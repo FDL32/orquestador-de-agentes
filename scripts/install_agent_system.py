@@ -51,6 +51,34 @@ LOCAL_DIRS = {"collaboration", "runtime", "audits"}
 # Contrast with LOCAL_DIRS (never synced at all).
 INSTALLER_MANAGED_PATHS: frozenset[str] = frozenset({"glossary.md", "microagents"})
 
+# WOT-2026-053f: rutas que el instalador ESCRIBE EN RUNTIME (no vienen del arbol
+# del motor) y que por tanto el calculo de residuos ve como "esta en el destino y
+# no en el origen" -> las clasifica como residuo -> las PODA.
+#
+# REPRODUCIDO EN PRODUCCION 2026-08-09 contra el destino real `Crear_Texto_LLM`:
+# un `--sync --yes` escribio el link (`[INFO] Wrote motor-destination link`) y
+# ACTO SEGUIDO lo borro (`[PRUNED] config/motor_destination_link.json`), saliendo
+# con `[SUCCESS]` y rc=0. El destino quedo HUERFANO: ese link es la unica via por
+# la que resuelve `motor_root` (el motor NO se copia al destino), y es UNTRACKED,
+# asi que git no lo recupera -- hubo que reconstruirlo a mano.
+#
+# POR QUE UNA CATEGORIA NUEVA Y NO `INSTALLER_MANAGED_PATHS`: aquella significa
+# "depositado una vez, LUEGO ES DEL DESTINO"; su contrato es no podar Y no
+# sobrescribir. El link es lo contrario: debe reescribirse en CADA sync, porque
+# es donde vive el pin `motor_sha` -- congelarlo derrotaria el motivo mismo de
+# correr `--sync`. Un bucle adversarial de 8 lentes marco por unanimidad el fix
+# "meterlo en INSTALLER_MANAGED_PATHS" como ROTO por esa razon.
+#
+# MATIZ MEDIDO (por que ademas no habria funcionado): el filtro compara
+# `r.parts[0]`, que para `config/motor_destination_link.json` es `config` -- no la
+# ruta completa. Meter la ruta entera en aquel set no habria eximido nada, y meter
+# `"config"` habria eximido el directorio ENTERO, que es demasiado amplio. De ahi
+# que este set se compare por ruta relativa COMPLETA (`as_posix()`), no por
+# primer segmento.
+INSTALLER_RUNTIME_WRITTEN_PATHS: frozenset[str] = frozenset(
+    {"config/motor_destination_link.json"}
+)
+
 # Directories whose CONTENT belongs to the destination once it exists (WOT-2026-024d).
 # The destination's Contract Formation Pipeline produces its artifacts here, so the
 # installer must NEVER overwrite and NEVER prune them.
@@ -457,6 +485,15 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     # against the INSTALLER_MANAGED_PATHS set. LOCAL_DIRS paths are already excluded
     # by iter_canonical_entries(); INSTALLER_MANAGED_PATHS are excluded here.
     residues = {r for r in residues if r.parts[0] not in INSTALLER_MANAGED_PATHS}
+    # WOT-2026-053f: lo que el instalador escribe EN RUNTIME no es residuo -- lo
+    # acaba de crear esta misma corrida. Se compara la ruta relativa COMPLETA
+    # (no `parts[0]`, que para `config/...json` seria `config` y eximiria el
+    # directorio entero). Sigue siendo SOBRESCRIBIBLE: esta exencion solo toca el
+    # calculo de residuos, nunca la escritura, asi que el pin `motor_sha` se
+    # actualiza en cada sync.
+    residues = {
+        r for r in residues if r.as_posix() not in INSTALLER_RUNTIME_WRITTEN_PATHS
+    }
     # WOT-2026-024d: destination-owned content is never pruned. The motor ships NO
     # planning artifact at all since WOT-2026-024h (it used to ship
     # .agent/planning/ticket_contracts.md), so EVERY Contract Formation artifact the
@@ -469,7 +506,39 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     residues = {r for r in residues if not is_destination_owned(r)}
     # Also exclude bootstrap-specific paths (full path matching, not just r.parts[0])
     residues = {r for r in residues if r.as_posix() not in INSTALLER_BOOTSTRAP_PATHS}
-    return compact_paths(residues)
+    compacted = compact_paths(residues)
+    # WOT-2026-053f (segunda mitad del defecto, y la mas peligrosa): `compact_paths`
+    # COLAPSA hijos en su ancestro, asi que si todos los hermanos de `config/` son
+    # residuo, el resultado es la ENTRADA `config` -- y podar `config` se lleva por
+    # delante el link exento, deshaciendo el filtro de arriba. Medido: el sync del
+    # test hermano imprimia `[PRUNED] config`, no `[PRUNED] config/motor_...json`.
+    # Filtrar solo por ruta exacta era necesario pero NO suficiente: hay que impedir
+    # tambien que un ANCESTRO de una ruta exenta sobreviva a la compactacion.
+    #
+    # NO basta con DESCARTAR el ancestro: eso protegeria `config/` ENTERO y dejaria
+    # sin podar residuos legitimos que vivan ahi (medido: con residuos
+    # `['config', 'otro/basura.txt']`, descartar el ancestro salvaba `otro/basura.txt`
+    # pero perdonaba todo `config/`). Lo correcto es RE-EXPANDIR ese ancestro en sus
+    # hijos reales y podarlos todos MENOS el exento, de modo que la exencion sea
+    # quirurgica y el prune siga haciendo su trabajo.
+    protected = {Path(p) for p in INSTALLER_RUNTIME_WRITTEN_PATHS}
+    result: list[Path] = []
+    for r in compacted:
+        covered = [p for p in protected if p == r or p.is_relative_to(r)]
+        if not covered:
+            result.append(r)
+            continue
+        if r in protected:
+            continue  # la propia ruta exenta: no se poda
+        # `r` es un ANCESTRO de algo exento: re-expandir en sus hijos reales.
+        for child in sorted((dest / r).rglob("*")):
+            if not child.is_file():
+                continue
+            rel = child.relative_to(dest)
+            if rel.as_posix() in INSTALLER_RUNTIME_WRITTEN_PATHS:
+                continue
+            result.append(rel)
+    return sorted(set(result))
 
 
 def ensure_parent_dirs(path: Path, dry_run: bool) -> None:
@@ -1599,6 +1668,14 @@ def sync_agent_system(  # noqa: C901
         dry_run=dry_run,
         motor_sha=motor_sha,
     )
+    # WOT-2026-053f: testigo para la postcondicion del final. Se mide el ARTEFACTO
+    # (existe el fichero tras escribirlo) y no el hecho de haber llamado a la
+    # funcion: asi la barrera compara "estaba" contra "sigue estando" y no puede
+    # dar por escrito algo que nunca aterrizo.
+    link_written = (
+        not dry_run
+        and (project_agent / "config" / "motor_destination_link.json").is_file()
+    )
 
     # Copy PROJECT_TEMPLATE.md as PROJECT.md (only if not exists)
     copy_project_template(
@@ -1667,6 +1744,34 @@ def sync_agent_system(  # noqa: C901
     if rc != 0:
         print("[sync] Host setup failed; aborting sync.", file=sys.stderr)
         return rc
+
+    # WOT-2026-053f: POSTCONDICION. Un `[SUCCESS]` sobre un destino HUERFANO es la
+    # peor clase de recibo: rc=0 mientras el destino pierde su unica via de resolver
+    # `motor_root`. Ocurrio de verdad el 2026-08-09 (el sync escribio el link y lo
+    # podo en la misma corrida). La exencion de arriba impide la causa; esta barrera
+    # impide el FALSO VERDE si alguna vez vuelve a desaparecer por otra via.
+    # No aplica en dry-run: ahi no se ha escrito nada por diseno.
+    # ALCANCE DECLARADO: la barrera exige el link solo si ESTA corrida lo escribio
+    # (`link_written`). No basta con "no existe": `sync_agent_system` se invoca en
+    # tests con un `template_agent` SINTETICO cuyo `parent` no es el motor real, y
+    # ahi el link legitimamente no aterriza en `project_agent`. Exigirlo siempre
+    # abortaria esa ruta con rc=1 y volveria FALSO VERDE al test hermano
+    # `test_sync_preserves_destination_contract_formation_end_to_end`, que asierta
+    # `rc == 0` A PROPOSITO (un abort a medias dejaria los ficheros intactos y el
+    # test mediria una corrida truncada). Lo que esta barrera caza es la DESAPARICION
+    # -- escrito y luego podado --, que es el fallo real de 2026-08-09.
+    if not dry_run and link_written:
+        link_file = project_agent / "config" / "motor_destination_link.json"
+        if not link_file.is_file():
+            print(
+                "[sync] ERROR: el sync termino sin dejar "
+                f"{link_file}. El destino queda HUERFANO: ese link es la unica via "
+                "por la que resuelve `motor_root` (el motor no se copia al destino) "
+                "y es UNTRACKED, asi que git NO lo recupera. Revisa si el calculo de "
+                "residuos lo poda (WOT-2026-053f) antes de volver a sincronizar.",
+                file=sys.stderr,
+            )
+            return 1
 
     print(
         f"\n[SUCCESS] Agent System synced. "
