@@ -174,6 +174,30 @@ Formato, celdas y reglas del buzon: **`backlog_inbox/README.md`** y el **Bloque
 sin `Estado`** (los asigna el fusionador) y debe traer resueltas las demas celdas de
 `Vista rapida` para que el fusionador no improvise.
 
+### RECIBO DEC: OBLIGATORIO, y es un GATE BLOQUEANTE
+
+Tu ficha **debe llevar escrito** un recibo DEC en una de estas TRES formas exactas:
+
+```
+DEC-<id> (motor)          DEC-<id> (destino)          DEC-no-aplica: <motivo>
+```
+
+El motivo de `DEC-no-aplica` va **escrito**: vacio o `n/a` no vale. Un `DEC-<id>`
+que cites debe EXISTIR en el registro que su scope declara.
+
+**Por que se dice aqui y no solo se remite al 8.bis** (medido 2026-08-09): esto no
+es un criterio de INGESTA que aplique el fusionador, es un CAMPO que la ficha trae
+o no trae. `check_dec_receipt.py` esta cableado en `prepush_check` y es
+**BLOQUEANTE**: una ficha sin recibo **frena el cierre del motor entero**. El
+primer sobre real llego sin el y bloqueo el preflight con
+`[FAIL] DEC Receipt Barrier` -- un destino puede, sin saberlo, dejar el motor sin
+poder cerrar. La ficha hermana del 2026-08-06 si lo traia, asi que el hueco era de
+este contrato, no del emisor.
+
+Si no sabes que DEC citar, la salida honesta es `DEC-no-aplica: <motivo>` con el
+motivo real (p.ej. `DEC-no-aplica: escalado de defecto reproducible, sin decision
+de diseno asociada`). Nunca lo omitas.
+
 Precedente real que puedes usar como plantilla:
 `FP-20260806-escalado-crear-texto-llm-2de2.tickets.md`.
 
