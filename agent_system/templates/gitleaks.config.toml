@@ -14,10 +14,20 @@
 #   de 40-hex (que ocultaria credenciales reales en CUALQUIER ruta del repo).
 # - Falsos positivos por VALOR concreto (placeholders didacticos de tests, un SHA
 #   publico puntual de un repo externo, etc.) van por VALOR EXACTO en un bloque
-#   [[allowlists]].regexes propio, con justificacion. NUNCA por path de un test:
-#   un path-allowlist crea una zona ciega (un secreto REAL futuro en ese archivo
-#   pasaria sin bloquear). El installer es no-clobber: nunca pisa el
-#   .gitleaks.toml ya personalizado de un destino.
+#   [[allowlists]].regexes propio, con justificacion.
+# - REGLA DE ALCANCE ACOTADO -- NO es una prohibicion general de los
+#   path-allowlists (este mismo seed usa cinco, justificados dos puntos mas
+#   arriba): un falso positivo por VALOR nunca se resuelve allowlisteando el PATH
+#   DEL FICHERO DE TEST que lo contiene, porque eso crearia una zona ciega (un
+#   secreto REAL futuro en ese fichero pasaria sin bloquear). La distincion es:
+#   superficie de LOG operativo append-only -> por PATH; valor concreto dentro de
+#   un test -> por VALOR EXACTO, jamas por su path.
+#   [Redaccion aclarada 2026-08-09 (WOT-2026-053g): el "NUNCA" cerraba una frase
+#   larga, lejos de su sujeto, y se leia como prohibicion general -- una auditoria
+#   externa lo reporto como contradiccion del fichero consigo mismo. La POLITICA
+#   no cambia; solo se explicita su alcance.]
+# - El installer es no-clobber: nunca pisa el .gitleaks.toml ya personalizado de
+#   un destino.
 #
 # NOTA gitleaks 8.x: [allowlist] (singular) esta deprecado y NO puede coexistir
 # con [[allowlists]] (plural). Este seed usa solo la forma plural.
