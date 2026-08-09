@@ -79,6 +79,75 @@ INSTALLER_RUNTIME_WRITTEN_PATHS: frozenset[str] = frozenset(
     {"config/motor_destination_link.json"}
 )
 
+# WOT-2026-053h: fichero OPCIONAL donde el motor DECLARA cual es su workspace de
+# dogfooding: una linea con el NOMBRE del directorio hermano, resuelto contra
+# `parent(motor_root)`. Se habla del ROL, no del nombre de ninguna instalacion
+# concreta -- escribir aqui el nombre real de un workspace haria que el motor
+# nombrase una maquina y `check_distribution_agnostic` lo bloquearia (lo hizo,
+# durante la implantacion de este mismo ticket).
+#
+# POR QUE UNA DECLARACION Y NO UNA HEURISTICA (medido 2026-08-09): un destino que
+# quiere escalar al motor (`prompts/escalate_to_motor.md`) tiene que escribir su
+# sobre en el buzon del WORKSPACE DEL MOTOR, y hasta hoy no tenia de donde sacar
+# esa ruta -- el link tiene 8 campos y NINGUNO la nombra. En el primer uso real
+# del contrato el sobre aterrizo en el buzon del PROPIO destino emisor: forma
+# correcta, superficie equivocada, rc=0 y cero senal de error.
+#
+# DOS DISCRIMINANTES CANDIDATOS, AMBOS DESCARTADOS POR MEDICION:
+#   - "el destino cuyo `motor_root` es este motor" (el criterio que ya usa
+#     `check_claude_settings_portability`): NO discrimina aqui -- medido, los DOS
+#     destinos de esta maquina (`Crear_Texto_LLM` y el workspace) dan True.
+#   - "el destino cuyo `ticket_prefix` coincide con el del motor": SI discrimina
+#     (WOT vs CTL), pero el motor no declara su prefijo en `.agent/config/`, solo
+#     en la prosa de `AGENTS.md`. Un discriminante que exige parsear prosa es
+#     fragil y seria heuristica nueva -- justo lo que el STOP de degeneracion
+#     prohibe.
+# De ahi una DECLARACION explicita: barata, sin adivinar, y ausente por defecto
+# (un motor que no la declare simplemente no propaga el campo).
+MOTOR_WORKSPACE_DECLARATION = ".agent/config/motor_workspace.txt"
+
+
+def read_motor_workspace_root(motor_root: Path) -> Path | None:
+    """Resolve the motor's own dogfooding workspace, or None if undeclared.
+
+    Before: ``motor_root`` is the motor repo root; the declaration file may or
+        may not exist and may hold junk or a stale name.
+    During: reads ``MOTOR_WORKSPACE_DECLARATION`` (a single line: the workspace
+        directory NAME, resolved against ``parent(motor_root)``). A NAME and not
+        an absolute path on purpose -- an absolute path would pin this machine
+        and `check_distribution_agnostic` would (rightly) reject it as
+        non-portable. No network, no subprocess, never raises.
+    After: returns the resolved existing directory, or None when the file is
+        absent, empty, unreadable or points at something that is not a
+        directory. Returning None is a NORMAL outcome, not an error: callers
+        must degrade (omit the field) instead of guessing a path.
+    """
+    try:
+        decl = motor_root / MOTOR_WORKSPACE_DECLARATION
+        if not decl.is_file():
+            return None
+        # Primera linea NO vacia y NO comentario: el fichero se documenta a si
+        # mismo, asi que saltarse los `#` es parte del contrato, no un extra.
+        name = next(
+            (
+                ln.strip()
+                for ln in decl.read_text(encoding="utf-8").splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ),
+            "",
+        )
+        if not name:
+            return None
+        # Un NOMBRE, no una ruta: rechaza separadores para que nadie cuele aqui
+        # una ruta absoluta de su maquina.
+        if "/" in name or "\\" in name or name in {".", ".."}:
+            return None
+        candidate = (motor_root.parent / name).resolve()
+        return candidate if candidate.is_dir() else None
+    except (OSError, UnicodeDecodeError, IndexError):
+        return None
+
+
 # Directories whose CONTENT belongs to the destination once it exists (WOT-2026-024d).
 # The destination's Contract Formation Pipeline produces its artifacts here, so the
 # installer must NEVER overwrite and NEVER prune them.
@@ -999,6 +1068,14 @@ def write_motor_destination_link(
         "ticket_prefix": ticket_prefix,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "manifest_version": MANIFEST_WORKSPACE_VERSION,
+        # WOT-2026-053h: ruta del workspace de dogfooding del MOTOR, para que un
+        # destino que escala (`prompts/escalate_to_motor.md`) sepa DONDE aterriza
+        # su sobre sin adivinar. ADITIVO y puede ser None: un motor que no lo
+        # declara deja el campo a null y el emisor cae a su fallback declarado --
+        # nunca fabrica la ruta. Ver `read_motor_workspace_root`.
+        "motor_workspace_root": (
+            str(mw) if (mw := read_motor_workspace_root(motor_root)) else None
+        ),
     }
 
     if dry_run:

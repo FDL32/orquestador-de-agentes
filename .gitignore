@@ -91,6 +91,12 @@ tests/sandbox/tmp*/
 .agent/runtime/research/
 .agent/backups/
 .agent/config/motor_destination_link.json
+# WOT-2026-053h: declaracion LOCAL del workspace de dogfooding de esta
+# instalacion. Nombra un directorio de ESTA maquina, asi que no se versiona --
+# mismo motivo que el link de arriba. El motor lo lee para propagar
+# `motor_workspace_root` a los destinos; un motor sin este fichero deja el campo
+# a null y el emisor cae a su fallback declarado.
+.agent/config/motor_workspace.txt
 # WOT-2026-020s: prefix-resolver local overrides (destinations outside search tree)
 scripts/prefix_resolver.local.json
 

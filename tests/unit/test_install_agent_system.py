@@ -1491,3 +1491,64 @@ def test_destination_can_still_bootstrap_planning_from_templates():
     assert (templates / "ticket_contract.md").exists(), (
         "the destination bootstraps its planning by copying this template"
     )
+
+
+# WOT-2026-053h: `motor_workspace_root` -- el dato que evita que un escalado
+# aterrice en el buzon equivocado. Medido 2026-08-09: el link tenia 8 campos y
+# NINGUNO nombraba el workspace del motor, asi que un destino que escalaba no
+# tenia de donde sacar la ruta y el sobre acabo en su PROPIO buzon (forma
+# correcta, superficie equivocada, rc=0 y cero senal de error).
+def test_read_motor_workspace_root_resolves_declared_sibling(tmp_path):
+    """Con declaracion valida, resuelve el hermano; sin ella, None.
+
+    Mutation-to-prove: si `read_motor_workspace_root` devolviera siempre None,
+    la primera asercion cae; si ignorase la existencia del directorio, cae la
+    de `no_existe`.
+    """
+    motor = tmp_path / "motor"
+    (motor / ".agent" / "config").mkdir(parents=True)
+    (tmp_path / "ws").mkdir()
+    decl = motor / ".agent" / "config" / "motor_workspace.txt"
+
+    assert ias.read_motor_workspace_root(motor) is None, "sin fichero -> None"
+
+    decl.write_text("# comentario\n\nws\n", encoding="utf-8")
+    assert ias.read_motor_workspace_root(motor) == (tmp_path / "ws").resolve(), (
+        "salta comentarios y lineas vacias hasta el primer NOMBRE real"
+    )
+
+    decl.write_text("no_existe\n", encoding="utf-8")
+    assert ias.read_motor_workspace_root(motor) is None, (
+        "un nombre que no es un directorio existente NO se acepta"
+    )
+
+
+def test_read_motor_workspace_root_rejects_paths_not_names(tmp_path):
+    """Solo NOMBRES: una ruta (absoluta o con separador) se rechaza.
+
+    Es la barrera de portabilidad: aceptar una ruta absoluta dejaria que el
+    motor nombrase una maquina concreta. Mutation-to-prove: quitar la guarda de
+    separadores hace que estas tres aserciones encuentren un Path en vez de None.
+    """
+    motor = tmp_path / "motor"
+    (motor / ".agent" / "config").mkdir(parents=True)
+    decl = motor / ".agent" / "config" / "motor_workspace.txt"
+    bs = chr(92)
+    for bad in [f"C:{bs}ruta{bs}absoluta", "sub/dir", "..", "# solo comentario"]:
+        decl.write_text(bad + "\n", encoding="utf-8")
+        assert ias.read_motor_workspace_root(motor) is None, f"debe rechazar {bad!r}"
+
+
+def test_link_carries_motor_workspace_root_and_degrades_to_none(tmp_path):
+    """El link propaga el campo; sin declaracion queda None, nunca inventado.
+
+    `None` es un resultado NORMAL del contrato: el emisor del escalado cae a su
+    fallback declarado en vez de deducir una ruta. Mutation-to-prove: omitir la
+    clave del payload hace fallar la asercion de pertenencia.
+    """
+    link = _write_link(tmp_path, prefix="WOT")
+    data = json.loads(link.read_text(encoding="utf-8"))
+    assert "motor_workspace_root" in data, "el campo debe existir SIEMPRE"
+    assert data["motor_workspace_root"] is None, (
+        "un motor sin declaracion deja el campo a null, no a una ruta adivinada"
+    )

@@ -132,7 +132,32 @@ No es castigo: es que sin recibo el motor no puede distinguirlo de una opinion.
 ## 5. Formato de salida: ficha del buzon
 
 El sobre se escribe como `FP-<YYYYMMDD>-escalado-<slug-destino>.tickets.md` en
-`<destination_root>/.agent/collaboration/backlog_inbox/`.
+**el buzon del WORKSPACE DEL MOTOR**, no en el tuyo.
+
+**No adivines la ruta: LEELA de tu propio link** (WOT-2026-053h):
+
+```bash
+python -c "import json;print(json.load(open(r'<destination_root>/.agent/config/motor_destination_link.json'))['motor_workspace_root'])"
+```
+
+El buzon es ese valor + `/.agent/collaboration/backlog_inbox/`.
+
+Si el campo **no existe o es `null`**, tu link es anterior a `053h` o el motor no
+declaro su workspace: **NO deduzcas la ruta** -- aplica el fallback de la seccion 1
+y dilo. Ese campo puede faltar legitimamente; inventarlo, no.
+
+**ESTE ES EL ERROR MAS FACIL DE COMETER, y ya ocurrio en el primer uso real del
+contrato (2026-08-09).** El sobre se escribio en
+`<tu-destino>/.agent/collaboration/backlog_inbox/` -- que existe, acepta el
+fichero y no da ningun error -- y ahi **no lo ve nadie**: el Bloque 8.bis corre en
+el cierre del MOTOR y hace glob sobre el buzon de SU workspace de dogfooding, no
+sobre el de cada destino. Un sobre en tu propio buzon queda en la unica superficie
+donde el fusionador no mira.
+
+Regla operativa: el `<destination_root>` del 8.bis es el destino **del motor**
+(su workspace de dogfooding), no tu repo. Si no puedes escribir ahi, **no
+inventes la ruta**: aplica el fallback de la seccion 1 y dilo. Un sobre en el
+buzon equivocado es peor que un fallback declarado, porque parece entregado.
 
 **El sufijo `.tickets.md` es OBLIGATORIO y no es cosmetico:** el consumidor hace
 glob de `backlog_inbox/*.tickets.md`. Un fichero en ese directorio con cualquier
