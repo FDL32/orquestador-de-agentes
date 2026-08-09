@@ -572,6 +572,88 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_ghost_ticket_ids_check(project_root: Path) -> CheckResult:
+    """WOT-2026-053i: un id CITADO en un commit publicado sin fila en el backlog.
+
+    Cierra el hueco INVERSO al de `run_backlog_contract_check`. Aquel valida las
+    FILAS que existen; este valida los ids que se CITARON en git y para los que
+    nunca se escribio fila. Ninguna de las dos superficies lo ve: la cola no lo
+    lista, el archive no lo tiene, y el contrato sale verde igual porque audita
+    filas, no citas.
+
+    MEDIDO 2026-08-09 (la fuga que lo origina): `WOT-2026-053f` se cito en un
+    commit publicado con CI verde y no tenia fila. Esa MISMA fuga se habia
+    corregido HORAS ANTES para `053e`, se documento su causa, y se repitio TRES
+    commits despues con el ticket mas importante de la tanda. El censo posterior
+    encontro 9 fantasmas historicos, no 1: no era descuido puntual sino un patron
+    que ningun mecanismo miraba. Tercera vez de la misma leccion: lo que nadie
+    invoca es una norma, no una barrera.
+
+    NO BLOQUEANTE por decision declarada (`is_blocking=False`): la deuda historica
+    esta anclada en `GHOST_BASELINE` y el guard solo avisa de fugas NUEVAS. Un
+    fantasma es un fallo de REGISTRO, no de codigo -- se corrige anadiendo una
+    fila, y frenar un cierre verde por eso convertiria una senal barata en un
+    bloqueo caro. Si la fuga se repite pese al aviso, subirlo a bloqueante es
+    trabajo de otro ticket, con su propia evidencia.
+
+    Before: `project_root` es el repo_destino; el cwd es el repo git del motor.
+    During: delega en `check_ghost_ticket_ids` (lee las dos superficies + git log).
+    After: CheckResult passed=False (no bloqueante) nombrando cada fantasma.
+    """
+    name = "Ghost Ticket IDs (closeout)"
+    try:
+        from scripts.check_ghost_ticket_ids import (
+            GHOST_BASELINE,
+            collect_cited_ids,
+            collect_row_ids,
+        )
+    except ImportError:
+        from check_ghost_ticket_ids import (  # type: ignore[no-redef]
+            GHOST_BASELINE,
+            collect_cited_ids,
+            collect_row_ids,
+        )
+    collab = project_root / ".agent" / "collaboration"
+    if not collab.is_dir():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"No {collab} (skipped)",
+            is_blocking=False,
+            skipped=True,
+        )
+    cited = collect_cited_ids(Path.cwd(), 400)
+    if cited is None:
+        # SKIP explicito: un guard que no puede MEDIR no se inventa un verde.
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="git unavailable; cannot measure (skipped)",
+            is_blocking=False,
+            skipped=True,
+        )
+    rows = collect_row_ids(collab)
+    ghosts = sorted(t for t in cited if t not in rows and t not in GHOST_BASELINE)
+    if ghosts:
+        detail = "\n".join(f"  - {t} (commit {cited[t]})" for t in ghosts)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(ghosts)} id(s) citados en git sin fila en ninguna "
+                f"superficie:\n{detail}\nAnade su fila (terminal -> archive) "
+                "antes de cerrar (WOT-2026-053i)."
+            ),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="ningun id publicado se quedo sin fila",
+        is_blocking=False,
+    )
+
+
 def run_contract_formation_check(project_root: Path) -> CheckResult:
     """WOT-2026-023m(c): gate bloqueante de cierre sobre el CF triple del motor.
 
@@ -1794,6 +1876,10 @@ def run_preflight_check(
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:
         results.append(run_backlog_contract_check(project_root))
+        # 6a-bis. Ghost Ticket IDs (WOT-2026-053i; no bloqueante). Hueco INVERSO
+        # al de arriba: aquel valida las FILAS que existen, este los ids CITADOS
+        # en git para los que nunca se escribio fila.
+        results.append(run_ghost_ticket_ids_check(project_root))
         # 6b. Contract-Backlog Reconcile (WOT-2026-024e; WARN default, FAIL opt-in)
         results.append(run_contract_reconcile_check(project_root))
         # 6c. Handoff State SHA (WOT-2026-024t s2; WARN default, FAIL opt-in)

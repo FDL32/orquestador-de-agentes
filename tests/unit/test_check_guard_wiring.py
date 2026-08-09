@@ -70,6 +70,14 @@ EXPECTED_WIRED_REAL = {
     "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
     "check_backlog_commits_landed",  # WOT-2026-024q: cableado via import estatico en agent_controller.py::_ticket_landed_by_archived_commit (retirado de known_unwired)
     "check_backlog_contract",
+    # WOT-2026-053i: cableado via import estatico en
+    # prepush_check.py::run_ghost_ticket_ids_check, invocado en la secuencia de
+    # closeout junto a run_backlog_contract_check. NO es falso-WIRED: verificado
+    # con MUTACION sobre el arbol real -- retirando la fila de `WOT-2026-053f`
+    # del archive, el guard sale exit 1 nombrando el id y su commit (`05df89c`);
+    # restaurada la fila, exit 0. No bloqueante por decision declarada (un
+    # fantasma es fallo de REGISTRO, no de codigo).
+    "check_ghost_ticket_ids",
     "check_batch_run_accounting",  # WOT-2026-025k: cableado via import estatico en batch_destination_controller.py::_batch_run_orphan_gsr_tickets y prepush_check.py::run_batch_run_accounting_check (closeout, WARN)
     "check_claude_settings_portability",
     # WOT-2026-046f: cableado en pre-commit con stages: [commit-msg] MAS
