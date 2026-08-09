@@ -226,6 +226,125 @@ def compute_motor_drift(motor_link: dict) -> str | None:
         return "[WARN] motor drift: no se pudo calcular drift del motor"
 
 
+CONTRACT_SURFACES = ("prompts/", "skills/", "AGENTS.md", "CLAUDE.md")
+
+
+def compute_contract_surface_drift(
+    motor_root: Path, primary_sha: str, ref: str = "origin/main"
+) -> str | None:
+    """WARN si el checkout de CONSUMO tiene un CONTRATO distinto del de origin/main.
+
+    Before: `motor_root` es el motor resuelto; `primary_sha` el HEAD del checkout
+        principal (detached, solo-consumo). Ninguno se valida aqui.
+    During: un unico `git diff --name-only <primary_sha>..origin/main` acotado a
+        `CONTRACT_SURFACES`. Read-only, sin fetch: mide lo que hay en disco.
+    After: devuelve el WARN nombrando los ficheros divergentes (max 5 y un
+        contador), o None si no hay divergencia CONTRACTUAL o si algo falla.
+        NUNCA lanza y NUNCA afecta al exit code: es SENAL, no gate -- misma
+        politica que `compute_motor_drift` (WOT-2026-024j), y por la misma razon
+        (`tests/test_destination_context.py:451` la pinea para el WARN vecino).
+
+    POR QUE POR SUPERFICIE Y NO POR UMBRAL DE COMMITS (WOT-2026-053a): un `N
+    commits detras` seria un umbral en MESETA sin barrido, que AGENTS.md prohibe
+    -- 1 commit puede cambiar el prompt de cierre y 50 pueden no tocar
+    `prompts/`. El discriminante correcto es BINARIO y no exige justificar
+    ningun numero: ¿divergio el contrato que esta sesion va a LEER?
+
+    POR QUE EN EL ARRANQUE: la unica barrera previa
+    (`prepush_check.run_principal_freshness_check`, WOT-2026-048l) avisa en el
+    CIERRE, cuando la sesion ya volo contra el contrato obsoleto. Medido
+    2026-08-08: 4 prompts divergian entre checkouts y un batch de 3 tickets
+    corrio sin que nadie lo viera. Es la misma leccion que
+    `check-suite-freshness`: la informacion solo AHORRA trabajo antes.
+    """
+    try:
+        if not Path(motor_root).is_dir():
+            return None
+        diff = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "git",
+                "-C",
+                str(motor_root),
+                "diff",
+                "--name-only",
+                f"{primary_sha}..{ref}",
+                "--",
+                *CONTRACT_SURFACES,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if diff.returncode != 0:
+            return None
+        files = [line.strip() for line in diff.stdout.splitlines() if line.strip()]
+        if not files:
+            return None
+        shown = ", ".join(files[:5])
+        more = f" (+{len(files) - 5} mas)" if len(files) > 5 else ""
+        return (
+            f"[WARN] contract surface drift: el checkout de consumo tiene "
+            f"{len(files)} contrato(s) DISTINTOS de origin/main -> {shown}{more}. "
+            f"Si citas prompts desde ahi, los estas leyendo STALE. "
+            f"Remedio: python scripts/sync_principal.py --apply --fetch"
+        )
+    except Exception:
+        # SIGNAL, not a gate: never propagate, never affect exit code.
+        return None
+
+
+def _contract_surface_warning(motor_link: dict) -> str | None:
+    """Resuelve el checkout de consumo desde el link y delega el diff (WOT-2026-053a).
+
+    Before: `motor_link` es el link parseado; puede no tener `motor_root`, o
+        apuntar a un motor sin topologia worktree-dev.
+    During: resuelve el checkout PRIMARIO reutilizando `_detect_primary` de
+        `sync_principal` -- la misma deteccion que ya usa el check de cierre, no
+        una segunda heuristica que pueda divergir de aquella. Lee su HEAD y
+        delega en `compute_contract_surface_drift`.
+    After: devuelve el WARN o None. NUNCA lanza: si no hay topologia de dos
+        worktrees (`_detect_primary` -> None, el caso de un clon normal), no hay
+        checkout de consumo que pueda estar stale y no hay nada que avisar.
+    """
+    try:
+        motor_root_raw = motor_link.get("motor_root")
+        if not motor_root_raw:
+            return None
+        motor_root = Path(str(motor_root_raw))
+        if not motor_root.is_dir():
+            return None
+
+        # El script se ejecuta DIRECTO (`python scripts/destination_context.py`),
+        # y entonces `scripts` NO es un paquete importable: el import por paquete
+        # lanza ModuleNotFoundError y el `except` de abajo lo tragaria en
+        # SILENCIO -- el WARN no saldria nunca y nadie lo sabria. Medido con un
+        # probe en la ruta productiva, no deducido. Por eso se prueba el import
+        # de paquete (valido bajo pytest, donde el rootdir esta en sys.path) y se
+        # cae al import por ruta cuando no lo hay.
+        try:
+            from scripts.sync_principal import _detect_primary
+        except ModuleNotFoundError:
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from scripts.sync_principal import _detect_primary
+
+        primary = _detect_primary(motor_root)
+        if primary is None:
+            return None
+
+        head = subprocess.run(  # noqa: S603
+            ["git", "-C", str(primary), "rev-parse", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if head.returncode != 0 or not head.stdout.strip():
+            return None
+        return compute_contract_surface_drift(motor_root, head.stdout.strip())
+    except Exception:
+        # SIGNAL, not a gate: never propagate, never affect exit code.
+        return None
+
+
 def get_git_info(project_root: Path) -> dict | None:
     """Get git status if available.
 
@@ -743,6 +862,16 @@ def _print_summary(
     drift_warning = compute_motor_drift(link)
     if drift_warning:
         print(drift_warning)
+
+    # WOT-2026-053a: el drift que IMPORTA no es "cuantos commits", es "¿el
+    # contrato que voy a LEER difiere del de origin/main?". Se avisa AQUI, en el
+    # arranque, porque la barrera hermana (prepush_check.run_principal_freshness_
+    # check, WOT-2026-048l) avisa en el CIERRE -- cuando la sesion ya volo contra
+    # el contrato obsoleto (medido 2026-08-08: 4 prompts divergentes, un batch de
+    # 3 tickets). SENAL, nunca gate: no toca el exit code.
+    surface_warning = _contract_surface_warning(link)
+    if surface_warning:
+        print(surface_warning)
 
     collab = project_root / ".agent" / "collaboration"
     wp = collab / "work_plan.md"

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from scripts.destination_context import (
     build_map,
+    compute_contract_surface_drift,
     compute_motor_drift,
     extract_file_preview,
     get_git_info,
@@ -628,3 +629,67 @@ def test_main_bootstrap_no_drift_warn_when_sha_matches_head(tmp_path, capsys):
     assert exit_code == 0
     captured = capsys.readouterr()
     assert "motor drift" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# compute_contract_surface_drift (WOT-2026-053a) -- el discriminante NO es
+# "cuantos commits", es "¿divergio el CONTRATO que voy a leer?".
+#
+# Origen medido (2026-08-08): una sesion leyo prompts del checkout PRINCIPAL
+# stale y volo un batch de 3 tickets contra un contrato obsoleto. El unico
+# aviso existente vivia en el CIERRE (`prepush_check.run_principal_freshness_
+# check`), que informa DESPUES de haber volado. Este avisa en el ARRANQUE.
+#
+# Por que por SUPERFICIE y no por umbral N de commits: un N seria un umbral en
+# MESETA sin barrido (AGENTS.md lo prohibe) -- 1 commit puede cambiar el prompt
+# de cierre y 50 pueden no tocar `prompts/`. El discriminante es BINARIO y no
+# exige justificar ningun numero.
+# ---------------------------------------------------------------------------
+
+
+def test_contract_surface_drift_warns_when_a_prompt_diverges(tmp_path):
+    """Un fichero de `prompts/` que difiere entre primary y HEAD -> WARN que lo NOMBRA.
+
+    MUTACION: si el discriminante pasara a contar commits en vez de mirar
+    superficies, este test seguiria verde por accidente; por eso asserta el
+    NOMBRE del fichero divergente, no el hecho de que haya drift.
+    """
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    _init_git_repo(motor_root)
+    (motor_root / "prompts").mkdir()
+    primary = _commit(motor_root, "prompts/contrato.md", "v1")
+    _commit(motor_root, "prompts/contrato.md", "v2-DIVERGENTE")
+
+    warn = compute_contract_surface_drift(motor_root, primary, ref="HEAD")
+
+    assert warn is not None
+    assert "prompts/contrato.md" in warn
+    assert "contract surface drift" in warn
+
+
+def test_contract_surface_drift_silent_when_only_noncontract_files_change(tmp_path):
+    """27 commits que NO tocan superficie contractual son RUIDO, no senal.
+
+    Este es el control negativo que justifica el diseno: sin el, el WARN se
+    dispararia por cualquier avance del motor y entrenaria a ignorarlo.
+    """
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    _init_git_repo(motor_root)
+    (motor_root / "prompts").mkdir()
+    (motor_root / "tests").mkdir()
+    primary = _commit(motor_root, "prompts/contrato.md", "v1")
+    _commit(motor_root, "tests/test_algo.py", "irrelevante")
+    _commit(motor_root, "README.md", "tambien irrelevante")
+
+    assert compute_contract_surface_drift(motor_root, primary, ref="HEAD") is None
+
+
+def test_contract_surface_drift_is_signal_never_gate(tmp_path):
+    """Un motor_root ilegible NO revienta y NO propaga: devuelve None.
+
+    Misma politica que `compute_motor_drift` (WOT-2026-024j): es SENAL, nunca
+    gate. Un guard que revienta por git es peor que uno que calla.
+    """
+    assert compute_contract_surface_drift(tmp_path / "no-existe", "deadbeef") is None
