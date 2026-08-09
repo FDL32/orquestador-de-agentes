@@ -200,8 +200,36 @@ def test_8bis_still_declares_the_same_surfaces(surface: str) -> None:
 # emitir. El fixture esta fijado en el test, no juzgado "por equivalencia".
 # ---------------------------------------------------------------------------
 
-# Ficha EXISTENTE nombrada (vive en la cola viva del destino).
+# Ficha EXISTENTE nombrada. Vive en `_archive/backlog_done.md`, NO en la cola
+# viva -- y esa eleccion es el arreglo, no un apano (WOT-2026-053b).
+#
+# HISTORIA MEDIDA (2026-08-09): el fixture apuntaba al backlog VIVO. Al archivar
+# `047w` en un cierre LEGITIMO, el test cayo: el vecino top paso a ser
+# `WOT-2026-042i` (cableado de guards), TEMATICAMENTE AJENO. Un test atado a una
+# fila viva se rompe con cada cierre correcto -- el dato es mutable por diseno.
+#
+# POR QUE EL ARCHIVE ES MEJOR FUENTE, no solo mas estable:
+#   1. `_archive/backlog_done.md` es APPEND-ONLY: una fila archivada con su
+#      `commit:` no vuelve a moverse. El fixture pasa de "vivo hasta que alguien
+#      lo cierre" a INMUTABLE POR DEFINICION.
+#   2. La senal es MAS FUERTE. Medido con el mismo candidato:
+#        - contra la cola viva: top=042i @ 0.0397, terminos compartidos
+#          `propios, alta, tiene, cierre` -- STOPWORDS de dominio, cero solape
+#          tematico, meseta plana sin escalon.
+#        - contra el archive:   top=047w @ 0.1549, terminos `dedup, propios,
+#          alta, paso, follow, tiene`; segundo 013r @ 0.0615 -> ESCALON 2.5x.
+#   3. El archive es una de las TRES superficies que la clausula DEDUPE del paso
+#      8 nombra (`orchestrator_session_close_full_audit.md:260`), asi que
+#      mirarlo NO es una concesion: es cumplir el contrato mas de cerca.
 FIXTURE_EXISTING_TICKET = "WOT-2026-047w"
+
+# Margen minimo top-vs-segundo. NO es un umbral elegido a ojo: es un INVARIANTE
+# de FORMA ("el top destaca"), no una medicion congelada. El valor medido hoy es
+# 2.5x (0.1549 vs 0.0615); se exige 1.5x para que la barrera muerda ante un
+# ranking degenerado sin romperse porque el corpus crezca. Sin este assert, la
+# mutacion "sort invertido" o "score constante" dejaria el test verde mientras
+# el scorer deja de discriminar (lente-FS del bucle L950, nonce 69e4a84a).
+FIXTURE_MIN_SCORE_RATIO = 1.5
 
 # Candidato de follow-up NOMBRADO: reformulacion del MISMO hallazgo que ya
 # ficha 047w. Un dedupe correcto debe reconocerlo y NO dar de alta fila nueva.
@@ -259,14 +287,47 @@ def _resolve_live_backlog() -> Path | None:
     return None
 
 
+def _resolve_dedupe_surfaces() -> list[Path]:
+    """Las TRES superficies que la clausula DEDUPE del paso 8 nombra.
+
+    Contrato: `orchestrator_session_close_full_audit.md:260` exige barrer
+    `backlog.md` vivo, `_archive/backlog_done.md` Y el archive de memoria
+    (`observations.YYYY-MM.jsonl`). El test cubria SOLO la primera -- una de
+    tres -- y por eso pudo caerse entero cuando su fixture salio de esa.
+
+    Before: puede no haber destino resoluble (maquina sin link) -> lista vacia,
+        y el llamante hace SKIP declarado.
+    During: reutiliza `_resolve_live_backlog` para el destino y deriva las otras
+        dos de su misma raiz. Read-only.
+    After: devuelve las superficies que EXISTEN en disco, en el orden del
+        contrato. Nunca inventa rutas: una superficie ausente simplemente no
+        entra, y el test declara cuantas barrio.
+    """
+    live = _resolve_live_backlog()
+    if live is None:
+        return []
+    collab = live.parent
+    surfaces = [live, collab / "_archive" / "backlog_done.md"]
+    mem_archive = collab.parent / "runtime" / "memory" / "archive"
+    if mem_archive.is_dir():
+        surfaces.extend(sorted(mem_archive.glob("observations.*.jsonl")))
+    return [p for p in surfaces if p.is_file()]
+
+
 def test_dedupe_flow_emits_ya_cubierto_for_a_known_duplicate() -> None:
     """DoD (b): el flujo REAL sobre un candidato duplicado nombra la ficha viva.
 
     Ejecuta `find_similar_signals.py` -- la ayuda mecanica que la clausula
-    DEDUPE nombra -- con el candidato fijado arriba contra el backlog vivo, y
-    exige que `WOT-2026-047w` salga como vecino de MAYOR score. Ese es el hit
-    que obliga al operador a emitir `[DEDUPE: YA CUBIERTO por WOT-2026-047w ...]`
-    en vez de dar de alta una fila nueva.
+    DEDUPE nombra -- con el candidato fijado arriba contra las TRES superficies
+    del contrato (`backlog.md` vivo, `_archive/backlog_done.md` y el archive de
+    memoria; `orchestrator_session_close_full_audit.md:260`), y exige que
+    `WOT-2026-047w` salga como vecino de MAYOR score Y que DESTAQUE sobre el
+    segundo. Ese es el hit que obliga al operador a emitir
+    `[DEDUPE: YA CUBIERTO por WOT-2026-047w ...]` en vez de dar de alta una fila
+    nueva.
+
+    El fixture vive en el ARCHIVE, no en la cola viva: ver el bloque de
+    FIXTURE_EXISTING_TICKET para la medicion que justifica la eleccion.
 
     NO se asevera un veredicto emitido por el script: el script genera SENAL y
     NUNCA veredicto (NON-GOAL de la ficha). Lo que se asevera es que la senal
@@ -277,15 +338,20 @@ def test_dedupe_flow_emits_ya_cubierto_for_a_known_duplicate() -> None:
     import subprocess
     import sys
 
-    backlog = _resolve_live_backlog()
-    if backlog is None:
+    surfaces = _resolve_dedupe_surfaces()
+    if not surfaces:
         pytest.skip(
             "no hay destino resoluble (AGENT_PROJECT_ROOT / link): "
-            "el flujo necesita un backlog vivo"
+            "el flujo necesita las superficies del dedupe"
         )
 
     script = MOTOR_ROOT / "scripts" / "find_similar_signals.py"
     assert script.is_file(), f"ayuda mecanica ausente: {script}"
+
+    surface_args: list[str] = []
+    for surface in surfaces:
+        flag = "--archive" if surface.suffix == ".jsonl" else "--backlog"
+        surface_args.extend([flag, str(surface)])
 
     proc = subprocess.run(
         [
@@ -293,8 +359,7 @@ def test_dedupe_flow_emits_ya_cubierto_for_a_known_duplicate() -> None:
             str(script),
             "--text",
             FIXTURE_CANDIDATE,
-            "--backlog",
-            str(backlog),
+            *surface_args,
             "--top",
             "3",
             "--json",
@@ -318,13 +383,32 @@ def test_dedupe_flow_emits_ya_cubierto_for_a_known_duplicate() -> None:
     )
 
     top = neighbours[0]
-    assert top.get("label") == FIXTURE_EXISTING_TICKET, (
+    assert top.get("label", "").endswith(FIXTURE_EXISTING_TICKET), (
         f"el vecino de mayor score fue {top.get('label')!r}, se esperaba "
         f"{FIXTURE_EXISTING_TICKET!r}. Sin este hit, un operador que aplique la "
         "clausula DEDUPE del paso 8 concluiria SIN VECINOS y daria de alta un "
         "duplicado -- exactamente el incidente de 2026-07-22."
     )
     assert top.get("score", 0) > 0, "score no positivo: la senal no discrimina"
+
+    # ESCALON top-vs-segundo: la identidad del top NO basta como barrera.
+    # Mutaciones que el assert anterior deja pasar y esta mata (nombradas por la
+    # lente-FS del bucle L950): invertir el sort, o devolver score constante --
+    # en ambos casos "hay un top" sigue siendo cierto mientras el scorer deja de
+    # DISCRIMINAR. Lo que prueba que la senal sirve no es que exista un primero,
+    # es que DESTAQUE sobre el segundo.
+    if len(neighbours) > 1:
+        second_score = neighbours[1].get("score", 0)
+        if second_score > 0:
+            ratio = top.get("score", 0) / second_score
+            assert ratio >= FIXTURE_MIN_SCORE_RATIO, (
+                f"el top ({top.get('score')}) no destaca sobre el segundo "
+                f"({second_score}): ratio {ratio:.2f} < {FIXTURE_MIN_SCORE_RATIO}. "
+                "Un top que empata con el ruido de fondo no es una senal de "
+                "dedupe: el operador no puede distinguir el hit real del "
+                "solape por stopwords (medido: contra la cola viva el top daba "
+                "0.0397 con `propios, alta, tiene, cierre`)."
+            )
 
 
 def test_dedupe_flow_reports_its_own_denominator() -> None:
