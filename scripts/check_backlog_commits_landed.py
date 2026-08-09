@@ -584,7 +584,12 @@ def _landed_by_subject(ticket_id: str, ref: str, repo: Path) -> bool:
 
 
 def classify(
-    ticket_id: str, sha: str, ref: str, repo: Path, patch_ids: set[str]
+    ticket_id: str,
+    sha: str,
+    ref: str,
+    repo: Path,
+    patch_ids: set[str],
+    other_repo: Path | None = None,
 ) -> tuple[str, str]:
     """Return (verdict, detail) for one (ticket_id, sha), layers exact -> lax.
 
@@ -637,6 +642,15 @@ def classify(
         )
     if _has_object(sha, repo):
         return ERROR, "object exists but landed by no layer -- LOST CLOSE (fail-closed)"
+    # WOT-2026-048u: check the other repo before emitting the WARN. If the sha
+    # exists in the other repo of the topology, the commit landed there -- not a
+    # typo or history-rewrite.
+    if other_repo is not None and _has_object(sha, other_repo):
+        return (
+            WARN,
+            f"commit landed in {other_repo.name} (other repo of topology), "
+            "outside this audit's scope -- not a typo or history-rewrite",
+        )
     return (
         WARN,
         "no git object and no ID in origin/main subjects -- obsolete cite / typo or "
@@ -644,12 +658,19 @@ def classify(
     )
 
 
-def audit(pairs: list[tuple[str, str]], ref: str, repo: Path) -> list[dict]:
+def audit(
+    pairs: list[tuple[str, str]],
+    ref: str,
+    repo: Path,
+    other_repo: Path | None = None,
+) -> list[dict]:
     """Classify every (ticket_id, sha) pair. Builds the CAPA-2 set once."""
     patch_ids = build_patch_id_set(ref, repo)
     results: list[dict] = []
     for ticket_id, sha in pairs:
-        verdict, detail = classify(ticket_id, sha, ref, repo, patch_ids)
+        verdict, detail = classify(
+            ticket_id, sha, ref, repo, patch_ids, other_repo=other_repo
+        )
         results.append(
             {"ticket_id": ticket_id, "sha": sha, "verdict": verdict, "detail": detail}
         )
@@ -770,7 +791,7 @@ def main(argv: list[str] | None = None) -> int:
     # "I skipped the rows that would have failed".
     census = census_archived(content)
     pairs = parse_archived_commits(content)
-    results = audit(pairs, args.ref, git_repo)
+    results = audit(pairs, args.ref, git_repo, other_repo=dest_root)
 
     roots = {"MOTOR_ROOT": motor_root, "DESTINO_ROOT": dest_root, "GIT_REPO": git_repo}
     counts = {
