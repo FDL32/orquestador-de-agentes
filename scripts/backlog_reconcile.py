@@ -645,6 +645,27 @@ def main(argv: list[str] | None = None) -> int:
         rows, content, motor_root, dest_root
     )
 
+    # WOT-2026-046i: explicit coverage block so "zero divergences" is
+    # distinguishable from "zero coverage".
+    all_statuses = [
+        cells[_COL_STATUS] for cells in rows if len(cells) == _EXPECTED_COLS
+    ]
+    reconcile_count = sum(1 for s in all_statuses if s in RECONCILE_STATES)
+    blocked_count = sum(1 for s in all_statuses if s == _BLOCKED_STATE)
+    other_count = len(all_statuses) - reconcile_count - blocked_count
+    coverage = {
+        "states_checked": sorted(set(all_statuses)),
+        "total_rows": len(all_statuses),
+        "reconcile_rows": reconcile_count,
+        "blocked_rows": blocked_count,
+        "other_rows": other_count,
+        "divergence_kinds": sorted({d["kind"] for d in divergences}),
+        "limitation": (
+            "Short-form blocker IDs (e.g. '028a' instead of 'WOT-2026-028a') "
+            "are not detected (backlog_reconcile.py:126-128)."
+        ),
+    }
+
     repos_last_run = {
         "motor": _read_last_run(motor_root),
         "destino": _read_last_run(dest_root),
@@ -658,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
             "destino_root": "<DESTINO_ROOT>",
             "backlog": str(backlog.name),
         },
+        "coverage": coverage,
         "tickets": tickets,
         "repos_last_run": repos_last_run,
         "automatic_warnings": warnings,

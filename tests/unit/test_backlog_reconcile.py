@@ -678,6 +678,36 @@ def test_046g_pending_row_with_archived_blocker_is_divergence(tmp_path, monkeypa
     assert all(d["ticket_id"] != "WOT-2026-900a" for d in findings["divergences"])
 
 
+def test_046i_coverage_block_present(tmp_path, monkeypatch):
+    """WOT-2026-046i: findings.json includes a coverage block.
+
+    The consumer can distinguish 'zero divergences' from 'zero coverage'
+    without reading the prompt.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+
+    assert "coverage" in findings, "coverage block must be present in findings.json"
+    cov = findings["coverage"]
+    assert "states_checked" in cov
+    assert "total_rows" in cov
+    assert "reconcile_rows" in cov
+    assert "blocked_rows" in cov
+    assert "divergence_kinds" in cov
+    assert "limitation" in cov
+    # The fixture has 5 pending/CP rows + 1 blocked + 1 ready-for-review
+    assert cov["total_rows"] >= 5
+    assert cov["reconcile_rows"] >= 4  # pending + completed-partial
+    assert cov["blocked_rows"] >= 1
+
+
 def test_046g_pending_row_with_live_blocker_not_flagged(tmp_path, monkeypatch):
     """ANTI-FALSE-POSITIVE: pending row whose blocker IS live must not be flagged."""
     motor = _fake_motor(tmp_path)
