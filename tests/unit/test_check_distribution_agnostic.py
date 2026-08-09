@@ -26,6 +26,7 @@ Cobertura (una idea por test):
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 from pathlib import Path
 
@@ -559,10 +560,26 @@ def test_zero_quota_exempts_nothing(fake_motor: Path):
 
 # T-REAL: contrato vivo sobre el arbol real del motor.
 def test_real_repo_is_green():
-    """LIVE contract: after Part 2 the real repo must audit clean (143 files, 0
-    unexempted). The point IS the real tree -- a synthetic-only suite is blind to the
-    boundary (WOT-2026-020q)."""
+    """LIVE contract: the real repo must audit clean -- 0 unexempted hits on every
+    needle. The point IS the real tree -- a synthetic-only suite is blind to the
+    boundary (WOT-2026-020q).
+
+    EL CRITERIO ES EL INVARIANTE, NO EL CONTEO (WOT-2026-053e). Antes se aserta el
+    literal "143 ficheros versionados auditados", y eso es una MEDICION disfrazada de
+    criterio: caduca sola en cuanto la frontera gana un fichero legitimo, sin que nadie
+    toque el guard ni rompa nada. Medido 2026-08-09: anadir `prompts/escalate_to_motor.md`
+    subio el censo a 144 y tumbo este test con la auditoria REAL en verde (0 hits, OK) --
+    exactamente el falso rojo que AGENTS.md describe en "criterio invariante, evidencia
+    fechada". Lo que este contrato protege es que NINGUNA aguja nombre esta maquina; el
+    tamano del censo es evidencia fechada, no el contrato.
+    """
     code, lines = cda.audit(_ROOT)
     joined = "\n".join(lines)
-    assert "143 ficheros versionados auditados" in joined, joined
+    # El censo se sigue exigiendo NO VACIO: un audit sobre 0 ficheros saldria verde
+    # trivialmente y este test dejaria de mirar donde ocurre el fallo.
+    match = re.search(r"(\d+) ficheros versionados auditados", joined)
+    assert match is not None, joined
+    assert int(match.group(1)) > 0, joined
+    # El INVARIANTE: ninguna aguja con hits sin eximir.
+    assert "OK: ninguna aguja nombra esta maquina en lo distribuido." in joined, joined
     assert code == 0, joined
