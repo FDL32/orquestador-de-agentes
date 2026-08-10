@@ -112,6 +112,19 @@ la resolucion real.
 comandos exactos y formato de salida en
 `prompts/audit_autonomous_ticket_batch.md` seccion 4.
 
+## Start Context Isolation receipt (WOT-2026-044r)
+
+El auditor tambien verifica el recibo de aislamiento de contexto
+(`start_context_isolation.json`), que vive FUERA del bloque PREDICATE
+(campo top-level del `batch_run_<ts>.json`). Verifica:
+- `status: RESOLVED` (no PENDING/UNRESOLVED)
+- `prompt_sha256` contra el fichero de arranque consumido
+- `project_root_resolved` contra el destino de la topologia
+- `scope` contra los tickets del DAG
+- `approved_by` = actor EXTERNO al ejecutor (nunca autocertificacion)
+
+Detalle en `prompts/audit_autonomous_ticket_batch.md` seccion 4.bis.
+
 ## Herramientas por fase
 
 | Fase | Rol | Prompts | Scripts / comandos |

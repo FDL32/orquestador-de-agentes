@@ -973,3 +973,79 @@ def test_audit_treats_cond6_pending_as_design_not_finding() -> None:
     text = AUDIT_PROMPT.read_text(encoding="utf-8")
     assert "contrato dual" in text
     assert "PENDING" in text
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-044r: start_context_isolation parity across three channels
+# ---------------------------------------------------------------------------
+
+
+def test_start_context_isolation_parity_three_channels() -> None:
+    """WOT-2026-044r (a2): the start_context_isolation receipt block must
+    exist in ALL THREE channels: executor prompt, auditor prompt, and skill.
+
+    LOAD-BEARING: the receipt existed ONLY in the executor (7 occurrences)
+    while the auditor and skill had 0. This split is exactly the defect
+    WOT-2026-044r exists to close -- a barrier that only one channel declares
+    is a norm, not a mechanism.
+
+    Mutation: remove the block from any one channel -> RED here, because
+    parity breaks.
+    """
+    keyword = "start_context_isolation"
+    exec_text = EXECUTOR_PROMPT.read_text(encoding="utf-8")
+    audit_text = AUDIT_PROMPT.read_text(encoding="utf-8")
+    skill_text = SKILL_FILE.read_text(encoding="utf-8")
+
+    exec_count = exec_text.count(keyword)
+    audit_count = audit_text.count(keyword)
+    skill_count = skill_text.count(keyword)
+
+    assert exec_count > 0, "executor prompt must reference start_context_isolation"
+    assert audit_count > 0, (
+        "auditor prompt must reference start_context_isolation (WOT-2026-044r a2)"
+    )
+    assert skill_count > 0, (
+        "skill must reference start_context_isolation (WOT-2026-044r a2)"
+    )
+
+
+def test_start_context_isolation_auditor_verifies_receipt() -> None:
+    """WOT-2026-044r: the auditor prompt must EXPLICITLY verify the receipt,
+    not just mention it. The verification must check status, sha256, scope,
+    and anti-self-certification."""
+    text = AUDIT_PROMPT.read_text(encoding="utf-8")
+    # Must check status is RESOLVED
+    assert "RESOLVED" in text, "auditor must verify receipt status is RESOLVED"
+    # Must check anti-self-certification
+    assert "approved_by" in text, "auditor must verify approved_by field"
+    # Must check prompt_sha256
+    assert "prompt_sha256" in text, "auditor must verify prompt_sha256 field"
+    # Must declare the receipt as a separate field, not a PREDICATE condition
+    assert (
+        "FUERA del bloque" in text
+        or "fuera del bloque" in text
+        or "outside" in text.lower()
+    ), "auditor must clarify receipt is NOT a PREDICATE condition"
+
+
+def test_start_context_isolation_blocks_on_self_certification() -> None:
+    """WOT-2026-044r (a3): if the executor self-marks the receipt as RESOLVED,
+    the auditor MUST BLOCK. This is the coded barrier: the test verifies the
+    auditor prompt declares self-certification as a BLOCKER, not just a finding."""
+    text = AUDIT_PROMPT.read_text(encoding="utf-8")
+    # Must declare self-certification as BLOCKER (not just WARNING or finding)
+    assert "BLOCKER" in text, (
+        "auditor must declare self-certification as BLOCKER, not just a finding"
+    )
+    # Must mention the specific failure mode: executor certifying itself
+    assert (
+        "auto-certifica" in text
+        or "autocertificacion" in text
+        or "self-certification" in text
+        or "auto-marco" in text
+    ), "auditor must name the self-certification failure mode"
+    # Must reference CEM class for false-green
+    assert "falso_verde" in text, (
+        "auditor must classify self-certification as falso_verde (CEM A)"
+    )

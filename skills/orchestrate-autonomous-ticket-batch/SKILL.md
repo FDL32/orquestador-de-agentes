@@ -35,6 +35,20 @@ skill se audita despues con `/audit-autonomous-ticket-batch`
 agente que NO sea el que ejecuto el batch**. El ejecutor no puede auditarse a
 si mismo.
 
+## Start Context Isolation receipt (WOT-2026-044r)
+
+El recibo de aislamiento de contexto (`start_context_isolation.json`) es
+obligatorio ANTES de tocar tickets. Verifica:
+- `status: RESOLVED` (no PENDING/UNRESOLVED)
+- `prompt_sha256` contra el fichero de arranque REALMENTE consumido
+- `project_root_resolved` contra el destino de la topologia
+- `scope` contra los tickets del DAG
+- `approved_by` = actor EXTERNO al ejecutor (nunca auto-certificacion)
+
+El auditor hermano (`audit_autonomous_ticket_batch.md`) tambien verifica este
+recibo (seccion 4.bis). Paridad de los tres canales: ejecutor, auditor y skill
+declaran el mismo requisito.
+
 ## Cuando usarla
 
 - Hay varios tickets `APTO_AUTONOMO` ya clasificados por `/backlog-triage`, y

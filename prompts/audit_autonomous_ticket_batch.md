@@ -325,6 +325,42 @@ auditoria) tiene un hueco: reportalo como hallazgo `CRITICO`, clase CEM A
 
 ---
 
+### 4.bis. Start Context Isolation receipt (WOT-2026-044r)
+
+**El recibo de aislamiento de contexto NO es una novena condicion del PREDICATE**
+(contrato del ejecutor, Section  PREDICATE: cardinalidad fija en 8, test
+`test_predicate_declares_its_cardinality`). Vive en su propio campo
+`start_context_isolation` del `batch_run_<ts>.json`, FUERA del bloque `PREDICATE`.
+
+**Verificacion obligatoria:** esta auditoria DEBE verificar el receipt
+`start_context_isolation.json` en el reports dir del rol destino:
+
+1. **Existencia:** el fichero DEBE existir. Si NO existe: `salida_obligatoria_ausente`
+   (mismo patron que el PREDICATE).
+
+2. **Campos obligatorios:**
+   - `status`: debe ser `RESOLVED`. Si es `PENDING` o `UNRESOLVED`: hallazgo
+     `BLOCKER` (el ejecutor no espero resolucion externa).
+   - `prompt_sha256`: debe corresponder a los bytes del fichero de arranque
+     REALMENTE consumido. Si el fichero ya no existe en disco (fue materializado
+     y eliminado), el receipt documenta la recomputacion; verifica que la
+     `approved_by` session es EXTERNA al hilo de ejecucion.
+   - `project_root_resolved`: debe apuntar al DESTINO de la topologia resuelta.
+   - `scope`: debe cubrir los tickets de ESTE vuelo.
+   - `approved_by`: debe ser un actor EXTERNO al ejecutor (sesion hermana,
+     operador humano). Un `approved_by` que coincide con el ejecutor es
+     autocertificacion = `falso_verde`.
+
+3. **Anti-autocertificacion (DoD a3 de WOT-2026-044r):** si el ejecutor se
+   auto-marco RESOLVED (campo `approved_by` = nombre del ejecutor, o campo
+   `_resolver` apunta al propio ejecutor), es `BLOCKER` con clase CEM
+   `falso_verde`. La resolucion DEBE ser externa.
+
+**Formato de salida:** bloque `start_context_isolation` en el `.json` de esta
+auditoria, con `cumple: true|false` y el detalle de la verificacion.
+
+---
+
 ## 5. Etiquetas de evidencia (heredadas de `audit_agent_output.md`)
 
 `VERIFICADO EN DIFF` / `VERIFICADO EN CODIGO` / `VERIFICADO EN TEST` /
