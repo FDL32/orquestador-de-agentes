@@ -263,6 +263,79 @@ independently per branch -- lesson 021u, branch isolation).
 - Do NOT hardcode "N repos" in any report or checkpoint: enumerate them from
   the resolved topology.
 
+### PORTABLE artifacts keep roles; OPERATIONAL artifacts resolve them
+
+Two families with OPPOSITE path rules. Confusing them causes real errors in both
+directions, and the boundary is **not** "prompt vs code" -- it is *"does this
+travel to other destinos, or is it consumed once against THIS one?"*
+
+| | Nature | Paths |
+|---|---|---|
+| **PORTABLE** -- this contract, every prompt/skill/script of the motor | Travels to every destino | **Roles only**: `<MOTOR_ROOT>`, `<DESTINO_ROOT>`. An absolute path here is a portability defect (see "Hard portability rules" below). |
+| **OPERATIONAL** -- anything an agent consumes to ACT on one concrete destino | Disposable: one machine, one destino, one flight | **Fully RESOLVED absolute paths.** Nobody reuses it elsewhere, and an unresolved role is a question its consumer cannot answer. |
+
+**OPERATIONAL is the wide class, not just the arranque prompt.** It covers, at
+least: arranque prompts; flight plans and triage DAGs; ticket work_plans and
+STRATEGY/AUDIT docs; **review and governance bundles** (fan-out payloads);
+audit, closeout and stop reports; handoffs; and any evidence block quoting a
+`command:` + `exit_code:`.
+
+**The obligation:** whoever writes one of these MUST resolve every role into the
+destino's real absolute path -- the artifact ITSELF first, then every command it
+orders, every artifact it cites, and every prompt or script it says to read. An
+artifact that is executed or hashed (the arranque prompt, a sealed bundle) also
+carries its own `sha256` and the command to recompute it, so its consumer can
+prove it got the intended bytes and not a stale copy.
+
+**THE ACCEPTANCE TEST IS THE COLD AGENT.** These artifacts are written FOR a
+reader with ZERO context: a fresh session that never saw the conversation that
+produced them, does not know which of several sibling checkouts is live, and
+cannot ask. So the bar is not "is it portable" -- it is:
+
+> **Could a cold agent execute this end to end WITHOUT asking a single
+> question and WITHOUT guessing any path?**
+
+If answering requires the reader to resolve a role, infer a root, pick between
+two same-named files, or reconstruct anything from memory, the artifact is NOT
+finished. Concretely, a cold-executable artifact:
+
+- names its OWN absolute path, so the reader can prove it opened the right file;
+- gives every command **runnable as written** -- absolute paths, mandatory
+  flags, and the positional subcommand if the CLI needs one (a command that
+  fails on invocation teaches the reader nothing about the system);
+- declares the RESOLVED root of every artifact it measures, especially when the
+  same filename exists in more than one repo;
+- states its own stop conditions: what makes it HARD-STOP, and what to do then.
+
+A role left unresolved does not make the artifact flexible -- it makes it
+**ambiguous**, and a cold agent resolves ambiguity by guessing. Every failure
+listed below is a guess that a resolved path would have prevented.
+
+**Corollary for BUNDLES specifically:** resolving the path is the FLOOR, not the
+ceiling. A blind lens has no filesystem, so a bundle that passes a contract *by
+reference* (a path) instead of *by content* buys nothing -- the lens can only
+audit internal coherence. If a governance loop must judge an artifact against a
+contract, the contract's TEXT goes IN the bundle. (Measured 2026-08-10: a
+4-lens loop over an arranque prompt caught none of three real omissions,
+because the contract reached it as a path.)
+
+Rationale, all measured 2026-08-10, in three DIFFERENT artifact families:
+- an **arranque prompt** naming neither its own path nor its roots -> an
+  operator pointed three times at a sibling checkout holding STALE copies of
+  these prompts;
+- a **stop report** computing the suite trigger over `run_history.jsonl`
+  without declaring which root -> `WOT-2026-054f`: the same criterion over
+  three repos, three different verdicts;
+- a **governance bundle** passing the contract by reference -> the loop could
+  not see what the artifact OMITTED.
+
+**A role is a question; a resolved path is an answer. Operational artifacts ship
+answers.**
+
+This rule is PORTABLE even though its products are concrete: the contract states
+the obligation in terms of roles, and each flight resolves them for its own
+destino. It does not authorize absolute paths anywhere in the motor.
+
 ### Hard portability rules
 
 - **The executor NEVER writes backlog, reports, follow-ups, or ledger into
