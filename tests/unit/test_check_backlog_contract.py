@@ -1239,11 +1239,32 @@ def test_048g_legacy_row_without_deliverable_type_passes(tmp_path) -> None:
     assert dt_errors == [], f"Legacy row should be exempt, got: {dt_errors}"
 
 
-def test_048g_legacy_row_with_invalid_type_fails(tmp_path) -> None:
-    """DoD (c) mutation: a legacy row with invalid deliverable_type -> ROJO.
+def test_048g_new_row_with_invalid_type_fails(tmp_path) -> None:
+    """DoD (c) mutation: a NEW row with an invalid deliverable_type -> ROJO.
 
     The regex only accepts code|mixed|documentation|research|analysis.
     An invalid value like 'invalid_type' should fail.
+
+    RENAMED and re-documented (2026-08-11, cross-session loop). It used to be
+    called `..._legacy_row_...` and its docstring said "a legacy row", but its
+    fixture is `WOT-2026-999z`, which is NOT in
+    `_DELIVERABLE_TYPE_LEGACY_BASELINE`. The name promised the legacy branch and
+    the body exercised the NEW-row branch -- the same one the test right above
+    already covers.
+
+    Why the id was NOT swapped for a baseline one (measured, both sessions
+    reproduced it): the check at `check_backlog_contract.py:392-396` is an `and`
+    that SHORT-CIRCUITS -- `ticket not in BASELINE and not REGEX.search(row)`.
+    A baseline id exits before the value is ever inspected, so a legacy row with
+    an INVALID value can never raise. Swapping `999z` for `002c` yields 0 errors
+    against an assertion demanding 1, i.e. it breaks the test. The premise
+    "legacy row with invalid type -> ROJO" is UNSATISFIABLE under this code; the
+    honest fix is to name what the test actually does.
+
+    Coverage of the legacy branch lives in
+    `test_048g_legacy_row_without_deliverable_type_passes`, whose fixture IS a
+    baseline id (`WOT-2026-002c`) and which DOES discriminate: measured, with
+    the real baseline it yields 0 errors and with an emptied baseline, 1.
     """
     collab = tmp_path / ".agent" / "collaboration"
     collab.mkdir(parents=True, exist_ok=True)
