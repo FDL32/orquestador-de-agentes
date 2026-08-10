@@ -1100,3 +1100,91 @@ def test_049c_dangling_dependency_is_reported(tmp_path) -> None:
     errors = cbc.validate_live_dependencies(tmp_path)
     assert len(errors) == 1
     assert "NO EXISTE" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-054b: structural integrity of the Vista rapida table
+# ---------------------------------------------------------------------------
+
+
+def test_054b_orphan_fragment_in_table_region_is_detected(tmp_path) -> None:
+    """DoD (b): a line inside the table region that doesn't start with '|'
+    but contains '|' is an orphan fragment (decapitated row tail).
+
+    MUTATION: remove the orphan -> VERDE; insert it -> ROJO.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + "| Alta | WOT-2026-054a | test | s | pending | - | x | - |\n"
+        + "test | s | pending | - | x | - |\n"
+        + "| Baja | WOT-2026-054b | test2 | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    orphan_errors = [e for e in errors if "orphan fragment" in e]
+    assert len(orphan_errors) == 1, (
+        f"Expected exactly 1 orphan fragment error, got {len(orphan_errors)}: {errors}"
+    )
+    assert "orphan fragment" in orphan_errors[0]
+
+
+def test_054b_clean_table_no_orphan(tmp_path) -> None:
+    """Control positivo: a clean table with no orphan fragments passes."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + "| Alta | WOT-2026-054a | test | s | pending | - | x | - |\n"
+        + "| Baja | WOT-2026-054b | test2 | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    orphan_errors = [e for e in errors if "orphan fragment" in e]
+    assert orphan_errors == []
+
+
+def test_054b_bom_at_start_is_handled(tmp_path) -> None:
+    """DoD (c): BOM at file start is transparent via utf-8-sig encoding.
+
+    The file is read with utf-8-sig, so the BOM is stripped before parsing.
+    If the BOM were NOT stripped, the header check would fail.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        "\ufeff"
+        + _HEADER
+        + "| Alta | WOT-2026-054a | test | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    bom_errors = [e for e in errors if "BOM" in e.upper() or "header" in e.lower()]
+    assert bom_errors == [], f"BOM should be transparent via utf-8-sig, got: {errors}"
+
+
+def test_054b_regression_decapitated_row_with_orphan(tmp_path) -> None:
+    """DoD (e): regression test reproducing the incident backlog.
+
+    A backlog with a decapitated row (missing header columns) AND an orphan
+    fragment line should be detected by the guard.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + "| Alta | WOT-2026-054a | intact | s | pending | - | x | - |\n"
+        + "ticket descripcion scope estado depende de origen reactivation |\n"
+        + "| Baja | WOT-2026-054b | also intact | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    orphan_errors = [e for e in errors if "orphan fragment" in e]
+    assert len(orphan_errors) == 1, (
+        f"Expected 1 orphan fragment in regression test, got {len(orphan_errors)}: {errors}"
+    )

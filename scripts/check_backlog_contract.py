@@ -144,6 +144,13 @@ def _extract_active_table(content: str) -> tuple[list[str], str | None]:
 
     Reads ONLY that table; stops at the next blank line after the table or the
     next header. Never consults HTML comments or prose.
+
+    BOM handling: the caller reads with ``utf-8-sig`` which strips a leading
+    BOM transparently.  If a BOM somehow reaches this function (e.g. the file
+    was read with ``utf-8`` instead), the BOM would appear inside the first
+    cell and the header-column check would reject it -- fail-closed, never
+    silent pass.  Encoding-level BOM detection is delegated to
+    ``check_encoding_guard`` (see module docstring).
     """
     lines = content.splitlines()
     try:
@@ -182,6 +189,39 @@ def _extract_active_table(content: str) -> tuple[list[str], str | None]:
         if stripped.startswith("|"):
             rows.append(stripped)
     return rows, None
+
+
+def _orphan_fragments_in_table(content: str) -> list[str]:
+    """WOT-2026-054b: detect orphan fragments inside the Vista rapida table region.
+
+    An orphan fragment is a line that does NOT start with ``|`` but contains a
+    ``|`` character, located between the table header and the table terminator
+    (blank line or next ``## `` header).  These are typically the tail of a
+    row that was split across two lines during an editing accident -- the
+    decapitated row still parses as 8 cells (its visible portion), so the
+    arity check does not catch it; the orphan fragment is invisible to every
+    existing guard.
+
+    Before: ``content`` is the whole backlog text.
+    During: pure string parsing over the Vista rapida table body span.
+    After: one error string per orphan fragment found (empty list == clean).
+    """
+    lines = content.splitlines()
+    body = _vista_rapida_body_span(lines)
+    if not body:
+        return []
+    errors: list[str] = []
+    for i in body:
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("|"):
+            continue
+        if "|" in stripped:
+            errors.append(
+                f"orphan fragment at line {i + 1} (inside Vista rapida table "
+                f"region): does not start with '|' but contains '|' -- likely "
+                f"a decapitated row or split line: {stripped!r}"
+            )
+    return errors
 
 
 def _is_ticket_row(stripped: str) -> bool:
@@ -321,6 +361,7 @@ def validate_backlog(backlog_path: Path) -> list[str]:
         if react_err:
             errors.append(f"{ticket}: {react_err}")
 
+    errors.extend(_orphan_fragments_in_table(content))
     errors.extend(_ticket_rows_outside_table(content))
     errors.extend(_check_ficha_bodies(content))
     errors.extend(_check_ficha_pointers(content, rows))
