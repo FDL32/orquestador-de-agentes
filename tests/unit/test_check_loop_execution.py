@@ -553,3 +553,56 @@ def test_end_to_end_substantive_fanout_passes_through_run_loop_round(
     verdicts = cle.audit(tmp_path, commit_shas=["abc123"], deliverable_type="code")
     assert verdicts[0]["ok"] is True
     assert verdicts[0]["silent_rounds"] == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-044p: orphan nonces (nonce emitted without rounds)
+# ---------------------------------------------------------------------------
+
+
+def test_orphan_nonces_detected_when_no_rounds():
+    """WOT-2026-044p (b): a nonce emitted for a commit but with no corresponding
+    scorecard rounds is an orphan -- the loop was DECLARED but never ACCREDITED."""
+    emitted = [_emitted(nonce="ORPHAN1", commit="abc")]
+    scorecard = []  # no rounds at all
+    orphans = cle.orphan_nonces(scorecard, emitted, commit_sha="abc")
+    assert len(orphans) == 1
+    assert orphans[0]["nonce"] == "ORPHAN1"
+    assert "DECLARADO" in orphans[0]["diagnosis"]
+    assert "ACREDITADO" in orphans[0]["diagnosis"]
+
+
+def test_orphan_nonces_empty_when_rounds_exist():
+    """A nonce with corresponding rounds is NOT an orphan."""
+    emitted = [_emitted(nonce="N1", commit="abc")]
+    scorecard = [
+        {
+            "event": "ronda",
+            "backend_key": "BA11",
+            "challenge_nonce": "N1",
+            "commit_sha": "abc",
+            "ts": "2026-07-24T10:00:01+00:00",
+            "output_chars": 100,
+            "evidencia": "some response",
+        }
+    ]
+    orphans = cle.orphan_nonces(scorecard, emitted, commit_sha="abc")
+    assert orphans == []
+
+
+def test_orphan_nonces_only_for_this_commit():
+    """Nonces for OTHER commits are not orphans of this commit."""
+    emitted = [_emitted(nonce="N1", commit="other_commit")]
+    scorecard = []  # no rounds for "abc"
+    orphans = cle.orphan_nonces(scorecard, emitted, commit_sha="abc")
+    assert orphans == []
+
+
+def test_audit_commit_includes_orphan_nonces():
+    """audit_commit returns orphan_nonces in its verdict dict."""
+    emitted = [_emitted(nonce="ORPHAN1", commit="abc")]
+    scorecard = []
+    verdict = cle.audit_commit(scorecard, emitted, commit_sha="abc", min_distinct=4)
+    assert "orphan_nonces" in verdict
+    assert len(verdict["orphan_nonces"]) == 1
+    assert verdict["orphan_nonces"][0]["nonce"] == "ORPHAN1"

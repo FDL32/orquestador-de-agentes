@@ -360,6 +360,59 @@ def silent_rounds(
     ]
 
 
+def orphan_nonces(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> list[dict]:
+    """Nonces emitted for this commit that have NO corresponding scorecard rounds.
+
+    WOT-2026-044p (b): distinguishes "no nonce emitted" (no loop happened) from
+    "nonce emitted without rounds" (loop happened and was lost). An orphan nonce
+    means the loop was DECLARED but never ACCREDITED -- the worst case, because
+    work was done and lost without detection.
+
+    Returns a list of dicts with nonce, loop_id, and issued_before_ts for each
+    orphan. Empty list means all emitted nonces have at least one round.
+    """
+    valid_nonces = _valid_nonces_for(emitted, commit_sha, loop_id)
+    if not valid_nonces:
+        return []
+
+    # Collect all nonces that appear in structurally valid rounds
+    rounds_with_nonce: set[str] = set()
+    for row in structurally_valid_rounds(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    ):
+        nonce = row.get("challenge_nonce")
+        if nonce:
+            rounds_with_nonce.add(nonce)
+
+    orphans = []
+    for nonce, ts in valid_nonces.items():
+        if nonce not in rounds_with_nonce:
+            # Find the loop_id from the emitted record
+            emitted_loop = None
+            for row in emitted:
+                if row.get("challenge_nonce") == nonce:
+                    emitted_loop = row.get("loop_id")
+                    break
+            orphans.append(
+                {
+                    "nonce": nonce,
+                    "loop_id": emitted_loop,
+                    "issued_before_ts": ts,
+                    "diagnosis": (
+                        "nonce emitido sin rondas: el bucle fue DECLARADO pero nunca "
+                        "ACREDITADO -- el trabajo se perdio sin deteccion"
+                    ),
+                }
+            )
+    return orphans
+
+
 def audit_commit(
     scorecard_rows: list[dict],
     emitted: list[dict],
@@ -386,6 +439,12 @@ def audit_commit(
         # (tambien en verde): una lente muda es una senal aunque el resto alcance
         # el minimo.
         "silent_rounds": silent_rounds(
+            scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+        ),
+        # WOT-2026-044p (b): nonces emitidos sin rondas (bucle declarado pero
+        # no acreditado). Se reportan SIEMPRE: es la peor senal porque el
+        # trabajo se perdio sin deteccion.
+        "orphan_nonces": orphan_nonces(
             scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
         ),
     }
@@ -470,6 +529,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"[loop-exec]   MUDA {s['backend_key']}: {s['diagnosis']} "
                 f"(output_chars={s['output_chars']})"
             )
+        # WOT-2026-044p (b): nonces emitidos sin rondas (bucle declarado pero
+        # no acreditado). Se reportan SIEMPRE como ERROR porque es la peor senal.
+        for o in v["orphan_nonces"]:
+            print(
+                f"[loop-exec]   HUERFANO {o['nonce'][:12]}... "
+                f"(loop={o['loop_id']}): {o['diagnosis']}"
+            )
+        if v["orphan_nonces"] and v not in failures:
+            failures.append(v)
     if failures:
         print(
             "\n[loop-exec] ERROR: el bucle 1->9->2 NO corrio (o corrio DEGRADADO) "
