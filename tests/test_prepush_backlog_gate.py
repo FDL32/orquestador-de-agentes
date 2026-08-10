@@ -22,8 +22,8 @@ LIVE_HEADER = (
     "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
     "|---|---|---|---|---|---|---|---|\n"
 )
-ROW_PENDING = "| Alta | WOT-2026-900a | x | s | pending | - | session-test | - |\n"
-ROW_COMPLETED = "| Alta | WOT-2026-901a | y | s | completed | - | session-test | - |\n"
+ROW_PENDING = "| Alta | WOT-2026-900a | x deliverable_type: code | s | pending | - | session-test | - |\n"
+ROW_COMPLETED = "| Alta | WOT-2026-901a | y deliverable_type: code | s | completed | - | session-test | - |\n"
 
 
 def _write_backlog(root: Path, rows: str) -> None:

@@ -35,10 +35,10 @@ def _write_backlog(tmp_path: Path, rows: str, fichas: str = "") -> Path:
 
 
 _VALID_ROWS = (
-    "| Alta | WOT-2026-001a | Bien | s | pending | - | x | - |\n"
-    "| Media | WOT-2026-001b | Diferido | s | deferred | - | x | condition:algo-resuelto |\n"
-    "| Baja | WOT-2026-001c | Bloqueado | s | blocked | - | x | external:cve-fix |\n"
-    "| Alta | WOT-2026-001d | Parcial | s | completed-partial | - | x | WOT-2026-099z |\n"
+    "| Alta | WOT-2026-001a | Bien deliverable_type: code | s | pending | - | x | - |\n"
+    "| Media | WOT-2026-001b | Diferido deliverable_type: code | s | deferred | - | x | condition:algo-resuelto |\n"
+    "| Baja | WOT-2026-001c | Bloqueado deliverable_type: code | s | blocked | - | x | external:cve-fix |\n"
+    "| Alta | WOT-2026-001d | Parcial deliverable_type: code | s | completed-partial | - | x | WOT-2026-099z |\n"
 )
 
 
@@ -1187,4 +1187,74 @@ def test_054b_regression_decapitated_row_with_orphan(tmp_path) -> None:
     orphan_errors = [e for e in errors if "orphan fragment" in e]
     assert len(orphan_errors) == 1, (
         f"Expected 1 orphan fragment in regression test, got {len(orphan_errors)}: {errors}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-048g (b)+(c): deliverable_type requirement in live-queue rows
+# ---------------------------------------------------------------------------
+
+
+def test_048g_new_row_without_deliverable_type_fails(tmp_path) -> None:
+    """DoD (c) mutation: a new row without deliverable_type -> ROJO."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER + "| Alta | WOT-2026-999z | test | s | pending | - | x | - |\n" + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    dt_errors = [e for e in errors if "deliverable_type" in e]
+    assert len(dt_errors) == 1, (
+        f"Expected 1 deliverable_type error for new row, got {len(dt_errors)}: {errors}"
+    )
+
+
+def test_048g_new_row_with_deliverable_type_passes(tmp_path) -> None:
+    """DoD (c) mutation: a new row with deliverable_type: code -> VERDE."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + "| Alta | WOT-2026-999z | test deliverable_type: code | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    dt_errors = [e for e in errors if "deliverable_type" in e]
+    assert dt_errors == [], f"Row with deliverable_type should pass, got: {dt_errors}"
+
+
+def test_048g_legacy_row_without_deliverable_type_passes(tmp_path) -> None:
+    """DoD (c) mutation: a legacy baseline row without deliverable_type -> VERDE."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    # Use a known legacy id from _DELIVERABLE_TYPE_LEGACY_BASELINE
+    content = (
+        _HEADER + "| Alta | WOT-2026-002c | test | s | pending | - | x | - |\n" + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    dt_errors = [e for e in errors if "deliverable_type" in e]
+    assert dt_errors == [], f"Legacy row should be exempt, got: {dt_errors}"
+
+
+def test_048g_legacy_row_with_invalid_type_fails(tmp_path) -> None:
+    """DoD (c) mutation: a legacy row with invalid deliverable_type -> ROJO.
+
+    The regex only accepts code|mixed|documentation|research|analysis.
+    An invalid value like 'invalid_type' should fail.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + "| Alta | WOT-2026-999z | test deliverable_type: invalid_type | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    dt_errors = [e for e in errors if "deliverable_type" in e]
+    assert len(dt_errors) == 1, (
+        f"Expected 1 deliverable_type error for invalid value, got {len(dt_errors)}: {errors}"
     )

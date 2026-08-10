@@ -42,6 +42,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bus.state_machine import NON_TERMINAL_STATES, TicketState
 
+# WOT-2026-048g: import the deliverable_type regex from the landing guard to
+# avoid reimplementing the WOT-2026-040s correction (logical-row search).
+from scripts.check_backlog_commits_landed import _DELIVERABLE_TYPE_RE
+
 
 # WOT-2026-012a closed vocabulary for the LIVE queue. Terminal states
 # (completed/done/closed/absorbed) must NOT appear here: they belong in history.
@@ -88,6 +92,31 @@ _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 # reappear. Cell-based (idx 2), never substring: a prose cell can cite a ticket
 # id (e.g. 'Depende de'), which must NOT match.
 _TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
+
+# WOT-2026-048g: legacy baseline of live-queue rows that lack deliverable_type.
+# Anchored by PAIR (id, absence) following _ARCHIVE_ARITY_LEGACY_BASELINE pattern.
+# CENSUSED 2026-08-10 from the real workspace backlog. Any ticket id NOT in this
+# mapping must carry a deliverable_type substring; a NEW row without it fails.
+_DELIVERABLE_TYPE_LEGACY_BASELINE: frozenset[str] = frozenset(
+    {
+        "WOT-2026-002c",
+        "WT-2026-256a",
+        "WOT-2026-016q",
+        "WOT-2026-016r",
+        "WOT-2026-016v",
+        "WOT-2026-019t",
+        "WOT-2026-023j",
+        "WOT-2026-023k",
+        "WOT-2026-024p",
+        "WOT-2026-021j",
+        "WOT-2026-021a",
+        "WOT-2026-040v",
+        "WOT-2026-040w",
+        "WOT-2026-040z",
+        "WOT-2026-041d",
+        "WOT-2026-041e",
+    }
+)
 
 # Extrae ids de la celda `Depende de`, que admite PROSA junto al id (caso real:
 # `WOT-2026-026j [026h SATISFECHA ...]`), asi que un match anclado los perderia.
@@ -360,6 +389,17 @@ def validate_backlog(backlog_path: Path) -> list[str]:
         react_err = _validate_reactivation(status, reactivation)
         if react_err:
             errors.append(f"{ticket}: {react_err}")
+        # WOT-2026-048g: require deliverable_type in new rows, exempt legacy.
+        if (
+            ticket not in _DELIVERABLE_TYPE_LEGACY_BASELINE
+            and not _DELIVERABLE_TYPE_RE.search(row)
+        ):
+            errors.append(
+                f"{ticket}: live-queue row missing 'deliverable_type' "
+                f"(code|mixed|documentation|research|analysis). New rows "
+                f"must declare it. If this is a legacy row, add its id to "
+                f"_DELIVERABLE_TYPE_LEGACY_BASELINE."
+            )
 
     errors.extend(_orphan_fragments_in_table(content))
     errors.extend(_ticket_rows_outside_table(content))
