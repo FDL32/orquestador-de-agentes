@@ -2163,7 +2163,8 @@ def test_042v_unresolvable_path_degrades_instead_of_raising():
 def test_042v_profile_without_repo_scope_keeps_inherited_behaviour(monkeypatch):
     """ADITIVIDAD: un perfil que no declara `repo_scope` no cambia en nada, ni
     siquiera con AGENT_PROJECT_ROOT puesto. Es lo que permite dejar lentes
-    CIEGAS a proposito como calibracion permanente del modelo base."""
+    CIEGAS a proposito como calibracion permanente: si todas pasaran a ver el
+    arbol se perderia la referencia contra la que medir su degradacion."""
     monkeypatch.setenv("AGENT_PROJECT_ROOT", str(Path.cwd()))
     cwd, scope = ed.resolve_lens_repo_root({"channel": "agent"}, {}, None)
     assert (cwd, scope) == (None, "motor")
