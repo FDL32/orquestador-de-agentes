@@ -198,21 +198,42 @@ def test_successful_round_is_unaffected(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "exc",
+    ("exc", "clase_esperada"),
     [
-        ed.TransportError("HTTP 524", status=524, body="error code: 524"),
-        RuntimeError("cualquier fallo inesperado del transporte"),
-        OSError(
-            "[WinError 206] El nombre del archivo o la extension es demasiado largo"
+        (
+            ed.TransportError("HTTP 524", status=524, body="error code: 524"),
+            "transport_failed",
         ),
+        (
+            OSError("[WinError 206] El nombre del archivo es demasiado largo"),
+            "transport_failed",
+        ),
+        (KeyError("perfil_inexistente"), "unexpected"),
+        (TypeError("argumento de tipo equivocado"), "unexpected"),
     ],
 )
-def test_any_transport_failure_leaves_a_row(tmp_path, monkeypatch, exc):
-    """El rastro NO depende de la CLASE de excepcion.
+def test_row_survives_any_failure_but_the_label_is_precise(
+    tmp_path, monkeypatch, exc, clase_esperada
+):
+    """La fila sobrevive a CUALQUIER fallo, pero la ETIQUETA no miente.
 
-    La ficha nacio del `WinError 206` (bundle demasiado grande para la linea de
-    comando) y la evidencia que la cerro fue un `HTTP 524`. Son causas distintas
-    del MISMO defecto, asi que la fila no puede depender de acertar el tipo.
+    Dos propiedades distintas, y hacen falta las dos:
+
+    - ANCHURA: ninguna excepcion puede dejar la ronda sin rastro. La ficha nacio
+      del `WinError 206` y la evidencia que la cerro fue un `HTTP 524`: causas
+      distintas del MISMO defecto, asi que el rastro no puede depender de
+      acertar el tipo.
+    - PRECISION: un `KeyError` NO es un fallo de transporte. Etiquetarlo asi
+      manda a buscar una caida de red donde hay un bug de programacion, y en un
+      ticket cuyo proposito es hacer FIABLE el registro, clasificar mal es peor
+      que no registrar.
+
+    Adjudicado por el bucle L1104: el lector-FS defendio la anchura y BA14 ataco
+    la etiqueta. Ambos tenian razon; este test fija las dos a la vez.
+
+    Mutation: volver a `failure_mode=f"transport_failed: ..."` fijo -> los dos
+    casos `unexpected` caen. Estrechar el `except` a `TransportError` -> los
+    casos `KeyError`/`TypeError` pierden la fila y caen por `len(rows) == 1`.
     """
 
     def _boom(*_a, **_k):
@@ -225,4 +246,10 @@ def test_any_transport_failure_leaves_a_row(tmp_path, monkeypatch, exc):
 
     rows = _rows(tmp_path)
     assert len(rows) == 1, f"{type(exc).__name__} debe dejar fila igualmente"
-    assert type(exc).__name__ in rows[0]["failure_mode"]
+    failure_mode = rows[0]["failure_mode"]
+    assert type(exc).__name__ in failure_mode
+    assert failure_mode.startswith(clase_esperada), (
+        f"{type(exc).__name__} debe clasificarse como '{clase_esperada}', no como "
+        f"'{failure_mode.split(':')[0]}': una fila de auditoria mal clasificada "
+        "manda a investigar la causa equivocada"
+    )

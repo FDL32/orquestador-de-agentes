@@ -2275,6 +2275,22 @@ def _cmd_loop_round(args, config) -> int:
     except DispatchBlockedError:
         raise
     except Exception as exc:
+        # La captura es ANCHA a proposito (no perder NINGUNA fila), pero la
+        # ETIQUETA es PRECISA. Adjudicado por el bucle L1104, donde dos lentes
+        # chocaron y las dos tenian razon sobre cosas distintas: el lector-FS
+        # defendio la anchura ("el hueco era exactamente ese: excepciones
+        # inesperadas que subian sin rastro") y BA14 ataco la etiqueta ("si
+        # `run_loop_round` lanza un KeyError, el fix lo registra como
+        # `transport_failed` y la fila de auditoria queda mintiendo").
+        #
+        # Clasificar mal es PEOR que no registrar en un ticket cuyo proposito es
+        # hacer el registro fiable: un `transport_failed` falso manda a buscar
+        # una caida de red donde hay un bug de programacion.
+        clase = (
+            "transport_failed"
+            if isinstance(exc, (TransportError, OSError))
+            else "unexpected"
+        )
         profile = (config.get("ensemble_profiles") or {}).get(args.profile)
         if profile is not None:
             _record_round(
@@ -2288,7 +2304,7 @@ def _cmd_loop_round(args, config) -> int:
                 reply="",
                 input_bytes=len(content.encode("utf-8")),
                 context_kind=args.context_kind,
-                failure_mode=f"transport_failed: {type(exc).__name__}: {exc}"[:300],
+                failure_mode=f"{clase}: {type(exc).__name__}: {exc}"[:300],
                 session_id=args.session_id,
                 phase=args.phase,
                 loop_id=args.loop_id,
