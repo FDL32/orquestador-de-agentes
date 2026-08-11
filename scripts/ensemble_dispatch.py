@@ -2224,24 +2224,79 @@ def _cmd_loop_round(args, config) -> int:
     )
     if not allowed:
         raise DispatchBlockedError(f"lectura de payload BLOQUEADA: {reason}")
-    reply = run_loop_round(
-        args.profile,
-        content_path.read_text(encoding="utf-8"),
-        config=config,
-        project_root=project_root,
-        ticket=args.ticket,
-        task_type=args.task_type,
-        rol=args.rol,
-        phase=args.phase,
-        loop_id=args.loop_id,
-        backend_key=args.backend_key,
-        sensitivity=args.data_sensitivity,
-        ronda=args.ronda,
-        context_kind=args.context_kind,
-        session_id=args.session_id,
-        commit_sha=args.commit_sha,
-        challenge_nonce=args.challenge_nonce,
-    )
+    content = content_path.read_text(encoding="utf-8")
+    # WOT-2026-048x: una ronda que muere por el TRANSPORTE no dejaba NINGUNA
+    # fila, asi que en el scorecard "nadie consulto a esta lente" y "la lente no
+    # llego a responder" eran indistinguibles -- y el silencio se lee como
+    # acuerdo. Medido 2026-08-11 en los bucles L1100/L1102 de esta misma sesion:
+    # 12 rondas lanzadas, 8 registradas; las 4 caidas (HTTP 524) no dejaron
+    # rastro. La cobertura efectiva de un bucle era INCOMPUTABLE desde su propio
+    # artefacto.
+    #
+    # POR QUE AQUI Y NO EN `run_loop_round`: identica razon que el pre-check de
+    # `task_type` de mas arriba (WOT-2026-048i) -- `_record_round` EXIGE un
+    # `profile` dict, y en este handler el perfil SI es resoluble desde la
+    # config, asi que la fila queda ATRIBUIBLE (ticket, loop_id, backend_key) en
+    # vez de ser un registro huerfano.
+    #
+    # POR QUE `_record_round` NO BASTABA: ya clasifica `transport_failed`
+    # (`:1651`), pero solo cuando el transporte DEVUELVE texto marcado con
+    # `_TRANSPORT_FAILED_PREFIX` -- la ruta del canal `agent` (`:1022`). El canal
+    # `api` LANZA `TransportError` (`:640-673`), que sube por encima de
+    # `_record_round` y nunca llega a escribir. Ese es el hueco exacto, y es el
+    # que cerro este ticket.
+    #
+    # `DispatchBlockedError` se EXCLUYE a proposito: el docstring de
+    # `run_loop_round` declara que un bloqueo del preflight de privacidad NO deja
+    # fila "porque no hubo ronda", y eso es correcto -- el payload nunca salio.
+    # Registrarlo aqui inventaria una ronda que no existio.
+    #
+    # Se registra y se RE-LANZA: `main` sigue mapeando la excepcion a su exit
+    # code (2 para las de transporte). La fila es ADITIVA, no sustituye al fallo.
+    try:
+        reply = run_loop_round(
+            args.profile,
+            content,
+            config=config,
+            project_root=project_root,
+            ticket=args.ticket,
+            task_type=args.task_type,
+            rol=args.rol,
+            phase=args.phase,
+            loop_id=args.loop_id,
+            backend_key=args.backend_key,
+            sensitivity=args.data_sensitivity,
+            ronda=args.ronda,
+            context_kind=args.context_kind,
+            session_id=args.session_id,
+            commit_sha=args.commit_sha,
+            challenge_nonce=args.challenge_nonce,
+        )
+    except DispatchBlockedError:
+        raise
+    except Exception as exc:
+        profile = (config.get("ensemble_profiles") or {}).get(args.profile)
+        if profile is not None:
+            _record_round(
+                project_root,
+                ticket=args.ticket,
+                task_type=args.task_type,
+                rol=args.rol,
+                profile=profile,
+                backend_version=None,
+                ronda=args.ronda,
+                reply="",
+                input_bytes=len(content.encode("utf-8")),
+                context_kind=args.context_kind,
+                failure_mode=f"transport_failed: {type(exc).__name__}: {exc}"[:300],
+                session_id=args.session_id,
+                phase=args.phase,
+                loop_id=args.loop_id,
+                backend_key=args.backend_key,
+                commit_sha=args.commit_sha,
+                challenge_nonce=args.challenge_nonce,
+            )
+        raise
     print(reply)
     return 0
 
