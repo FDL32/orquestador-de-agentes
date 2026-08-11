@@ -176,6 +176,15 @@ SCORECARD_FIELDS = [
     # no lo declaro (canal api, o CLI sin banner): AUSENCIA de dato, nunca
     # desacuerdo. Al final (prefijo frozen invariante).
     "model_reported",
+    # WOT-2026-042v: AMBITO EFECTIVO desde el que observo la lente
+    # (`destino` | `motor` | `sin-fs` | `declarado` | `motor:<causa>`). Sin este
+    # campo el scorecard MEZCLA dos poblaciones con tasas de acierto distintas
+    # -- una lente que ve el arbol y otra que opina sobre el -- y
+    # `backend_leaders.json` elegiria lider comparando lo incomparable. Se
+    # ANADE AL FINAL, que es el mecanismo de extension que el propio contrato
+    # WOT-2026-025y documenta (el prefijo frozen son los 16 primeros campos;
+    # 037b, 040b, 043q y 048g ya crecieron por aqui), asi que no lo rompe.
+    "lens_scope",
 ]
 
 ADJUDICATED_OUTCOMES = {
@@ -771,6 +780,14 @@ _TRANSPORT_FAILED_PREFIX = "[transport-failed] "
 # es None (ausencia), nunca un valor adivinado.
 _REPORTED_MODEL_KEY = "_model_reported"
 
+# WOT-2026-042v: AMBITO EFECTIVO de la lente, sellado sobre el `profile` (dict
+# mutable que el caller ya tiene) por la MISMA razon que `_REPORTED_MODEL_KEY`:
+# la firma `transport(profile, backend_cfg, messages, timeout)` es CONTRATO --
+# los tests inyectan `_FakeTransport` con esa aridad exacta -- y anadir un valor
+# de retorno la rompe. `_record_round` lo lee de ahi y lo escribe como
+# `lens_scope`.
+_LENS_SCOPE_KEY = "_lens_scope_effective"
+
 _MODEL_REPORTED_PATTERNS = (
     re.compile(r"^\s*model:\s*(?P<model>[^\s]+)\s*$", re.MULTILINE),
     re.compile(r"^\s*>\s*\w+\s*[·|-]\s*(?P<model>[^\s]+)\s*$", re.MULTILINE),
@@ -1023,6 +1040,84 @@ def _transport_agent(
     return out or ""
 
 
+# WOT-2026-042v: NINGUNA LENTE VE EL repo_destino. El mecanismo de ambito lo
+# cerro WOT-2026-038o (`repo_root` -> `cwd` del Popen, _transport_agent) y
+# quedo CABLEADO PERO SIN INVOCAR: censo al HEAD 8f7c5ff -- `'repo_root' in
+# json.dumps(agents.json)` -> False en motor Y destino. Consecuencia medida: un
+# perfil `channel: agent` hereda el cwd del PADRE (el repo_motor), asi que su
+# "no existe" sobre un artefacto del destino es un FALSO NEGATIVO POR AMBITO,
+# no un hallazgo (14 objeciones auditadas en 2026-08-10/11: 9 falsos positivos,
+# y los 9 son afirmaciones SOBRE EL ARBOL emitidas sin poder verlo).
+#
+# POR QUE SE RESUELVE AQUI Y NO EN `agents.json`: el DoD (b) prohibe hardcodear
+# la ruta del destino -- el motor es portable y `backend_cfg` es POR BACKEND
+# (compartido por todos los perfiles que lo usan), mientras que el ambito es
+# POR VUELO. La ruta solo puede salir del runtime: `--project-root` (que el CLI
+# ya resuelve con `_resolve_project_root`) o `AGENT_PROJECT_ROOT`.
+#
+# POR QUE NO EXIGE ALLOWLIST DE LECTURA (pregunta abierta de la ficha,
+# resuelta por medicion): cambiar el `cwd` de un hijo NO le concede ninguna
+# lectura nueva -- ya tiene filesystem completo y alcanza cualquier ruta
+# ABSOLUTA (medido en WOT-2026-030a: una lente leyo un fichero del repo real
+# por ruta absoluta desde dentro de su sandbox). El bloqueante de seguridad de
+# la ficha aplica a la via que DA filesystem a quien hoy no lo tiene (tools en
+# el payload de los `channel: api`), que es NON-GOAL declarado de este ticket.
+# `ensemble_payload_allowlist` (WOT-2026-041t) es OTRA capa y no puede
+# sustituir a esta: decide que fichero lee EL DISPATCHER antes de enviar, y no
+# alcanza a un subproceso.
+def resolve_lens_repo_root(
+    profile: dict,
+    backend_cfg: dict,
+    project_root: Path | None = None,
+) -> tuple[str | None, str]:
+    """Ambito desde el que debe observar la lente, y su etiqueta auditable.
+
+    Before: `profile` es la entrada de `ensemble_profiles` (declara `channel` y,
+        opcionalmente, `repo_scope: "destino"`); `backend_cfg` es su entrada de
+        `backends` (puede declarar `repo_root` explicito, contrato 038o);
+        `project_root` es el destino-rol ya resuelto por el caller, o None.
+    During: decide por precedencia -- canal sin filesystem, `repo_root`
+        explicito del backend, perfil que no pide destino, y por ultimo la
+        resolucion del destino desde `project_root` o `AGENT_PROJECT_ROOT`.
+        No lee ningun fichero ni lanza procesos.
+    After: retorna `(cwd_o_None, scope)`. NUNCA lanza: un ticket code-only, o
+        un vuelo sin destino resoluble, cae a la conducta heredada (el hijo
+        hereda el cwd del padre) en vez de empezar a fallar -- es el
+        ANTI-FALSO-POSITIVO del DoD. La degradacion NO es muda: `scope` la
+        nombra (`motor:destino-no-resoluble`), porque un fallback silencioso
+        haria indistinguible "la lente vio el arbol" de "la lente iba ciega",
+        que es justo el falso verde que este ticket persigue.
+    """
+    # Limite de CLASE, no bug: un `channel: api` no tiene filesystem que apuntar
+    # (NON-GOAL explicito de la ficha). Se etiqueta para que el scorecard no
+    # mezcle dos poblaciones con tasas de acierto distintas.
+    if profile.get("channel") == "api":
+        return None, "sin-fs"
+    # Contrato WOT-2026-038o intacto: un `repo_root` declarado manda y su
+    # conducta no cambia.
+    declared = backend_cfg.get("repo_root")
+    if declared is not None:
+        return str(declared), "declarado"
+    if profile.get("repo_scope") != "destino":
+        return None, "motor"
+    candidato = project_root or os.environ.get("AGENT_PROJECT_ROOT") or ""
+    if not str(candidato).strip():
+        return None, "motor:destino-no-resoluble"
+    try:
+        resuelto = Path(candidato).resolve()
+    except (OSError, ValueError):
+        return None, "motor:destino-irresoluble"
+    # Mismo invariante que `_resolve_project_root`: el destino-rol NUNCA es el
+    # propio motor. Sin esto, un AGENT_PROJECT_ROOT mal puesto daria un
+    # "destino" verde que en realidad observa el motor -- el falso verde exacto
+    # que el DoD (d) obliga a poder distinguir.
+    if resuelto == MOTOR_ROOT:
+        return None, "motor:destino-es-el-motor"
+    if not resuelto.is_dir():
+        return None, "motor:destino-inexistente"
+    return str(resuelto), "destino"
+
+
 def send_to_profile(
     profile_name: str,
     messages: list[dict],
@@ -1030,6 +1125,12 @@ def send_to_profile(
     config: dict,
     sensitivity: str | None = None,
     transport=None,
+    # WOT-2026-042v: el destino-rol desde el que debe observar una lente que
+    # declara `repo_scope: destino`. Opcional y por defecto None: los callers
+    # que no lo pasan (p.ej. `smoke_profile`) caen a `AGENT_PROJECT_ROOT` y, sin
+    # el, a la conducta heredada. Aditivo: cero efecto sobre los perfiles que no
+    # declaran `repo_scope`.
+    project_root: Path | None = None,
     # 120 s no daba: un reto de review sobre un repo real hace que el backend
     # CLI inspeccione arbol e historial. Medido 2026-07-31: prompt trivial
     # rc=0 en 10,1 s; payload real de 1,9 KB rc=0 en 143,4 s. Con 120 s el
@@ -1041,15 +1142,33 @@ def send_to_profile(
 
     Before: `profile_name` existe en `ensemble_profiles` (config validada);
         `messages` es la lista chat-completions; `sensitivity` es la del
-        payload (CLI) o None (cae al perfil; ausente en ambos = private).
+        payload (CLI) o None (cae al perfil; ausente en ambos = private);
+        `project_root` es el destino-rol ya resuelto, o None.
     During: (1) privacy_preflight fail-closed -- si bloquea, lanza
         DispatchBlockedError SIN tocar red; (2) resuelve transporte por
-        `channel` (api|agent) salvo `transport` inyectado (tests hermeticos).
+        `channel` (api|agent) salvo `transport` inyectado (tests hermeticos);
+        (3) WOT-2026-042v: resuelve el AMBITO de la lente y sella su etiqueta
+        en `profile[_LENS_SCOPE_KEY]` para que `_record_round` la registre.
     After: retorna el texto de respuesta del backend (puede ser vacio: el
-        caller lo registra como no-aportacion, nunca lo inventa).
+        caller lo registra como no-aportacion, nunca lo inventa). El `profile`
+        queda sellado con el ambito EFECTIVO (no el pedido): si el destino no
+        se pudo resolver, la etiqueta lo dice.
     """
     profile = config["ensemble_profiles"][profile_name]
     backend_cfg = config["backends"][profile["backend"]]
+    # WOT-2026-042v: el ambito se resuelve AQUI porque este es el UNICO camino
+    # de salida hacia un backend (lo declara el docstring, y el canary de
+    # WOT-2026-042k midio que 9 de 9 `dispatch.py` de gobierno llaman a esta
+    # funcion DIRECTAMENTE sin pasar por el CLI `run`): cualquier otro punto
+    # dejaria fuera la ruta por la que circulan los bundles reales.
+    cwd_lente, lens_scope = resolve_lens_repo_root(profile, backend_cfg, project_root)
+    profile[_LENS_SCOPE_KEY] = lens_scope
+    if cwd_lente is not None and backend_cfg.get("repo_root") != cwd_lente:
+        # COPIA, nunca mutacion: `backend_cfg` es la entrada COMPARTIDA de
+        # `backends` -- 3 perfiles del motor comparten backend --, y escribir el
+        # `repo_root` de un vuelo dentro de la config viva se lo colaria a los
+        # demas perfiles y persistiria entre llamadas dentro del proceso.
+        backend_cfg = {**backend_cfg, "repo_root": cwd_lente}
     # WOT-2026-026t: el techo NO puede ser uno solo para todos los backends. El
     # default de 300 s se fijo con datos de codex. `opencode` (GLM) no tiene una
     # media alta: tiene VARIANZA enorme. Medido 2026-08-04 sobre 14 rondas del
@@ -1689,6 +1808,10 @@ def _record_round(
             # WOT-2026-048g: el DECLARADO va en `model`; este es el que el
             # backend dijo usar. Que difieran es la senal que 047y no podia dar.
             "model_reported": profile.get(_REPORTED_MODEL_KEY),
+            # WOT-2026-042v: lo sella `send_to_profile` sobre el profile. None =
+            # la ronda no paso por el dispatcher (fila historica o caller que no
+            # despacha): AUSENCIA de dato, que no es lo mismo que `motor`.
+            "lens_scope": profile.get(_LENS_SCOPE_KEY),
         },
     )
 
@@ -1788,6 +1911,7 @@ def run_loop_round(
         config=config,
         sensitivity=sensitivity,
         transport=transport,
+        project_root=project_root,
     )
     latency_ms = round((time.perf_counter() - _t0) * 1000)
     _record_round(
@@ -1882,6 +2006,7 @@ def run_pipeline(
             config=config,
             sensitivity=sensitivity,
             transport=transport,
+            project_root=project_root,
         )
         latency_ms = round((time.perf_counter() - _t0) * 1000)
         _record_round(
@@ -1937,6 +2062,7 @@ def run_pipeline(
                 config=config,
                 sensitivity=sensitivity,
                 transport=transport,
+                project_root=project_root,
             )
             latency_ms = round((time.perf_counter() - _t0) * 1000)
 

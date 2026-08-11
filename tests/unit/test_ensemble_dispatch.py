@@ -561,7 +561,13 @@ def test_scorecard_fields_prefix_is_frozen():
         # aceptara el flag y sirviera otro modelo seguia siendo invisible. Al
         # final, igual que todos los anteriores: el prefijo de 16 es frozen.
         "model_reported",
-    ], "los 11 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+        # WOT-2026-042v: lens_scope es el AMBITO EFECTIVO desde el que observo
+        # la lente. Sin el, el scorecard mezcla una poblacion que VE el arbol
+        # con otra que solo opina sobre el, y backend_leaders.json rankea
+        # comparando lo incomparable. Al final, igual que todos los anteriores:
+        # el prefijo de 16 es frozen.
+        "lens_scope",
+    ], "los 12 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
     # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
     # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
     # colapsaria en silencio (la 2a pisa la 1a) sin error. Invariante: la
@@ -1927,6 +1933,258 @@ def test_append_scorecard_no_se_corrompe_con_procesos_concurrentes(tmp_path):
     # (3) el contrato de formato de WOT-2026-025y sobrevive
     primera = json.loads(next(line for line in lines if line.strip()))
     assert list(primera.keys()) == ed.SCORECARD_FIELDS
+
+
+# --- WOT-2026-042v: el ambito 038o, RESUELTO del vuelo e INVOCADO -----------
+#
+# ROJO que fija: el mecanismo de 038o estaba cableado y SIN INVOCAR. Censo al
+# HEAD 8f7c5ff -- `'repo_root' in json.dumps(agents.json)` -> False en motor Y
+# destino --, asi que toda lente `channel: agent` heredaba el cwd del PADRE (el
+# repo_motor) y su "no existe" sobre un artefacto del destino era un FALSO
+# NEGATIVO POR AMBITO. De 14 objeciones auditadas (2026-08-10/11), 9 fueron
+# falsos positivos y los 9 eran afirmaciones SOBRE EL ARBOL emitidas sin verlo.
+#
+# El probe es de RUTA PRODUCTIVA (CEM): entra por `send_to_profile` -- el UNICO
+# camino de salida, y el que usan directamente 9 de 9 `dispatch.py` de gobierno
+# -- y lanza un shim REAL, al que se le PREGUNTA por un artefacto igual que a
+# una lente. No inspecciona kwargs.
+
+
+def _fake_lookup_executable(tmp_path: Path, needle: str) -> str:
+    """Shim REAL que responde FOUND/ABSENT sobre `needle` RELATIVO a su cwd.
+
+    Reproduce la pregunta que se le hace a una lente ("¿existe este artefacto?")
+    en vez de inspeccionar el kwarg `cwd`: por eso su respuesta cambia con el
+    ambito, que es justo lo que el DoD (d) obliga a poder distinguir. Mismo
+    patron de shim que `_fake_cwd_echo_executable`.
+    """
+    script = tmp_path / f"lookup_{abs(hash(needle))}.py"
+    script.write_text(
+        "import os,sys\n"
+        f"sys.stdout.write('FOUND' if os.path.exists({needle!r}) else 'ABSENT')\n"
+        "sys.stdout.flush()\n",
+        encoding="utf-8",
+    )
+    if sys.platform == "win32":
+        shim = script.with_suffix(".cmd")
+        shim.write_text(
+            f'@echo off\r\n"{sys.executable}" "{script}"\r\n', encoding="utf-8"
+        )
+        return str(shim)
+    else:  # pragma: no cover -- POSIX shim, not exercised on this Windows CI
+        shim = script.with_suffix(".sh")
+        shim.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n', encoding="utf-8"
+        )
+        shim.chmod(0o755)
+        return str(shim)
+
+
+def _agent_config(tmp_path: Path, needle: str, *, repo_scope: str | None) -> dict:
+    """Config con UN perfil `channel: agent` que despacha contra el shim."""
+    # Sin `model`: el perfil no declara modelo, asi que `_render_model_flag` no
+    # exige `model_flag` al backend (WOT-2026-047y). Lo que este fixture prueba
+    # es el AMBITO, y anadir modelo solo traeria el contrato de otro ticket.
+    profile: dict = {
+        "backend": "fake_cli",
+        "channel": "agent",
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    if repo_scope is not None:
+        profile["repo_scope"] = repo_scope
+    return {
+        "schema_version": "1.3",
+        "backends": {
+            "fake_cli": {
+                "executable": _fake_lookup_executable(tmp_path, needle),
+                "args": [],
+                "discovery": {"method": "path_only"},
+            }
+        },
+        "ensemble_profiles": {"p_lente": profile},
+        "ensemble_private_roots": [],
+    }
+
+
+def test_042v_lens_finds_destino_artifact_and_misses_it_from_another_root(tmp_path):
+    """DoD (d) -- EL PAR QUE AISLA, en un solo test para que no se separen.
+
+    Un artefacto que existe SOLO en el destino: la lente con el repo_root
+    resuelto lo ENCUENTRA (verde) y la MISMA lente, con la unica variable
+    cambiada -- el arbol --, lo declara ausente (rojo). Un verde de una sola
+    direccion es indistinguible de una lente que no miro nada.
+
+    MUTACION DE CIERRE: quitar la inyeccion del `repo_root` en
+    `send_to_profile` -> el hijo hereda el cwd del padre en AMBOS brazos y el
+    brazo verde cae.
+    """
+    marca = "SOLO_EN_EL_DESTINO.md"
+    destino = tmp_path / "repo_destino"
+    destino.mkdir()
+    (destino / marca).write_text("artefacto del destino\n", encoding="utf-8")
+    otro_arbol = tmp_path / "otro_repo"
+    otro_arbol.mkdir()
+
+    config = _agent_config(tmp_path, marca, repo_scope="destino")
+    mensajes = [{"role": "user", "content": f"existe {marca}?"}]
+
+    verde = ed.send_to_profile(
+        "p_lente",
+        mensajes,
+        config=config,
+        sensitivity="public",
+        project_root=destino,
+    )
+    rojo = ed.send_to_profile(
+        "p_lente",
+        mensajes,
+        config=config,
+        sensitivity="public",
+        project_root=otro_arbol,
+    )
+
+    assert verde.strip() == "FOUND", (
+        f"la lente con repo_root={destino} respondio {verde.strip()!r}: no esta "
+        "observando el arbol del destino, luego su veredicto sobre artefactos "
+        "del destino sigue siendo un falso negativo por ambito"
+    )
+    assert rojo.strip() == "ABSENT", (
+        "el brazo de control respondio FOUND desde un arbol que NO tiene el "
+        "artefacto: el probe no discrimina y su verde no prueba nada"
+    )
+
+
+def test_042v_api_channel_is_labelled_sin_fs_and_gets_no_cwd():
+    """Limite de CLASE, no bug: un `channel: api` no tiene filesystem.
+
+    Se etiqueta aparte para que el scorecard no mezcle dos poblaciones con
+    tasas de acierto distintas -- que es lo que haria a `backend_leaders.json`
+    elegir lider comparando lo incomparable.
+    """
+    cwd, scope = ed.resolve_lens_repo_root(
+        {"channel": "api", "repo_scope": "destino"}, {}, Path.cwd()
+    )
+    assert cwd is None and scope == "sin-fs", (
+        "un canal sin filesystem no puede recibir cwd ni contarse como lente "
+        f"con ojos; se resolvio ({cwd!r}, {scope!r})"
+    )
+
+
+def test_042v_declared_backend_repo_root_still_wins(tmp_path):
+    """Backward-compat DURA del contrato WOT-2026-038o: un `repo_root`
+    declarado en el backend manda sobre la resolucion nueva. Sin este pin, el
+    ticket cambiaria en silencio la conducta de toda llamada que ya lo declara.
+    """
+    declarado = tmp_path / "declarado"
+    declarado.mkdir()
+    cwd, scope = ed.resolve_lens_repo_root(
+        {"channel": "agent", "repo_scope": "destino"},
+        {"repo_root": str(declarado)},
+        tmp_path / "destino_ignorado",
+    )
+    assert (cwd, scope) == (str(declarado), "declarado")
+
+
+def test_042v_shared_backend_cfg_is_not_mutated(tmp_path):
+    """El `repo_root` de UN vuelo no puede quedarse pegado en la config viva.
+
+    `backends` es COMPARTIDO (3 perfiles del motor comparten backend): mutarlo
+    se lo colaria a los demas perfiles y persistiria entre llamadas dentro del
+    mismo proceso. Mutacion: cambiar la copia `{**backend_cfg, ...}` por una
+    asignacion directa -> este test cae.
+    """
+    destino = tmp_path / "repo_destino"
+    destino.mkdir()
+    config = _agent_config(tmp_path, "cualquiera.md", repo_scope="destino")
+
+    ed.send_to_profile(
+        "p_lente",
+        [{"role": "user", "content": "x"}],
+        config=config,
+        sensitivity="public",
+        project_root=destino,
+    )
+
+    assert "repo_root" not in config["backends"]["fake_cli"], (
+        "el repo_root del vuelo se escribio DENTRO de la config compartida: el "
+        "siguiente perfil que use este backend heredaria un ambito ajeno"
+    )
+
+
+def test_042v_code_only_flight_falls_back_and_names_the_degradation(monkeypatch):
+    """ANTI-FALSO-POSITIVO del DoD + la degradacion NO puede ser muda.
+
+    Un vuelo sin destino resoluble (ticket code-only) NO empieza a fallar: cae
+    a la conducta heredada. Pero la etiqueta lo DICE, porque un fallback
+    silencioso volveria indistinguible "la lente vio el arbol" de "la lente iba
+    ciega" -- el falso verde exacto que este ticket persigue.
+    """
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    cwd, scope = ed.resolve_lens_repo_root(
+        {"channel": "agent", "repo_scope": "destino"}, {}, None
+    )
+    assert cwd is None, "sin destino resoluble no se inventa un cwd"
+    assert scope == "motor:destino-no-resoluble", (
+        f"la degradacion salio como {scope!r}: si no se distingue de un 'motor' "
+        "normal, el scorecard no puede separar la lente ciega de la que vio"
+    )
+
+
+def test_042v_destino_that_resolves_to_the_motor_is_refused(monkeypatch):
+    """Mismo invariante que `_resolve_project_root`: el destino-rol NUNCA es el
+    motor. Sin esto, un AGENT_PROJECT_ROOT mal puesto daria un `destino` VERDE
+    que en realidad observa el motor -- el falso verde que el DoD (d) obliga a
+    distinguir."""
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(ed.MOTOR_ROOT))
+    cwd, scope = ed.resolve_lens_repo_root(
+        {"channel": "agent", "repo_scope": "destino"}, {}, None
+    )
+    assert cwd is None and scope == "motor:destino-es-el-motor"
+
+
+def test_042v_profile_without_repo_scope_keeps_inherited_behaviour(monkeypatch):
+    """ADITIVIDAD: un perfil que no declara `repo_scope` no cambia en nada, ni
+    siquiera con AGENT_PROJECT_ROOT puesto. Es lo que permite dejar lentes
+    CIEGAS a proposito como calibracion permanente del modelo base."""
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(Path.cwd()))
+    cwd, scope = ed.resolve_lens_repo_root({"channel": "agent"}, {}, None)
+    assert (cwd, scope) == (None, "motor")
+
+
+def test_042v_scorecard_row_records_the_effective_scope(tmp_path):
+    """El ambito llega al REGISTRO, no solo al Popen.
+
+    Sin la columna, una ronda con ojos y una ciega son la misma fila y el
+    ranking de `backend_leaders.json` compara poblaciones distintas.
+    """
+    transport = _FakeTransport(replies=["ok"])
+    config = _config()
+    config["ensemble_profiles"]["p_chal"]["channel"] = "agent"
+    config["ensemble_profiles"]["p_chal"]["repo_scope"] = "destino"
+    destino = tmp_path / "repo_destino"
+    destino.mkdir()
+
+    ed.run_loop_round(
+        "p_chal",
+        "revisa esto",
+        config=config,
+        project_root=destino,
+        ticket="WOT-TEST-042v",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-dif",
+        loop_id="L042v",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+
+    fila = _rows(destino)[0]
+    assert fila["lens_scope"] == "destino", (
+        f"la fila registro lens_scope={fila.get('lens_scope')!r}: el ambito no "
+        "esta llegando al scorecard y las dos poblaciones siguen mezcladas"
+    )
 
 
 # --------------------------------------------------------------------------- #

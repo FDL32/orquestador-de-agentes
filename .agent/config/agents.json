@@ -128,7 +128,8 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA05"
+      "backend_key": "BA05",
+      "repo_scope": "destino"
     },
     "challenger_nan_deepseek_v4_flash": {
       "backend": "nan_api",
