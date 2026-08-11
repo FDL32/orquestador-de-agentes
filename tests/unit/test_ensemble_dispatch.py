@@ -2143,6 +2143,23 @@ def test_042v_destino_that_resolves_to_the_motor_is_refused(monkeypatch):
     assert cwd is None and scope == "motor:destino-es-el-motor"
 
 
+def test_042v_unresolvable_path_degrades_instead_of_raising():
+    """La rama `except (OSError, ValueError)` del resolver, que era la UNICA sin
+    cubrir (la nombro la lente 3 del bucle L042v).
+
+    Importa porque el contrato del resolver es que NUNCA lanza: una ruta
+    imposible tiene que degradar con etiqueta propia, no reventar el despacho de
+    una lente. Sin este test, cambiar el `except` por un `raise` no rompe nada.
+    """
+    cwd, scope = ed.resolve_lens_repo_root(
+        {"channel": "agent", "repo_scope": "destino"}, {}, "C:/x\x00y"
+    )
+    assert cwd is None and scope == "motor:destino-irresoluble", (
+        f"una ruta irresoluble dio ({cwd!r}, {scope!r}): o lanzo, o se confundio "
+        "con otra causa de degradacion"
+    )
+
+
 def test_042v_profile_without_repo_scope_keeps_inherited_behaviour(monkeypatch):
     """ADITIVIDAD: un perfil que no declara `repo_scope` no cambia en nada, ni
     siquiera con AGENT_PROJECT_ROOT puesto. Es lo que permite dejar lentes
