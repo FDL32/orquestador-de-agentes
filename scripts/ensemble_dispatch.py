@@ -2289,7 +2289,47 @@ def _cmd_emit_nonce(args, config) -> int:
     return 0
 
 
+def _force_utf8_stdio() -> None:
+    """Fuerza UTF-8 en los streams del PROPIO proceso (WOT-2026-054j).
+
+    Before: `sys.stdout`/`sys.stderr` son los que herede el proceso. En Windows
+        eso es `cp1252` (medido en esta maquina: `sys.stdout.encoding` ->
+        `cp1252`, `locale.getpreferredencoding()` -> `cp1252`).
+    During: reconfigura ambos a UTF-8 si el stream lo soporta. No toca red, no
+        escribe, no lee configuracion.
+    After: cualquier `print` posterior admite el repertorio Unicode completo.
+        Idempotente y sin efecto observable cuando el stream ya es UTF-8.
+
+    POR QUE AQUI Y NO EN EL ENTORNO DEL LLAMANTE: el DoD original pedia
+    `PYTHONIOENCODING=utf-8` en el entorno del subproceso, lo que deja el
+    arreglo en manos de QUIEN INVOCA. Este repo distingue NORMA de BARRERA
+    CABLEADA, y una norma "depende de que alguien se acuerde": basta un
+    llamante que no exporte la variable para perder la ronda. La reconfiguracion
+    DENTRO del proceso que falla es la barrera, y ademas cubre los TRES puntos
+    de impresion afectados (`:2084` smoke, `:2120` transcript, `:2245` reply),
+    no solo el que la ficha nombraba. `PYTHONIOENCODING` sigue siendo valido y
+    complementario: esta cableado para los SUBPROCESOS en
+    `bus/subprocess_env.py` (`_BASE_ALLOWLIST`).
+
+    `errors="backslashreplace"` es DEFENSA EN PROFUNDIDAD DECLARADA, no la
+    correccion de una violacion probada: con `encoding="utf-8"` el parametro es
+    practicamente inerte porque UTF-8 codifica cualquier codepoint. Importa solo
+    si el stream NO es reconfigurable y queda en cp1252; entonces
+    `backslashreplace` deja `\\u2192` -- legible y reversible -- en vez del `?`
+    que produciria `replace`, que es justo la "question-mark corruption" que
+    persigue `scripts/check_encoding_guard.py`.
+
+    La guarda `hasattr` NO es decorativa: bajo captura de pytest `sys.stdout` es
+    un objeto tipo `io.StringIO`, que carece de `reconfigure` (verificado).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="Ensemble dispatcher (WOT-2026-019o): proposer/challenger "
         "multi-backend con scorecard adjudicado."
