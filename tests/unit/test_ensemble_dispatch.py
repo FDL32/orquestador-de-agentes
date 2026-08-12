@@ -1343,7 +1343,7 @@ def test_047y_api_channel_still_passes_model_in_body_not_argv(monkeypatch):
     out = ed._transport_api(
         {
             "channel": "api",
-            "model": "deepseek-v4-flash-0731",
+            "model": "deepseek-v4-flash",
             "api_key_env": "FAKE_KEY_047Y",
             "api_base_url": "https://example.invalid/v1/chat/completions",
         },
@@ -1352,7 +1352,7 @@ def test_047y_api_channel_still_passes_model_in_body_not_argv(monkeypatch):
         timeout=10,
     )
     assert out == "respuesta-api"
-    assert sent["body"]["model"] == "deepseek-v4-flash-0731", (
+    assert sent["body"]["model"] == "deepseek-v4-flash", (
         "el canal api sigue pasando el modelo en el BODY JSON, intacto"
     )
 
@@ -2375,7 +2375,7 @@ class TestBackendKeyMatchesProfile:
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {
-    "deepseek-v4-flash-0731": "challenger_nan_deepseek_v4_flash",
+    "deepseek-v4-flash": "challenger_nan_deepseek_v4_flash",
     "qwen3.6": "challenger_nan_qwen3_6",
     "mimo-v2.5": "challenger_nan_mimo_v2_5",
     "gemma4": "challenger_nan_gemma4",

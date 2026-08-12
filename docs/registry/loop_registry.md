@@ -13,11 +13,11 @@
 | BA01 | claude | — | active |
 | BA05 | codex | gpt-5.4 | active |
 | BA06 | opencode | opencode-go/glm-5.2 | active |
-| BA10 | nan_api | deepseek-v4-flash | deprecated |
+| BA10 | nan_api | deepseek-v4-flash | active |
 | BA11 | nan_api | qwen3.6 | active |
 | BA12 | nan_api | mimo-v2.5 | active |
 | BA13 | nan_api | gemma4 | active |
-| BA14 | nan_api | deepseek-v4-flash-0731 | active |
+| BA14 | nan_api | deepseek-v4-flash-0731 | deprecated |
 
 ## Loop shapes
 
@@ -33,11 +33,11 @@
 | phase | function | backend_key |
 |-------|----------|-------------|
 | collector | participant | BA01 |
-| fanout-comun | participant | BA14 |
+| fanout-comun | participant | BA10 |
 | fanout-comun | participant | BA11 |
 | fanout-comun | participant | BA12 |
 | fanout-comun | participant | BA13 |
-| fanout-dif | participant | BA14 |
+| fanout-dif | participant | BA10 |
 | fanout-dif | participant | BA11 |
 | fanout-dif | participant | BA12 |
 | fanout-dif | participant | BA13 |
@@ -49,7 +49,7 @@
 |-------|----------|-------------|
 | collector | participant | BA01 |
 | challenge-fanout | participant | BA01 |
-| challenge-fanout | participant | BA14 |
+| challenge-fanout | participant | BA10 |
 | challenge-fanout | participant | BA11 |
 | challenge-fanout | participant | BA12 |
 | challenge-fanout | participant | BA13 |
