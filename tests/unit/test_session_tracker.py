@@ -63,6 +63,69 @@ def test_clear_session_removes_tracker_and_is_idempotent(collab: Path):
     assert not _tracker_file(collab).exists()
 
 
+def test_plan_id_not_resolvable_when_ticket_already_archived(collab: Path):
+    """WOT-2026-043o, direccion 1: un ID ARCHIVADO no es resoluble.
+
+    El defecto: `_get_current_plan_id()` copiaba la linea `**ID:**` de
+    work_plan.md sin preguntar si ese ticket ya estaba CERRADO, mientras
+    `session_closeout.py` (guard de WOT-2026-040e) SI lo pregunta y lo
+    rechaza. DOS consumidores del mismo dato con conclusiones OPUESTAS.
+
+    Consecuencia medida en el destino el 2026-08-12: work_plan.md apunta a
+    WOT-2026-046g, que `_archive/backlog_done.md` ya registra como cerrado,
+    y aun asi el tracker lo daba por activo -- lo que hace la rama
+    `clear_session()` de :6209 INALCANZABLE por construccion.
+
+    Politica declarada (DoD (a)): el guard vive en `_get_current_plan_id()`,
+    de modo que TODO consumidor del tracker ve el mismo veredicto, no solo
+    el refresh post-close.
+    """
+    (collab / "work_plan.md").write_text(
+        "# Work Plan\n- **ID:** WOT-2026-046g\n", encoding="utf-8"
+    )
+    archive = collab / "_archive" / "backlog_done.md"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_text(
+        "| WOT-2026-046g | completed | cerrado | scope | completed | "
+        "commit:abc1234 | origen | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+
+    assert session_tracker._get_current_plan_id() == "N/A"
+
+
+def test_plan_id_still_resolvable_for_a_genuinely_active_ticket(collab: Path):
+    """WOT-2026-043o, direccion 2: el guard NO puede tragarse un ticket VIVO.
+
+    Es la mitad que impide que el fix degenere en 'devolver N/A siempre'.
+    Mismo work_plan, pero el ticket NO figura en el archive -> sigue siendo
+    resoluble y `save_session()` conserva su comportamiento.
+    """
+    (collab / "work_plan.md").write_text(
+        "# Work Plan\n- **ID:** WOT-2026-099z\n", encoding="utf-8"
+    )
+    archive = collab / "_archive" / "backlog_done.md"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_text(
+        "| WOT-2026-046g | completed | otro ticket | scope | completed | "
+        "commit:abc1234 | origen | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+
+    assert session_tracker._get_current_plan_id() == "WOT-2026-099z"
+    session_tracker.save_session()
+    data = json.loads(_tracker_file(collab).read_text(encoding="utf-8"))
+    assert data["active_plan"] == "WOT-2026-099z"
+
+
+def test_plan_id_resolvable_when_no_archive_exists(collab: Path):
+    """Sin archive (destino recien instalado), el guard es transparente."""
+    (collab / "work_plan.md").write_text(
+        "# Work Plan\n- **ID:** WOT-2026-099z\n", encoding="utf-8"
+    )
+    assert session_tracker._get_current_plan_id() == "WOT-2026-099z"
+
+
 def test_close_refresh_tracker_no_longer_points_to_foreign_ticket(
     collab: Path, monkeypatch: pytest.MonkeyPatch
 ):

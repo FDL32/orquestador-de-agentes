@@ -140,8 +140,50 @@ def show_recovery_hint() -> None:
         print("[INFO] Hay una sesion anterior (>2h). Usa --recover para ver detalles.")
 
 
+def _ticket_is_archived(ticket_id: str) -> bool:
+    """True si `ticket_id` ya figura como CERRADO en el historico del backlog.
+
+    WOT-2026-043o. Delega el parseo en `check_backlog_contract._ticket_has_row`,
+    que es LAYOUT-ROBUSTO (el id vive en cell[0] en el archive y en cell[1] en la
+    cola viva). Reimplementar el parseo aqui crearia un SEGUNDO lector del mismo
+    dato, que es justo el defecto que este ticket corrige.
+
+    Before: `ticket_id` es un id ya extraido de work_plan.md.
+    During: localiza `_archive/backlog_done.md` bajo el collab dir resuelto en
+        caliente y pregunta si el ticket tiene fila.
+    After: bool. Si el modulo no es importable o el fichero no existe, retorna
+        False (fail-OPEN deliberado: sin evidencia NO se afirma que este cerrado,
+        y el comportamiento historico se conserva intacto).
+    """
+    with suppress(Exception):
+        from scripts.check_backlog_contract import _ticket_has_row
+
+        archive = _collab_dir() / "_archive" / "backlog_done.md"
+        return bool(_ticket_has_row(ticket_id, archive))
+
+    return False
+
+
 def _get_current_plan_id() -> str:
-    """Obtiene el ID del plan actual desde work_plan.md."""
+    """Obtiene el ID del plan actual desde work_plan.md, si SIGUE VIVO.
+
+    WOT-2026-043o: antes copiaba la linea `**ID:**` sin preguntar si ese ticket
+    ya estaba CERRADO, mientras `session_closeout.py` (guard de WOT-2026-040e)
+    SI lo preguntaba y lo rechazaba: DOS consumidores del mismo dato con
+    conclusiones OPUESTAS. Consecuencia medida (2026-08-12): con un work_plan.md
+    stale, la rama `clear_session()` de `agent_controller.py:6209` era
+    INALCANZABLE por construccion, porque el id siempre resolvia.
+
+    POLITICA DECLARADA (DoD (a) del ticket): el guard vive AQUI, no en la guarda
+    del refresh post-close, para que TODO consumidor del tracker obtenga el mismo
+    veredicto sobre el mismo dato.
+
+    Before: el collab dir se resuelve en caliente (no a nivel de modulo).
+    During: lee la linea `**ID:**` y, si la hay, comprueba contra el historico
+        del backlog que el ticket no este ya cerrado.
+    After: el ID si el plan sigue vivo; `"N/A"` si no hay work_plan, si no hay
+        linea de ID, o si el ticket ya esta archivado como cerrado.
+    """
     work_plan = _collab_dir() / "work_plan.md"
     if not work_plan.exists():
         return "N/A"
@@ -150,7 +192,10 @@ def _get_current_plan_id() -> str:
         content = work_plan.read_text(encoding="utf-8")
         for line in content.split("\n"):
             if "**ID:**" in line:
-                return line.split(":**")[1].strip()
+                plan_id = line.split(":**")[1].strip()
+                if plan_id and _ticket_is_archived(plan_id):
+                    return "N/A"
+                return plan_id
 
     return "N/A"
 
