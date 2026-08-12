@@ -172,7 +172,27 @@ root R), never FRESHNESS.
    states it arrives AFTER the batch closes or stops, so it is structurally
    incapable of resolving a PREVENTIVE gate. The resolution is recorded in
    `start_context_isolation.json` as `{status: RESOLVED, approved_by,
-   approved_at, prompt_sha256, project_root_resolved}`.
+   approved_at, prompt_sha256, project_root_resolved, flight}`.
+
+   **`flight` is MANDATORY and it is what makes the receipt ATTRIBUTABLE.**
+   Without it a receipt is indistinguishable from a valid one belonging to
+   ANOTHER flight: `status`, `prompt_sha256`, `approved_by` and
+   `project_root_resolved` can all be correct and still certify a different run.
+   The sibling auditor MUST reject a mismatched `flight` as `falso_verde`
+   (`audit_autonomous_ticket_batch.md` section 4.bis, point 4) -- **but only
+   after contrasting it against the `batch_run` OF THAT FLIGHT.** Measured
+   2026-08-13: a sibling session reported an "alien receipt" by comparing it
+   against ITS OWN flight; verification refuted it -- the receipt was correct and
+   its `flight`/`prompt_sha256` matched both its `batch_run` and the prompt bytes
+   on disk. Wrong anchor, not a defective receipt.
+
+   **Write it WITHOUT BOM.** Sealing the receipt from PowerShell (`Out-File`,
+   `Set-Content`) emits a UTF-8 BOM, and `json.load(open(p, encoding="utf-8"))`
+   then raises `JSONDecodeError: Unexpected UTF-8 BOM` **before reading any
+   field** -- an ingenuous consumer fails at line 1 and never reaches a single
+   check. Measured on a real 927-byte receipt starting with `ef bb bf`. Either
+   write it with `Write`/`Edit` (no BOM) or have every consumer read it with
+   `utf-8-sig`.
 
    **DECLARED DEBT, so this reads as a contract-in-force and not as a mechanism
    that already bites:** today this gate is a NORM, not a wired barrier -- nothing

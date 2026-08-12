@@ -356,6 +356,59 @@ auditoria) tiene un hueco: reportalo como hallazgo `CRITICO`, clase CEM A
    `_resolver` apunta al propio ejecutor), es `BLOCKER` con clase CEM
    `falso_verde`. La resolucion DEBE ser externa.
 
+4. **PERTENENCIA -- el receipt debe ser DE ESTE VUELO, no de otro.**
+   Los puntos 1-3 verifican que el receipt es INTEGRO y EXTERNO; **ninguno
+   verifica que sea EL TUYO**. Un receipt ajeno -- resuelto, con hash correcto,
+   aprobado por un tercero -- pasa las tres comprobaciones sin despeinarse.
+   Contrasta los TRES anclajes contra el vuelo que auditas:
+   - `flight`: debe nombrar ESTE vuelo. Si nombra otro -> `BLOCKER`,
+     `falso_verde` por receipt ajeno.
+   - `prompt_sha256`: debe ser el del prompt de arranque de ESTE vuelo. Un hash
+     valido de OTRO prompt es exactamente el fallo que este punto caza.
+   - `project_root_resolved`: el destino de ESTE vuelo.
+
+   **Caso real que lo motiva (2026-08-13) -- y el falso positivo que genero:**
+   una sesion hermana reporto haber encontrado un receipt AJENO (`flight` y
+   `prompt_sha256` de otro vuelo). **La verificacion posterior lo REFUTO:** el
+   receipt SI pertenecia a su vuelo -- `flight` coincidia con el `batch_run`, y
+   su `prompt_sha256` con los bytes del prompt en disco. Lo que la sesion hermana
+   comparo fue el receipt de un vuelo AJENO contra EL SUYO propio.
+
+   **La leccion NO es "los receipts suelen ser ajenos", sino:**
+   - la comprobacion de pertenencia es NECESARIA -- los puntos 1-3 no la cubren,
+     y un receipt genuinamente ajeno los pasaria;
+   - **el ancla de comparacion importa tanto como el campo.** Contrasta `flight`
+     contra el `batch_run` DE ESE VUELO, no contra el vuelo del que mira. Un
+     receipt correcto de OTRO vuelo no es un defecto del receipt: es que estas
+     comparando con el ancla equivocada;
+   - **antes de regenerar un receipt por "ajeno", MIDELO.** Regenerar uno valido
+     destruye una acreditacion legitima -- y en el caso medido estuvo a punto de
+     ocurrir por aceptar el hallazgo sin verificarlo.
+
+5. **Lectura del fichero: `utf-8-sig`, no `utf-8`.** Un receipt sellado desde
+   PowerShell **puede llevar BOM UTF-8** (`\xef\xbb\xbf`) segun version y opciones
+   de `Out-File`/`Set-Content`: `json.load(open(p, encoding="utf-8"))` lanza
+   `JSONDecodeError: Unexpected UTF-8 BOM` **antes de mirar ningun campo**, asi
+   que un consumidor ingenuo falla en la linea 1 y no llega a ninguna de las
+   verificaciones de arriba. Medido 2026-08-13 sobre un receipt real (927 B,
+   primeros bytes `ef bb bf`). **Mandato: escribirlo SIN BOM y leerlo SIEMPRE con
+   `utf-8-sig`** (que cubre ambos casos).
+
+6. **ESTADO DE ESTOS PUNTOS: son NORMA, no barrera cableada.**
+   Los puntos 4 y 5 dependen de que el auditor se acuerde: hoy hay **0
+   consumidores** de `start_context_isolation.json` en `scripts/` (verificado
+   2026-08-13), y el contrato del ejecutor ya declara esta gate como
+   *"a NORM, not a wired barrier"*. **Escribir estos puntos NO cierra la clase de
+   fallo**; solo hace que quien los lea no repita el caso de arriba.
+
+   **La barrera pendiente es `WOT-2026-055c`**, y para que muerda de verdad debe:
+   leer con `utf-8-sig`, exigir `flight` y contrastarlo contra el vuelo,
+   comparar `prompt_sha256` con el prompt REALMENTE consumido, verificar
+   `project_root_resolved` y `approved_by` externo, y **fallar cerrado**.
+   **Si `055c` no se escribe, esta seccion sigue siendo disciplina humana** --
+   y el caso medido demuestra que la disciplina humana ya fallo una vez con los
+   seis campos delante.
+
 **Formato de salida:** bloque `start_context_isolation` en el `.json` de esta
 auditoria, con `cumple: true|false` y el detalle de la verificacion.
 
