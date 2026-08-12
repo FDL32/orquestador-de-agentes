@@ -738,6 +738,69 @@ class TestRunCloseout:
         assert result == 0
         assert "**Overall:** PASS" not in content
 
+    def test_stale_work_plan_refusal_is_not_a_mere_warn(self, tmp_path: Path) -> None:
+        """WOT-2026-040e (SUBCONJUNTO DECLARADO): un work_plan STALE no es WARN.
+
+        ALCANCE, declarado a proposito: este test cubre SOLO el discriminante
+        `STATE.md`/`work_plan.md` -- el eje "bus vacio + commits productivos y 0
+        eventos" queda FUERA de este vuelo y sigue fichado. Un subconjunto
+        declarado es una decision; uno silencioso es falso_verde.
+
+        El defecto, medido 2026-08-12 en `session_closeout.py:911`: el paso
+        `resolve_tickets` marcaba `PASS if ticket_ids else WARN`, y como el exit
+        code solo es 1 cuando el overall es FAIL (`:1002-1003`), un cierre que
+        RECHAZO un work_plan stale salia con exit 0 igualmente. Es la segunda
+        instancia medida (2026-08-06, cierre de WOT-2026-049c): `CLOSE_EXIT=0`
+        certificando CERO tickets mientras la sesion entregaba 7 commits.
+
+        Lo que discrimina NO es la lista vacia -- una sesion de mantenimiento
+        legitima tambien devuelve `[]` -- sino el RECHAZO: `_resolve_tickets`
+        devuelve `stale work_plan.md: ...` cuando se nego a certificar, y
+        `no tickets found` cuando simplemente no habia nada. El fix se apoya en
+        esa distincion, que ya existia en el `source`.
+        """
+        _write_work_plan(tmp_path, "WP-2026-168")
+        archive = tmp_path / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_text(
+            "| WP-2026-168 | completed | ya cerrado | scope | completed | "
+            "commit:abc1234 | origen | commit:abc1234 |\n",
+            encoding="utf-8",
+        )
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+        assert tickets == []
+        assert "stale work_plan.md" in src
+
+        result = run_closeout(tmp_path, dry_run=True)
+        report_path = _generated_report_path(tmp_path, dry_run=True)
+        content = report_path.read_text(encoding="utf-8")
+
+        # El rechazo tiene que ser DISTINGUIBLE de "no habia nada que cerrar".
+        assert "| resolve_tickets | FAIL |" in content
+        assert result == 1
+
+    def test_maintenance_session_without_flight_still_closes(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-040e DoD (d): ANTI-FALSO-POSITIVO, la otra direccion.
+
+        Un cierre legitimo SIN vuelo (mantenimiento: no hay work_plan, no hay
+        eventos, no hay nada que certificar) debe SEGUIR pudiendo cerrar. Es la
+        mitad que impide que el fix degenere en "toda lista vacia bloquea", que
+        convertiria el guard en un tapon para sesiones legitimas.
+        """
+        tickets, src = _resolve_tickets(tmp_path, None)
+        assert tickets == []
+        assert "no tickets" in src
+
+        result = run_closeout(tmp_path, dry_run=True)
+        report_path = _generated_report_path(tmp_path, dry_run=True)
+        content = report_path.read_text(encoding="utf-8")
+
+        assert "| resolve_tickets | WARN |" in content
+        assert result == 0
+
     def test_unverified_blocking_gate_never_aggregates_to_pass(self) -> None:
         """WOT-2026-040y: an unverified blocking gate can never read as PASS.
 

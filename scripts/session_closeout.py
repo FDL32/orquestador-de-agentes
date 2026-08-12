@@ -357,6 +357,22 @@ def _ticket_is_archived_in_backlog(project_root: Path, ticket_id: str) -> bool:
     return _ticket_has_row(ticket_id, archive)
 
 
+STALE_WORK_PLAN_MARKER = "stale work_plan.md"
+"""Prefijo del `source` cuando `_resolve_tickets` RECHAZO certificar.
+
+WOT-2026-040e. Existe para que productor y consumidor compartan UN token en
+vez de que el llamante re-escriba la prosa: una lista vacia tiene DOS
+significados y solo uno debe bloquear el cierre.
+
+  - `no tickets found`  -> sesion de mantenimiento legitima: no habia nada que
+    certificar. NO bloquea (DoD (d), anti-falso-positivo).
+  - `stale work_plan.md: ...` -> el guard se NEGO a certificar un ticket ajeno.
+    Bloquea: un rechazo degradado a WARN sale con exit 0 y certifica CERO
+    mientras la sesion entrega commits (medido 2026-08-06, cierre de
+    WOT-2026-049c: `CLOSE_EXIT=0` con 7 commits sin certificar).
+"""
+
+
 def _resolve_tickets(
     project_root: Path,
     explicit_tickets: list[str] | None,
@@ -368,7 +384,8 @@ def _resolve_tickets(
         The work_plan fallback is guarded (WOT-2026-040e): if the bus already
         recorded that ticket in a terminal state, work_plan.md is stale and the
         ticket belongs to an earlier session, so it is refused rather than
-        certified.
+        certified. A refusal is marked with `STALE_WORK_PLAN_MARKER` so the
+        caller can tell it apart from an empty-but-legitimate resolution.
     After: Returns (ticket_list, source_description). An empty list with a
         "stale" source means the caller must not treat the close as scoped.
     """
@@ -395,7 +412,7 @@ def _resolve_tickets(
         # archivado de eventos.
         if _ticket_is_archived_in_backlog(project_root, active):
             return [], (
-                f"stale work_plan.md: it points at {active}, which "
+                f"{STALE_WORK_PLAN_MARKER}: it points at {active}, which "
                 "_archive/backlog_done.md already records as closed. This "
                 "session produced no events of its own, so there is nothing to "
                 "certify. Pass --ticket explicitly if you know what this "
@@ -408,7 +425,7 @@ def _resolve_tickets(
         # Trusting work_plan.md is the bug; the bus is the evidence.
         if _ticket_is_terminal(events, active):
             return [], (
-                f"stale work_plan.md: it points at {active}, which the event bus "
+                f"{STALE_WORK_PLAN_MARKER}: it points at {active}, which the event bus "
                 "already recorded as closed. This session produced no events of "
                 "its own, so there is nothing to certify. Pass --ticket "
                 "explicitly if you know what this session closed."
@@ -906,11 +923,31 @@ def run_closeout(
     report.session_start = window_src
     ticket_ids, ticket_src = _resolve_tickets(project_root, explicit_tickets)
     report.tickets = ticket_ids
+    # WOT-2026-040e: una lista vacia tiene DOS significados y solo uno debe
+    # bloquear. Antes se degradaban ambos a WARN, y como el exit code solo es 1
+    # cuando el overall es FAIL (:1002-1003), un cierre que RECHAZO un
+    # work_plan stale salia con exit 0 igual. Medido dos veces (2026-07-23 y
+    # 2026-08-06): la segunda certifico CERO tickets mientras la sesion
+    # entregaba 7 commits, y el WARN no lo detuvo.
+    _refused_stale = STALE_WORK_PLAN_MARKER in ticket_src
+    if ticket_ids:
+        _resolve_status = "PASS"
+    elif _refused_stale:
+        _resolve_status = "FAIL"
+    else:
+        # Sesion de mantenimiento sin vuelo: no hay nada que certificar y eso
+        # es legitimo (DoD (d)). Sigue siendo WARN, no FAIL.
+        _resolve_status = "WARN"
     report.steps.append(
         StepResult(
             name="resolve_tickets",
-            status="PASS" if ticket_ids else "WARN",
+            status=_resolve_status,
             detail=f"Source: {ticket_src}. Tickets: {ticket_ids or 'none'}",
+            # `blocking` solo cuando hubo RECHAZO: `overall_status` escala a
+            # FAIL unicamente si el paso que falla es blocking (WOT-2026-013m),
+            # y ese contrato se respeta en vez de debilitar la agregacion. Un
+            # cierre de mantenimiento (WARN) no es blocking y sigue saliendo 0.
+            blocking=_refused_stale,
         )
     )
     report.steps.append(
