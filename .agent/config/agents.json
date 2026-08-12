@@ -134,13 +134,13 @@
     "challenger_nan_deepseek_v4_flash": {
       "backend": "nan_api",
       "channel": "api",
-      "model": "deepseek-v4-flash-0731",
+      "model": "deepseek-v4-flash",
       "api_base_url": "https://api.nan.builders/v1/chat/completions",
       "api_key_env": "NAN_API_KEY",
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA14"
+      "backend_key": "BA10"
     },
     "challenger_nan_qwen3_6": {
       "backend": "nan_api",
@@ -214,7 +214,7 @@
         "backend": "nan_api",
         "model": "deepseek-v4-flash",
         "backend_version": null,
-        "status": "deprecated"
+        "status": "active"
       },
       "BA11": {
         "backend": "nan_api",
@@ -244,7 +244,7 @@
         "backend": "nan_api",
         "model": "deepseek-v4-flash-0731",
         "backend_version": null,
-        "status": "active"
+        "status": "deprecated"
       }
     },
     "loop_shapes": {
@@ -260,7 +260,7 @@
           {
             "phase": "fanout-comun",
             "function": "participant",
-            "backend_key": "BA14"
+            "backend_key": "BA10"
           },
           {
             "phase": "fanout-comun",
@@ -280,7 +280,7 @@
           {
             "phase": "fanout-dif",
             "function": "participant",
-            "backend_key": "BA14"
+            "backend_key": "BA10"
           },
           {
             "phase": "fanout-dif",
@@ -322,7 +322,7 @@
           {
             "phase": "challenge-fanout",
             "function": "participant",
-            "backend_key": "BA14"
+            "backend_key": "BA10"
           },
           {
             "phase": "challenge-fanout",
