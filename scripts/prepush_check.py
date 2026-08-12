@@ -1241,16 +1241,28 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
     commits a verificar los declara el orquestador via
     `.agent/collaboration/loop_execution_targets.txt` (una linea `sha[ deliverable_type]`
     por commit). SIN ese fichero, SKIPEA EXPLICITAMENTE -- un SKIP mudo convertiria
-    la barrera en norma; se IMPRIME el motivo. Hoy ningun vuelo emite todavia
-    receipts con nonce, asi que la barrera nace en WARN (is_blocking=False) para no
-    ser un falso-rojo heredado; el endurecimiento a bloqueante va con el primer
-    vuelo que emita.
+    la barrera en norma; se IMPRIME el motivo.
+
+    WOT-2026-055q: la barrera NACIO en WARN (`is_blocking=False`) porque ningun
+    vuelo emitia todavia receipts con nonce, y el docstring fijaba el criterio de
+    endurecimiento: "va con el primer vuelo que emita". ESE VUELO YA EMITIO -- el
+    20260812b dejo nonces, receipts y `loop_execution_targets.txt` con 3 commits --
+    asi que la rama de FALLO pasa a BLOQUEANTE. Sin ese cambio el check era el
+    patron CEM `exit 0 puede significar "no hice nada"`: un vuelo sin gobierno
+    atravesaba el cierre sin friccion y solo lo cazaba un humano por escrito.
+
+    Lo que NO cambia (backward-compat deliberada): las tres ramas de SKIP siguen
+    `passed=True, is_blocking=False`, para que un vuelo de solo-docs que no declara
+    targets no herede un falso-rojo. Ahora ademas llevan `skipped=True`: un SKIP
+    que pasa como `[OK]` a secas es indistinguible de un gate cumplido, que es
+    justo lo que documenta el docstring de `CheckResult`.
 
     Before: project_root resoluble.
     During: lee el fichero de targets (si existe) y corre el guard sobre el
         scorecard + emitted_nonces del destino. Read-only.
-    After: passed=True si no hay targets (SKIP nombrado) o todos pasan; False (WARN)
-        con el detalle de los commits sin fan-out ejecutado.
+    After: passed=True si no hay targets (SKIP nombrado, no bloqueante) o todos
+        pasan; passed=False e is_blocking=True -- el cierre ABORTA -- con el detalle
+        de los commits sin fan-out ejecutado.
     """
     name = "Loop Execution Barrier (WOT-2026-040b)"
     try:
@@ -1271,6 +1283,7 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
                 "commits para activar la barrera."
             ),
             is_blocking=False,
+            skipped=True,
         )
     commit_shas: list[str] = []
     per_commit_dtype: dict[str, str] = {}
@@ -1290,6 +1303,7 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             passed=True,
             output=f"SKIP: no se pudo leer {targets_file}: {exc}",
             is_blocking=False,
+            skipped=True,
         )
     if not commit_shas:
         return CheckResult(
@@ -1297,6 +1311,7 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             passed=True,
             output=f"SKIP: {targets_file.name} no declara ningun commit.",
             is_blocking=False,
+            skipped=True,
         )
 
     failures: list[dict] = []
@@ -1321,9 +1336,9 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
                 f"ejecutado (o ejecutado DEGRADADO):\n{detail}\n"
                 "Cada commit exige >=N rondas con backend_key DISTINTO y un "
                 "challenge_nonce emitido FUERA antes de la ronda. El bucle es una "
-                "barrera, no una norma (WOT-2026-040b)."
+                "barrera, no una norma (WOT-2026-040b/055q): esto ABORTA el cierre."
             ),
-            is_blocking=False,
+            is_blocking=True,
         )
     return CheckResult(
         name=name,
