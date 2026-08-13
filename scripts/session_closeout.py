@@ -788,6 +788,182 @@ def _git_log_shas_for_ticket(
     return [s for s in result.stdout.splitlines() if s.strip()], ""
 
 
+def _resolve_authoritative_repo(
+    ticket_id: str,
+    motor_root: Path,
+    extract_prefix_fn,
+    resolve_prefix_fn,
+) -> tuple[Path, Path | None, bool, str]:
+    """Resolve the authoritative repo for a ticket by its prefix.
+
+    WOT-2026-048b. WOT- tickets always resolve to motor_root (special case:
+    their commits live in the motor even though resolve_prefix('WOT') returns
+    the workspace destination). Non-WOT prefixes resolve via prefix_resolver.
+
+    Returns (authoritative_root, other_root_for_control, skip, warn_detail).
+    """
+    if extract_prefix_fn is None or resolve_prefix_fn is None:
+        return motor_root, None, False, ""
+    prefix = extract_prefix_fn(ticket_id)
+    if prefix is None or prefix == "WOT":
+        return motor_root, None, False, ""
+    try:
+        resolved_dest = resolve_prefix_fn(prefix, motor_root)
+    except Exception:
+        resolved_dest = None
+    if resolved_dest is None:
+        return (
+            motor_root,
+            None,
+            True,
+            (f"WARN_PREFIX_UNRESOLVABLE: {ticket_id} (prefix={prefix}); skipping"),
+        )
+    other = motor_root if resolved_dest != motor_root else None
+    return resolved_dest, other, False, ""
+
+
+@dataclass
+class _TicketTargetResult:
+    lines: list[str]
+    status: str  # "PASS", "WARN", "FAIL"
+    detail: str = ""
+    blocking: bool = False
+
+
+def _process_ticket_targets(
+    ticket_id: str,
+    project_root: Path,
+    motor_root: Path,
+    extract_prefix_fn,
+    resolve_prefix_fn,
+    since_args: list[str],
+) -> _TicketTargetResult:
+    """Process a single ticket for loop execution targets.
+
+    WOT-2026-048b. Resolves the authoritative repo by prefix, searches for
+    commits, and runs a control query when the authoritative repo is empty.
+    """
+    authoritative_root, other_root, skip, warn = _resolve_authoritative_repo(
+        ticket_id, motor_root, extract_prefix_fn, resolve_prefix_fn
+    )
+    if skip:
+        return _TicketTargetResult([], "WARN", warn)
+
+    shas, error_detail = _git_log_shas_for_ticket(
+        authoritative_root, ticket_id, since_args
+    )
+    if shas is None:
+        return _TicketTargetResult([], "SKIP", error_detail)
+
+    if not shas and other_root is not None:
+        ctrl_shas, _ = _git_log_shas_for_ticket(other_root, ticket_id, since_args)
+        if ctrl_shas:
+            return _TicketTargetResult(
+                [],
+                "FAIL",
+                f"FAIL_TARGETS_MISSING: {ticket_id} not in authoritative "
+                f"repo ({authoritative_root}) but found in {other_root}",
+                blocking=True,
+            )
+
+    if not shas:
+        return _TicketTargetResult([], "PASS")
+
+    dtype = _resolve_deliverable_type_for_ticket(project_root, ticket_id)
+    return _TicketTargetResult([f"{sha} {dtype}" for sha in shas], "PASS")
+
+
+@dataclass
+class _WriterSetup:
+    motor_root: Path
+    extract_prefix_fn: Any
+    resolve_prefix_fn: Any
+    since_args: list[str]
+    window_detail: str
+
+
+def _resolve_writer_setup(
+    project_root: Path, window_start: datetime | None
+) -> _WriterSetup | StepResult:
+    """Resolve motor_root, prefix resolvers, and window args for the writer.
+
+    Returns _WriterSetup on success, or a SKIP StepResult on failure.
+    """
+    try:
+        from runtime.motor_link import resolve_motor_root
+    except ImportError:
+        return StepResult(
+            name="write_loop_execution_targets",
+            status="SKIP",
+            detail="runtime.motor_link not available; writer skipped",
+        )
+
+    motor_root = resolve_motor_root(project_root)
+    if motor_root is None:
+        return StepResult(
+            name="write_loop_execution_targets",
+            status="SKIP",
+            detail="motor_root not resolvable; writer skipped",
+        )
+
+    try:
+        from scripts.prefix_resolver import extract_prefix, resolve_prefix
+    except ImportError:
+        extract_prefix = None  # type: ignore[assignment]
+        resolve_prefix = None  # type: ignore[assignment]
+
+    since_args: list[str] = []
+    window_detail = "no window filter (None: this flight's window is open)"
+    if window_start is not None:
+        since_iso = window_start.strftime("%Y-%m-%dT%H:%M:%S")
+        since_args = [f"--since={since_iso}"]
+        window_detail = f"--since={since_iso}"
+
+    return _WriterSetup(
+        motor_root, extract_prefix, resolve_prefix, since_args, window_detail
+    )
+
+
+def _finalize_targets_result(
+    name: str,
+    lines: list[str],
+    ticket_ids: list[str],
+    worst_status: str,
+    detail_parts: list[str],
+    targets_path: Path,
+    window_detail: str,
+) -> StepResult:
+    """Build the final StepResult for the writer step."""
+    if worst_status == "FAIL":
+        return StepResult(
+            name=name,
+            status="FAIL",
+            detail="; ".join(detail_parts) if detail_parts else "targets missing",
+            blocking=True,
+        )
+
+    if not lines:
+        if targets_path.exists():
+            targets_path.unlink()
+        detail = (
+            f"nothing to declare (tickets={ticket_ids or 'none'}, "
+            f"window={window_detail}); file removed if present"
+        )
+        if detail_parts:
+            detail += "; " + "; ".join(detail_parts)
+        return StepResult(name=name, status=worst_status, detail=detail)
+
+    targets_path.parent.mkdir(parents=True, exist_ok=True)
+    targets_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    detail = (
+        f"wrote {len(lines)} commit line(s) for {len(ticket_ids)} "
+        f"ticket(s); window={window_detail}"
+    )
+    if detail_parts:
+        detail += "; " + "; ".join(detail_parts)
+    return StepResult(name=name, status=worst_status, detail=detail)
+
+
 def _step_write_loop_execution_targets(
     project_root: Path,
     ticket_ids: list[str],
@@ -836,68 +1012,47 @@ def _step_write_loop_execution_targets(
     """
     name = "write_loop_execution_targets"
     if dry_run:
-        return StepResult(
-            name=name,
-            status="SKIP",
-            detail="Skipped in dry-run mode",
-        )
+        return StepResult(name=name, status="SKIP", detail="Skipped in dry-run mode")
+
+    setup = _resolve_writer_setup(project_root, window_start)
+    if isinstance(setup, StepResult):
+        return setup
+
     targets_path = project_root / LOOP_EXECUTION_TARGETS_REL
-
-    try:
-        from runtime.motor_link import resolve_motor_root
-    except ImportError:
-        return StepResult(
-            name=name,
-            status="SKIP",
-            detail="runtime.motor_link not available; writer skipped",
-        )
-
-    motor_root = resolve_motor_root(project_root)
-    if motor_root is None:
-        return StepResult(
-            name=name,
-            status="SKIP",
-            detail="motor_root not resolvable; writer skipped",
-        )
-
-    since_args: list[str] = []
-    window_detail = "no window filter (None: this flight's window is open)"
-    if window_start is not None:
-        since_iso = window_start.strftime("%Y-%m-%dT%H:%M:%S")
-        since_args = [f"--since={since_iso}"]
-        window_detail = f"--since={since_iso}"
-
     lines: list[str] = []
+    worst_status = "PASS"
+    detail_parts: list[str] = []
+
     for ticket_id in ticket_ids:
-        shas, error_detail = _git_log_shas_for_ticket(motor_root, ticket_id, since_args)
-        if shas is None:
-            return StepResult(name=name, status="SKIP", detail=error_detail)
-        if not shas:
-            continue
-        dtype = _resolve_deliverable_type_for_ticket(project_root, ticket_id)
-        lines.extend(f"{sha} {dtype}" for sha in shas)
-
-    if not lines:
-        if targets_path.exists():
-            targets_path.unlink()
-        return StepResult(
-            name=name,
-            status="PASS",
-            detail=(
-                f"nothing to declare (tickets={ticket_ids or 'none'}, "
-                f"window={window_detail}); file removed if present"
-            ),
+        res = _process_ticket_targets(
+            ticket_id,
+            project_root,
+            setup.motor_root,
+            setup.extract_prefix_fn,
+            setup.resolve_prefix_fn,
+            setup.since_args,
         )
+        if res.status == "SKIP":
+            return StepResult(name=name, status="SKIP", detail=res.detail)
+        if res.status == "FAIL":
+            worst_status = "FAIL"
+            detail_parts.append(res.detail)
+            continue
+        if res.status == "WARN":
+            if worst_status != "FAIL":
+                worst_status = "WARN"
+            detail_parts.append(res.detail)
+            continue
+        lines.extend(res.lines)
 
-    targets_path.parent.mkdir(parents=True, exist_ok=True)
-    targets_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return StepResult(
-        name=name,
-        status="PASS",
-        detail=(
-            f"wrote {len(lines)} commit line(s) for {len(ticket_ids)} "
-            f"ticket(s); window={window_detail}"
-        ),
+    return _finalize_targets_result(
+        name,
+        lines,
+        ticket_ids,
+        worst_status,
+        detail_parts,
+        targets_path,
+        setup.window_detail,
     )
 
 

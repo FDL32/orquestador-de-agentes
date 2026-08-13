@@ -28,6 +28,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 
 _MOTOR_ROOT = Path(__file__).resolve().parents[2]
@@ -521,3 +522,174 @@ def test_run_closeout_calls_writer_before_prepush(tmp_path: Path, monkeypatch) -
         f"writer must run BEFORE prepush_check; got order {call_order}"
     )
     assert exit_code == 1  # early-exit from the faked prepush FAIL
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-048b: two-repo prefix-aware resolution
+# ---------------------------------------------------------------------------
+
+
+def test_non_wot_ticket_commits_in_destino(tmp_path: Path) -> None:
+    """Non-WOT ticket with commits in the destino (resolved by prefix) but
+    NOT in the motor -> PASS with targets written.
+
+    The writer must resolve the authoritative repo by prefix, not always
+    use motor_root.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+
+    sha = _commit_file(destino, "src/a.py", "x = 1", "CTL-2026-001: fix bug")
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        if prefix == "CTL":
+            return destino
+        return None
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            destino, ["CTL-2026-001"], None, False
+        )
+
+    assert result.status == "PASS", result.detail
+    content = (destino / TARGETS_REL).read_text(encoding="utf-8")
+    assert sha in content, f"sha {sha} missing from {content!r}"
+
+
+def test_non_wot_ticket_commits_in_motor_is_fail(tmp_path: Path) -> None:
+    """Non-WOT ticket with commits in the motor (wrong repo) but NOT in the
+    destino -> FAIL_TARGETS_MISSING.
+
+    The control query detects commits in the non-authoritative repo.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+
+    _commit_file(motor, "src/a.py", "x = 1", "CTL-2026-002: fix bug")
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        if prefix == "CTL":
+            return destino
+        return None
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            destino, ["CTL-2026-002"], None, False
+        )
+
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert not (destino / TARGETS_REL).exists()
+
+
+def test_wot_ticket_commits_in_motor_two_repos(tmp_path: Path) -> None:
+    """WOT ticket with commits in the motor (correct) but NOT in the
+    destino -> PASS. WOT is special: always resolves to motor_root.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+
+    sha = _commit_file(motor, "src/a.py", "x = 1", "WOT-2026-999a: feature")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    content = (destino / TARGETS_REL).read_text(encoding="utf-8")
+    assert sha in content, f"sha {sha} missing from {content!r}"
+
+
+def test_unresolvable_prefix_gives_warn(tmp_path: Path) -> None:
+    """A ticket with an unresolvable prefix -> WARN, ticket skipped, no file."""
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+
+    _commit_file(destino, "src/a.py", "x = 1", "ZZZ-2026-001: unknown prefix")
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        return None
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            destino, ["ZZZ-2026-001"], None, False
+        )
+
+    assert result.status == "WARN", result.detail
+    assert "WARN_PREFIX_UNRESOLVABLE" in result.detail
+    assert not (destino / TARGETS_REL).exists()
+
+
+def test_control_query_skipped_when_same_repo(tmp_path: Path) -> None:
+    """When resolve_prefix returns the same path as motor_root, the control
+    query is skipped (same repo = no meaningful 'other' to check).
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        return _motor_root  # resolves to same repo
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            repo, ["CTL-2026-003"], None, False
+        )
+
+    assert result.status == "PASS", result.detail
+    assert not (repo / TARGETS_REL).exists()
+
+
+def test_mixed_results_one_warn_one_pass(tmp_path: Path) -> None:
+    """Two tickets: one with unresolvable prefix (WARN), one WOT with commits
+    (PASS). The overall status is WARN, and the file is written for the
+    resolved ticket only.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+
+    sha = _commit_file(motor, "src/a.py", "x = 1", "WOT-2026-999c: feature")
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        return None  # all non-WOT fail
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            destino, ["ZZZ-2026-001", "WOT-2026-999c"], None, False
+        )
+
+    assert result.status == "WARN", result.detail
+    assert "WARN_PREFIX_UNRESOLVABLE" in result.detail
+    content = (destino / TARGETS_REL).read_text(encoding="utf-8")
+    assert sha in content
