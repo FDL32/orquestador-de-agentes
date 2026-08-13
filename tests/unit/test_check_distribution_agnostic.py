@@ -353,6 +353,55 @@ def test_username_skip_generic(monkeypatch):
     rx, msg = cda.resolve_username_needle()
     assert rx is None
     assert "SKIPPED" in msg
+    # La causa REAL aqui si es "generico": el mensaje puede decirlo sin mentir.
+    assert "generico" in msg
+
+
+def test_username_skip_by_length_does_not_blame_generic(monkeypatch):
+    """El SKIP por LONGITUD no puede acusar al usuario de ser GENERICO.
+
+    Cazado por el bucle L700 (2026-08-13). El mensaje unico decia siempre
+    "usuario generico: <u>" aunque el descarte fuera por `len(u) >= 4`, y ademas
+    nombraba al usuario LOCAL aunque el token descartado viniera de
+    AGNOSTIC_EXTRA_USERNAMES. Un diagnostico que culpa a la causa equivocada manda
+    a quien lo lee a mirar el sitio equivocado: 'ci' se arregla renombrando al
+    usuario, un token corto NO -- son acciones distintas.
+
+    Caso: usuario base generico ('ci') + un token extra de 3 chars que NO es
+    generico. La lista sale vacia por LONGITUD, no por genericidad.
+    """
+    monkeypatch.setattr(cda.getpass, "getuser", lambda: "ci")
+    monkeypatch.setenv("AGNOSTIC_EXTRA_USERNAMES", "abc")
+    rx, msg = cda.resolve_username_needle()
+    assert rx is None, "un token de 3 chars sigue sin activarse (umbral intacto)"
+    assert "SKIPPED" in msg
+    # El fallo que este test fija: cada causa debe ir con SU token. Antes el
+    # mensaje era 'usuario generico: ci' a secas y 'abc' -- descartado por
+    # LONGITUD-- quedaba invisible, absorbido por la etiqueta de genericidad.
+    assert "longitud" in msg.lower(), f"debe nombrar la causa real; mensaje: {msg!r}"
+    assert "abc" in msg, f"debe nombrar el token descartado; mensaje: {msg!r}"
+    # Y el token corto NO puede aparecer atribuido a la causa 'generico'.
+    generic_part = msg.split("longitud")[0]
+    assert "abc" not in generic_part, (
+        f"'abc' se descarto por LONGITUD, no por generico; mensaje: {msg!r}"
+    )
+
+
+def test_username_skip_by_length_only_never_says_generic(monkeypatch):
+    """Si la UNICA causa es la longitud, 'generico' no aparece en absoluto.
+
+    Es el complemento del test anterior: alli conviven las dos causas, aqui solo
+    una. Sin este caso, un mensaje que SIEMPRE dijera "generico" seguiria pasando.
+    """
+    monkeypatch.setattr(cda.getpass, "getuser", lambda: "abc")  # corto, NO generico
+    monkeypatch.delenv("AGNOSTIC_EXTRA_USERNAMES", raising=False)
+    rx, msg = cda.resolve_username_needle()
+    assert rx is None
+    assert "SKIPPED" in msg
+    assert "generico" not in msg, (
+        f"la unica causa fue la longitud; no puede acusar de generico: {msg!r}"
+    )
+    assert "longitud" in msg.lower() and "abc" in msg, msg
 
 
 def test_username_active_via_env_catches(fake_motor: Path, monkeypatch):

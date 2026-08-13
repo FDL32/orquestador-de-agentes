@@ -36,11 +36,19 @@ La aguja username: derivada, NUNCA escrita en disco
 ---------------------------------------------------
 El username de esta maquina no puede vivir en un YAML versionado (seria PII, la
 regresion que WOT-2026-025a cerro). Se deriva con getpass.getuser() en runtime. Si
-el usuario es generico (ci/root/runner/... o < 4 chars) la aguja se SALTA con un
-aviso EXPLICITO ("SKIPPED: usuario generico"), nunca un verde silencioso. Env
-AGNOSTIC_EXTRA_USERNAMES (coma-separado) anade usernames -> permite EJERCER la rama
-activa en test sin depender de quien corra. El match usa \b...\b: un token corto
-(p.ej. 'fdl', 3 chars) sin fronteras daria falsos rojos dentro de otras palabras.
+el usuario es generico (ci/root/runner/...) o no llega a 4 chars, la aguja se SALTA
+con un aviso EXPLICITO, nunca un verde silencioso. Env AGNOSTIC_EXTRA_USERNAMES
+(coma-separado) anade usernames -> permite EJERCER la rama activa en test sin
+depender de quien corra. El match usa \b...\b para no casar dentro de otra palabra.
+
+El aviso NOMBRA SU CAUSA (WOT-2026-055v): "usuario generico: <tokens>" y/o
+"longitud < 4: <tokens>", cada una con los tokens que descarto. Antes era un
+mensaje unico que siempre decia "usuario generico" y nombraba al usuario LOCAL,
+aunque el descarte fuera por longitud o el token viniera del env -- un diagnostico
+que acusa a la causa equivocada manda a mirar donde no es, y las dos causas piden
+acciones OPUESTAS (renombrar/exportar env, frente a nada que el usuario pueda
+hacer). Ver el docstring de `resolve_username_needle` para el limite MEDIDO del
+umbral de longitud como proxy, y por que sustituirlo no es trivial.
 
 ALLOWLIST con dueno y deteccion de STALE (patron guard_wiring_policy)
 --------------------------------------------------------------------
@@ -162,25 +170,90 @@ def build_denominator(root: Path) -> tuple[int, list[str], str | None]:
 
 
 # --------------------------------------------------------------------- needles
+def format_skip_reason(generic: list[str], too_short: list[str]) -> str:
+    """Mensaje de SKIP que nombra CADA causa con los tokens que descarto.
+
+    Before: `generic` y `too_short` son los candidatos rechazados por cada motivo
+        (pueden solaparse en una misma llamada: un usuario generico y un token
+        corto del env). Listas vacias = no hubo candidato ninguno.
+    During: compone una clausula por causa OCURRIDA, con sus tokens ordenados y
+        deduplicados. No inventa causas que no se dieron.
+    After: devuelve la cadena `SKIPPED (...)`. Nunca lanza.
+
+    Existe como funcion propia por dos razones: baja la complejidad de
+    `resolve_username_needle` bajo el limite de ruff (C901), y hace la tabla de
+    causas testeable sin montar un repo ni parchear `getpass`.
+    """
+    causes: list[str] = []
+    if generic:
+        joined = ", ".join(repr(g) for g in sorted(set(generic)))
+        causes.append(f"usuario generico: {joined}")
+    if too_short:
+        joined = ", ".join(repr(t) for t in sorted(set(too_short)))
+        causes.append(f"longitud < 4: {joined}")
+    if not causes:
+        causes.append("no hay username resoluble")
+    return f"SKIPPED ({'; '.join(causes)})"
+
+
 def resolve_username_needle() -> tuple[re.Pattern | None, str]:
-    """(compiled \\b<user>\\b regex | None, message). None + 'SKIPPED' for a generic
-    user. AGNOSTIC_EXTRA_USERNAMES lets a test exercise the ACTIVE branch without
-    depending on the machine's real user (and without writing it to disk)."""
+    """(compiled \\b<user>\\b regex | None, message). None + 'SKIPPED' when no
+    candidate survives. AGNOSTIC_EXTRA_USERNAMES lets a test exercise the ACTIVE
+    branch without depending on the machine's real user (and without writing it to
+    disk).
+
+    EL MENSAJE DE SKIP DISTINGUE SUS DOS CAUSAS (WOT-2026-055v, 2026-08-13)
+    ----------------------------------------------------------------------
+    Un candidato se descarta por DOS motivos distintos -- ser un usuario generico
+    de CI/servicio, o no llegar al umbral de longitud-- y el mensaje unico anterior
+    los confundia: decia siempre "usuario generico: <u>" y ademas nombraba al
+    usuario LOCAL aunque el token descartado viniera del env. Cazado midiendo con
+    el token 'bus' (3 chars, presente 332 veces en el denominador): el skip fue por
+    LONGITUD y el mensaje acuso al usuario local de generico.
+
+    Importa porque las dos causas piden ACCIONES OPUESTAS: un usuario generico se
+    resuelve renombrando al usuario o exportando el env; un token corto NO se
+    resuelve asi, y quien lea el mensaje equivocado ira a mirar donde no es. Un
+    diagnostico que nombra la causa falsa es peor que no dar diagnostico.
+
+    LIMITE DECLARADO del umbral (medido, no resuelto aqui): `len >= 4` es un PROXY
+    de "¿este token colisiona con el corpus?" y falla en las DOS direcciones. Sobre
+    los 144 ficheros del denominador real: de los 17.576 tokens de 3 letras, 551
+    (3,13%) aparecen como palabra completa; de los 456.976 de 4 letras, 964 (0,21%).
+    O sea que el umbral admite `test` (213 apariciones) y `path` (788) mientras
+    bloquea tokens de 3 letras que no aparecen NUNCA. Sustituirlo por la medicion
+    directa NO es trivial: "colisiona con el denominador" y "hay fuga" son la MISMA
+    consulta, asi que medirla aqui autodesactiva la aguja justo cuando hay algo que
+    reportar (probado y revertido en esta misma sesion; lo caza
+    `test_username_active_via_env_catches`). Haria falta un corpus EXTERNO al
+    denominador, que es diseno nuevo. Esta funcion solo arregla el DIAGNOSTICO.
+    """
     users: list[str] = []
+    generic: list[str] = []
+    too_short: list[str] = []
+
+    def _classify(tok: str) -> None:
+        if not tok:
+            return
+        if tok.lower() in _GENERIC_USERS:
+            generic.append(tok)
+        elif len(tok) < 4:
+            too_short.append(tok)
+        else:
+            users.append(tok)
+
     try:
         u = getpass.getuser()
     except Exception:
         u = ""
-    if u and u.lower() not in _GENERIC_USERS and len(u) >= 4:
-        users.append(u)
+    _classify(u)
     extra = os.environ.get("AGNOSTIC_EXTRA_USERNAMES", "")
     for tok in extra.split(","):
-        tok = tok.strip()
-        if tok and tok.lower() not in _GENERIC_USERS and len(tok) >= 4:
-            users.append(tok)
+        _classify(tok.strip())
+
     users = sorted(set(users))
     if not users:
-        return None, f"SKIPPED (usuario generico: {u!r})"
+        return None, format_skip_reason(generic, too_short)
     pat = "|".join(re.escape(x) for x in users)
     return re.compile(r"\b(?:" + pat + r")\b"), f"activa para {users}"
 
