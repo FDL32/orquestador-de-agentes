@@ -312,9 +312,29 @@ def _step_write_decision_records(project_root: Path, ticket_ids: list[str]) -> N
     closeout writes a decision record and commits it so the handoff committed
     check (prepush) finds a commit and passes.
 
+    The commit query is PER TICKET (``git log --all --grep=<ticket_id>``, via
+    ``_signal_commits``), not per repo. A repo-wide query is True in any repo
+    with history, so it made this step inert: the ``continue`` always fired and
+    ``write_decision_record`` was never reached. It also matches the predicate
+    of the barrier this step unblocks -- ``assert_ticket_commit_visible``
+    (pre_handoff_guard) looks for the ticket_id in commit subjects, so both
+    sides of the contract now ask the same question.
+
+    PROXY BIAS, MEASURED AND DECLARED: ``_signal_commits`` greps the whole
+    commit MESSAGE while the barrier greps only the SUBJECT, so a commit that
+    merely mentions the ticket in its body counts as landed here. Measured
+    2026-08-13 over the three G1 tickets: identical verdicts by both routes;
+    the only divergence was one commit naming WOT-2026-040e in its body. The
+    bias therefore points at SKIP -- it can see commits that are not there,
+    never miss ones that are. That is the conservative direction: a false SKIP
+    omits a record, a false WRITE would commit a spurious one. The previous
+    repo-wide query had this same bias at its maximum (SKIP always).
+
     Before: ticket_ids is non-empty, project_root is a git working tree.
-    During: For each ticket, checks if commits exist in the repos. If not,
-        writes a decision record via write_decision_record and commits it.
+    During: For each ticket, searches motor and destino for a commit naming it.
+        If none exists, writes a decision record via write_decision_record and
+        commits it. An unresolvable motor narrows the search to destino rather
+        than skipping the check (which would write blindly).
     After: The working tree has decision records committed for stopped tickets.
     """
     try:
@@ -329,11 +349,15 @@ def _step_write_decision_records(project_root: Path, ticket_ids: list[str]) -> N
     except ImportError:
         mr = None
 
+    try:
+        from scripts.backlog_reconcile import _signal_commits
+    except ImportError:
+        return
+
+    repos = [r for r in (mr, project_root) if r is not None]
+
     for ticket_id in ticket_ids:
-        has_commits = False
-        if mr is not None:
-            has_commits = _has_productive_commits(project_root, mr, None)
-        if has_commits:
+        if any(_signal_commits(ticket_id, repo) for repo in repos):
             continue
         try:
             write_decision_record(
