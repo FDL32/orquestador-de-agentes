@@ -304,6 +304,67 @@ def _check_bus_vacio(project_root: Path, window_start: datetime | None) -> str:
     return "WARN"
 
 
+def _step_write_decision_records(project_root: Path, ticket_ids: list[str]) -> None:
+    """Write and commit decision records for tickets without commits.
+
+    WOT-2026-040w. Wires write_decision_record (check_handoff_committed.py)
+    into the closeout flow. When a flight stops without producing code, the
+    closeout writes a decision record and commits it so the handoff committed
+    check (prepush) finds a commit and passes.
+
+    Before: ticket_ids is non-empty, project_root is a git working tree.
+    During: For each ticket, checks if commits exist in the repos. If not,
+        writes a decision record via write_decision_record and commits it.
+    After: The working tree has decision records committed for stopped tickets.
+    """
+    try:
+        from scripts.check_handoff_committed import write_decision_record
+    except ImportError:
+        return
+
+    try:
+        from runtime.motor_link import resolve_motor_root as _rmr
+
+        mr = _rmr(project_root)
+    except ImportError:
+        mr = None
+
+    for ticket_id in ticket_ids:
+        has_commits = False
+        if mr is not None:
+            has_commits = _has_productive_commits(project_root, mr, None)
+        if has_commits:
+            continue
+        try:
+            write_decision_record(
+                worktree=project_root,
+                ticket=ticket_id,
+                state="STOPPED",
+                cause_type="UNCLASSIFIED",
+                summary="Flight stopped without code commits (session closeout)",
+                evidence=["closeout: no commits found for resolved ticket"],
+            )
+            subprocess.run(  # noqa: S603
+                ["git", "add", "--", f".flight-decision/{ticket_id}.json"],  # noqa: S607
+                cwd=project_root,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "git",
+                    "commit",
+                    "-m",
+                    f"{ticket_id}: decision record (flight stopped)",
+                ],
+                cwd=project_root,
+                capture_output=True,
+                timeout=30,
+            )
+        except Exception:  # noqa: S110
+            pass
+
+
 def _detect_tickets_in_window(
     events: list[dict[str, Any]],
     window_start: datetime | None,
@@ -1162,6 +1223,12 @@ def run_closeout(
             project_root, ticket_ids, _window_start, dry_run
         )
     )
+    # WOT-2026-040w: wire write_decision_record for flights that stopped without
+    # commits. Without this, the handoff committed check (prepush) rejects the
+    # closeout because the working tree is dirty (decision files written but not
+    # committed) or there is no commit to audit (F7: work in limbo).
+    if ticket_ids and not dry_run:
+        _step_write_decision_records(project_root, ticket_ids)
     prepush = _step_prepush_check(project_root, dry_run, skip_gates=skip_gates)
     report.steps.append(prepush)
     if prepush.status == "FAIL":
