@@ -249,6 +249,61 @@ def _resolve_session_window(
     return None, "no events or reports found"
 
 
+def _has_productive_commits(
+    project_root: Path,
+    motor_root: Path,
+    window_start: datetime | None,
+) -> bool:
+    """Check if there are productive commits in either repo after window_start.
+
+    WOT-2026-040e. Detects the 'BUS VACIO' scenario: commits exist but the
+    event bus has 0 events for them. Used to distinguish a maintenance session
+    (no commits, no events -> legitimate) from a session with productive work
+    that failed to emit events (commits exist, 0 events -> blocking).
+
+    Before: motor_root is resolvable, window_start may be None.
+    During: Runs ``git log --oneline --since=<window_start>`` in both motor
+        and destino repos, counting matching commits.
+    After: Returns True if at least one commit exists in either repo.
+    """
+    since_args: list[str] = []
+    if window_start is not None:
+        since_args = [f"--since={window_start.strftime('%Y-%m-%dT%H:%M:%S')}"]
+
+    for root in (motor_root, project_root):
+        try:
+            result = subprocess.run(  # noqa: S603
+                ["git", "log", "--oneline", *since_args],  # noqa: S607
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+    return False
+
+
+def _check_bus_vacio(project_root: Path, window_start: datetime | None) -> str:
+    """Check for BUS VACIO: productive commits but 0 events.
+
+    WOT-2026-040e. Returns 'FAIL' if commits exist but the bus has no events
+    (productive work not certified), 'WARN' if no commits exist (maintenance
+    session, legitimate).
+    """
+    try:
+        from runtime.motor_link import resolve_motor_root as _rmr
+
+        mr = _rmr(project_root)
+        if mr is not None and _has_productive_commits(project_root, mr, window_start):
+            return "FAIL"
+    except ImportError:
+        pass
+    return "WARN"
+
+
 def _detect_tickets_in_window(
     events: list[dict[str, Any]],
     window_start: datetime | None,
@@ -1090,19 +1145,16 @@ def run_closeout(
     elif _refused_stale:
         _resolve_status = "FAIL"
     else:
-        # Sesion de mantenimiento sin vuelo: no hay nada que certificar y eso
-        # es legitimo (DoD (d)). Sigue siendo WARN, no FAIL.
-        _resolve_status = "WARN"
+        _resolve_status = _check_bus_vacio(project_root, _window_start)
     report.steps.append(
         StepResult(
             name="resolve_tickets",
             status=_resolve_status,
             detail=f"Source: {ticket_src}. Tickets: {ticket_ids or 'none'}",
-            # `blocking` solo cuando hubo RECHAZO: `overall_status` escala a
-            # FAIL unicamente si el paso que falla es blocking (WOT-2026-013m),
-            # y ese contrato se respeta en vez de debilitar la agregacion. Un
-            # cierre de mantenimiento (WARN) no es blocking y sigue saliendo 0.
-            blocking=_refused_stale,
+            # `blocking` cuando hubo RECHAZO o BUS VACIO: `overall_status` escala
+            # a FAIL unicamente si el paso que falla es blocking (WOT-2026-013m).
+            # Un cierre de mantenimiento (WARN) no es blocking y sigue saliendo 0.
+            blocking=_refused_stale or (_resolve_status == "FAIL" and not ticket_ids),
         )
     )
     report.steps.append(

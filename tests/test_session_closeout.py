@@ -801,6 +801,65 @@ class TestRunCloseout:
         assert "| resolve_tickets | WARN |" in content
         assert result == 0
 
+    def test_bus_vacio_commits_without_events_is_fail(self, tmp_path: Path) -> None:
+        """WOT-2026-040e (BUS VACIO): productive commits but 0 events -> FAIL.
+
+        A session that delivered commits but emitted zero events to the bus
+        must NOT silently certify. The discriminant is: commits exist in the
+        repos after window_start, but the bus has no matching events.
+        """
+        import subprocess as _sp
+        from unittest.mock import patch
+
+        repo = tmp_path
+        repo.mkdir(parents=True, exist_ok=True)
+        _sp.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "config", "user.email", "t@e.com"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        _sp.run(
+            ["git", "config", "user.name", "T"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        (repo / "README.md").write_text("# repo")
+        _sp.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        # Productive commit AFTER window would start
+        (repo / "src.py").write_text("x = 1")
+        _sp.run(["git", "add", "src.py"], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "CTL-2026-999: productive work"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        # No events.jsonl -> 0 events
+
+        tickets, _src = _resolve_tickets(tmp_path, None)
+        assert tickets == []
+
+        # Mock resolve_motor_root to return tmp_path (so git log searches there)
+        with patch(
+            "runtime.motor_link.resolve_motor_root",
+            return_value=tmp_path,
+        ):
+            result = run_closeout(tmp_path, dry_run=True)
+        report_path = _generated_report_path(tmp_path, dry_run=True)
+        content = report_path.read_text(encoding="utf-8")
+
+        assert "| resolve_tickets | FAIL |" in content
+        assert result == 1
+
     def test_unverified_blocking_gate_never_aggregates_to_pass(self) -> None:
         """WOT-2026-040y: an unverified blocking gate can never read as PASS.
 
