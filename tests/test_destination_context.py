@@ -454,8 +454,23 @@ def test_handoff_blocked_absent_bus(tmp_path):
 
 
 def _init_git_repo(root: Path) -> None:
-    """Init a REAL (non-shallow) git repo with a working commit graph."""
-    subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+    """Init a REAL (non-shallow) git repo with a working commit graph.
+
+    WOT-2026-047j: la rama se fija con ``--initial-branch=main`` en vez de
+    heredar el default del entorno. Sin esto, el nombre de la rama depende de
+    ``init.defaultBranch``, que NO es el mismo en la maquina de desarrollo (donde
+    suele estar en ``main``) que en CI (donde ausente => ``master``): el fixture
+    creaba ``master`` y el ``git push origin main`` de ``_make_motor_repo``
+    moria con ``src refspec main does not match any``, tumbando 10 tests que
+    pasaban en local. El fixture debe fijar su propio universo, no leerlo del
+    host.
+    """
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"],
         cwd=root,
@@ -505,7 +520,7 @@ def _make_motor_repo(tmp_path: Path) -> tuple[Path, str, str]:
     bare_origin = tmp_path / "origin.git"
     bare_origin.mkdir()
     subprocess.run(
-        ["git", "init", "--bare"],
+        ["git", "init", "--bare", "--initial-branch=main"],
         cwd=bare_origin,
         capture_output=True,
         check=True,
