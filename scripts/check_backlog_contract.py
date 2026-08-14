@@ -1017,6 +1017,82 @@ def validate_archive_states(root: Path) -> list[str]:
     return errors
 
 
+# WOT-2026-053d: terminal states that REQUIRE landing evidence (commit:<sha>).
+# States like "absorbed" or "not-pursued" legitimately have "-" (no landing).
+_STATES_REQUIRING_LANDING = frozenset(
+    {
+        "completed",
+        "done",
+        "closed",
+        "superseded",
+        "blocked-final",
+    }
+)
+
+
+def _archive_row_reactivation(cells: list[str]) -> str:
+    """Locate the Reactivation cell of an archived row, tolerating pipe-shifted rows.
+
+    Uses the same shift detection as ``_archive_row_state``: if cells[4]
+    contains a Scope-shaped slug (``/``), the row is pipe-shifted and
+    Reactivation moves one slot right.
+
+    Normal layout (after strip+split): ``[Priority, Ticket, Title, Scope,
+    State, Depende, Origen, Reactivation]`` -- Reactivation at index 7.
+    Shifted layout: ``[Priority, Ticket, Title1, Title2, Scope, State,
+    Depende, Origen, Reactivation]`` -- Reactivation at index 8.
+    """
+    idx = 8 if len(cells) > 4 and "/" in cells[4].lower() else 7
+    if len(cells) > idx:
+        return cells[idx].strip()
+    return "-"
+
+
+def validate_archive_landing_evidence(root: Path) -> list[str]:
+    """Return violations for terminal rows lacking landing evidence.
+
+    Before: ``root`` is the destino root; the archive may or may not exist.
+    During: reads Prioridad-led rows from ``_archive/backlog_done.md``. For
+        each row whose state is in ``_STATES_REQUIRING_LANDING``, checks
+        that the Reactivation column contains ``commit:<sha>`` or
+        ``external:<ref>`` -- i.e. evidence of where the work landed.
+        Rows with state ``absorbed``/``not-pursued`` legitimately carry
+        ``-`` (no landing) and are not flagged.
+    After: one error per terminal row without landing evidence. No mutation.
+    """
+    collab = root / ".agent" / "collaboration"
+    archive = collab / "_archive" / "backlog_done.md"
+    if not archive.exists():
+        return []
+
+    errors: list[str] = []
+    for line in archive.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        tid = _row_ticket_id(stripped)
+        if tid is None:
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) <= 4:
+            continue  # sin celda de Estado que auditar
+        state = _archive_row_state(cells)
+        if state not in _STATES_REQUIRING_LANDING:
+            continue
+        reactivation = _archive_row_reactivation(cells)
+        has_landing = (
+            reactivation.startswith("commit:")
+            or reactivation.startswith("external:")
+            or reactivation.startswith("condition:")
+        )
+        if not has_landing:
+            errors.append(
+                f"{tid}: archived row with terminal state '{state}' has no landing "
+                f"evidence in Reactivation column ('{reactivation}'). Expected "
+                f"'commit:<sha>' or 'external:<ref>' -- a terminal row without "
+                f"landing evidence violates the transfer contract (WOT-2026-026t)."
+            )
+    return errors
+
+
 def _terminal_ticket_states(archive: Path) -> dict[str, str]:
     """Map ticket id -> terminal state for every archived Prioridad-led row.
 
@@ -1178,6 +1254,8 @@ def main(argv: list[str] | None = None) -> int:
     violations = violations + validate_archive_row_arity(root)
     # WOT-2026-026t: archived rows must not keep a non-terminal (live) state.
     violations = violations + validate_archive_states(root)
+    # WOT-2026-053d: terminal rows must have landing evidence.
+    violations = violations + validate_archive_landing_evidence(root)
     # WOT-2026-049c: una fila VIVA no puede depender de un ticket ya cerrado.
     violations = violations + validate_live_dependencies(root)
     if violations:

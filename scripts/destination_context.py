@@ -96,14 +96,20 @@ def resolve_motor_link(project_root: Path) -> dict | None:
         return None
 
 
-def _resolve_motor_head(motor_link: dict) -> tuple[str | None, str | None]:
-    """Resolve the motor's current HEAD from the link.
+def _resolve_motor_head(
+    motor_link: dict, ref: str = "HEAD"
+) -> tuple[str | None, str | None]:
+    """Resolve the motor's current ref from the link.
 
-    Returns (head_sha, warn): exactly one is non-None. `warn` is a soft WARN
+    Returns (ref_sha, warn): exactly one is non-None. `warn` is a soft WARN
     string when the motor_root is missing/absent/unresolvable (benign, never
-    fatal); `head_sha` is the resolved HEAD otherwise. Extracted from
+    fatal); `ref_sha` is the resolved ref otherwise. Extracted from
     compute_motor_drift to keep that function under the complexity cap
     (WOT-2026-024j).
+
+    WOT-2026-047j: `ref` defaults to "HEAD" for backward compatibility but
+    callers may pass "origin/main" to compare against the published state
+    rather than the local checkout.
     """
     motor_root_raw = motor_link.get("motor_root")
     if not motor_root_raw:
@@ -117,14 +123,14 @@ def _resolve_motor_head(motor_link: dict) -> tuple[str | None, str | None]:
         )
 
     head_result = subprocess.run(  # noqa: S603
-        ["git", "-C", str(motor_root), "rev-parse", "HEAD"],  # noqa: S607
+        ["git", "-C", str(motor_root), "rev-parse", ref],  # noqa: S607
         capture_output=True,
         text=True,
         timeout=10,
     )
     head = head_result.stdout.strip() if head_result.returncode == 0 else ""
     if not head:
-        return None, "[WARN] motor drift: no se pudo resolver HEAD del motor actual"
+        return None, (f"[WARN] motor drift: no se pudo resolver {ref} del motor actual")
     return head, None
 
 
@@ -147,21 +153,28 @@ def compute_motor_drift(motor_link: dict) -> str | None:
     Before: motor_link is the parsed motor_destination_link.json dict (may
             or may not have a 'motor_root' / 'motor_sha' key; may be stale
             or hand-edited).
-    During: Resolves the motor's current HEAD sha (via `git -C <motor_root>
-            rev-parse HEAD`) and compares it against the sha pinned in the
-            link, following an ordered guard chain so that no combination of
-            missing/unresolvable/non-ancestor shas can ever raise or leave
-            this function propagating an exception:
+    During: Resolves the motor's origin/main sha (via `git -C <motor_root>
+            rev-parse origin/main`) and compares it against the sha pinned
+            in the link, following an ordered guard chain so that no
+            combination of missing/unresolvable/non-ancestor shas can ever
+            raise or leave this function propagating an exception:
               1. motor_sha absent/falsy/"unknown" -> soft WARN, skip.
               2. motor_sha present but not resolvable in the motor repo
                  (`git cat-file -t <sha>` fails) -> soft WARN, skip. This
                  guard exists because `git rev-list --count <bad>..HEAD`
                  raises `fatal: Invalid revision range` for an unresolvable
                  sha -- verified by probe before writing this guard.
-              3. motor_sha == current HEAD -> up to date, no WARN (None).
-              4. motor_sha is a valid ancestor different from HEAD -> WARN
-                 with the exact commit count via `git rev-list --count
-                 <sha>..HEAD`.
+              3. motor_sha == origin/main -> up to date, no WARN (None).
+              4. motor_sha is a valid ancestor different from origin/main
+                 -> WARN with the exact commit count via
+                 `git rev-list --count <sha>..origin/main`.
+
+    WOT-2026-047j: compare against `origin/main` (published state) instead
+    of HEAD (local checkout). HEAD may include unpushed local commits that
+    don't represent what the destination actually consumes. The WARN message
+    now names `origin/main` explicitly and includes the consumed motor_sha
+    so gate failures can distinguish "stale motor" from "missing mechanism".
+
     After: Returns a one-line WARN string to print, or None when there is
            nothing to warn about (up to date, or drift could not be
            determined for a benign reason already reported elsewhere).
@@ -179,9 +192,10 @@ def compute_motor_drift(motor_link: dict) -> str | None:
                 "(se actualiza en el proximo sync)"
             )
 
-        head, head_warn = _resolve_motor_head(motor_link)
-        if head_warn is not None:
-            return head_warn
+        # WOT-2026-047j: compare against origin/main (published), not HEAD.
+        origin_main, origin_warn = _resolve_motor_head(motor_link, ref="origin/main")
+        if origin_warn is not None:
+            return origin_warn
 
         motor_root = str(motor_link["motor_root"])
         unresolvable = (
@@ -193,10 +207,10 @@ def compute_motor_drift(motor_link: dict) -> str | None:
             return unresolvable
 
         # Guard 3: already up to date.
-        if str(motor_sha) == head:
+        if str(motor_sha) == origin_main:
             return None
 
-        # Guard 4: valid, different -> count commits behind.
+        # Guard 4: valid, different -> count commits behind origin/main.
         count_result = subprocess.run(  # noqa: S603
             [  # noqa: S607
                 "git",
@@ -204,7 +218,7 @@ def compute_motor_drift(motor_link: dict) -> str | None:
                 motor_root,
                 "rev-list",
                 "--count",
-                f"{motor_sha}..{head}",
+                f"{motor_sha}..{origin_main}",
             ],
             capture_output=True,
             text=True,
@@ -218,8 +232,9 @@ def compute_motor_drift(motor_link: dict) -> str | None:
         if n <= 0:
             return None
         return (
-            f"[WARN] motor drift: {n} commits detras "
-            f"(link_sha={str(motor_sha)[:12]} vs HEAD={head[:12]})"
+            f"[WARN] motor drift: {n} commits detras de origin/main "
+            f"(motor_sha={str(motor_sha)[:12]} consumed, "
+            f"origin/main={origin_main[:12]})"
         )
     except Exception:
         # This is a SIGNAL, not a gate: never propagate, never affect exit code.

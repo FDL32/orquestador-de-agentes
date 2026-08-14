@@ -1279,3 +1279,98 @@ def test_048g_new_row_with_invalid_type_fails(tmp_path) -> None:
     assert len(dt_errors) == 1, (
         f"Expected 1 deliverable_type error for invalid value, got {len(dt_errors)}: {errors}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-053d: validate_archive_landing_evidence
+# ---------------------------------------------------------------------------
+
+
+def _archive_row_with_reactivation(ticket: str, estado: str, reactivation: str) -> str:
+    """Prioridad-led archive row with explicit Reactivation column."""
+    return (
+        f"| Media | {ticket} | titulo | motor/scope | {estado}"
+        f" | - | origen | {reactivation} |"
+    )
+
+
+def test_053d_completed_without_commit_is_violation(tmp_path) -> None:
+    """completed + Reactivation='-' -> VIOLATION: no landing evidence."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row_with_reactivation("WOT-2026-053d", "completed", "-") + "\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_archive_landing_evidence(tmp_path)
+    assert len(errors) == 1
+    assert "no landing evidence" in errors[0]
+    assert "WOT-2026-053d" in errors[0]
+
+
+def test_053d_completed_with_commit_passes(tmp_path) -> None:
+    """completed + commit:<sha> -> PASS: landing evidence present."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row_with_reactivation("WOT-2026-053d", "completed", "commit:abc1234")
+        + "\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_landing_evidence(tmp_path) == []
+
+
+def test_053d_absorbed_with_dash_passes(tmp_path) -> None:
+    """absorbed + '-' -> PASS: legitimately no landing (absorbed by another)."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row_with_reactivation("WOT-2026-053d", "absorbed", "-") + "\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_landing_evidence(tmp_path) == []
+
+
+def test_053d_completed_with_external_passes(tmp_path) -> None:
+    """completed + external:<ref> -> PASS: external landing evidence."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row_with_reactivation(
+            "WOT-2026-053d", "completed", "external:upstream-pr"
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_landing_evidence(tmp_path) == []
+
+
+def test_053d_pending_state_skipped(tmp_path) -> None:
+    """pending is NOT a terminal state -> skipped (not in _STATES_REQUIRING_LANDING)."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row_with_reactivation("WOT-2026-053d", "pending", "-") + "\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_landing_evidence(tmp_path) == []
+
+
+def test_053d_no_archive_passes(tmp_path) -> None:
+    """No archive file -> no violations (idempotent)."""
+    assert cbc.validate_archive_landing_evidence(tmp_path) == []
+
+
+def test_053d_mutation_guard(tmp_path) -> None:
+    """Mutation-to-prove: if _STATES_REQUIRING_LANDING were emptied, this test
+    goes red (completed without commit would pass)."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        _archive_row_with_reactivation("WOT-2026-053d", "completed", "-") + "\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_archive_landing_evidence(tmp_path)
+    assert len(errors) == 1, (
+        "Mutation guard: emptying _STATES_REQUIRING_LANDING should cause this test to fail"
+    )

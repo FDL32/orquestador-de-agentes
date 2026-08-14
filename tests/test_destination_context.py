@@ -491,35 +491,57 @@ def _commit(root: Path, filename: str, content: str) -> str:
 
 
 def _make_motor_repo(tmp_path: Path) -> tuple[Path, str, str]:
-    """Build a real git repo with 2 commits.
+    """Build a real git repo with 2 commits and an origin/main reference.
 
-    Returns (motor_root, old_sha, head_sha).
+    Returns (motor_root, old_sha, origin_main_sha).
+    The origin is a bare repo so that ``origin/main`` resolves locally.
     """
     motor_root = tmp_path / "motor"
     motor_root.mkdir()
     _init_git_repo(motor_root)
     old_sha = _commit(motor_root, "a.txt", "1")
     head_sha = _commit(motor_root, "b.txt", "2")
+    # WOT-2026-047j: create a bare origin so origin/main is resolvable.
+    bare_origin = tmp_path / "origin.git"
+    bare_origin.mkdir()
+    subprocess.run(
+        ["git", "init", "--bare"],
+        cwd=bare_origin,
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare_origin)],
+        cwd=motor_root,
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "origin", "main"],
+        cwd=motor_root,
+        capture_output=True,
+        check=True,
+    )
     return motor_root, old_sha, head_sha
 
 
 def test_compute_motor_drift_old_sha_gives_warn_with_count(tmp_path):
-    """Guard 4: link_sha is a valid ancestor != HEAD -> WARN with commit count."""
-    motor_root, old_sha, head_sha = _make_motor_repo(tmp_path)
+    """Guard 4: link_sha is a valid ancestor != origin/main -> WARN with commit count."""
+    motor_root, old_sha, origin_main_sha = _make_motor_repo(tmp_path)
     link = {"motor_root": str(motor_root), "motor_sha": old_sha}
 
     warning = compute_motor_drift(link)
 
     assert warning is not None
-    assert "1 commits detras" in warning
+    assert "1 commits detras de origin/main" in warning
     assert old_sha[:12] in warning
-    assert head_sha[:12] in warning
+    assert origin_main_sha[:12] in warning
 
 
 def test_compute_motor_drift_head_sha_no_warn(tmp_path):
-    """Guard 3: link_sha == HEAD -> no drift, returns None."""
-    motor_root, _old_sha, head_sha = _make_motor_repo(tmp_path)
-    link = {"motor_root": str(motor_root), "motor_sha": head_sha}
+    """Guard 3: link_sha == origin/main -> no drift, returns None."""
+    motor_root, _old_sha, origin_main_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root), "motor_sha": origin_main_sha}
 
     assert compute_motor_drift(link) is None
 
@@ -571,10 +593,40 @@ def test_compute_motor_drift_mutation_guard(tmp_path):
     assert compute_motor_drift(link) is not None
 
 
+def test_compute_motor_drift_names_distance_and_sha(tmp_path):
+    """WOT-2026-047j DoD(3): a stale motor fixture produces a WARN that
+    NOMBRA la distancia (commit count) AND the consumed motor_sha, so
+    gate failures can distinguish 'stale motor' from 'missing mechanism'."""
+    motor_root, old_sha, _origin_main_sha = _make_motor_repo(tmp_path)
+    link = {"motor_root": str(motor_root), "motor_sha": old_sha}
+
+    warning = compute_motor_drift(link)
+
+    assert warning is not None
+    # Must name the distance (commit count).
+    assert "1 commits detras de origin/main" in warning
+    # Must name the consumed motor_sha.
+    assert old_sha[:12] in warning
+    # Must name origin/main.
+    assert "origin/main" in warning
+
+
+def test_compute_motor_drift_compares_origin_main_not_head(tmp_path):
+    """WOT-2026-047j DoD(1): drift is measured against origin/main, not HEAD.
+    If motor_sha == origin/main but HEAD is ahead (unpushed commits), no WARN."""
+    motor_root, _old_sha, origin_main_sha = _make_motor_repo(tmp_path)
+    # Add a third commit that is local-only (not pushed to origin).
+    _commit(motor_root, "c.txt", "3")
+    # motor_sha == origin_main_sha -> should NOT warn despite HEAD being ahead.
+    link = {"motor_root": str(motor_root), "motor_sha": origin_main_sha}
+
+    assert compute_motor_drift(link) is None
+
+
 def test_main_bootstrap_emits_drift_warn_for_stale_link(tmp_path, capsys):
     """Full --bootstrap flow: a destination whose link pins an old motor_sha
     prints the drift WARN on stdout and exits 0 (signal, not a gate)."""
-    motor_root, old_sha, _head_sha = _make_motor_repo(tmp_path)
+    motor_root, old_sha, _origin_main_sha = _make_motor_repo(tmp_path)
 
     config_dir = tmp_path / ".agent" / "config"
     config_dir.mkdir(parents=True)
@@ -597,7 +649,7 @@ def test_main_bootstrap_emits_drift_warn_for_stale_link(tmp_path, capsys):
     assert exit_code == 0
     captured = capsys.readouterr()
     assert "motor drift" in captured.out
-    assert "1 commits detras" in captured.out
+    assert "1 commits detras de origin/main" in captured.out
 
     map_file = tmp_path / ".agent" / "context" / "destination_map.md"
     content = map_file.read_text(encoding="utf-8")
@@ -605,8 +657,8 @@ def test_main_bootstrap_emits_drift_warn_for_stale_link(tmp_path, capsys):
 
 
 def test_main_bootstrap_no_drift_warn_when_sha_matches_head(tmp_path, capsys):
-    """A link pinned to the CURRENT motor HEAD must not print a drift WARN."""
-    motor_root, _old_sha, head_sha = _make_motor_repo(tmp_path)
+    """A link pinned to the CURRENT origin/main must not print a drift WARN."""
+    motor_root, _old_sha, origin_main_sha = _make_motor_repo(tmp_path)
 
     config_dir = tmp_path / ".agent" / "config"
     config_dir.mkdir(parents=True)
@@ -614,7 +666,7 @@ def test_main_bootstrap_no_drift_warn_when_sha_matches_head(tmp_path, capsys):
         "motor_root": str(motor_root),
         "destination_root": str(tmp_path.resolve()),
         "motor_version": "9.17.1",
-        "motor_sha": head_sha,
+        "motor_sha": origin_main_sha,
         "destination_id": tmp_path.name,
         "ticket_prefix": "WOT",
         "created_at": "2026-07-19T00:00:00+00:00",
