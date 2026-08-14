@@ -526,6 +526,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         )
     try:
         from scripts.check_backlog_contract import (
+            validate_archive_landing_evidence,
             validate_archive_row_arity,
             validate_archive_states,
             validate_backlog,
@@ -533,6 +534,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         )
     except ImportError:
         from check_backlog_contract import (  # type: ignore[no-redef]
+            validate_archive_landing_evidence,
             validate_archive_row_arity,
             validate_archive_states,
             validate_backlog,
@@ -550,11 +552,20 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     # the closeout path (the automated one, where it matters) did not run it: an
     # adversarial pass caught that omission here. Same lesson, third time:
     # a guard nobody invokes is a norm, not a barrier.
+    # WOT-2026-054b: FOURTH time, same lesson, caught by a governance loop's
+    # filesystem lens. `validate_archive_landing_evidence` shipped in the
+    # standalone CLI only and was never wired here -- so the landing-evidence
+    # contract was a norm, not a barrier, exactly like the docstring above says
+    # was already learned three times. Wiring it required freezing the 86
+    # censused legacy rows first (_LANDING_EVIDENCE_LEGACY_BASELINE): this check
+    # is is_blocking=True, so wiring it without the baseline would have turned
+    # every closeout red.
     violations = (
         validate_backlog(backlog)
         + validate_live_archive_integrity(project_root)
         + validate_archive_row_arity(project_root)
         + validate_archive_states(project_root)
+        + validate_archive_landing_evidence(project_root)
     )
     if violations:
         detail = "\n".join(f"  - {v}" for v in violations)

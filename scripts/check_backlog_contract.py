@@ -1029,6 +1029,229 @@ _STATES_REQUIRING_LANDING = frozenset(
     }
 )
 
+# WOT-2026-054b: legacy baseline of ARCHIVED rows that lack landing evidence.
+# CENSUSED 2026-08-14 from the real workspace archive (86 rows out of 302 that
+# require evidence; the other 216 comply).
+#
+# ANCHORED BY PAIR (id, censused cell) -- deliberately the dict form of
+# _ARCHIVE_ARITY_LEGACY_BASELINE, NOT the frozenset-of-ids form of
+# _DELIVERABLE_TYPE_LEGACY_BASELINE. The reason is the one already measured and
+# documented at _ARCHIVE_ARITY_LEGACY_BASELINE: a bare id would exempt that
+# ticket FOREVER, so replacing a legacy row with a brand-new broken one under
+# the same id would pass silently. Here that risk is live, not theoretical: a
+# `completed` row with `-` can be rewritten in any closeout. Keying on the exact
+# cell means ANY change to it -- including "fixing" it to a different absence --
+# expels the row from the baseline and the guard bites.
+#
+# WHY FROZEN RATHER THAN BACKFILLED (measured 2026-08-14, 4-lens governance loop):
+#   - 66 rows carry '-'; 14 carry DISTILLED PROSE (a lesson learned, e.g.
+#     "un guard que aprueba lo que no puede verificar..."); 6 carry an HTML
+#     comment. The 20 non-'-' rows hold information that exists in NO other
+#     surface: overwriting them with a sha would DESTROY canonical memory to
+#     satisfy a regex.
+#   - Of the 86, only 38 have a single attributable commit. 35 have 2-3
+#     candidates (choosing = judgement, not extraction), 6 are merely mentioned
+#     by other tickets' commits, and 7 have no commit at all. A backfilled sha
+#     chosen by eye is INDISTINGUISHABLE from the 216 rows where the sha was
+#     written in the act -- it would degrade the evidentiary value of the whole
+#     column. An honest '-' is strictly better than a plausible guess.
+#   - A retroactive fix is also not inert: check_backlog_commits_landed.py
+#     CONSUMES `commit:<sha>` from this archive and verifies the object reaches
+#     origin/main. Backfilling invented shas would turn 86 silences into hard
+#     failures there.
+#
+# The invariant is "every archived terminal row NOT in this census carries
+# landing evidence" -- that does not expire. The number 86 is dated evidence,
+# never the acceptance criterion (AGENTS.md: "criterio invariante, evidencia
+# fechada"). The census can only SHRINK: repairing a row removes its entry.
+_LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
+    "WOT-2026-004b": "<!-- verificado: motor 9c7c91d. guard .git anclado a segmento (^",
+    "WOT-2026-008e": "-",
+    "WOT-2026-008j": "-",
+    "WOT-2026-010h": (
+        "<!-- verificado: motor 8dbfcda; 4 prompts (session/destination_bootstrap "
+        "+ audit_complete/audit_post_change) con formulacion canonica unica "
+        "(PREFIX se lee de AGENTS.md/CLAUDE.md; WOT-=motor only; verify via "
+        "--validate); diff +6/-2 dentro de FLT; nomenclatura exit 0, encoding "
+        "exit 0, validate 0/0; bus REVIEW_DECISION approve -> CLOSE_CONFIRMED "
+        "-> SUPERVISOR_CLOSED; decision artifact decision_WOT-2026-010h.json; "
+        "cierre canonico 2026-06-17. Non-finding investigado: --validate lee "
+        "Ticket prefix de PROJECT.md (agent_controller:1691) mientras la fuente "
+        "conceptual es AGENTS.md/CLAUDE.md; el contrato separa fuente-de-regla "
+        "de mecanismo-de-verificacion a proposito. Follow-up sugerido (no "
+        "bloqueante): si la fuente del prefijo migra a AGENTS.md/CLAUDE.md, "
+        "actualizar _validate_host_project_prefix. --> <!-- Origen historico: "
+        'la regla "el <PREFIX> de ticket es per-project, no universal" esta '
+        "fijada en codigo (bus/ticket_id.py: (?:WP"
+    ),
+    "WOT-2026-010m": (
+        "<!-- Fase 2, alto riesgo por estado compartido. Objetivo: probar "
+        "paralelizacion solo en subset unitario puro y demostrar que no pisa "
+        ".agent, tmp_path, cwd ni locks. No activar por defecto hasta barrera "
+        "anti state-leak verde. -->"
+    ),
+    "WOT-2026-011a": (
+        "<!-- follow-up estrechado y congelado: 010u ya bloquea el rename sin "
+        "commit en pre-handoff/validate, pero 011d demostro que --session-close "
+        "aun puede dejar el limbo y trasladar la contaminacion al ticket "
+        "siguiente. V1: post-condicion fail-closed en closeout_steps/archival o "
+        "session_closeout que nombre origen/destino + comando exacto de "
+        "reconcile. NO auto-commit del archivador en este ticket. -->"
+    ),
+    "WOT-2026-011b": "-",
+    "WOT-2026-011c": (
+        "<!-- recurre 008f/008k/008j/010w. 010v detecta control chars <32 "
+        "(defensa-en-profundidad) pero la FUENTE que inyecta BOM+CR-stray en "
+        ".md NO esta verificada (sospechas: PowerShell heredoc, launcher, "
+        "pre-commit). SPIKE primero: identificar la fuente con evidencia antes "
+        "de proponer cualquier fix; nace abierto si se salta el spike. Decidir "
+        "despues si hay fix de fuente o si 010v ya es suficiente. -->"
+    ),
+    "WOT-2026-011g": "-",
+    "WOT-2026-011h": "-",
+    "WOT-2026-011j": "-",
+    "WOT-2026-012a": "-",
+    "WOT-2026-013a": "-",
+    "WOT-2026-013c": "-",
+    "WOT-2026-013d": "-",
+    "WOT-2026-014a": "-",
+    "WOT-2026-014b": "-",
+    "WOT-2026-014c": "-",
+    "WOT-2026-014d": "-",
+    "WOT-2026-014e": "-",
+    "WOT-2026-014f": "-",
+    "WOT-2026-014g": "-",
+    "WOT-2026-014h": "-",
+    "WOT-2026-014i": "-",
+    "WOT-2026-014j": "-",
+    "WOT-2026-014m": "-",
+    "WOT-2026-014n": "-",
+    "WOT-2026-014o": "-",
+    "WOT-2026-014p": "-",
+    "WOT-2026-014q": "-",
+    "WOT-2026-014s": "-",
+    "WOT-2026-014t": "-",
+    "WOT-2026-014u": "-",
+    "WOT-2026-014v": "-",
+    "WOT-2026-015a": "-",
+    "WOT-2026-015b": "-",
+    "WOT-2026-015c": "-",
+    "WOT-2026-015d": "-",
+    "WOT-2026-015e": "-",
+    "WOT-2026-015f": "-",
+    "WOT-2026-015g": "-",
+    "WOT-2026-015h": "-",
+    "WOT-2026-015j": "-",
+    "WOT-2026-015l": "-",
+    "WOT-2026-015n": "-",
+    "WOT-2026-015o": "-",
+    "WOT-2026-015p": "-",
+    "WOT-2026-016b": "-",
+    "WOT-2026-016c": "-",
+    "WOT-2026-016d": "-",
+    "WOT-2026-016g": "-",
+    "WOT-2026-016j": "-",
+    "WOT-2026-016m": "-",
+    "WOT-2026-016o": "-",
+    "WOT-2026-016p": "-",
+    "WOT-2026-016s": "-",
+    "WOT-2026-016t": "-",
+    "WOT-2026-016u": "-",
+    "WOT-2026-016w": "-",
+    "WOT-2026-018a": "-",
+    "WOT-2026-018b": "-",
+    "WOT-2026-019a": "-",
+    "WOT-2026-019b": "-",
+    "WOT-2026-019c": "-",
+    "WOT-2026-019d": "-",
+    "WOT-2026-019i": "-",
+    "WOT-2026-020q": (
+        "una mutation solo tiene dientes si un test puede ALCANZAR la rama que "
+        "muta: la que prescribia la ficha pasaba verde en _dev con y sin fix "
+        "porque el directorio vive en OTRA worktree. Y el guard vigilaba la "
+        "subcadena equivocada mientras era ciego al nucleo del motor"
+    ),
+    "WOT-2026-021k": (
+        "el guard aprobaba lo que no podia verificar; DOS barreras separadas, "
+        "cada una con su mutacion"
+    ),
+    "WOT-2026-023i": (
+        "3 agentes no hallaron el estado operativo: la causa era un campo null"
+    ),
+    "WOT-2026-023n": ("adquirir y liberar usaban criterios de propiedad distintos"),
+    "WOT-2026-023q": (
+        "un guard que aprueba lo que no puede verificar: OK_BY_SUBJECT tapaba "
+        "un commit sin pushear"
+    ),
+    "WOT-2026-023r": (
+        "el test llamaba bug a una reentrada legitima Y ocultaba un TOCTOU "
+        "real: era ambiguo, no falso"
+    ),
+    "WOT-2026-023s": (
+        "Review 2 cazo que la mitad cross-process del fix no tenia barrera"
+    ),
+    "WOT-2026-023x": (
+        "el plan-audit PRE-Builder tumbo el plan original: mover el out_dir "
+        "habria DECIDIDO la politica de 021f y ademas habria enmascarado la "
+        "mutacion (C1 tapaba a C2, mutation sin dientes). Y Review 2 cazo que "
+        "corri ruff check pero NO ruff format --check: el gate del DoD-7 y del "
+        "CI eran DOS, no uno"
+    ),
+    "WOT-2026-024d": (
+        "un fix que cubre UN vector de dos es un falso-verde con los tests en "
+        "verde: los tests median copy_tree mientras el dano vivia en "
+        "prune_residues. Lo caza el PLAN-AUDIT, antes de construir; y la "
+        "AUDITORIA HERMANA caza lo que el autor se auto-certifica despues."
+    ),
+    "WOT-2026-024o": (
+        "el criterio de limpieza depende de la RUTA DE ADOPCION: 'no viaja a "
+        "instalacion' (MANIFEST) NO implica 'no viaja al clon' (git ls-files). "
+        "Dos discriminantes distintos; medir el que corresponde a la ruta real. "
+        "NIT vivo: el advisory de orchestrator_session_close_full_audit.md:68 "
+        "quedo STALE describiendo el estado viejo (follow-up documental, fuera "
+        "de scope por NON-GOALS)."
+    ),
+    "WOT-2026-024s": (
+        "el patron sistemico del repo: el guard existe, funciona, es "
+        "fail-closed Y NO ESTA ENCHUFADO (igual que el write-guard de 024f, "
+        "check_motor_pristine --check de 023y y la barrera 3 de 024b). "
+        "Escribir el guard es la mitad del trabajo; cablearlo es la otra mitad"
+    ),
+    "WOT-2026-024z": (
+        "una norma no es un mecanismo: la regla estaba escrita en el prompt de "
+        "cierre 3.5 y nadie la imponia. El guard BLOQUEO su propio commit hasta "
+        "que 025e limpio la fuga -> guard con dientes reales. checkout_princ NO "
+        "es aguja: el nombre del repo es identidad, no fuga (47 falsos rojos "
+        "evitados)."
+    ),
+    "WOT-2026-025a": (
+        "un DoD puede ser el falso-verde: el patron de verificacion que la "
+        "ficha PRESCRIBE puede ser mas estrecho que el defecto que dice cazar "
+        "(case-sensitive vs real, enumeracion 10 vs 20 medidas). Auditar el DoD "
+        "como PREMISA, no como autoridad. Corolario: al migrar un fixture, "
+        "input y assert-negativo van EN PAREJA o el assert se vuelve VACUO "
+        "(pasa siempre, protege nada)."
+    ),
+    "WOT-2026-025e": (
+        "024z declaro el motor agnostico midiendo UNA aguja (verde que no "
+        "gano); 025e amplio a 4 agujas + denominador cerrado. El denominador "
+        "roto (35% auditado) era el defecto de 024c en el propio probe: un "
+        "guard sin denominador salta en silencio."
+    ),
+    "WOT-2026-039m": (
+        "<!-- verificado: commit:816f4dc; mutation x2 (cruce-superficies + IDF) "
+        "0->1->0; dogfooding corpus real 583 entradas, 4/4 casos listan su "
+        "duplicado; DEFAULT_TOP=5 = borde N=3 de meseta medida, cota superior "
+        "abierta; CONTRACT_AUDIT CHANGESx3 aplicados -> MANAGER_REVIEW "
+        "APPROVEx3; suite 4819 passed/47 skipped @816f4dc==HEAD -->"
+    ),
+    "WOT-2026-044o": "-",
+    "WOT-2026-044q": "-",
+    "WOT-2026-045a": "-",
+    "WOT-2026-045b": "-",
+    "WOT-2026-047h": "-",
+}
+
 
 def _archive_row_reactivation(cells: list[str]) -> str:
     """Locate the Reactivation cell of an archived row, tolerating pipe-shifted rows.
@@ -1084,6 +1307,11 @@ def validate_archive_landing_evidence(root: Path) -> list[str]:
             or reactivation.startswith("condition:")
         )
         if not has_landing:
+            # WOT-2026-054b: exempt ONLY the censused legacy pair (id, cell).
+            # Keyed on the exact cell, so any rewrite of the row -- including
+            # swapping one absence for another -- falls through and fails.
+            if _LANDING_EVIDENCE_LEGACY_BASELINE.get(tid) == reactivation:
+                continue
             errors.append(
                 f"{tid}: archived row with terminal state '{state}' has no landing "
                 f"evidence in Reactivation column ('{reactivation}'). Expected "

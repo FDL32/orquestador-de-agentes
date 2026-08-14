@@ -127,3 +127,85 @@ def test_closeout_gate_catches_archived_row_with_live_state(tmp_path: Path) -> N
     assert result.passed is False, "el gate de closeout debe BLOQUEAR la fuga inversa"
     assert result.is_blocking is True
     assert "NON-terminal state 'pending'" in result.output
+
+
+def test_closeout_gate_catches_terminal_row_without_landing_evidence(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-054b: CUARTA vez el mismo patron -- guard escrito, guard sin cablear.
+
+    `validate_archive_landing_evidence` se entrego SOLO en la CLI standalone:
+    `run_backlog_contract_check` importaba cuatro validadores y este no estaba
+    entre ellos, asi que el contrato de landing evidence era una NORMA, no una
+    barrera -- literalmente la leccion que el docstring de esa funcion dice
+    haber aprendido ya tres veces. Lo caso la lente-lector-FS de un bucle de
+    gobierno de 4 lentes (2026-08-14).
+
+    MUTACION ALCANZABLE: quitar `validate_archive_landing_evidence(project_root)`
+    de `run_backlog_contract_check` -> este test pasa a VERDE con la fila sin
+    evidencia, que es el falso verde que el ticket cierra.
+    """
+    import scripts.prepush_check as pc
+
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "## Vista rapida\n\n"
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    # Fila NUEVA (id fuera del censo legacy) archivada como terminal SIN aterrizaje.
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| Media | WOT-2026-0C1C | titulo | motor/scope | completed | - | origen | - |\n",
+        encoding="utf-8",
+    )
+
+    result = pc.run_backlog_contract_check(tmp_path)
+
+    assert result.passed is False, "una fila terminal sin aterrizaje debe BLOQUEAR"
+    assert result.is_blocking is True
+    assert "WOT-2026-0C1C" in result.output
+    assert "no landing evidence" in result.output
+
+
+def test_closeout_gate_exempts_censused_legacy_row(tmp_path: Path) -> None:
+    """WOT-2026-054b: el baseline legacy exime, pero SOLO el par (id, celda) censado.
+
+    Las 86 filas historicas sin aterrizaje se congelaron por PAR -- forma dict de
+    `_ARCHIVE_ARITY_LEGACY_BASELINE`, no frozenset de ids -- porque un id pelado
+    eximiria ese ticket PARA SIEMPRE: reescribir la fila con otra ausencia
+    distinta pasaria en silencio. Este test pinea ambas mitades del contrato.
+    """
+    import scripts.check_backlog_contract as cbc
+    import scripts.prepush_check as pc
+
+    censused_id, censused_cell = next(
+        (k, v) for k, v in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items() if v == "-"
+    )
+
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "## Vista rapida\n\n"
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    archive = collab / "_archive" / "backlog_done.md"
+
+    # (a) el par censado EXACTO -> exento.
+    archive.write_text(
+        f"| Media | {censused_id} | t | motor/s | completed | - | origen | {censused_cell} |\n",
+        encoding="utf-8",
+    )
+    assert pc.run_backlog_contract_check(tmp_path).passed is True
+
+    # (b) MISMO id, celda REESCRITA a otra ausencia -> el baseline NO lo cubre.
+    archive.write_text(
+        f"| Media | {censused_id} | t | motor/s | completed | - | origen | pendiente |\n",
+        encoding="utf-8",
+    )
+    result = pc.run_backlog_contract_check(tmp_path)
+    assert result.passed is False, "cambiar la celda censada debe expulsar del baseline"
+    assert censused_id in result.output
