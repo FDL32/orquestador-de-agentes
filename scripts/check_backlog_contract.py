@@ -1065,28 +1065,6 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
     "WOT-2026-004b": "<!-- verificado: motor 9c7c91d. guard .git anclado a segmento (^",
     "WOT-2026-008e": "-",
     "WOT-2026-008j": "-",
-    "WOT-2026-010h": (
-        "<!-- verificado: motor 8dbfcda; 4 prompts (session/destination_bootstrap "
-        "+ audit_complete/audit_post_change) con formulacion canonica unica "
-        "(PREFIX se lee de AGENTS.md/CLAUDE.md; WOT-=motor only; verify via "
-        "--validate); diff +6/-2 dentro de FLT; nomenclatura exit 0, encoding "
-        "exit 0, validate 0/0; bus REVIEW_DECISION approve -> CLOSE_CONFIRMED "
-        "-> SUPERVISOR_CLOSED; decision artifact decision_WOT-2026-010h.json; "
-        "cierre canonico 2026-06-17. Non-finding investigado: --validate lee "
-        "Ticket prefix de PROJECT.md (agent_controller:1691) mientras la fuente "
-        "conceptual es AGENTS.md/CLAUDE.md; el contrato separa fuente-de-regla "
-        "de mecanismo-de-verificacion a proposito. Follow-up sugerido (no "
-        "bloqueante): si la fuente del prefijo migra a AGENTS.md/CLAUDE.md, "
-        "actualizar _validate_host_project_prefix. --> <!-- Origen historico: "
-        'la regla "el <PREFIX> de ticket es per-project, no universal" esta '
-        "fijada en codigo (bus/ticket_id.py: (?:WP"
-    ),
-    "WOT-2026-010m": (
-        "<!-- Fase 2, alto riesgo por estado compartido. Objetivo: probar "
-        "paralelizacion solo en subset unitario puro y demostrar que no pisa "
-        ".agent, tmp_path, cwd ni locks. No activar por defecto hasta barrera "
-        "anti state-leak verde. -->"
-    ),
     "WOT-2026-011a": (
         "<!-- follow-up estrechado y congelado: 010u ya bloquea el rename sin "
         "commit en pre-handoff/validate, pero 011d demostro que --session-close "
@@ -1095,7 +1073,6 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
         "session_closeout que nombre origen/destino + comando exacto de "
         "reconcile. NO auto-commit del archivador en este ticket. -->"
     ),
-    "WOT-2026-011b": "-",
     "WOT-2026-011c": (
         "<!-- recurre 008f/008k/008j/010w. 010v detecta control chars <32 "
         "(defensa-en-profundidad) pero la FUENTE que inyecta BOM+CR-stray en "
@@ -1104,41 +1081,17 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
         "de proponer cualquier fix; nace abierto si se salta el spike. Decidir "
         "despues si hay fix de fuente o si 010v ya es suficiente. -->"
     ),
-    "WOT-2026-011g": "-",
     "WOT-2026-011h": "-",
-    "WOT-2026-011j": "-",
     "WOT-2026-012a": "-",
-    "WOT-2026-013a": "-",
     "WOT-2026-013c": "-",
-    "WOT-2026-013d": "-",
-    "WOT-2026-014a": "-",
-    "WOT-2026-014b": "-",
-    "WOT-2026-014c": "-",
-    "WOT-2026-014d": "-",
     "WOT-2026-014e": "-",
-    "WOT-2026-014f": "-",
-    "WOT-2026-014g": "-",
-    "WOT-2026-014h": "-",
     "WOT-2026-014i": "-",
-    "WOT-2026-014j": "-",
-    "WOT-2026-014m": "-",
-    "WOT-2026-014n": "-",
-    "WOT-2026-014o": "-",
-    "WOT-2026-014p": "-",
-    "WOT-2026-014q": "-",
     "WOT-2026-014s": "-",
-    "WOT-2026-014t": "-",
     "WOT-2026-014u": "-",
-    "WOT-2026-014v": "-",
     "WOT-2026-015a": "-",
     "WOT-2026-015b": "-",
-    "WOT-2026-015c": "-",
     "WOT-2026-015d": "-",
-    "WOT-2026-015e": "-",
     "WOT-2026-015f": "-",
-    "WOT-2026-015g": "-",
-    "WOT-2026-015h": "-",
-    "WOT-2026-015j": "-",
     "WOT-2026-015l": "-",
     "WOT-2026-015n": "-",
     "WOT-2026-015o": "-",
@@ -1162,23 +1115,12 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
     "WOT-2026-019c": "-",
     "WOT-2026-019d": "-",
     "WOT-2026-019i": "-",
-    "WOT-2026-020q": (
-        "una mutation solo tiene dientes si un test puede ALCANZAR la rama que "
-        "muta: la que prescribia la ficha pasaba verde en _dev con y sin fix "
-        "porque el directorio vive en OTRA worktree. Y el guard vigilaba la "
-        "subcadena equivocada mientras era ciego al nucleo del motor"
-    ),
     "WOT-2026-021k": (
         "el guard aprobaba lo que no podia verificar; DOS barreras separadas, "
         "cada una con su mutacion"
     ),
     "WOT-2026-023i": (
         "3 agentes no hallaron el estado operativo: la causa era un campo null"
-    ),
-    "WOT-2026-023n": ("adquirir y liberar usaban criterios de propiedad distintos"),
-    "WOT-2026-023q": (
-        "un guard que aprueba lo que no puede verificar: OK_BY_SUBJECT tapaba "
-        "un commit sin pushear"
     ),
     "WOT-2026-023r": (
         "el test llamaba bug a una reentrada legitima Y ocultaba un TOCTOU "
@@ -1187,32 +1129,11 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
     "WOT-2026-023s": (
         "Review 2 cazo que la mitad cross-process del fix no tenia barrera"
     ),
-    "WOT-2026-023x": (
-        "el plan-audit PRE-Builder tumbo el plan original: mover el out_dir "
-        "habria DECIDIDO la politica de 021f y ademas habria enmascarado la "
-        "mutacion (C1 tapaba a C2, mutation sin dientes). Y Review 2 cazo que "
-        "corri ruff check pero NO ruff format --check: el gate del DoD-7 y del "
-        "CI eran DOS, no uno"
-    ),
     "WOT-2026-024d": (
         "un fix que cubre UN vector de dos es un falso-verde con los tests en "
         "verde: los tests median copy_tree mientras el dano vivia en "
         "prune_residues. Lo caza el PLAN-AUDIT, antes de construir; y la "
         "AUDITORIA HERMANA caza lo que el autor se auto-certifica despues."
-    ),
-    "WOT-2026-024o": (
-        "el criterio de limpieza depende de la RUTA DE ADOPCION: 'no viaja a "
-        "instalacion' (MANIFEST) NO implica 'no viaja al clon' (git ls-files). "
-        "Dos discriminantes distintos; medir el que corresponde a la ruta real. "
-        "NIT vivo: el advisory de orchestrator_session_close_full_audit.md:68 "
-        "quedo STALE describiendo el estado viejo (follow-up documental, fuera "
-        "de scope por NON-GOALS)."
-    ),
-    "WOT-2026-024s": (
-        "el patron sistemico del repo: el guard existe, funciona, es "
-        "fail-closed Y NO ESTA ENCHUFADO (igual que el write-guard de 024f, "
-        "check_motor_pristine --check de 023y y la barrera 3 de 024b). "
-        "Escribir el guard es la mitad del trabajo; cablearlo es la otra mitad"
     ),
     "WOT-2026-024z": (
         "una norma no es un mecanismo: la regla estaba escrita en el prompt de "
@@ -1220,14 +1141,6 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
         "que 025e limpio la fuga -> guard con dientes reales. checkout_princ NO "
         "es aguja: el nombre del repo es identidad, no fuga (47 falsos rojos "
         "evitados)."
-    ),
-    "WOT-2026-025a": (
-        "un DoD puede ser el falso-verde: el patron de verificacion que la "
-        "ficha PRESCRIBE puede ser mas estrecho que el defecto que dice cazar "
-        "(case-sensitive vs real, enumeracion 10 vs 20 medidas). Auditar el DoD "
-        "como PREMISA, no como autoridad. Corolario: al migrar un fixture, "
-        "input y assert-negativo van EN PAREJA o el assert se vuelve VACUO "
-        "(pasa siempre, protege nada)."
     ),
     "WOT-2026-025e": (
         "024z declaro el motor agnostico midiendo UNA aguja (verde que no "
@@ -1244,7 +1157,6 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
     ),
     "WOT-2026-044o": "-",
     "WOT-2026-044q": "-",
-    "WOT-2026-045a": "-",
     "WOT-2026-045b": "-",
     "WOT-2026-047h": "-",
 }
