@@ -97,26 +97,24 @@ _TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
 # Anchored by PAIR (id, absence) following _ARCHIVE_ARITY_LEGACY_BASELINE pattern.
 # CENSUSED 2026-08-10 from the real workspace backlog. Any ticket id NOT in this
 # mapping must carry a deliverable_type substring; a NEW row without it fails.
-_DELIVERABLE_TYPE_LEGACY_BASELINE: frozenset[str] = frozenset(
-    {
-        "WOT-2026-002c",
-        "WT-2026-256a",
-        "WOT-2026-016q",
-        "WOT-2026-016r",
-        "WOT-2026-016v",
-        "WOT-2026-019t",
-        "WOT-2026-023j",
-        "WOT-2026-023k",
-        "WOT-2026-024p",
-        "WOT-2026-021j",
-        "WOT-2026-021a",
-        "WOT-2026-040v",
-        "WOT-2026-040w",
-        "WOT-2026-040z",
-        "WOT-2026-041d",
-        "WOT-2026-041e",
-    }
-)
+_DELIVERABLE_TYPE_LEGACY_BASELINE: dict[str, str] = {
+    "WOT-2026-002c": "absent",
+    "WT-2026-256a": "absent",
+    "WOT-2026-016q": "absent",
+    "WOT-2026-016r": "absent",
+    "WOT-2026-016v": "absent",
+    "WOT-2026-019t": "absent",
+    "WOT-2026-023j": "absent",
+    "WOT-2026-023k": "absent",
+    "WOT-2026-024p": "absent",
+    "WOT-2026-021j": "absent",
+    "WOT-2026-021a": "absent",
+    "WOT-2026-040v": "absent",
+    "WOT-2026-040w": "absent",
+    "WOT-2026-040z": "absent",
+    "WOT-2026-041d": "absent",
+    "WOT-2026-041e": "absent",
+}
 
 # Extrae ids de la celda `Depende de`, que admite PROSA junto al id (caso real:
 # `WOT-2026-026j [026h SATISFECHA ...]`), asi que un match anclado los perderia.
@@ -390,10 +388,9 @@ def validate_backlog(backlog_path: Path) -> list[str]:
         if react_err:
             errors.append(f"{ticket}: {react_err}")
         # WOT-2026-048g: require deliverable_type in new rows, exempt legacy.
-        if (
-            ticket not in _DELIVERABLE_TYPE_LEGACY_BASELINE
-            and not _DELIVERABLE_TYPE_RE.search(row)
-        ):
+        if _DELIVERABLE_TYPE_LEGACY_BASELINE.get(
+            ticket
+        ) is None and not _DELIVERABLE_TYPE_RE.search(row):
             errors.append(
                 f"{ticket}: live-queue row missing 'deliverable_type' "
                 f"(code|mixed|documentation|research|analysis). New rows "
