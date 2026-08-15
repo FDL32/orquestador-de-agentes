@@ -527,6 +527,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     try:
         from scripts.check_backlog_contract import (
             validate_archive_landing_evidence,
+            validate_archive_prose_preservation,
             validate_archive_row_arity,
             validate_archive_states,
             validate_backlog,
@@ -535,6 +536,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     except ImportError:
         from check_backlog_contract import (  # type: ignore[no-redef]
             validate_archive_landing_evidence,
+            validate_archive_prose_preservation,
             validate_archive_row_arity,
             validate_archive_states,
             validate_backlog,
@@ -566,6 +568,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         + validate_archive_row_arity(project_root)
         + validate_archive_states(project_root)
         + validate_archive_landing_evidence(project_root)
+        + validate_archive_prose_preservation(project_root)
     )
     if violations:
         detail = "\n".join(f"  - {v}" for v in violations)

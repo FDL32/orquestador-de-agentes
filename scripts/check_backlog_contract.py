@@ -1321,6 +1321,64 @@ def validate_archive_landing_evidence(root: Path) -> list[str]:
     return errors
 
 
+def _read_archive_reactivations(archive: Path) -> dict[str, str]:
+    """Map ticket id -> Reactivation cell for every Prioridad-led archived row."""
+    result: dict[str, str] = {}
+    for line in archive.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        tid = _row_ticket_id(stripped)
+        if tid is None:
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) <= 4:
+            continue
+        result[tid] = _archive_row_reactivation(cells)
+    return result
+
+
+def _is_prose_baseline(val: str) -> bool:
+    """True if the baseline value is prose (not dash, not HTML comment)."""
+    return val != "-" and not val.startswith("<!--")
+
+
+def validate_archive_prose_preservation(root: Path) -> list[str]:
+    """Return violations for censused rows whose distilled prose was destroyed.
+
+    Before: ``root`` is the destino root; the archive may or may not exist.
+    During: for every entry in ``_LANDING_EVIDENCE_LEGACY_BASELINE`` whose
+        value is prose (not ``-`` and not an HTML comment ``<!-- ... -->``),
+        checks that the corresponding Prioridad-led row in
+        ``_archive/backlog_done.md`` still contains that prose as a substring
+        in its Reactivation column.  A censused row whose Reactivation was
+        overwritten to bare ``commit:<sha>`` (destroying the prose) is an
+        ERROR, as is a censused row missing from the archive entirely.
+    After: one error per destroyed prose entry.  No mutation.
+    """
+    collab = root / ".agent" / "collaboration"
+    archive = collab / "_archive" / "backlog_done.md"
+    if not archive.exists():
+        return []
+
+    archive_reactivations = _read_archive_reactivations(archive)
+    errors: list[str] = []
+    for tid, censused_prose in _LANDING_EVIDENCE_LEGACY_BASELINE.items():
+        if not _is_prose_baseline(censused_prose):
+            continue
+        if tid not in archive_reactivations:
+            errors.append(
+                f"{tid}: censused row with prose content missing from archive; "
+                f"prosa destilada perdida (WOT-2026-054u)."
+            )
+        elif censused_prose not in archive_reactivations[tid]:
+            actual = archive_reactivations[tid]
+            errors.append(
+                f"{tid}: distilled prose destroyed in Reactivation column; "
+                f"expected substring '{censused_prose[:80]}...' but got "
+                f"'{actual[:80]}...' (WOT-2026-054u)."
+            )
+    return errors
+
+
 def _terminal_ticket_states(archive: Path) -> dict[str, str]:
     """Map ticket id -> terminal state for every archived Prioridad-led row.
 
@@ -1484,6 +1542,8 @@ def main(argv: list[str] | None = None) -> int:
     violations = violations + validate_archive_states(root)
     # WOT-2026-053d: terminal rows must have landing evidence.
     violations = violations + validate_archive_landing_evidence(root)
+    # WOT-2026-054u: distilled prose in censused rows must be preserved.
+    violations = violations + validate_archive_prose_preservation(root)
     # WOT-2026-049c: una fila VIVA no puede depender de un ticket ya cerrado.
     violations = violations + validate_live_dependencies(root)
     if violations:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from scripts.prepush_check import run_backlog_contract_check
 
 
@@ -180,7 +181,7 @@ def test_closeout_gate_exempts_censused_legacy_row(tmp_path: Path) -> None:
     import scripts.check_backlog_contract as cbc
     import scripts.prepush_check as pc
 
-    censused_id, censused_cell = next(
+    censused_id, _censused_cell = next(
         (k, v) for k, v in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items() if v == "-"
     )
 
@@ -194,18 +195,165 @@ def test_closeout_gate_exempts_censused_legacy_row(tmp_path: Path) -> None:
     )
     archive = collab / "_archive" / "backlog_done.md"
 
+    # Build complete archive with ALL baseline entries (prose + dash)
+    rows = []
+    for tid, val in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items():
+        rows.append(f"| Media | {tid} | t | motor/s | completed | - | origen | {val} |")
+
     # (a) el par censado EXACTO -> exento.
-    archive.write_text(
-        f"| Media | {censused_id} | t | motor/s | completed | - | origen | {censused_cell} |\n",
-        encoding="utf-8",
-    )
+    archive.write_text("\n".join(rows) + "\n", encoding="utf-8")
     assert pc.run_backlog_contract_check(tmp_path).passed is True
 
     # (b) MISMO id, celda REESCRITA a otra ausencia -> el baseline NO lo cubre.
-    archive.write_text(
-        f"| Media | {censused_id} | t | motor/s | completed | - | origen | pendiente |\n",
-        encoding="utf-8",
-    )
+    rewritten_rows = []
+    for tid, val in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items():
+        cell = "pendiente" if tid == censused_id else val
+        rewritten_rows.append(
+            f"| Media | {tid} | t | motor/s | completed | - | origen | {cell} |"
+        )
+    archive.write_text("\n".join(rewritten_rows) + "\n", encoding="utf-8")
     result = pc.run_backlog_contract_check(tmp_path)
     assert result.passed is False, "cambiar la celda censada debe expulsar del baseline"
     assert censused_id in result.output
+
+
+# ---------------------------------------------------------------- WOT-2026-054u
+
+
+def test_prose_preservation_catches_destroyed_prose(tmp_path: Path) -> None:
+    """WOT-2026-054u DoD-1: celda con prosa -> commit:<sha> pelado = ROJO.
+
+    The test archive contains ONLY the target row; other censused rows are
+    absent and also produce errors. We verify the TARGET error is present
+    (the 'destroyed' variant, not just 'missing').
+    """
+    import scripts.check_backlog_contract as cbc
+
+    prose_id = next(
+        k
+        for k, v in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items()
+        if v != "-" and not v.startswith("<!--")
+    )
+
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "## Vista rapida\n\n"
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    # Prosa DESTRUIDA: solo commit:<sha>
+    (collab / "_archive" / "backlog_done.md").write_text(
+        f"| Media | {prose_id} | t | motor/s | completed | - | origen | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_archive_prose_preservation(tmp_path)
+    # Target error: prose destroyed (not just missing)
+    destroyed = [e for e in errors if "destroyed" in e and prose_id in e]
+    assert len(destroyed) == 1, (
+        f"prose destruction must produce exactly 1 error, got {len(destroyed)}"
+    )
+
+
+def test_prose_preservation_passes_with_intact_prose(tmp_path: Path) -> None:
+    """WOT-2026-054u DoD-2: prosa intacta = VERDE.
+
+    Builds a complete archive with ALL prose entries from the baseline so
+    the validator has nothing to complain about.
+    """
+    import scripts.check_backlog_contract as cbc
+
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "## Vista rapida\n\n"
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    # Build archive with ALL prose entries from the baseline
+    rows = []
+    for tid, val in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items():
+        rows.append(f"| Media | {tid} | t | motor/s | completed | - | origen | {val} |")
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8"
+    )
+    errors = cbc.validate_archive_prose_preservation(tmp_path)
+    assert errors == [], f"prosa intacta no debe producir errores, got {errors}"
+
+
+def test_prose_preservation_mutation_with_teeth(tmp_path: Path) -> None:
+    """WOT-2026-054u DoD-3: invertir condicion (in->not in) -> test 1 ROJO, test 2 VERDE.
+
+    Uses a complete archive to isolate the target row's behavior.
+    """
+    import scripts.check_backlog_contract as cbc
+
+    prose_id = next(
+        k
+        for k, v in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items()
+        if v != "-" and not v.startswith("<!--")
+    )
+
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "## Vista rapida\n\n"
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+
+    def _build_archive(
+        overwrite_id: str | None = None, overwrite_val: str = ""
+    ) -> None:
+        rows = []
+        for tid, val in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items():
+            cell = overwrite_val if tid == overwrite_id else val
+            rows.append(
+                f"| Media | {tid} | t | motor/s | completed | - | origen | {cell} |"
+            )
+        (collab / "_archive" / "backlog_done.md").write_text(
+            "\n".join(rows) + "\n", encoding="utf-8"
+        )
+
+    # Escenario 1: prosa destruida en 1 fila -> al menos 1 error "destroyed"
+    _build_archive(overwrite_id=prose_id, overwrite_val="commit:abc1234")
+    errors_with_destroyed = cbc.validate_archive_prose_preservation(tmp_path)
+    destroyed = [e for e in errors_with_destroyed if "destroyed" in e and prose_id in e]
+    assert len(destroyed) == 1
+
+    # Escenario 2: prosa intacta -> 0 errores
+    _build_archive()  # all intact
+    errors_with_intact = cbc.validate_archive_prose_preservation(tmp_path)
+    assert errors_with_intact == []
+
+
+def test_prose_preservation_real_archive(tmp_path: Path) -> None:
+    """WOT-2026-054u DoD-4: universo real -> 0 errores (las 20 celdas estan intactas)."""
+    import scripts.check_backlog_contract as cbc
+
+    real_archive = (
+        Path(r"C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_workspace")
+        / ".agent"
+        / "collaboration"
+        / "_archive"
+        / "backlog_done.md"
+    )
+    if not real_archive.exists():
+        pytest.skip("real archive not available")
+
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "_archive" / "backlog_done.md").write_bytes(real_archive.read_bytes())
+    (collab / "backlog.md").write_text(
+        "## Vista rapida\n\n"
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_archive_prose_preservation(tmp_path)
+    assert errors == [], (
+        f"real archive must produce 0 errors, got {len(errors)}: {errors}"
+    )
