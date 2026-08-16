@@ -12,6 +12,7 @@ mode MUST fail; without the gate (or outside closeout) it must not.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -334,13 +335,31 @@ def test_prose_preservation_real_archive(tmp_path: Path) -> None:
     """WOT-2026-054u DoD-4: universo real -> 0 errores (las 20 celdas estan intactas)."""
     import scripts.check_backlog_contract as cbc
 
-    real_archive = (
-        Path(r"C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_workspace")
-        / ".agent"
-        / "collaboration"
-        / "_archive"
-        / "backlog_done.md"
-    )
+    # WOT-2026-054u / hallazgo del MANAGER_REVIEW L907 (BA10, [MEDIO]): la primera
+    # version hardcodeaba la ruta absoluta del workspace de UNA maquina. Este fichero
+    # es del motor PORTABLE: en cualquier otro destino la ruta no existe, el test hace
+    # `skip` en silencio y el DoD-4 (universo real) deja de medirse -- un SKIP no es un
+    # verde. Se resuelve por topologia, con el mismo orden de precedencia que el resto
+    # del motor (`AGENT_PROJECT_ROOT` -> link motor<->destino) y nunca por ruta literal.
+    destino: Path | None = None
+    env_root = os.environ.get("AGENT_PROJECT_ROOT")
+    if env_root and Path(env_root).is_dir():
+        destino = Path(env_root)
+    else:
+        try:
+            from scripts.destination_context import resolve_motor_link
+
+            link = resolve_motor_link(Path(__file__).resolve().parents[1])
+            candidate = (link or {}).get("destination_root")
+            if candidate and Path(candidate).is_dir():
+                destino = Path(candidate)
+        except Exception:
+            destino = None
+
+    if destino is None:
+        pytest.skip("no destino resuelto (AGENT_PROJECT_ROOT / motor_destination_link)")
+
+    real_archive = destino / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
     if not real_archive.exists():
         pytest.skip("real archive not available")
 
