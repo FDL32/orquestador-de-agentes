@@ -27,6 +27,13 @@ from .memory_loader import get_review_context
 
 
 MAX_RUBRIC_OBSERVATIONS = 5
+
+#: WOT-2026-057b. Techo del bloque de memoria que se inyecta en el prompt del
+#: Manager. Es un tope al AGREGADO: `get_review_context` ya acota cada dominio,
+#: pero produccion concatena varios y la suma medida daba 126.049 chars
+#: (~31.512 tokens) antes de que el Manager viera una linea de diff. 60.000
+#: chars (~15k tok) dejan sitio al diff, que es lo que viene a revisar.
+_REVIEW_TOTAL_BUDGET = 60000
 MAX_OBSERVATION_SIGNAL_CHARS = 200
 
 # Domain-to-deliverable_type relevance mapping (WP-2026-177).
@@ -282,16 +289,39 @@ def render_loader_rules(dtype: str = "all", domains: set[str] | None = None) -> 
     )
     parts: list[str] = []
     seen_blocks: set[str] = set()
+    omitidos: list[str] = []
+    usados = 0
     for domain in sorted(relevant_domains):
         domain_rules = get_review_context(domain=domain)
-        if domain_rules and domain_rules not in seen_blocks:
-            parts.append(domain_rules)
-            seen_blocks.add(domain_rules)
+        if not domain_rules or domain_rules in seen_blocks:
+            continue
+        # El presupuesto se aplica AQUI, donde se AGREGA, no solo por dominio.
+        # WOT-2026-057b: `get_review_context` tiene su propio techo, pero
+        # produccion no lo llama una vez -- lo llama por dominio y concatena.
+        # Medido 2026-08-17: cada dominio cabia en su presupuesto (34.7k, 33.1k,
+        # 11.6k...) y la SUMA daba 126.049 chars ~31.512 tokens, o sea el
+        # desbordamiento vivia en la capa que nadie medía. Un tope por-parte no
+        # acota un total: hay que acotar donde se suma.
+        #
+        # Se descartan DOMINIOS enteros y se NOMBRAN; nunca un recorte mudo.
+        if usados + len(domain_rules) > _REVIEW_TOTAL_BUDGET and parts:
+            omitidos.append(domain)
+            continue
+        parts.append(domain_rules)
+        seen_blocks.add(domain_rules)
+        usados += len(domain_rules)
 
     if not parts:
         return ""
 
-    return "\n--- Memory Rules (L2, from memory_loader) ---\n" + "\n\n".join(parts)
+    bloque = "\n--- Memory Rules (L2, from memory_loader) ---\n" + "\n\n".join(parts)
+    if omitidos:
+        bloque += (
+            f"\n\n[{len(omitidos)} dominio(s) de memoria no mostrado(s) por "
+            f"presupuesto de review: {', '.join(omitidos)}. "
+            "Alcanzalos con `memory_context.py --recall --query <termino>`.]"
+        )
+    return bloque
 
 
 def render_review_learnings(project_root: Path, dtype: str = "all") -> str:
