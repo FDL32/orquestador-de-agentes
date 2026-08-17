@@ -200,9 +200,6 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket <TICKET_ID>
 
 - `<MOTOR_ROOT>/AGENTS.md`
 - `<MOTOR_ROOT>/prompts/audit_agent_output.md`
-- `<MOTOR_ROOT>/.agent/runtime/memory/MEMORY.md` si existe
-- `<MOTOR_ROOT>/.agent/runtime/memory/memory_rules.md` si existe
-- `<MOTOR_ROOT>/.agent/runtime/memory/memory_profile.md` si existe
 
 6. Antes de planificar, anota en el reporte de progreso:
 
