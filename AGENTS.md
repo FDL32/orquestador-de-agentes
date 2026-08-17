@@ -502,15 +502,41 @@ Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |
 
 ## Memoria por proyecto
 
-La memoria del proyecto sigue una jerarquia de tres niveles (L3 -> L2 -> L1),
-centralizada en `bus/memory_loader.py` para bootstrap, review bridge y pre-compact hook:
+**Lo primero, porque es lo que mas se malinterpreta (WOT-2026-057a/b):**
+
+- **`--bootstrap` entrega un INDICE, no el corpus.** Las lineas marcadas
+  `...[truncated]` son titulares con su `id`; el pie declara cuantas lecciones NO
+  muestra. Con mediana de 877 chars por leccion, la regla accionable de 82
+  entradas vive DESPUES del corte.
+- **`--recall` es la puerta de EXPANSION**, y entrega la leccion ENTERA:
+  `--query "<termino>"` (ordenado por cobertura, con fallback por terminos) o
+  `--id obs-<slug>` (exacto, fail-closed). Ejecutalo ANTES de medir o disenar.
+- **El archive portable se lee como UNION de MOTOR + root activo.** Son conjuntos
+  DISJUNTOS y ambos importan: el motor trae las lecciones de ingenieria, el
+  destino las de topologia. Medido 2026-08-17: 207 + 135, interseccion CERO.
+  Cada origen tiene CUOTA en el indice -- la recencia no es relevancia, y sin
+  cuota el repo tocado mas recientemente expulsa al otro entero.
+- **El hook `SessionStart` inyecta el indice al abrir sesion**, asi que la carga
+  del indice dejo de ser una norma que alguien debia recordar. La EXPANSION sigue
+  siendo manual.
+
+La jerarquia de tres niveles (L3 -> L2 -> L1) sigue existiendo, pero es el PASO 2
+de dos: primero el archive portable unido, despues el mejor tier local.
+Centralizado en `bus/memory_loader.py` para bootstrap, review bridge y
+pre-compact hook:
 
 - **L3 — `memory_profile.md`** (generado por `memory_consolidate.py --apply`): Perfil breve del proyecto con dominios activos, tickets referenciados y senales recientes. Cargado primero por `memory_loader.get_bootstrap_context()`.
 - **L2 — `memory_rules.md`** (generado por `memory_consolidate.py --apply`): Reglas deterministas organizadas por dominio, con IDs estables (R-XXX). Cargado por `memory_loader.get_review_context(domain)` para el review bridge.
 - **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
 - `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
 - `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
-- `bus/memory_loader.py` es la unica puerta de entrada: `get_bootstrap_context()` (L3 -> L2 -> L1), `get_review_context(domain)` (L2 por dominio), `get_compact_context()` (L3+L2).
+- `bus/memory_loader.py` es la unica puerta de entrada, y **cada puerta tiene su
+  propio tope, nunca uno global** (WOT-2026-057a): `get_bootstrap_context()`
+  (archive unido + tier local, CAPADO a un presupuesto de arranque),
+  `get_review_context(domain)` (por dominio y **SIN capar** -- un review decide
+  APPROVE/CHANGES y no puede perder lecciones; un cap filtrado ahi le costo al
+  Manager 14 de 74), `get_compact_context()` (capado por recencia con cuota por
+  origen, para el hook de pre-compact).
 - **La memoria PRIVADA de un agente no es autoritativa.** Cada backend (Claude Code, Kilo, Codex...) tiene su propio almacen personal, invisible para los demas y para el repo. Lo canonico es lo VERSIONADO: `archive/observations.YYYY-MM.jsonl`, este AGENTS.md, los prompts, las skills y los tests. Si una leccion solo vive en la memoria privada de un backend, para el sistema NO EXISTE.
 - **WOT-2026-024r (A1): el archive es la fuente portable de memoria, y el loader LA LEE.** `bus/memory_loader.py` incluye SIEMPRE las entradas de `archive/observations.YYYY-MM.jsonl` en el contexto de bootstrap, recorriendo TODOS los meses, no solo el actual. La precedencia es POR ENTRADA: ante colision de `id` estable gana la copia VIVA de L1, porque pudo editarse despues de archivarse. Antes de A1 el loader solo miraba L3/L2/L1 -- las tres gitignoradas --, asi que la memoria promovida se versionaba, viajaba por git y **no la leia nadie**; coste medido (2026-07-27): una leccion guardada dos veces se reincidio igual y destruyo 7 tests. No fue laguna de memoria: fue memoria escrita, versionada y no leida.
 - **Limites declarados de A1 (no son huecos, son alcance):** A1 NO cierra `WOT-2026-024r`. (a) La REGENERACION en bootstrap (quien invoca, cuando, idempotencia, y la reconciliacion con `memory_consolidate`, que hoy regenera L2 desde L1 viva y pierde reglas cuya fuente ya se archivo) es **A2**. (b) A1 **no filtra entradas refutadas**: el schema no tiene campo de vigencia y hay 12 entradas con refutacion en prosa; tocar el schema es NON-GOAL. (c) A1 **no promete portabilidad entre repos**: `scripts/install_agent_system.py` no propaga el `archive/` (0 menciones), asi que un destino nuevo arranca sin el -- eso es `WOT-2026-025o`.

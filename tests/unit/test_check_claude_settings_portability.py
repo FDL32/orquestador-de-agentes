@@ -79,11 +79,45 @@ def _make_settings(dest_dir: Path, command: str = _CANONICAL) -> None:
 
 
 def _settings(command: str = _CANONICAL, matcher: str = "Write|Edit|MultiEdit") -> dict:
+    """Un settings CANONICO minimo.
+
+    WOT-2026-057b: incluye los dos hooks de CONTEXTO ademas del write guard.
+    Antes solo traia `PreToolUse`, y ese fixture describia como "limpio" una
+    configuracion que deja al repo sin memoria por ningun canal -- justo el
+    estado del destino real, que este mismo guard aprobaba con rc=0. Un fixture
+    que no distingue el defecto del correcto no puede cazarlo.
+    """
     return {
         "hooks": {
             "PreToolUse": [
                 {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
-            ]
+            ],
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": gate.claude_guard_entry.canonical_command_for(
+                                "session_start_hook.py", "agent_hooks"
+                            ),
+                        }
+                    ],
+                }
+            ],
+            "PreCompact": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": gate.claude_guard_entry.canonical_command_for(
+                                "pre_compact_hook.py", "agent_hooks"
+                            ),
+                        }
+                    ],
+                }
+            ],
         }
     }
 
@@ -759,3 +793,75 @@ class TestInvariantDGuardCoversAll:
             "native_post_tool_hook.py", "agent_hooks"
         )
         assert _motor_commands()["PostToolUse::Read|Grep|Glob|WebFetch"] == expected
+
+
+# ===================================================== WOT-2026-057b
+# "Barrera del alcance": el guard mordia bien, pero no miraba donde ocurria
+# el fallo. Auditaba la CANONICIDAD de los hooks presentes y jamas la
+# PRESENCIA de los que inyectan memoria.
+
+
+class TestContextHooksMustBePresent:
+    """Un settings sin los hooks de contexto deja al repo SIN memoria.
+
+    Medido 2026-08-17 sobre el destino real: declaraba solo `PreToolUse` y el
+    guard daba `rc=0, OK (portable, fail-closed)`. Le faltaban los DOS unicos
+    hooks que inyectan contexto -- `SessionStart` y `PreCompact` --, asi que
+    ningun agente que operase alli recibia memoria por ningun canal, ni al
+    abrir sesion ni al compactar. Y el destino es justo donde viven las 135
+    lecciones de TOPOLOGIA que ese agente necesita.
+
+    El guard existia, estaba cableado y mordia... la propiedad equivocada:
+    `_NON_GATING_TARGETS` audita que los hooks PRESENTES sean canonicos, no
+    que los REQUERIDOS existan. Registrar `SessionStart` en ese censo (como
+    hizo 057b) es INERTE si el settings ni lo declara.
+    """
+
+    def test_settings_without_context_hooks_is_rejected(self) -> None:
+        """BARRERA: solo PreToolUse -> ERROR nombrando los hooks que faltan."""
+        solo_write = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Write|Edit|MultiEdit",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": gate.claude_guard_entry.canonical_hook_command(),
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        errors = gate.check_context_hooks_present(solo_write)
+        assert errors, (
+            "un settings sin SessionStart ni PreCompact deja al repo sin memoria "
+            "por NINGUN canal, y el guard lo aprobaba"
+        )
+        combined = " ".join(errors)
+        assert "SessionStart" in combined and "PreCompact" in combined, (
+            "el error debe NOMBRAR los hooks ausentes: un diagnostico que no "
+            "dice que falta obliga a adivinar"
+        )
+
+    def test_settings_with_both_context_hooks_passes(self) -> None:
+        """Control positivo: con los dos, cero errores.
+
+        Sin este control el test anterior pasaria con un guard que rechaza
+        SIEMPRE, que no discrimina nada.
+        """
+        completo = {
+            "hooks": {
+                "SessionStart": [{"matcher": "", "hooks": [{"type": "command"}]}],
+                "PreCompact": [{"matcher": "", "hooks": [{"type": "command"}]}],
+            }
+        }
+        assert gate.check_context_hooks_present(completo) == []
+
+    def test_real_motor_settings_declare_both_context_hooks(self) -> None:
+        """El motor cumple su propio contrato (aplicate tu propia vara)."""
+        settings = json.loads(
+            (_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
+        assert gate.check_context_hooks_present(settings) == []

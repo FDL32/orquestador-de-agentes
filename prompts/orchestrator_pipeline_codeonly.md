@@ -42,6 +42,18 @@ El canonico usa bus + `--session-close`. Aqui:
 
 ---
 
+## PASO 0.ante: memoria (WOT-2026-057b)
+
+El hermano canonico (`orchestrator_pipeline.md`, seccion 0.b) carga memoria y
+este no lo hacia: asimetria no declarada, y este es el modo que corre SIN bus,
+o sea con menos red de seguridad, no con mas.
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<superficie del ticket>" --limit 8
+```
+
+Las lineas `...[truncated]` son INDICE: expandelas por id con `--recall --id obs-<slug>`.
+
 ## PASO 0: PREFLIGHT (obligatorio, antes de tocar nada)
 
 **PRECONDICION DE MODO (WOT-2026-025r):** el cierre commit-directo requiere

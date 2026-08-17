@@ -63,6 +63,32 @@ implementes hasta que este guard de exit 0.
   justificacion en la salida del runner para que el Manager la registre. Si cambia
   el scope del ticket, detente.
 
+## Memoria: consultala ANTES de medir (WOT-2026-057b)
+
+**Eres un SUBAGENTE: no heredas el hook `SessionStart`.** El agente que te lanzo
+recibio el indice de memoria automaticamente; tu no. Si no ejecutas esto,
+trabajas con cero lecciones sobre un corpus de ~340 que ya documenta los fallos
+de esta casa.
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket {{TICKET_ID}}
+python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<superficie que vas a tocar>"
+```
+
+Consulta por la SUPERFICIE, no por el numero de ticket: `"backlog"`, `"suite"`,
+`"encoding"`, `"guard"`, `"bus"`, `"memoria"`. El ranking ordena por cobertura de
+la consulta, y una frase de varias palabras tambien vale.
+
+Si una linea llega marcada `...[truncated]`, es INDICE: expandela por su id.
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --recall --id obs-<slug>
+```
+
+**Por que esto no es ceremonia:** las cuatro reglas M1-M4 de la seccion siguiente
+son lecciones del corpus TRANSCRITAS A MANO a este prompt. Son cuatro de ~340.
+Las otras 336 solo te llegan si preguntas.
+
 ## Reglas de medicion (aplican DESDE Fase 0, no al redactar el informe)
 
 Estas cuatro reglas gobiernan como mides y como escribes MIENTRAS trabajas. No

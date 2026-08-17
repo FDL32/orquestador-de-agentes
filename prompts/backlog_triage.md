@@ -45,6 +45,30 @@ lanzar un pipeline.
 
 ---
 
+## Fase 0.ante: consulta el corpus antes de clasificar (WOT-2026-057b)
+
+Triar es decidir que entra al DAG y con que prioridad. Hacerlo sin memoria
+significa clasificar sobre premisas que el corpus ya refuto: el patron esta
+medido y reincidio en 016c, 016s/016t, 019b y 019c.
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<dominio del lote>" --limit 10
+```
+
+Antes de dar de ALTA una ficha, ejecuta ademas el dedupe sobre las TRES
+superficies -- exige que le declares cuales, sin ellas devuelve rc=2 y no
+escanea nada:
+
+```powershell
+python <MOTOR_ROOT>/scripts/find_similar_signals.py --text "<texto de la ficha>" `
+  --archive <MOTOR_ROOT>/.agent/runtime/memory/archive/observations.*.jsonl `
+  --backlog <DESTINO>/.agent/collaboration/backlog.md `
+  --backlog <DESTINO>/.agent/collaboration/_archive/backlog_done.md
+```
+
+Un `[DEDUPE: SIN VECINOS]` estampado sobre un barrido que no corrio es peor que
+no deduplicar: da por nueva una ficha que ya existe.
+
 ## Fase 0.pre: Gate de formato (obligatorio, antes de analizar)
 
 Ejecutar:

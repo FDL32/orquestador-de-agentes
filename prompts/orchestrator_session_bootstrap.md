@@ -15,9 +15,9 @@ Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo 
 ```
 Eres el agente principal del sistema multi-agente del repositorio orquestador_de_agentes.
 
-## Arranque canonico: 2 comandos + lectura condicional
+## Arranque canonico: 3 comandos + lectura condicional
 
-El arranque NO es una lista de lecturas rituales: son dos comandos
+El arranque NO es una lista de lecturas rituales: son tres comandos
 deterministas y despues se lee SOLO lo que el snapshot marque como
 relevante o con drift.
 
@@ -27,13 +27,66 @@ relevante o con drift.
 python scripts/local_audit.py
 # luego lee .agent/runtime/audit/AUDIT.md
 
-# 2. Contexto de memoria determinista (L3 perfil -> L2 reglas -> L1 fallback):
+# 2. INDICE de memoria (archive portable del MOTOR + del destino, luego
+#    L3 perfil -> L2 reglas -> L1). Las lineas marcadas [truncated] son
+#    INDICE, no la leccion entera:
 python scripts/memory_context.py --bootstrap
-# Verifica rapidamente el estado de memoria cargada:
 python scripts/memory_context.py --status
-# Si hay ticket activo, prioriza memoria relevante con:
-# python scripts/memory_context.py --recall --ticket <TICKET_ID>
+
+# 3. EXPANSION dirigida -- NO es opcional. El indice del paso 2 da titulares;
+#    esto devuelve la leccion ENTERA. Ejecutalo ANTES de medir o disenar nada,
+#    con el ticket activo o con el dominio de tu tarea:
+python scripts/memory_context.py --recall --ticket <TICKET_ID>
+python scripts/memory_context.py --recall --query <dominio-de-la-tarea>
 ```
+
+**Por que el paso 3 es obligatorio** (WOT-2026-057a, medido 2026-08-17): el
+paso 2 entrega un INDICE. Con mediana de 877 chars por leccion, la regla
+accionable de 82 entradas vive DESPUES del corte del indice. Un titular no te
+impide cometer el error que la regla previene: consulta el corpus ANTES de
+medir, no despues de fallar. `--recall` devuelve las señales COMPLETAS, con
+presupuesto en bytes que declara lo que omite (`--budget N` lo ajusta).
+
+**La memoria PORTABLE vive en `.agent/runtime/memory/archive/`** — es la unica
+superficie de memoria que viaja por git (L1/L2/L3 estan gitignored). El loader
+une el archive del MOTOR con el del destino: son conjuntos DISJUNTOS y ambos
+importan.
+
+## Herramientas fundamentales — NO las descubras, ya estan
+
+No explores `scripts/` para averiguar que existe: son ~180 ficheros y la mayoria
+no los necesitas. Esto es lo que se usa a diario, por repo. Cada una tiene
+`--help`; **leelo antes de inventarte un flag** (M1: un `rc=2` con `usage:` no es
+un veredicto, es "no medi").
+
+**MOTOR — programar el motor:**
+
+| Comando | Para que |
+|---|---|
+| `python scripts/run_pytest_safe.py --level all` | **La** suite canonica. Nunca `python -m pytest` directo: rompe la resolucion de `runtime/` |
+| `ruff check . && ruff format --check .` | Los DOS son gates independientes; uno solo es falso verde |
+| `python scripts/prepush_check.py --closeout-mode` | Gate de publicacion: encadena higiene, guards y validate |
+| `python scripts/memory_context.py --recall --query "<termino>"` | Expandir memoria ANTES de medir o disenar |
+| `python scripts/find_similar_signals.py --text "<txt>" --archive <a> --backlog <b>` | Dedupe antes de escribir leccion o ficha. EXIGE superficies: sin ellas da rc=2 y no escanea |
+| `python scripts/check_guard_wiring.py` | Un guard sin cablear es una norma, no una barrera |
+| `python scripts/check_encoding_guard.py` | Mojibake/BOM antes de entregar |
+| `python .agent/agent_controller.py --validate --json --project-root <destino>` | Estado canonico: 0 errors / 0 warnings |
+
+**DESTINO — operar el destino:**
+
+| Comando | Para que |
+|---|---|
+| `python <MOTOR>/scripts/check_backlog_contract.py --project-root .` | Contrato del backlog en sus DOS superficies (cola viva y `_archive/`) |
+| `python <MOTOR>/.agent/agent_controller.py --validate --json --project-root .` | Drift entre `work_plan.md` y `execution_log.md` |
+| `python <MOTOR>/scripts/local_audit.py --project-root .` | Snapshot de estado (lo que lee el paso 1) |
+| `python <MOTOR>/scripts/archive_collaboration_artifacts.py --project-root .` | Archivar `PLAN_/AUDIT_` cerrados. Idempotente |
+| `.agent/collaboration/` | Estado operativo VIVO: `work_plan.md`, `backlog.md`, `execution_log.md`, `STATE.md` |
+| `.agent/runtime/events/events.jsonl` | Bus append-only: la autoridad canonica del estado |
+
+**Regla de oro de la topologia:** toda operacion git del tooling corre con
+`cwd=repo_motor`; el estado operativo (tickets, memoria, eventos) vive en
+`repo_destino`. El motor se invoca SIEMPRE con `AGENT_PROJECT_ROOT` apuntando al
+`workspace_activo`.
 
 **Lectura condicional (solo si el snapshot lo pide):**
 - `CLAUDE.md`/`AGENTS.md`: ya los autocarga el entorno en la mayoria de

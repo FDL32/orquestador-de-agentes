@@ -94,6 +94,46 @@ def check_write_guard_present(settings: dict) -> list[str]:
     return []
 
 
+#: Hooks que INYECTAN contexto. Son los unicos dos del sistema que emiten
+#: `additionalContext`, asi que su ausencia deja al repo sin memoria automatica.
+_CONTEXT_HOOKS = ("SessionStart", "PreCompact")
+
+
+def check_context_hooks_present(settings: dict) -> list[str]:
+    """Require the hooks that INJECT memory, not just canonical ones.
+
+    WOT-2026-057b, "barrera del alcance": this gate already bit hard and was
+    already wired -- it just never looked where the failure lived. It audited
+    the CANONICITY of whatever hooks a settings declared, and never the
+    PRESENCE of the ones that matter.
+
+    Measured 2026-08-17 on the real destination: it declared only `PreToolUse`
+    and this gate returned `rc=0, "OK (portable, fail-closed)"`. Missing were
+    the only TWO hooks in the system that emit `additionalContext` --
+    `SessionStart` and `PreCompact` -- so no agent operating there received
+    memory through ANY channel, neither at session start nor at compaction. And
+    the destination is precisely where the 135 TOPOLOGY lessons live, the ones
+    that explain where each thing belongs to whoever operates it.
+
+    Registering `SessionStart` in `_NON_GATING_TARGETS` (as 057b did) is INERT
+    for that case: a censo of declared hooks cannot see an undeclared one.
+
+    Before: ``settings`` is the parsed tracked settings.json.
+    During: pure dict inspection, no I/O.
+    After: returns one error per missing context hook, NAMING it -- a diagnostic
+        that does not say what is missing forces the reader to guess.
+    """
+    hooks = settings.get("hooks", {})
+    missing = [name for name in _CONTEXT_HOOKS if not hooks.get(name)]
+    if not missing:
+        return []
+    return [
+        f"missing context hook(s): {', '.join(missing)}. Sin ellos este repo no "
+        "recibe memoria por NINGUN canal (son los dos unicos que emiten "
+        "additionalContext); declara cada uno con su bootstrap canonico"
+    ]
+
+
 def check_command_is_canonical(settings: dict) -> list[str]:
     """Each write-gating hook command must equal the canonical entrypoint bootstrap.
 
@@ -130,6 +170,7 @@ _NON_GATING_TARGETS: dict[tuple[str, str], tuple[str, str]] = {
         "scripts",
     ),
     ("PreCompact", ""): ("pre_compact_hook.py", "agent_hooks"),
+    ("SessionStart", ""): ("session_start_hook.py", "agent_hooks"),
     ("Stop", ""): ("native_stop_hook.py", "agent_hooks"),
     ("SubagentStop", ""): ("subagent_stop_hook.py", "agent_hooks"),
 }
@@ -220,6 +261,7 @@ def check_settings_file(path: Path) -> list[str]:
     return (
         check_no_personal_grants(settings)
         + check_write_guard_present(settings)
+        + check_context_hooks_present(settings)
         + check_command_is_canonical(settings)
         + check_all_hook_commands_are_canonical(settings)
         + check_entrypoint_fails_closed()

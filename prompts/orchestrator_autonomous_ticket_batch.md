@@ -67,6 +67,34 @@ invoke the executor. No cycle.
 
 ---
 
+## Paso 0-ante: load the memory you are about to need (WOT-2026-057b)
+
+This prompt declares below that **THE ACCEPTANCE TEST IS THE COLD AGENT**. That
+test applies to the executor's own memory first: a flight that closes tickets
+without a human in the loop, reading zero of the ~340 recorded lessons, is the
+coldest agent in the system.
+
+Run this BEFORE the accessibility gate -- it costs one command and no network:
+
+```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<domain of this flight>" --limit 10
+```
+
+Query by the SURFACE the flight touches (`backlog`, `suite`, `guard`, `bus`,
+`encoding`, `memoria`), not by ticket id. Lines that arrive marked
+`...[truncated]` are INDEX entries: expand the ones that matter by their id with
+`--recall --id obs-<slug>`.
+
+Do this once per GROUP too, not only at flight start: each group touches a
+different surface, and the lesson that saves you is the one about the surface
+you are about to break.
+
+**Why it belongs at Paso 0-ante and not later:** the barriers below tell you
+what to verify; the corpus tells you *how this repo has already failed at it*.
+A `rc=0` from a probe you invoked wrong looks exactly like a `rc=0` from a probe
+you invoked right -- and the corpus has that lesson written, along with the
+discriminator.
+
 ## Paso 0: backend-accessibility gate (Nivel 0, HARD-STOP before any ticket)
 
 Before the state machine touches a single ticket, the executor MUST run the
