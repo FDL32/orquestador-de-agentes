@@ -51,7 +51,7 @@ implementes hasta que este guard de exit 0.
   una `Builder Access Surface` que prohiba leer paths reales del `repo_destino`.
   En ese caso, usa el contrato ya inyectado en este prompt y no pidas permisos extra.
   - `.agent/collaboration/work_plan.md`
-  - `.agent/collaboration/STRATEGY_WOT-{{TICKET_ID}}.md`
+  - `.agent/collaboration/STRATEGY_{{TICKET_ID}}.md`
   - `.agent/collaboration/AUDIT_{{TICKET_ID}}.md`
   - legacy-compat solo si existe: `.agent/collaboration/PLAN_{{TICKET_ID}}.md`
 - Trata `Files Likely Touched` del `work_plan.md` como whitelist operativa. Si el
@@ -62,6 +62,19 @@ implementes hasta que este guard de exit 0.
   escribir en `repo_destino`, no escribas en `execution_log.md`: detente y deja la
   justificacion en la salida del runner para que el Manager la registre. Si cambia
   el scope del ticket, detente.
+
+## Prohibiciones duras (no negociables por CEM)
+
+Estas cuatro NO admiten justificacion CEM, ni "el ticket lo pide", ni scope
+ampliado. `guard_paths` es un hook de tool-call: muerde en tu PRIMERA escritura,
+antes de que llegues a leer `AGENTS.md`.
+
+- NUNCA leas ni escribas `privada/` ni ficheros `.env`.
+- NUNCA hardcodees tokens, passwords ni rutas sensibles. Variables de entorno,
+  y `***REDACTED***` en logs.
+- NUNCA desactives `guard_paths` ni relajes un hook para avanzar. Si te bloquea,
+  DETENTE y reporta al Orquestador.
+- NUNCA anadas dependencias sin aprobacion explicita (`uv add`, nunca `pip`).
 
 ## Memoria: consultala ANTES de medir (WOT-2026-057b)
 
@@ -163,7 +176,7 @@ Get-ChildItem <dir> ; Get-ChildItem <dir>/archive
 Fallo real (2026-07-26): se leyeron 12 eventos en `events.jsonl` y se diagnostico
 "el bus esta muerto", con 2506 eventos en el `archive/` de al lado.
 
-### M4. Validador citado => ejecutalo antes de redactar
+### M4. Validador o CONTRATO citado => ejecutalo / leelo ENTERO antes de redactar
 
 Si el contrato del ticket, este prompt o el propio artefacto nombran un
 validador, un gate o un schema para el artefacto que vas a producir, ESE
@@ -179,6 +192,20 @@ por ejemplos vistos ni por memoria.
 
 Fallo real (2026-07-26): se redacto un artefacto inventando su formato con el
 validador citado en el propio prompt -> 23 errores y 3 reescrituras completas.
+
+La misma regla, aplicada a la superficie NORMATIVA: un CONTRATO citado
+(`work_plan.md`, `STRATEGY_`, `AUDIT_`, un protocolo de `_shared/`, la skill de
+tu `contract_id`) se abre y se lee ENTERO antes de producir nada que se mida
+contra el. `grep` dirigido y `diff` NO cuentan: son muestreo, y el muestreo no
+puede ver lo que OMITES -- solo encuentra lo que ya sospechabas. Si un validador
+define el formato de un ARTEFACTO, un contrato define el formato de un PROCESO.
+Si decides muestrear, DECLARALO ANTES con su motivo y su riesgo; un muestreo
+silencioso presentado como cobertura es `falso_verde`.
+
+Fallo real (2026-07-29): se redacto un prompt contra un contrato de 571 lineas
+por grep + diff. Quedaron fuera un `MANAGER_REVIEW` por ticket, la forma exacta
+del bucle y el cierre bloqueante -- y un bucle de 4 lentes tampoco lo cazo,
+porque al bucle se le paso el contrato por REFERENCIA, no por CONTENIDO.
 
 ## Objetivo
 `{{DESCRIPCION_DEL_OBJETIVO_Y_ROOT_CAUSE}}`
@@ -291,8 +318,8 @@ suite canonica ni handoff. La evidencia de cierre vive en "Cierre canonico".
 Ejecuta y registra salida real en `execution_log.md`:
 
 ```powershell
-python -m pytest {{TEST_FILES}} -v
-ruff check {{PYTHON_FILES_TOUCHED}}
+python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level unit -- {{TEST_FILES}}
+uv run ruff check {{PYTHON_FILES_TOUCHED}}
 uv run ruff format --check {{PYTHON_FILES_TOUCHED}}
 python .agent/agent_controller.py --validate --json --project-root <repo_destino>
 ```
@@ -518,8 +545,13 @@ Reglas del informe:
   evidencia literal del handoff.
 - **Check de encoding (obligatorio en la seccion Gates):** todo archivo nuevo
   o tocado debe quedar en UTF-8 limpio sin mojibake ni puntuacion tipografica
-  (em-dash, comillas curvas: usa `-` y `"` ASCII). Verifica y reporta:
-  `python -c "raw=open('<archivo>','rb').read(); print(all(b<128 for b in raw) or 'utf8' if raw.decode('utf-8') else '')"`
-  o equivalente, y declara el resultado. Historial: dos artefactos de agente
-  llegaron con mojibake (.goosehints y WT-2026-257a); el encoding guard del
-  pre-commit los bloquea, pero el Builder debe detectarlo ANTES de entregar.
+  (em-dash, comillas curvas: usa `-` y `"` ASCII). Ejecuta el guard canonico y
+  declara su exit code:
+  `python <MOTOR_ROOT>/scripts/check_encoding_guard.py <archivos tocados>`
+  NO improvises un one-liner: el que vivia aqui devolvia `'utf8'` -- veredicto
+  de aspecto verde -- sobre un fichero con em-dash y comilla curva, que es
+  exactamente lo que este check debe cazar (medido, WOT-2026-058d). Un fichero
+  con mojibake es UTF-8 VALIDO: decodificar sin excepcion no prueba nada.
+  Historial: dos artefactos de agente llegaron con mojibake (.goosehints y
+  WT-2026-257a); el guard del pre-commit los bloquea, pero el Builder debe
+  detectarlo ANTES de entregar.

@@ -27,17 +27,22 @@ relevante o con drift.
 python scripts/local_audit.py
 # luego lee .agent/runtime/audit/AUDIT.md
 
-# 2. INDICE de memoria (archive portable del MOTOR + del destino, luego
-#    L3 perfil -> L2 reglas -> L1). Las lineas marcadas [truncated] son
-#    INDICE, no la leccion entera:
+# 2. INDICE de memoria. El hook `SessionStart` YA te lo inyecto al abrir la
+#    sesion: busca en tu contexto un bloque con lineas marcadas [truncated] y
+#    un pie que declara cuantas lecciones retiene. Si lo ves, NO ejecutes
+#    --bootstrap (duplicarias ~29 KB): salta al paso 3.
+#    Ejecutalo SOLO si tu backend no dispara hooks (Codex/OpenCode one-shot):
 python scripts/memory_context.py --bootstrap
+#    --status NO carga memoria: solo verifica que el root resuelve. Opcional.
 python scripts/memory_context.py --status
 
 # 3. EXPANSION dirigida -- NO es opcional. El indice del paso 2 da titulares;
 #    esto devuelve la leccion ENTERA. Ejecutalo ANTES de medir o disenar nada,
 #    con el ticket activo o con el dominio de tu tarea:
 python scripts/memory_context.py --recall --ticket <TICKET_ID>
-python scripts/memory_context.py --recall --query <dominio-de-la-tarea>
+python scripts/memory_context.py --recall --query "<dominio de la tarea>"
+# Las comillas NO son opcionales: `--query suite canonica` sin ellas da
+# `rc=2 unrecognized arguments: canonica`, que por M1 es MEDICION_FALLIDA.
 ```
 
 **Por que el paso 3 es obligatorio** (WOT-2026-057a, medido 2026-08-17): el
@@ -51,6 +56,13 @@ presupuesto en bytes que declara lo que omite (`--budget N` lo ajusta).
 superficie de memoria que viaja por git (L1/L2/L3 estan gitignored). El loader
 une el archive del MOTOR con el del destino: son conjuntos DISJUNTOS y ambos
 importan.
+
+**El pie del indice declara MENOS lecciones que el corpus, y eso NO es un
+error: es el corte.** Si el pie dice ~282 y el archive tiene ~342 (snapshot
+2026-08-17: 207 motor + 135 destino, interseccion cero), la diferencia son las
+entradas que el indice resume o deja fuera. Ese hueco es justo lo que `--recall`
+existe para cubrir. Si el pie NO declara ambas superficies, tienes MEDIA
+memoria: comprueba `AGENT_PROJECT_ROOT` y repite.
 
 ## Herramientas fundamentales — NO las descubras, ya estan
 
@@ -197,7 +209,8 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 - Antes de cualquier push: re-lee `last-run.json` FRESCO (status=finished,
   tested_commit_sha == HEAD) y confirma 0 procesos python vivos (existen
   suites fantasma en vuelo con el interprete del PATH). El conteo
-  "NNNN passed" vive en `last-run.log`, no en el `.json`.
+  "NNNN passed" vive en AMBOS: `last-run.json` trae la clave `passed` (mas
+  parseable) y `last-run.log` la linea final de pytest.
 - El churn de cierre (archivado de PLAN/AUDIT + proyecciones a COMPLETED)
   desalinea el stamp ~2 veces por ticket: re-suite sobre el HEAD final antes
   del mini-audit.
@@ -265,6 +278,11 @@ caso que mas muerde. Detalle, medicion y las dos creencias falsas que conviene n
 
 ## Reglas no negociables
 
+- **Seguridad (no negociable, ni por scope ni por CEM):** nunca leas ni escribas
+  `privada/` ni ficheros `.env`; nunca hardcodees tokens, passwords ni rutas
+  sensibles (variables de entorno, y `***REDACTED***` en logs); nunca desactives
+  `guard_paths` ni relajes un hook para avanzar -- si bloquea, DETENTE y
+  reporta; nunca anadas dependencias sin aprobacion explicita.
 - **Verifica antes de actuar.** No confies en reportes de Builder o agentes externos: `git status`, `tail events.jsonl`, `--validate`. El patron de fabricacion esta documentado en [AGENTS.md](AGENTS.md).
 - **No mezcles chat y terminal** sin sincronizar TURN/STATE/execution_log.
 - **`.codex/` y `*.log` estan gitignorados** (rollouts con prompts sensibles). No los toques.
