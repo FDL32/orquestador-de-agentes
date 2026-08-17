@@ -24,6 +24,7 @@ El modo de fallo es asimetrico -- produce falso VERDE, no rojo.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import uuid
@@ -311,11 +312,27 @@ def test_real_archive_entries_reach_the_context():
         "ninguna senal del archive tracked aparece en el contexto: el puente "
         "archive -> contexto no existe"
     )
-    # No es solo "alguna": el archive entra COMPLETO (el shaping es A2).
-    assert len(reached) >= len(archived) // 2, (
-        f"solo {len(reached)} de {len(archived)} entradas del archive llegan al "
-        "contexto: algo esta filtrando la memoria portable"
+    # WOT-2026-057a: el umbral pasa de "la mitad del archive" a "el indice va
+    # LLENO y DECLARA el resto". El invariante que este test protege -- que
+    # nada FILTRE la memoria portable en silencio -- sigue intacto; lo que
+    # cambia es que el indice ya no pretende ser el corpus entero.
+    #
+    # Por que cambia: unir motor+destino (el fix de D1) llevo el corpus de 135
+    # a 342 entradas y el bootstrap a ~28.7k tokens. Un indice sin tope crece
+    # con el corpus (~52 entradas/mes), asi que se acota por RECENCIA y se
+    # declara el resto. Un recorte DECLARADO es shaping; uno silencioso seria
+    # el defecto que este ticket corrige.
+    esperado = min(len(archived), memory_loader._BOOTSTRAP_INDEX_CAP)
+    assert len(reached) >= esperado // 2, (
+        f"solo {len(reached)} de {len(archived)} entradas llegan al contexto "
+        f"(cap del indice: {memory_loader._BOOTSTRAP_INDEX_CAP}): algo esta "
+        "filtrando la memoria portable por encima del shaping declarado"
     )
+    if len(archived) > memory_loader._BOOTSTRAP_INDEX_CAP:
+        assert "no mostrada" in context, (
+            "el indice recorta pero NO lo declara: un agente creeria que el "
+            "corpus entero cabe en lo que ve"
+        )
 
 
 # --- WOT-2026-047d: la puerta de RECALL tambien lee el archive ------------
@@ -831,4 +848,659 @@ def test_048g_real_archive_has_no_orphan_entries():
     assert not huerfanas, (
         f"{len(huerfanas)} entrada(s) del archive sin `domain`: serian invisibles "
         f"para get_review_context en TODOS los dominios -> {huerfanas[:5]}"
+    )
+
+
+# =========================================================== WOT-2026-057a
+# Bucle L914: el arranque en frio no recibia la memoria del MOTOR, y lo que
+# recibia llegaba MUTILADO SIN MARCADOR. Tres defectos medidos, tres barreras.
+
+
+def test_057a_union_keeps_destination_only_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-1 (DOS patas): la union NO puede perder lo exclusivo del destino.
+
+    Hallazgo BA12 del bucle L914: con `AGENT_PROJECT_ROOT` al destino -- la
+    forma CANONICA de operar segun AGENTS.md -- el loader veia 135 entradas del
+    destino y CERO de las 207 del motor (interseccion medida = 0 bajo 5 claves).
+
+    La primera version del fix decia "leer el motor y OPCIONALMENTE unir el
+    destino". Esa palabra habria borrado de la vista las 14 lecciones exclusivas
+    del destino, que son justo las de TOPOLOGIA motor/destino (donde vive el
+    backlog, donde vive el last-run canonico) -- las que mas necesita un agente
+    frio EN el destino.
+
+    Por que DOS patas: un DoD de una sola pata ("aparece un id solo-motor") lo
+    satisface TAMBIEN la variante destructiva. No discrimina. La pata 2 es la
+    que muerde.
+
+    MUTACION ALCANZABLE: implementar "reemplazar" en vez de "unir" -> pata 2 cae.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    for root in (motor, destino):
+        (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+
+    _write_jsonl(
+        motor / ".agent/runtime/memory/archive/observations.2026-07.jsonl",
+        [_observation("CANARY-SOLO-MOTOR", topic="solo-motor")],
+    )
+    _write_jsonl(
+        destino / ".agent/runtime/memory/archive/observations.2026-07.jsonl",
+        [_observation("CANARY-SOLO-DESTINO", topic="solo-destino")],
+    )
+
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: destino / ".agent")
+    monkeypatch.setattr(memory_loader, "_resolve_motor_root", lambda: motor)
+
+    signals = [
+        str(e.get("signal") or "") for e in memory_loader._read_portable_archive()
+    ]
+    joined = " ".join(signals)
+
+    # Pata 1: lo del MOTOR llega (era invisible antes del fix).
+    assert "CANARY-SOLO-MOTOR" in joined, (
+        "el archive del MOTOR debe alcanzar al agente que opera en el destino"
+    )
+    # Pata 2: lo del DESTINO SOBREVIVE (la que mata a la variante destructiva).
+    assert "CANARY-SOLO-DESTINO" in joined, (
+        "la union NO puede perder las lecciones exclusivas del destino: son las "
+        "de topologia motor/destino y NADIE mas las tiene"
+    )
+
+
+def test_057a_motor_resolution_ignores_agent_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-2: la raiz del MOTOR no se resuelve con `AGENT_PROJECT_ROOT`.
+
+    Hallazgo del lector-FS: D1 es CONDICIONAL. Sin esa env var el loader lee
+    bien las 207 del motor; el desvio aparece SOLO cuando vale el destino. Es
+    una COLISION DE CONTRATOS: esa variable responde "donde vive el ESTADO
+    OPERATIVO", y se estaba usando para decidir "donde vive la MEMORIA
+    PORTABLE". Son dos preguntas distintas.
+
+    La primera version del fix ponia `AGENT_PROJECT_ROOT` PRIMERA en la
+    precedencia: reproducia exactamente la causa. Este test lo impide.
+
+    MUTACION ALCANZABLE: hacer que `_resolve_motor_root` mire esa env var ->
+    devuelve el destino y el test cae.
+    """
+    falso_destino = tmp_path / "no-soy-el-motor"
+    (falso_destino / ".agent").mkdir(parents=True)
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(falso_destino))
+
+    resolved = memory_loader._resolve_motor_root()
+
+    assert resolved != falso_destino, (
+        "AGENT_PROJECT_ROOT apunta al ESTADO OPERATIVO, no a la memoria "
+        "portable: usarla para resolver el motor reintroduce el defecto D1"
+    )
+
+
+def test_057a_resolution_stays_hermetic_when_only_memory_dir_is_patched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-4: redirigir la raiz DEBE redirigir tambien la busqueda del motor.
+
+    Esta es la objecion BA12-H2 del bucle, y la primera version del fix la
+    incumplia: `_resolve_motor_root` caia a `Path(__file__)`, que apunta SIEMPRE
+    al motor de ESTA maquina. Medido: 11 tests hermeticos se pusieron ROJOS
+    porque empezaron a leer el archive real de 207 entradas.
+
+    Es exactamente la fuga que el docstring de `_get_repo_root` advierte y que
+    el fixture `wired` documenta al NO parchear esa funcion a proposito.
+
+    MUTACION ALCANZABLE: reintroducir el fallback `__file__` en
+    `_resolve_motor_root` -> este test cae (ve el archive real del motor).
+    """
+    vacio = tmp_path / "repo_sin_memoria"
+    (vacio / ".agent" / "runtime" / "memory").mkdir(parents=True)
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: vacio / ".agent")
+
+    assert memory_loader._read_portable_archive() == [], (
+        "con la raiz redirigida a un repo SIN archive, el loader debe devolver "
+        "vacio; si devuelve entradas esta leyendo la memoria de esta maquina"
+    )
+
+
+def test_057a_truncation_is_marked_and_id_is_reachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-3: si se trunca, se MARCA; y el `id` debe poder alcanzarse.
+
+    Dos defectos medidos en L914 sobre `_format_archive_as_text`:
+
+    (a) truncaba a 200 chars SIN marcador -- 118 de 197 señales quedaban
+        cortadas A MEDIA PALABRA y 82 tenian su regla operativa DESPUES del
+        corte. `memory_consolidate` marca sus cortes con `...[truncated]`; el
+        loader no, asi que el agente no podia saber que faltaba nada.
+    (b) imprimia `source_ticket or id`, y con `source_ticket` poblado al 100%
+        (207/207 medido) el `id` NO se imprimia NUNCA -> la expansion por `id`
+        era imposible.
+
+    MUTACION ALCANZABLE: quitar el marcador -> primer assert cae; volver a
+    `source_ticket or id` -> segundo assert cae.
+    """
+    root = tmp_path / "repo"
+    (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    larga = "A" * 400 + "REGLA-ENTERRADA-TRAS-EL-CORTE"
+    entry = _observation(larga, topic="entrada-larga")
+    entry["id"] = "obs-canary-expandible"
+    entry["source_ticket"] = "WOT-2026-999z"
+    _write_jsonl(
+        root / ".agent/runtime/memory/archive/observations.2026-07.jsonl", [entry]
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: root / ".agent")
+    monkeypatch.setattr(memory_loader, "_resolve_motor_root", lambda: root)
+
+    text = memory_loader._format_archive_as_text(memory_loader._read_portable_archive())
+
+    # El marcador se busca EN LA LINEA DE LA ENTRADA, no en el texto entero:
+    # la cabecera fija contiene el literal "[truncated]" para explicarlo, asi
+    # que un `in text` lo satisface SIEMPRE. Medido por el lector-FS en el
+    # bucle L915: con `_TRUNCATION_MARKER = ""` el test seguia VERDE -- barrera
+    # muerta por spurious hit contra su propia documentacion.
+    fila = next(ln for ln in text.splitlines() if ln.startswith("- [") and "AAAA" in ln)
+    assert memory_loader._TRUNCATION_MARKER, "el marcador no puede ser vacio"
+    assert (
+        fila.rstrip().endswith(
+            memory_loader._TRUNCATION_MARKER
+            + f" ({entry['source_ticket']} | id: {entry['id']})"
+        )
+        or memory_loader._TRUNCATION_MARKER in fila
+    ), (
+        "un corte SIN marcador miente: el agente recibe una frase cortada a "
+        f"media palabra y no puede saber que falta contenido. Fila: {fila[:120]}"
+    )
+    assert "REGLA-ENTERRADA-TRAS-EL-CORTE" not in fila, (
+        "la fila no esta truncada: el fixture no ejercita el corte"
+    )
+    assert "obs-canary-expandible" in text, (
+        "sin el `id` en la proyeccion, la expansion por --recall es imposible; "
+        "`source_ticket or id` lo ocultaba en 207/207 entradas"
+    )
+
+
+def test_057a_bootstrap_index_is_bounded_and_declares_what_it_omits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-5: el INDICE de bootstrap esta acotado y dice cuanto no muestra.
+
+    Defecto que el propio fix introdujo y que la vara de escalabilidad de BA13
+    caza: unir motor+destino llevo el corpus de 135 a 342 entradas y el
+    bootstrap de ~5.2k a ~28.7k tokens. Arreglar la ceguera creando un
+    desbordamiento no es arreglar: es mover el problema.
+
+    Y el crecimiento es el argumento, no el numero: ~52 entradas/mes medidas.
+    Cualquier cap fijo caduca, por eso lo que se pinea es el INVARIANTE
+    ("acotado Y declarado"), nunca una cifra.
+
+    MUTACION ALCANZABLE: quitar el cap -> el indice crece con el corpus y el
+    primer assert cae. Quitar el aviso -> cae el segundo.
+    """
+    root = tmp_path / "repo"
+    (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    entradas = []
+    for i in range(memory_loader._BOOTSTRAP_INDEX_CAP + 25):
+        e = _observation(f"CANARY-{i}", topic=f"tema{i}")
+        e["timestamp"] = f"2026-07-{(i % 28) + 1:02d}T00:00:00+00:00"
+        entradas.append(e)
+    _write_jsonl(
+        root / ".agent/runtime/memory/archive/observations.2026-07.jsonl", entradas
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: root / ".agent")
+
+    # Se mide la puerta REAL de arranque, no el formateador suelto: el cap es
+    # del bootstrap y solo se aplica ahi (ver DoD-7).
+    text = memory_loader.get_bootstrap_context()
+
+    emitidas = len(re.findall(r"^- \[", text, re.M))
+    # COTA ABSOLUTA, no `<= _BOOTSTRAP_INDEX_CAP`: comparar contra la propia
+    # constante es una TAUTOLOGIA -- ambos lados se mueven juntos, y BA22 midio
+    # en el bucle L915 que subir el cap a 10000 dejaba este test VERDE. El
+    # invariante es "el arranque cabe en un presupuesto", no "el codigo respeta
+    # su propia constante", asi que el techo se fija de forma independiente.
+    assert emitidas <= 150, (
+        f"el indice emitio {emitidas} lineas: por encima de ~150 el arranque "
+        "deja de caber en su presupuesto, valga lo que valga la constante"
+    )
+    assert emitidas <= memory_loader._BOOTSTRAP_INDEX_CAP
+    assert "mas no mostrada" in text or "omitida" in text, (
+        "un indice que recorta en SILENCIO repite el defecto que este ticket "
+        "corrige: el agente debe saber que hay mas y como alcanzarlo"
+    )
+
+
+def test_057a_index_reserves_room_for_both_origins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-6: el cap por RECENCIA no puede expulsar a un origen entero.
+
+    Defecto que el propio cap introdujo, medido en el bucle L915. Unir dos
+    corpus y despues recortar por recencia GLOBAL trata la union como si fuera
+    homogenea, y no lo es: el archive del destino termina en 2026-07-31 y el del
+    motor llega a 2026-08-16, asi que el motor copa el top-60 y las 14 lecciones
+    EXCLUSIVAS del destino -- las de topologia motor/destino, las que mas
+    necesita un agente que opera ALLI -- caen fuera del indice.
+
+    Es el mismo defecto que D1, con el signo invertido: antes se perdia el motor
+    por resolucion de ruta; ahora se perderia el destino por recencia. Arreglar
+    una ceguera creando la contraria no es arreglar.
+
+    La recencia NO es relevancia: por eso cada origen tiene cuota reservada y el
+    reparto se declara en la cabecera del indice.
+
+    MUTACION ALCANZABLE: volver a `_cap_by_recency` global sobre la union -> el
+    origen con timestamps mas antiguos desaparece y el assert cae.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    for root in (motor, destino):
+        (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+
+    # El MOTOR domina en recencia: todas sus entradas son mas nuevas.
+    nuevas = []
+    for i in range(memory_loader._BOOTSTRAP_INDEX_CAP + 20):
+        e = _observation(f"MOTOR-{i}", topic=f"motor{i}")
+        e["timestamp"] = f"2026-08-{(i % 28) + 1:02d}T00:00:00+00:00"
+        nuevas.append(e)
+    _write_jsonl(
+        motor / ".agent/runtime/memory/archive/observations.2026-08.jsonl", nuevas
+    )
+    # El DESTINO es entero MAS ANTIGUO: por recencia global caeria fuera.
+    viejas = []
+    for i in range(10):
+        e = _observation(f"DESTINO-{i}", topic=f"destino{i}")
+        e["timestamp"] = f"2026-06-{(i % 28) + 1:02d}T00:00:00+00:00"
+        viejas.append(e)
+    _write_jsonl(
+        destino / ".agent/runtime/memory/archive/observations.2026-06.jsonl", viejas
+    )
+
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: destino / ".agent")
+    monkeypatch.setattr(memory_loader, "_resolve_motor_root", lambda: motor)
+
+    text = memory_loader._format_archive_as_text(memory_loader._read_portable_archive())
+
+    assert "CANARY-MOTOR-" in text or "motor" in text, (
+        "el origen mas reciente debe estar representado"
+    )
+    assert "canario DESTINO-0" in text, (
+        "el origen con timestamps mas ANTIGUOS quedo expulsado del indice: un "
+        "cap por recencia global sobre corpus unidos borra un origen entero"
+    )
+
+
+def test_057a_index_cap_does_not_leak_into_review_or_compact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-7: el cap del INDICE es del arranque; review y compact no lo heredan.
+
+    Hallazgo BA21 del bucle L915, medido sobre el corpus real: el cap se metio
+    DENTRO del formateador, asi que las tres puertas lo heredaban. Consecuencia
+    material -- `get_review_context('review-quality')` tenia 74 lecciones y
+    emitia 60: el Manager perdia 14 al decidir APPROVE/CHANGES, y las que se
+    caian eran las MAS VIEJAS por recencia, o sea las cicatrices sedimentadas
+    que existen para vetar la reincidencia.
+
+    Un review degradado APRUEBA trabajo que debia rechazar, y eso se commitea.
+    El cap del arranque protege un presupuesto de arranque; no tiene ninguna
+    autoridad sobre una decision de review.
+
+    MUTACION ALCANZABLE: volver a capar dentro de `_format_archive_as_text` sin
+    parametro -> review vuelve a emitir 60 de 74 y el assert cae.
+    """
+    root = tmp_path / "repo"
+    (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    n = memory_loader._BOOTSTRAP_INDEX_CAP + 14
+    entradas = []
+    for i in range(n):
+        e = _observation(f"REV-{i}", topic=f"rev{i}")
+        e["domain"] = "review-quality"
+        e["timestamp"] = f"2026-07-{(i % 28) + 1:02d}T00:00:00+00:00"
+        entradas.append(e)
+    _write_jsonl(
+        root / ".agent/runtime/memory/archive/observations.2026-07.jsonl", entradas
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: root / ".agent")
+
+    review = memory_loader.get_review_context("review-quality")
+    emitidas = len(re.findall(r"^- \[", review, re.M))
+
+    assert emitidas == n, (
+        f"el review emitio {emitidas} de {n} lecciones del dominio: el cap del "
+        "INDICE de arranque se filtro a la puerta que decide APPROVE/CHANGES"
+    )
+
+
+def test_057a_compact_header_states_the_real_corpus_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-8: la cabecera no puede AFIRMAR un tamaño de corpus falso.
+
+    Hallazgo BA21: `get_compact_context` capa a 50 y el formateador recibia ya
+    esas 50, asi que calculaba `total = 50` y emitia "50 lesson(s) travel with
+    this repo; showing the 50 newest" sobre un corpus de 342 -- falso por un
+    factor de ~7, y SIN aviso de omision porque `total == len(shown)`.
+
+    Es peor que el silencio anterior: el agente recibe una afirmacion POSITIVA
+    y falsa justo cuando esta perdiendo contexto.
+
+    MUTACION ALCANZABLE: volver a calcular `total` sobre la lista ya capada ->
+    la cabecera vuelve a mentir y el assert cae.
+    """
+    root = tmp_path / "repo"
+    (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    n = memory_loader._COMPACT_ARCHIVE_CAP + 40
+    entradas = []
+    for i in range(n):
+        e = _observation(f"CMP-{i}", topic=f"cmp{i}")
+        e["timestamp"] = f"2026-07-{(i % 28) + 1:02d}T00:00:00+00:00"
+        entradas.append(e)
+    _write_jsonl(
+        root / ".agent/runtime/memory/archive/observations.2026-07.jsonl", entradas
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: root / ".agent")
+
+    compact = memory_loader.get_compact_context()
+
+    assert f"{n} lesson(s)" in compact, (
+        "la cabecera declara el tamaño del subconjunto capado como si fuera el "
+        f"corpus entero: debe decir {n}, no el numero de lineas que emite"
+    )
+    assert "no mostrada" in compact, (
+        "compact recorta y no lo declara: el agente cree ver el corpus entero "
+        "en el momento exacto en que esta perdiendo contexto"
+    )
+
+
+def test_057a_resolves_motor_from_a_real_link_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-9: la RESOLUCION real, sin mockear la funcion bajo prueba.
+
+    Hallazgo BA22 del bucle L915, y es el hueco mas grave que encontro: los
+    tests de la union mockeaban `_resolve_motor_root`, asi que probaban al
+    CONSUMIDOR y dejaban la resolucion SIN COBERTURA. Medido: sustituir todo el
+    cuerpo por `return None` -- que mata la union entera y reintroduce D1 --
+    dejaba 4 de 5 tests VERDES.
+
+    Ademas, `test_..._ignores_agent_project_root` era FLOOR ASSERTION: en un
+    tmp_path sin link la funcion devuelve `None` siempre, y `None != falso` pasa
+    sin la feature. Este test lo complementa con un assert POSITIVO: escribe un
+    link REAL y exige que resuelva exactamente al motor.
+
+    MUTACION ALCANZABLE: `return None` en `_resolve_motor_root` -> cae el primer
+    assert. Leer `AGENT_PROJECT_ROOT` en vez del link -> cae el segundo.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    (motor / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps(
+            {
+                "motor_root": str(motor),
+                "destination_root": str(destino),
+                "destination_id": "fixture",
+                "ticket_prefix": "WOT",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        motor / ".agent/runtime/memory/archive/observations.2026-07.jsonl",
+        [_observation("CANARY-VIA-LINK", topic="via-link")],
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: destino / ".agent")
+
+    # Assert POSITIVO: resuelve al motor REAL, leyendo el link de verdad.
+    assert memory_loader._resolve_motor_root() == motor, (
+        "la resolucion por link no funciona: sin ella la union es codigo muerto"
+    )
+
+    # Y con AGENT_PROJECT_ROOT apuntando a otro sitio, sigue resolviendo el
+    # motor por el LINK -- que es el discriminante de la colision de contratos.
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path / "otro-sitio"))
+    assert memory_loader._resolve_motor_root() == motor
+
+    # Y el efecto extremo a extremo: la leccion del motor llega al contexto.
+    assert "CANARY-VIA-LINK" in memory_loader.get_bootstrap_context()
+
+
+def test_057a_quota_picks_the_newest_of_each_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-11: la cuota reparte bien Y elige lo mas RECIENTE de cada origen.
+
+    Defecto medido en el bucle L915 sobre el corpus real: el reparto salia
+    30/30 -- correcto -- y sin embargo el indice contenia las entradas MAS
+    ANTIGUAS de cada archive (motor desde 2026-05-24, destino desde 2026-06-12),
+    dejando fuera las lecciones recientes que son las que un agente necesita.
+
+    Causa: `_cap_by_recency(entries, len(entries))` se estaba usando para
+    ORDENAR, pero esa funcion devuelve la lista INTACTA cuando `cap >= len`.
+    Un no-op silencioso: reparto correcto sobre la seleccion equivocada.
+
+    Es la misma familia que "un conteo correcto sobre la unidad equivocada":
+    la mitad visible del mecanismo funcionaba y tapaba la otra mitad.
+
+    MUTACION ALCANZABLE: volver a `_cap_by_recency(entries, len(entries))` ->
+    el indice se llena de entradas viejas y el assert cae.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    for root in (motor, destino):
+        (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+
+    def _lote(prefix: str, year_month: str, n: int) -> list[dict]:
+        out = []
+        for i in range(n):
+            e = _observation(f"{prefix}-{i:03d}", topic=f"{prefix.lower()}{i}")
+            e["timestamp"] = f"{year_month}-{(i % 28) + 1:02d}T00:00:00+00:00"
+            out.append(e)
+        return out
+
+    _write_jsonl(
+        motor / ".agent/runtime/memory/archive/observations.2026-07.jsonl",
+        _lote("MOTORVIEJO", "2026-01", 40) + _lote("MOTORNUEVO", "2026-08", 40),
+    )
+    _write_jsonl(
+        destino / ".agent/runtime/memory/archive/observations.2026-07.jsonl",
+        _lote("DESTVIEJO", "2026-02", 40) + _lote("DESTNUEVO", "2026-07", 40),
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: destino / ".agent")
+    monkeypatch.setattr(memory_loader, "_resolve_motor_root", lambda: motor)
+
+    text = memory_loader.get_bootstrap_context()
+
+    assert "MOTORNUEVO" in text, "el indice no trajo lo RECIENTE del motor"
+    assert "DESTNUEVO" in text, "el indice no trajo lo RECIENTE del destino"
+    assert "MOTORVIEJO" not in text, (
+        "el indice eligio entradas VIEJAS del motor teniendo recientes: la "
+        "ordenacion por recencia dentro de cada origen es un no-op"
+    )
+    assert "DESTVIEJO" not in text, (
+        "el indice eligio entradas VIEJAS del destino teniendo recientes"
+    )
+
+
+def test_057a_index_prefers_lessons_over_autogenerated_templates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD-12: las plantillas autogeneradas no pueden desplazar a las lecciones.
+
+    Medido en el bucle L915 sobre el corpus real del destino: 135 entradas, de
+    las cuales 116 son PLANTILLAS autogeneradas por el paso `observations:` del
+    cierre ("Decisiones arquitectonicas documentadas en X", topic `architecture`
+    o `ticket-completion`) y solo 19 son lecciones. Como las plantillas son mas
+    RECIENTES, ocupaban 25 de las 30 plazas de la cuota y dejaban fuera 14 de
+    las 19 lecciones reales.
+
+    Resultado neto: el arranque gastaba su presupuesto en ruido con schema
+    valido. `obs-schema-gate-certifies-empty-template-bodies` ya lo dice --
+    "presencia de campo no es presencia de conocimiento" -- y `is_lesson()` ya
+    existe y ya filtra en la puerta de `recall`. Aqui solo se aplica donde
+    faltaba.
+
+    NO es un borrado: las plantillas siguen en el archive y siguen siendo
+    alcanzables; lo que no hacen es competir por el indice.
+
+    MUTACION ALCANZABLE: quitar el filtro `is_lesson` del indice -> las
+    plantillas vuelven a copar la cuota y el assert cae.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    for root in (motor, destino):
+        (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+
+    _write_jsonl(
+        motor / ".agent/runtime/memory/archive/observations.2026-07.jsonl",
+        [_observation(f"M-{i}", topic=f"m{i}") for i in range(5)],
+    )
+    # El destino: 1 leccion ANTIGUA y 50 plantillas RECIENTES que la taparian.
+    leccion = _observation("LECCION-REAL-DEL-DESTINO", topic="topologia-destino")
+    leccion["timestamp"] = "2026-06-01T00:00:00+00:00"
+    plantillas = []
+    for i in range(memory_loader._BOOTSTRAP_INDEX_CAP * 3):
+        p = _observation(f"PLANTILLA-{i}", topic="architecture")
+        p.pop("id", None)
+        p["signal"] = f"Decisiones arquitectonicas documentadas en WOT-2026-{i:03d}"
+        p["timestamp"] = f"2026-08-{(i % 28) + 1:02d}T00:00:00+00:00"
+        plantillas.append(p)
+    _write_jsonl(
+        destino / ".agent/runtime/memory/archive/observations.2026-08.jsonl",
+        [leccion, *plantillas],
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: destino / ".agent")
+    monkeypatch.setattr(memory_loader, "_resolve_motor_root", lambda: motor)
+
+    text = memory_loader.get_bootstrap_context()
+
+    assert "LECCION-REAL-DEL-DESTINO" in text, (
+        "la unica leccion REAL del destino quedo fuera del indice, desplazada "
+        "por plantillas autogeneradas mas recientes: el arranque gasta su "
+        "presupuesto en ruido con schema valido"
+    )
+
+
+def test_057b_lesson_filter_never_erases_a_whole_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD: filtrar plantillas no puede borrar un ORIGEN entero del indice.
+
+    Defecto medido en el bucle L917 (BA41/BA43, reproducido): `is_lesson` corria
+    ANTES de agrupar por origen, asi que podia vaciar un origen completo antes de
+    que la cuota -- el mecanismo que existe para impedir exactamente eso --
+    llegase a protegerlo:
+
+        local=80 plantillas + motor=80 lecciones, cap=60
+          -> Counter({'motor': 60})    el destino DESAPARECE, sin aviso
+
+    Es la ceguera D1 con el signo invertido, y no es hipotetica: el paso
+    `observations:` del cierre genera plantillas AUTOMATICAMENTE mientras las
+    lecciones se escriben a mano, asi que la ratio de un destino tiende
+    monotonamente a favor de las plantillas. El dia que un destino llegue a cero
+    lecciones, su archive se evapora del arranque -- justo las de topologia, las
+    que mas necesita quien opera ALLI -- y el pie del indice lo contaria como
+    "no mostradas por presupuesto", indistinguible de un recorte legitimo.
+
+    MUTACION ALCANZABLE: mover el filtro `is_lesson` delante del agrupado por
+    origen -> el origen de plantillas desaparece y el assert cae.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    for root in (motor, destino):
+        (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+
+    lecciones = []
+    for i in range(80):
+        e = _observation(f"LECCION-{i}", topic=f"leccion{i}")
+        e["timestamp"] = f"2026-07-{(i % 28) + 1:02d}T00:00:00+00:00"
+        lecciones.append(e)
+    _write_jsonl(
+        motor / ".agent/runtime/memory/archive/observations.2026-07.jsonl", lecciones
+    )
+
+    # El destino: SOLO plantillas autogeneradas, el caso limite.
+    plantillas = []
+    for i in range(80):
+        p = _observation(f"PLANTILLA-{i}", topic="architecture")
+        p.pop("id", None)
+        p["signal"] = f"Decisiones arquitectonicas documentadas en WOT-2026-{i:03d}"
+        p["timestamp"] = f"2026-08-{(i % 28) + 1:02d}T00:00:00+00:00"
+        plantillas.append(p)
+    _write_jsonl(
+        destino / ".agent/runtime/memory/archive/observations.2026-08.jsonl", plantillas
+    )
+
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: destino / ".agent")
+    monkeypatch.setattr(memory_loader, "_resolve_motor_root", lambda: motor)
+
+    shown = memory_loader._cap_preserving_origins(
+        memory_loader._read_portable_archive(), memory_loader._BOOTSTRAP_INDEX_CAP
+    )
+    origenes = {str(e.get("_origin")) for e in shown}
+
+    assert "local" in origenes, (
+        "el origen cuyas entradas son TODAS plantillas desaparecio del indice: "
+        "el filtro corre antes de la cuota y la deja sin nada que proteger"
+    )
+    assert "motor" in origenes, "el origen con lecciones tambien debe estar"
+
+
+def test_057b_review_context_has_a_declared_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """DoD: el review tiene TECHO, y lo que omite lo DECLARA.
+
+    Hallazgo BA43 del bucle L917, medido en la ruta productiva:
+
+        render_loader_rules('code')  -> 126.049 chars ~31.512 tok
+
+    La union dejo `get_review_context` SIN capar a proposito -- "un review decide
+    APPROVE/CHANGES y no puede perder lecciones" -- y el invariante es correcto.
+    Lo que no se midio es la consecuencia: ~31.5k tokens de memoria antes de que
+    el Manager vea una sola linea de diff, creciendo ~103 entradas/mes.
+
+    Y contradecia el argumento central de este mismo modulo, que dice literal
+    que "curar la ceguera causando un desbordamiento no es una cura, es una
+    reubicacion". Eso es exactamente lo que quedaba en la puerta que decide si
+    el trabajo se aprueba.
+
+    La distincion que resuelve la tension: "un review no puede PERDER lecciones"
+    NO es lo mismo que "un review no puede tener PRESUPUESTO". Se aplica el
+    patron que `_print_recall` ya usa -- descartar entradas ENTERAS y NOMBRARLAS
+    -- en vez de un cap silencioso por cardinalidad, que es justo el defecto que
+    costo 14 de 74 lecciones al Manager.
+
+    MUTACION ALCANZABLE: quitar el presupuesto -> el output crece sin techo y el
+    primer assert cae. Quitar el aviso -> cae el segundo.
+    """
+    root = tmp_path / "repo"
+    (root / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    entradas = []
+    for i in range(120):
+        e = _observation(f"REV-{i}", topic=f"rev{i}")
+        e["domain"] = "review-quality"
+        e["signal"] = "R" * 2000
+        e["timestamp"] = f"2026-07-{(i % 28) + 1:02d}T00:00:00+00:00"
+        entradas.append(e)
+    _write_jsonl(
+        root / ".agent/runtime/memory/archive/observations.2026-07.jsonl", entradas
+    )
+    monkeypatch.setattr(memory_loader, "get_agent_dir", lambda: root / ".agent")
+
+    review = memory_loader.get_review_context("review-quality")
+
+    assert len(review) <= memory_loader._REVIEW_BYTE_BUDGET * 1.3, (
+        f"el review emitio {len(review)} chars sin techo: ~31.5k tokens de "
+        "memoria antes de ver el diff, y creciendo cada mes"
+    )
+    assert "no mostrada" in review, (
+        "el review recorta y NO lo declara: un recorte mudo en la puerta que "
+        "decide APPROVE/CHANGES es el falso verde que este ticket corrige"
     )
