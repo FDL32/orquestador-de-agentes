@@ -102,6 +102,12 @@ Antes de escribir cualquier memoria, declara EXPLÍCITAMENTE su destino. No bast
 | Destino | Qué es | Portable / validable | Cuándo |
 |---------|--------|----------------------|--------|
 | `Claude privada` | Memoria personal de Claude Code (`~/.claude/.../memory/`) | NO portable, NO validada por el schema del motor | Hábito transversal del usuario/equipo; no es estado del proyecto |
+
+> **Su taxonomía tampoco es transferible** (medido 2026-08-19): la memoria privada
+> etiqueta con `metadata.type` ∈ {`user`, `feedback`, `project`, `reference`}, que NO
+> es el `domain` portable (enum cerrado de 12 valores, sin `feedback`). Una propuesta
+> redactada con la etiqueta privada falla `validate_observations.py --strict` con
+> `rc=1`. Ninguna etiqueta privada se transfiere: re-mapea al enum antes de proponer.
 | `portable motor` | `repo_motor/.agent/runtime/memory/archive/observations.YYYY-MM.jsonl` (wings `engine`/`meta`) | Portable + validable por schema; **versionado en git**, se propaga a destinos via sync | Invariante o contrato generalizable; SIEMPRE con confirmación humana |
 | `portable destino` | `repo_destino/.agent/runtime/memory/archive/observations.YYYY-MM.jsonl` (wing `project`) | Portable al destino + validable por schema; no sale del destino | Aprendizaje local del proyecto destino |
 
