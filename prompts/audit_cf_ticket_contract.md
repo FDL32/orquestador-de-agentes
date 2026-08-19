@@ -16,13 +16,52 @@
 Lee antes de evaluar:
 
 - `.agent/planning/ticket_contracts.md` (el bloque del ticket auditado).
-- `.agent/planning/repo_charter.md` (`Non-Goals`, `Quality Bar`, `Security Constraints`).
-- `.agent/planning/plan_graph.md` (el `PLAN-*` y las `Forbidden Surfaces` derivadas).
+- `repo_charter.md` (`Non-Goals`, `Quality Bar`, `Security Constraints`).
+  **Resolucion de ruta POR DUEÑO DEL TICKET, no por orden fijo (DEC-motor-charter-001).**
+  El charter que gobierna a un contrato es el de SU repo, y lo determina el
+  `delivery_authority` del propio contrato (o, si no lo declara, el prefijo del ticket):
+  - `delivery_authority: repo_motor` -> `<motor>/repo_charter.md` (RAIZ; el motor no es un
+    `repo_destino`, por eso no vive en `.agent/planning/`).
+  - `delivery_authority: repo_destino` (o ticket de un destino) ->
+    `<destino>/.agent/planning/repo_charter.md`.
+
+  **NO uses "la raiz primero" como regla ciega:** en un `entorno_multi_root` ambos charters
+  existen a la vez, y buscar por orden fijo hace que un contrato de destino se audite contra
+  los `Non-Goals` del MOTOR -- dueño equivocado, veredicto invalido. Declara SIEMPRE que
+  charter resolviste y por que.
+- `plan_graph.md` (el `PLAN-*` y las `Forbidden Surfaces` derivadas). Misma resolucion por
+  dueño que `repo_charter.md`.
 - `prompts/contract_formation_pipeline.md` (campos obligatorios y maquina de estados).
 - `prompts/audit_agent_output.md` secciones 2.b y 2.c (marco general).
 - Para validacion mecanica de campos: `scripts/validate_contract_formation.py`
   (WOT-2026-007c). La auditoria humana/adversarial NO sustituye al validador ni
   viceversa: el script cubre estructura; este prompt cubre intencion y suficiencia.
+
+### Si una entrada obligatoria NO EXISTE: "repo sin CF materializado" != "contrato mal formado"
+
+**Distincion obligatoria (WOT-2026-023m(d)).** Antes de emitir un hallazgo por una entrada
+ausente, resuelve su ruta por la regla de arriba (raiz del motor, luego planning del
+destino). Si tras esa resolucion el artefacto **sigue sin existir**, estas ante un
+**repo sin CF materializado**, que es un estado del REPO, no un defecto del CONTRATO:
+
+- **NO es BLOCKER del ticket auditado.** Bloquearlo seria *scope hijack*: le cobras al
+  contrato una carencia de infraestructura que no le pertenece ni puede arreglar.
+- El punto 8 (**Intent Audit**) queda **INEJECUTABLE, no "debil"**: sin `Non-Goals` /
+  `Quality Bar` / `Security Constraints` no hay nada contra lo que contrastar. Declaralo
+  como tal, con la ruta que buscaste, en vez de inventar un veredicto.
+- Emite el estado **`CF_NOT_MATERIALIZED`** nombrando el artefacto y las rutas probadas, y
+  **escala con ARTEFACTO, no de palabra**: escribe el gap en el sink que ya existe,
+  `.agent/planning/contract_gaps/CG-<TICKET_ID>.md` (plantilla `templates/contract_gap.md`,
+  el mismo canal que usa el Builder). Una escalada sin fichero es NORMA, no mecanismo: nadie
+  la recibe y la carencia vuelve silenciosa. El gap declara el artefacto ausente, el dueño
+  del charter que se resolvio y la ruta probada.
+- Un contrato **mal formado** es cosa distinta: sus campos existen pero estan incompletos,
+  no son binarios o no son reproducibles. Eso SI es hallazgo del contrato y mantiene su
+  severidad normal.
+
+Regla practica: **ausencia de infra -> `CF_NOT_MATERIALIZED` + escalar; defecto de campo ->
+BLOCKER/MAJOR segun severidad.** Confundirlos produce falsos BLOCKER que congelan tickets
+sanos, y es la razon por la que `WOT-2026-021k` necesito un waiver explicito del usuario.
 
 ## Checklist especifica del ticket contract
 
@@ -44,8 +83,12 @@ Lee antes de evaluar:
    ambiguedad, superficie prohibida necesaria o criterio incompleto, el Builder emite
    `CG-<TICKET_ID>.md` y bloquea; no muta el contrato en silencio.
 8. **Intent Audit (rutado a 2.b):** contrasta el ticket contra `Non-Goals`,
-   `Quality Bar` y `Security Constraints` del charter. Un ticket que cumple su DoD pero
-   contradice un Non-Goal debe marcarse riesgo, no aprobarse.
+   `Quality Bar` y `Security Constraints` del charter **de su dueño** (resolucion de ruta
+   arriba). Un ticket que cumple su DoD pero contradice un Non-Goal debe marcarse riesgo,
+   no aprobarse.
+   **GATE PREVIO (WOT-2026-023m(d)):** si el charter de su dueño NO existe, este punto es
+   `CF_NOT_MATERIALIZED` -> **INEJECUTABLE, y NO BLOCKER del ticket**. Emite el estado con
+   la ruta probada y escala; no lo apruebes en silencio ni lo bloquees por la carencia.
 9. **Evidencia minima para frozen:** cada claim central del contrato necesita
    artefacto concreto (`path:`, `command:` + `exit_code:`, `commit:` cuando
    aplique). Una etiqueta sin artefacto es relato y no habilita `frozen`.
