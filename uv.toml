@@ -1,2 +1,9 @@
 cache-dir = '.agent/runtime/uv-cache'
 exclude-newer = '2026-05-16'
+# WOT-2026-058n: `exclude-newer` global (arriba) congela el indice al 2026-05-16, asi que
+# uv NO ve pip 26.1.2/26.2/26.2.1 (publicadas 05-31, 07-29 y 08-04) y respondia
+# "only pip<=26.1.1 is available" mientras PyPI si las servia. Eso dejaba PYSEC-2026-3721
+# sin fix posible y BLOQUEABA todo push (hook pip-audit, exit 1).
+# Corte POR-PAQUETE en vez de mover el global: sube solo pip (1 version) en lugar de
+# arrastrar 15 paquetes, que exigiria re-correr la suite sobre un entorno distinto.
+exclude-newer-package = { pip = '2026-08-21' }

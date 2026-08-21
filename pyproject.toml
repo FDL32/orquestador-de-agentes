@@ -88,7 +88,6 @@ asyncio_mode = "auto"
 # resolver desde PyPI. Retira cada excepcion cuando uv pueda bloquear la
 # version indicada.
 ignore-vuln = [
-    "PYSEC-2026-196",       # pip >=26.1.2
     "GHSA-6v7p-g79w-8964", # msgpack >=1.2.1
 ]
 
