@@ -22,6 +22,16 @@ __pycache__/
 # arbol y tumbaba el Git Status Check del closeout (bloqueante). Es runtime
 # por-maquina: no viaja.
 .agent/runtime/ensemble/
+
+# Bundles y respuestas de lentes de un bucle de gobierno lanzado desde el
+# arbol del motor (bundle_*.md, <backend>_*.txt, fanout_*/). Misma familia que
+# WOT-2026-042k: son runtime POR-MAQUINA de una sesion concreta -- no viajan --
+# y al quedar untracked tumbaban el Git Status Check del closeout, que es
+# BLOQUEANTE. Ironia medida 2026-08-21: el bucle que los genero auditaba
+# precisamente el cierre bloqueado por arbol sucio.
+bundle_*.md
+fanout_*/
+glm_*.txt
 graphify-out/
 debug_output.txt
 output.txt
