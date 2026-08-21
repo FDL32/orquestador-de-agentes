@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -369,6 +370,177 @@ def _errors_live_backlog(data: dict[str, Any], backlog_text: str) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-046h: condition 3 (`contabilidad_completa`) had NO teeth.
+# `prompts/orchestrator_autonomous_ticket_batch.md:741` fixes the accounting
+# universe as the tickets listed in `groups[]` (WOT-2026-025q), and requires
+# that a `tickets[]` entry belonging to NO group be ENUMERATED as excluded,
+# "never silently omitted". The validator checked NEITHER half: measured on
+# the real DAG `backlog_triage_20260820-024142.json`, `WOT-2026-055h` sits in
+# a group while being ABSENT from `tickets[]` entirely -- untriaged, with no
+# `classification` and no `evidence_label` -- and the validator returned
+# `exit 0`. The barrier existed and did not bite where the failure happens.
+# ---------------------------------------------------------------------------
+
+# Keys whose entries enumerate a ticket as DELIBERATELY excluded from the
+# accounting universe. The contract says "in the DAG or in the batch_run
+# accounting note"; this CLI only sees the DAG, so it accepts any of these.
+_EXCLUSION_KEYS = (
+    "requires_human",
+    "premise_verify",
+    "excluded",
+    "excluded_tickets",
+    # Measured on a REAL closed-flight DAG (backlog_triage_output_044_CERRADO):
+    # the enumeration of deliberate exclusions lives under this name. Omitting
+    # it made this check report 3 false positives on a historically correct DAG.
+    "excluded_from_flight",
+)
+
+
+def _ticket_ids(entries: Any) -> set[str]:
+    """Ticket ids from a list whose items are either bare strings or objects.
+
+    `tickets[]` carries objects (`{"id": ..., "classification": ...}`) while
+    `groups[].tickets` carries bare id strings; the exclusion lists use both
+    shapes across real DAGs. Accepting both is deliberate, not laxity: this
+    helper answers "which ids are named here", nothing else.
+
+    Before: `entries` is whatever the JSON held (may be any type).
+    During: pure; no I/O, no mutation.
+    After: returns the set of ids found. Never raises on malformed input.
+    """
+    ids: set[str] = set()
+    if not isinstance(entries, list):
+        return ids
+    for entry in entries:
+        if isinstance(entry, str):
+            ids.add(entry)
+        elif isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            ids.add(entry["id"])
+    return ids
+
+
+def _errors_accounting(data: dict[str, Any]) -> list[str]:
+    """WOT-2026-046h: enforce condition 3 (`contabilidad_completa`).
+
+    Two failures, deliberately kept DISTINCT because they mean opposite things:
+
+    (a) A ticket scheduled in `groups[]` but ABSENT from `tickets[]`: it is in
+        the accounting universe yet was never triaged, so it carries no
+        classification and no evidence. This is the defect measured on the real
+        DAG and it is the more dangerous of the two -- the executor would fly a
+        ticket the triage never assessed.
+    (b) A `tickets[]` entry in NO group and NOT enumerated as excluded: the F3
+        ambiguity the contract names verbatim ("never silently omitted").
+
+    A DAG with no root `tickets[]` key at all is NOT an error: this CLI also
+    validates generic/handwritten DAGs that carry only `groups[]`, and the
+    accounting universe is well defined without the triage roster.
+
+    Before: `data` is the parsed DAG root object.
+    During: pure set arithmetic; no I/O, no mutation of `data`.
+    After: returns a list of error strings (empty == accounting is complete).
+    """
+    errors: list[str] = []
+    if "tickets" not in data:
+        return errors
+
+    rostered = _ticket_ids(data.get("tickets"))
+    # Not every DAG's `tickets[]` is a full triage ROSTER. Measured on a real
+    # closed flight (backlog_triage_output_044_CERRADO.json): there `tickets[]`
+    # enumerates ONLY the excluded entries (`{id, note}`), while the flown
+    # tickets live solely in `groups[]`. Reading that as "untriaged" produced 4
+    # false positives on a DAG that was correct for its own schema variant.
+    # The discriminator is SHAPE, not count: a roster labels its entries
+    # (`classification` / `evidence_label`); an exclusion list only annotates.
+    is_roster = any(
+        isinstance(e, dict) and ("classification" in e or "evidence_label" in e)
+        for e in (data.get("tickets") or [])
+    )
+    grouped: set[str] = set()
+    groups = data.get("groups")
+    if isinstance(groups, list):
+        for group in groups:
+            if isinstance(group, dict):
+                grouped.update(
+                    tk for tk in (group.get("tickets") or []) if isinstance(tk, str)
+                )
+
+    if is_roster:
+        errors.extend(
+            f"contabilidad (WOT-2026-046h): el ticket '{ticket}' esta en un grupo "
+            f"pero NO figura en 'tickets[]': entra en el universo de contabilidad "
+            f"sin haber pasado por el triaje (sin classification ni evidence_label)"
+            for ticket in sorted(grouped - rostered)
+        )
+
+    if is_roster:
+        excluded: set[str] = set()
+        for key in _EXCLUSION_KEYS:
+            excluded |= _ticket_ids(data.get(key))
+
+        errors.extend(
+            f"contabilidad (WOT-2026-046h): el ticket '{ticket}' de 'tickets[]' no "
+            f"pertenece a ningun grupo y NO esta enumerado como excluido en "
+            f"{list(_EXCLUSION_KEYS)}: omision silenciosa (condicion 3, F3)"
+            for ticket in sorted((rostered - grouped) - excluded)
+        )
+
+    return errors
+
+
+# WOT-2026-046h (F-4, same surface, fused per the ticket): a DAG could stamp
+# `evidence_label: VERIFICADO` with no probe and pass `exit 0` (measured H-7 in
+# the same session). This CLI cannot verify a probe ran -- that is not knowable
+# from the JSON -- so it enforces the part that IS checkable: the label must be
+# PRESENT and one of the contract's values. An absent label is the silent case.
+_VALID_EVIDENCE_LABELS = {"VERIFICADO", "INFERIDO", "NO_VERIFICADO"}
+
+
+def _errors_evidence_label(data: dict[str, Any]) -> list[str]:
+    """WOT-2026-046h (F-4): every ROSTERED ticket declares a valid evidence_label.
+
+    Scoped to entries of `tickets[]` that are objects: a DAG whose roster is a
+    plain list of id strings predates the labelled schema and is left alone
+    (backward compatible on purpose -- this check adds teeth, it does not
+    retroactively invalidate older artifacts).
+
+    Before: `data` is the parsed DAG root object.
+    During: pure; no I/O.
+    After: returns error strings for missing/invalid labels.
+    """
+    errors: list[str] = []
+    entries = data.get("tickets")
+    if not isinstance(entries, list):
+        return errors
+    # Same shape guard as _errors_accounting: in the exclusion-list variant the
+    # entries are `{id, note}` and never promised a label. Demanding one there
+    # would flag a historically correct DAG (measured: 4 false positives).
+    if not any(
+        isinstance(e, dict) and ("classification" in e or "evidence_label" in e)
+        for e in entries
+    ):
+        return errors
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ticket = entry.get("id", "<sin id>")
+        if "evidence_label" not in entry:
+            errors.append(
+                f"evidencia (WOT-2026-046h): el ticket '{ticket}' de 'tickets[]' "
+                f"no declara 'evidence_label' (VERIFICADO/INFERIDO sin marcar)"
+            )
+            continue
+        label = entry.get("evidence_label")
+        if label not in _VALID_EVIDENCE_LABELS:
+            errors.append(
+                f"evidencia (WOT-2026-046h): el ticket '{ticket}' declara "
+                f"evidence_label {label!r} invalido, debe ser uno de "
+                f"{sorted(_VALID_EVIDENCE_LABELS)}"
+            )
+    return errors
+
+
 def validate_dag(data: dict[str, Any]) -> list[str]:
     """Run all validation rules and return the combined list of errors."""
     errors: list[str] = []
@@ -381,16 +553,84 @@ def validate_dag(data: dict[str, Any]) -> list[str]:
     errors.extend(_errors_cycle(groups))
     errors.extend(_errors_blocks_consistency(groups))
     errors.extend(_errors_surface_overlap(groups))
+    errors.extend(_errors_accounting(data))
+    errors.extend(_errors_evidence_label(data))
 
     return errors
 
 
-def _freshness_errors(live_backlog: Path | None, data: dict[str, Any]) -> list[str]:
-    """Resolve --live-backlog into freshness errors (fail-closed on I/O)."""
+def _backlog_text_as_of(
+    live_backlog: Path, as_of: str
+) -> tuple[str | None, str | None]:
+    """Read the backlog as it stood at commit `as_of`. Returns (text, error).
+
+    WOT-2026-055r: `--live-backlog` run AFTER a flight gives a FALSE RED -- the
+    tickets it closed have migrated to the archive, so the gate reports "DAG
+    muerto" about a DAG that was perfectly fresh when it was consumed. The only
+    workaround was reconstructing the state by hand
+    (`git show <sha>:backlog.md`), which no auditor does unless they know.
+
+    Resolution is done in the repo that CONTAINS the backlog (the destino), not
+    the motor: the backlog is destino state and `as_of` is a destino sha.
+
+    Before: `live_backlog` exists; `as_of` is a non-empty revision string.
+    During: one read-only `git show <as_of>:<relpath>` subprocess.
+    After: returns (text, None) on success or (None, error) on failure. The
+           error is fail-CLOSED on purpose: an unresolvable `--as-of` must not
+           silently degrade into the live read it was meant to replace.
+    """
+    repo_dir = live_backlog.parent
+    try:
+        top = subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo_dir), "rev-parse", "--show-toplevel"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if top.returncode != 0:
+            return None, (
+                f"frescura (WOT-2026-055r): --as-of={as_of} pero {repo_dir} no "
+                f"esta en un repo git: no se puede reconstruir el backlog"
+            )
+        rel = live_backlog.resolve().relative_to(Path(top.stdout.strip()).resolve())
+        shown = subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo_dir), "show", f"{as_of}:{rel.as_posix()}"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return None, (
+            f"frescura (WOT-2026-055r): no se pudo reconstruir el backlog en "
+            f"--as-of={as_of}: {e}"
+        )
+    if shown.returncode != 0:
+        return None, (
+            f"frescura (WOT-2026-055r): --as-of={as_of} no resuelve, o el "
+            f"backlog no existia en ese commit: {shown.stderr.strip()}"
+        )
+    return shown.stdout, None
+
+
+def _freshness_errors(
+    live_backlog: Path | None, data: dict[str, Any], as_of: str | None = None
+) -> list[str]:
+    """Resolve --live-backlog into freshness errors (fail-closed on I/O).
+
+    With `as_of` (WOT-2026-055r) the queue is reconstructed at that commit, so a
+    CLOSED flight can be re-validated for the freshness it had when consumed.
+    Without it the check reads the LIVE queue and is therefore PRE-EXECUTION
+    only -- stated in the output rather than left as folklore.
+    """
     if live_backlog is None:
         return []
     if not live_backlog.exists():
         return [f"frescura (WOT-2026-023t): backlog vivo no existe: {live_backlog}"]
+    if as_of:
+        backlog_text, error = _backlog_text_as_of(live_backlog, as_of)
+        if error:
+            return [error]
+        return _errors_live_backlog(data, backlog_text or "")
     try:
         backlog_text = live_backlog.read_text(encoding="utf-8")
     except OSError as e:
@@ -398,12 +638,79 @@ def _freshness_errors(live_backlog: Path | None, data: dict[str, Any]) -> list[s
     return _errors_live_backlog(data, backlog_text)
 
 
-def _head_sha_warnings(head_sha: str | None, data: dict[str, Any]) -> list[str]:
+def _sha_resolves_in_motor(head_sha: str, motor_root: Path) -> bool | None:
+    """True/False if `head_sha` names a commit of the MOTOR repo; None if unknown.
+
+    WOT-2026-051f: `--head-sha` used to compare CADENAS and nothing else, so a
+    sha that exists in NO repo (`deadbeef...`) produced `rc=0` plus the ordinary
+    staleness WARN -- indistinguishable from a genuinely stale motor.
+
+    Returns None (not False) when the question cannot be answered: git missing,
+    `motor_root` not a repo, git erroring for any reason other than "no such
+    object". Unknown is NOT "invalid": this CLI must stay usable off-repo, and
+    turning an unanswerable question into a warning would cry wolf.
+
+    Before: `head_sha` is a non-empty string; `motor_root` a candidate repo dir.
+    During: one read-only `git cat-file -e <sha>^{commit}` subprocess, no writes.
+    After: returns bool | None. Never raises.
+    """
+    try:
+        inside = subprocess.run(  # noqa: S603
+            ["git", "-C", str(motor_root), "rev-parse", "--is-inside-work-tree"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return None
+        probe = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "git",
+                "-C",
+                str(motor_root),
+                "cat-file",
+                "-e",
+                f"{head_sha}^{{commit}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return probe.returncode == 0
+
+
+def _head_sha_warnings(
+    head_sha: str | None, data: dict[str, Any], motor_root: Path | None = None
+) -> list[str]:
     """--head-sha vs state_at_triage.motor: WARN on mismatch, never an error
     (the motor HEAD advances with every close of the batch itself). Prefix
-    tolerant so short and long SHAs compare equal."""
+    tolerant so short and long SHAs compare equal.
+
+    WOT-2026-051f: the sha is FIRST resolved against the motor repo. A sha that
+    does not resolve gets its OWN warning and SHORT-CIRCUITS -- the staleness
+    WARN is deliberately NOT also emitted, because the whole defect was that the
+    two cases produced the same message and could not be told apart. Resolution
+    failure means "you passed a sha of another repo, or a typo"; staleness means
+    "the motor really moved". NON-GOAL (declared in the ticket): the staleness
+    semantics are unchanged, and nothing here becomes blocking.
+    """
     if not head_sha:
         return []
+
+    root = (
+        motor_root if motor_root is not None else Path(__file__).resolve().parent.parent
+    )
+    resolves = _sha_resolves_in_motor(head_sha, root)
+    if resolves is False:
+        return [
+            f"--head-sha={head_sha} NO resuelve a ningun commit del motor "
+            f"({root}): sha de otro repo, truncado o inexistente. El WARN de "
+            "staleness NO se emite porque no hay nada con que compararlo "
+            "(WARN, no bloquea; WOT-2026-051f)"
+        ]
+
     state = data.get("state_at_triage")
     triage_motor = str(state.get("motor", "")) if isinstance(state, dict) else ""
     if triage_motor and not (
@@ -493,6 +800,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--as-of",
+        default=None,
+        help=(
+            "Commit del DESTINO contra el que reconstruir el backlog para el "
+            "gate de frescura (WOT-2026-055r). Sin este flag, --live-backlog "
+            "lee la cola VIVA y por tanto solo es valido PRE-ejecucion: tras un "
+            "vuelo, los tickets cerrados ya migraron al archive y darian un "
+            "FALSO ROJO. Usar el sha del triaje para re-validar un vuelo cerrado."
+        ),
+    )
+    parser.add_argument(
         "--head-sha",
         default=None,
         help=(
@@ -537,9 +855,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     errors = validate_dag(data)
-    errors.extend(_freshness_errors(args.live_backlog, data))
+    errors.extend(_freshness_errors(args.live_backlog, data, args.as_of))
     errors.extend(_pair_completeness_errors(args.dag_path))
     warnings = _head_sha_warnings(args.head_sha, data)
+    # WOT-2026-055r (b): make the scope of the check explicit in its own output.
+    # Without --as-of the queue read is the LIVE one, so a green here means
+    # "fresh NOW", never "was fresh when this DAG was consumed".
+    if args.live_backlog is not None and not args.as_of:
+        warnings.append(
+            "frescura evaluada contra la cola VIVA: valido PRE-ejecucion. Para "
+            "re-validar un vuelo YA CERRADO usa --as-of <sha-del-triaje>, o los "
+            "tickets cerrados daran un falso rojo (WOT-2026-055r)"
+        )
     return _emit_result(args.json, args.dag_path, errors, warnings)
 
 

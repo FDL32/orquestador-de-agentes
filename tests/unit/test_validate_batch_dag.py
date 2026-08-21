@@ -417,17 +417,38 @@ def test_live_backlog_missing_file_fails(tmp_path: Path) -> None:
 
 def test_head_sha_mismatch_warns_but_passes(tmp_path: Path) -> None:
     """state_at_triage.motor != HEAD -> WARN with premise re-check, NEVER a
-    block (the HEAD advances with every close of the batch itself)."""
-    result = _run_with(_write_dag(tmp_path, _valid_dag()), "--head-sha", "fff999")
+    block (the HEAD advances with every close of the batch itself).
+
+    WOT-2026-051f: this test used the placeholder shas `fff999`/`abc123`, which
+    resolve to NO commit. Once `--head-sha` began resolving against git, those
+    placeholders exercised the new unresolvable branch instead of the staleness
+    branch they were written for -- so they now use REAL motor shas. The
+    property under test (mismatch -> WARN, never a block) is unchanged.
+    """
+    head = _motor_sha("HEAD")
+    older = _motor_sha("HEAD~1")
+    if older == head:
+        pytest.skip("historial insuficiente")
+    dag = _valid_dag()
+    dag["state_at_triage"]["motor"] = head
+    result = _run_with(_write_dag(tmp_path, dag), "--head-sha", older)
     assert result.returncode == 0, result.stderr
     assert "WARN" in result.stderr
-    assert "abc123" in result.stderr
+    assert head in result.stderr
 
 
 def test_head_sha_match_no_warning(tmp_path: Path) -> None:
-    """Matching SHA (prefix-tolerant) emits no warning."""
-    result = _run_with(_write_dag(tmp_path, _valid_dag()), "--head-sha", "abc123")
-    assert result.returncode == 0
+    """Matching SHA (prefix-tolerant) emits no warning.
+
+    Prefix tolerance is the POINT: `state_at_triage.motor` holds the short sha
+    while the caller passes the full one (or vice versa). Real shas, per the
+    note in the test above.
+    """
+    head = _motor_sha("HEAD")
+    dag = _valid_dag()
+    dag["state_at_triage"]["motor"] = head[:7]
+    result = _run_with(_write_dag(tmp_path, dag), "--head-sha", head)
+    assert result.returncode == 0, result.stderr
     assert "WARN" not in result.stderr
 
 
@@ -660,3 +681,285 @@ def test_051a_timestamped_name_still_demands_its_pair(tmp_path: Path) -> None:
         "a canonical triage name must still require its .md sibling"
     )
     assert "par incompleto" in result.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-046h: condition 3 (`contabilidad_completa`) now has teeth.
+# Measured on the REAL DAG backlog_triage_20260820-024142.json: `WOT-2026-055h`
+# sat in a group while absent from `tickets[]`, and the validator returned
+# exit 0 both before AND after that incoherence -- the barrier existed and did
+# not bite where the failure happens. Contract:
+# prompts/orchestrator_autonomous_ticket_batch.md:741.
+# ---------------------------------------------------------------------------
+
+
+def _roster_dag() -> dict[str, Any]:
+    """Baseline + a triage ROSTER (`tickets[]` with classification/evidence)."""
+    dag = _valid_dag()
+    dag["tickets"] = [
+        {"id": t, "classification": "APTO_AUTONOMO", "evidence_label": "VERIFICADO"}
+        for t in _DAG_TICKETS
+    ]
+    return dag
+
+
+def test_046h_roster_complete_passes(tmp_path: Path) -> None:
+    """Positive control: every grouped ticket rostered -> accounting is clean."""
+    result = _run(_write_dag(tmp_path, _roster_dag()))
+    assert result.returncode == 0, result.stderr
+
+
+def test_046h_grouped_ticket_absent_from_roster_rejected(tmp_path: Path) -> None:
+    """The defect measured on the real DAG: a ticket scheduled in a group but
+    never triaged (absent from `tickets[]`) used to pass with exit 0."""
+    dag = _roster_dag()
+    dag["tickets"] = [e for e in dag["tickets"] if e["id"] != "WOT-2026-019z"]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "WOT-2026-019z" in result.stderr
+    assert "contabilidad" in result.stderr
+
+
+def test_046h_groupless_roster_entry_must_be_enumerated_as_excluded(
+    tmp_path: Path,
+) -> None:
+    """F3 verbatim: a `tickets[]` entry in NO group is triage context and MUST
+    be enumerated as excluded, never silently omitted."""
+    dag = _roster_dag()
+    dag["tickets"].append(
+        {
+            "id": "WOT-2026-099x",
+            "classification": "DISENO_PRIMERO",
+            "evidence_label": "INFERIDO",
+        }
+    )
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "WOT-2026-099x" in result.stderr
+    assert "omision silenciosa" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "key", ["requires_human", "premise_verify", "excluded", "excluded_from_flight"]
+)
+def test_046h_enumerated_exclusion_is_accepted(tmp_path: Path, key: str) -> None:
+    """Mutation counterpart: enumerate the same entry and it passes. Every
+    accepted key is exercised -- `excluded_from_flight` is not hypothetical, it
+    is the name a real closed-flight DAG uses."""
+    dag = _roster_dag()
+    dag["tickets"].append(
+        {
+            "id": "WOT-2026-099x",
+            "classification": "DISENO_PRIMERO",
+            "evidence_label": "INFERIDO",
+        }
+    )
+    dag[key] = [{"id": "WOT-2026-099x", "reason": "decision de producto pendiente"}]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
+def test_046h_exclusion_list_schema_variant_is_not_flagged(tmp_path: Path) -> None:
+    """Not every `tickets[]` is a roster. A real closed-flight DAG
+    (backlog_triage_output_044_CERRADO.json) uses `tickets[]` to enumerate ONLY
+    the excluded entries as `{id, note}`, with the flown tickets living solely
+    in `groups[]`. Reading that as "untriaged" produced 4 false positives on a
+    DAG correct for its own schema variant: the discriminator is SHAPE (a
+    roster labels its entries), never count."""
+    dag = _valid_dag()
+    dag["tickets"] = [
+        {"id": "WOT-2026-027d", "note": "DISENO_PRIMERO: decision sin adjudicar."}
+    ]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
+def test_046h_dag_without_root_tickets_still_valid(tmp_path: Path) -> None:
+    """Backward compatibility: this CLI also validates generic DAGs carrying
+    only `groups[]`; the accounting universe is well defined without a roster."""
+    dag = _valid_dag()
+    assert "tickets" not in dag
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
+# WOT-2026-046h (F-4): an unlabelled/invalid evidence_label used to pass.
+
+
+def test_046h_missing_evidence_label_rejected(tmp_path: Path) -> None:
+    dag = _roster_dag()
+    del dag["tickets"][0]["evidence_label"]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "evidencia" in result.stderr
+    assert dag["tickets"][0]["id"] in result.stderr
+
+
+def test_046h_invalid_evidence_label_rejected(tmp_path: Path) -> None:
+    dag = _roster_dag()
+    dag["tickets"][0]["evidence_label"] = "SEGURO_SEGURISIMO"
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "SEGURO_SEGURISIMO" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-051f: `--head-sha` accepted ANY string. Reproduced with
+# `deadbeefdeadbeef...` -- a sha that exists in NO repo -- giving rc=0 plus the
+# ORDINARY staleness WARN, indistinguishable from a genuinely stale motor.
+# NON-GOAL: staleness semantics unchanged; nothing becomes blocking.
+# ---------------------------------------------------------------------------
+
+_UNRESOLVABLE_SHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+
+def _motor_sha(rev: str) -> str:
+    out = subprocess.run(
+        ["git", "-C", str(PROJECT_ROOT), "rev-parse", rev],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        pytest.skip(f"motor no es un repo git resoluble para {rev}")
+    return out.stdout.strip()
+
+
+def test_051f_unresolvable_sha_gets_its_own_distinct_warning(tmp_path: Path) -> None:
+    """DoD (a)+(c): a sha resolving to no commit of the MOTOR emits a warning
+    DISTINCT from staleness, and the staleness WARN is NOT also emitted -- the
+    whole defect was that both cases produced the same message."""
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()), "--head-sha", _UNRESOLVABLE_SHA
+    )
+    assert result.returncode == 0, "NON-GOAL: sigue sin bloquear"
+    assert "NO resuelve" in result.stderr
+    assert "re-verificar" not in result.stderr, (
+        "el WARN de staleness no debe emitirse: no hay nada con que comparar"
+    )
+
+
+def test_051f_real_motor_head_is_silent(tmp_path: Path) -> None:
+    """DoD (c): the real motor HEAD, matching state_at_triage -> no sha warning."""
+    head = _motor_sha("HEAD")
+    dag = _valid_dag()
+    dag["state_at_triage"]["motor"] = head
+    result = _run_with(_write_dag(tmp_path, dag), "--head-sha", head)
+    assert result.returncode == 0, result.stderr
+    assert "NO resuelve" not in result.stderr
+    assert "re-verificar" not in result.stderr
+
+
+def test_051f_real_but_older_sha_still_warns_staleness(tmp_path: Path) -> None:
+    """DoD (b): the LEGITIMATE case (real motor sha != state_at_triage.motor)
+    keeps its staleness WARN unchanged."""
+    head = _motor_sha("HEAD")
+    older = _motor_sha("HEAD~1")
+    if older == head:
+        pytest.skip("historial insuficiente")
+    dag = _valid_dag()
+    dag["state_at_triage"]["motor"] = head
+    result = _run_with(_write_dag(tmp_path, dag), "--head-sha", older)
+    assert result.returncode == 0, result.stderr
+    assert "re-verificar" in result.stderr
+    assert "NO resuelve" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-055r: `--live-backlog` gave a FALSE RED post-flight -- tickets the
+# flight closed have migrated to the archive, so a DAG that was fresh when
+# consumed is reported as "DAG muerto". Verified on the real closed flight
+# backlog_triage_output_044_CERRADO.json.
+# ---------------------------------------------------------------------------
+
+
+def _git_backlog_repo(tmp_path: Path, rows: list[str]) -> tuple[Path, str]:
+    """A throwaway git repo holding a backlog.md; returns (path, sha).
+
+    Its own `.git` is REQUIRED: without it git walks up and answers about the
+    REAL tree, so the fixture would not be hermetic (WOT-2026-020r).
+    """
+    repo = tmp_path / "destino"
+    repo.mkdir()
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], capture_output=True, text=True
+        )
+
+    if run("init").returncode != 0:
+        pytest.skip("git no disponible")
+    run("config", "user.email", "t@t.t")
+    run("config", "user.name", "t")
+    backlog = repo / "backlog.md"
+    header = "| Prio | Ticket | Descripcion | Dominio | Estado | Dep | Origen | Nota |"
+    sep = "|---|---|---|---|---|---|---|---|"
+    backlog.write_text("\n".join([header, sep, *rows]) + "\n", encoding="utf-8")
+    run("add", "backlog.md")
+    if run("commit", "-m", "triage").returncode != 0:
+        pytest.skip("no se pudo commitear el fixture")
+    sha = run("rev-parse", "HEAD").stdout.strip()
+    return backlog, sha
+
+
+def test_055r_as_of_revalidates_a_closed_flight(tmp_path: Path) -> None:
+    """DoD (a): with --as-of <sha del triaje>, a DAG whose tickets have since
+    been closed validates GREEN -- it was fresh when consumed."""
+    backlog, sha = _git_backlog_repo(tmp_path, [_pending_row(t) for t in _DAG_TICKETS])
+    # The flight closes: every ticket leaves the live queue.
+    backlog.write_text(
+        "| Prio | Ticket | Descripcion | Dominio | Estado | Dep | Origen | Nota |\n"
+        "|---|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    dag_path = _write_dag(tmp_path, _valid_dag())
+
+    stale = _run_with(dag_path, "--live-backlog", str(backlog))
+    assert stale.returncode == 1, "control: la cola viva da el FALSO ROJO"
+
+    fresh = _run_with(dag_path, "--live-backlog", str(backlog), "--as-of", sha)
+    assert fresh.returncode == 0, fresh.stderr
+
+
+def test_055r_as_of_negative_control_dag_not_fresh_at_that_sha(
+    tmp_path: Path,
+) -> None:
+    """DoD (c): a DAG that was NOT fresh at the given sha still fails."""
+    backlog, sha = _git_backlog_repo(
+        tmp_path,
+        [_pending_row("WOT-2026-022i"), _pending_row("WOT-2026-021k")],
+    )
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()),
+        "--live-backlog",
+        str(backlog),
+        "--as-of",
+        sha,
+    )
+    assert result.returncode == 1
+    assert "WOT-2026-019z" in result.stderr
+
+
+def test_055r_unresolvable_as_of_fails_closed(tmp_path: Path) -> None:
+    """An unresolvable --as-of must NOT degrade into the live read it replaces."""
+    backlog, _ = _git_backlog_repo(tmp_path, [_pending_row(t) for t in _DAG_TICKETS])
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()),
+        "--live-backlog",
+        str(backlog),
+        "--as-of",
+        _UNRESOLVABLE_SHA,
+    )
+    assert result.returncode == 1
+    assert "no resuelve" in result.stderr.lower()
+
+
+def test_055r_live_read_declares_it_is_pre_execution_only(tmp_path: Path) -> None:
+    """DoD (b): without --as-of the check states its own scope, instead of
+    leaving "this is pre-execution only" as folklore."""
+    backlog = _write_backlog(tmp_path, [_pending_row(t) for t in _DAG_TICKETS])
+    result = _run_with(
+        _write_dag(tmp_path, _valid_dag()), "--live-backlog", str(backlog)
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PRE-ejecucion" in result.stderr
+    assert "--as-of" in result.stderr
