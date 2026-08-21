@@ -1075,8 +1075,16 @@ def test_l700_unanswerable_resolution_is_not_reported_as_invalid() -> None:
 
 def test_l700_real_motor_resolves_true_and_fake_resolves_false() -> None:
     """Control positivo Y negativo del resolutor, en el repo REAL del motor:
-    el HEAD resuelve True y un sha inventado resuelve False. Sin este par, el
-    test de arriba pasaria igual con una funcion que devolviera None siempre."""
+    el HEAD resuelve True y un sha inventado resuelve False.
+
+    ALCANCE DECLARADO (adjudicado por Codex/BA05 en el bucle L700): este test
+    por si solo NO demuestra el fix de la rama `None` -- pasaria igual con la
+    implementacion previa, porque solo ejercita el camino DENTRO del repo. Su
+    trabajo es el inverso: impedir que el test de la rama `None` pase por
+    SUERTE con una funcion que devolviera None siempre. Los dos se sostienen en
+    PAREJA; ninguno de los dos basta solo, y por eso se declara aqui en vez de
+    dejar que el nombre sugiera mas cobertura de la que tiene.
+    """
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     try:
         from validate_batch_dag import _sha_resolves_in_motor
