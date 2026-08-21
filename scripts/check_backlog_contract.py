@@ -1269,6 +1269,22 @@ def validate_archive_prose_preservation(root: Path) -> list[str]:
         return []
 
     archive_reactivations = _read_archive_reactivations(archive)
+
+    # WOT-2026-058k: el baseline censa deuda de UN workspace concreto (el del
+    # motor, 51 entradas, todas de prefijo WOT). Aplicarlo a CUALQUIER destino
+    # exige filas que ese destino NUNCA tuvo -> 7 errores permanentes e
+    # IRRESOLUBLES desde el destino (no puede crear filas WOT ajenas, y borrar
+    # el baseline no es suyo). Medido 2026-08-21 sobre un destino de prefijo
+    # CTL: 7 errores, todos "censused row missing from archive".
+    # El baseline solo gobierna al archive que lo censo: si NINGUNA de sus
+    # entradas aparece aqui, este no es ese workspace y no hay prosa que
+    # preservar. Un archive que SI las tiene sigue gobernado por completo, asi
+    # que la barrera no se relaja donde nacio (control positivo en los tests).
+    if not any(
+        tid in archive_reactivations for tid in _LANDING_EVIDENCE_LEGACY_BASELINE
+    ):
+        return []
+
     errors: list[str] = []
     for tid, censused_prose in _LANDING_EVIDENCE_LEGACY_BASELINE.items():
         if not _is_prose_baseline(censused_prose):

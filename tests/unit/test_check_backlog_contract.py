@@ -1374,3 +1374,49 @@ def test_053d_mutation_guard(tmp_path) -> None:
     assert len(errors) == 1, (
         "Mutation guard: emptying _STATES_REQUIRING_LANDING should cause this test to fail"
     )
+
+
+def test_prose_baseline_does_not_govern_a_foreign_destino(tmp_path: Path) -> None:
+    """WOT-2026-058k: el baseline de prosa censa deuda de UN workspace (el del
+    motor, 51 entradas todas WOT). Aplicado a un destino AJENO exigia filas que
+    ese destino nunca tuvo -> 7 errores permanentes e IRRESOLUBLES desde alli.
+
+    Un archive SIN ninguna entrada del baseline no es ese workspace: no hay
+    prosa que preservar. El control positivo del par vive en
+    ``test_prose_baseline_still_bites_where_it_was_censused``: si alguien
+    revierte el fix a un bucle incondicional, ESTE test cae."""
+    arch = tmp_path / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True)
+    (arch / "backlog_done.md").write_text(
+        "# Historico\n\n## Cierres\n\n"
+        "| CTL-2026-001a | done | cerrado con evidencia | commit:abc1234 |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_prose_preservation(tmp_path) == []
+
+
+def test_prose_baseline_still_bites_where_it_was_censused(tmp_path: Path) -> None:
+    """CONTROL POSITIVO de WOT-2026-058k: donde el baseline SI aplica (el archive
+    contiene sus entradas), destruir la prosa destilada sigue siendo ERROR. El
+    fix ACOTA la barrera, no la relaja."""
+    tid, prose = next(
+        (t, v)
+        for t, v in cbc._LANDING_EVIDENCE_LEGACY_BASELINE.items()
+        if cbc._is_prose_baseline(v)
+    )
+    arch = tmp_path / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True)
+    (arch / "backlog_done.md").write_text(
+        "# Historico\n\n## Cierres\n\n"
+        f"| Alta | {tid} | titulo | scope | completed | - | origen | commit:deadbee |\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_archive_prose_preservation(tmp_path)
+    # El archive contiene UNA entrada del baseline, asi que el guard SI gobierna
+    # este archive: reporta la prosa destruida de `tid` y ademas las censadas que
+    # faltan. Lo que se pinea es que la de `tid` esta entre ellas -- si el fix se
+    # revirtiera a "return [] cuando falta alguna", esta asercion caeria.
+    assert any(tid in e and "destroyed" in e for e in errors), (
+        f"la prosa destruida de {tid} debe seguir siendo error; got {errors[:2]}"
+    )
+    assert prose  # la entrada elegida es prosa, no '-' ni comentario
