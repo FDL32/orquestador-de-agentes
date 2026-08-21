@@ -15,6 +15,7 @@ import copy
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -963,3 +964,124 @@ def test_055r_live_read_declares_it_is_pre_execution_only(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stderr
     assert "PRE-ejecucion" in result.stderr
     assert "--as-of" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Hallazgos del bucle adversarial L700 (nonce 1e366cfe, commit 25bb8ea).
+# BA11 REFUTO dos puntos; ambos se reprodujeron antes de tocar nada.
+# ---------------------------------------------------------------------------
+
+
+def test_l700_mixed_roster_does_not_flag_annotated_exclusions(tmp_path: Path) -> None:
+    """BA11/P2, reproducido: una `tickets[]` MIXTA -- exclusiones `{id, note}`
+    mas UNA entrada etiquetada -- encendia `is_roster` para toda la lista y
+    marcaba esas exclusiones anotadas como omision silenciosa.
+
+    La forma se lee ahora POR ENTRADA: un `note` no vacio ES la razon que el
+    contrato pide, asi que la entrada cuenta como excluida. El caso medido daba
+    2 falsos positivos.
+    """
+    dag = _valid_dag()
+    dag["tickets"] = [
+        {"id": "WOT-2026-090x", "note": "DISENO_PRIMERO: decision sin adjudicar"},
+        {"id": "WOT-2026-091x", "note": "bloqueada por politica de seguridad"},
+        *[
+            {
+                "id": t,
+                "classification": "APTO_AUTONOMO",
+                "evidence_label": "VERIFICADO",
+            }
+            for t in _DAG_TICKETS
+        ],
+    ]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
+def test_l700_entry_without_group_note_or_enumeration_still_rejected(
+    tmp_path: Path,
+) -> None:
+    """Contrapartida del fix anterior: relajar por `note` no puede desactivar la
+    deteccion. Una entrada sin grupo, SIN note y SIN enumerar sigue siendo la
+    omision silenciosa que F3 prohibe."""
+    dag = _valid_dag()
+    dag["tickets"] = [
+        {"id": t, "classification": "APTO_AUTONOMO", "evidence_label": "VERIFICADO"}
+        for t in (*_DAG_TICKETS, "WOT-2026-099z")
+    ]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "WOT-2026-099z" in result.stderr
+    assert "omision silenciosa" in result.stderr
+
+
+def test_l700_annotated_exclusion_needs_no_evidence_label(tmp_path: Path) -> None:
+    """Misma regla por-entrada en F-4: una exclusion anotada nunca prometio
+    `evidence_label`, asi que exigirselo seria el mismo falso positivo."""
+    dag = _valid_dag()
+    dag["tickets"] = [
+        {"id": "WOT-2026-090x", "note": "excluida a proposito"},
+        *[
+            {
+                "id": t,
+                "classification": "APTO_AUTONOMO",
+                "evidence_label": "VERIFICADO",
+            }
+            for t in _DAG_TICKETS
+        ],
+    ]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
+def test_l700_unanswerable_resolution_is_not_reported_as_invalid() -> None:
+    """BA11/P3: "no comprobable" != "invalido", y aqui queda PINEADO.
+
+    Se llama a `_sha_resolves_in_motor` con un directorio que NO es un repo git
+    (su propio tmp, sin `.git`): la pregunta no se puede responder, asi que debe
+    devolver None -- nunca False. Con False, el CLI avisaria "NO resuelve" cada
+    vez que corre fuera del motor: un cry-wolf. La rama se prueba DIRECTAMENTE
+    porque por CLI el motor siempre es resoluble desde SCRIPT_PATH, asi que
+    ninguna invocacion de linea de comandos alcanza este camino.
+    """
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    try:
+        from validate_batch_dag import _sha_resolves_in_motor
+    finally:
+        sys.path.pop(0)
+
+    # dir=Path.home() a proposito, NO el tmp_path de pytest: en esta suite
+    # tempfile esta redirigido a tests/sandbox/test_runtime/, que vive DENTRO
+    # del motor -- git haria walk-up y contestaria por el repo REAL. Ese fallo
+    # de hermetismo lo cazo este mismo test en su primera version (rc=False en
+    # vez de None) y es exactamente la trampa de WOT-2026-020r.
+    with tempfile.TemporaryDirectory(dir=str(Path.home())) as tmp:
+        outside = Path(tmp) / "sin_repo"
+        outside.mkdir()
+        assert not (outside / ".git").exists()
+        probe = subprocess.run(
+            ["git", "-C", str(outside), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            pytest.skip("el directorio de trabajo esta dentro de un repo git")
+        verdict = _sha_resolves_in_motor(_UNRESOLVABLE_SHA, outside)
+
+    assert verdict is None, (
+        f"fuera de un repo la respuesta debe ser None (incognoscible), no {verdict!r}"
+    )
+
+
+def test_l700_real_motor_resolves_true_and_fake_resolves_false() -> None:
+    """Control positivo Y negativo del resolutor, en el repo REAL del motor:
+    el HEAD resuelve True y un sha inventado resuelve False. Sin este par, el
+    test de arriba pasaria igual con una funcion que devolviera None siempre."""
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    try:
+        from validate_batch_dag import _sha_resolves_in_motor
+    finally:
+        sys.path.pop(0)
+
+    assert _sha_resolves_in_motor(_motor_sha("HEAD"), PROJECT_ROOT) is True
+    assert _sha_resolves_in_motor(_UNRESOLVABLE_SHA, PROJECT_ROOT) is False

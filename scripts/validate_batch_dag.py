@@ -479,6 +479,23 @@ def _errors_accounting(data: dict[str, Any]) -> list[str]:
         for key in _EXCLUSION_KEYS:
             excluded |= _ticket_ids(data.get(key))
 
+        # An entry that ANNOTATES itself (`note`) is a self-evident exclusion:
+        # the contract asks for the exclusion to be enumerated with a reason,
+        # and the note IS the reason. Refuted by the adversarial loop (L700,
+        # BA11) and reproduced: a MIXED `tickets[]` -- mostly `{id, note}`
+        # exclusions plus a single labelled entry -- flipped `is_roster` on and
+        # then flagged those annotated exclusions as silent omissions. Reading
+        # the shape PER ENTRY instead of per LIST removes that false positive
+        # without weakening the check: an entry with neither a group, a note,
+        # nor an enumeration is still an error.
+        excluded |= {
+            e["id"]
+            for e in (data.get("tickets") or [])
+            if isinstance(e, dict)
+            and isinstance(e.get("id"), str)
+            and str(e.get("note") or "").strip()
+        }
+
         errors.extend(
             f"contabilidad (WOT-2026-046h): el ticket '{ticket}' de 'tickets[]' no "
             f"pertenece a ningun grupo y NO esta enumerado como excluido en "
@@ -523,6 +540,10 @@ def _errors_evidence_label(data: dict[str, Any]) -> list[str]:
         return errors
     for entry in entries:
         if not isinstance(entry, dict):
+            continue
+        # Same per-entry rule as the accounting check: an annotated exclusion
+        # is not a roster row and never promised an evidence label.
+        if str(entry.get("note") or "").strip():
             continue
         ticket = entry.get("id", "<sin id>")
         if "evidence_label" not in entry:
