@@ -253,23 +253,37 @@ def _has_productive_commits(
     project_root: Path,
     motor_root: Path,
     window_start: datetime | None,
-) -> bool:
-    """Check if there are productive commits in either repo after window_start.
+) -> tuple[bool, list[str]]:
+    """Check for productive commits in either repo after window_start.
 
     WOT-2026-040e. Detects the 'BUS VACIO' scenario: commits exist but the
     event bus has 0 events for them. Used to distinguish a maintenance session
     (no commits, no events -> legitimate) from a session with productive work
     that failed to emit events (commits exist, 0 events -> blocking).
 
+    WOT-2026-058j. Returns ``(has_commits, ticket_ids)`` instead of a bare
+    bool: the SAME ``git log`` invocation now also harvests the ticket IDs
+    named in the commit subjects. The closeout emits a bus signal for them
+    (see ``_emit_session_close_recorded``); without a harvest the signal has no
+    ticket_id exactly in the case that fails. The harvest is deliberately
+    inclusive -- every ticket MENTIONED in a window subject, not only "closed"
+    ones: an extra id certifies nothing false, a missing id reproduces the
+    refusal.
+
     Before: motor_root is resolvable, window_start may be None.
     During: Runs ``git log --oneline --since=<window_start>`` in both motor
-        and destino repos, counting matching commits.
-    After: Returns True if at least one commit exists in either repo.
+        and destino repos, counting matching commits and extracting IDs from
+        their subjects with the canonical TICKET_ID_PATTERN.
+    After: Returns (True, [ids]) when at least one commit exists in either
+        repo (ids possibly empty when no subject names a ticket), or
+        (False, []) when neither repo produced a commit or git failed in both.
     """
     since_args: list[str] = []
     if window_start is not None:
         since_args = [f"--since={window_start.strftime('%Y-%m-%dT%H:%M:%S')}"]
 
+    found = False
+    seen: dict[str, None] = {}
     for root in (motor_root, project_root):
         try:
             result = subprocess.run(  # noqa: S603
@@ -281,9 +295,14 @@ def _has_productive_commits(
             )
         except (subprocess.TimeoutExpired, OSError):
             continue
-        if result.returncode == 0 and result.stdout.strip():
-            return True
-    return False
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        found = True
+        for line in result.stdout.splitlines():
+            for match in TICKET_RE.findall(line):
+                if match not in seen:
+                    seen[match] = None
+    return found, list(seen.keys())
 
 
 def _check_bus_vacio(project_root: Path, window_start: datetime | None) -> str:
@@ -297,8 +316,12 @@ def _check_bus_vacio(project_root: Path, window_start: datetime | None) -> str:
         from runtime.motor_link import resolve_motor_root as _rmr
 
         mr = _rmr(project_root)
-        if mr is not None and _has_productive_commits(project_root, mr, window_start):
-            return "FAIL"
+        if mr is not None:
+            has_commits, _harvested = _has_productive_commits(
+                project_root, mr, window_start
+            )
+            if has_commits:
+                return "FAIL"
     except ImportError:
         pass
     return "WARN"
@@ -605,6 +628,101 @@ def _check_versioned_filenames(motor_root: Path) -> StepResult:
         subprocess_run=subprocess.run,
         step_result_cls=StepResult,
         ticket_id_filename_re=TICKET_ID_FILENAME_RE,
+    )
+
+
+def _emit_session_close_recorded(
+    project_root: Path,
+    window_start: datetime | None,
+    overall_status: str,
+) -> StepResult:
+    """Emit one SESSION_CLOSE_RECORDED event per ticket found in window commits.
+
+    WOT-2026-058j. Today the closeout writes NO bus events (0 hits of ``.emit``
+    in this module), so a session that delivered commits via direct commit but
+    emitted nothing leaves the NEXT session's detection window empty: the
+    fallback resolves the stale work_plan and the guard refuses to certify.
+    This step closes the producer gap by harvesting ticket IDs from the commit
+    subjects the window already searches -- the SAME ``git log --since`` source
+    the BUS VACIO check uses -- and emitting one non-transitional event per ID.
+
+    Fire-and-forget by design: if the bus raises, the failure is recorded as a
+    non-blocking WARN and the close continues. Emission is observability, not a
+    gate -- making it fail-fast would let a bus failure block a close that
+    already passed all its real gates.
+
+    Before: the close report was already generated; ``overall_status != "FAIL"``
+        (a red close leaves no closure signal); ``window_start`` is the session
+        window from ``_resolve_session_window``.
+    During: resolves the motor, runs ``git log`` in motor and destino (same
+        source as ``_has_productive_commits``), extracts ticket IDs from commit
+        subjects, and appends one SESSION_CLOSE_RECORDED event per unique ID
+        to ``events.jsonl`` with actor SUPERVISOR and payload
+        ``{"ticket_id", "source": "direct_commit", "closeout_status"}``.
+    After: returns a StepResult; PASS when at least one event was written,
+        WARN when nothing could be emitted (unresolvable motor or bus error),
+        SKIP when there is no window. Never raises. Nothing is written when
+        ``window_start`` is None: without a window there is nothing to
+        describe, and harvesting the whole history would flood the bus with
+        signals for every past ticket.
+    """
+    if window_start is None:
+        return StepResult(
+            name="session_close_recorded",
+            status="SKIP",
+            detail="no session window; nothing to signal",
+        )
+
+    try:
+        from runtime.motor_link import resolve_motor_root as _rmr
+
+        motor_root = _rmr(project_root)
+    except ImportError:
+        motor_root = None
+    if motor_root is None:
+        return StepResult(
+            name="session_close_recorded",
+            status="WARN",
+            detail="motor_root not resolvable; no close signal emitted",
+        )
+
+    _has_commits, ticket_ids = _has_productive_commits(
+        project_root, motor_root, window_start
+    )
+    if not ticket_ids:
+        return StepResult(
+            name="session_close_recorded",
+            status="PASS",
+            detail="no ticket IDs harvested from window commits",
+        )
+
+    try:
+        from bus.event_bus import SESSION_CLOSE_RECORDED, EventBus
+
+        events_dir = project_root / EVENTS_REL.parent
+        bus = EventBus(events_dir)
+        for ticket_id in ticket_ids:
+            bus.emit(
+                event_type=SESSION_CLOSE_RECORDED,
+                ticket_id=ticket_id,
+                actor="SUPERVISOR",
+                payload={
+                    "ticket_id": ticket_id,
+                    "source": "direct_commit",
+                    "closeout_status": overall_status,
+                },
+            )
+    except Exception as exc:
+        return StepResult(
+            name="session_close_recorded",
+            status="WARN",
+            detail=f"close signal emission failed: {exc}",
+        )
+
+    return StepResult(
+        name="session_close_recorded",
+        status="PASS",
+        detail=f"emitted SESSION_CLOSE_RECORDED for {ticket_ids}",
     )
 
 
@@ -1329,13 +1447,31 @@ def run_closeout(
     report.steps.append(_step_git_clean(project_root, dry_run))
 
     # --- Generate report ---
+    # Capture overall BEFORE emission: the signal must land strictly after the
+    # report snapshot so its timestamp sits inside the NEXT session's window
+    # (filter `dt >= window_start`), and a bus hiccup must never change the
+    # exit code of a close that already passed its real gates.
+    overall_status = report.overall_status
     report_path = _generate_report(report, project_root)
     # Dry-run writes to runtime/tmp/ (non-mutating, 7d28d2e); print the path
     # so operators and reviewers do not look at the stale canonical report.
-    print(f"[closeout] Report ({report.overall_status}): {report_path}")
+    print(f"[closeout] Report ({overall_status}): {report_path}")
+
+    # WOT-2026-058j: the closeout itself must leave a bus trace when it
+    # resolved tickets from commits. A session delivered by direct commit
+    # writes no events today, so the NEXT session's detection window comes up
+    # empty, the fallback resolves the stale work_plan, and the guard refuses
+    # to certify. Emit one non-transitional SESSION_CLOSE_RECORDED event per
+    # ticket found in the window's commits, strictly AFTER report generation.
+    # A red close emits nothing: a failed close leaves no closure signal. In
+    # dry-run, nothing is emitted (the run must not mutate the tree).
+    if overall_status != "FAIL" and not dry_run:
+        report.steps.append(
+            _emit_session_close_recorded(project_root, _window_start, overall_status)
+        )
 
     # Return code: 0 if overall is PASS or WARN, 1 if FAIL
-    return 1 if report.overall_status == "FAIL" else 0
+    return 1 if overall_status == "FAIL" else 0
 
 
 def main() -> int:

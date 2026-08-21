@@ -19,23 +19,30 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from bus.event_bus import SESSION_CLOSE_RECORDED, EventBus
 from scripts.closeout_steps.archival import (
     step_archive_collaboration as _step_archive_collaboration_impl,
 )
 from scripts.session_closeout import (
     DRY_RUN_REPORT_REL,
     REPORT_REL,
+    STALE_WORK_PLAN_MARKER,
     CloseoutReport,
     StepResult,
+    _check_bus_vacio,
     _check_portability,
     _check_versioned_filenames,
     _detect_tickets_in_window,
+    _emit_session_close_recorded,
     _find_last_report_timestamp,
     _generate_report,
     _get_ticket_close_timestamps,
+    _has_productive_commits,
+    _read_events,
     _resolve_active_ticket,
     _resolve_session_window,
     _resolve_tickets,
@@ -1463,3 +1470,290 @@ class TestArchiveRenameFailsClosed011a:
 
         assert result.status == "PASS", result.detail
         assert "archive_rename_uncommitted" not in result.detail
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058j: the closeout emits SESSION_CLOSE_RECORDED so the next
+# session's detection window is not silently empty.
+# ---------------------------------------------------------------------------
+
+
+def _write_archived_backlog(repo: Path, ticket_id: str) -> None:
+    """Seed `_archive/backlog_done.md` with `ticket_id` as closed."""
+    archive = repo / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "backlog_done.md").write_text(
+        "# Backlog -- historico\n\n"
+        "| Ticket | Estado | Nota |\n"
+        "|--------|--------|------|\n"
+        f"| {ticket_id} | completed | cerrado en sesion anterior |\n",
+        encoding="utf-8",
+    )
+
+
+def _commit_ticket_work(repo: Path, ticket_id: str) -> None:
+    """Commit a real productive change naming `ticket_id` in the subject."""
+    (repo / "feature.py").write_text("x = 1", encoding="utf-8")
+    _git(repo, "add", "--", "feature.py")
+    _git(repo, "commit", "-m", f"{ticket_id}: deliver the close signal")
+
+
+def _success_runner(*args, **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr="")
+
+
+class TestSessionCloseRecorded058j:
+    """WOT-2026-058j DoD: closeout leaves a bus trace for commit-delivered
+    sessions, and the trace flips the stale-work_plan refusal into detection."""
+
+    def test_control_negative_stale_refusal(self, tmp_path: Path) -> None:
+        """(b) CONTROL NEGATIVO: without a seeded event and with work_plan.md
+        pointing at an archived ticket, ticket_src carries
+        STALE_WORK_PLAN_MARKER. This is the FAIL of today."""
+        _write_work_plan(tmp_path, "WOT-2026-026k")
+        _write_archived_backlog(tmp_path, "WOT-2026-026k")
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+
+        assert tickets == []
+        assert STALE_WORK_PLAN_MARKER in src
+
+    def test_seeded_event_flips_refusal_to_detection(self, tmp_path: Path) -> None:
+        """(a1) EVENTO SEMBRADO: an event written with EventBus.emit INSIDE the
+        window returned by _resolve_session_window is detected by
+        _detect_tickets_in_window and makes _resolve_tickets report "detected
+        in session window" with no stale marker -- the exact event the fix now
+        emits at close."""
+        _write_work_plan(tmp_path, "WOT-2026-026k")
+        _write_archived_backlog(tmp_path, "WOT-2026-026k")
+        _write_report(tmp_path, "2026-05-27 00:00:00 UTC")
+
+        events_dir = tmp_path / ".agent" / "runtime" / "events"
+        bus = EventBus(events_dir)
+        bus.emit(
+            event_type=SESSION_CLOSE_RECORDED,
+            ticket_id="WOT-2026-058j",
+            actor="SUPERVISOR",
+            payload={
+                "ticket_id": "WOT-2026-058j",
+                "source": "direct_commit",
+                "closeout_status": "PASS",
+            },
+            timestamp="2026-05-28T09:00:00+00:00",
+        )
+
+        window_start, _src = _resolve_session_window(tmp_path)
+        assert window_start is not None
+        events = _read_events(tmp_path)
+        detected = _detect_tickets_in_window(events, window_start)
+        assert "WOT-2026-058j" in detected
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+        assert tickets == ["WOT-2026-058j"]
+        assert "detected in session window" in src
+        assert STALE_WORK_PLAN_MARKER not in src
+
+    def test_extraction_from_real_commits(self, tmp_path: Path) -> None:
+        """(a2) EXTRACCION DESDE COMMITS REALES: a real git repo (init_git_repo
+        pattern, real git subprocess) whose commit subject names a ticket
+        yields exactly that id from _has_productive_commits -- the id the
+        productive emission must carry. Without this, (a1) only proves a
+        synthetic id."""
+        repo = tmp_path / "repo"
+        _init_destino_repo(repo)
+        _commit_ticket_work(repo, "WOT-2026-058j")
+
+        found, ids = _has_productive_commits(repo, repo, None)
+
+        assert found is True
+        assert ids == ["WOT-2026-058j"]
+
+    def test_commits_without_ticket_subjects_harvest_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """(e) RETORNO VACIO SIN SUBJECTS: commits exist but none name a ticket
+        -> found=True with an empty id list (nothing to emit)."""
+        repo = tmp_path / "repo"
+        _init_destino_repo(repo)
+        (repo / "chore.txt").write_text("x", encoding="utf-8")
+        _git(repo, "add", "--", "chore.txt")
+        _git(repo, "commit", "-m", "chore: no ticket in subject")
+
+        found, ids = _has_productive_commits(repo, repo, None)
+
+        assert found is True
+        assert ids == []
+
+    def test_event_does_not_alter_state_machine(self) -> None:
+        """(c) NO ALTERA LA MAQUINA DE ESTADOS: SESSION_CLOSE_RECORDED maps to
+        no target state, so the reentry guard returns None and the event can
+        never reopen a ticket."""
+        target = EventBus._reentry_target_state(
+            "SESSION_CLOSE_RECORDED", {"ticket_id": "WOT-2026-058j"}
+        )
+        assert target is None
+
+    def test_closeout_emits_signal_in_real_flow(self, tmp_path: Path) -> None:
+        """(d) FLUJO REAL: run_closeout (non-dry) with real git repos writes a
+        SESSION_CLOSE_RECORDED event into events.jsonl for the ticket named in
+        the window's commits. MUTATION: revert the productive emission (the
+        `if overall_status != "FAIL" and not dry_run:` block in run_closeout)
+        and this test fails -- the event is absent from events.jsonl."""
+        import runtime.motor_link
+
+        destino = tmp_path / "destino"
+        motor = tmp_path / "motor"
+        _init_destino_repo(destino)
+        _init_destino_repo(motor)
+        _commit_ticket_work(destino, "WOT-2026-058j")
+        # A previous close report anchors the window BEFORE the commit.
+        _write_report(destino, "2026-05-27 00:00:00 UTC")
+        _write_work_plan(destino, "WOT-2026-058j")
+
+        with (
+            patch("scripts.session_closeout._run_script", side_effect=_success_runner),
+            patch.object(runtime.motor_link, "resolve_motor_root", return_value=motor),
+        ):
+            result = run_closeout(destino, dry_run=False, skip_slow=True)
+
+        assert result == 0
+        events_path = destino / ".agent" / "runtime" / "events" / "events.jsonl"
+        assert events_path.exists(), "the close flow must have written events.jsonl"
+        events = [
+            json.loads(line)
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        signals = [
+            ev
+            for ev in events
+            if ev.get("event_type") == SESSION_CLOSE_RECORDED
+            and ev.get("ticket_id") == "WOT-2026-058j"
+        ]
+        assert signals, "no SESSION_CLOSE_RECORDED event in the real close flow"
+        assert signals[0]["actor"] == "SUPERVISOR"
+        assert signals[0]["payload"]["ticket_id"] == "WOT-2026-058j"
+        assert signals[0]["payload"]["source"] == "direct_commit"
+        assert signals[0]["payload"]["closeout_status"] in ("PASS", "WARN")
+
+    def test_dry_run_does_not_emit(self, tmp_path: Path) -> None:
+        """(e) HERMETICIDAD: dry-run never mutates the bus -- no signal event
+        is written, and the run exits 0 without side effects."""
+        import runtime.motor_link
+
+        destino = tmp_path / "destino"
+        motor = tmp_path / "motor"
+        _init_destino_repo(destino)
+        _init_destino_repo(motor)
+        _commit_ticket_work(destino, "WOT-2026-058j")
+        _write_report(destino, "2026-05-27 00:00:00 UTC")
+        _write_work_plan(destino, "WOT-2026-058j")
+
+        with (
+            patch("scripts.session_closeout._run_script", side_effect=_success_runner),
+            patch.object(runtime.motor_link, "resolve_motor_root", return_value=motor),
+        ):
+            result = run_closeout(destino, dry_run=True, skip_slow=True)
+
+        assert result == 0
+        events_path = destino / ".agent" / "runtime" / "events" / "events.jsonl"
+        if events_path.exists():
+            assert SESSION_CLOSE_RECORDED not in events_path.read_text(
+                encoding="utf-8"
+            ), "dry-run must not write close signals"
+
+    def test_bus_vacio_consumer_survives_harvest_signature(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """(e) HERMETICIDAD: the :300 consumer keeps working after the
+        _has_productive_commits signature change, driven ONLY by mocked git
+        (no real tree)."""
+        import runtime.motor_link
+
+        monkeypatch.setattr(
+            runtime.motor_link, "resolve_motor_root", lambda project_root: tmp_path
+        )
+        with_commit = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="abc1234 WOT-2026-058j: work\n",
+            stderr="",
+        )
+        monkeypatch.setattr(
+            "scripts.session_closeout.subprocess.run", lambda *a, **k: with_commit
+        )
+        assert _check_bus_vacio(tmp_path, None) == "FAIL"
+        found, ids = _has_productive_commits(tmp_path, tmp_path, None)
+        assert found is True
+        assert ids == ["WOT-2026-058j"]
+
+        empty = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        monkeypatch.setattr(
+            "scripts.session_closeout.subprocess.run", lambda *a, **k: empty
+        )
+        assert _check_bus_vacio(tmp_path, None) == "WARN"
+        found, ids = _has_productive_commits(tmp_path, tmp_path, None)
+        assert found is False
+        assert ids == []
+
+    def test_no_ticket_ids_harvested_emits_nothing(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """(e) HERMETICIDAD: with zero ticket IDs harvested, nothing is written
+        and the step reports PASS with an explicit detail."""
+        import runtime.motor_link
+
+        monkeypatch.setattr(
+            runtime.motor_link, "resolve_motor_root", lambda project_root: tmp_path
+        )
+        empty = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        monkeypatch.setattr(
+            "scripts.session_closeout.subprocess.run", lambda *a, **k: empty
+        )
+
+        result = _emit_session_close_recorded(
+            tmp_path, datetime(2026, 5, 27, tzinfo=timezone.utc), "WARN"
+        )
+
+        assert result.status == "PASS"
+        assert "no ticket IDs harvested" in result.detail
+        events_path = tmp_path / ".agent" / "runtime" / "events" / "events.jsonl"
+        assert not events_path.exists()
+
+    def test_no_window_skips_emission(self, tmp_path: Path) -> None:
+        """(e) HERMETICIDAD: without a session window there is nothing to
+        describe, so emission is SKIP and nothing is written."""
+        result = _emit_session_close_recorded(tmp_path, None, "PASS")
+        assert result.status == "SKIP"
+
+    def test_bus_failure_is_non_blocking_warn(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """(5.4) Si el bus lanza, el cierre NO cae: WARN no-bloqueante y el
+        close continua -- emision es observabilidad, no un gate."""
+        import runtime.motor_link
+
+        monkeypatch.setattr(
+            runtime.motor_link, "resolve_motor_root", lambda project_root: tmp_path
+        )
+        with_commit = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="abc1234 WOT-2026-058j: work\n",
+            stderr="",
+        )
+        monkeypatch.setattr(
+            "scripts.session_closeout.subprocess.run", lambda *a, **k: with_commit
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("bus on fire")
+
+        monkeypatch.setattr("bus.event_bus.EventBus.emit", _boom)
+
+        result = _emit_session_close_recorded(
+            tmp_path, datetime(2026, 5, 27, tzinfo=timezone.utc), "PASS"
+        )
+
+        assert result.status == "WARN"
+        assert result.blocking is False

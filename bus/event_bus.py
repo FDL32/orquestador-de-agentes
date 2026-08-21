@@ -40,6 +40,17 @@ class EventRecord:
         )
 
 
+# WOT-2026-058j: non-transitional event types live next to the state-mapped
+# ones so the reentry-guard contract is visible in one place.
+# `_reentry_target_state` maps STATE_CHANGED / REVIEW_DECISION /
+# APPROVAL_RESOLVED to a TicketState and returns None for every other
+# event_type, so SESSION_CLOSE_RECORDED never triggers the reentry guard.
+# It is emitted by session closeout when a session delivered commits without
+# writing bus events: the NEXT session's detection window consumes it, so the
+# window is no longer silently empty (stale work_plan fallback -> refusal).
+SESSION_CLOSE_RECORDED = "SESSION_CLOSE_RECORDED"
+
+
 class EventBus:
     # Default maximum consecutive duplicate events allowed
     MAX_CONSECUTIVE_DUPLICATES = 3
