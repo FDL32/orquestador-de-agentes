@@ -1412,11 +1412,70 @@ def test_prose_baseline_still_bites_where_it_was_censused(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     errors = cbc.validate_archive_prose_preservation(tmp_path)
-    # El archive contiene UNA entrada del baseline, asi que el guard SI gobierna
+    # El archive contiene UNA entrada de la baseline, asi que el guard SI gobierna
     # este archive: reporta la prosa destruida de `tid` y ademas las censadas que
-    # faltan. Lo que se pinea es que la de `tid` esta entre ellas -- si el fix se
+    # faltan. Lo que se pinnea es que la de `tid` esta entre ellas -- si el fix se
     # revirtiera a "return [] cuando falta alguna", esta asercion caeria.
     assert any(tid in e and "destroyed" in e for e in errors), (
         f"la prosa destruida de {tid} debe seguir siendo error; got {errors[:2]}"
     )
     assert prose  # la entrada elegida es prosa, no '-' ni comentario
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-056b: el censo deliverable_type consulta por VALOR, no por pertenencia.
+# Un id censado con valor compensado ('absent') excusa la AUSENCIA del campo,
+# pero NO un valor corrupto (garbage/typo/vacuo): un id censado + dtype invalido
+# = ERROR; censado + absent = EXENTO; censado + valido = pasa.
+# ---------------------------------------------------------------------------
+_LEGACY_CENSUSED_ID = "WOT-2026-002c"  # primer id de _DELIVERABLE_TYPE_LEGACY_BASELINE
+
+
+def test_056b_censored_id_with_invalid_dtype_is_error(tmp_path: Path) -> None:
+    """DoD (a): id CENSADO + dict value 'absent' + deliverable_type garbage ->
+    ERROR. El baseline excusa la ausencia, no corrompe el valor."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + f"| Alta | {_LEGACY_CENSUSED_ID} | old row deliverable_type: garbage | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    dt_errors = [e for e in errors if "deliverable_type" in e]
+    assert len(dt_errors) == 1, (
+        f"Expected 1 invalid-dtype error for censored row, got {len(dt_errors)}: {errors}"
+    )
+    assert "INVALID" in dt_errors[0]
+
+
+def test_056b_censored_id_absent_field_still_exempt(tmp_path: Path) -> None:
+    """DoD CONTROL NEGATIVO: id censado + campo AUSENTE -> sigue EXENTO (no se
+    convierte deuda legacy en regresion)."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + f"| Alta | {_LEGACY_CENSUSED_ID} | old row sin field | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    dt_errors = [e for e in errors if "deliverable_type" in e]
+    assert dt_errors == [], f"Censored row without field must stay exempt: {dt_errors}"
+
+
+def test_056b_censored_id_valid_dtype_still_passes(tmp_path: Path) -> None:
+    """Censored + deliverable_type: code -> 0 errors (value read, valid)."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    content = (
+        _HEADER
+        + f"| Alta | {_LEGACY_CENSUSED_ID} | old row deliverable_type: code | s | pending | - | x | - |\n"
+        + "\n"
+    )
+    (collab / "backlog.md").write_text(content, encoding="utf-8")
+    errors = cbc.validate_backlog(collab / "backlog.md")
+    dt_errors = [e for e in errors if "deliverable_type" in e]
+    assert dt_errors == [], f"Censored row with valid dtype must pass: {dt_errors}"

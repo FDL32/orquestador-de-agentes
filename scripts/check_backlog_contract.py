@@ -116,6 +116,13 @@ _DELIVERABLE_TYPE_LEGACY_BASELINE: dict[str, str] = {
     "WOT-2026-041e": "absent",
 }
 
+# WOT-2026-056b: DISTINGUE la PRESENCIA de un token `deliverable_type:` de su
+# VALIDEZ. El baseline excusa la AUSENCIA del campo en filas legacy; NO excusa
+# un valor corrupto (`garbage`, typo, vacio). Este regex detecta el token por
+# si MISMO (cualquier valor) para poder decir "presente pero invalido" frente
+# a "ausente".
+_DELIVERABLE_TYPE_RAW_RE = re.compile(r"deliverable_type\s*[:=]\s*\S*")
+
 # Extrae ids de la celda `Depende de`, que admite PROSA junto al id (caso real:
 # `WOT-2026-026j [026h SATISFECHA ...]`), asi que un match anclado los perderia.
 #
@@ -357,6 +364,43 @@ def _validate_reactivation(status: str, reactivation: str) -> str | None:
     return None
 
 
+def _deliverable_type_errors(ticket: str, row: str) -> list[str]:
+    """Return deliverable_type contract violations for one live-queue row.
+
+    WOT-2026-048g + WOT-2026-056b. The legacy baseline censes ids whose rows
+    historically lack `deliverable_type`; its per-id VALUE is the contract:
+    ``'absent'`` excuses the field's ABSENCE only. A censored row that now
+    carries a corrupt value (garbage/typo/empty) is an error, and a NEW row
+    (id not censused) must declare a valid value.
+
+    Before: ``ticket`` is the row's id; ``row`` the raw backlog line.
+    During: pure string matching -- no I/O, no git.
+    After: at most one error per row.
+    """
+    baseline_state = _DELIVERABLE_TYPE_LEGACY_BASELINE.get(ticket)
+    dtype_match = _DELIVERABLE_TYPE_RE.search(row)
+    if baseline_state is None:
+        if not dtype_match:
+            return [
+                f"{ticket}: live-queue row missing 'deliverable_type' "
+                f"(code|mixed|documentation|research|analysis). New rows "
+                f"must declare it. If this is a legacy row, add its id to "
+                f"_DELIVERABLE_TYPE_LEGACY_BASELINE."
+            ]
+    elif (
+        baseline_state == "absent"
+        and _DELIVERABLE_TYPE_RAW_RE.search(row)
+        and not dtype_match
+    ):
+        return [
+            f"{ticket}: censored legacy row carries an INVALID "
+            f"'deliverable_type' value (baseline excuses the field's "
+            f"absence, not a corrupt value). Use one of "
+            f"(code|mixed|documentation|research|analysis)."
+        ]
+    return []
+
+
 def validate_backlog(backlog_path: Path) -> list[str]:
     """Return a list of contract violations (empty == valid)."""
     if not backlog_path.exists():
@@ -387,16 +431,7 @@ def validate_backlog(backlog_path: Path) -> list[str]:
         react_err = _validate_reactivation(status, reactivation)
         if react_err:
             errors.append(f"{ticket}: {react_err}")
-        # WOT-2026-048g: require deliverable_type in new rows, exempt legacy.
-        if _DELIVERABLE_TYPE_LEGACY_BASELINE.get(
-            ticket
-        ) is None and not _DELIVERABLE_TYPE_RE.search(row):
-            errors.append(
-                f"{ticket}: live-queue row missing 'deliverable_type' "
-                f"(code|mixed|documentation|research|analysis). New rows "
-                f"must declare it. If this is a legacy row, add its id to "
-                f"_DELIVERABLE_TYPE_LEGACY_BASELINE."
-            )
+        errors.extend(_deliverable_type_errors(ticket, row))
 
     errors.extend(_orphan_fragments_in_table(content))
     errors.extend(_ticket_rows_outside_table(content))
