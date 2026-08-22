@@ -191,6 +191,27 @@ def resolve_by_project_name(name: str, motor_root: Path) -> Path | None:
     return None
 
 
+def resolve_prefix_for_destination(destination_root: Path) -> str | None:
+    """Read the ticket_prefix from a destination's own motor_destination_link.json.
+
+    Before: destination_root is a repo_destino path.
+    During: reads .agent/config/motor_destination_link.json from destination_root.
+    After: returns the ticket_prefix string (e.g. "WOT", "CTL"), or None if
+          the link is missing, malformed, or has no ticket_prefix field.
+    """
+    link_path = destination_root / LINK_REL
+    if not link_path.exists():
+        return None
+    try:
+        data = json.loads(link_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    prefix = data.get("ticket_prefix")
+    return str(prefix) if prefix else None
+
+
 def extract_prefix(ticket_or_project: str) -> str | None:
     """Extract prefix from a ticket ID, or return None for a project name.
 

@@ -41,30 +41,58 @@ from scripts.check_backlog_contract import _ticket_has_row, resolve_destino_root
 # A block is frozen if its body declares `**status:** frozen` (value may carry a
 # suffix, e.g. "frozen (adopted 020s)"), so match the word, not the whole cell.
 _STATUS_FROZEN_RE = re.compile(r"\*\*status:\*\*\s*frozen", re.IGNORECASE)
-_TICKET_ID_RE = re.compile(r"ticket_id:\s*\**\s*(WOT-\d{4}-\w+)", re.IGNORECASE)
-_WOT_RE = re.compile(r"WOT-\d{4}-\w+")
+_GENERIC_TICKET_ID_RE = re.compile(
+    r"ticket_id:\s*\**\s*([A-Z]{2,5}-\d{4}-\w+)", re.IGNORECASE
+)
+_GENERIC_TICKET_RE = re.compile(r"[A-Z]{2,5}-\d{4}-\w+")
 
 
-def _extract_ticket_id(block: str) -> str | None:
-    """Primary: the block's ``ticket_id:`` field. Fallback: the WOT id in the
+def _build_ticket_id_re(prefix: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"ticket_id:\s*\**\s*({re.escape(prefix)}-\d{{4}}-\w+)", re.IGNORECASE
+    )
+
+
+def _build_ticket_re(prefix: str) -> re.Pattern[str]:
+    return re.compile(rf"{re.escape(prefix)}-\d{{4}}-\w+")
+
+
+def _extract_ticket_id(
+    block: str,
+    ticket_id_re: re.Pattern[str],
+    ticket_re: re.Pattern[str],
+) -> str | None:
+    """Primary: the block's ``ticket_id:`` field. Fallback: the ticket id in the
     block's header line only. NEVER the body (dependencies would false-match)."""
-    m = _TICKET_ID_RE.search(block)
+    m = ticket_id_re.search(block)
     if m:
         return m.group(1)
     first_line = block.splitlines()[0] if block.splitlines() else ""
-    hm = _WOT_RE.search(first_line)
+    hm = ticket_re.search(first_line)
     return hm.group(0) if hm else None
 
 
-def find_frozen_ids(contracts_text: str) -> list[str]:
-    """Return the ticket ids of every FROZEN contract block (deduped, ordered)."""
+def find_frozen_ids(contracts_text: str, prefix: str | None = None) -> list[str]:
+    """Return the ticket ids of every FROZEN contract block (deduped, ordered).
+
+    The prefix determines which ticket ids are relevant (e.g. "WOT" for the
+    motor's own workspace, "CTL" for a CTL destination).  When *prefix* is
+    ``None`` (no destination link found), a generic pattern matching any valid
+    ticket prefix is used -- fail-closed: we never silently skip contracts we
+    cannot classify.
+    """
+    if prefix is not None:
+        ticket_id_re = _build_ticket_id_re(prefix)
+        ticket_re = _build_ticket_re(prefix)
+    else:
+        ticket_id_re = _GENERIC_TICKET_ID_RE
+        ticket_re = _GENERIC_TICKET_RE
     ids: list[str] = []
     seen: set[str] = set()
-    # Split on markdown H2 headers; each chunk is one contract block.
     for block in re.split(r"(?m)^## ", contracts_text):
         if not _STATUS_FROZEN_RE.search(block):
             continue
-        tid = _extract_ticket_id(block)
+        tid = _extract_ticket_id(block, ticket_id_re, ticket_re)
         if tid and tid not in seen:
             seen.add(tid)
             ids.append(tid)
@@ -76,7 +104,10 @@ def find_orphans(root: Path) -> list[str]:
     contracts = root / ".agent" / "planning" / "ticket_contracts.md"
     if not contracts.exists():
         return []
-    frozen = find_frozen_ids(contracts.read_text(encoding="utf-8-sig"))
+    from scripts.prefix_resolver import resolve_prefix_for_destination
+
+    prefix = resolve_prefix_for_destination(root)
+    frozen = find_frozen_ids(contracts.read_text(encoding="utf-8-sig"), prefix)
     collab = root / ".agent" / "collaboration"
     backlog = collab / "backlog.md"
     archive = collab / "_archive" / "backlog_done.md"

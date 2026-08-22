@@ -9,6 +9,7 @@ body WOT enumeration), and resolve rows across BOTH table layouts.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -50,6 +51,15 @@ def _write_archive(root: Path, rows: str) -> None:
     d = root / ".agent" / "collaboration" / "_archive"
     d.mkdir(parents=True, exist_ok=True)
     (d / "backlog_done.md").write_text(_ARCHIVE_HEADER + rows, encoding="utf-8")
+
+
+def _write_link(root: Path, prefix: str) -> None:
+    """Write a motor_destination_link.json declaring the given ticket_prefix."""
+    d = root / ".agent" / "config"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": prefix}), encoding="utf-8"
+    )
 
 
 def _frozen_block(header_id: str, ticket_id: str | None, body: str = "") -> str:
@@ -174,3 +184,41 @@ def test_wiring_strict_opt_in_blocks(tmp_path, monkeypatch) -> None:
     assert res.passed is False
     assert res.is_blocking is True  # FAIL opt-in makes the same orphan block
     assert "WOT-2026-007e" in res.output
+
+
+# --- WOT-2026-055g: prefix from resolver, not hardcoded WOT --------------------
+
+
+def test_non_wot_frozen_orphan_detected(tmp_path: Path, monkeypatch) -> None:
+    """DoD 2: a frozen contract with a NON-WOT prefix (CTL) and no row is detected
+    when the destination link declares that prefix."""
+    _write_link(tmp_path, "CTL")
+    _write_contracts(tmp_path, _frozen_block("CTL-2026-010a", "CTL-2026-010a"))
+    _write_backlog(tmp_path, "| Alta | WOT-2026-001a | t | s | pending | - | x | - |\n")
+    assert find_orphans(tmp_path) == ["CTL-2026-010a"]
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    assert main([]) == 1
+
+
+def test_mutation_wot_literal_breaks_non_wot_detection(tmp_path: Path) -> None:
+    """DoD 3: if find_frozen_ids is called with prefix='WOT' (the mutation),
+    a CTL contract is invisible -- proving the prefix parameter matters.
+
+    This test verifies the MUTATION PROPERTY only: WOT prefix cannot see
+    non-WOT contracts.  The correct behavior (CTL prefix sees CTL contracts)
+    is verified by test_non_wot_frozen_orphan_detected (DoD 2).
+    """
+    _write_contracts(tmp_path, _frozen_block("CTL-2026-010a", "CTL-2026-010a"))
+    contracts_text = (tmp_path / ".agent/planning/ticket_contracts.md").read_text()
+    # Mutated: hardcoded WOT -> CTL contract is invisible
+    assert find_frozen_ids(contracts_text, "WOT") == []
+
+
+def test_wot_destination_frozen_with_row_no_orphan(tmp_path: Path, monkeypatch) -> None:
+    """DoD 4: a WOT destination with a frozen contract that HAS a row -> exit 0."""
+    _write_link(tmp_path, "WOT")
+    _write_contracts(tmp_path, _frozen_block("WOT-2026-001a", "WOT-2026-001a"))
+    _write_backlog(tmp_path, "| Alta | WOT-2026-001a | t | s | pending | - | x | - |\n")
+    assert find_orphans(tmp_path) == []
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    assert main([]) == 0
