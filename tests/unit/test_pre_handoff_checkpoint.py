@@ -36,7 +36,19 @@ from tests.test_pre_handoff_multirepo import _git  # noqa: E402
 
 @pytest.mark.parametrize(
     "raw",
-    ["", "none", "None", "  none  ", "N/A", "n/a", "unknown", "UNKNOWN"],
+    [
+        "",
+        "none",
+        "None",
+        "  none  ",
+        "N/A",
+        "n/a",
+        "unknown",
+        "UNKNOWN",
+        "-",
+        "--",
+        "  -  ",
+    ],
 )
 def test_is_invalid_plan_id_rejects_placeholders(raw: str) -> None:
     assert state_validation.is_invalid_plan_id(raw) is True
@@ -55,9 +67,11 @@ def test_is_invalid_plan_id_accepts_real_tickets(raw: str) -> None:
 
 
 def test_invalid_plan_ids_single_source_contents() -> None:
-    # La constante es la fuente unica de verdad; debe cubrir los 4 placeholders.
+    # La constante es la fuente unica de verdad; debe cubrir todos los
+    # placeholders incluyendo el guion (WOT-2026-058k).
     assert (
-        frozenset({"", "n/a", "none", "unknown"}) == state_validation.INVALID_PLAN_IDS
+        frozenset({"", "-", "--", "n/a", "none", "unknown"})
+        == state_validation.INVALID_PLAN_IDS
     )
 
 
@@ -200,3 +214,103 @@ def test_pre_handoff_allows_valid_ticket_creates_tag(
     # Y la ruta real no crea review-none jamas.
     ac._handle_pre_handoff(json_output=True)
     assert "checkpoint/review-none" not in _tags(motor)
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058k: los guards de post-closure consultan el guard ANTES del bus.
+# Con plan_id invalido ('-', 'none', ...) NO debe haber busqueda en el bus.
+# ---------------------------------------------------------------------------
+
+
+def _patch_controller_post_closure(monkeypatch) -> object:
+    """Import agent_controller en modo hermetico para los guards de cierre.
+
+    Sin el fix de 058k, los guards llamarian a bus_has_ticket_events(bus, '-')
+    / check_post_closure_*(bus, '-') con el literal guion: pinchamos esos
+    call-sites con un objeto que LANZA, de modo que un guard que no consulta
+    is_invalid_plan_id primero -> AssertionError -> ROJO. Con el fix, el guard
+    corta antes y nadie toca el bus.
+    """
+    ac = importlib.import_module("agent_controller")
+    monkeypatch.setattr(ac, "BUS_AVAILABLE", True, raising=False)
+
+    class _FakeBus:
+        def read_events(self, ticket_id):
+            raise AssertionError(f"bus consulted with invalid plan_id {ticket_id!r}")
+
+        def has_events(self, ticket_id):
+            raise AssertionError(f"bus consulted with invalid plan_id {ticket_id!r}")
+
+    monkeypatch.setattr(ac, "event_bus", _FakeBus(), raising=False)
+
+    class _FakeClosure:
+        def bus_has_ticket_events(self, *a, **k):
+            raise AssertionError(f"bus_has_ticket_events called: {a!r} {k!r}")
+
+        def check_post_closure_built_exit(self, *a, **k):
+            raise AssertionError(f"check_post_closure_built_exit called: {a!r} {k!r}")
+
+        def check_post_closure_state_changed(self, *a, **k):
+            raise AssertionError(
+                f"check_post_closure_state_changed called: {a!r} {k!r}"
+            )
+
+    monkeypatch.setattr(ac, "closure_invariants", _FakeClosure(), raising=False)
+    return ac
+
+
+def _patch_closure_guards(monkeypatch) -> object:
+    """Module-level patch: BUS_AVAILABLE + event_bus activos, bus_has_ticket_events
+    pinchado para FALLAR el test si se consulta con un id no disparado (lo que se
+    pinnea es que NO se llame nunca con plan_id invalido)."""
+    ac = importlib.import_module("agent_controller")
+    monkeypatch.setattr(ac, "BUS_AVAILABLE", True, raising=False)
+
+    class _FakeBus:
+        def read_events(self, ticket_id):
+            raise AssertionError(f"bus consulted with invalid plan_id {ticket_id!r}")
+
+    monkeypatch.setattr(ac, "event_bus", _FakeBus(), raising=False)
+    return ac
+
+
+def test_058k_post_closure_built_exit_skips_bus_for_invalid_id(
+    monkeypatch,
+) -> None:
+    """DoD: _check_post_closure_built_exit('-') no consulta el bus (nada que
+    comprobar para un id que no designa ticket; ANTES media read_events('-') y
+    fabricaba 'No STATE_CHANGED event found for ticket -')."""
+    ac = _patch_controller_post_closure(monkeypatch)
+    errors, warnings = ac._check_post_closure_built_exit("-", "READY_FOR_REVIEW")
+    assert errors == []
+    assert warnings == []
+
+
+def test_058k_post_closure_state_changed_skips_bus_for_invalid_id(
+    monkeypatch,
+) -> None:
+    """Estado de paridad de guard: _check_post_closure_state_changed('-') tampoco
+    toca el bus con el literal guion."""
+    ac = _patch_controller_post_closure(monkeypatch)
+    errors, warnings = ac._check_post_closure_state_changed("-", "READY_FOR_REVIEW")
+    assert errors == []
+    assert warnings == []
+
+
+def test_058k_post_closure_built_exit_real_ticket_consults_bus(
+    monkeypatch,
+) -> None:
+    """CONTROL NEGATIVO: con un id real el guard SI llega al bus (el monkeypatch
+    del event_bus aqui lo deja pasar: cambiamos read_events para que devuelva
+    una lista minima, y comprobamos que el guard NO aborta por invalid_id)."""
+    ac = _patch_controller_post_closure(monkeypatch)
+    real_bus = type("B", (), {"read_events": lambda self, tid: []})()
+    monkeypatch.setattr(ac, "event_bus", real_bus)
+    monkeypatch.setattr(ac, "_ticket_events_archived", lambda tid: True, raising=False)
+    errors, warnings = ac._check_post_closure_built_exit(
+        "WOT-2026-999z", "READY_FOR_REVIEW"
+    )
+    # Con _ticket_events_archived -> True el guard corta sin errores (el bus no
+    # se toca de borrar), lo que probar es que NO bloquea por plan_id invalido.
+    assert errors == []
+    assert warnings == []

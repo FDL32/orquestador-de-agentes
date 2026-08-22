@@ -4352,6 +4352,11 @@ def _check_post_closure_built_exit(
     """Check BUILDER_EXIT invariant. Returns (errors, warnings)."""
     if not BUS_AVAILABLE or not event_bus:
         return [], []
+    # WOT-2026-058k: an invalid plan id ('-', none, N/A, ...) has no ticket
+    # events by construction -- do not fabricate a bus lookup on the literal
+    # string (measured: read_events(ticket_id="-") -> phantom warnings).
+    if is_invalid_plan_id(plan_id):
+        return [], []
     if _ticket_events_archived(plan_id):
         return [], []
     # WOT-2026-024q: see _check_bus_drift -- landed-by-commit + bus absent.
@@ -4383,6 +4388,10 @@ def _check_post_closure_state_changed(
 ) -> tuple[list[str], list[str]]:
     """Check STATE_CHANGED invariant. Returns (errors, warnings)."""
     if not BUS_AVAILABLE or not event_bus:
+        return [], []
+    # WOT-2026-058k: same as built_exit -- an invalid plan id must not
+    # trigger a bus lookup on the literal string.
+    if is_invalid_plan_id(plan_id):
         return [], []
     if _ticket_events_archived(plan_id):
         return [], []
