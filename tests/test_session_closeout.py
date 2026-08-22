@@ -18,6 +18,7 @@ No test mutates the real filesystem.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -865,6 +866,139 @@ class TestRunCloseout:
         content = report_path.read_text(encoding="utf-8")
 
         assert "| resolve_tickets | FAIL |" in content
+        assert result == 1
+
+    def test_bus_vacio_execution_log_frozen_adds_second_surface(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-040e AMPLIADO: cuando hay BUS VACIO (commits + 0 eventos),
+        el diagnostico mide TAMBIEN execution_log.md y lo anexa al detail.
+
+        El bus no es la unica superficie de proyeccion que se congela: el
+        execution_log.md del destino puede quedar anclado a un vuelo anterior
+        (medido 2026-08-07: congelado en WOT-2026-041c con 18 tickets
+        posteriores). No cambia el veredicto (sigue FAIL), pero lo documenta.
+        """
+        import subprocess as _sp
+        from unittest.mock import patch
+
+        repo = tmp_path / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+        _sp.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "config", "user.email", "t@e.com"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        _sp.run(
+            ["git", "config", "user.name", "T"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        (repo / "README.md").write_text("# repo")
+        _sp.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        (repo / "src.py").write_text("x = 1")
+        _sp.run(["git", "add", "src.py"], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "WOT-2026-999: productive work"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        # execution_log.md congelado: mtime anterior a la ventana. La ventana
+        # procede del report previo (REPORT_REL) -- sin el, window_start=None
+        # y el guard no puede atribuir congelamiento.
+        destino = tmp_path / "destino"
+        destino.mkdir(parents=True, exist_ok=True)
+        report = destino / ".agent" / "runtime" / "memory" / "session_close_report.md"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            "**Generated:** 2026-08-22T12:00:00+02:00\n", encoding="utf-8"
+        )
+        elog = destino / ".agent" / "collaboration" / "execution_log.md"
+        elog.parent.mkdir(parents=True, exist_ok=True)
+        elog.write_text("# Execution Log -- VUELO 20260730_X\n", encoding="utf-8")
+        past = datetime.now().replace(year=2020)
+        os.utime(elog, (past.timestamp(), past.timestamp()))
+
+        with patch(
+            "runtime.motor_link.resolve_motor_root",
+            return_value=repo,
+        ):
+            result = run_closeout(destino, dry_run=True, skip_slow=True)
+        report_path = _generated_report_path(destino, dry_run=True)
+        content = report_path.read_text(encoding="utf-8")
+
+        assert "| resolve_tickets | FAIL |" in content
+        assert "execution_log.md congelado" in content
+        assert result == 1
+
+    def test_bus_vacio_execution_log_fresh_stays_silent(self, tmp_path: Path) -> None:
+        """ANTI-FALSO-POSITIVO: un execution_log.md RECIENTE no anade detalle.
+
+        El log congelado solo se reporta cuando de verdad esta congelado; un
+        log al dia no debe inflar el diagnostico de un BUS VACIO (y el
+        veredicto FAIL por commits+0 eventos se mantiene).
+        """
+        import subprocess as _sp
+        from unittest.mock import patch
+
+        repo = tmp_path / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+        _sp.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "config", "user.email", "t@e.com"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        _sp.run(
+            ["git", "config", "user.name", "T"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        (repo / "README.md").write_text("# repo")
+        _sp.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        (repo / "src.py").write_text("x = 1")
+        _sp.run(["git", "add", "src.py"], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "WOT-2026-998: fresh work"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        destino = tmp_path / "destino"
+        destino.mkdir(parents=True, exist_ok=True)
+        elog = destino / ".agent" / "collaboration" / "execution_log.md"
+        elog.parent.mkdir(parents=True, exist_ok=True)
+        elog.write_text("# Execution Log -- VUELO 20260823_ACTUAL\n", encoding="utf-8")
+
+        with patch(
+            "runtime.motor_link.resolve_motor_root",
+            return_value=repo,
+        ):
+            result = run_closeout(destino, dry_run=True, skip_slow=True)
+        report_path = _generated_report_path(destino, dry_run=True)
+        content = report_path.read_text(encoding="utf-8")
+
+        # Sigue siendo BUS VACIO -> FAIL (el veredicto no cambia solo por el log)
+        assert "| resolve_tickets | FAIL |" in content
+        assert "execution_log.md congelado" not in content
         assert result == 1
 
     def test_unverified_blocking_gate_never_aggregates_to_pass(self) -> None:

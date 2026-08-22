@@ -327,6 +327,79 @@ def _check_bus_vacio(project_root: Path, window_start: datetime | None) -> str:
     return "WARN"
 
 
+def _execution_log_frozen(project_root: Path, window_start: datetime | None) -> str:
+    """Segunda superficie de proyeccion congelada (WOT-2026-040e ampliado).
+
+    El BUS VACIO no es la unica superficie que se congela: `execution_log.md`
+    del destino puede quedar anclado a un vuelo anterior mientras el bus pesa
+    0 bytes y la cola avanza. Medido 2026-08-07: aqui estaba congelado en
+    `WOT-2026-041c` (mtime 2026-07-30) con 18 tickets archivados despues.
+
+    Before: project_root es el destino; window_start puede ser None.
+    During: lee `execution_log.md`; extrae el vuelo (`# Execution Log -- VUELO
+    <X>`) y la fecha; considera congelado si el archivo existe y su mtime es
+    ANTERIOR a `window_start` (un log que no registro esta sesion no puede
+    sostener el cierre de esta sesion).
+    After: devuelve un string de detalle (vacio si no hay congelamiento
+    medible). NUNCA cambia el veredicto del BUS VACIO: amplia el diagnostico,
+    no la politica.
+    """
+    elog = project_root / ".agent" / "collaboration" / "execution_log.md"
+    if not elog.exists():
+        return ""
+    try:
+        mtime = datetime.fromtimestamp(elog.stat().st_mtime)
+        content = elog.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    vuelo = ""
+    m = re.search(r"VUELO\s+([A-Za-z0-9_\-]+)", content)
+    if m:
+        vuelo = m.group(1)
+    # Sin ventana no hay base para atribuir el log a esta sesion: un log con
+    # vuelo nuevo y mtime reciente es legítimo (anti-falso-positivo). La senal
+    # fiable de congelamiento es temporal (mtime anterior a la ventana), que
+    # es exactamente el caso medido (mtime 2026-07-30 con 18 tickets despues).
+    if window_start is None:
+        return ""
+    mtime_aware = mtime.astimezone()
+    if mtime_aware >= window_start.astimezone():
+        return ""
+    detail = (
+        f"execution_log.md congelado (mtime {mtime.isoformat(timespec='seconds')}"
+        f" anterior a la ventana"
+    )
+    if vuelo:
+        detail += f", vuelo '{vuelo}'"
+    return detail + ")"
+
+
+def _resolve_tickets_detail(
+    ticket_src: str,
+    ticket_ids: list[str],
+    *,
+    status: str,
+    stale: bool,
+    project_root: Path,
+    window_start: datetime | None,
+) -> str:
+    """Detalle del paso resolve_tickets, con la ampliacion 040e.
+
+    Before: veredicto (status/stale) y tickets ya resueltos.
+    During: compone la cadena base (source + tickets) y, cuando el paso cae en
+    BUS VACIO (FAIL sin rechazo stale), anexa la medicion de la SEGUNDA
+    superficie de proyeccion (`execution_log.md` congelado). No cambia el
+    veredicto: solo lo documenta (WOT-2026-040e ampliado).
+    After: cadena de detalle final para el StepResult.
+    """
+    detail = f"Source: {ticket_src}. Tickets: {ticket_ids or 'none'}"
+    if status == "FAIL" and not stale:
+        frozen = _execution_log_frozen(project_root, window_start)
+        if frozen:
+            detail += f" {frozen}"
+    return detail
+
+
 def _step_write_decision_records(project_root: Path, ticket_ids: list[str]) -> None:
     """Write and commit decision records for tickets without commits.
 
@@ -1342,22 +1415,34 @@ def run_closeout(
     # work_plan stale salia con exit 0 igual. Medido dos veces (2026-07-23 y
     # 2026-08-06): la segunda certifico CERO tickets mientras la sesion
     # entregaba 7 commits, y el WARN no lo detuvo.
-    _refused_stale = STALE_WORK_PLAN_MARKER in ticket_src
+    _resolved_stale = STALE_WORK_PLAN_MARKER in ticket_src
     if ticket_ids:
         _resolve_status = "PASS"
-    elif _refused_stale:
+    elif _resolved_stale:
         _resolve_status = "FAIL"
     else:
         _resolve_status = _check_bus_vacio(project_root, _window_start)
+    # WOT-2026-040e (ampliacion): cuando el cierre cae en BUS VACIO (commits
+    # productivos + 0 eventos), medir TAMBIEN la segunda superficie de
+    # proyeccion (execution_log.md) y anexarla al diagnostico. No cambia el
+    # veredicto: lo documenta.
+    _detail = _resolve_tickets_detail(
+        ticket_src,
+        ticket_ids,
+        status=_resolve_status,
+        stale=_resolved_stale,
+        project_root=project_root,
+        window_start=_window_start,
+    )
     report.steps.append(
         StepResult(
             name="resolve_tickets",
             status=_resolve_status,
-            detail=f"Source: {ticket_src}. Tickets: {ticket_ids or 'none'}",
+            detail=_detail,
             # `blocking` cuando hubo RECHAZO o BUS VACIO: `overall_status` escala
             # a FAIL unicamente si el paso que falla es blocking (WOT-2026-013m).
             # Un cierre de mantenimiento (WARN) no es blocking y sigue saliendo 0.
-            blocking=_refused_stale or (_resolve_status == "FAIL" and not ticket_ids),
+            blocking=_resolved_stale or (_resolve_status == "FAIL" and not ticket_ids),
         )
     )
     report.steps.append(
