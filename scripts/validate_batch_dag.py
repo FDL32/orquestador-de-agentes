@@ -479,6 +479,16 @@ def _errors_accounting(data: dict[str, Any]) -> list[str]:
         for key in _EXCLUSION_KEYS:
             excluded |= _ticket_ids(data.get(key))
 
+        # LIMITE DECLARADO (adjudicado por BA12 en el bucle L700): un `note`
+        # meramente informativo ("pendiente de revision") contaria como
+        # exclusion sin serlo. Es real y se asume: en los DAG medidos el `note`
+        # SIEMPRE es una razon de exclusion ("Excluido", "NO ejecutable",
+        # "fuera del foco"), y exigir mas estricto resucitaria los 4 falsos
+        # positivos medidos sobre un DAG historicamente correcto. Se prefiere
+        # rechazar lo hipotetico a romper lo real; si algun dia un DAG usa
+        # `note` como campo libre, el discriminante debe pasar a una clave
+        # explicita (`excluded_reason`) en vez de endurecerse aqui.
+        #
         # An entry that ANNOTATES itself (`note`) is a self-evident exclusion:
         # the contract asks for the exclusion to be enumerated with a reason,
         # and the note IS the reason. Refuted by the adversarial loop (L700,
