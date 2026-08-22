@@ -885,6 +885,71 @@ def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_seal_staleness_check(project_root: Path) -> CheckResult:
+    """WOT-2026-055c: seal-staleness over start_context_isolation receipts.
+
+    The start-context-isolation receipt of Paso 0-bis is a DUAL-CONTRACT gate
+    that until today only a human audit verified. This check runs the
+    seal-staleness guard (`check_seal_staleness.py`: integrity triple-via,
+    temporal order, semantic-freshness heuristic) over every
+    ``start_context_isolation*.json`` present in the destino's reports dir, so
+    a stale/counterfeit receipt surfaces at closeout instead of riding along.
+
+    WARN, not blocking, for the same reason as its sibling
+    ``run_batch_run_accounting_check``: it reconciles receipts already on disk
+    (legacy flights predate ``scope``/bytes/lines), so it never blocks a
+    push/close by itself. It exists to surface the moment a bad seal lands.
+
+    Before: project_root resoluble; reports dir may or may not exist.
+    During: imports `check_seal_staleness.check_seal_staleness` (static import
+    so check_guard_wiring's AST walker reaches it) and runs it over each
+    receipt found; ``[WARN]`` findings never fail the result.
+    After: passed=True if no receipt has a hard finding (or none exist);
+    passed=False + is_blocking=False (WARN, listing offending receipts)
+    otherwise. Never raises: unreadable/malformed receipts are listed.
+    """
+    name = "Seal-Staleness Check (start_context_isolation, WARN)"
+    from scripts.check_seal_staleness import check_seal_staleness
+
+    reports_dir = project_root / "orchestrator_pipeline" / "reports"
+    if not reports_dir.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"no {reports_dir} (skip)",
+            is_blocking=False,
+        )
+
+    findings: dict[str, list[str]] = {}
+    for receipt in sorted(reports_dir.glob("start_context_isolation*.json")):
+        try:
+            found = check_seal_staleness(receipt, project_root=project_root)
+        except (OSError, ValueError) as exc:
+            findings[receipt.name] = [f"UNREADABLE: {exc}"]
+            continue
+        hard = [f for f in found if not f.startswith("[WARN]")]
+        if hard:
+            findings[receipt.name] = hard
+
+    if findings:
+        lines = ["WARN: seal-staleness finding(s) [owner: WOT-2026-055c]:"]
+        for receipt_name, found in findings.items():
+            lines.append(f"  {receipt_name}:")
+            lines.extend(f"      {f}" for f in found)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output="\n".join(lines),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="every start_context_isolation*.json is fresh and intact",
+        is_blocking=False,
+    )
+
+
 def run_contract_reconcile_check(project_root: Path) -> CheckResult:
     """WOT-2026-024e: frozen contracts in ticket_contracts.md with no scheduling
     row (the batch reads only backlog.md, so it can never execute them).
@@ -1933,6 +1998,11 @@ def run_preflight_check(
         results.append(run_workspace_contract_formation_check(project_root))
         # 6i. Batch Run Accounting Check (WOT-2026-025k; GSR-subset, WARN)
         results.append(run_batch_run_accounting_check(project_root))
+        # 6i-bis. Seal-Staleness Check (WOT-2026-055c; WARN -- reconcilia
+        # recibos start_context_isolation ya en disco, nunca bloquea por si
+        # solo; cableado aqui porque este es el unico punto que corre solo Y
+        # conoce el reports dir del destino).
+        results.append(run_seal_staleness_check(project_root))
         # 6j. Distributable Planning Clean (WOT-2026-024h C4'; bloqueante)
         results.append(run_distributable_planning_check(project_root))
         # 6k. Guard Wiring Orphan Debt (WOT-2026-026v; WARN -- la deuda huerfana
