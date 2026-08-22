@@ -704,6 +704,12 @@ _ROW_LEGACY = (
     "| Baja | WOT-2026-0L1L | legacy row no dtype | motor/x | completed | - | "
     "session-l | some-note |"
 )
+# A terminal legacy row WITHOUT deliverable_type but WITH a valid commit cell
+# (WOT-2026-055u): the evidence exists, so the census must AUDIT it.
+_ROW_LEGACY_WITH_COMMIT = (
+    "| Baja | WOT-2026-0L2L | legacy row commit no dtype | motor/x | completed | "
+    "origina/foo | session-l | commit:0abc123 |"
+)
 # A `done`-state code row without commit -- terminal but NOT "completed" (DoD-4).
 _ROW_DONE_CODE_NO_COMMIT = (
     "| Alta | WOT-2026-0D1D | done code deliverable_type: code | motor/x | done | "
@@ -1211,3 +1217,43 @@ def test_capa2_detail_also_names_the_ref_it_actually_checked(tmp_path):
         f"CAPA 2 nombra origin/main pero comprobo HEAD: {detail!r}"
     )
     assert "HEAD" in detail, f"CAPA 2 debe nombrar la ref real: {detail!r}"
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-055u: a legacy row (no deliverable_type) WITH a commit cell is
+# auditable -> the census puts it in `audited`; a legacy row WITHOUT commit goes
+# to the named counter `skipped_legacy_no_commit`, never to `skipped_legacy` and
+# never to ERROR.
+# --------------------------------------------------------------------------- #
+def test_055u_legacy_row_with_commit_is_audited():
+    """DoD (a): a terminal legacy row (no deliverable_type) with a VALID commit cell
+    counts as `audited`, not `skipped_legacy_no_commit` and not `skipped_legacy`.
+
+    Reachable mutation: revert the `if has_commit: audited += 1` branch back to the
+    pre-055u `skipped_legacy += 1` -> audited drops to 0 and this goes RED.
+    """
+    census = gl.census_archived(_ROW_LEGACY_WITH_COMMIT + "\n")
+    assert census["audited"] == 1, f"legacy evidence must be audited: {census}"
+    assert census["skipped_legacy_no_commit"] == 0, f"{census}"
+    assert census["skipped_legacy"] == 0, f"{census}"
+
+
+def test_055u_legacy_row_without_commit_has_named_counter():
+    """DoD (b): a legacy row with NO commit goes to the NAMED counter
+    `skipped_legacy_no_commit` -- declared debt, not ERROR, and not skipped.
+
+    Reachable mutation: delete the counter -> `skipped_legacy_no_commit` missing
+    (KeyError) or dropped to 0 while the row vanishes -> RED.
+    """
+    census = gl.census_archived(_ROW_LEGACY + "\n")
+    assert census["skipped_legacy_no_commit"] == 1, f"{census}"
+    assert census["audited"] == 0, f"{census}"
+    assert census["skipped_required"] == 0, f"{census}"
+
+
+def test_055u_legacy_row_with_commit_parse_pairs():
+    """A legacy-with-commit row must reach `parse_archived_commits` too: its sha still
+    gets audited against origin/main (the evidence exists regardless of dtype label).
+    """
+    pairs = gl.parse_archived_commits(_ROW_LEGACY_WITH_COMMIT)
+    assert pairs == [("WOT-2026-0L2L", "0abc123")], f"{pairs}"

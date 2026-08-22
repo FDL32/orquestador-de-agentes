@@ -411,10 +411,16 @@ def census_archived(content: str) -> dict:
     carry a ticket-ID:
 
       - ``required``         : deliverable_type in {code, mixed} (landing REQUIRED).
-      - ``audited``          : required rows that DO carry a commit(s) cell.
+      - ``audited``          : rows that DO carry a commit(s) cell -- required rows AND
+                               legacy rows without deliverable_type (WOT-2026-055u):
+                               legacy evidence is auditable, so it is not skipped.
       - ``skipped_required`` : required rows with NO commit(s) cell -> the silent skip
                                this ticket exists to expose (their tickets are listed).
-      - ``skipped_legacy``   : terminal rows with NO deliverable_type at all (exempt).
+      - ``skipped_legacy_no_commit`` : legacy rows (NO deliverable_type) with NO commit
+                               evidence -- declared legacy debt under a NAMED counter
+                               (WOT-2026-055u), never mixed into ``skipped_legacy`` and
+                               never turned into ERROR; ``skipped_legacy`` is kept as a
+                               BACKWARD-COMPAT alias for its value.
 
     A row that carries commit evidence but NO terminal state is NOT terminal, so it
     matches none of the four classes above and would vanish silently (WOT-2026-043t,
@@ -472,13 +478,24 @@ def census_archived(content: str) -> dict:
                 skipped_required += 1
                 skipped_required_tickets.append(ticket_id)
         elif dtype is None:
-            skipped_legacy += 1
+            # WOT-2026-055u: a legacy row (no deliverable_type) that CARRIES a
+            # commit cell IS auditable -- the evidence exists, so it belongs in
+            # `audited`, not in a skip bucket. A legacy row WITHOUT a commit cell
+            # is declared legacy debt under `skipped_legacy` (never turned into
+            # ERROR). Measured 2026-08-16: 188 archive rows lacked
+            # deliverable_type; 150 of them had valid commit: evidence the census
+            # was not auditing (`audited` did not move: 134 -> 134).
+            if has_commit:
+                audited += 1
+            else:
+                skipped_legacy += 1
     duplicate_tickets = {tid: n for tid, n in Counter(terminal_ids).items() if n > 1}
     return {
         "required": required,
         "audited": audited,
         "skipped_required": skipped_required,
         "skipped_legacy": skipped_legacy,
+        "skipped_legacy_no_commit": skipped_legacy,
         "skipped_required_tickets": sorted(skipped_required_tickets),
         "malformed_evidence_tickets": sorted(malformed_evidence_tickets),
         "duplicate_tickets": duplicate_tickets,
@@ -688,7 +705,7 @@ def _print_text_report(
     print(
         f"[landed] required={census['required']} audited={census['audited']} "
         f"skipped_required={census['skipped_required']} "
-        f"skipped_legacy={census['skipped_legacy']}"
+        f"skipped_legacy_no_commit={census['skipped_legacy_no_commit']}"
     )
     print(
         f"[landed] OK={counts[OK]} OK_BY_SUBJECT={counts[OK_BY_SUBJECT]} "
