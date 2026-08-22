@@ -804,6 +804,23 @@ def test_046h_invalid_evidence_label_rejected(tmp_path: Path) -> None:
     assert "SEGURO_SEGURISIMO" in result.stderr
 
 
+@pytest.mark.parametrize("label", ["VERIFICADO", "INFERIDO", "REQUIERE_HUMANO"])
+def test_046h_contract_declared_labels_are_accepted(tmp_path: Path, label: str) -> None:
+    """El enum lo fija el prompt PRODUCTOR (`prompts/backlog_triage.md:364`:
+    "VERIFICADO|INFERIDO|REQUIERE_HUMANO"), no la memoria del implementador.
+
+    Regresion medida el 2026-08-22, primer uso real de la barrera: el enum se
+    habia escrito con `NO_VERIFICADO` (inexistente en todo el motor) y SIN
+    `REQUIERE_HUMANO` (presente en multiples DAGs reales), asi que un triaje
+    legitimo daba exit 1. Este test parametrizado falla si alguien vuelve a
+    tocar el enum sin mirar el contrato.
+    """
+    dag = _roster_dag()
+    dag["tickets"][0]["evidence_label"] = label
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
 # ---------------------------------------------------------------------------
 # WOT-2026-051f: `--head-sha` accepted ANY string. Reproduced with
 # `deadbeefdeadbeef...` -- a sha that exists in NO repo -- giving rc=0 plus the

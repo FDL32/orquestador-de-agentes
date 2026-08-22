@@ -521,7 +521,15 @@ def _errors_accounting(data: dict[str, Any]) -> list[str]:
 # the same session). This CLI cannot verify a probe ran -- that is not knowable
 # from the JSON -- so it enforces the part that IS checkable: the label must be
 # PRESENT and one of the contract's values. An absent label is the silent case.
-_VALID_EVIDENCE_LABELS = {"VERIFICADO", "INFERIDO", "NO_VERIFICADO"}
+# La FUENTE del enum es el prompt que PRODUCE el artefacto:
+# `prompts/backlog_triage.md:364` declara "VERIFICADO|INFERIDO|REQUIERE_HUMANO".
+# Medido 2026-08-22, primer uso real de esta barrera: se habia escrito
+# `NO_VERIFICADO` (que no aparece en NINGUN prompt ni skill del motor) y se
+# habia OMITIDO `REQUIERE_HUMANO` (presente en multiples DAGs reales del
+# destino). Resultado: falso ROJO que bloqueaba un triaje legitimo. Leccion
+# cableada aqui: el enum de un validador se copia del contrato productor, no
+# se reconstruye de memoria.
+_VALID_EVIDENCE_LABELS = {"VERIFICADO", "INFERIDO", "REQUIERE_HUMANO"}
 
 
 def _errors_evidence_label(data: dict[str, Any]) -> list[str]:
