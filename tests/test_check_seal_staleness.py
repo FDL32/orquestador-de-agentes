@@ -222,6 +222,78 @@ class TestPrepushWiring:
         result = run_seal_staleness_check(tmp_path)
         assert result.passed is True
 
+    def test_wiring_anchors_the_receipt_against_its_own_batch_run(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-058s: el cableado debe pasar el ANCLA de pertenencia.
+
+        Medido 2026-08-23 por DOS auditorias independientes: `prepush_check`
+        invocaba `check_seal_staleness(receipt, project_root=...)` sin
+        `batch_run_path`, asi que la capa de PERTENENCIA quedaba inerte EN
+        PRODUCCION -- un recibo de OTRO vuelo pasaba SIN HALLAZGOS. El guard
+        mordia en sus tests y no miraba donde ocurre el fallo ("barrera del
+        alcance"), justo lo que §4.bis punto 4 declara falso_verde.
+
+        El ancla correcta es el `batch_run` DEL PROPIO recibo (derivable por
+        `flight`), nunca un flight ajeno: comparar contra el ancla equivocada es
+        el falso positivo que ese mismo punto documenta.
+        """
+        from scripts.prepush_check import run_seal_staleness_check
+
+        prompt = _write_prompt(tmp_path)
+        reports = tmp_path / "orchestrator_pipeline" / "reports"
+        reports.mkdir(parents=True)
+        receipt = _write_receipt(
+            reports,
+            prompt=prompt,
+            payload={
+                "project_root_resolved": str(tmp_path),
+                "flight": "FP-EL-MIO",
+            },
+        )
+        # el UNICO batch_run del directorio declara OTRO flight -> recibo ajeno.
+        # Su nombre es deliberadamente el del OTRO vuelo: el ancla sale del disco,
+        # no del `flight` del recibo (si no, un recibo que miente se auto-exime).
+        (reports / "batch_run_FP-OTRO-VUELO.json").write_text(
+            json.dumps({"flight": "FP-OTRO-VUELO", "PREDICATE": {}}),
+            encoding="utf-8",
+        )
+
+        result = run_seal_staleness_check(tmp_path)
+
+        assert result.passed is False, "un recibo ajeno debe dar hallazgo"
+        assert receipt.name in result.output
+        assert "batch_run" in result.output
+
+    def test_wiring_clean_receipt_with_matching_batch_run_passes(
+        self, tmp_path: Path
+    ) -> None:
+        """Control negativo: mismo montaje, `flight` COINCIDENTE -> sin hallazgo.
+
+        Sin este par, el test de arriba pasaria con un guard que marcase
+        cualquier recibo que tenga un `batch_run` al lado.
+        """
+        from scripts.prepush_check import run_seal_staleness_check
+
+        prompt = _write_prompt(tmp_path)
+        reports = tmp_path / "orchestrator_pipeline" / "reports"
+        reports.mkdir(parents=True)
+        _write_receipt(
+            reports,
+            prompt=prompt,
+            payload={
+                "project_root_resolved": str(tmp_path),
+                "flight": "FP-EL-MIO",
+            },
+        )
+        (reports / "batch_run_FP-EL-MIO.json").write_text(
+            json.dumps({"flight": "FP-EL-MIO", "PREDICATE": {}}),
+            encoding="utf-8",
+        )
+
+        result = run_seal_staleness_check(tmp_path)
+        assert result.passed is True, result.output
+
     def test_wiring_skips_without_reports_dir(self, tmp_path: Path) -> None:
         from scripts.prepush_check import run_seal_staleness_check
 

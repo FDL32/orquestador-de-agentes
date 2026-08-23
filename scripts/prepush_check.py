@@ -82,6 +82,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -885,6 +886,29 @@ def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
     )
 
 
+def _batch_run_for_receipt(reports_dir: Path, receipt: Path) -> Path | None:
+    """El `batch_run` contra el que anclar el recibo, o None si no hay ancla.
+
+    WOT-2026-058s. **El ancla NO puede elegirla el propio recibo.** Un primer
+    intento resolvia `batch_run_<receipt['flight']>.json`, y eso deja al recibo
+    auto-eximirse: si miente en `flight`, el fichero no existe, el ancla sale
+    `None` y la capa de pertenencia no opina -- exactamente el recibo ajeno que
+    §4.bis punto 4 declara falso_verde. Medido 2026-08-23 sobre una copia del
+    arbol real: con `flight` ajeno el ancla desaparecia y el hallazgo no salia.
+
+    Se ancla por lo que hay EN DISCO: si el directorio contiene exactamente UN
+    `batch_run_*.json`, ese es el vuelo de esta corrida y el recibo se contrasta
+    contra el. Con cero (aun sin cerrar) o con varios (el ancla seria ambigua, y
+    elegir mal es el falso positivo de 2026-08-13) se devuelve None: esta capa
+    prefiere callar antes que acusar con el ancla equivocada.
+
+    Before: `reports_dir` existe. During: solo un glob, sin leer el recibo.
+    After: la ruta si hay exactamente uno; None en cualquier otro caso. No lanza.
+    """
+    candidates = sorted(reports_dir.glob("batch_run_*.json"))
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def run_seal_staleness_check(project_root: Path) -> CheckResult:
     """WOT-2026-055c: seal-staleness over start_context_isolation receipts.
 
@@ -922,8 +946,23 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
 
     findings: dict[str, list[str]] = {}
     for receipt in sorted(reports_dir.glob("start_context_isolation*.json")):
+        # WOT-2026-058s: pasar el ANCLA de pertenencia, o la capa queda INERTE.
+        # Medido 2026-08-23 por dos auditorias independientes: sin
+        # `batch_run_path` un recibo de OTRO vuelo pasaba SIN HALLAZGOS, asi que
+        # el guard mordia en sus tests y no miraba donde ocurre el fallo
+        # ("barrera del alcance"); §4.bis punto 4 lo declara falso_verde.
+        #
+        # El ancla se deriva del PROPIO recibo (su `flight`), nunca de un vuelo
+        # externo: contrastar contra el ancla equivocada es el falso positivo
+        # que ese mismo punto documenta (2026-08-13, estuvo a punto de destruir
+        # una acreditacion legitima). Si el recibo no nombra su vuelo, o su
+        # batch_run no esta en disco, se pasa `None` y esta capa simplemente no
+        # opina -- nunca inventa un ancla.
+        batch_run = _batch_run_for_receipt(reports_dir, receipt)
         try:
-            found = check_seal_staleness(receipt, project_root=project_root)
+            found = check_seal_staleness(
+                receipt, batch_run_path=batch_run, project_root=project_root
+            )
         except (OSError, ValueError) as exc:
             findings[receipt.name] = [f"UNREADABLE: {exc}"]
             continue
@@ -1156,7 +1195,6 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
         (perfil, backend) cuya restriccion no se puede enforcear.
     """
     name = "Agent Write Enforced (WOT-2026-048h, WARN)"
-    import json
 
     try:
         from scripts.check_agent_write_enforced import find_unenforced_pairs
