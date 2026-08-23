@@ -1110,3 +1110,29 @@ def test_l700_real_motor_resolves_true_and_fake_resolves_false() -> None:
 
     assert _sha_resolves_in_motor(_motor_sha("HEAD"), PROJECT_ROOT) is True
     assert _sha_resolves_in_motor(_UNRESOLVABLE_SHA, PROJECT_ROOT) is False
+
+
+def test_058p_bis_scheduled_and_excluded_is_a_contradiction(tmp_path: Path) -> None:
+    """Un ticket AGENDADO en un grupo y a la vez ENUMERADO como excluido.
+
+    Medido 2026-08-23: un plan de vuelo reintrodujo `WOT-2026-055f` en `groups[]`
+    mientras seguia en `requires_human` -- premisa refutada, y un triaje previo ya
+    lo habia marcado REQUIERE_HUMANO. El validador daba `rc=0` porque ese DAG usa
+    la variante SIN `tickets[]` raiz y toda la contabilidad vive tras esa guarda.
+    """
+    dag = _valid_dag()
+    dag["requires_human"] = [{"id": "WOT-2026-022i", "reason": "premisa refutada"}]
+    assert "tickets" not in dag, "el caso es la variante SIN roster raiz"
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "WOT-2026-022i" in result.stderr
+    assert "AGENDADO" in result.stderr
+
+
+def test_058p_bis_excluded_only_is_accepted(tmp_path: Path) -> None:
+    """Control negativo: excluir un ticket que NO esta agendado es legitimo y es
+    justamente la forma correcta de sacarlo de un vuelo."""
+    dag = _valid_dag()
+    dag["requires_human"] = [{"id": "WOT-2026-099x", "reason": "decision de producto"}]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr

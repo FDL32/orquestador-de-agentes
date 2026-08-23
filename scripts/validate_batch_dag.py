@@ -532,6 +532,45 @@ def _errors_accounting(data: dict[str, Any]) -> list[str]:
 _VALID_EVIDENCE_LABELS = {"VERIFICADO", "INFERIDO", "REQUIERE_HUMANO"}
 
 
+def _errors_scheduled_and_excluded(data: dict[str, Any]) -> list[str]:
+    """Un ticket NO puede estar AGENDADO y EXCLUIDO a la vez.
+
+    Medido 2026-08-23: un plan de vuelo reintrodujo `WOT-2026-055f` en `groups[]`
+    mientras seguia enumerado en `requires_human` -- su premisa estaba refutada y
+    un triaje previo ya lo habia clasificado REQUIERE_HUMANO. El validador daba
+    `rc=0` porque ese DAG usa la variante SIN `tickets[]` raiz, y toda la
+    contabilidad vive detras de esa guarda.
+
+    Esta comprobacion va APARTE a proposito: la contradiccion es INTERNA al DAG
+    (dos de sus propias listas se contradicen) y por tanto es visible en las DOS
+    variantes de esquema. El contrato del ejecutor es literal: "Do NOT execute
+    REQUIERE_HUMANO or DISENO_PRIMERO tickets. Ever."
+
+    Before: `data` es el objeto raiz del DAG.
+    During: aritmetica de conjuntos pura; sin I/O.
+    After: un error por ticket en la interseccion. Nunca lanza.
+    """
+    grouped: set[str] = set()
+    groups = data.get("groups")
+    if isinstance(groups, list):
+        for group in groups:
+            if isinstance(group, dict):
+                grouped.update(
+                    tk for tk in (group.get("tickets") or []) if isinstance(tk, str)
+                )
+
+    excluded: set[str] = set()
+    for key in _EXCLUSION_KEYS:
+        excluded |= _ticket_ids(data.get(key))
+
+    return [
+        f"contabilidad (WOT-2026-046h): el ticket '{ticket}' esta AGENDADO en un "
+        f"grupo y a la vez ENUMERADO como excluido en {list(_EXCLUSION_KEYS)}: "
+        f"contradiccion interna del DAG -- o se vuela o se excluye, no ambas"
+        for ticket in sorted(grouped & excluded)
+    ]
+
+
 def _errors_evidence_label(data: dict[str, Any]) -> list[str]:
     """WOT-2026-046h (F-4): every ROSTERED ticket declares a valid evidence_label.
 
@@ -592,6 +631,7 @@ def validate_dag(data: dict[str, Any]) -> list[str]:
     errors.extend(_errors_cycle(groups))
     errors.extend(_errors_blocks_consistency(groups))
     errors.extend(_errors_surface_overlap(groups))
+    errors.extend(_errors_scheduled_and_excluded(data))
     errors.extend(_errors_accounting(data))
     errors.extend(_errors_evidence_label(data))
 
