@@ -1136,3 +1136,18 @@ def test_058p_bis_excluded_only_is_accepted(tmp_path: Path) -> None:
     dag["requires_human"] = [{"id": "WOT-2026-099x", "reason": "decision de producto"}]
     result = _run(_write_dag(tmp_path, dag))
     assert result.returncode == 0, result.stderr
+
+
+def test_058p_bis_premise_verify_is_not_an_exclusion(tmp_path: Path) -> None:
+    """`premise_verify` NO excluye: significa "re-mide la premisa antes de volar",
+    y un ticket puede estar legitimamente AGENDADO y marcado para re-verificar.
+
+    Medido 2026-08-23: tratarla como exclusion produjo 22 falsos positivos sobre
+    42 DAGs reales del destino. Este test pinea la distincion.
+    """
+    dag = _valid_dag()
+    dag["premise_verify"] = [
+        {"id": "WOT-2026-022i", "reason": "censo medido antes de que aterrice 054r"}
+    ]
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr

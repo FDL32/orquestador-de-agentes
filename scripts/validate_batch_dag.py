@@ -397,6 +397,20 @@ _EXCLUSION_KEYS = (
 )
 
 
+# De las claves de arriba, solo estas EXCLUYEN del vuelo. `premise_verify` NO:
+# significa "re-mide la premisa antes de volar", y un ticket puede estar
+# legitimamente AGENDADO y marcado para re-verificar a la vez. Medido 2026-08-23:
+# tratarla como exclusion produjo 22 falsos positivos sobre 42 DAGs reales del
+# destino (p.ej. `backlog_triage_20260814-165708.json`, donde `WOT-2026-054p` y
+# `054u` estan agendados Y en `premise_verify` con su razon -- que es correcto).
+_BLOCKING_EXCLUSION_KEYS = (
+    "requires_human",
+    "excluded",
+    "excluded_tickets",
+    "excluded_from_flight",
+)
+
+
 def _ticket_ids(entries: Any) -> set[str]:
     """Ticket ids from a list whose items are either bare strings or objects.
 
@@ -560,13 +574,14 @@ def _errors_scheduled_and_excluded(data: dict[str, Any]) -> list[str]:
                 )
 
     excluded: set[str] = set()
-    for key in _EXCLUSION_KEYS:
+    for key in _BLOCKING_EXCLUSION_KEYS:
         excluded |= _ticket_ids(data.get(key))
 
     return [
         f"contabilidad (WOT-2026-046h): el ticket '{ticket}' esta AGENDADO en un "
-        f"grupo y a la vez ENUMERADO como excluido en {list(_EXCLUSION_KEYS)}: "
-        f"contradiccion interna del DAG -- o se vuela o se excluye, no ambas"
+        f"grupo y a la vez ENUMERADO como excluido en "
+        f"{list(_BLOCKING_EXCLUSION_KEYS)}: contradiccion interna del DAG -- "
+        f"o se vuela o se excluye, no ambas"
         for ticket in sorted(grouped & excluded)
     ]
 
