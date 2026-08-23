@@ -822,7 +822,8 @@ def run_workspace_contract_formation_check(project_root: Path) -> CheckResult:
 
 
 def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
-    """WOT-2026-025k: GSR-subset check over autonomous batch_run reports.
+    """WOT-2026-025k + WOT-2026-058t: accounting and predicate-input checks
+    over autonomous batch_run reports.
 
     In a `batch_run_<ts>.json` from the autonomous ticket batch, `tickets{}`
     is the CANONICAL index of terminal states. `group_stop_reports` (GSR) must
@@ -831,21 +832,33 @@ def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
     incomplete `tickets{}`; an auditor re-deriving the universe SOLELY from
     `tickets{}` would silently lose GSR-only tickets -- a false green.
 
+    WOT-2026-058t adds the flight-plan-input invariant to the same report:
+    PREDICATE conditions 1/2 (`schema_valido`, `dag_aciclico`) claiming
+    `exit_code: 0` for a `FP-` flight require a persisted DAG-JSON under the
+    destination's `orchestrator_pipeline/flight_plans/`; a report claiming
+    validation of a plan that does not exist is the same false-green family.
+
     WARN, not blocking: this reconciles HISTORICAL reports already on disk
     (`orchestrator_pipeline/reports/batch_run_*.json`); it is not a contract
     this ticket's own scope controls, so it never blocks a push/close. It
-    exists to surface accounting gaps the moment a new report lands.
+    exists to surface accounting gaps the moment a new report lands. The
+    blocking leverage lives in the batch auditor, which cites
+    `check_batch_run_accounting.py` directly (audit_autonomous_ticket_batch.md).
 
     Before: project_root resoluble; reports dir may or may not exist.
-    During: imports check_batch_run_accounting.check_batch_run_accounting
-    (static import so check_guard_wiring's AST walker reaches it) and runs it
-    over every batch_run_*.json found.
-    After: passed=True if no report has an orphan GSR ticket (or none exist);
-    passed=False + is_blocking=False (WARN, listing offending reports/tickets)
-    otherwise. Never raises: unreadable/malformed reports are skipped.
+    During: imports check_batch_run_accounting.check_batch_run_accounting and
+    check_flight_plan_persisted (static import so check_guard_wiring's AST
+    walker reaches them) and runs them over every batch_run_*.json found.
+    After: passed=True if no report has an orphan GSR ticket or a non-persisted
+    claimed flight plan (or none exist); passed=False + is_blocking=False
+    (WARN, listing offending reports/findings) otherwise. Never raises:
+    unreadable/malformed reports are skipped.
     """
-    name = "Batch Run Accounting Check (GSR-subset, WARN)"
-    from scripts.check_batch_run_accounting import check_batch_run_accounting
+    name = "Batch Run Accounting Check (GSR-subset + flight-plan, WARN)"
+    from scripts.check_batch_run_accounting import (
+        check_batch_run_accounting,
+        check_flight_plan_persisted,
+    )
 
     reports_dir = project_root / "orchestrator_pipeline" / "reports"
     if not reports_dir.exists():
@@ -855,23 +868,27 @@ def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
             output=f"no {reports_dir} (skip)",
             is_blocking=False,
         )
+    flight_plans_dir = project_root / "orchestrator_pipeline" / "flight_plans"
 
     findings: dict[str, list[str]] = {}
     for report in sorted(reports_dir.glob("batch_run_*.json")):
         try:
             orphans = check_batch_run_accounting(report)
+            plan_findings = check_flight_plan_persisted(report, flight_plans_dir)
         except (OSError, ValueError) as exc:
             findings[report.name] = [f"UNREADABLE: {exc}"]
             continue
-        if orphans:
-            findings[report.name] = orphans
+        combined = list(orphans) + list(plan_findings)
+        if combined:
+            findings[report.name] = combined
 
     if findings:
         lines = [
-            "WARN: orphan GSR ticket(s) absent from tickets{} [owner: WOT-2026-025k]:"
+            "WARN: batch_run accounting/flight-plan findings "
+            "[owners: WOT-2026-025k, WOT-2026-058t]:"
         ]
-        for report_name, orphans in findings.items():
-            lines.append(f"  {report_name}: {', '.join(orphans)}")
+        for report_name, items in findings.items():
+            lines.append(f"  {report_name}: {', '.join(items)}")
         return CheckResult(
             name=name,
             passed=False,
@@ -881,7 +898,10 @@ def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
     return CheckResult(
         name=name,
         passed=True,
-        output="every batch_run_*.json GSR ticket is present in tickets{}",
+        output=(
+            "every batch_run_*.json GSR ticket is present in tickets{} and "
+            "every claimed flight plan is persisted"
+        ),
         is_blocking=False,
     )
 

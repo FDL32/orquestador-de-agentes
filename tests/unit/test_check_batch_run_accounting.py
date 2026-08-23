@@ -189,3 +189,161 @@ def test_cli_accepts_dash_dash_file_flag(tmp_path: Path) -> None:
     rc = main(["--file", str(batch_run)])
 
     assert rc == 0
+
+
+def _write_flight_tree(
+    tmp_path: Path, payload: dict, dag_stem: str | None = None
+) -> Path:
+    """Standard report tree: `<tmp>/orchestrator_pipeline/reports/` +
+    `<tmp>/orchestrator_pipeline/flight_plans/` (empty unless dag_stem given)."""
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    flight_plans = tmp_path / "orchestrator_pipeline" / "flight_plans"
+    flight_plans.mkdir(parents=True, exist_ok=True)
+    if dag_stem is not None:
+        (flight_plans / f"{dag_stem}.json").write_text(
+            json.dumps({"name": dag_stem}), encoding="utf-8"
+        )
+    batch_run = reports / "batch_run_20260831-NAN-DAG.json"
+    batch_run.write_text(json.dumps(payload), encoding="utf-8")
+    return batch_run
+
+
+def _claimed_fp_payload() -> dict:
+    """WOT-2026-058t defect shape: FP- flight whose PREDICATE conditions 1/2
+    claim `exit_code: 0` for validate_batch_dag.py."""
+    return {
+        "flight": "FP-20260831-NAN-DAG",
+        "PREDICATE": {
+            "schema_valido": {
+                "command": "validate_batch_dag.py",
+                "exit_code": 0,
+                "note": "validated pre-execution by the flight plan",
+            },
+            "dag_aciclico": {
+                "command": "validate_batch_dag.py",
+                "exit_code": 0,
+                "note": "validated pre-execution",
+            },
+        },
+        "group_stop_reports": [],
+    }
+
+
+def test_missing_dag_for_claimed_fp_flight_fails(tmp_path: Path) -> None:
+    """WOT-2026-058t mutation: conditions 1/2 claim exit 0 but no DAG-JSON is
+    persisted for the FP- flight -> finding + CLI exit 1."""
+    from scripts.check_batch_run_accounting import (
+        check_flight_plan_persisted,
+        main,
+    )
+
+    batch_run = _write_flight_tree(tmp_path, _claimed_fp_payload())
+
+    findings = check_flight_plan_persisted(batch_run)
+    rc = main([str(batch_run)])
+
+    assert len(findings) == 1
+    assert "FP-20260831-NAN-DAG" in findings[0]
+    assert rc == 1
+
+
+def test_claimed_fp_flight_with_persisted_dag_passes(tmp_path: Path) -> None:
+    """WOT-2026-058t positive: the claim is VERIFIABLE because the DAG-JSON is
+    on disk -> no finding, CLI exit 0."""
+    from scripts.check_batch_run_accounting import (
+        check_flight_plan_persisted,
+        main,
+    )
+
+    batch_run = _write_flight_tree(
+        tmp_path, _claimed_fp_payload(), dag_stem="FP-20260831-NAN-DAG"
+    )
+
+    findings = check_flight_plan_persisted(batch_run)
+    rc = main([str(batch_run)])
+
+    assert findings == []
+    assert rc == 0
+
+
+def test_fp_flight_without_claim_passes_even_without_dag(tmp_path: Path) -> None:
+    """DoD sin-DAG remedy: conditions 1/2 emitted N/A (no exit_code 0) is a
+    declared absence, not a verified claim -> no finding."""
+    from scripts.check_batch_run_accounting import check_flight_plan_persisted
+
+    payload = _claimed_fp_payload()
+    payload["PREDICATE"]["schema_valido"]["exit_code"] = "N/A"
+    payload["PREDICATE"]["dag_aciclico"]["exit_code"] = "N/A"
+    batch_run = _write_flight_tree(tmp_path, payload)
+
+    findings = check_flight_plan_persisted(batch_run)
+
+    assert findings == []
+
+
+def test_non_fp_flight_citing_success_is_left_alone(tmp_path: Path) -> None:
+    """Legacy flights whose `flight` predates the FP- convention (descriptive
+    text, G-xxxx ids) are not constrained: retroactively requiring a persisted
+    plan from them would convert the historical corpus red (measured: 12 such
+    reports in the destination)."""
+    from scripts.check_batch_run_accounting import check_flight_plan_persisted
+
+    payload = {
+        "flight": "054-familia-barrera-prosa",
+        "PREDICATE": {
+            "schema_valido": {"command": "validate_batch_dag.py", "exit_code": 0},
+            "dag_aciclico": {"command": "validate_batch_dag.py", "exit_code": 0},
+        },
+    }
+    batch_run = _write_flight_tree(tmp_path, payload)
+
+    findings = check_flight_plan_persisted(batch_run)
+
+    assert findings == []
+
+
+def test_report_without_flight_field_is_left_alone(tmp_path: Path) -> None:
+    """Reports with no flight citation at all are not constrained by the
+    flight-plan check (nothing to resolve against flight_plans/)."""
+    from scripts.check_batch_run_accounting import check_flight_plan_persisted
+
+    payload = {
+        "PREDICATE": {
+            "schema_valido": {"command": "validate_batch_dag.py", "exit_code": 0},
+        },
+    }
+    batch_run = _write_flight_tree(tmp_path, payload)
+
+    findings = check_flight_plan_persisted(batch_run)
+
+    assert findings == []
+
+
+def test_flight_in_start_context_isolation_is_resolved(tmp_path: Path) -> None:
+    """The flight citation may live under start_context_isolation.flight."""
+    from scripts.check_batch_run_accounting import check_flight_plan_persisted
+
+    payload = _claimed_fp_payload()
+    payload.pop("flight")
+    payload["start_context_isolation"] = {"flight": "FP-20260831-NAN-DAG"}
+    batch_run = _write_flight_tree(tmp_path, payload)
+
+    findings = check_flight_plan_persisted(batch_run)
+
+    assert len(findings) == 1
+    assert "FP-20260831-NAN-DAG" in findings[0]
+
+
+def test_parenthetical_flight_suffix_still_resolves_dag(tmp_path: Path) -> None:
+    """Flight names with a '(VUELO ...)' annotation still resolve against the
+    DAG stem (measured on batch_run_20260722_FP-20260722-027n-027o.json)."""
+    from scripts.check_batch_run_accounting import check_flight_plan_persisted
+
+    payload = _claimed_fp_payload()
+    payload["flight"] = "FP-20260831-NAN-DAG (VUELO GARANTIAS DEL ENSEMBLE)"
+    batch_run = _write_flight_tree(tmp_path, payload, dag_stem="FP-20260831-NAN-DAG")
+
+    findings = check_flight_plan_persisted(batch_run)
+
+    assert findings == []
