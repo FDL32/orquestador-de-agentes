@@ -222,3 +222,56 @@ def test_wot_destination_frozen_with_row_no_orphan(tmp_path: Path, monkeypatch) 
     assert find_orphans(tmp_path) == []
     monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
     assert main([]) == 0
+
+
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058p: el gate perdia en SILENCIO los contratos de prefijo legacy
+# cuando el destino declara `ticket_prefix`. AGENTS.md declara `WP-`/`WT-` como
+# `legacy-compat` que los consumidores DEBEN aceptar; el gate los invisibilizaba
+# y salia VERDE sin haberlos mirado -- un falso cierre, no un rechazo.
+# ---------------------------------------------------------------------------
+
+
+def _frozen_058p(ticket: str) -> str:
+    """Un bloque de contrato `frozen` minimo para `find_frozen_ids`."""
+    return f"## {ticket}\n\n**status:** frozen\n\nticket_id: {ticket}\n\n"
+
+
+_FROZEN_PAIR = _frozen_058p("WT-2026-248a") + _frozen_058p("WOT-2026-099x")
+
+
+def test_058p_legacy_prefix_is_visible_under_declared_prefix() -> None:
+    """DoD (a)+(b): con `prefix='WOT'`, un contrato `frozen` de prefijo
+    legacy-compat DEBE verse.
+
+    Medido 2026-08-22 ANTES del fix: `find_frozen_ids(pair, 'WOT')` devolvia
+    solo `['WOT-2026-099x']` -- el contrato `WT-` no se cruzaba contra el
+    backlog y el gate salia VERDE sin haberlo mirado.
+    """
+    from scripts.check_contract_backlog_reconcile import find_frozen_ids
+
+    assert find_frozen_ids(_FROZEN_PAIR, "WOT") == ["WT-2026-248a", "WOT-2026-099x"]
+
+
+def test_058p_foreign_non_legacy_prefix_stays_invisible() -> None:
+    """DoD (c) CONTROL NEGATIVO: un prefijo AJENO y no-legacy (`CTL-`) sigue SIN
+    aparecer.
+
+    Sin este par, el test de arriba pasaria con un guard que hubiera degradado
+    al patron generico -- que es exactamente lo que NO se quiere: el destino
+    `Crear_Texto_LLM` usa `CTL-` y sus contratos no son de este destino.
+    """
+    from scripts.check_contract_backlog_reconcile import find_frozen_ids
+
+    assert find_frozen_ids(_frozen_058p("CTL-2026-001a"), "WOT") == []
+
+
+def test_058p_none_prefix_fallback_unchanged() -> None:
+    """NON-GOAL declarado en la ficha: el fallback de `prefix is None` es
+    correcto y NO se toca. Pineado para que un cambio futuro lo note."""
+    from scripts.check_contract_backlog_reconcile import find_frozen_ids
+
+    assert find_frozen_ids(_FROZEN_PAIR, None) == ["WT-2026-248a", "WOT-2026-099x"]

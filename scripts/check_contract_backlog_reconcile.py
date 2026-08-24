@@ -47,14 +47,40 @@ _GENERIC_TICKET_ID_RE = re.compile(
 _GENERIC_TICKET_RE = re.compile(r"[A-Z]{2,5}-\d{4}-\w+")
 
 
+# WOT-2026-058p: AGENTS.md declara `WP-`/`WT-` como `legacy-compat` y dice que
+# los consumidores DEBEN aceptarlos. Un destino que declara `ticket_prefix: WOT`
+# tiene filas historicas con esos prefijos, asi que el patron por-destino los
+# incluye SIEMPRE ademas del declarado. Medido 2026-08-22: sin esto, un contrato
+# `frozen` con prefijo `WT-` era INVISIBLE para `find_frozen_ids` -- no se
+# cruzaba contra el backlog y el gate salia VERDE sin haberlo mirado (falso
+# cierre, no rechazo). NO se degrada al patron generico: un prefijo AJENO y
+# no-legacy (p.ej. `CTL-`, de otro destino) sigue sin aparecer.
+_LEGACY_COMPAT_PREFIXES = ("WP", "WT")
+
+
+def _prefix_alternation(prefix: str) -> str:
+    """Alternancia regex del prefijo declarado + los legacy-compat de AGENTS.md.
+
+    Before: `prefix` es el `ticket_prefix` del destino (p.ej. "WOT").
+    During: puro; deduplica conservando el orden y escapa cada alternativa.
+    After: devuelve p.ej. `WOT|WP|WT`. Nunca lanza.
+    """
+    seen: list[str] = []
+    for candidate in (prefix, *_LEGACY_COMPAT_PREFIXES):
+        if candidate and candidate not in seen:
+            seen.append(candidate)
+    return "|".join(re.escape(c) for c in seen)
+
+
 def _build_ticket_id_re(prefix: str) -> re.Pattern[str]:
     return re.compile(
-        rf"ticket_id:\s*\**\s*({re.escape(prefix)}-\d{{4}}-\w+)", re.IGNORECASE
+        rf"ticket_id:\s*\**\s*((?:{_prefix_alternation(prefix)})-\d{{4}}-\w+)",
+        re.IGNORECASE,
     )
 
 
 def _build_ticket_re(prefix: str) -> re.Pattern[str]:
-    return re.compile(rf"{re.escape(prefix)}-\d{{4}}-\w+")
+    return re.compile(rf"(?:{_prefix_alternation(prefix)})-\d{{4}}-\w+")
 
 
 def _extract_ticket_id(
