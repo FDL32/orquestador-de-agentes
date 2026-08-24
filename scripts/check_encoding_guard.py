@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -50,12 +51,71 @@ def _allowlist_relative(path: Path) -> str | None:
         return None
 
 
+# WOT-2026-058r: allowlist declarable por el DESTINO, para deuda PREEXISTENTE.
+# `ALLOWLIST` (motor) esta vacia y `_allowlist_relative()` devuelve None fuera
+# del motor, asi que cualquier corrupcion historica del destino bloqueaba el gate
+# sin via de excepcion declarada. Medido 2026-08-23 en el cierre de un destino:
+# 3 ficheros con corrupcion preexistente (verificada contra los blobs de HEAD~1)
+# daban rc=1 y obligaban a re-declararlo en prosa en CADA cierre.
+#
+# La excepcion es POR FICHERO DECLARADO, nunca por patron: un fichero NUEVO con
+# la misma corrupcion sigue bloqueando. Esa asimetria es el punto -- tolerar
+# deuda historica sin abrir la puerta a deuda nueva.
+_DESTINO_ALLOWLIST_REL = Path(".agent") / "encoding_allowlist.json"
+
+
+def _destino_allowlist(file_path: Path) -> tuple[set[str], str | None]:
+    """Allowlist declarada por el destino que CONTIENE `file_path`.
+
+    Before: `file_path` es la ruta de un fichero a auditar.
+    During: sube por los padres buscando `.agent/encoding_allowlist.json`; lo lee
+        con utf-8-sig (un BOM no debe tumbar la resolucion). Sin I/O fuera de esa
+        cadena de padres.
+    After: devuelve (entradas relativas al destino, ticket dueno). Conjunto vacio
+        y None si no hay declaracion, es ilegible, o no declara `owner` --
+        fail-closed: una allowlist sin dueno no exime nada.
+    """
+    for parent in [file_path.parent, *file_path.parent.parents]:
+        candidate = parent / _DESTINO_ALLOWLIST_REL
+        if not candidate.exists():
+            continue
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return set(), None
+        if not isinstance(data, dict):
+            return set(), None
+        owner = data.get("owner")
+        entries = data.get("entries")
+        if not isinstance(owner, str) or not owner.strip():
+            return set(), None
+        if not isinstance(entries, list):
+            return set(), None
+        resolved: set[str] = set()
+        for entry in entries:
+            if isinstance(entry, str) and entry.strip():
+                resolved.add((parent / entry).resolve().as_posix())
+        return resolved, owner.strip()
+    return set(), None
+
+
 def _collect_file_errors(file_path) -> list[str]:
     """Return all encoding errors for one file (BOM/mojibake/q-mark/text corruption)."""
     from scripts.encoding_guard import file_issues, has_utf8_bom, is_allowlisted
 
     rel = _display_path(file_path)
     mojibake, q_in_word, text_corruption = file_issues(file_path)
+    # WOT-2026-058r: la allowlist del DESTINO se consulta antes que la del motor.
+    declared, owner = _destino_allowlist(Path(file_path))
+    if declared and Path(file_path).resolve().as_posix() in declared:
+        if not mojibake and not q_in_word and not text_corruption:
+            return [
+                f"Allowlist entry is now clean and should be removed: {rel} "
+                f"[owner: {owner}]"
+            ]
+        print(f"[encoding-guard] allowlisted by destino: {rel} [owner: {owner}]")
+        return []
+
     rel_for_allowlist = _allowlist_relative(file_path)
     if rel_for_allowlist is not None and is_allowlisted(rel_for_allowlist):
         if not mojibake and not q_in_word and not text_corruption:
