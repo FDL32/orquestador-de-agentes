@@ -1479,3 +1479,78 @@ def test_056b_censored_id_valid_dtype_still_passes(tmp_path: Path) -> None:
     errors = cbc.validate_backlog(collab / "backlog.md")
     dt_errors = [e for e in errors if "deliverable_type" in e]
     assert dt_errors == [], f"Censored row with valid dtype must pass: {dt_errors}"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-052a: el gate no debe ser MUDO sobre las filas Prioridad-led cuyo id
+# no casa la regex. El `exit 0` significaba "valide N" donde N excluia EN
+# SILENCIO las filas no canonicas (`DEC-WOT-*`, `WOT-2026-STATE-RECON-*`).
+# DoD: (a) CUENTA y NOMBRA las saltadas (WARN, no ERROR); (b) recibo
+# `validadas=N saltadas=M`; (c) `_TICKET_ROW_CELL_RE` NO se toca; (d) MUTATION
+# literal: fila con `WOT-2026-STATE-RECON-A` -> 1 saltada citando el id;
+# renombrada a canonico -> 0 saltadas.
+# ---------------------------------------------------------------------------
+
+
+def test_052a_reports_skipped_row_by_id_but_exit_zero(tmp_path, capsys) -> None:
+    """DoD (a)+(d) POSITIVO: fila con id no canonico presente -> saltadas cuenta
+    UNA y NOMBRA el id; es WARN -> rc 0, la fila NO rompe el arbol."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        _HEADER
+        + "| Media | WOT-2026-STATE-RECON-A | titulo deliverable_type: code | s | pending | - | x | - |\n"
+        + "\n",
+        encoding="utf-8",
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, "una fila id no canonico es WARN, nunca ERROR (DoD a)"
+    assert "universo: validadas=0 saltadas=1" in out, out
+    assert "WOT-2026-STATE-RECON-A" in out, out
+    assert "WARN" in out, out
+
+
+def test_052a_renamed_canonical_id_reports_zero_skipped(tmp_path, capsys) -> None:
+    """DoD (d) CONTROL NEGATIVO de la MUTATION: la MISMA fila con id CANONICO
+    (renombrado) deja de contar como saltada: validadas=1 saltadas=0."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        _HEADER
+        + "| Media | WOT-2026-052x | titulo deliverable_type: code | s | pending | - | x | - |\n"
+        + "\n",
+        encoding="utf-8",
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "validadas=1 saltadas=0" in out, out
+    assert "WARN" not in out, out
+
+
+def test_052a_partition_pure_function(tmp_path: Path) -> None:
+    """DoD (b) unidad: `_partition_prioridad_rows` clasifica por canonico y
+    conserva multiplicidad. Compact closure-log rows NO entran al censo."""
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    live = collab / "backlog.md"
+    arch = collab / "_archive" / "backlog_done.md"
+    live.write_text(
+        _HEADER
+        + "| Alta | WOT-2026-052a | t deliverable: code | s | pending | - | x | - |\n"
+        + "| Media | DEC-WOT-2026-047b | t | s | pending | - | x | - |\n"
+        + "| Baja | WOT-2026-STATE-RECON-A | t | s | pending | - | x | - |\n"
+        + "\n",
+        encoding="utf-8",
+    )
+    arch.write_text(
+        "| WOT-2026-052b | completed | nota compacta (NO es fila Prioridad-led) |\n",
+        encoding="utf-8",
+    )
+    v, s = cbc._partition_prioridad_rows(live)
+    assert "WOT-2026-052a" in v
+    assert "DEC-WOT-2026-047b" in s
+    assert s.count("WOT-2026-STATE-RECON-A") == 1
+    va, sa = cbc._partition_prioridad_rows(arch)
+    assert va == [] and sa == [], "compact closure-log rows are OUT of the census"

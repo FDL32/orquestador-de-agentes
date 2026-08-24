@@ -93,6 +93,13 @@ _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 # id (e.g. 'Depende de'), which must NOT match.
 _TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
 
+# WOT-2026-052a: Prioridad words that identify a live-queue / archived-snapshot
+# table row. The Prioridad cell sits at RAW split index 1 (empty token,
+# Prioridad, Ticket, ...). Only these values mark a row as a scheduling-surface
+# row -- a compact closure-log row (`| Ticket | Estado | Nota |`) fails this
+# test and stays out of the census.
+_PRIORIDAD_WORDS = frozenset({"Alta", "Media", "Baja"})
+
 # WOT-2026-048g: legacy baseline of live-queue rows that lack deliverable_type.
 # Anchored by PAIR (id, absence) following _ARCHIVE_ARITY_LEGACY_BASELINE pattern.
 # CENSUSED 2026-08-10 from the real workspace backlog. Any ticket id NOT in this
@@ -683,6 +690,63 @@ def _ticket_row_ids(path: Path) -> list[str]:
         if tid:
             ids.append(tid)
     return ids
+
+
+# WOT-2026-052a: the directory of a scheduling surface row. "Prioridad-led"
+# means the SAME definition _row_ticket_id uses -- a row that starts with `| `,
+# has a Prioridad cell at RAW split index 1 in the known vocabulary, and a
+# Ticket cell at index 2. Rows that fail any predicate (header, separator,
+# compact `| Ticket | Estado | Nota |` closure-log rows, prose) are NOT part of
+# the census universe, so the skip counter never counts things that were never
+# eligible to be audited.
+def _prio_ticket_cells(path: Path) -> list[str]:
+    """Ticket cells (raw index 2) of every Prioridad-led row in ``path``.
+
+    WOT-2026-052a universe census. Unlike ``_row_ticket_id`` / ``_ticket_row_ids``
+    this returns the cell REGARDLESS of whether it is a canonical id, so the
+    caller can partition the surface into ``validadas`` (regex matches, the rows
+    the gate actually audits) and ``saltadas`` (rows that fail the id pattern and
+    are silently invisible to every validate_* check). Duplicates are NOT
+    collapsed: each row occurrence counts once, with multiplicity, mirroring
+    ``_ticket_row_ids``.
+
+    Before: ``path`` exists or does not (a fresh destino has no archive row).
+    During: pure line parsing, no I/O beyond the read, no mutation.
+    After: a list of cell strings; empty when the file is absent or has no
+        Prioridad-led rows.
+    """
+    if not path.exists():
+        return []
+    cells: list[str] = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| "):
+            continue
+        raw = stripped.split("|")
+        if len(raw) <= 3:
+            continue
+        if raw[1].strip() not in _PRIORIDAD_WORDS:
+            continue
+        cells.append(raw[2].strip())
+    return cells
+
+
+def _partition_prioridad_rows(path: Path) -> tuple[list[str], list[str]]:
+    """Partition a scheduling surface into (validadas, saltadas) ticket cells.
+
+    WOT-2026-052a: ``validadas`` are the Prioridad-led rows whose Ticket cell is a
+    canonical id -- the rows every validate_* check actually sees. ``saltadas``
+    are the Prioridad-led rows whose id does not match ``_TICKET_ROW_CELL_RE``
+    (e.g. ``DEC-WOT-2026-047b``, ``WOT-2026-STATE-RECON-A``): previously the gate
+    returned ``exit 0`` over them without counting or naming them. They remain
+    unaudited -- this partition only makes the coverage partial, it does not
+    accept the rows.
+    """
+    canonical: list[str] = []
+    skipped: list[str] = []
+    for cell in _prio_ticket_cells(path):
+        (canonical if _TICKET_ROW_CELL_RE.match(cell) else skipped).append(cell)
+    return canonical, skipped
 
 
 def validate_live_archive_integrity(root: Path) -> list[str]:
@@ -1506,6 +1570,29 @@ def main(argv: list[str] | None = None) -> int:
     violations = violations + validate_archive_prose_preservation(root)
     # WOT-2026-049c: una fila VIVA no puede depender de un ticket ya cerrado.
     violations = violations + validate_live_dependencies(root)
+
+    # WOT-2026-052a: the gate must not be silent about rows its own universe
+    # excludes. Every Prioridad-led row whose Ticket cell fails the id pattern
+    # (DEC-WOT-*, WOT-2026-STATE-RECON-*) is invisible to EVERY validate_*
+    # check above -- their status, arity, live/archive duplication and
+    # dependencies are never audited, yet the gate's `exit 0` says "validated".
+    # This receipt declares the real coverage; M>0 is a WARN, never an ERROR
+    # (the live rows are legitimate pending work: blocking would break the tree).
+    collab_dir = root / ".agent" / "collaboration"
+    validadas_live, saltadas_live = _partition_prioridad_rows(collab_dir / "backlog.md")
+    validadas_arch, saltadas_arch = _partition_prioridad_rows(
+        collab_dir / "_archive" / "backlog_done.md"
+    )
+    validadas = len(validadas_live) + len(validadas_arch)
+    saltadas = len(saltadas_live) + len(saltadas_arch)
+    print(f"[backlog-contract] universo: validadas={validadas} saltadas={saltadas}")
+    if saltadas:
+        for cell in sorted(set(saltadas_live + saltadas_arch)):
+            print(
+                f"[backlog-contract] WARN: fila Prioridad-led con Ticket cell "
+                f"'{cell}' no auditable (id no canonico). Validadas no la ve: "
+                f"ni estado, ni aridad, ni duplicado, ni dependencias.",
+            )
     if violations:
         print(
             f"[backlog-contract] {len(violations)} violation(s) in {backlog}:",
