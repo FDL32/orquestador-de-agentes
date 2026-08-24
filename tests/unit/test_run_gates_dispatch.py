@@ -189,9 +189,16 @@ def test_run_code_gates_repo_motor_uses_motor_root_and_absolute_pytest(
     assert calls[0][0][:4] == [dispatch.sys.executable, "-m", "ruff", "check"]
     assert calls[0][1] == motor
     pytest_cmd, pytest_cwd, pytest_env = calls[2]
+    # WOT-2026-058q: la invocacion lleva ahora `--level all`. Este test aseveraba
+    # la forma EXACTA sin el flag, es decir pineaba el comportamiento defectuoso
+    # (el runner caia a su default `unit` y sellaba `level=unit` en el
+    # `last-run.json` COMPARTIDO). La propiedad que este test protege es la ruta
+    # ABSOLUTA del script y el interprete, no la ausencia de flags.
     assert pytest_cmd == [
         dispatch.sys.executable,
         str(motor / "scripts" / "run_pytest_safe.py"),
+        "--level",
+        "all",
     ]
     assert pytest_cwd == motor
     assert pytest_env is not None
@@ -511,3 +518,83 @@ def test_run_gates_dispatch_importable_without_module_shadowing():
     assert "ModuleNotFoundError" not in result.stderr
     assert "No module named 'runtime.motor_link'" not in result.stderr
     assert "[dispatch]" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058q: `run_gates_dispatch` no propagaba `--level` a `run_pytest_safe`.
+# El runner caia a su default (`unit`) y sellaba `level=unit` en `last-run.json`,
+# que es un ARTEFACTO COMPARTIDO: la corrida SIGUIENTE veia el sello degradado.
+# No es un gate rojo aislado, es un acoplamiento de ORDEN -- en el cierre donde
+# se midio solo salio verde porque `run_pytest_safe --level all` corrio DESPUES.
+# Un ejecutor que invierta el orden ve la suite roja sin haber tocado codigo.
+# ---------------------------------------------------------------------------
+
+
+def _pytest_invocation(calls):
+    """La invocacion de run_pytest_safe dentro de las llamadas capturadas."""
+    for cmd, _cwd, _env in calls:
+        if any("run_pytest_safe" in str(part) for part in cmd):
+            return [str(part) for part in cmd]
+    return []
+
+
+def _fake_gate_env(monkeypatch, tmp_path):
+    """Monta el doble de subprocess y devuelve la lista de llamadas."""
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    (motor / "tests").mkdir(parents=True)
+    destino.mkdir()
+
+    calls: list[tuple[list[str], Path, dict[str, str] | None]] = []
+
+    class _FakeCompleted:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append((cmd, Path(kwargs["cwd"]), kwargs.get("env")))
+        return _FakeCompleted(0)
+
+    monkeypatch.setattr(dispatch, "PROJECT_ROOT", destino)
+    monkeypatch.setattr(dispatch, "MOTOR_ROOT", motor)
+    monkeypatch.setattr(dispatch, "MOTOR_SCRIPTS_DIR", motor / "scripts")
+    monkeypatch.setattr(dispatch.subprocess, "run", fake_run)
+    monkeypatch.setattr(dispatch, "has_local_tests", lambda root: root == motor)
+    monkeypatch.setattr(
+        pip_audit_policy,
+        "should_run_pip_audit",
+        lambda project_root: (False, "skip"),
+    )
+    return calls
+
+
+def test_058q_code_gates_run_the_canonical_level(monkeypatch, tmp_path):
+    """DoD (a): el gate de codigo invoca `run_pytest_safe` con `--level all`.
+
+    Medido 2026-08-23 ANTES del fix: `grep -c "level" run_gates_dispatch.py` -> 0,
+    la invocacion no pasaba el flag y el runner caia a su default `unit`.
+    """
+    calls = _fake_gate_env(monkeypatch, tmp_path)
+
+    rc = dispatch.run_code_gates("repo_motor")
+
+    assert rc == 0
+    invocation = _pytest_invocation(calls)
+    assert invocation, "el dispatcher no invoco run_pytest_safe"
+    assert "--level" in invocation, invocation
+    assert invocation[invocation.index("--level") + 1] == "all", invocation
+
+
+def test_058q_code_gates_never_seal_unit(monkeypatch, tmp_path):
+    """CONTROL NEGATIVO del mismo par: el gate de codigo NUNCA sella `unit`.
+
+    `last-run.json` es compartido; degradarlo en silencio es el falso-verde
+    formal que WOT-2026-025p ya documenta. Sin esta asercion, el test de arriba
+    pasaria con un dispatcher que pasara `--level` con cualquier valor.
+    """
+    calls = _fake_gate_env(monkeypatch, tmp_path)
+
+    dispatch.run_code_gates("repo_motor")
+
+    invocation = _pytest_invocation(calls)
+    assert "unit" not in invocation, invocation

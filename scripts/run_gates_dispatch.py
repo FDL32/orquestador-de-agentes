@@ -133,6 +133,12 @@ def build_project_env(project_root: Path) -> dict[str, str]:
     return env
 
 
+# WOT-2026-058q: el nivel canonico del gate de codigo. Constante y no
+# parametrizable a proposito: un gate de codigo que corre menos que la suite
+# canonica es un verde formal-falso, y dejarlo configurable invita a degradarlo.
+CANONICAL_SUITE_LEVEL = "all"
+
+
 def run_motor_script(
     script_name: str, *args: str, project_root: Path | None = None
 ) -> int:
@@ -190,8 +196,17 @@ def run_code_gates(delivery_authority: str) -> int:
     # 2. pytest-safe (skip auditably when the destino has no local tests)
     if has_local_tests(authority_root):
         print("[dispatch] Running pytest-safe")
+        # WOT-2026-058q: `--level all` es PARTE del gate, no un adorno.
+        # Sin el, `run_pytest_safe` cae a su default `unit` y sella
+        # `level=unit` en `last-run.json` -- un ARTEFACTO COMPARTIDO, asi que
+        # la corrida SIGUIENTE hereda el sello degradado y falla sin que nadie
+        # haya tocado codigo (acoplamiento de ORDEN, medido 2026-08-23 en el
+        # cierre de un destino). Es la misma clase de falso-verde formal que
+        # WOT-2026-025p documenta: sin `--level all` el verde es unit-only.
         rc_pytest = run_motor_script(
             "run_pytest_safe.py",
+            "--level",
+            CANONICAL_SUITE_LEVEL,
             project_root=authority_root,
         )
         if rc_pytest != 0:
