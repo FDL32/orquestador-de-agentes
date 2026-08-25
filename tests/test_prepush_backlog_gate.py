@@ -376,3 +376,74 @@ def test_prose_preservation_real_archive(tmp_path: Path) -> None:
     assert errors == [], (
         f"real archive must produce 0 errors, got {len(errors)}: {errors}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058x: el recibo `validadas/saltadas` que WOT-2026-052a anadio vive
+# SOLO en el `main()` del CLI. El camino AUTOMATICO -- este gate, cableado en el
+# closeout -- importa los seis `validate_*` y NO el censo, asi que su
+# `passed=True` vuelve a significar "valide lo que se que puedo validar" sin
+# declarar cuanto quedo fuera. Misma familia que la leccion que el docstring de
+# `run_backlog_contract_check` ya cita cuatro veces ("un guard que nadie invoca
+# es una NORMA, no una barrera"), aplicada aqui no al guard sino a su RECIBO.
+# DoD: (a) el camino automatico OBTIENE y DECLARA el par; (b) si hay filas
+# saltadas las NOMBRA, SIN cambiar su caracter no-bloqueante (052a fijo
+# WARN-nunca-ERROR y esta ficha no lo revisa); (c) MUTATION que aisla; (d)
+# CONTROL NEGATIVO: ningun arbol limpio se vuelve rojo.
+# ---------------------------------------------------------------------------
+
+ROW_NON_CANONICAL = (
+    "| Media | WOT-2026-STATE-RECON-A | z deliverable_type: code | s | pending "
+    "| - | session-test | - |\n"
+)
+
+
+def test_058x_closeout_declares_the_census_pair(tmp_path: Path) -> None:
+    """DoD (a): el camino automatico DECLARA la cobertura, de modo que un
+    `passed=True` sea legible como cobertura declarada y no como total."""
+    _write_backlog(tmp_path, ROW_PENDING)
+    result = run_backlog_contract_check(tmp_path)
+    assert result.passed is True
+    assert "validadas=" in result.output, (
+        "el closeout debe declarar el par del censo; sin el, passed=True no "
+        "distingue 'valide todo' de 'valide lo que supe ver': " + result.output
+    )
+    assert "saltadas=" in result.output, result.output
+
+
+def test_058x_closeout_names_the_skipped_rows(tmp_path: Path) -> None:
+    """DoD (b): una fila Prioridad-led con id no canonico se NOMBRA (igual que
+    en el CLI) y NO cambia el veredicto -- sigue siendo WARN, nunca ERROR."""
+    _write_backlog(tmp_path, ROW_PENDING + ROW_NON_CANONICAL)
+    result = run_backlog_contract_check(tmp_path)
+    assert result.passed is True, (
+        "una fila no canonica es WARN, nunca ERROR: el DoD de 052a lo fijo y "
+        "esta ficha NO lo revisa: " + result.output
+    )
+    assert result.is_blocking is True
+    assert "WOT-2026-STATE-RECON-A" in result.output, (
+        "si hay filas saltadas, el CheckResult las NOMBRA: " + result.output
+    )
+    assert "saltadas=1" in result.output, result.output
+
+
+def test_058x_clean_tree_verdict_unchanged(tmp_path: Path) -> None:
+    """DoD (d) CONTROL NEGATIVO: un backlog SIN filas saltadas da el mismo
+    veredicto que antes del cableado. Ningun arbol limpio se vuelve rojo."""
+    _write_backlog(tmp_path, ROW_PENDING)
+    result = run_backlog_contract_check(tmp_path)
+    assert result.passed is True
+    assert result.is_blocking is True
+    assert "saltadas=0" in result.output, result.output
+    # El veredicto legado sobrevive: sigue afirmando que el contrato se cumple.
+    assert "live queue contract holds" in result.output, result.output
+
+
+def test_058x_census_does_not_mask_a_real_violation(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO 2: anadir el censo no debe tragarse una violacion real.
+    Un `completed` en cola viva sigue bloqueando el cierre."""
+    _write_backlog(tmp_path, ROW_PENDING + ROW_COMPLETED)
+    result = run_backlog_contract_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is True
+    assert "WOT-2026-901a" in result.output

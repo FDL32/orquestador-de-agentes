@@ -527,6 +527,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         )
     try:
         from scripts.check_backlog_contract import (
+            _partition_prioridad_rows,
             validate_archive_landing_evidence,
             validate_archive_prose_preservation,
             validate_archive_row_arity,
@@ -536,6 +537,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         )
     except ImportError:
         from check_backlog_contract import (  # type: ignore[no-redef]
+            _partition_prioridad_rows,
             validate_archive_landing_evidence,
             validate_archive_prose_preservation,
             validate_archive_row_arity,
@@ -579,10 +581,31 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             "(see WOT-2026-015i)."
         )
         return CheckResult(name=name, passed=False, output=output, is_blocking=True)
+    # WOT-2026-058x: el recibo del censo (WOT-2026-052a) vivia SOLO en el
+    # `main()` del CLI, asi que en ESTE camino -- el automatico, el que corre en
+    # el closeout -- un `passed=True` volvia a significar "valide lo que se que
+    # puedo validar" sin declarar cuanto quedo fuera. Se DECLARA la cobertura y,
+    # si hay filas saltadas, se NOMBRAN. El caracter no-bloqueante NO cambia: el
+    # DoD de 052a fijo WARN-nunca-ERROR y esta ficha no lo revisa.
+    validadas_live, saltadas_live = _partition_prioridad_rows(backlog)
+    validadas_arch, saltadas_arch = _partition_prioridad_rows(
+        project_root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    )
+    censo = (
+        f"universo Prioridad-led (cola viva + archive): "
+        f"validadas={len(validadas_live) + len(validadas_arch)} "
+        f"saltadas={len(saltadas_live) + len(saltadas_arch)}"
+    )
+    saltadas_all = sorted(set(saltadas_live + saltadas_arch))
+    if saltadas_all:
+        censo += (
+            "\n  WARN: fila(s) Prioridad-led no auditable(s) (id no canonico), "
+            "invisibles a TODO validate_*: " + ", ".join(saltadas_all)
+        )
     return CheckResult(
         name=name,
         passed=True,
-        output="live queue contract holds",
+        output=f"live queue contract holds\n  {censo}",
         is_blocking=True,
     )
 
