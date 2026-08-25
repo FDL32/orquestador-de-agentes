@@ -27,8 +27,12 @@ Exit codes:
 
 - 0  -> el comando corrio y los ficheros quedaron restaurados.
 - rc del comando si el comando fallo (>=1), propagado tal cual.
-- 125+ -> el helper no pudo completar la ceremonia (snapshot o restore
-  fallidos), independiente del rc del comando.
+- 125 -> invocacion invalida, o snapshot fallido (no se llego a mutar nada).
+- 126 -> RESTORE fallido: es el unico caso en que el arbol puede quedar
+  sucio. Si ves un 126, revisa el working tree.
+- 127 -> el comando NO SE PUDO LANZAR (convencion POSIX 'command not
+  found'). El arbol SI quedo restaurado: el fallo es del comando, no de la
+  ceremonia. Un 127 emitido POR EL COMANDO se propaga igual, tal cual.
 
 Contract core exportable (testable sin CLI):
     snapshot(paths) -> dict[Path, bytes]
@@ -43,6 +47,13 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+
+
+# WOT-2026-040d: convencion POSIX. 127 = command not found (el comando no se
+# pudo LANZAR). 126 queda reservado a un fallo REAL de la ceremonia del helper
+# (restore roto), que es el unico caso en que el arbol puede quedar sucio.
+EXIT_COMMAND_NOT_LAUNCHABLE = 127
+EXIT_RESTORE_FAILED = 126
 
 
 def snapshot(paths: Sequence[str | Path]) -> dict[Path, bytes]:
@@ -87,11 +98,29 @@ def run_cycle(
     During: ejecuta `command` con `subprocess.run` (cwd opcional); despues, en
         `finally`, restaura el snapshot. Sin tuberias: el rc que se lee es el
         del comando real, no el de un pipe.
-    After: devuelve el rc del comando (>=0). Incluso si el comando falla o
+    After: devuelve el rc del comando (>=0), o `EXIT_COMMAND_NOT_LAUNCHABLE`
+        (127) si el comando NO SE PUDO LANZAR. Incluso si el comando falla o
         lanza, el working tree queda restaurado al estado pre-mutacion.
+
+    WOT-2026-040d (follow-up del bucle L950): el fallo de LANZAMIENTO se captura
+    AQUI, que es donde consta que el OSError vino de arrancar el proceso y no de
+    restaurar. Antes subia hasta el `except OSError` de `main()`, cuyo mensaje
+    culpaba al restore -- sobre un arbol que este mismo `finally` YA habia
+    restaurado bien. Un helper que existe para proteger el fix sin commitear no
+    puede decir "no se pudo restaurar" cuando si se restauro: induce justo la
+    desconfianza que venia a eliminar.
     """
     try:
-        proc = subprocess.run(list(command), cwd=str(cwd) if cwd else None)  # noqa: S603
+        try:
+            proc = subprocess.run(list(command), cwd=str(cwd) if cwd else None)  # noqa: S603
+        except OSError as exc:
+            # NO es un fallo de la ceremonia: el comando no arranco. El `finally`
+            # de abajo restaura igual, asi que el arbol queda limpio.
+            print(
+                f"error: no se pudo lanzar el comando {list(command)!r}: {exc}",
+                file=sys.stderr,
+            )
+            return EXIT_COMMAND_NOT_LAUNCHABLE
         return proc.returncode
     finally:
         restore(snapshot_set)
@@ -138,8 +167,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return run_cycle(snap, command)
     except OSError as exc:
+        # Solo llega aqui un fallo REAL de restore: el de lanzamiento lo captura
+        # `run_cycle` y devuelve EXIT_COMMAND_NOT_LAUNCHABLE (WOT-2026-040d).
         print(f"error: no se pudo restaurar el snapshot: {exc}", file=sys.stderr)
-        return 126
+        return EXIT_RESTORE_FAILED
 
 
 if __name__ == "__main__":

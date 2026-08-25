@@ -92,3 +92,89 @@ def test_cli_leading_double_dash_and_restore(tmp_path):
 
     assert rc == 6, f"propaga el rc real: {rc}"
     assert target.read_bytes() == original
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-040d (follow-up del bucle L950): el `except OSError` de `main()`
+# atribuia al RESTORE un fallo del COMANDO. Un comando inexistente lanza
+# FileNotFoundError -- que ES un OSError -- desde el `subprocess.run` de
+# `run_cycle`, sube por la misma via, y el helper imprimia "no se pudo
+# restaurar el snapshot" con rc=126... sobre un arbol que el `finally` YA habia
+# restaurado correctamente.
+#
+# Por que importa: este helper existe para que un ciclo de mutation no destruya
+# el fix sin commitear. Decirle al operador que el restore fallo cuando no fallo
+# induce exactamente la desconfianza que el helper venia a eliminar, y rc=126
+# ("ceremonia rota") oculta que el fallo real fue del comando.
+#
+# Convencion POSIX: 127 = command not found. 126 queda SOLO para un restore
+# realmente roto.
+# ---------------------------------------------------------------------------
+
+
+def test_040d_missing_command_is_not_reported_as_restore_failure(tmp_path, capsys):
+    """ROJO sin el fix: un comando inexistente daba rc=126 y culpaba al restore.
+
+    El arbol DEBE quedar restaurado (el `finally` ya lo hacia bien) y el
+    veredicto debe distinguir el fallo de lanzamiento del de restauracion.
+    """
+    target = tmp_path / "f.txt"
+    original = b"pre-mutacion\n"
+    target.write_bytes(original)
+    target.write_bytes(b"MUTADO\n")  # mutacion aplicada
+    target.write_bytes(original)  # snapshot se toma de este estado
+
+    rc = main(["--", str(target), "--", "comando-que-no-existe-xyz-040d"])
+    err = capsys.readouterr().err
+
+    assert rc == 127, (
+        "un comando que no se puede lanzar es 'command not found' (127), no un "
+        f"fallo de ceremonia del helper (126): rc={rc}"
+    )
+    assert "restaurar" not in err.lower(), (
+        "el mensaje NO puede culpar al restore de un fallo del comando: " + err
+    )
+    assert target.read_bytes() == original, (
+        "el working tree debe quedar restaurado igualmente"
+    )
+
+
+def test_040d_real_restore_failure_still_reports_126(tmp_path, capsys, monkeypatch):
+    """CONTROL NEGATIVO: un restore REALMENTE roto sigue dando 126 y lo NOMBRA.
+
+    Sin este control, el fix podria degradar a 'nunca reporto 126' y el helper
+    dejaria de avisar del unico fallo que de verdad deja el arbol sucio.
+    """
+    import scripts.mutation_cycle as mc
+
+    target = tmp_path / "f.txt"
+    target.write_bytes(b"pre-mutacion\n")
+
+    def _boom(_snapshot_set):
+        raise OSError("disco lleno")
+
+    monkeypatch.setattr(mc, "restore", _boom)
+
+    rc = mc.main(["--", str(target), "--", sys.executable, "-c", "pass"])
+    err = capsys.readouterr().err
+
+    assert rc == 126, f"un fallo REAL de restore sigue siendo 126: rc={rc}"
+    assert "restaurar" in err.lower(), "y debe NOMBRAR el restore: " + err
+
+
+def test_040d_command_rc_is_still_propagated_verbatim(tmp_path):
+    """CONTROL NEGATIVO 2: el rc de un comando que SI se lanza no cambia.
+
+    El fix solo toca el caso 'no se pudo LANZAR'; un comando que corre y falla
+    sigue propagando su rc tal cual (incluido un 126/127 propios del comando).
+    """
+    target = tmp_path / "f.txt"
+    original = b"pre\n"
+    target.write_bytes(original)
+
+    rc = main(
+        ["--", str(target), "--", sys.executable, "-c", "import sys; sys.exit(127)"]
+    )
+
+    assert rc == 127, "un 127 emitido POR EL COMANDO se propaga tal cual"
+    assert target.read_bytes() == original
