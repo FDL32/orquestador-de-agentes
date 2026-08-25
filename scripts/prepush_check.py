@@ -1387,6 +1387,76 @@ def run_principal_freshness_check(project_root: Path) -> CheckResult:
     )
 
 
+def _unresolvable_target_shas(project_root: Path, commit_shas: list[str]) -> list[str]:
+    """WOT-2026-059b: targets cuyo SHA no resuelve en el MOTOR (fail-closed x repo).
+
+    La acreditacion se resuelve contra el MOTOR, no contra lo que quede escrito en el
+    fichero. Un target cuyo SHA no resuelve a un commit del motor es acreditacion por
+    herencia (un sha del repo equivocado, o un sha inexistente) y hoy lo da por
+    acreditado. Medido 2026-08-25: `3128e85` existia en el DESTINO (rc=0) y no en el
+    MOTOR (rc=128). Si el motor no es resoluble (link ausente), devuelve [] -> la
+    validacion queda inaplicable y no fabrica un falso-rojo (patron "None es
+    desconocido, no invalido", validate_batch_dag._sha_resolves_in_motor).
+
+    Before: commit_shas no vacio; project_root resoluble.
+    During: una lectura read-only git cat-file por sha contra el motor. Sin escrituras.
+    After: lista (posiblemente vacia) de shas que no resuelven a un commit del motor.
+    """
+    try:
+        from runtime.motor_link import resolve_motor_root as _resolve_motor_root
+    except ImportError:  # pragma: no cover - ruta de import alternativa
+        from runtime.motor_link import (
+            resolve_motor_root as _resolve_motor_root,  # type: ignore[no-redef]
+        )
+    motor_root = _resolve_motor_root(project_root)
+    if motor_root is None:
+        return []
+    unresolvable: list[str] = []
+    for sha in commit_shas:
+        try:
+            probe = subprocess.run(
+                ["git", "-C", str(motor_root), "cat-file", "-e", f"{sha}^{{commit}}"],  # noqa: S607
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):  # pragma: no cover
+            probe = None
+        if probe is None or probe.returncode != 0:
+            unresolvable.append(sha)
+    return unresolvable
+
+
+def _loop_accreditation_failures(
+    project_root: Path,
+    commit_shas: list[str],
+    per_commit_dtype: dict[str, str],
+) -> list[dict]:
+    """WOT-2026-059b: veredictos de acreditacion por commit (reparto de ciclomatica).
+
+    Aisla el import estatico de `check_loop_execution.audit` (que mantiene el guard
+    CABLEADO para `check_guard_wiring`) y el bucle por-commit, fuera de
+    `run_loop_execution_check` para que este no se escape del tope de ciclomatica.
+
+    Before: commit_shas no vacio; per_commit_dtype puede estar vacio.
+    During: por cada commit, una auditoria read-only del scorecard + emitted.
+    After: lista de veredictos con `ok=False`. Sin escrituras.
+    """
+    try:
+        from scripts.check_loop_execution import audit as _loop_audit
+    except ImportError:
+        from check_loop_execution import audit as _loop_audit  # type: ignore[no-redef]
+    failures: list[dict] = []
+    for sha in commit_shas:
+        verdicts = _loop_audit(
+            project_root,
+            commit_shas=[sha],
+            deliverable_type=per_commit_dtype.get(sha),
+        )
+        failures.extend(v for v in verdicts if not v["ok"])
+    return failures
+
+
 def run_loop_execution_check(project_root: Path) -> CheckResult:
     """WOT-2026-040b: el bucle de gobierno 1->9->2 corrio de verdad, no degradado.
 
@@ -1425,11 +1495,6 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
         de los commits sin fan-out ejecutado.
     """
     name = "Loop Execution Barrier (WOT-2026-040b)"
-    try:
-        from scripts.check_loop_execution import audit as _loop_audit
-    except ImportError:
-        from check_loop_execution import audit as _loop_audit  # type: ignore[no-redef]
-
     targets_file = (
         project_root / ".agent" / "collaboration" / "loop_execution_targets.txt"
     )
@@ -1474,14 +1539,25 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             skipped=True,
         )
 
-    failures: list[dict] = []
-    for sha in commit_shas:
-        verdicts = _loop_audit(
-            project_root,
-            commit_shas=[sha],
-            deliverable_type=per_commit_dtype.get(sha),
+    # WOT-2026-059b: la barrera se resuelve contra el MOTOR, no contra lo que quede
+    # escrito en el fichero. Un target cuyo SHA no resuelve a un commit del motor es
+    # acreditacion por herencia -> FALLA CERRADO, nombrando el sha.
+    unresolvable = _unresolvable_target_shas(project_root, commit_shas)
+    if unresolvable:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                "target(s) cuyo SHA no resuelve a un commit del MOTOR "
+                f"(WOT-2026-059b): {', '.join(unresolvable)}\n"
+                "La acreditacion se resuelve contra el motor; un sha del repo "
+                "equivocado o inexistente es herencia, no gobierno. Esto ABORTA "
+                "el cierre (fail-closed)."
+            ),
+            is_blocking=True,
         )
-        failures.extend(v for v in verdicts if not v["ok"])
+
+    failures = _loop_accreditation_failures(project_root, commit_shas, per_commit_dtype)
     if failures:
         detail = "\n".join(
             f"  - {v['commit_sha']}: {len(v['distinct_backends'])}/{v['min_distinct']} "
