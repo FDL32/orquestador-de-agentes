@@ -93,6 +93,28 @@ LAST_RUN_JSON = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.json")
 RUN_HISTORY_JSONL = _LazyPath(lambda: RUNTIME_DIR.resolve() / "run_history.jsonl")
 RUN_HISTORY_MAX = 500
 
+
+def _mark_no_tests_collected(exit_code: int, summary: dict) -> dict:
+    """WOT-2026-055j: marca un `exit_code: 5` como NO acreditante en last-run.json.
+
+    `exit_code: 5` en pytest es "NINGUN TEST RECOLECTADO": el artefacto no describe
+    una corrida de la suite, ni verde ni roja, y no puede quedar registrado como
+    `status: finished` indistinguible de una corrida legitima. Medido 2026-08-12:
+    un last-run.json del DESTINO con exit_code 5 y 1 segundo de duracion acreditaba
+    "finished" para cualquier lector, y una lente con repo_root=destino emitio un
+    BLOCKER falso. No toca el valor de `exit_code` (conserva el 5, que ningun gate
+    verde acepta); solo deja el STATUS no verde y una marca explicita.
+
+    Before: exit_code int; summary dict con "status"/"exit_code" ya asignados.
+    During: muta `summary` en su sitio. Sin I/O.
+    After: devuelve el mismo dict. exit_code != 5 -> sin cambios.
+    """
+    if exit_code == 5:
+        summary["status"] = "no-tests-collected"
+        summary["no_tests_collected"] = True
+    return summary
+
+
 DEFAULT_PYTEST_ARGS = [
     "tests",
     "-q",
@@ -1272,6 +1294,10 @@ def main() -> int:  # noqa: C901
         exit_code, failed_ids, error_ids = stream_pytest(command)
         summary["status"] = "finished"
         summary["exit_code"] = exit_code
+        # WOT-2026-055j: un `exit_code: 5` (pytest: NINGUN TEST RECOLECTADO) no
+        # puede quedar registrado como `status: finished` indistinguible de una
+        # corrida legitima. Ver helper _mark_no_tests_collected.
+        _mark_no_tests_collected(exit_code, summary)
         # WOT-2026-021w: enrich the summary with pass/skip/fail counts + duration
         # + top-slowest, parsed ONCE from the log stream_pytest just wrote. These
         # feed both last-run.json and the run-history append. Fail-soft: a parse

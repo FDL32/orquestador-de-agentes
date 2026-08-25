@@ -2172,3 +2172,35 @@ class TestStampSurvivesMutatingHooks:
             "an unverifiable window must not be re-stamped: that would assert a "
             "stability nobody measured"
         )
+
+
+# ---------------- WOT-2026-055j: exit 5 (no tests collected) no acredita ---------
+def test_exit_5_marks_last_run_as_no_tests_collected():
+    """WOT-2026-055j (b): `exit_code: 5` (pytest: ningun test recolectado) deja el
+    status en `no-tests-collected`, NO en `finished`, y anade la marca explicita.
+
+    Medido 2026-08-12: un last-run.json del DESTINO con exit_code 5 y 1 segundo de
+    duracion acreditaba `status: finished` para cualquier lector -- indistinguible
+    de una corrida legitima -- y una lente con repo_root=destino emitio un BLOCKER
+    falso. Sin esta marca, el artefacto miente sobre si midio algo.
+
+    MUTACION QUE LA MATA: revertir la rama `exit_code == 5` -> este test cae.
+    """
+    rps = load_runner_module()
+    summary = {"status": "finished", "exit_code": 5}
+    rps._mark_no_tests_collected(5, summary)
+
+    assert summary["status"] == "no-tests-collected", summary
+    assert summary["no_tests_collected"] is True, summary
+    assert summary["exit_code"] == 5, "conserva el 5: ningun gate verde lo acepta"
+
+
+def test_non_zero_non_five_status_unchanged_by_marker():
+    """WOT-2026-055j (d) CONTROL NEGATIVO: los demas exit codes no se tocan; una
+    corrida legitima (exit 0) queda `finished` sin marca de no-acreditacion."""
+    rps = load_runner_module()
+    for code in (0, 1, 2):
+        summary = {"status": "finished", "exit_code": code}
+        rps._mark_no_tests_collected(code, summary)
+        assert summary["status"] == "finished", f"exit {code}"
+        assert "no_tests_collected" not in summary, f"exit {code}"
