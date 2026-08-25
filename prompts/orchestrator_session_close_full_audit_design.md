@@ -142,6 +142,23 @@ L2. GARBAGE-COLLECTION de queued/: un plan marcado DEAD/STALE en el Bloque F que
     deja una nota/ficha para que desarrollo lo archive en done/. Un plan a medias/abortado se anota,
     no se deja como cadaver en queued/.
 
+L3. PODA OPCIONAL DEL SCRATCH DEL HARNESS (misma familia que L1: residuo que
+    `git status` no ve). El harness crea un directorio por SESION bajo
+    `<TEMP>/claude/<proyecto>/<session-uuid>/`; no lo crea el motor ni tu sesion
+    de diseno, pero se acumula igual. NO es la fuga de `WOT-2026-059d` (esa vive
+    en la RAIZ del TEMP y la crean los tests del motor: se arregla limpiando en
+    el test, no podando).
+    - EVIDENCIA FECHADA (2026-08-25, NO criterio): 1.769 sesiones, 1.502 sin
+      tocar en >14 dias. El coste son INODOS y latencia, no espacio.
+    - `python <repo_motor>/scripts/prune_session_scratch.py --days 14`
+      DRY-RUN por defecto; `--apply` BORRA y es IRREVERSIBLE. La exclusion por
+      `mtime` protege a la sesion VIVA sin conocer su id; solo toca bajo
+      `<TEMP>/claude/`.
+    - **Read-only manda**: en una sesion de DISENO corre SOLO el dry-run y CITA
+      el censo. `--apply` borra, y borrar NO es read-only: si procede, deja la
+      recomendacion en `reports/` para que la ejecute el operador o el cierre de
+      desarrollo. Reporta `[SCRATCH: <n> candidatas -- dry-run, no podado]`.
+
 == BLOQUE M - MEMORIA (minimo) ==
 M1. Hubo alguna LECCIoN de comportamiento (no infraestructura)? Infra -> documentacion/ficha, NO
     memoria (AGENTS.md). Solo si hay leccion real de comportamiento, proponla (no la escribas: el

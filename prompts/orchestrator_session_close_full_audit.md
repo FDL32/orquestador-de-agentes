@@ -269,6 +269,33 @@ PROPIEDAD DE ARTEFACTOS (quien escribe que, para evitar triple-write ciego):
    - Una ficha con `delivery_authority: repo_motor` (follow-up del motor descubierto en diseno) se registra igual en `backlog.md` del workspace; NUNCA se escribe en `repo_motor`. NO commitees. Contrato del buzon: `orchestrator_session_bootstrap_design.md` (arranque de diseno) y `orchestrator_session_close_full_audit_design.md` (cierre de diseno).
    - RECIBO DEC (WOT-2026-042w la NORMA, WOT-2026-042x la BARRERA): toda ficha deja un recibo en una de las TRES formas exactas -- `DEC-<id> (motor)`, `DEC-<id> (destino)` o `DEC-no-aplica: <motivo>` (motivo escrito; vacio o "n/a" no vale) -- y un `DEC-<id>` citado debe EXISTIR en el registro que su scope declara. Esta linea DOCUMENTA el criterio; NO es el mecanismo: el guard `scripts/check_dec_receipt.py` esta cableado en `scripts/prepush_check.py` (closeout), porque `check_guard_wiring.py:11` no cuenta los prompts como superficie -- "Prompts, skills, comentarios, docstrings y TESTS no son superficies: son normas". Las fichas anteriores a `GRANDFATHER_CUTOFF` degradan a WARN dentro del propio guard.
 
+8.qua PODA OPCIONAL DEL SCRATCH DEL HARNESS (higiene, NUNCA bloquea el cierre).
+   El harness (Claude Code) crea un directorio por SESION bajo
+   `<TEMP>/claude/<proyecto>/<session-uuid>/` (`scratchpad/` + `tasks/`) y nadie
+   lo poda. **NO lo crea el motor**: medido 2026-08-25, `grep` de esa ruta sobre
+   `scripts/` da 0 hits. Es acumulacion normal de un directorio efimero.
+   - **NO CONFUNDIR con `WOT-2026-059d`**, que es OTRA fuga: aquella vive en la
+     RAIZ del TEMP, la crean los tests del motor (`_make_repo` + `git init`) y NO
+     se arregla podando -- se arregla limpiando en el propio test. Este paso no
+     la toca, y podarla no cerraria aquel ticket.
+   - EVIDENCIA FECHADA (snapshot 2026-08-25, NO criterio): 1.769 sesiones
+     acumuladas en 43 proyectos; 1.502 sin tocar en >14 dias. El coste no es
+     espacio (~cientos de KB por sesion) sino INODOS y latencia: recorrer el TEMP
+     llego a colgar un comando >2 min. **Re-mide tu; el numero se mueve.**
+   - Herramienta: `python <repo_motor>/scripts/prune_session_scratch.py`
+     - **DRY-RUN por defecto**: sin `--apply` no borra nada, solo censa.
+     - `--days N` conserva lo tocado en los ultimos N dias (default 14). La
+       exclusion es por `mtime` (propio y de los hijos), asi que **la sesion VIVA
+       que ejecuta este cierre queda protegida sin conocer su id**.
+     - Frontera dura: solo borra bajo `<TEMP>/claude/`; cualquier ruta fuera
+       aborta.
+   - Corre SIEMPRE el dry-run primero y CITA su censo. `--apply` es decision del
+     operador: es IRREVERSIBLE y el criterio de "sesion muerta" es suyo, no del
+     repo. **No lo ejecutes por iniciativa propia en un cierre autonomo.**
+   - Reporta: `[SCRATCH: <total> sesiones, <n> candidatas >Nd -- dry-run]` o
+     `[SCRATCH: podadas <n>]` si el operador autorizo `--apply`. Si el paso no se
+     corre, dilo: `[SCRATCH: no ejecutado]`. Nunca bloquea el cierre.
+
 8.ter CIERRE DEL ESTADO DE LOS TICKETS TRABAJADOS (WOT-2026-026t). Los pasos 8 y 8.bis solo AÑADEN filas (follow-ups nuevos, fichas del inbox); ninguno cierra el estado de lo que ESTA sesion entrego. Ese hueco es el que produjo la fuga medida, asi que el cierre de estado es un paso PROPIO, no un efecto colateral de los anteriores.
    - **Cerrar un ticket es un TRASPASO, no un cambio de etiqueta.** Un estado terminal NO vive en la cola viva: la fila se MUEVE de `backlog.md` a `.agent/collaboration/_archive/backlog_done.md` con un estado terminal (`completed`/`done`/`closed`/`absorbed`/`superseded`/`blocked-final`/`not-pursued`) y su EVIDENCIA de aterrizaje en la celda `Reactivation` (`commit:<sha>`, o el ticket que lo absorbe). Escribir `completed` en la cola viva es la violacion que el gate bloquea.
    - **El fallo SILENCIOSO es el inverso, y es el que se midio:** una fila archivada que conserva un estado VIVO es trabajo pendiente guardado como historia -- la cola no lo lista y el archivo lo declara pendiente, asi que queda invisible en LAS DOS superficies. Medido 2026-08-04: 18 filas asi (9 de 8 celdas y 9 mas rotas por un pipe, que ni el primer guard veia). Ninguna era trabajo perdido, pero todas llevaban semanas fuera de la vista. **Si el ticket NO esta entregado del todo, NO se archiva:** se queda en la cola viva con un estado vivo (`ready-for-review`, `completed-partial`, ...). Archivar "para dejarlo limpio" es justamente lo que crea la fuga.
