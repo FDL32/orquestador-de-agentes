@@ -87,10 +87,13 @@ def _sentinel_id() -> str:
 def _make_repo(base: Path, name: str, with_git: bool = True) -> Path:
     repo = base / name
     repo.mkdir(parents=True, exist_ok=True)
+    # Registro IMMEDIATO tras crear el arbol: si `.agent.mkdir` o `git init`
+    # fallaran despues (WOT-2026-059d, hallazgo del gate), la fixture autouse
+    # podria purgar la ruta igualmente.
+    _TRACKED_REAL_TEMP.append(repo)
     (repo / ".agent").mkdir(exist_ok=True)
     if with_git:
         subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, timeout=10)
-    _TRACKED_REAL_TEMP.append(repo)
     return repo
 
 
@@ -116,16 +119,40 @@ def _rmtree_onerror(func, path: Path, _exc) -> None:
     func(path)
 
 
+def _purge_scratch_dir(path: Path) -> bool:
+    """Borra una ruta del scratch bajo REAL_SYSTEM_TEMP; True si quedo inerte.
+
+    El try queda FUERA del loop de `_cleanup_tracked` (PERF203 de ruff no se
+    ignora para ficheros `tests/*.py` top-level; la politica del repo exime
+    solo `tests/**/*.py`). Un fallo OSError pedal devuelve False: la fuga se
+    suma y se reporta, nunca silenciosa.
+    """
+    try:
+        if path.exists():
+            shutil.rmtree(path, onerror=_rmtree_onerror, ignore_errors=False)
+    except OSError:
+        return False
+    return not path.exists()
+
+
 def _cleanup_tracked(start: int) -> None:
     """Retira todas las rutas registradas en `_TRACKED_REAL_TEMP` desde `start`.
 
-    Es la MISMA funcion que usa la fixture autouse `_real_temp_hygiene`, asi la
-    prueba dedicada de abajo (DoD c, mutacion) ejercita la limpieza REAL. Si
-    `_cleanup_tracked` se neutralizara, el test propio se pone ROJO.
+    Registro truncado SIEMPRE: un rmtree fallido no debe bloquear la limpieza
+    del resto ni dejar el registro con rutas ya purgadas. Fallos se acumulan y
+    se reportan (una ruta que no pudo limpiarse es una fuga visible, no
+    silenciosa). Es la MISMA funcion que usa la fixture autouse
+    `_real_temp_hygiene`; la prueba dedicada de abajo (DoD c) ejercita la
+    limpieza REAL.
     """
-    for path in _TRACKED_REAL_TEMP[start:]:
-        shutil.rmtree(path, onerror=_rmtree_onerror, ignore_errors=False)
+    victims = _TRACKED_REAL_TEMP[start:]
+    failed = [p for p in victims if not _purge_scratch_dir(p)]
     del _TRACKED_REAL_TEMP[start:]
+    if failed:
+        raise AssertionError(
+            f"WOT-2026-059d: {len(failed)} rutas del scratch REAL_SYSTEM_TEMP "
+            f"no pudieron limpiarse (fuga visible): {[str(p) for p in failed]}"
+        )
 
 
 @pytest.fixture(autouse=True)
