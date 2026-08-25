@@ -1420,9 +1420,14 @@ def _unresolvable_target_shas(project_root: Path, commit_shas: list[str]) -> lis
                 text=True,
                 timeout=10,
             )
-        except (OSError, subprocess.SubprocessError):  # pragma: no cover
-            probe = None
-        if probe is None or probe.returncode != 0:
+        except (OSError, subprocess.SubprocessError):
+            # WOT-2026-059b (follow-up L970): un fallo de INFRAESTRUCTURA (git no
+            # ejecutable, timeout) NO es "el sha no existe": es un DESCONOCIDO.
+            # Clasificarlo como no-resoluble bloquea un cierre legitimo con una
+            # causa FALSA. Misma doctrina que el early-return de motor_root:
+            # "None es desconocido, no invalido". Se degrada a no-comprobable.
+            continue
+        if probe.returncode != 0:
             unresolvable.append(sha)
     return unresolvable
 

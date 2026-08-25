@@ -270,3 +270,43 @@ def test_real_flight_commit_passes_with_motor_link(tmp_path):
     assert result.skipped is False, "se ejecuto y acredito: no es un salto"
     assert "1 commit(s)" in result.output
     assert "059b" not in result.output or "no resuelve" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-059b (follow-up del bucle L970): un fallo de INFRAESTRUCTURA al
+# ejecutar git (OSError, timeout) colapsaba en la MISMA rama que "el sha no
+# existe", y el mensaje afirmaba "target(s) cuyo SHA no resuelve a un commit del
+# MOTOR". Un sha REAL bloqueaba un cierre legitimo con una causa FALSA.
+#
+# Es la misma doctrina que el propio 059b implanta para el motor no resoluble
+# ("None es desconocido, no invalido", `if motor_root is None: return []`):
+# un DESCONOCIDO no puede reportarse como INVALIDO.
+# ---------------------------------------------------------------------------
+
+
+def test_059b_git_failure_is_not_reported_as_unresolvable_sha(tmp_path, monkeypatch):
+    """ROJO sin el fix: con git roto, un sha REAL sale como no-resoluble.
+
+    Degradar a "no se pudo comprobar" es correcto; afirmar que el sha no existe
+    cuando no se llego a mirarlo es un falso-rojo con causa mal nombrada.
+    """
+    import scripts.prepush_check as pc
+
+    real_sha = "0826b521a1e115e77d6c06d12be7819f4de93156"
+    # El motor DEBE resolver, o el early-return `motor_root is None -> []` daria
+    # un verde por la razon equivocada (medido: el test pasaba sin el fix).
+    import runtime.motor_link as ml
+
+    monkeypatch.setattr(ml, "resolve_motor_root", lambda _p: tmp_path)
+
+    def _boom(*_a, **_k):
+        raise OSError("git no disponible (simulado)")
+
+    monkeypatch.setattr(pc.subprocess, "run", _boom)
+
+    out = pc._unresolvable_target_shas(tmp_path, [real_sha])
+
+    assert out == [], (
+        "un fallo de INFRAESTRUCTURA (git no ejecutable) NO puede clasificarse "
+        f"como 'el sha no resuelve': degrada a desconocido. Salio: {out}"
+    )
