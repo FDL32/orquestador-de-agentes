@@ -160,8 +160,12 @@ def _real_temp_hygiene() -> Iterator[None]:
     """WOT-2026-059d: purga por-test las rutas creadas bajo REAL_SYSTEM_TEMP.
 
     Atribucion por RUTA exacta (lo que el test registro), no por enumeracion:
-    segura bajo xdist (cada worker tiene su proceso/estado de modulo) y sin
-    coste de listar decenas de miles de entradas del TEMP por test.
+    el registro es estado de modulo por proceso-worker (xdist aísla por
+    proceso), asi que una ruta nunca se borra por pertenecer a OTRO worker --
+    la unica colision posible exigiria que dos workers usaran el MISMO nombre
+    uuid (32 bits de entropia: riesgo despreciable, y ese dominio de nombres
+    pre-existe a este fix). Ademas no se enumera el TEMP global (sin coste de
+    listar decenas de miles de entradas por test).
     """
     start = len(_TRACKED_REAL_TEMP)
     yield
