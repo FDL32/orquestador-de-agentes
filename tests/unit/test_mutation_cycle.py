@@ -191,3 +191,29 @@ def test_040d_command_rc_is_still_propagated_verbatim(tmp_path):
 
     assert rc == 127, "un 127 emitido POR EL COMANDO se propaga tal cual"
     assert target.read_bytes() == original
+
+
+def test_040d_cli_missing_command_end_to_end(tmp_path, capsys):
+    """Cobertura del CLI para el caso 'comando inexistente' (hallazgo 2 del gate).
+
+    El test de regresion usa la API por partes porque necesita el snapshot
+    PRE-mutacion, que `main` no puede expresar. Eso dejaba SIN cubrir la
+    combinacion `main` + comando inexistente -> rc 127 + mensaje sin "restaurar",
+    que es como lo invoca un operador de verdad. Este test la cierra.
+
+    NO duplica al de regresion: aquel prueba que el arbol se restaura con la
+    mutacion VIVA; este prueba que la RUTA DEL CLI clasifica bien el fallo.
+    """
+    target = tmp_path / "f.txt"
+    original = b"cli pre-mutacion\n"
+    target.write_bytes(original)
+
+    rc = main(["--", str(target), "--", "comando-que-no-existe-xyz-cli"])
+    err = capsys.readouterr().err
+
+    assert rc == 127, f"por el CLI tambien es 'command not found' (127): rc={rc}"
+    assert "no se pudo lanzar el comando" in err, err
+    assert "restaurar" not in err.lower(), (
+        "el CLI tampoco puede culpar al restore de un fallo del comando: " + err
+    )
+    assert target.read_bytes() == original
