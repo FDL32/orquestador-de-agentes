@@ -4547,7 +4547,17 @@ def _backfill_builder_exit(event_bus, ticket_id: str) -> bool:
 
     Returns True if an event was emitted.
     """
-    if event_bus.latest_event(ticket_id=ticket_id, event_type="BUILDER_EXIT"):
+    # WOT-2026-058z: la guarda debe usar el MISMO predicado que el invariante.
+    # WOT-2026-050a (3eaaac2) endurecio `validate` para DESCARTAR un
+    # BUILDER_EXIT sintetico de reconcile_ticket, pero esta funcion -- de
+    # 7407e84, ANTERIOR -- seguia contando cualquiera. Dos criterios
+    # incompatibles sobre el MISMO evento: el invariante lo descartaba (=> ERROR
+    # permanente) y el backfill lo veia (=> no reparaba). Un ticket reconciliado
+    # quedaba sin reparacion barata: `--manager-approve` devolvia
+    # `already_completed` sin emitir nada.
+    # El evento que ESTA funcion emite NO es reconciliado, asi que una segunda
+    # pasada sigue siendo no-op: la idempotencia se conserva.
+    if closure_invariants._latest_real_builder_exit(event_bus, ticket_id) is not None:
         return False
     event_bus.emit(
         event_type="BUILDER_EXIT",

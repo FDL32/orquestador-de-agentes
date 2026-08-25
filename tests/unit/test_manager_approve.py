@@ -670,3 +670,108 @@ class TestManagerApproveCLIContract:
         result = _ma_run_controller("--manager-approve")
         combined = result.stdout + result.stderr
         assert _MA_NOT_PARSED in combined, combined
+
+
+class TestBackfillIgnoresReconciledEvents:
+    """WOT-2026-058z: el backfill y el invariante aplicaban criterios OPUESTOS.
+
+    `WOT-2026-050a` (commit 3eaaac2, 2026-08-07) endurecio `validate` para que
+    dejara de aceptar un `BUILDER_EXIT` sintetico: `_latest_real_builder_exit`
+    DESCARTA los de `source == "reconcile_ticket"`. Correcto y deseado.
+
+    Pero `_backfill_builder_exit` -- la funcion que REPARA justo ese hueco -- es
+    de `7407e84` (2026-06-11), ANTERIOR, y su guarda seguia usando
+    `latest_event(...)` SIN filtrar `source`. Resultado medido: un ticket
+    reconciliado quedaba en un estado que `--manager-approve` NO reparaba, con
+    `validate` en 1 error PERMANENTE tras cualquier cierre por chat.
+
+    Escalado desde el repo_destino Crear_Texto_LLM; premisa RE-VERIFICADA aqui
+    con probe ejecutado sobre las dos funciones del motor antes de tocar codigo.
+    """
+
+    def test_backfill_emits_when_only_event_is_reconciled(
+        self, temp_bus: EventBus, tmp_path: Path
+    ) -> None:
+        """ROJO sin el fix: con SOLO un BUILDER_EXIT sintetico de
+        reconcile_ticket, el backfill debe EMITIR uno real. Antes veia el
+        sintetico y devolvia False sin emitir, dejando el invariante roto."""
+        from agent_controller import _backfill_builder_exit
+
+        ticket = "WOT-2026-058z-a"
+        temp_bus.emit(
+            event_type="BUILDER_EXIT",
+            ticket_id=ticket,
+            actor="BUILDER",
+            payload={
+                "source": "reconcile_ticket",
+                "exit_reason": "reconcile_ticket: forced close",
+            },
+        )
+
+        emitted = _backfill_builder_exit(temp_bus, ticket)
+
+        assert emitted is True, (
+            "un BUILDER_EXIT de reconcile_ticket es SINTETICO: el invariante lo "
+            "descarta, luego el backfill debe emitir uno real o el ticket queda "
+            "sin reparacion barata posible"
+        )
+        # Y el hueco queda REALMENTE cerrado: el invariante ya encuentra uno real.
+        import sys as _sys
+
+        _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agent"))
+        from closure_invariants import _latest_real_builder_exit
+
+        assert _latest_real_builder_exit(temp_bus, ticket) is not None, (
+            "tras el backfill el invariante debe converger: si sigue en None, "
+            "el fix no cierra el hueco que dice cerrar"
+        )
+
+    def test_backfill_still_noops_on_a_real_builder_exit(
+        self, temp_bus: EventBus, tmp_path: Path
+    ) -> None:
+        """CONTROL NEGATIVO: la idempotencia NO se relaja. Un BUILDER_EXIT REAL
+        (p.ej. de mark-ready) sigue impidiendo el backfill -- si esto cambiara,
+        el bus ganaria una fila duplicada en CADA aprobacion normal."""
+        from agent_controller import _backfill_builder_exit
+
+        ticket = "WOT-2026-058z-b"
+        temp_bus.emit(
+            event_type="BUILDER_EXIT",
+            ticket_id=ticket,
+            actor="BUILDER",
+            payload={"source": "mark-ready", "exit_reason": "handoff"},
+        )
+
+        assert _backfill_builder_exit(temp_bus, ticket) is False, (
+            "con un BUILDER_EXIT real ya presente, el backfill es no-op"
+        )
+
+    def test_backfill_noops_on_its_own_previous_backfill(
+        self, temp_bus: EventBus, tmp_path: Path
+    ) -> None:
+        """CONTROL NEGATIVO 2 (anti-bucle): el evento que el propio backfill
+        emite NO es reconciliado, asi que una segunda pasada es no-op. Sin esto
+        el fix anadiria una fila por cada invocacion de --manager-approve."""
+        from agent_controller import _backfill_builder_exit
+
+        ticket = "WOT-2026-058z-c"
+        temp_bus.emit(
+            event_type="BUILDER_EXIT",
+            ticket_id=ticket,
+            actor="BUILDER",
+            payload={"source": "reconcile_ticket", "exit_reason": "forced"},
+        )
+
+        assert _backfill_builder_exit(temp_bus, ticket) is True
+        assert _backfill_builder_exit(temp_bus, ticket) is False, (
+            "segunda pasada debe ser no-op: el backfill no puede acumular filas"
+        )
+
+    def test_backfill_emits_when_bus_has_no_builder_exit_at_all(
+        self, temp_bus: EventBus, tmp_path: Path
+    ) -> None:
+        """CONTROL POSITIVO heredado (7407e84): el caso original -- cierre por
+        chat sin ningun BUILDER_EXIT -- sigue reparandose igual que antes."""
+        from agent_controller import _backfill_builder_exit
+
+        assert _backfill_builder_exit(temp_bus, "WOT-2026-058z-d") is True
