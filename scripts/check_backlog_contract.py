@@ -749,6 +749,40 @@ def _partition_prioridad_rows(path: Path) -> tuple[list[str], list[str]]:
     return canonical, skipped
 
 
+def _compact_closure_log_cells(path: Path) -> list[str]:
+    """Ticket cells of the archive's COMPACT closure-log rows (raw index 1).
+
+    WOT-2026-058w. These rows are excluded from the census DELIBERATELY -- see
+    ``_row_ticket_id``'s SCOPE note (WOT-2026-027i): a ticket legitimately
+    appears in BOTH a closure-log note and an archived queue snapshot, so
+    counting them would double-count and yield a false positive. This helper
+    does NOT change that exclusion; it only makes the excluded class COUNTABLE
+    so the receipt can NAME it instead of leaving it invisible.
+
+    Before: ``path`` exists or not (a fresh destino has no archive).
+    During: pure line parsing, no mutation, no I/O beyond the read.
+    After: cell strings of compact rows whose id is canonical; empty when the
+        file is absent. Prioridad-led rows are never returned (they belong to
+        the census proper).
+    """
+    if not path.exists():
+        return []
+    cells: list[str] = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| "):
+            continue
+        raw = stripped.split("|")
+        if len(raw) <= 3:
+            continue
+        if raw[1].strip() in _PRIORIDAD_WORDS:
+            continue  # Prioridad-led: already inside the census universe.
+        candidate = raw[1].strip()
+        if _TICKET_ROW_CELL_RE.match(candidate):
+            cells.append(candidate)
+    return cells
+
+
 def validate_live_archive_integrity(root: Path) -> list[str]:
     """Return violations for duplicate ids across / within the scheduling surfaces.
 
@@ -1678,7 +1712,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     validadas = len(validadas_live) + len(validadas_arch)
     saltadas = len(saltadas_live) + len(saltadas_arch)
-    print(f"[backlog-contract] universo: validadas={validadas} saltadas={saltadas}")
+    # WOT-2026-058w: el denominador se CUALIFICA. Sin cualificar, el sustantivo
+    # "universo" invita a leer N+M como el total del fichero, cuando en realidad
+    # (i) suma DOS superficies -- cola viva + archive -- y (ii) excluye las filas
+    # de closure-log COMPACTAS del archive. Esa exclusion es DELIBERADA
+    # (_row_ticket_id, WOT-2026-027i: un ticket aparece legitimamente en un
+    # closure-log Y en un snapshot archivado, y contarlo dos veces daria falso
+    # positivo), pero hasta ahora era INVISIBLE. INVARIANTE: ninguna fila con id
+    # de ticket cae fuera del denominador en silencio -- o entra en validadas, o
+    # en saltadas, o su clase queda NOMBRADA aqui como excluida por diseno.
+    compact_arch = _compact_closure_log_cells(
+        collab_dir / "_archive" / "backlog_done.md"
+    )
+    print(
+        f"[backlog-contract] universo Prioridad-led "
+        f"(cola viva + archive): validadas={validadas} saltadas={saltadas} "
+        f"[viva {len(validadas_live)}/{len(saltadas_live)}, "
+        f"archive {len(validadas_arch)}/{len(saltadas_arch)}]"
+    )
+    print(
+        f"[backlog-contract] fuera del denominador POR DISENO: "
+        f"{len(compact_arch)} fila(s) de closure-log compacto del archive "
+        f"(id en celda 1, layout '| Ticket | Estado | Nota |'); excluidas desde "
+        f"WOT-2026-027i para no doble-contar un ticket que aparece a la vez en "
+        f"un closure-log y en un snapshot archivado."
+    )
     if saltadas:
         for cell in sorted(set(saltadas_live + saltadas_arch)):
             print(

@@ -1630,7 +1630,12 @@ def test_052a_reports_skipped_row_by_id_but_exit_zero(tmp_path, capsys) -> None:
     rc = cbc.main(["--project-root", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0, "una fila id no canonico es WARN, nunca ERROR (DoD a)"
-    assert "universo: validadas=0 saltadas=1" in out, out
+    # WOT-2026-058w cualifico la ETIQUETA del recibo (`universo Prioridad-led
+    # (cola viva + archive):`). El contrato que 052a protege es el PAR
+    # `validadas=N saltadas=M`, no la adyacencia del sustantivo -- se asertan
+    # por separado para que un cambio futuro diga CUAL de los dos rompio.
+    assert "validadas=0 saltadas=1" in out, out
+    assert "universo Prioridad-led" in out, out
     assert "WOT-2026-STATE-RECON-A" in out, out
     assert "WARN" in out, out
 
@@ -1678,3 +1683,99 @@ def test_052a_partition_pure_function(tmp_path: Path) -> None:
     assert s.count("WOT-2026-STATE-RECON-A") == 1
     va, sa = cbc._partition_prioridad_rows(arch)
     assert va == [] and sa == [], "compact closure-log rows are OUT of the census"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058w: el recibo `universo:` no declaraba A QUE SUPERFICIE se refiere.
+# El censo suma DOS superficies (cola viva + archive) en un unico par de
+# numeros, y el archive contiene ademas filas de closure-log en layout COMPACTO
+# que quedan fuera del denominador -- fuera CON RAZON (exclusion deliberada de
+# `_row_ticket_id`, WOT-2026-027i), pero SIN NOMBRAR. El sustantivo "universo"
+# sin cualificar invita a leer N+M como el total del fichero.
+# DoD: (a) el recibo declara la superficie de su denominador; (b) INVARIANTE:
+# ninguna fila con id de ticket cae fuera del denominador EN SILENCIO -- la
+# clase excluida queda NOMBRADA; (c) MUTATION: revertir la cualificacion hace
+# caer el test de (a) y SOLO ese; (d) CONTROL NEGATIVO: la exclusion de
+# `:667-671` NO se relaja -- las filas compactas NO entran en `validadas`.
+# ---------------------------------------------------------------------------
+
+
+def test_058w_receipt_qualifies_the_surface_of_its_denominator(
+    tmp_path, capsys
+) -> None:
+    """DoD (a): el recibo NOMBRA el criterio del denominador (`Prioridad-led`),
+    de modo que N+M no pueda leerse como el total del fichero."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        _HEADER
+        + "| Media | WOT-2026-058w | titulo deliverable_type: code | s | pending | - | x | - |\n"
+        + "\n",
+        encoding="utf-8",
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    # NO asertar solo "Prioridad-led": el WARN de fila saltada tambien contiene
+    # esa palabra ("fila Prioridad-led con Ticket cell ..."), asi que una
+    # asercion suelta seria una FLOOR ASSERTION -- verde sin la feature. Se
+    # ancla al RECIBO.
+    assert "universo Prioridad-led" in out, (
+        "el recibo debe declarar la superficie de su denominador; sin el "
+        "cualificador, `universo:` promete el total del fichero: " + out
+    )
+    # El contrato de 052a sobrevive intacto: el par sigue siendo legible.
+    assert "validadas=1 saltadas=0" in out, out
+
+
+def test_058w_receipt_names_the_class_excluded_by_design(tmp_path, capsys) -> None:
+    """DoD (b) INVARIANTE: una fila de closure-log COMPACTA en el archive queda
+    fuera del denominador por diseno, y el recibo la NOMBRA como clase excluida
+    en vez de dejarla invisible."""
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        _HEADER
+        + "| Media | WOT-2026-058w | titulo deliverable_type: code | s | pending | - | x | - |\n"
+        + "\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| WOT-2026-052b | completed | nota compacta, fuera del censo por diseno |\n"
+        "| WOT-2026-052c | done | otra nota compacta |\n",
+        encoding="utf-8",
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "closure-log" in out, (
+        "las filas compactas quedan fuera del denominador POR DISENO; el recibo "
+        "debe nombrarlas como clase excluida, nunca dejarlas invisibles: " + out
+    )
+    assert "2" in out, "la clase excluida se cuenta, no solo se menciona: " + out
+
+
+def test_058w_compact_rows_stay_out_of_validadas(tmp_path, capsys) -> None:
+    """DoD (d) CONTROL NEGATIVO: nombrar la clase excluida NO la mete en el
+    denominador. Si las filas compactas entrasen en `validadas`, el fix seria
+    incorrecto por construccion: reintroduce el falso positivo que la exclusion
+    deliberada de WOT-2026-027i evita a proposito."""
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        _HEADER
+        + "| Media | WOT-2026-058w | titulo deliverable_type: code | s | pending | - | x | - |\n"
+        + "\n",
+        encoding="utf-8",
+    )
+    (collab / "_archive" / "backlog_done.md").write_text(
+        "| WOT-2026-052b | completed | nota compacta |\n",
+        encoding="utf-8",
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    # 1 fila viva canonica; la compacta del archive NO suma al denominador.
+    assert "validadas=1" in out, out
+    va, sa = cbc._partition_prioridad_rows(collab / "_archive" / "backlog_done.md")
+    assert va == [] and sa == [], "la exclusion deliberada NO se relaja"
