@@ -89,6 +89,18 @@ def is_stale(path: Path, cutoff_ts: float) -> bool:
     return newest < cutoff_ts
 
 
+def _count_files(path: Path) -> int:
+    """Numero de ficheros bajo ``path`` (recursivo). 0 si no se puede leer.
+
+    Se usa para NOMBRAR las candidatas no vacias antes de borrar: un conteo
+    agregado esconde la unica pregunta que importa.
+    """
+    try:
+        return sum(1 for p in path.rglob("*") if p.is_file())
+    except OSError:
+        return 0
+
+
 def _guard_inside_root(target: Path, root: Path) -> None:
     """Aborta si ``target`` no cuelga de ``root``. Frontera dura, no confianza."""
     try:
@@ -146,6 +158,22 @@ def main(argv: list[str] | None = None) -> int:
         f"[prune-scratch] sesiones={len(sessions)} "
         f"candidatas(>{args.days}d)={len(stale)} conservadas={len(sessions) - len(stale)}"
     )
+
+    # El conteo AGREGADO ocultaba la unica pregunta que importa antes de borrar:
+    # ¿alguna candidata tiene contenido? Medido 2026-08-25 sobre 1.502 candidatas:
+    # 4 tenian ficheros y una era un documento de trabajo de 13,7 KB. Un muestreo
+    # de 200 dio 0/200: el agregado NO basta, hay que nombrarlas.
+    with_files = [(p, _count_files(p)) for p in stale]
+    with_files = [(p, n) for p, n in with_files if n > 0]
+    if with_files:
+        print(
+            f"[prune-scratch] AVISO: {len(with_files)} candidata(s) NO estan vacias. "
+            "Revisalas ANTES de --apply:"
+        )
+        for path, n_files in with_files:
+            print(f"[prune-scratch]   {n_files} fichero(s): {path}")
+    else:
+        print("[prune-scratch] todas las candidatas estan vacias (0 ficheros)")
 
     if not args.apply:
         print(

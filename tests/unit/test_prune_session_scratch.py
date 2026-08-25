@@ -135,3 +135,42 @@ def test_days_zero_is_refused(tmp_path, capsys):
     rc = main(["--root", str(root), "--days", "0", "--apply"])
     assert rc == 2, "una ventana de 0 dias debe rechazarse ANTES de borrar"
     assert "debe ser >= 1" in capsys.readouterr().err
+
+
+def test_non_empty_candidates_are_named_not_hidden(tmp_path, capsys):
+    """El dry-run NOMBRA las candidatas con contenido; no las esconde en un agregado.
+
+    Lo levanto el gate del bucle L990 y el censo le dio la razon: un conteo
+    agregado (`candidatas=1502`) hacia INVISIBLE que 4 de ellas tenian ficheros,
+    una de ellas un documento de trabajo real. Para un borrado irreversible, ver
+    el agregado no basta: el operador tiene que ver QUE va a borrar.
+    """
+    root = tmp_path / "claude"
+    vacia = _mk_session(root, "proj", "vacia", age_days=90)
+    (vacia / "scratchpad" / "f.txt").unlink()
+
+    con_datos = _mk_session(root, "proj", "con-datos", age_days=90)
+    (con_datos / "scratchpad" / "importante.md").write_text("dato", encoding="utf-8")
+    old = time.time() - 90 * 86400
+    for p in con_datos.rglob("*"):
+        os.utime(p, (old, old))
+    os.utime(con_datos, (old, old))
+
+    main(["--root", str(root), "--days", "14"])
+    out = capsys.readouterr().out
+
+    assert "NO estan vacias" in out, out
+    assert "con-datos" in out, "la candidata con contenido debe NOMBRARSE: " + out
+    assert "Revisalas ANTES de --apply" in out, out
+
+
+def test_all_empty_says_so_explicitly(tmp_path, capsys):
+    """Si todas estan vacias, se DICE: el silencio no distingue 'ninguna' de 'no mire'."""
+    root = tmp_path / "claude"
+    sess = _mk_session(root, "proj", "vacia", age_days=90)
+    (sess / "scratchpad" / "f.txt").unlink()
+
+    main(["--root", str(root), "--days", "14"])
+    out = capsys.readouterr().out
+
+    assert "todas las candidatas estan vacias" in out, out
