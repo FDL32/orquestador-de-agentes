@@ -2469,11 +2469,96 @@ def _cmd_leaders(args, config) -> int:
     return 0
 
 
+# WOT-2026-059c: markers de stderr (MEDIDOS 2026-08-25 sobre git del motor real)
+# que clasifican un `git rev-parse --verify <sha>^{commit}` fallido como INVALIDO
+# ("el sha no resuelve a un commit") frente a UNKNOWN ("no pude comprobar"):
+#   - "fatal: Needed a single revision"      <- sha inexistente o abbrev irresoluble
+#   - "expected commit type, but the object" <- objeto existe pero no es commit
+#   - "unknown revision" / "not a valid object name" / "ambiguous argument"
+# Un rc != 0 SIN estos markers es infraestructura (repos danado, config rota):
+# la doctrina de WOT-2026-059b es "un git que no arranca es DESCONOCIDO, no
+# INVALIDO", y reportarlo como "no existe" es falso-rojo con causa falsa.
+_INVALID_SHA_MARKERS = (
+    "needed a single revision",
+    "unknown revision",
+    "not a valid object name",
+    "ambiguous argument",
+    "expected commit type",
+)
+
+
+def _canonical_motor_commit_sha(motor_root: Path, commit_sha: str) -> tuple[bool, str]:
+    """WOT-2026-059c: resuelve y normaliza un --commit-sha contra el MOTOR.
+
+    Before: `motor_root` es un repo git (resuelto del link del destino);
+        `commit_sha` es la forma que el CLI recibio (puede ser abreviada).
+    During: una lectura `git rev-parse --verify <sha>^{commit}` contra el motor
+        (timeout 10s). Sin escrituras.
+    After: (True, sha40 pleno) si el sha resuelve a un commit; (False, razon)
+        si no. La razon distingue INVALIDO (markers medidos) de UNKNOWN
+        (infraestructura: OSError/SubprocessError, o rc sin markers) -- nunca
+        un fallo de git se reporta como "el sha no existe".
+    """
+    try:
+        probe = subprocess.run(
+            [  # noqa: S607 - git es el binario canonico del motor
+                "git",
+                "-C",
+                str(motor_root),
+                "rev-parse",
+                "--verify",
+                f"{commit_sha}^{{commit}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"UNKNOWN: git no pudo ejecutarse contra el motor ({exc})"
+    if probe.returncode == 0:
+        return True, probe.stdout.strip()
+    err = (probe.stderr or "").lower()
+    if any(marker in err for marker in _INVALID_SHA_MARKERS):
+        return False, f"'{commit_sha}' no resuelve a un commit del motor"
+    return False, (
+        f"UNKNOWN: no pude comprobar '{commit_sha}' contra el motor (git "
+        f"rc={probe.returncode}: {(probe.stderr or '').strip()[:120]})"
+    )
+
+
 def _cmd_emit_nonce(args, config) -> int:
     project_root = _resolve_project_root(args.project_root)
+    # WOT-2026-059c: el emisor NUNCA registra un sha que el motor no puede
+    # resolver (la contraparte productiva de la barrera de WOT-2026-059b que ya
+    # falla cerrado en prepush). La validacion vive AQUI, en la unica ruta
+    # productiva hacia el ledger: `emit_nonce()` es primitiva interna del estilo
+    # `append_scorecard` (grep verificado: solo `_cmd_emit_nonce` la invoca en
+    # produccion; los tests de join existentes la usan con shas sinteticos).
+    try:
+        from runtime.motor_link import resolve_motor_root
+    except ImportError:  # pragma: no cover - ruta de import alternativa
+        from runtime.motor_link import (  # type: ignore[no-redef]
+            resolve_motor_root,
+        )
+    motor_root = resolve_motor_root(project_root)
+    if motor_root is None:
+        raise ValueError(
+            f"emit-nonce bloqueado (WOT-2026-059c): no pude comprobar "
+            f"'{args.commit_sha}' -- sin motor_destination_link.json valido para "
+            f"{project_root} (UNKNOWN, no INVALIDO)"
+        )
+    ok, canonical_or_reason = _canonical_motor_commit_sha(motor_root, args.commit_sha)
+    if not ok:
+        raise ValueError(f"emit-nonce bloqueado (WOT-2026-059c): {canonical_or_reason}")
+    canonical_sha = canonical_or_reason
+    if canonical_sha != args.commit_sha:
+        print(
+            f"[emit-nonce] sha normalizado: {args.commit_sha} -> {canonical_sha}",
+            file=sys.stderr,
+        )
     nonce, out_path = emit_nonce(
         project_root,
-        commit_sha=args.commit_sha,
+        commit_sha=canonical_sha,
         loop_id=args.loop_id,
         issuer_role=args.issuer_role,
         issuer_backend_key=args.issuer_backend_key,
