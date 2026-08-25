@@ -568,6 +568,130 @@ def test_archive_arity_baseline_is_pinned() -> None:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-054i: the arity guard is BLIND to the archive's 4-cell closure-log
+# rows (id at RAW index 1), because _row_ticket_id only matches Prioridad-led
+# rows (id at raw index 2). Before 054i, a malformed 4/5-cell closure row
+# (unescaped pipe pushing its commit: cell out) passed silently -- the exact
+# format the close flow produces today. The guard must audit BOTH layouts or
+# explicitly reject a misformed one, never skip it.
+# ---------------------------------------------------------------------------
+
+
+def _write_archive_closure_rows(root: Path, rows: str) -> None:
+    """Write a 4-cell closure-log section into a fresh archive under ``root``.
+
+    The current close format is ``| TICKET | Estado | Nota | commit:sha |``
+    (id at RAW index 1, no Prioridad column).
+    """
+    arch = root / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(
+        "| Ticket | Estado | Nota | commit |\n" + "|--|--|--|--|\n" + rows,
+        encoding="utf-8",
+    )
+
+
+def test_054i_broken_closure_row_blocks(tmp_path: Path) -> None:
+    """A NEW 4-cell closure row whose unescaped pipe pushes the terminal commit:
+    cell out of the table (5 cells) MUST fail -- the same failure the Prioridad
+    guard already gives for its own layout. Before 054i this row was SILENT: id
+    at raw index 1 -> _row_ticket_id None -> validate_archive_row_arity never
+    saw it and returned 0 violations.
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_closure_rows(
+        tmp_path,
+        "| WOT-2026-088c | completed | note with | pipe | commit:abc |\n",
+    )
+    errs = cbc.validate_archive_row_arity(tmp_path)
+    assert any(
+        "WOT-2026-088c" in e and "closure row has 5 cells, expected 4" in e
+        for e in errs
+    ), errs
+
+
+def test_054i_clean_closure_row_passes(tmp_path: Path) -> None:
+    """A clean 4-cell closure row (id at raw index 1, valid commit: cell) passes
+    -- the guard recognizes the CURRENT close format as canonical.
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_closure_rows(
+        tmp_path,
+        "| WOT-2026-088c | completed | titulo limpio | commit:abc |\n",
+    )
+    assert cbc.validate_archive_row_arity(tmp_path) == []
+
+
+def test_054i_closure_row_without_commit_is_not_an_arity_surface(
+    tmp_path: Path,
+) -> None:
+    """A 3-cell compact row (id at index 1, NO commit cell) is a closure NOTE,
+    not a queue snapshot: it must NOT be dragged into the arity census. Its state
+    vocabulary is the _compact_closure_log_states surface, not this one.
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_closure_rows(
+        tmp_path,
+        "| WOT-2026-088c | completed | nota sin commit |\n",
+    )
+    assert cbc.validate_archive_row_arity(tmp_path) == []
+
+
+def test_054i_historical_closure_baseline_is_exempt(tmp_path: Path) -> None:
+    """The 25 historical non-4-cell id@1 rows (old 8-column Cerrados sections,
+    6/7-cell variants) are DECLARED legacy debt: a censused pair (id, arity) is
+    forgiven. This test dies if the exemption is removed or the id relocates to
+    a different (uncovered) arity.
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)
+    # 042w is censused at 6 cells; 040t at 8 cells.
+    _write_archive_closure_rows(
+        tmp_path,
+        "| WOT-2026-042w | completed | a | b | c | commit:20eb98b |\n"
+        "| WOT-2026-040t | completed | t | s | completed | - | o | commit:x |\n",
+    )
+    assert cbc.validate_archive_row_arity(tmp_path) == []
+
+
+def test_054i_closure_baseline_id_at_other_arity_is_fresh_break(
+    tmp_path: Path,
+) -> None:
+    """The RESTRICTIVE side of the closure baseline: a censused id is forgiven
+    ONLY at the arity actually measured. 042w is censused at 6; a brand-new
+    7-cell row under its id is a fresh break and MUST fail (pair-keying, same
+    trap _ARCHIVE_ARITY_LEGACY_BASELINE exists to close).
+    """
+    _write_backlog(tmp_path, _VALID_ROWS)
+    row = "| WOT-2026-042w | completed | a | b | c | d | commit:x |\n"
+    assert len(row.strip().strip("|").split("|")) == 7
+    _write_archive_closure_rows(tmp_path, row)
+    errors = cbc.validate_archive_row_arity(tmp_path)
+    assert len(errors) == 1, errors
+    assert "WOT-2026-042w" in errors[0]
+    assert "7 cells" in errors[0]
+
+
+def test_054i_closure_baseline_is_pinned() -> None:
+    """Pin the new closure census so it cannot be widened in silence.
+
+    The same discipline as _ARCHIVE_ARITY_LEGACY_BASELINE: ADDING an id to
+    silence a fresh break of the closure format is exactly the failure this
+    ticket closes. REDUCING (repairing a row) is legitimate and updates this
+    test.
+    """
+    baseline = cbc._CLOSURE_ARITY_LEGACY_BASELINE
+    assert len(baseline) == 25, (
+        f"closure baseline moved to {len(baseline)} entries: repairing a row is "
+        "legitimate (update this test); ADDING one to silence a fresh break is not."
+    )
+    by_arity = {n: list(baseline.values()).count(n) for n in set(baseline.values())}
+    assert by_arity == {8: 22, 6: 1, 7: 2}, (
+        f"closure census breakdown is now {by_arity}; update the comment above "
+        "_CLOSURE_ARITY_LEGACY_BASELINE so prose and code stay in lockstep."
+    )
+
+
+# ---------------------------------------------------------------------------
 # WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
 # ---------------------------------------------------------------------------
 

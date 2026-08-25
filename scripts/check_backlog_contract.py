@@ -846,25 +846,108 @@ _ARCHIVE_ARITY_LEGACY_BASELINE: dict[str, int] = {
 }
 
 
+def _closure_ticket_id(stripped: str) -> str | None:
+    """Return the ticket id of a compact closure-log row, or None otherwise.
+
+    WOT-2026-054i: the archive's CURRENT closure format is a 4-cell row
+    ``| TICKET | Estado | Nota | commit:sha |`` where the id sits at RAW split
+    index 1 (no Prioridad column). ``_row_ticket_id`` only matches Prioridad-led
+    rows (id at raw index 2), so every real closure row -- including a MALFORMED
+    one whose unescaped pipe pushed the terminal ``commit:`` cell out of the
+    table -- was invisible to ``validate_archive_row_arity`` (measured: the 7
+    closures 046g/046i/048u/044r/044p/054b/048g all return None, and an injected
+    5-cell broken closure row passes silently).
+
+    This recognizer is deliberately NARROW so it never conflates the two layouts:
+    the row must (1) start with ``| `` (like ``_row_ticket_id``), (2) carry a bare
+    ticket id at raw index 1, and (3) carry a ``commit:``/``commits:`` evidence
+    cell somewhere after the id. The 3-cell historical compact rows
+    (``| Ticket | Estado | Nota |``, id at index 1, NO commit cell) are closure
+    NOTES without landing evidence and stay out of the arity census -- they are
+    the ``_compact_closure_log_states`` surface. Cell-based, never substring.
+    """
+    if not stripped.startswith("| "):
+        return None
+    cells = stripped.split("|")
+    if len(cells) < 3:
+        return None
+    candidate = cells[1].strip()
+    if not _TICKET_ROW_CELL_RE.match(candidate):
+        return None
+    if not any(c.strip().startswith(("commit:", "commits:")) for c in cells[2:]):
+        return None
+    return candidate
+
+
+# WOT-2026-054i: legacy baseline of ARCHIVED closure-log rows (id at raw index 1)
+# that carry a commit: cell but are NOT the current 4-cell format. CENSUSED
+# 2026-08-25 from the real workspace archive: 52 rows are the canonical 4-cell
+# closure (not listed), and 25 are historical rows of other layouts -- the old
+# "Cerrados" 8-column sections of FP-20260723c (``| Ticket | Estado | Titulo |
+# Scope | Estado | Depende de | Origen | Commit |``, id at raw index 1) and a few
+# 6/7-cell variants. They are DECLARED debt (evidence, not criterion) so the
+# guard NEVER demands the current arity of history; a NEW closure row -- any id
+# not in this mapping -- must have exactly 4 cells.
+#
+# ANCHORED BY PAIR (id, censused arity) -- the same form as
+# _ARCHIVE_ARITY_LEGACY_BASELINE, for the same reason: a bare id would exempt
+# that ticket FOREVER, so replacing a legacy row with a brand-new broken one
+# under the same id would pass silently.
+_CLOSURE_ARITY_LEGACY_BASELINE: dict[str, int] = {
+    # Historical "Cerrados" 8-column section rows (FP-20260723c vuelo), id@1.
+    "WOT-2026-022c": 8,
+    "WOT-2026-022i": 8,
+    "WOT-2026-026q": 8,
+    "WOT-2026-027g": 8,
+    "WOT-2026-041a": 8,
+    "WOT-2026-041b": 8,
+    "WOT-2026-026j": 8,
+    "WOT-2026-040b": 8,
+    "WOT-2026-040t": 8,
+    "WOT-2026-040x": 8,
+    "WOT-2026-040y": 8,
+    "WOT-2026-040q": 8,
+    "WOT-2026-040s": 8,
+    "WOT-2026-040c": 8,
+    "WOT-2026-040j": 8,
+    "WOT-2026-040r": 8,
+    "WOT-2026-040n": 8,
+    "WOT-2026-054j": 8,
+    "WOT-2026-048x": 8,
+    "WOT-2026-042v": 8,
+    "WOT-2026-042q": 8,
+    "WOT-2026-043o": 8,
+    # Historical 6/7-cell closure variants (id@1, with commit cell).
+    "WOT-2026-042w": 6,
+    "WOT-2026-040w": 7,
+    "WOT-2026-048b": 7,
+}
+
+
 def validate_archive_row_arity(root: Path) -> list[str]:
-    """Return violations for NEW broken Prioridad-led rows in the archive (026z).
+    """Return violations for NEW broken rows in the archive (026z / 054i).
 
-    CANONICAL arity is 8 (the current schema). The archive's non-8 rows -- 3 of an
-    older 7-column section and 17 broken by an unescaped pipe -- are anchored in
-    _ARCHIVE_ARITY_LEGACY_BASELINE as DECLARED debt (the DoD's "ancla el censo
-    actual como baseline declarada"; the guard mira lo que se AÑADE). A NEW
-    Prioridad-led row -- any ticket id not in that baseline -- must have exactly 8
-    cells; a mismatch is a fresh break, almost always an unescaped pipe pushing the
-    terminal commit: cell out of the table. The fix is always to REMOVE the pipe
-    (the real consumer splits on the raw pipe), never to escape it.
+    The archive mixes TWO live layouts, and this guard audits BOTH (054i): a
+    Prioridad-led 8-column row (id at raw index 2, the historical schema) and a
+    compact 4-cell closure row ``| TICKET | Estado | Nota | commit:sha |`` (id at
+    raw index 1, the CURRENT close format). A NEW row of either layout must have
+    exactly its canonical arity (8 / 4); a mismatch is a fresh break, almost always
+    an unescaped pipe pushing the terminal commit: cell out of the table. The fix
+    is always to REMOVE the pipe (the real consumer splits on the raw pipe), never
+    to escape it.
 
-    The baseline exempts the PAIR (id, censused arity), not the id: a baseline
-    ticket whose row appears at ANY other arity is a fresh break and fails.
+    The baselines exempt the PAIR (id, censused arity), never by id alone: a
+    baseline ticket whose row appears at ANY other arity is a fresh break and
+    fails.
 
-    DECLARED SCOPE: a pipe break located BEFORE the Ticket cell shifts the id out
-    of raw index 2, so _row_ticket_id returns None and the row falls outside this
-    guard entirely. Verified against the real archive today (20/20 censused rows
-    are detected), but it is a structural blind spot, not full coverage.
+    DECLARED SCOPE, now closed (054i): a pipe break located BEFORE the Ticket cell
+    used to shift the id out of raw index 2, so ``_row_ticket_id`` returned None
+    and the row fell outside this guard entirely -- and the 4-cell closure format
+    put the id at raw index 1 BY DESIGN, making every real closure row invisible.
+    ``_closure_ticket_id`` now audits that format; the 3-cell compact rows without
+    a commit: cell are NOT an arity surface (they are the state-vocabulary surface
+    of ``_compact_closure_log_states``), and the historical 6/7/8-cell id@1 rows
+    are anchored in ``_CLOSURE_ARITY_LEGACY_BASELINE``.
     """
     archive = root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
     if not archive.exists():
@@ -879,21 +962,31 @@ def validate_archive_row_arity(root: Path) -> list[str]:
     for line in archive.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         tid = _row_ticket_id(stripped)
+        layout = "prioridad"
+        if tid is None:
+            tid = _closure_ticket_id(stripped)
+            layout = "closure"
         if tid is None:
             continue
         n = len(stripped.strip("|").split("|"))
+        want_n = 4 if layout == "closure" else want
         # Exempt by the PAIR (id, censused arity), never by id alone: a baseline
         # ticket is forgiven ONLY at the arity actually measured, so a fresh break
         # under a baseline id still fails.
-        if _ARCHIVE_ARITY_LEGACY_BASELINE.get(tid) == n:
+        baseline = (
+            _CLOSURE_ARITY_LEGACY_BASELINE
+            if layout == "closure"
+            else _ARCHIVE_ARITY_LEGACY_BASELINE
+        )
+        if baseline.get(tid) == n:
             continue
-        if n != want:
+        if n != want_n:
             errors.append(
-                f"{tid}: archived row has {n} cells, expected {want} "
-                f"(WOT-2026-026z). Almost certainly an unescaped '|' in the row "
-                f"text pushed its terminal 'commit:' cell out of the table. REMOVE "
-                f"the pipe from the cell text (do NOT escape it: the real consumer "
-                f"splits on the raw pipe)."
+                f"{tid}: archived {layout} row has {n} cells, expected {want_n} "
+                f"(WOT-2026-026z/054i). Almost certainly an unescaped '|' in the "
+                f"row text pushed its terminal 'commit:' cell out of the table. "
+                f"REMOVE the pipe from the cell text (do NOT escape it: the real "
+                f"consumer splits on the raw pipe)."
             )
     return errors
 
