@@ -117,14 +117,26 @@ def test_040d_missing_command_is_not_reported_as_restore_failure(tmp_path, capsy
 
     El arbol DEBE quedar restaurado (el `finally` ya lo hacia bien) y el
     veredicto debe distinguir el fallo de lanzamiento del de restauracion.
+
+    ORDEN DELIBERADO (lo levanto BA06 en el bucle L950): el snapshot se toma
+    ANTES de mutar, que es el orden REAL del ciclo. Una version anterior dejaba
+    el fichero ya en `original` al invocar, con lo que el restore era un no-op y
+    el assert del arbol pasaba TRIVIALMENTE -- floor assertion. Se usa la API por
+    partes porque el CLI fotografia AL INVOCARSE y no puede expresar
+    "snapshot pre-mutacion" en una sola llamada.
     """
     target = tmp_path / "f.txt"
     original = b"pre-mutacion\n"
     target.write_bytes(original)
-    target.write_bytes(b"MUTADO\n")  # mutacion aplicada
-    target.write_bytes(original)  # snapshot se toma de este estado
 
-    rc = main(["--", str(target), "--", "comando-que-no-existe-xyz-040d"])
+    snap = snapshot([target])
+    target.write_bytes(b"MUTADO\n")
+    assert target.read_bytes() != original, (
+        "la mutacion debe estar VIVA al medir: un verde sobre una mutacion no "
+        "aplicada no habla del fix"
+    )
+
+    rc = run_cycle(snap, ["comando-que-no-existe-xyz-040d"])
     err = capsys.readouterr().err
 
     assert rc == 127, (
@@ -135,7 +147,8 @@ def test_040d_missing_command_is_not_reported_as_restore_failure(tmp_path, capsy
         "el mensaje NO puede culpar al restore de un fallo del comando: " + err
     )
     assert target.read_bytes() == original, (
-        "el working tree debe quedar restaurado igualmente"
+        "el working tree debe quedar restaurado igualmente (con la mutacion "
+        "viva, este assert MUERDE: un restore no-op lo hace caer)"
     )
 
 
