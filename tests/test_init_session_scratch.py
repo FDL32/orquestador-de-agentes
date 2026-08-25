@@ -8,14 +8,17 @@ ONLY <motor>/.agent/runtime/session/ before/after.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -87,7 +90,72 @@ def _make_repo(base: Path, name: str, with_git: bool = True) -> Path:
     (repo / ".agent").mkdir(exist_ok=True)
     if with_git:
         subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, timeout=10)
+    _TRACKED_REAL_TEMP.append(repo)
     return repo
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-059d -- limpieza del scratch REAL_SYSTEM_TEMP
+# ---------------------------------------------------------------------------
+# Estos tests crean deliberadamente arboles bajo REAL_SYSTEM_TEMP (deben salir
+# del sandbox que secuestra os.environ['TEMP'/'TMP']). Cada ruta creada se
+# registra en `_TRACKED_REAL_TEMP` y la fixture autouse `_real_temp_hygiene`
+# la purga al terminar el test: la suite no deja ningun directorio atribuible.
+# El registro es por RUTA (nunca una enumeracion global del TEMP): atribucion
+# exacta, cero riesgo de borrar dirs de otro worker/fichero bajo xdist.
+
+_TRACKED_REAL_TEMP: list[Path] = []
+
+
+def _rmtree_onerror(func, path: Path, _exc) -> None:
+    # Objetos git y ficheros de solo-lectura en Windows (0444) hacen fallar el
+    # rmtree; se fuerza S_IWRITE y se reintenta (patron _rmtree_ro del repo,
+    # tests/unit/test_check_distribution_agnostic.py:79-87).
+    with contextlib.suppress(OSError):
+        Path(path).chmod(stat.S_IWRITE)
+    func(path)
+
+
+def _cleanup_tracked(start: int) -> None:
+    """Retira todas las rutas registradas en `_TRACKED_REAL_TEMP` desde `start`.
+
+    Es la MISMA funcion que usa la fixture autouse `_real_temp_hygiene`, asi la
+    prueba dedicada de abajo (DoD c, mutacion) ejercita la limpieza REAL. Si
+    `_cleanup_tracked` se neutralizara, el test propio se pone ROJO.
+    """
+    for path in _TRACKED_REAL_TEMP[start:]:
+        shutil.rmtree(path, onerror=_rmtree_onerror, ignore_errors=False)
+    del _TRACKED_REAL_TEMP[start:]
+
+
+@pytest.fixture(autouse=True)
+def _real_temp_hygiene() -> Iterator[None]:
+    """WOT-2026-059d: purga por-test las rutas creadas bajo REAL_SYSTEM_TEMP.
+
+    Atribucion por RUTA exacta (lo que el test registro), no por enumeracion:
+    segura bajo xdist (cada worker tiene su proceso/estado de modulo) y sin
+    coste de listar decenas de miles de entradas del TEMP por test.
+    """
+    start = len(_TRACKED_REAL_TEMP)
+    yield
+    _cleanup_tracked(start)
+
+
+def test_real_temp_scratch_cleanup_removes_created() -> None:
+    """DoD 059d (c): la limpieza del scratch REAL_SYSTEM_TEMP retira lo creado.
+
+    Ejercita la MISMA `_cleanup_tracked` que usa la fixture autouse. Mutacion
+    alcanzable: neutralizar `_cleanup_tracked` (no rmtree) -> el dir persiste y
+    esta asercion se pone ROJA.
+    """
+    start = len(_TRACKED_REAL_TEMP)
+    target = _make_repo(REAL_SYSTEM_TEMP, f"hyg_{uuid.uuid4().hex[:8]}")
+    assert target.is_dir(), "premise: _make_repo creo el arbol bajo el TEMP real"
+    _cleanup_tracked(start)
+    assert not target.exists(), (
+        "la limpieza del scratch bajo REAL_SYSTEM_TEMP debe retirar el dir creado"
+    )
+    assert REAL_SYSTEM_TEMP.is_dir(), "REAL_SYSTEM_TEMP nunca se elimina (non-goal b)"
 
 
 def _run_scratch(
@@ -1233,6 +1301,7 @@ class TestValidation:
     def test_validate_project_root_no_agent(self, tmp_path):
         base = REAL_SYSTEM_TEMP / f"npa_{uuid.uuid4().hex[:8]}"
         base.mkdir()
+        _TRACKED_REAL_TEMP.append(base)
         assert _validate_project_root(str(base)) is None
 
     def test_validate_project_root_nonexistent(self, tmp_path):
