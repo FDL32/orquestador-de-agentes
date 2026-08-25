@@ -3449,8 +3449,8 @@ def test_058y_scope_grants_reading_never_writing(profile_name):
 def test_058y_calibration_survives_with_at_least_four_blind_lenses():
     """DoD (f) CONTROL NEGATIVO: la CALIBRACION sigue viva.
 
-    `042v` razona que conservar lentes ciegas es lo que permite medir la
-    degradacion del modelo base: "si todo pasa a con-arbol se pierde la
+    `042v` razona que conservar lentes ciegas es lo que permite medir cuanto se
+    degrada un modelo SIN arbol: "si todo pasa a con-arbol se pierde la
     capacidad de medir". Por eso la opcion C (todas con ojos) quedo DESCARTADA.
     Este test pinea el suelo: si un cambio futuro deja el bucle sin ciegas,
     incumple el razonamiento heredado y debe fallar aqui.
