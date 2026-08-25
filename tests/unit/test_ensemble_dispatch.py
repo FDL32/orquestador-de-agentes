@@ -3376,3 +3376,111 @@ def test_real_config_opencode_binds_readonly_agent_for_glm_lens():
         "el write:false; sin el, la declaracion vuelve a ser decorativa y la "
         "lente corre bajo default_agent (builder, con edit/bash/task allow)"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058y: ejerce la DECISION DE PRODUCTO que WOT-2026-042v dejo
+# explicitamente abierta al cerrarse -- "la PROPORCION de lentes ciegas vs
+# con-ojos; se activo UN solo perfil, que es el minimo del DoD". Adjudicada por
+# el operador el 2026-08-25: opcion EQUILIBRADA (B) = 3 con arbol / 4 ciegas.
+#
+# NO es un bugfix y NO anade codigo: `resolve_lens_repo_root` ya esta cableado
+# (WOT-2026-038o, cerrado en 042v). Esta ficha solo lo INVOCA para dos perfiles
+# mas, declarando `repo_scope: destino` en `agents.json`.
+#
+# Los controles de MECANISMO (degradacion nombrada, limite de clase `api`,
+# aditividad) ya viven en los tests de 042v de arriba y NO se duplican aqui:
+# estos tests cubren la CONFIGURACION -- que la decision quedo realmente
+# ejercida -- y el aislamiento por rama del DoD (h).
+# ---------------------------------------------------------------------------
+
+
+def _real_agents_config() -> dict:
+    """La configuracion REAL del motor, no un fixture.
+
+    El DoD (a) de esta ficha es sobre `agents.json` en disco: un fixture
+    sintetico probaria el mecanismo (que ya prueba 042v) y no la decision.
+    """
+    import json
+
+    path = Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "profile_name",
+    ["challenger_opencode_glm_5_2", "proposer_claude"],
+)
+def test_058y_lens_declares_destino_scope(profile_name, tmp_path):
+    """DoD (a)+(h): CADA perfil adjudicado resuelve al destino, y se parametriza
+    para que retirar `repo_scope` de UNO haga caer SOLO su rama (leccion 021u).
+    Antes de esta ficha ambos devolvian `(None, 'motor')`."""
+    config = _real_agents_config()
+    profile = config["ensemble_profiles"][profile_name]
+    assert profile.get("repo_scope") == "destino", (
+        f"{profile_name} debe declarar repo_scope: destino (opcion B adjudicada "
+        f"por el operador 2026-08-25); hoy declara {profile.get('repo_scope')!r}"
+    )
+    destino = tmp_path / "repo_destino"
+    destino.mkdir()
+    backend_cfg = config.get("backends", {}).get(profile.get("backend", ""), {})
+    cwd, scope = ed.resolve_lens_repo_root(profile, backend_cfg, destino)
+    assert scope == "destino", (cwd, scope)
+    assert cwd == str(destino.resolve()), (cwd, scope)
+
+
+@pytest.mark.parametrize(
+    "profile_name",
+    ["challenger_opencode_glm_5_2", "proposer_claude"],
+)
+def test_058y_scope_grants_reading_never_writing(profile_name):
+    """DoD (g): dar ambito es dar LECTURA. `write` sigue en false en ambos.
+
+    Si un perfil con ojos pudiera escribir, el riesgo declarado de la ficha
+    (una lente construye un blocker falso sobre un artefacto enganoso del
+    destino, WOT-2026-055j) pasaria de emitir un veredicto a MUTAR el arbol.
+    """
+    profile = _real_agents_config()["ensemble_profiles"][profile_name]
+    assert profile.get("write") is False, (
+        f"{profile_name}: el ambito da lectura, NUNCA escritura: {profile!r}"
+    )
+
+
+def test_058y_calibration_survives_with_at_least_four_blind_lenses():
+    """DoD (f) CONTROL NEGATIVO: la CALIBRACION sigue viva.
+
+    `042v` razona que conservar lentes ciegas es lo que permite medir la
+    degradacion del modelo base: "si todo pasa a con-arbol se pierde la
+    capacidad de medir". Por eso la opcion C (todas con ojos) quedo DESCARTADA.
+    Este test pinea el suelo: si un cambio futuro deja el bucle sin ciegas,
+    incumple el razonamiento heredado y debe fallar aqui.
+    """
+    profiles = _real_agents_config()["ensemble_profiles"]
+    ciegas = [
+        name
+        for name, p in profiles.items()
+        if p.get("channel") == "api" or p.get("repo_scope") != "destino"
+    ]
+    assert len(ciegas) >= 4, (
+        f"la calibracion exige >= 4 lentes ciegas despachables; quedan "
+        f"{len(ciegas)}: {sorted(ciegas)}"
+    )
+
+
+def test_058y_ratio_is_the_adjudicated_option_b():
+    """La decision ADJUDICADA es 3 con arbol / 4 ciegas, no 'las que salgan'.
+
+    INVARIANTE, no medicion: se asertan las DOS clases a la vez, de modo que
+    mover un perfil de una a otra sin decision explicita rompa el test.
+    """
+    profiles = _real_agents_config()["ensemble_profiles"]
+    con_arbol = sorted(
+        name
+        for name, p in profiles.items()
+        if p.get("channel") != "api" and p.get("repo_scope") == "destino"
+    )
+    assert con_arbol == [
+        "challenger_codex",
+        "challenger_opencode_glm_5_2",
+        "proposer_claude",
+    ], f"opcion B (equilibrada) = BA05 + BA06 + BA01; hoy: {con_arbol}"

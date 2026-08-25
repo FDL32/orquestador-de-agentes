@@ -119,7 +119,8 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA01"
+      "backend_key": "BA01",
+      "repo_scope": "destino"
     },
     "challenger_codex": {
       "backend": "codex",
@@ -182,7 +183,8 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA06"
+      "backend_key": "BA06",
+      "repo_scope": "destino"
     }
   },
   "ensemble_pipelines": {
