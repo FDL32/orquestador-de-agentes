@@ -71,6 +71,22 @@ def test_blocks_model_with_context(tmp_path):
     assert main([str(m)]) == 1
 
 
+def test_blocks_context_parenthesized_alone(tmp_path):
+    """Regresion L810 (Codex): `(1M context)` AISLADO (sin numero exterior) debe
+    bloquear. Con el `\b` exterior envolviendo la alternativa parentetizada, un
+    `(1M context)` solitario no tenia frontera de palabra -> falso negativo."""
+    m = tmp_path / "msg.txt"
+    m.write_text(
+        "fix: algo\n\n"
+        "Co-Authored-By: Claude Opus (1M context) <noreply@anthropic.com>\n",
+        encoding="utf-8",
+    )
+    assert main([str(m)]) == 1, (
+        "el contexto parentetizado aislado es discriminante de modelo y debe "
+        "bloquear (regla cerrada L710); sin esta regresion pasa en verde"
+    )
+
+
 # --------------------------------------------------------------------------
 # Clase (iii): trailer humano -> PASA
 # --------------------------------------------------------------------------

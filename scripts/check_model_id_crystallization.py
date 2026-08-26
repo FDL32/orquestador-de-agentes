@@ -94,8 +94,12 @@ _BASE_RE = re.compile(
 # - `4.8`, `5`, `3.6`, `2.5` (numeros)
 # - `(1M context)`, `(1M)` (contexto)
 # - `v4`, `-v2.5`, `v1M` (version)
+# Las variantes parentetizadas van SIN `\b` exterior (Codex L810): `\b` no tiene
+# frontera de palabra antes de `(` ni despues de `)`, asi que `Claude Opus
+# (1M context)` quedaba sin discriminante y pasaba en verde -- falso negativo
+# contra la regla cerrada del contrato.
 _DISCRIMINATOR_RE = re.compile(
-    r"\b(?:\d+\.?\d*|v\d+(?:\.\d+)?|\(\d+[A-Za-z]?\s*(?:context)?\)|\([^)]*\d[^)]*\))\b",
+    r"(?:\b\d+\.?\d*\b|\bv\d+(?:\.\d+)?\b|\(\d+[A-Za-z]?\s*(?:context)?\)|\([^)]*\d[^)]*\))",
     re.IGNORECASE,
 )
 
