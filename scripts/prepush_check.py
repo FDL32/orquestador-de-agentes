@@ -1210,6 +1210,50 @@ def run_guard_wiring_orphan_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_prompt_wired_invocations_check(project_root: Path) -> CheckResult:
+    """WOT-2026-042m: instruccion(es) sin invocador automatico en prompts/skills.
+
+    Cablea `check_prompt_wired_invocations` en el cierre -- un camino que corre
+    solo. El import es ESTATICO para que `check_guard_wiring` alcance este
+    call-site y cuente el guard como CABLEADO (precedente:
+    `run_guard_wiring_orphan_check`). Retirar esta invocacion deja el guard
+    UNWIRED -> lo caza check_guard_wiring (mutation del DoD de des-cableado).
+
+    Que verifica: por cada scripts/check_*.py citado en prompts/*.md o
+    skills/*/SKILL.md, pregunta a check_guard_wiring si esta WIRED. Un script
+    citado como si fuera barrera pero sin invocador automatico es una NORMA, no
+    una barrera (WOT-2026-024u). Es un DETECTOR de la huella, NO un gate de
+    cumplimiento (ficha): cruza dos objetos discretos (una cita de fichero y un
+    veredicto que el motor ya calcula).
+
+    Warning (no bloqueante): el detector nace WARN porque su superficie son los
+    prompts del propio motor y en el estado actual todo lo citado esta WIRED o
+    declarado; un hallazgo nuevo NO debe romper el cierre en caliente, pero si
+    debe quedar VISIBLE en el reporte.
+    """
+    from scripts.check_prompt_wired_invocations import main as run_prompt_wired
+
+    name = "Prompt-Wired Invocations (WOT-2026-042m)"
+    rc = run_prompt_wired([])
+    if rc == 0:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="todo script citado como barrera esta WIRED o es deuda declarada",
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=False,
+        output=(
+            "existe una instruccion sin invocador automatico en prompts/skills. "
+            "Revisa un prompt/skill que cite scripts/check_*.py como si fuera "
+            "barrera: cablea el guard o declara la deuda (known_unwired)."
+        ),
+        is_blocking=False,
+    )
+
+
 def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
     """WOT-2026-048h: `write: false` sin enforcement posible es DECORATIVO (WARN).
 
@@ -2172,6 +2216,10 @@ def run_preflight_check(
         # unico punto que corre solo Y conoce el destino cuyo backlog decide si
         # un owner sigue vivo.)
         results.append(run_guard_wiring_orphan_check(project_root))
+        # 6k-bis. Prompt-Wired Invocations (WOT-2026-042m; WARN -- la huella de
+        # una instruccion sin invocador automatico en prompts/skills. Es un
+        # DETECTOR de la huella, no un gate de cumplimiento.)
+        results.append(run_prompt_wired_invocations_check(project_root))
         # 6l. Loop Execution Barrier (WOT-2026-040b; WARN -- el bucle 1->9->2 debe
         # haber corrido de verdad, no degradado, por cada commit de ticket del
         # vuelo. SKIPEA nombrado si el orquestador no declaro commits/targets.)

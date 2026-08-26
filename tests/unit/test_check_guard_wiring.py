@@ -125,6 +125,12 @@ EXPECTED_WIRED_REAL = {
     "check_loop_execution",  # WOT-2026-040b: cableado via import estatico en prepush_check.py::run_loop_execution_check (closeout, WARN). Barrera de ejecucion del bucle 1->9->2.
     "check_motor_destination_integration",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_no_history_truncation",
+    # WOT-2026-042m: cableado via import estatico en
+    # prepush_check.py::run_prompt_wired_invocations_check (closeout, WARN).
+    # DETECTOR de la huella de una instruccion sin invocador automatico en
+    # prompts/skills (cruza citas de fichero contra el veredicto WIRED del
+    # propio modulo). NO es un gate de cumplimiento (ficha).
+    "check_prompt_wired_invocations",
     "check_portable_memory_archive_schema",  # WOT-2026-035b: cableado en .pre-commit-config.yaml (always_run) + prepush_check.py
     "check_ruff_hook_scope",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     # WOT-2026-055c: cableado via import estatico en prepush_check.py::run_seal_staleness_check (closeout, WARN). NO es falso-WIRED: mutation-verify con par de exit-codes literal (rama de pertenencia del guard desactivada -> el test de flight cae; restaurada -> 18 passed). Regimen WARN por coherencia con run_batch_run_accounting_check: reconcilia recibos start_context_isolation ya en disco, nunca bloquea por si solo.
