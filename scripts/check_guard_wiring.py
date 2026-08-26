@@ -49,43 +49,31 @@ La asimetria -- ahora DOBLE (WOT-2026-024u, hallazgo del des-cableado)
   sostenian tambien con prosa viva, asi que borrar su call-site real no los ponia
   unwired. El baseline por-ARISTA (fichero) lo caza sin falsos rojos por edits.
 
-LIMITE CONOCIDO Y ABIERTO: la ruta PYTHON-SINK tiene falso-WIRED (WOT-2026-025c)
--------------------------------------------------------------------------------
-NO confies en el veredicto WIRED de un guard cuya UNICA evidencia venga de un
-string dentro de un fichero .py de la frontera. Esa ruta NO esta cerrada, y esta
-seccion existe para que nadie lo descubra por las malas.
+La ruta PYTHON-SINK decide si un string que llega a `subprocess.run(...)` es un
+COMANDO o es PROSA. Ocho intentos, ocho agujeros (2026-07-15); la clase de fallo
+es que *tokenizar prosa para adivinar si es un comando no converge*. CERRADO por
+**WOT-2026-025c** con la reformulacion que este modulo ahora implementa, sin
+re-tokenizar prosa:
 
-La ruta CONFIG (pre-commit `entry:`, workflow `run:`, settings `command`) SI es
-solida: se parsea estructuralmente y solo se leen los campos que ejecutan.
+  R1. SOLO el argumento que ES el comando cuenta: posicionales + kwargs
+      `args`/`cmd`/`command`/`location`/`module`. `env=`/`input=`/`cwd=` no son
+      argv y no pueden cablear (7o agujero cara-B).
+  R2. Dentro de una LISTA argv, solo se miran elementos si argv[0] EJECUTA
+      scripts .py: launcher conocido, variable/expresion (sys.executable) o
+      path .py directo. Un argv[0] literal no-launcher (echo, git, cat) no
+      ejecuta su argumento: los argv[1:] son ARGS, no comandos (7o y 8o
+      agujeros, e `isolated_pathtoken_in_echo` que era un residual).
+  R3. NUNCA se re-tokeniza prosa: una frase con espacios no se parte como linea
+      de comando (agujeros 4-6).
 
-La ruta PYTHON-SINK intenta decidir si un string que llega a `subprocess.run(...)`
-es un COMANDO o es PROSA. Ocho intentos, ocho agujeros (2026-07-15):
+La ruta CONFIG (pre-commit `entry:`, workflow `run:`, settings `command`) sigue
+siendo solida e independiente: se parsea estructuralmente y solo se leen los
+campos que ejecutan.
 
-  4o  una FRASE en un sink que no ejecuta:  `run(["echo", "recuerda check_x.py"])`
-  5o  una frase que empieza por un lanzador: `echo "python revisa check_x.py"`
-  6o  una frase unida por coma o `;`:        `echo "revisa,check_x.py,manual"`
-  7o  una frase con una palabra que esta en la lista de subcomandos (run/script/
-      exec/tool): `echo "python run check_x.py"`; y args que NO son argv
-      (`env={...}`, `input=...`) que igualmente se inspeccionaban
-  8o  una frase en kebab/snake_case o con `:`, que no lleva separadores y pasa como
-      "un token": `echo "pendiente-cablear-scripts/check_x.py"`  <-- ESTE REPO
-      ESCRIBE ASI ("des-cableado", "auto-DoSea"): un recordatorio real lo dispara
-
-Los agujeros 4-6 estan cerrados (`_sink_arg_tokens`, `_prefix_is_command_shaped`,
-`_SEP`). El 7o y el 8o siguen ABIERTOS: dos auditorias independientes los
-encontraron el mismo dia, en paralelo, sobre el fix del anterior. El patron ya no
-es "falto un caso": es que **tokenizar prosa para adivinar si es un comando no
-converge**. Mientras el discriminante sea "esto PARECE una linea de comando",
-habra frases que lo parezcan.
-
-La reformulacion correcta (solo el argumento que ES el comando; solo elementos
-LITERALES de la lista argv; nunca re-tokenizar prosa) es un ANALIZADOR ESTATICO DE
-EJECUCION -- otro ticket, no un parche mas: **WOT-2026-025c**. Los 8 vectores estan
-en el corpus con su origen, listos para el rediseno.
-
-Que hacer mientras tanto: el veredicto de la ruta config es fiable; el de la ruta
-python-sink puede sobre-declarar (falso-WIRED). Si un guard sale WIRED y no ves su
-call-site, VERIFICALO A MANO antes de fiarte.
+Residual declarado que 025c NO cierra (NON-GOAL): un wrapper-local con sink que
+NADIE llama (R_EXEC2, `function_never_called` en el corpus) sigue WIRED por
+construccion -- el analisis de alcanzabilidad es otro problema, no un parche del
+clasificador.
 
 Lo que el AST no decide se DECLARA, no se adivina
 -------------------------------------------------
@@ -511,6 +499,38 @@ def _python_invocations(src: str) -> list[tuple[str, int]]:  # noqa: C901 - el n
             a.arg for a in getattr(fn.args, "kwonlyargs", [])
         }
 
+    # WOT-2026-025c: rediseno del clasificador python-sink. Tres reglas cerradas,
+    # la reformulacion literal de la ficha (8 agujeros previos, NO parchear mas):
+    #
+    # 1. SOLO el argumento que ES el comando cuenta. Para subprocess.*/os.*/runpy
+    #    es el 1er posicional (o `args=`/`cmd=`/`command=`); para
+    #    spec_from_file_location es `location` (2o posicional o kwarg). Los kwargs
+    #    que NO son el comando (`env=`, `input=`, `cwd=`, `shell=`, `check=`,
+    #    `capture_output=`) NUNCA se miran (7o agujero cara-B: un token en `env=`
+    #    no es argv).
+    # 2. Dentro de una LISTA argv, los elementos se miran SOLO si argv[0] EJECUTA
+    #    scripts .py: un launcher conocido (_LAUNCHERS), una variable/expresion
+    #    (sys.executable), o un path .py directo. Un argv[0] literal que NO es
+    #    launcher (echo, git, cat, ls...) no ejecuta su argumento: los argv[1:]
+    #    son ARGS, no comandos. Esto cierra el 7o agujero (frase con subcomando
+    #    tras echo) y el 8o (frase kebab tras echo) SIN re-tokenizar prosa.
+    # 3. NUNCA se re-tokeniza prosa: un elemento argv que es una frase con
+    #    espacios no se parte como linea de comando (los agujeros 4-6 ya lo
+    #    cerraban; aqui se refuerza no mirando argv[1:] de un no-launcher).
+    _command_kwargs = {"args", "cmd", "command", "location", "module"}
+
+    def _argv0_executes_scripts(arg: ast.AST) -> bool:
+        """True si argv[0] de una lista es un ejecutor de scripts .py."""
+        if isinstance(arg, ast.List | ast.Tuple) and arg.elts:
+            first = arg.elts[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                exe = re.split(r"[/\\]", first.value)[-1].lower()
+                return exe in _LAUNCHERS or first.value.lower().endswith(".py")
+            # Name/Attribute/Call (sys.executable, una variable, una expresion)
+            # -> ejecutor: el nombre del script va en argv[1:].
+            return isinstance(first, ast.Name | ast.Attribute | ast.Call)
+        return False
+
     for scope in [tree, *funcs.values()]:
         sname = getattr(scope, "name", None)
         params = params_of.get(sname, set())
@@ -521,8 +541,19 @@ def _python_invocations(src: str) -> list[tuple[str, int]]:  # noqa: C901 - el n
             injected = isinstance(n.func, ast.Name) and n.func.id in params
             if d not in sinks and not injected:
                 continue
-            args = list(n.args) + [kw.value for kw in n.keywords]
+            # WOT-2026-025c regla 1: posicionales + SOLO kwargs-comando. Un kwarg
+            # que no es el comando (env=/input=/cwd=/shell=) no puede cablear.
+            args = list(n.args) + [
+                kw.value for kw in n.keywords if kw.arg in _command_kwargs
+            ]
             for arg in args:
+                # WOT-2026-025c regla 2: una LISTA argv solo se mira si argv[0]
+                # ejecuta scripts .py; si argv[0] es un literal no-launcher (echo,
+                # git, cat...), los argv[1:] son argumentos, no comandos.
+                if isinstance(
+                    arg, ast.List | ast.Tuple
+                ) and not _argv0_executes_scripts(arg):
+                    continue
                 for s in _strings_in(arg):
                     for base in _sink_arg_tokens(s):
                         out.append((base, getattr(arg, "lineno", n.lineno)))  # noqa: PERF401

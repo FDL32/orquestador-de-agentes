@@ -545,20 +545,18 @@ cases:
 
   - case_id: isolated_pathtoken_in_echo
     surface: python_self_running
-    should_wire: true
-    should_wire_override: true
+    should_wire: false
     negative_reason: prose_in_sink_arg
     why: >
-      RESIDUAL DECLARADO (no maquillado). `subprocess.run(["echo", "scripts/check_x.py"])`
-      -- un TOKEN de path aislado (sin espacios) como argumento de echo. v4 lo marca
-      WIRED porque no puede distinguir un arg que se ejecuta de uno que solo se imprime
-      SIN una lista abierta de "comandos que no ejecutan su arg" (echo/logger/cat/git-m).
-      Esa lista NUNCA es completa -- el auditor advirtio de NO construirla. La regla
-      cerrada (token aislado -> cuenta) prefiere este falso-WIRED raro y RUIDOSO (exige
-      escribir un path de guard suelto en echo, ausente del repo real) a una lista negra
-      que se pudre. Es fail-CLOSED en el sentido que importa: no oculta el limite, lo
-      DECLARA. Un guard afectado se declararia en known_unwired si de verdad ocurriera.
-    regression_origin: "v4 (2026-07-15): limite declarado de la regla token-aislado; residual honesto de la auditoria hermana"
+      `subprocess.run(["echo", "scripts/check_x.py"])` -- un TOKEN de path aislado
+      (sin espacios) como argumento de echo. CERRADO por WOT-2026-025c: la regla
+      de lista argv exige que argv[0] EJECUTE scripts .py; 'echo' no es un
+      launcher, asi que sus argv[1:] son ARGUMENTOS, no comandos, y el token no
+      se cuenta. La lista negra de "comandos que no ejecutan su arg" que v4
+      rehuso construir ya no es necesaria: el discriminante es positivo
+      (argv[0] in _LAUNCHERS o variable/expresion o path .py directo), no
+      negativo.
+    regression_origin: "v4 (2026-07-15): limite declarado de la regla token-aislado; CERRADO por WOT-2026-025c"
     files:
       scripts/prepush_check.py: |
         import subprocess
@@ -652,15 +650,15 @@ cases:
   - case_id: prose_word_in_subcommand_list
     surface: python_self_running
     should_wire: false
-    should_wire_override: true
     negative_reason: prose_in_sink_arg
     why: >
-      7o agujero, ABIERTO. `_LAUNCHER_SUBCOMMANDS` (run/script/exec/tool) es una lista
-      ABIERTA disfrazada de cerrada: son palabras corrientes. Una frase que use
-      cualquiera de ellas pasa `_prefix_is_command_shaped`. Es el error exacto contra el
-      que la 1a auditoria hermana advirtio ("no parchees con una lista negra"), cometido
-      una capa mas abajo. NO se parchea: el rediseno (025c) elimina la clase.
-    regression_origin: "v4 (2026-07-15): 7o agujero, autoverificacion del fix del 5o; ABIERTO -> WOT-2026-025c"
+      7o agujero, CERRADO por WOT-2026-025c. `_LAUNCHER_SUBCOMMANDS`
+      (run/script/exec/tool) era una lista ABIERTA disfrazada de cerrada: una frase que
+      use cualquiera de ellas pasaba `_prefix_is_command_shaped`. El rediseno no toca
+      ese prefijo: la regla de lista argv exige que argv[0] ejecute scripts .py; 'echo'
+      no es launcher, asi que la frase en argv[1] NO se mira (nunca se re-tokeniza
+      prosa).
+    regression_origin: "v4 (2026-07-15): 7o agujero; CERRADO por WOT-2026-025c"
     files:
       scripts/prepush_check.py: |
         import subprocess
@@ -670,16 +668,14 @@ cases:
   - case_id: prose_kebab_case_no_separators
     surface: python_self_running
     should_wire: false
-    should_wire_override: true
     negative_reason: prose_in_sink_arg
     why: >
-      8o agujero, ABIERTO. Una frase en kebab-case/snake_case (o con `:`) no lleva
-      separadores de `_SEP`, asi que pasa el gate como si fuera UN token de path. El
-      regex de "token limpio" acepta guion, guion-bajo y dos-puntos -- que es justo lo
-      que usa una frase sin espacios. CRITICO EN ESTE REPO: su prosa usa kebab-case
-      constantemente ("des-cableado", "auto-DoSea"), asi que un recordatorio real lo
-      dispara. Encontrado por una auditoria hermana FOCAL, en paralelo al 7o.
-    regression_origin: "v4 (2026-07-15): 8o agujero, hermana focal; ABIERTO -> WOT-2026-025c"
+      8o agujero, CERRADO por WOT-2026-025c. Una frase en kebab-case/snake_case
+      (o con `:`) no lleva separadores de `_SEP`, asi que pasaba el gate como si
+      fuera UN token de path. El rediseno no toca `_path_tokens_in`: la regla de
+      lista argv exige que argv[0] ejecute scripts .py; 'echo' no es launcher,
+      asi que argv[1:] no se mira.
+    regression_origin: "v4 (2026-07-15): 8o agujero, hermana focal; CERRADO por WOT-2026-025c"
     files:
       scripts/prepush_check.py: |
         import subprocess
@@ -689,13 +685,13 @@ cases:
   - case_id: token_in_non_argv_kwarg
     surface: python_self_running
     should_wire: false
-    should_wire_override: true
     negative_reason: prose_in_sink_arg
     why: >
-      7o agujero (2a cara), ABIERTO. Se inspeccionan TODOS los args de un sink, incluidos
-      los que no son argv (`env=`, `input=`, `cwd=`). Solo el argumento que ES el comando
-      puede cablear. Parte del rediseno 025c.
-    regression_origin: "v4 (2026-07-15): 7o agujero cara-B; ABIERTO -> WOT-2026-025c"
+      7o agujero (2a cara), CERRADO por WOT-2026-025c. Se inspeccionaban TODOS
+      los args de un sink, incluidos los que no son argv (`env=`, `input=`, `cwd=`).
+      El rediseno filtra los kwargs: solo `args`/`cmd`/`command`/`location`/`module`
+      cuentan como comando; un token en `env=` no es argv y no puede cablear.
+    regression_origin: "v4 (2026-07-15): 7o agujero cara-B; CERRADO por WOT-2026-025c"
     files:
       scripts/prepush_check.py: |
         import subprocess
