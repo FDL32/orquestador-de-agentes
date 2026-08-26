@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -105,25 +106,52 @@ def _normalize(text: str) -> str:
     return stripped.casefold()
 
 
-def reject_reason(extract: str) -> str | None:
+def _looks_like_path(value: str) -> bool:
+    """True si `value` tiene forma de PATH de fichero (UN token), no de frase.
+
+    WOT-2026-039h item 4: el gate de ENTRADA aplica la allowlist de patrones
+    prohibidos por SUBSTRING. Aplicarla a un `--target-file` cuyo basename
+    contiene una palabra prohibida (`scripts/contar_lineas.py` -> 'contar')
+    rechaza un path legitimo. Pero el discriminator debe ser ESTRICTO para no
+    reabrir la evasion textual: una FRASE con espacios que CONTIENE una ruta
+    (`"cuantas funciones hay en scripts/foo.py"`) tambien lleva `/`, asi que
+    exigir solo separador/ext areina reabre el hueco que cierra (hallazgo
+    confirmado por probe en el MANAGER_REVIEW de 039h). Solucion: un path es UN
+    UNICO token SIN espacios; una frase lleva espacios y queda bajo la
+    allowlist completa.
+    """
+    v = value.strip()
+    if not v:
+        return False
+    if any(ch.isspace() for ch in v):
+        return False  # una frase con espacios no es un path
+    return "/" in v or "\\" in v or bool(re.search(r"\.\w{1,6}$", v))
+
+
+def reject_reason(extract: str, *, skip_allowlist: bool = False) -> str | None:
     """Razon de rechazo del GATE DE ENTRADA, o None si el texto es admisible.
 
     Before: `extract` es el texto que el consumidor quiere preguntar.
-    During: (i) busca cada patron prohibido como substring del texto
-        normalizado; (ii) si ninguno dispara, pasa el MISMO texto por
-        check_prompt_bias (es lo que caza 'confirma que ...', ausente de la
-        allowlist por diseno).
+        `skip_allowlist` (WOT-2026-039h item 4) salta la allowlist de patrones
+        prohibidos y conserva SOLO check_prompt_bias: es el modo PATH de
+        `--target-file`, donde el basename puede contener una palabra prohibida
+        (`contar_lineas.py` -> 'contar') sin ser una pregunta de extraccion.
+    During: (i) a menos que `skip_allowlist`, busca cada patron prohibido como
+        substring del texto normalizado; (ii) si ninguno dispara, pasa el MISMO
+        texto por check_prompt_bias (es lo que caza 'confirma que ...', ausente
+        de la allowlist por diseno).
     After: retorna un string citable con el patron que disparo, o None. No
         lanza excepciones para entrada str; TypeError si no es str (via
         check_prompt_bias, fail-closed sobre tipo incorrecto).
     """
-    normalized = _normalize(extract)
-    for pattern in FORBIDDEN_PATTERNS:
-        if pattern in normalized:
-            familia = (
-                "agregativo" if pattern in AGGREGATIVE_PATTERNS else "adjudicativo"
-            )
-            return f"patron-prohibido:{pattern!r} ({familia})"
+    if not skip_allowlist:
+        normalized = _normalize(extract)
+        for pattern in FORBIDDEN_PATTERNS:
+            if pattern in normalized:
+                familia = (
+                    "agregativo" if pattern in AGGREGATIVE_PATTERNS else "adjudicativo"
+                )
+                return f"patron-prohibido:{pattern!r} ({familia})"
 
     bias = _load_bias_checker().check_prompt_bias(extract)
     if bias["sesgado"]:
@@ -189,12 +217,18 @@ def main(argv: list[str] | None = None) -> int:
     # que check_prompt_bias no conoce y por tanto el gate de salida tampoco
     # cazaba. No son sinonimos ni parafrasis (eso SI es NON-GOAL): es la
     # misma vara mecanica sin aplicar a los otros dos campos.
+    #
+    # WOT-2026-039h item 4: `--target-file` con FORMA DE PATH no se ofusca con
+    # la allowlist por substring -- un path es una RUTA, no una pregunta de
+    # extraccion. 'reject_reason' conserva check_prompt_bias en modo path,
+    # asi que la evasion textual (frase con espacios) sigue cerrada.
     for field, value in (
         ("--extract", args.extract),
         ("--anchor", args.anchor),
         ("--target-file", args.target_file),
     ):
-        reason = reject_reason(value)
+        skip_allowlist = field == "--target-file" and _looks_like_path(value)
+        reason = reject_reason(value, skip_allowlist=skip_allowlist)
         if reason is not None:
             print(
                 f"[extraction-prompt] RECHAZADO antes de generar "
@@ -206,10 +240,23 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-    if not args.extract.strip():
+    # WOT-2026-039h item 5: asimetria con --extract (que si valida vacio).
+    # Un ancla vacia o un path vacio generan prompts degenerados
+    # ('Ancla: ' / 'Fichero: ' sin objeto): mismo gate que --extract.
+    empty_fields = [
+        field
+        for field, value in (
+            ("--extract", args.extract),
+            ("--anchor", args.anchor),
+            ("--target-file", args.target_file),
+        )
+        if not value.strip()
+    ]
+    if empty_fields:
         print(
-            "[extraction-prompt] RECHAZADO antes de generar (--extract): "
-            "vacio. Un prompt sin objeto ('Extrae, literalmente, .') no es "
+            f"[extraction-prompt] RECHAZADO antes de generar "
+            f"({', '.join(empty_fields)}): vacio. Un prompt sin objeto "
+            "('Extrae, literalmente, .' / 'Ancla: ' / 'Fichero: ') no es "
             "una pregunta de extraccion.",
             file=sys.stderr,
         )

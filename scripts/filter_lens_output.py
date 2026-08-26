@@ -104,14 +104,19 @@ _NEGATOR_FALSE_FRIENDS = ("sin embargo",)
 # DE DONDE SALE EL 12 (barrido MEDIDO en el cierre 2026-07-22, sobre la suite
 # real de este fichero -- no sobre fixtures ad-hoc):
 #   W=4 -> 4 failed | W=6 -> 2 | W=8 -> 2 | W=10 -> 1 | W>=12 -> 26 passed
-# 12 es el BORDE INFERIOR de una meseta ABIERTA: cualquier valor >=12 es
-# indistinguible por los fixtures actuales. No es magia (hay un minimo real),
-# pero tampoco un optimo: la COTA SUPERIOR no esta pinneada, asi que subirlo a
-# 30 ampliaria la supresion sin que ningun test caiga. Fichado en F5 del cierre.
+# 12 es el BORDE INFERIOR de una meseta. La COTA SUPERIOR quedo pineada por la
+# propia suite de WOT-2026-039e (test_039c_h8_inverse_false_positive_is_pinned):
+# subir la ventana a >=14 convierte 'No parece haber bug' (dist 14) de
+# 'objection' en 'neutral' y el test cae; subirla a >=20 hace lo mismo con
+# 'No creo que exista un bug' (dist 20). NO es una meseta abierta (WOT-2026-039h
+# item 3: la ficha la declaro ABIERTA con un dato que quedo obsoleto al aterrizar
+# 039e). No es magia (hay un minimo real), pero tampoco un optimo: la cota
+# efectiva es W<14, impuesta por el coste asimetrico ya aceptado en 039e (este
+# lado gasta trabajo del brazo caro, el defecto original perdia aportacion).
 #
 # FALSO POSITIVO INVERSO (medido, direccion que el residuo NO declaraba):
 # "No parece haber bug" y "No creo que exista un bug" -> 'objection', porque la
-# distancia negador-marcador (14 y 17) excede la ventana. Son NEGACIONES. Con la
+# distancia negador-marcador (14 y 20) excede la ventana. Son NEGACIONES. Con la
 # version anterior (resto-de-oracion) salian 'neutral'. La ventana no solo
 # reduce el falso positivo original: MUEVE otro de sitio. Coste asimetrico y por
 # eso se acepta: este lado gasta trabajo del brazo caro, el original PERDIA

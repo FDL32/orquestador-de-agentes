@@ -310,3 +310,92 @@ def test_motor_root_mismatch_fails_closed(fake_workspace: Path, tmp_path: Path):
     assert proc.returncode != 0
     combined = proc.stdout + proc.stderr
     assert "motor" in combined.lower()
+
+
+# --------------------------------------------------------------------------
+# WOT-2026-039h items 1-2: huecos de alcance del guard de ticket divergente.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "wp_text",
+    [
+        "- **ID:** WOT-2026-039h\n",  # formato canonico del schema V2
+        "- **ID** : WOT-2026-039h\n",  # espacio antes del ':'
+        "- ID: WOT-2026-039h\n",  # sin negrita
+        "**ID:** WOT-2026-039h\n",  # sin bullet
+    ],
+)
+def test_039h_item1_workplan_id_variants_are_extracted(wp_text: str):
+    """Item 1: los formatos canonicos (con sus variantes razonables del schema
+    V2) SE extraen. Antes, `- **ID** : X` y `- ID: X` devolvian None y el guard
+    de divergencia no mordia: un packet podia exportarse con un work_plan de
+    identidad ilegible. La ficha manda pinner el comportamiento DECIDIDO: las
+    variantes del campo ID se reconocen; lo que no es el campo (ID en mitad de
+    una linea) se deja a None (NON-GOAL: no parser markdown completo) y el
+    caller fail-closed aborta."""
+    assert erp.workplan_ticket_id(wp_text) == "WOT-2026-039h"
+
+
+@pytest.mark.parametrize(
+    "wp_text",
+    [
+        "- **ID:** `WOT-2026-039h`\n",
+        "- **ID** : `WOT-2026-039h`\n",
+    ],
+)
+def test_039h_item2_backticks_do_not_cause_spurious_mismatch(wp_text: str):
+    """Item 2: backticks alrededor del ID NO producen mismatch espurio.
+
+    Antes, `` `WOT-2026-039h` `` (con backticks) se comparaba contra
+    `WOT-2026-039h` y daba falso positivo: el guard bloqueaba el ticket
+    CORRECTO. El token se limpia de backticks tras la captura."""
+    assert erp.workplan_ticket_id(wp_text) == "WOT-2026-039h"
+
+
+def test_039h_item1_id_embedded_in_a_line_is_not_a_recognized_format():
+    """Item 1 (NON-GOAL): un ID embebido en mitad de una linea NO se reconoce.
+
+    El guard no debe convertirse en parser markdown completo (NON-GOAL de la
+    ficha). Este caso devuelve None a proposito; el fail-closed del caller
+    (test hermano de abajo) lo convierte en aborto, NUNCA en export a ciegas."""
+    assert erp.workplan_ticket_id("- Blabla **ID:** WOT-2026-039h\n") is None
+
+
+def test_039h_item1_unreadable_id_fails_closed(fake_workspace: Path):
+    """Item 1: un work_plan SIN ID legible aborta el export (fail-closed).
+
+    Antes, `declared is None` dejaba pasar y el packet se exportaba con el
+    CONTENIDO del plan sin poder verificar su identidad -- el mismo hueco que
+    el guard existen para cerrar (MAJOR-1: packet con el plan de otro ticket).
+    Mutation (rutina de abajo): revertir el `if declared is None` a
+    `declared is not None and ...` restaura el hueco y este test cae."""
+    wp = fake_workspace / ".agent" / "collaboration" / "work_plan.md"
+    wp.write_text(
+        wp.read_text(encoding="utf-8").replace(
+            "**ID:** WOT-2026-027p", "- Blabla **ID:** WOT-2026-027p"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(erp.TicketMismatchError) as excinfo:
+        erp.export_packet("WOT-2026-027p", _MOTOR_ROOT, fake_workspace)
+    assert "no declara un ID legible" in str(excinfo.value)
+
+
+def test_039h_item1_mutation_id_embedded_fails_closed_via_cli(
+    fake_workspace: Path,
+):
+    """Mutation item 1 por la ruta CLI: ID ilegible -> exit !=0.
+
+    La variante CLI del fail-closed: `--ticket` + work_plan sin ID reconocible
+    -> TicketMismatchError capturado como `ticket divergente` exit 2."""
+    wp = fake_workspace / ".agent" / "collaboration" / "work_plan.md"
+    wp.write_text(
+        wp.read_text(encoding="utf-8").replace(
+            "**ID:** WOT-2026-027p", "- Blabla **ID:** WOT-2026-027p"
+        ),
+        encoding="utf-8",
+    )
+    proc = _run_cli(fake_workspace)
+    assert proc.returncode != 0
+    assert "ID legible" in (proc.stdout + proc.stderr)

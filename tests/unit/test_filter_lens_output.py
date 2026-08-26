@@ -306,6 +306,24 @@ def test_039c_h8_sin_embargo_is_still_an_objection(cite_repo: Path):
     )
 
 
+def test_039h_item3_upper_bound_of_negation_window_is_pinned():
+    """Item 3: la COTA SUPERIOR de `_NEGATION_WINDOW` es un INVARIANTE.
+
+    La ficha 039h declaro la meseta "sin cota superior" con un dato que quedo
+    OBSOLETO: el test de 039e (`test_039c_h8_inverse_false_positive_is_pinned`)
+    ya pinea la cota en W<14 -- subir la ventana a 14 convierte la negacion
+    'No parece haber bug' (distancia 14) de 'objection' en 'neutral' y ese test
+    cae. Este test DECLARA la cota como invariante con nombre, no como
+    subproducto: si alguien sube la ventana, cae AQUI primero, con un mensaje
+    que explica la cota real. Mutation: `_NEGATION_WINDOW = 14` -> rojo."""
+    assert flo._NEGATION_WINDOW < 14, (
+        "_NEGATION_WINDOW debe quedar < 14: a 14, 'No parece haber bug' "
+        "(distancia negador-marcador 14) cambiaria de objection a neutral y el "
+        "test de 039e caeria. La cota esta pineada por 039e (WOT-2026-039h "
+        "item 3); subirla solo amplia la supresion sin cerrar ese residuo."
+    )
+
+
 def test_039c_h9_fabricated_execution_receipt_is_not_a_cite(cite_repo: Path):
     """H9: un receipt de EJECUCION emitido por una lente SIN filesystem no
     puede verificarse. En modo cite_only se IGNORA como prosa: la salida se

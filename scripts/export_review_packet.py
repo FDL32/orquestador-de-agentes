@@ -214,11 +214,31 @@ def workplan_ticket_id(work_plan_text: str) -> str | None:
     """ID declarado en el work_plan (`- **ID:** WOT-...`), o None.
 
     Before: `work_plan_text` es el contenido del work_plan canonico.
-    During: busca el campo ID en el formato canonico del schema V2.
-    After: retorna el ID o None si el work_plan no lo declara.
+    During: busca el campo ID en el formato canonico del schema V2 y en sus
+        variantes razonables (espacio opcional antes de `:`, negrita opcional,
+        backticks alrededor del valor). WOT-2026-039h item 1: antes, un ID
+        escrito `` `- **ID** : WOT-...` `` o `- ID: WOT-...` devolvia None y el
+        guard de divergencia del caller no mordia. Item 2: el token capturado
+        conservaba los backticks (`` `WOT-...` ``), que comparado con el ticket
+        sin backticks daba un mismatch ESPURIO (falso positivo).
+        NON-GOAL (la ficha): NO es un parser de markdown completo -- un ID
+        embebido en mitad de una linea sigue sin reconocerse y devuelve None.
+    After: retorna el ID (sin backticks) o None si el work_plan no lo declara
+        en un formato reconocible.
     """
-    match = re.search(r"^\s*-?\s*\*\*ID:\*\*\s*(\S+)", work_plan_text, re.MULTILINE)
-    return match.group(1).strip() if match else None
+    match = re.search(
+        r"^\s*-?\s*(?:\*\*)?ID(?:\*\*)?\s*:\s*(.+)$",
+        work_plan_text,
+        re.MULTILINE,
+    )
+    if not match:
+        return None
+    token = match.group(1).strip()
+    while token and token[0] in "`*":
+        token = token[1:].strip() or token[1:]
+    while token and token[-1] in "`*":
+        token = token[:-1].rstrip()
+    return token.strip() or None
 
 
 def export_packet(
@@ -244,7 +264,22 @@ def export_packet(
     work_plan_sha = hashlib.sha256(work_plan.read_bytes()).hexdigest()
     wp_text = work_plan.read_text(encoding="utf-8")
     declared = workplan_ticket_id(wp_text)
-    if declared is not None and declared != ticket_id:
+    if declared is None:
+        # WOT-2026-039h item 1 (fail-closed): un ID ilegible es indistinguible de
+        # un work_plan que no declara su identidad. El guard de divergencia
+        # (`declared is not None and declared != ticket_id`) no mordia con None
+        # y el export procedia a ciegas con el CONTENIDO DEL plan -- el mismo
+        # huaco que el guard existe para cerrar (MAJOR-1 del MANAGER_REVIEW
+        # 2026-07-22: packet con el plan de OTRO ticket). Si no se puede
+        # verificar la identidad, no se exporta.
+        raise TicketMismatchError(
+            f"el work_plan vivo no declara un ID legible (se esperaba "
+            f"{ticket_id}). El bridge lee work_plan/STATE/TURN verbatim: sin ID "
+            "no se puede verificar que el packet describa el ticket pedido. "
+            "Corrige el campo ID del work_plan o usa --force solo si sabes que "
+            "el plan es el correcto."
+        )
+    if declared != ticket_id:
         raise TicketMismatchError(
             f"el work_plan vivo describe {declared}, no {ticket_id}. El bridge "
             "lee work_plan/STATE/TURN verbatim: el packet saldria con el "
