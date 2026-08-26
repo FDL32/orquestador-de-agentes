@@ -48,6 +48,16 @@ from collections import Counter
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# WOT-2026-040f: el patron de ticket CANONICO vive en `bus/ticket_id.py`; este
+# script lo importa en vez de mantener un patron privado que puede divergir
+# silenciosamente del asignador de ids (incidente WOT-2026-027t, donde el
+# asignador y el archive divergieron). El patron canonico acepta prefijos de
+# 2-3 letras (`WP-`, `WT-`, `WOT-`) lo cual cubre el registro por-destino.
+from bus.ticket_id import TICKET_ID_RE
+
+
 # Borde INFERIOR de la meseta medida contra el corpus REAL (132 entradas del archive
 # del motor + los 4 casos reales de duplicado del 2026-07-22), NO contra fixtures
 # escritos para el barrido -- barrer contra fixtures propios mide los fixtures.
@@ -62,11 +72,9 @@ DEFAULT_TOP = 5
 _MIN_TOKEN_LEN = 4
 _TOKEN_RE = re.compile(rf"[a-z0-9_]{{{_MIN_TOKEN_LEN},}}")
 
-# Identificador de ticket: prefijo canonico `WOT-` y los legacy/por-destino en uso
-# (`WP-`, `WT-`, `CTL-`, `EXF-`, ...). Cualquier prefijo de 2-4 mayusculas vale: el
-# registro de prefijos vive en los links por-destino, no aqui, y este lector solo
-# necesita reconocer la FORMA para no etiquetar una fila con su prosa.
-_TICKET_RE = re.compile(r"[A-Z]{2,4}-\d{4}-\d{3}[a-z]?(?:-[A-Za-z0-9]+)?")
+# Identificador de ticket: patron CANONICO importado de `bus/ticket_id.py`
+# (WT-2026-245c / WOT-2026-040f). Este lector solo necesita reconocer la FORMA
+# para no etiquetar una fila con su prosa; la fuente unica vive en el bus.
 
 
 def tokenize(text: str | None) -> set[str]:
@@ -209,9 +217,9 @@ def _row_label(cells: list[str], ticket_col: int) -> str:
     ese caso el id queda EMBEBIDO en la prosa ("con pipe WOT-2026-003c"), no solo.
     """
     label = cells[ticket_col]
-    if _TICKET_RE.fullmatch(label or ""):
+    if TICKET_ID_RE.fullmatch(label or ""):
         return label
-    found = next((m for c in cells if (m := _TICKET_RE.search(c))), None)
+    found = next((m for c in cells if (m := TICKET_ID_RE.search(c))), None)
     return found.group(0) if found else ""
 
 

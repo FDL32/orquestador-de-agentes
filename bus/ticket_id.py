@@ -12,6 +12,7 @@ their own local copy via ``$script:TicketIdPattern``.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 
 # ── Canonical ticket ID pattern ──────────────────────────────────────────────
@@ -98,3 +99,73 @@ def extract_all_ticket_ids(text: str) -> list[str]:
     After: Returns a list of matched ticket IDs (may be empty).
     """
     return LOOSE_PATTERN.findall(text)
+
+
+# ── Next-free-ID allocation helpers (WOT-2026-040f) ──────────────────────────
+# Pattern for the canonical assignment form <PREFIX>-<YEAR>-NNNx used by
+# `orchestrator_pipeline.md:0.d`: three-digit number + OPTIONAL single trailing
+# letter. Pure-numeric suffixes (WT-2026-251a legacy) also match, feeding int()
+# safely on the number group. The letter group is optional so `-040` and `-040f`
+# both parse: max is (number, letter-ord).
+_CANONICAL_ID_RE = re.compile(r"([A-Z]{2,4})-(\d{4})-(\d{3,})([a-z]?)")
+
+
+def collect_surface_ticket_ids(collab_dir: Path) -> set[str]:
+    """Return the ticket IDs present in BOTH live-backlog and archive surfaces.
+
+    Before: ``collab_dir`` resolves to a ``.agent/collaboration`` directory
+        containing ``backlog.md`` (live queue) and ``_archive/backlog_done.md``
+        (terminal archive). Missing files are tolerated (empty contribution).
+    During: reads both files, extracts every canonical ticket ID from each via
+        ``extract_all_ticket_ids``, unions the two sets. No mutation.
+    After: returns the set of IDs found across BOTH surfaces. This is the
+        single shared implementation of "which IDs exist" used by the
+        assignment helper and by the memory-dedupe sweep
+        (``scripts/find_similar_signals.py``).
+    """
+    found: set[str] = set()
+    for rel in ("backlog.md", "_archive/backlog_done.md"):
+        path = collab_dir / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        found.update(extract_all_ticket_ids(text))
+    return found
+
+
+def next_free_ticket_id(prefix: str, year: int, collab_dir: Path) -> str:
+    """Return the next free ticket ID for a prefix/year scanning both surfaces.
+
+    Before: ``collab_dir`` is a live ``.agent/collaboration`` directory with
+        ``backlog.md`` and ``_archive/backlog_done.md``; ``prefix`` is the
+        canon ticket prefix (e.g. ``WOT``); ``year`` the operative year.
+    During: collects the canonical IDs of BOTH surfaces
+        (``collect_surface_ticket_ids``), parses each matching
+        ``<PREFIX>-<YEAR>-NNNx`` into ``(number, letter)``, and takes the
+        global maximum. Allocation policy (WOT-2026-040f, declared): NO
+        gap-filling -- always the successor of the global max (number, letter)
+        across live + archive. Successor rules: same number with next letter
+        (``400x`` -> ``400y``); ``z`` or pure-numeric suffix advances the
+        number with letter ``a`` (``400z`` -> ``401a``). No prior IDs of the
+        prefix/year -> ``<PREFIX>-<YEAR>-001a``.
+    After: returns the successor as ``<PREFIX>-<YEAR>-NNNx`` (3-digit number).
+        Never returns an ID present in either surface by construction.
+    """
+    existing = collect_surface_ticket_ids(collab_dir)
+    max_key: tuple[int, int] | None = None
+    for tid in existing:
+        m = _CANONICAL_ID_RE.fullmatch(tid)
+        if not m:
+            continue
+        pfx, yr, num, letter = m.groups()
+        if pfx != prefix or int(yr) != year:
+            continue
+        key = (int(num), ord(letter) if letter else 0)
+        if max_key is None or key > max_key:
+            max_key = key
+    if max_key is None:
+        return f"{prefix}-{year:04d}-001a"
+    num, letter_ord = max_key
+    if letter_ord == 0 or letter_ord == ord("z"):
+        return f"{prefix}-{year:04d}-{num + 1:03d}a"
+    return f"{prefix}-{year:04d}-{num:03d}{chr(letter_ord + 1)}"
