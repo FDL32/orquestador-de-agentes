@@ -74,6 +74,7 @@
       "args": [
         "run"
       ],
+      "prompt_via_stdin": true,
       "model_flag": [
         "--model",
         "{model}"
