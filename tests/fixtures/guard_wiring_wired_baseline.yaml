@@ -30,6 +30,10 @@ wired_baseline:
     - scripts/prepush_check.py
   check_claude_settings_portability:
     - .pre-commit-config.yaml
+  check_commit_message_encoding:
+    - .pre-commit-config.yaml
+  check_model_id_crystallization:
+    - .pre-commit-config.yaml
   check_commit_worktree:
     - .pre-commit-config.yaml
   check_deliverables_exist:

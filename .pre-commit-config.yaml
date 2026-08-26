@@ -193,6 +193,19 @@ repos:
         language: system
         stages: [commit-msg]
 
+      # WOT-2026-022a: el historial cristalizo ~880 trailers `Co-Authored-By:
+      # <modelo literal>` sin fuente verificable. Este guard BLOQUEA SOLO la
+      # cristalizacion MANUAL de identidad de MODELO concreto (marca base +
+      # discriminante + auto-firma noreply@). No valida contra fuente runtime
+      # (no existe -- premise-check): degrada a warning/diagnostico y su unico
+      # veredicto bloqueante es el literal introducido a mano. Permite
+      # co-autoria humana y firma de proveedor sin version.
+      - id: check-model-id-crystallization
+        name: check commit msg no cristaliza identidad de modelo
+        entry: uv run python scripts/check_model_id_crystallization.py
+        language: system
+        stages: [commit-msg]
+
       # WOT-2026-003c: tracked .claude/settings.json must stay portable (no
       # personal permissions.allow) and any write-gating hook must FAIL CLOSED
       # (never exit 0 when its guard cannot be resolved). Prevents the A2d-class

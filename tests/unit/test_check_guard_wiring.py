@@ -88,6 +88,12 @@ EXPECTED_WIRED_REAL = {
     # "check commit message encoding ... Failed" y HEAD NO avanza; mensaje limpio
     # -> Passed y el commit aterriza (3dad216 es ese control negativo).
     "check_commit_message_encoding",
+    # WOT-2026-022a: cableado en pre-commit con stages: [commit-msg], misma
+    # arista que check_commit_message_encoding. NO es falso-WIRED: verificado
+    # por mutation con par de exit-codes literal -- mensaje con
+    # `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` -> exit 1;
+    # sin trailer o con identidad humana/generica -> exit 0.
+    "check_model_id_crystallization",
     "check_commit_worktree",
     "check_closeout_reconciliation",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
