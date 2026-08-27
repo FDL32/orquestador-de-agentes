@@ -91,6 +91,121 @@ STATUS_TERMINAL = _terminal_status_tokens()
 STATUS_VALID = STATUS_LIVE | STATUS_TERMINAL
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-055e: LA MEMORIA COMO ENTRADA, NO COMO ADORNO.
+# Un contrato se CONGELA (`status: frozen`) sin haber consultado el archive de
+# lecciones, asi que el mismo defecto se re-descubre y se vuelve a pagar. El
+# corpus portable EXISTE (215 entradas, MEDIDO 2026-08-27, en
+# .agent/runtime/memory/archive/observations.YYYY-MM.jsonl) y nada obligaba a
+# mirarlo antes de congelar. ROJO MEDIDO: un contrato frozen SIN matriz de
+# consulta valida rc=0.
+#
+# Se exige, SOLO para frozen, una matriz `DoD-item | consulta | hits |
+# conclusion` y el hash corto (>=7) del archive consultado. La verificacion es
+# de FORMA: que el hash declarado sea coherente, no que sus bytes se relean aqui
+# (M1 del diseno) -- este validador no abre el archive.
+#
+# CORRECCION MEDIDA a la ruta del diseno: el archive NO vive en `archive/` sino
+# en `.agent/runtime/memory/archive/`. La ruta del enunciado no existe en disco.
+# ---------------------------------------------------------------------------
+
+# Fila de la matriz: cuatro columnas separadas por `|`, todas con contenido real
+# (una fila de guiones es el separador markdown, no una consulta).
+_MEMORY_MATRIX_ROW_RE = re.compile(
+    r"^\s*\|(?P<dod>[^|\n]+)\|(?P<consulta>[^|\n]+)\|(?P<hits>[^|\n]+)\|"
+    r"(?P<concl>[^|\n]+)\|\s*$",
+    re.MULTILINE,
+)
+
+# Separador de tabla markdown (|---|---|): no es fila de datos.
+_MATRIX_SEPARATOR_RE = re.compile(r"^[\s:-]+$")
+
+# Hash corto del archive consultado. La convencion del repo es >=7 hex; uno mas
+# corto NO identifica un commit y se rechaza NOMBRANDO su longitud. Se capturan
+# tambien los de 4-6 chars para poder DIAGNOSTICAR el truncado en vez de decir
+# "falta el hash" cuando lo que pasa es que esta mutilado.
+#
+# FALSO POSITIVO MEDIDO 2026-08-27: el nombre del propio archive contiene un ano
+# que es hex VALIDO -- `observations.2026-08` ofrece `2026` (4 chars) ANTES que
+# el sha real, y quedarse con la PRIMERA coincidencia rechazaba un contrato
+# correcto por "hash truncado ('2026')". Se recogen TODOS los candidatos de la
+# linea y basta con que UNO sea un hash legitimo; solo si ninguno lo es se
+# reporta el mas largo como truncado. La fecha `YYYY-MM` se descarta ademas por
+# forma, para no contar un ano como intento de sha.
+_ARCHIVE_LINE_RE = re.compile(r"^.*archive.*$", re.IGNORECASE | re.MULTILINE)
+_HEX_TOKEN_RE = re.compile(r"(?<![0-9a-zA-Z])([0-9a-f]{4,40})(?![0-9a-zA-Z])")
+# `2026-08` / `2026-08-27`: fragmento de fecha, nunca un sha declarado.
+_DATE_FRAGMENT_RE = re.compile(r"\d{4}-\d{2}(?:-\d{2})?")
+
+
+def _archive_hash_candidates(block: str) -> list[str]:
+    """Hex tokens on any line mentioning the archive, minus date fragments."""
+    out: list[str] = []
+    for line in _ARCHIVE_LINE_RE.findall(block):
+        masked = _DATE_FRAGMENT_RE.sub(lambda m: " " * len(m.group(0)), line)
+        out.extend(_HEX_TOKEN_RE.findall(masked))
+    return out
+
+
+_MEMORY_MATRIX_HEADER_TOKENS = ("dod-item", "consulta", "hits", "conclusion")
+
+
+def _matrix_rows(block: str) -> list[tuple[str, str, str, str]]:
+    """Data rows of the memory-consultation matrix (header/separator excluded)."""
+    rows: list[tuple[str, str, str, str]] = []
+    for m in _MEMORY_MATRIX_ROW_RE.finditer(block):
+        cells = [
+            m.group("dod").strip(),
+            m.group("consulta").strip(),
+            m.group("hits").strip(),
+            m.group("concl").strip(),
+        ]
+        if not all(cells):
+            continue
+        if any(_MATRIX_SEPARATOR_RE.fullmatch(c) for c in cells):
+            continue
+        joined = " ".join(c.lower() for c in cells)
+        if all(tok in joined for tok in _MEMORY_MATRIX_HEADER_TOKENS):
+            continue
+        rows.append((cells[0], cells[1], cells[2], cells[3]))
+    return rows
+
+
+def _chk_frozen_memory_consultation(
+    block: str, tid: str, fp: str, res: VResult
+) -> None:
+    """WOT-2026-055e: a frozen contract must SHOW it consulted the archive."""
+    rows = _matrix_rows(block)
+    if not rows:
+        res.add(
+            fp,
+            "memory_matrix",
+            f"Ticket frozen {tid}: falta la matriz de consulta al archive "
+            "(`DoD-item | consulta | hits | conclusion`) -- congelar sin "
+            "consultar la memoria re-descubre lo ya escrito",
+        )
+        return
+
+    candidates = _archive_hash_candidates(block)
+    if not candidates:
+        res.add(
+            fp,
+            "memory_archive_hash",
+            f"Ticket frozen {tid}: la matriz no declara el hash corto del "
+            "archive consultado (observations.YYYY-MM.jsonl)",
+        )
+        return
+    if any(len(c) >= 7 for c in candidates):
+        return
+    worst = max(candidates, key=len)
+    res.add(
+        fp,
+        "memory_archive_hash",
+        f"Ticket frozen {tid}: hash del archive truncado "
+        f"('{worst}', {len(worst)} chars): se exigen >=7",
+    )
+
+
 def _chk_ticket(block: str, tid: str, fp: str, res: VResult) -> None:
     bl = block.lower()
     sm = re.search(r"\*\*status:?\*\*:?\s*([A-Za-z_-]+)", block, re.IGNORECASE)
@@ -124,6 +239,10 @@ def _chk_ticket(block: str, tid: str, fp: str, res: VResult) -> None:
     for fld in TICKET_REQUIRED:
         if fld.lower() not in bl:
             res.add(fp, fld, f"Campo obligatorio ausente en ticket {tid}")
+
+    # WOT-2026-055e: congelar exige, ADEMAS, haber consultado la memoria.
+    if st == "frozen":
+        _chk_frozen_memory_consultation(block, tid, fp, res)
 
 
 def validate_ticket_contracts(fp: str, res: VResult) -> None:

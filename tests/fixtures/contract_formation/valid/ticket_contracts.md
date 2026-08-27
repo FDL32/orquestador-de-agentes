@@ -10,6 +10,13 @@
 - **ticket:** T-HEALTH-001
 - **status:** frozen
 - **Objective-Link:** OBJ-001 (Endpoint de salud operativo)
+- **Memoria consultada (WOT-2026-055e):** el archive se consulta ANTES de
+  congelar; la matriz declara que se miro y con que resultado.
+
+| DoD-item | consulta | hits | conclusion |
+|---|---|---|---|
+| endpoint de salud | archive observations 2026-08 eca1e16 | 0 | sin vecinos: patron nuevo |
+| tests verdes | archive observations 2026-07 eca1e16 | 2 | reusar barrera de suite |
 - **Plan-Link:** PLAN-001
 - **Premise:** el repositorio tiene pyproject.toml o se crea;
   FastAPI y uvicorn son instalables sin conflicto;

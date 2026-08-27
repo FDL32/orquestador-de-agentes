@@ -689,6 +689,11 @@ _COMPLETE_TICKET_LINES = [
     "- **STOP conditions:** stop and escalate if blocked",
     "- **CONTRACT_GAP behavior:** emit CG file and block",
     "- **Builder clarification budget:** 0",
+    # WOT-2026-055e: un contrato frozen debe MOSTRAR que consulto el archive.
+    "",
+    "| DoD-item | consulta | hits | conclusion |",
+    "|---|---|---|---|",
+    "| ruff+tests | archive observations 2026-08 eca1e16 | 1 | reusar barrera |",
 ]
 _COMPLETE_TICKET = chr(10).join(_COMPLETE_TICKET_LINES) + chr(10)
 
@@ -958,3 +963,84 @@ class TestTicketIdNotMutilatedByCharClass:
         assert "TODO" not in blob and " API" not in blob, (
             f"un encabezado de prosa en mayusculas se trato como ticket. blob={blob[:300]!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-055e: la MEMORIA como ENTRADA de un contrato frozen.
+# ROJO MEDIDO 2026-08-27: un contrato `status: frozen` SIN matriz de consulta
+# al archive validaba rc=0. El corpus portable existe (215 entradas en
+# .agent/runtime/memory/archive/observations.YYYY-MM.jsonl) y nada obligaba a
+# mirarlo antes de congelar.
+# ---------------------------------------------------------------------------
+
+_FROZEN_BASE_FIELDS = (
+    "- **Objective-Link:** OBJ-1\n"
+    "- **Plan-Link:** PLAN-1\n"
+    "- **Premise:** algo\n"
+    "- **Premise Re-check:** algo\n"
+    "- **Context Baseline:** algo\n"
+    "- **Forbidden Surfaces:** ninguna\n"
+    "- **DoD:** (a) cosa (b) otra cosa\n"
+    "- **STOP conditions:** algo\n"
+    "- **CONTRACT_GAP:** none\n"
+    "- **Builder clarification:** none\n"
+)
+
+_MATRIX_OK = (
+    "\n| DoD-item | consulta | hits | conclusion |\n"
+    "|---|---|---|---|\n"
+    "| (a) | archive observations 2026-08 eca1e16 | 3 | reusar patron |\n"
+)
+
+
+def _ticket_block(tid: str, status: str, extra: str = "") -> str:
+    return f"## {tid}\n\n**status:** {status}\n{_FROZEN_BASE_FIELDS}{extra}"
+
+
+def _errors_for(tmp_path, content: str) -> list[str]:
+    path = tmp_path / "ticket_contract_x.md"
+    path.write_text(content, encoding="utf-8")
+    res = VResult()
+    validate_ticket_contracts(str(path), res)
+    return [f"{e.field_}::{e.reason}" for e in res.errors]
+
+
+class TestFrozenMemoryConsultation055e:
+    def test_frozen_sin_matriz_es_error(self, tmp_path):
+        """ROJO del ticket: congelar sin consultar la memoria."""
+        errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900x", "frozen"))
+        assert any("memory_matrix" in e for e in errors), errors
+
+    def test_frozen_con_matriz_y_hash_valido_pasa(self, tmp_path):
+        errors = _errors_for(
+            tmp_path, _ticket_block("WOT-2026-900v", "frozen", _MATRIX_OK)
+        )
+        assert errors == [], errors
+
+    def test_frozen_con_hash_truncado_es_error(self, tmp_path):
+        matrix = _MATRIX_OK.replace("eca1e16", "eca1e1")
+        errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900t", "frozen", matrix))
+        assert any("memory_archive_hash" in e for e in errors), errors
+        assert any("6 chars" in e for e in errors), errors
+
+    def test_draft_sin_matriz_no_se_le_exige(self, tmp_path):
+        """CONTROL NEGATIVO: la exigencia es SOLO para frozen."""
+        errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900d", "draft"))
+        assert not any("memory_" in e for e in errors), errors
+
+    def test_el_ano_del_nombre_de_fichero_no_es_el_hash(self, tmp_path):
+        """FALSO POSITIVO MEDIDO: `observations.2026-08` ofrece `2026` (hex
+
+        valido, 4 chars) ANTES que el sha real. Quedarse con la PRIMERA
+        coincidencia rechazaba un contrato correcto por 'hash truncado'.
+        """
+        errors = _errors_for(
+            tmp_path, _ticket_block("WOT-2026-900y", "frozen", _MATRIX_OK)
+        )
+        assert not any("2026" in e and "truncado" in e for e in errors), errors
+
+    def test_matriz_solo_cabecera_no_cuenta_como_consulta(self, tmp_path):
+        """Una tabla sin filas de datos no es una consulta."""
+        empty = "\n| DoD-item | consulta | hits | conclusion |\n|---|---|---|---|\n"
+        errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900z", "frozen", empty))
+        assert any("memory_matrix" in e for e in errors), errors
