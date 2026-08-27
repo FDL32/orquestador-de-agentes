@@ -100,6 +100,11 @@ known_unwired:
   # propio -- cablear ambos es el mismo trabajo de 038b.
   check_prompt_bias: WOT-2026-038b
 
+  # WOT-2026-034c: el detector nace STANDALONE por diseno del propio ticket --
+  # cablearlo en prepush es NON-GOAL declarado y se pedira como follow-up propio.
+  # La deuda se declara aqui, con dueno, para que no entre como huerfano silencioso.
+  check_dod_metric_freshness: WOT-2026-034c
+
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
   pre_handoff_guard: scripts/pre_handoff_guard.py
