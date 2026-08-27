@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -230,6 +231,115 @@ def test_dir_symlink_is_warned_not_silently_invisible(tmp_path, monkeypatch, cap
         and "dir-symlink" in (out.out + out.err).lower()
     )
     # ...y queda NOMBRADO en la salida (la invisibilidad silenciosa era el fallo)
+
+
+# ---------------------------------------------------------------- Dientes ronda 2 (MANAGER_REVIEW BA05 post-4ab4320)
+
+
+def test_casefold_extension_no_invisibility(tmp_path):
+    """ALTO-casesensitivity (Codex L701): `FP-X.TICKETS.MD` en un buzon lateral es
+    VISIBLE como stray (el glob del vecino DEC la ve en Windows; la tricotomia no
+    puede mirar menos)."""
+    dest = _mkdest(tmp_path)
+    _touch(dest / "orchestrator_pipeline/backlog_inbox/FP-MAYUSC.TICKETS.MD")
+    rep = classify_inbox(dest)
+    assert [s["basename"] for s in rep["strays"]] == ["FP-MAYUSC.TICKETS.MD"]
+
+
+def test_casefold_mayus_en_canonico_es_pending(tmp_path):
+    """Simetrico: en el canonico, una extension en mayusculas sigue siendo pending
+    (misma regla casefold que el escaneo stray)."""
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "FP-MAYUSP.TICKETS.MD")
+    rep = classify_inbox(dest)
+    assert rep["pending_count"] == 1, rep
+    assert rep["strays"] == []
+
+
+def test_move_rollback_on_midbatch_failure(tmp_path, monkeypatch, capsys):
+    """ALTO-atomicidad real (Codex L701): si shutil.move revienta a mitad del lote,
+    lo ya movido vuelve a su sitio (lote sin medios-migrados que parezcan progreso)."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    s1 = _touch(dest / "orchestrator_pipeline/backlog_inbox/FP-uno.tickets.md")
+    s2 = _touch(dest / "otro_lugar/FP-dos.tickets.md")
+    canon_dir = dest / CANON_REL
+
+    real_move = shutil.move
+    ida_count = {"n": 0}
+
+    def flaky_move(a, b):
+        # solo fallan los movimientos AL CANONICO (ida), y a partir del segundo:
+        # simula OSError en medio del lote; el rollback (canonico -> origen)
+        # SIEMPRE se ejecuta real para probar la revertida.
+        if canon_dir in Path(b).parents:
+            ida_count["n"] += 1
+            if ida_count["n"] >= 2:
+                raise OSError("disco-lleno simulado")
+        return real_move(a, b)
+
+    monkeypatch.setattr(cid.shutil, "move", flaky_move)
+    rc = cid.run_move_strays(dest)
+    monkeypatch.undo()
+    out = capsys.readouterr().out
+    assert rc != 0
+    assert "abort ATOMICO" in out, out
+    # el PRIMERO que si se movio debe haber VUELTO a su origen:
+    assert s1.exists(), f"rollback incompleto: {s1} no volvio {out}"
+    assert s2.exists()
+    assert not (dest / CANON_REL / "FP-uno.tickets.md").exists(), (
+        "quedaron restos del lote revertido"
+    )
+
+
+def test_mark_drained_ledger_fail_revierte_move(tmp_path, monkeypatch, capsys):
+    """MEDIO-ledger atomico (Codex L701): si el append del ledger revienta DESPUES
+    del move, la ficha vuelve al canonico (nada drenado sin registro)."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    ficha = _touch(dest / CANON_REL / "FP-ledgerfalla.tickets.md")
+
+    def boom_open(self, *a, **k):
+        if str(a[0] if a else "").startswith("a") and "drain_ledger" in str(self):
+            raise OSError("sin-permiso simulado")
+        return Path.open(self, *a, **k)
+
+    monkeypatch.setattr(Path, "open", boom_open)
+    rc = cid.run_mark_drained(
+        dest, "FP-ledgerfalla.tickets.md", "moved", None, "prueba de rollback"
+    )
+    monkeypatch.undo()
+    out = capsys.readouterr().out
+    assert rc != 0
+    assert "move revertido" in out or "auditoria manual" in out, out
+    assert ficha.exists(), "la ficha quedo drenada sin su linea de ledger"
+    assert not cid._ledger_names(dest), "existe ledger con lineas pese al fallo"
+
+
+def test_fused_to_formato_invalido_rechazado(tmp_path):
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "FP-formato.tickets.md")
+    assert (
+        run_mark_drained(
+            dest, "FP-formato.tickets.md", "fused", "sin-forma-de-id", None
+        )
+        != 0
+    )
+    assert (
+        run_mark_drained(dest, "FP-formato.tickets.md", "fused", "WOT-2026-999x", None)
+        == 0
+    )
+    assert (dest / CANON_REL / "_drained").is_dir()
+
+
+def test_fused_to_legacy_wt_wp_aceptado(tmp_path):
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "FP-leg.tickets.md")
+    assert (
+        run_mark_drained(dest, "FP-leg.tickets.md", "fused", "WT-2026-019", None) == 0
+    )
 
 
 def test_flags_excluyentes_rechazados(tmp_path):

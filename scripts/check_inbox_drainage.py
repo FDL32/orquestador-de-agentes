@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -85,6 +86,11 @@ CACHE_PRUNE_DIRS = frozenset(
 )
 
 _PREFIX = "[inbox-drainage]"
+
+# Forma de id canonico de ticket (0.d de orchestrator_pipeline.md + validador del
+# bus `(?:WP|WT|[A-Z]{3})-\d{4}-...`): prefijo 2-3 mayusculas, ano, numero y sufijo
+# de subfase opcional. Solo se exige para --fused-to (trazabilidad del ledger).
+_FUSED_TO_RE = re.compile(r"[A-Z]{2,3}-\d{4}-\d{1,3}[A-Za-z]?")
 
 
 def _dir_is_untraversed_link(dpath: Path) -> bool:
@@ -133,11 +139,28 @@ def _is_in_archive_exempt_prefix(rel: Path) -> bool:
     )
 
 
+def _is_ticket_name(name: str) -> bool:
+    """Poblacion de fichas: `*.tickets.md` SIN importar el caso de la extension.
+
+    La regla del vecino 6n (check_dec_receipt) usa glob de pathlib, que en
+    Windows normaliza caso: una `FP-X.TICKETS.MD` es ficha PARA EL y no lo seria
+    para un `endswith` stricto == la misma enfermedad del ticket (dos consumidores
+    del buzon, miradas distintas). Aqui se iguala hacia MAS estricto (casefold
+    en ambos SO): nada con forma de ficha queda fuera de la tricotomia.
+    """
+    return name.lower().endswith(TICKET_SUFFIX)
+
+
 def _pending_files(project_root: Path) -> list[Path]:
     canon = canonical_inbox(project_root)
     if not canon.is_dir():
         return []
-    return sorted(p for p in canon.glob(TICKET_GLOB) if p.is_file() or p.is_symlink())
+    return sorted(
+        p
+        for p in canon.iterdir()
+        if p.is_file() or p.is_symlink()
+        if _is_ticket_name(p.name)
+    )
 
 
 def _ledger_names(project_root: Path) -> set[str]:
@@ -230,7 +253,7 @@ def _scan_all_tickets(
             surviving.append(d)
         dirnames[:] = surviving
         for fname in sorted(filenames):
-            if not fname.endswith(TICKET_SUFFIX):
+            if not _is_ticket_name(fname):
                 continue
             kind, payload = _ticket_entry(base / fname, project_root, root_resolved)
             if kind == "found":
@@ -283,7 +306,7 @@ def classify_inbox(project_root: Path) -> dict:
             sorted(
                 p.name
                 for p in canon.iterdir()
-                if p.is_file() and not p.name.endswith(TICKET_SUFFIX)
+                if p.is_file() and not _is_ticket_name(p.name)
             )
         )
     legacy = project_root / LEGACY_INBOX_REL
@@ -379,8 +402,48 @@ def run_audit(project_root: Path, as_json: bool = False) -> int:
     return 0
 
 
+def _rollback_moves(moved: list[tuple[Path, Path]]) -> tuple[int, list[str]]:
+    """Revierte (src,dst) en orden inverso. Devuelve (n_reverted, fallos)."""
+    reverted: list[str] = []
+    failed: list[str] = []
+    for src, dst in reversed(moved):
+        try:
+            shutil.move(str(dst), str(src))
+            reverted.append(str(src))
+        except OSError as exc:  # noqa: PERF203 - cada revertida necesita su propio veredicto; son lotes pequenos
+            failed.append(f"{dst} -> {src} ({exc})")
+    return len(reverted), failed
+
+
+def _reject_unsupported_strays(strays: list[dict], project_root: Path) -> bool:
+    """Si algun stray es symlink/escape, lo nombra y devuelve True (no se mueve)."""
+    bad = [s for s in strays if "motivo_extra" in s]
+    if not bad:
+        return False
+    print(
+        f"{_PREFIX} ERROR: --move-strays NO mueve symlinks ni rutas fuera de root; trata cada STRAY-UNSUPPORTED a mano con diagnostico:"
+    )
+    for s in bad:
+        print(_diagnostic(s, project_root))
+    return True
+
+
+def _preflight_conflicts(strays: list[dict], canon: Path) -> list[str]:
+    """Mensajes de bloqueo del lote (dups entre strays o colision con el canonico)."""
+    basenames = [s["basename"] for s in strays]
+    msgs = [
+        f"    duplicado entre strays: {b}"
+        for b in sorted({b for b in basenames if basenames.count(b) > 1})
+    ]
+    msgs += [
+        f"    colision con el canonico: {canon / b}"
+        for b in sorted({b for b in basenames if (canon / b).exists()})
+    ]
+    return msgs
+
+
 def run_move_strays(project_root: Path) -> int:
-    """Reconciliacion mecanica atomica (DoD e + enmienda L711 ALTO)."""
+    """Reconciliacion mecanica atomica (DoD e + enmienda L711 ALTO + L701 ALTO)."""
     report = classify_inbox(project_root)
     strays = report["strays"]
     if not strays:
@@ -388,46 +451,67 @@ def run_move_strays(project_root: Path) -> int:
             f"{_PREFIX} SKIP move-strays: no hay strays que mover (2a pasada = no-op, contadores intactos)."
         )
         return 0
-    if any("motivo_extra" in s for s in strays):
-        print(
-            f"{_PREFIX} ERROR: --move-strays NO mueve symlinks ni rutas fuera de root; trata cada STRAY-UNSUPPORTED a mano con diagnostico:"
-        )
-        for s in strays:
-            if "motivo_extra" in s:
-                print(_diagnostic(s, project_root))
+    if _reject_unsupported_strays(strays, project_root):
         return 1
-    # Preflight all-or-nothing: duplicados entre strays o colision con el canonico.
     canon = canonical_inbox(project_root)
-    basenames = [s["basename"] for s in strays]
-    dups_same_batch = sorted({b for b in basenames if basenames.count(b) > 1})
-    existing_conflicts = sorted({b for b in basenames if (canon / b).exists()})
-    if dups_same_batch or existing_conflicts:
+    conflicts = _preflight_conflicts(strays, canon)
+    if conflicts:
         print(
             f"{_PREFIX} ERROR abort ATOMICO: lote rechazado ANTES de mover nada (nada movido a medias)."
         )
-        for b in dups_same_batch:
-            print(f"    duplicado entre strays: {b}")
-        for b in existing_conflicts:
-            print(f"    colision con el canonico: {canon / b}")
+        for b in conflicts:
+            print(b)
         return 1
     canon.mkdir(parents=True, exist_ok=True)
-    moved = 0
-    for s in strays:
-        src = project_root / s["path"]
-        dst = canon / s["basename"]
-        if dst.exists():
-            print(
-                f"{_PREFIX} ERROR abort atomico INESPERADO: {dst} aparecio durante el lote; nada pisado."
-            )
-            return 1
-        shutil.move(str(src), str(dst))
-        moved += 1
-        print(f"{_PREFIX} MOVED: {s['path']} -> {dst}")
+    moved: list[tuple[Path, Path]] = []  # (src, dst) en orden de ejecucion
+    try:
+        for s in strays:
+            src = project_root / s["path"]
+            dst = canon / s["basename"]
+            if dst.exists():
+                raise OSError(f"{dst} aparecio durante el lote")
+            shutil.move(str(src), str(dst))
+            moved.append((src, dst))
+            print(f"{_PREFIX} MOVED: {s['path']} -> {dst}")
+    except OSError as exc:
+        # atomicidad REAL del lote (enmienda MANAGER_REVIEW BA05 ALTO
+        # 2026-08-27): un fallo a mitad revierte en orden inverso; lo ya movido
+        # vuelve a su sitio, el lote no termina "a medias".
+        done, failed = _rollback_moves(moved)
+        print(
+            f"{_PREFIX} ERROR abort ATOMICO por fallo a mitad: {exc}; rollback inverso "
+            f"{done}/{len(moved)} restaurado(s)."
+        )
+        for fpath in failed:
+            print(f"{_PREFIX} ERROR ROLLBACK-FALLO requiere auditoria manual: {fpath}")
+        return 1
     after = classify_inbox(project_root)
     print(
-        f"{_PREFIX} lote completo: {moved} movido(s); strays restantes = {len(after['strays'])}."
+        f"{_PREFIX} lote completo: {len(moved)} movido(s); strays restantes = {len(after['strays'])}."
     )
     return 0
+
+
+def _validate_mark_drained_args(
+    disposition: str,
+    fused_to: str | None,
+    reason: str | None,
+) -> str | None:
+    """None si validos; mensaje de ERROR en contrario (rama separada del I/O)."""
+    if disposition not in {"fused", "moved", "expired"}:
+        return f"{_PREFIX} ERROR: --disposition invalida '{disposition}' (enum: fused, moved, expired)."
+    if disposition == "fused" and not fused_to:
+        return f"{_PREFIX} ERROR: disposition=fused exige --fused-to <WOT-id> (evidencia de destino)."
+    if disposition == "fused" and not _FUSED_TO_RE.fullmatch(str(fused_to)):
+        return (
+            f"{_PREFIX} ERROR: --fused-to='{fused_to}' no tiene forma de id canonico "
+            "<PREFIJO>-YYYY-NNNx (p. ej. WOT-2026-042u). El ledger es trazabilidad, "
+            "no prosa libre (enmienda MANAGER_REVIEW BA05 MEDIO 2026-08-27; formato "
+            "gobernado por '0.d' de orchestrator_pipeline.md y el validador del bus)."
+        )
+    if disposition == "expired" and not reason:
+        return f"{_PREFIX} ERROR: disposition=expired exige --reason <motivo> (caducidad con criterio, no por relato)."
+    return None
 
 
 def run_mark_drained(
@@ -437,20 +521,9 @@ def run_mark_drained(
     fused_to: str | None,
     reason: str | None,
 ) -> int:
-    if disposition not in {"fused", "moved", "expired"}:
-        print(
-            f"{_PREFIX} ERROR: --disposition invalida '{disposition}' (enum: fused, moved, expired)."
-        )
-        return 1
-    if disposition == "fused" and not fused_to:
-        print(
-            f"{_PREFIX} ERROR: disposition=fused exige --fused-to <WOT-id> (evidencia de destino)."
-        )
-        return 1
-    if disposition == "expired" and not reason:
-        print(
-            f"{_PREFIX} ERROR: disposition=expired exige --reason <motivo> (caducidad con criterio, no por relato)."
-        )
+    err = _validate_mark_drained_args(disposition, fused_to, reason)
+    if err:
+        print(err)
         return 1
     canon = canonical_inbox(project_root)
     ficha = canon / ficha_name
@@ -463,6 +536,11 @@ def run_mark_drained(
             return 0
         print(
             f"{_PREFIX} ERROR estado dividido: {ficha_name} figura en el ledger PERO sigue en el canonico; no se toca nada, audita a mano."
+        )
+        return 1
+    if ficha.is_symlink():
+        print(
+            f"{_PREFIX} ERROR: '{ficha_name}' es un SYMLINK (el censo lo trata como stray-unsupported); no se drena por el cano: reconcilia primero su destino real."
         )
         return 1
     if not ficha.is_file():
@@ -492,8 +570,23 @@ def run_mark_drained(
         "drained_at": datetime.now(timezone.utc).isoformat(),
         "month": month,
     }
-    with ledger.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    try:
+        with ledger.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        # Atomicidad move+ledger (enmienda MANAGER_REVIEW BA05 MEDIO
+        # 2026-08-27): sin linea en el ledger, un archivo ya movido es estado
+        # dividido; se revierte el move y nada queda drenado a medias.
+        try:
+            shutil.move(str(dest), str(ficha))
+            print(
+                f"{_PREFIX} ERROR ledger no escribible ({exc}); move revertido -- nada drenado."
+            )
+        except OSError as exc2:
+            print(
+                f"{_PREFIX} ERROR ledger fallo Y el revert fallo ({exc} / {exc2}): {dest} exige auditoria manual."
+            )
+        return 1
     print(f"{_PREFIX} DRAINED: {ficha_name} -> {dest} (ledger +1 linea)")
     return 0
 
