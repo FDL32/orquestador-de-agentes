@@ -2143,7 +2143,10 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
     DESTINO, y este es el unico camino auto-ejecutable que los conoce (mismo
     argumento que 6n: WOT-2026-042x).
     """
-    from scripts.check_inbox_drainage import classify_inbox  # import ESTATICO
+    from scripts.check_inbox_drainage import (  # import ESTATICO
+        CANONICAL_INBOX_REL,
+        classify_inbox,
+    )
 
     name = "Inbox Drainage Barrier (WOT-2026-042u)"
     try:
@@ -2158,7 +2161,7 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
 
     strays = report.get("strays", [])
     if strays:
-        canon_rel = Path(".agent") / "collaboration" / "backlog_inbox"
+        canon_rel = CANONICAL_INBOX_REL
         detalle = "; ".join(
             f"{s['path']} -> debe vivir en {canon_rel / s['basename']}"
             for s in strays[:8]

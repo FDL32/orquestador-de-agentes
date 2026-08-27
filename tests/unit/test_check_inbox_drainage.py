@@ -198,6 +198,57 @@ def test_deep_inside_canonical_is_stray(tmp_path):
     assert [s["basename"] for s in rep["strays"]] == ["FP-enterrada.tickets.md"]
 
 
+def test_dir_symlink_is_warned_not_silently_invisible(tmp_path, monkeypatch, capsys):
+    """Rama ALCANZABLE del hallazgo BA10/deepseek MANAGER_REVIEW (2026-08-27):
+    un directorio-symlink no recorrido NO puede esconder fichas en silencio.
+    En Windows sin privilegios no se pueden crear dir-symlinks; se monkeypatchea
+    el PREDICADO de deteccion (no el escaneo) para que la rama sea ejecutada y
+    asertada en cualquier SO. WARN (no bloqueante): link no es ficha confirmada."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    escondite = _mkdest(tmp_path / "escondite")
+    _touch(escondite / "FP-tras-link.tickets.md")
+
+    real_predicado = cid._dir_is_untraversed_link
+    monkeypatch.setattr(
+        cid,
+        "_dir_is_untraversed_link",
+        lambda p: p.name == "escondite" or real_predicado(p),
+    )
+    rep = cid.classify_inbox(dest)
+    assert any(entry["path"].endswith("escondite") for entry in rep["dir_links"]), rep[
+        "dir_links"
+    ]
+    assert rep["strays"] == []  # no es ficha confirmada -> no stray, pero...
+    assert rep["pending_count"] == 0
+    rc = cid.main(["--project-root", str(dest)])
+    out = capsys.readouterr()
+    assert rc == 0  # WARN no bloquea el cierre
+    assert (
+        "escondite" in out.out + out.err
+        and "dir-symlink" in (out.out + out.err).lower()
+    )
+    # ...y queda NOMBRADO en la salida (la invisibilidad silenciosa era el fallo)
+
+
+def test_flags_excluyentes_rechazados(tmp_path):
+    dest = _mkdest(tmp_path)
+    with pytest.raises(SystemExit) as ex:
+        main(
+            [
+                "--project-root",
+                str(dest),
+                "--move-strays",
+                "--mark-drained",
+                "FP-x.tickets.md",
+                "--disposition",
+                "moved",
+            ]
+        )
+    assert ex.value.code == 2
+
+
 def test_symlink_shown_as_unsupported(tmp_path):
     """Política symlink (enmierta L710 MEDIO): un `*.tickets.md` symlink NO es
     pending silencioso: stray-unsupported con su destino resuelto. Si el SO no

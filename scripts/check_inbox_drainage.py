@@ -87,6 +87,23 @@ CACHE_PRUNE_DIRS = frozenset(
 _PREFIX = "[inbox-drainage]"
 
 
+def _dir_is_untraversed_link(dpath: Path) -> bool:
+    """True si os.walk(followlinks=False) NO va a recorrer este subdirectorio.
+
+    Un symlink de archivo lo delata `is_symlink()`; en Python >=3.12 tambien
+    junctiones (que 3.10 recorre). La funcion propia permite fijar la rama en
+    tests con monkeypatch cuando el SO no deja crear enlaces reales
+    (Windows sin privilegios) -- la barrera es alcanzable, no decorativa.
+    """
+    if dpath.is_symlink():
+        return True
+    is_junction = getattr(dpath, "is_junction", None)
+    try:
+        return bool(is_junction and is_junction())
+    except OSError:
+        return False
+
+
 def canonical_inbox(project_root: Path) -> Path:
     """Ruta canonica del buzon, resuelta contra el project_root dado."""
     return project_root / CANONICAL_INBOX_REL
@@ -141,45 +158,86 @@ def _ledger_names(project_root: Path) -> set[str]:
     return names
 
 
-def _scan_all_tickets(project_root: Path) -> tuple[list[Path], list[tuple[Path, str]]]:
-    """Todos los `*.tickets.md` bajo root (prada de caches, sin seguir symlinks).
+def _dirlink_note(dpath: Path, project_root: Path) -> tuple[Path, str]:
+    """Nota (rel, motivo) de un dir-symlink no recorrido, con destino resuelto."""
+    try:
+        rel_d = dpath.relative_to(project_root)
+    except ValueError:  # pragma: no cover - os.walk no lo produce
+        rel_d = Path(str(dpath))
+    try:
+        target = str(dpath.resolve())
+    except OSError:
+        target = "<unresolvable>"
+    return (rel_d, f"DIR-SYMLINK no recorrido destino-resuelto={target}")
 
-    Retorna (fichas_reales, problematicas) donde problematicas = (ruta, motivo)
-    para symlinks de archivo y rutas cuyo resolve() escapa de project_root; esas
-    entradas son strays-unsupported y viajan aparte para el diagnostic.
+
+def _ticket_entry(
+    fpath: Path, project_root: Path, root_resolved: Path
+) -> tuple[str, object]:
+    """Clasifica UN archivo candidato: ('found', rel) | ('problem', (rel, motivo)).
+
+    Un symlink de archivo jamas es pending silencioso; una ruta cuyo resolve()
+    escapa del proyecto tampoco (enmiendas L710/L711). Nunca lanza: devuelve la
+    clase para que el caller la enrumbe.
+    """
+    try:
+        rel = fpath.relative_to(project_root)
+    except ValueError:  # pragma: no cover - os.walk no lo produce
+        return ("skip", None)
+    if fpath.is_symlink():
+        try:
+            target = str(fpath.resolve())
+        except OSError:
+            target = "<unresolvable>"
+        return ("problem", (rel, f"SYMLINK-UNSUPPORTED destino-resuelto={target}"))
+    try:
+        resolved = fpath.resolve()
+    except OSError as exc:
+        return ("problem", (rel, f"UNRESOLVABLE ({exc})"))
+    if root_resolved not in resolved.parents and resolved != root_resolved:
+        return ("problem", (rel, f"OUTSIDE-ROOT resolve={resolved}"))
+    return ("found", rel)
+
+
+def _scan_all_tickets(
+    project_root: Path,
+) -> tuple[list[Path], list[tuple[Path, str]], list[tuple[Path, str]]]:
+    """Todos los `*.tickets.md` bajo root, sin seguir enlaces.
+
+    Retorna (fichas_reales, problematicas, dir_links). `problematicas` son
+    symlinks de archivo / rutas que escapan del root (strays-unsupported);
+    `dir_links` son subdirectorios-enlace que followlinks=False NO recorre --
+    posibles escondites, reportados loud (enmienda MANAGER_REVIEW BA10 deepseek
+    2026-08-27) y jamsa seguidos (ciclos). Los CACHE_PRUNE_DIRS se excluyen del
+    recorrido igual que antes (test_cache_dirs_pruned fija esa arista).
     """
     found: list[Path] = []
     problems: list[tuple[Path, str]] = []
+    dir_links: list[tuple[Path, str]] = []
     root_resolved = project_root.resolve()
+
     for dirpath, dirnames, filenames in os.walk(project_root, followlinks=False):
         base = Path(dirpath)
-        dirnames[:] = sorted(d for d in dirnames if d not in CACHE_PRUNE_DIRS)
+        surviving = []
+        for d in sorted(dirnames):
+            dpath = base / d
+            if d in CACHE_PRUNE_DIRS:
+                continue  # cache de codigo: ni se recorre ni se reporta
+            if _dir_is_untraversed_link(dpath):
+                # una ficha detras seria INVISIBLE: nombrar, no seguir
+                dir_links.append(_dirlink_note(dpath, project_root))
+                continue
+            surviving.append(d)
+        dirnames[:] = surviving
         for fname in sorted(filenames):
             if not fname.endswith(TICKET_SUFFIX):
                 continue
-            fpath = base / fname
-            try:
-                rel = fpath.relative_to(project_root)
-            except ValueError:  # pragma: no cover - os.walk no lo produce
-                continue
-            if fpath.is_symlink():
-                target = ""
-                try:
-                    target = str(fpath.resolve())
-                except OSError:
-                    target = "<unresolvable>"
-                problems.append((rel, f"SYMLINK-UNSUPPORTED destino-resuelto={target}"))
-                continue
-            try:
-                resolved = fpath.resolve()
-            except OSError as exc:
-                problems.append((rel, f"UNRESOLVABLE ({exc})"))
-                continue
-            if root_resolved not in resolved.parents and resolved != root_resolved:
-                problems.append((rel, f"OUTSIDE-ROOT resolve={resolved}"))
-                continue
-            found.append(rel)
-    return found, problems
+            kind, payload = _ticket_entry(base / fname, project_root, root_resolved)
+            if kind == "found":
+                found.append(payload)
+            elif kind == "problem":
+                problems.append(payload)
+    return found, problems, dir_links
 
 
 def classify_inbox(project_root: Path) -> dict:
@@ -191,7 +249,7 @@ def classify_inbox(project_root: Path) -> dict:
     canonico y del legacy), canonical_exists.
     """
     canon = canonical_inbox(project_root)
-    all_tickets, problems = _scan_all_tickets(project_root)
+    all_tickets, problems, dir_links = _scan_all_tickets(project_root)
     now = datetime.now(timezone.utc)
 
     pending: list[dict] = []
@@ -239,6 +297,7 @@ def classify_inbox(project_root: Path) -> dict:
         "pending_count": len(pending),
         "drained_count": drained_count,
         "strays": strays,
+        "dir_links": [{"path": str(p), "motivo": m} for p, m in dir_links],
         "legacy_inbox_files": legacy_files,
         "support_files_canonical": support,
     }
@@ -285,6 +344,13 @@ def _census_lines(report: dict) -> list[str]:
             f"{_PREFIX} INFO legacy buzon de fichas no-canonico 'orchestrator_pipeline/backlog_inbox/' con {len(report['legacy_inbox_files'])} archivo(s): "
             + ", ".join(report["legacy_inbox_files"])
         )
+    lines.extend(
+        f"{_PREFIX} WARN dir-symlink no recorrido (posible escondite; enmienda "
+        f"MANAGER_REVIEW, sin seguir para evitar ciclos): {dl['path']} :: {dl['motivo']}. "
+        "Reconcilia: sustituye el enlace por archivos reales (o mueve lo que esconda "
+        "al canonico) y elimina el enlace."
+        for dl in report.get("dir_links", [])
+    )
     return lines
 
 
@@ -472,6 +538,11 @@ def main(argv=None) -> int:
         help="Motivo (obligatorio con --disposition expired; opcional en el resto).",
     )
     args = parser.parse_args(argv)
+
+    if args.mark_drained and args.move_strays:
+        parser.error(
+            "--move-strays y --mark-drained son excluyentes (un lote por invocacion, fallo 2026-08-27)"
+        )
 
     project_root = args.project_root.resolve()
     if not project_root.is_dir():
