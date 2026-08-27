@@ -98,3 +98,70 @@ def test_guard_accepts_wording_variants_not_a_literal_template() -> None:
         "PRESUPUESTO: maximo 4 ficheros.\n"
     )
     assert check_bundle(text) == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-035a: la CUARTA invariante (refutacion previa), OPT-IN.
+# La norma "censo antes de tocar superficie gobernante" existia como PROSA y
+# era NO EJECUTABLE. ROJO MEDIDO 2026-08-27: `grep REFUTACION` -> 0 hits y el
+# flag `--requires-refutation` no existia (argparse: unrecognized arguments).
+# ---------------------------------------------------------------------------
+
+_TRES_NATALES = (
+    "INVENTARIO DE EVIDENCIA: el fichero X sustenta el punto 1.\n"
+    "Si algo no se puede comprobar, reporta NO VERIFICABLE en vez de abortar.\n"
+    "PRESUPUESTO: no explores mas de 5 ficheros y para.\n"
+)
+_CON_REFUTACION = _TRES_NATALES + (
+    "REFUTACION-PREVIA: censado el arbol; no hay implementacion previa.\n"
+)
+
+
+def _run(tmp_path, text, *argv):
+    import sys
+
+    from scripts.check_loop_bundle_protocol import main
+
+    path = tmp_path / "bundle.md"
+    path.write_text(text, encoding="utf-8")
+    argv_backup = sys.argv
+    sys.argv = ["check_loop_bundle_protocol.py", str(path), *argv]
+    try:
+        return main()
+    finally:
+        sys.argv = argv_backup
+
+
+class TestRefutacionPrevia035a:
+    def test_flag_off_sin_refutacion_avisa_pero_no_bloquea(self, tmp_path):
+        """WARN-only sin el flag: un gate que nace bloqueando se desactiva."""
+        assert _run(tmp_path, _TRES_NATALES) == 0
+
+    def test_flag_on_sin_refutacion_bloquea(self, tmp_path):
+        assert _run(tmp_path, _TRES_NATALES, "--requires-refutation") == 1
+
+    def test_flag_on_con_refutacion_pasa(self, tmp_path):
+        assert _run(tmp_path, _CON_REFUTACION, "--requires-refutation") == 0
+
+    def test_flag_off_con_refutacion_pasa(self, tmp_path):
+        assert _run(tmp_path, _CON_REFUTACION) == 0
+
+    def test_la_cuarta_no_entra_en_las_tres_natales(self):
+        """Las natales BLOQUEAN siempre; la cuarta NO puede colarse ahi.
+
+        Si `refutacion_previa` entrase en INVARIANTS, todo bundle historico
+        pasaria a rojo de golpe -- exactamente lo que el opt-in evita.
+        """
+        from scripts.check_loop_bundle_protocol import INVARIANTS, check_bundle
+
+        assert "refutacion_previa" not in INVARIANTS
+        assert len(INVARIANTS) == 3
+        assert check_bundle(_TRES_NATALES) == []
+
+    def test_variante_con_espacio_tambien_cuenta(self):
+        """El guard exige la PROPIEDAD declarada, no una plantilla literal."""
+        from scripts.check_loop_bundle_protocol import has_refutation_section
+
+        assert has_refutation_section("REFUTACION PREVIA: censado")
+        assert has_refutation_section("refutacion-previa: censado")
+        assert not has_refutation_section("hablo de refutacion en general")

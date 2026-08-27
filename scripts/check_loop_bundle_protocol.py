@@ -75,6 +75,34 @@ INVARIANTS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-035a: REFUTACION PREVIA, la cuarta invariante.
+# La norma "censo antes de tocar superficie gobernante" existia como PROSA y
+# era NO EJECUTABLE: nada la verificaba. Se vuelve exigible, pero OPT-IN.
+#
+# Vive FUERA de INVARIANTS a proposito. Las tres natales BLOQUEAN siempre; esta
+# solo bloquea cuando el encargo declara que toca superficie gobernante
+# (`--requires-refutation`). Meterla en INVARIANTS habria convertido en rojo
+# todos los bundles historicos de golpe -- un gate que nace bloqueando lo que
+# ayer era legal no se adopta: se desactiva.
+#
+# Se exige como SECCION DECLARADA, no como keyword magico semantico: el guard
+# verifica que el bundle DECLARE haber refutado, igual que hace con las otras
+# tres. No puede (ni pretende) verificar que la refutacion sea CIERTA.
+# ---------------------------------------------------------------------------
+REFUTATION_INVARIANT = (
+    "refutacion_previa",
+    "censar y refutar lo que ya existe ANTES de tocar superficie gobernante",
+    ("REFUTACION-PREVIA:", "REFUTACION PREVIA:"),
+)
+
+
+def has_refutation_section(text: str) -> bool:
+    """True iff the bundle DECLARES its prior-refutation section."""
+    upper = text.upper()
+    return any(m.upper() in upper for m in REFUTATION_INVARIANT[2])
+
+
 def check_bundle(text: str) -> list[str]:
     """Devuelve la lista de invariantes AUSENTES (vacia si el bundle cumple)."""
     upper = text.upper()
@@ -90,6 +118,14 @@ def main() -> int:
         description="Verifica que un bundle de bucle declare su protocolo de suficiencia."
     )
     ap.add_argument("bundle", help="ruta del fichero de bundle")
+    ap.add_argument(
+        "--requires-refutation",
+        action="store_true",
+        help=(
+            "el encargo declara que toca SUPERFICIE GOBERNANTE: exige la "
+            "seccion REFUTACION-PREVIA: en el bundle (sin el flag, solo WARN)"
+        ),
+    )
     args = ap.parse_args()
 
     path = Path(args.bundle)
@@ -97,7 +133,28 @@ def main() -> int:
         print(f"[loop-bundle] ERROR: bundle no encontrado: {path}", file=sys.stderr)
         return 2
 
-    missing = check_bundle(path.read_text(encoding="utf-8", errors="replace"))
+    text = path.read_text(encoding="utf-8", errors="replace")
+    missing = check_bundle(text)
+
+    # WOT-2026-035a: la cuarta invariante se evalua SIEMPRE, pero solo BLOQUEA
+    # con el flag. Sin el flag avisa, para que la deuda sea visible sin
+    # convertir en rojo natal todo bundle que hoy es legal.
+    refutation_ok = has_refutation_section(text)
+    if not refutation_ok:
+        if args.requires_refutation:
+            print(
+                f"[loop-bundle] BLOQUEA: el encargo declara SUPERFICIE "
+                f"GOBERNANTE y a {path.name} le falta la seccion "
+                f"'REFUTACION-PREVIA:' ({REFUTATION_INVARIANT[1]}).",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"[loop-bundle] WARN: {path.name} no declara 'REFUTACION-PREVIA:'. "
+            f"Sin --requires-refutation esto NO bloquea; con el, si.",
+            file=sys.stderr,
+        )
+
     if not missing:
         print(f"[loop-bundle] OK: los 3 invariantes estan declarados en {path.name}")
         return 0
