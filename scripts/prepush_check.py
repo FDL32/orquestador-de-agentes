@@ -2117,6 +2117,88 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_inbox_drainage_check(project_root: Path) -> CheckResult:
+    """WOT-2026-042u: unico backlog_inbox canonico + drenaje descubierto desde codigo.
+
+    El fallo de la ficha: "hay DOS buzones y el drenaje no lee ninguno: una sesion
+    que mire uno pierde el otro". El consumidor de la fusion (Bloque 8.bis) era
+    100% prompt-level -- una NORMA. Este conector es la BARRERA: llama la tricotomia
+    pending/drained/stray del guard por IMPORT ESTATICO (patron WOT-2026-042m: el
+    AST de 1-hop de check_guard_wiring alcanza el call-site y lo cuenta WIRED; si
+    el AST llegara a NO alcanzarlo, la alternativa es declaracion wired_via + Probe
+    -- hoy medido WIRED, y dejar una entrada en guard_wiring_policy.yaml seria una
+    declaracion STALE que el propio gate caza, formula medida en
+    check_guard_wiring.py).
+
+    Asimetria deliberada, en el orden del contrato del buzon (README: "registrar
+    nunca debe bloquear el cierre que lo permite"):
+      - STRAY (`*.tickets.md` fuera del canonico, no en zona terminal explicita)
+        -> BLOQUEANTE con diagnostico self-service (que ficha, donde, como moverla).
+        Hoy no hay deuda historica de esta clase (medido al arrancar el vuelo:
+        canonico 16 pending / legacy 0 fichas / 0 estrays), asi que nace
+        bloqueante sin grandfathering.
+      - PENDING (fichas vivas del canonico esperando fusion) -> WARN census con n
+        y edad de la mas antigua; jamas bloquea.
+    Va en closeout (tras 6n) y no en pre-commit: su superficie son los buzones del
+    DESTINO, y este es el unico camino auto-ejecutable que los conoce (mismo
+    argumento que 6n: WOT-2026-042x).
+    """
+    from scripts.check_inbox_drainage import classify_inbox  # import ESTATICO
+
+    name = "Inbox Drainage Barrier (WOT-2026-042u)"
+    try:
+        report = classify_inbox(project_root)
+    except OSError as exc:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"inbox-drainage no pudo leer el destino: {exc} (falla cerrado, no verde silencioso)",
+            is_blocking=True,
+        )
+
+    strays = report.get("strays", [])
+    if strays:
+        canon_rel = Path(".agent") / "collaboration" / "backlog_inbox"
+        detalle = "; ".join(
+            f"{s['path']} -> debe vivir en {canon_rel / s['basename']}"
+            for s in strays[:8]
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(strays)} ficha(s) `*.tickets.md` FUERA del buzon canonico: {detalle}. "
+                f"Reconciliar con: python scripts/check_inbox_drainage.py "
+                f"--project-root '{project_root}' --move-strays (atomico, no pisa colisiones). "
+                "Por que importa: una ficha fuera del canonico no la ve ningun drenaje "
+                "(la clase de fallo que acumulo 16 sobres perdidos)."
+            ),
+            is_blocking=True,
+        )
+
+    pending = report.get("pending_count", 0)
+    if pending:
+        oldest = report["pending"][0]
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"WARN census inbox: {pending} fichas pendientes de fusion "
+                f"(mas antigua: {oldest['name']} -- {oldest['age_days']} dias). Fusion = "
+                "Bloque 8.bis + `check_inbox_drainage.py --mark-drained` (mismo guard). "
+                "No bloquea: registrar no puede bloquear el cierre que lo permite."
+            ),
+            is_blocking=False,
+        )
+
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="inbox canonico sin fichas pendientes; sin estrays (SKIP nombrado si estaba vacio)",
+        is_blocking=False,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -2249,6 +2331,13 @@ def run_preflight_check(
         # dentro del propio guard (censo medido: 14/14 sin recibo), asi que el
         # cableado no bloquea la deuda historica.
         results.append(run_dec_receipt_check(project_root))
+        # 6o. Inbox Drainage Barrier (WOT-2026-042u). El DoD (b) de la ficha: el
+        # drenaje procesa el canonico desde CODIGO y esta cableado a un camino que
+        # corre solo. Import estatico en el run_ -> check_guard_wiring lo cuenta
+        # WIRED. Las fichas previas en _drained/_archive/backlog_inbox_* son zona
+        # terminal explicita; pending sale como WARN census (el contrato del
+        # README: registrar nunca debe bloquear el cierre que lo permite).
+        results.append(run_inbox_drainage_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)

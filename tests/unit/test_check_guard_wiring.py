@@ -99,6 +99,15 @@ EXPECTED_WIRED_REAL = {
     "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
     "check_dec_receipt",  # WOT-2026-042x: cableado en prepush_check.py::run_dec_receipt_check (closeout). Barrera de la NORMA de 042w (recibo DEC en las fichas de diseno). No es falso-WIRED: mutation-verify con par de exit-codes literal sobre la invocacion REAL (1 sin recibo / 1 con DEC-<id> inexistente -> 0 con `DEC-no-aplica: <motivo>`), y 14/14 fichas reales del destino degradan a WARN por el grandfathering.
     "check_deliverables_exist",
+    # WOT-2026-042u: cableado via import ESTATICO en
+    # prepush_check.py::run_inbox_drainage_check (closeout, 6o). NO es falso-WIRED:
+    # la arista real medida con wiring_edges() es {prepush_check.py} y el par de
+    # des-cableado corre en el mutation-verify del MANAGER_REVIEW (retirar la linea
+    # del registro -> el guard es nuevo+unwired+undeclarado -> rc=1 "1 UNDECLARED",
+    # clase medida precedentemente en G4/042m sobre el mismo mecanismo). No tiene
+    # entrada en wired_via A PROPOSITO: con el AST alcanzando, anadirla seria una
+    # declaracion STALE que el propio gate caza (formula measure en su codigo).
+    "check_inbox_drainage",
     "check_destination_pii_leak",  # WOT-2026-020t: cableado en prepush_check.py (closeout, WARN/FAIL)
     # WOT-2026-049c: NO es falso-WIRED, pero su `wired` es ACOTADO y hay que leerlo asi.
     # Declarado en extra_guards porque no lleva prefijo check_/validate_/guard_ y por eso
