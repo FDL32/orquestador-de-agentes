@@ -344,6 +344,11 @@ def _terminal_signal_rows(text: str) -> dict[str, str]:
             signals. The id is read from a CELL, never from prose -- a ficha
             that MENTIONS another id would otherwise be credited as that
             ticket's own row.
+
+            The signal is credited to the row's OWNER ONLY: the FIRST
+            ticket-shaped cell, which is the `Ticket` column. A live row cites
+            OTHER ids in other cells (`Depende de` is the common one), and
+            those cells are NOT that ticket's row.
     After: returns {ticket_id: matched signal text}; no I/O, no mutation.
     """
     found: dict[str, str] = {}
@@ -353,14 +358,20 @@ def _terminal_signal_rows(text: str) -> dict[str, str]:
         cells = [c.strip() for c in line.split("|")]
         if "pending" not in cells:
             continue
-        ids = [c for c in cells if _TICKET_CELL_RE.fullmatch(c)]
-        if not ids:
+        # WOT-2026-043w (correccion, bucle L2601 H1): el DUENO de la fila es la
+        # PRIMERA celda con forma de ticket (columna `Ticket`). Acreditar la
+        # senal a TODOS los ids de la fila era un falso positivo MEDIDO: una
+        # fila cuyo `Depende de` cita otro ticket le acreditaba el `RESUELTO`
+        # del dueno, y ese DONE_NOT_ARCHIVED espurio bloquea un plan sano.
+        # Medido en el corpus vivo: 13 filas pending con >1 id (0 con senal
+        # HOY, luego el defecto estaba LATENTE, no disparando).
+        owner = next((c for c in cells if _TICKET_CELL_RE.fullmatch(c)), None)
+        if owner is None:
             continue
         for pattern in _TERMINAL_SIGNAL_RES:
             match = pattern.search(line)
             if match:
-                for ticket in ids:
-                    found.setdefault(ticket, match.group(0))
+                found.setdefault(owner, match.group(0))
                 break
     return found
 

@@ -1252,3 +1252,29 @@ def test_043w_senal_en_fila_ajena_no_acredita_a_otro_ticket():
     )
     errors = _errors_live_backlog(_dna_dag("WOT-2026-800g"), backlog)
     assert errors == []
+
+
+def test_043w_h1_senal_solo_acredita_al_dueno_de_la_fila():
+    """Bucle L2601 H1: una fila cita OTROS ids; no son su fila.
+
+    FALSO POSITIVO MEDIDO 2026-08-27: `for ticket in ids` acreditaba la senal
+    a TODOS los ids de la fila, asi que un ticket citado en `Depende de`
+    heredaba el `RESUELTO` del dueno y producia un DONE_NOT_ARCHIVED espurio
+    que bloquea un plan sano. El dueno es la PRIMERA celda con forma de ticket.
+    """
+    from scripts.validate_batch_dag import _errors_live_backlog, _terminal_signal_rows
+
+    row = (
+        "| Alta | WOT-2026-800a | RESUELTO 2026-08-01: hecho | motor "
+        "| pending | WOT-2026-800b | x | none |"
+    )
+    backlog = _dna_backlog(row)
+
+    signals = _terminal_signal_rows(backlog)
+    assert "WOT-2026-800a" in signals, "el dueno de la fila SI lleva la senal"
+    assert "WOT-2026-800b" not in signals, (
+        "un ticket citado en `Depende de` NO es el dueno de esta fila"
+    )
+
+    # Y el plan que vuela 800b no debe bloquearse por la senal de 800a.
+    assert _errors_live_backlog(_dna_dag("WOT-2026-800b"), backlog) == []
