@@ -49,6 +49,80 @@ def _write_utf8(path: Path, text: str) -> None:
     path.write_text(normalized, encoding="utf-8", newline="\n")
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-036g: el lector ANCLABA POR HEADER EXACTO.
+# `_extract_section` hacia `lines.index(heading)`, es decir igualdad literal de
+# la linea entera. MEDIDO 2026-08-27: un renombrado CONSERVADOR del header
+# ("## Vocabulario canonico" -> "## Vocabulario Canonico"), e incluso un
+# ESPACIO FINAL invisible, rompen el bundle con ValueError. Los titulos
+# literales vivian ademas en el hot-path, repetidos en cada llamada.
+#
+# El REGISTRY es la lista CERRADA de secciones que el bundle necesita: cada
+# entrada mapea un id estable -> patron de header tolerante a renombrado
+# conservador (mayusculas/minusculas y espaciado). Tolerante NO es laxo: el
+# patron sigue anclado al nivel de encabezado y al texto del titulo, asi que
+# una seccion DISTINTA no se cuela; lo que deja de romper es la tipografia.
+# ---------------------------------------------------------------------------
+
+AGENTS_SECTIONS_REGISTRY: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "vocabulario_canonico",
+        re.compile(r"^##\s+Vocabulario\s+canonico\s*$", re.IGNORECASE),
+    ),
+    (
+        "cem_v0",
+        re.compile(
+            r"^##\s+CEM\s+v0\s*-\s*Contrato,\s*Evidencia\s+y\s+Memoria\s*$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "secretos_y_seguridad",
+        re.compile(r"^##\s+Secretos\s+y\s+seguridad\s*$", re.IGNORECASE),
+    ),
+)
+
+_REGISTRY_BY_ID = dict(AGENTS_SECTIONS_REGISTRY)
+
+
+def _extract_registered_section(text: str, section_id: str) -> str:
+    """Extract a REGISTERED section by its stable id, not by literal title.
+
+    Before: `section_id` is a key of AGENTS_SECTIONS_REGISTRY.
+    During: match each line against the registered tolerant pattern; the
+        section runs until the next header of the SAME level.
+    After: returns the section text. Raises ValueError naming the id AND the
+        pattern when no header matches -- a caller must be able to tell
+        "renamed beyond tolerance" from "typo in my id".
+    """
+    try:
+        pattern = _REGISTRY_BY_ID[section_id]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown section id: {section_id!r}; registered ids are "
+            f"{sorted(_REGISTRY_BY_ID)}"
+        ) from exc
+
+    lines = text.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if pattern.match(line)),
+        None,
+    )
+    if start is None:
+        raise ValueError(
+            f"Required section not found: id={section_id!r} pattern={pattern.pattern!r}"
+        )
+
+    heading = lines[start]
+    level = len(heading) - len(heading.lstrip("#"))
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if lines[index].startswith("#" * level + " "):
+            end = index
+            break
+    return "\n".join(lines[start:end]).rstrip()
+
+
 def _extract_section(text: str, heading: str) -> str:
     """Before: heading is exact. During: scan headings. After: section text."""
     lines = text.splitlines()
@@ -129,9 +203,10 @@ def build_motor_context(motor_root: Path, generated_at: str) -> str:
     sections = [
         "# Contexto operativo del motor",
         _metadata_header(version, commit, generated_at),
-        _extract_section(agents, "## Vocabulario canonico"),
-        _extract_section(agents, "## CEM v0 - Contrato, Evidencia y Memoria"),
-        _extract_section(agents, "## Secretos y seguridad"),
+        # WOT-2026-036g: por ID DE REGISTRY, nunca por titulo literal.
+        _extract_registered_section(agents, "vocabulario_canonico"),
+        _extract_registered_section(agents, "cem_v0"),
+        _extract_registered_section(agents, "secretos_y_seguridad"),
         "## Bootstrap canonico de repo_destino",
         bootstrap,
     ]

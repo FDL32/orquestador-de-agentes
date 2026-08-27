@@ -92,3 +92,80 @@ def test_build_bundle_fails_when_required_section_is_missing(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="Required section not found"):
         hermes_build_context_bundle.build_bundle(motor, tmp_path / "out")
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-036g: el lector ancla por REGISTRY, no por header exacto.
+# ROJO MEDIDO 2026-08-27: `_extract_section` hacia `lines.index(heading)` --
+# igualdad literal de la linea entera -- asi que un renombrado CONSERVADOR
+# ("## Vocabulario canonico" -> "## Vocabulario Canonico"), o un simple
+# ESPACIO FINAL invisible, rompian el bundle con ValueError.
+# ---------------------------------------------------------------------------
+
+_VOCAB_DOC = "# T\n\n## Vocabulario canonico\n\ncuerpo A\n\n## Otra\n\nx\n"
+
+
+def test_036g_registry_existe_y_saca_los_literales_del_hot_path() -> None:
+    """El registry es la lista CERRADA de secciones que el bundle necesita."""
+    import scripts.hermes_build_context_bundle as mod
+
+    ids = [sid for sid, _ in mod.AGENTS_SECTIONS_REGISTRY]
+    assert ids == ["vocabulario_canonico", "cem_v0", "secretos_y_seguridad"]
+
+    # Los titulos literales solo pueden vivir en el REGISTRY (como patron).
+    # Si reaparecen como argumento de una llamada de extraccion, el hot-path
+    # volvio a anclar por header exacto y esta mutacion debe verse.
+    source = Path(mod.__file__).read_text(encoding="utf-8")
+    assert '_extract_section(agents, "##' not in source, (
+        "el hot-path volvio a anclar por titulo literal; debe usar el registry"
+    )
+    assert source.count("_extract_registered_section(agents,") == 3
+
+
+def test_036g_renombrado_conservador_ya_no_rompe_el_lector() -> None:
+    """La MUTACION del ticket: renombrar el header sin tocar el registry.
+
+    Con el lector viejo (`lines.index`) cada una de estas variantes lanzaba
+    ValueError. Con el registry, las tres resuelven.
+    """
+    import scripts.hermes_build_context_bundle as mod
+
+    variantes = (
+        "## Vocabulario Canonico",  # capitalizacion
+        "## Vocabulario canonico  ",  # espacio final invisible
+        "##  Vocabulario  canonico",  # espaciado interno
+    )
+    for variante in variantes:
+        doc = _VOCAB_DOC.replace("## Vocabulario canonico", variante)
+        seccion = mod._extract_registered_section(doc, "vocabulario_canonico")
+        assert "cuerpo A" in seccion, f"la variante {variante!r} no resolvio"
+
+
+def test_036g_tolerante_no_es_laxo_una_seccion_distinta_no_se_cuela() -> None:
+    """Tolerar tipografia no es tolerar OTRA seccion."""
+    import scripts.hermes_build_context_bundle as mod
+
+    doc = _VOCAB_DOC.replace("## Vocabulario canonico", "## Vocabulario extendido")
+    with pytest.raises(ValueError):
+        mod._extract_registered_section(doc, "vocabulario_canonico")
+
+
+def test_036g_error_nombra_el_id_y_el_patron() -> None:
+    """Un fallo debe distinguir 'renombrado de mas' de 'id mal escrito'."""
+    import scripts.hermes_build_context_bundle as mod
+
+    with pytest.raises(ValueError, match="vocabulario_canonico"):
+        mod._extract_registered_section("# nada\n", "vocabulario_canonico")
+    with pytest.raises(ValueError, match="Unknown section id"):
+        mod._extract_registered_section(_VOCAB_DOC, "no_registrado")
+
+
+def test_036g_las_tres_anclas_reales_resuelven_contra_agents_md() -> None:
+    """Control de realidad: el registry sirve para el fichero de verdad."""
+    import scripts.hermes_build_context_bundle as mod
+
+    agents = (Path(mod.__file__).resolve().parents[1] / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+    for sid, _ in mod.AGENTS_SECTIONS_REGISTRY:
+        assert mod._extract_registered_section(agents, sid).strip(), sid
