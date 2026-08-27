@@ -131,6 +131,45 @@ below: both are pre-flight barriers that run BEFORE the state machine, and
 both fail closed rather than let an inaccessible dependency surface mid-batch
 as a confusing per-ticket failure.
 
+### P2 (WOT-2026-029e): the HEAD you read must BE the SHA the plan assumes
+
+The accessibility census above answers "can I reach the backends". It does not
+answer the other binary question the start of a flight depends on: **is the
+motor I am about to execute the same motor the plan was written against?**
+
+This is a BINARY question answered ONLY by a probe, never by assumption:
+
+- **Probe**: `git rev-parse HEAD` in the motor repo, compared LITERALLY against
+  the `state_at_triage.motor` SHA the DAG declares.
+- **Criterion**: equal -> proceed. DIFFERENT -> this is NOT a hard stop by
+  itself (the motor HEAD legitimately advances as the batch closes its own
+  tickets, and an equality gate would self-block after the first ticket -- the
+  reason `state_at_triage.motor != HEAD` is deliberately not an error in
+  `validate_batch_dag`). What a mismatch DOES require is to REFRESH the
+  intersected premises exactly as the governing plan mandates, and to record
+  in the start minutes WHICH premises were re-measured and with what result.
+- **What must be copied LITERALLY into the start minutes**: the SHA read, the
+  SHA declared by the plan, and the verdict (equal / refreshed). A premise
+  re-measured but not written down is a premise nobody can audit later.
+
+Rationale: a plan is a set of claims ABOUT a tree. When the tree moves, the
+claims do not follow it. A flight that starts without answering this question
+inherits, silently, whatever drifted -- and the drift surfaces later as a
+per-ticket failure whose real cause is already out of sight.
+
+**Scope note, deliberately NOT crossed here (WOT-2026-029e, adjudicated loop
+L2600)**: the round-trip / liveness half of this ticket (a real
+`ensemble_dispatch smoke` per backend before starting) is NOT implemented, and
+must not be added without derogating the Nivel 0 / Nivel 1 boundary above in
+an explicit, signed amendment. That boundary is owned by WOT-2026-025s and is
+wired in code (`check_agents_accessible.py --level 1` refuses with rc=2).
+Reaching the same capability through a different door would derogate it de
+facto. Four independent review lenses agreed unanimously (loop L2600, nonce
+3a67a089): emitting N backends x 120s of real external traffic at startup
+makes the start LESS available, not safer -- a transient network hiccup would
+block a whole batch that does not depend on that backend yet, and the same
+liveness is re-verified anyway when the first ticket actually dispatches.
+
 ---
 
 ## Paso 0-bis: START CONTEXT ISOLATION is DUAL-CONTRACT -- never self-certified
