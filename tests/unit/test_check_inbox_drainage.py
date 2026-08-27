@@ -52,6 +52,17 @@ def _pending_names(tmp_path: Path) -> set[str]:
     return {p.name for p in (tmp_path / CANON_REL).glob("*.tickets.md")}
 
 
+def _seed_registry(tmp_path: Path, *ticket_ids: str) -> None:
+    """backlog.md sintetico donde viven los ids-destino (para --disposition fused:
+    el guard exige que --fused-to RESUELVA en el registro del destino)."""
+    reg = tmp_path / ".agent/collaboration/backlog.md"
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    rows = "\n".join(
+        f"| Alta | {t} | titulo | code | pending | - | - | - | - |" for t in ticket_ids
+    )
+    reg.write_text(f"# Backlog\n{rows}\n", encoding="utf-8")
+
+
 def _ledger_lines(tmp_path: Path) -> list[dict]:
     led = tmp_path / CANON_REL / "_drained" / "drain_ledger.jsonl"
     if not led.is_file():
@@ -320,6 +331,7 @@ def test_mark_drained_ledger_fail_revierte_move(tmp_path, monkeypatch, capsys):
 
 def test_fused_to_formato_invalido_rechazado(tmp_path):
     dest = _mkdest(tmp_path)
+    _seed_registry(dest, "WOT-2026-999x")
     _touch(dest / CANON_REL / "FP-formato.tickets.md")
     assert (
         run_mark_drained(
@@ -334,8 +346,26 @@ def test_fused_to_formato_invalido_rechazado(tmp_path):
     assert (dest / CANON_REL / "_drained").is_dir()
 
 
+def test_fused_to_destino_inexistente_rechazado(tmp_path, capsys):
+    """BA05 L702 MEDIO: una ficha no se drena 'fused' contra un id que no resuelve
+    en el registro (aunque su FORMA sea valida) -- sin lineas falsas en el ledger."""
+    dest = _mkdest(tmp_path)
+    # registro existente pero SIN ese id:
+    _seed_registry(dest, "WOT-2026-001a")
+    _touch(dest / CANON_REL / "FP-fantasma.tickets.md")
+    rc = run_mark_drained(
+        dest, "FP-fantasma.tickets.md", "fused", "WOT-2026-777z", None
+    )
+    out = capsys.readouterr().out
+    assert rc != 0, "dreno fused contra id inexistente"
+    assert "no resuelve" in out, out
+    assert _pending_names(dest) == {"FP-fantasma.tickets.md"}  # nada movido
+    assert not (dest / CANON_REL / "_drained").exists()
+
+
 def test_fused_to_legacy_wt_wp_aceptado(tmp_path):
     dest = _mkdest(tmp_path)
+    _seed_registry(dest, "WT-2026-019")
     _touch(dest / CANON_REL / "FP-leg.tickets.md")
     assert (
         run_mark_drained(dest, "FP-leg.tickets.md", "fused", "WT-2026-019", None) == 0
@@ -383,6 +413,7 @@ def test_symlink_shown_as_unsupported(tmp_path):
 
 def test_d_mark_drained_moves_and_appends_ledger(tmp_path):
     dest = _mkdest(tmp_path)
+    _seed_registry(dest, "WOT-2026-999a")
     _touch(dest / CANON_REL / "FP-20260801-a.tickets.md", "# a\n")
     _touch(dest / CANON_REL / "FP-20260802-b.tickets.md", "# b\n")
     assert (

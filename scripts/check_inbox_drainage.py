@@ -492,6 +492,28 @@ def run_move_strays(project_root: Path) -> int:
     return 0
 
 
+def _fused_to_resolves(project_root: Path, fused_to: str) -> bool:
+    """El id `fused` debe ser RESOLUBLE en el registro del propio destino: fila en
+    `backlog.md` (cola viva) o en `_archive/backlog_done.md` (traspaso).
+
+    Mecanico, no semantico (la comprobacion de fused es NON-GOAL de la ficha): esto
+    es existencia del id-destino, no juicio sobre el contenido. (enmienda
+    MANAGER_REVIEW BA05 MEDIO L702 2026-08-27)
+    """
+    needles = (
+        project_root / ".agent/collaboration/backlog.md",
+        project_root / ".agent/collaboration/_archive/backlog_done.md",
+    )
+    for fpath in needles:
+        try:
+            text = fpath.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        if fused_to in text:
+            return True
+    return False
+
+
 def _validate_mark_drained_args(
     disposition: str,
     fused_to: str | None,
@@ -524,6 +546,14 @@ def run_mark_drained(
     err = _validate_mark_drained_args(disposition, fused_to, reason)
     if err:
         print(err)
+        return 1
+    if disposition == "fused" and not _fused_to_resolves(project_root, str(fused_to)):
+        print(
+            f"{_PREFIX} ERROR: --fused-to='{fused_to}' no resuelve en el registro del "
+            "destino (.agent/collaboration/backlog.md ni _archive/backlog_done.md). "
+            "Orden correcto (8.bis): escribir PRIMERO la fila destino, luego drenar "
+            "la ficha. Si la fila es nueva de este ciclo, ya debe estar en backlog.md."
+        )
         return 1
     canon = canonical_inbox(project_root)
     ficha = canon / ficha_name
