@@ -2179,6 +2179,27 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
             is_blocking=True,
         )
 
+    # WOT-2026-042u (nit MANAGER_REVIEW L700): `dir_links` viajaba en el report y
+    # el conector lo DESCARTABA -- la enmienda BA10 ("nombrar, no seguir": un
+    # dir-symlink puede esconder una ficha que followlinks=False no recorre) solo
+    # se cumplia en la CLI manual (`check_inbox_drainage.py:371-376`), y este
+    # conector es el UNICO camino auto-ejecutable. Un escondite anunciado solo en
+    # la via manual es la misma clase de fallo que el ticket cierra, un nivel mas
+    # arriba: se nombra en AMBAS ramas no-bloqueantes o no se nombra en la que
+    # corre sola. Sigue siendo WARN y NUNCA gate: no se sigue el enlace (ciclos), y
+    # convertirlo en bloqueante castigaria una topologia legitima del destino.
+    dir_links = report.get("dir_links", [])
+    dl_nota = ""
+    if dir_links:
+        dl_detalle = "; ".join(
+            f"{dl['path']} :: {dl['motivo']}" for dl in dir_links[:4]
+        )
+        dl_nota = (
+            f" | WARN {len(dir_links)} dir-symlink(s) NO recorrido(s) "
+            f"(posible escondite de fichas): {dl_detalle}. Reconcilia: sustituye el "
+            "enlace por archivos reales (o mueve lo que esconda al canonico)."
+        )
+
     pending = report.get("pending_count", 0)
     if pending:
         oldest = report["pending"][0]
@@ -2190,14 +2211,18 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
                 f"(mas antigua: {oldest['name']} -- {oldest['age_days']} dias). Fusion = "
                 "Bloque 8.bis + `check_inbox_drainage.py --mark-drained` (mismo guard). "
                 "No bloquea: registrar no puede bloquear el cierre que lo permite."
+                + dl_nota
             ),
             is_blocking=False,
         )
 
     return CheckResult(
         name=name,
-        passed=True,
-        output="inbox canonico sin fichas pendientes; sin estrays (SKIP nombrado si estaba vacio)",
+        passed=not dir_links,
+        output=(
+            "inbox canonico sin fichas pendientes; sin estrays "
+            "(SKIP nombrado si estaba vacio)" + dl_nota
+        ),
         is_blocking=False,
     )
 

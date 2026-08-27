@@ -128,14 +128,24 @@ def _archive_exempt_dir(project_root: Path) -> Path:
 
 
 def _is_in_archive_exempt_prefix(rel: Path) -> bool:
-    """True solo bajo _archive/backlog_inbox_*/ (subruta explicita, no _archive/**)."""
+    """True solo bajo _archive/backlog_inbox_*/ (subruta explicita, no _archive/**).
+
+    WOT-2026-042u (nit MANAGER_REVIEW L700): el predicado usaba
+    `startswith("backlog_inbox")`, que exenta ADEMAS cualquier directorio que
+    meramente EMPIECE por esa cadena (`backlog_inboxes_falso/`, `backlog_inboxXYZ/`)
+    -- contradiciendo este mismo docstring, que promete patron EXPLICITO, y el del
+    modulo: "El archivo ajeno a ese patron NO esta exento: si hay una ficha ahi, es
+    stray". Una exencion mas ancha que su contrato convierte fichas stray en
+    `drained` SILENCIOSAMENTE, que es la clase de invisibilidad que este guard
+    cierra. El patron correcto es el nombre exacto o el prefijo CON separador.
+    """
     parts = rel.parts
     return (
         len(parts) >= 4
         and parts[0] == ".agent"
         and parts[1] == "collaboration"
         and parts[2] == "_archive"
-        and parts[3].startswith("backlog_inbox")
+        and (parts[3] == "backlog_inbox" or parts[3].startswith("backlog_inbox_"))
     )
 
 

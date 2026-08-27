@@ -612,3 +612,81 @@ def test_b_wiring_classifies_stray_blocking_pending_warn(tmp_path):
     dest3 = _mkdest(tmp_path / "d3")
     r3 = pc.run_inbox_drainage_check(dest3)
     assert r3.passed is True
+
+
+def test_b_wiring_nombra_dir_links_en_el_camino_automatico(tmp_path, monkeypatch):
+    """WOT-2026-042u (nit MANAGER_REVIEW L700): el conector de prepush -- el UNICO
+    camino auto-ejecutable -- descartaba `dir_links`, asi que la enmienda BA10
+    ("nombrar, no seguir") solo se cumplia en la CLI manual y la barrera devolvia
+    verde silencioso sobre un posible escondite.
+
+    Cubre las DOS ramas no-bloqueantes (con y sin pendientes), porque el nit era que
+    ninguna lo mencionaba. Sigue siendo WARN y NUNCA gate: `is_blocking` es False en
+    ambas -- convertirlo en bloqueante castigaria una topologia legitima.
+    """
+    import scripts.check_inbox_drainage as cid
+    from scripts import prepush_check as pc
+
+    real_predicado = cid._dir_is_untraversed_link
+    monkeypatch.setattr(
+        cid,
+        "_dir_is_untraversed_link",
+        lambda p: p.name == "escondite" or real_predicado(p),
+    )
+
+    # Rama SIN pendientes: antes decia "sin fichas pendientes; sin estrays" y callaba.
+    dest = _mkdest(tmp_path / "sin_pending")
+    escondite = _mkdest(tmp_path / "sin_pending" / "escondite")
+    _touch(escondite / "FP-oculta.tickets.md")
+    r = pc.run_inbox_drainage_check(dest)
+    assert "dir-symlink" in r.output, r.output
+    assert "escondite" in r.output, r.output
+    assert r.is_blocking is False  # WARN, jamas gate
+    assert r.passed is False  # ya no es un verde mudo
+
+    # Rama CON pendientes: el census de fichas no puede tapar el escondite.
+    dest2 = _mkdest(tmp_path / "con_pending")
+    _touch(dest2 / CANON_REL / "FP-p.tickets.md")
+    escondite2 = _mkdest(tmp_path / "con_pending" / "escondite")
+    _touch(escondite2 / "FP-oculta2.tickets.md")
+    r2 = pc.run_inbox_drainage_check(dest2)
+    assert "dir-symlink" in r2.output, r2.output
+    assert "WARN census inbox" in r2.output, r2.output
+    assert r2.is_blocking is False
+
+
+def test_exencion_de_archive_exige_separador_no_solo_prefijo(tmp_path):
+    """WOT-2026-042u (nit MANAGER_REVIEW L700): `startswith("backlog_inbox")`
+    exentaba ADEMAS cualquier directorio que meramente EMPEZARA por esa cadena,
+    contradiciendo su propio docstring ("subruta EXPLICITA... El archivo ajeno a ese
+    patron NO esta exento: si hay una ficha ahi, es stray"). Una exencion mas ancha
+    que su contrato convierte fichas stray en `drained` EN SILENCIO -- la clase de
+    invisibilidad que este guard cierra.
+
+    CONTROL POSITIVO incluido: el patron legitimo medido en el destino real
+    (`backlog_inbox_fusionado_*`) DEBE seguir exento; si cae, el fix es incorrecto.
+    """
+    import scripts.check_inbox_drainage as cid
+
+    arch = Path(".agent") / "collaboration" / "_archive"
+
+    # AJENOS: empiezan por la cadena pero no son el buzon archivado -> stray.
+    assert not cid._is_in_archive_exempt_prefix(
+        arch / "backlog_inboxes_falso" / "deep" / "FP-r.tickets.md"
+    )
+    assert not cid._is_in_archive_exempt_prefix(
+        arch / "backlog_inboxXYZ" / "FP-r.tickets.md"
+    )
+
+    # CONTROL POSITIVO: los legitimos siguen exentos.
+    assert cid._is_in_archive_exempt_prefix(
+        arch / "backlog_inbox_fusionado_20260811" / "FP-r.tickets.md"
+    )
+    assert cid._is_in_archive_exempt_prefix(arch / "backlog_inbox" / "FP-r.tickets.md")
+
+    # Y de punta a punta: la ficha ajena aparece como stray, no como drained.
+    dest = _mkdest(tmp_path)
+    _touch(dest / arch / "backlog_inboxes_falso" / "deep" / "FP-r.tickets.md")
+    rep = cid.classify_inbox(dest)
+    assert len(rep["strays"]) == 1, rep
+    assert rep["strays"][0]["basename"] == "FP-r.tickets.md"
