@@ -1278,3 +1278,113 @@ def test_043w_h1_senal_solo_acredita_al_dueno_de_la_fila():
 
     # Y el plan que vuela 800b no debe bloquearse por la senal de 800a.
     assert _errors_live_backlog(_dna_dag("WOT-2026-800b"), backlog) == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-029a: checkpoint mid-flight (continuidad, no freno).
+# ROJO MEDIDO 2026-08-27: `checkpoints: "no-soy-lista"`, `checkpoint_policy:
+# 12345` y `after_ticket: -5` se aceptaban los tres con 0 errores.
+# ---------------------------------------------------------------------------
+
+_CP_GROUP = {
+    "id": "g1",
+    "class": "S",
+    "common_gate": "gate",
+    "tickets": ["WOT-2026-800a", "WOT-2026-800b"],
+    "autonomy_mode": "auto",
+    "blocks_groups": [],
+    "depends_on_groups": [],
+    "shared_surfaces": [],
+}
+
+
+def _cp_dag(**over):
+    group = dict(_CP_GROUP)
+    if "checkpoints" in over:
+        group["checkpoints"] = over.pop("checkpoints")
+    return {"schema": "autonomous-batch-dag/v1", "groups": [group], **over}
+
+
+class TestCheckpointSchema029a:
+    def test_dag_sin_checkpoints_sigue_limpio(self):
+        """El campo es OPCIONAL: su ausencia no puede inventar errores."""
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        assert _errors_schema_basics(_cp_dag()) == []
+
+    def test_checkpoints_no_lista_es_error(self):
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        errors = _errors_schema_basics(_cp_dag(checkpoints="no-soy-lista"))
+        assert len(errors) == 1 and "debe ser una lista" in errors[0]
+
+    def test_after_ticket_negativo_es_error(self):
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        errors = _errors_schema_basics(
+            _cp_dag(checkpoints=[{"after_ticket": -5, "note": "x"}])
+        )
+        assert len(errors) == 1 and "negativo" in errors[0]
+
+    def test_after_ticket_de_otro_grupo_es_error(self):
+        """Un checkpoint anclado a un ticket ajeno no se ejecutaria JAMAS."""
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        errors = _errors_schema_basics(
+            _cp_dag(checkpoints=[{"after_ticket": "WOT-2026-999z", "note": "x"}])
+        )
+        assert len(errors) == 1 and "no pertenece a este grupo" in errors[0]
+
+    def test_note_vacia_es_error(self):
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        errors = _errors_schema_basics(
+            _cp_dag(checkpoints=[{"after_ticket": 0, "note": "   "}])
+        )
+        assert len(errors) == 1 and "no vacio" in errors[0]
+
+    def test_wellformed_pasa(self):
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        dag = _cp_dag(
+            checkpoints=[{"after_ticket": "WOT-2026-800a", "note": "handoff"}],
+            checkpoint_policy="soft",
+        )
+        assert _errors_schema_basics(dag) == []
+
+    def test_policy_invalida_es_error(self):
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        errors = _errors_schema_basics(_cp_dag(checkpoint_policy=12345))
+        assert len(errors) == 1 and "checkpoint_policy" in errors[0]
+
+    def test_policy_hard_es_valida(self):
+        from scripts.validate_batch_dag import _errors_schema_basics
+
+        assert _errors_schema_basics(_cp_dag(checkpoint_policy="hard")) == []
+
+    def test_default_es_soft_en_la_senal(self):
+        """Sin policy declarada, la senal sale como soft (DEFAULT)."""
+        from scripts.validate_batch_dag import checkpoint_signals
+
+        dag = _cp_dag(checkpoints=[{"after_ticket": 0, "note": "n"}])
+        signals = checkpoint_signals(dag)
+        assert len(signals) == 1
+        assert signals[0].startswith("CHECKPOINT [soft]")
+
+    def test_senal_nombra_grupo_ticket_y_nota(self):
+        from scripts.validate_batch_dag import checkpoint_signals
+
+        dag = _cp_dag(
+            checkpoints=[{"after_ticket": "WOT-2026-800a", "note": "handoff aqui"}],
+            checkpoint_policy="hard",
+        )
+        (signal,) = checkpoint_signals(dag)
+        assert "[hard]" in signal
+        assert "g1" in signal and "WOT-2026-800a" in signal
+        assert "handoff aqui" in signal
+
+    def test_sin_checkpoints_no_hay_senales(self):
+        from scripts.validate_batch_dag import checkpoint_signals
+
+        assert checkpoint_signals(_cp_dag()) == []

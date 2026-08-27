@@ -70,6 +70,131 @@ REQUIRED_GROUP_KEYS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-029a: CHECKPOINT MID-FLIGHT -- continuidad, no freno.
+# Una compactacion o un cambio de sesion mata el contexto sin dejar handoff
+# util. El schema admite ahora, de forma ADITIVA y OPCIONAL, que un grupo
+# declare donde conviene cortar: `checkpoints: [{after_ticket, note}]`, y que
+# el DAG declare `checkpoint_policy: soft|hard` (default soft).
+#
+# ALCANCE DELIBERADO: este validador valida la FORMA (tipo, no-vacio,
+# after_ticket que pertenece al grupo) y emite la senal CHECKPOINT en su
+# salida para que el runner la imprima al cerrar el ticket marcado. NO
+# implementa la semantica de pausa: `hard` queda declarado para los planes que
+# lo pidan, y quien lo consuma decide. Validar forma sin prometer semantica es
+# lo que evita que este campo se convierta en un contrato que nadie cumple.
+#
+# ROJO MEDIDO 2026-08-27: `checkpoints: "no-soy-lista"`, `checkpoint_policy:
+# 12345` y `after_ticket: -5` se aceptaban los tres con 0 errores.
+# ---------------------------------------------------------------------------
+
+VALID_CHECKPOINT_POLICIES = ("soft", "hard")
+DEFAULT_CHECKPOINT_POLICY = "soft"
+
+
+def _errors_checkpoint_after_ticket(
+    after: Any, tickets: list[str], where: str
+) -> list[str]:
+    """Validate one checkpoint's `after_ticket` (id in the group, or index)."""
+    if after is None:
+        return [f"{where}: falta 'after_ticket'"]
+    # bool is an int subclass: True would silently pass as index 1.
+    if isinstance(after, bool) or not isinstance(after, (str, int)):
+        return [
+            f"{where}: 'after_ticket' debe ser id de ticket o indice, "
+            f"no {type(after).__name__}"
+        ]
+    if isinstance(after, int):
+        if after < 0:
+            return [f"{where}: 'after_ticket' negativo ({after})"]
+        if tickets and after >= len(tickets):
+            return [
+                f"{where}: 'after_ticket' {after} fuera de rango "
+                f"(el grupo tiene {len(tickets)} ticket(s))"
+            ]
+        return []
+    if tickets and after not in tickets:
+        # Un checkpoint anclado a un ticket que no esta en el grupo no se
+        # ejecutaria nunca: es una instruccion muerta, no un aviso.
+        return [f"{where}: 'after_ticket' '{after}' no pertenece a este grupo"]
+    return []
+
+
+def _errors_single_checkpoint(cp: Any, tickets: list[str], where: str) -> list[str]:
+    """Validate ONE checkpoint entry (form only)."""
+    if not isinstance(cp, dict):
+        return [f"{where}: debe ser un objeto, no {type(cp).__name__}"]
+
+    errors = _errors_checkpoint_after_ticket(cp.get("after_ticket"), tickets, where)
+
+    note = cp.get("note")
+    if note is None:
+        errors.append(f"{where}: falta 'note'")
+    elif not isinstance(note, str) or not note.strip():
+        errors.append(f"{where}: 'note' debe ser texto no vacio")
+    return errors
+
+
+def _errors_group_checkpoints(group: dict[str, Any]) -> list[str]:
+    """Validate the OPTIONAL `checkpoints` list of one group (form only)."""
+    gid = group.get("id")
+    raw = group.get("checkpoints")
+    if raw is None:
+        return []
+
+    if not isinstance(raw, list):
+        return [
+            f"grupo '{gid}': 'checkpoints' debe ser una lista, no {type(raw).__name__}"
+        ]
+
+    tickets = [t for t in (group.get("tickets") or []) if isinstance(t, str)]
+    errors: list[str] = []
+    for idx, cp in enumerate(raw):
+        errors.extend(
+            _errors_single_checkpoint(cp, tickets, f"grupo '{gid}': checkpoints[{idx}]")
+        )
+    return errors
+
+
+def _errors_checkpoint_policy(data: dict[str, Any]) -> list[str]:
+    """Validate the OPTIONAL top-level `checkpoint_policy` (form only)."""
+    policy = data.get("checkpoint_policy")
+    if policy is None:
+        return []
+    if policy not in VALID_CHECKPOINT_POLICIES:
+        return [
+            f"'checkpoint_policy' invalida: {policy!r}; debe ser una de "
+            f"{list(VALID_CHECKPOINT_POLICIES)} (default "
+            f"'{DEFAULT_CHECKPOINT_POLICY}')"
+        ]
+    return []
+
+
+def checkpoint_signals(data: dict[str, Any]) -> list[str]:
+    """CHECKPOINT lines for the runner to print when it closes a marked ticket.
+
+    Before: `data` is a schema-valid DAG. During: pure read. After: one line
+    per declared checkpoint, carrying the policy in effect so the runner does
+    not have to re-derive the default.
+    """
+    policy = data.get("checkpoint_policy") or DEFAULT_CHECKPOINT_POLICY
+    out: list[str] = []
+    groups = data.get("groups")
+    if not isinstance(groups, list):
+        return out
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        for cp in group.get("checkpoints") or []:
+            if not isinstance(cp, dict):
+                continue
+            out.append(
+                f"CHECKPOINT [{policy}] grupo '{group.get('id')}' "
+                f"after_ticket={cp.get('after_ticket')!r}: {cp.get('note')}"
+            )
+    return out
+
+
 def _errors_single_group(
     group: dict[str, Any], group_ids: set[str], ticket_owner: dict[str, str]
 ) -> list[str]:
@@ -108,6 +233,9 @@ def _errors_single_group(
         else:
             ticket_owner[ticket] = gid
 
+    # WOT-2026-029a: checkpoints opcionales, validados por FORMA.
+    errors.extend(_errors_group_checkpoints(group))
+
     return errors
 
 
@@ -131,6 +259,9 @@ def _errors_schema_basics(data: dict[str, Any]) -> list[str]:
     schema = data.get("schema")
     if schema != REQUIRED_SCHEMA:
         errors.append(f"schema '{schema}' invalido: se esperaba '{REQUIRED_SCHEMA}'")
+
+    # WOT-2026-029a: politica de checkpoint opcional, validada por FORMA.
+    errors.extend(_errors_checkpoint_policy(data))
 
     groups = data.get("groups")
     if not isinstance(groups, list):
