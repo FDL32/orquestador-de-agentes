@@ -313,6 +313,58 @@ def _errors_surface_overlap(groups: list[dict[str, Any]]) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-043w: HECHO-Y-NO-ARCHIVADO. `_errors_live_backlog` asks only whether
+# a ticket is still a `pending` row. A row can be pending AND already carry a
+# STRUCTURED TERMINAL SIGNAL written by a human closing it in place -- the work
+# is done, the archiving never happened -- and the DAG citing it passes every
+# mechanical gate at exit 0. Measured 2026-08-27 on a fixture carrying the three
+# real shapes: 0 errors. The plan flies a ticket that no longer exists as work.
+#
+# The patterns are OWN CONSTANTS on purpose: importing the triage extractor
+# (a private helper of another module) would create a circular dependency and
+# couple this gate to an internal it does not own.
+# ---------------------------------------------------------------------------
+_TERMINAL_SIGNAL_RES = (
+    # "RESUELTO 2026-08-01: ..." -- closed in place, with the date IN the row.
+    re.compile(r"(?<![\w-])RESUELTO\s+\d{4}-\d{2}-\d{2}", re.IGNORECASE),
+    # "SUPERSEDED por WOT-2026-800z" -- superseded BY A LIVE ID.
+    re.compile(r"(?<![\w-])SUPERSEDED\s+por\s+[A-Z]{2,4}-\d{4}-\w+", re.IGNORECASE),
+    # "ABSORBIDA por WOT-2026-800y" -- absorbed BY A LIVE ID.
+    re.compile(r"(?<![\w-])ABSORBIDA\s+por\s+[A-Z]{2,4}-\d{4}-\w+", re.IGNORECASE),
+)
+
+
+def _terminal_signal_rows(text: str) -> dict[str, str]:
+    """Map ticket id -> the terminal signal found in ITS OWN live row.
+
+    Before: text is the raw markdown of the live backlog queue.
+    During: scans table rows only; a row must be `pending` (same cell rule as
+            `_pending_tickets_in_backlog`) AND carry one of the terminal
+            signals. The id is read from a CELL, never from prose -- a ficha
+            that MENTIONS another id would otherwise be credited as that
+            ticket's own row.
+    After: returns {ticket_id: matched signal text}; no I/O, no mutation.
+    """
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        if "pending" not in cells:
+            continue
+        ids = [c for c in cells if _TICKET_CELL_RE.fullmatch(c)]
+        if not ids:
+            continue
+        for pattern in _TERMINAL_SIGNAL_RES:
+            match = pattern.search(line)
+            if match:
+                for ticket in ids:
+                    found.setdefault(ticket, match.group(0))
+                break
+    return found
+
+
 def _pending_tickets_in_backlog(text: str) -> set[str]:
     """Ticket ids that appear in a LIVE `pending` row of the backlog.
 
@@ -353,6 +405,8 @@ def _errors_live_backlog(data: dict[str, Any], backlog_text: str) -> list[str]:
     if not isinstance(groups, list):
         return errors
     pending = _pending_tickets_in_backlog(backlog_text)
+    # WOT-2026-043w: a row can be pending AND already done-in-place.
+    terminal = _terminal_signal_rows(backlog_text)
     for group in groups:
         if not isinstance(group, dict):
             continue
@@ -366,6 +420,14 @@ def _errors_live_backlog(data: dict[str, Any], backlog_text: str) -> list[str]:
             f"DAG muerto, devolver al triage (re-triage), no ejecutarlo"
             for ticket in tickets
             if isinstance(ticket, str) and ticket not in pending
+        )
+        errors.extend(
+            f"DONE_NOT_ARCHIVED (WOT-2026-043w): el ticket '{ticket}' del "
+            f"grupo '{group_id}' sigue 'pending' pero su propia fila lleva "
+            f"senal terminal ({terminal[ticket]!r}) -- el trabajo esta HECHO y "
+            f"sin archivar; archivar la fila, no volarla"
+            for ticket in tickets
+            if isinstance(ticket, str) and ticket in terminal
         )
     return errors
 

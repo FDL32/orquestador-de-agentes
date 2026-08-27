@@ -1151,3 +1151,104 @@ def test_058p_bis_premise_verify_is_not_an_exclusion(tmp_path: Path) -> None:
     ]
     result = _run(_write_dag(tmp_path, dag))
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-043w: HECHO-Y-NO-ARCHIVADO.
+# Un plan pasa todos los gates mecanicos aunque su ticket este hecho sin
+# archivar. ROJO MEDIDO 2026-08-27: fixture con las tres senales terminales
+# reales -> 0 errores (exit 0). Y sobre el corpus VIVO el detector encontro un
+# caso real: WOT-2026-056e sigue `pending` con `RESUELTO 2026-08-16` en su
+# propia fila.
+# ---------------------------------------------------------------------------
+
+_DNA_HEADER = (
+    "## Vista rapida\n\n"
+    "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+    "|---|---|---|---|---|---|---|---|\n"
+)
+
+
+def _dna_row(ticket: str, titulo: str) -> str:
+    return f"| Alta | {ticket} | {titulo} | motor | pending | - | x | none |"
+
+
+def _dna_dag(*tickets: str) -> dict:
+    return {"groups": [{"id": "g1", "tickets": list(tickets)}]}
+
+
+def _dna_backlog(*rows: str) -> str:
+    return _DNA_HEADER + "\n".join(rows) + "\n"
+
+
+def test_043w_resuelto_con_fecha_es_done_not_archived():
+    from scripts.validate_batch_dag import _errors_live_backlog
+
+    backlog = _dna_backlog(_dna_row("WOT-2026-800a", "RESUELTO 2026-08-01: entregado"))
+    errors = _errors_live_backlog(_dna_dag("WOT-2026-800a"), backlog)
+    assert len(errors) == 1
+    assert "DONE_NOT_ARCHIVED" in errors[0]
+    assert "WOT-2026-800a" in errors[0]
+
+
+def test_043w_superseded_por_id_vivo_es_done_not_archived():
+    from scripts.validate_batch_dag import _errors_live_backlog
+
+    backlog = _dna_backlog(_dna_row("WOT-2026-800b", "SUPERSEDED por WOT-2026-800z"))
+    errors = _errors_live_backlog(_dna_dag("WOT-2026-800b"), backlog)
+    assert len(errors) == 1
+    assert "DONE_NOT_ARCHIVED" in errors[0]
+
+
+def test_043w_absorbida_por_id_vivo_es_done_not_archived():
+    from scripts.validate_batch_dag import _errors_live_backlog
+
+    backlog = _dna_backlog(_dna_row("WOT-2026-800c", "ABSORBIDA por WOT-2026-800y"))
+    errors = _errors_live_backlog(_dna_dag("WOT-2026-800c"), backlog)
+    assert len(errors) == 1
+    assert "DONE_NOT_ARCHIVED" in errors[0]
+
+
+def test_043w_control_negativo_ticket_limpio_no_dispara():
+    """CONTROL NEGATIVO: un ticket vivo SIN senales sigue pasando."""
+    from scripts.validate_batch_dag import _errors_live_backlog
+
+    backlog = _dna_backlog(_dna_row("WOT-2026-800d", "trabajo normal en curso"))
+    assert _errors_live_backlog(_dna_dag("WOT-2026-800d"), backlog) == []
+
+
+def test_043w_los_tres_patrones_juntos_mas_uno_limpio():
+    """El fixture del ticket: 3 senales + 1 limpio -> exactamente 3 errores."""
+    from scripts.validate_batch_dag import _errors_live_backlog
+
+    backlog = _dna_backlog(
+        _dna_row("WOT-2026-800a", "RESUELTO 2026-08-01: entregado"),
+        _dna_row("WOT-2026-800b", "SUPERSEDED por WOT-2026-800z"),
+        _dna_row("WOT-2026-800c", "ABSORBIDA por WOT-2026-800y"),
+        _dna_row("WOT-2026-800d", "trabajo normal en curso"),
+    )
+    dag = _dna_dag("WOT-2026-800a", "WOT-2026-800b", "WOT-2026-800c", "WOT-2026-800d")
+    errors = _errors_live_backlog(dag, backlog)
+    assert len(errors) == 3
+    assert all("DONE_NOT_ARCHIVED" in e for e in errors)
+    assert not any("WOT-2026-800d" in e for e in errors)
+
+
+def test_043w_resuelto_sin_fecha_no_dispara():
+    """`RESUELTO` a secas no es senal ESTRUCTURADA: exige fecha in-row."""
+    from scripts.validate_batch_dag import _errors_live_backlog
+
+    backlog = _dna_backlog(_dna_row("WOT-2026-800e", "queda RESUELTO cuando cierre"))
+    assert _errors_live_backlog(_dna_dag("WOT-2026-800e"), backlog) == []
+
+
+def test_043w_senal_en_fila_ajena_no_acredita_a_otro_ticket():
+    """La senal se lee de la fila PROPIA, nunca de la prosa de otra fila."""
+    from scripts.validate_batch_dag import _errors_live_backlog
+
+    backlog = _dna_backlog(
+        _dna_row("WOT-2026-800f", "RESUELTO 2026-08-01: entregado"),
+        _dna_row("WOT-2026-800g", "trabajo normal en curso"),
+    )
+    errors = _errors_live_backlog(_dna_dag("WOT-2026-800g"), backlog)
+    assert errors == []
