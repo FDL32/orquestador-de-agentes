@@ -120,8 +120,9 @@ EXCLUDE_PATTERNS = {
 ALLOWLIST = {}
 
 
-def relative_path(path: Path) -> str:
-    return path.relative_to(ROOT).as_posix()
+def relative_path(path: Path, root: Path | None = None) -> str:
+    base = ROOT if root is None else Path(root).resolve()
+    return path.relative_to(base).as_posix()
 
 
 def find_mojibake(text: str) -> list[str]:
@@ -328,24 +329,43 @@ def is_allowlisted(relative: str) -> bool:
     return relative in ALLOWLIST
 
 
-@lru_cache(maxsize=1)
-def collect_files_to_check() -> tuple[Path, ...]:
-    files = {path for path in STATIC_FILES_TO_CHECK}
+# WOT-2026-043d: el scope ya no esta anclado al MOTOR por construccion. Toda
+# funcion de scope acepta un `root` (arbol auditado); el default None conserva
+# el comportamiento historico (ROOT). El anclaje lo resuelve el CALLER
+# (check_encoding_guard lo deriva del cwd real del commit), asi que un arbol
+# ajeno con cwd != ROOT es auditable contra su PROPIO scope. maxsize=8: los
+# tests alternan raices temporales; unbounded creceria con cada tmp_path.
+@lru_cache(maxsize=8)
+def collect_files_to_check(root: Path | None = None) -> tuple[Path, ...]:
+    base = ROOT if root is None else Path(root).resolve()
+    files: set[Path] = set(STATIC_FILES_TO_CHECK) if base == ROOT else set()
     for pattern in GLOB_PATTERNS:
-        files.update(path for path in ROOT.glob(pattern) if path.is_file())
-    return tuple(sorted(path for path in files if not is_excluded(relative_path(path))))
+        files.update(path for path in base.glob(pattern) if path.is_file())
+    scoped: list[Path] = []
+    for path in files:
+        try:
+            rel = path.relative_to(base).as_posix()
+        except ValueError:
+            # Entradas motor-static bajo una raiz ajena: se conservan (ningun
+            # path staged de un arbol ajeno puede igualarlas).
+            scoped.append(path)
+            continue
+        if not is_excluded(rel):
+            scoped.append(path)
+    return tuple(sorted(scoped))
 
 
-@lru_cache(maxsize=1)
-def collect_scope_set() -> frozenset[Path]:
-    return frozenset(collect_files_to_check())
+@lru_cache(maxsize=8)
+def collect_scope_set(root: Path | None = None) -> frozenset[Path]:
+    return frozenset(collect_files_to_check(root))
 
 
-def is_in_scope(relative: str) -> bool:
+def is_in_scope(relative: str, root: Path | None = None) -> bool:
     if is_excluded(relative):
         return False
-    candidate = ROOT / relative
-    return candidate in collect_scope_set()
+    base = ROOT if root is None else Path(root).resolve()
+    candidate = base / relative
+    return candidate in collect_scope_set(base)
 
 
 def load_text(path: Path) -> str:
@@ -391,11 +411,12 @@ def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
     return find_mojibake(text), find_q_in_word(text), text_corruption
 
 
-def iter_staged_files(paths: list[str]) -> list[Path]:
+def iter_staged_files(paths: list[str], root: Path | None = None) -> list[Path]:
+    base = ROOT if root is None else Path(root).resolve()
     staged: list[Path] = []
     for rel in paths:
-        candidate = ROOT / rel
-        if candidate.exists() and candidate.is_file() and is_in_scope(rel):
+        candidate = base / rel
+        if candidate.exists() and candidate.is_file() and is_in_scope(rel, base):
             staged.append(candidate)
     return staged
 

@@ -12,14 +12,51 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _staged_relative_paths() -> list[str]:
+def _resolve_audit_root() -> Path:
+    """WOT-2026-043d: raiz del arbol REAL cuyo indice se esta commiteando.
+
+    Before: el cwd del proceso (pre-commit lo fija a la raiz del repo que
+        commitea; una invocacion manual desde un subdirectorio tambien vale).
+    During: resuelve `git rev-parse --show-toplevel` contra ese cwd. Fail-closed
+        (exit 2, diagnosticos en stderr) si git no esta en PATH o el cwd no
+        pertenece a un arbol git: sin arbol real que auditar, un rc=0 seria el
+        falso verde que este ticket cierra.
+    After: la raiz absoluta resuelta del arbol auditado (worktrees incluidos:
+        --show-toplevel devuelve la raiz del worktree, no la del main).
+    """
+    git_executable = shutil.which("git")
+    if not git_executable:
+        print(
+            "[encoding-guard] FAIL-CLOSED: git executable not found in PATH",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    candidate = Path.cwd().resolve()
+    probe = subprocess.run(  # noqa: S603
+        [git_executable, "rev-parse", "--show-toplevel"],
+        cwd=candidate,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if probe.returncode != 0:
+        print(
+            f"[encoding-guard] FAIL-CLOSED: cwd is not inside a git tree: {candidate}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return Path(probe.stdout.strip()).resolve()
+
+
+def _staged_relative_paths(audit_root: Path) -> list[str]:
     git_executable = shutil.which("git")
     if not git_executable:
         raise RuntimeError("git executable not found in PATH")
 
     result = subprocess.run(  # noqa: S603
         [git_executable, "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
-        cwd=ROOT,
+        cwd=audit_root,
         check=True,
         capture_output=True,
         text=True,
@@ -137,7 +174,16 @@ def main() -> int:
     from scripts.encoding_guard import iter_staged_files
 
     explicit_files = _explicit_paths(sys.argv[1:])
-    files_to_check = explicit_files or iter_staged_files(_staged_relative_paths())
+    if explicit_files:
+        files_to_check = explicit_files
+    else:
+        # WOT-2026-043d: en la ruta staged (la que usa pre-commit con
+        # pass_filenames: false) la raiz auditada es la del cwd REAL, no la del
+        # modulo: el indice que se valida es el de ESTE commit.
+        audit_root = _resolve_audit_root()
+        files_to_check = iter_staged_files(
+            _staged_relative_paths(audit_root), root=audit_root
+        )
 
     if not files_to_check:
         return 0
