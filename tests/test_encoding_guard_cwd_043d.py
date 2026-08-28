@@ -109,6 +109,24 @@ def test_foreign_index_out_of_scope_stays_green(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_foreign_static_scope_work_plan_is_blocked(tmp_path):
+    """L801 refutation (Codex): the canonical static surfaces resolve RELATIVE
+    to the audited tree. A staged, corrupted `.agent/collaboration/work_plan.md`
+    in a foreign repo (cwd != motor ROOT) must be RED: the glob patterns never
+    covered `.agent/**/*.md`, so under a motor-only static set this file stayed
+    invisible in any foreign tree (residual false green)."""
+    repo = _init_foreign_repo(tmp_path)
+    static_file = repo / ".agent" / "collaboration" / "work_plan.md"
+    static_file.parent.mkdir(parents=True)
+    static_file.write_text(_MOJIBAKE, encoding="utf-8")
+    _git(repo, "add", ".agent/collaboration/work_plan.md")
+
+    result = _run_guard(repo)
+
+    assert result.returncode == 1, result.stderr
+    assert "Mojibake detected" in result.stderr
+
+
 # ---------------------------------------------------------------------------
 # (c) scope anchor, independent of the CLI: in-process, foreign audit root
 # ---------------------------------------------------------------------------
@@ -127,6 +145,10 @@ def test_scope_anchor_resolves_against_audit_root(tmp_path):
 
     assert iter_staged_files([rel], root=foreign) == [target.resolve()]
     assert is_in_scope(rel, root=foreign) is True
+
+    # Canonical static surfaces belong to the FOREIGN scope too (L801): the
+    # static list resolves relative to the audited tree, not only to the motor.
+    assert is_in_scope(".agent/collaboration/work_plan.md", root=foreign) is True
 
     # Contrast: under the motor default the same relative path does not exist,
     # so nothing is staged (the old anchor could never see the foreign file).

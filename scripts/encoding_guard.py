@@ -97,6 +97,17 @@ STATIC_FILES_TO_CHECK = [
     AGENT_DIR / "legacy" / "BUILDER_CONTEXT.md",
 ]
 
+# WOT-2026-043d (review L801, refutacion Codex): los statics canonicos se
+# resuelven RELATIVOS al arbol auditado, no solo al motor. Con el anclaje por
+# `root`, una raiz ajena que solo heredara los GLOB_PATTERNS dejaba FUERA de
+# scope superficies canonicas como `.agent/collaboration/work_plan.md` (los
+# globs no cubren `.agent/**/*.md`): falso verde restante exactamente en las
+# superficies que el destino commitea. Para base == ROOT el conjunto
+# resultante es IDENTICO al anterior.
+STATIC_RELATIVES_TO_CHECK = tuple(
+    path.relative_to(ROOT).as_posix() for path in STATIC_FILES_TO_CHECK
+)
+
 GLOB_PATTERNS = [
     "skills/**/*.md",
     "prompts/**/*.md",
@@ -338,7 +349,7 @@ def is_allowlisted(relative: str) -> bool:
 @lru_cache(maxsize=8)
 def collect_files_to_check(root: Path | None = None) -> tuple[Path, ...]:
     base = ROOT if root is None else Path(root).resolve()
-    files: set[Path] = set(STATIC_FILES_TO_CHECK) if base == ROOT else set()
+    files = {base / rel for rel in STATIC_RELATIVES_TO_CHECK}
     for pattern in GLOB_PATTERNS:
         files.update(path for path in base.glob(pattern) if path.is_file())
     scoped: list[Path] = []
@@ -346,8 +357,8 @@ def collect_files_to_check(root: Path | None = None) -> tuple[Path, ...]:
         try:
             rel = path.relative_to(base).as_posix()
         except ValueError:
-            # Entradas motor-static bajo una raiz ajena: se conservan (ningun
-            # path staged de un arbol ajeno puede igualarlas).
+            # Entradas fuera del arbol auditado: se conservan (ningun path
+            # staged del arbol auditado puede igualarlas).
             scoped.append(path)
             continue
         if not is_excluded(rel):
