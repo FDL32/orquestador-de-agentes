@@ -102,6 +102,17 @@ MARKER_RE = re.compile(r"(?m)^[ \t>*_]{0,6}\[(?:EVIDENCIA|HIPOTESIS)\]")
 #: Centinela opt-in. Sin este fichero el hook es un no-op absoluto.
 SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode.json"
 
+#: WOT-2026-044x: edad maxima del centinela antes de tratarlo como inactivo.
+#: Criterio DECLARADO (no hay distribucion empirica de duraciones medida):
+#: cubre con margen las sesiones de "varias horas" que acota el DoD (d) de la
+#: fila; una sesion viva excepcional que supere 24h pierde la exigencia de
+#: recibo en su proximo stop (coste benigno: el hook ya es fail-open ante
+#: ambiguedad, tiene escotilla por entorno, y el dueno puede re-armar con
+#: `verification_mode.py on`, que re-mide baseline y renueva activated_at).
+#: Fecha futura o reloj hacia atras dejan el centinela ARMADO (aritmetica
+#: conservadora: nunca producen falso relieve).
+SENTINEL_MAX_AGE_S = 24 * 60 * 60
+
 #: Tope defensivo del texto devuelto al agente.
 REASON_MAX_LEN = 400
 
@@ -162,6 +173,40 @@ def read_sentinel(root: Path) -> dict | None:
     except ValueError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def sentinel_expiry(data: dict) -> str:
+    """Razon por la que el centinela se trata como INACTIVO ("" si esta vigente).
+
+    WOT-2026-044x: la caducidad se evalua EN LECTURA (NON-GOAL de la fila: ni
+    demonio ni limpieza programada). El unico campo con fecha es
+    `activated_at` (ISO-8601 UTC, escrito por turn_on).
+
+    - "EXPIRADO: activated_at > SENTINEL_MAX_AGE_S": fecha parseable y mas
+      vieja que el umbral (sesion muerta: crash, Ctrl-C, ventana cerrada).
+    - "SIN-FECHA-LEGIBLE: activated_at ausente o ilegible": sin prueba de
+      vigencia. DoD (e): fail-open, "nunca bloquea ante ambiguedad" -- la unica
+      lectura que garantiza no-bloqueo ante edad desconocida es tratarla como
+      inactiva, que ademas da relevo a centinelas legacy sin el campo. La
+      etiqueta es LITERAL y compartida con `verification_mode.py status`
+      (terminologia unica para el operador; adjudicacion L702-A1).
+
+    Las dos etiquetas son literales estables: los tests y el diagnostico del
+    operador las matchean por texto.
+    """
+    raw = data.get("activated_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return "SIN-FECHA-LEGIBLE: activated_at ausente o ilegible"
+    try:
+        activated = datetime.fromisoformat(raw.strip())
+    except ValueError:
+        return "SIN-FECHA-LEGIBLE: activated_at ausente o ilegible"
+    if activated.tzinfo is None:
+        activated = activated.replace(tzinfo=timezone.utc)
+    age_s = (datetime.now(timezone.utc) - activated).total_seconds()
+    if age_s > SENTINEL_MAX_AGE_S:
+        return f"EXPIRADO: activated_at > {SENTINEL_MAX_AGE_S}s"
+    return ""
 
 
 def _git(root: Path, *args: str) -> str | None:
@@ -321,10 +366,69 @@ def _record_observation(root: Path, payload: dict) -> None:
         return
 
 
+def _sentinel_inactive_exit(baseline: dict) -> bool:
+    """True si el centinela debe tratarse como INACTIVO (WOT-2026-044x).
+
+    Side-effect deliberado: diagnostico visible en stderr con la etiqueta
+    literal (EXPIRADO / SIN-FECHA-LEGIBLE) para que el operador vea POR QUE el
+    hook no exige recibo.
+    """
+    expiry = sentinel_expiry(baseline)
+    if expiry:
+        sys.stderr.write(
+            f"native_stop_hook: centinela {expiry}; tratado como INACTIVO.\n"
+        )
+        return True
+    return False
+
+
 def emit(result: dict) -> None:
     """Escribe el veredicto en stdout como JSON y termina con exit 0."""
     print(json.dumps(result))
     sys.exit(0)
+
+
+def _decide(payload: dict) -> dict:
+    """Veredicto del hook (WOT-2026-044x lo extrae de main para C901).
+
+    Fail-open ante cualquier anomalia del dominio: toda ambiguedad devuelve
+    `{"continue": True}`. Los side-effects (stderr de INACTIVO/OBSERVE,
+    observaciones) ocurren aqui; el emision unico lo hace main().
+    """
+    cwd = payload.get("cwd")
+    start = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
+    root = find_repo_root(start.resolve())
+
+    baseline = read_sentinel(root)
+    if baseline is None:
+        return {"continue": True}
+
+    # WOT-2026-044x: centinela caducado o sin fecha legible -> INACTIVO con
+    # diagnostico visible (el relief es el proposito del ticket; el flujo
+    # posterior de mutacion/fail-open queda intacto para vigentes).
+    if _sentinel_inactive_exit(baseline):
+        return {"continue": True}
+
+    # Proporcionalidad: un cierre puramente conversacional no debe recibo.
+    # Solo se exige clasificacion si el turno MUTO el repo, que es un hecho
+    # estructural medible, no una lectura de la prosa del agente.
+    if not repo_mutated(root, baseline):
+        return {"continue": True}
+
+    if needs_classification(payload):
+        # Escape por entorno (WOT-2026-044t): en `observe` la barrera MIDE
+        # pero no bloquea. Existe para que un vuelo autonomo -- sin humano
+        # delante -- no estrene un mecanismo bloqueante en la corrida que
+        # debe salir sola, conservando la medicion de cuantos cierres
+        # habrian sido bloqueados.
+        if _observe_only():
+            _record_observation(root, payload)
+            sys.stderr.write(
+                "native_stop_hook: OBSERVE -- habria bloqueado; no bloquea.\n"
+            )
+            return {"continue": True}
+        return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
+    return {"continue": True}
 
 
 def main() -> None:
@@ -348,37 +452,7 @@ def main() -> None:
         return
 
     try:
-        cwd = payload.get("cwd")
-        start = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
-        root = find_repo_root(start.resolve())
-
-        baseline = read_sentinel(root)
-        if baseline is None:
-            emit({"continue": True})
-            return
-
-        # Proporcionalidad: un cierre puramente conversacional no debe recibo.
-        # Solo se exige clasificacion si el turno MUTO el repo, que es un hecho
-        # estructural medible, no una lectura de la prosa del agente.
-        if not repo_mutated(root, baseline):
-            emit({"continue": True})
-            return
-
-        if needs_classification(payload):
-            # Escape por entorno (WOT-2026-044t): en `observe` la barrera MIDE
-            # pero no bloquea. Existe para que un vuelo autonomo -- sin humano
-            # delante -- no estrene un mecanismo bloqueante en la corrida que
-            # debe salir sola, conservando la medicion de cuantos cierres
-            # habrian sido bloqueados.
-            if _observe_only():
-                _record_observation(root, payload)
-                sys.stderr.write(
-                    "native_stop_hook: OBSERVE -- habria bloqueado; no bloquea.\n"
-                )
-                emit({"continue": True})
-                return
-            emit({"decision": "block", "reason": _REASON[:REASON_MAX_LEN]})
-            return
+        emit(_decide(payload))
     except SystemExit:
         raise
     except Exception as exc:  # pragma: no cover - defensa en profundidad
@@ -386,9 +460,6 @@ def main() -> None:
             f"native_stop_hook: fallo interno ({type(exc).__name__}); fail-open.\n"
         )
         emit({"continue": True})
-        return
-
-    emit({"continue": True})
 
 
 if __name__ == "__main__":

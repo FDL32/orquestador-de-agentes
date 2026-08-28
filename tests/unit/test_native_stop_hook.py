@@ -15,6 +15,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 import pytest
 
@@ -42,7 +43,13 @@ def make_git_repo(tmp_path):
 
 
 def current_baseline(root):
-    """Baseline git tal y como lo escribe scripts/verification_mode.py."""
+    """Baseline git tal y como lo escribe scripts/verification_mode.py.
+
+    WOT-2026-044x: incluye `activated_at` fresco, porque el escritor real
+    (turn_on) siempre lo escribe y el hook ahora lo lee para decidir
+    caducidad. Los tests que quieren centinela VIEJO escriben su propio
+    sentinel_text.
+    """
     head = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True
     ).stdout.decode()
@@ -52,6 +59,7 @@ def current_baseline(root):
     return {
         "baseline_head": head.strip(),
         "baseline_status_hash": hook.status_hash(status),
+        "activated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 

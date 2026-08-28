@@ -160,9 +160,25 @@ def show_status(root: Path) -> int:
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        print("verification_mode: ON (centinela ilegible, sin baseline)")
+        # WOT-2026-044x: el hook trata ilegible como SIN-FECHA-LEGIBLE ->
+        # INACTIVO (fail-open ante ambiguedad). El operador debe verlo igual.
+        print(
+            "verification_mode: ON pero INACTIVO (centinela ilegible: SIN-FECHA-LEGIBLE)"
+        )
         return 0
-    print("verification_mode: ON")
+    if not isinstance(data, dict):
+        print(
+            "verification_mode: ON pero INACTIVO (centinela ilegible: SIN-FECHA-LEGIBLE)"
+        )
+        return 0
+    sys.path.insert(0, str(REPO_ROOT / ".agent" / "hooks"))
+    from native_stop_hook import sentinel_expiry
+
+    expiry = sentinel_expiry(data)
+    if expiry:
+        print(f"verification_mode: ON pero INACTIVO ({expiry})")
+    else:
+        print("verification_mode: ON")
     print(f"  baseline_head={str(data.get('baseline_head', '?'))[:12]}")
     print(f"  activated_at={data.get('activated_at', '?')}")
     return 0
