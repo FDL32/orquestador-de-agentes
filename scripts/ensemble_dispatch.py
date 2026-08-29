@@ -342,6 +342,10 @@ _ENTROPY_BITS_THRESHOLD = 4.0
 # sale, no. CREDITS.md, que era el falso positivo de 041q, YA NO MUERDE gracias
 # al guardia de etiqueta.
 _OPAQUE_TOKEN = re.compile(rf"[A-Za-z0-9+=_-]{{{_ENTROPY_MIN_TOKEN_LEN},}}")
+# WOT-2026-059e: un token seguido de '.' + alfanumerico es un nombre de
+# fichero con extension, no un valor de credencial (filtro de contexto de
+# la rama de token opaco; la rama HEX tiene el suyo con _CREDENTIAL_LABEL).
+_FILE_EXT_AFTER = re.compile(r"\.[A-Za-z0-9]")
 # WOT-2026-041q CAPA 3b: el hex puro NO PASA por _OPAQUE_TOKEN + clases.
 #
 # EL DEFECTO QUE CIERRA (medido 2026-07-27 por un bucle adversarial externo, no
@@ -458,7 +462,8 @@ def _entropy_leak(payload_text: str) -> str | None:
             f"token hexadecimal opaco de {len(token)} chars "
             "(forma de clave API o hash; WOT-2026-041q)"
         )
-    for token in _OPAQUE_TOKEN.findall(payload_text):
+    for hit in _OPAQUE_TOKEN.finditer(payload_text):
+        token = hit.group()
         classes = sum(
             (
                 any(c.islower() for c in token),
@@ -470,6 +475,20 @@ def _entropy_leak(payload_text: str) -> str | None:
             continue
         bits = _shannon_bits(token)
         if bits >= _ENTROPY_BITS_THRESHOLD:
+            # WOT-2026-059e: filtro de CONTEXTO, la asimetria que la ficha
+            # documenta contra la rama HEX (que exige _CREDENTIAL_LABEL en su
+            # ventana izquierda). Un token que es COMPONENTE DE RUTA
+            # (precedido de separador de ruta) o NOMBRE DE FICHERO con
+            # extension (seguido de '.' + alfanumerico) es un nombre, no un
+            # valor: flaggearlo bloqueo fan-outs publicos legitimos sobre
+            # nombres reales del repo ('reports/batch_run_<id>.json',
+            # 'queued/<id>.json') y dejo el fan-out en N=0 (bucle L1500).
+            # El token PELADO (sin contexto de ruta) sigue bloqueando: es el
+            # residual por el que 027s creo esta capa (pines 027s/041r).
+            prev_ch = payload_text[hit.start() - 1] if hit.start() > 0 else ""
+            after = payload_text[hit.end() : hit.end() + 2]
+            if prev_ch in ("/", "\\") or _FILE_EXT_AFTER.match(after):
+                continue
             return (
                 f"token opaco de {len(token)} chars con entropia "
                 f"{bits:.2f} bits/char (umbral {_ENTROPY_BITS_THRESHOLD})"

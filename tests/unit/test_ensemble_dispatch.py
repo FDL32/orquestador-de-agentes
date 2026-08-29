@@ -3608,3 +3608,41 @@ def test_059m_sin_commit_sha_la_ruta_sigue_funcionando(tmp_path, monkeypatch):
     rc = _run_loop_round_cli(tmp_path, monkeypatch, None)
     assert rc == 0
     assert len(_rows(tmp_path)) == 1
+
+
+# --- WOT-2026-059e: la rama de token opaco aplica filtro de contexto ----------
+
+
+def test_059e_nombre_de_fichero_en_prosa_no_bloquea():
+    """DoD 059e: un nombre de fichero de alta entropia en prosa NO es una fuga.
+
+    Reproduce el caso medido en el bucle L1500: 'reports/batch_run_<id>.json'
+    recibia FLAG identico a una credencial real y bloqueo las 4 lentes de un
+    fan-out publico (N=0). ROJO HOY: la rama de token opaco no mira contexto.
+    """
+    import random
+    import string
+
+    rng = random.Random(7)  # noqa: S311 - fixture determinista, no es cripto
+    hi = "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(33))
+    assert ed._content_leak("revision manual del informe trimestral sin rutas") is None
+    assert ed._content_leak(f"ruta del informe: reports/batch_run_{hi}.json") is None, (
+        "un nombre de fichero en prosa no debe recibir FLAG"
+    )
+    assert (
+        ed._content_leak(f"plan orchestrator_pipeline/flight_plans/queued/{hi}.json")
+        is None
+    ), "un nombre de fichero en cola de planes no debe recibir FLAG"
+
+
+def test_059e_credencial_etiquetada_sigue_bloqueando():
+    """CONTROL POSITIVO de 059e: con etiqueta/asignacion, el MISMO token bloquea."""
+    valor = "kJ8vQz3XpR7mNw2LtY6bHc4FdA9sG1eU5iO0"
+    assert ed._content_leak(f"api_key = {valor}") is not None
+    assert ed._content_leak(f"clave de acceso: {valor}") is not None
+
+
+def test_059e_token_pelado_sigue_bloqueando():
+    """CONTROL 027s intacto: el token pelado (sin contexto) sigue siendo fuga."""
+    valor = "kJ8vQz3XpR7mNw2LtY6bHc4FdA9sG1eU5iO0"
+    assert ed._entropy_leak(valor) is not None
