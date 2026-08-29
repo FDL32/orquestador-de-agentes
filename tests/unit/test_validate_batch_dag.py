@@ -1388,3 +1388,101 @@ class TestCheckpointSchema029a:
         from scripts.validate_batch_dag import checkpoint_signals
 
         assert checkpoint_signals(_cp_dag()) == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-059i: el validador mira el GRAFO pero no la SECUENCIA emitida.
+# Un DAG aciclico cuyo groups[] lista un grupo ANTES que uno del que depende
+# salia exit 0: un ejecutor secuencial llega a un grupo bloqueado sin causa
+# clasificada (no es hard_stop ni recoverable). Hallazgo ALTA del bucle L1600.
+# ---------------------------------------------------------------------------
+
+
+def _out_of_order_dag() -> dict[str, Any]:
+    """GA depends on GB but is LISTED first -- the exact 059i defect shape."""
+    return {
+        "schema": "autonomous-batch-dag/v1",
+        "generated_at": "2026-08-26T00:00:00Z",
+        "state_at_triage": {"motor": "a" * 40, "workspace": "b" * 40, "dirty": 0},
+        "groups": [
+            {
+                "id": "GA",
+                "tickets": ["WOT-2026-9001"],
+                "depends_on_groups": ["GB"],
+                "blocks_groups": [],
+                "shared_surfaces": [],
+                "class": "S",
+                "autonomy_mode": "autonomous",
+                "common_gate": "pytest tests/unit/test_ga.py",
+                "recovery_owner_stage": "BUILDER",
+                "max_recovery_attempts": 1,
+            },
+            {
+                "id": "GB",
+                "tickets": ["WOT-2026-9002"],
+                "depends_on_groups": [],
+                "blocks_groups": [],
+                "shared_surfaces": [],
+                "class": "S",
+                "autonomy_mode": "autonomous",
+                "common_gate": "pytest tests/unit/test_gb.py",
+                "recovery_owner_stage": "BUILDER",
+                "max_recovery_attempts": 1,
+            },
+        ],
+        "recommended_start": "GA",
+        "stop_policy": {
+            "hard_stop_causes": ["x"],
+            "recoverable_causes": ["y"],
+            "max_unclassified_stops": 1,
+        },
+        "budget": {"max_tickets_closed": 2, "max_group_recoveries": 1},
+    }
+
+
+def test_059i_grupo_listado_antes_de_su_dependencia_rechazado(tmp_path: Path) -> None:
+    """DoD (a): GA depende de GB y se lista ANTES -> el validador rechaza."""
+    dag = _out_of_order_dag()
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode != 0, (
+        "un DAG aciclico con groups[] fuera de orden topologico debe "
+        f"rechazarse: {result.stderr}"
+    )
+    assert "GA" in result.stderr and "GB" in result.stderr, result.stderr
+
+
+def test_059i_recommended_start_no_primero_rechazado(tmp_path: Path) -> None:
+    """DoD (b): si el DAG declara recommended_start, debe ser el primer grupo."""
+    dag = _out_of_order_dag()
+    # Arregla el orden de emision (GB primero) pero apunta recommended_start
+    # al SEGUNDO grupo: el check (b) debe disparar por si solo, aislado del (a).
+    dag["groups"] = list(reversed(dag["groups"]))
+    dag["recommended_start"] = "GA"
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode != 0, (
+        f"recommended_start debe ser el primer elemento de groups[]: {result.stderr}"
+    )
+    assert "recommended_start" in result.stderr, result.stderr
+
+
+def test_059i_control_orden_topologico_correcto_pasa(tmp_path: Path) -> None:
+    """CONTROL: el mismo DAG en orden correcto (GB primero, start=GB) pasa."""
+    dag = _out_of_order_dag()
+    dag["groups"] = list(reversed(dag["groups"]))
+    dag["recommended_start"] = "GB"
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, (
+        f"el orden topologico correcto no debe bloquearse: {result.stderr}"
+    )
+
+
+def test_059i_independientes_orden_cualquiera_sigue_pasando(tmp_path: Path) -> None:
+    """CONTROL del invariante 023u: sin dependencias y sin recommended_start,
+    revertir la lista NO cambia el veredicto (el orden de lista no es el DAG)."""
+    dag = _two_independent_groups()
+    forward = _run(_write_dag(tmp_path, dag, "f059i.json"))
+    assert forward.returncode == 0, forward.stderr
+    rev = copy.deepcopy(dag)
+    rev["groups"] = list(reversed(rev["groups"]))
+    backward = _run(_write_dag(tmp_path, rev, "b059i.json"))
+    assert backward.returncode == 0, backward.stderr

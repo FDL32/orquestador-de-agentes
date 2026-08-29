@@ -838,6 +838,62 @@ def _errors_evidence_label(data: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _errors_emission_order(
+    data: dict[str, Any], groups: list[dict[str, Any]]
+) -> list[str]:
+    """WOT-2026-059i: validate the EMITTED SEQUENCE, not only the graph.
+
+    Cycle detection proves the depends_on_groups GRAPH is acyclic; it says
+    nothing about the order in which groups[] LISTS them. A DAG whose
+    dependent group is listed BEFORE its dependency validates clean, and a
+    sequential executor reaches the blocked group with no classified cause
+    (it is neither a hard_stop nor a recoverable cause). Measured live by
+    bucle L1600 on the corrected WOT-2026-059g DAG; the barrier was missing.
+
+    Two checks, matching the ficha's DoD:
+    (a) no group may appear in groups[] BEFORE a group it depends on;
+    (b) if the DAG declares `recommended_start`, it must be the FIRST element
+        of groups[].
+    (b) is conditional BY DESIGN: a DAG without `recommended_start` (e.g. the
+    WOT-2026-023u independent-pairs fixture) has nothing to pin, and demanding
+    the field would break the pinned invariant that list order is not the DAG
+    for independent groups.
+
+    Before: ``data`` is the parsed DAG; ``groups`` its (already-typed) list.
+    During: pure index arithmetic over group ids; unknown refs are ignored
+        (they are `_errors_unknown_refs`'s business).
+    After: one error per out-of-order edge / misplaced recommended_start.
+    """
+    errors: list[str] = []
+    ids = [
+        g.get("id")
+        for g in groups
+        if isinstance(g, dict) and isinstance(g.get("id"), str)
+    ]
+    position = {gid: i for i, gid in enumerate(ids)}
+    depends = _build_depends_map(groups)
+    for gid in ids:
+        i = position[gid]
+        for dep in sorted(depends.get(gid, set())):
+            j = position.get(dep)
+            if j is not None and j > i:
+                errors.append(
+                    f"orden de emision: el grupo '{gid}' (posicion {i}) aparece "
+                    f"en groups[] ANTES que su dependencia '{dep}' (posicion "
+                    f"{j}) -- un ejecutor secuencial llega a '{gid}' con "
+                    f"'{dep}' sin hacer y sin causa clasificada "
+                    f"(WOT-2026-059i). Reordena groups[] en orden topologico."
+                )
+    start = data.get("recommended_start")
+    if isinstance(start, str) and ids and start in position and position[start] != 0:
+        errors.append(
+            f"orden de emision: recommended_start '{start}' no es el primer "
+            f"elemento de groups[] (el primero es '{ids[0]}') "
+            f"(WOT-2026-059i)."
+        )
+    return errors
+
+
 def validate_dag(data: dict[str, Any]) -> list[str]:
     """Run all validation rules and return the combined list of errors."""
     errors: list[str] = []
@@ -848,6 +904,7 @@ def validate_dag(data: dict[str, Any]) -> list[str]:
         return errors
 
     errors.extend(_errors_cycle(groups))
+    errors.extend(_errors_emission_order(data, groups))
     errors.extend(_errors_blocks_consistency(groups))
     errors.extend(_errors_surface_overlap(groups))
     errors.extend(_errors_scheduled_and_excluded(data))
