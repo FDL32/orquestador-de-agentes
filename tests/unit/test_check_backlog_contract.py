@@ -1828,3 +1828,78 @@ def test_055f_control_prioridades_canonicas_sin_error(tmp_path: Path) -> None:
     root = _write_backlog(tmp_path, rows)
     errors = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
     assert errors == [], f"las prioridades canonicas deben pasar limpias: {errors}"
+
+
+# --- WOT-2026-058h: el cruce cola viva x archive es ciego al layout compacto ---
+
+
+def _write_archive_compact_058h(root: Path, rows: str) -> None:
+    arch = root / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text("# h\n\n" + rows, encoding="utf-8")
+
+
+def test_058h_par_vivo_pendiente_y_compacto_completado_bloquea(tmp_path: Path) -> None:
+    """DoD (a): id vivo `pending` + fila COMPACTA archivada `done` -> error.
+
+    La fila compacta ('| Ticket | Estado | Nota |', id en raw index 1) era
+    invisible para `validate_live_archive_integrity`: `_row_ticket_id` lee el id
+    en raw index 2 (Prioridad-led) y en index 2 encuentra el estado. Medido en
+    el mundo real: 054p/054r/054s/054t/054u aterrizaron justo en ese hueco.
+    """
+    root = _write_backlog(
+        tmp_path,
+        "| Media | WOT-2026-0007 | vivo deliverable_type: code | motor/t | pending | - | y | - |\n",
+    )
+    _write_archive_compact_058h(
+        root, "| WOT-2026-0007 | done | cerrado prueba | commit:deadbee |\n"
+    )
+    errors = cbc.validate_live_archive_integrity(root)
+    assert errors, "el par vivo-pendiente x compacto-completado debe disparar"
+    assert any("WOT-2026-0007" in e for e in errors), (
+        f"el error debe NOMBRAR el id: {errors}"
+    )
+
+
+def test_058h_control_prio_led_sigue_disparando(tmp_path: Path) -> None:
+    """DoD (b) CONTROL POSITIVO: el mismo par en layout prio-led sigue mordiendo."""
+    root = _write_backlog(
+        tmp_path,
+        "| Media | WOT-2026-0007 | vivo deliverable_type: code | motor/t | pending | - | y | - |\n",
+    )
+    _write_archive_compact_058h(
+        root,
+        "| Media | WOT-2026-0007 | hecha deliverable_type: code | motor/t | done | - | y | commit:deadbee |\n",
+    )
+    errors = cbc.validate_live_archive_integrity(root)
+    assert any("WOT-2026-0007" in e for e in errors), (
+        f"el layout prio-led NO debe dejar de morder: {errors}"
+    )
+
+
+def test_058h_credits_y_doble_cierre_compacto_no_son_falsos_positivos(
+    tmp_path: Path,
+) -> None:
+    """DoD (d) convertido en test: la clase compacta es HETEROGENEA.
+
+    Censo del archive real (2026-08-29): 1 id aparece en DOS layouts internos
+    via una fila de CREDITS (WOT-2026-010t) y 2 ids llevan doble entrada
+    compacta legitima (WOT-2026-040n completed->superseded; WOT-2026-010s
+    closure + credits). Este fixture replica ambas formas y exige que el
+    cruce nuevo NO las convierta en violaciones.
+    """
+    root = _write_backlog(
+        tmp_path,
+        "| Alta | WOT-2026-0008 | vivo deliverable_type: code | s | pending | - | y | - |\n",
+    )
+    _write_archive_compact_058h(
+        root,
+        "| WOT-2026-0008 | [skills url https://example.com/skills] | User-invoked vs m |\n"
+        "| WOT-2026-0009 | completed | primer cierre | commit:aaaaaaa |\n"
+        "| WOT-2026-0009 | superseded | reemplazado despues | commit:bbbbbbb |\n",
+    )
+    errors = cbc.validate_live_archive_integrity(root)
+    assert errors == [], (
+        "la fila de credits y el doble cierre compacto son legitimos; el cruce "
+        f"nuevo no debe falsearlos: {errors}"
+    )

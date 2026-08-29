@@ -794,6 +794,54 @@ def _compact_closure_log_cells(path: Path) -> list[str]:
     return cells
 
 
+def _compact_terminal_closure_ids(path: Path) -> dict[str, set[str]]:
+    """WOT-2026-058h: compact archive rows carrying a TERMINAL state cell.
+
+    Shape: ``| <ticket-id> | <terminal-state> | ...`` -- the id at RAW index 1,
+    the state at RAW index 2, the state in _STATES_REQUIRING_LANDING. Only this
+    subclass of the compact layout is closure EVIDENCE for the live-cross check.
+
+    The census this fix was required to run FIRST (ficha DoD d, measured
+    2026-08-29 against the real archive: 169 compact rows / 167 unique) found
+    the compact class is HETEROGENEOUS: 1 id appears in BOTH internal layouts
+    via a CREDITS/skills reference row (WOT-2026-010t), and 2 ids carry
+    legitimate double compact entries (WOT-2026-040n completed->superseded;
+    WOT-2026-010s closure + credits row). Widening _row_ticket_id to secas
+    would have turned both into false positives -- the exact trap the
+    deliberate exclusion of WOT-2026-027i avoids. This reader therefore
+    DISTINGUISHES the surfaces instead of merging them: terminal-state compact
+    rows feed ONLY the live-cross check in validate_live_archive_integrity,
+    never the internal duplicate checks, and non-terminal compact rows
+    (credits, prose) stay out entirely.
+
+    Before: ``path`` exists or not.
+    During: pure line parsing; a row counts only when BOTH cells parse
+        (canonical id + terminal state).
+    After: map id -> set of terminal states seen; empty when the file is
+        absent or carries no terminal compact row.
+    """
+    if not path.exists():
+        return {}
+    found: dict[str, set[str]] = {}
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| "):
+            continue
+        raw = stripped.split("|")
+        if len(raw) <= 3:
+            continue
+        if raw[1].strip() in _PRIORIDAD_WORDS:
+            continue  # Prioridad-led: belongs to the snapshot census, not here.
+        tid = raw[1].strip()
+        state = raw[2].strip()
+        if not _TICKET_ROW_CELL_RE.match(tid):
+            continue
+        if state not in _STATES_REQUIRING_LANDING:
+            continue
+        found.setdefault(tid, set()).add(state)
+    return found
+
+
 def validate_live_archive_integrity(root: Path) -> list[str]:
     """Return violations for duplicate ids across / within the scheduling surfaces.
 
@@ -829,6 +877,25 @@ def validate_live_archive_integrity(root: Path) -> list[str]:
         f"archived row for the ticket."
         for tid, n in sorted(Counter(archive_all).items())
         if n > 1
+    )
+    # WOT-2026-058h: the COMPACT closure-log layout (id at raw index 1) was
+    # invisible to the live-cross check above, the exact blind spot where
+    # 054p/054r/054s/054t/054u landed (done in compact + pending in the
+    # live queue, rc=0). Cross the live queue against terminal-state
+    # compact rows only; credits rows and legitimate double closures stay
+    # out (census in _compact_terminal_closure_ids's docstring).
+    compact_terminal = _compact_terminal_closure_ids(
+        collab / "_archive" / "backlog_done.md"
+    )
+    errors.extend(
+        f"{tid}: appears as a live-queue row in backlog.md AND a COMPACT "
+        f"archived closure row ('| {tid} | {state} | ...') in "
+        f"_archive/backlog_done.md -- it lies in both directions "
+        f"(WOT-2026-058h). Keep exactly one: remove the live row if the "
+        f"ticket is closed, or the closure row if it is live."
+        for tid, states in sorted(compact_terminal.items())
+        if tid in live_ids
+        for state in sorted(states)
     )
     return errors
 
