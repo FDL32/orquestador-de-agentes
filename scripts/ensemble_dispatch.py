@@ -2247,6 +2247,86 @@ def _cmd_run(args, config) -> int:
     return 0
 
 
+def _validated_motor_sha(project_root: Path, commit_sha: str) -> str:
+    """WOT-2026-059m: valida y NORMALIZA el --commit-sha de una ronda.
+
+    La ronda escribe en el MISMO ledger que emit-nonce y su emparejamiento
+    con el nonce depende de commit_sha; aceptar cualquier cadena deja la
+    acreditacion en N=0 sin que nadie avise (medido en
+    FP-20260826-G3-ID-GUARDS: 5 rondas contra 2331c010e294b5df, inexistente,
+    compartiendo los 8 primeros chars con el commit real). La barrera ya
+    existia en el extremo EMISOR (WOT-2026-059c, _cmd_emit_nonce); esta es
+    la misma via en el extremo RONDA: resuelve el motor por link, valida
+    con _canonical_motor_commit_sha y normaliza a sha40.
+
+    Before: project_root es el destino-rol resuelto; commit_sha la forma
+        que el CLI recibio (puede ser abreviada).
+    During: lectura del link + git rev-parse contra el motor. Sin filas,
+        sin envio: quien llama NO ha gastado todavia la ronda.
+    After: sha40 pleno si el sha resuelve; ValueError fail-closed en caso
+        contrario, distinguiendo INVALIDO de UNKNOWN (059c).
+    """
+    try:
+        from runtime.motor_link import resolve_motor_root
+    except ImportError:  # pragma: no cover - ruta de import alternativa
+        from runtime.motor_link import (  # type: ignore[no-redef]
+            resolve_motor_root,
+        )
+    motor_root = resolve_motor_root(project_root)
+    if motor_root is None:
+        raise ValueError(
+            f"loop-round bloqueado (WOT-2026-059m): no pude comprobar "
+            f"'{commit_sha}' -- sin motor_destination_link.json valido "
+            f"para {project_root} (UNKNOWN, no INVALIDO)"
+        )
+    ok, resolved = _canonical_motor_commit_sha(motor_root, commit_sha)
+    if not ok:
+        raise ValueError(f"loop-round bloqueado (WOT-2026-059m): {resolved}")
+    return resolved
+
+
+def _warn_bundle_protocol(content_path: Path) -> None:
+    """PROTOCOLO DE BUNDLE (2026-08-05): avisa ANTES de gastar la ronda si el
+    encargo no declara sus invariantes de suficiencia.
+
+    Medido con la MISMA lente (BA06), el MISMO cwd y ficheros del MISMO repo:
+    bundle SIN protocolo -> 106 bytes sin veredicto; CON protocolo -> 4708 y
+    un informe completo. Una lente muda es indistinguible de una que no
+    encontro nada, asi que el fallo NO es ruidoso: por eso se avisa aqui.
+
+    WARN y NO bloqueo, a proposito: el guard verifica FORMA (que los
+    invariantes esten declarados), no que sean CIERTOS. Bloquear con un
+    detector de cadenas obligaria a escribir las palabras magicas y
+    convertiria el protocolo en cargo cult. El aviso llega cuando aun es
+    barato corregir; la decision sigue siendo del operador.
+
+    Before: content_path es la ruta del bundle declarada por el CLI.
+    During: lectura utf-8 con errors=replace y chequeo de marcadores; un
+        fallo del checker se REPORTA y nunca rompe el despacho (un `except:
+        pass` silencioso es el modo de fallo que este guard existe para
+        cazar: algo que calla es indistinguible de algo que no encontro
+        nada).
+    After: 0 o 1 avisos por stderr; sin retorno.
+    """
+    if not content_path.is_file():
+        return
+    try:
+        from scripts.check_loop_bundle_protocol import check_bundle
+
+        _missing = check_bundle(
+            content_path.read_text(encoding="utf-8", errors="replace")
+        )
+        if _missing:
+            print(
+                f"[loop-bundle] WARN: el bundle no declara {len(_missing)} "
+                f"invariante(s) del protocolo: {', '.join(_missing)}. "
+                "Medido: una lente sin protocolo devolvio 106 bytes; con el, 4708.",
+                file=sys.stderr,
+            )
+    except Exception as exc:  # un aviso NUNCA rompe el despacho
+        print(f"[loop-bundle] aviso no disponible: {exc}", file=sys.stderr)
+
+
 def _cmd_loop_round(args, config) -> int:
     """UNA ronda de un bucle de GOBIERNO por CLI (WOT-2026-043z).
 
@@ -2270,40 +2350,18 @@ def _cmd_loop_round(args, config) -> int:
         `ValueError` a `main`, que los mapea a exit != 0.
     """
     project_root = _resolve_project_root(args.project_root)
+    # WOT-2026-059m: la ronda escribe en el MISMO ledger que emit-nonce y su
+    # emparejamiento con el nonce depende de commit_sha; aceptar cualquier
+    # cadena deja la acreditacion en N=0 sin que nadie avise (medido en
+    # FP-20260826-G3-ID-GUARDS). La barrera ya existia en el extremo EMISOR
+    # (WOT-2026-059c, _cmd_emit_nonce); esta es la misma via en el extremo
+    # RONDA, extraida a _validated_motor_sha. Falla cerrado ANTES de gastar
+    # el envio y ANTES de escribir fila (DoD: rc != 0 SIN fila).
+    if args.commit_sha:
+        args.commit_sha = _validated_motor_sha(project_root, args.commit_sha)
     content_path = Path(args.content_file)
+    _warn_bundle_protocol(content_path)
 
-    # PROTOCOLO DE BUNDLE (2026-08-05): avisa ANTES de gastar la ronda si el
-    # encargo no declara sus invariantes de suficiencia.
-    #
-    # Medido con la MISMA lente (BA06), el MISMO cwd y ficheros del MISMO repo:
-    # bundle SIN protocolo -> 106 bytes sin veredicto; CON protocolo -> 4708 y
-    # un informe completo. Una lente muda es indistinguible de una que no
-    # encontro nada, asi que el fallo NO es ruidoso: por eso se avisa aqui.
-    #
-    # WARN y NO bloqueo, a proposito: el guard verifica FORMA (que los
-    # invariantes esten declarados), no que sean CIERTOS. Bloquear con un
-    # detector de cadenas obligaria a escribir las palabras magicas y
-    # convertiria el protocolo en cargo cult. El aviso llega cuando aun es
-    # barato corregir; la decision sigue siendo del operador.
-    if content_path.is_file():
-        try:
-            from scripts.check_loop_bundle_protocol import check_bundle
-
-            _missing = check_bundle(
-                content_path.read_text(encoding="utf-8", errors="replace")
-            )
-            if _missing:
-                print(
-                    f"[loop-bundle] WARN: el bundle no declara {len(_missing)} "
-                    f"invariante(s) del protocolo: {', '.join(_missing)}. "
-                    "Medido: una lente sin protocolo devolvio 106 bytes; con el, 4708.",
-                    file=sys.stderr,
-                )
-        except Exception as exc:  # un aviso NUNCA rompe el despacho
-            # Se REPORTA en vez de tragarse: un `except: pass` silencioso es el
-            # mismo modo de fallo que este guard existe para cazar (algo que
-            # calla es indistinguible de algo que no encontro nada).
-            print(f"[loop-bundle] aviso no disponible: {exc}", file=sys.stderr)
     # WOT-2026-048i: un error de USO deja RASTRO, no solo un stderr.
     #
     # El exit code YA era correcto (`main` mapea ValueError -> 1) y NO se toca:

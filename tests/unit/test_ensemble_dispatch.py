@@ -2919,6 +2919,11 @@ def test_loop_round_cli_writes_the_four_barrier_fields(tmp_path, monkeypatch):
     transport_attr = "send_to" + "_profile"
     monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
     monkeypatch.setattr(ed, transport_attr, lambda *a, **k: "hallazgo real")
+    # WOT-2026-059m: la barrera de commit_sha exige un link a un motor real
+    # y un sha que resuelva; el repo del fixture provee el commit semilla y
+    # la fila debe llevar el sha40 NORMALIZADO, no la forma abreviada.
+    repo, sha40 = _git_repo_with_commit(tmp_path)
+    _write_link_059m(tmp_path, repo)
     material = tmp_path / "bundle.md"
     material.write_text("material publico bajo review", encoding="utf-8")
 
@@ -2942,7 +2947,7 @@ def test_loop_round_cli_writes_the_four_barrier_fields(tmp_path, monkeypatch):
             "--backend-key",
             "NA01",
             "--commit-sha",
-            "0c1362c4bfeb13d8c5e8c304d0210dd1170f971b",
+            sha40[:7],
             "--challenge-nonce",
             "2a66997af98a052eeb75d24bf9761542",
             "--data-sensitivity",
@@ -2962,7 +2967,9 @@ def test_loop_round_cli_writes_the_four_barrier_fields(tmp_path, monkeypatch):
     # Los 4 campos que la barrera LEE. Sin ellos la fila es imputable a nadie.
     assert row["loop_id"] == "L2100"
     assert row["backend_key"] == "NA01"
-    assert row["commit_sha"] == "0c1362c4bfeb13d8c5e8c304d0210dd1170f971b"
+    assert row["commit_sha"] == sha40, (
+        "la fila debe llevar el sha40 normalizado, no la forma abreviada"
+    )
     assert row["challenge_nonce"] == "2a66997af98a052eeb75d24bf9761542"
     assert row["evidencia"] == "hallazgo real", (
         "el CONTENIDO de la respuesta viaja al receipt: una lente que corre y "
@@ -3484,3 +3491,120 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "challenger_opencode_glm_5_2",
         "proposer_claude",
     ], f"opcion B (equilibrada) = BA05 + BA06 + BA01; hoy: {con_arbol}"
+
+
+# --- WOT-2026-059m: la ronda no acepta un commit_sha que no resuelve ----------
+
+
+def _git_repo_with_commit(tmp_path):
+    """Repo git REAL (sin mockear git) con un commit semilla; devuelve (repo, sha40)."""
+    import subprocess as sp
+
+    repo = tmp_path / "motor_fx"
+    repo.mkdir()
+
+    def git(*a):
+        r = sp.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (repo / "seed.txt").write_text("seed", encoding="utf-8")
+    git("add", "seed.txt")
+    git("commit", "-q", "-m", "seed")
+    return repo, git("rev-parse", "HEAD")
+
+
+def _write_link_059m(destino, motor_root):
+    cfg = destino / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps(
+            {
+                "motor_root": str(motor_root),
+                "destination_root": str(destino),
+                "motor_version": "9.17.1-test",
+                "destination_id": destino.name,
+                "ticket_prefix": "WOT",
+                "created_at": "2026-08-29T00:00:00+00:00",
+                "manifest_version": "1.0",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _run_loop_round_cli(tmp_path, monkeypatch, commit_sha):
+    """La ruta CLI REAL con transporte stub (nombre compuesto, patron 043z)."""
+    transport_attr = "send_to" + "_profile"
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, transport_attr, lambda *a, **k: "hallazgo real")
+    material = tmp_path / "bundle.md"
+    material.write_text("material publico bajo review", encoding="utf-8")
+    argv = [
+        "loop-round",
+        "--profile",
+        "p_chal",
+        "--content-file",
+        str(material),
+        "--ticket",
+        "WOT-TEST-059m",
+        "--task-type",
+        "code-review",
+        "--rol",
+        "challenger",
+        "--phase",
+        "MANAGER_REVIEW",
+        "--loop-id",
+        "L800",
+        "--backend-key",
+        "BA10",
+        "--data-sensitivity",
+        "public",
+        "--project-root",
+        str(tmp_path),
+    ]
+    if commit_sha is not None:
+        argv += ["--commit-sha", commit_sha]
+    return ed.main(argv)
+
+
+def test_059m_ronda_con_sha_inexistente_bloquea_sin_fila(tmp_path, monkeypatch):
+    """DoD (a): sha inexistente -> rc != 0 y CERO filas en scorecard.
+
+    Medido en FP-20260826-G3-ID-GUARDS: 5 rondas contra un sha inexistente
+    dejaron fila, la acreditacion real era N=0 y el ejecutor reportaba N=4.
+    """
+    repo, _sha40 = _git_repo_with_commit(tmp_path)
+    _write_link_059m(tmp_path, repo)
+    rc = _run_loop_round_cli(tmp_path, monkeypatch, "d" * 40)
+    assert rc != 0, "un sha que no resuelve debe bloquear la ronda"
+    sc = tmp_path / ed.SCORECARD_REL
+    rows = _rows(tmp_path) if sc.exists() else []
+    assert rows == [], (
+        f"una ronda bloqueada por sha inexistente NO debe escribir fila: {rows}"
+    )
+
+
+def test_059m_sha_valido_abreviado_se_acepta_y_normaliza(tmp_path, monkeypatch):
+    """DoD (b) CONTROL POSITIVO: sha corto valido pasa y la fila lleva sha40."""
+    repo, sha40 = _git_repo_with_commit(tmp_path)
+    _write_link_059m(tmp_path, repo)
+    rc = _run_loop_round_cli(tmp_path, monkeypatch, sha40[:7])
+    assert rc == 0
+    rows = _rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["commit_sha"] == sha40, (
+        f"el sha valido abreviado debe normalizarse a sha40 en la fila: "
+        f"{rows[0]['commit_sha']}"
+    )
+
+
+def test_059m_sin_commit_sha_la_ruta_sigue_funcionando(tmp_path, monkeypatch):
+    """DoD (c) CONTROL: el campo es opcional; sin el, nada se valida ni bloquea."""
+    rc = _run_loop_round_cli(tmp_path, monkeypatch, None)
+    assert rc == 0
+    assert len(_rows(tmp_path)) == 1
