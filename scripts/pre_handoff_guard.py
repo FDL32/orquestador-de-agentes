@@ -549,6 +549,54 @@ def _read_delivery_authority_from_active_plan(project_root: Path) -> str:
 # WOT-2026-010c: deliverable types that DO require a green canonical suite.
 _SUITE_REQUIRED_TYPES = {"code", "mixed"}
 
+# WOT-2026-058g: the runner that produces a CANONICAL suite run. Any other
+# value means run_pytest_safe fell back to the degraded `unittest discover`
+# path (interpreter without pytest), whose telemetry cannot sustain the gate.
+_CANONICAL_SUITE_RUNNER = "pytest"
+
+# WOT-2026-058g: literal remediation text. This module must NOT import
+# run_pytest_safe (forbidden surface, and nothing imports it today): the
+# diagnostic is NAMED as a textual reference, never invoked.
+_DEGRADED_RUNNER_REMEDIATION = (
+    "The canonical suite ran through the DEGRADED 'unittest discover' fallback, "
+    "not pytest: its telemetry cannot sustain the handoff gate (parse_run_metrics "
+    "reports passed=null even when unittest approves). Install pytest in the "
+    "resolved interpreter (see the incomplete_interpreter_diagnostic emitted by "
+    "run_pytest_safe), then re-run: "
+    "python scripts/run_pytest_safe.py --level all"
+)
+
+
+def _degraded_runner_block(data: dict, base_diag: dict) -> dict | None:
+    """Return a block diag when last-run.json came from a degraded runner.
+
+    Before: data is the parsed last-run.json payload; base_diag carries the
+            shared canonical_suite_required/last_run_json/remediation fields.
+    During: reads the `runner` field written by run_pytest_safe. A MISSING
+            field is legacy-compat and ACCEPTED (artifacts predating the field
+            must keep working: preflight_closeout and several health checks
+            read this same artifact). Only an explicit non-pytest runner blocks.
+    After: returns None when the run is acceptable, or a block diag with
+           reason="degraded_runner" and an actionable remediation string.
+    """
+    runner = data.get("runner")
+    if runner is None:
+        # legacy-compat: pre-`runner` artifacts are accepted (WOT-2026-058g DoD 3).
+        return None
+    if runner == _CANONICAL_SUITE_RUNNER:
+        return None
+    return {
+        **base_diag,
+        "reason": "degraded_runner",
+        "runner": runner,
+        "remediation": _DEGRADED_RUNNER_REMEDIATION,
+        "canonical_suite_error": (
+            f"last-run runner={runner!r}: only runner="
+            f"{_CANONICAL_SUITE_RUNNER!r} produces a canonical suite run. "
+            "A degraded run may not have executed the suite at all."
+        ),
+    }
+
 
 def assert_canonical_suite_green(
     motor_root: Path,
@@ -701,6 +749,12 @@ def assert_canonical_suite_green(
                     "being delivered."
                 ),
             }
+        # WOT-2026-058g: the inherited-failures branch must not accept a run
+        # produced by the degraded runner either (checked independently of the
+        # fresh_green branch so a mutation in one isolates from the other).
+        _inh_degraded = _degraded_runner_block(data, base_diag)
+        if _inh_degraded is not None:
+            return False, _inh_degraded
         return True, {
             "canonical_suite_required": True,
             "reason": "inherited_failures_subset",
@@ -755,6 +809,13 @@ def assert_canonical_suite_green(
                 "Run: python scripts/run_pytest_safe.py --level all"
             ),
         }
+
+    # WOT-2026-058g: a green-looking run produced by the degraded `unittest`
+    # fallback is not a canonical suite run (checked independently of the
+    # inherited-failures branch so a mutation in one isolates from the other).
+    _fresh_degraded = _degraded_runner_block(data, base_diag)
+    if _fresh_degraded is not None:
+        return False, _fresh_degraded
 
     return True, {
         "canonical_suite_required": True,

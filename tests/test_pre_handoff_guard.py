@@ -1934,3 +1934,246 @@ class TestPreExistingSuiteRed:
             diag.get("reason")
             == "nonzero_exit_but_no_failed_ids (state-leak suspected)"
         ), diag
+
+
+# =============================================================================
+# WOT-2026-058g: degraded-runner barrier tests
+# =============================================================================
+
+
+class TestDegradedRunnerRejected:
+    """WOT-2026-058g: a run produced by the degraded `unittest` fallback is
+    NOT a canonical suite run, on EITHER accepting branch.
+
+    run_pytest_safe falls back to `unittest discover` when the resolved
+    interpreter has no pytest, and records runner="unittest". Before this
+    barrier the gate validated five fields (status, exit_code,
+    tested_commit_sha, level, args_mode) and none of them distinguished
+    pytest from the degradation, so a suite that may never have run reached
+    handoff as fresh_green.
+
+    Both accepting branches are covered because a fix pinned only on
+    fresh_green would leave inherited_failures_subset open.
+    """
+
+    @staticmethod
+    def _write_last_run(motor: Path, payload: dict) -> None:
+        d = motor / ".agent" / "runtime" / "pytest-safe"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "last-run.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    @staticmethod
+    def _head_sha(repo: Path) -> str:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        return r.stdout.strip()
+
+    def _import_guard(self):
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    def _base_payload(self, repo: Path, exit_code: int) -> dict:
+        return {
+            "status": "finished",
+            "exit_code": exit_code,
+            "tested_commit_sha": self._head_sha(repo),
+            "level": "all",
+            "args_mode": "default_discovery",
+        }
+
+    # ------------------------------------------------------------------
+    # DoD 1a: case B -- degraded runner on the fresh_green branch -> BLOCKED
+    # ------------------------------------------------------------------
+
+    def test_degraded_runner_blocks_fresh_green_branch(self, tmp_path: Path) -> None:
+        """Case B: runner=unittest, exit_code=0 -> blocked (was fresh_green)."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        payload = self._base_payload(motor, exit_code=0)
+        payload["runner"] = "unittest"
+        payload["passed"] = None
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False, f"degraded runner must block on fresh branch: {diag}"
+        assert diag.get("reason") == "degraded_runner", diag
+        assert diag.get("runner") == "unittest", diag
+        # DoD 5: remediation is actionable and names the re-run command.
+        assert "run_pytest_safe.py --level all" in diag.get("remediation", ""), diag
+
+    def test_degraded_runner_blocks_even_when_unittest_passed(
+        self, tmp_path: Path
+    ) -> None:
+        """Case E: unittest with passed=12 still blocks.
+
+        Proves the barrier does not depend on the degraded telemetry being
+        empty: the gate never looked at `passed`, so a unittest run that
+        APPROVES was equally accepted before the fix.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        payload = self._base_payload(motor, exit_code=0)
+        payload["runner"] = "unittest"
+        payload["passed"] = 12
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False, f"unittest run must block even when passing: {diag}"
+        assert diag.get("reason") == "degraded_runner", diag
+
+    # ------------------------------------------------------------------
+    # DoD 1b: case F -- degraded runner on the inherited branch -> BLOCKED
+    # ------------------------------------------------------------------
+
+    def test_degraded_runner_blocks_inherited_failures_branch(
+        self, tmp_path: Path
+    ) -> None:
+        """Case F: runner=unittest with inherited failures -> blocked.
+
+        The second accepting branch (inherited_failures_subset) reached
+        `return True` without ever consulting the runner.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-058g")
+
+        node_id = "tests/foo/test_bar.py::TestFoo::test_one"
+        payload = self._base_payload(motor, exit_code=1)
+        payload["failed_test_ids"] = [node_id]
+        payload["baseline_failed_test_ids"] = [node_id]
+        payload["runner"] = "unittest"
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is False, f"degraded runner must block on inherited branch: {diag}"
+        assert diag.get("reason") == "degraded_runner", diag
+
+    # ------------------------------------------------------------------
+    # DoD 2: positive controls intact, one per branch
+    # ------------------------------------------------------------------
+
+    def test_pytest_runner_still_passes_fresh_green(self, tmp_path: Path) -> None:
+        """Case A CONTROL+: runner=pytest still reaches fresh_green."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        payload = self._base_payload(motor, exit_code=0)
+        payload["runner"] = "pytest"
+        payload["passed"] = 5712
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is True, f"pytest run must still pass: {diag}"
+        assert diag.get("reason") == "fresh_green", diag
+
+    def test_pytest_runner_still_passes_inherited_failures(
+        self, tmp_path: Path
+    ) -> None:
+        """Case F-control: runner=pytest with inherited failures still passes."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-058g")
+
+        node_id = "tests/foo/test_bar.py::TestFoo::test_one"
+        payload = self._base_payload(motor, exit_code=1)
+        payload["failed_test_ids"] = [node_id]
+        payload["baseline_failed_test_ids"] = [node_id]
+        payload["runner"] = "pytest"
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is True, f"pytest inherited failures must still pass: {diag}"
+        assert diag.get("reason") == "inherited_failures_subset", diag
+
+    # ------------------------------------------------------------------
+    # DoD 3: legacy-compat -- an absent `runner` field is ACCEPTED
+    # ------------------------------------------------------------------
+
+    def test_absent_runner_field_is_accepted_legacy_compat(
+        self, tmp_path: Path
+    ) -> None:
+        """Case C: last-run.json predating the `runner` field still passes.
+
+        IMPERATIVE, not a preference: rejecting it would propagate the red
+        beyond handoff -- preflight_closeout, check_suite_freshness,
+        collect_system_health, backlog_reconcile and run_gates_dispatch all
+        read this same artifact.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        payload = self._base_payload(motor, exit_code=0)
+        assert "runner" not in payload
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is True, f"absent runner must be accepted (legacy): {diag}"
+        assert diag.get("reason") == "fresh_green", diag
+
+    def test_absent_runner_field_accepted_on_inherited_branch(
+        self, tmp_path: Path
+    ) -> None:
+        """Case C, inherited branch: legacy-compat holds on BOTH branches."""
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, "WOT-2026-058g")
+
+        node_id = "tests/foo/test_bar.py::TestFoo::test_one"
+        payload = self._base_payload(motor, exit_code=1)
+        payload["failed_test_ids"] = [node_id]
+        payload["baseline_failed_test_ids"] = [node_id]
+        assert "runner" not in payload
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+
+        assert ok is True, f"absent runner must be accepted (legacy): {diag}"
+        assert diag.get("reason") == "inherited_failures_subset", diag
+
+    # ------------------------------------------------------------------
+    # Scope guard: the legitimate non-code skip (:579) is NOT touched
+    # ------------------------------------------------------------------
+
+    def test_documentation_skip_unaffected_by_degraded_runner(
+        self, tmp_path: Path
+    ) -> None:
+        """Case G: deliverable_type=documentation still skips, runner aside.
+
+        The deliverable_type_skip branch is a legitimate exit for non-code
+        tickets and is declared out of scope for this barrier.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+
+        payload = self._base_payload(motor, exit_code=0)
+        payload["runner"] = "unittest"
+        self._write_last_run(motor, payload)
+
+        ok, diag = guard.assert_canonical_suite_green(motor, "documentation")
+
+        assert ok is True, f"non-code skip must be unaffected: {diag}"
+        assert diag.get("reason") == "deliverable_type_skip", diag
