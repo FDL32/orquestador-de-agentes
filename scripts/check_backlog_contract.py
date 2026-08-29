@@ -430,6 +430,17 @@ def validate_backlog(backlog_path: Path) -> list[str]:
         if len(cells) != len(_TABLE_HEADER_COLS):
             errors.append(f"row has {len(cells)} columns, expected 8: {row}")
             continue
+        # WOT-2026-055f: the header (Prioridad) cell is part of the row's
+        # structural contract. A full-width row whose Prioridad is not a
+        # canonical word is a decapitated or corrupted row (the body shifted
+        # a column, or the cell was edited to a non-vocabulary value); the
+        # arity check alone cannot see it. Fail closed NAMING the row so the
+        # operator can repair the exact line.
+        if cells[0] not in _PRIORIDAD_WORDS:
+            errors.append(
+                f"{cells[1]}: non-canonical Prioridad cell {cells[0]!r} "
+                f"(expected one of {sorted(_PRIORIDAD_WORDS)}): {row}"
+            )
         ticket, status, reactivation = cells[1], cells[4], cells[7]
         if status not in LIVE_STATES:
             errors.append(

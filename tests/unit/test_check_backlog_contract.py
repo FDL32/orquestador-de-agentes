@@ -1779,3 +1779,52 @@ def test_058w_compact_rows_stay_out_of_validadas(tmp_path, capsys) -> None:
     assert "validadas=1" in out, out
     va, sa = cbc._partition_prioridad_rows(collab / "_archive" / "backlog_done.md")
     assert va == [] and sa == [], "la exclusion deliberada NO se relaja"
+
+
+# --- WOT-2026-055f: cabecera (Prioridad) no canonica en fila de cola viva ---
+
+
+def test_055f_cabecera_no_canonica_bloquea_y_nombra_la_fila(tmp_path: Path) -> None:
+    """Fila ancho-8 con Prioridad fuera de Alta/Media/Baja debe bloquear.
+
+    WOT-2026-055f (probe del PLAN FP-20260827-GUARDS, rojo vivo): 'Media-Plus'
+    con 8 celdas pasaba rc=0 sin WARN que nombrara la fila -- validate_backlog
+    validaba aridad, estado, reactivation y deliverable_type, nunca la celda
+    de cabecera.
+    """
+    rows = (
+        "| Alta | WOT-2026-0001 | sana deliverable_type: code | motor/t | pending | - | x | - |\n"
+        "| Media-Plus | WOT-2026-9003 | corrupta deliverable_type: code | motor/t | pending | - | x | - |\n"
+    )
+    root = _write_backlog(tmp_path, rows)
+    errors = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert errors, "la fila con cabecera no canonica debe bloquear"
+    assert any("WOT-2026-9003" in e for e in errors), (
+        f"el error debe NOMBRAR la fila: {errors}"
+    )
+
+
+def test_055f_fila_decapitada_id_en_celda_prioridad_bloquea(tmp_path: Path) -> None:
+    """Variante decapitada: el id quedo en la celda Prioridad con 8 celdas.
+
+    El cuerpo se desplazo una columna pero la aridad se conserva, asi que el
+    chequeo de 8 columnas no la caza; la validacion de cabecera si.
+    """
+    rows = "| WOT-2026-9004 | titulo deliverable_type: code | motor/t | pending | - | x | - | - |\n"
+    root = _write_backlog(tmp_path, rows)
+    errors = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert any("WOT-2026-9004" in e for e in errors), (
+        f"la fila decapitada debe quedar NOMBRADA: {errors}"
+    )
+
+
+def test_055f_control_prioridades_canonicas_sin_error(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: Alta/Media/Baja no generan errores de cabecera."""
+    rows = (
+        "| Alta | WOT-2026-0005 | a deliverable_type: code | s | pending | - | x | - |\n"
+        "| Media | WOT-2026-0006 | b deliverable_type: code | s | pending | - | x | - |\n"
+        "| Baja | WOT-2026-0007 | c deliverable_type: code | s | pending | - | x | - |\n"
+    )
+    root = _write_backlog(tmp_path, rows)
+    errors = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+    assert errors == [], f"las prioridades canonicas deben pasar limpias: {errors}"
