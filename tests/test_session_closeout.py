@@ -1891,3 +1891,229 @@ class TestSessionCloseRecorded058j:
 
         assert result.status == "WARN"
         assert result.blocking is False
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-061c: certification by landed archived commit (commits -> archive)
+# ---------------------------------------------------------------------------
+
+
+_CERT_TEST_ID = "WOT-2026-456t"
+
+
+def _rnd_sha() -> str:
+    import secrets
+
+    return secrets.token_hex(20)
+
+
+def _cert_init_repo(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init")
+    _git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(repo, "config", "user.email", "t@e.com")
+    _git(repo, "config", "user.name", "T")
+    # The clone's "origin" IS this checked-out repo: allow pushing into it
+    # anyway (the pushed branch's worktree is stale in the fixture, refs are
+    # all any consumer here reads).
+    _git(repo, "config", "receive.denyCurrentBranch", "ignore")
+    (repo / "README.md").write_text("# repo", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "init")
+
+
+def _cert_origin_clone(src: Path) -> tuple[Path, Path]:
+    """Clone src (pushes its current history as the origin's baseline)."""
+    clone = src.parent / f"{src.name}-clone"
+    _git(Path(str(src.parent)), "clone", str(src).replace("\\", "/"), str(clone))
+    _git(clone, "config", "user.email", "t@e.com")
+    _git(clone, "config", "user.name", "T")
+    _git(clone, "push", "-u", "origin", "main")
+    return clone, clone / "origin.git"
+
+
+def _cert_commit_in(repo: Path, ticket_id: str) -> str:
+    (repo / f"f_{ticket_id}.py").write_text("x = 1", encoding="utf-8")
+    _git(repo, "add", f"f_{ticket_id}.py")
+    _git(repo, "commit", "-m", f"{ticket_id}: productive delivery")
+    return _git_stdout(repo, "rev-parse", "HEAD")
+
+
+def _git_stdout(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    )
+    return proc.stdout.strip()
+
+
+class TestResolveTicketsCertification061c:
+    """WOT-2026-061c: a direct-commit session (empty bus) certifies the tickets
+    whose WINDOW commits are backed by archived landed rows.
+
+    DIRECTION OF INFERENCE is the property under test: candidates come ONLY from
+    `_has_productive_commits` (this session's window), and the archive is queried
+    about those candidates -- never the other way around. Seeded fixtures live
+    under tmp_path with short names (Windows MAX_PATH).
+    """
+
+    def _fixture(
+        self, tmp_path: Path, *, with_product: bool = True, push_product: bool = True
+    ) -> dict:
+        """Dest + motor with pushed origin baselines; optional in-window delivery.
+
+        push_product=False leaves the delivery commit local-only, which is what
+        the rejection tests need: otherwise CAPA 3 of the landed guard certifies
+        by SUBJECT convention (the ticket-ID is in an origin/main subject) and a
+        broken citation could not be observed at all.
+        """
+        home = tmp_path / "h"
+        dest = home / "d"
+        motor = home / "m"
+        _cert_init_repo(dest)
+        _cert_init_repo(motor)
+        dest, _dest_remote = _cert_origin_clone(dest)
+        motor, _motor_remote = _cert_origin_clone(motor)
+        sha = ""
+        if with_product:
+            sha = _cert_commit_in(motor, _CERT_TEST_ID)
+            if push_product:
+                _git(motor, "push", "origin", "main")
+        _write_report(dest, "2020-01-01 00:00:00 UTC")
+        return {"dest": dest, "motor": motor, "sha": sha}
+
+    def _archive_row(self, dest: Path, ticket_id: str, sha: str) -> None:
+        archive = dest / ".agent" / "collaboration" / "_archive"
+        archive.mkdir(parents=True, exist_ok=True)
+        (archive / "backlog_done.md").write_text(
+            "# Backlog -- historico\n\n"
+            "| Ticket | Estado | Nota | Evidencia |\n"
+            "|--------|--------|------|-----------|\n"
+            f"| {ticket_id} | completed | cierra por landed commit | commit:{sha} |\n",
+            encoding="utf-8",
+        )
+
+    def test_resolve_tickets_certifies_by_archived_sha(self, tmp_path: Path) -> None:
+        """Window commit + archived row citing its landed sha -> certifies WITHOUT
+        any bus event. This is the H-C1 unblock: len(ids) == 1."""
+        fx = self._fixture(tmp_path)
+        self._archive_row(fx["dest"], _CERT_TEST_ID, fx["sha"][:7])
+        import runtime.motor_link
+
+        with patch.object(
+            runtime.motor_link, "resolve_motor_root", return_value=fx["motor"]
+        ):
+            tickets, src = _resolve_tickets(fx["dest"], None)
+        assert len(tickets) == 1
+        assert tickets == [_CERT_TEST_ID]
+        assert "certified by archived landed commit" in src
+
+    def test_resolve_tickets_rejects_sha_not_ancestor(self, tmp_path: Path) -> None:
+        """An archived sha that exists as a git object but lands by NO layer
+        (orphaned by a branch delete: not an ancestor of origin/main, not
+        reachable from HEAD) does not certify: ids == []. Discriminates
+        "certifies for real" from "accepts any citation". The product commit
+        is NOT pushed, otherwise CAPA 3 (subject convention) would certify it
+        legitimately and the broken citation could not be observed."""
+        fx = self._fixture(tmp_path, push_product=False)
+        motor = fx["motor"]
+        orphan = fx["sha"]
+        # orphan the delivery: main goes back to the pushed baseline, the
+        # product commit survives only as an unreachable object.
+        _git(motor, "reset", "--hard", "origin/main")
+        self._archive_row(fx["dest"], _CERT_TEST_ID, orphan)
+        import runtime.motor_link
+
+        with patch.object(runtime.motor_link, "resolve_motor_root", return_value=motor):
+            tickets, _src = _resolve_tickets(fx["dest"], None)
+        assert tickets == []
+
+    def test_resolve_tickets_rejects_sha_without_git_object(
+        self, tmp_path: Path
+    ) -> None:
+        """An invented sha (WARN: no git object anywhere) does not certify: ids
+        == []. The delivery is committed but STAYS OUT OF origin/main, so CAPA 3
+        (subject convention) cannot bless the broken citation either."""
+        fx = self._fixture(tmp_path, with_product=False)
+        self._archive_row(fx["dest"], _CERT_TEST_ID, _rnd_sha())
+        import runtime.motor_link
+
+        with patch.object(
+            runtime.motor_link, "resolve_motor_root", return_value=fx["motor"]
+        ):
+            tickets, _src = _resolve_tickets(fx["dest"], None)
+        assert tickets == []
+
+    def test_resolve_tickets_rejects_archived_sha_from_other_session(
+        self, tmp_path: Path
+    ) -> None:
+        """CRITICO-1 (unanime): the forbidden direction. A row whose sha IS landed
+        and archived, but whose commit is NOT in this session's window harvest,
+        must not certify -- otherwise an empty-bus session certifies whatever the
+        archive happens to hold last."""
+        fx = self._fixture(tmp_path, with_product=False)
+        seed = _git_stdout(fx["motor"], "rev-parse", "origin/main")
+        self._archive_row(fx["dest"], "WOT-2026-458z", seed)
+        dest = fx["dest"]
+        from scripts.session_closeout import _harvest_window_commits_by_root
+
+        ws = _resolve_session_window(dest)[0]
+        _pr, _oo, harvest = _harvest_window_commits_by_root(dest, fx["motor"], ws)
+        assert "WOT-2026-458z" not in harvest, (
+            "fixture invalido: el seed CAE en la ventana y el test mediria otra cosa"
+        )
+        import runtime.motor_link
+
+        with patch.object(
+            runtime.motor_link, "resolve_motor_root", return_value=fx["motor"]
+        ):
+            tickets, _src = _resolve_tickets(dest, None)
+        assert tickets == []
+
+    def test_resolve_tickets_commits_without_archive_stays_fail(
+        self, tmp_path: Path
+    ) -> None:
+        """ALTO-3: window commits with NO archived row -> empty resolution and
+        the BUS VACIO verdict stays FAIL: the new path never opens a spurious
+        PASS branch."""
+        fx = self._fixture(tmp_path)
+        import runtime.motor_link
+
+        with patch.object(
+            runtime.motor_link, "resolve_motor_root", return_value=fx["motor"]
+        ):
+            tickets, src = _resolve_tickets(fx["dest"], None)
+            assert tickets == []
+            assert "no tickets" in src
+            assert (
+                _check_bus_vacio(fx["dest"], _resolve_session_window(fx["dest"])[0])
+                == "FAIL"
+            )
+
+    def test_certification_path_harvests_window_never_sweeps_archive(self) -> None:
+        """DoD "fuente del sha auditada": the new branch must take its candidates
+        from `_has_productive_commits` and REUSE the landed-guard module (import,
+        not reimplementation). A silent sweep of the archive would keep every
+        functional test green -- this pins the direction statically."""
+        import inspect
+
+        import scripts.session_closeout as sc
+
+        src = inspect.getsource(sc._resolve_tickets)
+        assert "_has_productive_commits" in src, (
+            "la certificacion no puede partir del harvest de la ventana"
+        )
+        # La via nueva no reimplementa el escaneo: lo COMPARTE con el gate
+        # BUS-VACIO a traves del helper por-repo. Dos scans distintos del mismo
+        # hecho es como un harvest y un gate driftean.
+        body = inspect.getsource(sc._productive_commits_and_ids)
+        assert "git" in body and "--since" in body
+        assert "_productive_commits_and_ids" in inspect.getsource(
+            sc._has_productive_commits
+        ), "_has_productive_commits debe delegar en _productive_commits_and_ids"
+        whole = inspect.getsource(sc)
+        assert "scripts.check_backlog_commits_landed" in whole and (
+            "parse_archived_commits" in whole
+        ), (
+            "parse_archived_commits/audit se IMPORTAN (patron agent_controller), "
+            "no se reimplementan"
+        )

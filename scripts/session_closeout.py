@@ -249,6 +249,48 @@ def _resolve_session_window(
     return None, "no events or reports found"
 
 
+def _productive_commits_and_ids(
+    root: Path,
+    window_start: datetime | None,
+) -> tuple[bool, list[str]]:
+    """Productive commits of ONE repo after window_start + the ticket ids named.
+
+    WOT-2026-040e (per-repo split wired by WOT-2026-061c): the single-root body
+    of `_has_productive_commits`. Before 061c the two-repo loop and the ID
+    harvest lived inline, so a per-root consumer had to duplicate the scan --
+    duplication that is exactly how a harvest and the BUS-VACIO gate drift
+    apart. Both now share this one.
+
+    Before: `root` is a git working tree; window_start may be None.
+    During: one read-only ``git log --oneline --since=<window_start>`` in `root`;
+        ids extracted with the canonical TICKET_RE from each subject (inclusive:
+        every ticket MENTIONED, per 058j).
+    After: returns (found, [ids]); (False, []) on git failure or empty output.
+    """
+    since_args: list[str] = []
+    if window_start is not None:
+        since_args = [f"--since={window_start.strftime('%Y-%m-%dT%H:%M:%S')}"]
+
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "log", "--oneline", *since_args],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False, []
+    if result.returncode != 0 or not result.stdout.strip():
+        return False, []
+    ids: list[str] = []
+    for line in result.stdout.splitlines():
+        for match in TICKET_RE.findall(line):
+            if match not in ids:
+                ids.append(match)
+    return True, ids
+
+
 def _has_productive_commits(
     project_root: Path,
     motor_root: Path,
@@ -270,6 +312,11 @@ def _has_productive_commits(
     ones: an extra id certifies nothing false, a missing id reproduces the
     refusal.
 
+    WOT-2026-061c: the per-repo scan moved to `_productive_commits_and_ids`;
+    this function keeps its exact merge semantics (either repo -> found; ids
+    deduplicated motor-first) and is now a thin two-root aggregation of the
+    shared helper.
+
     Before: motor_root is resolvable, window_start may be None.
     During: Runs ``git log --oneline --since=<window_start>`` in both motor
         and destino repos, counting matching commits and extracting IDs from
@@ -278,30 +325,15 @@ def _has_productive_commits(
         repo (ids possibly empty when no subject names a ticket), or
         (False, []) when neither repo produced a commit or git failed in both.
     """
-    since_args: list[str] = []
-    if window_start is not None:
-        since_args = [f"--since={window_start.strftime('%Y-%m-%dT%H:%M:%S')}"]
-
     found = False
     seen: dict[str, None] = {}
     for root in (motor_root, project_root):
-        try:
-            result = subprocess.run(  # noqa: S603
-                ["git", "log", "--oneline", *since_args],  # noqa: S607
-                cwd=root,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            continue
-        if result.returncode != 0 or not result.stdout.strip():
-            continue
-        found = True
-        for line in result.stdout.splitlines():
-            for match in TICKET_RE.findall(line):
-                if match not in seen:
-                    seen[match] = None
+        root_found, root_ids = _productive_commits_and_ids(root, window_start)
+        if root_found:
+            found = True
+        for match in root_ids:
+            if match not in seen:
+                seen[match] = None
     return found, list(seen.keys())
 
 
@@ -608,6 +640,168 @@ significados y solo uno debe bloquear el cierre.
     WOT-2026-049c: `CLOSE_EXIT=0` con 7 commits sin certificar).
 """
 
+CERTIFIED_BY_ARCHIVED_COMMIT_SRC = "certified by archived landed commit"
+"""Source del paso `resolve_tickets` cuando certify_tickets_by_landed_commits
+resolvio por la via de commits-de-la-ventana respaldados por fila archivada
+aterrizada (WOT-2026-061c, modo dogfooding de commit directo: bus vacio por
+diseno, H-C1)."""
+
+_CERTIFIABLE_VERDICTS = ("OK", "OK_BY_SUBJECT")
+"""Unicamente estos veredictos del guard de aterrizaje certifican cierre.
+PENDING_GROUPED_PUSH / WARN / ERROR NO: son las mismas reglas canonicas que
+aplica `agent_controller._ticket_landed_by_archived_commit` (WOT-2026-024q);
+una segunda opinion sobre "que cuenta como aterrizado" es como dos lectores
+driftian."""
+
+
+def _harvest_window_commits_by_root(
+    project_root: Path,
+    motor_root: Path | None,
+    window_start: datetime | None,
+) -> tuple[dict[str, list[str]], dict[str, str], list[str]]:
+    """Harvest productive commits PER ROOT: ids per root, origin map, order.
+
+    WOT-2026-061c. `_has_productive_commits` merges both repos into one verdict;
+    certification needs the origin of each candidate to resolve the audit root
+    POR ORIGEN DE LA FILA (same defect class that WOT-2026-054e fixes in
+    agent_controller: auditing a motor sha against the destino repo answers with
+    the wrong tree). This delegates the whole per-repo scan to
+    `_productive_commits_and_ids`, which `_has_productive_commits` itself now
+    calls -- harvest and BUS-VACIO gate run the SAME code path, so they cannot
+    drift.
+
+    Before: project_root is the destino; motor_root may be None; window may be
+        None (then every reachable commit counts, same semantics as the bool).
+    During: read-only `git log` per root through the shared helper.
+    After: returns ({root_label: [ticket_id]}, {ticket_id: root_label},
+        [ticket_id in first-seen motor-first order]). When the motor is
+        unresolvable only the destino is scanned, so the harvest never shrinks
+        silently. Never raises.
+    """
+    roots: dict[str, Path] = {"destino": project_root}
+    if motor_root is not None:
+        roots = {"motor": motor_root, "destino": project_root}
+
+    per_root: dict[str, list[str]] = {}
+    origin_of: dict[str, str] = {}
+    order: list[str] = []
+    for label, root in roots.items():
+        found, ids = _productive_commits_and_ids(root, window_start)
+        per_root[label] = ids if found else []
+        for tid in per_root[label]:
+            if tid not in origin_of:
+                origin_of[tid] = label
+                order.append(tid)
+    return per_root, origin_of, order
+
+
+def _read_root_archive_content(root: Path) -> str:
+    """Content of `<root>/.agent/collaboration/_archive/backlog_done.md` or ''."""
+    archive = root / BACKLOG_ARCHIVE_REL
+    try:
+        return archive.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _candidate_archived_pairs(
+    cand: str,
+    roots: dict[str, Path],
+    skip_motor: bool,
+) -> list[tuple[str, str]]:
+    """(id, sha) pairs citing candidate `cand` in any root's archived backlog.
+
+    Queried PER CANDIDATE only: the archive is never swept to invent
+    candidates (WOT-2026-061c direction of inference).
+    """
+    try:
+        from scripts.check_backlog_commits_landed import parse_archived_commits
+    except ImportError:
+        return []
+    pairs: list[tuple[str, str]] = []
+    for label, root in roots.items():
+        if skip_motor and label == "motor":
+            # placeholder slot: the destino root is scanned under its own
+            # label; do not parse the same archive twice.
+            continue
+        content = _read_root_archive_content(root)
+        if not content:
+            continue
+        pairs.extend(
+            (tid, sha) for tid, sha in parse_archived_commits(content) if tid == cand
+        )
+    return pairs
+
+
+def certify_tickets_by_landed_commits(
+    project_root: Path,
+    motor_root: Path | None,
+    window_start: datetime | None,
+) -> list[str]:
+    """Second certification path: this session's window commits backed by an
+    archived row whose cited shas LANDED.
+
+    WOT-2026-061c (H-C1). In direct-commit dogfooding the bus stays empty by
+    design, `resolve_tickets` finds nothing and `_check_bus_vacio` blocks the
+    close even though the backlog rows were already archived with
+    `commit:<sha>` evidence. This path certifies EXACTLY those tickets, with the
+    inference direction load-bearing:
+
+        CORRECTO:  commits productivos en VENTANA -> buscar su respaldo archivado
+        PROHIBIDO: barrer _archive/backlog_done.md -> tomar shas ancestros -> certificar
+
+    The candidate ids come ONLY from `_harvest_window_commits_by_root`, which
+    shares its scan with `_has_productive_commits` -- the very window scan
+    `_check_bus_vacio` relies on; the archive is queried about those candidates,
+    never swept to invent them. Inverting it would certify another session's
+    last archived row over hand-editable plaintext -- the exact false green
+    WOT-2026-040e / WOT-2026-042f exist to close.
+
+    The root is resolved POR ORIGEN: a candidate harvested from motor commits is
+    audited with the motor repo as home; one from destino commits, with the
+    destino. Only `_CERTIFIABLE_VERDICTS` certify (canonical rules of
+    WOT-2026-024q). Fail-closed at every seam: any error yields no
+    certification for that ticket.
+
+    Before: project_root is the destino; motor_root may be None.
+    During: read-only git (merge-base/cat-file/log inside the landed-guard
+        module) and reads of each root's archive. Mutates nothing.
+    After: returns certifying ticket ids in harvest order (deduplicated). Empty
+        list when there are no candidates, no archived rows, or no landing.
+    """
+    _per_root, origin_of, candidates = _harvest_window_commits_by_root(
+        project_root, motor_root, window_start
+    )
+    if not candidates:
+        return []
+
+    try:
+        from scripts.check_backlog_commits_landed import audit
+    except ImportError:
+        return []
+
+    roots: dict[str, Path] = {"motor": project_root, "destino": project_root}
+    if motor_root is not None:
+        roots["motor"] = motor_root
+    skip_motor = motor_root is None
+
+    certified: list[str] = []
+    for cand in candidates:
+        home_label = origin_of[cand]
+        home = roots[home_label]
+        other = roots["destino" if home_label == "motor" else "motor"]
+        pairs = _candidate_archived_pairs(cand, roots, skip_motor)
+        if not pairs:
+            continue
+        try:
+            results = audit(pairs, "origin/main", home, other_repo=other)
+        except OSError:
+            # fail-closed: an unrunnable git/object read certifies nothing.
+            continue
+        if results and all(r["verdict"] in _CERTIFIABLE_VERDICTS for r in results):
+            certified.append(cand)
+    return certified
+
 
 def _resolve_tickets(
     project_root: Path,
@@ -616,7 +810,8 @@ def _resolve_tickets(
     """Resolve tickets to audit using the priority chain.
 
     Before: project_root is valid, explicit_tickets may be None/empty.
-    During: Priority: explicit CLI > detected in window > active from work_plan.
+    During: Priority: explicit CLI > detected in window > active from work_plan
+        > certified by archived landed commit (WOT-2026-061c).
         The work_plan fallback is guarded (WOT-2026-040e): if the bus already
         recorded that ticket in a terminal state, work_plan.md is stale and the
         ticket belongs to an earlier session, so it is refused rather than
@@ -667,6 +862,35 @@ def _resolve_tickets(
                 "explicitly if you know what this session closed."
             )
         return [active], "fallback from work_plan.md active ticket"
+
+    # WOT-2026-061c (H-C1): fourth, NON-contradicting source. With no events and
+    # no active ticket, a direct-commit session certifies the tickets whose
+    # WINDOW commits are backed by an archived row whose shas landed. The
+    # direction of inference is load-bearing: candidates come from
+    # `_has_productive_commits`-style window harvest (via the shared per-root
+    # scan), never from a sweep of the archive (that would certify another
+    # session's last archived row). A ticket with productive commits and no
+    # archived backing still lands in `_check_bus_vacio` -> FAIL: the
+    # fail-closed is untouched.
+    try:
+        from runtime.motor_link import resolve_motor_root as _rmr
+
+        motor_root = _rmr(project_root)
+    except ImportError:
+        motor_root = None
+    _has_any, _window_ids = _has_productive_commits(
+        project_root, motor_root or project_root, window_start
+    )
+    if not _has_any:
+        # Nothing productive in the window: nothing this path could certify,
+        # and a maintenance session must keep resolving [] WITHOUT the
+        # stale marker so `_check_bus_vacio` answers WARN, not FAIL.
+        return [], "no tickets found"
+    certified = certify_tickets_by_landed_commits(
+        project_root, motor_root, window_start
+    )
+    if certified:
+        return certified, f"{CERTIFIED_BY_ARCHIVED_COMMIT_SRC} (window harvest)"
 
     return [], "no tickets found"
 
