@@ -415,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
 
     # ---- Deterministic checks (read-only) ----
     checks: dict[str, dict] = {}
-    checks["ruff_motor"] = _run(["ruff", "check", "."], motor_root)
+    checks["ruff_motor"] = _run(["ruff", "check", "--no-fix", "."], motor_root)
     checks["validate_motor"] = _run(
         [
             sys.executable,
@@ -516,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
         )
 
     if dest_ok:
-        checks["ruff_destino"] = _run(["ruff", "check", "."], dest_root)
+        checks["ruff_destino"] = _run(["ruff", "check", "--no-fix", "."], dest_root)
         checks["validate_destino"] = _run(
             [
                 sys.executable,

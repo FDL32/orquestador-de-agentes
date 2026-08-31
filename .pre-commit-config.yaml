@@ -105,6 +105,19 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-047v: el recolector de salud se declara read-only pero `fix = true`
+      # en pyproject.toml hace que un `ruff check` DESNUDO reescriba el arbol que
+      # audita y salga verde-por-arreglo (mock-drift inverso). Este guard es
+      # ESTATICO: falla si CUALQUIER lista literal de invocacion de ruff carece de
+      # --no-fix en ESA misma lista (por invocacion, no por presencia global).
+      - id: check-collector-ruff-nofix
+        name: check collector ruff --no-fix (recolector read-only de verdad)
+        entry: uv run python scripts/check_collector_ruff_nofix.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: check-skill-collisions
         name: check skill collisions (no duplicate skill name/trigger)
         entry: uv run python scripts/check_skill_collisions.py
