@@ -4297,69 +4297,6 @@ def _ticket_events_archived(plan_id: str) -> bool:
     return archive_file.exists()
 
 
-def _pair_home_root(
-    sha: str,
-    archive_home: Path | None,
-    extra_home: Path | None,
-) -> Path | None:
-    """Pick the git root that actually holds the object of one (ticket, sha).
-
-    WOT-2026-054e. The archive read by ``_ticket_landed_by_archived_commit``
-    belongs to the workspace (``get_collab_dir()``), but its rows cite commits
-    from EITHER repo of the topology: dogfooded WOT rows cite motor commits,
-    ``delivery_authority: repo_destino`` rows cite destino commits. Auditing
-    all of them against one fixed root crosses roots -- the half whose object
-    is absent answers WARN (fail-closed by design, not a bug) and the ticket
-    can never certify its own landed close.
-
-    Before: ``sha`` any token; ``archive_home`` the root the archive belongs
-        to (None when the caller could not derive one); ``extra_home`` the
-        sibling repo of the topology or None.
-    During: one read-only ``git cat-file -e "sha^{commit}"`` per candidate
-        root (motor first, mirroring the historical iteration order of
-        ``_has_productive_commits``). Never mutates.
-    After: returns the first root holding the commit object; when NO root has
-        it, returns the motor sibling if there is one (the historical fixed
-        root, preserved for un-derivable archive homes), else ``archive_home``
-        -- so the landed guard keeps emitting its design WARN (with
-        ``other_repo`` as witness of the sibling), never a spurious ERROR.
-    """
-    candidates = [c for c in (extra_home, archive_home) if isinstance(c, Path)]
-    try:
-        for root in candidates:
-            if _root_has_commit_object(root, sha):
-                return root
-    except (OSError, subprocess.SubprocessError, ValueError):
-        # an unproable home falls to the historical default below
-        pass
-    # no candidate holds the object: keep the historical home so the guard's
-    # WARN (with other_repo as sibling witness) is preserved verbatim.
-    return (
-        candidates[0]
-        if candidates
-        else (extra_home if extra_home is not None else archive_home)
-    )
-
-
-def _root_has_commit_object(root: Path, sha: str) -> bool:
-    """True if ``root`` resolves ``sha`` to a commit object (read-only git).
-
-    WOT-2026-054e. Deliberately its own seam: the existence probe runs on the
-    root choice boundary only; the landing VERDICTS stay owned by
-    ``check_backlog_commits_landed`` (this module never reinterprets them).
-    """
-    try:
-        proc = subprocess.run(
-            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-            cwd=str(root),
-            capture_output=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return proc.returncode == 0
-
-
 def _ticket_landed_by_archived_commit(plan_id: str) -> bool:
     """True when the ticket's archived backlog row cites a commit that LANDED.
 
@@ -4378,55 +4315,26 @@ def _ticket_landed_by_archived_commit(plan_id: str) -> bool:
     do NOT, so validate never blesses a close that has not actually reached
     origin/main.
 
-    WOT-2026-054e: the audit root is resolved PER PAIR via ``_pair_home_root``.
-    Before, the pairs read from the DESTINO archive were audited against a fixed
-    ``_MOTOR_ROOT``, so any row citing a destino commit (``delivery_authority:
-    repo_destino``) got WARN forever -- the object never exists where it was
-    looked for -- and false-greened as "not landed". Motor-citing rows keep
-    landing against the motor (no regression: the object probe picks that home).
-
     Before: ``plan_id`` non-empty. Reads the archive file and runs read-only git
-    against the repo of the project root and the motor; never mutates.
-    During: parses the archive, filters to this ticket's (id, sha) pairs, groups
-        them by the home root that holds their object, and classifies each group
-        against ``origin/main`` in that home repo.
+    against the motor repo; never mutates.
+    During: parses the archive, filters to this ticket's (id, sha) pairs, and
+    classifies them against ``origin/main`` in the motor repo.
     After: returns True iff the ticket has at least one cited pair and ALL of
-        them land as OK / OK_BY_SUBJECT (a grouped ``commit:sha1+sha2`` row must
-        land in full); False on any read/parse/git error (fail-closed: unproven).
+    them land as OK / OK_BY_SUBJECT (a grouped ``commit:sha1+sha2`` row must land
+    in full); False on any read/parse/git error (fail-closed: unproven).
     """
     try:
         from scripts.check_backlog_commits_landed import audit, parse_archived_commits
 
-        collab_dir = get_collab_dir()
-        archive = collab_dir / "_archive" / "backlog_done.md"
+        archive = get_collab_dir() / "_archive" / "backlog_done.md"
         content = archive.read_text(encoding="utf-8-sig")
         pairs = [
             (tid, sha) for tid, sha in parse_archived_commits(content) if tid == plan_id
         ]
         if not pairs:
             return False
-        # WOT-2026-054e: the archive's OWN repo is the default home (the file
-        # read above lives under it). Guarded getattr: test seams that stub
-        # get_collab_dir() with a non-filesystem object keep working and then
-        # fall back to the motor constant, exactly the historical behavior.
-        collab_parent = getattr(collab_dir, "parent", None)
-        archive_home = getattr(collab_parent, "parent", None)
-        if not isinstance(archive_home, Path):
-            archive_home = None
-        motor_root = None
-        if (_MOTOR_ROOT / ".git").exists():
-            candidate = _MOTOR_ROOT.resolve()
-            if archive_home is None or candidate != archive_home:
-                motor_root = candidate
-        by_home: dict[Path, list[tuple[str, str]]] = {}
-        for pair in pairs:
-            home = _pair_home_root(pair[1], archive_home, motor_root)
-            by_home.setdefault(home, []).append(pair)
-        results: list[dict] = []
-        for home, home_pairs in by_home.items():
-            siblings = [r for r in (motor_root, archive_home) if r != home]
-            sibling = siblings[0] if siblings else None
-            results.extend(audit(home_pairs, "origin/main", home, other_repo=sibling))
+        motor_root = _MOTOR_ROOT.resolve()
+        results = audit(pairs, "origin/main", motor_root)
         # WOT-2026-024q (Codex-FS review): a row may cite SEVERAL grouped SHAs
         # (``commit:sha1+sha2``); parse_archived_commits emits one pair per SHA.
         # ALL of them must land -- ``any`` would bless a ticket whose landed SHA
