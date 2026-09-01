@@ -1,5 +1,5 @@
 cache-dir = '.agent/runtime/uv-cache'
-exclude-newer = '2026-05-16'
+exclude-newer = '2026-09-01'
 # WOT-2026-058n: `exclude-newer` global (arriba) congela el indice al 2026-05-16, asi que
 # uv NO ve pip 26.1.2/26.2/26.2.1 (publicadas 05-31, 07-29 y 08-04) y respondia
 # "only pip<=26.1.1 is available" mientras PyPI si las servia. Eso dejaba PYSEC-2026-3721
