@@ -60,7 +60,20 @@ def ticket_landed_by_archived_commit(
 
     """
     try:
-        from scripts.check_backlog_commits_landed import audit, parse_archived_commits
+        try:
+            from scripts.check_backlog_commits_landed import (
+                audit,
+                parse_archived_commits,
+            )
+        except ImportError:
+            # WOT-2026-062d: under the CLI's sys.path (scripts/ at [0]),the
+            # package form is unimportable;the sibling form keeps the surface from dying
+            # MUDO (except Exception -> False) before it looks at the ticket.
+
+            from check_backlog_commits_landed import (  # type: ignore[no-redef]
+                audit,
+                parse_archived_commits,
+            )
 
         collab_dir = project_root / ".agent" / "collaboration"
         archive = collab_dir / "_archive" / "backlog_done.md"

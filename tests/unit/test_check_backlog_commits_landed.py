@@ -11,6 +11,7 @@ the group split, the Revert exclusion, or the exact-ID match must flip a verdict
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 
@@ -1257,3 +1258,58 @@ def test_055u_legacy_row_with_commit_parse_pairs():
     """
     pairs = gl.parse_archived_commits(_ROW_LEGACY_WITH_COMMIT)
     assert pairs == [("WOT-2026-0L2L", "0abc123")], f"{pairs}"
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-062d -- la CLI audita cada par contra la raiz que TIENE su objeto.
+#
+# Antes, main() auditaba TODOS los pares contra --git-repo (default: el motor),
+# con el destino como other_repo: una fila que cita un sha solo-en-destino daba
+# WARN para siempre ("other repo of topology"). El fix agrupa cada par por home
+# (motor primero, destino segundo), igual que los otros 3 call-sites. El DoD es
+# el REPARTO de raices, NO ERROR=0 ni rc (ambos ya eran 0 con el bug): este test
+# aserta sobre los veredictos JSON, no sobre el exit code.
+# --------------------------------------------------------------------------- #
+def test_062d_pair_is_audited_against_root_that_holds_its_object(tmp_path, capsys):
+    """Un sha que aterrizo SOLO en el destino es OK (CAPA 1, contra el destino),
+    nunca WARN contra el motor. Anti-falso-verde: el ticket-ID del par NO aparece
+    en ningun subject del motor, o CAPA 3 lo degradaria a OK_BY_SUBJECT y el test
+    pasaria SIN el fix.
+    """
+    m_home = tmp_path / "m"
+    m_home.mkdir()
+    _origin_m, motor = _make_repo(m_home)
+    (motor / "MANIFEST.distribute").write_text("x\n", encoding="utf-8")
+    d_home = tmp_path / "d"
+    d_home.mkdir()
+    _origin_d, work_d = _make_repo(d_home)
+    dest_sha = _commit(work_d, "f.txt", "f\n", "WOT-2026-062D: landed in dest")
+    _g(["push", "-q", "origin", "main"], work_d)
+    _g(["fetch", "-q", "origin"], work_d)
+
+    archive = work_d / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "backlog_done.md").write_text(
+        f"| Alta | WOT-2026-062D | t | motor/x | completed | - | s | commit:{dest_sha} |\n",
+        encoding="utf-8",
+    )
+
+    rc = gl.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(work_d),
+            "--ref",
+            "origin/main",
+            "--json",
+        ]
+    )
+    assert rc == gl.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["audited"] == 1
+    assert payload["counts"][gl.OK] == 1
+    assert payload["counts"][gl.WARN] == 0, (
+        f"con el fix un sha solo-en-destino aterriza OK contra el destino, "
+        f"no WARN contra el motor: {payload['counts']}"
+    )

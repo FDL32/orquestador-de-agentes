@@ -73,9 +73,10 @@ Why the anchoring/exclusion matters (each VERIFIED against live git 2026-07-10):
 
 Topology (mirrors backlog_reconcile.py): the guard lives in ``<motor>/scripts`` but
 audits the backlog of the DESTINO/workspace, resolved via ``--project-root`` verbatim
-or the workspace's ``motor_destination_link.json``. The git against which origin/main
-is resolved is ``--git-repo`` (default: the motor root); it is NOT assumed to be any
-particular worktree.
+or the workspace's ``motor_destination_link.json``. Each pair is routed per origin
+(WOT-2026-054e/062d:the DESTINO root and ``--git-repo`` (default:the motor root;
+neither assumed to be any particular worktree)are the two candidate homes, motor
+first,and the audit runs against whichever one holds the commit object.
 
 Exit codes:
     0 = all audited SHAs OK / OK_BY_SUBJECT / WARN (no lost close) AND the denominator
@@ -99,6 +100,16 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+
+
+# WOT-2026-062d: the CLI loads under TWO sys.path shapes (test: 'scripts' package;
+# production: file-by-path with scripts/ at sys.path[0]); a single import shape
+# breaks one of them. Dual fallback, the same shape prepush_check.py:1915-1919 uses
+# with this same CLI.
+try:
+    from scripts.landed_commit_surface import _pair_home_root
+except ImportError:
+    from landed_commit_surface import _pair_home_root  # type: ignore[no-redef]
 
 
 SCHEMA_VERSION = "backlog-commits-landed-guard/v1"
@@ -737,7 +748,7 @@ def _print_text_report(
         print(f"[landed]   DUPLICATE: {tid} appears in {n} terminal rows")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI dispatch with flag handling
     parser = argparse.ArgumentParser(
         description="Audit that backlog-closed commits landed in origin/main (3 layers)."
     )
@@ -808,7 +819,19 @@ def main(argv: list[str] | None = None) -> int:
     # "I skipped the rows that would have failed".
     census = census_archived(content)
     pairs = parse_archived_commits(content)
-    results = audit(pairs, args.ref, git_repo, other_repo=dest_root)
+    # WOT-2026-062d: audit each pair against the root that holds its object (motor
+    # first, destino second), like the other 3 call-sites (agent_controller.py:4421-4429).
+    # Under the old fixed-root audit a destino-citing row answered WARN forever.
+    by_home: dict[Path, list[tuple[str, str]]] = {}
+    for ticket_id, sha in pairs:
+        home = _pair_home_root(sha, dest_root, git_repo)
+        by_home.setdefault(home, []).append((ticket_id, sha))
+
+    results: list[dict] = []
+    for home, home_pairs in by_home.items():
+        siblings = [r for r in (git_repo, dest_root) if r != home]
+        other = siblings[0] if siblings else None
+        results.extend(audit(home_pairs, args.ref, home, other_repo=other))
 
     roots = {"MOTOR_ROOT": motor_root, "DESTINO_ROOT": dest_root, "GIT_REPO": git_repo}
     counts = {

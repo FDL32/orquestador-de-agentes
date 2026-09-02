@@ -254,3 +254,36 @@ def test_public_surface_agrees_with_private_impl(
         private = _private_landed(world, monkeypatch, ticket_id, sha)
 
         assert public is private, (ticket_id, public, private)
+
+
+def test_062d_surface_same_verdict_under_cli_sys_path(
+    world: dict, tmp_path: Path
+) -> None:
+    """Criterio 6: la superficie responde True bajo el sys.path de la CLI
+    (scripts/ en sys.path[0]), NO solo con el motor en sys.path. Hoy el import
+    `from scripts.check_backlog_commits_landed` falla ahi y el `except Exception`
+    lo convierte en False MUDO (WOT-2026-048o -> False vs True control).
+    """
+    _archive_row(world["dest"], "CTL-2026-013y", world["dest_sha"])
+
+    code = (
+        "import sys\n"
+        "sys.path.insert(0, " + repr(str(PROJECT_ROOT / "scripts")) + ")\n"
+        "from pathlib import Path\n"
+        "from landed_commit_surface import ticket_landed_by_archived_commit\n"
+        "v = ticket_landed_by_archived_commit(\n"
+        "    " + repr("CTL-2026-013y") + ",\n"
+        "    motor_root=Path(" + repr(str(world["motor"])) + "),\n"
+        "    project_root=Path(" + repr(str(world["dest"])) + "),\n"
+        ")\n"
+        "print('verdict:', v)\n"
+        "assert v is True\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
