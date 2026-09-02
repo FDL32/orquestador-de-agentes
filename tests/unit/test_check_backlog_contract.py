@@ -692,6 +692,27 @@ def test_054i_closure_baseline_is_pinned() -> None:
 
 
 # ---------------------------------------------------------------------------
+def test_ctl_closure_five_cell_schema_passes(tmp_path: Path) -> None:
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_closure_rows(
+        tmp_path,
+        "| CTL-2026-088d | completed | commit:abc | deliverable_type: code | nota limpia |\n",
+    )
+    assert cbc.validate_archive_row_arity(tmp_path) == []
+
+
+def test_ctl_closure_schema_broken_arity_still_blocks(tmp_path: Path) -> None:
+    _write_backlog(tmp_path, _VALID_ROWS)
+    _write_archive_closure_rows(
+        tmp_path,
+        "| CTL-2026-088d | completed | commit:abc | deliverable_type: code | x | nota sobran |\n",
+    )
+    errs = cbc.validate_archive_row_arity(tmp_path)
+    assert len(errs) == 1, errs
+    assert "CTL-2026-088d" in errs[0]
+    assert "6 cells" in errs[0]
+
+
 # WOT-2026-023o: STATE.md ACTIVE_TICKET vs the scheduling surfaces (bus projection)
 # ---------------------------------------------------------------------------
 

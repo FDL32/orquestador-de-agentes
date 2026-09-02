@@ -65,7 +65,7 @@ REACTIVATION_REQUIRED = ("blocked", "deferred", "completed-partial")
 # trigger" and is only valid for active states without one.
 REACTIVATION_PREFIXES = ("condition:", "commit:", "external:")
 # A bare ticket id (WOT-YYYY-NNNx / WT-...) is also a valid trigger.
-_TICKET_TRIGGER_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
+_TICKET_TRIGGER_RE = re.compile(r"^(?:WOT|WP|WT|CTL)-\d{4}-\w+$")
 
 # Vocabulary that is NEVER a valid structured trigger (vague prose).
 _VAGUE_REACTIVATION = {"n/a", "na", "pendiente", "pending", "tbd", "todo", "?"}
@@ -81,7 +81,7 @@ _TABLE_HEADER_COLS = (
     "Origen",
     "Reactivation",
 )
-_FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
+_FICHA_RE = re.compile(r"^### (WOT|WP|WT|CTL)-\d{4}-\w+(?:\s+-\s+.+)?$")
 
 # WOT-2026-027t: a live-queue ticket row is a Prioridad-led markdown table row
 # whose Ticket cell (RAW split index 2: empty token, Prioridad, Ticket) is a bare
@@ -91,7 +91,7 @@ _FICHA_RE = re.compile(r"^### (WOT|WP|WT)-\d{4}-\w+(?:\s+-\s+.+)?$")
 # OUTSIDE the Vista rapida table body, so the fragmentation cannot silently
 # reappear. Cell-based (idx 2), never substring: a prose cell can cite a ticket
 # id (e.g. 'Depende de'), which must NOT match.
-_TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
+_TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT|CTL)-\d{4}-\w+$")
 
 # WOT-2026-052a: Prioridad words that identify a live-queue / archived-snapshot
 # table row. The Prioridad cell sits at RAW split index 1 (empty token,
@@ -146,7 +146,7 @@ _DELIVERABLE_TYPE_RAW_RE = re.compile(r"deliverable_type\s*[:=]\s*\S*")
 #                 `WOT-2026-STATE-RECON-A` produce el id fantasma
 #                 `WOT-2026-STATE` (fila viva de `WOT-2026-030b`).
 # Ambos los cazo la lente codex del bucle; ninguna de las cinco anteriores.
-_DEPENDS_ON_ID_RE = re.compile(r"(?<![\w-])(?:WOT|WP|WT)-\d{4}-[a-z0-9]+(?![\w-])")
+_DEPENDS_ON_ID_RE = re.compile(r"(?<![\w-])(?:WOT|WP|WT|CTL)-\d{4}-[a-z0-9]+(?![\w-])")
 
 # WOT-2026-013j: a detailed ficha must NOT re-declare Files Likely Touched. The
 # canonical FLT lives ONLY in the frozen contract (ticket_contracts.md) and then
@@ -159,7 +159,7 @@ _DEPENDS_ON_ID_RE = re.compile(r"(?<![\w-])(?:WOT|WP|WT)-\d{4}-[a-z0-9]+(?![\w-]
 _FLT_DECLARATION_RE = re.compile(r"^\s*[-*]\s*\*\*Files Likely Touched", re.IGNORECASE)
 # WOT-2026-043t: ticket id SEARCHED inside a line (the constants above are anchored
 # with ^...$ for whole-cell matches and cannot find an id embedded in prose).
-_TICKET_ID_IN_TEXT_RE = re.compile(r"\b((?:WOT|WP|WT)-\d{4}-\w+)\b")
+_TICKET_ID_IN_TEXT_RE = re.compile(r"\b((?:WOT|WP|WT|CTL)-\d{4}-\w+)\b")
 
 
 def resolve_destino_root(cli_value: str | None) -> tuple[Path | None, str | None]:
@@ -527,7 +527,7 @@ def _check_ficha_bodies(content: str) -> list[str]:
     current_ficha = "<before any ficha>"
     for line in content.splitlines():
         is_ticket_ficha = line.startswith("### ") and (
-            "WOT-" in line or "WT-" in line or "WP-" in line
+            "WOT-" in line or "WT-" in line or "WP-" in line or "CTL-" in line
         )
         if is_ticket_ficha:
             current_ficha = line.rstrip().lstrip("# ").strip()
@@ -1082,6 +1082,16 @@ def validate_archive_row_arity(root: Path) -> list[str]:
             continue
         n = len(stripped.strip("|").split("|"))
         want_n = 4 if layout == "closure" else want
+        # CTL-2026-026a cierre (2026-09-02): el archive del destino CTL usa un
+        # schema de closure PROPIO de 5 celdas (`| Ticket | Estado | commit: |
+        # deliverable_type: | Nota |`), censado en el archive real: 26 de 26
+        # filas a arity 5. Aplicar el canonico de 4 del motor a esas filas
+        # declararia ROTAS filas legitimas (falso positivo, medido al extender el
+        # gate a CTL). El canonico del closure DEL DESTINO manda: 5 para CTL,
+        # 4 para WOT/legacy (el motor/workspace). Una fila NUEVA de cualquier
+        # otro arity sigue fallando igual (la baseline del motor para WOT se mantiene).
+        if layout == "closure" and tid.startswith("CTL-"):
+            want_n = 5
         # Exempt by the PAIR (id, censused arity), never by id alone: a baseline
         # ticket is forgiven ONLY at the arity actually measured, so a fresh break
         # under a baseline id still fails.

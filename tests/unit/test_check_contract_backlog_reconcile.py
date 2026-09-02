@@ -275,3 +275,58 @@ def test_058p_none_prefix_fallback_unchanged() -> None:
     from scripts.check_contract_backlog_reconcile import find_frozen_ids
 
     assert find_frozen_ids(_FROZEN_PAIR, None) == ["WT-2026-248a", "WOT-2026-099x"]
+
+
+def _write_loose_contract(root: Path, name: str, body: str) -> None:
+    d = root / ".agent" / "planning"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(body, encoding="utf-8")
+
+
+def test_loose_frozen_orphan_detected(tmp_path, monkeypatch) -> None:
+    _write_contracts(tmp_path, "")
+    _write_loose_contract(
+        tmp_path,
+        "TICKET_CONTRACT_CTL-2026-900a.md",
+        "## CTL-2026-900a - X\n\n- **ticket_id:** CTL-2026-900a\n- **status:** frozen\n",
+    )
+    _write_backlog(tmp_path, "| Alta | WOT-2026-001a | t | s | pending | - | x | - |\n")
+    assert find_orphans(tmp_path) == ["CTL-2026-900a"]
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    assert main([]) == 1
+
+
+def test_loose_draft_orphan_detected(tmp_path, monkeypatch) -> None:
+    _write_contracts(tmp_path, "")
+    _write_loose_contract(
+        tmp_path,
+        "TICKET_CONTRACT_CTL-2026-900b.md",
+        "## CTL-2026-900b - Y\n\n- **ticket_id:** CTL-2026-900b\n- **status:** draft\n",
+    )
+    _write_backlog(tmp_path, "| Alta | WOT-2026-001a | t | s | pending | - | x | - |\n")
+    assert find_orphans(tmp_path) == ["CTL-2026-900b"]
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    assert main([]) == 1
+
+
+def test_loose_file_with_row_no_orphan(tmp_path, monkeypatch) -> None:
+    _write_contracts(tmp_path, "")
+    _write_loose_contract(
+        tmp_path,
+        "TICKET_CONTRACT_CTL-2026-900c.md",
+        "## CTL-2026-900c - Z\n\n- **ticket_id:** CTL-2026-900c\n- **status:** draft\n",
+    )
+    _write_backlog(tmp_path, "| Alta | CTL-2026-900c | t | s | pending | - | x | - |\n")
+    assert find_orphans(tmp_path) == []
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    assert main([]) == 0
+
+
+def test_loose_file_without_contract_block_ignored(tmp_path) -> None:
+    _write_contracts(tmp_path, "")
+    _write_loose_contract(
+        tmp_path,
+        "TICKET_CONTRACT_CTL-2026-900d.md",
+        "notas sueltas sin bloque de contrato\n",
+    )
+    assert find_orphans(tmp_path) == []

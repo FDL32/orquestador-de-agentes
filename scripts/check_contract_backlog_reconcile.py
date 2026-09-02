@@ -125,7 +125,70 @@ def find_frozen_ids(contracts_text: str, prefix: str | None = None) -> list[str]
     return ids
 
 
+_CONTRACT_FILE_PATTERN = "TICKET_CONTRACT_*.md"
+
+
+def _loose_contract_files(root: Path) -> list[Path]:
+    """Loose contract files in ``.agent/planning/`` (outside the aggregate).
+
+    Before: ``root`` is the destino root; the loose-files dir may not exist.
+    During: pure glob, sorted for determinism. No I/O beyond the listing.
+    After: returns the matching Paths; never raises.
+    """
+    d = root / ".agent" / "planning"
+    if not d.exists():
+        return []
+    return sorted(d.glob(_CONTRACT_FILE_PATTERN))
+
+
+def _loose_contract_ids(text: str, prefix: str | None) -> list[str]:
+    """Ticket ids of every ``## `` block in a loose contract file.
+
+    Same extraction discipline as the aggregate (``_extract_ticket_id``):
+    ``ticket_id:`` is primary, the header line only as fallback, NEVER the
+    body (dependencies/citations would false-match).
+    """
+    if prefix is not None:
+        ticket_id_re = _build_ticket_id_re(prefix)
+        ticket_re = _build_ticket_re(prefix)
+    else:
+        ticket_id_re = _GENERIC_TICKET_ID_RE
+        ticket_re = _GENERIC_TICKET_RE
+    ids: list[str] = []
+    for block in re.split(r"(?m)^## ", text):
+        tid = _extract_ticket_id(block, ticket_id_re, ticket_re)
+        if tid and tid not in ids:
+            ids.append(tid)
+    return ids
+
+
 def find_orphans(root: Path) -> list[str]:
+    """Frozen contract ids that have no row in backlog.md nor the archive."""
+    contracts = root / ".agent" / "planning" / "ticket_contracts.md"
+    from scripts.prefix_resolver import resolve_prefix_for_destination
+
+    prefix = resolve_prefix_for_destination(root)
+    frozen: list[str] = []
+    if contracts.exists():
+        frozen = find_frozen_ids(contracts.read_text(encoding="utf-8-sig"), prefix)
+    collab = root / ".agent" / "collaboration"
+    backlog = collab / "backlog.md"
+    archive = collab / "_archive" / "backlog_done.md"
+    orphans = [
+        tid
+        for tid in frozen
+        if not _ticket_has_row(tid, backlog) and not _ticket_has_row(tid, archive)
+    ]
+    for cfile in _loose_contract_files(root):
+        for tid in _loose_contract_ids(cfile.read_text(encoding="utf-8-sig"), prefix):
+            if (
+                tid not in orphans
+                and not _ticket_has_row(tid, backlog)
+                and not _ticket_has_row(tid, archive)
+            ):
+                orphans.append(tid)
+    return orphans
+
     """Frozen contract ids that have no row in backlog.md nor the archive."""
     contracts = root / ".agent" / "planning" / "ticket_contracts.md"
     if not contracts.exists():
@@ -163,8 +226,8 @@ def main(argv: list[str] | None = None) -> int:
     orphans = find_orphans(root)
     if orphans:
         print(
-            f"[contract-reconcile] {len(orphans)} frozen contract(s) with NO "
-            f"scheduling row (batch can never execute them):",
+            f"[contract-reconcile] {len(orphans)} contract(s) (frozen aggregate or "
+            f"loose fichero) with NO scheduling row (batch can never execute them):",
             file=sys.stderr,
         )
         for tid in orphans:
@@ -176,7 +239,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print("[contract-reconcile] OK: every frozen contract has a scheduling row")
+    print(
+        "[contract-reconcile] OK: every contract (frozen aggregate or loose fichero) has a scheduling row"
+    )
     return 0
 
 
