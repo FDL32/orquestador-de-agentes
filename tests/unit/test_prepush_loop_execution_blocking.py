@@ -310,3 +310,105 @@ def test_059b_git_failure_is_not_reported_as_unresolvable_sha(tmp_path, monkeypa
         "un fallo de INFRAESTRUCTURA (git no ejecutable) NO puede clasificarse "
         f"como 'el sha no resuelve': degrada a desconocido. Salio: {out}"
     )
+
+
+# ---------------------------------------------------------------------------
+# CTL-2026-027b (D1/D3/D5): la resolucion de raiz es POR ORIGEN, no por una raiz
+# fija. La barrera WOT-2026-059b NO se relaja: un sha que no existe en NINGUNA
+# raiz sigue siendo irresoluble. El corpus real es MIXTO-ORIGEN (medido
+# 2026-09-02): 7x solo-destino y `d0699ad2` solo-motor, que prueba ambas
+# direcciones.
+# ---------------------------------------------------------------------------
+
+
+def _commit_in_repo(root: Path, marker: str) -> str:
+    """Crea un repo git en `root` con un commit y devuelve su SHA real."""
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@localhost"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "test"], check=True)
+    (root / marker).write_text(marker, encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", marker], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", marker], check=True)
+    out = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
+def test_unresolvable_target_shas_resolves_against_home_root(tmp_path):
+    """D1 (CTL-2026-027b): un sha que existe SOLO en el destino deja de ser hallazgo.
+
+    El corpus real es MIXTO-ORIGEN: 7x CTL-2026-024k/025d existen solo en el
+    destino y `d0699ad2` (WOT-2026-042m) solo en el motor. La barrera se
+    resolvia contra una raiz FIJA (el motor) y los 7 abortaban el cierre.
+
+    MUTACION QUE LA MATA: volver a resolver contra una raiz fija -> este test
+    cae con el sha del destino en la lista.
+    """
+    import scripts.prepush_check as pc
+
+    motor = tmp_path / "motor"
+    motor_sha = _make_motor_repo(motor)
+    dest = _link_motor(tmp_path / "dest", motor)
+    dest_sha = _commit_in_repo(dest, "dest-seed.txt")
+
+    out = pc._unresolvable_target_shas(dest, [dest_sha])
+    assert out == [], f"un sha que SOLO existe en el destino no es hallazgo: {out}"
+    out = pc._unresolvable_target_shas(dest, [motor_sha])
+    assert out == [], f"un sha del motor no es hallazgo: {out}"
+    out = pc._unresolvable_target_shas(dest, [dest_sha, motor_sha])
+    assert out == [], f"corpus mixto-origen sin hallazgos: {out}"
+
+
+def test_unresolvable_target_shas_keeps_ghost_sha_fail_closed(tmp_path):
+    """D3 (CTL-2026-027b): un sha inexistente en AMBAS raices sigue marcandose
+    como irresoluble -- la relajacion de raiz no relaja el fail-closed."""
+    import scripts.prepush_check as pc
+
+    motor = tmp_path / "motor"
+    _make_motor_repo(motor)
+    dest = _link_motor(tmp_path / "dest", motor)
+    _commit_in_repo(dest, "dest-seed.txt")
+    ghost = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+    out = pc._unresolvable_target_shas(dest, [ghost])
+
+    assert out == [ghost], (
+        "un sha que no existe en NINGUNA raiz sigue abortando el cierre "
+        f"(WOT-2026-059b intacto): {out}"
+    )
+
+
+def test_destino_sha_without_governance_still_blocks_the_closeout(tmp_path):
+    """D5 (CTL-2026-027b, POR EFECTO): tras D1 la barrera SIGUE abortando ante un
+    target cuyo gobierno no esta acreditado -- ahora por la rama 2 (fan-out
+    1->9->2), que es OTRO problema declarado como follow-up, no este ticket.
+
+    El sha solo-destino es exactamente el caso del CG aceptado del ciclo 1: se
+    mide POR EFECTO (`is_blocking=True` sobre un target sin gobierno) y nunca
+    por derivacion de `delivery_authority`. El test demuestra que el mensaje de
+    shas irresolubles desaparece (D2) y que la barrera NO se abre (D5).
+    """
+    motor = tmp_path / "motor"
+    _make_motor_repo(motor)
+    dest = _link_motor(tmp_path / "dest", motor)
+    dest_sha = _commit_in_repo(dest, "dest-seed.txt")
+    _build_destination(dest, targets=f"{dest_sha} code\n", rounds=[], emitted=[])
+
+    result = run_loop_execution_check(dest)
+
+    assert result.passed is False, result.output
+    assert result.is_blocking is True, (
+        "un target cuyo gobierno no esta acreditado debe ABORTAR el cierre tras "
+        f"D1, no dejar de bloquear: {result.output}"
+    )
+    assert "fan-out" in result.output, (
+        "tras D1 el bloqueo debe venir de la rama de ACREDITACION, no del mensaje "
+        f"de shas irresolubles (que debe haber desaparecido): {result.output}"
+    )

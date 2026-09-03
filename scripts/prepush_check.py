@@ -104,6 +104,15 @@ if str(_MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT))
 
 
+# WOT-2026-062d (resolucion por origen): dual import shape -- the same fallback
+# the CLI of check_backlog_commits_landed.py:109-112 uses; `_pair_home_root`
+# picks the git root (motor first, destino second) that actually holds a sha.
+try:
+    from scripts.landed_commit_surface import _pair_home_root
+except ImportError:
+    from landed_commit_surface import _pair_home_root  # type: ignore[no-redef]
+
+
 # Global noqa for S603 - all subprocess calls use hardcoded command lists
 # ruff: noqa: S603
 
@@ -1432,19 +1441,32 @@ def run_principal_freshness_check(project_root: Path) -> CheckResult:
 
 
 def _unresolvable_target_shas(project_root: Path, commit_shas: list[str]) -> list[str]:
-    """WOT-2026-059b: targets cuyo SHA no resuelve en el MOTOR (fail-closed x repo).
+    """Targets cuyo SHA no resuelve en NINGUNA raiz (fail-closed x repo).
 
-    La acreditacion se resuelve contra el MOTOR, no contra lo que quede escrito en el
-    fichero. Un target cuyo SHA no resuelve a un commit del motor es acreditacion por
-    herencia (un sha del repo equivocado, o un sha inexistente) y hoy lo da por
-    acreditado. Medido 2026-08-25: `3128e85` existia en el DESTINO (rc=0) y no en el
-    MOTOR (rc=128). Si el motor no es resoluble (link ausente), devuelve [] -> la
+    WOT-2026-059b resolvia contra una raiz FIJA (el motor) y un sha del DESTINO
+    -- commit de vuelo con entrega en el destino -- abortaba el cierre como
+    "acreditacion por herencia". La resolucion es ahora POR ORIGEN:
+    `_pair_home_root` (landed_commit_surface.py, WOT-2026-062d) prueba por root
+    candidato -- motor primero, orden historico -- y devuelve la raiz que tiene
+    el objeto; si NINGUNA lo tiene, devuelve el motor para que este guard siga
+    emitiendo su veredicto de diseno. Medido 2026-08-25: `3128e85` existia en
+    el DESTINO (rc=0) y no en el MOTOR (rc=128); el corpus real es
+    MIXTO-ORIGEN (2026-09-02: 7x solo-destino, `d0699ad2` solo-motor), y prueba
+    las dos direcciones.
+
+    El veredicto final se re-prueba contra el home devuelto con subprocess (no
+    con `_root_has_commit_object`, que colapsa OSError en "no tiene el objeto"):
+    un fallo de INFRAESTRUCTURA (git no ejecutable, timeout) NO es "el sha no
+    existe", es un DESCONOCIDO -- doctrina L970 del bucle de 059b -- y no entra
+    en la lista. Si el motor no es resoluble (link ausente), devuelve [] -> la
     validacion queda inaplicable y no fabrica un falso-rojo (patron "None es
     desconocido, no invalido", validate_batch_dag._sha_resolves_in_motor).
 
     Before: commit_shas no vacio; project_root resoluble.
-    During: una lectura read-only git cat-file por sha contra el motor. Sin escrituras.
-    After: lista (posiblemente vacia) de shas que no resuelven a un commit del motor.
+    During: una lectura read-only git cat-file por sha contra las raices
+        candidatas. Sin escrituras.
+    After: lista (posiblemente vacia) de shas que no resuelven a un commit de
+        NINGUNA raiz.
     """
     try:
         from runtime.motor_link import resolve_motor_root as _resolve_motor_root
@@ -1457,9 +1479,13 @@ def _unresolvable_target_shas(project_root: Path, commit_shas: list[str]) -> lis
         return []
     unresolvable: list[str] = []
     for sha in commit_shas:
+        home = _pair_home_root(sha, project_root, motor_root)
+        if home is None:
+            # Sin root candidato: no se pudo comprobar, no es invalido.
+            continue
         try:
             probe = subprocess.run(
-                ["git", "-C", str(motor_root), "cat-file", "-e", f"{sha}^{{commit}}"],  # noqa: S607
+                ["git", "-C", str(home), "cat-file", "-e", f"{sha}^{{commit}}"],  # noqa: S607
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -1588,20 +1614,22 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             skipped=True,
         )
 
-    # WOT-2026-059b: la barrera se resuelve contra el MOTOR, no contra lo que quede
-    # escrito en el fichero. Un target cuyo SHA no resuelve a un commit del motor es
-    # acreditacion por herencia -> FALLA CERRADO, nombrando el sha.
+    # La resolucion de raiz es POR ORIGEN (_unresolvable_target_shas via
+    # _pair_home_root): un sha que existe en el DESTINO (o en el motor) ya no
+    # es hallazgo; uno que no existe en NINGUNA raiz sigue siendo herencia ->
+    # FALLA CERRADO, nombrando el sha (WOT-2026-059b no se relaja).
     unresolvable = _unresolvable_target_shas(project_root, commit_shas)
     if unresolvable:
         return CheckResult(
             name=name,
             passed=False,
             output=(
-                "target(s) cuyo SHA no resuelve a un commit del MOTOR "
-                f"(WOT-2026-059b): {', '.join(unresolvable)}\n"
-                "La acreditacion se resuelve contra el motor; un sha del repo "
-                "equivocado o inexistente es herencia, no gobierno. Esto ABORTA "
-                "el cierre (fail-closed)."
+                "target(s) cuyo SHA no resuelve a un commit de NINGUNA raiz "
+                f"(ni motor ni destino; WOT-2026-059b): {', '.join(unresolvable)}\n"
+                "La resolucion de raiz es por origen (_pair_home_root): un sha "
+                "solo-existente en el destino es un commit de vuelo que entrego "
+                "en el destino. Uno que no resuelve en ninguna raiz es herencia, "
+                "no gobierno. Esto ABORTA el cierre (fail-closed)."
             ),
             is_blocking=True,
         )
