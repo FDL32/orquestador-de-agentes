@@ -13,6 +13,8 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 _SPEC = importlib.util.spec_from_file_location(
     "sync_principal",
@@ -283,3 +285,52 @@ def test_refuse_named_branch_exit_1(tmp_path):
     _g(["checkout", "-q", "main"], work)
     rc = sp.main(["--motor-root", str(work), "--primary-root", str(work)])
     assert rc == 1
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "WOT-2026-053a: _detect_primary devuelve None con >1 worktree non-_dev, "
+        "dejando INERTES sus 3 consumidores (destination_context.py:345, "
+        "prepush_check.py:1359, sync_principal.py:351). Arreglo NO decidido: "
+        "(a) resolver por link/AGENT_PROJECT_ROOT -- reescribe o borra este test; "
+        "(b) excluir .kilo/ del recuento -- basta retirar el marcador. "
+        "Si XPASS: retira el marcador Y fortalece la asercion a IDENTIDAD del "
+        "primario, porque 'not None' deja pasar un auxiliar como primario. "
+        "raises=AssertionError es deliberado: sin el, un fixture reventado "
+        "(git worktree add es fragil) se reporta XFAIL y el defecto queda mudo."
+    ),
+)
+def test_detect_primary_resolves_with_auxiliary_worktrees(tmp_path):
+    """>=3 non-_dev worktrees (the REAL motor topology) must still resolve.
+
+    The hermetic two-worktree tests above build the one case that works. The
+    live motor carries auxiliary worktrees under `.kilo/worktrees/`, so the
+    non-_dev count is >1 and `_detect_primary` gives up with None -- which
+    silently disarms its three consumers: the contract-surface WARN of
+    WOT-2026-053a (destination_context.py:345), the primary-freshness check of
+    the closeout (prepush_check.py:1359) and sync_principal's own path (:351).
+
+    This test reaches that frontier: primary + work_dev + two auxiliary
+    checkouts. It asserts only that the primary is RESOLVED, staying agnostic
+    about HOW (link-based resolution vs excluding auxiliary worktrees) -- that
+    choice is still open.
+    """
+    _origin, work = _make_repo_with_main(tmp_path)
+    dev = tmp_path / "work_dev"
+    _g(["worktree", "add", "-q", "--detach", str(dev), "HEAD"], work)
+    aux_root = work / ".kilo" / "worktrees"
+    for name in ("flight-alpha", "flight-beta"):
+        _g(["worktree", "add", "-q", "--detach", str(aux_root / name), "HEAD"], work)
+
+    tops = sp._worktree_toplevels(work)
+    non_dev = [p for p in tops if not p.name.endswith("_dev")]
+    assert len(non_dev) >= 3, f"topology precondition not met: {non_dev}"
+
+    primary = sp._detect_primary(work)
+    assert primary is not None, (
+        "_detect_primary gave up (None) because auxiliary worktrees make the "
+        "non-_dev count >1; its consumers then self-skip in silence"
+    )
+    assert primary.name == "work"
