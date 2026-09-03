@@ -1568,6 +1568,75 @@ def test_prose_baseline_still_bites_where_it_was_censused(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# CTL-2026-027a (D1/D7): la evidencia de aterrizaje se lee en CUALQUIER celda,
+# no solo en la celda Reactivation -- criterio EXACTO del hermano
+# check_backlog_commits_landed._commit_cell:363 (`cell.startswith(("commit:",
+# "commits:"))`, nunca subcontencion). Medido 2026-09-02 en el archive del
+# destino: 9 de las 12 filas en rojo llevan su `commit:<sha>` en la celda 5
+# (indice 0-based) y el guard las leia solo en la 7.
+# ---------------------------------------------------------------------------
+
+
+def test_027a_commit_in_cell5_is_landing_evidence(tmp_path: Path) -> None:
+    """D1: `commit:<sha>` en la celda 5 (Depende/indice 0-based) con Reactivation
+    '-' -> PASA. Es exactamente la fila real CTL-2026-014k/016a/... del destino.
+    """
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        "| Media | WOT-2026-053d | titulo | motor/scope | completed"
+        " | commit:abc1234 | origen | - |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_landing_evidence(tmp_path) == []
+
+
+def test_027a_commits_plural_in_any_cell_passes(tmp_path: Path) -> None:
+    """D1: el prefijo PLURAL `commits:` cuenta como evidencia en cualquier celda
+    (mismo criterio que _COMMIT_CELL_PREFIXES del hermano, WOT-2026-024c P3)."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        "| Media | WOT-2026-053d | titulo | motor/scope | completed"
+        " | commits:abc1234+def5678 | origen | - |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_landing_evidence(tmp_path) == []
+
+
+def test_027a_prose_mentioning_commit_is_not_evidence(tmp_path: Path) -> None:
+    """CONTROL POSITIVO del criterio startswith: una celda de PROSA que CONTIENE
+    'commit:' a mitad de frase (22 medidas en el archive del destino, p.ej. 018f)
+    NO acredita. Un criterio por subcontencion haria pasar esta fila."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        "| Media | WOT-2026-053d | la ficha quedo sin actualizar tras el commit:"
+        " sus SIETE citas | motor/scope | completed | - | origen | - |\n",
+        encoding="utf-8",
+    )
+    errors = cbc.validate_archive_landing_evidence(tmp_path)
+    assert len(errors) == 1, f"prosa con 'commit:' no es evidencia: {errors}"
+    assert "WOT-2026-053d" in errors[0]
+
+
+def test_027a_mutation_guard_reactivation_only(tmp_path: Path) -> None:
+    """D7 (mutation-to-prove): si el fix se revierte a leer SOLO la celda
+    Reactivation, esta fila (commit: en la celda 5) vuelve a rojo y el test
+    cae."""
+    collab = tmp_path / ".agent" / "collaboration" / "_archive"
+    collab.mkdir(parents=True)
+    (collab / "backlog_done.md").write_text(
+        "| Media | WOT-2026-053d | titulo | motor/scope | completed"
+        " | commit:abc1234 | origen | - |\n",
+        encoding="utf-8",
+    )
+    assert cbc.validate_archive_landing_evidence(tmp_path) == [], (
+        "mutation guard: reverting to Reactivation-only must fail this test"
+    )
+
+
+# ---------------------------------------------------------------------------
 # WOT-2026-056b: el censo deliverable_type consulta por VALOR, no por pertenencia.
 # Un id censado con valor compensado ('absent') excusa la AUSENCIA del campo,
 # pero NO un valor corrupto (garbage/typo/vacuo): un id censado + dtype invalido

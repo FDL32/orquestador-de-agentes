@@ -1500,10 +1500,26 @@ def validate_archive_landing_evidence(root: Path) -> list[str]:
     Before: ``root`` is the destino root; the archive may or may not exist.
     During: reads Prioridad-led rows from ``_archive/backlog_done.md``. For
         each row whose state is in ``_STATES_REQUIRING_LANDING``, checks
-        that the Reactivation column contains ``commit:<sha>`` or
-        ``external:<ref>`` -- i.e. evidence of where the work landed.
+        that SOME cell of the row starts with ``commit:``/``commits:`` --
+        i.e. evidence of where the work landed -- or that the Reactivation
+        column starts with ``external:``/``condition:``.
         Rows with state ``absorbed``/``not-pursued`` legitimately carry
         ``-`` (no landing) and are not flagged.
+        Column-agnostic landing evidence (ticket 027a, D1): the evidence
+        cell is ANY cell of the row, same criterion as the sibling guard
+        ``check_backlog_commits_landed._commit_cell`` (WOT-2026-024c). The
+        criterion is EXACTLY ``cell.startswith(("commit:", "commits:"))``,
+        never substring: 2026-09-02 the destino archive has 22 PROSE cells
+        containing ``commit:`` mid-sentence (e.g. 018f) that must NOT count
+        (measured: substring would credit 18 rows by narrative prose).
+        CONFLACION DOCUMENTADA, no retirada (ticket 027a, D3):
+        ``condition:`` as landing evidence is a semantic conflation -- the
+        prefix comes from ``REACTIVATION_PREFIXES`` (:66), vocabulary of
+        the LIVE queue where it means "condition to reactivate", not
+        landing evidence. Retiring it would raise the violations 3 -> 10
+        (measured: 7 of the 15 exempted rows -- 014n, 014o, 014p, 014q,
+        014r, 015b, 013y -- carry no ``commit:`` cell at all), so it is
+        documented here and its follow-up is census'd, not retired.
     After: one error per terminal row without landing evidence. No mutation.
     """
     collab = root / ".agent" / "collaboration"
@@ -1524,11 +1540,15 @@ def validate_archive_landing_evidence(root: Path) -> list[str]:
         if state not in _STATES_REQUIRING_LANDING:
             continue
         reactivation = _archive_row_reactivation(cells)
-        has_landing = (
-            reactivation.startswith("commit:")
-            or reactivation.startswith("external:")
-            or reactivation.startswith("condition:")
-        )
+        # Column-agnostic (ticket 027a D1): commit:/commits: se leen en
+        # CUALQUIER celda (el hermano _commit_cell:363 ya es asi);
+        # external:/condition: siguen siendo vocabulario de la celda
+        # Reactivation. `startswith`, nunca `in`: una celda de prosa que
+        # MENCIONA 'commit:' (22 medidas en el archive del destino) no
+        # acredita.
+        has_landing = any(
+            c.startswith(("commit:", "commits:")) for c in cells
+        ) or reactivation.startswith(("external:", "condition:"))
         if not has_landing:
             # WOT-2026-054b: exempt ONLY the censused legacy pair (id, cell).
             # Keyed on the exact cell, so any rewrite of the row -- including
