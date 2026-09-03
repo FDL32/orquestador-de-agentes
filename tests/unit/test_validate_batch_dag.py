@@ -1486,3 +1486,192 @@ def test_059i_independientes_orden_cualquiera_sigue_pasando(tmp_path: Path) -> N
     rev["groups"] = list(reversed(rev["groups"]))
     backward = _run(_write_dag(tmp_path, rev, "b059i.json"))
     assert backward.returncode == 0, backward.stderr
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-055x: CROSS-TICKET SURFACE SCAN -- el DAG debe declarar SI midio,
+# no la cifra. Contrato T-055X-001, decisiones del operador (2026-09-02):
+#   D1/D6 -- se bloquea el SILENCIO, no la ausencia de dato: un grupo raiz
+#     (`depends_on_groups == []`) sin `surface_scan` no distingue "medido, sin
+#     solape" de "no pude medir"; `{executed: false, ...}` pasa en verde.
+#   D3 -- forma exacta: {executed: bool, coverage: "N/M", method: str}.
+#     El gate valida las 3 claves y sus TIPOS; NO la verdad de los valores.
+#   D4 -- rollout por BUMP DE SCHEMA: /v2 exige el campo, /v1 valida como
+#     antes (anti-falso-positivo: los 109 DAGs /v1 vivos del destino no
+#     pueden empezar a fallar, censo 2026-09-02).
+# ---------------------------------------------------------------------------
+
+_FIXTURE_V1_QUEUED_REAL = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "fixtures"
+    / "batch_dag"
+    / "FP-20260901-scopes-independientes.json"
+)
+
+
+def test_055x_v2_raiz_sin_surface_scan_rechazado(tmp_path: Path) -> None:
+    """DoD (b) lado ROJO: un /v2 cuyo grupo raiz OMITE el campo falla.
+
+    Mutacion UNICA respecto al baseline valido: el tag de schema pasa a /v2.
+    Ese es el disparo del gate -- nada mas cambia, asi que solo el gate puede
+    hacer que falle.
+    """
+    dag = _valid_dag()
+    dag["schema"] = "autonomous-batch-dag/v2"
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1, (
+        "un grupo raiz /v2 sin surface_scan no distingue 'medido, sin solape' "
+        f"de 'no pude medir': el SILENCIO debe bloquear. stderr: {result.stderr}"
+    )
+    assert "surface_scan" in result.stderr, result.stderr
+
+
+def test_055x_v2_raiz_con_campo_executed_false_pasa(tmp_path: Path) -> None:
+    """DoD (b) lado VERDE: el campo presente con `{executed: false}` pasa.
+
+    Lo que se bloquea es el SILENCIO, no la ausencia de dato: una declaracion
+    honesta de 'no pude medir' es un dato valido. G-XDIST (no raiz) NO lleva
+    campo: solo los grupos raiz son exigibles, y aun asi el DAG valida.
+    """
+    dag = _valid_dag()
+    dag["schema"] = "autonomous-batch-dag/v2"
+    for group in dag["groups"]:
+        if not group["depends_on_groups"]:
+            group["surface_scan"] = {
+                "executed": False,
+                "coverage": "0/12",
+                "method": "FLT no resoluble (gate 013j + indice T- <-> WOT-)",
+            }
+    assert all(
+        "surface_scan" not in g for g in dag["groups"] if g["depends_on_groups"]
+    ), "G-XDIST (no raiz) debe quedar sin campo para que el verde sea real"
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, (
+        "una declaracion honesta de no-pude-medir debe pasar: se bloquea el "
+        f"silencio, no la ausencia de dato. stderr: {result.stderr}"
+    )
+
+
+def test_055x_v2_raiz_con_campo_ejecutado_pasa(tmp_path: Path) -> None:
+    """CONTROL: la forma del DoD(a) -- `{executed: true, coverage: "11/23"}`
+    -- tambien pasa. El gate no requiere deserializacion ni cobertura real:
+    solo forma y tipos."""
+    dag = _valid_dag()
+    dag["schema"] = "autonomous-batch-dag/v2"
+    for group in dag["groups"]:
+        if not group["depends_on_groups"]:
+            group["surface_scan"] = {
+                "executed": True,
+                "coverage": "11/23",
+                "method": "FLT de ticket_contracts.md",
+            }
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
+def test_055x_v2_con_dependencias_no_exige_campo(tmp_path: Path) -> None:
+    """El gate alcanza solo a grupos RAIZ: un /v2 con un grupo no-raiz que
+    omite el campo sigue pasando (su ejecucion es serial; el scan protege la
+    ejecucion PARALELA). BVC-G2 es raiz y declara; BVC-G1 depende y no."""
+    dag = _valid_dag()
+    dag["schema"] = "autonomous-batch-dag/v2"
+    for group in dag["groups"]:
+        if not group["depends_on_groups"]:
+            group["surface_scan"] = {
+                "executed": True,
+                "coverage": "1/1",
+                "method": "FLT de ticket_contracts.md",
+            }
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, (
+        "un grupo con depends_on_groups no corre en paralelo: no debe exijirsele "
+        f"surface_scan. stderr: {result.stderr}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_needle"),
+    [
+        ({"surface_scan": "no-soy-objeto"}, "debe ser un objeto"),
+        (
+            {"surface_scan": {"coverage": "0/12", "method": "x"}},
+            "no declara 'executed'",
+        ),
+        ({"surface_scan": {"executed": True, "method": "x"}}, "no declara 'coverage'"),
+        (
+            {"surface_scan": {"executed": True, "coverage": "0/12"}},
+            "no declara 'method'",
+        ),
+        (
+            {"surface_scan": {"executed": "si", "coverage": "0/12", "method": "x"}},
+            "debe ser bool",
+        ),
+        (
+            {"surface_scan": {"executed": True, "coverage": 11, "method": "x"}},
+            "debe ser str",
+        ),
+        (
+            {"surface_scan": {"executed": True, "coverage": "0/12", "method": 42}},
+            "debe ser str",
+        ),
+    ],
+)
+def test_055x_forma_invalida_rechazada(
+    tmp_path: Path, mutate: dict[str, Any], expected_needle: str
+) -> None:
+    """D3 declara el alcance del gate (3 claves + tipos): cada forma invalida
+    cae en un veredicto distinto, no en un catch-all que ocultaria el fallo."""
+    dag = _valid_dag()
+    dag["schema"] = "autonomous-batch-dag/v2"
+    dag["groups"][0].update(mutate)
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1, (
+        f"mutation {mutate!r} no debe validar: {result.stderr}"
+    )
+    assert "surface_scan" in result.stderr, result.stderr
+    assert expected_needle in result.stderr, (
+        f"el error debe nombrar el tipo ({expected_needle}): {result.stderr}"
+    )
+
+
+def test_055x_anti_falso_positivo_v1_real_de_queued_sigue_verde() -> None:
+    """MUTACION INVERSA (D4) sobre un /v1 REAL de queued/ del destino.
+
+    Copia en tests/fixtures/batch_dag/ del plan vivo FP-20260901
+    (orchestrator_pipeline/flight_plans/queued/, 2026-09-01): 6 grupos,
+    raices con depends_on_groups: [] y shared_surfaces: [], NINGUNO con
+    surface_scan. El rollout por schema protege los 109 /v1 vivos: no
+    pueden empezar a fallar. Mutacion que caza: aplicar requiere_surface_scan
+    a /v1 -> este test cae en ROJO.
+    """
+    assert _FIXTURE_V1_QUEUED_REAL.exists(), _FIXTURE_V1_QUEUED_REAL
+    result = _run(_FIXTURE_V1_QUEUED_REAL)
+    assert result.returncode == 0, (
+        f"el plan /v1 vivo del destino no debe empezar a fallar: {result.stderr}"
+    )
+
+
+def test_055x_v1_con_campo_declarado_ignora_pasa(tmp_path: Path) -> None:
+    """Un /v1 que YA declara el campo (por ejemplo por escribir el schema del
+    triage tal cual, o por migracion parcial) no se rompe: /v1 valida como
+    siempre, el campo es aditivo y el gate solo dispara con /v2."""
+    dag = _valid_dag()
+    dag["groups"][0]["surface_scan"] = {
+        "executed": True,
+        "coverage": "2/2",
+        "method": "FLT de ticket_contracts.md",
+    }
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 0, result.stderr
+
+
+def test_055x_schema_v3_sigue_rechazado(tmp_path: Path) -> None:
+    """El tag de esquema NO se relajo: solo se admiten /v1 y /v2. Una
+    escritura de '/v3' debe seguir cayendo -- el gate no se evade por
+    version de futuro."""
+    dag = _valid_dag()
+    dag["schema"] = "autonomous-batch-dag/v3"
+    result = _run(_write_dag(tmp_path, dag))
+    assert result.returncode == 1
+    assert "schema" in result.stderr and "v3" in result.stderr

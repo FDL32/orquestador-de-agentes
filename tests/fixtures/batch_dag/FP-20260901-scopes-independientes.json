@@ -1,0 +1,487 @@
+{
+ "schema": "autonomous-batch-dag/v1",
+ "generated_at": "2026-09-01T18:15:00+02:00",
+ "authored_by": "sesion DISENO 2026-09-01 (triaje paralelo)",
+ "state_at_triage": {
+  "motor": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+  "motor_branch": "main (limpio)",
+  "workspace": "32fabdb",
+  "dirty": "0"
+ },
+ "freshness_note": "V1.7: preflight A corrige la premise de 042g (touches -> bus/event_bus.py del MOTOR, no ruta fantasma del destino). Preflight B: 4 tickets (039b/040g/040i/040p) estan tambien declarados en FP-20260803, que esta MUERTO (RC=1, 6 tickets no-pending, validado hoy) -> no colision real. 23 tickets, 6 grupos.",
+ "pipelines": [
+  {
+   "name": "GB-A01-scopes-independientes",
+   "tickets": [
+    "WOT-2026-025w",
+    "WOT-2026-027a",
+    "WOT-2026-036b"
+   ],
+   "rationale": "Grupo independiente; scope unico.",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "size": "M"
+  },
+  {
+   "name": "GB-A02-scopes-independientes",
+   "tickets": [
+    "WOT-2026-037c",
+    "WOT-2026-038d",
+    "WOT-2026-038f",
+    "WOT-2026-038g"
+   ],
+   "rationale": "Grupo independiente; scope unico.",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "size": "M"
+  },
+  {
+   "name": "GB-A03-scopes-independientes",
+   "tickets": [
+    "WOT-2026-038m",
+    "WOT-2026-039b",
+    "WOT-2026-040g",
+    "WOT-2026-040i"
+   ],
+   "rationale": "Grupo independiente; scope unico.",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "size": "M"
+  },
+  {
+   "name": "GB-A04-scopes-independientes",
+   "tickets": [
+    "WOT-2026-040o",
+    "WOT-2026-040p",
+    "WOT-2026-040v",
+    "WOT-2026-041d"
+   ],
+   "rationale": "Grupo independiente; scope unico.",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "size": "M"
+  },
+  {
+   "name": "GB-A05-scopes-independientes",
+   "tickets": [
+    "WOT-2026-041g",
+    "WOT-2026-041i",
+    "WOT-2026-041n",
+    "WOT-2026-041s"
+   ],
+   "rationale": "Grupo independiente; scope unico.",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "size": "M"
+  },
+  {
+   "name": "GB-A06-scopes-independientes",
+   "tickets": [
+    "WOT-2026-041t",
+    "WOT-2026-041v",
+    "WOT-2026-042g",
+    "WOT-2026-042i"
+   ],
+   "rationale": "Grupo independiente; scope unico.",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "size": "M"
+  }
+ ],
+ "tickets": [
+  "WOT-2026-025w",
+  "WOT-2026-027a",
+  "WOT-2026-036b",
+  "WOT-2026-037c",
+  "WOT-2026-038d",
+  "WOT-2026-038f",
+  "WOT-2026-038g",
+  "WOT-2026-038m",
+  "WOT-2026-039b",
+  "WOT-2026-040g",
+  "WOT-2026-040i",
+  "WOT-2026-040o",
+  "WOT-2026-040p",
+  "WOT-2026-040v",
+  "WOT-2026-041d",
+  "WOT-2026-041g",
+  "WOT-2026-041i",
+  "WOT-2026-041n",
+  "WOT-2026-041s",
+  "WOT-2026-041t",
+  "WOT-2026-041v",
+  "WOT-2026-042g",
+  "WOT-2026-042i"
+ ],
+ "recommended_start": "GB-A01-scopes-independientes",
+ "requires_human": [],
+ "premise_verify": [],
+ "groups": [
+  {
+   "id": "GB-A01-scopes-independientes",
+   "tickets": [
+    "WOT-2026-025w",
+    "WOT-2026-027a",
+    "WOT-2026-036b"
+   ],
+   "depends_on_groups": [],
+   "blocks_groups": [],
+   "shared_surfaces": [],
+   "external_dependencies": [],
+   "surface_scope_note": "Cada ticket toca su propio scope (verificado 2026-09-01: sin colisiones entre estos).",
+   "class": "M",
+   "autonomy_mode": "hard-stop-with-recovery",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "recovery_owner_stage": "BUILDER",
+   "max_recovery_attempts": 2
+  },
+  {
+   "id": "GB-A02-scopes-independientes",
+   "tickets": [
+    "WOT-2026-037c",
+    "WOT-2026-038d",
+    "WOT-2026-038f",
+    "WOT-2026-038g"
+   ],
+   "depends_on_groups": [],
+   "blocks_groups": [],
+   "shared_surfaces": [],
+   "external_dependencies": [
+    {
+     "ticket": "WOT-2026-024r",
+     "status": "A1 aterrizado (81ad86b), A2 DISENO_PRIMERO fuera del vuelo"
+    }
+   ],
+   "surface_scope_note": "Cada ticket toca su propio scope (verificado 2026-09-01: sin colisiones entre estos).",
+   "class": "M",
+   "autonomy_mode": "hard-stop-with-recovery",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "recovery_owner_stage": "BUILDER",
+   "max_recovery_attempts": 2
+  },
+  {
+   "id": "GB-A03-scopes-independientes",
+   "tickets": [
+    "WOT-2026-038m",
+    "WOT-2026-039b",
+    "WOT-2026-040g",
+    "WOT-2026-040i"
+   ],
+   "depends_on_groups": [],
+   "blocks_groups": [],
+   "shared_surfaces": [],
+   "external_dependencies": [],
+   "surface_scope_note": "Cada ticket toca su propio scope (verificado 2026-09-01: sin colisiones entre estos).",
+   "class": "M",
+   "autonomy_mode": "hard-stop-with-recovery",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "recovery_owner_stage": "BUILDER",
+   "max_recovery_attempts": 2
+  },
+  {
+   "id": "GB-A04-scopes-independientes",
+   "tickets": [
+    "WOT-2026-040o",
+    "WOT-2026-040p",
+    "WOT-2026-040v",
+    "WOT-2026-041d"
+   ],
+   "depends_on_groups": [],
+   "blocks_groups": [],
+   "shared_surfaces": [],
+   "external_dependencies": [],
+   "surface_scope_note": "Cada ticket toca su propio scope (verificado 2026-09-01: sin colisiones entre estos).",
+   "class": "M",
+   "autonomy_mode": "hard-stop-with-recovery",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "recovery_owner_stage": "BUILDER",
+   "max_recovery_attempts": 2
+  },
+  {
+   "id": "GB-A05-scopes-independientes",
+   "tickets": [
+    "WOT-2026-041g",
+    "WOT-2026-041i",
+    "WOT-2026-041n",
+    "WOT-2026-041s"
+   ],
+   "depends_on_groups": [],
+   "blocks_groups": [],
+   "shared_surfaces": [],
+   "external_dependencies": [],
+   "surface_scope_note": "Cada ticket toca su propio scope (verificado 2026-09-01: sin colisiones entre estos).",
+   "class": "M",
+   "autonomy_mode": "hard-stop-with-recovery",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "recovery_owner_stage": "BUILDER",
+   "max_recovery_attempts": 2
+  },
+  {
+   "id": "GB-A06-scopes-independientes",
+   "tickets": [
+    "WOT-2026-041t",
+    "WOT-2026-041v",
+    "WOT-2026-042g",
+    "WOT-2026-042i"
+   ],
+   "depends_on_groups": [],
+   "blocks_groups": [],
+   "shared_surfaces": [],
+   "external_dependencies": [
+    {
+     "ticket": "WOT-2026-024u",
+     "status": "LIKELY_DONE (2d27404), fuera del vuelo"
+    }
+   ],
+   "surface_scope_note": "Cada ticket toca su propio scope (verificado 2026-09-01: sin colisiones entre estos).",
+   "class": "M",
+   "autonomy_mode": "hard-stop-with-recovery",
+   "common_gate": "python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/.agent/agent_controller.py\" --validate --json --no-heal --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\" && python \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev/scripts/run_pytest_safe.py\" --level all --project-root \"C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace\"",
+   "recovery_owner_stage": "BUILDER",
+   "max_recovery_attempts": 2
+  }
+ ],
+ "stop_policy": {
+  "hard_stop_causes": [
+   "ticket no pending en cola viva",
+   "touches intersecta diff y probe falla",
+   "se propone tocar fuera de superficie"
+  ],
+  "recoverable_causes": [
+   "mutation roja por fixture",
+   "ruff format pendiente"
+  ],
+  "max_unclassified_stops": 1
+ },
+ "budget": {
+  "max_tickets_closed": 23,
+  "max_group_recoveries": 2
+ },
+ "design_premises": {
+  "WOT-2026-025w": [
+   {
+    "claim": "WOT-2026-025w sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-025w",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-027a": [
+   {
+    "claim": "WOT-2026-027a sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-027a",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-036b": [
+   {
+    "claim": "WOT-2026-036b sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-036b",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-037c": [
+   {
+    "claim": "WOT-2026-037c sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-037c",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-038d": [
+   {
+    "claim": "WOT-2026-038d sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-038d",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-038f": [
+   {
+    "claim": "WOT-2026-038f sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-038f",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-038g": [
+   {
+    "claim": "WOT-2026-038g sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-038g",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-038m": [
+   {
+    "claim": "WOT-2026-038m sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-038m",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-039b": [
+   {
+    "claim": "WOT-2026-039b sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-039b",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-040g": [
+   {
+    "claim": "WOT-2026-040g sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-040g",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-040i": [
+   {
+    "claim": "WOT-2026-040i sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-040i",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-040o": [
+   {
+    "claim": "WOT-2026-040o sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-040o",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-040p": [
+   {
+    "claim": "WOT-2026-040p sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-040p",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-040v": [
+   {
+    "claim": "WOT-2026-040v sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-040v",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-041d": [
+   {
+    "claim": "WOT-2026-041d sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-041d",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-041g": [
+   {
+    "claim": "WOT-2026-041g sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-041g",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-041i": [
+   {
+    "claim": "WOT-2026-041i sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-041i",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-041n": [
+   {
+    "claim": "WOT-2026-041n sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-041n",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-041s": [
+   {
+    "claim": "WOT-2026-041s sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-041s",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-041t": [
+   {
+    "claim": "WOT-2026-041t sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-041t",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-041v": [
+   {
+    "claim": "WOT-2026-041v sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-041v",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ],
+  "WOT-2026-042g": [
+   {
+    "claim": "WOT-2026-042g sigue vivo: guard de desincronizacion bus<->backlog (premisa de silencio refutada 2026-07-27, backlog L174). touches=bus/event_bus.py en el MOTOR (tracked). Si cambia, re-ejecutar pending-check.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-042g",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     "bus/event_bus.py"
+    ]
+   }
+  ],
+  "WOT-2026-042i": [
+   {
+    "claim": "WOT-2026-042i sigue 'pending' en la cola viva; si se cierra esta premisa caduca y el vuelo debe re-triar.",
+    "probe": "python C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/orchestrator_pipeline/reports/_probe_pending.py WOT-2026-042i",
+    "verified_at_sha": "f71c74485f3c37f7d56962e4ee375d15c0b75de3",
+    "touches": [
+     ".agent/collaboration/backlog.md"
+    ]
+   }
+  ]
+ },
+ "id": "FP-20260901-scopes-independientes"
+}

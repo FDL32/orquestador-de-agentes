@@ -3,8 +3,9 @@
 Validador de batch_dag.json (WOT-2026-022r)
 
 Verifica que un DAG de grupos producido por /backlog-triage (esquema
-"autonomous-batch-dag/v1") sea estructuralmente valido antes de que un
-ejecutor (p.ej. /orchestrate-pipeline) lo consuma.
+"autonomous-batch-dag/v1" o "autonomous-batch-dag/v2") sea
+estructuralmente valido antes de que un ejecutor (p.ej.
+/orchestrate-pipeline) lo consuma.
 
 Reglas de rechazo (exit 1):
 1. Ciclo en el grafo de grupos (siguiendo depends_on_groups).
@@ -17,10 +18,16 @@ Reglas de rechazo (exit 1):
    camino de dependencia entre ellos en ninguna direccion). Grupos
    conectados por un camino de dependencia (directo o transitivo) pueden
    compartir superficies: se ejecutan en serie, es seguro.
-5. Basicos de esquema: "schema" == "autonomous-batch-dag/v1"; claves de
-   grupo obligatorias presentes; "class" en {S, M, L}; id de grupo
-   desconocido referenciado en depends_on_groups/blocks_groups; un mismo
-   ticket apareciendo en dos grupos.
+5. Basicos de esquema: "schema" en {autonomous-batch-dag/v1,
+   autonomous-batch-dag/v2}; claves de grupo obligatorias presentes;
+   "class" en {S, M, L}; id de grupo desconocido referenciado en
+   depends_on_groups/blocks_groups; un mismo ticket apareciendo en dos
+   grupos.
+6. WOT-2026-055x (solo /v2): todo grupo con depends_on_groups == [] (raiz)
+   debe declarar el campo surface_scan con sus tres claves de tipo correcto
+   (executed: bool, coverage: str, method: str). Lo que se bloquea es el
+   SILENCIO, no la ausencia de dato: `{executed: false, ...}` pasa. Los /v1
+   validan exactamente como antes (rollout por bump de schema, D4).
 
 La regla 4 (solapamiento de superficies) es un camino de codigo
 INDEPENDIENTE de las reglas 1 y 2 (ciclo / common_gate): debe poder
@@ -57,6 +64,13 @@ _TICKET_CELL_RE = re.compile(r"[A-Z]{2,4}-\d{4}-\d{3}[a-z]?")
 
 
 REQUIRED_SCHEMA = "autonomous-batch-dag/v1"
+SCHEMA_V2 = "autonomous-batch-dag/v2"
+# WOT-2026-055x (D4): el validador admite AMBAS versiones. /v1 valida como
+# siempre (sin exigencia de surface_scan); /v2 anade el gate del campo en
+# grupos raiz. El rollout es por BUMP DE SCHEMA, no por fecha (generated_at
+# ni se lee aqui y lo escribe el propio productor del DAG: un artefacto no
+# elige su propia ancla).
+SUPPORTED_SCHEMAS = (REQUIRED_SCHEMA, SCHEMA_V2)
 VALID_CLASSES = {"S", "M", "L"}
 REQUIRED_GROUP_KEYS = {
     "id",
@@ -195,8 +209,70 @@ def checkpoint_signals(data: dict[str, Any]) -> list[str]:
     return out
 
 
+def _errors_group_surface_scan(group: dict[str, Any]) -> list[str]:
+    """WOT-2026-055x (D3): valida la FORMA de `surface_scan` de un grupo raiz /v2.
+
+    El triage declara el CROSS-TICKET SURFACE SCAN obligatorio sobre el FLT, y
+    el DoD fija que lo que se bloquea es el SILENCIO, no la ausencia de dato:
+    un grupo con `depends_on_groups: []` que no declara el campo no distingue
+    "medido, sin solape" de "no pude medir" (contrato T-055X-001, DoD b).
+
+    ALCANCE DECLARADO (no ampliar): se valida que las 3 claves existan y sean
+    del tipo correcto (executed: bool, coverage: str, method: str). NO se
+    valida que los valores sean CIERTOS: juzgar la verdad de la medicion exige
+    un oraculo que este guard no tiene, y un guard que prometiera verificarlo
+    aplicaria una vara mas floja que la que predica (WOT-2026-024u).
+    `{executed: false, ...}` es una declaracion honesta de "no pude medir" y
+    pasa: exigir cobertura real convertiria la falta de dato en bloqueo, que
+    el NON-GOAL de T-055X-001 prohibe.
+
+    Before: `group` es el grupo del DAG (dict), con `id` legible.
+    During: puro, sin I/O; solo lee claves del dict.
+    After: lista de errores de forma (vacia == forma correcta).
+    """
+    errors: list[str] = []
+    gid = group.get("id")
+
+    raw = group.get("surface_scan")
+    if raw is None:
+        return [
+            f"grupo '{gid}': falta 'surface_scan' -- grupo raiz de un DAG /v2 "
+            "debe declarar su escaneo de superficie cruzada: el SILENCIO se "
+            "bloquea, la ausencia de dato no (WOT-2026-055x)"
+        ]
+    if not isinstance(raw, dict):
+        return [
+            f"grupo '{gid}': 'surface_scan' debe ser un objeto con "
+            f"{{executed, coverage, method}}, no {type(raw).__name__} "
+            "(WOT-2026-055x)"
+        ]
+
+    checks = {
+        "executed": bool,
+        "coverage": str,
+        "method": str,
+    }
+    for key, expected in checks.items():
+        value = raw.get(key)
+        if value is None:
+            errors.append(
+                f"grupo '{gid}': 'surface_scan' no declara '{key}' "
+                f"({expected.__name__}) (WOT-2026-055x)"
+            )
+        elif not isinstance(value, expected):
+            errors.append(
+                f"grupo '{gid}': 'surface_scan.{key}' debe ser "
+                f"{expected.__name__}, no {type(value).__name__} "
+                "(WOT-2026-055x)"
+            )
+    return errors
+
+
 def _errors_single_group(
-    group: dict[str, Any], group_ids: set[str], ticket_owner: dict[str, str]
+    group: dict[str, Any],
+    group_ids: set[str],
+    ticket_owner: dict[str, str],
+    requires_surface_scan: bool = False,
 ) -> list[str]:
     """Validate one group's required keys, id, class, common_gate, tickets."""
     errors: list[str] = []
@@ -236,6 +312,12 @@ def _errors_single_group(
     # WOT-2026-029a: checkpoints opcionales, validados por FORMA.
     errors.extend(_errors_group_checkpoints(group))
 
+    # WOT-2026-055x (D3 + D4): /v2 exige surface_scan SOLO en grupos raiz.
+    # Un grupo con dependencias se ejecuta en serie tras ellas: el scan que
+    # protege la ejecucion PARALELA no aplica a su silencio de superficie.
+    if requires_surface_scan and not (group.get("depends_on_groups") or []):
+        errors.extend(_errors_group_surface_scan(group))
+
     return errors
 
 
@@ -257,8 +339,10 @@ def _errors_schema_basics(data: dict[str, Any]) -> list[str]:
     errors: list[str] = []
 
     schema = data.get("schema")
-    if schema != REQUIRED_SCHEMA:
-        errors.append(f"schema '{schema}' invalido: se esperaba '{REQUIRED_SCHEMA}'")
+    if schema not in SUPPORTED_SCHEMAS:
+        errors.append(
+            f"schema '{schema}' invalido: se esperaba uno de {list(SUPPORTED_SCHEMAS)}"
+        )
 
     # WOT-2026-029a: politica de checkpoint opcional, validada por FORMA.
     errors.extend(_errors_checkpoint_policy(data))
@@ -270,12 +354,15 @@ def _errors_schema_basics(data: dict[str, Any]) -> list[str]:
 
     group_ids: set[str] = set()
     ticket_owner: dict[str, str] = {}
+    requires_surface_scan = schema == SCHEMA_V2
 
     for group in groups:
         if not isinstance(group, dict):
             errors.append(f"grupo invalido (no es objeto): {group!r}")
             continue
-        errors.extend(_errors_single_group(group, group_ids, ticket_owner))
+        errors.extend(
+            _errors_single_group(group, group_ids, ticket_owner, requires_surface_scan)
+        )
 
     for group in groups:
         if not isinstance(group, dict):
@@ -1136,7 +1223,9 @@ def _pair_completeness_errors(dag_path: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Validar un batch_dag.json contra el esquema autonomous-batch-dag/v1"
+        description=(
+            "Validar un batch_dag.json contra el esquema autonomous-batch-dag/v1 o /v2"
+        )
     )
     parser.add_argument("dag_path", type=Path, help="Ruta al archivo dag.json")
     parser.add_argument(

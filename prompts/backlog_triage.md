@@ -201,7 +201,7 @@ Cada pipeline resultante declara:
 - gate de verificacion comun;
 - tamano `S` / `M` / `L`.
 
-### CROSS-TICKET SURFACE SCAN (obligatorio)
+### CROSS-TICKET SURFACE SCAN (obligatorio cuando el FLT es resoluble; cobertura declarada SIEMPRE)
 
 Ademas de dependencias declaradas, la Fase 2 exige un escaneo de
 superficie cruzada: dos tickets SIN dependencia declarada entre si pero
@@ -211,6 +211,17 @@ Un DAG construido solo a partir de dependencias declaradas NO es
 suficiente: la colision de superficie es una dependencia OCULTA tan real
 como una declarada, y omitirla produce una carrera de escritura si dos
 grupos se ejecutan en paralelo.
+
+El escaneo es OBLIGATORIO cuando el FLT es resoluble: el triage puede
+leer `Files Likely Touched` de los tickets y compararlos para decidir
+serializacion. Cuando NO es resoluble -- el gate de WOT-2026-013j
+PROHIBE el campo en el backlog a proposito; el FLT canonico vive en
+`ticket_contracts.md`, indexado por `T-XXXX-NNN` mientras el DAG razona
+en `WOT-YYYY-NNNx`, y la resolucion por prosa se midio al 46% de
+ambiguedad -- el grupo NO omite el dato: declara `surface_scan` con
+`{"executed": false, "coverage": "0/N", "method": "<por que no se
+resolvio>"}`. La cobertura se declara SIEMPRE, resuelto o no: lo que se
+bloquea es el SILENCIO, no la ausencia de dato.
 
 ### DEPENDENCIA REAL vs PREFERENCIA DE ORDEN (WOT-2026-023u)
 
@@ -386,6 +397,11 @@ cablear la copia automatica del previo antes de sobrescribir.
       "depends_on_groups": [],
       "blocks_groups": ["G-OTRO"],
       "shared_surfaces": ["ruta/relativa/archivo.py"],
+      "surface_scan": {
+        "executed": true,
+        "coverage": "11/23",
+        "method": "FLT de ticket_contracts.md"
+      },
       "class": "S|M|L",
       "autonomy_mode": "autonomous|hard-stop-with-recovery",
       "common_gate": "string (comando exacto)",
