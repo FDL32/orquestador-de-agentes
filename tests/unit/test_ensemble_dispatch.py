@@ -25,6 +25,7 @@ import inspect
 import io
 import json
 import sys
+import time
 import traceback
 import urllib.error
 from pathlib import Path
@@ -1842,6 +1843,426 @@ def test_transport_api_error_no_encadena_el_objeto_crudo(monkeypatch):
         )
         assert not isinstance(node.__cause__, urllib.error.HTTPError)
         assert not isinstance(node.__context__, urllib.error.HTTPError)
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-063c: streaming SSE en `_transport_api`. Cloudflare corta con 524 el
+# POST largo que no emite bytes; con `stream:true` los deltas fluyen desde el
+# primer token y el proxy nunca ve silencio. Seis invariantes del diseno
+# auditado (nonce cfb71138fee4bb2ff632e0c9537a086f), cada uno con su mutation:
+#   I1 centinela [DONE] por FRAMING de evento (mutation: aceptar el centinela
+#     por substring del acumulado -> cae test_063c_centinela_en_prosa...);
+#   I2 deadline TOTAL con lecturas dimensionadas (mutation: quitar el chequeo
+#     de remaining entre lecturas -> test_063c_deadline_total cuelga o falla);
+#   I3 content vacio con centinela = FALLO EXPLICITO (mutation: devolver "" o
+#     hacer fallback a reasoning_content -> cae test_063c_content_vacio...);
+#   I4 chunk `data:` malformado ANTES de [DONE] sigue siendo PARSEO (mutation:
+#     envolverlo en TransportError -> cae test_063c_chunk_malformado...);
+#   I5 la api_key no sale ni por el nuevo punto de fallo del parser (mutation:
+#     levantar el JSONDecodeError crudo con su doc -> cae
+#     test_063c_sanea_la_key...);
+#   I6 un 200 no-SSE se consume como HOY (mutation: exigir streaming sin
+#     discriminar por Content-Type -> caen estos tests Y los 3 pineados de
+#     antes: :1343, :1608 y :1768, que devuelven cuerpos no-SSE).
+# VIVEN ANTES del marcador WOT-2026-025z a proposito: el self-check estructural
+# (g2) prohibe los tokens `_transport_api`, `monkeypatch.setenv` y `urllib`
+# solo en el bloque POSTERIOR a ese marcador.
+# --------------------------------------------------------------------------- #
+
+_KEY_063C = "sk-live-063c-SSEKEY-9f2c47ab"
+
+
+def _sse_event(data_text: str) -> list[bytes]:
+    """Un evento SSE tal como lo ve readline(): linea `data:` + linea en blanco."""
+    return [b"data: " + data_text.encode("utf-8") + b"\n", b"\n"]
+
+
+def _sse_chunk(text: str, idx: int = 0) -> list[bytes]:
+    payload = json.dumps(
+        {
+            "id": f"chatcmpl-{idx}",
+            "choices": [{"index": 0, "delta": {"content": text}}],
+        }
+    )
+    return _sse_event(payload)
+
+
+_SSE_DONE = _sse_event("[DONE]")
+
+
+class _FakeSSEStream:
+    """HTTPResponse simulada de un canal SSE, leida por lineas.
+
+    `readline()` consume lineas preparadas: tras agotarlas devuelve EOF (b"")
+    o levanta la excepcion de socket indicada. `read()` FALLA deliberadamente:
+    la ruta actual consume la respuesta entera de una vez, asi que ese
+    AssertionError ES el rojo de los tests red-first, no un accidente.
+    """
+
+    def __init__(self, lines, content_type="text/event-stream", after_eof=None):
+        self._lines = list(lines)
+        self.headers = {"Content-Type": content_type}
+        self._after_eof = after_eof
+        self.readlines = 0
+
+    def readline(self):
+        self.readlines += 1
+        if self._lines:
+            return self._lines.pop(0)
+        if self._after_eof is not None:
+            raise self._after_eof
+        return b""
+
+    def read(self):
+        raise AssertionError(
+            "la respuesta SSE se esta consumiendo entera de una vez: exactamente "
+            "el defecto que WOT-2026-063c cierra"
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _FakeSSEDrip:
+    """Stream que gotea keep-alives PARA SIEMPRE: solo un deadline total lo corta."""
+
+    def __init__(self, delay: float = 0.02):
+        self._delay = delay
+        self._alternates = [b": ping\n", b"\n"]
+        self._i = 0
+        self.headers = {"Content-Type": "text/event-stream"}
+
+    def readline(self):
+        time.sleep(self._delay)
+        line = self._alternates[self._i % 2]
+        self._i += 1
+        return line
+
+    def read(self):
+        raise AssertionError("read() sin tamano sobre goteo perpetuo: cuelga")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _FakeSSESlowDrip:
+    """Goteo LENTO que acabaria en EOF: solo el deadline total puede ganarle.
+
+    Distingue las dos senales de fallo de I2: sin el chequeo de remaining entre
+    lecturas la primera senal del caller seria "EOF" (~3 s); con el chequeo es
+    "deadline" (~1 s). El mensaje es el contrato de precision, no un adorno.
+    """
+
+    def __init__(self, n_keepalives: int = 40, delay: float = 0.04):
+        self.headers = {"Content-Type": "text/event-stream"}
+        self._delay = delay
+        self._alternates = [b": ping\n", b"\n"]
+        self._i = 0
+        self._n = n_keepalives * 2
+
+    def readline(self):
+        if self._i >= self._n:
+            return b""  # EOF tardio: no debe ser la senal que vea el caller
+        time.sleep(self._delay)
+        line = self._alternates[self._i % 2]
+        self._i += 1
+        return line
+
+    def read(self):
+        raise AssertionError("read() sin tamano sobre goteo lento: cuelga")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _FakePlainResp:
+    """200 NO-SSE: cuerpo entero via read(). Con `content_type=None` simula los
+    fixtures pineados de :1343/:1608/:1768, que NO exponen atributo headers."""
+
+    def __init__(self, body: bytes, content_type="application/json"):
+        self._body = body
+        if content_type is not None:
+            self.headers = {"Content-Type": content_type}
+
+    def read(self, amt=None):
+        return self._body
+
+    def readline(self):
+        raise AssertionError("readline() no debe tocar la ruta no-SSE")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _profile_063c() -> dict:
+    return {
+        "channel": "api",
+        "model": "deepseek-v4-flash",
+        "api_key_env": "FAKE_NAN_KEY_063C",
+        "api_base_url": "https://api.nan.builders/v1/chat/completions",
+    }
+
+
+def _install_063c_transport(monkeypatch, resp, capture: dict | None = None) -> None:
+    def fake_urlopen(req, timeout=None):
+        if capture is not None:
+            capture["body"] = json.loads(req.data.decode("utf-8"))
+            capture["timeout"] = timeout
+        return resp
+
+    monkeypatch.setattr(ed.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv("FAKE_NAN_KEY_063C", _KEY_063C)
+
+
+def _api_063c(timeout: int = 5) -> str:
+    # `backend_cfg` NO interviene en `_transport_api`: el timeout ya viene
+    # resuelto por la expresion `:1212` de `send_to_profile`.
+    return ed._transport_api(
+        _profile_063c(), {}, [{"role": "user", "content": "x"}], timeout=timeout
+    )
+
+
+def test_063c_el_body_declara_stream_true(monkeypatch):
+    """El request pide streaming SIEMPRE (aditivo, sin flag por perfil).
+
+    Mutation: quitar `"stream": True` del body -> KeyError en la asercion.
+    """
+    capture: dict = {}
+    body = json.dumps({"choices": [{"message": {"content": "respuesta-hoy"}}]}).encode()
+    _install_063c_transport(monkeypatch, _FakePlainResp(body), capture)
+    assert _api_063c() == "respuesta-hoy"
+    assert capture["body"]["stream"] is True, (
+        "sin stream:true el backend seguira acumulando en silencio hasta el 524"
+    )
+
+
+def test_063c_muerte_al_chunk_50_es_transporte_nunca_parcial(monkeypatch):
+    """(a1) Desconexion en el chunk 50 de 200: EOF sin centinela -> TransportError.
+
+    El parcial JAMAS se devuelve (I1): si la implementacion devolviera lo
+    acumulado, este test no veria la excepcion esperada.
+    """
+    lines: list[bytes] = []
+    for idx in range(50):
+        lines.extend(_sse_chunk(f"delta{idx} ", idx))
+    stream = _FakeSSEStream(lines)
+    _install_063c_transport(monkeypatch, stream)
+    with pytest.raises(ed.TransportError) as excinfo:
+        _api_063c()
+    assert stream.readlines >= 100, (
+        f"el stream no se consumio lectura a lectura (readlines={stream.readlines}): "
+        "sin lecturas dimensionadas no hay donde evaluar el deadline"
+    )
+    assert "delta49" not in str(excinfo.value), (
+        "el error no debe re-emitir contenido del modelo"
+    )
+
+
+def test_063c_centinela_en_prosa_no_corta_antes_y_rellena_el_buffer(monkeypatch):
+    """(a2) `[DONE]` DENTRO de un payload no es el centinela (I1, jamas substring).
+
+    La prosa que menciona el centinela debe sobrevivir en el texto final.
+    Mutation: comparar `"[DONE]" in acumulado` en vez del payload completo del
+    evento -> el test corta en el chunk 0 y la asercion de igualdad cae.
+    """
+    lines = (
+        _sse_chunk("El veredicto cita ", 0)
+        + _sse_chunk("`[DONE]` en prosa ", 1)
+        + _sse_chunk("y sigue.", 2)
+        + _SSE_DONE
+    )
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    out = _api_063c()
+    assert out == "El veredicto cita `[DONE]` en prosa y sigue."
+
+
+def test_063c_goteo_que_enmudece_es_transporte_puntual(monkeypatch):
+    """(a3) Socket que gotea y ENMUDECE: TimeoutError -> Transporte, dentro de budget.
+
+    Medido en el diseno: el timeout de urlopen es POR-LECTURA; un silencio de
+    socket levanta TimeoutError y aqui se convierte en TransportError
+    saneado (I5) -- fail-closed sin hilos. El margen pinado es el del propio
+    diseno I2: deadline + una lectura bloqueada.
+    """
+    lines = _sse_chunk("a", 0) + _sse_chunk("b", 1) + _sse_chunk("c", 2)
+    stream = _FakeSSEStream(
+        lines, after_eof=TimeoutError("The read operation timed out")
+    )
+    _install_063c_transport(monkeypatch, stream)
+    t0 = time.perf_counter()
+    with pytest.raises(ed.TransportError) as excinfo:
+        _api_063c(timeout=3)
+    elapsed = time.perf_counter() - t0
+    assert elapsed <= 3 + 0.5, (
+        f"el fallback tardo {elapsed:.2f}s: sin deadline o sin socket-timeout"
+    )
+    assert "TimeoutError" in str(excinfo.value)
+    assert _KEY_063C not in str(excinfo.value)
+
+
+def test_063c_deadline_total_corta_goteo_perpetuo(monkeypatch):
+    """(I2) Goteo que nunca enmudece y nunca manda centinela: deadline TOTAL.
+
+    Sin el chequeo de remaining entre lecturas el bucle no termina jams (el
+    socket nunca agota su timeout porque SIEMPRE hay un byte): esta es la
+    mutacion que el timeout por-lectura NO puede atrapar.
+    """
+    _install_063c_transport(monkeypatch, _FakeSSEDrip())
+    timeout = 1
+    t0 = time.perf_counter()
+    with pytest.raises(ed.TransportError) as excinfo:
+        _api_063c(timeout=timeout)
+    elapsed = time.perf_counter() - t0
+    assert elapsed >= 0.8, "corto antes del deadline: no era un fallo total"
+    assert elapsed <= timeout + 0.5, f"deadline sin margen razonable: {elapsed:.2f}s"
+    assert "deadline" in str(excinfo.value).lower()
+
+
+def test_063c_goteo_lento_la_senal_es_deadline_no_eof(monkeypatch):
+    """(I2) Goteo lento que moriria en EOF: la senal puntable es DEADLINE.
+
+    Mutation M5 (neutralizar el chequeo de remaining): el bucle aguanta hasta
+    el EOF a ~3.2 s y el mensaje dice "EOF": este test distingue las dos
+    senales y acota el tiempo total.
+    """
+    _install_063c_transport(monkeypatch, _FakeSSESlowDrip())
+    t0 = time.perf_counter()
+    with pytest.raises(ed.TransportError) as excinfo:
+        _api_063c(timeout=1)
+    elapsed = time.perf_counter() - t0
+    assert "deadline" in str(excinfo.value).lower()
+    assert elapsed <= 1 + 0.8, f"el deadline total no goberno el goteo: {elapsed:.2f}s"
+
+
+def test_063c_content_vacio_con_centinela_es_fallo_explicito(monkeypatch):
+    """(I3) Centinela limpio y content vacio -> FAILURE_MODE propio, jamas "".
+
+    Y NUNCA fallback a `reasoning_content`: la deliberacion cruda no lleva
+    nonce ni formato y PARECE un veredicto. Mutation: devolver "" o leer
+    reasoning_content -> este test ve un return donde espera excepcion.
+    """
+    lines = (
+        _sse_event(json.dumps({"choices": [{"delta": {}}]}))
+        + _sse_event(
+            json.dumps(
+                {"choices": [{"delta": {"reasoning_content": "deliberacion cruda"}}]}
+            )
+        )
+        + _sse_event(json.dumps({"choices": [{"delta": {"content": ""}}]}))
+        + _SSE_DONE
+    )
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    with pytest.raises(ed.TransportError) as excinfo:
+        _api_063c()
+    assert "empty_content_despite_sentinel" in str(excinfo.value)
+    assert "deliberacion cruda" not in str(excinfo.value)
+
+
+def test_063c_chunk_malformado_antes_del_centinela_es_parso(monkeypatch):
+    """(I4) Un `data:` con JSON roto ANTES de [DONE] sigue siendo JSONDecodeError.
+
+    Mismo contrato que el 200 no-SSE malformado de :1768 (hallazgo del
+    MANAGER_REVIEW que el diseno hereda): un error de PARSEO no puede
+    disfrazarse de TRANSPORTE, o el caller que discrimina el tipo pierde la
+    seccal. Mutation: envolver el fallo del parser en TransportError.
+    """
+    lines = _sse_chunk("a ", 0) + _sse_event('{"delta": {roto')
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    with pytest.raises(json.JSONDecodeError):
+        _api_063c()
+
+
+def test_063c_garbage_tras_el_centinela_no_se_parsea(monkeypatch):
+    """I1: [DONE] es la UNICA ruta de exito; lo que llegue despues no se toca.
+
+    Mutation: seguir leyendo tras el centinela -> JSONDecodeError por la
+    basura posterior.
+    """
+    lines = _sse_chunk("ok ", 0) + _SSE_DONE + _sse_event("{basura sin cerrar")
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    assert _api_063c() == "ok "
+
+
+def test_063c_comentarios_keepalives_y_data_sin_espacio(monkeypatch):
+    """Framing defensivo: `: ping` ignorado, evento solo-comentario no corta,
+    y `data:[DONE]` sin espacio tras el colon es centinela valido (SSE permite
+    un espacio opcional)."""
+    lines = [
+        b": ping\n",
+        b"\n",
+        *_sse_chunk("K", 0),
+        b": keep-alive\n",
+        b"\n",
+        b"data:[DONE]\n",
+        b"\n",
+    ]
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    assert _api_063c() == "K"
+
+
+def test_063c_sanea_la_key_ante_chunk_malformado(monkeypatch):
+    """(I5, DoD-e) El nuevo punto de fallo del parser NO filtra la api_key.
+
+    Extiende el barrido de :1668 al JSONDecodeError del stream: si el server
+    hace eco de la key en un chunk roto, el error propagado (y su cadena de
+    encadenamiento) debe seguirla INVISIBLE. Mutation: propagar el
+    JSONDecodeError crudo (su `.doc` lleva el payload con la key).
+    """
+    lines = _sse_event('{"echo": "' + _KEY_063C + '", roto')
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    with pytest.raises(json.JSONDecodeError) as excinfo:
+        _api_063c()
+    err = excinfo.value
+    assert _KEY_063C not in str(err)
+    assert _KEY_063C not in repr(err)
+    assert _KEY_063C not in repr(err.args)
+    assert _KEY_063C not in repr(vars(err))
+    assert ed.REDACTED_MARKER in err.doc
+    # cadena de encadenamiento limpia (mismo patron que :1798):
+    seen: list = []
+    node = err
+    while node is not None and node not in seen:
+        seen.append(node)
+        node = node.__cause__ or node.__context__
+    assert len(seen) == 1, "el parser enlazo un error crudo ademas del saneado"
+    assert _KEY_063C not in str(err.__cause__)
+    assert _KEY_063C not in str(err.__context__ if err.__context__ else "")
+
+
+def test_063c_200_no_sse_se_consume_como_hoy(monkeypatch):
+    """(I6, CARGA del DoD) Discriminador por Content-Type, no por fe.
+
+    Un 200 con `application/json` se lee de una vez Y se parsea como hasta
+    hoy: es lo que mantiene vivos los fixtures sin headers de :1343/:1608/
+    :1768 (objeto SIN atributo headers: el guard debe ser defensivo).
+    Mutation: eliminar el check de Content-Type -> el no-SSE entra al parser
+    SSE y revienta contra read() del fake.
+    """
+    body = json.dumps({"choices": [{"message": {"content": "hoy"}}]}).encode()
+    _install_063c_transport(monkeypatch, _FakePlainResp(body))
+    assert _api_063c() == "hoy"
+
+
+def test_063c_sse_con_charset_activa_la_ruta_de_stream(monkeypatch):
+    """`text/event-stream; charset=utf-8` cuenta como SSE (match flexible)."""
+    lines = _sse_chunk("streamed", 0) + _SSE_DONE
+    _install_063c_transport(
+        monkeypatch,
+        _FakeSSEStream(lines, content_type="text/event-stream; charset=utf-8"),
+    )
+    assert _api_063c() == "streamed"
 
 
 # --------------------------------------------------------------------------- #

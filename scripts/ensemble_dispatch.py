@@ -62,6 +62,7 @@ import sys
 import time
 import urllib.request
 from collections import Counter
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -701,10 +702,164 @@ def _sanitized_transport_error(exc: Exception, api_key: str | None) -> Transport
     return TransportError(" | ".join(parts), status=status, body=body)
 
 
+_SSE_CONTENT_TYPE = "text/event-stream"
+
+
+def _response_is_sse(resp) -> bool:
+    """I6: discrimina la ruta de consumo por Content-Type, no por fe.
+
+    Before: `resp` es lo que devuelve `urlopen`: un HTTPResponse real en
+        produccion; en los fixtures pineados de :1343/:1608/:1768 es un objeto
+        SIN atributo `headers` que representa cuerpos NO-SSE.
+    During: lee `Content-Type` solo si el objeto expone `headers` con `get()`;
+        sin headers no hay forma de afirmar streaming, y adivinarlo caeria al
+        lado equivocado del contrato (leer como hoy es la via conservadora).
+    After: True solo si la cabecera contiene `text/event-stream` (flexible
+        ante `; charset=...`). No lanza nunca.
+    """
+    headers = getattr(resp, "headers", None)
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return False
+    try:
+        content_type = getter("Content-Type", "") or ""
+    except Exception:  # cabecera ilegible: consumir como HOY, no improvisar
+        return False
+    return _SSE_CONTENT_TYPE in str(content_type).lower()
+
+
+def _sse_lines(resp, deadline: float, api_key: str | None) -> Iterator[str]:
+    """Cede lineas ya decodificadas del stream, con deadline TOTAL (I2).
+
+    Before: `resp` es una respuesta ya discriminada como SSE
+        (`_response_is_sse`); `deadline` es un instante absoluto de
+        `time.monotonic()`; `api_key` es solo para el saneado (I5).
+    During: una lectura DIMENSIONADA por linea (`readline()`, nunca un `read()`
+        sin tamano: con goteo sin EOF esa llamada nunca vuelve y no habria
+        ninguna iteracion donde evaluar el deadline). Entre lectura y lectura
+        se comprueba el deadline TOTAL (medido: el timeout de `urlopen` es
+        POR-LECTURA: un timeout=3 completo 6.0 s de goteo).
+    After: cede cada linea sin su terminador. Fallos: socket en silencio o
+        roto -> TransportError con el patron I5 (saneado construido en el
+        `except`, levantado despues, fuera del bloque); EOF ->
+        TransportError (fracaso fail-closed: sin centinela NO hay ronda, y el
+        parcial lo descarta el caller); deadline vencido -> TransportError.
+    """
+    while True:
+        if time.monotonic() >= deadline:
+            raise TransportError(
+                "deadline: el presupuesto total del stream SSE se agoto antes "
+                "del centinela [DONE] (parcial descartado)",
+                status=None,
+                body=None,
+            )
+        try:
+            raw_line = resp.readline()
+        except Exception as exc:  # silencio de socket, reset u otro fallo de I/O
+            stalled = _sanitized_transport_error(exc, api_key)
+        else:
+            stalled = None
+        if stalled is not None:
+            raise stalled
+        if not raw_line:
+            raise TransportError(
+                "EOF: el stream SSE termino sin el centinela [DONE] "
+                "(parcial descartado, la ronda no se da por exitosa)",
+                status=None,
+                body=None,
+            )
+        yield raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+
+
+def _sse_events(resp, deadline: float, api_key: str | None) -> Iterator[str]:
+    """Cede el payload `data` unido de cada evento SSE COMPLETO (I1, framing).
+
+    Before: como `_sse_lines`.
+    During: una linea en blanco cierra un evento; el buffer de lineas del
+        evento sobrevive a los cortes de chunk porque quien lee es el
+        generador de lineas (I1): el centinela NUNCA se reconoce por substring
+        del acumulado. Comentarios (`: ping`) y eventos vacios se ignoran; los
+        campos `event:`, `id:` y `retry:` no deciden completitud.
+    After: solo payloads de evento cerrado; ningun fallo de lectura se
+        convierte en texto: los que hay suben desde `_sse_lines`.
+    """
+    data_lines: list[str] = []
+    for line in _sse_lines(resp, deadline, api_key):
+        if line == "":
+            if data_lines:
+                yield "\n".join(data_lines)
+                data_lines = []
+            continue
+        if line.startswith(":"):
+            continue  # comentario / keep-alive: no es payload
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+
+
+def _collect_sse_content(resp, deadline: float, api_key: str | None) -> str:
+    """Consume un stream SSE acumulando `delta.content` hasta el centinela.
+
+    Before: `resp` SSE, `deadline` absoluto, `api_key` para saneado.
+    During: recorre `_sse_events`; tras el centinela [DONE] NO se lee ni se
+        parsea nada mas (I1: es la unica ruta de exito; basura posterior al
+        centinela no puede tumbar una ronda completa). Un `data:` con JSON
+        malformado ANTES del centinela es error de PARSEO, no de transporte
+        (I4, frontera heredada de :1768): se propaga `JSONDecodeError` con su
+        `doc` ya redactado (I5) y levantado FUERA del `except` para que ni
+        `__cause__` ni `__context__` arrastren el crudo con la key.
+    After: retorna el contenido acumulado. Si llego el centinela con content
+        vacio, FALLO EXPLICITO `empty_content_despite_sentinel` (I3): nunca
+        una ronda "exitosa" de 0 chars y nunca fallback a `reasoning_content`
+        (devolveria deliberacion cruda sin nonce ni formato). Con cualquier
+        fallo de framing/deadline/socket no devuelve parcial: lanza.
+    """
+    parts: list[str] = []
+    for event_data in _sse_events(resp, deadline, api_key):
+        if event_data.strip() == "[DONE]":
+            break
+        try:
+            payload = json.loads(event_data)
+        except json.JSONDecodeError as exc:
+            parse_failure: json.JSONDecodeError | None = json.JSONDecodeError(
+                exc.msg, _redact_secret(exc.doc, api_key), exc.pos
+            )
+        else:
+            parse_failure = None
+        if parse_failure is not None:
+            raise parse_failure
+        for choice in payload.get("choices") or []:
+            delta = choice.get("delta") or {}
+            piece = delta.get("content")
+            if isinstance(piece, str) and piece:
+                parts.append(piece)
+    content = "".join(parts)
+    if not content:
+        raise TransportError(
+            "empty_content_despite_sentinel: el stream SSE cerro con centinela "
+            "y content vacio (no se devuelve una ronda de 0 chars, ni "
+            "deliberacion de reasoning_content como veredicto)",
+            status=None,
+            body=None,
+        )
+    return content
+
+
 def _transport_api(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
 ) -> str:
-    """POST chat-completions con auth por-invocacion (env var de api_key_env)."""
+    """POST chat-completions con auth por-invocacion (env var de api_key_env).
+
+    WOT-2026-063c: pide `stream: true` y consume la respuesta como SSE. Causa
+    raiz medida: Cloudflare corta con 524 (~100 s) un POST que no emite bytes
+    -- 106 fallos en el scorecard -- mientras el modelo si podia responder
+    (mismo bundle: 2414 chars en 148 s con stream, primer chunk a 4.3 s).
+    Con SSE los bytes fluyen desde el primer delta y el proxy nunca ve
+    silencio. La aditividad es segura solo con I6: una respuesta que NO se
+    anuncia `text/event-stream` (backend que ignora `stream`, o los fixtures
+    pineados) se lee y parsea EXACTAMENTE como antes. No hay flag por perfil
+    ni fallback runtime a no-stream: un flag dejaria el 524 como default
+    silencioso del proximo perfil.
+    """
     key_env = profile["api_key_env"]
     api_key = os.environ.get(key_env)
     if not api_key:
@@ -716,6 +871,7 @@ def _transport_api(
             "model": profile.get("model"),
             "messages": messages,
             "temperature": 0,
+            "stream": True,
         }
     ).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310 -- https exigido por el validador
@@ -733,24 +889,42 @@ def _transport_api(
     # interprete reasigna __context__ al ejecutar el `raise` DENTRO del except,
     # y ahi vuelve a quedar el HTTPError crudo con sus headers (la asercion (d)
     # de la mutation lo caza). Levantarlo fuera deja ambos encadenamientos en
-    # None. `req` tampoco se referencia nunca: repr(req) filtra la key.
+    # None. `req` tampoco se referencia nunca: repr(req) filtra la key. El
+    # mismo patron rige dentro del parser SSE (I5, extendido por WOT-2026-063c).
     #
     # El try envuelve SOLO el urlopen y la lectura de la respuesta, NO el
-    # json.loads: una respuesta 200 con cuerpo malformado es un error de
-    # PARSEO, no de transporte, y convertirlo en TransportError con
+    # json.loads del cuerpo NO-SSE: una respuesta 200 con cuerpo malformado es
+    # un error de PARSEO, no de transporte, y convertirlo en TransportError con
     # status=None borraria el tipo original (JSONDecodeError) que un caller
     # podria estar discriminando. Hallazgo de dos lentes del MANAGER_REVIEW,
     # confirmado midiendo: antes de acotarlo, un 200 con cuerpo no-JSON salia
-    # como "TransportError | JSONDecodeError ... status=None".
+    # como "TransportError | JSONDecodeError ... status=None". Por eso la ruta
+    # SSE tampoco los funde: `_collect_sse_content` Levanta JSONDecodeError
+    # (parseo) o TransportError (transporte) ya saneados, y ambos pasan a
+    # traves de este except sin re-envolverse (I4).
     sanitized: TransportError | None = None
     raw_body: bytes | None = None
+    streamed: str | None = None
+    # I2: deadline TOTAL del stream. `timeout` es el MISMO valor que resuelve
+    # :1212 en send_to_profile -- ningun default nuevo aqui (seria cambiar
+    # politica dentro de un fix de transporte). Solo gobernado en la ruta SSE:
+    # la lectura unica del no-SSE queda protegida por el timeout de socket,
+    # exactamente como hoy.
+    deadline = time.monotonic() + timeout
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            raw_body = resp.read()
+            if _response_is_sse(resp):
+                streamed = _collect_sse_content(resp, deadline, api_key)
+            else:
+                raw_body = resp.read()
+    except (TransportError, json.JSONDecodeError):
+        raise
     except Exception as exc:
         sanitized = _sanitized_transport_error(exc, api_key)
     if sanitized is not None:
         raise sanitized
+    if streamed is not None:
+        return streamed
     data = json.loads(raw_body.decode("utf-8"))
     return data["choices"][0]["message"]["content"]
 
