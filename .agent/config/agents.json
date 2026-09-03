@@ -349,6 +349,83 @@
           }
         ],
         "status": "active"
+      },
+      "L710": {
+        "name": "BUC-02",
+        "launched_from": "chat",
+        "steps": [
+          {
+            "phase": "collector",
+            "function": "participant",
+            "backend_key": "BA01"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA10"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA11"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA12"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA13"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA05"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA06"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA10"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA11"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA12"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA13"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA05"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA06"
+          },
+          {
+            "phase": "fanout-lector-fs",
+            "function": "participant",
+            "backend_key": "BA01"
+          }
+        ],
+        "status": "active"
       }
     },
     "statuses": [

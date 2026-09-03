@@ -24,6 +24,7 @@
 | loop_id | name | launched_from | steps | status |
 |---------|------|----------------|-------|--------|
 | L700 | BUC-01 | chat | 10 | active |
+| L710 | BUC-02 | chat | 14 | active |
 | L800 | CHA-01 | chat | 7 | active |
 
 ## Steps by loop
@@ -41,6 +42,25 @@
 | fanout-dif | participant | BA11 |
 | fanout-dif | participant | BA12 |
 | fanout-dif | participant | BA13 |
+| fanout-lector-fs | participant | BA01 |
+
+### L710 (BUC-02)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+| collector | participant | BA01 |
+| fanout-comun | participant | BA10 |
+| fanout-comun | participant | BA11 |
+| fanout-comun | participant | BA12 |
+| fanout-comun | participant | BA13 |
+| fanout-comun | participant | BA05 |
+| fanout-comun | participant | BA06 |
+| fanout-dif | participant | BA10 |
+| fanout-dif | participant | BA11 |
+| fanout-dif | participant | BA12 |
+| fanout-dif | participant | BA13 |
+| fanout-dif | participant | BA05 |
+| fanout-dif | participant | BA06 |
 | fanout-lector-fs | participant | BA01 |
 
 ### L800 (CHA-01)
