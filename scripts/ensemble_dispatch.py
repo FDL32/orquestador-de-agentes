@@ -1600,12 +1600,34 @@ def regenerate_leaders(project_root: Path) -> Path:
     Lider por task_type SOLO con n>=LEADER_MIN_N; por debajo, 'sin lider,
     rotar'. Incluye hash sha256 de la fuente (proyeccion desfasada =
     detectable) y la politica de exploracion como campo del artefacto.
+
+    IDENTIDAD DE CELDA: `backend|model`, y `model=None` NO es un dato ausente
+    ------------------------------------------------------------------------
+    La celda de ranking es `f"{backend}|{model}"`. Para `claude` y `codex`,
+    `model` es None POR DISENO: son UN backend, independientemente de que modelo
+    corran por dentro. `agents.json` lo declara asi en el registro (BA01 =
+    `{backend: claude, model: None}`), y por eso una fila `codex|None` es la
+    identidad CORRECTA y COMPLETA de ese backend, no una identidad perdida.
+
+    Los backends multi-modelo SI se distinguen por modelo: `nan_api` produce
+    cuatro celdas (`nan_api|qwen3.6`, `nan_api|gemma4`, ...) porque ahi el modelo
+    ES el discriminante -- son lentes distintas que comparten transporte.
+
+    Corolario para quien lea el scorecard: al medir adjudicaciones, filtra SIEMPRE
+    por `event`. Las filas de `ronda` llevan `model` y `backend_key`; las de
+    `adjudicacion` llevan `model` pero NO `backend_key`, y para claude/codex ese
+    `model` es None. Mezclar ambos eventos hace ver un "split" que no existe:
+    medido 2026-09-04, `codex|gpt-5.4` aparece 200 veces en RONDAS y CERO en
+    adjudicaciones. Tres diagnosticos falsos seguidos salieron de no filtrar por
+    evento; ninguno era un defecto del ranking.
     """
     rows, sha = _read_scorecard(project_root)
     per_type: dict = {}
     for row in _adjudicated_cells(rows).values():
         task_type = row.get("task_type") or "desconocido"
         cells = per_type.setdefault(task_type, {})
+        # `model=None` es la identidad correcta de claude/codex (un backend, sin
+        # discriminar modelo), no un campo perdido. Ver docstring de esta funcion.
         cell_key = f"{row.get('backend')}|{row.get('model')}"
         cell = cells.setdefault(
             cell_key,
