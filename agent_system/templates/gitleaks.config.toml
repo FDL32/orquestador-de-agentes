@@ -70,3 +70,30 @@ regexes = [
   '''sk-ABCDEFGHIJKLMNOP0123456789''',
   '''ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123''',
 ]
+
+# WOT-2026-063c: el test del saneado de key en el transporte SSE necesita un
+# literal con FORMA de clave para probar que NO se filtra en los mensajes de
+# error. Por VALOR EXACTO, como manda la politica de arriba, nunca por path.
+#
+# PROCEDENCIA SINTETICA VERIFICADA (no basta afirmar 'es un fixture': un
+# secreto REAL pegado en un test desempena el mismo rol -- ese es el accidente
+# para el que existe gitleaks). Tres comprobaciones re-ejecutables:
+#  1. El literal lleva su propio origen embebido: `063c` (ticket) + `SSEKEY`
+#     (el subsistema que prueba). Una clave emitida por un proveedor no
+#     contiene el ID del ticket que la usa: eso es generacion sintetica
+#     auto-documentada.
+#  2. `git log --all -S'<literal>'` devuelve UN commit (701fa59, que crea el
+#     test) y `git grep` del literal en toda la historia no lo encuentra en
+#     ningun fichero fuera de tests/. Nunca fue una clave en uso.
+#  3. La porta `FAKE_NAN_KEY_063C`, inyectada por `monkeypatch.setenv` y
+#     ausente de scripts/, bus/ y agent_system/: no existe ruta productiva
+#     que lea esa variable.
+#
+# EXACTITUD: el literal es [A-Za-z0-9-] puro, sin metacaracteres, asi que
+# como regex casa solo a si mismo. No se relaja a una familia. Cualquier otro
+# secreto -- en este fichero o en otro -- sigue bloqueando.
+[[allowlists]]
+description = "fixture sintetico del test de saneado de key en el transporte SSE (WOT-2026-063c). NO es una credencial: es el valor que los asserts buscan NO encontrar en los mensajes de error. Procedencia sintetica verificada, ver comentario."
+regexes = [
+  '''sk-live-063c-SSEKEY-9f2c47ab''',
+]
