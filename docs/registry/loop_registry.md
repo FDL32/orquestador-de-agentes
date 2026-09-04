@@ -6,6 +6,35 @@
 > archivo NO es fuente de verdad; regeneralo con
 > `python scripts/discover_loops.py --generate`.
 
+## Que significa cada `status` (y que NO significa)
+
+> Enum del registro de BACKENDS, que vive en
+> `.agent/config/agents.json` -> `ensemble_registry.statuses`:
+> `active` / `deprecated` / `archived`. NO es el enum del catalogo de
+> SKILLS (`active`/`deprecated`/`draft`, ver `docs/registry/README.md`):
+> son catalogos distintos con nombres que colisionan. Antes de cambiar un
+> `status`, confirma en cual de los dos estas.
+
+| status | significa | NO significa |
+|--------|-----------|--------------|
+| `active` | el backend esta EN USO: puede figurar en un `loop_shape` y se lanza. | que responda siempre. Un backend activo puede fallar una corrida, o varias, y seguir activo. |
+| `deprecated` | ya no es recomendable para uso NUEVO: obsolescencia, sustituto mejor, retirada del proveedor, licencia, seguridad, coste o cumplimiento. Ej. `BA14 = deepseek-v4-flash-0731`, superado por `deepseek-v4-flash`. Puede seguir en un `loop_shape` mientras se migra. | que este caido ni que haya fallado. Es un juicio sobre su VIGENCIA, no sobre su disponibilidad. |
+| `archived` | retiro DELIBERADO del catalogo operativo; se conserva por trazabilidad historica. | que estuviera roto o caido. No se usa para expulsar un backend que falla: eso seria un `deprecated` silencioso. |
+
+### Regla operativa: que cambia un `status` y que NO
+
+**Ningun fallo de ejecucion cambia un `status`.** Ni `transport-failed`, ni timeout, ni un smoke en rojo, ni una sesion entera sin respuesta. Esos se registran como INCIDENTE o deuda, y el backend sigue `active`.
+
+Para mover un backend fuera de `active` hace falta evidencia que EXCLUYA lo temporal: causa documentada (el proveedor lo retiro, hay sustituto, vencio la licencia) o un patron sostenido a lo largo de VARIAS sesiones. Con evidencia de una sola sesion, sigue `active`.
+
+Y como cualquier `status` distinto de `active` puede sacar al backend de los bucles adversariales, el cambio declara que FAMILIA DE LENTE se pierde y si la cobertura restante sigue siendo suficiente.
+
+**Caso medido (2026-09-04):** se marco `BA05` (codex) como `deprecated` tras 3 `transport-failed` en UNA sesion, y eso lo saco de todos los bucles. Era un fallo TEMPORAL: el mismo backend entrego despues una auditoria completa. Confundir "no respondio hoy" con "esta obsoleto" degrada el gobierno adversarial EN SILENCIO -- se pierde una familia de lente y ningun gate lo detecta, porque el registro queda internamente coherente. Lo cazo el usuario, no un mecanismo.
+
+**El fallo cronico SI tiene salida, y no es `deprecated`:** un backend cuyo endpoint desaparecio o que lleva meses sin responder se `archived` con su evidencia. `deprecated` habla de vigencia; `archived`, de retiro.
+
+**Antes de culpar al backend, descarta el instrumento.** Si el smoke devuelve `alive: true` sin el `PONG` esperado, el defecto es del DISPATCHER: abrelo como tal y deja el `status` intacto. La salud del backend es la ULTIMA hipotesis, no la primera.
+
 ## Backend keys
 
 | backend_key | backend | model | status |

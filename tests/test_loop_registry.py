@@ -343,3 +343,42 @@ def test_every_step_has_explicit_function_field(loop_id):
     for i, step in enumerate(shape["steps"]):
         assert "function" in step, f"{loop_id}.steps[{i}] missing 'function' field"
         assert step["function"] in ("participant", "consolidator")
+
+
+def test_status_semantics_are_documented_in_the_projection():
+    """La proyeccion debe DEFINIR que significa cada `status`, no solo listarlos.
+
+    LOAD-BEARING (medido 2026-09-04): el enum vivia en
+    `agents.json::ensemble_registry.statuses` como tres strings SIN semantica, y
+    la definicion no existia en docs, AGENTS.md ni en el codigo. Consecuencia:
+    se marco `BA05` (codex) como `deprecated` tras 3 `transport-failed` en UNA
+    sesion --un fallo TEMPORAL-- y eso lo saco de todos los bucles adversariales.
+    Ningun gate lo detecto: el registro quedaba internamente coherente. Lo cazo
+    el usuario.
+
+    Este test es el ancla: sin el, la seccion puede desaparecer en un refactor
+    del generador y el enum vuelve a quedar sin semantica en silencio.
+    """
+    texto = REGISTRY_MD_PATH.read_text(encoding="utf-8")
+
+    # La distincion que se perdio: fallo temporal != obsolescencia.
+    assert "Ningun fallo de ejecucion cambia un `status`" in texto
+    # La salida para el fallo cronico, sin la cual la regla produce zombis.
+    assert "`archived` con su evidencia" in texto or "se `archived`" in texto
+    # El instrumento antes que el backend.
+    assert "la ULTIMA hipotesis" in texto
+    # La colision de enums entre catalogos.
+    assert "catalogo de" in texto and "SKILLS" in texto
+
+    for status in ("active", "deprecated", "archived"):
+        assert f"`{status}`" in texto, f"falta la definicion de {status}"
+
+
+def test_status_enum_matches_the_documented_one():
+    """El enum vivo y el documentado no pueden divergir en silencio."""
+    registry = dl.load_registry()
+    statuses = set(registry.get("statuses", []))
+    assert statuses == {"active", "deprecated", "archived"}, (
+        f"el enum vivo es {sorted(statuses)}; si cambia, actualiza la tabla de "
+        "semantica en discover_loops.py (la proyeccion se genera desde ahi)"
+    )
