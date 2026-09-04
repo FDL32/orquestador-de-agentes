@@ -208,6 +208,16 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA16"
+    },
+    "challenger_opencode_glm_5_3": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode-go/glm-5.3",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA07",
+      "repo_scope": "destino"
     }
   },
   "ensemble_pipelines": {
@@ -280,6 +290,12 @@
       "BA16": {
         "backend": "nan_api",
         "model": "glm5.3-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA07": {
+        "backend": "opencode",
+        "model": "opencode-go/glm-5.3",
         "backend_version": null,
         "status": "active"
       }
