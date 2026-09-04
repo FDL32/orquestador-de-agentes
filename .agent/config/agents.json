@@ -233,7 +233,7 @@
         "backend": "codex",
         "model": "gpt-5.4",
         "backend_version": null,
-        "status": "deprecated"
+        "status": "active"
       },
       "BA10": {
         "backend": "nan_api",
@@ -491,6 +491,11 @@
             "backend_key": "BA11"
           },
           {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA05"
+          },
+          {
             "phase": "fanout-dif",
             "function": "participant",
             "backend_key": "BA06"
@@ -509,6 +514,11 @@
             "phase": "fanout-dif",
             "function": "participant",
             "backend_key": "BA11"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA05"
           },
           {
             "phase": "fanout-lector-fs",

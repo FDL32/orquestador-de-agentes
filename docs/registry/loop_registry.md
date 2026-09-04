@@ -11,7 +11,7 @@
 | backend_key | backend | model | status |
 |-------------|---------|-------|--------|
 | BA01 | claude | — | active |
-| BA05 | codex | gpt-5.4 | deprecated |
+| BA05 | codex | gpt-5.4 | active |
 | BA06 | opencode | opencode-go/glm-5.2 | active |
 | BA10 | nan_api | deepseek-v4-flash | active |
 | BA11 | nan_api | qwen3.6 | active |
@@ -27,7 +27,7 @@
 |---------|------|----------------|-------|--------|
 | L700 | BUC-01 | chat | 10 | deprecated |
 | L710 | BUC-02 | chat | 14 | deprecated |
-| L720 | BUC-03 | chat | 10 | active |
+| L720 | BUC-03 | chat | 12 | active |
 | L800 | CHA-01 | chat | 7 | active |
 
 ## Steps by loop
@@ -75,10 +75,12 @@
 | fanout-comun | participant | BA15 |
 | fanout-comun | participant | BA16 |
 | fanout-comun | participant | BA11 |
+| fanout-comun | participant | BA05 |
 | fanout-dif | participant | BA06 |
 | fanout-dif | participant | BA15 |
 | fanout-dif | participant | BA16 |
 | fanout-dif | participant | BA11 |
+| fanout-dif | participant | BA05 |
 | fanout-lector-fs | participant | BA01 |
 
 ### L800 (CHA-01)
