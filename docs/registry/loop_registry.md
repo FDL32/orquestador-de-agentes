@@ -11,20 +11,23 @@
 | backend_key | backend | model | status |
 |-------------|---------|-------|--------|
 | BA01 | claude | — | active |
-| BA05 | codex | gpt-5.4 | active |
+| BA05 | codex | gpt-5.4 | deprecated |
 | BA06 | opencode | opencode-go/glm-5.2 | active |
 | BA10 | nan_api | deepseek-v4-flash | active |
 | BA11 | nan_api | qwen3.6 | active |
 | BA12 | nan_api | mimo-v2.5 | active |
 | BA13 | nan_api | gemma4 | active |
 | BA14 | nan_api | deepseek-v4-flash-0731 | deprecated |
+| BA15 | nan_api | qwen3.8-flash | active |
+| BA16 | nan_api | glm5.3-flash | active |
 
 ## Loop shapes
 
 | loop_id | name | launched_from | steps | status |
 |---------|------|----------------|-------|--------|
-| L700 | BUC-01 | chat | 10 | active |
-| L710 | BUC-02 | chat | 14 | active |
+| L700 | BUC-01 | chat | 10 | deprecated |
+| L710 | BUC-02 | chat | 14 | deprecated |
+| L720 | BUC-03 | chat | 10 | active |
 | L800 | CHA-01 | chat | 7 | active |
 
 ## Steps by loop
@@ -61,6 +64,21 @@
 | fanout-dif | participant | BA13 |
 | fanout-dif | participant | BA05 |
 | fanout-dif | participant | BA06 |
+| fanout-lector-fs | participant | BA01 |
+
+### L720 (BUC-03)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+| collector | participant | BA01 |
+| fanout-comun | participant | BA06 |
+| fanout-comun | participant | BA15 |
+| fanout-comun | participant | BA16 |
+| fanout-comun | participant | BA11 |
+| fanout-dif | participant | BA06 |
+| fanout-dif | participant | BA15 |
+| fanout-dif | participant | BA16 |
+| fanout-dif | participant | BA11 |
 | fanout-lector-fs | participant | BA01 |
 
 ### L800 (CHA-01)

@@ -186,6 +186,28 @@
       "data_sensitivity": "public",
       "backend_key": "BA06",
       "repo_scope": "destino"
+    },
+    "challenger_nan_qwen3_8_flash": {
+      "backend": "nan_api",
+      "channel": "api",
+      "model": "qwen3.8-flash",
+      "api_base_url": "https://api.nan.builders/v1/chat/completions",
+      "api_key_env": "NAN_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA15"
+    },
+    "challenger_nan_glm5_3_flash": {
+      "backend": "nan_api",
+      "channel": "api",
+      "model": "glm5.3-flash",
+      "api_base_url": "https://api.nan.builders/v1/chat/completions",
+      "api_key_env": "NAN_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA16"
     }
   },
   "ensemble_pipelines": {
@@ -211,7 +233,7 @@
         "backend": "codex",
         "model": "gpt-5.4",
         "backend_version": null,
-        "status": "active"
+        "status": "deprecated"
       },
       "BA10": {
         "backend": "nan_api",
@@ -248,6 +270,18 @@
         "model": "deepseek-v4-flash-0731",
         "backend_version": null,
         "status": "deprecated"
+      },
+      "BA15": {
+        "backend": "nan_api",
+        "model": "qwen3.8-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA16": {
+        "backend": "nan_api",
+        "model": "glm5.3-flash",
+        "backend_version": null,
+        "status": "active"
       }
     },
     "loop_shapes": {
@@ -306,7 +340,7 @@
             "backend_key": "BA01"
           }
         ],
-        "status": "active"
+        "status": "deprecated"
       },
       "L800": {
         "name": "CHA-01",
@@ -418,6 +452,63 @@
             "phase": "fanout-dif",
             "function": "participant",
             "backend_key": "BA06"
+          },
+          {
+            "phase": "fanout-lector-fs",
+            "function": "participant",
+            "backend_key": "BA01"
+          }
+        ],
+        "status": "deprecated"
+      },
+      "L720": {
+        "name": "BUC-03",
+        "launched_from": "chat",
+        "steps": [
+          {
+            "phase": "collector",
+            "function": "participant",
+            "backend_key": "BA01"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA06"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA15"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA16"
+          },
+          {
+            "phase": "fanout-comun",
+            "function": "participant",
+            "backend_key": "BA11"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA06"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA15"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA16"
+          },
+          {
+            "phase": "fanout-dif",
+            "function": "participant",
+            "backend_key": "BA11"
           },
           {
             "phase": "fanout-lector-fs",

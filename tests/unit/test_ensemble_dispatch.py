@@ -2800,6 +2800,11 @@ _NAN_MODELS = {
     "qwen3.6": "challenger_nan_qwen3_6",
     "mimo-v2.5": "challenger_nan_mimo_v2_5",
     "gemma4": "challenger_nan_gemma4",
+    # 2026-09-04: la API de nan expone `qwen3.8-flash` y `glm5.3-flash`
+    # (verificado contra `GET /v1/models`) y no estaban declarados. Se anaden
+    # con la MISMA forma canonica; el test sigue exigiendo un perfil por modelo.
+    "qwen3.8-flash": "challenger_nan_qwen3_8_flash",
+    "glm5.3-flash": "challenger_nan_glm5_3_flash",
 }
 
 
@@ -2964,8 +2969,8 @@ def test_nan_backend_shape_matches_direct_api_backends_without_trusted():
 
 
 def test_nan_profiles_one_per_model_with_canonical_shape():
-    """(b): EXACTAMENTE un perfil por modelo nan {deepseek-v4-flash, qwen3.6,
-    mimo-v2.5, gemma4}; cada uno backend=nan_api, channel=api, api_base_url
+    """(b): EXACTAMENTE un perfil por modelo nan declarado en `_NAN_MODELS`;
+    cada uno backend=nan_api, channel=api, api_base_url
     completo, api_key_env=NAN_API_KEY, context=diff-o-artefacto-publico,
     write=false, data_sensitivity=public. Mutation M4: borrar un perfil nan
     hace este test FALLAR (conteo y presencia por nombre)."""
@@ -2974,8 +2979,9 @@ def test_nan_profiles_one_per_model_with_canonical_shape():
     nan_profile_names = [
         name for name, prof in profiles.items() if prof.get("backend") == "nan_api"
     ]
-    assert len(nan_profile_names) == 4, (
-        f"esperados EXACTAMENTE 4 perfiles nan, hallados: {nan_profile_names}"
+    assert len(nan_profile_names) == len(_NAN_MODELS), (
+        f"esperados EXACTAMENTE {len(_NAN_MODELS)} perfiles nan (uno por modelo "
+        f"de _NAN_MODELS), hallados: {nan_profile_names}"
     )
     for model, expected_name in _NAN_MODELS.items():
         assert expected_name in profiles, f"falta perfil {expected_name}"
