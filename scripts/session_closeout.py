@@ -1301,26 +1301,106 @@ def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> 
     return "code"
 
 
+# Trailers que DECLARAN la entrega de un ticket (git-trailer, `clave: valor` al
+# final del cuerpo). Una mencion en prosa no es ninguno de estos.
+# Separadores de `git log --format`: 0x1f entre campos, 0x1e entre registros.
+# Ningun mensaje de commit los contiene, asi que el parseo no depende del cuerpo.
+SEP_FIELD = chr(0x1F)
+SEP_RECORD = chr(0x1E)
+SEP_LINE = chr(0x0A)
+
+# `refs` NO esta: en la semantica git/GitHub es REFERENCIA, no cierre, y
+# aceptarlo reabriria la clase del bug que este fix cierra --un commit ajeno que
+# referencia el ticket contaria como entrega-- solo que en forma mas estrecha
+# (hallazgo glm-5.2).
+_DELIVERY_TRAILERS = ("ticket", "closes", "fixes", "resolves")
+
+
+def _delivers_ticket(subject: str, body: str, ticket_id: str) -> bool:
+    """True si el commit ENTREGA `ticket_id` (subject o trailer), no si lo menciona.
+
+    WOT-2026-066a. La frontera de palabra evita que `WOT-2026-999ab` cuente como
+    entrega de `WOT-2026-999a`: `--fixed-strings` casa substrings.
+    """
+    # Frontera asimetrica a proposito: el lookBEHIND excluye `-` porque un id
+    # va precedido de separadores normales, pero NUNCA es sufijo de otro id;
+    # el lookAHEAD no puede excluir `-` porque el propio id lo contiene
+    # (`WOT-2026-062d`). Se anade `_` al lookahead: `WOT-2026-062d_fix` es un
+    # nombre de rama, no una entrega (hallazgo glm-5.2).
+    pat = re.compile(rf"(?<![0-9A-Za-z-]){re.escape(ticket_id)}(?![0-9A-Za-z_])")
+    if pat.search(subject):
+        return True
+    for line in body.splitlines():
+        head, sep, rest = line.partition(":")
+        if not sep:
+            continue
+        if head.strip().lower() in _DELIVERY_TRAILERS and pat.search(rest):
+            return True
+    return False
+
+
+def _shas_that_deliver(stdout: str, ticket_id: str) -> list[str]:
+    """Filtra la salida de `git log --format=%H%x1f%s%x1f%b%x1e` por ENTREGA."""
+    shas: list[str] = []
+    for record in stdout.split(SEP_RECORD):
+        if not record.strip():
+            continue
+        parts = record.strip(SEP_LINE).split(SEP_FIELD)
+        if len(parts) < 2:
+            continue
+        sha, subject = parts[0].strip(), parts[1]
+        body = parts[2] if len(parts) > 2 else ""
+        # El sha se VALIDA antes de escribirlo: si un cuerpo contuviera 0x1e,
+        # el fragmento posterior se parsearia como registro y texto libre
+        # entraria en `targets.txt` como si fuera un sha, corrompiendo el
+        # fichero que el guard consume (hallazgo glm-5.2). La garantia de que
+        # ningun mensaje contiene los separadores es empirica, no estructural.
+        if not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+            continue
+        if _delivers_ticket(subject, body, ticket_id):
+            shas.append(sha)
+    return shas
+
+
 def _git_log_shas_for_ticket(
     motor_root: Path, ticket_id: str, since_args: list[str]
 ) -> tuple[list[str] | None, str]:
-    """Run `git log --grep=<ticket_id>` and return matching shas.
+    """Devuelve los shas que ENTREGAN `ticket_id`, no los que lo mencionan.
 
-    WOT-2026-045a. Extracted so the caller stays under complexity budget.
+    WOT-2026-045a (extraccion). WOT-2026-066a (membresia por entrega).
 
-    Before: ``motor_root`` is a resolvable git repo root; ``since_args`` is
-        `["--since=<ISO>"]` or `[]` (open window).
-    During: `subprocess.run(["git", "log", "--format=%H",
-        f"--grep={ticket_id}", "--fixed-strings", *since_args],
-        cwd=motor_root)`, never reading `$?` after a pipe.
-    After: Returns `(shas, "")` on success (possibly an empty list when no
-        commit matches). Returns `(None, detail)` on any git failure (OSError
-        or non-zero returncode), where `detail` explains the failure.
+    El `--grep` de git busca en el mensaje COMPLETO, y eso confunde MENCION con
+    ENTREGA. Medido 2026-09-04: `888e67c` entregaba `CTL-2026-027b` y mencionaba
+    `WOT-2026-062d` una vez en su cuerpo; entro en el `targets.txt` de un vuelo
+    ajeno como si lo entregara y bloqueo el cierre con 0/4 lentes. Su subject no
+    lo mencionaba.
+
+    Criterio de ENTREGA (uno de los dos basta):
+      - el ticket aparece en el SUBJECT (`%s`), o
+      - se declara en un TRAILER estructurado del cuerpo (`Ticket:`, `Closes:`,
+        `Refs:`). Sin esto, un fix subject-only romperia squash/fixup y las
+        entregas que declaran su id en un trailer.
+
+    Una mencion en PROSA del cuerpo NO es entrega.
+
+    Ademas se exige frontera de palabra: `--fixed-strings` casa substrings, asi
+    que `WOT-2026-999ab` arrastraba a `WOT-2026-999a`.
+
+    Before: ``motor_root`` es un repo git resoluble; ``since_args`` es
+        `["--since=<ISO>"]` o `[]` (ventana abierta).
+    During: `git log --format=%H%x1f%s%x1f%b%x1e` (campos separados por 0x1f,
+        registros por 0x1e: ningun mensaje de commit los contiene) y filtra en
+        Python. Sigue pasando `--grep` como PRE-filtro barato: reduce el volumen
+        pero ya no decide la membresia.
+    After: `(shas, "")` en exito (lista posiblemente vacia). `(None, detail)` en
+        cualquier fallo de git (OSError o rc != 0).
     """
     cmd = [
         "git",
         "log",
-        "--format=%H",
+        # 0x1f separa campos y 0x1e registros: ningun mensaje de commit los
+        # contiene, asi que el parseo no depende del contenido del cuerpo.
+        "--format=%H%x1f%s%x1f%b%x1e",
         f"--grep={ticket_id}",
         "--fixed-strings",
         *since_args,
@@ -1340,7 +1420,7 @@ def _git_log_shas_for_ticket(
         return None, (
             f"git log rc={result.returncode} for {ticket_id}: {result.stderr.strip()}"
         )
-    return [s for s in result.stdout.splitlines() if s.strip()], ""
+    return _shas_that_deliver(result.stdout, ticket_id), ""
 
 
 def _resolve_authoritative_repo(
@@ -1498,6 +1578,54 @@ def _finalize_targets_result(
         )
 
     if not lines:
+        # WOT-2026-066a (F1b): el ambito no puede VACIARSE en silencio.
+        #
+        # Sin fichero, `check_loop_execution` hace SKIP NO bloqueante, asi que
+        # un ambito vaciado seria indistinguible de uno correcto: el falso verde
+        # exacto que la barrera existe para impedir. Medido 2026-09-04: una
+        # propuesta de excluir tickets archivados sacaba 6 de 9 --incluido el de
+        # la propia sesion-- y habria borrado el fichero sin dejar rastro.
+        #
+        # ALCANCE DELIBERADO, y por que no es mas amplio: solo dispara cuando
+        # HABIA targets declarados y ahora no quedaria ninguno. "Ticket resuelto
+        # sin commits" es un caso LEGITIMO por diseno --lo pinea
+        # `test_control_negative_ticket_with_no_commits_no_file`, y un ticket
+        # documental no tiene por que producir commits--, asi que exigir
+        # "tickets => ambito no vacio" convertiria en error el caso normal.
+        # Se probo: rompia 7 tests que describen comportamiento correcto.
+        # La regresion que este guard caza es la PERDIDA de un ambito que
+        # existia, no la ausencia de uno que nunca hubo.
+        if ticket_ids and targets_path.exists():
+            # Fail-CLOSED al leer: un fichero existente pero ilegible (sharing
+            # violation, AV, encoding roto) no puede asimilarse a "no habia
+            # nada". `UnicodeDecodeError` NO es `OSError`: se atrapa aparte.
+            try:
+                previo = [
+                    ln
+                    for ln in targets_path.read_text(encoding="utf-8").splitlines()
+                    if ln.strip()
+                ]
+            except (OSError, UnicodeDecodeError) as exc:
+                return StepResult(
+                    name=name,
+                    status="FAIL",
+                    detail=(
+                        f"FAIL_TARGETS_UNREADABLE: {targets_path} existe pero no "
+                        f"se pudo leer ({exc}); con tickets resueltos "
+                        f"({', '.join(ticket_ids)}) no se asume ambito vacio."
+                    ),
+                )
+            if previo:
+                return StepResult(
+                    name=name,
+                    status="FAIL",
+                    detail=(
+                        "FAIL_TARGETS_EMPTIED: el ambito quedaria VACIO partiendo "
+                        f"de {len(previo)} target(s), con tickets resueltos "
+                        f"({', '.join(ticket_ids)}). No se borra el fichero: sin "
+                        "el, el guard hace SKIP no bloqueante."
+                    ),
+                )
         if targets_path.exists():
             targets_path.unlink()
         detail = (

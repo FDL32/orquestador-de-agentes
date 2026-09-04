@@ -693,3 +693,220 @@ def test_mixed_results_one_warn_one_pass(tmp_path: Path) -> None:
     assert "WARN_PREFIX_UNRESOLVABLE" in result.detail
     content = (destino / TARGETS_REL).read_text(encoding="utf-8")
     assert sha in content
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-066a: membresia por ENTREGA, no por MENCION.
+#
+# Medido 2026-09-04: `_git_log_shas_for_ticket` corria
+# `git log --grep=<ticket_id>` sobre el mensaje COMPLETO. Un commit que
+# entregaba CTL-2026-027b y mencionaba WOT-2026-062d una vez en su cuerpo
+# entraba en el `targets.txt` de un vuelo ajeno como si lo entregara, y
+# bloqueaba el cierre con 0/4 lentes. El subject NO lo mencionaba.
+# ---------------------------------------------------------------------------
+
+
+def test_mencion_en_prosa_del_cuerpo_no_es_entrega(tmp_path: Path) -> None:
+    """Un commit que MENCIONA el ticket en el cuerpo pero entrega OTRO no entra.
+
+    ROJO antes del fix: `--grep` sobre el mensaje completo lo capturaba.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(
+        repo,
+        "src/otro.py",
+        "y = 2",
+        "WOT-2026-888z: arregla otra cosa\n\nContexto: esto NO entrega WOT-2026-999a,\nsolo lo menciona como referencia historica.",
+    )
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    targets_path = repo / TARGETS_REL
+    assert result.status == "PASS", result.detail
+    assert not targets_path.exists(), (
+        "un commit que solo MENCIONA el ticket en el cuerpo no lo entrega: "
+        f"targets no deberia existir, contiene {targets_path.read_text(encoding='utf-8') if targets_path.exists() else ''!r}"
+    )
+
+
+def test_trailer_estructurado_si_es_entrega(tmp_path: Path) -> None:
+    """Falso NEGATIVO: si el ticket se declara en un TRAILER, SI entra.
+
+    Un fix subject-only ingenuo romperia squash/fixup y las entregas que
+    declaran su ticket con `Ticket:`/`Closes:` en vez de en el subject.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    sha = _commit_file(
+        repo,
+        "src/b.py",
+        "z = 3",
+        "fix: corrige el parser sin id en el subject\n\nTicket: WOT-2026-999a",
+    )
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    targets_path = repo / TARGETS_REL
+    assert result.status == "PASS", result.detail
+    assert targets_path.exists(), "una entrega declarada en trailer DEBE entrar"
+    assert sha in targets_path.read_text(encoding="utf-8")
+
+
+def test_subject_sigue_siendo_entrega(tmp_path: Path) -> None:
+    """No-regresion: el caso canonico (ticket en el subject) sigue entrando."""
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    sha = _commit_file(repo, "src/c.py", "w = 4", "WOT-2026-999a: el caso normal")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert (repo / TARGETS_REL).exists()
+    assert sha in (repo / TARGETS_REL).read_text(encoding="utf-8")
+
+
+def test_substring_accidental_no_es_entrega(tmp_path: Path) -> None:
+    """`WOT-2026-999ab` en el subject no entrega `WOT-2026-999a`.
+
+    `--fixed-strings` casa substrings: sin frontera de palabra, un id que
+    CONTIENE a otro lo arrastra al ambito.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(repo, "src/d.py", "v = 5", "WOT-2026-999ab: otro ticket distinto")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    targets_path = repo / TARGETS_REL
+    assert result.status == "PASS", result.detail
+    assert not targets_path.exists(), (
+        "un id que CONTIENE al buscado no lo entrega: 999ab != 999a"
+    )
+
+
+def test_f1b_ambito_vaciado_falla_en_vez_de_borrar(tmp_path: Path) -> None:
+    """Si el ambito quedaria VACIO partiendo de no-vacio, FALLA. No borra.
+
+    LOAD-BEARING (WOT-2026-066a): sin el fichero, `check_loop_execution` hace
+    SKIP NO bloqueante. Un ambito vaciado seria indistinguible de uno correcto
+    -- el falso verde exacto que la barrera existe para impedir. Medido
+    2026-09-04: una propuesta de excluir tickets archivados sacaba 6 de 9,
+    incluido el de la propia sesion, y habria borrado el fichero en silencio.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(repo, "src/e.py", "u = 6", "WOT-2026-777a: algo")
+
+    targets_path = repo / TARGETS_REL
+    targets_path.parent.mkdir(parents=True, exist_ok=True)
+    targets_path.write_text("deadbeef0000 code\n", encoding="utf-8")
+
+    # Ticket sin commits -> el escritor no produce lineas.
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-000z"], None, False
+    )
+
+    assert result.status == "FAIL", (
+        f"vaciar un ambito no-vacio debe FALLAR, no borrar: {result.detail}"
+    )
+    assert "FAIL_TARGETS_EMPTIED" in result.detail
+    assert targets_path.exists(), "el fichero NO se borra cuando el vaciado falla"
+
+
+def test_f1b_no_dispara_si_no_habia_targets(tmp_path: Path) -> None:
+    """Control negativo: sin fichero previo, cero targets sigue siendo PASS.
+
+    Una sesion de mantenimiento legitima no declara nada y eso no es un fallo.
+    Sin este control, F1b convertiria en error el caso normal.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(repo, "src/f.py", "t = 7", "WOT-2026-777a: algo")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-000z"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert not (repo / TARGETS_REL).exists()
+
+
+def test_f1b_alcance_declarado_ticket_sin_commits_es_legitimo(tmp_path: Path) -> None:
+    """Ticket resuelto SIN commits y sin fichero previo -> PASS, no FAIL.
+
+    Alcance DELIBERADO de F1b, medido: glm-5.2 propuso el invariante fuerte
+    ("tickets => ambito no vacio o FAIL"). Se implanto y rompio 7 tests que
+    describen comportamiento CORRECTO: un ticket documental no produce commits,
+    y `test_control_negative_ticket_with_no_commits_no_file` lo pinea desde
+    antes. F1b caza la PERDIDA de un ambito que existia, no la ausencia de uno
+    que nunca hubo.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(repo, "src/g.py", "s = 8", "otro: nada que ver con el ticket")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert not (repo / TARGETS_REL).exists()
+
+
+def test_refs_no_es_entrega(tmp_path: Path) -> None:
+    """`Refs:` es REFERENCIA, no entrega: no debe meter el commit en el ambito.
+
+    Aceptarlo reabriria la clase del bug original en forma mas estrecha
+    (hallazgo glm-5.2).
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(
+        repo,
+        "src/h.py",
+        "r = 9",
+        "WOT-2026-888z: otra cosa\n\nRefs: WOT-2026-999a",
+    )
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert not (repo / TARGETS_REL).exists(), (
+        "`Refs:` es REFERENCIA, no entrega: ese commit no entra en el ambito"
+    )
+
+
+def test_frontera_no_deja_pasar_guion_bajo(tmp_path: Path) -> None:
+    """`WOT-2026-999a_fix` en el subject es un nombre de rama, no una entrega."""
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(repo, "src/i.py", "q = 10", "merge de WOT-2026-999a_fix en main")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert not (repo / TARGETS_REL).exists(), (
+        "`WOT-2026-999a_fix` es un nombre de rama, no una entrega"
+    )
