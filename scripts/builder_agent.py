@@ -7,6 +7,7 @@ WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from datetime import datetime
@@ -29,15 +30,107 @@ if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
 from agent_controller import (  # noqa: E402
+    BUS_AVAILABLE,
     WORK_PLAN,
+    event_bus,
     get_plan_id,
-    publish_state_changed_event,
     read_file,
     update_log_status,
 )
 
+# WOT-2026-058v: the launch-precondition logic is REUSED from the WOT-2026-058t
+# detective path (prepush imports it from here too). prepush_check.py and
+# check_batch_run_accounting.py are IMPORT-ONLY surfaces for this ticket: they
+# are never modified here. Reimplementing the PREDICATE-vs-flight_plans
+# matching would create a second variant of the same invariant.
+from scripts.check_batch_run_accounting import (  # noqa: E402
+    _flight_name,
+    _predicate_claims_dag,
+    _resolve_flight_plans_root,
+    check_flight_plan_persisted,
+)
 
-def main():
+
+def check_flight_launch_prerequisites(
+    launch_context: Path, flight_plans_root: Path | None = None
+) -> list[str]:
+    """WOT-2026-058v: preventive launch gate - a flight does not launch
+    without a persisted DAG.
+
+    Before: ``launch_context`` is a batch_run-shaped JSON (top-level ``flight``
+    plus ``PREDICATE``) prepared at flight takeoff; ``flight_plans_root`` may
+    override the ``orchestrator_pipeline/flight_plans/`` tree (resolved from
+    the context's own ancestor chain when None, same convention as
+    WOT-2026-058t).
+    During: reads the context and fails closed on (a0) a launch that cites no
+    DAG at all (no ``flight``, no ``PREDICATE``, or a PREDICATE whose
+    conditions 1/2 do not claim ``exit_code: 0``) and on a launch context with
+    no reachable ``flight_plans/`` tree (nothing to resolve the claim against
+    is not a pass); the claimed-DAG-vs-disk resolution itself is delegated to
+    ``check_flight_plan_persisted`` (the WOT-2026-058t detective, reused by
+    import, never reimplemented).
+    After: returns finding strings (empty list = launch may proceed); every
+    finding names the flight it blocks. Unreadable or malformed context input
+    is surfaced as a finding, never raised past the launch.
+    """
+    path = Path(launch_context)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return [f"launch context ilegible ({path}): {exc}"]
+    if not isinstance(payload, dict):
+        return [f"launch context invalido ({path}): se esperaba un objeto JSON"]
+
+    flight = _flight_name(payload)
+    if not flight:
+        return [
+            "arranque sin 'flight' citado: un vuelo no arranca sin identificar "
+            "el plan que ejecuta (WOT-2026-058v)"
+        ]
+    if not _predicate_claims_dag(payload):
+        return [
+            f"el arranque del vuelo '{flight}' no cita ningun DAG validado: su "
+            "PREDICATE no declara exit_code 0 en las condiciones 1/2 "
+            "(schema_valido/dag_aciclico); un vuelo no arranca sin DAG "
+            "persistido bajo orchestrator_pipeline/flight_plans/ "
+            "(WOT-2026-058v)"
+        ]
+    if flight_plans_root is None:
+        flight_plans_root = _resolve_flight_plans_root(path)
+    if flight_plans_root is None:
+        return [
+            f"el arranque del vuelo '{flight}' cita un DAG validado pero no hay "
+            "arbol orchestrator_pipeline/flight_plans/ alcanzable desde el "
+            "contexto de arranque: el DAG citado no resuelve a ningun fichero "
+            "(WOT-2026-058v)"
+        ]
+    try:
+        return check_flight_plan_persisted(path, Path(flight_plans_root))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return [f"launch context ilegible ({path}): {exc}"]
+
+
+def _launch_precondition_exit(args: argparse.Namespace) -> int | None:
+    """WOT-2026-058v: run the launch precondition as step 0 of main().
+
+    Before: ``args`` carries the optional ``--flight-launch-context`` value
+    (or None when the launch is not a flight launch).
+    During: with a context given, runs the launch guard and prints its output;
+    a guard with findings stops the launch (exit != 0) before any work runs.
+    After: returns 1 when the launch must stop, None when it may proceed.
+    """
+    if not args.flight_launch_context:
+        return None
+    findings = check_flight_launch_prerequisites(Path(args.flight_launch_context))
+    if findings:
+        for finding in findings:
+            print(f"[LAUNCH-GUARD] ERROR: {finding}")
+        return 1
+    print("[OK] Launch guard: el DAG citado por el vuelo esta persistido")
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: parser + pasos + precondicion de arranque (WOT-2026-058v); main ya estaba en el umbral (10)
     """Main builder flow."""
     parser = argparse.ArgumentParser(description="Builder agent for the active ticket")
     parser.add_argument(
@@ -45,7 +138,25 @@ def main():
         default=None,
         help="Ticket ID to implement (defaults to the active plan_id from work_plan.md)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--flight-launch-context",
+        dest="flight_launch_context",
+        default=None,
+        help=(
+            "WOT-2026-058v: JSON del contexto de arranque del vuelo (forma "
+            "batch_run: flight + PREDICATE). El arranque falla cerrado si el "
+            "vuelo no cita un DAG validado o si el DAG citado no esta "
+            "persistido bajo orchestrator_pipeline/flight_plans/."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    # WOT-2026-058v: launch precondition runs BEFORE any work. A flight whose
+    # PREDICATE cites no DAG, or whose cited DAG does not resolve to a file
+    # under flight_plans/**, fails closed here (exit != 0), naming the plan.
+    stop = _launch_precondition_exit(args)
+    if stop is not None:
+        return stop
 
     print("\n" + "=" * 70)
     print(f"BUILDER AGENT - {args.ticket_id}")
@@ -142,9 +253,23 @@ def main():
     update_log_status(
         "READY_FOR_REVIEW", "\n### BUILDER COMPLETE\n- Ready for Manager review\n"
     )
-    publish_state_changed_event(
-        plan_id, "IN_PROGRESS", "READY_FOR_REVIEW", "Builder complete"
-    )
+    # WOT-2026-058v (repair, Fase 0 finding): this flow imported
+    # `publish_state_changed_event`, a symbol that no longer exists in
+    # agent_controller - the module has been unimportable since that removal.
+    # The canonical emission (same shape the controller itself uses) replaces
+    # the stale call; the mark-ready subprocess below remains the authority.
+    if BUS_AVAILABLE and event_bus:
+        event_bus.emit(
+            event_type="STATE_CHANGED",
+            ticket_id=plan_id,
+            actor="BUILDER",
+            payload={
+                "from_state": "IN_PROGRESS",
+                "to_state": "READY_FOR_REVIEW",
+                "reason": "Builder completed implementation",
+                "source": "builder_agent",
+            },
+        )
     print("[OK] Estado actualizado a READY_FOR_REVIEW")
 
     # 7. Execute mark-ready

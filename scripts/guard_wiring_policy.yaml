@@ -114,8 +114,30 @@ extra_guards:
   # no lo aprobaba, es que no lo veia. Declararlo aqui lo mete en el censo; el
   # veredicto (cableado vs norma declarada) lo decide `wired_via` mas abajo.
   prepush_check: scripts/prepush_check.py
+  # WOT-2026-058v: el guard PREVENTIVO de arranque vive dentro del modulo
+  # builder_agent (check_flight_launch_prerequisites, ejecutado por main() como
+  # paso 0 cuando se pasa --flight-launch-context). El fichero no lleva prefijo
+  # check_/validate_/guard_, asi que sin declararlo aqui el censo no lo ve; el
+  # veredicto lo decide `wired_via` mas abajo.
+  builder_agent: scripts/builder_agent.py
 
 wired_via:
+  # WOT-2026-058v: guard preventivo de ARRANQUE. Su camino que corre solo es la
+  # ejecucion del propio CLI: `python scripts/builder_agent.py
+  # --flight-launch-context <ctx.json>` ejecuta main() y el guard corre como
+  # paso 0, ANTES de cualquier trabajo (exit 1 nombrando el plan si el vuelo no
+  # cita un DAG validado o el DAG citado no resuelve a fichero bajo
+  # orchestrator_pipeline/flight_plans/**). El AST de 1-hop no puede deducir
+  # este cableado: la invocacion es el __main__ del propio modulo, no un import
+  # desde la frontera. Sin AST no hay des-cableado automatico para esta via; el
+  # probe de abajo es el verificador.
+  builder_agent: >-
+    scripts/builder_agent.py:136-144 (main() paso 0:
+    check_flight_launch_prerequisites(Path(args.flight_launch_context)) ->
+    exit 1 si devuelve hallazgos; la definicion vive en :53). Probe:
+    python scripts/builder_agent.py --flight-launch-context <ctx-sin-dag.json>
+    -> exit 1 con "[LAUNCH-GUARD] ERROR" y el nombre del plan; con el DAG
+    persistido bajo flight_plans/ -> "[OK] Launch guard" y el arranque sigue.
   # check_loop_bundle_protocol (2026-08-05): import LAZY dentro del handler de
   # `loop-round`, no en el modulo -- por eso el AST de 1-hop no lo alcanza. Es un
   # camino que corre solo: TODA ronda de bucle pasa por ahi antes de despachar.
