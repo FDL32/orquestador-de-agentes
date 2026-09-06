@@ -1490,12 +1490,19 @@ def _contract_block_for_ticket(text: str, ticket_id: str) -> str | None:
 def _declared_authority_from_surfaces(
     ticket_id: str, surfaces: list[Path]
 ) -> str | None:
-    """Primer valor declarado entre superficies; nunca lanza; read-only.
+    """Valor declarado entre superficies, con precedencia y deteccion de
+    conflicto; nunca lanza; read-only.
 
     Un work_plan solo cuenta si declara `ticket_id` como su `**ID:**` (el plan
-    activo de OTRO ticket no es contrato de este). Un bloque de contracts que
-    existe pero no declara el campo degrada a None: cae en D2, no en un default.
+    de OTRO ticket no es contrato de este; ese guard tambien neutraliza una
+    colision de nombre del glob `work_plan_<ID>*.md` con un vecino). Si DOS
+    superficies declaran valores DISTINTOS no hay veredicto: None ->
+    fail-closed (D2). Nunca first-wins silencioso sobre una discordancia
+    (review del Manager, B2 de WOT-2026-066i): un work_plan archivado no puede
+    pisar al contrato frozen vigente, y dos valores en pugna no se resuelven
+    por orden de lectura.
     """
+    first: str | None = None
     for path in surfaces:
         try:
             content = path.read_text(encoding="utf-8")
@@ -1511,26 +1518,35 @@ def _declared_authority_from_surfaces(
                 continue
             content = block
         value = _read_declared_authority_value(content)
-        if value is not None:
-            return value
-    return None
+        if value is None:
+            continue
+        if first is None:
+            first = value
+        elif value != first:
+            return None
+    return first
 
 
 def _glob_work_plans(base: Path, ticket_id: str) -> list[Path]:
     """`work_plan_<ID>*.md` bajo `base`; [] si la superficie no existe o no es
-    legible (nunca lanza)."""
+    legible (nunca lanza). Los hits pasan ademas el guard del `**ID:**` dentro
+    del fichero, asi que un vecino cuyo nombre colisione no declara autoridad."""
     try:
         return sorted(base.glob(f"work_plan_{ticket_id}*.md"))
     except OSError:
         return []
 
 
-def _work_plan_surfaces(root: Path, ticket_id: str) -> list[Path]:
-    """Superficies work_plan de `root` para `ticket_id`: el plan vivo y sus
-    hermanos archivados (`work_plan_<ID>*.md`, vivo y en `_archive/` -- M3:
-    el fichero vivo escaso no es diagnostico, su archive hermano si)."""
+def _root_authority_surfaces(root: Path, ticket_id: str) -> list[Path]:
+    """Superficies de `root` para `ticket_id`, en orden de precedencia
+    (review del Manager, B2 de WOT-2026-066i): el plan vivo activo es el
+    contrato en fuerza; los ficheros per-ticket vivos le siguen; el contrato
+    FROZEN es la fuente canonica cuando no hay nada vivo; el work_plan
+    ARCHIVADO es el ultimo recurso historico y NUNCA pisa al frozen.
+    """
     surfaces = [root / ".agent" / "collaboration" / "work_plan.md"]
     surfaces.extend(_glob_work_plans(root / ".agent" / "collaboration", ticket_id))
+    surfaces.append(root / ".agent" / "planning" / "ticket_contracts.md")
     surfaces.extend(
         _glob_work_plans(root / ".agent" / "collaboration" / "_archive", ticket_id)
     )
@@ -1546,30 +1562,34 @@ def _read_declared_delivery_authority(
 ) -> str | None:
     """Lee el `delivery_authority` DECLARADO para `ticket_id` (WOT-2026-066i D1).
 
-    Superficies, en orden; la primera que declara gana:
+    Superficies de cada raiz, en orden de precedencia (B2 del review): el plan
+    vivo activo, los ficheros per-ticket vivos, el contrato frozen
+    (`ticket_contracts.md`), y los work_plan archivados al final -- un plan
+    archivado NUNCA pisa al contrato frozen vigente. Si dos superficies
+    declaran valores distintos, el lector devuelve None (fail-closed, D2).
 
-      1. `<project_root>/.agent/collaboration/work_plan.md` -- SOLO si el plan
-         declara `ticket_id` como su `**ID:**` (el plan activo de la sesion).
-      2. Los work_plan archivados de ese ticket junto al vivo
-         (`work_plan_<ID>*.md`, vivo y en `_archive/`): la superficie real de
-         los tickets historicos (medido 2026-09-06: el contrato de un ticket
-         de prefijo ajeno entregado al motor vive en el work_plan archivado
-         del propio destino, con el campo declarado).
-      3. `<project_root>/.agent/planning/ticket_contracts.md` -- el bloque cuyo
-         campo `ticket_id:` (o cabecera) es `ticket_id`.
-      4. El DESTINO propio del ticket (`resolve_prefix`), mismas superficies --
+    Raices consultadas, en orden; la primera que declara un valor univoco gana:
+
+      1. ``project_root`` -- plan vivo SOLO si el plan declara `ticket_id`
+         como su `**ID:**` (el plan activo de la sesion).
+      2. Los work_plan de ese ticket junto al vivo y en `_archive/`
+         (`work_plan_<ID>*.md`): la superficie real de los tickets historicos
+         (medido 2026-09-06: el contrato de un ticket de prefijo ajeno
+         entregado al motor vive en el work_plan archivado del propio destino,
+         con el campo declarado).
+      3. El DESTINO propio del ticket (`resolve_prefix`), mismas superficies --
          leer contratos alojados en un destino es explicitamente legitimo
          (contrato WOT-2026-066i). Se omite cuando resuelve a project_root
-         (ya cubierto por 1-3).
+         (ya cubierto por 1-2).
 
     After: devuelve `repo_motor` / `repo_destino`, o None cuando NINGUNA
-    superficie declara el campo: el llamante debe fallar cerrado (D2), nunca
-    aplicar un default. Nunca lanza; cada fallo de lectura degrada a
-    "superficie ausente". Read-only.
+    superficie lo declara (o dos discrepan): el llamante debe fallar cerrado
+    (D2), nunca aplicar un default. Nunca lanza; cada fallo de lectura degrada
+    a "superficie ausente". Read-only.
     """
-    surfaces = _work_plan_surfaces(project_root, ticket_id)
-    surfaces.append(project_root / ".agent" / "planning" / "ticket_contracts.md")
-    declared = _declared_authority_from_surfaces(ticket_id, surfaces)
+    declared = _declared_authority_from_surfaces(
+        ticket_id, _root_authority_surfaces(project_root, ticket_id)
+    )
     if declared is not None:
         return declared
 
@@ -1587,9 +1607,42 @@ def _read_declared_delivery_authority(
         dest = None
     if dest is None or dest == project_root:
         return None
-    dest_surfaces = _work_plan_surfaces(dest, ticket_id)
-    dest_surfaces.append(dest / ".agent" / "planning" / "ticket_contracts.md")
-    return _declared_authority_from_surfaces(ticket_id, dest_surfaces)
+    return _declared_authority_from_surfaces(
+        ticket_id, _root_authority_surfaces(dest, ticket_id)
+    )
+
+
+def _absence_fail_detail(ticket_id: str) -> str:
+    """Detail fail-closed de D2: ticket sin `delivery_authority` declarado.
+
+    Unico texto para las DOS ramas de ausencia (topologia trivial y two-repo):
+    la ausencia nunca se resuelve con un default, ni siquiera cuando hay una
+    sola raiz candidata (review del Manager, B1 de WOT-2026-066i).
+    """
+    return (
+        f"FAIL_TARGETS_MISSING: {ticket_id} no declara delivery_authority "
+        "en ninguna superficie de contrato legible; se rechaza adivinar la "
+        "raiz autoritativa desde el prefijo del id (WOT-2026-066i D2; "
+        "un default silencioso esta prohibido en un guard fail-closed)"
+    )
+
+
+def _resolve_trivial_topology(
+    ticket_id: str,
+    motor_root: Path,
+    declared_authority: str | None,
+) -> tuple[Path, Path | None, bool, str, str]:
+    """Rama de topologia trivial (``project_root == motor_root``), separada
+    por reparto de ciclomatica (precedente `prepush_check._loop_accreditation_
+    failures`). Un despliegue de repo unico concentra todas las superficies de
+    entrega; repo_motor y repo_destino denotan el MISMO repo fisico. Valor
+    declarado -> la unica raiz candidata. Ausencia -> fail-closed (D2): aqui
+    es donde el default silencioso estaria escondido, y ahi es donde se
+    prohibe (B1 del review del Manager).
+    """
+    if declared_authority is None:
+        return motor_root, None, False, "", _absence_fail_detail(ticket_id)
+    return motor_root, None, False, "", ""
 
 
 def _resolve_authoritative_repo(
@@ -1616,16 +1669,22 @@ def _resolve_authoritative_repo(
         valor leido de las superficies de contrato del ticket
         (``_read_declared_delivery_authority``): ``repo_motor``,
         ``repo_destino``, o None cuando ninguna superficie lo declara.
-    During: Topologia trivial (``project_root == motor_root``): hay una unica
-        raiz candidata, no hay nada que resolver mal. ``repo_motor`` ->
-        motor_root, con el destino resuelto por prefijo como raiz de control
-        (best-effort: un destino no resoluble solo desactiva el control).
-        ``repo_destino`` -> la raiz destino resuelta por prefijo, con
-        motor_root de control; si el destino no puede localizarse, el gate
-        falla cerrado.         ``None`` (ausencia) es fail-closed (D2): el quinto
-        elemento lleva un detail ``FAIL_TARGETS_MISSING`` que NOMBRA el
-        ticket -- nunca un default, nunca "vuelvo al prefijo" (el CG que
-        prohibe el default silencioso en un guard fail-closed).
+    During: Topologia trivial (``project_root == motor_root``): un despliegue
+        de repo unico concentra todas las superficies de entrega, y
+        ``repo_motor`` y ``repo_destino`` denotan el MISMO repo fisico, asi
+        que cualquier valor DECLARADO se satisface con la unica raiz
+        candidata. La AUSENCIA, en cambio, sigue siendo fail-closed (D2) con
+        el detail de ``_absence_fail_detail``: la topologia trivial NO
+        convierte la ausencia en default -- es la rama donde nadie mira, y el
+        CG prohibe el default silencioso justo ahi (review del Manager, B1).
+        ``repo_motor`` (two-repo) -> motor_root, con el destino resuelto por
+        prefijo como raiz de control (best-effort: un destino no resoluble
+        solo desactiva el control). ``repo_destino`` (two-repo) -> la raiz
+        destino resuelta por prefijo, con motor_root de control; si el destino
+        no puede localizarse, el gate falla cerrado. ``None`` (ausencia,
+        two-repo) es fail-closed (D2): el quinto elemento lleva un detail
+        ``FAIL_TARGETS_MISSING`` que NOMBRA el ticket -- nunca un default,
+        nunca "vuelvo al prefijo".
     After: ``(authoritative_root, other_root_for_control, skip, warn_detail,
         fail_detail)``. ``fail_detail`` no vacio obliga al llamante a
         convertirlo en FAIL bloqueante. ``skip``/``warn_detail`` se conservan
@@ -1633,9 +1692,7 @@ def _resolve_authoritative_repo(
         WARN-skip de prefijo no resoluble.
     """
     if project_root is not None and project_root == motor_root:
-        # Topologia trivial: un despliegue de repo unico concentra todas las
-        # superficies de entrega; no hay segunda raiz contra la que errar.
-        return motor_root, None, False, "", ""
+        return _resolve_trivial_topology(ticket_id, motor_root, declared_authority)
     if declared_authority == "repo_motor":
         other: Path | None = None
         if extract_prefix_fn is not None and resolve_prefix_fn is not None:
@@ -1672,12 +1729,7 @@ def _resolve_authoritative_repo(
         None,
         False,
         "",
-        (
-            f"FAIL_TARGETS_MISSING: {ticket_id} no declara delivery_authority "
-            "en ninguna superficie de contrato legible; se rechaza adivinar la "
-            "raiz autoritativa desde el prefijo del id (WOT-2026-066i D2; "
-            "un default silencioso esta prohibido en un guard fail-closed)"
-        ),
+        _absence_fail_detail(ticket_id),
     )
 
 

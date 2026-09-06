@@ -108,6 +108,7 @@ def test_writer_declares_the_ticket_commit(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     sha = _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999a: implement feature")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -177,6 +178,7 @@ def test_control_negative_ticket_with_no_commits_no_file(tmp_path: Path) -> None
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-777z", "repo_motor")
 
     result = session_closeout._step_write_loop_execution_targets(
         repo, ["WOT-2026-777z"], None, False
@@ -211,6 +213,7 @@ def test_no_self_dirty_when_gitignored(tmp_path: Path) -> None:
         capture_output=True,
     )
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999a: implement feature")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -240,6 +243,7 @@ def test_deliverable_type_from_backlog_row(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999b", "repo_motor")
     sha = _commit_file(repo, "docs/x.md", "# doc", "WOT-2026-999b: write docs")
     backlog_path = repo / session_closeout.BACKLOG_REL
     backlog_path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,6 +272,7 @@ def test_deliverable_type_fallback_to_code_without_backlog_row(
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999c", "repo_motor")
     sha = _commit_file(
         repo, "src/b.py", "y = 2", "WOT-2026-999c: implement without backlog row"
     )
@@ -291,6 +296,7 @@ def test_idempotent_rewrite_no_duplicates(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999a: implement feature")
 
     first = session_closeout._step_write_loop_execution_targets(
@@ -324,6 +330,7 @@ def test_window_none_declares_all_matching_commits(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999d", "repo_motor")
     # Backdate the commit far in the past; with no window filter it must
     # still be declared.
     old_date = "2000-01-01T00:00:00"
@@ -377,6 +384,7 @@ def test_window_with_date_excludes_older_commits(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999e", "repo_motor")
     old_date = "2000-01-01T00:00:00"
     (repo / "src").mkdir(exist_ok=True)
     (repo / "src" / "old.py").write_text("z = 1")
@@ -691,6 +699,7 @@ def test_control_query_skipped_when_same_repo(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "CTL-2026-003", "repo_motor")
 
     def _fake_resolve_prefix(prefix, _motor_root):
         return _motor_root  # resolves to same repo
@@ -768,6 +777,7 @@ def test_mencion_en_prosa_del_cuerpo_no_es_entrega(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     _commit_file(
         repo,
         "src/otro.py",
@@ -796,6 +806,7 @@ def test_trailer_estructurado_si_es_entrega(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     sha = _commit_file(
         repo,
         "src/b.py",
@@ -818,6 +829,7 @@ def test_subject_sigue_siendo_entrega(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     sha = _commit_file(repo, "src/c.py", "w = 4", "WOT-2026-999a: el caso normal")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -838,6 +850,7 @@ def test_substring_accidental_no_es_entrega(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     _commit_file(repo, "src/d.py", "v = 5", "WOT-2026-999ab: otro ticket distinto")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -863,6 +876,7 @@ def test_f1b_ambito_vaciado_falla_en_vez_de_borrar(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-000z", "repo_motor")
     _commit_file(repo, "src/e.py", "u = 6", "WOT-2026-777a: algo")
 
     targets_path = repo / TARGETS_REL
@@ -890,6 +904,7 @@ def test_f1b_no_dispara_si_no_habia_targets(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-000z", "repo_motor")
     _commit_file(repo, "src/f.py", "t = 7", "WOT-2026-777a: algo")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -913,6 +928,7 @@ def test_f1b_alcance_declarado_ticket_sin_commits_es_legitimo(tmp_path: Path) ->
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     _commit_file(repo, "src/g.py", "s = 8", "otro: nada que ver con el ticket")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -932,6 +948,7 @@ def test_refs_no_es_entrega(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     _commit_file(
         repo,
         "src/h.py",
@@ -954,6 +971,7 @@ def test_frontera_no_deja_pasar_guion_bajo(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
     _commit_file(repo, "src/i.py", "q = 10", "merge de WOT-2026-999a_fix en main")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -1148,3 +1166,88 @@ def test_sha_absent_in_both_roots_still_aborts(tmp_path: Path) -> None:
         f"(WOT-2026-059b no se relaja): {result.output}"
     )
     assert ghost in result.output
+
+
+def test_trivial_topology_declared_repo_destino_resolves_single_root(
+    tmp_path: Path,
+) -> None:
+    """B1: en topologia trivial (repo unico), un ticket que DECLARA
+    `repo_destino` resuelve a la unica raiz candidata -- en ese despliegue
+    repo_motor y repo_destino denotan el MISMO repo fisico, asi que el valor
+    declarado se satisface. Y el ticket SIN declaracion SIGUE fallando
+    cerrado: la topologia trivial NO convierte la ausencia en un default
+    silencioso (rama B1 del review del Manager: las tres ramas tenian el
+    mismo cuerpo y la ausencia pasaba sin veredicto).
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-667a", "repo_destino")
+    sha = _commit_file(
+        repo, "src/a.py", "x = 1", "WOT-2026-667a: entrega en el unico repo"
+    )
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-667a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert sha in (repo / TARGETS_REL).read_text(encoding="utf-8")
+
+
+def test_trivial_topology_without_declared_authority_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """B1: en topologia trivial la AUSENCIA de `delivery_authority` tambien es
+    fail-closed (D2). La unica raiz candidata no autoriza un default: es la
+    rama donde nadie miraba, y ahi es donde el CG prohibe el default.
+
+    Antes del fix B1 este caso devolvia motor_root con fail_detail vacio para
+    los TRES valores de `declared_authority` (None/repo_motor/repo_destino):
+    la rama ignoraba el campo declarado entero.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-667b: feature")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-667b"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert "WOT-2026-667b" in result.detail
+    assert not (repo / TARGETS_REL).exists()
+
+
+def test_neighbor_archive_plan_does_not_leak_authority(tmp_path: Path) -> None:
+    """B3: el glob `work_plan_<ID>*.md` no puede devolver la autoridad de un
+    ticket VECINO. El fichero del vecino (otro id completo) ni siquiera entra
+    en las superficies del glob, y el guard del `**ID:**` dentro del fichero
+    neutralizaria una colision de nombre. El ticket sin declaracion propia
+    cae en D2 (FAIL), nunca hereda la del vecino.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    archive = repo / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "work_plan_WOT-2026-666y_COMPLETED.md").write_text(
+        "# Plan de Trabajo: WOT-2026-666y\n\n## Metadata\n"
+        "- **ID:** WOT-2026-666y\n"
+        "- **delivery_authority:** repo_destino\n",
+        encoding="utf-8",
+    )
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-666x: feature del vecino")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-666x"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert "WOT-2026-666x" in result.detail
+    assert "WOT-2026-666y" not in result.detail
