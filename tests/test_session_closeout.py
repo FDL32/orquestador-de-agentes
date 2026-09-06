@@ -1743,6 +1743,29 @@ class TestSessionCloseRecorded058j:
         # A previous close report anchors the window BEFORE the commit.
         _write_report(destino, "2026-05-27 00:00:00 UTC")
         _write_work_plan(destino, "WOT-2026-058j")
+        # WOT-2026-066i: el escritor de targets resuelve la raiz por el
+        # `delivery_authority` DECLARADO del contrato del ticket (D2: la
+        # ausencia es fail-closed). Los commits de este fixture viven en el
+        # destino, asi que el contrato declara repo_destino y el link declara
+        # el prefijo WOT para que `resolve_prefix` localice esa raiz.
+        _link = destino / ".agent" / "config" / "motor_destination_link.json"
+        _link.parent.mkdir(parents=True, exist_ok=True)
+        _link.write_text(
+            json.dumps(
+                {
+                    "motor_root": str(motor),
+                    "ticket_prefix": "WOT",
+                    "destination_root": str(destino),
+                }
+            ),
+            encoding="utf-8",
+        )
+        _plan = destino / ".agent" / "collaboration" / "work_plan.md"
+        _plan.write_text(
+            "# Work Plan\n\n## Metadata\n- **ID:** WOT-2026-058j\n"
+            "- **Estado:** APPROVED\n- **delivery_authority:** repo_destino\n",
+            encoding="utf-8",
+        )
 
         with (
             patch("scripts.session_closeout._run_script", side_effect=_success_runner),

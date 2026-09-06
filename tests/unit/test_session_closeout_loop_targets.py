@@ -467,6 +467,22 @@ def _write_work_plan(project_root: Path, ticket_id: str) -> None:
     )
 
 
+def _declare_authority(project_root: Path, ticket_id: str, authority: str) -> None:
+    """Escribe el work_plan activo del fixture declarando `delivery_authority`.
+
+    WOT-2026-066i (D1): la resolucion de raiz se lee de este campo DECLARADO;
+    los fixtures que ejercitan la resolucion deben declararlo, igual que un
+    contrato real. Sin la declaracion, el ticket cae en D2 (fail-closed).
+    """
+    wp_dir = project_root / ".agent" / "collaboration"
+    wp_dir.mkdir(parents=True, exist_ok=True)
+    (wp_dir / "work_plan.md").write_text(
+        f"# Work Plan\n\n## Metadata\n- **ID:** {ticket_id}\n"
+        f"- **delivery_authority:** {authority}\n",
+        encoding="utf-8",
+    )
+
+
 def test_run_closeout_calls_writer_before_prepush(tmp_path: Path, monkeypatch) -> None:
     """`run_closeout` must call `_step_write_loop_execution_targets` with the
     resolved `project_root`, `ticket_ids` and `_window_start`, and it must do
@@ -530,17 +546,19 @@ def test_run_closeout_calls_writer_before_prepush(tmp_path: Path, monkeypatch) -
 
 
 def test_non_wot_ticket_commits_in_destino(tmp_path: Path) -> None:
-    """Non-WOT ticket with commits in the destino (resolved by prefix) but
-    NOT in the motor -> PASS with targets written.
+    """Non-WOT ticket DECLARING `delivery_authority: repo_destino` with commits
+    in the destino but NOT in the motor -> PASS with targets written.
 
-    The writer must resolve the authoritative repo by prefix, not always
-    use motor_root.
+    WOT-2026-066i (D1): the writer resolves the authoritative repo from the
+    DECLARED field, not from the prefix (the prefix only LOCATES the
+    destination). This is the declared-destino path: the field decides.
     """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
     _init_git_repo(motor)
     _init_git_repo(destino)
     _link_motor(destino, motor)
+    _declare_authority(destino, "CTL-2026-001", "repo_destino")
 
     sha = _commit_file(destino, "src/a.py", "x = 1", "CTL-2026-001: fix bug")
 
@@ -596,14 +614,20 @@ def test_non_wot_ticket_commits_in_motor_is_fail(tmp_path: Path) -> None:
 
 
 def test_wot_ticket_commits_in_motor_two_repos(tmp_path: Path) -> None:
-    """WOT ticket with commits in the motor (correct) but NOT in the
-    destino -> PASS. WOT is special: always resolves to motor_root.
+    """WOT ticket DECLARING `delivery_authority: repo_motor` with commits in
+    the motor (correct) but NOT in the destino -> PASS.
+
+    WOT-2026-066i (D1/D5): PASS por el CAMPO DECLARADO, no por un caso especial
+    de prefijo. La declaracion en el fixture es load-bearing: la mutacion D5(ii)
+    (neutralizar la lectura del campo) debe hacer CAER este test -- si sigue
+    verde bajo la mutacion, esta pasando por un hardcode `WOT-` que D1 retira.
     """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
     _init_git_repo(motor)
     _init_git_repo(destino)
     _link_motor(destino, motor)
+    _declare_authority(destino, "WOT-2026-999a", "repo_motor")
 
     sha = _commit_file(motor, "src/a.py", "x = 1", "WOT-2026-999a: feature")
 
@@ -616,8 +640,19 @@ def test_wot_ticket_commits_in_motor_two_repos(tmp_path: Path) -> None:
     assert sha in content, f"sha {sha} missing from {content!r}"
 
 
-def test_unresolvable_prefix_gives_warn(tmp_path: Path) -> None:
-    """A ticket with an unresolvable prefix -> WARN, ticket skipped, no file."""
+def test_unresolvable_prefix_without_declared_authority_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Ticket con prefijo no resoluble y SIN `delivery_authority` declarado
+    -> FAIL blocking, nombrando el ticket.
+
+    WOT-2026-066i (D2): la rama WARN-skip de prefijo no resoluble queda
+    RETIRADA -- la ausencia del campo declarado es fail-closed (el censo D5 del
+    contrato: los tickets sin campo "caen en D2"). Un skip silencioso dejaria
+    fuera del ambito los commits de un ticket que el cierre no sabe donde
+    buscar: el falso verde exacto que D2 impide. (Antes de 066i este caso
+    devolvia WARN_PREFIX_UNRESOLVABLE; ver execution_log del ticket.)
+    """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
     _init_git_repo(motor)
@@ -637,14 +672,21 @@ def test_unresolvable_prefix_gives_warn(tmp_path: Path) -> None:
             destino, ["ZZZ-2026-001"], None, False
         )
 
-    assert result.status == "WARN", result.detail
-    assert "WARN_PREFIX_UNRESOLVABLE" in result.detail
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert "ZZZ-2026-001" in result.detail
     assert not (destino / TARGETS_REL).exists()
 
 
 def test_control_query_skipped_when_same_repo(tmp_path: Path) -> None:
-    """When resolve_prefix returns the same path as motor_root, the control
-    query is skipped (same repo = no meaningful 'other' to check).
+    """When the resolved root IS the motor root (single-repo topology,
+    project_root == motor_root), the control query is skipped: same repo =
+    no meaningful 'other' to check.
+
+    WOT-2026-066i: this is now the TRIVIAL-topology branch of
+    `_resolve_authoritative_repo` -- one candidate root, nothing to
+    misresolve, no declaration required.
     """
     repo = tmp_path / "repo"
     _init_git_repo(repo)
@@ -665,20 +707,28 @@ def test_control_query_skipped_when_same_repo(tmp_path: Path) -> None:
     assert not (repo / TARGETS_REL).exists()
 
 
-def test_mixed_results_one_warn_one_pass(tmp_path: Path) -> None:
-    """Two tickets: one with unresolvable prefix (WARN), one WOT with commits
-    (PASS). The overall status is WARN, and the file is written for the
-    resolved ticket only.
+def test_mixed_results_one_fail_one_pass(tmp_path: Path) -> None:
+    """Two tickets: one WITHOUT declared authority (D2 -> FAIL), one WOT
+    DECLARING repo_motor with commits (PASS). Overall status is FAIL
+    blocking, the detail names the failed ticket, and the targets file is
+    NOT written (a batch with a misresolved ticket writes no partial scope).
+
+    WOT-2026-066i: antes de D2 el ticket sin campo daba WARN
+    (WARN_PREFIX_UNRESOLVABLE) y el mixto salia WARN con fichero escrito; la
+    ausencia declarada ahora es fail-closed.
     """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
     _init_git_repo(motor)
     _init_git_repo(destino)
     _link_motor(destino, motor)
+    _declare_authority(destino, "WOT-2026-999c", "repo_motor")
 
     sha = _commit_file(motor, "src/a.py", "x = 1", "WOT-2026-999c: feature")
 
     def _fake_resolve_prefix(prefix, _motor_root):
+        if prefix == "WOT":
+            return destino
         return None  # all non-WOT fail
 
     with (
@@ -689,10 +739,14 @@ def test_mixed_results_one_warn_one_pass(tmp_path: Path) -> None:
             destino, ["ZZZ-2026-001", "WOT-2026-999c"], None, False
         )
 
-    assert result.status == "WARN", result.detail
-    assert "WARN_PREFIX_UNRESOLVABLE" in result.detail
-    content = (destino / TARGETS_REL).read_text(encoding="utf-8")
-    assert sha in content
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert "ZZZ-2026-001" in result.detail
+    assert not (destino / TARGETS_REL).exists(), (
+        "un lote con un ticket sin raiz resuelta no escribe un ambito parcial"
+    )
+    assert sha  # el commit del ticket declarado existe en el motor (fixture)
 
 
 # ---------------------------------------------------------------------------
@@ -910,3 +964,187 @@ def test_frontera_no_deja_pasar_guion_bajo(tmp_path: Path) -> None:
     assert not (repo / TARGETS_REL).exists(), (
         "`WOT-2026-999a_fix` es un nombre de rama, no una entrega"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-066i: la raiz autoritativa se resuelve por el `delivery_authority`
+# DECLARADO del contrato del ticket (D1); la ausencia es fail-closed (D2); el
+# caso especial hardcodeado de `WOT-` muere POR COMPORTAMIENTO (D5).
+# ---------------------------------------------------------------------------
+
+
+def test_declared_repo_motor_resolves_to_motor(tmp_path: Path) -> None:
+    """D1: un ticket que DECLARA `delivery_authority: repo_motor` resuelve al
+    MOTOR aunque su prefijo resuelva al destino: sin FAIL_TARGETS_MISSING.
+
+    Regression medida en el corpus real (premisa de WOT-2026-066i):
+    CTL-2026-027b declara repo_motor y la resolucion por prefijo mandaba el
+    gate al destino -> FAIL_TARGETS_MISSING bloqueante (ROJO sin el fix).
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    _declare_authority(destino, "CTL-2026-900b", "repo_motor")
+    sha = _commit_file(motor, "src/a.py", "x = 1", "CTL-2026-900b: fix bug")
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        if prefix == "CTL":
+            return destino
+        return None
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            destino, ["CTL-2026-900b"], None, False
+        )
+
+    assert result.status == "PASS", result.detail
+    assert "FAIL_TARGETS_MISSING" not in result.detail
+    content = (destino / TARGETS_REL).read_text(encoding="utf-8")
+    assert sha in content, f"sha {sha} missing from {content!r}"
+
+
+def test_declared_authority_read_from_destination_archive_plan(
+    tmp_path: Path,
+) -> None:
+    """D1: el campo declarado se lee del work_plan ARCHIVADO del propio
+    destino (`_archive/work_plan_<ID>_*.md`) -- la superficie real de los
+    tickets historicos (medido 2026-09-06 en el corpus: el contrato de un
+    ticket de prefijo ajeno entregado al motor vive en el work_plan archivado
+    de su destino). Sin esta superficie, un ticket cerrado caeria en D2.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    archive = destino / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "work_plan_CTL-2026-901a_COMPLETED.md").write_text(
+        "# Plan de Trabajo: CTL-2026-901a\n\n## Metadata\n"
+        "- **ID:** CTL-2026-901a\n"
+        "- **delivery_authority:** repo_motor\n",
+        encoding="utf-8",
+    )
+    sha = _commit_file(motor, "src/a.py", "x = 1", "CTL-2026-901a: fix bug")
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        if prefix == "CTL":
+            return destino
+        return None
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            destino, ["CTL-2026-901a"], None, False
+        )
+
+    assert result.status == "PASS", result.detail
+    assert "FAIL_TARGETS_MISSING" not in result.detail
+    assert sha in (destino / TARGETS_REL).read_text(encoding="utf-8")
+
+
+def test_declared_authority_read_from_frozen_contract_block(
+    tmp_path: Path,
+) -> None:
+    """D1/D9: el campo se lee del BLOQUE del contrato frozen en
+    `ticket_contracts.md` (la superficie de los 6 contratos `WOT-` que declaran
+    `repo_destino`). El bloque se empareja por su campo `ticket_id:` (o
+    cabecera), NUNCA por menciones del cuerpo (citas ajenas no son contrato).
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    contracts = destino / ".agent" / "planning" / "ticket_contracts.md"
+    contracts.parent.mkdir(parents=True, exist_ok=True)
+    contracts.write_text(
+        "# ticket_contracts.md\n\n"
+        "## T-902A-001 -- contrato de WOT-2026-902a\n\n"
+        "- **ticket_id:** WOT-2026-902a\n"
+        "- **status:** frozen\n"
+        "- **delivery_authority:** repo_destino\n"
+        "- Menciona a WOT-2026-999z como dependencia (NO es su contrato).\n",
+        encoding="utf-8",
+    )
+    sha = _commit_file(destino, "docs/x.md", "# doc", "WOT-2026-902a: write docs")
+
+    def _fake_resolve_prefix(prefix, _motor_root):
+        if prefix == "WOT":
+            return destino
+        return None
+
+    with (
+        patch("scripts.prefix_resolver.resolve_prefix", _fake_resolve_prefix),
+        patch("scripts.prefix_resolver.extract_prefix", lambda t: t.split("-")[0]),
+    ):
+        result = session_closeout._step_write_loop_execution_targets(
+            destino, ["WOT-2026-902a"], None, False
+        )
+
+    assert result.status == "PASS", result.detail
+    assert sha in (destino / TARGETS_REL).read_text(encoding="utf-8")
+
+
+def test_wot_without_declared_authority_fails_closed(tmp_path: Path) -> None:
+    """D5(i): fixture `WOT-` SIN `delivery_authority` declarado -> FAIL
+    blocking nombrando el ticket.
+
+    Con el caso especial hardcodeado vivo, el ticket resolveria motor_root y
+    daria PASS: este test MATA el hardcode por comportamiento (no por grep).
+    Bajo D2, la ausencia del campo declarado es fail-closed (un default
+    silencioso esta prohibido en un guard fail-closed; WOT-2026-066i D2).
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    _commit_file(motor, "src/a.py", "x = 1", "WOT-2026-666x: feature")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-666x"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert "WOT-2026-666x" in result.detail
+    assert not (destino / TARGETS_REL).exists()
+
+
+def test_sha_absent_in_both_roots_still_aborts(tmp_path: Path) -> None:
+    """D6 / WOT-2026-059b: un sha de targets que no resuelve en NINGUNA raiz
+    sigue ABORTANDO el cierre (fail-closed, nombrando el sha).
+
+    La nueva resolucion por `delivery_authority` declarado no relaja la
+    acreditacion por origen del CONSUMADOR del fichero de targets
+    (`run_loop_execution_check`, importado -- no modificado: Forbidden Surface).
+    """
+    from scripts.prepush_check import run_loop_execution_check
+
+    motor = tmp_path / "motor"
+    _init_git_repo(motor)
+    destino = tmp_path / "destino"
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    ghost = "f" * 40
+    targets_path = destino / TARGETS_REL
+    targets_path.parent.mkdir(parents=True, exist_ok=True)
+    targets_path.write_text(f"{ghost} code\n", encoding="utf-8")
+
+    result = run_loop_execution_check(destino)
+
+    assert result.passed is False, result.output
+    assert result.is_blocking is True, (
+        "un sha que no existe en NINGUNA raiz debe abortar el cierre "
+        f"(WOT-2026-059b no se relaja): {result.output}"
+    )
+    assert ghost in result.output

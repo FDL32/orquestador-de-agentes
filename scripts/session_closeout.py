@@ -1423,38 +1423,262 @@ def _git_log_shas_for_ticket(
     return _shas_that_deliver(result.stdout, ticket_id), ""
 
 
+# WOT-2026-066i (D1): el `delivery_authority` DECLARADO se lee con la MISMA
+# gramatica del parser existente `_read_delivery_authority`
+# (.agent/agent_controller.py:1295), que acepta `delivery_authority: <valor>` y
+# la forma castellana `Repo de autoridad: <valor>`. Se replica inline (regla de
+# la casa: importar agent_controller desde scripts/ no es una superficie de
+# import garantizada; precedentes replican el criterio con cita), MINUS su
+# `default=`: D2 prohibe un default silencioso en un guard fail-closed, asi que
+# la AUSENCIA debe seguir observable (None) y no colapsar a un valor.
+_DELIVERY_AUTHORITY_DECLARED_RE = re.compile(
+    r"(?:delivery_authority|repo\s+de\s+autoridad)\s*:?\**\s*"
+    r"(`?)(repo_motor|repo_destino)\1",
+    re.IGNORECASE,
+)
+
+# El work_plan vivo declara su ticket como `- **ID:** <TICKET-ID>`.
+_WORK_PLAN_ID_RE = re.compile(r"\*\*ID:\*\*\s*([A-Z]{2,5}-\d{4}-\w+)", re.IGNORECASE)
+
+# Los bloques de contrato frozen declaran `- **ticket_id:** <TICKET-ID>`.
+_TICKET_ID_FIELD_RE = re.compile(
+    r"ticket_id:\s*\**\s*([A-Z]{2,5}-\d{4}-\w+)", re.IGNORECASE
+)
+
+
+def _read_declared_authority_value(content: str) -> str | None:
+    """Primer valor `delivery_authority` / `Repo de autoridad` del texto, o None.
+
+    Sin default: la ausencia es None y el llamante debe fallar cerrado (D2).
+    """
+    m = _DELIVERY_AUTHORITY_DECLARED_RE.search(content or "")
+    if m is None:
+        return None
+    return m.group(2).strip().lower()
+
+
+def _split_contract_blocks(text: str) -> list[str]:
+    """Divide ticket_contracts.md en bloques `## ` (precedente de la casa:
+    check_contract_backlog_reconcile.find_frozen_ids)."""
+    return [b for b in re.split(r"(?m)^## ", text or "") if b.strip()]
+
+
+def _contract_block_for_ticket(text: str, ticket_id: str) -> str | None:
+    """El bloque de contrato frozen que DECLARA `ticket_id`.
+
+    Primario: el campo `ticket_id:` del bloque. Fallback: el id en la LINEA DE
+    CABECERA del bloque, nunca el cuerpo (las dependencias y citas mencionan
+    ids ajenos; precedente `_extract_ticket_id` de
+    check_contract_backlog_reconcile). Gana el ultimo match: el fichero
+    acumula por orden cronologico.
+    """
+    found: str | None = None
+    for block in _split_contract_blocks(text):
+        m = _TICKET_ID_FIELD_RE.search(block)
+        if m is not None:
+            if m.group(1) == ticket_id:
+                found = block
+            continue
+        header = block.splitlines()[0] if block.splitlines() else ""
+        if re.search(
+            rf"(?<![0-9A-Za-z-]){re.escape(ticket_id)}(?![0-9A-Za-z_])", header
+        ):
+            found = block
+    return found
+
+
+def _declared_authority_from_surfaces(
+    ticket_id: str, surfaces: list[Path]
+) -> str | None:
+    """Primer valor declarado entre superficies; nunca lanza; read-only.
+
+    Un work_plan solo cuenta si declara `ticket_id` como su `**ID:**` (el plan
+    activo de OTRO ticket no es contrato de este). Un bloque de contracts que
+    existe pero no declara el campo degrada a None: cae en D2, no en un default.
+    """
+    for path in surfaces:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if path.name.startswith("work_plan"):
+            m = _WORK_PLAN_ID_RE.search(content)
+            if m is None or m.group(1) != ticket_id:
+                continue
+        elif path.name == "ticket_contracts.md":
+            block = _contract_block_for_ticket(content, ticket_id)
+            if block is None:
+                continue
+            content = block
+        value = _read_declared_authority_value(content)
+        if value is not None:
+            return value
+    return None
+
+
+def _glob_work_plans(base: Path, ticket_id: str) -> list[Path]:
+    """`work_plan_<ID>*.md` bajo `base`; [] si la superficie no existe o no es
+    legible (nunca lanza)."""
+    try:
+        return sorted(base.glob(f"work_plan_{ticket_id}*.md"))
+    except OSError:
+        return []
+
+
+def _work_plan_surfaces(root: Path, ticket_id: str) -> list[Path]:
+    """Superficies work_plan de `root` para `ticket_id`: el plan vivo y sus
+    hermanos archivados (`work_plan_<ID>*.md`, vivo y en `_archive/` -- M3:
+    el fichero vivo escaso no es diagnostico, su archive hermano si)."""
+    surfaces = [root / ".agent" / "collaboration" / "work_plan.md"]
+    surfaces.extend(_glob_work_plans(root / ".agent" / "collaboration", ticket_id))
+    surfaces.extend(
+        _glob_work_plans(root / ".agent" / "collaboration" / "_archive", ticket_id)
+    )
+    return surfaces
+
+
+def _read_declared_delivery_authority(
+    ticket_id: str,
+    project_root: Path,
+    motor_root: Path,
+    extract_prefix_fn,
+    resolve_prefix_fn,
+) -> str | None:
+    """Lee el `delivery_authority` DECLARADO para `ticket_id` (WOT-2026-066i D1).
+
+    Superficies, en orden; la primera que declara gana:
+
+      1. `<project_root>/.agent/collaboration/work_plan.md` -- SOLO si el plan
+         declara `ticket_id` como su `**ID:**` (el plan activo de la sesion).
+      2. Los work_plan archivados de ese ticket junto al vivo
+         (`work_plan_<ID>*.md`, vivo y en `_archive/`): la superficie real de
+         los tickets historicos (medido 2026-09-06: el contrato de un ticket
+         de prefijo ajeno entregado al motor vive en el work_plan archivado
+         del propio destino, con el campo declarado).
+      3. `<project_root>/.agent/planning/ticket_contracts.md` -- el bloque cuyo
+         campo `ticket_id:` (o cabecera) es `ticket_id`.
+      4. El DESTINO propio del ticket (`resolve_prefix`), mismas superficies --
+         leer contratos alojados en un destino es explicitamente legitimo
+         (contrato WOT-2026-066i). Se omite cuando resuelve a project_root
+         (ya cubierto por 1-3).
+
+    After: devuelve `repo_motor` / `repo_destino`, o None cuando NINGUNA
+    superficie declara el campo: el llamante debe fallar cerrado (D2), nunca
+    aplicar un default. Nunca lanza; cada fallo de lectura degrada a
+    "superficie ausente". Read-only.
+    """
+    surfaces = _work_plan_surfaces(project_root, ticket_id)
+    surfaces.append(project_root / ".agent" / "planning" / "ticket_contracts.md")
+    declared = _declared_authority_from_surfaces(ticket_id, surfaces)
+    if declared is not None:
+        return declared
+
+    if extract_prefix_fn is None or resolve_prefix_fn is None:
+        return None
+    try:
+        prefix = extract_prefix_fn(ticket_id)
+    except Exception:
+        return None
+    if prefix is None:
+        return None
+    try:
+        dest = resolve_prefix_fn(prefix, motor_root)
+    except Exception:
+        dest = None
+    if dest is None or dest == project_root:
+        return None
+    dest_surfaces = _work_plan_surfaces(dest, ticket_id)
+    dest_surfaces.append(dest / ".agent" / "planning" / "ticket_contracts.md")
+    return _declared_authority_from_surfaces(ticket_id, dest_surfaces)
+
+
 def _resolve_authoritative_repo(
     ticket_id: str,
     motor_root: Path,
     extract_prefix_fn,
     resolve_prefix_fn,
-) -> tuple[Path, Path | None, bool, str]:
-    """Resolve the authoritative repo for a ticket by its prefix.
+    declared_authority: str | None = None,
+    project_root: Path | None = None,
+) -> tuple[Path, Path | None, bool, str, str]:
+    """Resolve the authoritative repo for a ticket by its DECLARED
+    ``delivery_authority`` (WOT-2026-066i), not by its id prefix.
 
-    WOT-2026-048b. WOT- tickets always resolve to motor_root (special case:
-    their commits live in the motor even though resolve_prefix('WOT') returns
-    the workspace destination). Non-WOT prefixes resolve via prefix_resolver.
+    WOT-2026-048b resolvia por prefijo con un caso especial hardcodeado para
+    ``WOT-``. Eso ignoraba el campo que el propio contrato del ticket declara y
+    des-raizaba todo ticket cuyo repo de ENTREGA difiere de su prefijo de
+    ORIGEN (medido 2026-09-06: tickets de prefijo ajeno que declaran
+    ``repo_motor`` resolvian al destino y bloqueaban el cierre con
+    FAIL_TARGETS_MISSING). El prefijo DEJA de ser fuente de resolucion (D1):
+    solo LOCALIZA la raiz destino, que es un hecho de topologia
+    (prefix_resolver), no una decision de politica.
 
-    Returns (authoritative_root, other_root_for_control, skip, warn_detail).
+    Before: ``motor_root`` es una raiz resoluble; ``declared_authority`` es el
+        valor leido de las superficies de contrato del ticket
+        (``_read_declared_delivery_authority``): ``repo_motor``,
+        ``repo_destino``, o None cuando ninguna superficie lo declara.
+    During: Topologia trivial (``project_root == motor_root``): hay una unica
+        raiz candidata, no hay nada que resolver mal. ``repo_motor`` ->
+        motor_root, con el destino resuelto por prefijo como raiz de control
+        (best-effort: un destino no resoluble solo desactiva el control).
+        ``repo_destino`` -> la raiz destino resuelta por prefijo, con
+        motor_root de control; si el destino no puede localizarse, el gate
+        falla cerrado.         ``None`` (ausencia) es fail-closed (D2): el quinto
+        elemento lleva un detail ``FAIL_TARGETS_MISSING`` que NOMBRA el
+        ticket -- nunca un default, nunca "vuelvo al prefijo" (el CG que
+        prohibe el default silencioso en un guard fail-closed).
+    After: ``(authoritative_root, other_root_for_control, skip, warn_detail,
+        fail_detail)``. ``fail_detail`` no vacio obliga al llamante a
+        convertirlo en FAIL bloqueante. ``skip``/``warn_detail`` se conservan
+        por compatibilidad de forma y quedan inactivos: D2 retiro la rama
+        WARN-skip de prefijo no resoluble.
     """
-    if extract_prefix_fn is None or resolve_prefix_fn is None:
-        return motor_root, None, False, ""
-    prefix = extract_prefix_fn(ticket_id)
-    if prefix is None or prefix == "WOT":
-        return motor_root, None, False, ""
-    try:
-        resolved_dest = resolve_prefix_fn(prefix, motor_root)
-    except Exception:
-        resolved_dest = None
-    if resolved_dest is None:
-        return (
-            motor_root,
-            None,
-            True,
-            (f"WARN_PREFIX_UNRESOLVABLE: {ticket_id} (prefix={prefix}); skipping"),
-        )
-    other = motor_root if resolved_dest != motor_root else None
-    return resolved_dest, other, False, ""
+    if project_root is not None and project_root == motor_root:
+        # Topologia trivial: un despliegue de repo unico concentra todas las
+        # superficies de entrega; no hay segunda raiz contra la que errar.
+        return motor_root, None, False, "", ""
+    if declared_authority == "repo_motor":
+        other: Path | None = None
+        if extract_prefix_fn is not None and resolve_prefix_fn is not None:
+            try:
+                dest = resolve_prefix_fn(extract_prefix_fn(ticket_id), motor_root)
+            except Exception:
+                dest = None
+            if dest is not None and dest != motor_root:
+                other = dest
+        return motor_root, other, False, "", ""
+    if declared_authority == "repo_destino":
+        dest = None
+        if extract_prefix_fn is not None and resolve_prefix_fn is not None:
+            try:
+                dest = resolve_prefix_fn(extract_prefix_fn(ticket_id), motor_root)
+            except Exception:
+                dest = None
+        if dest is None:
+            return (
+                motor_root,
+                None,
+                False,
+                "",
+                (
+                    f"FAIL_TARGETS_MISSING: {ticket_id} declara "
+                    "delivery_authority repo_destino pero su prefijo no "
+                    "resuelve a ninguna raiz destino; no se adivina la raiz "
+                    "(WOT-2026-066i D2)"
+                ),
+            )
+        return dest, (motor_root if dest != motor_root else None), False, "", ""
+    return (
+        motor_root,
+        None,
+        False,
+        "",
+        (
+            f"FAIL_TARGETS_MISSING: {ticket_id} no declara delivery_authority "
+            "en ninguna superficie de contrato legible; se rechaza adivinar la "
+            "raiz autoritativa desde el prefijo del id (WOT-2026-066i D2; "
+            "un default silencioso esta prohibido en un guard fail-closed)"
+        ),
+    )
 
 
 @dataclass
@@ -1472,15 +1696,36 @@ def _process_ticket_targets(
     extract_prefix_fn,
     resolve_prefix_fn,
     since_args: list[str],
+    read_authority_fn=None,
 ) -> _TicketTargetResult:
     """Process a single ticket for loop execution targets.
 
-    WOT-2026-048b. Resolves the authoritative repo by prefix, searches for
-    commits, and runs a control query when the authoritative repo is empty.
+    WOT-2026-048b. WOT-2026-066i: resuelve la raiz autoritativa por el
+    `delivery_authority` DECLARADO del ticket (la ausencia es FAIL bloqueante,
+    D2), busca ahi los commits y corre una consulta de control cuando la raiz
+    autoritativa esta vacia.
     """
-    authoritative_root, other_root, skip, warn = _resolve_authoritative_repo(
-        ticket_id, motor_root, extract_prefix_fn, resolve_prefix_fn
+    if read_authority_fn is None:
+
+        def _default_read_authority(tid: str) -> str | None:
+            return _read_declared_delivery_authority(
+                tid, project_root, motor_root, extract_prefix_fn, resolve_prefix_fn
+            )
+
+        read_authority_fn = _default_read_authority
+    declared = read_authority_fn(ticket_id)
+    authoritative_root, other_root, skip, warn, fail_detail = (
+        _resolve_authoritative_repo(
+            ticket_id,
+            motor_root,
+            extract_prefix_fn,
+            resolve_prefix_fn,
+            declared_authority=declared,
+            project_root=project_root,
+        )
     )
+    if fail_detail:
+        return _TicketTargetResult([], "FAIL", fail_detail, blocking=True)
     if skip:
         return _TicketTargetResult([], "WARN", warn)
 
