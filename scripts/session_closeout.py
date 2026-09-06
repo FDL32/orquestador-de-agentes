@@ -1431,6 +1431,14 @@ def _git_log_shas_for_ticket(
 # import garantizada; precedentes replican el criterio con cita), MINUS su
 # `default=`: D2 prohibe un default silencioso en un guard fail-closed, asi que
 # la AUSENCIA debe seguir observable (None) y no colapsar a un valor.
+# WOT-2026-066i: los dos unicos valores canonicos de `delivery_authority`.
+# La regex de abajo ya solo captura estos dos, asi que hoy ningun valor ajeno
+# llega desde el parser real; la constante existe para que la rama de topologia
+# trivial no dependa de esa invariante REMOTA (leccion
+# `guard-behind-a-guard-clause-never-runs`: una comprobacion cuya garantia vive
+# en otra funcion deja de valer en cuanto alguien toca la otra funcion).
+_VALID_DELIVERY_AUTHORITIES = frozenset({"repo_motor", "repo_destino"})
+
 _DELIVERY_AUTHORITY_DECLARED_RE = re.compile(
     r"(?:delivery_authority|repo\s+de\s+autoridad)\s*:?\**\s*"
     r"(`?)(repo_motor|repo_destino)\1",
@@ -1640,8 +1648,21 @@ def _resolve_trivial_topology(
     es donde el default silencioso estaria escondido, y ahi es donde se
     prohibe (B1 del review del Manager).
     """
-    if declared_authority is None:
+    if not (declared_authority or "").strip():
         return motor_root, None, False, "", _absence_fail_detail(ticket_id)
+    if declared_authority not in _VALID_DELIVERY_AUTHORITIES:
+        return (
+            motor_root,
+            None,
+            False,
+            "",
+            (
+                f"FAIL_TARGETS_MISSING: {ticket_id} declara un "
+                f"delivery_authority no reconocido ({declared_authority!r}); "
+                "los valores canonicos son repo_motor y repo_destino. No se "
+                "adivina la raiz autoritativa (WOT-2026-066i D2)"
+            ),
+        )
     return motor_root, None, False, "", ""
 
 

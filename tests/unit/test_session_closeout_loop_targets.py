@@ -1251,3 +1251,128 @@ def test_neighbor_archive_plan_does_not_leak_authority(tmp_path: Path) -> None:
     assert "FAIL_TARGETS_MISSING" in result.detail
     assert "WOT-2026-666x" in result.detail
     assert "WOT-2026-666y" not in result.detail
+
+
+def test_frozen_contract_wins_over_archived_plan(tmp_path: Path) -> None:
+    """B2 (hallazgo del bucle L720, lente BA06): la PRECEDENCIA de superficies
+    esta pineada, no solo implementada.
+
+    Antes del fix, `_root_authority_surfaces` consultaba los work_plan
+    ARCHIVADOS ANTES que `ticket_contracts.md` con estrategia first-wins. El
+    fix invirtio el orden, pero NINGUN test lo protegia -- el mutation-verify
+    de la ronda 2 tumbaba 2 tests (B1 y B3) y ninguno de B2, asi que revertir
+    la precedencia salia VERDE. Este test cierra ese hueco.
+
+    Aqui el archivado EXISTE y es legible pero NO declara el campo: solo el
+    frozen puede aportar el valor. Asi el test fija el ORDEN sin solaparse con
+    el de conflicto (dos valores contradictorios dan None por diseno, que es
+    otra propiedad). Mutacion que debe matarlo: que el lector se detenga en la
+    primera superficie LEIDA en vez de en la primera que DECLARA.
+    """
+    root = tmp_path / "repo"
+    archive = root / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True)
+    planning = root / ".agent" / "planning"
+    planning.mkdir(parents=True)
+    ticket = "WOT-2026-902a"
+    # El ARCHIVADO existe y es legible, pero NO declara el campo.
+    (archive / f"work_plan_{ticket}_COMPLETED.md").write_text(
+        f"# Plan de Trabajo: {ticket}\n\n## Metadata\n"
+        f"- **ID:** {ticket}\n"
+        "- **Estado:** COMPLETED\n",
+        encoding="utf-8",
+    )
+    # Solo el FROZEN aporta el valor: si el lector se detuviera en la primera
+    # superficie LEIDA (en vez de la primera que DECLARA), esto daria None.
+    (planning / "ticket_contracts.md").write_text(
+        f"## {ticket} -- contrato vigente\n"
+        f"- **ticket_id:** {ticket}\n"
+        "- **status:** frozen\n"
+        "- **delivery_authority:** repo_motor\n",
+        encoding="utf-8",
+    )
+
+    got = session_closeout._read_declared_delivery_authority(
+        ticket, root, root, None, None
+    )
+
+    assert got == "repo_motor", (
+        "el contrato FROZEN vigente debe ganar al work_plan ARCHIVADO stale; "
+        f"se obtuvo {got!r}"
+    )
+
+
+def test_conflicting_surfaces_fail_closed_instead_of_first_wins(
+    tmp_path: Path,
+) -> None:
+    """B2 (segunda mitad): dos superficies con valores CONTRADICTORIOS no se
+    resuelven en silencio por orden -- se declaran indecidibles (None) y el
+    llamante cae en D2 (fail-closed).
+
+    Un first-wins sobre un conflicto elegiria un valor arbitrario y resolveria
+    una raiz que quiza no es la del ticket: exactamente el default silencioso
+    que `CG-CTL-2026-027b` prohibe en un guard fail-closed.
+    """
+    root = tmp_path / "repo"
+    collab = root / ".agent" / "collaboration"
+    collab.mkdir(parents=True)
+    planning = root / ".agent" / "planning"
+    planning.mkdir(parents=True)
+    ticket = "WOT-2026-902b"
+    # Plan VIVO per-ticket y contrato frozen se CONTRADICEN.
+    (collab / f"work_plan_{ticket}.md").write_text(
+        f"# Plan de Trabajo: {ticket}\n\n## Metadata\n"
+        f"- **ID:** {ticket}\n"
+        "- **delivery_authority:** repo_destino\n",
+        encoding="utf-8",
+    )
+    (planning / "ticket_contracts.md").write_text(
+        f"## {ticket} -- contrato vigente\n"
+        f"- **ticket_id:** {ticket}\n"
+        "- **status:** frozen\n"
+        "- **delivery_authority:** repo_motor\n",
+        encoding="utf-8",
+    )
+
+    got = session_closeout._read_declared_delivery_authority(
+        ticket, root, root, None, None
+    )
+
+    assert got is None, (
+        "un conflicto entre superficies debe ser indecidible (None -> D2), "
+        f"nunca resolverse por orden; se obtuvo {got!r}"
+    )
+
+
+def test_trivial_topology_rejects_unknown_authority_value(tmp_path: Path) -> None:
+    """B1 (defensa en profundidad, hallazgo convergente de BA15/BA16): la rama
+    de topologia trivial valida el VALOR, no solo su presencia.
+
+    Antes, cualquier string no-`None` -- cadena vacia, espacios, un typo como
+    `repo_moter` -- entraba por la rama feliz con `fail_detail` vacio: el
+    mismatch era indistinguible del match, y D2 exige que AMBOS fallen. Hoy el
+    regex del parser solo captura `repo_motor|repo_destino`, asi que la rama no
+    es alcanzable desde produccion; se pinea igual porque el guard no debe
+    depender de una invariante que vive en OTRA funcion (leccion
+    `guard-behind-a-guard-clause-never-runs`).
+    """
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    ticket = "WOT-2026-902c"
+
+    for bogus in ("", "   ", "repo_moter", "basura"):
+        _root, _other, _skip, _warn, fail_detail = (
+            session_closeout._resolve_trivial_topology(ticket, motor, bogus)
+        )
+        assert fail_detail, (
+            f"un valor de autoridad no reconocido ({bogus!r}) debe fallar "
+            "cerrado, no resolver la raiz en silencio"
+        )
+        assert ticket in fail_detail
+
+    # Control positivo: los dos valores canonicos SI resuelven.
+    for good in ("repo_motor", "repo_destino"):
+        _root, _other, _skip, _warn, fail_detail = (
+            session_closeout._resolve_trivial_topology(ticket, motor, good)
+        )
+        assert not fail_detail, f"{good!r} es canonico y debe resolver"
