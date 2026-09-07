@@ -102,3 +102,64 @@ def test_baseline_exempts_known_debt_but_not_new_leaks(tmp_path):
     assert "WOT-2026-053f" not in cgti.GHOST_BASELINE, (
         "053f se registro en el mismo acto: NO es deuda perdonada"
     )
+
+
+# ---------------------------------------------------------------------------
+# S1B item 4 (WOT-2026-058n DoD (b)): el check exige la LETRA terminal
+# ---------------------------------------------------------------------------
+
+
+def test_family_citation_is_not_a_ghost(tmp_path):
+    """Citar la FAMILIA en un commit es legitimo por contrato y NO es fantasma.
+
+    WOT-2026-058n DoD (b) + ampliacion 2026-09-07: `_TICKET_RE` declaraba la
+    letra OPCIONAL (`[a-z]?`), y esa era la CAUSA de que una cita de familia
+    contara como fantasma. Una familia (p.ej. `WOT-2026-054`, con 20 hijos con
+    fila) por definicion NUNCA tendra fila propia: el gate le exigia algo que
+    el contrato (AGENTS.md) le prohibe tener.
+
+    MUTACION declarada en la ficha: devolver la letra a OPCIONAL hace caer este
+    test -- la familia vuelve a recogerse como citada y a reportarse fantasma.
+    """
+    repo = _make_repo(tmp_path, ["WOT-2026-054: familia citada en el resumen"])
+    cited = cgti.collect_cited_ids(repo, 50)
+    assert cited is not None
+    assert "WOT-2026-054" not in cited, (
+        "la FAMILIA (sin letra) no es un id de ticket individual: no se recoge"
+    )
+
+
+def test_lettered_id_is_still_collected_next_to_its_family(tmp_path):
+    """CONTROL POSITIVO en el mismo acto: el id CON letra sigue recogiendose.
+    Sin esto, exigir la letra seria indistinguible de romper el match entero."""
+    repo = _make_repo(tmp_path, ["WOT-2026-054a: hijo con letra, individual"])
+    cited = cgti.collect_cited_ids(repo, 50)
+    assert cited is not None
+    assert "WOT-2026-054a" in cited
+
+
+def test_rows_without_letter_are_not_collected_either():
+    """La MISMA regla de la letra en `_ROW_RE`: una fila de FAMILIA (sin letra)
+    no cuenta como fila de ticket individual. Con la letra opcional, una fila
+    de familia habria "tenido fila" sin representar a ningun ticket."""
+    import re
+
+    row_family = "| Media | WOT-2026-054 | familia | - |\n"
+    row_child = "| WOT-2026-054a | completed | hijo |\n"
+    matches = [
+        m.group(1) or m.group(2) for m in cgti._ROW_RE.finditer(row_family + row_child)
+    ]
+    assert "WOT-2026-054" not in matches
+    assert "WOT-2026-054a" in matches
+    # y el patron de fila nuevo sigue siendo compatible con las DOS formas de
+    # celda (pinned por test_row_in_either_surface_clears_the_ghost)
+    assert re.search(cgti._ROW_RE, row_family) is None
+    assert re.search(cgti._ROW_RE, row_child) is not None
+
+
+def test_wot_045_left_the_baseline():
+    """WOT-2026-058n AMPLIACION: `WOT-2026-045` salio del baseline. El sintoma
+    (una cita de familia reportada fantasma) se BASELINEO en vez de arreglar el
+    patron; con la letra exigida la familia deja de ser citable y la entrada
+    quedaria muerta. La salimos en el mismo acto que arregla la causa."""
+    assert "WOT-2026-045" not in cgti.GHOST_BASELINE

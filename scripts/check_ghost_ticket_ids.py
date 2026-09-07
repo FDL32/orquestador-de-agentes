@@ -17,6 +17,11 @@ QUE MIDE Y QUE NO (frontera declarada, no es un detalle):
 - Mide la INTERSECCION: ids citados en los ultimos N commits que no tienen fila.
 - NO mide el inverso (filas sin commit): una ficha `pending` legitimamente no
   tiene commit todavia, asi que ese sentido no es una senal de nada.
+- NO mide FAMILIAS (`WOT-2026-054`, id sin letra terminal): por contrato
+  (AGENTS.md) una familia no es el artefacto de un ticket individual y NUNCA
+  tendra fila propia, asi que citarla en un commit es legitimo. Con la letra
+  OPCIONAL la guard las reportaba como fantasmas (WOT-2026-058n); con la letra
+  EXIGIDA quedan fuera del alcance, por contrato y no por omision.
 - La ventana de commits es finita (`--max-commits`): un id citado hace 2000
   commits y nunca fichado NO se detecta. Es un limite ASUMIDO -- el objetivo es
   cazar la fuga RECIENTE, que es cuando la correccion es barata, no auditar la
@@ -49,15 +54,25 @@ import sys
 from pathlib import Path
 
 
-# Un id CITADO en git pero sin fila. Se ancla al patron canonico `WOT-YYYY-NNNx`.
-_TICKET_RE = re.compile(r"\b(WOT-\d{4}-\d{3}[a-z]?)\b")
+# Un id CITADO en git pero sin fila. Se ancla al patron canonico `WOT-YYYY-NNNx`
+# CON LETRA TERMINAL. Las FAMILIAS (`WOT-2026-054`, sin letra) quedan FUERA del
+# alcance de este check por contrato (WOT-2026-058n DoD (b)): AGENTS.md --
+# "'Plan' NUNCA designa el artefacto de un ticket individual" -- y una familia
+# por definicion NUNCA tendra fila propia, luego el gate le exigia algo que el
+# contrato le prohibe tener; citarla en un commit es legitimo. La letra era
+# OPCIONAL y esa era la causa de que una cita de familia contara como fantasma
+# (medido 2026-09-07: 2 de los 5 fantasmas fuera de baseline eran familias,
+# `WOT-2026-054` y `WOT-2026-058`). Control positivo 2026-09-07: 0 filas sin
+# letra en 805 -- exigir la letra no rompe ninguna fila real.
+_TICKET_RE = re.compile(r"\b(WOT-\d{4}-\d{3}[a-z])\b")
 
 # Fila de tabla cuyo id vive en la celda 1 o 2: el archive tiene secciones con
 # `| Prioridad | Ticket | ...` y otras con `| Ticket | Estado | ...`. Cubrir
 # ambas es obligatorio -- medido: 5 filas cerradas viven en la segunda forma y un
 # regex que solo mirase la primera las daria por inexistentes (falso fantasma).
+# Misma regla de la LETRA TERMINAL que `_TICKET_RE` (WOT-2026-058n DoD (b)).
 _ROW_RE = re.compile(
-    r"^\|[^|]*\|\s*(WOT-\d{4}-\d{3}[a-z]?)\s*\|" r"|^\|\s*(WOT-\d{4}-\d{3}[a-z]?)\s*\|",
+    r"^\|[^|]*\|\s*(WOT-\d{4}-\d{3}[a-z])\s*\|" r"|^\|\s*(WOT-\d{4}-\d{3}[a-z])\s*\|",
     re.M,
 )
 
@@ -68,13 +83,17 @@ _ROW_RE = re.compile(
 #
 # El censo es EVIDENCIA FECHADA, no criterio: el criterio es "cero fantasmas
 # NUEVOS". Vaciar esta lista es trabajo de otro ticket, no de este guard.
+#
+# `WOT-2026-045` SALIO de esta baseline (WOT-2026-058n, 2026-09-07): era el
+# sintoma de la MISMA causa (una cita de FAMILIA contada como fantasma)
+# baseleineada en vez de arreglar el patron; con la letra exigida, la familia
+# deja de ser citable y la entrada queda muerta.
 GHOST_BASELINE: frozenset[str] = frozenset(
     {
         "WOT-2026-029f",
         "WOT-2026-042d",
         "WOT-2026-042p",
         "WOT-2026-044t",
-        "WOT-2026-045",
         "WOT-2026-047e",
         "WOT-2026-047l",
         "WOT-2026-047n",
