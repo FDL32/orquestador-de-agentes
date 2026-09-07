@@ -2500,6 +2500,49 @@ def _validated_motor_sha(project_root: Path, commit_sha: str) -> str:
     return resolved
 
 
+def reject_nonce_reuse(
+    project_root: Path,
+    *,
+    challenge_nonce: str,
+    commit_sha: str,
+    loop_id: str,
+) -> None:
+    """C' (DEC-bucle-doc-001): rechaza un nonce YA USADO con otro sha/loop_id.
+
+    Un nonce identifica UNA corrida del bucle (una emision fuera). Si ya dejo
+    rondas con OTRO `commit_sha` u OTRO `loop_id`, reutilizarlo funde fan-outs
+    distintos en el recuento de lentes (los 3 casos sucios medidos en la DEC).
+    El MISMO par (sha, loop_id) es un reintento legitimo y NO rechaza.
+
+    Before: `project_root` es el destino-rol con `.agent/runtime/ensemble/`;
+        `challenge_nonce`/`commit_sha`/`loop_id` los de ESTA ronda
+        (commit_sha ya normalizado por `_validated_motor_sha`).
+    During: lectura del scorecard (read-only). Sin filas, sin envio.
+    After: None si el nonce no esta usado o solo lo esta con el MISMO par;
+        `ValueError` nombrando la colision en caso contrario (fail-closed
+        ANTES de gastar la ronda y de escribir fila).
+    """
+    rows, _sha = _read_scorecard(project_root)
+    for row in rows:
+        if row.get("event") != "ronda":
+            continue
+        if row.get("challenge_nonce") != challenge_nonce:
+            continue
+        row_sha = row.get("commit_sha")
+        row_loop = row.get("loop_id")
+        if row_sha == commit_sha and row_loop == loop_id:
+            continue
+        raise ValueError(
+            f"loop-round bloqueado (DEC-bucle-doc-001, C'): el nonce "
+            f"'{challenge_nonce[:12]}...' YA fue usado por una ronda con "
+            f"commit_sha={row_sha!r}, loop_id={row_loop!r}; esta ronda lo "
+            f"pretende con commit_sha={commit_sha!r}, loop_id={loop_id!r}. Un "
+            "nonce identifica UNA corrida: reusarlo funde fan-outs distintos "
+            "en el recuento de lentes. Emita un nonce nuevo (emit-nonce)."
+        )
+    return None
+
+
 def _warn_bundle_protocol(content_path: Path) -> None:
     """PROTOCOLO DE BUNDLE (2026-08-05): avisa ANTES de gastar la ronda si el
     encargo no declara sus invariantes de suficiencia.
@@ -2574,6 +2617,16 @@ def _cmd_loop_round(args, config) -> int:
     # el envio y ANTES de escribir fila (DoD: rc != 0 SIN fila).
     if args.commit_sha:
         args.commit_sha = _validated_motor_sha(project_root, args.commit_sha)
+    # C' (DEC-bucle-doc-001): un nonce ya usado con OTRO sha u OTRO loop_id se
+    # rechaza AQUI, ANTES de gastar el envio y de escribir fila (misma via que
+    # 059m; un nonce identifica UNA corrida).
+    if args.commit_sha and args.challenge_nonce:
+        reject_nonce_reuse(
+            project_root,
+            challenge_nonce=args.challenge_nonce,
+            commit_sha=args.commit_sha,
+            loop_id=args.loop_id,
+        )
     content_path = Path(args.content_file)
     _warn_bundle_protocol(content_path)
 

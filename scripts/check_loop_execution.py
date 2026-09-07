@@ -20,6 +20,20 @@ DISTINTO, un `challenge_nonce` que fue EMITIDO FUERA del ejecutor
 (`emitted_nonces.jsonl`) ANTES de la ronda, y CONTENIDO en la respuesta. `N` es
 proporcional al `deliverable_type` (un typo/doc no exige 9 lentes).
 
+CONTAR POR INSTANCIA (C', DEC-bucle-doc-001)
+--------------------------------------------
+"N lentes distintas" significa N lentes en la MISMA corrida. Las rondas validas
+de un sha se agrupan por `challenge_nonce` (cada nonce emitido fuera identifica
+UNA corrida); el commit pasa sii ALGUNA instancia alcanza N con lentes
+sustantivas, y las instancias que no llegan se NOMBRAN en el veredicto
+(`per_nonce`), como ya se hacia con las mudas. Defecto que cierra (medido
+2026-09-07): L730/L731/L732 comparten `c54b9deb...` y su UNION sumaba `4/4` sin
+que ninguna corrida llegara sola a N -- el guard fusionaba fan-outs distintos.
+Ademas, una ronda cuyo nonce no fue emitido para este commit se reporta en
+`fabricated_rounds` (antes se descartaba con un `continue` mudo), y `loop-round`
+rechaza un nonce ya usado con otro sha u otro `loop_id` (los 3 casos sucios de
+la DEC).
+
 SUSTANCIA, no solo independencia (WOT-2026-043q)
 ------------------------------------------------
 `WOT-2026-040b` cerro la INDEPENDENCIA (N `backend_key` distintos) pero no la
@@ -414,6 +428,79 @@ def orphan_nonces(
     return orphans
 
 
+def nonce_fanouts(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> dict[str, set[str]]:
+    """nonce -> conjunto de `backend_key` sustantivos de ESA corrida (C').
+
+    Cada nonce emitido fuera identifica UNA corrida del bucle; agrupar por el
+    es lo que hace que "N lentes distintas" signifique N lentes en la MISMA
+    corrida y no la suma de corridas distintas (DEC-bucle-doc-001). Solo
+    participan las rondas estructuralmente validas y SUSTANTIVAS: es la misma
+    poblacion que cuenta `distinct_execution_backends`, partiendola por
+    instancia en vez de sumarla.
+    """
+    fanouts: dict[str, set[str]] = {}
+    for row in structurally_valid_rounds(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    ):
+        if not is_substantive(row):
+            continue
+        # structurally_valid_rounds ya exige nonce y backend_key no vacios
+        fanouts.setdefault(row["challenge_nonce"], set()).add(row["backend_key"])
+    return fanouts
+
+
+def fabricated_nonce_rounds(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> list[dict]:
+    """Rondas que SOLO fallan por su nonce: no fue emitido para este commit.
+
+    Hoy `structurally_valid_rounds` las descarta con un `continue` MUDO y el
+    veredicto dice `0/4` sin decir por que. Se NOMBRAN (mismo criterio ya
+    aplicado a las mudas en WOT-2026-043q): un contador sin nombres obliga a
+    re-medir a mano. Un receipt cuyo nonce no esta en el ledger para este
+    commit (y loop, si se da) es un nonce fabricado.
+    """
+    valid_nonces = _valid_nonces_for(emitted, commit_sha, loop_id)
+    issuers = {
+        row.get("issuer_backend_key")
+        for row in emitted
+        if row.get("commit_sha") == commit_sha and row.get("issuer_backend_key")
+    }
+    fabricated: list[dict] = []
+    for row in scorecard_rows:
+        if row.get("event") != "ronda":
+            continue
+        if row.get("commit_sha") != commit_sha:
+            continue
+        bk = row.get("backend_key")
+        nonce = row.get("challenge_nonce")
+        if not bk or not nonce or bk in issuers:
+            continue  # esas exclusiones NO son por el nonce: no se reportan aqui
+        if nonce in valid_nonces:
+            continue
+        fabricated.append(
+            {
+                "backend_key": bk,
+                "nonce": nonce,
+                "reason": (
+                    "nonce no emitido para este commit (y loop, si se da): "
+                    "receipt descartado como fabricado"
+                ),
+            }
+        )
+    return fabricated
+
+
 def audit_commit(
     scorecard_rows: list[dict],
     emitted: list[dict],
@@ -424,18 +511,39 @@ def audit_commit(
 ) -> dict:
     """Veredicto para UN commit: {commit_sha, distinct_backends, min_distinct, ok}.
 
-    `ok` es True sii el nº de backend_key distintos con ronda valida alcanza
-    `min_distinct`. El commit_sha se compara por prefijo NO: se exige match exacto
-    del campo `commit_sha` que el receipt declara (el caller normaliza la longitud).
+    C' (DEC-bucle-doc-001): `ok` es True sii ALGUNA INSTANCIA (challenge_nonce)
+    alcanza `min_distinct` con lentes sustantivas; las instancias que no llegan
+    quedan nombradas en `per_nonce`. `distinct_backends` (la union) se sigue
+    reportando para diagnostico, pero ya no decide: la union de dos corridas
+    de 2 lentes no prueba independencia.
+
+    El commit_sha se compara por prefijo NO: se exige match exacto del campo
+    `commit_sha` que el receipt declara (la ENTRADA CLI se normaliza en
+    `resolve_input_commit_sha`; S1B item 1).
     """
     backends = distinct_execution_backends(
         scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
     )
+    fanouts = nonce_fanouts(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    )
+    per_nonce = [
+        {
+            "nonce": nonce,
+            "backends": sorted(instancia),
+            "distinct": len(instancia),
+            "ok": len(instancia) >= min_distinct,
+        }
+        for nonce, instancia in sorted(fanouts.items())
+    ]
     return {
         "commit_sha": commit_sha,
         "distinct_backends": sorted(backends),
         "min_distinct": min_distinct,
-        "ok": len(backends) >= min_distinct,
+        # C' (DEC-bucle-doc-001): decide la INSTANCIA, no la union.
+        "ok": any(entry["ok"] for entry in per_nonce),
+        # Instancias por nonce, con las que no llegan a N NOMBRADAS.
+        "per_nonce": per_nonce,
         # WOT-2026-043q: rondas que corrieron y callaron. Se reportan SIEMPRE
         # (tambien en verde): una lente muda es una senal aunque el resto alcance
         # el minimo.
@@ -446,6 +554,11 @@ def audit_commit(
         # no acreditado). Se reportan SIEMPRE: es la peor senal porque el
         # trabajo se perdio sin deteccion.
         "orphan_nonces": orphan_nonces(
+            scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+        ),
+        # C': rondas descartadas por nonce no emitido, antes mudas en el
+        # `continue` de structurally_valid_rounds. Se NOMBRAN siempre.
+        "fabricated_rounds": fabricated_nonce_rounds(
             scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
         ),
     }
@@ -523,6 +636,50 @@ def resolve_input_commit_sha(project_root: Path, commit_sha: str) -> str:
     )
 
 
+def _print_verdict(v: dict) -> None:
+    """Imprime UN veredicto por-commit y sus senales, todas NOMBRADAS.
+
+    Reparto de ciclomatica (el CLI supera C901 con el render inline). Criterio
+    ya aplicado a las mudas (WOT-2026-043q): un contador sin nombres obliga a
+    re-medir a mano.
+    """
+    status = "OK" if v["ok"] else "FAIL"
+    print(
+        f"[loop-exec] {status} {v['commit_sha']}: "
+        f"{len(v['distinct_backends'])}/{v['min_distinct']} lentes distintas "
+        f"{v['distinct_backends']}"
+    )
+    # WOT-2026-043q: nombrar a quien callo, en verde y en rojo.
+    for s in v["silent_rounds"]:
+        print(
+            f"[loop-exec]   MUDA {s['backend_key']}: {s['diagnosis']} "
+            f"(output_chars={s['output_chars']})"
+        )
+    # C' (DEC-bucle-doc-001): las corridas que no llegan a N se NOMBRAN,
+    # tambien en verde (una instancia por debajo del minimo es senal aunque
+    # otra la alcance).
+    for entry in v["per_nonce"]:
+        if not entry["ok"]:
+            print(
+                f"[loop-exec]   NONCE {entry['nonce'][:12]}...: "
+                f"{entry['distinct']}/{v['min_distinct']} lentes distintas "
+                f"{entry['backends']} (esa corrida no llega a N)"
+            )
+    # C': receipts con nonce no emitido, antes un `continue` mudo.
+    for f in v["fabricated_rounds"]:
+        print(
+            f"[loop-exec]   FABRICADO {f['backend_key']} (nonce "
+            f"{f['nonce'][:12]}...): {f['reason']}"
+        )
+    # WOT-2026-044p (b): nonces emitidos sin rondas (bucle declarado pero
+    # no acreditado). Se reportan SIEMPRE como ERROR porque es la peor senal.
+    for o in v["orphan_nonces"]:
+        print(
+            f"[loop-exec]   HUERFANO {o['nonce'][:12]}... "
+            f"(loop={o['loop_id']}): {o['diagnosis']}"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--project-root", required=True)
@@ -571,26 +728,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     failures = [v for v in verdicts if not v["ok"]]
     for v in verdicts:
-        status = "OK" if v["ok"] else "FAIL"
-        print(
-            f"[loop-exec] {status} {v['commit_sha']}: "
-            f"{len(v['distinct_backends'])}/{v['min_distinct']} lentes distintas "
-            f"{v['distinct_backends']}"
-        )
-        # WOT-2026-043q: nombrar a quien callo, en verde y en rojo. Un contador
-        # sin nombres obliga a re-medir a mano.
-        for s in v["silent_rounds"]:
-            print(
-                f"[loop-exec]   MUDA {s['backend_key']}: {s['diagnosis']} "
-                f"(output_chars={s['output_chars']})"
-            )
-        # WOT-2026-044p (b): nonces emitidos sin rondas (bucle declarado pero
-        # no acreditado). Se reportan SIEMPRE como ERROR porque es la peor senal.
-        for o in v["orphan_nonces"]:
-            print(
-                f"[loop-exec]   HUERFANO {o['nonce'][:12]}... "
-                f"(loop={o['loop_id']}): {o['diagnosis']}"
-            )
+        _print_verdict(v)
         if v["orphan_nonces"] and v not in failures:
             failures.append(v)
     if failures:

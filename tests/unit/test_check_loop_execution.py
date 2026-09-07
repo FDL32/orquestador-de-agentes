@@ -10,9 +10,11 @@ Fixtures REALISTAS: filas con la forma exacta que escribe `_record_round`
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -733,3 +735,202 @@ def test_cli_unresolvable_sha_is_rejected_with_a_message(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "no resuelve a un commit" in out, out
     assert "deadbeef" in out, out
+
+
+# ---------------------------------------------------------------------------
+# S1B item 3 (C', DEC-bucle-doc-001): contar lentes POR INSTANCIA (nonce)
+# ---------------------------------------------------------------------------
+
+
+def test_two_nonces_two_lenses_each_no_longer_reach_n():
+    """MUTACION C' (la del DEC): dos nonces con 2 lentes cada uno -> ANTES la
+    union daba 4/4 OK; AHORA el veredicto es POR INSTANCIA (2/4 y 2/4 -> FAIL).
+
+    'N lentes distintas' significa N lentes en la MISMA corrida: la union de
+    dos corridas distintas no prueba independencia. La union sigue
+    informandose en `distinct_backends`, pero ya no decide."""
+    emitted = [_emitted(nonce="NA"), _emitted(nonce="NB")]
+    sc = [
+        _ronda("BA10", nonce="NA"),
+        _ronda("BA11", nonce="NA"),
+        _ronda("BA12", nonce="NB"),
+        _ronda("BA13", nonce="NB"),
+    ]
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False, (
+        "ninguna instancia llega a N; la suma de corridas no acredita: "
+        f"{v['per_nonce']}"
+    )
+    assert v["distinct_backends"] == ["BA10", "BA11", "BA12", "BA13"]
+    assert sorted(e["distinct"] for e in v["per_nonce"]) == [2, 2]
+    assert all(not e["ok"] for e in v["per_nonce"])
+
+
+def test_one_instance_reaching_minimum_still_passes():
+    """CONTROL POSITIVO: la misma forma de fixture con UNA instancia que SI
+    alcanza N sigue en verde. Sin este control, endurecer el veredicto seria
+    indistinguible de romper la rama verde."""
+    emitted = [_emitted(nonce="NA"), _emitted(nonce="NB")]
+    sc = [
+        _ronda("BA10", nonce="NA"),
+        _ronda("BA11", nonce="NA"),
+        _ronda("BA12", nonce="NA"),
+        _ronda("BA13", nonce="NA"),
+        _ronda("BA12", nonce="NB"),
+    ]
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is True
+    assert v["silent_rounds"] == []
+
+
+def test_instances_below_minimum_are_named_in_the_verdict():
+    """Las instancias que no llegan a N se NOMBRAN (criterio ya aplicado a las
+    mudas): cada entrada de `per_nonce` lleva su nonce y sus backends."""
+    emitted = [_emitted(nonce="NA"), _emitted(nonce="NB")]
+    sc = [
+        _ronda("BA10", nonce="NA"),
+        _ronda("BA11", nonce="NA"),
+        _ronda("BA12", nonce="NB"),
+    ]
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    by_nonce = {e["nonce"]: e for e in v["per_nonce"]}
+    assert by_nonce["NA"]["backends"] == ["BA10", "BA11"]
+    assert by_nonce["NA"]["ok"] is False
+    assert by_nonce["NB"]["backends"] == ["BA12"]
+    assert by_nonce["NB"]["ok"] is False
+
+
+def test_fabricated_nonce_round_is_named_not_silently_dropped():
+    """C': el receipt con nonce no emitido ya NO desaparece en un `continue`
+    mudo: se reporta en `fabricated_rounds` con backend, nonce y razon."""
+    emitted = [_emitted(nonce="N1")]
+    sc = [_ronda(bk, nonce="FABRICADO") for bk in ("BA10", "BA11", "BA12", "BA13")]
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert v["ok"] is False
+    assert {f["backend_key"] for f in v["fabricated_rounds"]} == {
+        "BA10",
+        "BA11",
+        "BA12",
+        "BA13",
+    }
+    assert "fabricado" in v["fabricated_rounds"][0]["reason"]
+    # el emisor con nonce fabricado se excluye por EMISOR, no por el nonce:
+    # no se reporta aqui (misma condicion que structurally_valid_rounds)
+    sc2 = [_ronda("BA01", nonce="FABRICADO")]
+    v2 = cle.audit_commit(sc2, [_emitted()], commit_sha="abc", min_distinct=4)
+    assert v2["fabricated_rounds"] == []
+
+
+# ------------------------------------------------- S1B item 3c: nonce reutilizado
+
+
+SHA_A = "a" * 40
+SHA_B = "b" * 40
+
+
+def test_reject_nonce_reuse_names_the_collision(tmp_path):
+    """S1B item 3c: un nonce ya usado con OTRO sha o con OTRO loop_id se
+    rechaza nombrando la colision; el MISMO par (sha, loop_id) es un reintento
+    legitimo y NO rechaza; un nonce sin uso previo pasa."""
+    ed.append_scorecard(
+        tmp_path,
+        {
+            "event": "ronda",
+            "commit_sha": SHA_A,
+            "backend_key": "BA10",
+            "challenge_nonce": "N1",
+            "ts": "2026-09-07T10:00:00+00:00",
+            "loop_id": "L-A",
+        },
+    )
+    with pytest.raises(ValueError, match="YA fue usado"):
+        ed.reject_nonce_reuse(
+            tmp_path, challenge_nonce="N1", commit_sha=SHA_B, loop_id="L-B"
+        )
+    with pytest.raises(ValueError, match="loop_id='L-B'"):
+        ed.reject_nonce_reuse(
+            tmp_path, challenge_nonce="N1", commit_sha=SHA_A, loop_id="L-B"
+        )
+    # reintento legitimo del MISMO par: no rechaza
+    ed.reject_nonce_reuse(
+        tmp_path, challenge_nonce="N1", commit_sha=SHA_A, loop_id="L-A"
+    )
+    # nonce sin uso previo: pasa
+    ed.reject_nonce_reuse(
+        tmp_path, challenge_nonce="N2", commit_sha=SHA_B, loop_id="L-B"
+    )
+
+
+def _link_motor(dest: Path, motor: Path) -> Path:
+    """Escribe el motor_destination_link.json que `resolve_motor_root` lee."""
+    cfg = dest / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+    )
+    return dest
+
+
+def _loop_round_args(dest: Path, **overrides):
+    """Namespace con la forma que exige el CLI `loop-round`."""
+    defaults = dict(
+        profile="p0",
+        content_file=str(dest / "bundle.md"),
+        ticket="WOT-2026-000x",
+        task_type="weird",  # invalido a proposito: el error de uso debe quedar
+        rol="challenger",
+        phase="fanout",
+        loop_id="L-B",
+        backend_key="BA10",
+        data_sensitivity="public",
+        ronda=1,
+        context_kind="diff",
+        commit_sha=None,
+        challenge_nonce=None,
+        session_id=None,
+        project_root=str(dest),
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_loop_round_call_site_blocks_nonce_reuse_before_any_row(tmp_path):
+    """El CALL-SITE (una barrera tras una clausula guard nunca corre):
+    `loop-round` rechaza el nonce reutilizado ANTES de escribir fila y sin
+    rastro nuevo en el scorecard.
+
+    PRECEDENCIA = mutacion in-suite: el task_type es invalido a proposito, asi
+    que si alguien RETIRA la llamada a `reject_nonce_reuse`, el error que sube
+    es el de task_type ('invalido') y este test cae por mensaje."""
+    motor = tmp_path / "motor"
+    _repo, sha = _make_git_repo_with_commit(motor)
+    dest = tmp_path / "dest"
+    _link_motor(dest, motor)
+    prev = {
+        "event": "ronda",
+        "commit_sha": sha,
+        "backend_key": "BA10",
+        "challenge_nonce": "N1",
+        "ts": "2026-09-07T10:00:00+00:00",
+        "loop_id": "L-A",
+    }
+    ed.append_scorecard(dest, prev)
+    stored_before, _ = ed._read_scorecard(dest)
+
+    args = _loop_round_args(
+        dest, task_type="weird", commit_sha=sha, challenge_nonce="N1", loop_id="L-B"
+    )
+    with pytest.raises(ValueError, match="YA fue usado"):
+        ed._cmd_loop_round(args, {})
+    rows, _sha = ed._read_scorecard(dest)
+    assert rows == stored_before, "el rechazo NO debe escribir fila ninguna"
+
+    # y el MISMO par (sha, loop_id) es un reintento legitimo: pasa de la
+    # barrera y cae despues por el task_type invalido (evidencia de orden)
+    args_retry = _loop_round_args(
+        dest, task_type="weird", commit_sha=sha, challenge_nonce="N1", loop_id="L-A"
+    )
+    with pytest.raises(ValueError, match="task_type"):
+        ed._cmd_loop_round(args_retry, {})
+    rows_after, _ = ed._read_scorecard(dest)
+    assert rows_after == stored_before, "sin perfil resoluble no debe quedar fila"
