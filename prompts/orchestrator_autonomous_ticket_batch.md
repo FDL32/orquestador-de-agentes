@@ -740,6 +740,27 @@ real false-green in the evidence that informed this design:
 All of these are written to the **destino-rol**, never to `repo_motor`
 (portability rule above).
 
+**SCOPE of these outputs: a batch of ONE ticket is still a batch (WOT-2026-066n).**
+The outputs above are owed by every autonomous flight this executor governs,
+**including a flight that carries a single ticket and no DAG**. The obligation
+does not come from the ticket count: it comes from the fact that
+`batch_run_<ts>.json` is a declared FAIL-CLOSED INPUT of the sibling auditor
+(`prompts/audit_autonomous_ticket_batch.md`, S.4), which is forbidden from
+reconstructing it. A flight that skips it is not "a small flight that needs less
+paperwork" -- it is a flight that cannot be audited by anyone, ever.
+
+Measured 2026-09-07, which is why this scope is now written down: of the flights
+accredited by a resolved start-context receipt, SIX had no `batch_run` at all,
+and of the single-ticket flights sampled, NONE emitted one. The obligation was
+declared here all along; what was missing was saying out loud that it covers the
+single-ticket case, because the sections around it speak of groups and DAGs.
+
+**This paragraph is a NORM, not the barrier.** The barrier is
+`check_batch_run_emitted` (`scripts/check_batch_run_accounting.py`, wired into
+`prepush_check`), which crosses the isolation receipts against the reports and
+reports the absence -- no prose required. Do not add a test that pins these
+words: pin the behaviour.
+
 ### Blocking close step (WOT-2026-023v): DONE requires the outputs ON DISK
 
 In the inaugural run the executor OMITTED `batch_run_<ts>.json` (it was written
