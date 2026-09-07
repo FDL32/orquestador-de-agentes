@@ -173,6 +173,42 @@ def _dag_persisted(base: str, flight_plans_root: Path) -> bool:
     return False
 
 
+def _index_emitted_reports(
+    reports_root: Path,
+) -> tuple[set[str], set[str], list[str]]:
+    """Indexa los `batch_run_*.json` presentes por sus senas de IDENTIDAD.
+
+    Se separa de `check_batch_run_emitted` porque son dos responsabilidades
+    distintas: esta LEE lo emitido, aquella decide quien falta.
+
+    Before: `reports_root` existe y es un directorio.
+    During: lee cada informe tolerando BOM (`utf-8-sig`). Solo lectura.
+    After: devuelve (vuelos declarados, `prompt_sha256` referenciados, nombres
+        de fichero). Un informe ilegible o no-dict aporta su NOMBRE pero no
+        acredita identidad: no puede silenciar un hallazgo real.
+    """
+    emitted_flights: set[str] = set()
+    emitted_shas: set[str] = set()
+    report_names: list[str] = []
+    for report in sorted(reports_root.glob("batch_run_*.json")):
+        report_names.append(report.name)
+        try:
+            payload = json.loads(report.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        declared = str(payload.get("flight", "")).strip()
+        if declared:
+            emitted_flights.add(declared)
+        isolation = payload.get("start_context_isolation")
+        if isinstance(isolation, dict):
+            sha = str(isolation.get("prompt_sha256", "")).strip()
+            if sha:
+                emitted_shas.add(sha)
+    return emitted_flights, emitted_shas, report_names
+
+
 def check_batch_run_emitted(reports_root: Path) -> list[str]:
     """WOT-2026-066n: caza la AUSENCIA del batch_run, no solo su calidad.
 
@@ -191,9 +227,23 @@ def check_batch_run_emitted(reports_root: Path) -> list[str]:
     Un receipt `RESOLVED` sin su `batch_run` es un vuelo que corrio y no dejo su
     salida obligatoria.
 
-    Medido 2026-09-07 (clase, no incidente): 8 receipts, 6 sin `batch_run`
-    correlativo; y de los vuelos de UN ticket (062d, 063c, P1_STREAMING,
-    FV-20260831, 064a) ninguno emitio el suyo.
+    **Un informe se correlaciona por IDENTIDAD, no por nombre de fichero**
+    (corregido 2026-09-07, mismo dia): la primera version globeaba
+    `batch_run_*<flight>*.json` y daba 6 hallazgos sobre el corpus real, de los
+    cuales **4 eran FALSOS**: el informe existia y declaraba su vuelo DENTRO
+    (`20260810_G1` -> `batch_run_20260810T004827.json`), o compartia el
+    `prompt_sha256` del recibo (`lote-A-20260805` ->
+    `batch_run_20260805-0220.json`). Un guard de ausencia que acusa a quien SI
+    cumplio produce fatiga de senal y acaba ignorandose, que es como perderlo.
+
+    Orden de correlacion, de mas fuerte a mas debil: campo `flight` declarado en
+    el informe; `prompt_sha256` compartido con el recibo (identidad
+    criptografica del prompt sellado); y como ultimo recurso el nombre del
+    fichero, que se conserva para los informes antiguos que no declaran ninguno
+    de los dos.
+
+    Censo REAL tras la correccion: 8 receipts RESOLVED, **2 sin su `batch_run`**
+    (`FP-20260827-GUARDS` y `WOT-2026-064a`).
 
     Un receipt cuyo `status` NO es RESOLVED no acredita vuelo (PENDING = el
     vuelo se paro en el gate, que es el comportamiento correcto): no genera
@@ -214,6 +264,8 @@ def check_batch_run_emitted(reports_root: Path) -> list[str]:
     if not reports_root.is_dir():
         return []
 
+    emitted_flights, emitted_shas, report_names = _index_emitted_reports(reports_root)
+
     findings: list[str] = []
     for receipt in sorted(reports_root.glob("start_context_isolation*.json")):
         try:
@@ -227,12 +279,17 @@ def check_batch_run_emitted(reports_root: Path) -> list[str]:
         flight = str(payload.get("flight", "")).strip()
         if not flight:
             continue
-        if any(reports_root.glob(f"batch_run_*{flight}*.json")):
+        if flight in emitted_flights:
+            continue
+        receipt_sha = str(payload.get("prompt_sha256", "")).strip()
+        if receipt_sha and receipt_sha in emitted_shas:
+            continue
+        if any(flight in name for name in report_names):
             continue
         findings.append(
-            f"vuelo '{flight}' acreditado por {receipt.name} pero SIN "
-            f"batch_run_*{flight}*.json: la corrida no es auditable "
-            "(input fail-closed del auditor hermano, WOT-2026-023v)"
+            f"vuelo '{flight}' acreditado por {receipt.name} pero SIN su "
+            "batch_run: la corrida no es auditable (input fail-closed del "
+            "auditor hermano, WOT-2026-023v)"
         )
     return findings
 

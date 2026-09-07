@@ -434,3 +434,115 @@ def test_missing_reports_dir_is_not_a_finding(tmp_path: Path) -> None:
     from scripts.check_batch_run_accounting import check_batch_run_emitted
 
     assert check_batch_run_emitted(tmp_path / "no-existe") == []
+
+
+# --- WOT-2026-066n: correlacion por IDENTIDAD, no por nombre de fichero -------
+
+
+def test_report_declaring_its_flight_inside_is_not_a_false_absence(
+    tmp_path: Path,
+) -> None:
+    """El informe EXISTE y declara su vuelo dentro; el nombre no lo contiene.
+
+    Caso REAL del corpus (2026-09-07): el vuelo `20260810_G1` emitio
+    `batch_run_20260810T004827.json`, cuyo nombre NO contiene el token del
+    vuelo. La primera version de este guard lo acusaba de no haber emitido
+    nada. Un guard de ausencia que acusa a quien SI cumplio produce fatiga de
+    senal y acaba ignorandose.
+
+    Mutacion que debe matar este test: volver a correlacionar solo por
+    `glob(f"batch_run_*{flight}*.json")`.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "start_context_isolation.x.json").write_text(
+        json.dumps({"status": "RESOLVED", "flight": "20260810_G1"}),
+        encoding="utf-8",
+    )
+    (reports / "batch_run_20260810T004827.json").write_text(
+        json.dumps({"flight": "20260810_G1"}), encoding="utf-8"
+    )
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_report_sharing_prompt_sha256_is_not_a_false_absence(
+    tmp_path: Path,
+) -> None:
+    """Correlacion por identidad criptografica del prompt sellado.
+
+    Caso REAL: `lote-A-20260805` no declara `flight` en su informe, pero el
+    informe y el recibo comparten `prompt_sha256` byte a byte. Ese sha es un
+    vinculo MAS fuerte que el nombre del fichero: prueba que ambos artefactos
+    hablan del mismo prompt sellado.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    sha = "27feeff1f67790012904289d0dcac27a69a1d3d6823c60f1a8a170d2c0052cc4"
+    (reports / "start_context_isolation.y.json").write_text(
+        json.dumps(
+            {"status": "RESOLVED", "flight": "lote-A-20260805", "prompt_sha256": sha}
+        ),
+        encoding="utf-8",
+    )
+    (reports / "batch_run_20260805-0220.json").write_text(
+        json.dumps({"start_context_isolation": {"prompt_sha256": sha}}),
+        encoding="utf-8",
+    )
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_absence_still_detected_when_no_criterion_matches(tmp_path: Path) -> None:
+    """CONTROL DE NO-RELAJACION: la ausencia REAL sigue siendo hallazgo.
+
+    Anadir dos vias de correlacion no puede convertir el guard en trivialmente
+    verde. Aqui hay un informe ajeno --con otro vuelo y otro sha-- y el vuelo
+    acreditado sigue sin el suyo.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "start_context_isolation.z.json").write_text(
+        json.dumps(
+            {"status": "RESOLVED", "flight": "WOT-2026-064a", "prompt_sha256": "aaaa"}
+        ),
+        encoding="utf-8",
+    )
+    (reports / "batch_run_otro.json").write_text(
+        json.dumps(
+            {
+                "flight": "OTRO-VUELO",
+                "start_context_isolation": {"prompt_sha256": "bbbb"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_batch_run_emitted(reports)
+
+    assert len(findings) == 1, findings
+    assert "WOT-2026-064a" in findings[0]
+
+
+def test_unreadable_report_does_not_mask_a_real_absence(tmp_path: Path) -> None:
+    """Un informe ilegible no acredita a nadie.
+
+    Si un informe corrupto contara como emision, bastaria un fichero roto para
+    silenciar el guard entero.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "start_context_isolation.w.json").write_text(
+        json.dumps({"status": "RESOLVED", "flight": "WOT-2026-064a"}), encoding="utf-8"
+    )
+    (reports / "batch_run_roto.json").write_text("{no es json", encoding="utf-8")
+
+    assert len(check_batch_run_emitted(reports)) == 1
