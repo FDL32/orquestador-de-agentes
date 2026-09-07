@@ -81,6 +81,7 @@ if str(MOTOR_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(MOTOR_ROOT / "scripts"))
 
 from ensemble_dispatch import (  # noqa: E402
+    _canonical_motor_commit_sha,
     _read_scorecard,
     read_emitted_nonces,
 )
@@ -483,6 +484,45 @@ def audit(
     ]
 
 
+def resolve_input_commit_sha(project_root: Path, commit_sha: str) -> str:
+    """Normaliza la ENTRADA CLI del --commit-sha a sha40 (S1B item 1).
+
+    Defecto medido 2026-09-07 sobre el destino real: `--commit-sha c54b9de`
+    (corto) daba `FAIL 0/4 lentes []` (rc=1) mientras el sha40 daba `OK 4/4`
+    (rc=0). Un ROJO FALSO indistinguible de uno real, que muerde a cualquier
+    humano o agente frio que invoque el guard a mano (misma familia que
+    `obs-a-guard-invoked-with-relative-root-produces-a-false-red`). El join de
+    `audit_commit` es EXACTO por diseno -- su docstring lo dice: "el caller
+    normaliza la longitud" -- y ese caller era el CLI, que no lo hacia.
+
+    AQUI se normaliza la ENTRADA, NUNCA el join: se reutiliza
+    `_canonical_motor_commit_sha` (WOT-2026-059c, ya existia; no se inventa
+    una segunda). Resuelve contra el MOTOR (la casa del guard) y, si no
+    resuelve alli, contra el `--project-root` (corpus mixto-origen,
+    CTL-2026-027b: hay shas que solo existen en el destino).
+
+    Before: `project_root` resuelto; `commit_sha` la forma recibida (puede
+        ser abreviada).
+    During: dos lecturas `git rev-parse --verify <sha>^{commit}` (read-only,
+        timeout 10s c/u). Sin escrituras.
+    After: sha40 pleno si el sha resuelve en alguna de las dos raices;
+        `ValueError` NOMBRANDO el sha si no resuelve en ninguna
+        (fail-closed: el veredicto no se inventa).
+    """
+    ok, canonical = _canonical_motor_commit_sha(MOTOR_ROOT, commit_sha)
+    if ok:
+        return canonical
+    motor_reason = canonical
+    if project_root != MOTOR_ROOT and project_root.is_dir():
+        ok_dest, canonical_dest = _canonical_motor_commit_sha(project_root, commit_sha)
+        if ok_dest:
+            return canonical_dest
+    raise ValueError(
+        f"--commit-sha '{commit_sha}' no resuelve a un commit ni del motor "
+        f"({MOTOR_ROOT}) ni del destino ({project_root}): {motor_reason}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--project-root", required=True)
@@ -507,9 +547,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     project_root = Path(args.project_root).resolve()
+    # S1B item 1: normalizar la ENTRADA CLI (sha corto -> sha40) ANTES de
+    # auditar. El join exacto de `audit_commit` queda intacto.
+    resolved_shas: list[str] = []
+    for sha in args.commit_sha:
+        try:
+            canonical = resolve_input_commit_sha(project_root, sha)
+        except ValueError as exc:
+            print(f"[loop-exec] ERROR: {exc}")
+            return 1
+        if canonical != sha:
+            print(
+                f"[loop-exec] sha normalizado: {sha} -> {canonical}",
+                file=sys.stderr,
+            )
+        resolved_shas.append(canonical)
     verdicts = audit(
         project_root,
-        commit_shas=args.commit_sha,
+        commit_shas=resolved_shas,
         deliverable_type=args.deliverable_type,
         min_distinct=args.min_distinct,
         loop_id=args.loop_id,

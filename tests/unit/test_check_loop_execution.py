@@ -10,6 +10,7 @@ Fixtures REALISTAS: filas con la forma exacta que escribe `_record_round`
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -606,3 +607,129 @@ def test_audit_commit_includes_orphan_nonces():
     assert "orphan_nonces" in verdict
     assert len(verdict["orphan_nonces"]) == 1
     assert verdict["orphan_nonces"][0]["nonce"] == "ORPHAN1"
+
+
+# ---------------------------------------------------------------------------
+# S1B item 1: normalizar el sha en la ENTRADA CLI (el join exacto queda intacto)
+# ---------------------------------------------------------------------------
+
+
+def _make_git_repo_with_commit(root: Path) -> tuple[Path, str]:
+    """Repo git REAL en `root` con un commit; devuelve (repo, sha40 de HEAD).
+
+    Hermetico: `.git` propio para que el walk-up de git no alcance el repo REAL
+    y el probe conteste sobre el arbol de la maquina (vector documentado en
+    AGENTS.md).
+    """
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "t"], check=True)
+    (root / "seed.txt").write_text("seed", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "seed"], check=True)
+    out = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return root, out.stdout.strip()
+
+
+def _build_accredited_ensemble(dest: Path, sha40: str) -> None:
+    """Ensemble anclado al sha40: un nonce y 4 lentes sustantivas (verde para code)."""
+    ed.emit_nonce(
+        dest,
+        commit_sha=sha40,
+        loop_id="L-SHATEST",
+        issuer_role="orchestrator",
+        issuer_backend_key="BA01",
+        nonce="N-SHATEST",
+    )
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        ed.append_scorecard(
+            dest,
+            {
+                "event": "ronda",
+                "commit_sha": sha40,
+                "backend_key": bk,
+                "challenge_nonce": "N-SHATEST",
+                "ts": "2099-01-01T00:00:00+00:00",
+            },
+        )
+
+
+def test_cli_short_sha_and_sha40_give_the_same_verdict(tmp_path, capsys):
+    """S1B item 1 (MUTACION): sha corto y sha40 dan el MISMO veredicto.
+
+    Defecto medido 2026-09-07 sobre el destino real: `--commit-sha c54b9de`
+    (corto) -> `FAIL 0/4 lentes []` rc=1 (ROJO FALSO); el sha40 -> `OK 4/4`
+    rc=0. Con el fix, las DOS formas del MISMO commit resuelven al sha40 y el
+    veredicto es identico. Revertir la normalizacion vuelve a diferirlos (lo
+    pinea el test siguiente)."""
+    repo, sha40 = _make_git_repo_with_commit(tmp_path / "repo")
+    _build_accredited_ensemble(repo, sha40)
+    rc = cle.main(
+        [
+            "--project-root",
+            str(repo),
+            "--commit-sha",
+            sha40[:7],
+            "--commit-sha",
+            sha40,
+            "--deliverable-type",
+            "code",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    # dos veredictos por-commit identicos (la linea final de resumen tambien
+    # dice "OK", por eso se cuenta el detalle y no el marcador a secas)
+    assert out.count("4/4 lentes distintas") == 2, out
+    assert out.count("[loop-exec] FAIL") == 0, out
+    assert "0/4" not in out, out
+
+
+def test_cli_short_sha_without_normalization_is_a_false_red(
+    tmp_path, monkeypatch, capsys
+):
+    """El estado PRE-fix (mutacion revertida a identidad): el sha corto llega
+    crudo al join EXACTO y produce el ROJO FALSO medido 2026-09-07. Si la
+    normalizacion desaparece del CLI, este test y el de arriba ya no pueden ser
+    verdes a la vez: el veredicto difiere por la FORMA del sha."""
+    repo, sha40 = _make_git_repo_with_commit(tmp_path / "repo")
+    _build_accredited_ensemble(repo, sha40)
+    monkeypatch.setattr(cle, "resolve_input_commit_sha", lambda _root, sha: sha)
+    rc = cle.main(
+        [
+            "--project-root",
+            str(repo),
+            "--commit-sha",
+            sha40[:7],
+            "--deliverable-type",
+            "code",
+        ]
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "[loop-exec] FAIL" in out and "0/4" in out, out
+
+
+def test_cli_unresolvable_sha_is_rejected_with_a_message(tmp_path, capsys):
+    """Fail-closed NOMBRADO: un sha que no resuelve ni en el motor ni en el
+    destino no produce un veredicto `0/4` ambiguo: se rechaza con la razon y el
+    sha nombrado. El veredicto no se inventa."""
+    rc = cle.main(
+        [
+            "--project-root",
+            str(tmp_path),
+            "--commit-sha",
+            "deadbeef" * 5,
+            "--deliverable-type",
+            "code",
+        ]
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "no resuelve a un commit" in out, out
+    assert "deadbeef" in out, out
