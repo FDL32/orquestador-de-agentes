@@ -228,6 +228,15 @@ En tickets documentales, trata las subsecciones `Read/inspect only` y
 `Manager-only` como contexto: no las conviertas en entregables ni en scope
 productivo.
 
+**Salida del vuelo suelto (D1.c, WOT-2026-066n):** un vuelo autonomo de UN
+ticket sigue debiendo las salidas que declara `orchestrator_autonomous_ticket_batch.md`,
+seccion `## Outputs (design section 12)`: un lote de un ticket es un lote, y
+`batch_run_<ts>.json` es input FAIL-CLOSED del auditor hermano. Esta referencia
+cruzada es NORMA (es lo que un builder de vuelo suelto SIEMPRE lee); la barrera
+es `check_batch_run_emitted` (`scripts/check_batch_run_accounting.py`, cableada
+en `prepush_check`), que caza la AUSENCIA en cada closeout. No pinear esta
+prosa con un test: la barrera es de comportamiento y existe.
+
 ## Fase 0: Diagnostico antes del cambio
 Confirma en codigo antes de modificar archivos:
 
