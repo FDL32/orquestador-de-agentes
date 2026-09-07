@@ -412,3 +412,80 @@ def test_destino_sha_without_governance_still_blocks_the_closeout(tmp_path):
         "tras D1 el bloqueo debe venir de la rama de ACREDITACION, no del mensaje "
         f"de shas irresolubles (que debe haber desaparecido): {result.output}"
     )
+
+
+# ---------------------------------------------------------------------------
+# S1B item 2: el lector honra el `loop_id` opcional de `loop_execution_targets.txt`
+# ---------------------------------------------------------------------------
+
+
+def _emitted_for(commit: str, nonce: str, loop: str) -> dict:
+    """Fila de emision con la forma de `emit_nonce`, parametrizada."""
+    row = _emitted_row(commit)
+    row["challenge_nonce"] = nonce
+    row["loop_id"] = loop
+    return row
+
+
+def _round_for(backend: str, nonce: str, loop: str, commit: str = COMMIT) -> dict:
+    """Fila de ronda con la forma de `_record_round`, parametrizada."""
+    row = _round_row(backend, commit)
+    row["challenge_nonce"] = nonce
+    row["loop_id"] = loop
+    return row
+
+
+def test_targets_line_with_loop_token_filters_the_fanout(tmp_path):
+    """S1B item 2: la linea `sha dtype loop=<id>` filtra el bucle a ESE loop_id.
+
+    Defecto medido 2026-09-07 sobre el destino real: L730 y L731 comparten
+    `c54b9deb...` (dos bucles sobre DOCUMENTOS distintos) y el lector solo
+    pasaba shas, asi que la acreditacion de uno tomaba lentes del otro.
+    Fixture: L-A acreditado (4 lentes) y L-B degradado (1 lente) sobre el
+    MISMO sha; la linea con `loop=L-B` debe ver SOLO L-B -> RED.
+
+    MUTACION: retirar el pase de `loop_id` al audit devuelve la fusion ->
+    el veredicto pasa a verde y este test cae.
+    """
+    emitted = [
+        _emitted_for(COMMIT, "NA", "L-A"),
+        _emitted_for(COMMIT, "NB", "L-B"),
+    ]
+    rounds = [_round_for(bk, "NA", "L-A") for bk in ACCREDITED_BACKENDS] + [
+        _round_for("BA14", "NB", "L-B")
+    ]
+    root = _build_destination(
+        tmp_path, targets=f"{COMMIT} code loop=L-B\n", rounds=rounds, emitted=emitted
+    )
+    result = run_loop_execution_check(root)
+
+    assert result.passed is False, (
+        "con `loop=L-B` el bucle declarado SOLO tiene 1 lente (< N=4 de code): "
+        f"el veredicto no puede tomar lentes de L-A: {result.output}"
+    )
+    assert result.is_blocking is True, result.output
+
+
+def test_targets_without_loop_token_keeps_the_old_verdict(tmp_path):
+    """S1B item 2 (RETROCOMPAT obligatoria): el formato viejo `sha[ dtype]` sigue
+    valiendo y NO cambia de veredicto. Con el MISMO corpus del test anterior,
+    quitar el token `loop=` restaura el comportamiento de hoy: la acreditacion
+    mira el sha sin filtro de bucle y alcanza N (L-A aporta 4 lentes). Un
+    fichero en formato viejo no cambia de veredicto."""
+    emitted = [
+        _emitted_for(COMMIT, "NA", "L-A"),
+        _emitted_for(COMMIT, "NB", "L-B"),
+    ]
+    rounds = [_round_for(bk, "NA", "L-A") for bk in ACCREDITED_BACKENDS] + [
+        _round_for("BA14", "NB", "L-B")
+    ]
+    root = _build_destination(
+        tmp_path, targets=f"{COMMIT} code\n", rounds=rounds, emitted=emitted
+    )
+    result = run_loop_execution_check(root)
+
+    assert result.passed is True, (
+        "sin token `loop=` el lector es identico al de hoy: el mismo corpus "
+        f"que hoy acredita debe seguir acreditando: {result.output}"
+    )
+    assert result.skipped is False, result.output

@@ -1517,10 +1517,50 @@ def _unresolvable_target_shas(project_root: Path, commit_shas: list[str]) -> lis
     return unresolvable
 
 
+def _parse_loop_execution_targets(
+    text: str,
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """S1B item 2: parsea el fichero de targets (reparto de ciclomatica).
+
+    Before: `text` es el contenido crudo de `loop_execution_targets.txt`.
+    During: una linea es `sha[ deliverable_type][ loop=<id>]`; `#` empieza
+        comentario; lineas vacias se saltan. El token `loop=<id>` OPCIONAL se
+        honra en cualquier posicion tras el sha; el PRIMER token sin prefijo
+        `loop=` sigue siendo el deliverable_type (formato viejo
+        `sha[ dtype]` intacto); un `loop=` repetido se ignora (gana el
+        primero). Sin I/O.
+    After: (commit_shas, deliverable_type por commit, loop_id por commit).
+    """
+    commit_shas: list[str] = []
+    per_commit_dtype: dict[str, str] = {}
+    per_commit_loop: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        sha = parts[0]
+        dtype: str | None = None
+        loop_id: str | None = None
+        for token in parts[1:]:
+            if token.startswith("loop="):
+                if loop_id is None:
+                    loop_id = token.split("=", 1)[1]
+            elif dtype is None:
+                dtype = token
+        commit_shas.append(sha)
+        if dtype:
+            per_commit_dtype[sha] = dtype
+        if loop_id:
+            per_commit_loop[sha] = loop_id
+    return commit_shas, per_commit_dtype, per_commit_loop
+
+
 def _loop_accreditation_failures(
     project_root: Path,
     commit_shas: list[str],
     per_commit_dtype: dict[str, str],
+    per_commit_loop: dict[str, str] | None = None,
 ) -> list[dict]:
     """WOT-2026-059b: veredictos de acreditacion por commit (reparto de ciclomatica).
 
@@ -1528,8 +1568,10 @@ def _loop_accreditation_failures(
     CABLEADO para `check_guard_wiring`) y el bucle por-commit, fuera de
     `run_loop_execution_check` para que este no se escape del tope de ciclomatica.
 
-    Before: commit_shas no vacio; per_commit_dtype puede estar vacio.
-    During: por cada commit, una auditoria read-only del scorecard + emitted.
+    Before: commit_shas no vacio; per_commit_dtype puede estar vacio;
+        per_commit_loop (S1B item 2) puede ser None o vacio.
+    During: por cada commit, una auditoria read-only del scorecard + emitted,
+        con el `loop_id` declarado en targets (token `loop=<id>`) si lo hay.
     After: lista de veredictos con `ok=False`. Sin escrituras.
     """
     try:
@@ -1537,11 +1579,13 @@ def _loop_accreditation_failures(
     except ImportError:
         from check_loop_execution import audit as _loop_audit  # type: ignore[no-redef]
     failures: list[dict] = []
+    loop_map = per_commit_loop or {}
     for sha in commit_shas:
         verdicts = _loop_audit(
             project_root,
             commit_shas=[sha],
             deliverable_type=per_commit_dtype.get(sha),
+            loop_id=loop_map.get(sha),
         )
         failures.extend(v for v in verdicts if not v["ok"])
     return failures
@@ -1559,9 +1603,17 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
     Que verifica: por cada commit de ticket del vuelo, >=N rondas de EJECUCION con
     backend_key DISTINTO y un challenge_nonce emitido FUERA antes de la ronda. Los
     commits a verificar los declara el orquestador via
-    `.agent/collaboration/loop_execution_targets.txt` (una linea `sha[ deliverable_type]`
-    por commit). SIN ese fichero, SKIPEA EXPLICITAMENTE -- un SKIP mudo convertiria
-    la barrera en norma; se IMPRIME el motivo.
+    `.agent/collaboration/loop_execution_targets.txt` (una linea
+    `sha[ deliverable_type][ loop=<id>]` por commit). SIN ese fichero, SKIPEA
+    EXPLICITAMENTE -- un SKIP mudo convertiria la barrera en norma; se IMPRIME
+    el motivo.
+
+    S1B item 2: el token `loop=<id>` OPCIONAL se honra como `--loop-id` del
+    guard. Defecto medido 2026-09-07: dos bucles sobre DOCUMENTOS distintos
+    anclados al MISMO sha (L730 y L731 comparten `c54b9deb...`) se FUNDIAN si
+    el lector solo pasa shas. El formato viejo `sha[ deliverable_type]` SIGUE
+    VALIENDO: sin token `loop=`, el comportamiento es identico al anterior
+    (retrocompatibilidad obligatoria).
 
     WOT-2026-055q: la barrera NACIO en WARN (`is_blocking=False`) porque ningun
     vuelo emitia todavia receipts con nonce, y el docstring fijaba el criterio de
@@ -1600,18 +1652,10 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             is_blocking=False,
             skipped=True,
         )
-    commit_shas: list[str] = []
-    per_commit_dtype: dict[str, str] = {}
     try:
-        for line in targets_file.read_text(encoding="utf-8").splitlines():
-            line = line.split("#", 1)[0].strip()
-            if not line:
-                continue
-            parts = line.split()
-            sha = parts[0]
-            commit_shas.append(sha)
-            if len(parts) > 1:
-                per_commit_dtype[sha] = parts[1]
+        commit_shas, per_commit_dtype, per_commit_loop = _parse_loop_execution_targets(
+            targets_file.read_text(encoding="utf-8")
+        )
     except OSError as exc:
         return CheckResult(
             name=name,
@@ -1649,7 +1693,9 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             is_blocking=True,
         )
 
-    failures = _loop_accreditation_failures(project_root, commit_shas, per_commit_dtype)
+    failures = _loop_accreditation_failures(
+        project_root, commit_shas, per_commit_dtype, per_commit_loop
+    )
     if failures:
         detail = "\n".join(
             f"  - {v['commit_sha']}: {len(v['distinct_backends'])}/{v['min_distinct']} "
