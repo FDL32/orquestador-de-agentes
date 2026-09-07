@@ -173,6 +173,70 @@ def _dag_persisted(base: str, flight_plans_root: Path) -> bool:
     return False
 
 
+def check_batch_run_emitted(reports_root: Path) -> list[str]:
+    """WOT-2026-066n: caza la AUSENCIA del batch_run, no solo su calidad.
+
+    `check_batch_run_accounting` y `check_flight_plan_persisted` auditan los
+    informes que EXISTEN. Un vuelo que nunca emitio el suyo no produce hallazgo:
+    el bucle del llamante recorre cero elementos y el check pasa en silencio
+    (medido 2026-09-07 en `prepush_check.py`, `glob("batch_run_*.json")`). Ese
+    silencio es el que dejo `WOT-2026-064a` entregado pero NO AUDITABLE -- el
+    `batch_run` es INPUT FAIL-CLOSED del auditor hermano
+    (`audit_autonomous_ticket_batch.md` S.4), que ademas tiene PROHIBIDO
+    reconstruirlo.
+
+    La senal de que HUBO un vuelo es su receipt de aislamiento
+    (`start_context_isolation*.json`), que un vuelo autonomo debe traer resuelto
+    ANTES de mutar nada: es el registro mas fiable de que una corrida existio.
+    Un receipt `RESOLVED` sin su `batch_run` es un vuelo que corrio y no dejo su
+    salida obligatoria.
+
+    Medido 2026-09-07 (clase, no incidente): 8 receipts, 6 sin `batch_run`
+    correlativo; y de los vuelos de UN ticket (062d, 063c, P1_STREAMING,
+    FV-20260831, 064a) ninguno emitio el suyo.
+
+    Un receipt cuyo `status` NO es RESOLVED no acredita vuelo (PENDING = el
+    vuelo se paro en el gate, que es el comportamiento correcto): no genera
+    hallazgo.
+
+    Before: `reports_root` es el directorio de reports del rol destino; puede no
+        existir.
+    During: lee cada `start_context_isolation*.json` (tolerando BOM via
+        `utf-8-sig`), toma su `flight` y busca un `batch_run_*<flight>*.json`
+        hermano. Solo lectura.
+    After: devuelve un finding por vuelo acreditado sin `batch_run` (lista vacia
+        = ningun vuelo sin su salida). Nunca lanza: un receipt ilegible o
+        malformado se ignora -- este guard mide AUSENCIA de batch_run, no
+        integridad de receipts, y confundirlos convertiria un receipt roto en un
+        falso hallazgo de vuelo sin salida.
+    """
+    reports_root = Path(reports_root)
+    if not reports_root.is_dir():
+        return []
+
+    findings: list[str] = []
+    for receipt in sorted(reports_root.glob("start_context_isolation*.json")):
+        try:
+            payload = json.loads(receipt.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("status", "")).strip().upper() != "RESOLVED":
+            continue
+        flight = str(payload.get("flight", "")).strip()
+        if not flight:
+            continue
+        if any(reports_root.glob(f"batch_run_*{flight}*.json")):
+            continue
+        findings.append(
+            f"vuelo '{flight}' acreditado por {receipt.name} pero SIN "
+            f"batch_run_*{flight}*.json: la corrida no es auditable "
+            "(input fail-closed del auditor hermano, WOT-2026-023v)"
+        )
+    return findings
+
+
 def check_flight_plan_persisted(
     batch_run_path: Path, flight_plans_root: Path | None = None
 ) -> list[str]:

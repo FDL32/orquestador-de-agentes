@@ -881,14 +881,21 @@ def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
     During: imports check_batch_run_accounting.check_batch_run_accounting and
     check_flight_plan_persisted (static import so check_guard_wiring's AST
     walker reaches them) and runs them over every batch_run_*.json found.
+    WOT-2026-066n adds the ABSENCE check: `check_batch_run_emitted` crosses the
+    isolation receipts (proof a flight ran) against the batch_run reports. A
+    RESOLVED receipt with no matching report is a flight that ran without its
+    fail-closed output, which leaves the run unauditable.
+
     After: passed=True if no report has an orphan GSR ticket or a non-persisted
-    claimed flight plan (or none exist); passed=False + is_blocking=False
+    claimed flight plan, AND no accredited flight lacks its batch_run (or none
+    exist); passed=False + is_blocking=False
     (WARN, listing offending reports/findings) otherwise. Never raises:
     unreadable/malformed reports are skipped.
     """
     name = "Batch Run Accounting Check (GSR-subset + flight-plan, WARN)"
     from scripts.check_batch_run_accounting import (
         check_batch_run_accounting,
+        check_batch_run_emitted,
         check_flight_plan_persisted,
     )
 
@@ -903,6 +910,14 @@ def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
     flight_plans_dir = project_root / "orchestrator_pipeline" / "flight_plans"
 
     findings: dict[str, list[str]] = {}
+    # WOT-2026-066n: la AUSENCIA primero. El bucle de abajo solo ve los informes
+    # que EXISTEN, asi que un vuelo que nunca emitio el suyo recorreria cero
+    # elementos y pasaria en silencio -- el hueco que dejo WOT-2026-064a
+    # entregado pero NO AUDITABLE.
+    missing = check_batch_run_emitted(reports_dir)
+    if missing:
+        findings["<vuelos sin batch_run>"] = missing
+
     for report in sorted(reports_dir.glob("batch_run_*.json")):
         try:
             orphans = check_batch_run_accounting(report)

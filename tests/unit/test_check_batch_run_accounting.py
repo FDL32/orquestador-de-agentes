@@ -347,3 +347,90 @@ def test_parenthetical_flight_suffix_still_resolves_dag(tmp_path: Path) -> None:
     findings = check_flight_plan_persisted(batch_run)
 
     assert findings == []
+
+
+# --- WOT-2026-066n: la AUSENCIA del batch_run, no solo su calidad -------------
+
+
+def _write_receipt(reports: Path, name: str, flight: str, status: str = "RESOLVED"):
+    (reports / f"start_context_isolation.{name}.json").write_text(
+        json.dumps({"status": status, "flight": flight}), encoding="utf-8"
+    )
+
+
+def test_accredited_flight_without_batch_run_is_a_finding(tmp_path: Path) -> None:
+    """El caso REAL que dejo WOT-2026-064a entregado pero NO auditable.
+
+    Un receipt RESOLVED prueba que hubo vuelo; sin su `batch_run_*.json` la
+    corrida no es auditable, porque ese fichero es INPUT FAIL-CLOSED del auditor
+    hermano y este tiene PROHIBIDO reconstruirlo.
+
+    Mutacion que debe matar este test: que `check_batch_run_emitted` vuelva a
+    mirar solo los informes existentes (devolver [] sin cruzar los receipts).
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_receipt(reports, "WOT-2026-999z", "WOT-2026-999z")
+
+    findings = check_batch_run_emitted(reports)
+
+    assert len(findings) == 1, findings
+    assert "WOT-2026-999z" in findings[0]
+    assert "no es auditable" in findings[0]
+
+
+def test_flight_with_its_batch_run_is_not_a_finding(tmp_path: Path) -> None:
+    """CONTROL POSITIVO: el guard no puede sonar cuando el vuelo SI cumplio.
+
+    Sin este control, un guard que devolviera un finding por CADA receipt
+    pasaria el test de arriba y seria inutil.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_receipt(reports, "WOT-2026-999y", "WOT-2026-999y")
+    (reports / "batch_run_WOT-2026-999y.json").write_text("{}", encoding="utf-8")
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_pending_receipt_does_not_accredit_a_flight(tmp_path: Path) -> None:
+    """Un receipt PENDING significa que el vuelo se PARO en el gate.
+
+    Eso es el comportamiento correcto del contrato, no un vuelo sin salida:
+    reportarlo convertiria una parada honesta en un hallazgo.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_receipt(reports, "WOT-2026-999x", "WOT-2026-999x", status="PENDING")
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_unreadable_receipt_is_skipped_not_reported(tmp_path: Path) -> None:
+    """Este guard mide AUSENCIA de batch_run, no integridad de receipts.
+
+    Confundirlos convertiria un receipt roto en un falso hallazgo de "vuelo sin
+    salida", que es un diagnostico distinto y con otro dueno.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "start_context_isolation.roto.json").write_text(
+        "{no es json", encoding="utf-8"
+    )
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_missing_reports_dir_is_not_a_finding(tmp_path: Path) -> None:
+    """Un destino sin reports/ no ha volado: no hay ausencia que reportar."""
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    assert check_batch_run_emitted(tmp_path / "no-existe") == []
