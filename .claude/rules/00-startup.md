@@ -1,5 +1,9 @@
 # Protocolo de Inicio y Flujo Principal
 
+> **Carga de memoria:** ejecuta el mecanismo en `prompts/_shared/memory_bootstrap.md`
+> al arrancar. Motivo: sin carga, el agente opera con 0 lecciones y repite
+> errores ya documentados en la memoria del proyecto.
+
 ## Flujo de Trabajo (Manager → Builder)
 
 > Ver detalle completo en [PROJECT.md sección "Current Cycle"](../PROJECT.md#current-cycle) y [prompts/orchestrator_session_bootstrap.md](../prompts/orchestrator_session_bootstrap.md).

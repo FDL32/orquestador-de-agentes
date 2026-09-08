@@ -28,6 +28,10 @@ Cuando el usuario solicita una nueva funcionalidad, el Manager usa esta skill pa
 ## Workflow
 
 ### Paso 0: Verificar Turno
+
+> **Carga de memoria:** antes de planificar, ejecuta el mecanismo descrito en
+> `prompts/_shared/memory_bootstrap.md`. Motivo: el Manager que planifica sin
+> corpus decide sin lecciones; las decisiones ya aprendidas se repiten.
 ```bash
 python .agent/agent_controller.py
 ```

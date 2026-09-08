@@ -45,6 +45,11 @@ python scripts/memory_context.py --recall --query "<dominio de la tarea>"
 # `rc=2 unrecognized arguments: canonica`, que por M1 es MEDICION_FALLIDA.
 ```
 
+**Mecanismo de carga de memoria:** el mecanismo completo (comandos, regla del
+indice, cuando ejecutar) vive en `prompts/_shared/memory_bootstrap.md`.
+Motivo: una sesion que arranca fria no hereda el hook SessionStart; sin carga
+de memoria, trabaja con 0 lecciones y repite errores ya documentados.
+
 **Por que el paso 3 es obligatorio** (WOT-2026-057a, medido 2026-08-17): el
 paso 2 entrega un INDICE. Con mediana de 877 chars por leccion, la regla
 accionable de 82 entradas vive DESPUES del corte del indice. Un titular no te
