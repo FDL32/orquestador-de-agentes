@@ -8,7 +8,9 @@ DoD coverage:
     all produce CONTRACT_BLOCKED (not COMPLETED).
   - Payload contains exactly {ticket_id, gap_type, cg_file_path}.
   - _validate_contract_gap_coherence: event without CG file -> error.
-  - _validate_contract_gap_coherence: CG file without event -> error.
+  - _validate_contract_gap_coherence: CG file without event -> warning when
+    the bus holds no events for the ticket (WOT-2026-067e: bus absent in
+    this context), error when the bus holds other events for the ticket.
   - _validate_contract_gap_coherence: both present -> no error.
   - emit_contract_gap reentry guard: second emit for same ticket+gap_type -> None.
 """
@@ -394,20 +396,31 @@ def test_validate_coherence_event_without_cg_file(tmp_path: Path, monkeypatch) -
 
     _patch_coherence_seams(monkeypatch, agent_dir, local_bus)
     plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
-    errors = agent_controller._validate_contract_gap_coherence(plan_content)
+    errors, warnings = agent_controller._validate_contract_gap_coherence(plan_content)
 
     assert len(errors) == 1, f"Expected exactly one coherence error, got: {errors}"
     assert "not found in contract_gaps" in errors[0]
+    assert warnings == [], f"Inverse branch must not emit warnings, got: {warnings}"
 
 
 # ---------------------------------------------------------------------------
-# Test 9: _validate_contract_gap_coherence: CG file without event -> error
+# Test 9: _validate_contract_gap_coherence: CG file without event for the
+# ticket -> degraded to warning (WOT-2026-067e, re-anchored: was error)
 # ---------------------------------------------------------------------------
 
 
 def test_validate_coherence_cg_file_without_event(tmp_path: Path, monkeypatch) -> None:
-    """_validate_contract_gap_coherence: CG file present, bus event absent -> error."""
+    """CG file present, bus WITHOUT events for this ticket -> warning, not error.
+
+    WOT-2026-067e: originally this test pinned the pre-fix behavior (hard
+    error on an empty bus). The fix degrades the branch to a warning when the
+    runtime bus holds no events for the ticket (bus absent in this context).
+    Re-anchored to the ticket-scoping boundary: the bus is NON-empty but only
+    holds events for a DIFFERENT ticket, so bus_has_ticket_events(<ticket>)
+    is still False and the branch must degrade, not hard-fail.
+    """
     ticket_id = "WOT-2026-007c"
+    other_ticket = "WOT-2026-000z"
     agent_dir = tmp_path / ".agent"
     runtime_dir = agent_dir / "runtime" / "events"
     runtime_dir.mkdir(parents=True)
@@ -417,14 +430,25 @@ def test_validate_coherence_cg_file_without_event(tmp_path: Path, monkeypatch) -
         f"# CG-{ticket_id}\n- **ticket_id:** {ticket_id}\n", encoding="utf-8"
     )
 
-    empty_bus = EventBus(runtime_dir)  # no events emitted
+    local_bus = EventBus(runtime_dir)  # events for another ticket only
+    emitted = local_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=other_ticket,
+        actor="BUILDER",
+        payload={"to_state": "IN_PROGRESS"},
+    )
+    assert emitted is not None, "bus setup: STATE_CHANGED for other ticket must emit"
 
-    _patch_coherence_seams(monkeypatch, agent_dir, empty_bus)
+    _patch_coherence_seams(monkeypatch, agent_dir, local_bus)
     plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
-    errors = agent_controller._validate_contract_gap_coherence(plan_content)
+    errors, warnings = agent_controller._validate_contract_gap_coherence(plan_content)
 
-    assert len(errors) == 1, f"Expected exactly one coherence error, got: {errors}"
-    assert "no CONTRACT_GAP event found in bus" in errors[0]
+    assert errors == [], (
+        f"Bus absent for THIS ticket must degrade to warning, got errors: {errors}"
+    )
+    assert len(warnings) == 1, f"Expected exactly one warning, got: {warnings}"
+    assert "no CONTRACT_GAP event found in bus" in warnings[0]
+    assert "bus absent in this context" in warnings[0]
 
 
 # ---------------------------------------------------------------------------
@@ -451,9 +475,10 @@ def test_validate_coherence_both_present_no_error(tmp_path: Path, monkeypatch) -
 
     _patch_coherence_seams(monkeypatch, agent_dir, local_bus)
     plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
-    errors = agent_controller._validate_contract_gap_coherence(plan_content)
+    errors, warnings = agent_controller._validate_contract_gap_coherence(plan_content)
 
     assert errors == [], f"Coherent state must produce no errors, got: {errors}"
+    assert warnings == [], f"Coherent state must produce no warnings, got: {warnings}"
 
 
 # ---------------------------------------------------------------------------
@@ -489,11 +514,124 @@ def test_validate_coherence_flags_non_canonical_stored_path(
     local_bus = EventBus(runtime_dir)
     _patch_coherence_seams(monkeypatch, agent_dir, local_bus)
     plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
-    errors = agent_controller._validate_contract_gap_coherence(plan_content)
+    errors, _warnings = agent_controller._validate_contract_gap_coherence(plan_content)
 
     assert any("path incoherence" in e for e in errors), (
         f"Validator must flag the stored non-canonical path, got: {errors}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-067e: the "CG file without event" branch degrades to a warning
+# when the runtime bus holds no events for the ticket (bus absent in this
+# context), and stays an error when the bus DOES hold events for the ticket.
+# The inverse branch (event without CG file) is untouched. These use the
+# same `bus: EventBus` fixture as the rest of the file; the validator seams
+# are patched with the same _patch_coherence_seams helper.
+# ---------------------------------------------------------------------------
+
+
+def test_cg_sin_evento_y_bus_vacio_degrada_a_warning(
+    bus: EventBus, tmp_path: Path, monkeypatch
+) -> None:
+    """DoD 1: CG on disk + bus with NO events for the ticket -> warning.
+
+    The CI / fresh-clone case: the gitignored bus never travels, so the
+    "CG exists but no CONTRACT_GAP event" branch fired on every CI run. The
+    fix degrades it to a warning when bus_has_ticket_events is False.
+    """
+    ticket_id = "WOT-2026-067e"
+    agent_dir = tmp_path / ".agent"
+    cg_dir = agent_dir / "planning" / "contract_gaps"
+    cg_dir.mkdir(parents=True)
+    (cg_dir / f"CG-{ticket_id}.md").write_text(
+        f"# CG-{ticket_id}\n- **ticket_id:** {ticket_id}\n", encoding="utf-8"
+    )
+
+    # `bus` fixture: fresh EventBus over tmp_path/events -- no events at all.
+    assert bus.read_events(ticket_id=ticket_id) == []
+    _patch_coherence_seams(monkeypatch, agent_dir, bus)
+    plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
+    errors, warnings = agent_controller._validate_contract_gap_coherence(plan_content)
+
+    assert errors == [], (
+        f"Bus absent in this context must NOT hard-fail, got errors: {errors}"
+    )
+    assert len(warnings) == 1, f"Expected exactly one warning, got: {warnings}"
+    assert "no CONTRACT_GAP event found in bus" in warnings[0]
+    assert "bus absent in this context" in warnings[0]
+
+
+def test_cg_sin_evento_pero_bus_con_eventos_sigue_siendo_error_bus_sin_contract_gap(
+    bus: EventBus, tmp_path: Path, monkeypatch
+) -> None:
+    """DoD 3 (negative control): CG on disk + bus with OTHER events for the
+    ticket but NO CONTRACT_GAP -> stays an error.
+
+    Builds the "bus with events but no CONTRACT_GAP" state by emitting a
+    STATE_CHANGED for the plan_id and no CONTRACT_GAP, per the work plan.
+
+    Name note: the work plan's -k filter for this DoD is
+    ``bus_sin_contract_gap``; the suffix keeps that filter selecting THIS
+    test (the plan's mandated name alone did not match its own -k command).
+    """
+    ticket_id = "WOT-2026-067b"
+    agent_dir = tmp_path / ".agent"
+    cg_dir = agent_dir / "planning" / "contract_gaps"
+    cg_dir.mkdir(parents=True)
+    (cg_dir / f"CG-{ticket_id}.md").write_text(
+        f"# CG-{ticket_id}\n- **ticket_id:** {ticket_id}\n", encoding="utf-8"
+    )
+
+    emitted = bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="BUILDER",
+        payload={"to_state": "IN_PROGRESS"},
+    )
+    assert emitted is not None, "bus setup: STATE_CHANGED for the ticket must emit"
+    assert bus.read_events(ticket_id=ticket_id, event_type="CONTRACT_GAP") == []
+
+    _patch_coherence_seams(monkeypatch, agent_dir, bus)
+    plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
+    errors, warnings = agent_controller._validate_contract_gap_coherence(plan_content)
+
+    assert len(errors) == 1, f"Observable incoherence must stay an ERROR, got: {errors}"
+    assert "no CONTRACT_GAP event found in bus" in errors[0]
+    assert warnings == [], f"No warning may accompany the error, got: {warnings}"
+
+
+def test_evento_sin_cg_sigue_siendo_error_bus_sin_contract_gap(
+    bus: EventBus, tmp_path: Path, monkeypatch
+) -> None:
+    """DoD 4: bus with a CONTRACT_GAP event and NO CG file -> stays an error.
+
+    The inverse branch must NOT be relaxed by WOT-2026-067e: when the bus is
+    visible and declares a CONTRACT_GAP without a file, that is a real
+    incoherence regardless of bus visibility.
+    """
+    ticket_id = "WOT-2026-067c"
+    agent_dir = tmp_path / ".agent"
+    # contract_gaps/ exists but holds no CG file for this ticket.
+    (agent_dir / "planning" / "contract_gaps").mkdir(parents=True)
+
+    result = bus.emit_contract_gap(
+        ticket_id=ticket_id,
+        gap_type="premise_false",
+        cg_file_path=f"contract_gaps/CG-{ticket_id}.md",
+    )
+    assert result is not None, "bus setup: CONTRACT_GAP emit must succeed"
+    assert not (
+        agent_dir / "planning" / "contract_gaps" / f"CG-{ticket_id}.md"
+    ).exists()
+
+    _patch_coherence_seams(monkeypatch, agent_dir, bus)
+    plan_content = f"# Work Plan\n- **ID:** {ticket_id}\n"
+    errors, warnings = agent_controller._validate_contract_gap_coherence(plan_content)
+
+    assert len(errors) == 1, f"Inverse branch must stay an ERROR, got: {errors}"
+    assert "not found in contract_gaps" in errors[0]
+    assert warnings == [], f"No warning may accompany the error, got: {warnings}"
 
 
 # ---------------------------------------------------------------------------

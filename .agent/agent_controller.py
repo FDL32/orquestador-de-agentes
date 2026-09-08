@@ -1952,8 +1952,19 @@ def _validate_git_presence() -> list[str]:
     ]
 
 
-def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C901
+def _validate_contract_gap_coherence(  # noqa: C901
+    plan_content: str,
+) -> tuple[list[str], list[str]]:
     """WOT-2026-007f: Validate CONTRACT_GAP event ↔ CG-*.md file coherence.
+
+    WOT-2026-067e: returns an (errors, warnings) tuple. The "CG file present
+    but no CONTRACT_GAP event" branch degrades to a warning when the runtime
+    bus holds no events for the ticket at all (bus absent in this context:
+    CI, fresh clone, other machine -- the gitignored bus never travels),
+    mirroring closure_invariants.check_post_closure_built_exit. When the bus
+    DOES hold events for the ticket but none is a CONTRACT_GAP one, the
+    incoherence is observable in this context and stays an error. The inverse
+    branch (bus event without CG file) is untouched and stays an error.
 
     Before:
         - plan_content is the content of work_plan.md (may be empty).
@@ -1967,27 +1978,31 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
         - Compares the two surfaces for coherence.
 
     After:
-        - Returns [] if both surfaces agree (both present or both absent).
-        - Returns an error string if event present without CG file, or CG file
-          present without event (incoherent projection).
-        - Returns [] if ticket_id cannot be determined (no active ticket).
+        - Returns ([], []) if both surfaces agree (both present or both
+          absent) or if ticket_id cannot be determined (no active ticket).
+        - Returns an error string if event present without CG file, or CG
+          file present while the bus holds other events for the ticket but
+          no CONTRACT_GAP one (incoherent projection).
+        - Returns a warning string (not an error) if CG file is present and
+          the bus holds no events for the ticket (unverifiable here).
         - Never raises; all exceptions are caught and reported as errors.
     """
     errors: list[str] = []
+    warnings: list[str] = []
 
     # Skip if bus is unavailable
     if not BUS_AVAILABLE:
-        return errors
+        return errors, warnings
 
     # Determine active ticket_id
     ticket_id = get_plan_id(plan_content).strip()
     if is_invalid_plan_id(ticket_id):
-        return errors
+        return errors, warnings
 
     # Check bus for CONTRACT_GAP events
     bus = _get_event_bus()
     if bus is None:
-        return errors
+        return errors, warnings
 
     try:
         contract_gap_events = bus.read_events(
@@ -1996,7 +2011,7 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
         # Guard: read_events must return a list (not a mock or unexpected type).
         # If the bus is mocked in tests or returns an unexpected type, skip.
         if not isinstance(contract_gap_events, list):
-            return errors
+            return errors, warnings
         has_bus_event = bool(contract_gap_events)
     except OSError as exc:
         # WOT-2026-019d: bus.read_events -> _read_raw_events hace
@@ -2008,10 +2023,10 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
         else:
             detail = f"{exc.strerror} (errno {exc.errno})"
         errors.append(f"CONTRACT_GAP coherence: error reading bus events: {detail}")
-        return errors
+        return errors, warnings
     except Exception as exc:
         errors.append(f"CONTRACT_GAP coherence: error reading bus events: {exc}")
-        return errors
+        return errors, warnings
 
     # WOT-2026-007f review: emit_contract_gap enforces a canonical cg_file_path,
     # but legacy or tampered events may carry a non-canonical path. Verify the
@@ -2043,7 +2058,7 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
         errors.append(
             f"CONTRACT_GAP coherence: error scanning contract_gaps/: {detail}"
         )
-        return errors
+        return errors, warnings
 
     # Coherence check: both must agree
     if has_bus_event and not has_cg_file:
@@ -2053,13 +2068,31 @@ def _validate_contract_gap_coherence(plan_content: str) -> list[str]:  # noqa: C
             "Create the CG file or remove the stale bus event."
         )
     elif has_cg_file and not has_bus_event:
-        errors.append(
-            f"CONTRACT_GAP incoherence: {cg_pattern} exists in contract_gaps/ "
-            f"but no CONTRACT_GAP event found in bus for {ticket_id}. "
-            "Emit the CONTRACT_GAP event or remove the stale CG file."
-        )
+        if closure_invariants.bus_has_ticket_events(bus, ticket_id):
+            # The bus is visible here and registers OTHER events for this
+            # ticket: the missing CONTRACT_GAP event is an observable
+            # incoherence, not an artifact of a bus-less context.
+            errors.append(
+                f"CONTRACT_GAP incoherence: {cg_pattern} exists in contract_gaps/ "
+                f"but no CONTRACT_GAP event found in bus for {ticket_id}. "
+                "Emit the CONTRACT_GAP event or remove the stale CG file."
+            )
+        else:
+            # WOT-2026-067e: the bus is gitignored runtime state. When it
+            # holds no events for this ticket (CI, fresh clone, other
+            # machine), the event's absence is UNVERIFIABLE here, not a
+            # proven incoherence. Mirror
+            # closure_invariants.check_post_closure_built_exit: degrade to a
+            # warning instead of failing on an unobservable fact.
+            warnings.append(
+                f"CONTRACT_GAP incoherence: {cg_pattern} exists in contract_gaps/ "
+                f"but no CONTRACT_GAP event found in bus for {ticket_id} "
+                "(runtime bus has no events for this ticket - bus absent in "
+                "this context). Emit the CONTRACT_GAP event or remove the "
+                "stale CG file."
+            )
 
-    return errors
+    return errors, warnings
 
 
 def validate_state_files() -> dict[str, list[str]]:
@@ -6197,10 +6230,14 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
             warnings.setdefault("invariants", []).extend(invariant_result["warnings"])
 
     # WOT-2026-007f: Check CONTRACT_GAP event ↔ CG-*.md file coherence.
+    # WOT-2026-067e: the coherence validator returns (errors, warnings); the
+    # degraded "bus absent in this context" case lands in the warnings bucket.
     if not seed_neutral:
-        cg_errors = _validate_contract_gap_coherence(plan_content)
+        cg_errors, cg_warnings = _validate_contract_gap_coherence(plan_content)
         if cg_errors:
             errors.setdefault("contract_gap", []).extend(cg_errors)
+        if cg_warnings:
+            warnings.setdefault("contract_gap", []).extend(cg_warnings)
 
     # WOT-2026-026j D4: agents.json schema fail-closed. Una clave de role_mapping
     # fuera del enum canonico (o un actor_runtime desconocido) DEBE hacer fallar

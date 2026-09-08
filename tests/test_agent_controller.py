@@ -4968,7 +4968,7 @@ class TestValidateJsonTotals:
         monkeypatch.setattr(
             agent_controller,
             "_validate_contract_gap_coherence",
-            lambda x: [],
+            lambda x: ([], []),
         )
 
         # Mock scripts.validate_ticket_prose (imported dynamically inside _handle_validate)
@@ -5227,7 +5227,7 @@ class TestPiiSafeExceptionSites:
             "# Work Plan\n## Metadata\n- **ID:** WOT-2026-019d\n"
             "- **Estado:** APPROVED\n"
         )
-        errors = ac._validate_contract_gap_coherence(plan_content)
+        errors, _warnings = ac._validate_contract_gap_coherence(plan_content)
 
         assert errors, "expected a CONTRACT_GAP coherence error"
         joined = " ".join(errors)
@@ -5271,7 +5271,7 @@ class TestPiiSafeExceptionSites:
             "# Work Plan\n## Metadata\n- **ID:** WOT-2026-019d\n"
             "- **Estado:** APPROVED\n"
         )
-        errors = ac._validate_contract_gap_coherence(plan_content)
+        errors, _warnings = ac._validate_contract_gap_coherence(plan_content)
 
         assert errors, "expected a CONTRACT_GAP coherence error"
         joined = " ".join(errors)
