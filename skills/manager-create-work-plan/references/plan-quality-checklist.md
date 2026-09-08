@@ -11,6 +11,7 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 ## Alcance
 
 - [ ] La seccion `Non-goals` existe y no esta vacia.
+- [ ] La seccion `Decision Arquitectonica` existe y no esta vacia. `validate_ticket_prose.py:404` (TP-PROSE-10) la exige igual que exige `Non-goals` en `:221` (TP-PROSE-06, con umbral de 30 caracteres de contenido). "Ninguna, y por que" es una respuesta VALIDA para un cambio local; el relleno ritual que solo busca superar el umbral NO lo es, y ademas enciende TP-PROSE-02 (declarativo-vago).
 - [ ] `Files Likely Touched` enumera todos los archivos que el plan espera tocar.
 - [ ] Cada bullet FLT es `path` o `path (anotacion)`: la anotacion descriptiva va entre parentesis `(...)` o corchetes `[...]`, o el path va en su propia linea; NUNCA prosa libre tras el path en el mismo bullet. Ejemplo NO: `scripts/x.py es read-only, no tocar`; ejemplo SI: `scripts/x.py (read-only, no tocar)`, o mover ese path a `Read/inspect only`. Motivo: el parser FLT (`scope_gate._normalize_flt_line`, `check_deliverables_exist._resolve_flt_bullet_tokens`) se queda con el primer token del bullet; una anotacion delimitada es inequivoca, la prosa libre es ambigua.
 - [ ] No hay comodines difusos como "etc.", "los necesarios" o "otros archivos".

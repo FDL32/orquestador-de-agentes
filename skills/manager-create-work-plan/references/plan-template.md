@@ -54,6 +54,18 @@
 |--------|------|---------|----------|
 | [A] | [+] | [-] | [Aceptada/Descartada] |
 
+## Decision Arquitectonica
+[Qué pieza del sistema cambia y por qué ESA y no otra. Si el cambio conecta con
+un mecanismo que ya existe, nómbralo con su ruta. Respuesta válida y frecuente:
+"ninguna: es un cambio local de N líneas que no altera ninguna interfaz" — y por
+qué eso es cierto. Prefiere una frase honesta a un párrafo ritual.]
+
+## Non-goals
+[Qué queda FUERA de este ticket, y por qué. Lo que otro ticket ya cubre, lo que
+exige una decisión que aún no está tomada, o la superficie vecina que sería
+tentador tocar de paso. Si de verdad no hay ninguno, dilo así: "ninguno: la
+superficie es un único fichero y no hay vecina adyacente".]
+
 ## 🚨 Guía de Riesgos
 | Nivel | Significado | Acción del Builder |
 |-------|-------------|-------------------|
