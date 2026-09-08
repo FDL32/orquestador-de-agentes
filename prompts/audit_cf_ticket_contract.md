@@ -49,12 +49,22 @@ destino). Si tras esa resolucion el artefacto **sigue sin existir**, estas ante 
 - El punto 8 (**Intent Audit**) queda **INEJECUTABLE, no "debil"**: sin `Non-Goals` /
   `Quality Bar` / `Security Constraints` no hay nada contra lo que contrastar. Declaralo
   como tal, con la ruta que buscaste, en vez de inventar un veredicto.
-- Emite el estado **`CF_NOT_MATERIALIZED`** nombrando el artefacto y las rutas probadas, y
-  **escala con ARTEFACTO, no de palabra**: escribe el gap en el sink que ya existe,
-  `.agent/planning/contract_gaps/CG-<TICKET_ID>.md` (plantilla `templates/contract_gap.md`,
-  el mismo canal que usa el Builder). Una escalada sin fichero es NORMA, no mecanismo: nadie
-  la recibe y la carencia vuelve silenciosa. El gap declara el artefacto ausente, el dueño
-  del charter que se resolvio y la ruta probada.
+- Emite el estado **`CF_NOT_MATERIALIZED`** nombrando el artefacto y las rutas probadas.
+  **DECISION que produce este estado:** `CHANGES` de ambito REPO, nunca `APPROVE`. Sin
+  charter no existe `Intent Audit OK`, y el pipeline lo exige para congelar: un contrato
+  sin defectos propios no puede helarse contra una intencion que no esta donde mirar.
+  Aprobarlo en silencio seria el bypass del Intent Audit que esta regla existe para cerrar.
+- El auditorio sigue siendo read-only: no editas archivos del repo auditado. La escalada
+  es con ARTEFACTO, no de palabra: **produce el contenido exacto de la propuesta `DEC-*`
+  para que el Manager lo materialice** en la cola de decisiones del repo dueno
+  (`.agent/planning/decisions.md`, schema en `prompts/contract_formation_pipeline.md`
+  seccion 6), nombrando el artefacto ausente, el dueno del charter resuelto y las rutas
+  probadas. Una escalada que no deja artefacto recepible es NORMA, no mecanismo: nadie la
+  recibe y la carencia vuelve silenciosa.
+- Los puntos del checklist que no dependen de la entrada ausente se auditan IGUAL, con las
+  entradas disponibles. Cada claim que no puedas contrastar por infraestructura inexistente
+  se marca **`NO VERIFICABLE`** (con la ruta probada) en la tabla `Claim | Evidencia |
+  Estado` de la salida, y no se aprueba por inercia del estado vecino.
 - Un contrato **mal formado** es cosa distinta: sus campos existen pero estan incompletos,
   no son binarios o no son reproducibles. Eso SI es hallazgo del contrato y mantiene su
   severidad normal.
@@ -65,11 +75,15 @@ sanos, y es la razon por la que `WOT-2026-021k` necesito un waiver explicito del
 
 ## Checklist especifica del ticket contract
 
-1. **Campos completos:** `status`, `Objective-Link`, `Plan-Link`, `Premise`,
-   `Premise Re-check`, `Files Likely Touched`, `Forbidden Surfaces`, DoD, STOP,
-   `CONTRACT_GAP behavior`, `Builder clarification budget`. Un campo ausente bloquea.
-2. **Premise verificable read-only:** el `Premise Re-check` es un comando read-only
-   reproducible, no una afirmacion de fe. Si no se puede reproducir, no es premisa.
+1. **Campos completos:** la lista de campos de un ticket contract vivo es ESTRUCTURA y su
+   unico declarante es `scripts/validate_contract_formation.py` (`TICKET_REQUIRED`):
+   ejecutalo contra el artefacto auditado (`--tickets <ruta>`) y exige rc=0. Un campo
+   ausente bloquea. Este prompt no re-declara la lista: re-declararla deriva en drift
+   bidireccional silencioso contra su productor, como lo midio `WOT-2026-063a`. Frontera:
+   `WOT-2026-014r` -- puntero, no fuente.
+2. **Premise verificable read-only:** el bloque de re-verificacion de la premisa es un
+   comando read-only reproducible, no una afirmacion de fe. Si no se puede reproducir, no
+   es premisa.
 3. **DoD binario:** cada criterio de cierre es un comando con exit code o un test
    pass/fail, no "verificar que funcione".
 4. **Forbidden Surfaces coherentes con el plan:** las superficies prohibidas derivan del
@@ -81,7 +95,10 @@ sanos, y es la razon por la que `WOT-2026-021k` necesito un waiver explicito del
    ejecutar Builder/codigo/tests debe ser `mixed` o abrir ticket separado.
 7. **CONTRACT_GAP como unica valvula:** el contrato deja claro que ante premisa falsa,
    ambiguedad, superficie prohibida necesaria o criterio incompleto, el Builder emite
-   `CG-<TICKET_ID>.md` y bloquea; no muta el contrato en silencio.
+   `CG-<TICKET_ID>.md` y bloquea; no muta el contrato en silencio. Plantilla:
+   `docs/contract_formation/templates/contract_gap.md`. Su ambito es post-freeze (un
+   contrato helado que resulta obsoleto en ejecucion); carencias de infraestructura del
+   repo no caben ahi -- son el caso `CF_NOT_MATERIALIZED` de arriba, otro canal.
 8. **Intent Audit (rutado a 2.b):** contrasta el ticket contra `Non-Goals`,
    `Quality Bar` y `Security Constraints` del charter **de su dueño** (resolucion de ruta
    arriba). Un ticket que cumple su DoD pero contradice un Non-Goal debe marcarse riesgo,
