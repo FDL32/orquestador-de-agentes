@@ -40,7 +40,7 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | backend_key | backend | model | status |
 |-------------|---------|-------|--------|
 | BA01 | claude | — | active |
-| BA05 | codex | gpt-6-astra | active |
+| BA05 | codex | gpt-5.6-luna | active |
 | BA06 | opencode | opencode-go/glm-5.2 | active |
 | BA10 | nan_api | deepseek-v4-flash | active |
 | BA11 | nan_api | qwen3.6 | active |
