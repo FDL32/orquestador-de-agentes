@@ -65,6 +65,20 @@ def _write_receipt(
     return receipt
 
 
+def _write_executed_prompt(
+    root: Path,
+    content: str = "# Arranque REALMENTE ejecutado B\nlinea dos\n",
+    utime: int = 1784800000,
+) -> Path:
+    """El prompt B que la sesion REALMENTE ejecuto (WOT-2026-066z). Fichero
+    aparte del sellado A, con bytes distintos y mtime controlado como
+    _write_prompt para que el orden temporal sea hermetico."""
+    prompt = root / "arranque_ejecutado_B.md"
+    prompt.write_text(content, encoding="utf-8", newline="\n")
+    os.utime(prompt, (utime, utime))
+    return prompt
+
+
 class TestIntegrityTripleVia:
     def test_conforming_receipt_has_no_findings(self, tmp_path: Path) -> None:
         prompt = _write_prompt(tmp_path)
@@ -97,6 +111,87 @@ class TestIntegrityTripleVia:
         receipt = _write_receipt(tmp_path, prompt=prompt, payload=payload)
         findings = check_seal_staleness(receipt, prompt_path=prompt)
         assert any("prompt_lines" in f for f in findings)
+
+
+class TestExecutedPromptAnchor:
+    """WOT-2026-066z / DEC-066Z-001: nivel 2 de la cascada del prompt REALLY
+    consumido. El recibo declara en `prompt_executed_path` el arranque que la
+    sesion REALMENTE ejecuto (lo escribe el RESOLVER del recibo, no el
+    ejecutor); el guard lo contrasta contra el sello midiendo BYTES, no
+    afirmaciones. El nivel 3 (receipt.prompt_path) queda CONSERVADO como
+    fallback legacy por decision (DEC-066Z-001 sec 4)."""
+
+    def test_declared_executed_prompt_distinct_from_sealed_is_hard(
+        self, tmp_path: Path
+    ) -> None:
+        prompt_a = _write_prompt(tmp_path)
+        prompt_b = _write_executed_prompt(tmp_path)
+        receipt = _write_receipt(
+            tmp_path, prompt=prompt_a, payload={"prompt_executed_path": str(prompt_b)}
+        )
+        findings = check_seal_staleness(receipt)
+        sha_findings = [f for f in findings if "prompt_sha256" in f]
+        assert sha_findings, findings
+        # la discrepancia NOMBRA a A y a B, no solo los shas:
+        assert prompt_b.name in sha_findings[0]
+        assert prompt_a.name in sha_findings[0]
+        assert all(not f.startswith("[WARN]") for f in findings)
+
+    def test_declared_executed_prompt_equal_to_sealed_is_clean(
+        self, tmp_path: Path
+    ) -> None:
+        # Control de simetria (DoD 1): misma via, caso feliz -> sin hallazgos.
+        prompt_a = _write_prompt(tmp_path)
+        receipt = _write_receipt(
+            tmp_path, prompt=prompt_a, payload={"prompt_executed_path": str(prompt_a)}
+        )
+        assert check_seal_staleness(receipt) == []
+
+    def test_arg_still_wins_over_declared_executed_prompt(self, tmp_path: Path) -> None:
+        # Nivel 1 > nivel 2: el arg del CLI/humano sigue mandando sobre el campo.
+        prompt_a = _write_prompt(tmp_path)
+        prompt_b = _write_executed_prompt(tmp_path)
+        receipt = _write_receipt(
+            tmp_path, prompt=prompt_a, payload={"prompt_executed_path": str(prompt_b)}
+        )
+        assert check_seal_staleness(receipt, prompt_path=prompt_a) == []
+
+    def test_declared_executed_prompt_relative_resolves_against_receipt_dir(
+        self, tmp_path: Path
+    ) -> None:
+        prompt_a = _write_prompt(tmp_path)
+        subdir = tmp_path / "sesion"
+        subdir.mkdir()
+        prompt_b = _write_executed_prompt(subdir)
+        receipt = _write_receipt(
+            tmp_path,
+            prompt=prompt_a,
+            payload={"prompt_executed_path": "sesion/arranque_ejecutado_B.md"},
+        )
+        findings = check_seal_staleness(receipt)
+        assert any("prompt_sha256" in f and prompt_b.name in f for f in findings)
+
+    def test_declared_executed_prompt_missing_is_hard(self, tmp_path: Path) -> None:
+        # Ancla DECLARADA que no resuelve -> hard (fail-closed), nombrando el campo.
+        prompt_a = _write_prompt(tmp_path)
+        receipt = _write_receipt(
+            tmp_path,
+            prompt=prompt_a,
+            payload={"prompt_executed_path": str(tmp_path / "desaparecido.md")},
+        )
+        findings = check_seal_staleness(receipt)
+        assert any(
+            "cannot resolve" in f and "prompt_executed_path" in f for f in findings
+        )
+
+    def test_receipt_without_executed_field_keeps_legacy_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        # La AUSENCIA del campo no es hallazgo: un recibo legacy conforme cae al
+        # nivel 3 y sale limpio (DEC-066Z-001 sec 4).
+        prompt_a = _write_prompt(tmp_path)
+        receipt = _write_receipt(tmp_path, prompt=prompt_a)
+        assert check_seal_staleness(receipt) == []
 
 
 class TestTemporalOrder:
@@ -300,3 +395,88 @@ class TestPrepushWiring:
         result = run_seal_staleness_check(tmp_path)
         assert result.passed is True
         assert "(skip)" in result.output
+
+    def test_wiring_detects_executed_prompt_distinct_from_sealed(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-066z (DoD 1 + DoD 3): el camino automatico emite el
+        veredicto de R1.
+
+        Espejo hermetico del par R1/R2 del escalado (ficha F-A2, salida literal
+        preservada en arranques/INCIDENT_20260908-ficha-inbox-borrada-con-rm.md):
+        recibo que sella A y declara en `prompt_executed_path` el arranque B que
+        la sesion REALMENTE ejecuto (bytes distintos, mtime posterior a
+        approved_at). R1 (con --prompt) daba 4 hard findings y R2 (sin ella)
+        daba `seal fresh`; con el nivel 2 de DEC-066Z-001 el camino AUTOMATICO
+        -- que NO pasa prompt_path -- debe emitir el mismo veredicto que R1:
+        las 4 clases de hallazgo, sin bloquear (el regimen sigue siendo WARN).
+        """
+        from scripts.prepush_check import run_seal_staleness_check
+
+        prompt_a = _write_prompt(tmp_path)
+        prompt_b = _write_executed_prompt(tmp_path, utime=1800000000)
+        reports = tmp_path / "orchestrator_pipeline" / "reports"
+        reports.mkdir(parents=True)
+        receipt = _write_receipt(
+            reports,
+            prompt=prompt_a,
+            payload={
+                "project_root_resolved": str(tmp_path),
+                "prompt_executed_path": str(prompt_b),
+            },
+        )
+        result = run_seal_staleness_check(tmp_path)
+        assert result.passed is False, result.output
+        assert result.is_blocking is False
+        assert receipt.name in result.output
+        # las 4 clases de hallazgo que R1 emitio con la ancla:
+        assert "prompt_sha256" in result.output
+        assert prompt_b.name in result.output
+        assert prompt_a.name in result.output
+        assert "prompt_bytes" in result.output
+        assert "prompt_lines" in result.output
+        assert "EARLIER" in result.output
+
+    def test_wiring_executed_prompt_equal_to_sealed_passes(
+        self, tmp_path: Path
+    ) -> None:
+        """Control de simetria del DoD 1: A y B = el MISMO fichero -> sin hard."""
+        from scripts.prepush_check import run_seal_staleness_check
+
+        prompt = _write_prompt(tmp_path)
+        reports = tmp_path / "orchestrator_pipeline" / "reports"
+        reports.mkdir(parents=True)
+        _write_receipt(
+            reports,
+            prompt=prompt,
+            payload={
+                "project_root_resolved": str(tmp_path),
+                "prompt_executed_path": str(prompt),
+            },
+        )
+        result = run_seal_staleness_check(tmp_path)
+        assert result.passed is True, result.output
+
+    def test_vuelo_sin_batch_run_y_ausencia_de_ancla_no_es_rojo_garantizado(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-066z (DoD 4): control negativo del camino automatico.
+
+        Un recibo conforme SIN `batch_run` en disco y SIN ancla derivable de
+        prompt (ni arg, ni `prompt_executed_path`) NO se convierte en rojo
+        garantizado: cae al nivel 3 legacy y esta capa calla. Sin este control,
+        el fix cambiaria un falso verde por un falso rojo sistematico.
+        """
+        from scripts.prepush_check import run_seal_staleness_check
+
+        prompt = _write_prompt(tmp_path)
+        reports = tmp_path / "orchestrator_pipeline" / "reports"
+        reports.mkdir(parents=True)
+        receipt = _write_receipt(
+            reports, prompt=prompt, payload={"project_root_resolved": str(tmp_path)}
+        )
+        assert not list(reports.glob("batch_run_*.json"))
+        result = run_seal_staleness_check(tmp_path)
+        assert result.passed is True, result.output
+        assert "hard" not in result.output
+        assert receipt.name not in result.output

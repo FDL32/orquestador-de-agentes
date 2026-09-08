@@ -1026,6 +1026,14 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
         # batch_run no esta en disco, se pasa `None` y esta capa simplemente no
         # opina -- nunca inventa un ancla.
         batch_run = _batch_run_for_receipt(reports_dir, receipt)
+        # WOT-2026-066z / DEC-066Z-001: el ancla del prompt REALMENTE ejecutado
+        # viaja DENTRO del recibo (campo `prompt_executed_path`, nivel 2 de la
+        # cascada de `_prompt_integrity`): este camino automatico sigue SIN
+        # pasar `prompt_path`; el arg es nivel 1, reservado al uso CLI/humano.
+        # Un recibo sin el campo cae al nivel 3 legacy (`receipt["prompt_path"]`,
+        # conservado por decision: deuda declarada en DEC-066Z-001 sec 4). Un
+        # vuelo SIN `batch_run` y sin ancla derivable NO se convierte en rojo
+        # garantizado: con un recibo conforme esta capa calla (DoD 4 del ticket).
         try:
             found = check_seal_staleness(
                 receipt, batch_run_path=batch_run, project_root=project_root

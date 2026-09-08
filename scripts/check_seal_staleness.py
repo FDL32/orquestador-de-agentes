@@ -7,6 +7,11 @@ verify in three layers:
 1. **Integrity (triple via):** ``prompt_sha256`` + ``prompt_bytes`` +
    ``prompt_lines`` must match the file. Three ways, not one: a bare sha cannot
    distinguish "wrong file" from "right file renamed".
+   The file is resolved with a three-level cascade (DEC-066Z-001, via B): the
+   ``--prompt`` argument wins, else the receipt field ``prompt_executed_path``
+   (the arranque the session REALLY consumed, declared by the receipt's
+   RESOLVER), else ``receipt["prompt_path"]`` -- the sealed file itself, the
+   legacy fallback, conserved by decision (declared debt: DEC-066Z-001 sec 4).
 2. **Temporal order:** ``approved_at`` is LATER than the ``mtime`` of the
    prompt. A seal earlier than what it seals never saw what it signs.
 3. **Semantic freshness (heuristic):** if the prompt carries state claims
@@ -44,6 +49,12 @@ from typing import Any
 _STATE_CLAIM = re.compile(
     r"(?i)(\d+)\s+(?:warnings?|errores?|errors?)|EN VUELO|runtime OCUPADO|sin push"
 )
+
+# WOT-2026-066z / DEC-066Z-001 (via B): campo del recibo que declara el prompt
+# REALMENTE ejecutado. Lo escribe el RESOLVER del recibo (tercero externo),
+# nunca el ejecutor auditado. Es el nivel 2 de la cascada de `_prompt_integrity`;
+# su AUSENCIA no es hallazgo (los recibos legacy caen al nivel 3).
+_EXECUTED_PROMPT_FIELD = "prompt_executed_path"
 
 
 def _norm(root: str | Path) -> str:
@@ -198,36 +209,85 @@ def _semantic_freshness(prompt: Path, project_root: Path | None) -> list[str]:
     return findings
 
 
-def _prompt_integrity(
+def _resolve_prompt_cascade(
     receipt: dict[str, Any],
     prompt_path: str | Path | None,
     receipt_path: str | Path,
-) -> tuple[Path | None, list[str]]:
-    """Layer 1 (triple via) + prompt resolution. Before: parsed receipt.
-    During: resolve the prompt REALLY consumed (arg wins, else receipt.prompt_path),
-    contrast prompt_sha256 and, when present, prompt_bytes/prompt_lines.
-    After: (prompt | None, findings). Absent bytes/lines fields are tolerated
-    (legacy receipts carry only the sha)."""
-    findings: list[str] = []
-    prompt = None
+) -> tuple[Path | None, int]:
+    """Three-level cascade of DEC-066Z-001. Before: parsed receipt. During:
+    pick the anchor of the prompt REALLY consumed in priority order: (1) the
+    ``prompt_path`` argument, (2) the receipt field ``prompt_executed_path``
+    (declared by the receipt's RESOLVER), (3) ``receipt["prompt_path"]`` (the
+    sealed file itself, legacy fallback). Levels 2/3 resolve relative paths
+    against the receipt's dir. After: (prompt, resolved_from) with
+    resolved_from in {0 no anchor, 1 arg, 2 executed field, 3 sealed}.
+    Never raises."""
     if prompt_path is not None:
-        prompt = Path(prompt_path)
-    elif isinstance(receipt.get("prompt_path"), str) and receipt["prompt_path"]:
-        cand = Path(receipt["prompt_path"])
-        prompt = cand if cand.is_absolute() else Path(receipt_path).parent / cand
-    if prompt is None or not prompt.exists():
-        findings.append(
-            f"hard: cannot resolve the prompt file consumed (arg={prompt_path})"
+        return Path(prompt_path), 1
+    executed_raw = receipt.get(_EXECUTED_PROMPT_FIELD)
+    if isinstance(executed_raw, str) and executed_raw.strip():
+        cand = Path(executed_raw)
+        if cand.is_absolute():
+            return cand, 2
+        return Path(receipt_path).parent / cand, 2
+    sealed_raw = receipt.get("prompt_path")
+    if isinstance(sealed_raw, str) and sealed_raw:
+        cand = Path(sealed_raw)
+        if cand.is_absolute():
+            return cand, 3
+        return Path(receipt_path).parent / cand, 3
+    return None, 0
+
+
+def _unresolvable_hint(
+    receipt: dict[str, Any],
+    prompt_path: str | Path | None,
+    resolved_from: int,
+) -> str:
+    """Name WHICH anchor failed to resolve, so the finding is auditable.
+    Before: parsed receipt, resolved_from in {1, 2, 3} (level 0 never reaches
+    the exists-check). After: the hint string; never raises."""
+    if prompt_path is not None:
+        return f"arg={prompt_path}"
+    if resolved_from == 2:
+        return (
+            f"receipt '{_EXECUTED_PROMPT_FIELD}'="
+            f"{receipt.get(_EXECUTED_PROMPT_FIELD)!r}"
         )
-        return prompt, findings
-    actual_sha = _sha256(prompt)
+    return f"receipt 'prompt_path'={receipt.get('prompt_path')!r} (legacy fallback)"
+
+
+def _sealed_note(receipt: dict[str, Any], resolved_from: int) -> str:
+    """Name the SEALED file alongside the consumed one when they can differ
+    (levels 1/2); empty on the level-3 tautological fallback. Never raises."""
+    if resolved_from == 3:
+        return ""
+    sealed_ref = receipt.get("prompt_path")
+    if isinstance(sealed_ref, str) and sealed_ref:
+        return f" (sealed 'prompt_path'={sealed_ref!r})"
+    return ""
+
+
+def _sealed_bytes_integrity(
+    prompt: Path,
+    receipt: dict[str, Any],
+    resolved_from: int,
+) -> list[str]:
+    """Triple via of the seal over the RESOLVED prompt. Before: prompt exists.
+    During: contrast ``prompt_sha256`` and, when present,
+    ``prompt_bytes``/``prompt_lines`` against the file. After: list of hard
+    findings; absent bytes/lines fields are tolerated (legacy receipts carry
+    only the sha). Never raises."""
+    findings: list[str] = []
     claimed_sha = receipt.get("prompt_sha256")
+    actual_sha = _sha256(prompt)
     if not claimed_sha:
         findings.append("hard: receipt lacks 'prompt_sha256'")
     elif claimed_sha != actual_sha:
         findings.append(
             f"hard: receipt 'prompt_sha256'={claimed_sha[:12]}... does not match "
             f"the prompt bytes {actual_sha[:12]}... ({prompt.name})"
+            f"{_sealed_note(receipt, resolved_from)}"
         )
     if isinstance(receipt.get("prompt_bytes"), int):
         actual_bytes = prompt.stat().st_size
@@ -241,6 +301,38 @@ def _prompt_integrity(
             findings.append(
                 f"hard: 'prompt_lines'={receipt['prompt_lines']} != actual {actual_lines}"
             )
+    return findings
+
+
+def _prompt_integrity(
+    receipt: dict[str, Any],
+    prompt_path: str | Path | None,
+    receipt_path: str | Path,
+) -> tuple[Path | None, list[str]]:
+    """Layer 1 (triple via) + prompt resolution. Before: parsed receipt.
+    During: resolve the prompt REALLY consumed with the three-level cascade of
+    DEC-066Z-001 (arg wins, else the receipt's ``prompt_executed_path``, else
+    ``receipt["prompt_path"]`` -- the legacy fallback, CONSERVED by decision:
+    DEC-066Z-001 sec 4, declared debt with its own owner) and contrast the
+    seal against the RESOLVED file, so a prompt executed with bytes other than
+    the sealed ones is visible without any argument (the defect WOT-2026-066z
+    closes). After: (prompt | None, findings). An anchor that IS declared but
+    does not resolve to an existing file is a hard finding (fail-closed); the
+    ABSENCE of the level-2 field is not a finding -- legacy receipts keep
+    falling to level 3."""
+    findings: list[str] = []
+    prompt, resolved_from = _resolve_prompt_cascade(receipt, prompt_path, receipt_path)
+    if prompt is None:
+        findings.append(
+            "hard: cannot resolve the prompt file consumed (no arg, no "
+            f"'{_EXECUTED_PROMPT_FIELD}', no 'prompt_path')"
+        )
+        return prompt, findings
+    if not prompt.exists():
+        hint = _unresolvable_hint(receipt, prompt_path, resolved_from)
+        findings.append(f"hard: cannot resolve the prompt file consumed ({hint})")
+        return prompt, findings
+    findings.extend(_sealed_bytes_integrity(prompt, receipt, resolved_from))
     return prompt, findings
 
 
@@ -345,7 +437,8 @@ def check_seal_staleness(
     Before: receipt_path exists and points to start_context_isolation*.json;
     prompt_path, batch_run_path, project_root are optional external anchors.
     During: reads the receipt with utf-8-sig; resolves the prompt REALLY consumed
-    (arg wins, else receipt.prompt_path); contrasts flight against the arg and/or
+    with the DEC-066Z-001 cascade (arg wins, else receipt.prompt_executed_path,
+    else receipt.prompt_path); contrasts flight against the arg and/or
     the receipt's own batch_run flight; verifies integrity, temporal order and
     semantic freshness.
     After: returns a list of finding strings. HARD findings make the CLI exit 1;
@@ -394,7 +487,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--prompt",
         default=None,
-        help="Path to the sealed prompt file actually consumed (overrides receipt.prompt_path).",
+        help=(
+            "Path to the prompt REALLY consumed (level 1 of the "
+            "DEC-066Z-001 cascade; overrides the receipt's own anchors)."
+        ),
     )
     parser.add_argument(
         "--flight",
