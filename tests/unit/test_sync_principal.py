@@ -13,8 +13,6 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
-import pytest
-
 
 _SPEC = importlib.util.spec_from_file_location(
     "sync_principal",
@@ -243,6 +241,22 @@ def test_detect_primary_picks_non_dev_worktree(tmp_path):
     assert primary.name == "work"  # not work_dev
 
 
+def test_detect_primary_plain_clone_returns_itself(tmp_path):
+    """A plain clone (one worktree, no *_dev) resolves to ITSELF, not None.
+
+    WOT-2026-053a, DoD (e). This pins the behaviour the nesting filter must NOT
+    change: with a single worktree there is nothing nested, so the filter is a
+    no-op and the original `len(non_dev) == 1` branch still returns the repo.
+
+    It exists because the first draft of that DoD criterion asserted None here
+    and was REFUTED by measurement -- a criterion that could not pass before or
+    after the fix. Pinning the real behaviour stops it being re-asserted.
+    """
+    _origin, work = _make_repo_with_main(tmp_path)
+    assert [p.name for p in sp._worktree_toplevels(work)] == ["work"]
+    assert sp._detect_primary(work) == work.resolve()
+
+
 def test_bad_motor_root_exits_2(tmp_path):
     notrepo = tmp_path / "x"
     notrepo.mkdir()
@@ -287,35 +301,24 @@ def test_refuse_named_branch_exit_1(tmp_path):
     assert rc == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "WOT-2026-053a: _detect_primary devuelve None con >1 worktree non-_dev, "
-        "dejando INERTES sus 3 consumidores (destination_context.py:345, "
-        "prepush_check.py:1359, sync_principal.py:351). Arreglo NO decidido: "
-        "(a) resolver por link/AGENT_PROJECT_ROOT -- reescribe o borra este test; "
-        "(b) excluir .kilo/ del recuento -- basta retirar el marcador. "
-        "Si XPASS: retira el marcador Y fortalece la asercion a IDENTIDAD del "
-        "primario, porque 'not None' deja pasar un auxiliar como primario. "
-        "raises=AssertionError es deliberado: sin el, un fixture reventado "
-        "(git worktree add es fragil) se reporta XFAIL y el defecto queda mudo."
-    ),
-)
 def test_detect_primary_resolves_with_auxiliary_worktrees(tmp_path):
     """>=3 non-_dev worktrees (the REAL motor topology) must still resolve.
 
     The hermetic two-worktree tests above build the one case that works. The
     live motor carries auxiliary worktrees under `.kilo/worktrees/`, so the
-    non-_dev count is >1 and `_detect_primary` gives up with None -- which
-    silently disarms its three consumers: the contract-surface WARN of
+    non-_dev count is >1 and `_detect_primary` used to give up with None --
+    which silently disarmed its three consumers: the contract-surface WARN of
     WOT-2026-053a (destination_context.py:345), the primary-freshness check of
-    the closeout (prepush_check.py:1359) and sync_principal's own path (:351).
+    the closeout (prepush_check.py:1382) and sync_principal's own path (:351).
 
     This test reaches that frontier: primary + work_dev + two auxiliary
-    checkouts. It asserts only that the primary is RESOLVED, staying agnostic
-    about HOW (link-based resolution vs excluding auxiliary worktrees) -- that
-    choice is still open.
+    checkouts nested under the primary. It asserts IDENTITY, not mere
+    resolution: `is not None` would let an AUXILIARY pass as the primary, which
+    is a worse failure than not resolving at all.
+
+    Fixed in WOT-2026-053a by discarding worktrees nested under another
+    worktree, which restores the original "exactly one non-_dev" invariant
+    instead of relaxing it.
     """
     _origin, work = _make_repo_with_main(tmp_path)
     dev = tmp_path / "work_dev"
@@ -333,4 +336,10 @@ def test_detect_primary_resolves_with_auxiliary_worktrees(tmp_path):
         "_detect_primary gave up (None) because auxiliary worktrees make the "
         "non-_dev count >1; its consumers then self-skip in silence"
     )
-    assert primary.name == "work"
+    # IDENTITY, not just "not None": compared against the RESOLVED path because
+    # _worktree_toplevels resolves every entry while tmp_path may not be
+    # resolved (on macOS /var -> /private/var, on Windows short 8.3 names).
+    # Asserting identity also proves no AUXILIARY was returned as the primary.
+    assert primary == work.resolve(), (
+        f"_detect_primary returned {primary}, expected the primary at {work.resolve()}"
+    )

@@ -110,13 +110,39 @@ def _worktree_toplevels(motor_root: Path) -> list[Path]:
 
 
 def _detect_primary(motor_root: Path, dev_suffix: str = "_dev") -> Path | None:
-    """The primary checkout = the worktree whose basename does NOT end in _dev.
+    """The primary checkout = the TOP-LEVEL worktree whose basename is not *_dev.
 
-    If there are exactly two worktrees (primary + _dev), return the non-_dev one.
-    If ambiguous (0 or >1 non-dev), return None so the caller must pass it.
+    Worktrees NESTED under another worktree of the same repo are auxiliary
+    checkouts created by tooling (Kilo today, any other tool tomorrow): a
+    consumption checkout never lives inside another checkout. Discarding them
+    RESTORES the original invariant -- exactly one non-_dev top-level worktree --
+    instead of relaxing it.
+
+    WOT-2026-053a: counting ALL worktrees made this return None on the real
+    topology (10 non-_dev: the primary plus 9 under `.kilo/worktrees/`), which
+    silently disarmed its three consumers -- the closeout freshness check
+    (`prepush_check.run_principal_freshness_check`), the bootstrap contract-drift
+    WARN (`destination_context._contract_surface_warning`) and this script's own
+    `main`. All three then self-skipped in silence while the primary served
+    stale prompts.
+
+    The nesting rule is a DEPLOYMENT CONVENTION of this repo, not a git
+    invariant: git does allow a worktree inside another. It is documented here
+    because that is where it is read.
+
+    LIMIT (declared, not hidden): an auxiliary worktree created at TOP LEVEL is
+    not discarded, so the count stays ambiguous and this returns None. That is
+    the SAFE direction -- callers must then pass `--primary-root` explicitly.
+
+    Before: `motor_root` is any worktree of the motor repo.
+    During: lists worktrees via git (read-only), drops nested ones, then applies
+        the original non-_dev filter. No mutation, no network.
+    After: the primary checkout, or None when it cannot be resolved
+        unambiguously (0 or >1 candidates). Never raises.
     """
     tops = _worktree_toplevels(motor_root)
-    non_dev = [p for p in tops if not p.name.endswith(dev_suffix)]
+    top_level = [p for p in tops if not any(o in p.parents for o in tops if o != p)]
+    non_dev = [p for p in top_level if not p.name.endswith(dev_suffix)]
     return non_dev[0] if len(non_dev) == 1 else None
 
 
