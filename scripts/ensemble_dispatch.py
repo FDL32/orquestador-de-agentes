@@ -118,6 +118,11 @@ EMITTED_NONCE_FIELDS = [
     "commit_sha",
     "loop_id",
     "challenge_nonce",
+    # WOT-2026-067i: contra QUE raiz se resolvio el sha ("repo_motor" |
+    # "repo_destino"). Sin el, dos raices que comparten prefijo dejan un ledger
+    # que no dice cual acredito. Las filas anteriores a 067i no lo llevan: el
+    # lector trata su ausencia como "no comprobable", nunca como discrepancia.
+    "resolved_against",
 ]
 
 SCORECARD_FIELDS = [
@@ -1506,6 +1511,7 @@ def emit_nonce(
     issuer_role: str,
     issuer_backend_key: str,
     nonce: str | None = None,
+    resolved_against: str | None = None,
 ) -> tuple[str, Path]:
     """Emite (registra) un challenge_nonce ANTES de un fan-out de gobierno.
 
@@ -1538,6 +1544,7 @@ def emit_nonce(
         "commit_sha": commit_sha,
         "loop_id": loop_id,
         "challenge_nonce": nonce,
+        "resolved_against": resolved_against,
     }
     path = project_root / EMITTED_NONCES_REL
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2852,14 +2859,69 @@ def _canonical_motor_commit_sha(motor_root: Path, commit_sha: str) -> tuple[bool
     )
 
 
+def resolve_governed_commit_sha(
+    motor_root: Path, project_root: Path, commit_sha: str
+) -> tuple[str, str]:
+    """Resuelve un sha gobernado contra el motor O el destino (WOT-2026-067i).
+
+    EMISOR y LECTOR comparten esta funcion, y ese es el punto: hasta 067i el
+    emisor (`emit-nonce`) resolvia SOLO contra el motor mientras su lector
+    (`check_loop_execution`) ya aceptaba ambas raices. La asimetria hacia
+    INSATISFACIBLE el cierre de cualquier ticket `delivery_authority:
+    repo_destino`: el lector exigia rondas con nonce y el emisor prohibia
+    emitir ese nonce (medido sobre `5eff360b`, commit real de CTL-2026-027f).
+
+    AMPLIA el dominio de WOT-2026-059c de "resoluble en el motor" a "resoluble
+    en el motor O en el destino" -- deliberadamente, no por efecto colateral.
+    Lo que se CONSERVA es el nucleo fail-closed: un sha que no resuelve en
+    NINGUNA raiz se rechaza nombrandolo. Al compartir funcion, emisor y lector
+    tienen el mismo dominio POR CONSTRUCCION, no por acuerdo.
+
+    ENDURECE ademas la resolucion previa del lector: una abreviatura que
+    resuelve a sha40 DISTINTOS en cada raiz se aceptaba en silencio (ganaba el
+    motor). Ahora es error nombrado -- un veredicto sobre el commit equivocado
+    es peor que no emitirlo.
+
+    Before: `motor_root` y `project_root` resueltos por el llamador (AMBOS
+        call-sites pasan el MISMO `motor_root`, resuelto por
+        `resolve_motor_link`; no se usa ningun global de modulo).
+        `commit_sha` es la forma que llego por CLI (puede ser abreviada).
+    During: hasta dos lecturas `git rev-parse --verify` (read-only, 10 s c/u).
+        Si `project_root == motor_root`, solo una.
+    After: `(sha40, resolved_against)` con `resolved_against` in
+        {"repo_motor", "repo_destino"}. `ValueError` NOMBRANDO el sha si es
+        ambiguo entre raices o si no resuelve en ninguna.
+    """
+    ok_m, sha_m = _canonical_motor_commit_sha(motor_root, commit_sha)
+    ok_d, sha_d = (False, "")
+    if project_root != motor_root and project_root.is_dir():
+        ok_d, sha_d = _canonical_motor_commit_sha(project_root, commit_sha)
+
+    if ok_m and ok_d and sha_m != sha_d:
+        raise ValueError(
+            f"'{commit_sha}' es AMBIGUO: resuelve a {sha_m[:12]} en el motor y a "
+            f"{sha_d[:12]} en el destino. Pasa el sha40 completo."
+        )
+    if ok_m:
+        return sha_m, "repo_motor"
+    if ok_d:
+        return sha_d, "repo_destino"
+    raise ValueError(
+        f"'{commit_sha}' no resuelve a un commit ni del motor ({motor_root}) "
+        f"ni del destino ({project_root}): {sha_m}"
+    )
+
+
 def _cmd_emit_nonce(args, config) -> int:
     project_root = _resolve_project_root(args.project_root)
-    # WOT-2026-059c: el emisor NUNCA registra un sha que el motor no puede
-    # resolver (la contraparte productiva de la barrera de WOT-2026-059b que ya
-    # falla cerrado en prepush). La validacion vive AQUI, en la unica ruta
-    # productiva hacia el ledger: `emit_nonce()` es primitiva interna del estilo
+    # WOT-2026-059c: el emisor NUNCA registra un sha que NADIE puede resolver
+    # (la contraparte productiva de la barrera de WOT-2026-059b que ya falla
+    # cerrado en prepush). La validacion vive AQUI, en la unica ruta productiva
+    # hacia el ledger: `emit_nonce()` es primitiva interna del estilo
     # `append_scorecard` (grep verificado: solo `_cmd_emit_nonce` la invoca en
     # produccion; los tests de join existentes la usan con shas sinteticos).
+    # WOT-2026-067i: el dominio incluye el DESTINO, no solo el motor -- ver
+    # `resolve_governed_commit_sha`, compartida con el lector.
     try:
         from runtime.motor_link import resolve_motor_root
     except ImportError:  # pragma: no cover - ruta de import alternativa
@@ -2873,10 +2935,12 @@ def _cmd_emit_nonce(args, config) -> int:
             f"'{args.commit_sha}' -- sin motor_destination_link.json valido para "
             f"{project_root} (UNKNOWN, no INVALIDO)"
         )
-    ok, canonical_or_reason = _canonical_motor_commit_sha(motor_root, args.commit_sha)
-    if not ok:
-        raise ValueError(f"emit-nonce bloqueado (WOT-2026-059c): {canonical_or_reason}")
-    canonical_sha = canonical_or_reason
+    try:
+        canonical_sha, resolved_against = resolve_governed_commit_sha(
+            motor_root, project_root, args.commit_sha
+        )
+    except ValueError as exc:
+        raise ValueError(f"emit-nonce bloqueado (WOT-2026-059c): {exc}") from exc
     if canonical_sha != args.commit_sha:
         print(
             f"[emit-nonce] sha normalizado: {args.commit_sha} -> {canonical_sha}",
@@ -2889,6 +2953,7 @@ def _cmd_emit_nonce(args, config) -> int:
         issuer_role=args.issuer_role,
         issuer_backend_key=args.issuer_backend_key,
         nonce=args.nonce,
+        resolved_against=resolved_against,
     )
     # El nonce va a stdout para que el orquestador lo pase al fan-out; la fila
     # ya quedo registrada en emitted_nonces.jsonl (la prueba de la ceremonia).

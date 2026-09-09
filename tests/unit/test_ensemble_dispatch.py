@@ -4073,3 +4073,118 @@ def test_059e_token_pelado_sigue_bloqueando():
     """CONTROL 027s intacto: el token pelado (sin contexto) sigue siendo fuga."""
     valor = "kJ8vQz3XpR7mNw2LtY6bHc4FdA9sG1eU5iO0"
     assert ed._entropy_leak(valor) is not None
+
+
+# --- WOT-2026-067i: simetria emisor <-> lector en la resolucion del sha ---
+#
+# El defecto que cierran: el EMISOR (`emit-nonce`) resolvia SOLO contra el motor
+# mientras su LECTOR (`check_loop_execution`) ya aceptaba ambas raices. Eso hacia
+# INSATISFACIBLE el cierre de todo ticket `delivery_authority: repo_destino`: el
+# lector exigia rondas con nonce y el emisor prohibia emitir ese nonce.
+# Medido sobre `5eff360b` (commit real de CTL-2026-027f) antes del fix.
+
+
+def _two_repos_067i(tmp_path):
+    """Motor y destino REALES (sin mockear git), cada uno con su commit propio.
+
+    Devuelve (motor, sha_motor, destino, sha_destino). Los dos son repos git
+    INDEPENDIENTES: ningun sha resuelve en el otro, que es la topologia que el
+    caso `repo_destino` exige y que el fixture de dos-worktrees no reproduce.
+    """
+    import subprocess as sp
+
+    def _mk(name, seed):
+        repo = tmp_path / name
+        repo.mkdir()
+
+        def git(*a):
+            r = sp.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+            return r.stdout.strip()
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        (repo / f"{seed}.txt").write_text(seed, encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", seed)
+        return repo, git("rev-parse", "HEAD")
+
+    motor, sha_m = _mk("motor_067i", "seed-motor")
+    destino, sha_d = _mk("destino_067i", "seed-destino")
+    return motor, sha_m, destino, sha_d
+
+
+def test_067i_a_sha_del_destino_resuelve(tmp_path):
+    """DoD (a): un sha que SOLO vive en el destino se resuelve, no se bloquea.
+
+    Es el caso que hacia insatisfacible el cierre de un ticket repo_destino.
+    """
+    motor, _sha_m, destino, sha_d = _two_repos_067i(tmp_path)
+    sha40, resolved_against = ed.resolve_governed_commit_sha(motor, destino, sha_d)
+    assert sha40 == sha_d
+    assert resolved_against == "repo_destino"
+
+
+def test_067i_c_sha_del_motor_no_regresiona(tmp_path):
+    """DoD (c): un sha del motor sigue resolviendo igual, contra el motor."""
+    motor, sha_m, destino, _sha_d = _two_repos_067i(tmp_path)
+    sha40, resolved_against = ed.resolve_governed_commit_sha(motor, destino, sha_m)
+    assert sha40 == sha_m
+    assert resolved_against == "repo_motor"
+
+
+def test_067i_b_sha_inexistente_sigue_bloqueado(tmp_path):
+    """DoD (b): el nucleo fail-closed de 059c se CONSERVA pese a la ampliacion.
+
+    El dominio se amplia (motor -> motor O destino) pero un sha que no resuelve
+    en NINGUNA raiz sigue rechazandose, y el error NOMBRA ambas.
+    """
+    motor, _sha_m, destino, _sha_d = _two_repos_067i(tmp_path)
+    with pytest.raises(ValueError) as exc:
+        ed.resolve_governed_commit_sha(motor, destino, "deadbeef" * 5)
+    msg = str(exc.value)
+    assert "deadbeef" in msg
+    assert str(motor) in msg and str(destino) in msg
+
+
+def test_067i_g_abreviatura_ambigua_falla_cerrado(tmp_path, monkeypatch):
+    """DoD (g): una abreviatura que resuelve a sha40 DISTINTOS en cada raiz.
+
+    ENDURECE al lector: antes ganaba el motor EN SILENCIO, asi que el nonce
+    acreditaba un commit que no era el pedido -- un veredicto sobre el commit
+    equivocado es peor que no emitirlo.
+    """
+    motor, sha_m, destino, sha_d = _two_repos_067i(tmp_path)
+
+    # El fixture AISLA la rama (leccion 021u) en vez de fabricar una colision de
+    # sha por fuerza bruta: forzar el estado que la rama decide es lo que hace la
+    # mutacion alcanzable. Buscar un prefijo colisionante real costaba ~137 s de
+    # arranque de subprocesos (medido) y ademas dependia del azar -> un `skip`
+    # dejaria (g) SIN VERIFICAR, que es el falso verde que este DoD cierra.
+    def _fake(root, sha):
+        # La MISMA abreviatura resuelve en ambas raices, a sha40 DISTINTOS.
+        return (True, sha_m) if root == motor else (True, sha_d)
+
+    monkeypatch.setattr(ed, "_canonical_motor_commit_sha", _fake)
+    assert sha_m != sha_d, "precondicion: los dos repos deben tener shas distintos"
+
+    with pytest.raises(ValueError, match="AMBIGUO"):
+        ed.resolve_governed_commit_sha(motor, destino, "abc1234")
+
+
+def test_067i_d_simetria_emisor_lector_misma_funcion(tmp_path):
+    """DoD (d): la simetria es POR CONSTRUCCION, no por acuerdo.
+
+    El lector delega en la MISMA funcion del emisor. Si alguien le devolviera su
+    resolucion propia, este test lo caza: son el mismo objeto.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "cle_067i",
+        Path(__file__).resolve().parents[2] / "scripts" / "check_loop_execution.py",
+    )
+    cle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cle)
+    assert cle.resolve_governed_commit_sha is ed.resolve_governed_commit_sha

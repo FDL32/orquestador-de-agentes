@@ -95,9 +95,9 @@ if str(MOTOR_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(MOTOR_ROOT / "scripts"))
 
 from ensemble_dispatch import (  # noqa: E402
-    _canonical_motor_commit_sha,
     _read_scorecard,
     read_emitted_nonces,
+    resolve_governed_commit_sha,
 )
 
 
@@ -600,40 +600,27 @@ def audit(
 def resolve_input_commit_sha(project_root: Path, commit_sha: str) -> str:
     """Normaliza la ENTRADA CLI del --commit-sha a sha40 (S1B item 1).
 
-    Defecto medido 2026-09-07 sobre el destino real: `--commit-sha c54b9de`
-    (corto) daba `FAIL 0/4 lentes []` (rc=1) mientras el sha40 daba `OK 4/4`
-    (rc=0). Un ROJO FALSO indistinguible de uno real, que muerde a cualquier
-    humano o agente frio que invoque el guard a mano (misma familia que
-    `obs-a-guard-invoked-with-relative-root-produces-a-false-red`). El join de
-    `audit_commit` es EXACTO por diseno -- su docstring lo dice: "el caller
-    normaliza la longitud" -- y ese caller era el CLI, que no lo hacia.
+    WOT-2026-067i: la resolucion ya NO vive aqui. Delega en
+    `ensemble_dispatch.resolve_governed_commit_sha`, la MISMA funcion que usa el
+    EMISOR (`emit-nonce`). Antes cada extremo tenia la suya y discrepaban: el
+    lector aceptaba shas del destino y el emisor los bloqueaba, lo que hacia
+    INSATISFACIBLE el cierre de todo ticket `delivery_authority: repo_destino`.
+    Compartir funcion hace que ambos dominios sean el mismo POR CONSTRUCCION.
 
-    AQUI se normaliza la ENTRADA, NUNCA el join: se reutiliza
-    `_canonical_motor_commit_sha` (WOT-2026-059c, ya existia; no se inventa
-    una segunda). Resuelve contra el MOTOR (la casa del guard) y, si no
-    resuelve alli, contra el `--project-root` (corpus mixto-origen,
-    CTL-2026-027b: hay shas que solo existen en el destino).
+    Cambio de comportamiento heredado del helper compartido, deliberado: una
+    abreviatura que resuelve a sha40 DISTINTOS en motor y destino ya NO se
+    acepta en silencio (antes ganaba el motor) -- ahora es `ValueError`.
 
-    Before: `project_root` resuelto; `commit_sha` la forma recibida (puede
-        ser abreviada).
-    During: dos lecturas `git rev-parse --verify <sha>^{commit}` (read-only,
-        timeout 10s c/u). Sin escrituras.
-    After: sha40 pleno si el sha resuelve en alguna de las dos raices;
-        `ValueError` NOMBRANDO el sha si no resuelve en ninguna
-        (fail-closed: el veredicto no se inventa).
+    Before: `project_root` resuelto; `commit_sha` la forma recibida (puede ser
+        abreviada). `MOTOR_ROOT` es el motor de ESTE checkout.
+    During: delega; sin escrituras.
+    After: sha40 pleno. `ValueError` NOMBRANDO el sha si es ambiguo entre raices
+        o si no resuelve en ninguna (fail-closed: el veredicto no se inventa).
     """
-    ok, canonical = _canonical_motor_commit_sha(MOTOR_ROOT, commit_sha)
-    if ok:
-        return canonical
-    motor_reason = canonical
-    if project_root != MOTOR_ROOT and project_root.is_dir():
-        ok_dest, canonical_dest = _canonical_motor_commit_sha(project_root, commit_sha)
-        if ok_dest:
-            return canonical_dest
-    raise ValueError(
-        f"--commit-sha '{commit_sha}' no resuelve a un commit ni del motor "
-        f"({MOTOR_ROOT}) ni del destino ({project_root}): {motor_reason}"
+    sha40, _resolved_against = resolve_governed_commit_sha(
+        MOTOR_ROOT, project_root, commit_sha
     )
+    return sha40
 
 
 def _print_verdict(v: dict) -> None:
