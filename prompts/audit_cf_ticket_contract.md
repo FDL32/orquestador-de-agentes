@@ -56,11 +56,16 @@ destino). Si tras esa resolucion el artefacto **sigue sin existir**, estas ante 
   Aprobarlo en silencio seria el bypass del Intent Audit que esta regla existe para cerrar.
 - El auditor sigue siendo read-only: no editas archivos del repo auditado. La escalada
   es con ARTEFACTO, no de palabra: **produce el contenido exacto de la propuesta `DEC-*`
-  para que el Manager lo materialice** en la cola de decisiones del repo dueno
-  (`.agent/planning/decisions.md`, schema en `prompts/contract_formation_pipeline.md`
-  seccion 6), nombrando el artefacto ausente, el dueno del charter resuelto y las rutas
-  probadas. Una escalada que no deja artefacto recibible es NORMA, no mecanismo: nadie la
-  recibe y la carencia vuelve silenciosa.
+  para que el Manager lo materialice** en la cola de decisiones del repo dueno, resuelta
+  POR DUEÑO con la MISMA tabla del charter:
+  - `delivery_authority: repo_motor` -> `<motor>/docs/decisions/` (el registro DEC del
+    motor vive ahi, y es el directorio que `scripts/check_dec_receipt.py` ya lee; el
+    motor NO usa `.agent/planning/`).
+  - `delivery_authority: repo_destino` -> `<destino>/.agent/planning/decisions.md`
+    (schema en `prompts/contract_formation_pipeline.md` seccion 6).
+  La propuesta nombra el artefacto ausente, el dueno del charter resuelto, la cola
+  destino elegida y las rutas probadas. Una escalada que no deja artefacto recibible es
+  NORMA, no mecanismo: nadie la recibe y la carencia vuelve silenciosa.
 - Los puntos del checklist que no dependen de la entrada ausente se auditan IGUAL, con las
   entradas disponibles. Cada claim que no puedas contrastar por infraestructura inexistente
   se marca **`NO VERIFICABLE`** (con la ruta probada) en la tabla `Claim | Evidencia |
@@ -137,6 +142,11 @@ sanos, y es la razon por la que `WOT-2026-021k` necesito un waiver explicito del
 Entrega:
 - `DECISION: APPROVE (frozen-ready) | CHANGES`.
 - Hallazgos por severidad, cada uno con el campo del contrato afectado y la correccion.
-- Estimacion explicita del `Builder clarification rate` esperado y por que.
+- Estimacion explicita del `Builder clarification rate` esperado, con procedimiento de
+  medida binario anclado al checklist: es el CONTEO de decisiones de producto que el
+  punto 5 del checklist obliga a enumerar al simular al Builder. Conteo 0 = `frozen`
+  viable; conteo > 0 = `CHANGES` (el hueco vuelve a genesis; no lo improvisa el Builder).
+  La lista de preguntas del punto 5 ES el artefacto del conteo: una estimacion sin esa
+  lista es una etiqueta sin artefacto (punto 9) y no habilita `frozen`.
 - Tabla minima `Claim | Evidencia | Estado` para los claims centrales del contrato.
 - Si `CHANGES`, la lista de campos que el Manager debe completar antes de `frozen`.
