@@ -1551,9 +1551,19 @@ def _root_authority_surfaces(root: Path, ticket_id: str) -> list[Path]:
     contrato en fuerza; los ficheros per-ticket vivos le siguen; el contrato
     FROZEN es la fuente canonica cuando no hay nada vivo; el work_plan
     ARCHIVADO es el ultimo recurso historico y NUNCA pisa al frozen.
+
+    Los work_plan per-ticket vivos se buscan en las DOS superficies donde
+    existen: `collaboration/` y `planning/` (WOT-2026-067k). Consultar solo la
+    primera dejaba fuera la que de verdad los aloja -- censo en ruta productiva
+    2026-09-09: `planning/` 9, `collaboration/` 0, `_archive/` 0 --, asi que el
+    lector miraba dos directorios VACIOS y un fail-closed correcto rechazaba un
+    campo que SI estaba declarado. Ambas son planes VIVOS y preceden al frozen;
+    su orden relativo entre si es indiferente porque una discordancia entre dos
+    superficies no se resuelve por orden, sino que es indecidible (D2).
     """
     surfaces = [root / ".agent" / "collaboration" / "work_plan.md"]
     surfaces.extend(_glob_work_plans(root / ".agent" / "collaboration", ticket_id))
+    surfaces.extend(_glob_work_plans(root / ".agent" / "planning", ticket_id))
     surfaces.append(root / ".agent" / "planning" / "ticket_contracts.md")
     surfaces.extend(
         _glob_work_plans(root / ".agent" / "collaboration" / "_archive", ticket_id)

@@ -1376,3 +1376,115 @@ def test_trivial_topology_rejects_unknown_authority_value(tmp_path: Path) -> Non
             session_closeout._resolve_trivial_topology(ticket, motor, good)
         )
         assert not fail_detail, f"{good!r} es canonico y debe resolver"
+
+
+def test_planning_per_ticket_work_plan_declares_authority(tmp_path: Path) -> None:
+    """WOT-2026-067k (a)(b): `.agent/planning/work_plan_<ID>.md` es superficie
+    de contrato legible.
+
+    `WOT-2026-066i` arreglo QUE campo leer (el declarado, nunca el prefijo);
+    este test fija DONDE leerlo. Medido en ruta productiva el 2026-09-09 sobre
+    el motor `881068f`: los work_plan per-ticket del destino viven en
+    `.agent/planning/` (censo: planning 9, collaboration 0, _archive 0), y el
+    lector consultaba dos directorios VACIOS -- asi que un fail-closed correcto
+    rechazaba un campo que SI estaba declarado, y NINGUN ticket con su contrato
+    en `planning/` podia cerrar sesion.
+
+    Mutacion que debe matarlo (DoD (e)): retirar la superficie nueva de
+    `_root_authority_surfaces` devuelve None y reaparece `FAIL_TARGETS_MISSING`.
+    """
+    root = tmp_path / "repo"
+    planning = root / ".agent" / "planning"
+    planning.mkdir(parents=True)
+    ticket = "WOT-2026-903a"
+    (planning / f"work_plan_{ticket}.md").write_text(
+        f"# Plan de Trabajo: {ticket}\n\n## Metadata\n"
+        f"- **ID:** {ticket}\n"
+        "- **delivery_authority:** repo_motor\n",
+        encoding="utf-8",
+    )
+
+    got = session_closeout._read_declared_delivery_authority(
+        ticket, root, root, None, None
+    )
+
+    assert got == "repo_motor", (
+        "un work_plan per-ticket en `.agent/planning/` declara autoridad; "
+        f"se obtuvo {got!r}"
+    )
+
+
+def test_planning_work_plan_conflicting_with_frozen_is_undecidable(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-067k (c)(d): la superficie nueva entra en el MISMO regimen de
+    conflicto, no en uno privilegiado.
+
+    Nota de diseno, medida al implementar: el lector NO tiene precedencia
+    ejecutable entre superficies -- tiene DETECCION DE CONFLICTO. El orden de
+    `_root_authority_surfaces` solo decide que se lee antes; en cuanto DOS
+    superficies declaran valores DISTINTOS el veredicto es None (D2), venga de
+    donde venga. `test_frozen_contract_wins_over_archived_plan` no contradice
+    esto: alli el archivado no declara NADA, asi que no hay conflicto que
+    resolver.
+
+    Este test pinea que ampliar el ALCANCE del lector no abrio una via para
+    resolver discordancias en silencio: un `planning/work_plan` que contradice
+    al contrato frozen deja el ticket indecidible, que es exactamente lo que
+    `WOT-2026-066i` D2 exige. Darle precedencia a la superficie nueva seria
+    debilitar el fail-closed, NON-GOAL explicito de la ficha.
+    """
+    root = tmp_path / "repo"
+    planning = root / ".agent" / "planning"
+    planning.mkdir(parents=True)
+    ticket = "WOT-2026-903b"
+    (planning / f"work_plan_{ticket}.md").write_text(
+        f"# Plan de Trabajo: {ticket}\n\n## Metadata\n"
+        f"- **ID:** {ticket}\n"
+        "- **delivery_authority:** repo_motor\n",
+        encoding="utf-8",
+    )
+    (planning / "ticket_contracts.md").write_text(
+        f"## {ticket} -- contrato vigente\n"
+        f"- **ticket_id:** {ticket}\n"
+        "- **status:** frozen\n"
+        "- **delivery_authority:** repo_destino\n",
+        encoding="utf-8",
+    )
+
+    got = session_closeout._read_declared_delivery_authority(
+        ticket, root, root, None, None
+    )
+
+    assert got is None, (
+        "una discordancia entre `planning/work_plan` y el contrato frozen debe "
+        f"ser indecidible (D2), nunca resolverse por orden; se obtuvo {got!r}"
+    )
+
+
+def test_planning_work_plan_of_another_ticket_declares_nothing(tmp_path: Path) -> None:
+    """WOT-2026-067k (d): la superficie nueva hereda el guard del `**ID:**`.
+
+    Ampliar el alcance del lector NO puede ampliar lo que acepta: un work_plan
+    vecino cuyo nombre casa con el glob `work_plan_<ID>*.md` pero que declara
+    OTRO `**ID:**` no es contrato de este ticket, y su ausencia debe seguir
+    fallando CERRADA (D2) en vez de resolverse con el valor del vecino.
+    """
+    root = tmp_path / "repo"
+    planning = root / ".agent" / "planning"
+    planning.mkdir(parents=True)
+    ticket = "WOT-2026-903c"
+    (planning / f"work_plan_{ticket}_vecino.md").write_text(
+        "# Plan de Trabajo: WOT-2026-903z\n\n## Metadata\n"
+        "- **ID:** WOT-2026-903z\n"
+        "- **delivery_authority:** repo_destino\n",
+        encoding="utf-8",
+    )
+
+    got = session_closeout._read_declared_delivery_authority(
+        ticket, root, root, None, None
+    )
+
+    assert got is None, (
+        f"el plan de OTRO ticket no declara autoridad para este; se obtuvo {got!r}"
+    )
