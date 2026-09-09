@@ -552,11 +552,16 @@ Reglas del informe:
   no lo ocultes.
 - No reportes `READY_FOR_REVIEW` si el bus/proyecciones no lo confirman con
   evidencia literal del handoff.
-- **Check de encoding (obligatorio en la seccion Gates):** todo archivo nuevo
+- **Check de encoding (obligatorio en el informe):** todo archivo nuevo
   o tocado debe quedar en UTF-8 limpio sin mojibake ni puntuacion tipografica
   (em-dash, comillas curvas: usa `-` y `"` ASCII). Ejecuta el guard canonico y
   declara su exit code:
   `python <MOTOR_ROOT>/scripts/check_encoding_guard.py <archivos tocados>`
+  Declara SIEMPRE, junto al exit code, cuantos ficheros audito el guard, con esta
+  linea literal en el informe:
+  `Encoding guard: exit <N>, ficheros auditados: <M>`
+  Un `exit 0` con `ficheros auditados: 0` NO es un verde: es un universo vacio y
+  debes re-invocar el guard nombrando los ficheros tocados.
   NO improvises un one-liner: el que vivia aqui devolvia `'utf8'` -- veredicto
   de aspecto verde -- sobre un fichero con em-dash y comilla curva, que es
   exactamente lo que este check debe cazar (medido, WOT-2026-058d). Un fichero

@@ -11,6 +11,11 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# WOT-2026-047s: tope de la LISTA de saltados publicada. Un commit masivo de
+# binarios no debe inundar la salida; el truncamiento se PUBLICA, nunca es
+# silencioso (seria la misma familia de defecto que este ticket cierra).
+_LISTA_TOPE = 20
+
 
 def _resolve_audit_root() -> Path:
     """WOT-2026-043d: raiz del arbol REAL cuyo indice se esta commiteando.
@@ -65,13 +70,71 @@ def _staged_relative_paths(audit_root: Path) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _explicit_paths(args: list[str]) -> list[Path]:
-    files: list[Path] = []
+def _explicit_paths(args: list[str]) -> tuple[list[Path], list[str]] | None:
+    """WOT-2026-047s (D3): resuelve los args explicitos SIN descartar en silencio.
+
+    La barrera va en el TIPO, no en un flag (leccion
+    obs-degradado-indistinguible-del-legitimo: el camino degradado debe devolver
+    un valor de OTRO TIPO, nunca un valor valido empobrecido).
+
+    Before: los argumentos crudos de argv (puede ser []).
+    During: sin argumentos devuelve None (la via es el hook: el universo es el
+        indice staged). Con argumentos resuelve cada uno a Path y lo clasifica:
+        resuelto (existe y es fichero) o irresoluble (se NOMBRA, nunca se
+        descarta). Sin I/O mas alla del `exists` de cada candidato.
+    After: None sin args; (resueltos, irresolubles) en el orden de argv con args.
+        La lista de resueltos VACIA con args presentes ya NO es indistinguible
+        de "no me pasaron argumentos": es MEDICION FALLIDA (ROJO por
+        DEC-047S-001), no un universo sin materia.
+    """
+    if not args:
+        return None
+    resolved: list[Path] = []
+    unresolved: list[str] = []
     for raw in args:
         candidate = Path(raw).resolve()
         if candidate.exists() and candidate.is_file():
-            files.append(candidate)
-    return files
+            resolved.append(candidate)
+        else:
+            unresolved.append(raw)
+    return resolved, unresolved
+
+
+def _publicar_denominador(
+    via: str,
+    denominador: int,
+    inspeccionados: int,
+    hits: int,
+    saltados: list[str],
+    etiqueta_saltado: str,
+) -> None:
+    """WOT-2026-047s (D1): publica el denominador en stderr en TODOS los caminos.
+
+    Before: la via del universo (`indice staged` | `argumentos explicitos`), el
+        denominador PRE-filtro (entradas staged en via hook; argumentos pasados
+        en via explicita), los ficheros efectivamente auditados, los ficheros
+        con errores de encoding, y la lista de saltados (relativos en via hook;
+        argumentos crudos en via explicita).
+    During: imprime la linea estructurada con los CUATRO campos que el Quality
+        Bar y DEC-047S-001 exigen, y la LISTA de saltados: una linea por fichero
+        hasta `_LISTA_TOPE`; el truncamiento se publica con `... y <N> mas`.
+    After: nada (solo stderr). El guard no emite veredictos por stdout.
+    """
+    print(
+        f"[encoding-guard] denominador={denominador} inspeccionados={inspeccionados} "
+        f"hits={hits} saltados={len(saltados)} (universo: {via})",
+        file=sys.stderr,
+    )
+    if not saltados:
+        return
+    for item in saltados[:_LISTA_TOPE]:
+        print(f"[encoding-guard] {etiqueta_saltado}: {item}", file=sys.stderr)
+    ocultos = len(saltados) - _LISTA_TOPE
+    if ocultos > 0:
+        print(
+            f"[encoding-guard] ... y {ocultos} mas (truncamiento publicado)",
+            file=sys.stderr,
+        )
 
 
 def _display_path(path: Path) -> str:
@@ -171,30 +234,85 @@ def _collect_file_errors(file_path) -> list[str]:
 
 
 def main() -> int:
+    """WOT-2026-047s (D1+D3): publica SIEMPRE su denominador y distingue
+    'audite y esta limpio' de 'universo sin materia' de 'medicion fallida'.
+
+    Before: argv. En la via hook (sin argumentos) el cwd debe pertenecer a un
+        arbol git (fail-closed exit 2 via `_resolve_audit_root`).
+    During: via hook: el universo es el indice staged del arbol del cwd
+        (WOT-2026-043d); via explicita: los ficheros que resolvieron de los args
+        pasados; los irresolubles se NOMBRAN y cuentan como saltados (D3: nunca
+        se cae en silencio al indice, que seria un veredicto sobre OTRA COSA).
+        Se audita cada fichero del universo resuelto.
+    After: publica la linea estructurada de 4 campos y la LISTA de saltados en
+        stderr en TODOS los caminos, mas la senal del caso: vacuo (via hook,
+        0 auditables, exit 0 por universo SIN MATERIA, autorizado por
+        DEC-047S-001 con denominador publicado), medicion FALLIDA (via
+        explicita, 0 resueltos, exit 1), diagnostico de errores (exit 1), o
+        verde limpio (exit 0). Nunca un exit 0 mudo.
+    """
     from scripts.encoding_guard import iter_staged_files
 
-    explicit_files = _explicit_paths(sys.argv[1:])
-    if explicit_files:
-        files_to_check = explicit_files
-    else:
+    explicit = _explicit_paths(sys.argv[1:])
+    if explicit is None:
         # WOT-2026-043d: en la ruta staged (la que usa pre-commit con
         # pass_filenames: false) la raiz auditada es la del cwd REAL, no la del
         # modulo: el indice que se valida es el de ESTE commit.
         audit_root = _resolve_audit_root()
-        files_to_check = iter_staged_files(
-            _staged_relative_paths(audit_root), root=audit_root
+        staged_rels = _staged_relative_paths(audit_root)
+        files_to_check = iter_staged_files(staged_rels, root=audit_root)
+        via = "indice staged"
+        etiqueta_saltado = "saltado (fuera de alcance)"
+        auditados_resueltos = {path.resolve() for path in files_to_check}
+        saltados = [
+            rel
+            for rel in staged_rels
+            if (audit_root / rel).resolve() not in auditados_resueltos
+        ]
+    else:
+        resolved, unresolved = explicit
+        files_to_check = resolved
+        via = "argumentos explicitos"
+        etiqueta_saltado = "ruta irresoluble"
+        saltados = unresolved
+
+    errores_por_fichero = [_collect_file_errors(path) for path in files_to_check]
+    hits = sum(1 for errores in errores_por_fichero if errores)
+    lineas_error = [linea for errores in errores_por_fichero for linea in errores]
+
+    _publicar_denominador(
+        via,
+        len(files_to_check) + len(saltados),
+        len(files_to_check),
+        hits,
+        saltados,
+        etiqueta_saltado,
+    )
+
+    if explicit is None and not files_to_check:
+        # DEC-047S-001: universo SIN MATERIA (propiedad del contenido, no fallo
+        # de la medicion). Verde AUTORIZADO porque el denominador y la LISTA
+        # acaban de publicarse: deja de ser un cero mudo.
+        print(
+            "[encoding-guard] 0 ficheros auditados (universo: indice staged, "
+            "0 entradas). Verde VACUO: no se audito nada.",
+            file=sys.stderr,
         )
-
-    if not files_to_check:
         return 0
+    if explicit is not None and not files_to_check:
+        # DEC-047S-001: MEDICION FALLIDA -- se pidio auditar N rutas y no se
+        # audito ninguna (D3: las irresolubles ya se nombraron arriba).
+        print(
+            f"[encoding-guard] 0 ficheros auditados (universo: argumentos "
+            f"explicitos, {len(saltados)} pedidos, {len(saltados)} irresolubles). "
+            "Medicion FALLIDA: se pidio auditar y no se audito nada.",
+            file=sys.stderr,
+        )
+        return 1
 
-    errors: list[str] = []
-    for file_path in files_to_check:
-        errors.extend(_collect_file_errors(file_path))
-
-    if errors:
+    if lineas_error:
         print("Encoding guard blocked this commit:", file=sys.stderr)
-        for error in errors:
+        for error in lineas_error:
             print(f"- {error}", file=sys.stderr)
         return 1
     return 0

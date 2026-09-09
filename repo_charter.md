@@ -52,6 +52,11 @@ runtime). `--install` fresco SI puede depositar un seed neutro. *(Ya cerrado por
   barrera (`WOT-2026-024u`): guard nuevo sin cablear = FAIL; deuda existente = WARN con su ticket.
 - **Todo probe publica su denominador:** `denominador / inspeccionados / hits / saltados` + LISTA
   de saltados. `inspeccionados == 0` -> ROJO, nunca verde. *(La regla que 8 falso-verdes enseñaron.)*
+  **Excepcion unica (DEC-047S-001):** `inspeccionados == 0` es VERDE **solo si** el universo
+  carece de materia auditable por una propiedad del CONTENIDO (no por un fallo de la medicion)
+  **y** el probe publica `denominador / inspeccionados / hits / saltados` con la LISTA de
+  saltados. Si `inspeccionados == 0` proviene de una MEDICION FALLIDA -- el invocador pidio
+  auditar un universo y no se audito -- sigue siendo ROJO, sin excepcion.
 - **DoD invariante, jamas una medicion.** Un criterio que fija un NUMERO se pudre y empuja a romper
   una herramienta que funciona (`WOT-2026-024t`). Los numeros son evidencia fechada (SNAPSHOT).
 - **Suite verde POST-commit + CI.** `tested_sha == HEAD` sobre el commit que se sube; CI es la
