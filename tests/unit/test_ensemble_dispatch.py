@@ -4188,3 +4188,30 @@ def test_067i_d_simetria_emisor_lector_misma_funcion(tmp_path):
     cle = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cle)
     assert cle.resolve_governed_commit_sha is ed.resolve_governed_commit_sha
+
+
+def test_067i_ronda_tercera_superficie_resuelve_ambas_raices(tmp_path, monkeypatch):
+    """La RONDA (`_validated_motor_sha`) comparte la misma resolucion.
+
+    TERCERA superficie de la misma asimetria, y la que el fix inicial dejo
+    fuera: se podia EMITIR el nonce de un commit del destino pero no GASTAR la
+    ronda que lo acredita -- el dominio ampliado era inalcanzable en la
+    practica. Lo cazo la sesion del destino en produccion
+    (`loop-round --commit-sha 043b1d31...` -> `[BLOCKED] 059m`), no el bucle
+    L818: su censo miro emisor/lector/barrera/escritor y NO este call-site.
+
+    El test cubre las tres respuestas: sha del destino resuelve, sha del motor
+    no regresiona, y un sha inexistente sigue fail-closed.
+    """
+    motor, sha_m, destino, sha_d = _two_repos_067i(tmp_path)
+    monkeypatch.setattr(ed, "resolve_motor_root", lambda _p: motor, raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "runtime.motor_link",
+        type("_M", (), {"resolve_motor_root": staticmethod(lambda _p: motor)}),
+    )
+
+    assert ed._validated_motor_sha(destino, sha_d) == sha_d  # antes: BLOCKED
+    assert ed._validated_motor_sha(destino, sha_m) == sha_m  # no-regresion
+    with pytest.raises(ValueError, match="059m"):
+        ed._validated_motor_sha(destino, "deadbeef" * 5)

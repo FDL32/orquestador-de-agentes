@@ -254,7 +254,21 @@ def _valid_nonces_for(
 
     Solo las emisiones cuyo `commit_sha` casa cuentan: un nonce emitido para OTRO
     commit no autoriza este. Si se pasa `loop_id`, tambien debe casar (un nonce de
-    L700 no vale para L800)."""
+    L700 no vale para L800).
+
+    WOT-2026-067i -- POR QUE NO SE FILTRA POR `resolved_against`, habiendolo:
+    el ledger registra contra que raiz se resolvio el sha (motor o destino), y el
+    DoD inicial de 067i pedia CONTRASTARLO aqui. Se implemento y se RETIRO al
+    medir que no aporta: el casado es por **sha40**, que identifica un objeto git
+    UNIVOCO. Si dos raices contienen ese mismo sha40 es el MISMO commit (historia
+    compartida), asi que ninguna acreditacion cruzada es posible. El riesgo real
+    era la ABREVIATURA que resuelve a objetos DISTINTOS en cada raiz, y esa la
+    cierra `resolve_governed_commit_sha` en origen con su rama `AMBIGUO` -- antes
+    de que ningun sha llegue al ledger. Filtrar aqui habria exigido propagar la
+    raiz por CINCO firmas para una comprobacion vacua: es el STOP de degeneracion
+    de AGENTS.md, no una omision. El campo se conserva como TRAZA auditable (que
+    raiz acredito cada nonce), que es su valor real.
+    """
     valid: dict[str, str] = {}
     for row in emitted:
         if row.get("commit_sha") != commit_sha:

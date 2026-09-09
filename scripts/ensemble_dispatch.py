@@ -2481,12 +2481,23 @@ def _validated_motor_sha(project_root: Path, commit_sha: str) -> str:
     la misma via en el extremo RONDA: resuelve el motor por link, valida
     con _canonical_motor_commit_sha y normaliza a sha40.
 
+    WOT-2026-067i: la RONDA es la TERCERA superficie de la misma asimetria.
+    El fix inicial compartio la resolucion entre EMISOR y LECTOR y dejo esta
+    fuera, asi que el dominio ampliado era INALCANZABLE EN LA PRACTICA: se
+    podia emitir el nonce de un commit del destino pero no gastar la ronda que
+    lo acredita. Medido en produccion por la sesion del destino:
+    `loop-round --commit-sha 043b1d31...` -> `[BLOCKED] 059m`. El censo del
+    bucle L818 miro emisor/lector/barrera/escritor y NO vio este call-site --
+    por eso ahora las TRES vias comparten `resolve_governed_commit_sha`, que es
+    lo que hace el dominio comun POR CONSTRUCCION y no por acuerdo.
+
     Before: project_root es el destino-rol resuelto; commit_sha la forma
         que el CLI recibio (puede ser abreviada).
-    During: lectura del link + git rev-parse contra el motor. Sin filas,
-        sin envio: quien llama NO ha gastado todavia la ronda.
-    After: sha40 pleno si el sha resuelve; ValueError fail-closed en caso
-        contrario, distinguiendo INVALIDO de UNKNOWN (059c).
+    During: lectura del link + git rev-parse contra el motor Y el destino. Sin
+        filas, sin envio: quien llama NO ha gastado todavia la ronda.
+    After: sha40 pleno si el sha resuelve en ALGUNA de las dos raices;
+        ValueError fail-closed en caso contrario, y tambien si una abreviatura
+        es AMBIGUA entre ellas.
     """
     try:
         from runtime.motor_link import resolve_motor_root
@@ -2501,9 +2512,12 @@ def _validated_motor_sha(project_root: Path, commit_sha: str) -> str:
             f"'{commit_sha}' -- sin motor_destination_link.json valido "
             f"para {project_root} (UNKNOWN, no INVALIDO)"
         )
-    ok, resolved = _canonical_motor_commit_sha(motor_root, commit_sha)
-    if not ok:
-        raise ValueError(f"loop-round bloqueado (WOT-2026-059m): {resolved}")
+    try:
+        resolved, _resolved_against = resolve_governed_commit_sha(
+            motor_root, project_root, commit_sha
+        )
+    except ValueError as exc:
+        raise ValueError(f"loop-round bloqueado (WOT-2026-059m): {exc}") from exc
     return resolved
 
 
