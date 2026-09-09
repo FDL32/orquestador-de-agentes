@@ -54,12 +54,12 @@ destino). Si tras esa resolucion el artefacto **sigue sin existir**, estas ante 
   charter no existe `Intent Audit OK`, y el pipeline lo exige para congelar: un contrato
   sin defectos propios no puede helarse contra una intencion que no esta donde mirar.
   Aprobarlo en silencio seria el bypass del Intent Audit que esta regla existe para cerrar.
-- El auditorio sigue siendo read-only: no editas archivos del repo auditado. La escalada
+- El auditor sigue siendo read-only: no editas archivos del repo auditado. La escalada
   es con ARTEFACTO, no de palabra: **produce el contenido exacto de la propuesta `DEC-*`
   para que el Manager lo materialice** en la cola de decisiones del repo dueno
   (`.agent/planning/decisions.md`, schema en `prompts/contract_formation_pipeline.md`
   seccion 6), nombrando el artefacto ausente, el dueno del charter resuelto y las rutas
-  probadas. Una escalada que no deja artefacto recepible es NORMA, no mecanismo: nadie la
+  probadas. Una escalada que no deja artefacto recibible es NORMA, no mecanismo: nadie la
   recibe y la carencia vuelve silenciosa.
 - Los puntos del checklist que no dependen de la entrada ausente se auditan IGUAL, con las
   entradas disponibles. Cada claim que no puedas contrastar por infraestructura inexistente
