@@ -229,7 +229,7 @@ En tickets documentales, trata las subsecciones `Read/inspect only` y
 productivo.
 
 **Salida del vuelo suelto (D1.c, WOT-2026-066n):** un vuelo autonomo de UN
-ticket sigue debiendo las salidas que declara `orchestrator_autonomous_ticket_batch.md`,
+ticket sigue debiendo las salidas que declara `prompts/orchestrator_autonomous_ticket_batch.md` (ruta completa: es un contrato CITADO, asi que M4 obliga a abrirlo y leerlo ENTERO antes de producir sus outputs),
 seccion `## Outputs (design section 12)`: un lote de un ticket es un lote, y
 `batch_run_<ts>.json` es input FAIL-CLOSED del auditor hermano. Esta referencia
 cruzada es NORMA (es lo que un builder de vuelo suelto SIEMPRE lee); la barrera
@@ -420,13 +420,19 @@ lo permite. Si no lo permite, imprime esta evidencia en la salida del runner:
 - exit codes;
 - nombres de tests nuevos o modificados;
 - evidencia de que el test de regresion falla sin el fix, cuando sea verificable;
-- commit o commits del `repo_motor` que contienen la entrega.
+- commit o commits del REPO DE ENTREGA -- el que decide `delivery_authority`, igual que en el bullet de commit de mas abajo -- que contienen la entrega.
 
 Antes de `mark-ready`:
-- commitea en `repo_motor`;
+- commitea en el REPO DE ENTREGA, que lo decide el `delivery_authority` declarado
+  en el contrato del ticket, NO una raiz fija: `repo_motor` -> commit en el motor
+  (su WORKTREE, nunca el checkout detached); `repo_destino` -> commit en el destino.
+  Es el MISMO campo que resuelve el stamp `tested_commit_sha` en la seccion de cierre
+  cross-repo, y por eso no puede resolverse distinto aqui. Si el contrato no lo declara,
+  DETENTE y reporta `DELIVERY_AUTHORITY_MISSING`: adivinar la raiz esta prohibido
+  (WOT-2026-066i D2, un default silencioso en un guard fail-closed);
 - usa `{{TICKET_ID}}` en el mensaje del commit;
 - verifica que el diff revisable corresponde al contrato.
-- si hay herencia operativa de un ticket anterior en `.agent/collaboration/` del `repo_motor`, limpiala primero en un commit previo separado para que no contamine el scope gate.
+- si hay herencia operativa de un ticket anterior en `.agent/collaboration/` del `repo_motor`, archivala primero en un commit previo separado para que no contamine el scope gate. MECANISMO CANONICO, no improvises: `python <MOTOR_ROOT>/scripts/archive_collaboration_artifacts.py --project-root <RAIZ>`, donde `<RAIZ>` es la raiz CUYO `.agent/collaboration/` arrastra la herencia (el archivador resuelve `<project-root>/.agent/collaboration`, asi que apuntarlo a la otra raiz no archiva nada y da un `exit 0` vacuo). El commit de archivado va en ESA misma raiz, separado del commit de la entrega. Usa `--dry-run` antes y comprueba que LISTA ficheros: si lista 0, estas apuntando a la raiz equivocada. NUNCA borres: el archivador MUEVE a `_archive/`. Si ese script no cubre el artefacto concreto, DETENTE y reportalo en vez de decidir tu que se borra.
 - si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `--pre-handoff` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
 Contrato de handoff canonico:
