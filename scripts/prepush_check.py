@@ -1877,9 +1877,14 @@ def run_arranques_index_check(project_root: Path) -> CheckResult:
     entera lo pone UNWIRED y `check_guard_wiring` lo caza.
 
     BLOQUEANTE (is_blocking=True), a diferencia de los WARN heredados: el
-    `_archive/` nace CONSISTENTE (lo escribe `archive_arranques.py`, que invoca el
-    mismo guard y aborta si no cuadra), asi que no hay deuda historica que degradar
+    `_archive/` nace CONSISTENTE (lo escribe `archive_arranques.py`, que valida el
+    PLANO COMPLETO antes de mover un solo byte -- WOT-2026-067n -- e invoca ademas
+    este mismo guard tras la mudanza), asi que no hay deuda historica que degradar
     a WARN. Un desajuste es un fallo de la barrera, no un residuo.
+
+    Aviso de alcance: esa consistencia de origen vale para el archivador. Una mano
+    humana que mueva ficheros a `_archive/` sin tocar el INDEX produce el mismo
+    desajuste, y es precisamente lo que este guard existe para cazar.
 
     Before: `project_root` resoluble; `_archive/` puede existir o no.
     During: lee (read-only) los ficheros de `arranques/_archive/` y las filas de
@@ -1890,10 +1895,14 @@ def run_arranques_index_check(project_root: Path) -> CheckResult:
     """
     name = "Arranques Index (WOT-2026-067m)"
     try:
-        from scripts.check_arranques_index import check_index_consistency
+        from scripts.check_arranques_index import (
+            check_index_consistency,
+            parse_index_filenames,
+        )
     except ImportError:
         from check_arranques_index import (  # type: ignore[no-redef]
             check_index_consistency,
+            parse_index_filenames,
         )
 
     arranques_dir = project_root / "orchestrator_pipeline" / "arranques"
@@ -1921,10 +1930,22 @@ def run_arranques_index_check(project_root: Path) -> CheckResult:
             ),
             is_blocking=True,
         )
+    # WOT-2026-067n: el verde PUBLICA su denominador. Sin el, un cuadre sobre
+    # `_archive/` con 0 ficheros y 0 filas se lee igual que uno sustantivo -- la
+    # familia "un exit 0 puede significar 'no hice nada'". El CLI del guard ya los
+    # imprimia; el camino mas transitado (este) los perdia.
+    archive_dir = arranques_dir / "_archive"
+    n_files = sum(
+        1 for p in archive_dir.iterdir() if p.is_file() and p.name != "INDEX.md"
+    )
+    n_rows = len(parse_index_filenames(archive_dir / "INDEX.md"))
     return CheckResult(
         name=name,
         passed=True,
-        output="INDEX.md cuadra con _archive/ en ambas direcciones.",
+        output=(
+            f"INDEX.md cuadra con _archive/ en ambas direcciones "
+            f"({n_files} fichero(s) en disco, {n_rows} fila(s) en el indice)."
+        ),
         is_blocking=True,
     )
 

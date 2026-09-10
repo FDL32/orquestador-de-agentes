@@ -53,14 +53,17 @@ def parse_index_filenames(index_path: Path) -> list[str]:
     Before: `index_path` puede no existir (indice aun no creado).
     During: lee el fichero en UTF-8 y descarta cabecera (`Archivo`) y separador
         (`---`). Solo cuenta filas de tabla con primera celda no vacia.
-    After: lista de nombres en el orden del fichero. Ilegible -> [] (el llamador
-        lo interpreta como "sin filas", que es fail-closed: todo fichero de disco
-        saldra como "sin fila").
+    After: lista de nombres en el orden del fichero. AUSENTE -> [] ("sin filas
+        todavia"), que es fail-closed mientras haya ficheros en disco: cada uno
+        saldra como "sin fila". PRESENTE PERO ILEGIBLE -> OSError propagado
+        (WOT-2026-067n): degradarlo a [] seria fail-OPEN con `_archive/` vacio,
+        porque `rows=[]` y `disco=vacio` no producen ningun hallazgo y el guard
+        daria verde sin haber podido leer nada. Un INDEX corrupto ya reventaba
+        via UnicodeDecodeError (no es OSError); esto cierra la via de permisos.
     """
-    try:
-        text = index_path.read_text(encoding="utf-8")
-    except OSError:
+    if not index_path.exists():
         return []
+    text = index_path.read_text(encoding="utf-8")
     names: list[str] = []
     for line in text.splitlines():
         cells = _table_cells(line)

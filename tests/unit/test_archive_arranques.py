@@ -283,3 +283,66 @@ def test_archive_refuses_to_overwrite_existing_history(tmp_path):
         aa.archive(tmp_path)
     # El historico NO se sobrescribe.
     assert (archive / "ARRANQUE_libre.md").read_text(encoding="utf-8") == "ya existia\n"
+
+
+def test_collision_late_in_the_batch_leaves_no_file_moved(tmp_path):
+    """Rojo de WOT-2026-067n: una colision TARDIA no puede dejar mudanza parcial.
+
+    El test hermano (`..._refuses_to_overwrite_existing_history`) usa UN solo
+    fichero, asi que la colision cae en la primera iteracion y no hay nada movido
+    todavia: no puede ALCANZAR esta rama. Aqui la colision cae en el SEGUNDO, con
+    el primero ya movido -- el estado que `check_index_consistency` declara
+    imposible ("el `_archive/` nace CONSISTENTE").
+    """
+    _make_project(
+        tmp_path, {"ARRANQUE_aaa.md": "primero\n", "ARRANQUE_zzz.md": "segundo\n"}
+    )
+    archive = _arranques(tmp_path) / "_archive"
+    archive.mkdir()
+    (archive / "ARRANQUE_zzz.md").write_text("ya existia\n", encoding="utf-8")
+    (archive / "INDEX.md").write_text(_INDEX_EMPTY, encoding="utf-8")
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+
+    with pytest.raises(aa.ArchiveError):
+        aa.archive(tmp_path)
+
+    # El historico previo sigue intacto...
+    assert (archive / "ARRANQUE_zzz.md").read_text(encoding="utf-8") == "ya existia\n"
+    # ...y NINGUN fichero quedo movido sin su fila: el guard debe seguir cuadrando.
+    assert (_arranques(tmp_path) / "ARRANQUE_aaa.md").exists(), (
+        "mudanza PARCIAL: el primer fichero se movio y la colision aborto despues"
+    )
+    assert not (archive / "ARRANQUE_aaa.md").exists()
+    # El unico desajuste que ve el guard es el `zzz.md` SEMBRADO por el fixture
+    # (historico previo sin fila, deliberado). Ningun hallazgo puede nombrar a
+    # `aaa.md`: eso probaria que la mudanza parcial ocurrio.
+    findings = cai.check_index_consistency(_arranques(tmp_path))
+    assert not [f for f in findings if "ARRANQUE_aaa" in f], findings
+
+
+def test_citation_on_unmerged_branch_is_preserved(tmp_path):
+    """Rojo de WOT-2026-067n: `git log` sin `--all` solo alcanza HEAD.
+
+    Un arranque citado UNICAMENTE desde una rama no fusionada se clasificaria
+    NO-CITADO y se moveria: perdida de evidencia, justo lo que DEC-067L-001
+    prohibe. Control POSITIVO: el fichero no citado en ninguna parte SI se mueve,
+    para que el test no pueda pasar por la via trivial de "no mueve nada".
+    """
+    _make_project(
+        tmp_path, {"ARRANQUE_rama.md": "en rama\n", "ARRANQUE_huerfano.md": "nadie\n"}
+    )
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init sin citar ninguno")
+
+    _git(tmp_path, "checkout", "-q", "-b", "rama-sin-fusionar")
+    (tmp_path / "nota.md").write_text("x\n", encoding="utf-8")
+    _commit_all(tmp_path, "cita ARRANQUE_rama.md desde una rama NO fusionada")
+    _git(tmp_path, "checkout", "-q", "main")
+
+    report = aa.archive(tmp_path, dry_run=True)
+
+    assert "ARRANQUE_rama.md" in report.cited, (
+        "la cita vive en una rama no fusionada: `git log` sin `--all` no la ve"
+    )
+    assert report.uncited == ["ARRANQUE_huerfano.md"]

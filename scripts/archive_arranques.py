@@ -143,7 +143,12 @@ def _git_log_surface(project_root: Path) -> str:
             "commit; se aborta para no mover evidencia citada."
         )
     proc = subprocess.run(  # noqa: S603
-        [git, "-C", str(project_root), "log", "--format=%s%n%b"],
+        # `--all`: sin el, `git log` solo alcanza HEAD, y un arranque citado unicamente
+        # desde una rama o tag NO fusionado se clasificaria NO-CITADO y se moveria
+        # (WOT-2026-067n). Medido el 2026-09-10 en el destino: `--all --not HEAD` da
+        # VACIO -- el riesgo es LATENTE, no vivo, pero el coste de cerrarlo es una
+        # palabra y el fallo que evita es perdida de evidencia.
+        [git, "-C", str(project_root), "log", "--all", "--format=%s%n%b"],
         capture_output=True,
         text=True,
         check=False,
@@ -214,14 +219,28 @@ def archive(
     report.index_path = index_path
     stamp = today or date.today().isoformat()
 
-    rows: list[str] = []
+    # WOT-2026-067n: PLAN COMPLETO antes de mover un solo byte. Comprobar la
+    # colision DENTRO del bucle de mudanza dejaba mudanza PARCIAL -- los ficheros
+    # anteriores ya movidos y `append_index_rows` sin llegar a correr, porque el
+    # `raise` cortaba antes. Ese es justo el estado que el guard declara imposible
+    # ("el `_archive/` nace CONSISTENTE"), asi que la premisa era falsa en la ruta
+    # de excepcion. Validar primero hace la operacion todo-o-nada por construccion.
+    plan: list[tuple[Path, Path, str]] = []
+    collisions: list[str] = []
     for path in uncited:
         destination = archive_dir / path.name
         if destination.exists():
-            raise ArchiveError(
-                f"colision: {destination} ya existe; no se sobrescribe historico."
-            )
-        digest = sha256_file(path)
+            collisions.append(path.name)
+            continue
+        plan.append((path, destination, sha256_file(path)))
+    if collisions:
+        raise ArchiveError(
+            f"colision: {', '.join(sorted(collisions))} ya existe(n) en "
+            f"{archive_dir}; no se sobrescribe historico. NADA se ha movido."
+        )
+
+    rows: list[str] = []
+    for path, destination, digest in plan:
         shutil.move(str(path), str(destination))
         rows.append(f"| {path.name} | {stamp} | {digest} | {MOTIVO} |\n")
         report.moved.append(path.name)

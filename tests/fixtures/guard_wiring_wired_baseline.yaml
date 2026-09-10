@@ -38,6 +38,8 @@ wired_baseline:
     - .pre-commit-config.yaml
   check_deliverables_exist:
     - .agent/agent_controller.py
+  check_arranques_index:
+    - scripts/prepush_check.py
   check_encoding_guard:
     - .pre-commit-config.yaml
   check_guard_wiring:
