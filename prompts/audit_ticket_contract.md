@@ -7,6 +7,21 @@
 > cierre o publicación.
 >
 > Identifica problemas y propón correcciones exactas.
+>
+> **HERMANO, no version: este NO es `prompts/audit_cf_ticket_contract.md`.**
+> Los dos auditan "el contrato" y por eso se confunden, pero son FASES DISTINTAS del
+> ciclo de vida y auditan ARTEFACTOS DISTINTOS. Orden real:
+>
+>     audit_cf -> status: frozen -> se escribe work_plan.md -> audit_ticket_contract (ESTE) -> Builder
+>
+> El hermano audita el `ticket_contract` de `.agent/planning/ticket_contracts.md`
+> ANTES de congelarlo, contra el charter y el plan_graph: mide INTENCION y suficiencia.
+> ESTE audita el `work_plan.md` ya escrito (mas `STRATEGY_` / `AUDIT_`)
+> ANTES de pasar a Builder: mide MADUREZ OPERATIVA (bus, gates, packaging, TURN.md).
+> Solapamiento medido 2026-09-10: 1 linea sustantiva de 296, y es la cabecera
+> `Modo:` comun a todas las auditorias. Si todavia estas FORMANDO el contrato
+> (no hay `work_plan.md`), gobierna el hermano, no este.
+>
 
 ---
 
