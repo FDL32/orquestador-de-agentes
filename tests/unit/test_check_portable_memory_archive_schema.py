@@ -308,3 +308,39 @@ def test_allowlisted_collision_pair_is_accepted(tmp_path: Path) -> None:
         "a collision pair on the accepted allowlist must pass (exit 0); the guard "
         f"blocks only NEW collisions. got {r.returncode}. stdout: {r.stdout} stderr: {r.stderr}"
     )
+
+
+def test_acceptlisted_post_write_verification_collision_is_accepted(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-067t: the REAL destination collision (post-write-verification,
+    WOT-2026-010j) is ACCEPTED because its two records are DISTINCT lessons of
+    the same ticket, not re-editions: obs-20260617-post-write-existence-plus-encoding
+    (verificar existencia aparte del encoding) and obs-20260617-report-write-evidence-separately
+    (patron de reporte de escritura). An allowlisted pair must pass (exit 0), so the
+    guard blocks only NEW, unreviewed collisions.
+
+    Mutation: remove the key from ACCEPTED_COLLISIONS -> the pair blocks (exit 5) -> RED.
+    """
+    repo = _make_repo(tmp_path)
+    _write(
+        repo / ARCHIVE_DIR_REL / "observations.2026-07.jsonl",
+        [
+            _entry(
+                "post-write-verification",
+                "WOT-2026-010j",
+                "verificar EXISTENCIA aparte del encoding",
+            ),
+            _entry(
+                "post-write-verification",
+                "WOT-2026-010j",
+                "patron de reporte de escritura, evidencia separada",
+            ),
+        ],
+    )
+
+    r = _run(repo)
+    assert r.returncode == EXIT_OK, (
+        "the accepted (post-write-verification, WOT-2026-010j) collision pair must "
+        f"pass (exit 0); got {r.returncode}. stdout: {r.stdout} stderr: {r.stderr}"
+    )

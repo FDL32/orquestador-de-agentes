@@ -84,6 +84,8 @@ ACCEPTED_COLLISIONS = frozenset(
         ("manager-review-rubric", "WP-2026-137"),
         ("manager-review-rubric", "WP-2026-133"),
         ("delivery-hook-mutation", "WT-2026-191"),
+        # (post-write-verification, WOT-2026-010j): son DOS lecciones DISTINTAS del mismo ticket, no re-ediciones (obs-20260617-post-write-existence-plus-encoding y obs-20260617-report-write-evidence-separately).
+        ("post-write-verification", "WOT-2026-010j"),
     }
 )
 
