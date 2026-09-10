@@ -42,6 +42,8 @@ wired_baseline:
     - .pre-commit-config.yaml
   check_guard_wiring:
     - .pre-commit-config.yaml
+  check_launch_prompt_paths:
+    - scripts/prepush_check.py
   check_no_history_truncation:
     - .pre-commit-config.yaml
   check_worktree_topology:

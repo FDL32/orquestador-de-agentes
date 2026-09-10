@@ -1791,6 +1791,80 @@ def run_flight_plan_collision_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_launch_prompt_paths_check(project_root: Path) -> CheckResult:
+    """WOT-2026-067n: un prompt de arranque no puede mandar leer runtime SIN ruta.
+
+    Por que AQUI. Los prompts de arranque viven en el `.agent/planning/` del DESTINO, y
+    el cierre es el unico camino que corre solo Y conoce ese destino. El import es
+    ESTATICO para que `check_guard_wiring` alcance este call-site y cuente el guard como
+    CABLEADO (precedente: `run_flight_plan_collision_check`). Retirar esta invocacion
+    deja el guard UNWIRED -> lo caza check_guard_wiring (mutation del DoD de
+    des-cableado).
+
+    EL FALLO QUE CIERRA, medido y con coste: el 2026-09-10 un prompt decia "Confirma que
+    `work_plan.md` activo apunta a ..." sin prefijo de raiz. En esta topologia hay DOS
+    `.agent/collaboration/` (el seed neutro del worktree y el operativo del destino); el
+    Builder resolvio contra su cwd, leyo un ticket ajeno COMPLETED y reporto
+    `RUNTIME_NOT_BOOTSTRAPPED`. Su razonamiento fue correcto: el prompt era ambiguo. La
+    norma ya existia (`AGENTS.md:142`); faltaba el mecanismo.
+
+    WARN (is_blocking=False) a proposito, mismo precedente: 2 de los 3 prompts vivos YA
+    violan la regla antes de introducir la barrera (deuda medida: 6 hallazgos), y
+    bloquear el cierre con ella seria un falso-rojo heredado. El CHECK en si (exit!=0) es
+    fiel al contrato; es el CABLEADO el que nace no bloqueante. Criterio de salida a
+    is_blocking=True: censo de R1 en 0 sobre los prompts vivos.
+
+    LIMITE MEDIDO del des-cableado (2026-09-10, no heredado): retirar SOLO esta linea
+    de `results.append(...)` NO lo caza `check_guard_wiring` -- la arista sobrevive
+    porque el import estatico de esta misma funcion la sostiene. La mutacion que SI
+    lo caza es retirar la funcion ENTERA (medido: rc=1, "esperaba cableado desde
+    ['scripts/prepush_check.py'], ahora NADA"). Es la misma familia que el baseline
+    documenta ("se sostenian TAMBIEN con prosa viva"), y se deja escrita aqui en vez
+    de descubrirla la proxima vez.
+
+    Before: project_root resoluble; `.agent/planning/` puede existir o no.
+    During: lee `builder_prompt_*.md` (read-only) y aplica R1 (orden de lectura sin ruta
+        absoluta) y R2 (placeholder sin expandir).
+    After: passed=True sin hallazgos o si no hay directorio (SKIP nombrado, nunca un
+        verde mudo); False (WARN) con el listado y el DENOMINADOR. Read-only.
+    """
+    name = "Launch Prompt Paths (WOT-2026-067n)"
+    try:
+        from scripts.check_launch_prompt_paths import audit
+    except ImportError:
+        from check_launch_prompt_paths import audit  # type: ignore[no-redef]
+
+    planning = project_root / ".agent" / "planning"
+    if not planning.is_dir():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no existe {planning} (sin prompts de arranque).",
+            is_blocking=False,
+        )
+    findings, prompts = audit(project_root)
+    denom = f"{len(prompts)} prompt(s) auditado(s)"
+    if findings:
+        detail = "\n".join(f"  - {f.render()}" for f in findings)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{denom}, {len(findings)} hallazgo(s):\n{detail}\n"
+                "Un prompt que ordena leer runtime SIN ruta absoluta deja al Builder "
+                "resolver contra su cwd, y en esta topologia eso es el seed neutro del "
+                "worktree (AGENTS.md:142). Escribe la ruta completa del destino."
+            ),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=f"{denom}, sin hallazgos",
+        is_blocking=False,
+    )
+
+
 def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
     (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
@@ -2449,6 +2523,10 @@ def run_preflight_check(
         # en WOT-2026-040r cuando queued/ este limpio. El CHECK en si (exit!=0) es
         # fiel a 'colision SIEMPRE falla, sin allowlist'; el CABLEADO nace WARN.)
         results.append(run_flight_plan_collision_check(project_root))
+        # 6m-bis. Launch Prompt Paths (WOT-2026-067n; WARN -- 2 de 3 prompts vivos
+        # ya violan la regla antes de la barrera (deuda medida: 6 hallazgos).
+        # Endurecer a bloqueante cuando el censo de R1 llegue a 0.)
+        results.append(run_launch_prompt_paths_check(project_root))
         # 6n. DEC Receipt Barrier (WOT-2026-042x; la norma de 042w cableada).
         # Va en closeout y no en pre-commit porque su superficie son los buzones
         # de fichas del DESTINO, que este es el unico camino auto-ejecutable que
