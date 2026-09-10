@@ -126,11 +126,17 @@ def sha256_file(path: Path) -> str:
 
 
 def root_files(arranques_dir: Path) -> list[Path]:
-    """Ficheros de la RAIZ de `arranques/`, excluidos README e `_archive/`."""
+    """Ficheros de la RAIZ de `arranques/`, excluidos README, INDEX y `_archive/`.
+
+    `INDEX_FILENAME` se excluye por WOT-2026-067n: un `INDEX.md` en la RAIZ se
+    clasificaria como archivable y la mudanza lo dejaria caer ENCIMA del indice
+    de `_archive/` (o chocaria con el). No es un caso vivo, pero cuesta un token.
+    """
     if not arranques_dir.is_dir():
         return []
+    skip = {README_NAME, INDEX_FILENAME}
     return sorted(
-        p for p in arranques_dir.iterdir() if p.is_file() and p.name != README_NAME
+        p for p in arranques_dir.iterdir() if p.is_file() and p.name not in skip
     )
 
 
@@ -166,6 +172,16 @@ def _git_log_surface(project_root: Path) -> str:
 def load_citation_blob(project_root: Path) -> str:
     """Union de las TRES superficies publicadas de citacion."""
     parts: list[str] = []
+    # WOT-2026-067n: la superficie VIVA es obligatoria. Saltarla en silencio dejaba
+    # el censo incompleto y podia mover evidencia citada -- justo lo que la rama de
+    # `git log` ya trataba como fail-closed. `backlog_done.md` SI puede faltar
+    # legitimamente (destino sin ningun ticket archivado todavia).
+    live = project_root / _BACKLOG_SURFACES[0]
+    if not live.is_file():
+        raise ArchiveError(
+            f"superficie de citacion VIVA ausente: {live}. Se aborta: un censo "
+            "incompleto moveria evidencia citada (DEC-067L-001)."
+        )
     for rel in _BACKLOG_SURFACES:
         path = project_root / rel
         if path.is_file():

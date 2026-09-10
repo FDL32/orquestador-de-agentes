@@ -81,12 +81,24 @@ def _commit_all(root: Path, message: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def _make_project(tmp_path: Path, files: dict[str, str]) -> Path:
+def _make_project(
+    tmp_path: Path, files: dict[str, str], *, live_backlog: str | None = ""
+) -> Path:
+    """Proyecto temporal con `arranques/` y la superficie de citacion VIVA.
+
+    `live_backlog=None` OMITE `backlog.md` a proposito, para los tests que pinean
+    el fail-closed de WOT-2026-067n. Por defecto se crea VACIO: existe (el censo
+    puede correr) y no cita a nadie, que es el fixture neutro que casi todos los
+    tests quieren.
+    """
     arranques = tmp_path / "orchestrator_pipeline" / "arranques"
     arranques.mkdir(parents=True)
     for name, content in files.items():
         (arranques / name).write_text(content, encoding="utf-8")
-    (tmp_path / ".agent" / "collaboration").mkdir(parents=True)
+    collaboration = tmp_path / ".agent" / "collaboration"
+    collaboration.mkdir(parents=True)
+    if live_backlog is not None:
+        (collaboration / "backlog.md").write_text(live_backlog, encoding="utf-8")
     return tmp_path
 
 
@@ -346,3 +358,39 @@ def test_citation_on_unmerged_branch_is_preserved(tmp_path):
         "la cita vive en una rama no fusionada: `git log` sin `--all` no la ve"
     )
     assert report.uncited == ["ARRANQUE_huerfano.md"]
+
+
+def test_missing_live_backlog_aborts_instead_of_censusing_partially(tmp_path):
+    """Rojo de WOT-2026-067n: la superficie VIVA ausente es fail-CLOSED.
+
+    Saltarla en silencio dejaba el censo incompleto y podia mover un arranque
+    citado solo desde `backlog.md` -- perdida de evidencia. La rama de `git log`
+    ya abortaba en ese caso; esta no.
+    """
+    _make_project(tmp_path, {"ARRANQUE_x.md": "x\n"}, live_backlog=None)
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+    assert not (tmp_path / ".agent" / "collaboration" / "backlog.md").exists()
+
+    with pytest.raises(aa.ArchiveError, match="VIVA ausente"):
+        aa.archive(tmp_path, dry_run=True)
+
+
+def test_index_in_root_is_not_archivable(tmp_path):
+    """`INDEX.md` en la RAIZ no puede clasificarse como archivable.
+
+    Si lo fuera, la mudanza lo dejaria caer sobre el indice de `_archive/`.
+    """
+    _make_project(
+        tmp_path, {"ARRANQUE_a.md": "a\n", "INDEX.md": "no soy un arranque\n"}
+    )
+    (tmp_path / ".agent" / "collaboration" / "backlog.md").write_text(
+        "sin citas\n", encoding="utf-8"
+    )
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+
+    report = aa.archive(tmp_path, dry_run=True)
+
+    assert report.denominator == 1, "INDEX.md no entra en el denominador"
+    assert report.uncited == ["ARRANQUE_a.md"]
