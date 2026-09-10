@@ -162,3 +162,62 @@ def test_el_prompt_no_cristaliza_estado(tmp_path):
     # un sha de 7-40 hex aislado seria estado cristalizado
     assert not re.search(r"\b[0-9a-f]{7,40}\b", prompt), "el prompt cristaliza un SHA"
     assert "C:\\Users" not in prompt and "C:/Users" not in prompt
+
+
+def test_060j_la_suite_y_el_modo_nombran_el_repo_que_midieron(tmp_path):
+    """WOT-2026-060j (a)(b)(c): la atribucion de raiz no puede ser AMBIGUA.
+
+    El recolector mide la suite canonica y el modo SIEMPRE contra `motor_root`,
+    aunque se le invoque con `--project-root <destino>`. La tabla de Topologia SI
+    distingue ambos repos, asi que un lector razonable ATRIBUYE al destino un dato
+    que es del motor.
+
+    Por que importa, medido 2026-09-10: coexisten TRES `last-run.json` en esta
+    topologia (motor, destino y worktree) con veredictos DISTINTOS. Sin etiqueta,
+    el bloque de arranque reporto la suite como STALE cuando la real estaba VERDE
+    y fresca en el worktree, y el lector no tenia forma de saberlo.
+
+    El test corre sobre DOS raices DISTINTAS (`--project-root` != `--motor-root`)
+    porque con una sola raiz la atribucion correcta y la ambigua son
+    indistinguibles: es justo el caso que el defecto produce.
+
+    Mutacion que debe matarlo (DoD (e1)(e2)): retirar la etiqueta de CUALQUIERA de
+    las dos secciones deja este test ROJO.
+    """
+    dest = _mkdest(tmp_path / "destino")
+    motor = tmp_path / "motor_falso"
+    (motor / ".agent" / "runtime" / "pytest-safe").mkdir(parents=True)
+
+    proc = _run(dest, "--motor-root", str(motor))
+    assert proc.returncode == 0, proc.stderr
+
+    out = proc.stdout
+    suite_idx = out.find("### Suite canonica")
+    # La linea del modo se localiza por su PREFIJO, no por "Modo:" literal:
+    # la etiqueta de raiz se inserta entre el rotulo y los dos puntos, y un
+    # find("Modo:") volveria -1 justo cuando el fix ESTA aplicado.
+    modo_line = next(
+        (ln for ln in out.splitlines() if ln.lstrip().startswith("Modo")), None
+    )
+    assert suite_idx != -1, "falta la seccion Suite canonica"
+    assert modo_line is not None, "falta la linea Modo"
+
+    # (a) La seccion Suite canonica declara de que repo es su dato.
+    suite_block = out[suite_idx : suite_idx + 600]
+    assert "repo medido:" in suite_block, (
+        "`### Suite canonica` no NOMBRA el repo del que procede su dato: con TRES "
+        f"last-run.json coexistiendo, el lector no puede atribuirlo. Bloque:{chr(10)}{suite_block[:300]}"
+    )
+
+    # (b) La linea Modo: hace lo mismo.
+    modo_block = modo_line
+    assert "repo medido:" in modo_block, (
+        "la linea `Modo:` no NOMBRA el repo sobre el que se detecto "
+        f"is_motor_code_only(). Bloque:{chr(10)}{modo_block[:300]}"
+    )
+
+    # El rol declarado es el vocabulario canonico, no una ruta improvisada.
+    assert "repo medido: repo_motor" in out, (
+        "el rol debe ser literalmente `repo_motor` o `repo_destino` (formato fijado "
+        "por contrato para que el Builder no lo elija)"
+    )

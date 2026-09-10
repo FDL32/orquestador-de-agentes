@@ -308,7 +308,8 @@ def render_markdown(rep: dict) -> str:
         )
     out.append("")
     out.append(
-        f"Modo: `is_motor_code_only() = {rep['mode']['is_motor_code_only']}` "
+        f"Modo (repo medido: repo_motor): "
+        f"`is_motor_code_only() = {rep['mode']['is_motor_code_only']}` "
         f"(`exit_code: {rep['mode']['exit_code']}`) -- **detectado, no asumido**."
     )
     out.append("")
@@ -316,6 +317,13 @@ def render_markdown(rep: dict) -> str:
     s = rep["suite"]
     out.append("### Suite canonica")
     out.append("")
+    # WOT-2026-060j: la ATRIBUCION es parte del dato. `collect_suite` lee
+    # SIEMPRE el sello del motor, aunque se invoque con --project-root <destino>,
+    # y en esta topologia coexisten varios `last-run.json` con veredictos
+    # DISTINTOS (motor, destino y worktree). Sin nombrar la raiz, un lector
+    # razonable atribuye al destino un dato que es del motor. El rol es el
+    # vocabulario canonico (`repo_motor`), no la ruta: la ruta ya viaja abajo.
+    out.append("- repo medido: repo_motor (el sello del motor, NO el del destino).")
     if not s.get("present"):
         out.append(f"- `last-run.json` ausente en `{s['path']}`.")
     elif s.get("unreadable"):
