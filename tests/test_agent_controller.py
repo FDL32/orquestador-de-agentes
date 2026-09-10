@@ -14,6 +14,7 @@ request_*, get_rejection_*, publish_*) can be restored when those
 functions are implemented.
 """
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -2254,6 +2255,103 @@ class TestManagerApproveStateCleanup:
         )
         assert "ACTIVE_TICKET: WT-2026-208" in state_content
         assert "STATUS: COMPLETED" in state_content
+
+
+class TestWorkPlanArchiveOnRotation:
+    """WOT-2026-067o: closeout archives the live work_plan before rotating it."""
+
+    _PLAN_ID = "WOT-2026-900"
+    _PLAN_TEMPLATE = (
+        "# Plan de Trabajo: {plan_id}\n"
+        "\n"
+        "## Metadata\n"
+        "- **ID:** {plan_id}\n"
+        "- **Estado:** APPROVED\n"
+        "- **deliverable_type:** code\n"
+    )
+
+    def _prepare_closeout(self, monkeypatch, tmp_path):
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        work_plan = collab / "work_plan.md"
+        work_plan.write_text(
+            self._PLAN_TEMPLATE.format(plan_id=self._PLAN_ID), encoding="utf-8"
+        )
+        exec_log = collab / "execution_log.md"
+        exec_log.write_text("**Estado:** READY_FOR_REVIEW\n", encoding="utf-8")
+        state = collab / "STATE.md"
+        state.write_text("STATUS: READY_FOR_REVIEW\n", encoding="utf-8")
+        turn = collab / "TURN.md"
+        turn.write_text("# TURNO ACTUAL\n", encoding="utf-8")
+
+        monkeypatch.setattr(agent_controller, "WORK_PLAN", work_plan)
+        monkeypatch.setattr(agent_controller, "EXEC_LOG", exec_log)
+        monkeypatch.setattr(agent_controller, "STATE_FILE", state)
+        monkeypatch.setattr(agent_controller, "TURN_FILE", turn)
+        monkeypatch.setattr(agent_controller, "update_log_status", lambda *_a: True)
+        monkeypatch.setattr(agent_controller, "update_turn_file", lambda *_a: None)
+        return collab, work_plan
+
+    def test_archive_is_byte_identical_to_pre_rotation_plan(
+        self, tmp_path, monkeypatch
+    ):
+        """The archived copy must match the live plan byte for byte."""
+        collab, work_plan = self._prepare_closeout(monkeypatch, tmp_path)
+        pre_sha = hashlib.sha256(work_plan.read_bytes()).hexdigest()
+
+        agent_controller._sync_markdowns_to_completed(self._PLAN_ID)
+
+        archived = collab / "_archive" / f"work_plan_{self._PLAN_ID}.md"
+        assert archived.exists()
+        assert hashlib.sha256(archived.read_bytes()).hexdigest() == pre_sha
+        # The rotation still ran: the live plan now reads COMPLETED.
+        assert "- **Estado:** COMPLETED" in work_plan.read_text(encoding="utf-8")
+
+    def test_archive_name_uses_plan_id_not_entrant_ticket(self, tmp_path, monkeypatch):
+        """The name derives from the plan ID being overwritten, not the ticket."""
+        collab, _ = self._prepare_closeout(monkeypatch, tmp_path)
+        other_ticket = "WOT-2026-999"
+
+        agent_controller._sync_markdowns_to_completed(other_ticket)
+
+        assert (collab / "_archive" / f"work_plan_{self._PLAN_ID}.md").exists()
+        assert not (collab / "_archive" / f"work_plan_{other_ticket}.md").exists()
+
+    def test_existing_archive_is_not_overwritten(self, tmp_path, monkeypatch):
+        """A pre-existing copy is preserved and the rotation is not aborted."""
+        collab, work_plan = self._prepare_closeout(monkeypatch, tmp_path)
+        archive_dir = collab / "_archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archived = archive_dir / f"work_plan_{self._PLAN_ID}.md"
+        preexisting = "PREVIOUS ARCHIVE CONTENT\n"
+        archived.write_text(preexisting, encoding="utf-8")
+        pre_sha = hashlib.sha256(archived.read_bytes()).hexdigest()
+
+        agent_controller._sync_markdowns_to_completed(self._PLAN_ID)
+
+        assert hashlib.sha256(archived.read_bytes()).hexdigest() == pre_sha
+        assert archived.read_text(encoding="utf-8") == preexisting
+        # Rotation is not aborted by the collision.
+        assert "- **Estado:** COMPLETED" in work_plan.read_text(encoding="utf-8")
+
+    def test_missing_plan_id_skips_archive(self, tmp_path, monkeypatch):
+        """No archive is written when get_plan_id returns the N/A sentinel."""
+        collab, work_plan = self._prepare_closeout(monkeypatch, tmp_path)
+        work_plan.write_text(
+            "# Plan sin ID\n\n## Metadata\n- **Estado:** APPROVED\n",
+            encoding="utf-8",
+        )
+
+        agent_controller._sync_markdowns_to_completed("WOT-2026-901")
+
+        archive_dir = collab / "_archive"
+        archived_files = (
+            list(archive_dir.glob("work_plan_*.md")) if archive_dir.exists() else []
+        )
+        assert archived_files == []
+        assert not (archive_dir / "work_plan_N/A.md").exists()
+        # Rotation still ran.
+        assert "- **Estado:** COMPLETED" in work_plan.read_text(encoding="utf-8")
 
 
 # ======================================================================

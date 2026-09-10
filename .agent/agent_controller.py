@@ -26,6 +26,7 @@ import codecs
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -4763,6 +4764,53 @@ def _emit_manager_approve_cascade(event_bus, ticket_id: str) -> None:
     )
 
 
+def _archive_live_work_plan(plan_id: str) -> None:
+    """Archive the live work_plan.md before the closeout rotates it.
+
+    Before (pre-conditions):
+        ``plan_id`` is the ``**ID:**`` parsed from the work_plan that is about
+        to be overwritten; ``WORK_PLAN`` resolves to that live work_plan.md.
+    During (process):
+        Copies the live file to ``<collab>/_archive/work_plan_<plan_id>.md``
+        with ``shutil.copy2``. Skips the copy with a WARN when ``plan_id`` is
+        not a real ticket id or the destination already exists, and reports any
+        ``OSError`` from the copy as a WARN.
+    After (post-conditions):
+        On success the archived copy is byte-identical to the pre-rotation
+        work_plan. This helper never raises and never deletes: the closeout
+        rotation that follows must always proceed. WARN lines go to stderr so
+        they cannot corrupt a JSON stdout payload.
+    """
+    if is_invalid_plan_id(plan_id):
+        print(
+            "[WARN] work_plan archive skipped: no real plan ID to derive the name",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
+    archive_dir = Path(str(WORK_PLAN)).parent / "_archive"
+    archive_file = archive_dir / f"work_plan_{plan_id}.md"
+
+    if archive_file.exists():
+        print(
+            f"[WARN] work_plan archive skipped: {archive_file} already exists",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(WORK_PLAN, archive_file)
+    except OSError as exc:
+        print(
+            f"[WARN] work_plan archive failed for {archive_file}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _sync_markdowns_to_completed(ticket_id: str) -> None:
     """Sync markdown files to COMPLETED state."""
     update_log_status(
@@ -4805,6 +4853,7 @@ def _sync_markdowns_to_completed(ticket_id: str) -> None:
         updated_work_plan = updated_work_plan.replace(
             "- **Accion:** REVIEW_WORK", "- **Accion:** CLOSEOUT", 1
         )
+        _archive_live_work_plan(get_plan_id(work_plan_content))
         write_file(WORK_PLAN, updated_work_plan)
 
     # Update TURN.md for next cycle
