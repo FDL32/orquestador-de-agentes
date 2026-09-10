@@ -103,6 +103,13 @@ __all__ = [
 # Fichero RUNTIME (gitignored): fuente de lecciones, NUNCA destino de promocion.
 OBS_REL = Path(".agent/runtime/memory/observations.jsonl")
 
+# WOT-2026-067u: separador del selector alternativo `<topic>|<source_ticket>` de
+# la via curada. Se separa del `id` porque un record de LECCION sin campo `id`
+# (telemetria excluida aparte por `is_lesson`) no era nombrable por `--promote-id`
+# y quedaba huerfano de forma permanente. Reutiliza `record_key`, que YA es la
+# identidad canonica del dedup en los tres consumidores de memoria portable.
+SEPARADOR_PROMOTE_ID = "|"
+
 
 def _git(repo: Path, *args: str) -> str:
     r = subprocess.run(  # noqa: S603
@@ -331,13 +338,16 @@ def _promote_one(
     (`validate_dest_archive` antes, `validate_strict` despues). No es un bypass.
 
     Before: `source` legible; `obs_id` es el campo `id` de un record de
-        `observations.jsonl` del source.
-    During: localiza el record por `id` (fail-closed si no existe o si hay
-        ambiguedad), deduplica contra TODOS los archive/*.jsonl del destino
-        (por `id` y por `record_key`), valida `--strict` ANTES de escribir y
-        vuelve a validar DESPUES.
-    After: 0 si promovio (o si ya estaba / dry-run); != 0 si el id no existe, si
-        el archive no valida, o si la escritura dejo memoria invalida.
+        `observations.jsonl` del source, O BIEN el selector alternativo
+        `<topic>|<source_ticket>` (WOT-2026-067u) para un record de LECCION sin
+        `id`; el separador es `SEPARADOR_PROMOTE_ID`.
+    During: localiza el record por `id` (o por `record_key` si el valor lleva el
+        separador; fail-closed si no existe o si hay ambiguedad), deduplica
+        contra TODOS los archive/*.jsonl del destino (por `id` y por
+        `record_key`), valida `--strict` ANTES de escribir y vuelve a validar
+        DESPUES.
+    After: 0 si promovio (o si ya estaba / dry-run); != 0 si el id/selector no
+        existe, si el archive no valida, o si la escritura dejo memoria invalida.
     """
     src_obs = source / OBS_REL
     dst_archive = current_archive_file(dest)
@@ -345,22 +355,26 @@ def _promote_one(
     print(f"[reconcile] destino (ARCHIVE TRACKEADO): {dst_archive}")
 
     src = load_records(src_obs)
-    matches = [r for r in src if r.get("id") == obs_id]
+    if SEPARADOR_PROMOTE_ID in obs_id:
+        topic, _, source_ticket = obs_id.partition(SEPARADOR_PROMOTE_ID)
+        selector = f"topic={topic!r} source_ticket={source_ticket!r}"
+        matches = [r for r in src if record_key(r) == (topic, source_ticket)]
+    else:
+        selector = f"id={obs_id!r}"
+        matches = [r for r in src if r.get("id") == obs_id]
     if not matches:
-        print(
-            f"[reconcile] ERROR: no hay ninguna leccion con id={obs_id!r} en {src_obs}"
-        )
+        print(f"[reconcile] ERROR: no hay ninguna leccion con {selector} en {src_obs}")
         print("[reconcile] no se promueve lo que no existe (fail-closed)")
         return 1
     if len(matches) > 1:
         print(
-            f"[reconcile] ERROR: id={obs_id!r} aparece {len(matches)} veces en el source"
+            f"[reconcile] ERROR: {selector} aparece {len(matches)} veces en el source"
         )
         print("[reconcile] no se adivina cual promover (fail-closed)")
         return 1
     record = matches[0]
     if not is_lesson(record):
-        print(f"[reconcile] ERROR: id={obs_id!r} no es una LECCION (es autogenerado)")
+        print(f"[reconcile] ERROR: {selector} no es una LECCION (es autogenerado)")
         print("[reconcile] la via curada promueve lecciones, no telemetria")
         return 1
 
@@ -414,7 +428,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "VIA CURADA (WOT-2026-026f / DEC-026F-001): promueve UNA leccion "
             "concreta por su campo `id` al archive trackeado, tambien cuando el "
-            "source ES el checkout canonico. Requiere --apply para escribir."
+            "source ES el checkout canonico. Acepta tambien el selector "
+            "alternativo `<topic>|<source_ticket>` (WOT-2026-067u) para una "
+            "leccion sin `id`. Requiere --apply para escribir."
         ),
     )
     return parser
