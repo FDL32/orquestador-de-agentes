@@ -1865,6 +1865,70 @@ def run_launch_prompt_paths_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_arranques_index_check(project_root: Path) -> CheckResult:
+    """WOT-2026-067m: cuadre `arranques/_archive/` <-> `_archive/INDEX.md` (AMBAS direcciones).
+
+    Por que AQUI. El indice que hace consultable el historico de `arranques/` es
+    BARRERA y no norma (DEC-067L-002): solo lo es si un camino que corre solo lo
+    INVOCA. Este es ese camino -- el cierre conoce el `project_root` del destino.
+    El import es ESTATICO para que `check_guard_wiring` alcance este call-site y
+    cuente `check_arranques_index` como CABLEADO (precedente literal:
+    `run_flight_plan_collision_check`, `prepush_check.py:1733`). Retirar la funcion
+    entera lo pone UNWIRED y `check_guard_wiring` lo caza.
+
+    BLOQUEANTE (is_blocking=True), a diferencia de los WARN heredados: el
+    `_archive/` nace CONSISTENTE (lo escribe `archive_arranques.py`, que invoca el
+    mismo guard y aborta si no cuadra), asi que no hay deuda historica que degradar
+    a WARN. Un desajuste es un fallo de la barrera, no un residuo.
+
+    Before: `project_root` resoluble; `_archive/` puede existir o no.
+    During: lee (read-only) los ficheros de `arranques/_archive/` y las filas de
+        `_archive/INDEX.md`; cruza ambos conjuntos en las dos direcciones.
+    After: passed=True con SKIP nombrado si `_archive/` no existe (nunca un verde
+        mudo) o si cuadra; passed=False (BLOQUEANTE) con el listado si hay
+        desajustes. Read-only.
+    """
+    name = "Arranques Index (WOT-2026-067m)"
+    try:
+        from scripts.check_arranques_index import check_index_consistency
+    except ImportError:
+        from check_arranques_index import (  # type: ignore[no-redef]
+            check_index_consistency,
+        )
+
+    arranques_dir = project_root / "orchestrator_pipeline" / "arranques"
+    if not (arranques_dir / "_archive").is_dir():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                f"SKIP: no existe {arranques_dir / '_archive'} "
+                "(sin historico archivado)."
+            ),
+            is_blocking=True,
+        )
+    findings = check_index_consistency(arranques_dir)
+    if findings:
+        detail = "\n".join(f"  - {finding}" for finding in findings)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(findings)} desajuste(s) INDEX <-> _archive/:\n{detail}\n"
+                "El historico de arranques/ se MUEVE con una fila por fichero "
+                "(DEC-067L-002); un fichero sin fila o una fila sin fichero es un "
+                "desajuste real, no deuda declarada."
+            ),
+            is_blocking=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="INDEX.md cuadra con _archive/ en ambas direcciones.",
+        is_blocking=True,
+    )
+
+
 def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
     (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
@@ -2527,6 +2591,14 @@ def run_preflight_check(
         # ya violan la regla antes de la barrera (deuda medida: 6 hallazgos).
         # Endurecer a bloqueante cuando el censo de R1 llegue a 0.)
         results.append(run_launch_prompt_paths_check(project_root))
+        # 6m-ter. Arranques Index (WOT-2026-067m; BLOQUEANTE -- el `_archive/` nace
+        # consistente porque `archive_arranques.py` invoca el mismo guard, asi que
+        # no hay deuda heredada que degradar a WARN). El indice que hace
+        # consultable el historico de arranques/ es BARRERA y no norma
+        # (DEC-067L-002): este es el camino que corre solo que lo invoca. Import
+        # ESTATICO en el run_ -> check_guard_wiring lo cuenta WIRED (precedente
+        # run_flight_plan_collision_check).
+        results.append(run_arranques_index_check(project_root))
         # 6n. DEC Receipt Barrier (WOT-2026-042x; la norma de 042w cableada).
         # Va en closeout y no en pre-commit porque su superficie son los buzones
         # de fichas del DESTINO, que este es el unico camino auto-ejecutable que
