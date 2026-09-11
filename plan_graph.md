@@ -41,6 +41,18 @@
 - interfaces: [PreToolUse hook contract (payload tool_input anidado, exit 2 = bloquea)]
 - shared_dependencies: [el censo de PLAN-002 (denominador de destinos a endurecer)]
 
+## PLAN-005 - Guards de auditoria de prompts de arranque
+- objetivo: OBJ-002 (el censo de proteccion conoce su denominador y falla honestamente)
+- tickets: [ESPEJO-MOTOR-067n-a, ESPEJO-MOTOR-067n-b, ESPEJO-MOTOR-067n-c]
+- depends_on: -
+- superficies_archivo: [scripts/check_launch_prompt_paths.py,
+  tests/unit/test_check_launch_prompt_paths.py]
+- interfaces: [CLI del guard, resolucion del universo de prompts inspeccionados]
+- shared_dependencies: [la nocion de denominador declarado que OBJ-002 exige a todo
+  instrumento de auditoria de la flota]
+- origen: DEC-067N-001 (decidido [B] el 2026-09-12). Se abre plan propio en vez de ampliar
+  PLAN-002, que esta acotado a `check_claude_settings_portability.py`.
+
 ## Impact Simulation
 
 | Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |
@@ -49,6 +61,7 @@
 | PLAN-002 | scripts/check_claude_settings_portability.py + su test | link schema, canonical_hook_command() | comparte `canonical_hook_command()` (solo LEE) con 001 | 001 no muta esa API; 002 solo la consume | yes |
 | PLAN-003 | install_agent_system.py, MANIFEST.workspace | MANIFEST.distribute (comparte con 001) | 001 y 003 leen MANIFEST.distribute; 003 no lo muta | owner unico del MANIFEST; 003 solo lee | yes |
 | PLAN-004 | .claude/settings.json + hooks de destinos externos | el censo de 002 | 004 necesita el denominador que 002 produce | serializar tras 002 | after PLAN-002 |
+| PLAN-005 | scripts/check_launch_prompt_paths.py + su test | ninguna de codigo; comparte con 002 la NOCION de denominador declarado (OBJ-002), no una API | ninguno con 001/002/003 (superficies de archivo disjuntas; 002 toca otro guard) | ninguna necesaria: no muta interfaces ajenas | yes |
 
 Reglas aplicadas:
 - PLAN-004 degradado a `after PLAN-002`: endurecer sin medir es operar a ciegas (no es
@@ -65,6 +78,10 @@ Reglas aplicadas:
   ajenos -> REQUIERE_HUMANO.
 - **PLAN-003**: NO pisar `DESTINATION_OWNED_DIRS`; NO distribuir dogfooding (NG-1).
 - **PLAN-001**: NO introducir un hardcode en una entrada de `MANIFEST.distribute`.
+- **PLAN-005 (067n-a/b/c)**: NO tocar `check_claude_settings_portability.py` ni su test (son
+  superficie de PLAN-002); NO tocar prompts ni skills (PLAN-001); NO ejecutar guards de
+  destinos ajenos (PLAN-004); NO reabrir `WOT-2026-067n`, completed con limite declarado
+  *"NO re-audita la implementacion"*.
 
 ## Merge Regression Audit
 Antes de integrar resultados de planes que tocaron superficies vecinas:
