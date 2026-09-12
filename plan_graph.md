@@ -52,6 +52,11 @@
   instrumento de auditoria de la flota]
 - origen: DEC-067N-001 (decidido [B] el 2026-09-12). Se abre plan propio en vez de ampliar
   PLAN-002, que esta acotado a `check_claude_settings_portability.py`.
+- NOTA (bucle L722): `OBJ-002` del charter declara `related_plans: [PLAN-002]` y NO lista ni
+  a PLAN-004 (que tambien cuelga de OBJ-002, ver `:37`) ni a PLAN-005. **La omision es
+  PRE-EXISTENTE, no la introduce PLAN-005.** No se corrige aqui: definir si `related_plans`
+  es informativo o vinculante es semantica del charter, y decidirla por heuristica violaria
+  NG-RAIZ. Requiere DEC propia que cubra las DOS omisiones.
 
 ## Impact Simulation
 
@@ -61,7 +66,7 @@
 | PLAN-002 | scripts/check_claude_settings_portability.py + su test | link schema, canonical_hook_command() | comparte `canonical_hook_command()` (solo LEE) con 001 | 001 no muta esa API; 002 solo la consume | yes |
 | PLAN-003 | install_agent_system.py, MANIFEST.workspace | MANIFEST.distribute (comparte con 001) | 001 y 003 leen MANIFEST.distribute; 003 no lo muta | owner unico del MANIFEST; 003 solo lee | yes |
 | PLAN-004 | .claude/settings.json + hooks de destinos externos | el censo de 002 | 004 necesita el denominador que 002 produce | serializar tras 002 | after PLAN-002 |
-| PLAN-005 | scripts/check_launch_prompt_paths.py + su test | ninguna de codigo; comparte con 002 la NOCION de denominador declarado (OBJ-002), no una API | ninguno con 001/002/003 (superficies de archivo disjuntas; 002 toca otro guard) | ninguna necesaria: no muta interfaces ajenas | yes |
+| PLAN-005 | scripts/check_launch_prompt_paths.py + su test | ninguna de codigo; comparte con 002 y 004 la NOCION de denominador declarado (OBJ-002), no una API | ninguno de ARCHIVO con 001/002/003/004 (superficies disjuntas). SI hay conflicto SEMANTICO: 002, 004 y 005 cuelgan de OBJ-002 con censos distintos (002 destinos, 005 universo de prompts) y sus denominadores pueden DIVERGIR sin que nadie revalide | par 002+005 en Merge Regression Audit (abajo): la coherencia de denominadores se audita en merge, no se presume. Si 005 inspeccionase superficies de destinos, se serializa tras 004 por REQUIERE_HUMANO | yes |
 
 Reglas aplicadas:
 - PLAN-004 degradado a `after PLAN-002`: endurecer sin medir es operar a ciegas (no es
@@ -89,6 +94,10 @@ Antes de integrar resultados de planes que tocaron superficies vecinas:
   haya cambiado de forma (si 001 cambia la forma canonica, 002 debe re-medir su clase 1).
 - **002 + 003** comparten `MANIFEST.distribute`: revalidar que el denominador de agnosticismo y el
   set instalable siguen coherentes.
+- **002 + 005** cuelgan ambos de OBJ-002 y declaran un denominador cada uno: revalidar que
+  el censo de destinos (002) y el universo de prompts (005) no se contradicen -- un destino
+  incluido en uno y ausente del otro es divergencia, no cobertura. Sin este par, la
+  independencia de 005 seria declarada y no verificada, que es lo que la cabecera prohibe.
 - Gates sobre la union: suite `--level all` completa (no solo los tests de cada plan);
   `check_distribution_agnostic` exit 0; CI verde.
 - Si la auditoria de merge falla, el paralelismo era ilegitimo: re-serializar y abrir
