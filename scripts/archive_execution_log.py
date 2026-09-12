@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from datetime import datetime
@@ -17,6 +18,37 @@ from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
 
 # WT-2026-251a: derived from canonical TICKET_ID_PATTERN (accepts WP, WT, 3-letter prefixes).
 SECTION_RE = re.compile(r"(?m)^###\s+" + TICKET_ID_PATTERN + r"\b.*$")
+
+# WOT-2026-068d: the DENOMINATOR universe. ANY markdown heading level counts --
+# the real logs delimit ticket content with `#`/`##` too, so counting only `###`
+# would report present=0 while tickets ARE present. SECTION_RE is NOT widened, so
+# nothing starts being archived that was not archived before.
+HEADING_RE = re.compile(r"^#{1,6}\s")
+
+
+def _denominator(text: str) -> tuple[int, int, list[str]]:
+    """Return (present, recognized, skipped_heading_lines) for the log text."""
+    present = 0
+    recognized = 0
+    skipped: list[str] = []
+    for line in text.splitlines():
+        if not HEADING_RE.match(line):
+            continue
+        present += 1
+        if SECTION_RE.match(line):
+            recognized += 1
+        else:
+            skipped.append(line)
+    return present, recognized, skipped
+
+
+def _emit_protocol(
+    archived: int, recognized: int, present: int, skipped: list[str], state: str
+) -> None:
+    """Emit the productor<->consumidor protocol (WOT-2026-068d D1)."""
+    print(f"COUNTS archived={archived} recognized={recognized} present={present}")
+    print("SKIPPED " + json.dumps(skipped))
+    print(f"CONTENT state={state}")
 
 
 def _find_sections(text: str) -> list[tuple[int, int, str]]:
@@ -104,13 +136,32 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    archived = archive_execution_log(
+    try:
+        text = args.execution_log.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        # WOT-2026-068d D1: a read failure is NOT an empty universe. Emit the
+        # conventional transport protocol and fail closed (exit 1), no writes.
+        # The try wraps ONLY the log read: a later error (e.g. an unreadable
+        # monthly archive) must NOT be reclassified as `unavailable`.
+        print(f"ERROR: cannot read {args.execution_log}: {exc}", file=sys.stderr)
+        _emit_protocol(0, 0, 0, [], "unavailable")
+        return 1
+
+    present, recognized, skipped = _denominator(text)
+    state = "empty" if not text.strip() else "nonempty"
+
+    would_archive = archive_execution_log(
         args.execution_log, keep_sections=args.keep, dry_run=args.dry_run
     )
     if args.dry_run:
-        print(f"DRY RUN: would archive {archived} section(s)")
+        print(f"DRY RUN: would archive {would_archive} section(s)")
     else:
-        print(f"Archived {archived} section(s)")
+        print(f"Archived {would_archive} section(s)")
+
+    # `archived` in COUNTS is the REAL effect: 0 in --dry-run, independent of the
+    # function's return (which stays the forecast). WOT-2026-068d D2.
+    archived_effect = 0 if args.dry_run else would_archive
+    _emit_protocol(archived_effect, recognized, present, skipped, state)
     return 0
 
 
