@@ -94,10 +94,17 @@ Antes de integrar resultados de planes que tocaron superficies vecinas:
   haya cambiado de forma (si 001 cambia la forma canonica, 002 debe re-medir su clase 1).
 - **002 + 003** comparten `MANIFEST.distribute`: revalidar que el denominador de agnosticismo y el
   set instalable siguen coherentes.
-- **002 + 005** cuelgan ambos de OBJ-002 y declaran un denominador cada uno: revalidar que
-  el censo de destinos (002) y el universo de prompts (005) no se contradicen -- un destino
-  incluido en uno y ausente del otro es divergencia, no cobertura. Sin este par, la
-  independencia de 005 seria declarada y no verificada, que es lo que la cabecera prohibe.
+- **002 + 005** cuelgan ambos de OBJ-002 y cada uno declara un denominador, pero **cuentan
+  COSAS DISTINTAS**: 002 enumera DESTINOS (`--fleet`), 005 enumera PROMPTS DE ARRANQUE.
+  No son el mismo conjunto y no deben compararse elemento a elemento -- compararlos asi es
+  el error que esta linea contenia antes (bucle L722, BA10: la mitigacion era ambigua en su
+  propio texto). Lo que SI hay que revalidar es la RELACION entre ambos: que todo destino
+  del censo de 002 tenga su universo de prompts RESUELTO por 005 (con `inspeccionados`
+  declarado, aunque sea cero por ausencia legitima), y que 005 no inspeccione prompts de
+  destinos que 002 no enumera. Un destino medido por 002 cuyo universo de prompts nadie
+  resuelve es el `failure_mode` literal de OBJ-002: *"se salta en silencio y el censo sale
+  verde"*. Sin este par, la independencia de 005 seria declarada y no verificada, que es lo
+  que la cabecera prohibe.
 - Gates sobre la union: suite `--level all` completa (no solo los tests de cada plan);
   `check_distribution_agnostic` exit 0; CI verde.
 - Si la auditoria de merge falla, el paralelismo era ilegitimo: re-serializar y abrir
