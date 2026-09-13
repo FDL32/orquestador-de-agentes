@@ -1393,9 +1393,13 @@ def _check_last_commit(project_root: Path, active_id: str) -> tuple[bool, str]:
     During:
         - Runs 'git log -1 --format=%s' to get the latest commit message.
         - Delegates to _validate_closeout_commit_message() for validation.
+        - When HEAD itself does not cite the ticket, falls back to the
+          accredited M3 checkpoint commit via
+          _check_accredited_checkpoint_commit() (WOT-2026-068q).
 
     After:
-        - Returns (True, "") if valid for closeout.
+        - Returns (True, "") if HEAD -- or the accredited M3 checkpoint
+          commit reachable from HEAD -- is valid for closeout.
         - Returns (False, reason_string) if invalid or git unavailable.
     """
     try:
@@ -1412,9 +1416,88 @@ def _check_last_commit(project_root: Path, active_id: str) -> tuple[bool, str]:
         if not msg:
             return False, "No commit message found"
 
-        return _validate_closeout_commit_message(msg, active_id)
+        valid, reason = _validate_closeout_commit_message(msg, active_id)
+        if valid:
+            return True, ""
+        # WOT-2026-068q: HEAD may be a foreign-but-legitimate commit that
+        # buried the ticket's own commit. Do not re-ask HEAD: consult the
+        # accredited M3 checkpoint anchor instead.
+        return _check_accredited_checkpoint_commit(project_root, active_id, reason)
     except FileNotFoundError:
         return False, "Git not available"
+
+
+def _check_accredited_checkpoint_commit(
+    project_root: Path, active_id: str, head_reason: str
+) -> tuple[bool, str]:
+    """Accept the accredited M3 checkpoint commit when it is buried under HEAD.
+
+    WOT-2026-068q: _check_last_commit() used to judge only the literal HEAD
+    commit. A later, legitimate commit from another session (e.g. a memory
+    promotion) buried the ticket's own commit, and the closeout aborted with
+    "Commit message does not reference any ticket ID" even though the ticket's
+    commit was still reachable and had already been accredited by
+    checkpoint/review-<ticket> (the M3 tag).
+
+    Before:
+        - project_root is the git repo that owns the closeout commit
+          (resolved by _resolve_closeout_commit_root).
+        - active_id is the active ticket ID.
+        - head_reason is the rejection reason produced for the literal HEAD.
+
+    During:
+        - Resolves checkpoint/review-<active_id> to its peeled commit SHA.
+        - Requires that commit to be an ancestor of HEAD.
+        - Requires that commit's subject to cite the active ticket (same
+          validator as the literal HEAD path).
+        - Does NOT scan history: the tag is the single anchor -- exactly the
+          artifact the closeout already validated.
+
+    After:
+        - Returns (True, "") when the checkpoint commit is accredited.
+        - Returns (False, reason) distinguishing "no commit cites the ticket"
+          (tag absent) from "the ticket's commit exists but is not an ancestor
+          of HEAD", without asserting an unmeasured absence.
+    """
+    tag_name = f"checkpoint/review-{active_id}"
+    try:
+        tag_ok, tag_result = _resolve_git_tag_sha(project_root, tag_name)
+        if not tag_ok:
+            # No accredited checkpoint: nothing reachable was accredited for
+            # this ticket, so propagate the literal-HEAD reason.
+            return False, head_reason
+
+        checkpoint_sha = tag_result
+
+        if not _is_git_ancestor_of_head(project_root, checkpoint_sha):
+            return (
+                False,
+                f"Ticket {active_id} commit {checkpoint_sha[:8]} "
+                f"({tag_name}) exists but is not an ancestor of HEAD",
+            )
+
+        log_proc = subprocess.run(
+            ["git", "log", "-1", "--format=%s", checkpoint_sha],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            timeout=30,
+        )
+        if log_proc.returncode != 0:
+            return False, head_reason
+
+        checkpoint_valid, checkpoint_reason = _validate_closeout_commit_message(
+            log_proc.stdout.strip(), active_id
+        )
+        if checkpoint_valid:
+            return True, ""
+        return (
+            False,
+            f"Checkpoint commit {checkpoint_sha[:8]} ({tag_name}) "
+            f"is not a valid closeout commit: {checkpoint_reason}",
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False, head_reason
 
 
 def _resolve_closeout_commit_root(
