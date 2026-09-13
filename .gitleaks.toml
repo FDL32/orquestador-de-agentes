@@ -1,0 +1,99 @@
+# gitleaks seed config (portable) - bundled by the motor, provisioned to destinos
+# por scripts/install_agent_system.py (copy_gitleaks_config, no-clobber).
+#
+# Este seed es GENERICO. Extiende el ruleset por defecto de gitleaks (no lo
+# reemplaza) y neutraliza falsos positivos ESTRUCTURALES comunes a cualquier
+# destino.
+#
+# Politica generic-api-key-on-SHA:
+# - Los logs operativos del sistema (.agent/collaboration, .agent/runtime,
+#   orchestrator_pipeline, execution_log.md, CHANGELOG.md) son append-only y
+#   referencian commits por su SHA. No son almacenes de secretos: el contrato del
+#   proyecto prohibe commitear credenciales y exige ***REDACTED*** en logs.
+# - Por eso se permiten por PATH esas superficies, en vez de por un regex amplio
+#   de 40-hex (que ocultaria credenciales reales en CUALQUIER ruta del repo).
+# - Falsos positivos por VALOR concreto (placeholders didacticos de tests, un SHA
+#   publico puntual de un repo externo, etc.) van por VALOR EXACTO en un bloque
+#   [[allowlists]].regexes propio, con justificacion.
+# - REGLA DE ALCANCE ACOTADO -- NO es una prohibicion general de los
+#   path-allowlists (este mismo seed usa cinco, justificados dos puntos mas
+#   arriba): un falso positivo por VALOR nunca se resuelve allowlisteando el PATH
+#   DEL FICHERO DE TEST que lo contiene, porque eso crearia una zona ciega (un
+#   secreto REAL futuro en ese fichero pasaria sin bloquear). La distincion es:
+#   superficie de LOG operativo append-only -> por PATH; valor concreto dentro de
+#   un test -> por VALOR EXACTO, jamas por su path.
+#   [Redaccion aclarada 2026-08-09 (WOT-2026-053g): el "NUNCA" cerraba una frase
+#   larga, lejos de su sujeto, y se leia como prohibicion general -- una auditoria
+#   externa lo reporto como contradiccion del fichero consigo mismo. La POLITICA
+#   no cambia; solo se explicita su alcance.]
+# - El installer es no-clobber: nunca pisa el .gitleaks.toml ya personalizado de
+#   un destino.
+#
+# NOTA gitleaks 8.x: [allowlist] (singular) esta deprecado y NO puede coexistir
+# con [[allowlists]] (plural). Este seed usa solo la forma plural.
+
+title = "motor gitleaks seed (portable, generic)"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "generic-api-key-on-SHA: superficies de log operativo append-only que referencian SHAs git"
+paths = [
+  '''(^|/)\.agent/collaboration/''',
+  '''(^|/)\.agent/runtime/''',
+  '''(^|/)orchestrator_pipeline/''',
+  '''(^|/)execution_log\.md$''',
+  '''(^|/)CHANGELOG\.md$''',
+]
+
+[[allowlists]]
+description = "fixtures de secreto sinteticos de los tests del propio scanner de publicacion (NO credenciales reales). Allowlist por VALOR EXACTO, nunca por path: cualquier OTRO secreto en esos tests sigue bloqueando el gate."
+regexes = [
+  '''sk_live_0123456789abcdefXYZ''',
+  '''valorsincomillas0123456789abcd''',
+]
+
+# WOT-2026-027n: los tests del gate de CONTENIDO de privacy_preflight tienen que
+# CONTENER los literales que prueban que el gate los bloquea. Un test que
+# demuestra que `password = "sk-live-..."` no sale hacia la API externa no puede
+# escribirse sin ese literal: el fixture y el secreto son la misma cadena.
+# Van por VALOR EXACTO, como manda la politica de arriba, NUNCA por path del
+# test: un path-allowlist crearia una zona ciega y un secreto REAL futuro en ese
+# fichero pasaria sin bloquear.
+[[allowlists]]
+description = "fixtures sinteticos del gate de contenido de privacy_preflight (WOT-2026-027n). NO son credenciales: son los payloads que PRUEBAN el bloqueo."
+regexes = [
+  '''sk-live-abc12345''',
+  '''A1b2C3d4E5f6G7h8''',
+  '''ghp_0123456789abcdefghijklmno''',
+  '''sk-ABCDEFGHIJKLMNOP0123456789''',
+  '''ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123''',
+]
+
+# WOT-2026-063c: el test del saneado de key en el transporte SSE necesita un
+# literal con FORMA de clave para probar que NO se filtra en los mensajes de
+# error. Por VALOR EXACTO, como manda la politica de arriba, nunca por path.
+#
+# PROCEDENCIA SINTETICA VERIFICADA (no basta afirmar 'es un fixture': un
+# secreto REAL pegado en un test desempena el mismo rol -- ese es el accidente
+# para el que existe gitleaks). Tres comprobaciones re-ejecutables:
+#  1. El literal lleva su propio origen embebido: `063c` (ticket) + `SSEKEY`
+#     (el subsistema que prueba). Una clave emitida por un proveedor no
+#     contiene el ID del ticket que la usa: eso es generacion sintetica
+#     auto-documentada.
+#  2. `git log --all -S'<literal>'` devuelve UN commit (701fa59, que crea el
+#     test) y `git grep` del literal en toda la historia no lo encuentra en
+#     ningun fichero fuera de tests/. Nunca fue una clave en uso.
+#  3. La porta `FAKE_NAN_KEY_063C`, inyectada por `monkeypatch.setenv` y
+#     ausente de scripts/, bus/ y agent_system/: no existe ruta productiva
+#     que lea esa variable.
+#
+# EXACTITUD: el literal es [A-Za-z0-9-] puro, sin metacaracteres, asi que
+# como regex casa solo a si mismo. No se relaja a una familia. Cualquier otro
+# secreto -- en este fichero o en otro -- sigue bloqueando.
+[[allowlists]]
+description = "fixture sintetico del test de saneado de key en el transporte SSE (WOT-2026-063c). NO es una credencial: es el valor que los asserts buscan NO encontrar en los mensajes de error. Procedencia sintetica verificada, ver comentario."
+regexes = [
+  '''sk-live-063c-SSEKEY-9f2c47ab''',
+]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -48,7 +49,16 @@ def test_make_repo_disables_autogc(tmp_path: Path) -> None:
     assert result.stdout.strip() == "0"
 
 
-def test_clean_repo_is_listo(tmp_path: Path) -> None:
+def _gitleaks_ok_mock(repo: Path) -> dict:
+    return {
+        "check": "gitleaks_config",
+        "ok": True,
+        "evidence": {"cause": None, "config_path": "<mocked>", "config_hash": "mocked"},
+    }
+
+
+def test_clean_repo_is_listo(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(gate, "check_gitleaks_config", _gitleaks_ok_mock)
     repo = _make_repo(tmp_path, "proyecto_limpio")
     report = gate.run_gate(repo, [], ["usuarioinexistente9x"], [])
     assert report["verdict"] == "LISTO"
@@ -77,6 +87,7 @@ def test_personal_metadata_email_blocks_and_mutation(
 ) -> None:
     """El check de metadata es el UNICO que caza autores/committers (classify
     solo escanea blobs). MUTATION: sin el check, el gate daria falso verde."""
+    monkeypatch.setattr(gate, "check_gitleaks_config", _gitleaks_ok_mock)
     repo = _make_repo(tmp_path, "proyecto_meta", email="persona@dominioprivado.es")
     report = gate.run_gate(repo, [], ["x9z"], [])
     meta = next(c for c in report["checks"] if c["check"] == "metadata")
@@ -93,8 +104,9 @@ def test_personal_metadata_email_blocks_and_mutation(
     assert mutated["verdict"] == "LISTO"
 
 
-def test_dirty_sibling_blocks_unidad(tmp_path: Path) -> None:
+def test_dirty_sibling_blocks_unidad(tmp_path: Path, monkeypatch) -> None:
     """El caso UNIDAD original de 016m: repo limpio + hermano con PII -> BLOCKED."""
+    monkeypatch.setattr(gate, "check_gitleaks_config", _gitleaks_ok_mock)
     repo = _make_repo(tmp_path, "principal")
     hermano = _make_repo(tmp_path, "hermano")
     (hermano / "leak.md").write_text(
@@ -151,3 +163,140 @@ def test_loose_pattern_chunks_many_revs(tmp_path: Path, monkeypatch) -> None:
     report = gate.run_gate(repo, [], ["pepito"], [])
     loose = next(c for c in report["checks"] if c["check"] == "loose_pattern")
     assert not loose["ok"] and "leak.md" in str(loose["evidence"])
+
+
+# --- WOT-2026-068w: gitleaks config in motor root ---
+
+
+def _seed_bytes() -> bytes:
+    """Return the seed content (canonical source)."""
+    return gate.GITLEAKS_SEED.read_bytes()
+
+
+def _setup_gitleaks_repo(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    """Create a test repo with .gitleaks.toml identical to seed, and point
+    GITLEAKS_SEED to a temp copy so tests are hermetic."""
+    fake_seed_dir = tmp_path / "seed"
+    fake_seed_dir.mkdir()
+    fake_seed = fake_seed_dir / "gitleaks.config.toml"
+    fake_seed.write_bytes(_seed_bytes())
+    monkeypatch.setattr(gate, "GITLEAKS_SEED", fake_seed)
+
+    repo = _make_repo(tmp_path, "motor_fake")
+    (repo / ".gitleaks.toml").write_bytes(_seed_bytes())
+    return repo, fake_seed
+
+
+def test_gitleaks_config_present_identical_passes(tmp_path: Path, monkeypatch) -> None:
+    """D3: .gitleaks.toml present and identical to seed -> ok=True."""
+    repo, _ = _setup_gitleaks_repo(tmp_path, monkeypatch)
+    result = gate.check_gitleaks_config(repo)
+    assert result["ok"] is True
+    assert result["check"] == "gitleaks_config"
+    assert result["evidence"]["cause"] is None
+    assert result["evidence"]["config_hash"] is not None
+    assert len(result["evidence"]["config_hash"]) == 12
+
+
+def test_gitleaks_config_absent_fails(tmp_path: Path, monkeypatch) -> None:
+    """D3: .gitleaks.toml absent -> ok=False, cause=ABSENT."""
+    fake_seed_dir = tmp_path / "seed"
+    fake_seed_dir.mkdir()
+    fake_seed = fake_seed_dir / "gitleaks.config.toml"
+    fake_seed.write_bytes(_seed_bytes())
+    monkeypatch.setattr(gate, "GITLEAKS_SEED", fake_seed)
+
+    repo = _make_repo(tmp_path, "motor_no_config")
+    result = gate.check_gitleaks_config(repo)
+    assert result["ok"] is False
+    assert result["evidence"]["cause"] == "ABSENT"
+    assert result["evidence"]["config_hash"] is None
+
+
+def test_gitleaks_config_divergent_fails(tmp_path: Path, monkeypatch) -> None:
+    """D3: .gitleaks.toml present but differs from seed -> ok=False, cause=DIVERGENT."""
+    fake_seed_dir = tmp_path / "seed"
+    fake_seed_dir.mkdir()
+    fake_seed = fake_seed_dir / "gitleaks.config.toml"
+    fake_seed.write_bytes(_seed_bytes())
+    monkeypatch.setattr(gate, "GITLEAKS_SEED", fake_seed)
+
+    repo = _make_repo(tmp_path, "motor_divergente")
+    (repo / ".gitleaks.toml").write_text("title = 'divergent'\n", encoding="utf-8")
+    result = gate.check_gitleaks_config(repo)
+    assert result["ok"] is False
+    assert result["evidence"]["cause"] == "DIVERGENT"
+    assert result["evidence"]["config_hash"] is not None
+    assert result["evidence"]["seed_hash"] is not None
+
+
+def test_gitleaks_config_in_run_gate(tmp_path: Path, monkeypatch) -> None:
+    """D3: check_gitleaks_config is wired into run_gate and affects verdict."""
+    repo, _ = _setup_gitleaks_repo(tmp_path, monkeypatch)
+    report = gate.run_gate(repo, [], ["x9z_nonexistent"], [])
+    gitleaks = next(c for c in report["checks"] if c["check"] == "gitleaks_config")
+    assert gitleaks["ok"] is True
+
+
+def test_gitleaks_config_receipt_d4(tmp_path: Path, monkeypatch) -> None:
+    """D4: publication receipt declares gitleaks config path + hash when ok."""
+    repo, _ = _setup_gitleaks_repo(tmp_path, monkeypatch)
+    report = gate.run_gate(repo, [], ["x9z_nonexistent"], [])
+    assert report["gitleaks_config"] is not None
+    assert "path" in report["gitleaks_config"]
+    assert "hash" in report["gitleaks_config"]
+    assert len(report["gitleaks_config"]["hash"]) == 12
+
+
+def test_gitleaks_config_receipt_d4_absent(tmp_path: Path, monkeypatch) -> None:
+    """D4: receipt is None when config check fails."""
+    fake_seed_dir = tmp_path / "seed"
+    fake_seed_dir.mkdir()
+    fake_seed = fake_seed_dir / "gitleaks.config.toml"
+    fake_seed.write_bytes(_seed_bytes())
+    monkeypatch.setattr(gate, "GITLEAKS_SEED", fake_seed)
+
+    repo = _make_repo(tmp_path, "motor_sin_config")
+    report = gate.run_gate(repo, [], ["x9z_nonexistent"], [])
+    assert report["gitleaks_config"] is None
+
+
+def test_gitleaks_config_mutation_absent_and_divergent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """D5: mutation with teeth -- rename (ABSENT) and delete rule (DIVERGENT)
+    both make check_gitleaks_config fail; COPY-RESTORE brings it back."""
+    repo, _ = _setup_gitleaks_repo(tmp_path, monkeypatch)
+    config_path = repo / ".gitleaks.toml"
+    backup_path = tmp_path / ".gitleaks.toml.bak"
+    original_bytes = config_path.read_bytes()
+
+    # m1: rename -> ABSENT
+    config_path.rename(backup_path)
+    result_absent = gate.check_gitleaks_config(repo)
+    assert result_absent["ok"] is False
+    assert result_absent["evidence"]["cause"] == "ABSENT"
+
+    # Restore via COPY-RESTORE (never git checkout)
+    shutil.copy2(backup_path, config_path)
+
+    # m2: delete one rule -> DIVERGENT
+    content = config_path.read_text(encoding="utf-8")
+    content = content.replace(
+        "'''sk-live-063c-SSEKEY-9f2c47ab''',\n",
+        "",
+    )
+    config_path.write_text(content, encoding="utf-8")
+    result_divergent = gate.check_gitleaks_config(repo)
+    assert result_divergent["ok"] is False
+    assert result_divergent["evidence"]["cause"] == "DIVERGENT"
+
+    # Restore via COPY-RESTORE (never git checkout)
+    shutil.copy2(backup_path, config_path)
+
+    # After restore -> passes again
+    result_restored = gate.check_gitleaks_config(repo)
+    assert result_restored["ok"] is True
+
+    # Full test file still passes
+    assert config_path.read_bytes() == original_bytes

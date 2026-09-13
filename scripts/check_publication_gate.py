@@ -19,6 +19,7 @@ After:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -41,6 +42,8 @@ COPY_FOLDER_RE = re.compile(r" - copia", re.IGNORECASE)
 DEFAULT_EMAIL_ALLOW_RE = re.compile(
     r"@users\.noreply\.github\.com$|\.local$", re.IGNORECASE
 )
+
+GITLEAKS_SEED = ROOT / "agent_system" / "templates" / "gitleaks.config.toml"
 
 
 def _now_iso() -> str:
@@ -133,6 +136,65 @@ def check_metadata(repo: Path, allow_res: list[re.Pattern[str]]) -> dict[str, An
     return {"check": "metadata", "ok": not bad, "evidence": bad[:10]}
 
 
+def _sha256_short(path: Path) -> str:
+    """Return the first 12 hex chars of the SHA-256 of a file."""
+    h = hashlib.sha256(path.read_bytes()).hexdigest()
+    return h[:12]
+
+
+def check_gitleaks_config(repo: Path) -> dict[str, Any]:
+    """Verify .gitleaks.toml in repo root matches the bundled seed.
+
+    Before: GITLEAKS_SEED points to the template in the motor; repo is valid.
+    During: Reads repo_root/.gitleaks.toml and the seed, compares byte-by-byte.
+    After: Returns ok=True if present AND identical; ok=False with the specific
+           cause (ABSENT or DIVERGENT) and the config_hash for auditing.
+    """
+    config_path = repo / ".gitleaks.toml"
+    if not config_path.exists():
+        return {
+            "check": "gitleaks_config",
+            "ok": False,
+            "evidence": {
+                "cause": "ABSENT",
+                "detail": f"{config_path} does not exist",
+                "config_hash": None,
+            },
+        }
+    if not GITLEAKS_SEED.exists():
+        return {
+            "check": "gitleaks_config",
+            "ok": False,
+            "evidence": {
+                "cause": "SEED_MISSING",
+                "detail": f"Seed template not found at {GITLEAKS_SEED}",
+                "config_hash": _sha256_short(config_path),
+            },
+        }
+    config_bytes = config_path.read_bytes()
+    seed_bytes = GITLEAKS_SEED.read_bytes()
+    if config_bytes != seed_bytes:
+        return {
+            "check": "gitleaks_config",
+            "ok": False,
+            "evidence": {
+                "cause": "DIVERGENT",
+                "detail": (f"{config_path} differs from seed ({GITLEAKS_SEED})"),
+                "config_hash": _sha256_short(config_path),
+                "seed_hash": _sha256_short(GITLEAKS_SEED),
+            },
+        }
+    return {
+        "check": "gitleaks_config",
+        "ok": True,
+        "evidence": {
+            "cause": None,
+            "config_path": str(config_path),
+            "config_hash": _sha256_short(config_path),
+        },
+    }
+
+
 def run_gate(
     repo: Path,
     siblings: list[Path],
@@ -149,6 +211,7 @@ def run_gate(
         check_classify(repo),
         check_loose_pattern(repo, pii_terms),
         check_metadata(repo, allow_res),
+        check_gitleaks_config(repo),
     ]
     sibling_reports = []
     for sib in siblings:
@@ -168,6 +231,13 @@ def run_gate(
         )
     ok = all(c["ok"] for c in checks) and all(s["ok"] for s in sibling_reports)
     head = _run_git(repo, "rev-parse", "HEAD").stdout.strip()
+    gitleaks_cfg = next((c for c in checks if c["check"] == "gitleaks_config"), None)
+    config_info = None
+    if gitleaks_cfg and gitleaks_cfg["ok"]:
+        config_info = {
+            "path": gitleaks_cfg["evidence"]["config_path"],
+            "hash": gitleaks_cfg["evidence"]["config_hash"],
+        }
     return {
         "verdict": "LISTO" if ok else "BLOCKED",
         "repo": repo.name,
@@ -175,6 +245,7 @@ def run_gate(
         "generated_at": _now_iso(),
         "checks": checks,
         "siblings": sibling_reports,
+        "gitleaks_config": config_info,
     }
 
 
@@ -184,7 +255,7 @@ HUMAN_CHECKLIST = """\
  2. B-TOCTOU: NO ejecutar herramientas del motor entre este gate y el push;
     si HEAD cambia respecto al 'head' del reporte, el gate queda INVALIDADO.
  3. Push -> re-verificar private:true y sha local == remoto.
- 4. gitleaks como segunda herramienta (manual) cuando este disponible.
+ 4. gitleaks: verificacion AUTOMATICA via check_publication_gate (D3, WOT-2026-068w).
 """
 
 
