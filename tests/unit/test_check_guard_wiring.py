@@ -147,6 +147,14 @@ EXPECTED_WIRED_REAL = {
     "check_distribution_boundary",  # WOT-2026-025i: cableado en pre-commit (entry: uv run python)
     "check_encoding_guard",
     "check_flight_plan_collision",  # WOT-2026-027h: cableado via import estatico en prepush_check.py::run_flight_plan_collision_check (closeout, WARN). Check HERMANO de validate_batch_dag: colision inter-plan en queued/. Endurecer a bloqueante: 040r.
+    # WOT-2026-069a: cableado via import ESTATICO en
+    # agent_controller.py::_handle_validate (preflight: FAIL para plan activo NO
+    # terminal con ruta del FLT ignorada en el repo que resuelve
+    # `delivery_authority`; SKIP nombrado para plan terminal o seed-neutral). NO
+    # es falso-WIRED: mutation-verify en tests/unit/test_check_flt_versionable.py
+    # (ruta ignorada -> FAIL nombrando la regla) y el wiring en
+    # tests/test_agent_controller.py::TestFltVersionableGateWiring.
+    "check_flt_versionable",
     "check_guard_wiring",
     "check_handoff_committed",  # WOT-2026-040t(P1): cableado en prepush_check.py (closeout, BLOQUEANTE)
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
