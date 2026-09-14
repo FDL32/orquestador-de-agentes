@@ -6371,6 +6371,33 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
         if cg_warnings:
             warnings.setdefault("contract_gap", []).extend(cg_warnings)
 
+    # WOT-2026-069a: FLT versionability gate (P2: corre en el --validate del
+    # preflight, ANTES de que el Builder escriba el artefacto). FAIL para plan
+    # activo no terminal con ruta FLT ignorada en el repo de entrega, nombrando
+    # la regla; SKIP nombrado para plan terminal/ausente/seed. El denominador
+    # (rutas/inspeccionadas/ignoradas/saltadas) se publica en el JSON bajo la
+    # clave aditiva "flt_versionable" (los consumidores usan claves especificas,
+    # no el objeto entero). Read-only: no depende de --no-heal.
+    flt_gate = None
+    try:
+        from scripts.check_flt_versionable import (
+            flt_paths_not_versionable,
+            format_summary,
+            gate_errors,
+        )
+
+        flt_gate = flt_paths_not_versionable(plan_content)
+        flt_gate_errors = gate_errors(flt_gate)
+        if flt_gate_errors:
+            errors.setdefault("flt_versionable", []).extend(flt_gate_errors)
+    except ImportError:
+        pass  # Gracefully degrade if the gate module is unavailable.
+    except Exception as exc:
+        # Fail-closed: un gate roto es un error de validate, no un verde mudo.
+        errors.setdefault("flt_versionable", []).append(
+            f"flt_versionable gate error: {type(exc).__name__}: {exc} (WOT-2026-069a)"
+        )
+
     # WOT-2026-026j D4: agents.json schema fail-closed. Una clave de role_mapping
     # fuera del enum canonico (o un actor_runtime desconocido) DEBE hacer fallar
     # --validate (exit!=0), no solo el load en runtime. Cablea la barrera de
@@ -6396,6 +6423,9 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
             "total_errors": total_errors,
             "total_warnings": total_warnings,
         }
+        # WOT-2026-069a: denominador del gate de versionabilidad del FLT
+        # (clave aditiva; None cuando el modulo del gate no esta disponible).
+        output["flt_versionable"] = flt_gate
         print(json.dumps(output, indent=2))
     else:
         if total_errors == 0 and total_warnings == 0:
@@ -6405,6 +6435,9 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
                 print(f"[ERROR] {total_errors} problema(s) encontrados.")
             if total_warnings > 0:
                 print(f"[WARN] {total_warnings} advertencia(s) encontradas.")
+        if flt_gate is not None and flt_gate["status"] != "OK":
+            # WOT-2026-069a: SKIP nombrado (no verde mudo) y detalle de FAIL.
+            print(format_summary(flt_gate))
     # Only fail on actual errors, not on warnings
     return 0 if total_errors == 0 else 1
 

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -5596,3 +5597,208 @@ class TestPiiSafeExceptionSites:
         assert "<REPO_ROOT>" in captured.out or "context" in captured.out
         assert "Permission denied" in captured.out
         assert "13" in captured.out
+
+
+# ======================================================================
+# WOT-2026-069a: wiring del gate de versionabilidad del FLT en _handle_validate
+# (P2: el gate corre por un camino que corre solo, el --validate; la prueba de
+# cableado es que SE EJECUTA, no que se le cite).
+# ======================================================================
+
+
+class TestFltVersionableGateWiring:
+    """WOT-2026-069a D2: el gate corre en --validate y su FAIL aterriza."""
+
+    OK_RESULT: ClassVar[dict] = {
+        "gate": "flt_versionable",
+        "ticket": "WOT-2026-069a",
+        "status": "OK",
+        "reason": None,
+        "delivery_authority": "repo_motor",
+        "repo_motor": "M",
+        "repo_destino": "D",
+        "rutas": 4,
+        "inspeccionadas": 4,
+        "ignoradas": 0,
+        "saltadas": 0,
+        "violaciones": [],
+        "saltadas_detalle": [],
+    }
+
+    FAIL_RESULT: ClassVar[dict] = {
+        "gate": "flt_versionable",
+        "ticket": "WOT-2026-069a",
+        "status": "FAIL",
+        "reason": "1 ruta(s) del FLT NO versionable(s) en el repo de entrega",
+        "delivery_authority": "repo_motor",
+        "repo_motor": "M",
+        "repo_destino": "D",
+        "rutas": 1,
+        "inspeccionadas": 1,
+        "ignoradas": 1,
+        "saltadas": 0,
+        "violaciones": [
+            {
+                "ruta": "reports/x.md",
+                "repo": "M",
+                "repo_role": "repo_motor",
+                "regla": ".gitignore:1:reports/*",
+            }
+        ],
+        "saltadas_detalle": [],
+    }
+
+    def _wire_neutral_validate(self, tmp_path, monkeypatch):
+        """Neutraliza todos los colaboradores de _handle_validate (misma
+        tecnica que TestValidateJsonTotals) para que el unico factor activo
+        sea el gate under test."""
+        import agent_controller
+
+        monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
+        fake_work_plan = tmp_path / "work_plan.md"
+        fake_work_plan.write_text("# Plan\n", encoding="utf-8")
+        fake_collab = tmp_path / "collab"
+        fake_collab.mkdir()
+        monkeypatch.setattr(agent_controller, "WORK_PLAN", fake_work_plan)
+        monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: fake_collab)
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda x: {}
+        )
+        monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
+        monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
+        monkeypatch.setattr(
+            agent_controller, "_check_scope_for_validate", lambda x, y: ([], [])
+        )
+        monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda x, y, z: {"errors": [], "warnings": []},
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_validate_contract_gap_coherence",
+            lambda x: ([], []),
+        )
+        mock_prose_module = type(
+            "MockProseModule",
+            (),
+            {
+                "validate_ticket_prose": staticmethod(
+                    lambda work_plan_path, collab_dir: {
+                        "warnings": [],
+                        "warning_count": 0,
+                    }
+                )
+            },
+        )()
+        monkeypatch.setitem(
+            sys.modules, "scripts.validate_ticket_prose", mock_prose_module
+        )
+        return agent_controller
+
+    def _install_gate_stub(self, monkeypatch, gate_result, calls):
+        module = type("MockFltGateModule", (), {})()
+
+        def fake_gate(plan_content):
+            calls.append(plan_content)
+            return gate_result
+
+        def fake_gate_errors(result):
+            if result.get("status") != "FAIL":
+                return []
+            return [
+                f"FLT '{result['violaciones'][0]['ruta']}' NO versionable en repo "
+                f"{result['violaciones'][0]['repo']} "
+                f"({result['violaciones'][0]['repo_role']}): ignorada por "
+                f"{result['violaciones'][0]['regla']} (WOT-2026-069a)"
+            ]
+
+        module.flt_paths_not_versionable = fake_gate
+        module.gate_errors = fake_gate_errors
+        module.format_summary = lambda result: (
+            f"flt_versionable [{result['status']}] "
+            f"rutas={result['rutas']} ignoradas={result['ignoradas']}"
+        )
+        monkeypatch.setitem(sys.modules, "scripts.check_flt_versionable", module)
+
+    def test_gate_fail_lands_in_errors_and_json(self, tmp_path, monkeypatch):
+        """MUTATION (a): un gate que FALLA debe bloquear --validate con la
+        regla nombrada y publicar su denominador en el JSON. Si el gate NO
+        estuviera cableado, el FAIL nunca apareceria y este test fallaria."""
+        ac = self._wire_neutral_validate(tmp_path, monkeypatch)
+        calls: list = []
+        self._install_gate_stub(monkeypatch, self.FAIL_RESULT, calls)
+
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            exit_code = ac._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        assert exit_code == 1
+        assert calls, "el gate DEBE ejecutarse dentro de --validate"
+        data = json.loads(captured.getvalue())
+        assert data["flt_versionable"]["status"] == "FAIL"
+        errors_blob = json.dumps(data["errors"]["flt_versionable"])
+        assert ".gitignore:1:reports/*" in errors_blob
+
+    def test_gate_ok_keeps_validate_green_and_publishes_denominator(
+        self, tmp_path, monkeypatch
+    ):
+        """MUTATION (b): gate OK -> --validate sigue 0/0 y el denominador se
+        publica en la clave aditiva del JSON (reportando el gate nuevo)."""
+        ac = self._wire_neutral_validate(tmp_path, monkeypatch)
+        calls: list = []
+        self._install_gate_stub(monkeypatch, self.OK_RESULT, calls)
+
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            exit_code = ac._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        assert exit_code == 0
+        assert calls, "el gate DEBE ejecutarse dentro de --validate"
+        data = json.loads(captured.getvalue())
+        assert data["total_errors"] == 0
+        assert data["flt_versionable"]["status"] == "OK"
+        assert data["flt_versionable"]["inspeccionadas"] == 4
+
+    def test_broken_gate_fails_validate(self, tmp_path, monkeypatch):
+        """Un gate que explota es un ERROR de validate (fail-closed), nunca
+        un verde silencioso por no poder medir."""
+        ac = self._wire_neutral_validate(tmp_path, monkeypatch)
+
+        def boom(plan_content):
+            raise RuntimeError("gate roto")
+
+        module = type("MockFltGateModule", (), {})()
+        module.flt_paths_not_versionable = boom
+        module.gate_errors = lambda result: []
+        module.format_summary = lambda result: "flt_versionable"
+        monkeypatch.setitem(sys.modules, "scripts.check_flt_versionable", module)
+
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            exit_code = ac._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        assert exit_code == 1
+        data = json.loads(captured.getvalue())
+        errors_blob = json.dumps(data["errors"]["flt_versionable"])
+        assert "flt_versionable gate error" in errors_blob
+        assert "RuntimeError" in errors_blob
