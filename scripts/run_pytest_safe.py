@@ -256,6 +256,25 @@ def _warn_if_interpreter_is_not_root_venv(interpreter: str, root: Path) -> None:
     )
 
 
+def classify_interpreter_kind(interpreter: str, root: Path) -> str:
+    """WOT-2026-069g (I1): name WHERE the chosen interpreter lives.
+
+    Before: `interpreter` is a resolved path string; `root` is the active
+        workspace root.
+    During: pure path comparison via ``resolve()``; no I/O beyond resolution.
+    After: returns ``"venv-local"`` iff the interpreter sits under
+        ``root/.venv``, else ``"other"``. Never raises on unresolvable paths
+        (falls open to ``"other"``). A row without the key (pre-069g history)
+        reads as "unknown", never as "venv-local".
+    """
+    try:
+        venv_root = (root / ".venv").resolve()
+        chosen = Path(interpreter).resolve()
+        return "venv-local" if chosen.is_relative_to(venv_root) else "other"
+    except (OSError, ValueError):
+        return "other"
+
+
 def resolve_test_interpreter() -> str:
     """Pick the interpreter that has the *delivery repo's* dependencies.
 
@@ -281,6 +300,17 @@ def resolve_test_interpreter() -> str:
         venv_py = _venv_python(active)
         if venv_py is not None:
             return str(venv_py)
+    # WOT-2026-069g (I2): the motor case used to fall straight through to
+    # sys.executable. If the repo's OWN .venv has pytest, prefer it -- the
+    # ~110-min cost documented in the 069g dossier was measured under the
+    # system python. NO speedup is promised here (that premise belongs to
+    # the acceptance measurement, not to this branch): the probe decides.
+    # A rejected candidate is never silent: if we fall through, the WARN
+    # below still fires (candidato-existente-pero-rechazado == interprete-
+    # que-no-es-el-venv), per WOT-2026-041h.
+    motor_venv = _venv_python(motor)
+    if motor_venv is not None and probe_pytest(str(motor_venv)):
+        return str(motor_venv)
     # WOT-2026-041h (RAMA 2): the motor case falls through to sys.executable,
     # which may be the system python without this repo's deps. Diagnose it
     # BEFORE the suite starts -- silence here is what cost ~1h of a session.
@@ -781,6 +811,59 @@ def parse_run_metrics(log_text: str) -> dict:
     return metrics
 
 
+def suite_eta_note(path: Path, level: str, args_mode: str) -> str:
+    """WOT-2026-069g (I1): ETA de la corrida, mediana del historico comparable.
+
+    Funcion PURA de lectura (sin subsistema): antes de lanzar la suite el
+    operador ve cuantos minutos le esperan, derivados de DURACIONES YA
+    MEDIDAS (``duration_s``) -- no de una pasada de coleccion (coste extra,
+    descartado por el bucle de lentes).
+
+    Before: `path` apunta a run_history.jsonl (puede no existir); `level` y
+        `args_mode` definen comparabilidad.
+    During: lee lineas JSON, conserva las terminadas (status=="finished") de
+        mismo level+args_mode con ``duration_s`` numerico; mediana por
+        ordenacion. CUALQUIER error de lectura/count/parsing cae al mensaje
+        sin-historico (fail-open: la ETA es diagnostico, nunca gate).
+    After: devuelve una nota legible con mediana en minutos y n de corridas,
+        o "sin historico comparable (primera corrida de este nivel)".
+        No lanza nunca. No escribe.
+    """
+    fallback = "sin historico comparable (primera corrida de este nivel)"
+    try:
+        durations: list[float] = []
+        for raw in Path(path).read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(row, dict)
+                and row.get("status") == "finished"
+                and row.get("level") == level
+                and row.get("args_mode") == args_mode
+                and isinstance(row.get("duration_s"), (int, float))
+                and not isinstance(row.get("duration_s"), bool)
+            ):
+                durations.append(float(row["duration_s"]))
+        if not durations:
+            return fallback
+        durations.sort()
+        mid = len(durations) // 2
+        if len(durations) % 2:
+            median = durations[mid]
+        else:
+            median = (durations[mid - 1] + durations[mid]) / 2
+        return (
+            f"ETA estimada ~{median / 60:.1f} min "
+            f"(mediana duration_s, {len(durations)} corrida(s) comparable(s))"
+        )
+    except Exception:
+        return fallback
+
+
 def append_run_history(summary: dict) -> None:
     """WOT-2026-021w: append one JSON line to run_history.jsonl (FAIL-OPEN).
 
@@ -794,6 +877,12 @@ def append_run_history(summary: dict) -> None:
     """
     try:
         record = {
+            # WOT-2026-069g (I1): `started_at` e `interpreter_kind` entran en la
+            # whitelist deliberada. Sin `started_at` la fila era in-distinguible
+            # entre "empezo y murio" y "ni empezo"; sin `interpreter_kind` el
+            # WARN de WOT-2026-041h no dejaba rastro en el historico y la
+            # telemetria de coste no podia atribuir duraciones al interprete.
+            "started_at": summary.get("started_at"),
             "finished_at": summary.get("finished_at") or iso_now(),
             "level": summary.get("level"),
             "args_mode": summary.get("args_mode"),
@@ -806,6 +895,7 @@ def append_run_history(summary: dict) -> None:
             "duration_s": summary.get("duration_s"),
             "top_slowest": summary.get("top_slowest") or [],
             "tested_commit_sha": summary.get("tested_commit_sha"),
+            "interpreter_kind": summary.get("interpreter_kind"),
         }
         line = json.dumps(record, ensure_ascii=False)
 
@@ -1186,8 +1276,9 @@ def main() -> int:  # noqa: C901
     # the resolved interpreter has pytest; falls back to unittest discover when
     # it does not. For interpreters that DO have pytest the command matches the
     # historic construction plus the --durations=25 telemetry flag (WOT-2026-021t).
+    _chosen_interpreter = resolve_test_interpreter()
     command, _runner = select_test_runner(
-        resolve_test_interpreter(),
+        _chosen_interpreter,
         pytest_args,
         xdist_flags,
         run_dir,
@@ -1249,8 +1340,21 @@ def main() -> int:  # noqa: C901
             f"[pytest-safe] delivery_authority={_da_value} ({_da_reason})",
             file=sys.stderr,
         )
+    # WOT-2026-069g (I1): la ETA se deriva de duraciones YA medidas en el
+    # historico comparable (mediana de duration_s). Se imprime antes de
+    # lanzar el hijo para que el primer receptor sea el operador en vivo.
+    print(
+        f"[pytest-safe] {suite_eta_note(RUN_HISTORY_JSONL, args.level, args_mode)}",
+        file=sys.stderr,
+    )
     summary = {
         "started_at": iso_now(),
+        # WOT-2026-069g (I1): el interprete usado, como clase (venv-local u
+        # otro). El path completo NO va a run_history: la fila es telemetria
+        # agregada y el path solo aporta ruido de usuario/maquina.
+        "interpreter_kind": classify_interpreter_kind(
+            _chosen_interpreter, _PROJECT_ROOT
+        ),
         "delivery_authority": _da_value,
         "delivery_authority_reason": _da_reason,
         "lock": lock,
