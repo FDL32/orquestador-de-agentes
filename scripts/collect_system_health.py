@@ -144,22 +144,24 @@ def _read_delivery_authority(root: Path) -> str:
     """Read delivery_authority from a repo's active work_plan (repo_motor default).
 
     WOT-2026-021n: mirror of pre_handoff_guard._read_delivery_authority_from_content
-    (same regex) so the HEAD we compare tested_commit_sha against uses the SAME axis
-    that run_pytest_safe used to STAMP it. Returns "repo_destino" only when the field
+    so the HEAD we compare tested_commit_sha against uses the SAME axis that
+    run_pytest_safe used to STAMP it. WOT-2026-069e: el espejo ya no es una cuarta
+    copia del regex naive -- AMBOS lados (guard, runner y este colector) delegan en
+    el unico ``scripts/work_plan_authority.py``, que es justo lo que "SAME axis"
+    prometia y la copia literal incumpla. Returns "repo_destino" only when the field
     says so; "repo_motor" otherwise (missing/unreadable work_plan -> default).
     """
+    bootstrap = Path(__file__).resolve().parent.parent
+    if str(bootstrap) not in sys.path:
+        sys.path.insert(0, str(bootstrap))
+    from scripts import work_plan_authority as _wpa
+
     wp = root / ".agent" / "collaboration" / "work_plan.md"
     try:
         content = wp.read_text(encoding="utf-8")
     except OSError:
         return "repo_motor"
-    if re.search(
-        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
-        content,
-        re.IGNORECASE,
-    ):
-        return "repo_destino"
-    return "repo_motor"
+    return _wpa.read_delivery_authority(content)
 
 
 def _read_pytest_last_run(motor_root: Path) -> dict:

@@ -464,17 +464,26 @@ def parse_files_likely_touched(
     return buckets["motor"] | buckets["destino"]
 
 
-def _read_delivery_authority_from_content(content: str) -> str:
-    """Read delivery_authority field from work_plan content."""
-    import re
+def _import_work_plan_authority():
+    """Carga el resolvedor compartido (WOT-2026-069e) desde el paquete scripts."""
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from scripts import work_plan_authority as _wpa
 
-    if re.search(
-        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
-        content,
-        re.IGNORECASE,
-    ):
-        return "repo_destino"
-    return "repo_motor"
+    return _wpa
+
+
+def _read_delivery_authority_from_content(content: str) -> str:
+    """Read delivery_authority field from work_plan content.
+
+    WOT-2026-069e: delegation unica a ``scripts/work_plan_authority.py`` (resuelve
+    solo la seccion ``## Metadata`` via el canonico ``scope_gate``). La copia
+    anterior era un ``re.search`` sin anclar sobre TODO el contenido: la prosa del
+    plan podia anular el campo declarado (medido en ``CG-WOT-2026-069a.md``).
+    La firma ``-> str`` se conserva para todos los call-sites existentes.
+    """
+    return _import_work_plan_authority().read_delivery_authority(content)
 
 
 def resolve_delivery_root(
@@ -531,19 +540,30 @@ def _read_deliverable_type_from_active_plan(project_root: Path) -> str:
         return "code"
 
 
+def resolve_delivery_authority_from_active_plan(
+    project_root: Path,
+) -> tuple[str, str]:
+    """Read (delivery_authority, motivo) from the active work_plan.md.
+
+    WOT-2026-069e D3: el default por plan ilegible/ausente va NOMBRAO
+    ('work_plan_unreadable'), nunca confundible con una declaracion de Metadata.
+    """
+    work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
+    try:
+        return _import_work_plan_authority().resolve_delivery_authority_from_content(
+            work_plan.read_text(encoding="utf-8")
+        )
+    except OSError:
+        return "repo_motor", "work_plan_unreadable"
+
+
 def _read_delivery_authority_from_active_plan(project_root: Path) -> str:
     """Read delivery_authority from the active work_plan.md; default 'repo_motor'.
 
     Fail-safe to 'repo_motor' (the legacy assumption) if the plan is missing or
     unreadable, preserving pre-existing behavior for single-repo deliveries.
     """
-    work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
-    try:
-        return _read_delivery_authority_from_content(
-            work_plan.read_text(encoding="utf-8")
-        )
-    except OSError:
-        return "repo_motor"
+    return resolve_delivery_authority_from_active_plan(project_root)[0]
 
 
 # WOT-2026-010c: deliverable types that DO require a green canonical suite.
@@ -1137,7 +1157,13 @@ def run_guard(
     # The delivery repo is resolved by delivery_authority (LEA topology fix):
     # a repo_destino code ticket keeps its suite + commit in the destination.
     # Fail-closed: any error blocks with a self-service diagnostic.
-    _da = _read_delivery_authority_from_active_plan(project_root)
+    # WOT-2026-069e D3/D6: el JSON del guard nombra valor Y motivo de la
+    # resolucion (metadata_field / no_field_in_metadata / no_metadata_section /
+    # work_plan_unreadable): un consumidor distingue "la Metadata lo dijo" de
+    # "caimos al default".
+    _da, _da_reason = resolve_delivery_authority_from_active_plan(project_root)
+    result["delivery_authority"] = _da
+    result["delivery_authority_reason"] = _da_reason
     _delivery_root = resolve_delivery_root(
         project_root=project_root, motor_root=motor_root, delivery_authority=_da
     )

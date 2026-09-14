@@ -525,8 +525,17 @@ def check_cross_root_isolation(
 
 
 def _read_delivery_authority(project_root: Path) -> str:
-    """Read delivery_authority from work_plan.md in project_root."""
-    import re
+    """Read delivery_authority from work_plan.md in project_root.
+
+    WOT-2026-069e: delegacion al resolvedor compartido
+    ``scripts/work_plan_authority.py`` (rebanada ``## Metadata`` + canonico).
+    La copia anterior era un regex naive sobre TODO el contenido, la misma
+    cuarta copia que bloque el cierre de WOT-2026-069a (``CG-WOT-2026-069a.md``).
+    """
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from scripts import work_plan_authority as _wpa
 
     wp = project_root / ".agent" / "collaboration" / "work_plan.md"
     if not wp.exists():
@@ -535,13 +544,7 @@ def _read_delivery_authority(project_root: Path) -> str:
         content = wp.read_text(encoding="utf-8")
     except OSError:
         return "repo_motor"
-    if re.search(
-        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
-        content,
-        re.IGNORECASE,
-    ):
-        return "repo_destino"
-    return "repo_motor"
+    return _wpa.read_delivery_authority(content)
 
 
 def run_delivery_hygiene_check(  # noqa: C901

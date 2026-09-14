@@ -131,25 +131,41 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _delivery_authority() -> str:
-    """Read delivery_authority from the active work_plan under PROJECT_ROOT.
+def _import_work_plan_authority():
+    """Carga el resolvedor compartido (WOT-2026-069e) desde el paquete scripts."""
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from scripts import work_plan_authority as _wpa
 
-    Default 'repo_motor' (legacy single-repo behavior) if missing/unreadable.
+    return _wpa
+
+
+def resolve_delivery_authority() -> tuple[str, str]:
+    """(valor, motivo) del delivery_authority del plan activo bajo PROJECT_ROOT.
+
+    WOT-2026-069e: antes este modulo tenia su propia copia del regex naive
+    sobre TODO el contenido; ahora delega en ``scripts/work_plan_authority.py``
+    (rebanada ``## Metadata`` + resolvedor canonico ``scope_gate``). El motivo
+    permite nombrar el default (``work_plan_unreadable`` / ``no_field_in_metadata``
+    / ``no_metadata_section``) en el sello, sin cambiar las firmas existentes.
     """
     work_plan = _PROJECT_ROOT / ".agent" / "collaboration" / "work_plan.md"
     try:
         content = work_plan.read_text(encoding="utf-8")
     except OSError:
-        return "repo_motor"
-    import re
+        return "repo_motor", "work_plan_unreadable"
+    return _import_work_plan_authority().resolve_delivery_authority_from_content(
+        content
+    )
 
-    if re.search(
-        r"delivery_authority\s*:?\**\s*(?:repo_destino|destino)",
-        content,
-        re.IGNORECASE,
-    ):
-        return "repo_destino"
-    return "repo_motor"
+
+def _delivery_authority() -> str:
+    """Read delivery_authority from the active work_plan under PROJECT_ROOT.
+
+    Default 'repo_motor' (legacy single-repo behavior) if missing/unreadable.
+    """
+    return resolve_delivery_authority()[0]
 
 
 def _delivery_repo_root() -> Path:
@@ -1227,8 +1243,16 @@ def main() -> int:  # noqa: C901
         except Exception:
             _baseline_failed = []
 
+    _da_value, _da_reason = resolve_delivery_authority()
+    if _da_reason != "metadata_field":
+        print(
+            f"[pytest-safe] delivery_authority={_da_value} ({_da_reason})",
+            file=sys.stderr,
+        )
     summary = {
         "started_at": iso_now(),
+        "delivery_authority": _da_value,
+        "delivery_authority_reason": _da_reason,
         "lock": lock,
         "level": args.level,
         "args_mode": args_mode,

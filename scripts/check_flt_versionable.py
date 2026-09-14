@@ -364,7 +364,7 @@ def flt_paths_not_versionable(
 
     result: dict = {
         "gate": "flt_versionable",
-        "ticket": "WOT-2026-069a",
+        "ticket": None,
         "status": "OK",
         "reason": None,
         "delivery_authority": None,
@@ -379,6 +379,8 @@ def flt_paths_not_versionable(
     }
 
     content = plan_content or ""
+    plan_id = _import_state_validation().get_plan_id(content).strip()
+    result["ticket"] = plan_id or "ninguno"
     skip_reason = _early_skip_reason(content, cde, result)
     if skip_reason is not None:
         result["status"] = "SKIP"
