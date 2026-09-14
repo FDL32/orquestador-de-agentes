@@ -267,7 +267,8 @@ def _fake_dest(tmp_path, lastrun: dict | None, delivery_authority: str | None = 
         collab = dest / ".agent" / "collaboration"
         collab.mkdir(parents=True, exist_ok=True)
         (collab / "work_plan.md").write_text(
-            f"# Work Plan\n\n- **delivery_authority:** {delivery_authority}\n",
+            f"# Work Plan\n\n## Metadata\n- **delivery_authority:**"
+            f" {delivery_authority}\n",
             encoding="utf-8",
         )
     if lastrun is not None:
@@ -686,7 +687,8 @@ def _write_wp(root: Path, delivery_authority: str):
     collab = root / ".agent" / "collaboration"
     collab.mkdir(parents=True, exist_ok=True)
     (collab / "work_plan.md").write_text(
-        f"# Plan\n\n- **delivery_authority:** {delivery_authority}\n", encoding="utf-8"
+        f"# Plan\n\n## Metadata\n- **delivery_authority:** {delivery_authority}\n",
+        encoding="utf-8",
     )
 
 
