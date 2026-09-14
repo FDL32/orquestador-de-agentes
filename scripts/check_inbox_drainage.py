@@ -35,15 +35,27 @@ Operaciones declarativas con dientes propios (no un second descubridor):
                   Segunda pasada = no-op VERIFICABLE por conteos de artefactos
                   ("already drained (ledger hit)"), no por exit code.
 
+Segunda forma del mismo defecto (WOT-2026-067d, EJE-1): la ficha SI esta en la zona
+terminal `_drained/` (raiz o `YYYY-MM/`), pero el ledger NO registra su disposicion.
+La ruta de AUDITORIA compara ahora el censo terminal contra `_ledger_names` y reporta
+`DRENADA_SIN_ASIENTO` nombrando cada huerfana, con el denominador
+`terminales / con_asiento / sin_asiento`. Es WARN y NUNCA bloquea (motivo escrito en
+`_census_lines`): las huerfanas son deuda PREEXISTENTE de varios destinos y un FAIL
+secuestraria cualquier push por deuda ajena al ticket que empuja. El asiento publica
+`fused_to`; los asientos que registran drenaje SIN id de fusion se nombran porque no
+cierran la obligacion residual de vinculacion que los sobres declaran.
+
 Before:  `--project-root <destino>` (ARGUMENTO OBLIGATORIO: el guard NO resuelve la
          topologia por su cuenta -- stop heredado del contrato 042x). El canonico
          puede existir o no; las operaciones sobre fichas exigen que exista.
 During:  auditoria = read-only puro sobre el filesystem. Las dos operaciones son la
          unica rama que escribe (shutil.move y append al ledger); ninguna toca git,
          backlog.md ni la red.
-After:   exit 0 sin strays (pending sale como WARN census nombrado); exit 1 con
-         estrays detallados, o con operacion rechazada (colision/dup/ledger mismatch);
-         exit 2 = uso (argparse). --json emite los conteos como artefacto leible.
+After:   exit 0 sin strays (pending sale como WARN census nombrado; las huerfanas
+         DRENADA_SIN_ASIENTO salen como WARN y tampoco mueven el exit code);
+         exit 1 con estrays detallados, o con operacion rechazada
+         (colision/dup/ledger mismatch); exit 2 = uso (argparse). --json emite los
+         conteos como artefacto leible.
 """
 
 from __future__ import annotations
@@ -173,11 +185,17 @@ def _pending_files(project_root: Path) -> list[Path]:
     )
 
 
-def _ledger_names(project_root: Path) -> set[str]:
+def _ledger_records(project_root: Path) -> list[dict]:
+    """Asientos del ledger, en orden de escritura. Tolerante a lineas ilegibles.
+
+    Before: project_root Path. During: lee `_drained/drain_ledger.jsonl` si existe.
+    After: lista de dicts con clave `ficha` (lineas vacias o corruptas se SALTAN,
+    no abortan la auditoria); `[]` si no hay ledger.
+    """
     ledger = _ledger_path(project_root)
-    names: set[str] = set()
+    records: list[dict] = []
     if not ledger.is_file():
-        return names
+        return records
     for raw in ledger.read_text(encoding="utf-8").splitlines():
         raw = raw.strip()
         if not raw:
@@ -187,8 +205,67 @@ def _ledger_names(project_root: Path) -> set[str]:
         except json.JSONDecodeError:
             continue
         if isinstance(rec, dict) and rec.get("ficha"):
-            names.add(str(rec["ficha"]))
-    return names
+            records.append(rec)
+    return records
+
+
+def _ledger_names(project_root: Path) -> set[str]:
+    """Conjunto de `ficha` con asiento (union de TODOS los asientos del ledger)."""
+    return {str(rec["ficha"]) for rec in _ledger_records(project_root)}
+
+
+def _drained_zone_ticket_names(project_root: Path) -> set[str]:
+    """Fichas (`*.tickets.md`, casefold) en la zona terminal COMPLETA (D5).
+
+    Before: project_root Path. During: recorre `_drained/` entero -- raiz Y los
+    subdirectorios `YYYY-MM/` que `--mark-drained` crea (`run_mark_drained`);
+    read-only. NO incluye `_archive/backlog_inbox_*`: esa zona archiva buzones
+    ENTEROS (fusionados), no fichas drenadas una a una, y no la gobierna el
+    `drain_ledger` -- compararla daria falsos positivos de huerfanas.
+    After: set de basenames, la MISMA clave que el ledger guarda en `ficha`.
+    """
+    zone = _drained_zone(project_root)
+    if not zone.is_dir():
+        return set()
+    return {
+        p.name
+        for p in zone.rglob("*")
+        if (p.is_file() or p.is_symlink()) and _is_ticket_name(p.name)
+    }
+
+
+def _drained_seat_report(project_root: Path) -> dict:
+    """Censo terminal contra ledger: DRENADA_SIN_ASIENTO (WOT-2026-067d, EJE-1).
+
+    Before: project_root Path. During: read-only; `terminal - asientos` da las
+    huerfanas (la ficha esta en la zona terminal y su disposicion no consta en
+    ninguna superficie). After: dict con el denominador `terminales /
+    con_asiento / sin_asiento` + la LISTA de sin-asiento, y los `fused_to` que
+    cada asiento PUBLICA (D3) mas los asientos que registran drenaje SIN id de
+    fusion (no cierran la obligacion residual de vinculacion).
+    """
+    terminal = _drained_zone_ticket_names(project_root)
+    seats = _ledger_records(project_root)
+    seated_names = {str(rec["ficha"]) for rec in seats}
+    without_seat = sorted(terminal - seated_names)
+    return {
+        "drained_terminal_count": len(terminal),
+        "drained_with_seat_count": len(terminal & seated_names),
+        "drained_without_seat_count": len(without_seat),
+        "drained_without_seat": without_seat,
+        "ledger_seat_count": len(seats),
+        "ledger_seats": [
+            {
+                "ficha": str(rec["ficha"]),
+                "fused_to": rec.get("fused_to"),
+                "disposition": rec.get("disposition"),
+            }
+            for rec in seats
+        ],
+        "ledger_seats_without_fused_to": sorted(
+            {str(rec["ficha"]) for rec in seats if not rec.get("fused_to")}
+        ),
+    }
 
 
 def _dirlink_note(dpath: Path, project_root: Path) -> tuple[Path, str]:
@@ -279,7 +356,10 @@ def classify_inbox(project_root: Path) -> dict:
     Before: project_root Path. During: sin escribeura. After: dict con claves
     pending (lista de{name,age_days}), pending_count, drained_count, strays
     (lista de dicts con path y diagnostic), support (nombres no-ficha del
-    canonico y del legacy), canonical_exists.
+    canonico y del legacy), canonical_exists, y el censo terminal de EJE-1
+    (drained_terminal_count / drained_with_seat_count /
+    drained_without_seat_count / drained_without_seat + ledger_seats /
+    ledger_seats_without_fused_to).
     """
     canon = canonical_inbox(project_root)
     all_tickets, problems, dir_links = _scan_all_tickets(project_root)
@@ -333,6 +413,7 @@ def classify_inbox(project_root: Path) -> dict:
         "dir_links": [{"path": str(p), "motivo": m} for p, m in dir_links],
         "legacy_inbox_files": legacy_files,
         "support_files_canonical": support,
+        **_drained_seat_report(project_root),
     }
 
 
@@ -366,6 +447,49 @@ def _census_lines(report: dict) -> list[str]:
     if report["drained_count"]:
         lines.append(
             f"{_PREFIX} INFO drained: {report['drained_count']} fichas en zonas terminales (_drained/ o _archive/backlog_inbox_*)."
+        )
+    # WARN y NUNCA FAIL (D4; decision del contrato, NO del Builder): el guard corre
+    # cableado en prepush_check (`run_inbox_drainage_check`) y las huerfanas son
+    # deuda PREEXISTENTE de varios destinos. Un FAIL convertiria esa deuda en
+    # bloqueo de CUALQUIER push del destino, castigando al ticket que pase por ahi;
+    # la barrera debe hacer VISIBLE la deuda, no secuestrar el flujo.
+    terminales = report.get("drained_terminal_count", 0)
+    con_asiento = report.get("drained_with_seat_count", 0)
+    sin_asiento = report.get("drained_without_seat_count", 0)
+    if terminales == 0:
+        lines.append(
+            f"{_PREFIX} INFO DRENADA_SIN_ASIENTO: universo vacio (terminales=0 / "
+            "con_asiento=0 / sin_asiento=0), lista vacia. No es un PASS de drenaje: "
+            "no hay fichas en la zona terminal `_drained/`."
+        )
+    elif sin_asiento:
+        lines.append(
+            f"{_PREFIX} WARN DRENADA_SIN_ASIENTO: terminales={terminales} / "
+            f"con_asiento={con_asiento} / sin_asiento={sin_asiento}. Fichas de la zona "
+            "terminal SIN asiento en el ledger (su disposicion no consta en ninguna "
+            "superficie): " + ", ".join(report.get("drained_without_seat", []))
+        )
+    else:
+        lines.append(
+            f"{_PREFIX} INFO DRENADA_SIN_ASIENTO: terminales={terminales} / "
+            f"con_asiento={con_asiento} / sin_asiento=0 -- todas las fichas de la "
+            "zona terminal tienen asiento."
+        )
+    sin_fused = report.get("ledger_seats_without_fused_to", [])
+    if sin_fused:
+        lines.append(
+            f"{_PREFIX} WARN asiento sin `fused_to` (D3): {len(sin_fused)} asiento(s) "
+            "registran el drenaje pero NO el id de fusion, asi que la obligacion "
+            "residual de vinculacion que los sobres declaran NO queda cerrada: "
+            + ", ".join(sin_fused)
+        )
+    asientos_con_fused = [
+        s for s in report.get("ledger_seats", []) if s.get("fused_to")
+    ]
+    if asientos_con_fused:
+        lines.append(
+            f"{_PREFIX} INFO asiento -> `fused_to` publicado: "
+            + "; ".join(f"{s['ficha']} -> {s['fused_to']}" for s in asientos_con_fused)
         )
     if report["support_files_canonical"]:
         lines.append(

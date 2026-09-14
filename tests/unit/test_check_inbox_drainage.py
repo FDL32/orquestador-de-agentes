@@ -690,3 +690,179 @@ def test_exencion_de_archive_exige_separador_no_solo_prefijo(tmp_path):
     rep = cid.classify_inbox(dest)
     assert len(rep["strays"]) == 1, rep
     assert rep["strays"][0]["basename"] == "FP-r.tickets.md"
+
+
+# ---------------- WOT-2026-067d EJE-1: DRENADA_SIN_ASIENTO ----------------
+# La ficha SI esta en la zona terminal `_drained/` pero el ledger no registra su
+# disposicion. El ledger de prueba se escribe en el fixture; NUNCA se lee el real.
+
+
+def _write_ledger(dest: Path, *records: dict) -> Path:
+    led = dest / CANON_REL / "_drained" / "drain_ledger.jsonl"
+    led.parent.mkdir(parents=True, exist_ok=True)
+    led.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+        encoding="utf-8",
+    )
+    return led
+
+
+def test_d1_drenada_sin_asiento_nombra_cada_huerfana(tmp_path, capsys):
+    """(D1)(D2) ficha en zona terminal SIN asiento -> `DRENADA_SIN_ASIENTO`
+    nombrando cada huerfana + denominador `terminales / con_asiento /
+    sin_asiento`. La asentada NO entra en la lista de sin-asiento.
+
+    Cubre las DOS zonas terminales a la vez (D5): la huerfana vive en `_drained/`
+    raiz y la asentada en `_drained/YYYY-MM/`.
+    """
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "_drained" / "FP-20260914-huerfana.tickets.md")
+    _touch(
+        dest / CANON_REL / "_drained" / "2026-09" / "FP-20260914-asentada.tickets.md"
+    )
+    _write_ledger(
+        dest,
+        {
+            "ficha": "FP-20260914-asentada.tickets.md",
+            "disposition": "fused",
+            "fused_to": "WOT-2026-999a",
+        },
+    )
+
+    rep = cid.classify_inbox(dest)
+    assert rep["drained_terminal_count"] == 2
+    assert rep["drained_with_seat_count"] == 1
+    assert rep["drained_without_seat_count"] == 1
+    assert rep["drained_without_seat"] == ["FP-20260914-huerfana.tickets.md"]
+
+    rc = cid.main(["--project-root", str(dest)])
+    assert rc == 0  # WARN, jamas FAIL (D4)
+    out = capsys.readouterr().out
+    assert "DRENADA_SIN_ASIENTO" in out
+    assert "terminales=2 / con_asiento=1 / sin_asiento=1" in out
+    assert "FP-20260914-huerfana.tickets.md" in out
+
+
+def test_m2_control_negativo_misma_ficha_con_asiento_silencio(tmp_path, capsys):
+    """(m2) CONTROL NEGATIVO: la MISMA ficha CON asiento -> silencio (ningun WARN
+    DRENADA_SIN_ASIENTO, lista de sin-asiento vacia)."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "_drained" / "FP-20260914-y.tickets.md")
+    _write_ledger(
+        dest,
+        {
+            "ficha": "FP-20260914-y.tickets.md",
+            "disposition": "fused",
+            "fused_to": "WOT-2026-999a",
+        },
+    )
+    rep = cid.classify_inbox(dest)
+    assert rep["drained_terminal_count"] == 1
+    assert rep["drained_without_seat"] == []
+
+    rc = cid.main(["--project-root", str(dest)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WARN DRENADA_SIN_ASIENTO" not in out
+    assert "sin_asiento=0" in out
+
+
+def test_m2_control_negativo_drained_enteramente_asentado_silencio(tmp_path, capsys):
+    """(m2) CONTROL NEGATIVO: un `_drained/` enteramente asentado (raiz + subdir)
+    -> silencio total sobre sin-asiento."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "_drained" / "FP-20260914-a.tickets.md")
+    _touch(dest / CANON_REL / "_drained" / "2026-09" / "FP-20260914-b.tickets.md")
+    _write_ledger(
+        dest,
+        {
+            "ficha": "FP-20260914-a.tickets.md",
+            "disposition": "fused",
+            "fused_to": "WOT-2026-999a",
+        },
+        {
+            "ficha": "FP-20260914-b.tickets.md",
+            "disposition": "moved",
+            "fused_to": None,
+        },
+    )
+    rep = cid.classify_inbox(dest)
+    assert rep["drained_terminal_count"] == 2
+    assert rep["drained_with_seat_count"] == 2
+    assert rep["drained_without_seat"] == []
+
+    rc = cid.main(["--project-root", str(dest)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WARN DRENADA_SIN_ASIENTO" not in out
+    assert "sin_asiento=0" in out
+
+
+def test_d2_universo_vacio_declarado(tmp_path, capsys):
+    """(D2) `terminales == 0` se declara universo vacio con lista vacia, NO verde
+    por inercia: la salida lo dice explicitamente."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    rep = cid.classify_inbox(dest)
+    assert rep["drained_terminal_count"] == 0
+    assert rep["drained_without_seat"] == []
+
+    rc = cid.main(["--project-root", str(dest)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "DRENADA_SIN_ASIENTO" in out
+    assert "universo vacio" in out
+    assert "terminales=0 / con_asiento=0 / sin_asiento=0" in out
+
+
+def test_d5_zona_terminal_incluye_subdirectorio_yyyy_mm(tmp_path):
+    """(D5) la zona terminal es COMPLETA: una huerfana SOLO en
+    `_drained/YYYY-MM/` (donde `--mark-drained` la deja) tambien se reporta."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "_drained" / "2026-08" / "FP-20260914-sub.tickets.md")
+    rep = cid.classify_inbox(dest)
+    assert rep["drained_terminal_count"] == 1
+    assert rep["drained_without_seat"] == ["FP-20260914-sub.tickets.md"]
+
+
+def test_d3_asiento_publica_fused_to_y_nombra_el_que_falta(tmp_path, capsys):
+    """(D3) el asiento PUBLICA `fused_to`; un asiento que registra el drenaje sin
+    id de fusion se nombra porque no cierra la obligacion residual de vinculacion."""
+    import scripts.check_inbox_drainage as cid
+
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "_drained" / "2026-09" / "FP-20260914-con.tickets.md")
+    _touch(dest / CANON_REL / "_drained" / "2026-09" / "FP-20260914-sin.tickets.md")
+    _write_ledger(
+        dest,
+        {
+            "ficha": "FP-20260914-con.tickets.md",
+            "disposition": "fused",
+            "fused_to": "WOT-2026-999a",
+        },
+        {
+            "ficha": "FP-20260914-sin.tickets.md",
+            "disposition": "moved",
+            "fused_to": None,
+        },
+    )
+    rep = cid.classify_inbox(dest)
+    seats = {s["ficha"]: s for s in rep["ledger_seats"]}
+    assert seats["FP-20260914-con.tickets.md"]["fused_to"] == "WOT-2026-999a"
+    assert rep["ledger_seats_without_fused_to"] == ["FP-20260914-sin.tickets.md"]
+
+    rc = cid.main(["--project-root", str(dest)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WOT-2026-999a" in out  # el id de fusion se publica
+    assert "fused_to" in out
+    assert "FP-20260914-sin.tickets.md" in out  # el asiento sin id se nombra
