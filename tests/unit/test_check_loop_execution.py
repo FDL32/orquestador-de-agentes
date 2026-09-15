@@ -616,7 +616,7 @@ def test_audit_commit_includes_orphan_nonces():
 # ---------------------------------------------------------------------------
 
 
-def _make_git_repo_with_commit(root: Path) -> tuple[Path, str]:
+def _make_git_repo_with_commit(root: Path, *, seed: str = "seed") -> tuple[Path, str]:
     """Repo git REAL en `root` con un commit; devuelve (repo, sha40 de HEAD).
 
     Hermetico: `.git` propio para que el walk-up de git no alcance el repo REAL
@@ -626,9 +626,9 @@ def _make_git_repo_with_commit(root: Path) -> tuple[Path, str]:
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.name", "t"], check=True)
-    (root / "seed.txt").write_text("seed", encoding="utf-8")
+    (root / "seed.txt").write_text(seed, encoding="utf-8")
     subprocess.run(["git", "-C", str(root), "add", "seed.txt"], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "-qm", "seed"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", seed], check=True)
     out = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"],
         capture_output=True,
@@ -934,3 +934,193 @@ def test_loop_round_call_site_blocks_nonce_reuse_before_any_row(tmp_path):
         ed._cmd_loop_round(args_retry, {})
     rows_after, _ = ed._read_scorecard(dest)
     assert rows_after == stored_before, "sin perfil resoluble no debe quedar fila"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-059n: el LECTOR resuelve shas del DESTINO via resolve_governed_commit_sha
+# ---------------------------------------------------------------------------
+
+
+def _two_repos(tmp_path):
+    """Motor y destino INDEPENDIENTES, cada uno con su commit propio.
+
+    Devuelve (motor, sha_motor, destino, sha_destino). Los dos son repos git
+    REALES con .git propio (hermetico contra el repo real de la maquina).
+    Los SHAs son DISTINTOS y NO compartidos: genesis con contenido diferente
+    garantiza que sha_m no existe en destino y viceversa.
+    """
+    motor, sha_m = _make_git_repo_with_commit(tmp_path / "motor", seed="motor-seed")
+    destino, _sha_d_initial = _make_git_repo_with_commit(
+        tmp_path / "destino", seed="destino-seed"
+    )
+    _link_motor(destino, motor)
+    # Anadir contenido al destino para crear un segundo commit.
+    (destino / "extra.txt").write_text("extra", encoding="utf-8")
+    subprocess.run(["git", "-C", str(destino), "add", "extra.txt"], check=True)
+    subprocess.run(["git", "-C", str(destino), "commit", "-qm", "extra"], check=True)
+    out = subprocess.run(
+        ["git", "-C", str(destino), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    sha_d = out.stdout.strip()
+    assert sha_d != sha_m, "motor y destino deben tener SHAs distintos"
+    # Verificar que sha_m NO existe como commit en destino.
+    probe = subprocess.run(
+        ["git", "-C", str(destino), "cat-file", "-e", f"{sha_m}^{{commit}}"],
+        capture_output=True,
+    )
+    assert probe.returncode != 0, (
+        f"sha_m ({sha_m[:12]}...) no debe existir en destino; "
+        "el test de mutation no seria discriminante"
+    )
+    return motor, sha_m, destino, sha_d
+
+
+def _build_accredited_ensemble_dest(tmp_path, destino, sha, *, loop_id="L-TEST"):
+    """Ensemble anclado al sha: emite nonce + 4 lentes, con timestamps
+    coherentes (ronda DESPUES del nonce)."""
+    from datetime import datetime, timezone
+
+    ed.emit_nonce(
+        destino,
+        commit_sha=sha,
+        loop_id=loop_id,
+        issuer_role="orchestrator",
+        issuer_backend_key="BA01",
+        nonce=f"N-{loop_id}",
+    )
+    # Usar un timestamp DESPUES de la emision real para que el guard no
+    # rechace la ronda por "nonce emitido despues de la ronda".
+    now = datetime.now(timezone.utc).isoformat()
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        ed.append_scorecard(
+            destino,
+            {
+                "event": "ronda",
+                "commit_sha": sha,
+                "backend_key": bk,
+                "challenge_nonce": f"N-{loop_id}",
+                "ts": now,
+                "loop_id": loop_id,
+            },
+        )
+
+
+def test_destination_sha_resolves_through_audit(tmp_path, capsys):
+    """WOT-2026-059n DoD (a): un sha que SOLO vive en el destino se resuelve
+    a traves de check_loop_execution.audit, no produce ERROR de resolucion.
+
+    El lector usa resolve_governed_commit_sha (ensemble_dispatch) que prueba
+    contra el motor Y el destino. Un sha del destino no puede contar como
+    'no-resoluble'."""
+    _motor, _sha_m, destino, sha_d = _two_repos(tmp_path)
+    _build_accredited_ensemble_dest(tmp_path, destino, sha_d, loop_id="L-DEST")
+    verdicts = cle.audit(
+        destino,
+        commit_shas=[sha_d],
+        deliverable_type="code",
+        loop_id="L-DEST",
+    )
+    assert len(verdicts) == 1
+    v = verdicts[0]
+    assert v["commit_sha"] == sha_d
+    assert v["ok"] is True, (
+        f"sha del destino debe resolver y pasar: {v['distinct_backends']}"
+    )
+    assert len(v["distinct_backends"]) >= 4
+
+
+def test_motor_sha_no_regression(tmp_path):
+    """WOT-2026-059n DoD (b): un sha del motor sigue resolviendo igual
+    (sin regresion del writer ni del lector)."""
+    _motor, sha_m, destino, _sha_d = _two_repos(tmp_path)
+    _build_accredited_ensemble_dest(tmp_path, destino, sha_m, loop_id="L-MOTOR")
+    verdicts = cle.audit(
+        destino,
+        commit_shas=[sha_m],
+        deliverable_type="code",
+        loop_id="L-MOTOR",
+    )
+    assert len(verdicts) == 1
+    v = verdicts[0]
+    assert v["commit_sha"] == sha_m
+    assert v["ok"] is True
+
+
+def test_destination_sha_resolution_mutation_motor_only(tmp_path, capsys):
+    """WOT-2026-059n mutation-verify: si resolve_input_commit_sha SOLO resuelve
+    contra el motor (mutacion a identidad), un sha del destino FALLA con
+    'no resuelve a un commit' -- evidencia de que la resolucion dual es lo
+    UNICO que decide el veredicto.
+
+    Rojo previo: sin resolve_governed_commit_sha (o con una que solo mira
+    el motor), el sha del destino produce ERROR."""
+    _motor, _sha_m, destino, sha_d = _two_repos(tmp_path)
+    _build_accredited_ensemble_dest(tmp_path, destino, sha_d, loop_id="L-DEST")
+
+    original = cle.resolve_input_commit_sha
+
+    def motor_only(project_root, sha):
+        return original(_motor, sha)
+
+    import unittest.mock as mock
+
+    with mock.patch.object(cle, "resolve_input_commit_sha", motor_only):
+        rc = cle.main(
+            [
+                "--project-root",
+                str(destino),
+                "--commit-sha",
+                sha_d,
+                "--deliverable-type",
+                "code",
+                "--loop-id",
+                "L-DEST",
+            ]
+        )
+    assert rc == 1, "sin resolucion dual, sha del destino debe fallar"
+    out = capsys.readouterr().out
+    assert "no resuelve" in out or "FAIL" in out, out
+
+
+def test_destination_sha_resolution_mutation_dest_only(tmp_path, capsys):
+    """WOT-2026-059n mutation-verify: si resolve_governed_commit_sha SOLO
+    resuelve contra el destino (mutacion), un sha del motor FALLA --
+    evidencia de que la resolucion AMBAS raices es lo que protege la
+    regresion.
+
+    La mutacion reemplaza resolve_governed_commit_sha en check_loop_execution
+    para que SOLO pruebe contra project_root (destino), nunca contra
+    motor_root. Un sha que solo existe en el motor no resuelve -> ValueError
+    -> rc=1."""
+    _motor, sha_m, destino, _sha_d = _two_repos(tmp_path)
+    _build_accredited_ensemble_dest(tmp_path, destino, sha_m, loop_id="L-MOTOR")
+
+    def _dest_only_res(_motor_root, project_root, sha):
+        ok, resolved = ed._canonical_motor_commit_sha(project_root, sha)
+        if ok:
+            return resolved, "repo_destino"
+        raise ValueError(
+            f"'{sha}' no resuelve a un commit del destino ({project_root})"
+        )
+
+    import unittest.mock as mock
+
+    with mock.patch.object(cle, "resolve_governed_commit_sha", _dest_only_res):
+        rc = cle.main(
+            [
+                "--project-root",
+                str(destino),
+                "--commit-sha",
+                sha_m,
+                "--deliverable-type",
+                "code",
+                "--loop-id",
+                "L-MOTOR",
+            ]
+        )
+    assert rc == 1, "sin resolucion contra motor, sha del motor debe fallar"
+    out = capsys.readouterr().out
+    assert "no resuelve" in out or "FAIL" in out, out
