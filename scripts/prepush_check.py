@@ -2483,6 +2483,80 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_backlog_admission_check(project_root: Path) -> CheckResult:
+    """WOT-2026-054m: puerta de admision anti-duplicado (PASO 0 cableado).
+
+    Por que AQUI. El PASO 0 de `finding_triage_protocol.md` exige recibo de
+    barrido para cualquier alta de ficha o leccion, y su estatus declarado era
+    "NORMA, no barrera... Cablearlo es WOT-2026-054m". El closeout es el camino
+    que corre solo Y conoce el `project_root` cuyo repo trackea las superficies
+    del backlog (medido: `backlog.md` y `_archive/backlog_done.md` tracked).
+    El import es ESTATICO para que `check_guard_wiring` alcance este call-site
+    y cuente el guard como CABLEADO (precedente: `run_flight_plan_collision_check`).
+    Retirar esta invocacion deja el guard UNWIRED -> lo caza check_guard_wiring.
+
+    Que verifica: altas de ids NUEVOS (filas anadidas en el diff del rango
+    `merge-base(origin/main, HEAD)..HEAD` que no estaban en la UNION cola viva
+    + archive de la revision PADRE) con recibo de barrido CONTRASTADO (N
+    entradas, corpus_sha, algoritmo+umbral, vecinos, propuesta). Solo
+    veredictos mecanicos: SIN_RECIBO / RECIBO_INCOHERENTE / ALTA_CONCURRENTE
+    fallan; RECIBO_COHERENTE pasa. Las etiquetas semanticas son PROPUESTA del
+    recibo; la resolucion es humana.
+
+    NACE BLOQUEANTE y sin baseline: el rango no-pushado del destino media 0
+    commits al cablear (sin deuda que amnistiar) y sin este gate ninguna alta
+    fue JAMAS contrastada -- no hay falso-rojo heredado posible (mismo patron
+    que `run_landed_evidence_shape_check`). SKIP NOMBRADO si no hay backlog o
+    el rango no resuelve (nunca un verde mudo); una medicion rota en un rango
+    resoluble bloquea nombrado (fail-closed, nunca verde).
+
+    Before: `project_root` es el repo del backlog (destino en esta topologia).
+    During: delega en `check_backlog_admission._audit_closeout` (read-only).
+    After: CheckResult passed=True si 0 altas o todas con recibo coherente;
+        passed=False (bloqueante) con el veredicto por alta si no.
+    """
+    try:
+        from scripts.check_backlog_admission import _audit_closeout
+    except ImportError:
+        from check_backlog_admission import (  # type: ignore[no-redef]
+            _audit_closeout,
+        )
+
+    name = "Backlog Admission Guard (WOT-2026-054m)"
+    backlog = project_root / ".agent" / "collaboration" / "backlog.md"
+    if not backlog.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"No backlog.md at {backlog} (skipped)",
+            is_blocking=True,
+            skipped=True,
+        )
+    try:
+        code, lines, skipped, _findings = _audit_closeout(project_root)
+    except Exception as exc:  # fail-closed: una medicion rota no es un verde
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"medicion fallida ({exc}): fail-closed, no se inventa verde",
+            is_blocking=True,
+        )
+    if skipped:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="\n".join(lines),
+            is_blocking=True,
+            skipped=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=code == 0,
+        output="\n".join(lines),
+        is_blocking=True,
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -2634,6 +2708,13 @@ def run_preflight_check(
         # terminal explicita; pending sale como WARN census (el contrato del
         # README: registrar nunca debe bloquear el cierre que lo permite).
         results.append(run_inbox_drainage_check(project_root))
+        # 6p. Backlog Admission Guard (WOT-2026-054m; BLOQUEANTE). Cablea el
+        # PASO 0 de `finding_triage_protocol.md` como barrera: ninguna alta de
+        # id nuevo al backlog entra sin recibo de barrido CONTRASTADO (solo
+        # veredictos mecanicos; la resolucion semantica sigue siendo humana).
+        # Import ESTATICO en el run_ -> check_guard_wiring lo cuenta WIRED
+        # (patron canonico del modulo). SKIP nombrado si el rango no resuelve.
+        results.append(run_backlog_admission_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)
