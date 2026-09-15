@@ -70,6 +70,10 @@ EXPECTED_WIRED_REAL = {
     "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
     "check_backlog_commits_landed",  # WOT-2026-024q: cableado via import estatico en agent_controller.py::_ticket_landed_by_archived_commit (retirado de known_unwired)
     "check_backlog_contract",
+    # WOT-2026-054m: cableado via import estatico en
+    # prepush_check.py::run_backlog_admission_check (closeout, BLOQUEANTE --
+    # el gate nace bloqueante: sin deuda que amnistiar, rango real 0 commits).
+    "check_backlog_admission",
     # WOT-2026-067n: cableado via import estatico en
     # prepush_check.py::run_launch_prompt_paths_check (closeout, WARN -- 2 de 3
     # prompts vivos ya violan la regla antes de la barrera: rojo heredado).
