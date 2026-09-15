@@ -105,6 +105,17 @@ known_unwired:
   # La deuda se declara aqui, con dueno, para que no entre como huerfano silencioso.
   check_dod_metric_freshness: WOT-2026-034c
 
+  # WOT-2026-004y: guard PII tracked en el destino (`tools/check_pii_tracked.py`).
+  # Cableado REAL en el destino: `.git/hooks/pre-commit` -> `tools/pre_commit_check.py`
+  # (versionado) -> subprocess `python tools/check_pii_tracked.py` (linea 65).
+  # El motor no puede ver los ficheros del destino -> AST del motor no lo alcanza.
+  # El hook local `.git/hooks/pre-commit` corre solo (always_run). El camino
+  # `.pre-commit-config.yaml` es inerte (pre-commit package no instalado).
+  # El cableado versionado es `pre_commit_check.py` del destino.
+  # Adicionalmente: `tools/run_suite_safe.py` (camino de cierre) invoca el gate
+  # como subprocess -> parte de la suite canonica versionada.
+  check_pii_tracked: WOT-2026-004y
+
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
   pre_handoff_guard: scripts/pre_handoff_guard.py
@@ -169,11 +180,3 @@ wired_via:
     _run([sys.executable, "scripts/check_motor_pristine.py", "--snapshot", ...])).
     Probe: grep -n "check_motor_pristine.py" scripts/collect_system_health.py
     -> :452; el recolector corre en cada system-health audit del cierre.
-  # WOT-2026-004y: guard PII tracked en el destino (`tools/check_pii_tracked.py`).
-  # Cableado REAL en el destino: `.git/hooks/pre-commit` -> `tools/pre_commit_check.py`
-  # (versionado) -> subprocess `python tools/check_pii_tracked.py` (linea 65).
-  # El motor no puede ver los ficheros del destino -> AST del motor no lo alcanza.
-  # El hook local `.git/hooks/pre-commit` corre solo (siempre_run). El camino
-  # `.pre-commit-config.yaml` es inerte (pre-commit package no instalado).
-  # El cableado versionado es `pre_commit_check.py` del destino.
-  check_pii_tracked: WOT-2026-004y
