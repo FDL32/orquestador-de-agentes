@@ -169,12 +169,11 @@ wired_via:
     _run([sys.executable, "scripts/check_motor_pristine.py", "--snapshot", ...])).
     Probe: grep -n "check_motor_pristine.py" scripts/collect_system_health.py
     -> :452; el recolector corre en cada system-health audit del cierre.
-  # WOT-2026-004y: guard PII tracked en el destino. Vive en `.agent/hooks/check_pii_tracked.py`
-  # del destino, invocada desde `.pre-commit-config.yaml` del destino (hook check-pii-tracked,
-  # entry: python .agent/hooks/check_pii_tracked.py, always_run implícito por types: [python]).
-  # El motor no tiene ese pre-commit config -> AST del motor no lo alcanza. El probe corre
-  # en el destino: pre-commit run check-pii-tracked -> rc 0 si no hay PII, rc 1 si hay.
-  check_pii_tracked: >-
-    .pre-commit-config.yaml:check-pii-tracked (entry: python .agent/hooks/check_pii_tracked.py).
-    Probe: pre-commit run check-pii-tracked --files <fichero-con-PII> -> rc 1 con
-    "[PII] ERROR: tracked files contain PII"; con ficheros sin PII -> rc 0.
+  # WOT-2026-004y: guard PII tracked en el destino (`tools/check_pii_tracked.py`).
+  # Cableado REAL en el destino: `.git/hooks/pre-commit` -> `tools/pre_commit_check.py`
+  # (versionado) -> subprocess `python tools/check_pii_tracked.py` (linea 65).
+  # El motor no puede ver los ficheros del destino -> AST del motor no lo alcanza.
+  # El hook local `.git/hooks/pre-commit` corre solo (siempre_run). El camino
+  # `.pre-commit-config.yaml` es inerte (pre-commit package no instalado).
+  # El cableado versionado es `pre_commit_check.py` del destino.
+  check_pii_tracked: WOT-2026-004y
