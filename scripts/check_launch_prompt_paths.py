@@ -59,6 +59,42 @@ RUNTIME_FILES = ("work_plan.md", "STATE.md", "TURN.md", "execution_log.md")
 
 # Un placeholder sin expandir: el prompt canonico es plantilla y DEBE llevarlos, pero
 # una proyeccion de arranque con `{{...}}` no es un arranque (el Builder lo reporto).
+# WOT-2026-067w: un prompt de arranque se reconoce por su CONTENIDO, no por su
+# nombre ni su carpeta. El fallo medido (2026-09-16): un prompt llamado
+# `launch_builder_*.md` en `orchestrator_pipeline/reports/` quedaba FUERA del
+# universo de este guard, que solo miraba `planning/builder_prompt_*.md`. El
+# guard salio VERDE y el Builder escribio estado operativo en el seed neutro del
+# motor (AGENTS.md:142). Ampliar la ENUMERACION de patrones no cierra la clase:
+# un tercer nombre evade igual. El discriminante es el contract_id del contrato
+# de Builder, presente en 10 de 10 prompts reales medidos en ambas ubicaciones.
+# Firma DOBLE, calibrada sobre los 10 prompts reales de ambas ubicaciones:
+# - la DECLARACION del contract_id como linea propia (no una mencion en prosa);
+# - o el encabezado de rol, para los prompts que citan el cid entre parentesis.
+# Medido 2026-09-16: 10/10 detectados, 0 falsos positivos sobre backlog.md,
+# bundles de ensemble y propuestas -- ficheros que MENCIONAN el cid sin serlo.
+BUILDER_CONTRACT_DECL_RE = re.compile(
+    r"^[ 	>*-]*`?contract_id`?\s*:\s*`?cid-bui-implement-v1`?\s*$",
+    re.MULTILINE,
+)
+BUILDER_ROLE_RE = re.compile(r"^\s*Eres el BUILDER\b", re.MULTILINE | re.IGNORECASE)
+
+# Ubicacion canonica, declarada en prompts/_shared/topology_artifact_locations.md.
+CANONICAL_PROMPT_DIR = (".agent", "planning")
+
+# Directorios que NO se recorren al buscar prompts extraviados: ruido de runtime
+# y arboles ajenos. Sin esta poda el barrido leeria miles de ficheros.
+_SKIP_DIRS = {
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".kilo",
+    "node_modules",
+    "_archive",
+    # `runtime/` es scratch transitorio (bundles de ensemble, tmp de vuelos):
+    # sus copias de prompts no son la superficie que este guard gobierna.
+    "runtime",
+}
+
 PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
 
 # Marca de ruta absoluta de destino. No se busca una ruta concreta de maquina (seria
@@ -134,6 +170,53 @@ def scan_prompt(path: Path) -> list[Finding]:
     return findings
 
 
+def _read(path: Path) -> str:
+    """Lectura tolerante: un fichero ilegible no puede tumbar el barrido."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _is_builder_prompt(path: Path) -> bool:
+    """True si el fichero ES un prompt de arranque, por su contract_id.
+
+    Se mira el CONTENIDO y no el nombre a proposito: el nombre fue justamente
+    el vector del fallo que esta regla cierra.
+    """
+    text = _read(path)
+    return bool(BUILDER_CONTRACT_DECL_RE.search(text) or BUILDER_ROLE_RE.search(text))
+
+
+def find_stray_prompts(project_root: Path) -> list[Path]:
+    """Prompts de arranque que viven FUERA de la ubicacion canonica.
+
+    Before: `project_root` es la raiz del repo_destino.
+    During: recorre los `.md` del arbol saltando runtime y arboles ajenos, y
+        selecciona los que declaran el contract_id del Builder.
+    After: devuelve la lista ordenada; no muta nada.
+    """
+    canonical = project_root.joinpath(*CANONICAL_PROMPT_DIR).resolve()
+    stray: list[Path] = []
+    for path in project_root.rglob("*.md"):
+        if any(part in _SKIP_DIRS for part in path.parts):
+            continue
+        # `prompts/` del MOTOR son PLANTILLAS: deben llevar `{{...}}` y el rol sin
+        # resolver. No son prompts de arranque INSTANCIADOS, y meterlas aqui seria
+        # el falso rojo masivo que `test_los_prompts_del_motor_no_entran_en_el_
+        # denominador` pinea desde WOT-2026-067n.
+        if PLACEHOLDER_RE.search(_read(path)):
+            continue
+        try:
+            if path.parent.resolve() == canonical:
+                continue
+        except OSError:
+            continue
+        if _is_builder_prompt(path):
+            stray.append(path)
+    return sorted(stray)
+
+
 def audit(project_root: Path) -> tuple[list[Finding], list[Path]]:
     """Devuelve (hallazgos, prompts_auditados). El segundo ES el denominador."""
     planning = project_root / ".agent" / "planning"
@@ -141,6 +224,20 @@ def audit(project_root: Path) -> tuple[list[Finding], list[Path]]:
     findings: list[Finding] = []
     for prompt in prompts:
         findings.extend(scan_prompt(prompt))
+    # R3: la ubicacion tambien es contrato. Un prompt de arranque fuera de
+    # `.agent/planning/` no lo ve este guard en su barrido por-linea, y el
+    # Builder que lo consuma resolvera runtime contra su cwd.
+    for path in find_stray_prompts(project_root):
+        rel = path.relative_to(project_root).as_posix()
+        findings.append(
+            Finding(
+                path,
+                1,
+                "R3-ubicacion-no-canonica",
+                f"prompt de arranque fuera de .agent/planning/: {rel}",
+            )
+        )
+        prompts.append(path)
     return findings, prompts
 
 

@@ -146,3 +146,81 @@ def test_los_prompts_del_motor_no_entran_en_el_denominador(tmp_path):
     findings, prompts = audit(tmp_path)
     assert [p.name for p in prompts] == ["builder_prompt_WOT-2026-000d.md"]
     assert findings == []
+
+
+NL = chr(10)
+
+
+def _stray_prompt(root, relpath, body):
+    """Escribe un prompt de arranque FUERA de la ubicacion canonica."""
+    path = root / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+BUILDER_PROMPT_BODY = (
+    "# Launch Builder Prompt"
+    + NL
+    + NL
+    + "contract_id: cid-bui-implement-v1"
+    + NL
+    + NL
+    + "Registra en `C:/destino/.agent/collaboration/execution_log.md` los gates."
+    + NL
+)
+
+
+def test_prompt_de_arranque_fuera_de_la_canonica_es_hallazgo(tmp_path):
+    """R3: un prompt de arranque se reconoce por su CONTENIDO, no por su nombre.
+
+    El fallo medido (2026-09-16): un prompt llamado `launch_builder_*.md` en
+    `orchestrator_pipeline/reports/` quedaba FUERA del universo del guard, que
+    solo miraba `planning/builder_prompt_*.md`. El guard salio VERDE y el
+    Builder escribio estado operativo en el seed neutro del motor.
+
+    Ampliar la ENUMERACION de patrones no cierra la clase: un tercer nombre
+    evade igual. El discriminante es el `contract_id` del contrato de Builder,
+    presente en 10 de 10 prompts reales medidos.
+    """
+    _stray_prompt(
+        tmp_path,
+        "orchestrator_pipeline/reports/launch_builder_WOT-2026-999z.md",
+        BUILDER_PROMPT_BODY,
+    )
+    findings, prompts = audit(tmp_path)
+    codes = {f.rule for f in findings}
+    assert "R3-ubicacion-no-canonica" in codes, (
+        "un prompt de arranque fuera de .agent/planning/ debe producir hallazgo; "
+        f"hallazgos={[f.rule for f in findings]} prompts={[p.name for p in prompts]}"
+    )
+
+
+def test_prompt_de_arranque_en_la_canonica_no_dispara_r3(tmp_path):
+    """CONTROL POSITIVO: el mismo contenido EN su sitio no produce R3.
+
+    Sin este control, un guard que marcara todo pasaria el test de arriba.
+    """
+    _prompt(tmp_path, "builder_prompt_WOT-2026-999z.md", BUILDER_PROMPT_BODY)
+    findings, _prompts = audit(tmp_path)
+    codes = {f.rule for f in findings}
+    assert "R3-ubicacion-no-canonica" not in codes, (
+        f"falso positivo en la ubicacion canonica: {[f.rule for f in findings]}"
+    )
+
+
+def test_fichero_ajeno_fuera_de_la_canonica_no_dispara_r3(tmp_path):
+    """CONTROL NEGATIVO: un .md cualquiera NO es un prompt de arranque.
+
+    Sin esto, el guard marcaria cada informe de `reports/` y se volveria ruido.
+    """
+    _stray_prompt(
+        tmp_path,
+        "orchestrator_pipeline/reports/AUDIT_algo_20260916.md",
+        "# Informe de auditoria" + NL + NL + "No instruye a ningun Builder." + NL,
+    )
+    findings, _prompts = audit(tmp_path)
+    codes = {f.rule for f in findings}
+    assert "R3-ubicacion-no-canonica" not in codes, (
+        f"un informe corriente no debe disparar R3: {[f.rule for f in findings]}"
+    )
