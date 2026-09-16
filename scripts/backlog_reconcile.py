@@ -462,7 +462,7 @@ def _signal_blocker_offqueue(depends_cell: str, live_ids: frozenset[str]) -> lis
     ]
 
 
-def _collect_all(
+def _collect_all(  # noqa: C901
     rows: list[list[str]], content: str, motor_root: Path, dest_root: Path
 ) -> tuple[list[dict], list[str], list[str], list[dict]]:
     """Build per-ticket signal records for every row in the reconcile set.
@@ -541,6 +541,7 @@ def _collect_all(
             "scope_slug": scope_slug,
             "repo": repo_label,
             "grep_commits": [],
+            "commits_found": 0,
             "scope_paths": [],
             "dod_terms": [],
             "dec_accepted_hits": [],
@@ -567,11 +568,35 @@ def _collect_all(
                 f"{ticket_id}: scope '{scope_slug}' -> no git repo (n/a); "
                 "file/grep signals omitted"
             )
+            record["grep_commits"] = []
         else:
+            # WOT-2026-067w: scan BOTH repos to distinguish "no commits" from
+            # "didn't look where the commits are".  The scoped repo is still
+            # used for file/grep signals (the agent judges scope); only the
+            # commit signal is dual-sourced.
+            alternate_label, alternate_repo = (
+                ("motor", motor_root)
+                if repo_label == "destino"
+                else ("destino", dest_root)
+            )
+            scoped_commits = _signal_commits(ticket_id, repo)
+            alternate_commits: list[dict] = []
+            if alternate_repo is not None:
+                alternate_commits = _signal_commits(ticket_id, alternate_repo)
+            all_commits = scoped_commits + alternate_commits
+            record["grep_commits"] = scoped_commits
+            record["commits_found"] = len(all_commits)
+            # Warning: the ticket has commits but NOT in the scoped repo.
+            # This means the signal was searched in the wrong repo.
+            if not scoped_commits and alternate_commits:
+                warnings.append(
+                    f"{ticket_id}: 0 commits in scoped repo ({repo_label}), "
+                    f"but {len(alternate_commits)} found in {alternate_label}; "
+                    "the commit signal was searched in the wrong repo"
+                )
             paths = _harvest_paths(titulo, ficha_body)
             terms = _harvest_terms(ticket_id, scope_slug, titulo, ficha_body)
             ticket_sink: list[str] = []
-            record["grep_commits"] = _signal_commits(ticket_id, repo)
             record["scope_paths"] = _signal_paths(paths, repo)
             record["dod_terms"] = _signal_grep(terms, repo, ticket_sink)
             if ticket_sink:

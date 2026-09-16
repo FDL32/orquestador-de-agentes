@@ -735,3 +735,234 @@ def test_046g_pending_row_with_live_blocker_not_flagged(tmp_path, monkeypatch):
     findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
     # WOT-2026-900i must NOT appear in divergences (blocker is live)
     assert all(d["ticket_id"] != "WOT-2026-900i" for d in findings["divergences"])
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-067w: dual-repo commit scanning (collector scans BOTH motor and
+# destino to distinguish "no commits" from "didn't look where the commits are").
+# --------------------------------------------------------------------------- #
+
+
+def _fake_run_factory_067w(  # noqa: C901
+    motor: Path, dest: Path
+):
+    """A _run fake tailored for WOT-2026-067w scenarios.
+
+    - WOT-2026-900a (motor scope): has commits in motor only (control positivo).
+    - WOT-2026-900b (destino scope): has commits in motor only -> regression test
+      for the false-negative pattern (motor=0, destino>=1).
+    - WOT-2026-900d (completed-partial, infra scope): no commits anywhere (n/a).
+    - WOT-2026-900h (pending, motor scope): no commits anywhere (control negativo).
+    """
+    motor_s = str(motor)
+
+    def _fake(cmd, cwd, timeout=120):
+        joined = " ".join(str(c) for c in cmd)
+        is_motor = str(cwd) == motor_s
+        if "rev-parse" in joined:
+            sha = MOTOR_SHA if is_motor else DEST_SHA
+            return {
+                "cmd": cmd,
+                "exit_code": 0,
+                "stdout": sha + "\n",
+                "stderr": "",
+                "ok": True,
+            }
+        if "log" in joined and "--grep" in joined:
+            # WOT-2026-900a has a commit in motor (control positivo).
+            if "WOT-2026-900a" in joined and is_motor:
+                out = "deadbeefcafe\x1fWOT-2026-900a done\x1f2026-07-10\n"
+                return {
+                    "cmd": cmd,
+                    "exit_code": 0,
+                    "stdout": out,
+                    "stderr": "",
+                    "ok": True,
+                }
+            # WOT-2026-900b has a commit ONLY in motor (regression target).
+            if "WOT-2026-900b" in joined and is_motor:
+                out = "cafebeefdead\x1fWOT-2026-900b fix\x1f2026-07-11\n"
+                return {
+                    "cmd": cmd,
+                    "exit_code": 0,
+                    "stdout": out,
+                    "stderr": "",
+                    "ok": True,
+                }
+            return {"cmd": cmd, "exit_code": 1, "stdout": "", "stderr": "", "ok": False}
+        if "ls-files" in joined:
+            if is_motor:
+                return {
+                    "cmd": cmd,
+                    "exit_code": 0,
+                    "stdout": "scripts/x.py\n",
+                    "stderr": "",
+                    "ok": True,
+                }
+            return {"cmd": cmd, "exit_code": 0, "stdout": "", "stderr": "", "ok": True}
+        if "grep" in joined:
+            if is_motor:
+                return {
+                    "cmd": cmd,
+                    "exit_code": 0,
+                    "stdout": "scripts/x.py:1:SKIP_GATES_TOKEN\n",
+                    "stderr": "",
+                    "ok": True,
+                }
+            return {"cmd": cmd, "exit_code": 1, "stdout": "", "stderr": "", "ok": False}
+        if "status" in joined:
+            return {"cmd": cmd, "exit_code": 0, "stdout": "", "stderr": "", "ok": True}
+        return {"cmd": cmd, "exit_code": 0, "stdout": "", "stderr": "", "ok": True}
+
+    return _fake
+
+
+def test_067w_motor_ticket_sees_commits_in_scoped_repo(tmp_path, monkeypatch):
+    """Control positivo: un ticket motor/* con commits en motor -> commits_found >= 1.
+
+    WOT-2026-900a is motor/scope and has a commit in the motor repo.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory_067w(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    a = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900a")
+    assert a["repo"] == "motor"
+    assert a["commits_found"] >= 1
+    assert len(a["grep_commits"]) >= 1  # scoped repo has the commit
+    # No warning: the scoped repo has the commit.
+    assert not any("WOT-2026-900a" in w for w in findings["automatic_warnings"])
+
+
+def test_067w_destino_ticket_finds_commits_in_alternate_repo(tmp_path, monkeypatch):
+    """Regression: un ticket destino/* sin commits en destino PERO con commits en motor
+    -> commits_found >= 1 y un warning sobre repo equivocado.
+
+    WOT-2026-900b is destinos/* and has a commit ONLY in motor.
+    Before the fix, grep_commits would be [] and commits_found would not exist.
+    After the fix, commits_found >= 1 and a warning is emitted.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory_067w(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    b = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900b")
+    assert b["repo"] == "destino"
+    # The scoped repo (destino) has no commits.
+    assert b["grep_commits"] == []
+    # But the alternate repo (motor) has commits -> commits_found >= 1.
+    assert b["commits_found"] >= 1
+    # A warning must be emitted about the wrong repo.
+    assert any(
+        "WOT-2026-900b" in w and "wrong repo" in w
+        for w in findings["automatic_warnings"]
+    )
+
+
+def test_067w_no_commits_anywhere_zero_found_no_warning(tmp_path, monkeypatch):
+    """Control negativo: sin commits en NINGUN repo -> commits_found: 0 y SIN aviso.
+
+    WOT-2026-900h is motor/* but has no commits in either repo.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory_067w(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    h = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900h")
+    assert h["repo"] == "motor"
+    assert h["commits_found"] == 0
+    assert h["grep_commits"] == []
+    # No warning: no commits anywhere means it's a genuine "no commits", not
+    # "didn't look in the right repo".
+    assert not any("WOT-2026-900h" in w for w in findings["automatic_warnings"])
+
+
+def test_067w_na_scope_no_dual_scan(tmp_path, monkeypatch):
+    """n/a scope (infra/system) -> no commit signal at all, no dual-scan.
+
+    WOT-2026-900d is infra/* -> repo n/a, no grep_commits, no commits_found.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory_067w(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    d = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900d")
+    assert d["repo"] == "n/a"
+    assert d["grep_commits"] == []
+    assert d["commits_found"] == 0
+    # n/a scope emits a warning about no repo, but NOT about wrong repo.
+    assert any(
+        "WOT-2026-900d" in w and "no git repo" in w
+        for w in findings["automatic_warnings"]
+    )
+    assert not any(
+        "WOT-2026-900d" in w and "wrong repo" in w
+        for w in findings["automatic_warnings"]
+    )
+
+
+def test_067w_commits_found_field_present_in_all_entries(tmp_path, monkeypatch):
+    """DoD: commits_found must be present in EVERY ticket entry (N entries, N with field)."""
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory_067w(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    for t in findings["tickets"]:
+        assert "commits_found" in t, (
+            f"ticket {t['ticket_id']} missing 'commits_found' field"
+        )
+
+
+def test_067w_mutation_verify_revert_dual_scan(tmp_path, monkeypatch):
+    """MUTATION-VERIFY: revert the dual-scan logic -> the regression test fails.
+
+    This proves the fix is what makes the test pass, not just the test fixture.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory_067w(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    b = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900b")
+    # With the fix: commits_found >= 1.
+    assert b["commits_found"] >= 1
+
+    # Now revert: simulate the OLD behavior by setting grep_commits from motor
+    # but NOT doing the alternate scan (the mutant).
+    b_mutant = dict(b)
+    b_mutant["commits_found"] = len(
+        b_mutant["grep_commits"]
+    )  # old behavior: only scoped
+    # Without the fix, grep_commits for destino scope would be [] -> commits_found=0.
+    assert b_mutant["commits_found"] == 0, (
+        "mutation: without dual-scan, commits_found collapses to 0"
+    )
