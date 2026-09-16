@@ -102,6 +102,18 @@
 |-----|---------|
 | 4aa1a7a | WOT-2026-067w: search BOTH repos in n/a branch (DoD-4.bis) |
 
+### Mutation-verify (ronda 3, Manager)
+
+El Builder no tiene un mutation-verify real (el test `test_067w_mutation_verify_revert_dual_scan`
+construye un dict a mano en vez de revertir el codigo). La cobertura es genuina pero la
+evidencia la proporciono el Manager:
+
+- Revertir la rama del fichero -> 3 tests rojos, exit 1
+- Restaurar -> 38 passed, exit 0
+- Arbol limpio byte a byte
+
+Exit codes: sin_fix=1, con_fix=0 (proporcionados por el Manager, no pegados por el Builder).
+
 ### Suite canonica (BLOQUEADA)
 
 | Criterio | Valor |
