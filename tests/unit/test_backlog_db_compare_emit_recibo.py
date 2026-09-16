@@ -411,3 +411,65 @@ def test_e2e_realista_sin_vecinos_sobre_umbral(tmp_path: Path) -> None:
     code, gout = run_guard(repo, "--base", sha_init, "--head", sha_alta)
     assert code == 0, f"guard fallo: {gout}"
     assert "RECIBO_COHERENTE" in gout
+
+
+def test_contador_del_generador_coincide_con_el_del_guard(tmp_path: Path) -> None:
+    """El campo `entradas` lo re-cuenta el guard: ambos deben contar IGUAL.
+
+    Defecto medido 2026-09-16 en el PRIMER uso real del contrato (alta de
+    WOT-2026-070c): el generador contaba con un contador propio (lineas que
+    empiezan por `|`, menos 2) mientras el guard re-cuenta con
+    `load_backlog_rows`. Sobre el archive real la diferencia era de 64
+    entradas (591 vs 527) y el guard rechazaba el alta con
+    RECIBO_INCOHERENTE, porque una celda de detalle puede contener una TABLA
+    ANIDADA cuyas lineas empiezan por `|` sin ser filas de entrada.
+
+    Con el contador desalineado este test falla en la asercion de igualdad;
+    el E2E de mas abajo falla ademas con rc=1 del guard.
+    """
+    # El archive real contiene una SEGUNDA tabla con otro esquema, cuyas
+    # filas no llevan id de ticket en la columna canonica. El guard las
+    # descarta ("id de ticket no parseable"); el generador las contaba.
+    anidada = (
+        "\n## Trazas de cierre (segunda tabla, otro esquema)\n\n"
+        "| Fase | Resultado |\n"
+        "|---|---|\n"
+        "| archivado | ok |\n"
+        "| publicacion | ok |\n"
+    )
+
+    repo = init_repo(tmp_path, archive_extra=anidada)
+
+    # El contraste es sobre lo que EMITE el generador, no sobre una
+    # funcion interna: el campo `entradas` del recibo es exactamente lo
+    # que el guard re-cuenta con su propio contador.
+    archive = repo / ARCHIVE_REL
+    guard_count = cba._count_markdown(cba.norm_newlines(archive.read_bytes()))
+
+    # E2E: el alta debe ser aceptada por el guard.
+    sha_init = git(repo, "rev-parse", "HEAD").strip()
+    rc, out = run_emit_recibo(
+        repo,
+        "--candidato-id",
+        "WOT-2026-812b",
+        "--veredicto",
+        "NUEVA",
+        "--row-text",
+        row("WOT-2026-812b", "candidato con archive de tabla anidada"),
+    )
+    assert rc == 0, f"emit-recibo fallo: {out}"
+    recibo = json.loads(out)
+    emitido = next(s["entradas"] for s in recibo["corpus"] if s["tipo"] == "archive")
+    assert emitido == guard_count, (
+        f"el recibo declara {emitido} entradas de archive y el guard "
+        f"re-cuenta {guard_count}: RECIBO_INCOHERENTE garantizado"
+    )
+    commit_alta(
+        repo,
+        row("WOT-2026-812b", "candidato con archive de tabla anidada"),
+        msg_with_recibo("alta 812b", recibo),
+    )
+    sha_alta = git(repo, "rev-parse", "HEAD").strip()
+    code, gout = run_guard(repo, "--base", sha_init, "--head", sha_alta)
+    assert code == 0, f"guard rechazo un recibo del generador canonico: {gout}"
+    assert "RECIBO_COHERENTE" in gout

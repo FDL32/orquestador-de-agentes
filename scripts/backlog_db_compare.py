@@ -1111,21 +1111,6 @@ def _resolve_relative(path_str: str, root: Path) -> str:
         return path_str.replace("\\", "/")
 
 
-def _count_table_rows(path: Path) -> int:
-    """Cuenta filas de tabla markdown (excluye cabecera y separador)."""
-    try:
-        content = path.read_bytes()
-    except OSError:
-        return 0
-    normalized = content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    n_rows = sum(
-        1
-        for ln in normalized.decode("utf-8", "replace").splitlines()
-        if ln.lstrip().startswith("|")
-    )
-    return max(0, n_rows - 2)
-
-
 def _check_universe_coverage(
     usuario_total: list[str], obligatorias: list[str], git_root: Path
 ) -> list[str]:
@@ -1220,7 +1205,7 @@ def _build_corpus(
                 "path": relpath,
                 "tipo": tipo,
                 "repo": "alta",
-                "entradas": _count_table_rows(target),
+                "entradas": len(load_backlog_rows(target)[0]),
             }
         )
     return corpus, sum(s["entradas"] for s in corpus)
