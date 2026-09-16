@@ -58,6 +58,33 @@
   es informativo o vinculante es semantica del charter, y decidirla por heuristica violaria
   NG-RAIZ. Requiere DEC propia que cubra las DOS omisiones.
 
+## PLAN-006 - Instrumentacion del recolector de triage
+- objetivo: OBJ-002 (el instrumento conoce su denominador y falla honestamente cuando no
+  puede enumerar)
+- tickets: [WOT-2026-067w]
+- depends_on: -
+- superficies_archivo: [scripts/backlog_reconcile.py,
+  tests/unit/test_backlog_reconcile.py]
+- interfaces: [schema de `findings.json` (solo ADICION de campos), canal
+  `automatic_warnings`]
+- shared_dependencies: [la nocion de denominador declarado que OBJ-002 exige a todo
+  instrumento de auditoria; NINGUNA API compartida con 001-005]
+- origen: bucle adversarial de formacion de contrato del 2026-09-16. El contrato de
+  `WOT-2026-067w` se congelo citando un `PLAN-TRIAGE-INSTRUMENTATION` INEXISTENTE, y una
+  lente lo cazo: sin plan, las `Forbidden Surfaces` del ticket no derivaban de ninguna
+  fuente. Se abre plan propio en vez de ampliar PLAN-005, cuya superficie
+  (`check_launch_prompt_paths.py`) es disjunta de esta.
+- DEFECTO QUE ATACA, medido 2026-09-16 sobre poblacion completa: `backlog_reconcile.py`
+  emite `grep_commits: []` en 262 de 330 tickets, y de esos 262 hay **158 falsos
+  negativos** (`denominador=262 / inspeccionados=262 / hits=158 / saltados=0`). Dos
+  causas distintas: (a) `_signal_commits` se invoca contra UN solo repo, el que resuelve
+  `_scope_repo`, mientras el commit puede vivir en el otro; (b) cuando `_scope_repo`
+  devuelve `("n/a", None)` la funcion **no se invoca en absoluto**. Es el `failure_mode`
+  literal de OBJ-002: un universo vacio presentado como universo medido.
+- NOTA: aplica la misma omision PRE-EXISTENTE que declara PLAN-005 -- `OBJ-002` del
+  charter lista `related_plans: [PLAN-002]` y no nombra a PLAN-004, PLAN-005 ni a este.
+  No se corrige aqui por el mismo motivo (semantica del charter, requiere DEC propia).
+
 ## Impact Simulation
 
 | Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |
@@ -67,6 +94,7 @@
 | PLAN-003 | install_agent_system.py, MANIFEST.workspace | MANIFEST.distribute (comparte con 001) | 001 y 003 leen MANIFEST.distribute; 003 no lo muta | owner unico del MANIFEST; 003 solo lee | yes |
 | PLAN-004 | .claude/settings.json + hooks de destinos externos | el censo de 002 | 004 necesita el denominador que 002 produce | serializar tras 002 | after PLAN-002 |
 | PLAN-005 | scripts/check_launch_prompt_paths.py + su test | ninguna de codigo; comparte con 002 y 004 la NOCION de denominador declarado (OBJ-002), no una API | ninguno de ARCHIVO con 001/002/003/004 (superficies disjuntas). SI hay conflicto SEMANTICO: 002, 004 y 005 cuelgan de OBJ-002 con censos distintos (002 destinos, 005 universo de prompts) y sus denominadores pueden DIVERGIR sin que nadie revalide | par 002+005 en Merge Regression Audit (abajo): la coherencia de denominadores se audita en merge, no se presume. Si 005 inspeccionase superficies de destinos, se serializa tras 004 por REQUIERE_HUMANO | yes |
+| PLAN-006 | scripts/backlog_reconcile.py + su test | ninguna de codigo; comparte con 002, 004 y 005 la NOCION de denominador declarado (OBJ-002), no una API | ninguno de ARCHIVO con 001-005 (superficies disjuntas). Conflicto SEMANTICO de la misma clase que el par 002+005: 006 declara un denominador propio (el universo de tickets recolectados) que puede DIVERGIR de los otros censos de OBJ-002 sin que nadie revalide | par 005+006 en Merge Regression Audit: la coherencia de denominadores se audita en merge, no se presume. 006 es read-only sobre el backlog y no toca superficies de destinos, asi que no se serializa tras 004 | yes |
 
 Reglas aplicadas:
 - PLAN-004 degradado a `after PLAN-002`: endurecer sin medir es operar a ciegas (no es
@@ -87,6 +115,13 @@ Reglas aplicadas:
   superficie de PLAN-002); NO tocar prompts ni skills (PLAN-001); NO ejecutar guards de
   destinos ajenos (PLAN-004); NO reabrir `WOT-2026-067n`, completed con limite declarado
   *"NO re-audita la implementacion"*.
+
+- **PLAN-006 (067w)**: NO tocar `prompts/backlog_triage.md` (consumidor, no superficie del
+  plan); NO tocar `scripts/check_backlog_contract.py` (superficie viva de `WOT-2026-068k`);
+  NO cruzar la frontera recolector/juez -- el script no emite `LIKELY_DONE`/
+  `LIKELY_PENDING`/`NEEDS_HUMAN_VERIFY` (su docstring lo declara: *"This script NEVER
+  classifies"*); NO renombrar ni retirar campos de `findings.json`, solo ANADIR; NO mutar
+  `backlog.md` (el recolector es read-only sobre el backlog).
 
 ## Merge Regression Audit
 Antes de integrar resultados de planes que tocaron superficies vecinas:
