@@ -26,7 +26,25 @@ dogfooding especifica.
 | Eventos del bus | `<DESTINO_ROOT>/.agent/runtime/events/events.jsonl` |
 | Memoria por proyecto | `<DESTINO_ROOT>/.agent/runtime/memory/` |
 | Reportes de pipeline | `<DESTINO_ROOT>/orchestrator_pipeline/reports/` |
+| **Prompt de arranque de Builder** | `<DESTINO_ROOT>/.agent/planning/builder_prompt_<TICKET>.md` |
 | Superficies de codigo del motor | `<MOTOR_ROOT>/scripts/`, `<MOTOR_ROOT>/prompts/`, `<MOTOR_ROOT>/bus/` |
+
+### Por que el prompt de arranque vive en `planning/` y no en `reports/`
+
+Decidido en WOT-2026-067w tras un fallo medido. `reports/` es **deny-por-defecto con
+allowlist** (`.gitignore:74-82`) y lo que se versiona ahi es **evidencia de cierre**
+(`batch_run_*`, `start_context_isolation`, recibos de mutation-verify). Un prompt de
+arranque es **entrada gobernante**, no evidencia: pertenece a `planning/`, junto a los
+`ARRANQUE_*` y `PROPUESTA_*` que ya viven ahi. Censo 2026-09-16: 20 prompts de Builder
+repartidos en 4 ubicaciones; `planning/` es la mayoritaria (10) y la UNICA tracked.
+
+**Barrera, no norma:** `scripts/check_launch_prompt_paths.py` emite
+`R3-ubicacion-no-canonica` y falla si un prompt de arranque vive fuera. Lo reconoce por
+CONTENIDO (declaracion del `contract_id` del Builder, o encabezado de rol), no por
+nombre ni carpeta: el nombre fue justamente el vector del fallo. Coste de no tenerla,
+medido: un prompt fuera del universo del guard cito `execution_log.md` sin ruta, el
+Builder escribio en el seed neutro del motor, y se le reprocho tres rondas de review
+antes de ver que la causa era el prompt.
 
 ## Mecanismo de resolucion
 
