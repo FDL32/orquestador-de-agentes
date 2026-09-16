@@ -1,6 +1,9 @@
 # Prompt de alta de backlog con recibo
 
 contract_id: cid-backlog-admit-v1
+Skill canonica: skills/backlog-admit/SKILL.md
+source_of_truth: este prompt. La skill `skills/backlog-admit/SKILL.md` es wrapper
+operativo; si divergen, prevalece este prompt.
 
 Este prompt documenta el flujo de ALTA de un ticket nuevo al backlog del repo
 del alta, incluyendo el recibo que satisface el guard `check_backlog_admission.py`.
