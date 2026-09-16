@@ -107,7 +107,7 @@ known_unwired:
 
   # WOT-2026-004y: guard PII tracked en el destino (`tools/check_pii_tracked.py`).
   # Cableado REAL en el destino: `.git/hooks/pre-commit` -> `tools/pre_commit_check.py`
-  # (versionado) -> subprocess `python tools/check_pii_tracked.py` (linea 65).
+  # (versionado) -> subprocess en `verificar_pii_tracked()` de ese fichero.
   # El motor no puede ver los ficheros del destino -> AST del motor no lo alcanza.
   # El hook local `.git/hooks/pre-commit` corre solo (always_run). El camino
   # `.pre-commit-config.yaml` es inerte (pre-commit package no instalado).
