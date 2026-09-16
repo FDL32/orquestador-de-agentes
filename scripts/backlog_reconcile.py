@@ -542,6 +542,7 @@ def _collect_all(  # noqa: C901
             "repo": repo_label,
             "grep_commits": [],
             "commits_found": 0,
+            "commits_searched_in": [],
             "scope_paths": [],
             "dod_terms": [],
             "dec_accepted_hits": [],
@@ -569,6 +570,8 @@ def _collect_all(  # noqa: C901
                 "file/grep signals omitted"
             )
             record["grep_commits"] = []
+            record["commits_found"] = 0
+            record["commits_searched_in"] = []
         else:
             # WOT-2026-067w: scan BOTH repos to distinguish "no commits" from
             # "didn't look where the commits are".  The scoped repo is still
@@ -586,6 +589,11 @@ def _collect_all(  # noqa: C901
             all_commits = scoped_commits + alternate_commits
             record["grep_commits"] = scoped_commits
             record["commits_found"] = len(all_commits)
+            # Track which repos were actually queried (for DoD-1).
+            searched = [repo_label]
+            if alternate_repo is not None:
+                searched.append(alternate_label)
+            record["commits_searched_in"] = searched
             # Warning: the ticket has commits but NOT in the scoped repo.
             # This means the signal was searched in the wrong repo.
             if not scoped_commits and alternate_commits:

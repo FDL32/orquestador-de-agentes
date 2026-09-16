@@ -5,8 +5,11 @@ pending/deferred/completed-partial), per-scope repo routing (motor/* -> motor,
 destinos/* -> destino, system|infra/* -> n/a), the 3 raw signal families + the
 repo-level last-run block, the "no verdict field" boundary, relativization (PII),
 exit codes, read-only-ness, and topology resolution via motor_destination_link.json.
-Mirrors test_collect_system_health.py conventions (importlib load, monkeypatched
-_run, tmp_path fixtures, NO real git).
+
+Two conventions coexist in this module:
+- Legacy synthetic tests: monkeypatched _run, NO real git (the dominant pattern).
+- Real-git tests: git repos created in tmp_path for scenarios where mock drift
+  would hide bugs (git cwd-resolution, shell escaping, etc.).
 """
 
 from __future__ import annotations
