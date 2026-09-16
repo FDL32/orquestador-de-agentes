@@ -569,9 +569,20 @@ def _collect_all(  # noqa: C901
                 f"{ticket_id}: scope '{scope_slug}' -> no git repo (n/a); "
                 "file/grep signals omitted"
             )
+            # WOT-2026-067w DoD-4.bis: an ID is an ID -- commit search does
+            # NOT depend on scope. Both repos are queried even though the
+            # scope does not resolve to either; per-scope signals
+            # (grep_commits/scope_paths/dod_terms) stay empty, which is correct.
             record["grep_commits"] = []
-            record["commits_found"] = 0
-            record["commits_searched_in"] = []
+            searched: list[str] = []
+            found = 0
+            for label, root in (("motor", motor_root), ("destino", dest_root)):
+                if root is None:
+                    continue
+                found += len(_signal_commits(ticket_id, root))
+                searched.append(label)
+            record["commits_found"] = found
+            record["commits_searched_in"] = searched
         else:
             # WOT-2026-067w: scan BOTH repos to distinguish "no commits" from
             # "didn't look where the commits are".  The scoped repo is still

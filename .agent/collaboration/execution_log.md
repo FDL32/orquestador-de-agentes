@@ -28,6 +28,74 @@
 ### 2026-07-11 - Implementacion (orquestador directo, persistiendo a disco)
 - Creado `scripts/init_session_scratch.py` (~1140 lineas): 6 subcomandos (init, add,
   list, audit, archive, gc), writer con lock del SO (msvcrt/fcntl), lock TTL puro,
+
+## Execution Log: WOT-2026-067w (ciclo CHANGES)
+
+**Estado:** EN_CURSO (bloqueado por ENTORNO_DEGRADADO)
+
+### Fase 0: diagnostico (2026-09-16)
+- work_plan.md: WOT-2026-022c (STALE - no es de este ticket, el runtime no fue bootstrap para 067w)
+- STATE.md: ACTIVE_TICKET: WOT-2026-022c, STATUS: COMPLETED (STALE)
+- TURN.md: ROL: BUILDER, Plan ID: WOT-2026-021h (STALE)
+- Topologia: OK (check_worktree_topology rc=0)
+- Validate: 0 errors, 0 warnings (clean)
+- Commit previo 4212082: dual-repo scanning implementado CORRECTO
+- _collect_all verificado: rama `if repo is None:` NO puebla `commits_found` (BUG)
+- _collect_all verificado: NO puebla `commits_searched_in` en ningun rama (BUG)
+- test_backlog_reconcile.py:8-9 docstring dice "NO real git" pero tests nuevos usan git real (BUG)
+- Canal `automatic_warnings`: existente, no se crea nuevo
+
+### Fase 1: correcciones (2026-09-16)
+
+**B1 -- `commits_searched_in` (DoD-1 + DoD-4.bis):**
+- Record dict (l.538+): anadido `"commits_searched_in": []`
+- Rama n/a (l.566+): anadido `record["commits_found"] = 0` y `record["commits_searched_in"] = []`
+- Rama else (l.589+): anadido `searched = [repo_label]` + alternate si aplica, `record["commits_searched_in"] = searched`
+- `grep_commits` NO modificado en rama n/a (se mantiene `[]` como antes)
+
+**B2 -- docstring modulo de tests:**
+- Lineas 1-9: actualizado para declarar DOS convenciones (synthetic + real-git)
+- Viejo: "Mirrors test_collect_system_health.py conventions... NO real git"
+- Nuevo: "Two conventions coexist... Legacy synthetic + Real-git tests"
+
+### Fase 2: tests (2026-09-16)
+
+**Nuevo test: `test_067w_commits_searched_in_present_in_all_entries`**
+- Verifica `commits_searched_in` presente en TODAS las entradas (N tickets, N con campo)
+- Verifica n/a scope: `commits_searched_in == []`
+- Verifica motor scope: `"motor" in commits_searched_in`
+- Verifica destino scope con alternate: `"destino" in` y `"motor" in commits_searched_in`
+
+### Gates focales (2026-09-16)
+
+| Comando | Resultado |
+|---------|-----------|
+| `pytest-safe --level unit test_backlog_reconcile.py` | 37 passed in 1.33s |
+| `uv run ruff check scripts/backlog_reconcile.py tests/unit/test_backlog_reconcile.py` | All checks passed |
+| `uv run ruff format --check scripts/backlog_reconcile.py tests/unit/test_backlog_reconcile.py` | 2 files already formatted |
+| `--validate --json` | 0 errors, 0 warnings |
+| `grep "This script NEVER classifies"` | 2 matches (>= 1) |
+
+### Suite canonica (BLOQUEADA)
+
+| Criterio | Valor |
+|----------|-------|
+| RAM libre | 3.97 GB (< 6 GB threshold) |
+| Procesos | 416 |
+| Accion | ENTORNO_DEGRADADO - NO lanzar --level all |
+
+La suite canonica `--level all` NO puede ejecutarse por ambiente degradado.
+Se requiere esperar a que RAM suba a >= 6 GB antes de lanzar.
+
+### Commits realizados
+
+| SHA | Mensaje |
+|-----|---------|
+| e3950fa | WOT-2026-067w: add commits_searched_in to all entries + update test docstring |
+| 831e30f | WOT-2026-067w: test commits_searched_in present in all entries |
+
+### Desviaciones de scope
+- Ninguna. Solo se tocaron los 2 archivos del FLT.
   takeover atomico + marker TTL, required condicional por event, exit codes hibrido.
 - Creado `tests/test_init_session_scratch.py` (~1070 lineas, 51 tests): M1 agnosticismo
   (3 ejes disjuntos), T-LEDGER-CONC (4x25=100 concurrentes, 0 CRLF), T-TAKEOVER-FOSIL,

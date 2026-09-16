@@ -896,9 +896,10 @@ def test_067w_no_commits_anywhere_zero_found_no_warning(tmp_path, monkeypatch):
 
 
 def test_067w_na_scope_no_dual_scan(tmp_path, monkeypatch):
-    """n/a scope (infra/system) -> no commit signal at all, no dual-scan.
+    """n/a scope (infra/system) -> no grep/scope signals, but commits ARE searched.
 
-    WOT-2026-900d is infra/* -> repo n/a, no grep_commits, no commits_found.
+    WOT-2026-900d is infra/* -> repo n/a, no grep_commits, no scope_paths.
+    Commits ARE searched in both repos (DoD-4.bis), but the fake yields 0.
     """
     motor = _fake_motor(tmp_path)
     ws = _fake_workspace(tmp_path)
@@ -912,6 +913,9 @@ def test_067w_na_scope_no_dual_scan(tmp_path, monkeypatch):
     d = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900d")
     assert d["repo"] == "n/a"
     assert d["grep_commits"] == []
+    # Commits ARE searched in both repos even for n/a scope.
+    assert d["commits_searched_in"] == ["motor", "destino"]
+    # The fake yields 0 commits for 900d, so commits_found is 0 here.
     assert d["commits_found"] == 0
     # n/a scope emits a warning about no repo, but NOT about wrong repo.
     assert any(
@@ -922,6 +926,74 @@ def test_067w_na_scope_no_dual_scan(tmp_path, monkeypatch):
         "WOT-2026-900d" in w and "wrong repo" in w
         for w in findings["automatic_warnings"]
     )
+
+
+def test_067w_na_scope_with_commits_in_alternate_repo(tmp_path, monkeypatch):
+    """n/a scope: commits ARE searched in both repos (DoD-4.bis).
+
+    If an n/a ticket has commits in either repo, commits_found must be >= 1.
+    This pins the real invariant: n/a does not hide commits.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+
+    def _na_with_commits(m: Path, d: Path):
+        inner = _fake_run_factory_067w(m, d)
+
+        def _spy(cmd, cwd, timeout=120):
+            joined = " ".join(str(c) for c in cmd)
+            if (
+                "log" in joined
+                and "--grep" in joined
+                and "WOT-2026-999z" in joined
+                and str(cwd) == str(m)
+            ):
+                out = "cafe999z\x1fWOT-2026-999z infra fix\x1f2026-07-15\n"
+                return {
+                    "cmd": cmd,
+                    "exit_code": 0,
+                    "stdout": out,
+                    "stderr": "",
+                    "ok": True,
+                }
+            return inner(cmd, cwd, timeout)
+
+        return _spy
+
+    # Insert an n/a ticket BEFORE the blank line that terminates the table.
+    # The _BACKLOG has a blank line right before "## Fichas"; inserting after
+    # that blank line would be invisible to the table parser.
+    backlog = (ws / ".agent" / "collaboration" / "backlog.md").read_text(
+        encoding="utf-8"
+    )
+    # Go back past the blank line (\n\n) that precedes "## Fichas".
+    table_end = backlog.rfind("\n\n## Fichas")
+    if table_end > 0:
+        new_row = (
+            "| Baja | WOT-2026-999z | infra ticket with commits | "
+            "infra/na-fix | pending | - | s | - |\n"
+        )
+        inserted = backlog[:table_end] + "\n" + new_row + backlog[table_end:]
+        backlog = inserted
+    else:
+        backlog += "| Baja | WOT-2026-999z | infra ticket with commits | infra/na-fix | pending | - | s | - |\n"
+    (ws / ".agent" / "collaboration" / "backlog.md").write_text(
+        backlog, encoding="utf-8"
+    )
+
+    monkeypatch.setattr(br, "_run", _na_with_commits(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    z = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-999z")
+    assert z["repo"] == "n/a"
+    assert z["grep_commits"] == []  # no forced grep for n/a
+    # But commits ARE searched -> found in motor.
+    assert z["commits_found"] >= 1
+    assert "motor" in z["commits_searched_in"]
 
 
 def test_067w_commits_found_field_present_in_all_entries(tmp_path, monkeypatch):
@@ -960,9 +1032,11 @@ def test_067w_commits_searched_in_present_in_all_entries(tmp_path, monkeypatch):
         assert "commits_searched_in" in t, (
             f"ticket {t['ticket_id']} missing 'commits_searched_in' field"
         )
-    # n/a scope: empty list (no repos searched).
+    # n/a scope: the scope does not resolve to a repo, but commit search
+    # still runs (DoD-4.bis) -- the universe is declared, not left empty.
     d = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900d")
-    assert d["commits_searched_in"] == []
+    assert d["commits_searched_in"] == ["motor", "destino"]
+    assert "commits_found" in d
     # motor scope: at least the scoped repo.
     a = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900a")
     assert "motor" in a["commits_searched_in"]
