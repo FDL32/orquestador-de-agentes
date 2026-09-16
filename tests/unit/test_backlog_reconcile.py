@@ -941,6 +941,37 @@ def test_067w_commits_found_field_present_in_all_entries(tmp_path, monkeypatch):
         )
 
 
+def test_067w_commits_searched_in_present_in_all_entries(tmp_path, monkeypatch):
+    """DoD-1: commits_searched_in must be present in EVERY ticket entry.
+
+    A `commits_found: 0` without its universe is the false-green this ticket
+    kills: it cannot distinguish "searched and found nothing" from "didn't search".
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory_067w(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    for t in findings["tickets"]:
+        assert "commits_searched_in" in t, (
+            f"ticket {t['ticket_id']} missing 'commits_searched_in' field"
+        )
+    # n/a scope: empty list (no repos searched).
+    d = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900d")
+    assert d["commits_searched_in"] == []
+    # motor scope: at least the scoped repo.
+    a = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900a")
+    assert "motor" in a["commits_searched_in"]
+    # destino scope with alternate: both repos.
+    b = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900b")
+    assert "destino" in b["commits_searched_in"]
+    assert "motor" in b["commits_searched_in"]
+
+
 def test_067w_mutation_verify_revert_dual_scan(tmp_path, monkeypatch):
     """MUTATION-VERIFY: revert the dual-scan logic -> the regression test fails.
 
