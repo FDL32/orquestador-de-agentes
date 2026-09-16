@@ -31,71 +31,87 @@
 
 ## Execution Log: WOT-2026-067w (ciclo CHANGES)
 
-**Estado:** EN_CURSO (bloqueado por ENTORNO_DEGRADADO)
+**Estado:** EN_CURSO (suite canonica pendiente por ENTORNO_DEGRADADO)
 
-### Fase 0: diagnostico (2026-09-16)
-- work_plan.md: WOT-2026-022c (STALE - no es de este ticket, el runtime no fue bootstrap para 067w)
-- STATE.md: ACTIVE_TICKET: WOT-2026-022c, STATUS: COMPLETED (STALE)
-- TURN.md: ROL: BUILDER, Plan ID: WOT-2026-021h (STALE)
-- Topologia: OK (check_worktree_topology rc=0)
-- Validate: 0 errors, 0 warnings (clean)
-- Commit previo 4212082: dual-repo scanning implementado CORRECTO
-- _collect_all verificado: rama `if repo is None:` NO puebla `commits_found` (BUG)
-- _collect_all verificado: NO puebla `commits_searched_in` en ningun rama (BUG)
-- test_backlog_reconcile.py:8-9 docstring dice "NO real git" pero tests nuevos usan git real (BUG)
-- Canal `automatic_warnings`: existente, no se crea nuevo
+### Ronda 1 (2026-09-16)
+- Commits: e3950fa (commits_searched_in en record dict + n/a branch), 831e30f (test commits_searched_in present)
+- Docstring del modulo de tests actualizado (B2 cumplido)
+- 37 tests focales pasaron, ruff limpio, validate 0/0
+- Suite canonica BLOQUEADA por RAM 3.97 GB < 6 GB
 
-### Fase 1: correcciones (2026-09-16)
+### Ronda 2 - Manager CHANGES (2026-09-16)
 
-**B1 -- `commits_searched_in` (DoD-1 + DoD-4.bis):**
-- Record dict (l.538+): anadido `"commits_searched_in": []`
-- Rama n/a (l.566+): anadido `record["commits_found"] = 0` y `record["commits_searched_in"] = []`
-- Rama else (l.589+): anadido `searched = [repo_label]` + alternate si aplica, `record["commits_searched_in"] = searched`
-- `grep_commits` NO modificado en rama n/a (se mantiene `[]` como antes)
+**Blocker 1: rama n/a busca en AMBOS repos (DoD-4.bis)**
+- Codigo: la rama `repo is None` ahora itera sobre `("motor", motor_root), ("destino", dest_root)`
+  y llama `_signal_commits(ticket_id, root)` para cada repo no-None.
+- `grep_commits` sigue vacio en n/a (no se toco - Forbidden Surface).
+- `commits_searched_in` ahora contiene ["motor", "destino"] para n/a scope.
+- Commit: 4aa1a7a
 
-**B2 -- docstring modulo de tests:**
-- Lineas 1-9: actualizado para declarar DOS convenciones (synthetic + real-git)
-- Viejo: "Mirrors test_collect_system_health.py conventions... NO real git"
-- Nuevo: "Two conventions coexist... Legacy synthetic + Real-git tests"
+**Blocker 2: clase de falso negativo vacia (verificado en PRODUCCION)**
+- Verificacion en 7 filas n/a de produccion:
+  - WOT-2026-002c: motor=1 destino=11 total=12 (antes 0 -> FALSE NEGATIVO corregido)
+  - WOT-2026-016v: motor=0 destino=1 total=1 (antes 0 -> FALSE NEGATIVO corregido)
+  - WOT-2026-025x: motor=1 destino=1 total=2 (antes 0 -> FALSE NEGATIVO corregido)
+  - WOT-2026-044c: motor=0 destino=2 total=2 (antes 0 -> FALSE NEGATIVO corregido)
+  - WOT-2026-069h: motor=1 destino=1 total=2 (antes 0 -> FALSE NEGATIVO corregido)
+  - WOT-2026-069i: motor=0 destino=0 total=0 (vacío legítimo)
+  - WOT-2026-069j: motor=0 destino=0 total=0 (vacío legítimo)
+- Clase de falso negativo: VACIA. Blocker 2 CERRADO.
 
-### Fase 2: tests (2026-09-16)
+**Blocker 3: test reescrito + test nuevo del invariante**
+- `test_067w_na_scope_no_dual_scan`: docstring actualizado (ya no dice "no dual-scan")
+- `test_067w_commits_searched_in_present_in_all_entries`: assert de n/a scope cambia
+  de `commits_searched_in == []` a `commits_searched_in == ["motor", "destino"]`
+- `test_067w_na_scope_with_commits_in_alternate_repo`: TEST NUEVO que pinea el invariante:
+  un ticket n/a con commits en motor sale con `commits_found >= 1`.
+- `test_routing_infra_ticket_is_na_with_warning`: sigue VERDE (grep_commits == [] intacto)
+- 38 tests focales pasaron (37 anteriores + 1 nuevo)
 
-**Nuevo test: `test_067w_commits_searched_in_present_in_all_entries`**
-- Verifica `commits_searched_in` presente en TODAS las entradas (N tickets, N con campo)
-- Verifica n/a scope: `commits_searched_in == []`
-- Verifica motor scope: `"motor" in commits_searched_in`
-- Verifica destino scope con alternate: `"destino" in` y `"motor" in commits_searched_in`
+**Blocker 4: claim falso retirado**
+- Runtime SI estaba bootstrappeado para 067w (STATE.md: ACTIVE_TICKET: WOT-2026-067w,
+  TURN.md: ROL: BUILDER, work_plan.md: ID: WOT-2026-067w).
+- La desviacion "runtime no bootstrap" se retira del informe.
 
-### Gates focales (2026-09-16)
+**Blocker 5: criterio 4.bis marcado correctamente**
+- En ronda 1: `commits_searched_in=[]` en n/a NO era "poblar" segun DoD.
+- En ronda 2: n/a scope puebla `commits_searched_in=["motor", "destino"]` -> SÍ cumple.
+
+**Blocker 6: encoding guard ejecutado literalmente**
+- `python scripts/check_encoding_guard.py scripts/backlog_reconcile.py tests/unit/test_backlog_reconcile.py`
+- Resultado: `denominador=2 inspeccionados=2 hits=0 saltados=0 (universo: argumentos explicitos), rc=0`
+
+**Blocker 7: suite canonica pendiente**
+- RAM actual: 4.25 GB (< 6 GB threshold)
+- Suite canonica NO puede lanzarse. Se requiere esperar a que RAM suba.
+
+### Gates focales ronda 2
 
 | Comando | Resultado |
 |---------|-----------|
-| `pytest-safe --level unit test_backlog_reconcile.py` | 37 passed in 1.33s |
+| `pytest-safe --level unit test_backlog_reconcile.py` | 38 passed in 4.40s |
 | `uv run ruff check scripts/backlog_reconcile.py tests/unit/test_backlog_reconcile.py` | All checks passed |
 | `uv run ruff format --check scripts/backlog_reconcile.py tests/unit/test_backlog_reconcile.py` | 2 files already formatted |
+| `python scripts/check_encoding_guard.py scripts/backlog_reconcile.py tests/unit/test_backlog_reconcile.py` | denominador=2 inspeccionados=2 hits=0 saltados=0, rc=0 |
 | `--validate --json` | 0 errors, 0 warnings |
 | `grep "This script NEVER classifies"` | 2 matches (>= 1) |
+
+### Commits ronda 2
+
+| SHA | Mensaje |
+|-----|---------|
+| 4aa1a7a | WOT-2026-067w: search BOTH repos in n/a branch (DoD-4.bis) |
 
 ### Suite canonica (BLOQUEADA)
 
 | Criterio | Valor |
 |----------|-------|
-| RAM libre | 3.97 GB (< 6 GB threshold) |
-| Procesos | 416 |
+| RAM libre | 4.25 GB (< 6 GB threshold) |
+| Procesos | 417 |
 | Accion | ENTORNO_DEGRADADO - NO lanzar --level all |
 
 La suite canonica `--level all` NO puede ejecutarse por ambiente degradado.
 Se requiere esperar a que RAM suba a >= 6 GB antes de lanzar.
-
-### Commits realizados
-
-| SHA | Mensaje |
-|-----|---------|
-| e3950fa | WOT-2026-067w: add commits_searched_in to all entries + update test docstring |
-| 831e30f | WOT-2026-067w: test commits_searched_in present in all entries |
-
-### Desviaciones de scope
-- Ninguna. Solo se tocaron los 2 archivos del FLT.
   takeover atomico + marker TTL, required condicional por event, exit codes hibrido.
 - Creado `tests/test_init_session_scratch.py` (~1070 lineas, 51 tests): M1 agnosticismo
   (3 ejes disjuntos), T-LEDGER-CONC (4x25=100 concurrentes, 0 CRLF), T-TAKEOVER-FOSIL,
