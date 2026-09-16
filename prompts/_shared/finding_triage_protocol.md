@@ -33,6 +33,13 @@ python <MOTOR_ROOT>/scripts/find_similar_signals.py --text-file <candidato.txt> 
     --backlog <...>/backlog.md --backlog <...>/_archive/backlog_done.md
 ```
 
+**`find_similar_signals` es generador de senal, nunca veredicto.** Su salida NO
+es el recibo de admision del PASO 0. El recibo lo genera
+`backlog_db_compare.py --emit-recibo` (ver `prompts/backlog_admit.md` para la
+forma correcta). `find_similar_signals` sirve para el BARRIDO PREVIO del PASO 0:
+genera senal sobre vecinos potenciales, pero el juicio de triaje es humano y el
+recibo mecanico lo emite el generador con `--emit-recibo`.
+
 **Lee ENTEROS los vecinos proximos. No descartes por el titulo:** las lecciones
 del archive se redactan como REGLAS ABSTRACTAS y los candidatos como CASOS
 CONCRETOS, asi que los titulos no se parecen aunque el contenido sea el mismo.
@@ -58,11 +65,16 @@ Precedente: el propio `find_similar_signals.py` nacio de "4 duplicados de
 memoria/backlog en UN dia, tres de ellos declarando 'busque duplicados'"
 (2026-07-22). El fallo no es el descuido: es barrer UNA superficie o UN tramo.
 
-**ESTATUS DECLARADO: esto es una NORMA, no una barrera cableada.** Ningun script
-se niega hoy a aceptar una ficha o una leccion sin recibo de barrido, y
-`find_similar_signals.py` sale `exit 0` aunque encuentre vecinos identicos
-(deliberado: es generador de senal, nunca veredicto). Cablearlo es
-`WOT-2026-054m`.
+**ESTATUS: barrera cableada.** `check_backlog_admission.py` (WOT-2026-054m) es
+fail-closed en el ALTA de un id nuevo al backlog: si el commit del alta no
+incluye un recibo coherente (`BACKLOG-ADMISSION-RECIBO`), el guard rechaza con
+`SIN_RECIBO` y el gate de prepush/closeout falla. Punto de cableado:
+`scripts/prepush_check.py`. El algoritmo del recibo es `backlog_db_compare`
+(umbral `0.12`). **Alcance por flujo:** esta barrera cubre UNICAMENTE el ALTA
+de backlog. Los otros dos flujos del PASO 0 (promocion de memoria,
+`preexisting_gate_unblock`) tienen sus propios caminos y NO estan cubiertos
+por este guard. La forma correcta del recibo se documenta en
+`prompts/backlog_admit.md`.
 
 | Caso | Accion autonoma por defecto |
 |------|------------------------------|

@@ -98,6 +98,12 @@ from find_similar_signals import (  # noqa: E402
 
 SCHEMA = "backlog-db-compare/v1"
 
+# NOTA: las constantes compartidas con check_backlog_admission.py
+# (ALGORITMO_REQUERIDO, DEFAULT_BACKLOG, DEFAULT_ARCHIVES, RECIBO_VERSION,
+# UMBRAL_REQUERIDO, derive_corpus_sha) se importan DENTRO de _emit_recibo()
+# para evitar circular import (check_backlog_admission -> backlog_db_compare
+# -> check_backlog_admission).
+
 # Borde MEDIDO sobre el UNIVERSO DE DESPLIEGUE (ver docstring): 0.12 = minimo
 # calibrador real (0.1393) menos 0.0193 de margen; trigger de re-validacion
 # declarado en el docstring. No es un optimo: es un corte con evidencia.
@@ -899,6 +905,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tabla markdown de backlog/archive (repetible).",
     )
     p.add_argument(
+        "--archive-file",
+        type=Path,
+        action="append",
+        default=None,
+        help="Archivo de backlog completado (repetible, para --emit-recibo).",
+    )
+    p.add_argument(
         "--inbox",
         type=Path,
         default=None,
@@ -948,6 +961,38 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-json", type=Path, default=None, help="Informe JSON.")
     p.add_argument(
         "--json", action="store_true", help="Imprime el JSON a stdout (maquina)."
+    )
+    p.add_argument(
+        "--emit-recibo",
+        action="store_true",
+        help=(
+            "Modo generador de recibo para el alta de backlog. Emite un JSON "
+            "BACKLOG-ADMISSION-RECIBO a stdout con las superficies del "
+            "universo obligatorio (DEFAULT_BACKLOG + DEFAULT_ARCHIVES). "
+            "Requiere --candidato-id."
+        ),
+    )
+    p.add_argument(
+        "--candidato-id",
+        default=None,
+        help="ID canonico del candidato (obligatorio con --emit-recibo).",
+    )
+    p.add_argument(
+        "--row-text",
+        default=None,
+        help=(
+            "Texto de la fila del alta (para calcular candidato_contenido_sha "
+            "y computar vecinos via Jaccard)."
+        ),
+    )
+    p.add_argument(
+        "--veredicto",
+        default=None,
+        help=(
+            "Veredicto propuesta del autor (obligatorio con --emit-recibo). "
+            "Formato: 'TIPO:id1,id2' o 'NUEVA'. Ejemplo: 'NUEVA' o "
+            "'DUPLICADO_DE:WOT-2026-001a'."
+        ),
     )
     return p
 
@@ -1058,8 +1103,248 @@ def _emit_reports(args: argparse.Namespace, md_text: str, json_text: str) -> int
     return None
 
 
+def _resolve_relative(path_str: str, root: Path) -> str:
+    """Resuelve un path contra root y devuelve la ruta relativa normalizada."""
+    try:
+        return str(Path(path_str).resolve().relative_to(root)).replace("\\", "/")
+    except ValueError:
+        return path_str.replace("\\", "/")
+
+
+def _count_table_rows(path: Path) -> int:
+    """Cuenta filas de tabla markdown (excluye cabecera y separador)."""
+    try:
+        content = path.read_bytes()
+    except OSError:
+        return 0
+    normalized = content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    n_rows = sum(
+        1
+        for ln in normalized.decode("utf-8", "replace").splitlines()
+        if ln.lstrip().startswith("|")
+    )
+    return max(0, n_rows - 2)
+
+
+def _check_universe_coverage(
+    usuario_total: list[str], obligatorias: list[str], git_root: Path
+) -> list[str]:
+    """Devuelve la lista de superficies obligatorias no cubiertas por el usuario."""
+    usuario_resolved = {_resolve_relative(p, git_root) for p in usuario_total}
+    obligatorias_set = {o.replace("\\", "/") for o in obligatorias}
+    return sorted(obligatorias_set - usuario_resolved)
+
+
+_TOP_N_FALLBACK = 3
+
+
+def _compute_vecinos(
+    git_root: Path, obligatorias: list[str], candidato_id: str, row_text: str | None
+) -> tuple[list[dict], list[dict]]:
+    """Calcula vecinos del candidato usando el tokenizador y Jaccard del compare.
+
+    Devuelve (vecinos, fallback) donde:
+    - vecinos: candidatos con score >= UMBRAL_DEFAULT (aceptados)
+    - fallback: top-N candidatos cuando el umbral deja la lista vacia
+      (solo cuando hay al menos 1 candidato; vacio si no hay ninguno)
+
+    El umbral es el mismo del contrato (0.12). La lista fallback distingue
+    "barrido sin coincidencias" de "vecinos aceptados".
+    """
+    if not row_text:
+        return [], []
+
+    # Cargar todas las entradas de las superficies obligatorias
+    all_entries: list[Entry] = []
+    for relpath in obligatorias:
+        target = git_root / relpath
+        if not target.is_file():
+            continue
+        try:
+            rows, _stats = load_backlog_rows(target)
+            all_entries.extend(rows)
+        except (ParseError, OSError):
+            continue
+
+    if not all_entries:
+        return [], []
+
+    # Tokenizar el candidato
+    cand_tokens = _tokens(row_text)
+    idf = _compute_idf_simple(all_entries)
+
+    # Calcular similitud contra cada entrada existente
+    all_candidates: list[dict] = []
+    for entry in all_entries:
+        if entry.label == candidato_id:
+            continue
+        entry_tokens = _tokens(entry.text)
+        score = jaccard_idf(cand_tokens, entry_tokens, idf)
+        if score > 0:
+            all_candidates.append({"id": entry.label, "score": round(score, 4)})
+
+    # Ranking estable: score desc, luego id asc para empates
+    all_candidates.sort(key=lambda v: (-v["score"], v["id"]))
+
+    vecinos = [c for c in all_candidates if c["score"] >= UMBRAL_DEFAULT]
+    fallback = all_candidates[:_TOP_N_FALLBACK] if not vecinos else []
+
+    # Cuando el umbral deja la lista vacia, los fallback SE EMITEN en vecinos
+    # para que el guard los acepte (valida que score es numerico, no minimo).
+    # vecinos_barrido marca que son de fallback, no de umbral.
+    if fallback:
+        vecinos = list(fallback)
+
+    return vecinos, fallback
+
+
+def _compute_idf_simple(entries: list[Entry]) -> dict[str, float]:
+    """IDF simple sobre un conjunto de entradas (para el calculo de vecinos)."""
+    toks = [_tokens(e.text) for e in entries]
+    idf, _n = compute_idf(toks)
+    return idf
+
+
+def _build_corpus(
+    git_root: Path, obligatorias: list[str]
+) -> tuple[list[dict], int] | str:
+    """Construye el corpus y devuelve (corpus, entradas_censadas) o msg de error."""
+    corpus = []
+    for relpath in obligatorias:
+        target = git_root / relpath
+        if not target.exists():
+            return f"superficie obligatoria no existe: {relpath}"
+        tipo = "backlog" if "backlog_done" not in relpath else "archive"
+        corpus.append(
+            {
+                "path": relpath,
+                "tipo": tipo,
+                "repo": "alta",
+                "entradas": _count_table_rows(target),
+            }
+        )
+    return corpus, sum(s["entradas"] for s in corpus)
+
+
+def _emit_recibo(args: argparse.Namespace) -> int:
+    """Modo generador de recibo para el alta de backlog.
+
+    Carga las superficies del universo obligatorio (DEFAULT_BACKLOG +
+    DEFAULT_ARCHIVES), cuenta entradas, calcula corpus_sha con
+    derive_corpus_sha del guard, y emite el JSON del recibo a stdout.
+
+    Contrato de universo: si el invocante pasa MENOS que el universo
+    obligatorio, el generador falla explicito y NO emite recibo (NG-RAIZ
+    aplicado al emisor).
+    """
+    # Import DENTRO de la funcion para evitar circular import
+    from scripts.check_backlog_admission import (
+        ALGORITMO_REQUERIDO,
+        DEFAULT_ARCHIVES,
+        DEFAULT_BACKLOG,
+        RECIBO_VERSION,
+        UMBRAL_REQUERIDO,
+        derive_corpus_sha,
+    )
+
+    candidato_id = args.candidato_id
+    if not candidato_id:
+        print(
+            "[db-compare] ERROR: --emit-recibo requiere --candidato-id.",
+            file=sys.stderr,
+        )
+        return 2
+
+    veredicto_raw = args.veredicto
+    if not veredicto_raw:
+        print(
+            "[db-compare] ERROR: --emit-recibo requiere --veredicto "
+            "(el juicio es del autor, nunca del generador). "
+            "Formato: 'NUEVA' o 'DUPLICADO_DE:WOT-2026-001a'.",
+            file=sys.stderr,
+        )
+        return 2
+
+    v_parts = veredicto_raw.split(":", 1)
+    v_tipo = v_parts[0].upper()
+    v_ids = (
+        [i.strip() for i in v_parts[1].split(",") if i.strip()]
+        if len(v_parts) > 1
+        else []
+    )
+    valid_tipos = {"NUEVA", "DUPLICADO_DE", "VINCULADA_A", "ABSORBE_A"}
+    if v_tipo not in valid_tipos:
+        print(
+            f"[db-compare] ERROR: veredicto tipo invalido: {v_tipo!r}. "
+            f"Valores validos: {', '.join(sorted(valid_tipos))}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    git_root = Path(args.git_root or ".").resolve()
+    obligatorias = [DEFAULT_BACKLOG, *DEFAULT_ARCHIVES]
+
+    usuario_total = [str(p) for p in (args.backlog or [])] + [
+        str(p) for p in (args.archive_file or [])
+    ]
+    if not usuario_total:
+        usuario_total = list(obligatorias)
+
+    faltantes = _check_universe_coverage(usuario_total, obligatorias, git_root)
+    if faltantes:
+        print(
+            f"[db-compare] ERROR: --emit-recibo exige cobertura del universo "
+            f"obligatorio. Faltan: {', '.join(faltantes)}. "
+            f"Superficies obligatorias: {', '.join(obligatorias)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    candidato_contenido_sha = ""
+    if args.row_text:
+        import hashlib
+
+        candidato_contenido_sha = hashlib.sha256(
+            args.row_text.rstrip("\n").encode("utf-8")
+        ).hexdigest()
+
+    corpus_result = _build_corpus(git_root, obligatorias)
+    if isinstance(corpus_result, str):
+        print(f"[db-compare] ERROR: {corpus_result}", file=sys.stderr)
+        return 2
+    corpus, entradas_censadas = corpus_result
+
+    corpus_sha, _sin_pin, _reconto = derive_corpus_sha(git_root, corpus, None, git_root)
+
+    # Calcular vecinos: el compare ya tiene la logica Jaccard con umbral 0.12.
+    vecinos, vecinos_fallback = _compute_vecinos(
+        git_root, obligatorias, candidato_id, args.row_text
+    )
+
+    recibo = {
+        "recibo_version": RECIBO_VERSION,
+        "candidato_id": candidato_id,
+        "candidato_contenido_sha": candidato_contenido_sha,
+        "corpus": corpus,
+        "corpus_sha": corpus_sha,
+        "entradas_censadas": entradas_censadas,
+        "algoritmo": ALGORITMO_REQUERIDO,
+        "umbral": UMBRAL_REQUERIDO,
+        "veredicto_propuesta": {"tipo": v_tipo, "ids": v_ids},
+        "vecinos": vecinos,
+        "vecinos_barrido": vecinos_fallback,
+    }
+
+    print(json.dumps(recibo, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Modo generador de recibo (camino independiente del compare)
+    if args.emit_recibo:
+        return _emit_recibo(args)
 
     if not any((args.backlog, args.inbox, args.queued, args.in_flight, args.contracts)):
         print(

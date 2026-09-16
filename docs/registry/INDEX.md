@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 34 |
+| prompt | 35 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 40 |
-| **total** | **115** |
+| skill | 41 |
+| **total** | **117** |
 
 ## Entradas
 
@@ -35,6 +35,7 @@
 | prompt | `prompts/audit_portability_legacy_surface.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_post_change_system_health.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_ticket_contract.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/backlog_admit.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/backlog_triage.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/escalate_to_motor.md` | active | system | shared | model-invoked | — |
@@ -101,6 +102,7 @@
 | skill | `skills/audit-git-publication/SKILL.md` | active | agent | auditor | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
 | skill | `skills/audit-pipeline-codeonly/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline-codeonly, audit-pipeline-codeonly, auditar-pipeline-codeonly |
 | skill | `skills/audit-pipeline/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline, audit-pipeline, auditar-pipeline |
+| skill | `skills/backlog-admit/SKILL.md` | active | agent | builder | model-invoked | /alta-backlog, /backlog-admit, backlog-admit |
 | skill | `skills/backlog-triage/SKILL.md` | active | agent | manager | model-invoked | /backlog-triage, backlog-triage |
 | skill | `skills/builder-implement-from-plan/SKILL.md` | active | agent | builder | model-invoked | /code, /implement, implement |
 | skill | `skills/builder-run-quality-gates/SKILL.md` | active | agent | builder | model-invoked | /check, /gates, quality-gates |
