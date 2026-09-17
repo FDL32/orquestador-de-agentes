@@ -119,6 +119,9 @@ GLOB_PATTERNS = [
     "runtime/**/*.py",
     "bus/**/*.py",
     ".agent/**/*.py",
+    # WOT-2026-070e: bring .agent/**/*.md under the guard so operational
+    # surfaces (.agent/collaboration/, .agent/planning/) are audited.
+    ".agent/**/*.md",
     "*.md",
 ]
 
@@ -126,6 +129,13 @@ EXCLUDE_PATTERNS = {
     "scripts/sandbox/**",
     ".agent/backups/**",
     ".agent/runtime/uv-cache/**",
+    # WOT-2026-070e: exclude archived and transient directories to avoid
+    # blocking closes on historical corruption (404 noise files).
+    "**/_archive/**",
+    "**/archive/**",
+    "**/runtime/tmp/**",
+    "**/runtime/reviews/**",
+    "**/runtime/review_packets/**",
 }
 
 ALLOWLIST = {}
