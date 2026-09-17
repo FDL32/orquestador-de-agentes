@@ -224,3 +224,98 @@ def test_fichero_ajeno_fuera_de_la_canonica_no_dispara_r3(tmp_path):
     assert "R3-ubicacion-no-canonica" not in codes, (
         f"un informe corriente no debe disparar R3: {[f.rule for f in findings]}"
     )
+
+
+def test_el_stray_tambien_se_escanea_por_contenido(tmp_path):
+    """El HUECO que cierra WOT-2026-067w-b: a un stray solo se le ponia R3.
+
+    Medido 2026-09-17 (bucle L1018, cazado por la lente BA06 leyendo `audit()`):
+    el bucle de `scan_prompt` recorre `prompts` ANTES de que los strays se anadan
+    a esa lista, asi que un prompt fuera de la canonica recibia UNICAMENTE el
+    hallazgo de ubicacion. Su CONTENIDO no se miraba.
+
+    Consecuencia real, no hipotetica: `launch_builder_016r_20260915.md` (ticket
+    VIVO) ordena en su linea 25 `Lee: .agent/collaboration/work_plan.md` -- ruta
+    RELATIVA, el defecto R1 exacto que originó esta barrera. El guard lo
+    reportaba como simple "ubicacion no canonica"; el defecto grave lo encontro
+    una lectura humana. El hallazgo peligroso se presentaba como el mas benigno.
+
+    Este test pinea que un stray recibe AMBAS reglas.
+    """
+    _stray_prompt(
+        tmp_path,
+        "orchestrator_pipeline/reports/launch_builder_WOT-2026-998y.md",
+        "# Launch Builder Prompt"
+        + NL
+        + NL
+        + "contract_id: cid-bui-implement-v1"
+        + NL
+        + NL
+        + "- Lee: `.agent/collaboration/work_plan.md`, STRATEGY si existe."
+        + NL,
+    )
+    findings, _prompts = audit(tmp_path)
+    codes = {f.rule for f in findings}
+    assert "R3-ubicacion-no-canonica" in codes, (
+        f"el stray debe seguir marcando ubicacion: {[f.rule for f in findings]}"
+    )
+    assert "R1-ruta-ambigua" in codes, (
+        "un stray con runtime SIN raiz debe producir R1 ademas de R3; "
+        f"hallazgos={[f.render() for f in findings]}"
+    )
+
+
+def test_el_stray_correcto_no_inventa_r1(tmp_path):
+    """CONTROL POSITIVO del test anterior.
+
+    Sin esto, extender `scan_prompt` a los strays podria marcarlos todos y el
+    test de arriba pasaria igual. Un stray que SI ancla su ruta recibe R3 (esta
+    fuera de sitio) pero NO R1 (su contenido es correcto).
+    """
+    _stray_prompt(
+        tmp_path,
+        "orchestrator_pipeline/reports/launch_builder_WOT-2026-997x.md",
+        BUILDER_PROMPT_BODY,
+    )
+    findings, _prompts = audit(tmp_path)
+    codes = {f.rule for f in findings}
+    assert "R3-ubicacion-no-canonica" in codes, (
+        f"sigue estando fuera de sitio: {[f.rule for f in findings]}"
+    )
+    assert "R1-ruta-ambigua" not in codes, (
+        f"falso positivo de R1 sobre un stray correcto: {[f.render() for f in findings]}"
+    )
+
+
+def test_el_verbo_no_se_pierde_por_su_puntuacion(tmp_path):
+    """El AGUJERO DE UN CARACTER (medido 2026-09-17).
+
+    `_READ_VERBS` contenia `"lee "` -- con espacio final. Eso casaba
+    ``Lee `work_plan.md` `` pero NO ``Lee: `work_plan.md` ``, que es exactamente
+    la forma del defecto VIVO de `launch_builder_016r_20260915.md:25`. Tres de
+    cinco formas imperativas reales se escapaban por su puntuacion.
+
+    Pinea las DOS direcciones: la orden con dos puntos se caza, y la palabra
+    que solo CONTIENE el verbo (`leemos`, prosa) sigue sin cazarse -- sin ese
+    segundo extremo, acortar el verbo habria reabierto los falsos positivos que
+    el barrido de 2026-09-10 cerro.
+    """
+    ordenes = (
+        "- Lee: `work_plan.md` antes de nada.",
+        "Leer: `STATE.md` del destino.",
+        "- Lee:`TURN.md`",
+        "- Lee `execution_log.md`",
+    )
+    for linea in ordenes:
+        path = _prompt(tmp_path, "builder_prompt_WOT-2026-996w.md", linea + NL)
+        findings = scan_prompt(path)
+        assert [f.rule for f in findings] == ["R1-ruta-ambigua"], (
+            f"orden no cazada por su puntuacion: {linea!r} -> "
+            f"{[f.render() for f in findings]}"
+        )
+
+    prosa = "Cuando leemos `work_plan.md` conviene mirar la fecha."
+    path = _prompt(tmp_path, "builder_prompt_WOT-2026-995v.md", prosa + NL)
+    assert scan_prompt(path) == [], (
+        f"falso positivo sobre prosa: {[f.render() for f in scan_prompt(path)]}"
+    )

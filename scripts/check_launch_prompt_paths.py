@@ -110,14 +110,41 @@ ABSOLUTE_HINT_RE = re.compile(
 # mencion daba 13 hits, de los que solo 4 eran ordenes reales -- 9 falsos positivos (69%).
 # Enumerar la prosa es inagotable; enumerar el imperativo es una lista corta y cerrada.
 # Sin este filtro la barrera muere por ruido, que es como mueren las barreras.
+#
+# EL ESPACIO FINAL ERA UN AGUJERO (medido 2026-09-17, WOT-2026-067w-b). `"lee "` casaba
+# `Lee \`work_plan.md\`` pero NO `Lee: \`work_plan.md\``: un solo caracter de diferencia.
+# Y esa segunda forma es la del defecto VIVO de `launch_builder_016r_20260915.md:25`, que
+# por eso viajaba invisible. Medidas 5 formas imperativas reales: 3 se escapaban
+# (`Lee:`, `Leer:`, `Lee:\``). La lista sigue siendo CERRADA y el filtro SINTACTICO -- lo
+# que cambia es que el limite del verbo se expresa como frontera no-alfabetica en vez de
+# como un espacio literal, para no volver a perder la orden por su puntuacion.
 _READ_VERBS = (
     "confirma",
     "verifica",
     "inspecc",
     "registra en",
-    "lee ",
-    "leer ",
+    "lee",
+    "leer",
     "consulta",
+)
+
+# Un verbo de `_READ_VERBS` seguido de algo que NO sea una letra: asi `lee` casa `Lee:`,
+# `Lee \`x\`` y `Lee*`, pero NO `leemos` ni `leelo` (que son prosa, no orden). Sin esta
+# frontera, acortar `"lee "` a `"lee"` habria reabierto los falsos positivos que el
+# barrido de 2026-09-10 cerro.
+#
+# PRECISION MEDIDA TRAS EL CAMBIO (2026-09-17, sobre los 11 prompts vivos del destino):
+# 7 hallazgos R1, de los que 6 son ORDENES reales en imperativo (`Confirma`, `Registra
+# en`, `Lee:`) y 1 es prosa descriptiva -- `launch_builder_WOT-2026-070a:38`, que explica
+# lo que hace un SCRIPT ("no acepta el ticket como argumento: lee el `work_plan.md`
+# ACTIVO"). Precision 6/7 = 86%, frente al 31% (4/13) de la regla que marcaba toda
+# mencion. Ese unico FP se DECLARA y no se persigue: distinguir "lee" imperativo de "lee"
+# con sujeto no-humano exige analisis de sujeto, que es heuristica nueva sobre una
+# superficie ya acotada -- el patron que este repo llama STOP de degeneracion. Un FP
+# nombrado cuesta menos que un analizador que nadie audita.
+_READ_VERB_RE = re.compile(
+    r"(?:" + "|".join(re.escape(v) for v in _READ_VERBS) + r")(?![a-záéíóúñ])",
+    re.IGNORECASE,
 )
 
 
@@ -145,8 +172,7 @@ def _is_read_order(line: str) -> bool:
     positivos; exigir el verbo deja 4, que son las ordenes reales -- incluida la
     linea 40 pre-fix que detuvo el vuelo.
     """
-    low = line.lower()
-    return any(verb in low for verb in _READ_VERBS)
+    return _READ_VERB_RE.search(line) is not None
 
 
 def scan_prompt(path: Path) -> list[Finding]:
@@ -227,6 +253,16 @@ def audit(project_root: Path) -> tuple[list[Finding], list[Path]]:
     # R3: la ubicacion tambien es contrato. Un prompt de arranque fuera de
     # `.agent/planning/` no lo ve este guard en su barrido por-linea, y el
     # Builder que lo consuma resolvera runtime contra su cwd.
+    #
+    # Y su CONTENIDO se escanea igual (WOT-2026-067w-b). Hasta el 2026-09-17 no
+    # se hacia: el bucle de `scan_prompt` de arriba recorre `prompts` ANTES de
+    # que los strays entren en esa lista, asi que un prompt fuera de sitio
+    # recibia SOLO el hallazgo de ubicacion. Medido en produccion:
+    # `launch_builder_016r_20260915.md` (ticket VIVO) ordena `Lee:
+    # .agent/collaboration/work_plan.md` sin raiz -- el defecto R1 exacto que
+    # origino esta barrera -- y el guard lo reportaba como mera "ubicacion no
+    # canonica". El defecto grave lo encontro una lectura humana, no el guard:
+    # el hallazgo peligroso se presentaba como el mas benigno.
     for path in find_stray_prompts(project_root):
         rel = path.relative_to(project_root).as_posix()
         findings.append(
@@ -237,6 +273,7 @@ def audit(project_root: Path) -> tuple[list[Finding], list[Path]]:
                 f"prompt de arranque fuera de .agent/planning/: {rel}",
             )
         )
+        findings.extend(scan_prompt(path))
         prompts.append(path)
     return findings, prompts
 
