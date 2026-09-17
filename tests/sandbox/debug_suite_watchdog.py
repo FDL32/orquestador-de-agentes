@@ -44,6 +44,7 @@ import ctypes
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -180,8 +181,14 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.project_root).resolve()
     base = root / ".agent" / "runtime" / "pytest-safe"
+    # FUERA del arbol observado, y no es un detalle de estilo (medido 2026-09-17):
+    # la v1 escribia su `.jsonl` en `tests/sandbox/`, dentro del repo. Eso ensucio el
+    # arbol MIENTRAS corria la suite canonica, y `run_pytest_safe` invalido la medicion
+    # entera -- `MEDICION INVALIDADA: el arbol cambio durante la ventana` -- pese a que
+    # los 6631 tests habian pasado. Un observador que altera lo observado destruye la
+    # medicion que existe para proteger.
     out = Path(args.out) if args.out else (
-        Path(__file__).resolve().parent / f"watchdog_{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+        Path(tempfile.gettempdir()) / f"watchdog_{datetime.now():%Y%m%d-%H%M%S}.jsonl"
     )
 
     print(f"[watchdog] repo    : {root}")
