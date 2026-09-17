@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -2283,26 +2284,30 @@ class TestWriteJsonFsync:
     """WOT-2026-062e (Pieza A): write_json with fsync persists data."""
 
     def test_write_json_without_fsync(self, tmp_path: Path) -> None:
-        """write_json without fsync writes the file normally."""
+        """write_json without fsync does NOT call os.fsync."""
         rps = load_runner_module()
         test_file = tmp_path / "test.json"
-        rps.write_json(test_file, {"key": "value"})
-        assert test_file.exists()
-        import json
-
-        data = json.loads(test_file.read_text(encoding="utf-8"))
-        assert data == {"key": "value"}
+        with patch.object(rps, "os", autospec=True) as mock_os:
+            rps.write_json(test_file, {"key": "value"})
+            mock_os.open.assert_not_called()
+            mock_os.fsync.assert_not_called()
 
     def test_write_json_with_fsync(self, tmp_path: Path) -> None:
-        """write_json with fsync=True writes and syncs the file."""
+        """write_json with fsync=True calls os.fsync on the file descriptor."""
         rps = load_runner_module()
         test_file = tmp_path / "test_fsync.json"
-        rps.write_json(test_file, {"key": "value"}, fsync=True)
-        assert test_file.exists()
-        import json
-
-        data = json.loads(test_file.read_text(encoding="utf-8"))
-        assert data == {"key": "value"}
+        with patch.object(rps, "os", autospec=True) as mock_os:
+            rps.write_json(test_file, {"key": "value"}, fsync=True)
+            assert mock_os.open.called, (
+                "fsync=True debe llamar os.open para obtener el fd"
+            )
+            assert mock_os.fsync.called, "fsync=True debe llamar os.fsync con el fd"
+            # Verificar que os.fsync se llamó con el fd devuelto por os.open
+            fd_returned = mock_os.open.return_value
+            fsync_arg = mock_os.fsync.call_args[0][0]
+            assert fsync_arg is fd_returned, (
+                "os.fsync debe recibir el fd devuelto por os.open"
+            )
 
 
 class TestReconcileDeadRun:
