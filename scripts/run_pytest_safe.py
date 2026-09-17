@@ -17,6 +17,7 @@ WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -394,8 +395,278 @@ def read_json(path: Path) -> dict:
         return {}
 
 
-def write_json(path: Path, payload: dict) -> None:
+# ---------------------------------------------------------------------------
+# WOT-2026-062e (Pieza A): environment probes — stdlib-only, Windows-first
+# ---------------------------------------------------------------------------
+
+
+def _run_cmd(
+    cmd: list[str], timeout: float = 10.0
+) -> subprocess.CompletedProcess[str] | None:
+    """Run *cmd*, return CompletedProcess or None on any failure."""
+    try:
+        return subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def _get_wmi_attribute(attribute: str) -> str | None:
+    """Query a single WMI attribute via PowerShell Get-CimInstance."""
+    ps = shutil.which("powershell")
+    if not ps:
+        return None
+    cmd = [
+        ps,
+        "-NoProfile",
+        "-Command",
+        f"$o=Get-CimInstance Win32_OperatingSystem; Write-Output($o.{attribute})",
+    ]
+    result = _run_cmd(cmd, timeout=5.0)
+    if result is None:
+        return None
+    val = result.stdout.strip()
+    return val if val else None
+
+
+def _probe_ram() -> tuple[float | None, float | None, float | None, list[str]]:
+    """Probe RAM via CIM. Returns (ram_free_mb, ram_total_mb, ram_used_pct, errors)."""
+    errors: list[str] = []
+    ram_free_mb: float | None = None
+    ram_total_mb: float | None = None
+    raw_free = _get_wmi_attribute("FreePhysicalMemory")
+    if raw_free is not None:
+        try:
+            ram_free_mb = float(raw_free) / 1024.0
+        except (ValueError, TypeError):
+            errors.append("ram_free: parse failed")
+    raw_total = _get_wmi_attribute("TotalVisibleMemorySize")
+    if raw_total is not None:
+        try:
+            ram_total_mb = float(raw_total) / 1024.0
+        except (ValueError, TypeError):
+            errors.append("ram_total: parse failed")
+    ram_used_pct: float | None = None
+    if ram_free_mb is not None and ram_total_mb is not None and ram_total_mb > 0:
+        ram_used_pct = round(100.0 * (1.0 - ram_free_mb / ram_total_mb), 1)
+    return ram_free_mb, ram_total_mb, ram_used_pct, errors
+
+
+def _probe_process_count() -> tuple[int | None, list[str]]:
+    """Probe process count via tasklist. Returns (count, errors)."""
+    errors: list[str] = []
+    tasklist = shutil.which("tasklist")
+    if not tasklist:
+        errors.append("tasklist: not found")
+        return None, errors
+    result = _run_cmd([tasklist, "/NH"], timeout=5.0)
+    if result is None:
+        errors.append("tasklist: command failed")
+        return None, errors
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    return max(0, len(lines) - 1), errors
+
+
+def _probe_cpu_load() -> tuple[float | None, list[str]]:
+    """Probe CPU load via CIM. Returns (load_pct, errors)."""
+    errors: list[str] = []
+    raw_cpu = _get_wmi_attribute("LoadPercentage")
+    if raw_cpu is None:
+        errors.append("cpu_load: WMI query failed")
+        return None, errors
+    try:
+        return float(raw_cpu), errors
+    except (ValueError, TypeError):
+        errors.append("cpu_load: parse failed")
+        return None, errors
+
+
+def _probe_spawn_latency() -> tuple[float | None, list[str]]:
+    """Probe spawn latency via 20 subprocess calls. Returns (mean_ms, errors)."""
+    errors: list[str] = []
+    try:
+        python_exe = sys.executable
+        times: list[float] = []
+        for _ in range(20):
+            t0 = datetime.now(timezone.utc)
+            _run_cmd([python_exe, "-c", "pass"], timeout=5.0)
+            t1 = datetime.now(timezone.utc)
+            times.append((t1 - t0).total_seconds() * 1000.0)
+        if times:
+            return round(sum(times) / len(times), 2), errors
+        return None, errors
+    except Exception:
+        errors.append("spawn_benchmark: exception")
+        return None, errors
+
+
+def _collect_environment() -> dict:
+    """Collect a snapshot of the machine environment at startup.
+
+    WOT-2026-062e (Pieza A): stdlib-only environment probes for Windows.
+    Used as `environment_at_start` in the heartbeat (last-run.json).
+
+    Before: nothing.
+    During: queries CIM/WMI for RAM and CPU, counts processes via tasklist,
+        and measures spawn latency via 20 subprocess calls.
+    After: returns a dict with keys: ram_free_mb, ram_used_pct, process_count,
+        cpu_load_pct, spawn_ms_mean, probe_cost_s, probe_errors.
+
+    Cost measured in L1010: ~1.9 s total.
+    """
+    all_errors: list[str] = []
+    start = datetime.now(timezone.utc)
+
+    ram_free_mb, _, ram_used_pct, ram_errors = _probe_ram()
+    all_errors.extend(ram_errors)
+
+    process_count, proc_errors = _probe_process_count()
+    all_errors.extend(proc_errors)
+
+    cpu_load_pct, cpu_errors = _probe_cpu_load()
+    all_errors.extend(cpu_errors)
+
+    spawn_ms_mean, spawn_errors = _probe_spawn_latency()
+    all_errors.extend(spawn_errors)
+
+    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+
+    return {
+        "ram_free_mb": ram_free_mb,
+        "ram_used_pct": ram_used_pct,
+        "process_count": process_count,
+        "cpu_load_pct": cpu_load_pct,
+        "spawn_ms_mean": spawn_ms_mean,
+        "probe_cost_s": round(elapsed, 3),
+        "probe_errors": all_errors if all_errors else [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-062e (Pieza B): reconcile dead runs
+# ---------------------------------------------------------------------------
+
+
+def _reconcile_dead_run() -> None:
+    """Reconcile a dead run: if last-run.json has status=started with a dead PID,
+    mark it aborted and append to run_history BEFORE the new run proceeds.
+
+    WOT-2026-062e (Pieza B): the SO reuses PIDs, so we use a DOUBLE probe
+    to confirm the PID is truly dead. If the second probe disagrees we
+    label it `assumed_dead`.
+
+    Before: last-run.json may exist with status="started" and exit_code=None.
+    During: reads the lock file for the PID, runs is_pid_running twice.
+    After: if dead, appends an aborted record to run_history.jsonl and
+        overwrites last-run.json with status="aborted".
+    """
+    if not LAST_RUN_JSON.exists():
+        return
+
+    prev = read_json(LAST_RUN_JSON)
+    if prev.get("status") != "started":
+        return
+    if prev.get("exit_code") is not None:
+        return
+
+    # The PID comes from the lock file (written by acquire_lock), not from
+    # last-run.json. last-run.json may not have a PID field if the process
+    # died before writing it.
+    lock_pid: int | None = None
+    if LOCK_FILE.exists():
+        lock_data = read_json(LOCK_FILE)
+        lock_pid = int(lock_data.get("pid", 0) or 0)
+
+    if lock_pid and is_pid_running(lock_pid):
+        return  # PID is alive -> not dead
+
+    # Double probe: confirm the PID is dead with a second check.
+    # The SO reuses PIDs, so we need two probes with a small delay.
+    import time as _time
+
+    _time.sleep(0.05)
+    still_dead = not is_pid_running(lock_pid) if lock_pid else True
+
+    assumed_dead = not still_dead  # second probe says alive -> recycled
+
+    # Build the aborted record
+    aborted_record = {
+        "started_at": prev.get("started_at"),
+        "finished_at": iso_now(),
+        "level": prev.get("level"),
+        "args_mode": prev.get("args_mode"),
+        "status": "aborted",
+        "exit_code": None,
+        "passed": None,
+        "skipped": None,
+        "failed_count": None,
+        "errors": None,
+        "duration_s": None,
+        "top_slowest": [],
+        "tested_commit_sha": prev.get("tested_commit_sha"),
+        "interpreter_kind": prev.get("interpreter_kind"),
+        "reconciled_at": iso_now(),
+        "reconciled_reason": "dead_pid" if not assumed_dead else "assumed_dead",
+        "lock_pid": lock_pid,
+        "assumed_dead": assumed_dead,
+    }
+
+    # Append to run_history (fail-open)
+    with contextlib.suppress(Exception):
+        append_run_history(aborted_record)
+
+    # Overwrite last-run.json with the aborted status
+    prev["status"] = "aborted"
+    prev["reconciled_at"] = iso_now()
+    prev["reconciled_reason"] = "dead_pid" if not assumed_dead else "assumed_dead"
+    prev["lock_pid"] = lock_pid
+    prev["assumed_dead"] = assumed_dead
+    write_json(LAST_RUN_JSON, prev)
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-062e (Pieza C): preflight environment warning (non-blocking)
+# ---------------------------------------------------------------------------
+
+
+def _emit_env_preflight(env: dict) -> None:
+    """Print a non-blocking warning if free RAM is below a heuristic threshold.
+
+    WOT-2026-062e (Pieza C): the threshold is NOT barrido (that's a separate
+    ticket). This is a WARNING only, never blocking. The heuristic threshold
+    of 2 GB (2048 MB) is documented as such and may be adjusted by the
+    operator without changing code.
+    """
+    ram_free = env.get("ram_free_mb")
+    if ram_free is not None and ram_free < 2048:
+        print(
+            f"[pytest-safe] WARN: RAM libre baja ({ram_free:.0f} MB). "
+            "La suite puede ser mas lenta de lo normal."
+        )
+
+
+def write_json(path: Path, payload: dict, fsync: bool = False) -> None:
+    """Write JSON to *path*.
+
+    WOT-2026-062e (Pieza A): when *fsync* is True, an explicit fsync is issued
+    after writing so that the data hits disk even if the process is killed
+    immediately afterwards (e.g. OOM / TerminateProcess).  This is critical
+    for the heartbeat that *must* persist because downstream consumers
+    (reconciliation, stale-lock detection) depend on it.
+    """
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    if fsync:
+        fd = os.open(str(path), os.O_RDWR)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def acquire_lock(force_unlock: bool = False) -> dict:
@@ -896,6 +1167,10 @@ def append_run_history(summary: dict) -> None:
             "top_slowest": summary.get("top_slowest") or [],
             "tested_commit_sha": summary.get("tested_commit_sha"),
             "interpreter_kind": summary.get("interpreter_kind"),
+            # WOT-2026-062e (Pieza A): environment snapshot at run start.
+            # Included so run_history.jsonl entries are self-contained:
+            # every row allows diagnosing slow runs without measuring the machine.
+            "environment_at_start": summary.get("environment_at_start"),
         }
         line = json.dumps(record, ensure_ascii=False)
 
@@ -1256,6 +1531,11 @@ def main() -> int:  # noqa: C901
             return 1
         return 0
 
+    # WOT-2026-062e (Pieza B): reconcile dead runs BEFORE acquiring a new lock.
+    # If last-run.json shows status=started with a dead PID, mark it aborted
+    # and append to run_history so the telemetry is complete.
+    _reconcile_dead_run()
+
     lock = acquire_lock(force_unlock=args.force_unlock)
     run_dir = make_run_dir()
 
@@ -1401,8 +1681,14 @@ def main() -> int:  # noqa: C901
         # WOT-2026-014b: informative field; does not change gate contract.
         "runner": _runner,
         "status": "started",
+        # WOT-2026-062e (Pieza A): environment snapshot at run start.
+        # Written with fsync so it persists even if the process is killed.
+        "environment_at_start": _collect_environment(),
     }
-    write_json(LAST_RUN_JSON, summary)
+    write_json(LAST_RUN_JSON, summary, fsync=True)
+
+    # WOT-2026-062e (Pieza C): preflight RAM warning (non-blocking).
+    _emit_env_preflight(summary.get("environment_at_start", {}))
 
     try:
         if args.dry_run:

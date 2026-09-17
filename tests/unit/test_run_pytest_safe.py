@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -2204,3 +2205,232 @@ def test_non_zero_non_five_status_unchanged_by_marker():
         rps._mark_no_tests_collected(code, summary)
         assert summary["status"] == "finished", f"exit {code}"
         assert "no_tests_collected" not in summary, f"exit {code}"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-062e: environment probes, dead-run reconciliation, preflight
+# ---------------------------------------------------------------------------
+
+
+class TestCollectEnvironment:
+    """WOT-2026-062e (Pieza A): _collect_environment returns expected keys."""
+
+    def test_returns_all_required_keys(self, monkeypatch) -> None:
+        """_collect_environment returns a dict with all required keys."""
+        rps = load_runner_module()
+        # Mock _get_wmi_attribute to return predictable values
+        monkeypatch.setattr(
+            rps,
+            "_get_wmi_attribute",
+            lambda attr: (
+                "1000" if "Memory" in attr else "50" if "Load" in attr else None
+            ),
+        )
+        monkeypatch.setattr(
+            rps, "_run_cmd", lambda cmd, timeout=10.0: _fake_run_cmd(cmd)
+        )
+
+        env = rps._collect_environment()
+
+        required_keys = [
+            "ram_free_mb",
+            "ram_used_pct",
+            "process_count",
+            "cpu_load_pct",
+            "spawn_ms_mean",
+            "probe_cost_s",
+            "probe_errors",
+        ]
+        for key in required_keys:
+            assert key in env, f"falta clave {key}"
+
+    def test_probe_errors_empty_on_success(self, monkeypatch) -> None:
+        """When all probes succeed, probe_errors is empty."""
+        rps = load_runner_module()
+        monkeypatch.setattr(
+            rps,
+            "_get_wmi_attribute",
+            lambda attr: (
+                "1000" if "Memory" in attr else "50" if "Load" in attr else None
+            ),
+        )
+        monkeypatch.setattr(
+            rps, "_run_cmd", lambda cmd, timeout=10.0: _fake_run_cmd(cmd)
+        )
+
+        env = rps._collect_environment()
+
+        assert env["probe_errors"] == [], (
+            f"probe_errors no vacio: {env['probe_errors']}"
+        )
+
+    def test_probe_errors_on_failure(self, monkeypatch) -> None:
+        """When probes fail, probe_errors lists the failures."""
+        rps = load_runner_module()
+        monkeypatch.setattr(
+            rps, "_get_wmi_attribute", lambda attr: None
+        )  # all WMI fails
+        monkeypatch.setattr(
+            rps, "_run_cmd", lambda cmd, timeout=10.0: None
+        )  # all cmds fail
+
+        env = rps._collect_environment()
+
+        assert len(env["probe_errors"]) > 0, "probe_errors deberia tener fallos"
+
+
+class TestWriteJsonFsync:
+    """WOT-2026-062e (Pieza A): write_json with fsync persists data."""
+
+    def test_write_json_without_fsync(self, tmp_path: Path) -> None:
+        """write_json without fsync writes the file normally."""
+        rps = load_runner_module()
+        test_file = tmp_path / "test.json"
+        rps.write_json(test_file, {"key": "value"})
+        assert test_file.exists()
+        import json
+
+        data = json.loads(test_file.read_text(encoding="utf-8"))
+        assert data == {"key": "value"}
+
+    def test_write_json_with_fsync(self, tmp_path: Path) -> None:
+        """write_json with fsync=True writes and syncs the file."""
+        rps = load_runner_module()
+        test_file = tmp_path / "test_fsync.json"
+        rps.write_json(test_file, {"key": "value"}, fsync=True)
+        assert test_file.exists()
+        import json
+
+        data = json.loads(test_file.read_text(encoding="utf-8"))
+        assert data == {"key": "value"}
+
+
+class TestReconcileDeadRun:
+    """WOT-2026-062e (Pieza B): dead-run reconciliation."""
+
+    def test_no_reconcile_when_no_last_run(self, tmp_path: Path, monkeypatch) -> None:
+        """When last-run.json does not exist, nothing happens."""
+        rps = load_runner_module()
+        monkeypatch.setattr(rps, "LAST_RUN_JSON", tmp_path / "last-run.json")
+        monkeypatch.setattr(rps, "LOCK_FILE", tmp_path / "pytest.lock")
+        # No last-run.json created
+        rps._reconcile_dead_run()
+        # No crash, no side effects
+        assert not (tmp_path / "last-run.json").exists()
+
+    def test_no_reconcile_when_status_finished(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When last-run.json has status=finished, nothing happens."""
+        rps = load_runner_module()
+        last_run = tmp_path / "last-run.json"
+        last_run.write_text(
+            json.dumps({"status": "finished", "exit_code": 0}), encoding="utf-8"
+        )
+        monkeypatch.setattr(rps, "LAST_RUN_JSON", last_run)
+        monkeypatch.setattr(rps, "LOCK_FILE", tmp_path / "pytest.lock")
+        monkeypatch.setattr(rps, "RUN_HISTORY_JSONL", tmp_path / "run_history.jsonl")
+        monkeypatch.setattr(rps, "is_pid_running", lambda pid: False)
+
+        rps._reconcile_dead_run()
+
+        # last-run.json unchanged
+        data = json.loads(last_run.read_text(encoding="utf-8"))
+        assert data["status"] == "finished"
+
+    def test_reconcile_dead_run_appends_aborted(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A dead run (status=started, dead PID) is reconciled as aborted."""
+        rps = load_runner_module()
+        last_run = tmp_path / "last-run.json"
+        last_run.write_text(
+            json.dumps(
+                {
+                    "status": "started",
+                    "exit_code": None,
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        lock_file = tmp_path / "pytest.lock"
+        lock_file.write_text(json.dumps({"pid": 99999}), encoding="utf-8")
+        monkeypatch.setattr(rps, "LAST_RUN_JSON", last_run)
+        monkeypatch.setattr(rps, "LOCK_FILE", lock_file)
+        monkeypatch.setattr(rps, "RUN_HISTORY_JSONL", tmp_path / "run_history.jsonl")
+        # PID 99999 is dead
+        monkeypatch.setattr(rps, "is_pid_running", lambda pid: False)
+
+        rps._reconcile_dead_run()
+
+        # last-run.json now shows aborted
+        data = json.loads(last_run.read_text(encoding="utf-8"))
+        assert data["status"] == "aborted", f"expected aborted, got {data['status']}"
+        assert "reconciled_at" in data
+
+        # run_history.jsonl has an aborted record
+        history = tmp_path / "run_history.jsonl"
+        assert history.exists()
+        lines = [
+            line
+            for line in history.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(lines) >= 1
+        last_line = json.loads(lines[-1])
+        assert last_line["status"] == "aborted"
+
+
+class TestEmitEnvPreflight:
+    """WOT-2026-062e (Pieza C): preflight RAM warning (non-blocking)."""
+
+    def test_warning_when_ram_low(self, monkeypatch, capsys) -> None:
+        """When ram_free_mb < 2048, a WARN is printed."""
+        rps = load_runner_module()
+        env = {"ram_free_mb": 1024.0, "ram_used_pct": 96.0}
+        rps._emit_env_preflight(env)
+        captured = capsys.readouterr()
+        assert "WARN" in captured.out, "debe imprimir WARN cuando RAM es baja"
+        assert "1024" in captured.out
+
+    def test_no_warning_when_ram_sufficient(self, monkeypatch, capsys) -> None:
+        """When ram_free_mb >= 2048, no WARN is printed."""
+        rps = load_runner_module()
+        env = {"ram_free_mb": 4096.0, "ram_used_pct": 80.0}
+        rps._emit_env_preflight(env)
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.out, (
+            "no debe imprimir WARN cuando RAM es suficiente"
+        )
+
+    def test_no_warning_when_ram_missing(self, monkeypatch, capsys) -> None:
+        """When ram_free_mb is missing, no crash and no WARN."""
+        rps = load_runner_module()
+        env: dict = {}
+        rps._emit_env_preflight(env)
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.out
+
+
+def _fake_run_cmd(
+    cmd: list[str], timeout: float = 10.0
+) -> subprocess.CompletedProcess[str] | None:
+    """Fake subprocess.run that returns a successful result for tasklist."""
+
+    class Result:
+        stdout: str
+        returncode: int
+
+        def __init__(self, stdout: str, returncode: int = 0):
+            self.stdout = stdout
+            self.returncode = returncode
+
+    if "tasklist" in str(cmd):
+        # Return 3 processes (header + 3 lines)
+        return Result(
+            "Image Name                     PID Session Name        Mem Size\npython.exe                 1234 Console              102400\ncode.exe                  5678 Console              204800\nchrome.exe                9012 Console             512000\n",
+            0,
+        )
+    # Default: successful empty command
+    return Result("", 0)
