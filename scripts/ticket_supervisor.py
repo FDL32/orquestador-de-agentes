@@ -105,8 +105,12 @@ def main() -> int:
     # WOT-2026-070g (Eje 1): fail explicit when no project root is available.
     # Without --project-root / AGENT_PROJECT_ROOT the supervisor would fall
     # back to the motor root and write into the neutral seed.
+    # Use args.project_root when provided (overrides module-level _PROJECT_ROOT).
     motor_root = Path(__file__).resolve().parent.parent
-    if Path(_PROJECT_ROOT) == motor_root:
+    effective_root = (
+        Path(args.project_root).resolve() if args.project_root else _PROJECT_ROOT
+    )
+    if Path(effective_root) == motor_root:
         tried_paths: list[str] = []
         # Try common workspace locations relative to cwd
         for _candidate in (
@@ -126,7 +130,7 @@ def main() -> int:
         )
 
     supervisor = SequentialTicketSupervisor(
-        project_root=_PROJECT_ROOT,
+        project_root=effective_root,
         auto_sync=not args.no_auto_sync,
     )
 
