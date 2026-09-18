@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import faulthandler
 import hashlib
 import importlib
 import os
@@ -13,6 +15,39 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+
+# WOT-2026-070i: faulthandler watchdog for hang detection.
+# dump_traceback_later is an ABSOLUTE timer, not a "no progress" detector
+# (measured: a process doing work for 4 s with watchdog at 2 s still dumps).
+# Must be cancelled and re-armed per test.
+# Controlled by FAULTHANDLER_WATCHDOG_SECONDS env var; disabled by default
+# to avoid spurious dumps in the real suite (DoD-6 STOP condition).
+_watchdog_seconds: int | None = None
+try:
+    _watchdog_seconds = (
+        int(os.environ.get("FAULTHANDLER_WATCHDOG_SECONDS", "0")) or None
+    )
+except (ValueError, TypeError):
+    _watchdog_seconds = None
+_watchdog_enabled = _watchdog_seconds is not None and hasattr(
+    faulthandler, "dump_traceback_later"
+)
+
+
+def _cancel_watchdog() -> None:
+    """Cancel any pending ``dump_traceback_later`` timer."""
+    if not _watchdog_enabled:
+        return
+    with contextlib.suppress(Exception):
+        faulthandler.cancel_dump_traceback_later()
+
+
+def _arm_watchdog(seconds: int) -> None:
+    """Start ``dump_traceback_later`` with the given timeout (seconds)."""
+    if not _watchdog_enabled:
+        return
+    faulthandler.dump_traceback_later(seconds, repeat=False, file=sys.stderr)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -295,9 +330,78 @@ def _isolate_git_discovery_global(
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the session runtime once pytest finishes."""
+    # WOT-2026-070i: flush and close heartbeat file handle.
+    if heartbeat is not None:  # type: ignore
+        with contextlib.suppress(Exception):
+            heartbeat.close()
     # WOT-2026-013i: robust removal (read-only .git fixtures) instead of the
     # silent ignore_errors no-op that let orphans accumulate.
     _rmtree_robust(SESSION_RUNTIME_ROOT)
+
+
+# ── WOT-2026-070i: heartbeat hooks ──────────────────────────────────────────
+
+# Import heartbeat module; all writes are fail-open so a missing module
+# would only be caught by the test suite, not by the running suite.
+try:
+    from tests import heartbeat  # type: ignore
+except Exception:
+    heartbeat = None  # type: ignore
+else:
+    # WOT-2026-070i DoD-2: marker emitted at IMPORT time. ``pytest_collection``
+    # only fires once collection starts, so a death before that point would
+    # leave no trace at all.
+    with contextlib.suppress(Exception):
+        heartbeat.process_start()
+
+
+def pytest_collection() -> None:
+    """Emit ``collection_start`` BEFORE collection begins."""
+    if heartbeat is not None:  # type: ignore
+        with contextlib.suppress(Exception):
+            heartbeat.collection_start()
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Emit ``collection_finish`` after collection completes."""
+    if heartbeat is not None:  # type: ignore
+        with contextlib.suppress(Exception):
+            heartbeat.collection_finish(len(session.items))
+
+
+def pytest_runtest_logstart(
+    nodeid: str,
+    location: tuple[str, int | None, str],
+) -> None:
+    """Emit ``test_start`` when a test begins (before setup)."""
+    if heartbeat is not None:  # type: ignore
+        with contextlib.suppress(Exception):
+            heartbeat.test_start(nodeid)
+            # WOT-2026-070i DoD-6: re-arm watchdog at each test start.
+            if _watchdog_enabled:
+                _cancel_watchdog()
+                _arm_watchdog(_watchdog_seconds)
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Emit a ``phase`` event after each test phase completes.
+
+    ``report.when`` is ``setup``, ``call``, or ``teardown``.
+    ``report.outcome`` is ``passed``, ``failed``, ``skipped``, or ``error``.
+    """
+    if heartbeat is not None:  # type: ignore
+        with contextlib.suppress(Exception):
+            heartbeat.phase_report(report.nodeid, report.when, report.outcome)
+
+    # WOT-2026-070i DoD-6: cancel the watchdog only once the test is OVER.
+    # ``pytest_runtest_logreport`` fires for ``setup`` BEFORE the test body runs,
+    # so cancelling on every phase disarms the timer precisely during ``call`` --
+    # the only phase where a hang matters. Measured on a clean tree with the real
+    # hook logic (3 tests: 0.1s / 8s / 0.1s, watchdog N=3):
+    #   cancel on every phase -> 0 dumps ; cancel on teardown only -> 1 dump
+    # DoD-6 requires exactly 1.
+    if _watchdog_enabled and report.when == "teardown":
+        _cancel_watchdog()
 
 
 @pytest.fixture(autouse=True)
