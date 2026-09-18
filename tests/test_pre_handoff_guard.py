@@ -2177,3 +2177,118 @@ class TestDegradedRunnerRejected:
 
         assert ok is True, f"non-code skip must be unaffected: {diag}"
         assert diag.get("reason") == "deliverable_type_skip", diag
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-070s: un sello que ARRANCO antes del commit no puede haberlo probado.
+#
+# Medido 2026-09-18 en el handoff de WOT-2026-040i: un `last-run.json` con
+# `status=finished`, `exit_code=0` y `tested_commit_sha == HEAD` -- los tres
+# checks que habia -- paso el gate llevando `started_at` DOS HORAS ANTES del
+# commit sellado. La corrida real del Builder (6521 tests, 0 fallos) nunca llego
+# al sello, y el guard acredito otra.
+# ---------------------------------------------------------------------------
+
+
+class TestSealPredatesCommit:
+    """The seal must not claim to have tested code that did not exist yet."""
+
+    @staticmethod
+    def _guard():
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    @staticmethod
+    def _commit_with_date(repo: Path, iso: str) -> None:
+        """Add a commit with a pinned COMMITTER date."""
+        import os
+
+        env = {**os.environ, "GIT_COMMITTER_DATE": iso, "GIT_AUTHOR_DATE": iso}
+        (repo / "later.txt").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "dated"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+
+    @staticmethod
+    def _seal(repo: Path, **overrides: object) -> Path:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        data: dict[str, object] = {
+            "status": "finished",
+            "exit_code": 0,
+            "level": "all",
+            "args_mode": "default_discovery",
+            "runner": "pytest",
+            "tested_commit_sha": head,
+            "passed": 6459,
+            "stamp_scope": "provisional_at_run_start",
+        }
+        data.update(overrides)
+        path = repo / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
+
+    def test_seal_started_before_commit_is_rejected(self, tmp_path: Path) -> None:
+        """The temporal impossibility measured on 2026-09-18 must now block."""
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._commit_with_date(repo, "2026-06-15T12:00:00+0000")
+        self._seal(repo, started_at="2026-06-15T11:00:00+00:00")
+
+        ok, diag = self._guard().assert_canonical_suite_green(repo, "code")
+
+        assert ok is False, f"a seal predating its commit must block: {diag}"
+        assert diag["reason"] == "seal_predates_commit", diag
+
+    def test_seal_started_after_commit_passes(self, tmp_path: Path) -> None:
+        """Positive control: the normal case must never be blocked."""
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._commit_with_date(repo, "2026-06-15T12:00:00+0000")
+        self._seal(repo, started_at="2026-06-15T12:05:00+00:00")
+
+        ok, diag = self._guard().assert_canonical_suite_green(repo, "code")
+
+        assert ok is True, f"a seal started after its commit must pass: {diag}"
+
+    def test_z_suffix_is_accepted(self, tmp_path: Path) -> None:
+        """Both UTC spellings must compare by INSTANT, not by ASCII order.
+
+        Regression guard for the bug this barrier hit while being written:
+        `datetime.fromisoformat` before Python 3.11 rejects the `Z` suffix that
+        git emits, so without normalisation the check fell through its
+        fail-open branch and NEVER fired. The positive control alone would not
+        have caught it -- the legitimate case passed either way.
+        """
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._commit_with_date(repo, "2026-06-15T12:00:00+0000")
+        self._seal(repo, started_at="2026-06-15T12:05:00Z")
+
+        ok, diag = self._guard().assert_canonical_suite_green(repo, "code")
+
+        assert ok is True, f"the Z spelling must be accepted: {diag}"
+
+    def test_missing_started_at_fails_open(self, tmp_path: Path) -> None:
+        """An absent timestamp must not become a new single point of failure."""
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._commit_with_date(repo, "2026-06-15T12:00:00+0000")
+        self._seal(repo)
+
+        ok, diag = self._guard().assert_canonical_suite_green(repo, "code")
+
+        assert ok is True, f"a seal without started_at must not be blocked: {diag}"
