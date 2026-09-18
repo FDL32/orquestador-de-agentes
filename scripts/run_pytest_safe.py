@@ -1761,7 +1761,7 @@ def main() -> int:  # noqa: C901
             summary["state_leak"] = leaked
             print(
                 "[pytest-safe] STATE LEAK: la suite modifico archivos canonicos "
-                f"de .agent/collaboration/: {', '.join(leaked)}. "
+                f"en {_AGENT_DIR!s}: {', '.join(leaked)}. "
                 "Algun test escribe fuera de tmp_path. Restaura con git checkout "
                 "y biseca el test culpable."
             )

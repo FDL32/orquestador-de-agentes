@@ -1167,10 +1167,26 @@ def test_ticket_supervisor_reactive_prints_bootstrapped_state(
     monkeypatch.setattr(
         ticket_supervisor_script, "SequentialTicketSupervisor", DummySupervisor
     )
+
+    # El modulo importado tiene _PROJECT_ROOT al motor root;
+    # hay que sobreescribirlo para que el guard no lo detecte como motor.
+    monkeypatch.setattr(
+        ticket_supervisor_script,
+        "_PROJECT_ROOT",
+        tmp_path,
+    )
+
     monkeypatch.setattr(
         sys,
         "argv",
-        ["ticket_supervisor.py", "--reactive", "--timeout", "1"],
+        [
+            "ticket_supervisor.py",
+            "--project-root",
+            str(tmp_path),
+            "--reactive",
+            "--timeout",
+            "1",
+        ],
     )
 
     ticket_supervisor_script.main()
@@ -1178,6 +1194,203 @@ def test_ticket_supervisor_reactive_prints_bootstrapped_state(
     out = capsys.readouterr().out
     assert "active=WP-2026-042" in out
     assert "completed=2" in out
+
+
+# =============================================================================
+# WOT-2026-070g: ticket_supervisor --project-root guard
+# =============================================================================
+
+
+def test_supervisor_fails_without_project_root(monkeypatch, tmp_path):
+    """Regression: without --project-root the supervisor must fail explicit.
+
+    FAIL-sin-fix / PASS-con-fix: sin el fix de Eje 1, main() resuelve al
+    motor root y continua (o escribe en el seed). Con el fix, main()
+    levanta SystemExit con diagnostico accionable.
+    """
+    from runtime import project_root as pr_module
+    from scripts import ticket_supervisor as ts_module
+
+    # Limpiar cache y env var para simular invocacion sin raiz
+    pr_module.clear_cache()
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+    # Mockear el import de SequentialTicketSupervisor para que NO se ejecute
+    # el codigo real (que requeriria un arbol completo)
+    monkeypatch.setattr(
+        ts_module,
+        "SequentialTicketSupervisor",
+        MagicMock(),
+    )
+
+    # Simular que resolve_project_root() devolvio el motor root
+    monkeypatch.setattr(
+        ts_module,
+        "_PROJECT_ROOT",
+        Path(__file__).resolve().parent.parent,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ticket_supervisor.py", "--once"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        ts_module.main()
+
+    # SystemExit con string -> el code es el mensaje
+    assert isinstance(exc_info.value.code, str)
+    assert "ERROR: no project root resolved" in exc_info.value.code
+    assert "--project-root" in exc_info.value.code
+    assert "AGENT_PROJECT_ROOT" in exc_info.value.code
+
+
+def test_supervisor_starts_with_project_root_flag(monkeypatch, tmp_path, capsys):
+    """Exploratory: con --project-root el supervisor arranca sin error.
+
+    El constructor recibe tmp_path como project_root; no escribe en el motor.
+    """
+    from runtime import project_root as pr_module
+    from scripts import ticket_supervisor as ts_module
+
+    pr_module.clear_cache()
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor_mock = MagicMock()
+    supervisor_mock.bootstrap.return_value = True
+    supervisor_mock.load_state.return_value = SupervisorState(
+        active_ticket="WP-2026-099", completed_tickets=[]
+    )
+    supervisor_mock.run_once.return_value = False
+
+    monkeypatch.setattr(
+        ts_module,
+        "SequentialTicketSupervisor",
+        MagicMock(return_value=supervisor_mock),
+    )
+
+    monkeypatch.setattr(
+        ts_module,
+        "_PROJECT_ROOT",
+        tmp_path,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ticket_supervisor.py", "--project-root", str(tmp_path), "--once"],
+    )
+
+    rc = ts_module.main()
+    assert rc == 0
+    supervisor_mock.bootstrap.assert_called_once()
+
+
+def test_supervisor_starts_with_env_var(monkeypatch, tmp_path):
+    """Product path: raiz solo por env var, SIN el flag (como el launcher).
+
+    Equivale a launch_agent_terminals.ps1:790: set env var, run script without --project-root.
+    """
+    from runtime import project_root as pr_module
+    from scripts import ticket_supervisor as ts_module
+
+    collaboration_dir = tmp_path / ".agent" / "collaboration"
+    runtime_dir = tmp_path / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+
+    supervisor_mock = MagicMock()
+    supervisor_mock.bootstrap.return_value = True
+    supervisor_mock.load_state.return_value = SupervisorState(
+        active_ticket="WP-2026-099", completed_tickets=[]
+    )
+    supervisor_mock.run_once.return_value = False
+
+    monkeypatch.setattr(
+        ts_module,
+        "SequentialTicketSupervisor",
+        MagicMock(return_value=supervisor_mock),
+    )
+
+    # Env var antes de la resolucion -> resolve_project_root() la usa
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    pr_module.clear_cache()
+
+    # El modulo ya importado tiene _PROJECT_ROOT congelado;
+    # hay que sobreescribirlo para que el guard no lo detecte como motor.
+    monkeypatch.setattr(
+        ts_module,
+        "_PROJECT_ROOT",
+        tmp_path,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ticket_supervisor.py", "--once"],
+    )
+
+    rc = ts_module.main()
+    assert rc == 0
+    supervisor_mock.bootstrap.assert_called_once()
+
+
+def test_supervisor_diagnostic_names_missing_root(monkeypatch):
+    """Diagnostic: el mensaje de aborto nombra que falta y como corregirlo."""
+    from runtime import project_root as pr_module
+    from scripts import ticket_supervisor as ts_module
+
+    pr_module.clear_cache()
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+    monkeypatch.setattr(
+        ts_module,
+        "_PROJECT_ROOT",
+        Path(__file__).resolve().parent.parent,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ticket_supervisor.py", "--once"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        ts_module.main()
+
+    msg = exc_info.value.code
+    assert isinstance(msg, str)
+    assert "--project-root" in msg
+    assert "AGENT_PROJECT_ROOT" in msg
+    assert "Fix:" in msg
+
+
+def test_supervisor_write_guard_blocks_motor_write(tmp_path):
+    """Eje 2: el supervisor no escribe en el seed del motor.
+
+    FAIL-sin-fix / PASS-con-fix: sin el guard, write_artifact atomic
+    escribe en el motor. Con el guard, levanta RuntimeError.
+    """
+    from bus.supervisor import SequentialTicketSupervisor
+
+    motor_root = Path(__file__).resolve().parent.parent
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True)
+
+    sup = SequentialTicketSupervisor(
+        project_root=motor_root,
+        collaboration_dir=collab,
+        auto_sync=False,
+    )
+
+    with pytest.raises(RuntimeError, match="WRITE BLOCKED"):
+        sup._write_text_if_changed(collab / "test.md", "content")
 
 
 # =============================================================================

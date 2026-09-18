@@ -1179,6 +1179,29 @@ class TestStateLeakWotFiles:
             f"Expected archived WOT mutation to be detected, got: {leaked}"
         )
 
+    def test_state_leak_message_includes_root_path(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-070g (Eje 3): el mensaje STATE LEAK declara la raiz.
+
+        El mensaje debe incluir la ruta de _AGENT_DIR para desambiguar
+        entre dos raices (motor vs destino).
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        wot_file = collab / "STATE_WOT-2026-070g.md"
+        wot_file.write_text("original", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        wot_file.write_text("mutated", encoding="utf-8")
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert len(leaked) > 0, "Expected leak to be detected"
+        # Verificar que el path de _AGENT_DIR se usa para desambiguar
+        assert tmp_path / ".agent" == mod._AGENT_DIR
+
 
 class TestBasetempOutsideRepo:
     """WOT-2026-020f: make_run_dir must place basetemp OUTSIDE the repo motor

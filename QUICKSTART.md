@@ -65,7 +65,7 @@ The launcher performs a comprehensive startup hygiene check before opening any w
 - **OpenCode integration (historical: WP-2026-067)**: When the Builder backend is OpenCode, the launcher invokes `opencode run "<msg>" --agent builder --model <model> --dir <root> -f <canonicals>` with a composed prompt from the active ticket, model read from `.opencode/opencode.json`, and canonical files attached. No manual paste required.
 
 The launcher opens windows independently for each agent:
-- **Supervisor window**: Runs `python scripts\ticket_supervisor.py --reactive`
+- **Supervisor window**: Runs `python scripts\ticket_supervisor.py --reactive --project-root <workspace>`
 - **Review Bridge window**: Runs `python scripts\manager_review_bridge.py --watch --backend-path <path>`
 - **Builder window**: Opens OpenCode with the active ticket prompt and the Builder contract in `.opencode/agents/builder.md` (only when appropriate)
 
@@ -129,7 +129,7 @@ If you need a clean restart after an interrupted session, use the supervisor dir
 ```powershell
 Set-Location <repo_root>
 
-python scripts\ticket_supervisor.py --once
+python scripts\ticket_supervisor.py --once --project-root <workspace>
 ```
 
 Regla operativa:
@@ -278,7 +278,7 @@ No manual paste is required.
 ### Terminal 2: Supervisor
 
 ```powershell
-python scripts\ticket_supervisor.py --reactive
+python scripts\ticket_supervisor.py --reactive --project-root <workspace>
 ```
 
 Supervisor prompt, if you need to run it manually:
@@ -357,10 +357,10 @@ If you see stale state (e.g., Supervisor still watching an old ticket), you must
 # (Ctrl+C in the terminal, or use Task Manager if needed)
 
 # Terminal 2: Reconcile state
-python scripts/ticket_supervisor.py --once
+python scripts/ticket_supervisor.py --once --project-root <workspace>
 
 # Then restart Supervisor in reactive mode
-python scripts/ticket_supervisor.py --reactive
+python scripts/ticket_supervisor.py --reactive --project-root <workspace>
 
 # And restart the Review Bridge
 python scripts/manager_review_bridge.py --watch --backend-path "..."

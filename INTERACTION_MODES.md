@@ -59,7 +59,7 @@ Use terminal-driven mode when:
 
 Typical flow:
 1. Start the supervisor:
-   - `python scripts/ticket_supervisor.py --reactive`
+    - `python scripts/ticket_supervisor.py --reactive --project-root <workspace>`
 2. Builder works on the active ticket in `TURN.md`.
 3. Supervisor enforces order and ticket transitions.
 4. Manager reviews from terminal using the review bridge:
@@ -105,8 +105,8 @@ with verifiable progress** (e.g., a Monitor task or explicit output file).
 
 ```powershell
 python .agent\agent_controller.py --validate --json --force
-python scripts\ticket_supervisor.py --once
-python scripts\ticket_supervisor.py --reactive
+python scripts\ticket_supervisor.py --once --project-root <workspace>
+python scripts\ticket_supervisor.py --reactive --project-root <workspace>
 python scripts\manager_review_bridge.py --watch
 python .agent\agent_controller.py --closeout --force
 ```

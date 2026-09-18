@@ -809,6 +809,26 @@ class SequentialTicketSupervisor:
 
     def _write_text_if_changed(self, path: Path, content: str) -> bool:
         """Write a text artifact only when its content changes."""
+        # WOT-2026-070g (Eje 2): guard against writing into the motor repo.
+        # Compare self.project_root against the motor root (deterministic,
+        # immune to lru_cache): if they resolve to the same directory the
+        # supervisor is operating on the neutral seed and must abort.
+        _motor_root = Path(__file__).resolve().parent.parent
+        try:
+            _project_resolved = Path(self.project_root).resolve()
+        except (OSError, ValueError):
+            _project_resolved = self.project_root
+        if _project_resolved == _motor_root:
+            raise RuntimeError(
+                "[supervisor] WRITE BLOCKED: project_root resolves to the "
+                "motor repo. This means AGENT_PROJECT_ROOT was not set or "
+                "--project-root was not provided. The supervisor cannot "
+                "write into the motor's .agent/collaboration/ seed.\n"
+                f"  project_root: {self.project_root}\n"
+                f"  motor_root:   {_motor_root}\n"
+                "  Fix: set AGENT_PROJECT_ROOT to the destination workspace "
+                "or pass --project-root <workspace> to the launcher."
+            )
         current = ""
         if path.exists():
             current = path.read_text(encoding="utf-8")
