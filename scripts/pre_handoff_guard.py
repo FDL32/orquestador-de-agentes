@@ -400,45 +400,54 @@ def check_checkpoint_alignment(project_root: Path, ticket_id: str) -> tuple[bool
         return (True, False)
 
 
-def _normalise_utc_iso(value: object) -> str:
-    """Normalise an ISO-8601 timestamp to UTC with a ``Z`` suffix.
+def _parse_utc(value: object) -> datetime | None:
+    """Parse an ISO-8601 timestamp into an aware UTC ``datetime``.
 
     Before: ``value`` is whatever the seal carried (``str``, ``None``, or an
         unexpected type -- the seal is untrusted input).
     During: pure parsing, no I/O. Accepts both the ``+00:00`` spelling that
-        ``run_pytest_safe`` writes and the ``Z`` spelling that ``git`` emits.
-    After: the normalised string, or ``""`` when absent or unparseable.
-        Returning ``""`` makes the caller SKIP the check instead of comparing
-        two different spellings: ``"...+00:00" < "...Z"`` is True by ASCII
-        order regardless of the actual instants, which would be a silent false
-        negative.
+        ``run_pytest_safe`` writes and the ``Z`` spelling that ``git`` emits
+        with ``%cI`` (``datetime.fromisoformat`` before Python 3.11 rejects the
+        latter).
+    After: an aware UTC ``datetime``, or ``None`` when absent, naive or
+        unparseable -- which makes the caller SKIP the check.
+
+    **Devuelve datetime y NO una cadena a proposito** (hallazgo del bucle L1180,
+    confirmado por 3 lentes y MEDIDO): comparar los ISO como STRING invierte el
+    resultado cuando uno lleva microsegundos y el otro no.
+    ``"2026-06-15T12:00:00.500000Z" < "2026-06-15T12:00:00Z"`` es **True** por
+    orden ASCII (el `.` es 0x2E y `Z` es 0x5A) cuando el instante real es
+    POSTERIOR. Falla en los dos sentidos: falso positivo (bloquea un handoff
+    legitimo) y falso negativo (deja pasar el sello que esta barrera existe para
+    cazar). `git %cI` no emite subsegundos, pero `started_at` del sello SI puede
+    llevarlos, asi que el caso es alcanzable en produccion.
     """
     if not isinstance(value, str) or not value.strip():
-        return ""
+        return None
     try:
         from datetime import timezone
 
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
-        return ""
+        return None
     if parsed.tzinfo is None:
-        return ""
-    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
-def _resolve_commit_committer_date(repo_root: Path, sha: str) -> tuple[bool, str]:
-    """Return the COMMITTER date of ``sha`` as an ISO-8601 UTC string.
+def _resolve_commit_committer_date(repo_root: Path, sha: str) -> datetime | None:
+    """Return the COMMITTER date of ``sha`` as an aware UTC ``datetime``.
 
     Before: ``repo_root`` is a git worktree; ``sha`` is a resolvable commit.
     During: one read-only ``git show -s --format=%cI``. Committer date, NOT
         author date: ``rebase``/``amend`` regenerate the former and preserve
         the latter, so the author date can predate the real work and produce a
-        false positive.
-    After: ``(True, "<iso>")`` on success; ``(False, "<reason>")`` when git is
-        absent, the sha is unknown or the date cannot be parsed. **Fails OPEN
-        on purpose**: an unresolvable date must not block a handoff that is
-        otherwise green -- this check adds a rejection, it does not become a
-        new single point of failure.
+        false positive. ``sha`` is passed as a separate argv element (no shell),
+        so a malformed value makes git fail, never injects.
+    After: the datetime, or ``None`` when git is absent, the sha is unknown or
+        the date cannot be parsed. **Fails OPEN on purpose**: an unresolvable
+        date must not block a handoff that is otherwise green -- this check adds
+        a rejection, it does not become a new single point of failure.
     """
     try:
         proc = subprocess.run(
@@ -447,16 +456,13 @@ def _resolve_commit_committer_date(repo_root: Path, sha: str) -> tuple[bool, str
             text=True,
             cwd=repo_root,
         )
-    except (FileNotFoundError, OSError) as exc:
-        return False, f"git unavailable: {exc}"
+    except (FileNotFoundError, OSError):
+        return None
 
     if proc.returncode != 0:
-        return False, f"git show failed for {sha[:12]}: {proc.stderr.strip()[:120]}"
+        return None
 
-    normalised = _normalise_utc_iso(proc.stdout.strip())
-    if not normalised:
-        return False, f"unparseable committer date: {proc.stdout.strip()!r}"
-    return True, normalised
+    return _parse_utc(proc.stdout.strip())
 
 
 def _import_scope_gate():
@@ -880,23 +886,24 @@ def assert_canonical_suite_green(
     # Fail-open por diseno en tres puntos: sin `started_at`, con una fecha
     # irresoluble, o si git no responde, el check se SALTA. Anade un motivo de
     # rechazo; no se convierte en un punto de fallo nuevo.
-    _started_at = _normalise_utc_iso(data.get("started_at"))
-    if _started_at:
-        _date_ok, _commit_iso = _resolve_commit_committer_date(motor_root, head_sha)
-        if _date_ok and _started_at < _commit_iso:
+    _started_at = _parse_utc(data.get("started_at"))
+    if _started_at is not None:
+        _commit_dt = _resolve_commit_committer_date(motor_root, head_sha)
+        if _commit_dt is not None and _started_at < _commit_dt:
             return False, {
                 **base_diag,
                 "reason": "seal_predates_commit",
                 "canonical_suite_error": (
-                    f"last-run started at {_started_at} but the sealed commit "
-                    f"{head_sha[:12]} is from {_commit_iso}: the run began "
-                    "BEFORE the code it claims to have tested existed. The sha "
-                    "matches because it is stamped at run start "
+                    f"last-run started at {_started_at.isoformat()} but the "
+                    f"sealed commit {head_sha[:12]} is from "
+                    f"{_commit_dt.isoformat()}: the run began BEFORE the code "
+                    "it claims to have tested existed. The sha matches because "
+                    "it is stamped at run start "
                     "(stamp_scope=provisional_at_run_start), not at the end. "
                     "Re-run the canonical suite after committing."
                 ),
-                "seal_started_at": _started_at,
-                "commit_committer_date": _commit_iso,
+                "seal_started_at": _started_at.isoformat(),
+                "commit_committer_date": _commit_dt.isoformat(),
             }
 
     # WOT-2026-010q: require level=="all" so a focal run never satisfies handoff.

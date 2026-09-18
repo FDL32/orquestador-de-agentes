@@ -2292,3 +2292,28 @@ class TestSealPredatesCommit:
         ok, diag = self._guard().assert_canonical_suite_green(repo, "code")
 
         assert ok is True, f"a seal without started_at must not be blocked: {diag}"
+
+    def test_subsecond_precision_compares_by_instant(self, tmp_path: Path) -> None:
+        """Sub-second precision must compare by INSTANT, not by ASCII order.
+
+        Bucle L1180, MEDIDO: comparing the normalised ISO strings inverts the
+        result when one side carries microseconds and the other does not --
+        `"2026-06-15T12:00:00.500000Z" < "2026-06-15T12:00:00Z"` is True by
+        ASCII (`.` is 0x2E, `Z` is 0x5A) while the instant is LATER. It fails
+        both ways: blocking a legitimate handoff, and letting through the very
+        seal this barrier exists to catch. `git %cI` emits no sub-seconds, but
+        the seal's `started_at` can, so the case is reachable in production.
+
+        Here the seal starts 0.5s AFTER the commit: it must PASS.
+        """
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        self._commit_with_date(repo, "2026-06-15T12:00:00+0000")
+        self._seal(repo, started_at="2026-06-15T12:00:00.500000+00:00")
+
+        ok, diag = self._guard().assert_canonical_suite_green(repo, "code")
+
+        assert ok is True, (
+            f"a seal 0.5s AFTER its commit must pass; string comparison would "
+            f"have blocked it: {diag}"
+        )
