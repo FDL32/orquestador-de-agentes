@@ -2246,7 +2246,21 @@ class TestCollectEnvironment:
             assert key in env, f"falta clave {key}"
 
     def test_probe_errors_empty_on_success(self, monkeypatch) -> None:
-        """When all probes succeed, probe_errors is empty."""
+        """When all probes succeed, probe_errors is empty.
+
+        WOT-2026-070n: este test parcheaba `_run_cmd` (que ya simula tasklist
+        via `_fake_run_cmd`) pero NO `shutil.which`. En Windows daba igual
+        porque `tasklist` existe de verdad; en el runner Linux de CI
+        `_probe_process_count` sale por su rama de guarda
+        (`run_pytest_safe.py:464-467`) y anade "tasklist: not found" ANTES de
+        llegar a `_run_cmd`, asi que el mock nunca se ejercitaba. Mock drift
+        del libro: el patch apunta a `_run_cmd` y el codigo consulta `which`.
+
+        El fallo estaba en el TEST, no en el codigo: `_probe_process_count`
+        degrada correctamente cuando la herramienta no existe. Lo que el test
+        quiere afirmar es "con todas las sondas disponibles y funcionando, no
+        hay errores", y para eso la disponibilidad tambien hay que simularla.
+        """
         rps = load_runner_module()
         monkeypatch.setattr(
             rps,
@@ -2257,6 +2271,11 @@ class TestCollectEnvironment:
         )
         monkeypatch.setattr(
             rps, "_run_cmd", lambda cmd, timeout=10.0: _fake_run_cmd(cmd)
+        )
+        # La sonda resuelve la herramienta ANTES de invocarla: sin esto el test
+        # mide la ausencia de tasklist en el SO, no el camino de exito.
+        monkeypatch.setattr(
+            rps.shutil, "which", lambda name: f"/usr/bin/{name}", raising=True
         )
 
         env = rps._collect_environment()
