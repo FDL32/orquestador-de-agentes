@@ -3021,8 +3021,79 @@ def resolve_governed_commit_sha(
     )
 
 
+def validate_loop_id(loop_id: str, config: dict) -> str | None:
+    """Valida `loop_id` contra el registro citable de bucles.
+
+    WOT-2026-070g (arreglo inmediato, 2026-09-18). El registro
+    (`.agent/config/agents.json::ensemble_registry.loop_shapes`) declara los
+    bucles y su `status`, y NADIE lo hacia cumplir: `emit-nonce` aceptaba
+    cualquier cadena. Probe en ruta productiva: `--loop-id L999-INVENTADO` ->
+    `exit 0` y fila APPENDEADA al ledger. Ese ledger es la unica prueba de que la
+    ceremonia previa ocurrio y `check_loop_execution` agrupa por el, asi que un
+    `loop_id` fabricado contamina la auditoria sin dar sintoma.
+
+    Simetria con la validacion hermana de `backend_key` (misma funcion de
+    despacho, mismo registro): se valida ANTES de escribir, para no archivar una
+    fila que ya nace invalida.
+
+    Before: `loop_id` es la cadena del CLI; `config` es el agents.json cargado.
+    During: solo lee el registro. Sin red, sin escritura.
+    After: retorna `None` si el bucle es `active` (o si el registro no declara
+        `loop_shapes`); retorna un texto de WARN si esta `deprecated`/`archived`
+        o si NO existe en el registro. NUNCA lanza ni bloquea.
+
+    ALCANCE DECLARADO -- por que AVISA y no BLOQUEA (decision del usuario,
+    2026-09-18, tras aplicar el STOP de degeneracion de AGENTS.md):
+    una primera version lanzaba `ValueError` ante un `loop_id` inexistente. Rompio
+    4 tests hermanos y el censo midio **7+ identificadores sinteticos**
+    (`LX`, `L-B`, `L-MOTOR`, `L-DEST`, `L-A`, `L-TEST`, `L-SHATEST`) repartidos en
+    **6+ ficheros** de test que los usan A PROPOSITO, para no acoplarse al registro
+    real. Convertir eso en rojo exigia tocar ficheros ajenos al defecto: el parche
+    empezaba a pedir otro parche. Aplicando la hipotesis por defecto del repo --
+    "si una barrera nueva rompe tests existentes en masa, la barrera mide una
+    propiedad demasiado ancha" -- se degrada a WARN.
+    El WARN cierra el fallo que origino esto (lanzar un bucle `deprecated` en
+    SILENCIO) sin romper nada. El BLOQUEO duro queda como deuda declarada, con su
+    censo ya medido; exige primero adaptar los sinteticos.
+
+    Fail-OPEN si el registro esta vacio: un motor sin `ensemble_registry` es una
+    carencia de INFRAESTRUCTURA, no una llamada invalida (misma distincion que
+    `CF_NOT_MATERIALIZED`).
+    """
+    shapes = (config or {}).get("ensemble_registry", {}).get("loop_shapes", {})
+    if not shapes:
+        return None
+    activos = sorted(
+        lid for lid, meta in shapes.items() if (meta or {}).get("status") == "active"
+    )
+    meta = shapes.get(loop_id)
+    if meta is None:
+        return (
+            f"[emit-nonce] WARN: el loop-id '{loop_id}' NO existe en el registro "
+            f"citable de bucles (.agent/config/agents.json::ensemble_registry."
+            f"loop_shapes). Un loop_id fabricado contamina emitted_nonces.jsonl, "
+            f"que es la unica prueba de que la ceremonia previa ocurrio, y "
+            f"check_loop_execution agrupa las rondas por el. Bucles ACTIVOS: "
+            f"{', '.join(activos) or '(ninguno)'}."
+        )
+    status = (meta or {}).get("status")
+    if status != "active":
+        return (
+            f"[emit-nonce] WARN: el bucle '{loop_id}' esta '{status}' en el "
+            f"registro: no es recomendable para uso NUEVO. Activos: "
+            f"{', '.join(activos) or '(ninguno)'}. Se emite igualmente (un bucle "
+            f"retirado puede seguir en un loop_shape mientras se migra)."
+        )
+    return None
+
+
 def _cmd_emit_nonce(args, config) -> int:
     project_root = _resolve_project_root(args.project_root)
+    # WOT-2026-070g: el loop_id se valida ANTES de tocar el ledger, igual que
+    # backend_key se valida antes de gastar una llamada al backend.
+    _loop_warning = validate_loop_id(args.loop_id, config)
+    if _loop_warning:
+        print(_loop_warning, file=sys.stderr)
     # WOT-2026-059c: el emisor NUNCA registra un sha que NADIE puede resolver
     # (la contraparte productiva de la barrera de WOT-2026-059b que ya falla
     # cerrado en prepush). La validacion vive AQUI, en la unica ruta productiva
