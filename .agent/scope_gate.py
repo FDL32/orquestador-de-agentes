@@ -51,6 +51,9 @@ def exclude_files(
 
     excluded.add(str((context_dir / "project-map.json").resolve()))
     excluded.add(str((agent_dir / "runtime" / "events" / "events.jsonl").resolve()))
+    excluded.add(
+        str((agent_dir / "runtime" / "memory" / "observations.jsonl").resolve())
+    )
     excluded.add(str((agent_dir / "config").resolve()))
     return excluded
 
