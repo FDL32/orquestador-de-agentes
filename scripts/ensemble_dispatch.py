@@ -2621,6 +2621,65 @@ def _warn_bundle_protocol(content_path: Path) -> None:
         print(f"[loop-bundle] aviso no disponible: {exc}", file=sys.stderr)
 
 
+def _check_government_nonce(
+    *,
+    project_root: Path,
+    config: dict,
+    phase: str | None,
+    challenge_nonce: str | None,
+    ticket: str,
+    task_type: str,
+    rol: str,
+    ronda: int,
+    context_kind: str,
+    session_id: str | None,
+    phase_str: str,
+    loop_id: str,
+    backend_key: str,
+    commit_sha: str | None,
+    profile_name: str,
+) -> None:
+    """WOT-2026-040i: exige challenge_nonce para fases de gobierno.
+
+    Si la fase es de gobierno y falta el nonce, escribe una fila con
+    failure_mode=missing-nonce y lanza ValueError. Las fases no-gobierno
+    pasan sin nonce.
+    """
+    if (
+        phase
+        and phase.lower().replace("-", "_")
+        in {p.lower().replace("-", "_") for p in GOVERNMENT_PHASES}
+        and not challenge_nonce
+    ):
+        profiles = config.get("ensemble_profiles") or {}
+        profile = profiles.get(profile_name)
+        if profile is not None:
+            _record_round(
+                project_root,
+                ticket=ticket,
+                task_type=task_type,
+                rol=rol,
+                profile=profile,
+                backend_version=None,
+                ronda=ronda,
+                reply="",
+                input_bytes=0,
+                context_kind=context_kind,
+                failure_mode="missing-nonce",
+                session_id=session_id,
+                phase=phase_str,
+                loop_id=loop_id,
+                backend_key=backend_key,
+                commit_sha=commit_sha,
+                challenge_nonce=challenge_nonce,
+            )
+        raise ValueError(
+            f"loop-round bloqueado (WOT-2026-040i): la fase de gobierno "
+            f"'{phase_str}' exige --challenge-nonce. Emitelo antes de esta "
+            "ronda con el subcomando `emit-nonce`."
+        )
+
+
 def _cmd_loop_round(args, config) -> int:
     """UNA ronda de un bucle de GOBIERNO por CLI (WOT-2026-043z).
 
@@ -2669,17 +2728,23 @@ def _cmd_loop_round(args, config) -> int:
     # WOT-2026-040i: las fases de gobierno del bucle 1->9->2 EXIGEN
     # challenge_nonce. Sin el, FALLA ANTES de gastar la llamada al backend.
     # Las fases NO de gobierno siguen aceptando la ausencia.
-    if (
-        args.phase
-        and args.phase.lower().replace("-", "_")
-        in {p.lower().replace("-", "_") for p in GOVERNMENT_PHASES}
-        and not args.challenge_nonce
-    ):
-        raise ValueError(
-            f"loop-round bloqueado (WOT-2026-040i): la fase de gobierno "
-            f"'{args.phase}' exige --challenge-nonce. Emitelo antes de esta "
-            "ronda con el subcomando `emit-nonce`."
-        )
+    _check_government_nonce(
+        project_root=project_root,
+        config=config,
+        phase=args.phase,
+        challenge_nonce=args.challenge_nonce,
+        ticket=args.ticket,
+        task_type=args.task_type,
+        rol=args.rol,
+        ronda=args.ronda,
+        context_kind=args.context_kind,
+        session_id=args.session_id,
+        phase_str=args.phase,
+        loop_id=args.loop_id,
+        backend_key=args.backend_key,
+        commit_sha=args.commit_sha,
+        profile_name=args.profile,
+    )
 
     # WOT-2026-048i: un error de USO deja RASTRO, no solo un stderr.
     #

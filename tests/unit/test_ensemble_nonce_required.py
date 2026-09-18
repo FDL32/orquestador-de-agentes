@@ -125,9 +125,10 @@ def test_government_phase_without_nonce_fails(tmp_path, monkeypatch):
 
 
 def test_government_phase_without_nonce_no_scorecard_row(tmp_path, monkeypatch):
-    """WOT-2026-040i DoD-2(a): tras el fallo sin nonce, 0 filas nuevas.
+    """WOT-2026-040i DoD-2(a): tras el fallo sin nonce, 1 fila con missing-nonce.
 
-    Mutation: quitar el check -> se escribe una fila en el scorecard -> RED.
+    Mutation: quitar el check -> se despacha el backend y se escribe una fila con
+    el veredicto real -> RED (la fila tendria output_chars > 0, no missing-nonce).
     """
     monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
     transport = _FakeTransport(replies=["respuesta"])
@@ -161,9 +162,13 @@ def test_government_phase_without_nonce_no_scorecard_row(tmp_path, monkeypatch):
         ]
     )
     after = _rows(tmp_path)
-    assert len(after) == len(before), (
-        "sin nonce en gobierno no debe escribir fila; "
+    assert len(after) == len(before) + 1, (
+        f"sin nonce en gobierno debe escribir EXACTAMENTE UNA fila; "
         f"antes={len(before)}, despues={len(after)}"
+    )
+    row = after[-1]
+    assert row["failure_mode"] == "missing-nonce", (
+        f"la fila debe ser missing-nonce; failure_mode={row['failure_mode']}"
     )
 
 
@@ -408,10 +413,73 @@ def test_cross_case_nonce_missing_and_invalid_task_type(tmp_path, monkeypatch):
         f"rc={rc} (sin el fix, rc=0 y el test cae)"
     )
     after = _rows(tmp_path)
-    assert len(after) == len(before), (
-        f"sin nonce en gobierno no debe escribir fila aunque task_type sea invalido; "
+    assert len(after) == len(before) + 1, (
+        f"sin nonce en gobierno debe escribir EXACTAMENTE UNA fila con missing-nonce; "
         f"antes={len(before)}, despues={len(after)}"
+    )
+    row = after[-1]
+    assert row["failure_mode"] == "missing-nonce", (
+        f"la fila debe ser missing-nonce; failure_mode={row['failure_mode']}"
     )
     assert transport.calls == [], (
         f"gobierno sin nonce no debe llamar al backend; calls={transport.calls}"
+    )
+
+
+def test_usage_error_in_government_phase_with_nonce(tmp_path, monkeypatch):
+    """WOT-2026-040i: task_type invalido EN fase de gobierno con nonce valido → 1 fila.
+
+    El nonce esta presente, asi que el check de nonce no bloquea. El check de
+    task_type invalido SI dispara y escribe una fila con failure_mode=usage-error.
+    Esto garantiza que la clase usage-error sigue cubierta en fases de gobierno.
+
+    Mutation: quitar el pre-check de task_type -> no se escribe fila -> RED.
+    """
+    transport = _FakeTransport(replies=["respuesta"])
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to_profile", transport)
+    payload_file = tmp_path / "payload.txt"
+    payload_file.write_text("material publico", encoding="utf-8")
+    before = _rows(tmp_path)
+    rc = ed.main(
+        [
+            "loop-round",
+            "--profile",
+            "p_chal",
+            "--content-file",
+            str(payload_file),
+            "--ticket",
+            "WOT-TEST-040i",
+            "--task-type",
+            "contract_audit",
+            "--rol",
+            "challenger",
+            "--phase",
+            "challenge-fanout",
+            "--loop-id",
+            "L700",
+            "--backend-key",
+            "BA01",
+            "--challenge-nonce",
+            "abc123",
+            "--data-sensitivity",
+            "public",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc != 0, (
+        "task_type invalido en gobierno con nonce valido debe fallar; rc={rc}"
+    )
+    after = _rows(tmp_path)
+    assert len(after) == len(before) + 1, (
+        f"task_type invalido debe escribir EXACTAMENTE UNA fila; "
+        f"antes={len(before)}, despues={len(after)}"
+    )
+    row = after[-1]
+    assert row["failure_mode"] == "usage-error", (
+        f"la fila debe ser usage-error; failure_mode={row['failure_mode']}"
+    )
+    assert transport.calls == [], (
+        f"task_type invalido no debe llamar al backend; calls={transport.calls}"
     )

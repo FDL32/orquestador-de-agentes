@@ -717,7 +717,7 @@ def test_loop_round_usage_error_leaves_auditable_row(tmp_path, monkeypatch):
         f"'nadie consulto' y 'invocacion mal escrita' son iguales: {rows}"
     )
     row = rows[0]
-    assert row["failure_mode"] == "usage-error", (
+    assert row["failure_mode"] == "missing-nonce", (
         f"la fila debe declarar POR QUE murio, no solo que murio: {row}"
     )
     assert row["ticket"] == "WOT-TEST-048i", (

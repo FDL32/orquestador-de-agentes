@@ -94,6 +94,22 @@
   generales que benefician a todos los tickets. Se dejaron como commits separados
   para que puedan escindirse si se decide que no pertenecen a 040i.
 
+### 2026-09-18 - DEC-040I-001 decidida: failure_mode missing-nonce (opcion d)
+
+- El Manager decidio la opcion (d): `failure_mode: "missing-nonce"` como clase
+  propia. Ningun contrato cede.
+- Se anadio `_record_round` antes del `raise ValueError` en el check de nonce
+  (ensemble_dispatch.py:2669-2699).
+- Se actualizo test_048i: espera `missing-nonce` en vez de `usage-error`.
+- Se anadio test para `usage-error` en fase de gobierno con nonce valido.
+- Se actualizo test_cross_case: espera 1 fila con `missing-nonce` + 0 backend calls.
+- Se censaron los consumidores de scorecard:
+  - `phase_value_report.py`: NO filtra por failure_mode. Una fila missing-nonce se
+    contaria como ronda "muda" (sin output_chars). No distorsiona la metrica.
+  - `pool_permanence_metric.py`: solo lee event == "adjudicacion". Las filas
+    missing-nonce son event == "ronda". No distorsiona la metrica.
+- Contracto actualizado via contract_formation_pipeline.md (CONTRACT_GAP).
+
 ### 2026-09-18 - Manager review: CHANGES
 
 - Blocker 1: suite solo ejecuto 3899 de 6520 tests (60 %). `run_pytest_safe.py` se
