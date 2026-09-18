@@ -50,13 +50,6 @@ _writer_lock = threading.Lock()
 _active_path: Path | None = None
 _active_file = None
 _record_count = 0
-_consecutive_failures = 0
-
-# Maximum consecutive write failures before disabling the heartbeat channel.
-# Prevents infinite retry loops when the failure is permanent (e.g. full disk,
-# invalid path). After this threshold the channel is disabled for the rest
-# of the suite run.
-_MAX_FAILURES = 10
 
 
 def _heartbeat_path() -> Path:
@@ -73,11 +66,10 @@ def write_record(event: dict[str, Any]) -> None:
     """Append a single NDJSON record to the heartbeat file.
 
     Fail-open: if the write fails for any reason (disk full, permission
-    denied, invalid path), the exception is swallowed and the suite
-    continues unaffected. After ``_MAX_FAILURES`` consecutive failures,
-    the channel is disabled to avoid infinite retry overhead.
+    denied, invalid path), the exception is swallowed, the suite continues
+    unaffected, and the next call retries from scratch.
     """
-    global _active_path, _active_file, _record_count, _consecutive_failures
+    global _active_path, _active_file, _record_count
 
     with _writer_lock:
         try:
@@ -90,18 +82,24 @@ def write_record(event: dict[str, Any]) -> None:
             _active_file.write(line)
             _active_file.flush()
             _record_count += 1
-            _consecutive_failures = 0  # reset on success
         except Exception:
             # Fail-open: never let heartbeat I/O break pytest.
-            _consecutive_failures += 1
-            if _consecutive_failures >= _MAX_FAILURES:
-                # Permanent failure: disable the channel.
-                _active_file = None
-                _active_path = None
-            else:
-                # Temporary failure: reset so next call retries.
-                _active_file = None
-                _active_path = None
+            #
+            # There is deliberately no "disable the channel" branch. The code
+            # used to have one gated on _MAX_FAILURES, but BOTH of its arms
+            # were byte-identical (drop the handle, retry next time), so it was
+            # a zero-logic no-op whose docstring promised behaviour the code
+            # never delivered -- and the counter reset on every success, so a
+            # flapping failure never reached the threshold anyway.
+            #
+            # Measured before removing it: with a PERMANENT failure, 26.000
+            # events (a full suite) cost 26.000 failed opens in 1.68 s. That is
+            # cheap enough that retrying forever is the right trade: a channel
+            # that disables itself would go silent for the rest of the run
+            # right when a transient fault clears, which is the opposite of
+            # what an observability channel is for.
+            _active_file = None
+            _active_path = None
 
 
 def close() -> None:
