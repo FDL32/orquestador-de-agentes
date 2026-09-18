@@ -212,6 +212,21 @@ TASK_TYPES = {
     "prompt-audit",
 }
 
+# Fases de gobierno del bucle 1->9->2 (WOT-2026-040i): exigen challenge_nonce.
+# Las fases NO de gobierno (p.ej. premise_check, smoke) siguen aceptando la
+# ausencia. La lista la deriva el lector `check_loop_execution` para su recuento.
+GOVERNMENT_PHASES = frozenset(
+    {
+        "challenge_fanout",
+        "challenge-fanout",
+        "contract_audit",
+        "contract-audit",
+        "manager_review",
+        "manager-review",
+        "close",
+    }
+)
+
 LEADER_MIN_N = 5
 EXPLORATION_POLICY = (
     "1-de-5 rondas, o al cambiar la version del modelo/backend, el challenger "
@@ -2647,6 +2662,20 @@ def _cmd_loop_round(args, config) -> int:
             challenge_nonce=args.challenge_nonce,
             commit_sha=args.commit_sha,
             loop_id=args.loop_id,
+        )
+    # WOT-2026-040i: las fases de gobierno del bucle 1->9->2 EXIGEN
+    # challenge_nonce. Sin el, FALLA ANTES de gastar la llamada al backend.
+    # Las fases NO de gobierno siguen aceptando la ausencia.
+    if (
+        args.phase
+        and args.phase.lower().replace("-", "_")
+        in {p.lower().replace("-", "_") for p in GOVERNMENT_PHASES}
+        and not args.challenge_nonce
+    ):
+        raise ValueError(
+            f"loop-round bloqueado (WOT-2026-040i): la fase de gobierno "
+            f"'{args.phase}' exige --challenge-nonce. Emitelo antes de esta "
+            "ronda con el subcomando `emit-nonce`."
         )
     content_path = Path(args.content_file)
     _warn_bundle_protocol(content_path)
