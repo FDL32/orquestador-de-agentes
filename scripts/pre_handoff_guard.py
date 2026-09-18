@@ -49,6 +49,7 @@ LIVE_SURFACES_REL = {
     ".agent/runtime/relaunch_capsule.md",
     ".agent/runtime/events/",
     ".agent/runtime/approvals/",
+    ".agent/runtime/memory/observations.jsonl",
     ".agent/context/project-map.json",
     "PROJECT.md",
 }
