@@ -2663,6 +2663,9 @@ def _cmd_loop_round(args, config) -> int:
             commit_sha=args.commit_sha,
             loop_id=args.loop_id,
         )
+    content_path = Path(args.content_file)
+    _warn_bundle_protocol(content_path)
+
     # WOT-2026-040i: las fases de gobierno del bucle 1->9->2 EXIGEN
     # challenge_nonce. Sin el, FALLA ANTES de gastar la llamada al backend.
     # Las fases NO de gobierno siguen aceptando la ausencia.
@@ -2677,8 +2680,6 @@ def _cmd_loop_round(args, config) -> int:
             f"'{args.phase}' exige --challenge-nonce. Emitelo antes de esta "
             "ronda con el subcomando `emit-nonce`."
         )
-    content_path = Path(args.content_file)
-    _warn_bundle_protocol(content_path)
 
     # WOT-2026-048i: un error de USO deja RASTRO, no solo un stderr.
     #

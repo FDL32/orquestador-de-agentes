@@ -320,6 +320,7 @@ def test_historical_ledger_without_nonce_parses_cleanly(tmp_path):
         "CONTRACT_AUDIT",
         "MANAGER_REVIEW",
         "CLOSE",
+        "close",
     ],
 )
 def test_other_government_phases_without_nonce_fail(tmp_path, monkeypatch, phase):
@@ -359,3 +360,58 @@ def test_other_government_phases_without_nonce_fail(tmp_path, monkeypatch, phase
     )
     assert rc != 0, f"fase {phase} sin nonce debe fallar; rc={rc}"
     assert transport.calls == [], f"fase {phase} sin nonce no debe llamar al backend"
+
+
+def test_cross_case_nonce_missing_and_invalid_task_type(tmp_path, monkeypatch):
+    """WOT-2026-040i: nonce ausente + task_type invalido → 0 filas.
+
+    Este caso cruzado es la unica combinacion que podia escribir fila: el check
+    de nonce debe disparar ANTES del pre-check de task_type que escribe al
+    scorecard.
+
+    Mutation: mover el check de nonce despues del de task_type -> se escribe
+    una fila con failure_mode=usage-error -> RED.
+    """
+    transport = _FakeTransport(replies=["respuesta"])
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to_profile", transport)
+    payload_file = tmp_path / "payload.txt"
+    payload_file.write_text("material publico", encoding="utf-8")
+    before = _rows(tmp_path)
+    rc = ed.main(
+        [
+            "loop-round",
+            "--profile",
+            "p_chal",
+            "--content-file",
+            str(payload_file),
+            "--ticket",
+            "WOT-TEST-040i",
+            "--task-type",
+            "contract_audit",
+            "--rol",
+            "challenger",
+            "--phase",
+            "challenge-fanout",
+            "--loop-id",
+            "L700",
+            "--backend-key",
+            "BA01",
+            "--data-sensitivity",
+            "public",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc != 0, (
+        "gobierno sin nonce + task_type invalido debe fallar; "
+        f"rc={rc} (sin el fix, rc=0 y el test cae)"
+    )
+    after = _rows(tmp_path)
+    assert len(after) == len(before), (
+        f"sin nonce en gobierno no debe escribir fila aunque task_type sea invalido; "
+        f"antes={len(before)}, despues={len(after)}"
+    )
+    assert transport.calls == [], (
+        f"gobierno sin nonce no debe llamar al backend; calls={transport.calls}"
+    )
