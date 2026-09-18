@@ -699,7 +699,7 @@ def test_loop_round_usage_error_leaves_auditable_row(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "premise_check",
+            "CONTRACT_AUDIT",
             "--loop-id",
             "L999",
             "--backend-key",
