@@ -1,4 +1,4 @@
-"""Scope tests for WOT-2026-070e.
+"""Scope tests for WOT-2026-070e (portabilidad corregida en WOT-2026-070n).
 
 Verifies that collect_files_to_check() includes the operational surfaces
 (.agent/collaboration/, .agent/planning/) and excludes archived/transient
@@ -7,6 +7,12 @@ runtime/review_packets/).
 
 Red-first: these tests MUST FAIL against the pre-fix GLOB_PATTERNS
 because ticket_contracts.md is not reached by the current glob patterns.
+
+WOT-2026-070n: estos tests se median contra el workspace REAL de una maquina
+concreta, con la ruta absoluta hardcodeada. Eran verdes en Windows y llevaban
+10 en rojo en el CI de Linux desde el commit que los introdujo. Ahora usan el
+fixture `destino`, que siembra un arbol sintetico en `tmp_path`: portable y
+hermetico, y con control positivo sobre la exclusion de ruido.
 """
 
 from __future__ import annotations
@@ -37,15 +43,61 @@ from encoding_guard import (  # noqa: E402
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DESTINO = Path("C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace")
-_MOTOR = Path("C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_dev")
-
 
 def _write_bom_file(tmp_path: Path, name: str) -> Path:
     """Write a file with UTF-8 BOM to *tmp_path* and return the Path."""
     p = tmp_path / name
     p.write_bytes(b"\xef\xbb\xbf# test\n")
     return p
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-070n: fixture de destino SINTETICO.
+#
+# Estos tests median `collect_files_to_check()` contra el workspace REAL de una
+# maquina concreta, via dos constantes con la ruta absoluta hardcodeada
+# (`C:/Users/<user>/...`). Eso tenia dos defectos independientes:
+#
+#   1. NO PORTABLE: en el runner Linux de CI la ruta Windows se concatena al
+#      workspace del checkout y `relative_to()` lanza ValueError. 10 tests en
+#      rojo desde el commit que los introdujo, verdes en local todo el tiempo.
+#   2. NO HERMETICO: el veredicto dependia del CONTENIDO de un repo externo,
+#      que cambia solo. Un test que mide el arbol real no puede distinguir
+#      "el guard esta roto" de "alguien borro un fichero del destino".
+#
+# El fixture reconstruye la ESTRUCTURA que el DoD describe -- superficies vivas
+# que deben entrar, directorios de ruido que deben quedar fuera -- sin depender
+# de ninguna maquina. Es lo que estos tests debieron ser desde el principio.
+# ---------------------------------------------------------------------------
+
+_LIVING_SURFACES = (
+    ".agent/collaboration/work_plan.md",
+    ".agent/planning/ticket_contracts.md",
+)
+
+_NOISE_SURFACES = (
+    ".agent/collaboration/_archive/plan_audit/AUDIT_WOT-2026-001a.md",
+    ".agent/collaboration/archive/notifications_2026-09-01.md",
+    ".agent/runtime/tmp/scratch_note.md",
+    ".agent/runtime/reviews/review_raw.md",
+    ".agent/runtime/review_packets/packet_001.md",
+)
+
+
+@pytest.fixture
+def destino(tmp_path: Path) -> Path:
+    """Un destino SINTETICO con las superficies vivas y las de ruido.
+
+    Before: `tmp_path` vacio.
+    During: crea los ficheros de `_LIVING_SURFACES` (deben entrar en el
+        denominador) y `_NOISE_SURFACES` (deben quedar excluidos).
+    After: devuelve la raiz. No toca ningun repo real ni depende del SO.
+    """
+    for rel in _LIVING_SURFACES + _NOISE_SURFACES:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"# {Path(rel).name}\n", encoding="utf-8")
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -60,44 +112,58 @@ class TestOperationalSurfacesIncluded:
     .agent/collaboration/work_plan.md and .agent/planning/ticket_contracts.md.
     """
 
-    def test_work_plan_md_in_scope(self) -> None:
+    def test_work_plan_md_in_scope(self, destino: Path) -> None:
         """work_plan.md must be in the denominador collected for the destino."""
-        files = collect_files_to_check(_DESTINO)
-        file_set = {p.relative_to(_DESTINO).as_posix() for p in files}
+        files = collect_files_to_check(destino)
+        file_set = {p.relative_to(destino).as_posix() for p in files}
         assert ".agent/collaboration/work_plan.md" in file_set, (
             "DoD-1 FAIL: .agent/collaboration/work_plan.md is NOT in "
             "collect_files_to_check(). GLOB_PATTERNS does not reach it."
         )
 
-    def test_ticket_contracts_md_in_scope(self) -> None:
+    def test_ticket_contracts_md_in_scope(self, destino: Path) -> None:
         """ticket_contracts.md must be in the denominador collected for the destino."""
-        files = collect_files_to_check(_DESTINO)
-        file_set = {p.relative_to(_DESTINO).as_posix() for p in files}
+        files = collect_files_to_check(destino)
+        file_set = {p.relative_to(destino).as_posix() for p in files}
         assert ".agent/planning/ticket_contracts.md" in file_set, (
             "DoD-1 FAIL: .agent/planning/ticket_contracts.md is NOT in "
             "collect_files_to_check(). GLOB_PATTERNS does not reach .agent/**/*.md."
         )
 
-    def test_all_operational_surfaces_in_scope(self) -> None:
+    def test_all_operational_surfaces_in_scope(self, destino: Path) -> None:
         """All named operational surfaces must be in the denominador."""
-        files = collect_files_to_check(_DESTINO)
-        file_set = {p.relative_to(_DESTINO).as_posix() for p in files}
-        surfaces = [
-            ".agent/collaboration/work_plan.md",
-            ".agent/planning/ticket_contracts.md",
-        ]
-        missing = [s for s in surfaces if s not in file_set]
+        files = collect_files_to_check(destino)
+        file_set = {p.relative_to(destino).as_posix() for p in files}
+        missing = [s for s in _LIVING_SURFACES if s not in file_set]
         assert not missing, (
             f"DoD-1 FAIL: surfaces NOT in denominador: {missing}. "
             f"GLOB_PATTERNS={GLOB_PATTERNS}"
         )
 
-    def test_denominator_grew_from_baseline(self) -> None:
-        """The denominador must be larger than the pre-fix baseline (156)."""
-        count = len(collect_files_to_check(_DESTINO))
-        assert count > 156, (
-            f"DoD-2 FAIL: denominador count={count} is NOT greater than "
-            "baseline 156. The GLOB_PATTERNS expansion did not increase scope."
+    def test_denominator_covers_every_living_surface(self, destino: Path) -> None:
+        """DoD-2 como INVARIANTE: el denominador cubre TODAS las vivas y NINGUNA de ruido.
+
+        WOT-2026-070n: la version anterior aseveraba `count > 156` contra el
+        workspace real. Ese 156 era una MEDICION cristalizada como criterio, y
+        AGENTS.md lo prohibe: caduca sola cuando alguien anade o borra un
+        fichero del destino, y entonces el Builder no puede distinguir "el
+        mundo avanzo" de "he roto el guard". Ademas era una floor assertion --
+        cualquier arbol grande la satisface sin que la expansion funcione.
+
+        El invariante real no es "cuantos" sino "cuales": toda superficie viva
+        entra y ninguna de ruido lo hace, sea cual sea el tamano del arbol.
+        """
+        files = collect_files_to_check(destino)
+        file_set = {p.relative_to(destino).as_posix() for p in files}
+
+        missing = [s for s in _LIVING_SURFACES if s not in file_set]
+        leaked = [s for s in _NOISE_SURFACES if s in file_set]
+
+        assert not missing, (
+            f"DoD-2 FAIL: superficies vivas fuera del denominador: {missing}"
+        )
+        assert not leaked, (
+            f"DoD-2 FAIL: superficies de ruido DENTRO del denominador: {leaked}"
         )
 
 
@@ -124,13 +190,22 @@ class TestNoiseExclusion:
             "runtime/review_packets/",
         ],
     )
-    def test_noise_dirs_excluded_from_scope(self, noise_dir: str) -> None:
-        """No collected file path may contain the noise directory marker."""
-        files = collect_files_to_check(_DESTINO)
+    def test_noise_dirs_excluded_from_scope(
+        self, noise_dir: str, destino: Path
+    ) -> None:
+        """No collected file path may contain the noise directory marker.
+
+        El fixture `destino` CREA un fichero bajo cada uno de estos directorios
+        (ver `_NOISE_SURFACES`), asi que este test tiene control positivo: si la
+        exclusion dejara de funcionar, el fichero sembrado aparece y el test se
+        pone rojo. Contra el workspace real no habia tal garantia -- el test
+        pasaba tambien cuando el directorio simplemente no existia.
+        """
+        files = collect_files_to_check(destino)
         noisy_paths = [
-            p.relative_to(_DESTINO).as_posix()
+            p.relative_to(destino).as_posix()
             for p in files
-            if noise_dir in p.relative_to(_DESTINO).as_posix()
+            if noise_dir in p.relative_to(destino).as_posix()
         ]
         assert not noisy_paths, (
             f"DoD-3 FAIL: noise directory {noise_dir!r} found in scope: "
