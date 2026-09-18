@@ -23,6 +23,14 @@ import pytest
 # Must be cancelled and re-armed per test.
 # Controlled by FAULTHANDLER_WATCHDOG_SECONDS env var; disabled by default
 # to avoid spurious dumps in the real suite (DoD-6 STOP condition).
+
+# Where the hang dump lands. Same directory and per-PID convention as the
+# heartbeat, so a dead run leaves its position AND its stack side by side.
+HEARTBEAT_RUNTIME_DIR = (
+    Path(__file__).resolve().parents[1] / ".agent" / "runtime" / "pytest-safe"
+)
+_watchdog_file = None
+
 _watchdog_seconds: int | None = None
 try:
     _watchdog_seconds = (
@@ -43,11 +51,40 @@ def _cancel_watchdog() -> None:
         faulthandler.cancel_dump_traceback_later()
 
 
+def _watchdog_dump_target():
+    """Return a durable file object for the hang dump, or ``None``.
+
+    WOT-2026-070i: ``sys.stderr`` is NOT a valid target. ``faulthandler`` binds
+    the file DESCRIPTOR when the timer is armed, and both pytest's capture and
+    the canonical runner replace it, so the dump lands on a descriptor nobody
+    reads. Measured A/B on the same child, same timing, only the target
+    changing: ``sys.stderr`` -> 0 dumps, real file -> 1 dump. A hang dump that
+    goes nowhere is worse than none: it reads as "no hang".
+
+    The dump therefore goes next to the heartbeat, under the same per-PID
+    naming, and is opened ONCE at import time so the descriptor is already
+    valid when a timer fires.
+    """
+    global _watchdog_file
+    if _watchdog_file is not None:
+        return _watchdog_file
+    try:
+        target = HEARTBEAT_RUNTIME_DIR / f"hang-{os.getpid()}.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _watchdog_file = open(target, "w", encoding="utf-8")
+    except Exception:
+        _watchdog_file = None
+    return _watchdog_file
+
+
 def _arm_watchdog(seconds: int) -> None:
     """Start ``dump_traceback_later`` with the given timeout (seconds)."""
     if not _watchdog_enabled:
         return
-    faulthandler.dump_traceback_later(seconds, repeat=False, file=sys.stderr)
+    target = _watchdog_dump_target()
+    if target is None:
+        return
+    faulthandler.dump_traceback_later(seconds, repeat=False, file=target)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

@@ -370,19 +370,15 @@ class TestWatchdog:
     # with a capture object, and faulthandler binds the file descriptor at arm
     # time -- so a stderr dump never reaches the parent and would read as a
     # false "0 dumps".
-    _CONFTEST = """import sys
+    # The child conftest uses the motor's hooks AND its real dump target, so a
+    # regression in either propagates here. Only HEARTBEAT_RUNTIME_DIR is
+    # redirected, to keep the probe's artifacts out of the live runtime dir.
+    _CONFTEST = """import pathlib, sys
 sys.path.insert(0, r"{motor_root}")
 
 from tests import conftest as motor_conftest
 
-_DUMP = open(r"{dump}", "w")
-motor_conftest._arm_watchdog = (
-    lambda seconds: __import__("faulthandler").dump_traceback_later(
-        seconds, repeat=False, file=_DUMP
-    )
-    if motor_conftest._watchdog_enabled
-    else None
-)
+motor_conftest.HEARTBEAT_RUNTIME_DIR = pathlib.Path(r"{dump_dir}")
 
 pytest_runtest_logstart = motor_conftest.pytest_runtest_logstart
 pytest_runtest_logreport = motor_conftest.pytest_runtest_logreport
@@ -421,9 +417,10 @@ def test_fast_2():
         work = pathlib.Path(
             tempfile.mkdtemp(prefix="wd_probe_", dir=str(REAL_SYSTEM_TEMP))
         )
-        dump = work / "dump.txt"
+        dump_dir = work / "hangs"
+        dump_dir.mkdir()
         (work / "conftest.py").write_text(
-            self._CONFTEST.format(dump=dump, motor_root=_MOTOR_ROOT),
+            self._CONFTEST.format(dump_dir=dump_dir, motor_root=_MOTOR_ROOT),
             encoding="utf-8",
         )
         (work / "test_wd.py").write_text(self._TESTS, encoding="utf-8")
@@ -453,9 +450,14 @@ def test_fast_2():
         )
         assert result.returncode == 0, result.stdout + result.stderr
         try:
-            if not dump.exists():
+            # The motor names the dump hang-<pid>.txt; the child is the only
+            # writer in this private dir, so any match is its own.
+            dumps = sorted(dump_dir.glob("hang-*.txt"))
+            if not dumps:
                 return ""
-            return dump.read_text(encoding="utf-8", errors="replace")
+            return "".join(
+                d.read_text(encoding="utf-8", errors="replace") for d in dumps
+            )
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
