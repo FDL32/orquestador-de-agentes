@@ -358,7 +358,7 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
             skipped=True,
         )
     return run_subprocess_check(
-        cmd=["uv", "run", "ruff", "format", "--check", "."],
+        cmd=["uv", "run", "--isolated", "ruff", "format", "--check", "."],
         name="Ruff Format Check",
         project_root=project_root,
     )
