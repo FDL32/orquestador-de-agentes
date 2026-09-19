@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 35 |
+| prompt | 36 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 41 |
-| **total** | **117** |
+| skill | 42 |
+| **total** | **119** |
 
 ## Entradas
 
@@ -38,6 +38,7 @@
 | prompt | `prompts/backlog_admit.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/backlog_triage.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/doc_optimization.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/escalate_to_motor.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/hermes_soul.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | shared | model-invoked | — |
@@ -111,6 +112,7 @@
 | skill | `skills/code-audit/SKILL.md` | active | agent | auditor | model-invoked | /code-audit, /deadcode, code-quality |
 | skill | `skills/create-agent-skill/SKILL.md` | active | agent | shared | model-invoked | /create-skill, /new, skill-create |
 | skill | `skills/deep-research/SKILL.md` | active | agent | shared | model-invoked | /deep-research, /pre-plan-research, /research |
+| skill | `skills/doc-optimization/SKILL.md` | active | agent | manager | model-invoked | /doc-optimization, doc-optimization, optimizar-documentacion |
 | skill | `skills/escalate-to-motor/SKILL.md` | active | agent | auditor | model-invoked | /escalate-to-motor, escalado-motor, escalar-al-motor |
 | skill | `skills/graphify/SKILL.md` | active | agent | shared | model-invoked | /graphify, graph, map |
 | skill | `skills/grill-work-plan/SKILL.md` | active | agent | manager | model-invoked | /grill, /grill-plan, grill-wp |
