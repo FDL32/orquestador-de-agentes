@@ -1313,3 +1313,32 @@ def test_062d_pair_is_audited_against_root_that_holds_its_object(tmp_path, capsy
         f"con el fix un sha solo-en-destino aterriza OK contra el destino, "
         f"no WARN contra el motor: {payload['counts']}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-070g: `absorbed` es estado TERMINAL canonico y el censo no lo conocia.
+# `check_backlog_contract.py:1164` lo acepta y el archive real tiene 12 filas
+# usandolo, pero `_TERMINAL_STATES` solo declaraba
+# completed/done/completed-partial/completed-via-010n. Consecuencia medida
+# 2026-09-19: `Landed Evidence Shape` bloqueaba el cierre de sesion acusando a
+# WOT-2026-020p de "commit evidence but NO terminal state" -- su fila SI tiene
+# `absorbed` en su propia celda y `commit:29a66cf` en la suya. Dos guards que
+# leen la MISMA superficie discrepaban sobre el vocabulario terminal.
+# --------------------------------------------------------------------------- #
+def test_070g_absorbed_is_a_terminal_state_for_the_census():
+    """Una fila `absorbed` con evidencia de commit NO es malformada.
+
+    `superseded` ya estaba eximido (`:468`) por este mismo motivo; `absorbed`
+    quedo fuera. Mutacion alcanzable: quitar `absorbed` de `_TERMINAL_STATES`
+    -> la fila vuelve a `malformed_evidence_tickets` y esto se pone ROJO.
+    """
+    row = (
+        "| WOT-2026-0A1A | absorbed | ABSORBIDO POR WOT-2026-999z "
+        "deliverable_type: code | commit:abc1234 | - |\n"
+    )
+    census = gl.census_archived(row)
+    assert census["malformed_evidence_tickets"] == [], (
+        "`absorbed` es terminal en el vocabulario canonico "
+        "(check_backlog_contract.py:1164): una fila absorbed con commit no puede "
+        f"contarse como malformada; got {census}"
+    )

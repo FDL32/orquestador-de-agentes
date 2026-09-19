@@ -156,7 +156,21 @@ WARN = "WARN"
 # state-machine parser: the whole fix is this closed enumeration.
 _COMPLETED_STATE = "completed"
 _TERMINAL_STATES = frozenset(
-    {"completed", "done", "completed-partial", "completed-via-010n"}
+    {
+        "completed",
+        "done",
+        "completed-partial",
+        "completed-via-010n",
+        # WOT-2026-070g: `absorbed` es terminal en el vocabulario CANONICO
+        # (`check_backlog_contract.py:1164`, y el contrato de cierre 8.ter lo
+        # lista junto a completed/done/closed/superseded). Faltaba aqui, asi que
+        # una fila correctamente archivada -- estado en su celda, SHA en la suya --
+        # se contaba como `malformed_evidence` y BLOQUEABA el cierre. Medido
+        # 2026-09-19 sobre WOT-2026-020p; el archive real tiene 12 filas
+        # `absorbed`. Dos guards que leen la MISMA superficie no pueden discrepar
+        # sobre que es un estado terminal.
+        "absorbed",
+    }
 )
 # Evidence cell: singular `commit:` OR plural `commits:`. WOT-2026-024c P3: a
 # `commits:sha1+sha2` cell fails `.startswith("commit:")` (position 6 is 's', not
