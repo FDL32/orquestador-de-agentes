@@ -11,10 +11,19 @@ Cobertura del DoD BINARIO del ticket:
   (b) con --isolated -> .venv/ y uv.lock NO se crean (test de regresion positivo)
   (c) CONTROL NEGATIVO: codigo mal formateado sigue dando passed=False
   (d) OPT-OUT: [tool.motor] format-check = false sigue funcionando
+
+Nota (Manager review WOT-2026-047i, 2026-09-19): (a) y (c) se reescribieron
+para ejecutar `uv run`/`ruff` REAL en vez de mockear el resultado -- las
+versiones originales fabricaban el efecto esperado con un mock en vez de
+demostrarlo, y (a) en particular pasaba igual con o sin el fix real
+(mutation-verify del Manager: worktree en el commit pre-fix, mismo test,
+exit_code=0 -- falso verde). Verificado tras la correccion: mutation-verify
+sin_fix exit_code=1, con_fix exit_code=0.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -25,6 +34,7 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import prepush_check as pc_module  # noqa: E402
 from prepush_check import run_ruff_format_check  # noqa: E402
 
 
@@ -93,85 +103,83 @@ def test_no_venv_or_lock_with_isolation(tmp_path):
 def test_venv_and_lock_created_without_isolation(tmp_path):
     """(a) DoD-2 (mutation): sin --isolated -> .venv/ y uv.lock SI se crean.
 
-    Este test demuestra que el probe funciona: si el fix se revierte
-    (retirar --isolated), el test cae porque aparecen los artefactos.
+    Ejecuta `uv run` REAL (sin mock de subprocess) reproduciendo literalmente
+    el cmd PRE-fix (`uv run ruff format --check .`, sin `--isolated`), para
+    demostrar la premisa del ticket con evidencia real, no fabricada.
 
-    MUTACION: revertir el fix de 047i (quitar --isolated del cmd) -> el test
-    cae con assertion error nombrando .venv y uv.lock.
+    MUTACION QUE LO VERIFICA (Manager review WOT-2026-047i, revision del test
+    original que mockeaba run_subprocess_check y pasaba con o sin el fix):
+    corrido contra el codigo pre-fix (worktree en 6684d1d) -> este test PASA
+    (los artefactos SI aparecen, confirmando la premisa); corrido contra el
+    codigo con fix -> vease test_no_venv_or_lock_with_isolation, que es el que
+    prueba la AUSENCIA con el cmd real ya parcheado.
     """
-    import scripts.prepush_check as pc
-
     _make_minimal_project(tmp_path)
 
-    # Simular la version SIN fix: sin --isolated
-    with patch.object(
-        pc,
-        "run_subprocess_check",
-        side_effect=lambda cmd, name, project_root, capture_output=True: (
-            # Simular subprocess.run sin --isolated -> crea .venv y uv.lock
-            _fake_subprocess_call(cmd, name, project_root, materialize_artifacts=True)
-        ),
-    ):
-        pc.run_ruff_format_check(tmp_path)
+    # cmd PRE-fix literal (antes de anadir --isolated), ejecutado tal cual
+    # ejecutaria uv en la maquina real: sin mocks.
+    subprocess.run(
+        ["uv", "run", "ruff", "format", "--check", "."],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
     file_names = {f.name for f in tmp_path.iterdir()}
     assert ".venv" in file_names, (
-        "sin --isolated, .venv DEBE ser creado (probe de mutation funciona)"
+        f"sin --isolated, uv run DEBE materializar .venv en el arbol auditado: {file_names}"
     )
     assert "uv.lock" in file_names, (
-        "sin --isolated, uv.lock DEBE ser creado (probe de mutation funciona)"
-    )
-
-
-def _fake_subprocess_call(cmd, name, project_root, materialize_artifacts=False):
-    """Simula run_subprocess_check que crea artefactos si materialize_artifacts."""
-
-    if materialize_artifacts:
-        # Simular que uv run creo .venv y uv.lock
-        (project_root / ".venv").mkdir(exist_ok=True)
-        (project_root / "uv.lock").write_text("# lock file", encoding="utf-8")
-        (project_root / ".ruff_cache").mkdir(exist_ok=True)
-
-    # Simular que ruff format --check paso (rc=0)
-    from prepush_check import CheckResult
-
-    return CheckResult(
-        name=name, passed=True, output="0 files would reformat", is_blocking=True
+        f"sin --isolated, uv run DEBE materializar uv.lock en el arbol auditado: {file_names}"
     )
 
 
 # ---------------------------------------------------------- (c) CONTROL NEGATIVO
-def test_unformatted_code_still_blocks(monkeypatch):
+def test_unformatted_code_still_blocks(tmp_path):
     """(c) DoD-3 (control negativo): codigo mal formateado sigue dando passed=False.
 
     El check sigue siendo BLOQUEANTE: un project_root con codigo no formateado
-    devuelve passed=False, incluso con --isolated.
+    devuelve passed=False, incluso con --isolated (de uv).
 
-    Sin este test, aislar la invocacion podria haber roto el check (false green).
+    CAUSA RAIZ REAL investigada (Manager review WOT-2026-047i, 2026-09-19; el
+    test original mockeaba subprocess.run completo alegando que "ruff no
+    encuentra archivos en tmp_path" sin diagnosticar por que): el `tmp_path`
+    de ESTA suite vive bajo `tests/sandbox/test_runtime/...`
+    (ProjectTmpPathFactory, ver tests/conftest.py), y `pyproject.toml:35`
+    excluye `tests/sandbox/` de ruff. Cuando `ruff` corre SIN su propio
+    `--isolated` (config), hereda esa exclusion ascendente del
+    `pyproject.toml` REAL del motor por mas que `cwd` sea el tmp_path
+    sintetico, y no ve ningun fichero -- artefacto del ENTORNO DE TEST, no
+    del comportamiento de produccion (donde `project_root` nunca vive bajo
+    `tests/sandbox/`). Verificado con `uv run --isolated ... --verbose`: uv
+    SI resuelve tmp_path como proyecto correcto; el hueco es la herencia de
+    config de ruff.
 
-    Nota: se usa monkeypatch de subprocess.run porque ruff no encuentra archivos
-    en tmp_path cuando se ejecuta desde pytest (posible interaccion con el entorno
-    de pytest-safe). La logica se prueba con un mock que replica el comportamiento
-    real de ruff format --check sobre codigo sin formatear.
+    Mock LEGITIMO (envuelve la funcion real, no fabrica el resultado): se
+    intercepta `run_subprocess_check` solo para inyectar el `--isolated` de
+    RUFF (neutraliza el artefacto de entorno) y delega en la implementacion
+    REAL, que ejecuta `subprocess.run` de verdad. El resultado que llega al
+    assert es la salida genuina de ruff sobre codigo sin formatear, no un
+    valor inventado.
     """
-    import subprocess as _subprocess
+    _make_unformatted_project(tmp_path)
 
-    test_dir = Path(__file__).resolve().parent / ".sandbox_unfmt"
-    test_dir.mkdir(exist_ok=True)
-    _make_minimal_project(test_dir)
+    real_run_subprocess_check = pc_module.run_subprocess_check
 
-    # Mock subprocess.run to simulate ruff returning rc=1 (unformatted)
-    def _mock_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        class _Result:
-            returncode = 1
-            stdout = "Would reformat: main.py\n1 file would be reformatted\n"
-            stderr = ""
+    def _inject_ruff_isolated(cmd, name, project_root, capture_output=True):
+        patched_cmd = list(cmd)
+        if "ruff" in patched_cmd:
+            idx = patched_cmd.index("ruff")
+            patched_cmd.insert(idx + 1, "--isolated")
+        return real_run_subprocess_check(
+            patched_cmd, name, project_root, capture_output
+        )
 
-        return _Result()
-
-    monkeypatch.setattr(_subprocess, "run", _mock_run)
-
-    result = run_ruff_format_check(test_dir)
+    with patch.object(
+        pc_module, "run_subprocess_check", side_effect=_inject_ruff_isolated
+    ):
+        result = run_ruff_format_check(tmp_path)
 
     assert result.passed is False, (
         f"codigo sin formatear debe fallar el check, no pasar: {result.output}"
@@ -221,9 +229,15 @@ def test_optout_skips_format_check(tmp_path):
 def test_cmd_contains_isolated_flag(tmp_path):
     """(e) Verificar que el cmd pasado a run_subprocess_check incluye --isolated.
 
+    Mock LEGITIMO: solo intercepta run_subprocess_check para CAPTURAR el cmd
+    que run_ruff_format_check construye, sin fabricar ningun resultado ni
+    artefacto -- no ejecuta el subproceso real (por velocidad), pero tampoco
+    simula su efecto. La verificacion es sobre el ARGUMENTO construido, no
+    sobre el comportamiento del proceso.
+
     Mutation: si se retira --isolated del cmd, este test cae.
     """
-    import prepush_check as pc_module
+    from prepush_check import CheckResult
 
     _make_minimal_project(tmp_path)
 
@@ -231,9 +245,7 @@ def test_cmd_contains_isolated_flag(tmp_path):
 
     def _capture_run(cmd, name, project_root, capture_output=True):  # type: ignore[no-untyped-def]
         captured_cmd.extend(cmd)
-        return _fake_subprocess_call(
-            cmd, name, project_root, materialize_artifacts=False
-        )
+        return CheckResult(name=name, passed=True, output="", is_blocking=True)
 
     with patch.object(pc_module, "run_subprocess_check", side_effect=_capture_run):
         run_ruff_format_check(tmp_path)
