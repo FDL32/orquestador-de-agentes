@@ -3654,7 +3654,7 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
     return 0
 
 
-def _sync_state_after_bootstrap(plan_id: str, json_output: bool) -> None:
+def _sync_state_after_bootstrap(plan_id: str) -> str | None:
     """Sync STATE.md to match the STATE_CHANGED event just emitted by bootstrap.
 
     Before: `_handle_bootstrap_ticket` just emitted STATE_CHANGED->IN_PROGRESS
@@ -3663,10 +3663,15 @@ def _sync_state_after_bootstrap(plan_id: str, json_output: bool) -> None:
     During: invokes `sync_state_projection`, best-effort (same pattern as
         `_handle_reopen_terminal_ticket`): a sync failure must NOT fail the
         bootstrap, which already emitted the correct bus event.
-    After: STATE.md matches the bus-derived state when the sync succeeds;
-        on failure, a `[WARN]` is printed to stderr (non-JSON mode only) with
-        a PII-safe detail (no raw absolute path), and the bootstrap still
-        returns success.
+    After: STATE.md matches the bus-derived state when the sync succeeds and
+        this returns None; on failure, returns a PII-safe warning message
+        (no raw absolute path) instead of printing it directly -- the caller
+        decides how to surface it (stderr in text mode, `warnings` field in
+        JSON mode; WOT-2026-070t follow-up from the L720 governance loop:
+        the previous version gated the print on `not json_output`, making a
+        sync failure completely invisible to `--json` consumers, the mode
+        used by automated orchestration). The bootstrap itself still returns
+        success either way.
 
     WOT-2026-070t: without this call, STATE.md kept declaring the previous
     cycle's ACTIVE_TICKET even though the bus already had the new ticket's
@@ -3687,19 +3692,35 @@ def _sync_state_after_bootstrap(plan_id: str, json_output: bool) -> None:
             detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
         else:
             detail = f"{exc.strerror} (errno {exc.errno})"
-        if not json_output:
-            print(
-                f"[WARN] Ticket {plan_id} bootstrapped in bus, but projection sync "
-                f"failed: {detail}",
-                file=sys.stderr,
-            )
+        return (
+            f"Ticket {plan_id} bootstrapped in bus, but projection sync "
+            f"failed: {detail}"
+        )
     except Exception as exc:
-        if not json_output:
-            print(
-                f"[WARN] Ticket {plan_id} bootstrapped in bus, but projection sync "
-                f"failed: {exc}",
-                file=sys.stderr,
-            )
+        # WOT-2026-070t follow-up (L720, lente BA06): esta rama generica NO
+        # tiene la composicion PII-safe de la rama OSError de arriba. Una
+        # excepcion no-OSError cuyo str() contenga una ruta absoluta fugaria
+        # sin redaccion. Redacta igual que el caso OSError con filename,
+        # usando el propio directorio de colaboracion como candidato a
+        # ocultar -- es la unica ruta con contenido sensible que este
+        # helper conoce en este punto.
+        detail = str(exc)
+        try:
+            collab_dir = str(get_collab_dir())
+            if collab_dir and collab_dir in detail:
+                where = scope_gate._relativize_scope_path(collab_dir, PROJECT_ROOT)
+                detail = detail.replace(collab_dir, where)
+        except Exception:  # noqa: S110 - best-effort redaction, must not fail here
+            # Si la propia redaccion falla, cae al `detail` sin redactar en
+            # vez de tumbar el bootstrap ya exitoso. No se loguea aqui a
+            # proposito -- loguear el error de redaccion podria volver a
+            # incluir el mismo fragmento sensible que se intentaba ocultar.
+            pass
+        return (
+            f"Ticket {plan_id} bootstrapped in bus, but projection sync "
+            f"failed: {detail}"
+        )
+    return None
 
 
 def _handle_bootstrap_ticket(json_output: bool) -> int:
@@ -3770,11 +3791,16 @@ def _handle_bootstrap_ticket(json_output: bool) -> int:
         },
     )
 
-    _sync_state_after_bootstrap(plan_id, json_output)
+    sync_warning = _sync_state_after_bootstrap(plan_id)
 
     if json_output:
-        print(json.dumps({"status": "bootstrapped", "plan_id": plan_id}, indent=2))
+        payload = {"status": "bootstrapped", "plan_id": plan_id}
+        if sync_warning:
+            payload["warnings"] = [sync_warning]
+        print(json.dumps(payload, indent=2))
     else:
+        if sync_warning:
+            print(f"[WARN] {sync_warning}", file=sys.stderr)
         print(f"[OK] Bootstrapped STATE_CHANGED -> IN_PROGRESS for {plan_id}")
 
     return 0

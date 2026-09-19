@@ -5569,6 +5569,145 @@ class TestPiiSafeExceptionSites:
         assert "Permission denied" in captured.err
         assert "13" in captured.err
 
+    def test_handle_bootstrap_ticket_generic_exception_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """WOT-2026-070t follow-up (bucle L720, lente BA06 fanout-dif): la
+        rama `except Exception` generica de `_sync_state_after_bootstrap`
+        NO tenia la composicion PII-safe que si tiene la rama `OSError` --
+        una excepcion no-OSError cuyo `str()` contuviera una ruta absoluta
+        fugaba sin redaccion, y esa superficie no tenia test (solo la rama
+        OSError se ejercia). Reproduce con un `RuntimeError` (no OSError,
+        cae en `except Exception`) cuyo mensaje incrusta la ruta absoluta
+        del `collaboration_dir`."""
+        import agent_controller as ac
+
+        work_plan_content = (
+            "# Work Ticket\n## Metadata\n- **ID:** WT-2026-210\n"
+            "- **Estado:** APPROVED\n"
+        )
+
+        class FakeBus:
+            def __init__(self):
+                self.emits = []
+
+            def latest_event(self, ticket_id=None, event_type=None):
+                return None
+
+            def emit(self, *args, **kwargs):
+                self.emits.append((args, kwargs))
+                return object()
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            ac,
+            "read_file",
+            lambda p: work_plan_content if "work_plan" in str(p) else "",
+        )
+        monkeypatch.setattr(ac, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(ac, "event_bus", FakeBus())
+        monkeypatch.setattr(ac, "get_runtime_dir", lambda: tmp_path / "runtime")
+        collab_dir = tmp_path / "collaboration"
+        monkeypatch.setattr(ac, "get_collab_dir", lambda: collab_dir)
+
+        absolute_collab_str = str(collab_dir)
+
+        def fake_sync_state_projection(**kwargs):
+            # No es OSError: cae en la rama `except Exception` generica.
+            raise RuntimeError(
+                f"internal projection error while reading {absolute_collab_str}/STATE.md"
+            )
+
+        monkeypatch.setitem(
+            sys.modules,
+            "scripts.state_projection_sync",
+            type(
+                "MockSyncModule",
+                (),
+                {"sync_state_projection": staticmethod(fake_sync_state_projection)},
+            )(),
+        )
+
+        rc = ac._handle_bootstrap_ticket(False)
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.err, absolute_collab_str, tmp_path.name)
+        assert "internal projection error" in captured.err
+
+    def test_handle_bootstrap_ticket_json_mode_surfaces_sync_failure_as_warning(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """WOT-2026-070t follow-up (bucle L720, lente BA06 fanout-dif): antes,
+        el `[WARN]` de un fallo de sync solo se imprimia cuando
+        `not json_output`. En modo `--json` (el que consume la orquestacion
+        automatica, p.ej. el launcher) el fallo quedaba completamente
+        invisible: el payload solo decia `{"status": "bootstrapped"}`. Ahora
+        `_sync_state_after_bootstrap` devuelve el mensaje y el caller lo
+        expone en un campo `warnings` del payload JSON cuando aplica."""
+        import agent_controller as ac
+
+        work_plan_content = (
+            "# Work Ticket\n## Metadata\n- **ID:** WT-2026-211\n"
+            "- **Estado:** APPROVED\n"
+        )
+
+        class FakeBus:
+            def __init__(self):
+                self.emits = []
+
+            def latest_event(self, ticket_id=None, event_type=None):
+                return None
+
+            def emit(self, *args, **kwargs):
+                self.emits.append((args, kwargs))
+                return object()
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            ac,
+            "read_file",
+            lambda p: work_plan_content if "work_plan" in str(p) else "",
+        )
+        monkeypatch.setattr(ac, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(ac, "event_bus", FakeBus())
+        monkeypatch.setattr(ac, "get_runtime_dir", lambda: tmp_path / "runtime")
+        monkeypatch.setattr(ac, "get_collab_dir", lambda: tmp_path / "collaboration")
+
+        def fake_sync_state_projection(**kwargs):
+            raise OSError(
+                13, "Permission denied", str(tmp_path / "collaboration" / "STATE.md")
+            )
+
+        monkeypatch.setitem(
+            sys.modules,
+            "scripts.state_projection_sync",
+            type(
+                "MockSyncModule",
+                (),
+                {"sync_state_projection": staticmethod(fake_sync_state_projection)},
+            )(),
+        )
+
+        # json_output=True: el modo automatizado que antes silenciaba el fallo.
+        rc = ac._handle_bootstrap_ticket(True)
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["status"] == "bootstrapped"
+        # MUTATION: sin este fix, "warnings" no existe en el payload y este
+        # assert falla -- el fallo de sync era invisible en modo --json.
+        assert "warnings" in payload, payload
+        assert len(payload["warnings"]) == 1
+        assert "Permission denied" in payload["warnings"][0]
+        # PII-safe tambien en el payload JSON, no solo en stderr.
+        self._assert_no_pii_leak(
+            json.dumps(payload),
+            str(tmp_path / "collaboration" / "STATE.md"),
+            tmp_path.name,
+        )
+
     def test_handle_session_close_subprocess_oserror_detail_has_no_absolute_path(
         self, tmp_path, monkeypatch, capsys
     ):
@@ -5952,14 +6091,30 @@ class TestBootstrapTicketSyncsStateMd:
         assert old_ticket not in state_md, state_md
         assert "STATUS: IN_PROGRESS" in state_md, state_md
 
-    def test_bootstrap_is_idempotent_when_state_already_matches(
+    def test_bootstrap_sync_does_not_rewrite_when_state_already_matches(
         self, tmp_path: Path
     ) -> None:
-        """(c) del DoD, control negativo: si STATE.md YA coincide con el
-        ticket activo (mismo estado que el bootstrap produciria), una
-        segunda invocacion no debe corromper ni reescribir a un estado
-        distinto -- sigue reportando 'already_bootstrapped' (idempotencia
-        del guardia de bus existente) y STATE.md permanece estable.
+        """(c) del DoD, control negativo REAL: cuando `sync_state_projection`
+        SI se ejecuta (no la rama early-return `already_bootstrapped`) y el
+        estado en disco YA coincide con el derivado del bus, no debe
+        reescribir el fichero -- ni siquiera con bytes identicos.
+
+        WOT-2026-070t, hallazgo del bucle L720 (lente BA06, fanout-dif):
+        la version anterior de este test usaba `old_ticket == new_ticket`,
+        lo que hace que la 2a invocacion tome la rama `already_bootstrapped`
+        (`latest_state_event`) y retorne ANTES de llegar a
+        `_sync_state_after_bootstrap`. Verificado por MUTACION: revertido el
+        fix del handler (`_sync_state_after_bootstrap` sin llamar), ambas
+        invocaciones dejaban el fichero intacto igual -- el test SOBREVIVIA
+        a la mutacion, es decir, tenia poder de refutacion CERO sobre este
+        fix. Corregido: fuerza que la sync SI se ejecute usando un
+        `work_plan.md` cuyo ticket coincide con el `STATE.md` PREVIO (asi
+        `--bootstrap-ticket` no toma la rama `already_bootstrapped`: el bus
+        esta vacio, emite el evento, y SI invoca la sync), y usa `st_mtime_ns`
+        como canario -- una reescritura con bytes identicos SI mueve el
+        mtime; solo el camino MATCHED de `sync_state_projection` (Bloque C:
+        `if probe_output.result == ProbeResult.MATCHED: return True`, sin
+        `write_text`) deja el mtime intacto.
         """
         ticket = "WOT-TEST-070T-IDEMPOTENT"
         project_root = _bootstrap_project_root(
@@ -5968,19 +6123,30 @@ class TestBootstrapTicketSyncsStateMd:
             old_status="IN_PROGRESS",
             new_ticket=ticket,
         )
-
-        first = _run_bootstrap_ticket(project_root)
-        assert first.returncode == 0, first.stdout + first.stderr
-
         state_md_path = project_root / ".agent" / "collaboration" / "STATE.md"
-        state_after_first = state_md_path.read_text(encoding="utf-8")
-        assert ticket in state_after_first
-        assert "STATUS: IN_PROGRESS" in state_after_first
+        content_before = state_md_path.read_text(encoding="utf-8")
+        mtime_before = state_md_path.stat().st_mtime_ns
 
-        second = _run_bootstrap_ticket(project_root)
-        assert second.returncode == 0, second.stdout + second.stderr
-        payload = json.loads(second.stdout)
-        assert payload["status"] == "already_bootstrapped"
+        # UNICA invocacion: bus vacio -> emite STATE_CHANGED->IN_PROGRESS ->
+        # _sync_state_after_bootstrap SI corre -> run_probe deriva IN_PROGRESS
+        # (el evento recien emitido) vs markdown IN_PROGRESS (ya declarado en
+        # el fixture) -> MATCHED -> sync_state_projection NO escribe.
+        result = _run_bootstrap_ticket(project_root)
+        assert result.returncode == 0, result.stdout + result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "bootstrapped", (
+            "esta invocacion debe tomar la rama de emit+sync real, "
+            f"no already_bootstrapped: {payload}"
+        )
 
-        state_after_second = state_md_path.read_text(encoding="utf-8")
-        assert state_after_second == state_after_first
+        content_after = state_md_path.read_text(encoding="utf-8")
+        mtime_after = state_md_path.stat().st_mtime_ns
+
+        # MUTATION: si sync_state_projection escribiera incondicionalmente
+        # (incluso con bytes identicos), mtime_after > mtime_before. Solo el
+        # camino MATCHED-sin-write deja el canario intacto.
+        assert content_after == content_before
+        assert mtime_after == mtime_before, (
+            "STATE.md fue reescrito (mtime cambio) pese a que el estado ya "
+            "coincidia -- sync_state_projection no deberia escribir en MATCHED"
+        )
