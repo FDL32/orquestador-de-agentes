@@ -201,7 +201,7 @@ class TestSinDuplicados:
             partes = set(py.parts)
             if py == _CANONICO or "__pycache__" in partes:
                 continue
-            if partes & {".git", ".venv", "venv", "node_modules", "backups"}:
+            if partes & {".git", ".venv", "venv", "node_modules", "backups", ".kilo"}:
                 continue
             try:
                 arbol = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
