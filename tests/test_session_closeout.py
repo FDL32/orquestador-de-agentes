@@ -2140,3 +2140,163 @@ class TestResolveTicketsCertification061c:
             "parse_archived_commits/audit se IMPORTAN (patron agent_controller), "
             "no se reimplementan"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: WOT-2026-070v — archive_event_bus runs AFTER session_close_recorded
+# ---------------------------------------------------------------------------
+
+
+class TestWOT2026070vArchiveOrder:
+    """Tests for WOT-2026-070v: archive_event_bus must run AFTER
+    _emit_session_close_recorded so that SESSION_CLOSE_RECORDED lands in the
+    active bus before it is archived.
+
+    DoD (b): test that reproduces the real scenario — step order must show
+    archive_event_bus AFTER session_close_recorded.  Must FAIL with the old
+    order and PASS with the fix.
+
+    DoD (d1): dry_run=True must still invoke _step_archive_event_bus (with
+    dry_run=True propagated, which decides internally not to mutate disk).
+
+    NOTE: Both steps are appended to report.steps AFTER _generate_report is
+    called, so they won't appear in the report FILE.  We mock _generate_report
+    to capture the report object and check report.steps directly.
+    """
+
+    @staticmethod
+    def _mock_run_success(*args, **kwargs) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="ok", stderr=""
+        )
+
+    def test_archive_event_bus_after_session_close_recorded(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-070v DoD (b): archive_event_bus step must appear AFTER
+        session_close_recorded in report.steps.
+
+        The fix moves `_step_archive_event_bus` from before `_generate_report`
+        to after `_emit_session_close_recorded`.  This test verifies that order
+        by inspecting report.steps directly (both steps are appended AFTER
+        _generate_report, so they won't appear in the report FILE).
+
+        Uses dry_run=False so _emit_session_close_recorded is actually called
+        (it is skipped when dry_run=True due to the `not dry_run` condition).
+        """
+        _write_work_plan(tmp_path, "WOT-2026-070v")
+
+        captured_report: list[CloseoutReport] = []
+
+        def _capture_report(report: CloseoutReport, project_root: Path) -> Path:
+            captured_report.append(report)
+            return _generated_report_path(project_root, dry_run=True)
+
+        with (
+            patch(
+                "scripts.session_closeout._generate_report",
+                side_effect=_capture_report,
+            ),
+            patch(
+                "scripts.session_closeout._run_script",
+                side_effect=self._mock_run_success,
+            ),
+        ):
+            run_closeout(tmp_path, dry_run=False)
+
+        assert len(captured_report) == 1
+        steps = captured_report[0].steps
+        step_names = [s.name for s in steps]
+
+        archive_idx = None
+        emit_idx = None
+        for i, name in enumerate(step_names):
+            if "archive_event_bus" in name.lower():
+                archive_idx = i
+            if "session_close_recorded" in name.lower():
+                emit_idx = i
+
+        assert archive_idx is not None, (
+            f"archive_event_bus step must be in report.steps; steps: {step_names}"
+        )
+        assert emit_idx is not None, (
+            f"session_close_recorded step must be in report.steps; steps: {step_names}"
+        )
+        assert archive_idx > emit_idx, (
+            f"archive_event_bus (pos {archive_idx}) must come AFTER "
+            f"session_close_recorded (pos {emit_idx}); "
+            f"order: {step_names}"
+        )
+
+    def test_dry_run_still_invokes_archive_event_bus(self, tmp_path: Path) -> None:
+        """WOT-2026-070v DoD (d1): _step_archive_event_bus must still be
+        invoked in dry_run=True mode (with dry_run=True propagated), even
+        after the reordering.
+
+        The old order had archive_event_bus unconditionally before the emit
+        block.  The new order places it unconditionally AFTER the emit block.
+        In both cases it must appear in report.steps.
+        """
+        _write_work_plan(tmp_path, "WOT-2026-070v")
+
+        captured_report: list[CloseoutReport] = []
+
+        def _capture_report(report: CloseoutReport, project_root: Path) -> Path:
+            captured_report.append(report)
+            return _generated_report_path(project_root, dry_run=True)
+
+        with (
+            patch(
+                "scripts.session_closeout._generate_report",
+                side_effect=_capture_report,
+            ),
+            patch(
+                "scripts.session_closeout._run_script",
+                side_effect=self._mock_run_success,
+            ),
+        ):
+            run_closeout(tmp_path, dry_run=True)
+
+        assert len(captured_report) == 1
+        step_names = [s.name for s in captured_report[0].steps]
+        assert "archive_event_bus" in step_names, (
+            f"_step_archive_event_bus must be invoked even in dry_run=True; "
+            f"steps: {step_names}"
+        )
+
+    def test_archive_event_bus_outside_emit_condition_block(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-070v: archive_event_bus must be OUTSIDE the
+        `if overall_status != "FAIL" and not dry_run:` block that contains
+        _emit_session_close_recorded.  This ensures archive runs unconditionally
+        (same as the old order).
+
+        We verify by checking that archive_event_bus is in report.steps even
+        when dry_run=True (emit is skipped but archive must still run).
+        """
+        _write_work_plan(tmp_path, "WOT-2026-070v")
+
+        captured_report: list[CloseoutReport] = []
+
+        def _capture_report(report: CloseoutReport, project_root: Path) -> Path:
+            captured_report.append(report)
+            return _generated_report_path(project_root, dry_run=True)
+
+        with (
+            patch(
+                "scripts.session_closeout._generate_report",
+                side_effect=_capture_report,
+            ),
+            patch(
+                "scripts.session_closeout._run_script",
+                side_effect=self._mock_run_success,
+            ),
+        ):
+            run_closeout(tmp_path, dry_run=True)
+
+        assert len(captured_report) == 1
+        step_names = [s.name for s in captured_report[0].steps]
+        assert "archive_event_bus" in step_names, (
+            f"archive_event_bus must run even when dry_run=True; steps: {step_names}"
+        )

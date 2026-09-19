@@ -2205,7 +2205,6 @@ def run_closeout(
     report.steps.append(_step_archive_manager_feedback(project_root, dry_run, events))
 
     report.steps.append(_step_archive_execution_log(project_root, dry_run))
-    report.steps.append(_step_archive_event_bus(project_root, dry_run))
     report.steps.append(_step_manifest_check(project_root))
     report.steps.append(_check_portability(project_root))
     try:
@@ -2256,6 +2255,8 @@ def run_closeout(
         report.steps.append(
             _emit_session_close_recorded(project_root, _window_start, overall_status)
         )
+
+    report.steps.append(_step_archive_event_bus(project_root, dry_run))
 
     # Return code: 0 if overall is PASS or WARN, 1 if FAIL
     return 1 if overall_status == "FAIL" else 0
