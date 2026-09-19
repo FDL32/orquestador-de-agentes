@@ -24,6 +24,7 @@ repos, and a mock would only prove the mock (WOT-2026-045a contract).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -56,6 +57,34 @@ def _init_git_repo(repo: Path) -> None:
     subprocess.run(
         ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True
     )
+
+
+def _commit_file_at(repo: Path, rel: str, content: str, message: str, when: str) -> str:
+    """Como `_commit_file` pero con FECHA explicita (autor y committer).
+
+    `git log --since` filtra por fecha del COMMITTER, asi que fijar solo
+    GIT_AUTHOR_DATE no mueve la ventana: hay que fijar las dos.
+    """
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    env = {**os.environ, "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+    subprocess.run(["git", "add", "--", rel], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def _commit_file(repo: Path, rel: str, content: str, message: str) -> str:
@@ -1487,4 +1516,78 @@ def test_planning_work_plan_of_another_ticket_declares_nothing(tmp_path: Path) -
 
     assert got is None, (
         f"el plan de OTRO ticket no declara autoridad para este; se obtuvo {got!r}"
+    )
+
+
+def test_commits_outside_the_window_are_not_absence_from_the_repo(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-070g: `FAIL_TARGETS_MISSING` afirmaba ausencia DEL REPO midiendo
+    solo su VENTANA.
+
+    Caso medido 2026-09-19 en produccion: un ticket `delivery_authority:
+    repo_motor` con 3 commits REALES en el motor (uno de ellos el HEAD sellado
+    por la suite) fue declarado "not in authoritative repo" porque esos commits
+    caian FUERA de la ventana de sesion -- madrugada en el motor, manana en el
+    destino, con la ventana arrancando entre medias. Probe del defecto, misma
+    consulta y mismo repo, cambiando solo la ventana:
+
+        git log --grep=<ticket> --since=<dia-anterior>  -> 3 commits
+        git log --grep=<ticket> --since=<hoy-01:00>     -> 0 commits
+
+    En la topologia motor+destino, commitear en los dos repos con horas de
+    diferencia es el flujo NORMAL, asi que el falso FAIL bloquea el cierre de un
+    ticket correctamente entregado y ademas dirige el diagnostico al sitio
+    equivocado (parece `delivery_authority`, es ventana).
+
+    Este test fija el INVARIANTE: si el autoritativo tiene commits del ticket
+    FUERA de la ventana, el veredicto NO es FAIL.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    _declare_authority(destino, "WOT-2026-999z", "repo_motor")
+
+    # Reproduccion EXACTA del caso de produccion: el AUTORITATIVO commitea
+    # ANTES de la ventana (madrugada) y el OTRO repo DENTRO (manana). Una
+    # ventana simetrica NO reproduce el defecto: si ambos salen vacios, la rama
+    # del control no dispara y el test pasaria sin probar nada.
+    _commit_file_at(
+        motor,
+        "src/fix.py",
+        "x = 1",
+        "WOT-2026-999z: implement",
+        "2026-09-19T00:04:00",
+    )
+    _commit_file_at(
+        destino,
+        "notes.md",
+        "n",
+        "WOT-2026-999z: proyecciones",
+        "2026-09-19T09:16:00",
+    )
+
+    # Ventana que arranca ENTRE MEDIAS: excluye el motor, incluye el destino.
+    future = "--since=2026-09-19T01:00:00"
+
+    result = session_closeout._process_ticket_targets(
+        "WOT-2026-999z",
+        destino,
+        motor,
+        lambda tid: "WOT",
+        # resuelve el OTRO repo: sin esto `other_root` queda None y la rama del
+        # control (`:1821`) nunca se evalua -- el test saldria verde sin probar nada.
+        lambda prefix, *a, **k: destino,
+        [future],
+    )
+
+    assert result.status != "FAIL", (
+        "commits fuera de la ventana NO son ausencia del repo autoritativo; "
+        f"se obtuvo {result.status}: {result.detail}"
+    )
+    assert "not in authoritative" not in (result.detail or ""), (
+        "el mensaje no puede afirmar ausencia DEL REPO cuando solo midio su "
+        f"ventana; detail={result.detail!r}"
     )

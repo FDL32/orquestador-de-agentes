@@ -1819,13 +1819,35 @@ def _process_ticket_targets(
         return _TicketTargetResult([], "SKIP", error_detail)
 
     if not shas and other_root is not None:
+        # WOT-2026-070g: antes de acusar de AUSENCIA, comprueba el autoritativo
+        # SIN ventana. Medido en produccion 2026-09-19: un ticket con 3 commits
+        # REALES en el motor -- uno de ellos el HEAD sellado por la suite -- se
+        # declaraba "not in authoritative repo" porque caian FUERA de la ventana
+        # de sesion (motor commiteado de madrugada, destino por la manana, con
+        # la ventana arrancando entre medias). Probe: misma consulta y mismo
+        # repo, `--since=<dia-anterior>` -> 3 commits, `--since=<hoy-01:00>` -> 0.
+        # En la topologia motor+destino, commitear en los dos repos con horas de
+        # diferencia es el flujo NORMAL: el falso FAIL bloqueaba el cierre de un
+        # ticket correctamente entregado y ademas mandaba el diagnostico al
+        # sitio equivocado (parecia `delivery_authority`, era la ventana).
+        outside_window, _ = _git_log_shas_for_ticket(authoritative_root, ticket_id, [])
+        if outside_window:
+            return _TicketTargetResult(
+                [],
+                "WARN",
+                f"{ticket_id}: sin commits en la ventana de sesion, pero el "
+                f"repo autoritativo ({authoritative_root}) SI los tiene "
+                f"({len(outside_window)} fuera de la ventana). No es ausencia "
+                f"del repo: es ausencia de la ventana.",
+            )
         ctrl_shas, _ = _git_log_shas_for_ticket(other_root, ticket_id, since_args)
         if ctrl_shas:
             return _TicketTargetResult(
                 [],
                 "FAIL",
-                f"FAIL_TARGETS_MISSING: {ticket_id} not in authoritative "
-                f"repo ({authoritative_root}) but found in {other_root}",
+                f"FAIL_TARGETS_MISSING: {ticket_id} sin commits en el repo "
+                f"autoritativo ({authoritative_root}) -- ni en la ventana ni "
+                f"fuera de ella -- pero SI en {other_root}",
                 blocking=True,
             )
 
