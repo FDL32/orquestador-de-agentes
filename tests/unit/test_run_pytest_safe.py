@@ -2481,3 +2481,77 @@ def _fake_run_cmd(
         )
     # Default: successful empty command
     return Result("", 0)
+
+
+# =============================================================================
+# WOT-2026-055t: mismatched .agent/ detection (cwd != project_root)
+# =============================================================================
+
+
+def test_055t_abort_when_cwd_has_different_agent_dir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """DoD-1: cwd con .agent/ distinto al del project_root -> abort (exit 1).
+
+    Mutation: eliminar la deteccion -> este test da exit 0 (no aborta).
+    """
+    import pathlib
+
+    fake_dest = tmp_path / "fake_dest"
+    fake_dest.mkdir()
+    (fake_dest / ".agent").mkdir()
+
+    mod = load_runner_module()
+
+    with pytest.raises(SystemExit) as exc_info:
+        monkeypatch.setattr(pathlib.Path, "cwd", lambda: fake_dest)
+        mod._abort_on_mismatch()
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "AGENT_PROJECT_ROOT" in captured.err
+
+
+def test_055t_no_abort_when_cwd_agent_matches_project_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Control positivo: cwd = motor (sin AGENT_PROJECT_ROOT) -> no abort.
+
+    Mutation: si el guard se vuelve demasiado amplio y aborta tambien en el
+    motor, este test va RED.
+    """
+    import pathlib
+
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    (motor / ".agent").mkdir()
+
+    mod = load_runner_module()
+
+    monkeypatch.setattr(pathlib.Path, "cwd", lambda: motor)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", motor)
+    monkeypatch.setattr(mod, "_AGENT_DIR", motor / ".agent")
+
+    mod._abort_on_mismatch()  # no debe levantar
+
+
+def test_055t_no_abort_when_agent_project_root_is_set(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Si AGENT_PROJECT_ROOT ya esta exportada, no aborta aunque el .agent/
+    del cwd sea distinto: la eleccion fue explicita.
+
+    Mutation: si la guarda no verifica AGENT_PROJECT_ROOT, este test va RED.
+    """
+    import pathlib
+
+    fake_dest = tmp_path / "fake_dest"
+    fake_dest.mkdir()
+    (fake_dest / ".agent").mkdir()
+
+    mod = load_runner_module()
+
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(fake_dest))
+    monkeypatch.setattr(pathlib.Path, "cwd", lambda: fake_dest)
+
+    mod._abort_on_mismatch()  # no debe levantar

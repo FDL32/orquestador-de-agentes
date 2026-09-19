@@ -95,6 +95,50 @@ RUN_HISTORY_JSONL = _LazyPath(lambda: RUNTIME_DIR.resolve() / "run_history.jsonl
 RUN_HISTORY_MAX = 500
 
 
+def _detect_mismatched_agent_dir() -> str | None:
+    """Detectar si el cwd real tiene un .agent/ distinto al del project_root.
+
+    WOT-2026-055t: cuando el runner se ejecuta desde un repo_destino que tiene
+    su propio .agent/ pero AGENT_PROJECT_ROOT NO esta exportada, _PROJECT_ROOT
+    resuelve al MOTOR por fallback silencioso y la suite mide el arbol equivocado
+    con exit 0 (falso verde). Esta deteccion aborta explicitamente en ese caso.
+
+    Antes: nada.
+    Durante: camina hacia arriba desde Path.cwd() buscando el primer .agent/.
+        Si se encuentra y su ruta resuelta difiere de _AGENT_DIR (el .agent/
+        del project_root resuelto), se considera un mismatch.
+        Si AGENT_PROJECT_ROOT ya esta exportada, se asume que la eleccion fue
+        deliberada y no se aborta.
+    After: devuelve None (sin mismatch) o una cadena con el mensaje de error.
+        Nunca lanza.
+    """
+    if os.environ.get("AGENT_PROJECT_ROOT", "").strip():
+        return None
+    cwd = Path.cwd()
+    for candidate in [cwd, *cwd.parents]:
+        agent_candidate = candidate / ".agent"
+        if agent_candidate.exists():
+            if agent_candidate.resolve() != _AGENT_DIR.resolve():
+                return (
+                    f"[ERROR] El directorio actual ({cwd}) tiene su propio "
+                    f".agent/ ({agent_candidate.resolve()}) que difiere del "
+                    f".agent/ del project_root resuelto ({_AGENT_DIR.resolve()}).\n"
+                    f"        El runner midio el arbol equivocado (falso verde).\n"
+                    f"        Solucion: exporta AGENT_PROJECT_ROOT apuntando al "
+                    f"repo_destino correcto antes de ejecutar este runner."
+                )
+            return None
+    return None
+
+
+def _abort_on_mismatch() -> None:
+    """Abortar con exit 1 si hay mismatch de .agent/."""
+    msg = _detect_mismatched_agent_dir()
+    if msg:
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
+
 def _mark_no_tests_collected(exit_code: int, summary: dict) -> dict:
     """WOT-2026-055j: marca un `exit_code: 5` como NO acreditante en last-run.json.
 
@@ -1512,8 +1556,8 @@ def check_canonical_state_leak(snapshot: dict[str, str]) -> list[str]:
 
 def main() -> int:  # noqa: C901
     args = parse_args()
+    _abort_on_mismatch()
     ensure_runtime_dir()
-
     if args.status:
         print_status(build_status_payload())
         return 0
