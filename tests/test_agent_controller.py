@@ -5509,6 +5509,66 @@ class TestPiiSafeExceptionSites:
         assert "Permission denied" in captured.err
         assert "13" in captured.err
 
+    def test_handle_bootstrap_ticket_projection_sync_oserror_detail_has_no_absolute_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """WOT-2026-070t (_handle_bootstrap_ticket / _sync_state_after_bootstrap):
+        sync_state_projection does state_md_path.write_text; OSError must be
+        composed safely, same contract as _handle_reopen_terminal_ticket."""
+        import agent_controller as ac
+
+        work_plan_content = (
+            "# Work Ticket\n## Metadata\n- **ID:** WT-2026-209\n"
+            "- **Estado:** APPROVED\n"
+        )
+
+        class FakeBus:
+            def __init__(self):
+                self.emits = []
+
+            def latest_event(self, ticket_id=None, event_type=None):
+                return None  # no bootstrap yet -> proceeds to emit + sync
+
+            def emit(self, *args, **kwargs):
+                self.emits.append((args, kwargs))
+                return object()
+
+        monkeypatch.setattr(ac, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            ac,
+            "read_file",
+            lambda p: work_plan_content if "work_plan" in str(p) else "",
+        )
+        monkeypatch.setattr(ac, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(ac, "event_bus", FakeBus())
+        monkeypatch.setattr(ac, "get_runtime_dir", lambda: tmp_path / "runtime")
+        monkeypatch.setattr(ac, "get_collab_dir", lambda: tmp_path / "collaboration")
+
+        state_md_path = tmp_path / "collaboration" / "STATE.md"
+        absolute_path_str = str(state_md_path)
+
+        def fake_sync_state_projection(**kwargs):
+            raise OSError(13, "Permission denied", absolute_path_str)
+
+        monkeypatch.setitem(
+            sys.modules,
+            "scripts.state_projection_sync",
+            type(
+                "MockSyncModule",
+                (),
+                {"sync_state_projection": staticmethod(fake_sync_state_projection)},
+            )(),
+        )
+
+        rc = ac._handle_bootstrap_ticket(False)
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        self._assert_no_pii_leak(captured.err, absolute_path_str, tmp_path.name)
+        assert "<REPO_ROOT>" in captured.err or "STATE.md" in captured.err
+        assert "Permission denied" in captured.err
+        assert "13" in captured.err
+
     def test_handle_session_close_subprocess_oserror_detail_has_no_absolute_path(
         self, tmp_path, monkeypatch, capsys
     ):
@@ -5801,4 +5861,126 @@ class TestFltVersionableGateWiring:
         data = json.loads(captured.getvalue())
         errors_blob = json.dumps(data["errors"]["flt_versionable"])
         assert "flt_versionable gate error" in errors_blob
-        assert "RuntimeError" in errors_blob
+
+
+# =============================================================================
+# WOT-2026-070t: --bootstrap-ticket debe sincronizar STATE.md, no solo el bus
+# =============================================================================
+#
+# DoD binario de la ficha (backlog.md): (a) STATE.md con ticket VIEJO
+# COMPLETED + work_plan.md con ticket NUEVO -> --bootstrap-ticket debe hacer
+# que STATE.md CAMBIE (no solo que el stdout lo diga); (b) MUTACION: revertir
+# el fix -> el test cae porque STATE.md sigue con el ticket viejo; (c)
+# CONTROL NEGATIVO: si STATE.md YA coincide con el ticket activo,
+# --bootstrap-ticket no debe reescribirlo innecesariamente (idempotencia).
+#
+# Subprocess real (CLI completo, no el handler interno) contra un
+# --project-root temporal y aislado: ejercita la ruta productiva real
+# (parseo de --project-root -> export AGENT_PROJECT_ROOT -> get_collab_dir()/
+# get_runtime_dir() resueltos contra el tmp), no un mock de sync_state_projection.
+
+
+def _bootstrap_project_root(
+    tmp_path: Path, *, old_ticket: str, old_status: str, new_ticket: str
+) -> Path:
+    """Build a throwaway --project-root with a STALE STATE.md and a work_plan
+    pointing to a different (new) ticket -- the exact drift shape the ticket
+    describes (`ACTIVE_TICKET` left over from the previous cycle)."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "work_plan.md").write_text(
+        f"# Plan de Trabajo\n\n- **ID:** {new_ticket}\n- **Estado:** APPROVED\n",
+        encoding="utf-8",
+    )
+    (collab / "STATE.md").write_text(
+        f"ACTIVE_TICKET: {old_ticket}\nSTATUS: {old_status}\n",
+        encoding="utf-8",
+    )
+    runtime_events = tmp_path / ".agent" / "runtime" / "events"
+    runtime_events.mkdir(parents=True, exist_ok=True)
+    # events.jsonl vacio: no hay bus previo para ninguno de los dos tickets.
+    (runtime_events / "events.jsonl").write_text("", encoding="utf-8")
+    return tmp_path
+
+
+def _run_bootstrap_ticket(tmp_path: Path) -> subprocess.CompletedProcess:
+    controller = PROJECT_ROOT / ".agent" / "agent_controller.py"
+    return subprocess.run(
+        [
+            sys.executable,
+            str(controller),
+            "--bootstrap-ticket",
+            "--json",
+            "--project-root",
+            str(tmp_path),
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+class TestBootstrapTicketSyncsStateMd:
+    """WOT-2026-070t: --bootstrap-ticket debe dejar STATE.md coherente con el
+    ticket que acaba de bootstrapear en el bus, no solo emitir el evento."""
+
+    def test_bootstrap_updates_stale_state_md_to_new_ticket(
+        self, tmp_path: Path
+    ) -> None:
+        """(a)+(b) del DoD: STATE.md con ticket viejo COMPLETED debe CAMBIAR
+        al ticket nuevo tras --bootstrap-ticket. MUTATION: sin la llamada a
+        sync_state_projection en _handle_bootstrap_ticket, STATE.md queda
+        con ACTIVE_TICKET=<viejo>/STATUS=COMPLETED y este assert falla.
+        """
+        old_ticket = "WOT-TEST-070T-OLD"
+        new_ticket = "WOT-TEST-070T-NEW"
+        project_root = _bootstrap_project_root(
+            tmp_path,
+            old_ticket=old_ticket,
+            old_status="COMPLETED",
+            new_ticket=new_ticket,
+        )
+
+        result = _run_bootstrap_ticket(project_root)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        state_md = (project_root / ".agent" / "collaboration" / "STATE.md").read_text(
+            encoding="utf-8"
+        )
+        assert new_ticket in state_md, state_md
+        assert old_ticket not in state_md, state_md
+        assert "STATUS: IN_PROGRESS" in state_md, state_md
+
+    def test_bootstrap_is_idempotent_when_state_already_matches(
+        self, tmp_path: Path
+    ) -> None:
+        """(c) del DoD, control negativo: si STATE.md YA coincide con el
+        ticket activo (mismo estado que el bootstrap produciria), una
+        segunda invocacion no debe corromper ni reescribir a un estado
+        distinto -- sigue reportando 'already_bootstrapped' (idempotencia
+        del guardia de bus existente) y STATE.md permanece estable.
+        """
+        ticket = "WOT-TEST-070T-IDEMPOTENT"
+        project_root = _bootstrap_project_root(
+            tmp_path,
+            old_ticket=ticket,
+            old_status="IN_PROGRESS",
+            new_ticket=ticket,
+        )
+
+        first = _run_bootstrap_ticket(project_root)
+        assert first.returncode == 0, first.stdout + first.stderr
+
+        state_md_path = project_root / ".agent" / "collaboration" / "STATE.md"
+        state_after_first = state_md_path.read_text(encoding="utf-8")
+        assert ticket in state_after_first
+        assert "STATUS: IN_PROGRESS" in state_after_first
+
+        second = _run_bootstrap_ticket(project_root)
+        assert second.returncode == 0, second.stdout + second.stderr
+        payload = json.loads(second.stdout)
+        assert payload["status"] == "already_bootstrapped"
+
+        state_after_second = state_md_path.read_text(encoding="utf-8")
+        assert state_after_second == state_after_first

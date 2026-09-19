@@ -35,7 +35,7 @@ _AGENT_DIR = _PROJECT_ROOT / ".agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
-from bus.state_machine import StateMachine  # noqa: E402
+from bus.state_machine import StateMachine, TicketState, is_terminal_state  # noqa: E402
 
 
 class ProbeResult(str, Enum):
@@ -170,6 +170,86 @@ def _filter_events_for_ticket(all_events: list[dict], ticket_id: str) -> list[di
     return [e for e in all_events if e.get("ticket_id") == ticket_id]
 
 
+def _is_unknown_derivation_downgrading_terminal_markdown(
+    bus_derived_state: str, markdown_state: str
+) -> bool:
+    """Detect a would-be downgrade of a terminal STATE.md to UNKNOWN.
+
+    WOT-2026-070t: `derive_state_from_events` devuelve UNKNOWN cuando el
+    ultimo evento visible para el ticket no es de un tipo que la maquina de
+    estados reconoce (p.ej. SESSION_CLOSE_RECORDED, emitido DESPUES de que
+    el cierre archive el bus del ticket -- ver commit a2845eb del destino,
+    2026-09-19: bus_derived_state=UNKNOWN sobreescribio STATE.md que ya
+    tenia STATUS=COMPLETED). UNKNOWN aqui significa "sin evidencia en la
+    ventana de eventos leida", no "el ticket paso a estado desconocido"; un
+    STATUS terminal ya persistido es informacion MEJOR que esa ausencia y no
+    debe perderse.
+
+    Reapertura legitima no la dispara: --reopen-terminal-ticket emite un
+    STATE_CHANGED->IN_PROGRESS real ANTES de invocar la sync
+    (agent_controller.py::_handle_reopen_terminal_ticket), asi que
+    bus_derived_state nunca es UNKNOWN en ese flujo.
+    """
+    return bus_derived_state == TicketState.UNKNOWN.value and is_terminal_state(
+        markdown_state
+    )
+
+
+def _compare_bus_and_markdown_state(
+    *,
+    ticket_id: str,
+    bus_derived_state: str,
+    markdown_state: str,
+    events_count: int,
+) -> ProbeOutput:
+    """Compare bus-derived state against STATE.md and classify the outcome.
+
+    Before: both states are already resolved (non-None) strings.
+    During: applies the WOT-2026-070t guard (do not let an UNKNOWN derivation
+        downgrade an already-terminal markdown state) before falling back to
+        a plain equality comparison.
+    After: returns MATCHED (states agree, or the guard preserved the terminal
+        markdown state) or DRIFTED (states genuinely disagree).
+    """
+    if _is_unknown_derivation_downgrading_terminal_markdown(
+        bus_derived_state, markdown_state
+    ):
+        return ProbeOutput(
+            result=ProbeResult.MATCHED,
+            ticket_id=ticket_id,
+            bus_derived_state=bus_derived_state,
+            markdown_state=markdown_state,
+            drift_detected=False,
+            events_count=events_count,
+            message=(
+                "Bus derivo UNKNOWN (sin evento reconocido en la ventana leida) "
+                f"pero markdown ya declara un estado terminal ({markdown_state}); "
+                "se preserva, no se degrada."
+            ),
+        )
+
+    if bus_derived_state != markdown_state:
+        return ProbeOutput(
+            result=ProbeResult.DRIFTED,
+            ticket_id=ticket_id,
+            bus_derived_state=bus_derived_state,
+            markdown_state=markdown_state,
+            drift_detected=True,
+            events_count=events_count,
+            message=f"Drift detected: bus={bus_derived_state}, markdown={markdown_state}",
+        )
+
+    return ProbeOutput(
+        result=ProbeResult.MATCHED,
+        ticket_id=ticket_id,
+        bus_derived_state=bus_derived_state,
+        markdown_state=markdown_state,
+        drift_detected=False,
+        events_count=events_count,
+        message=f"State matched: {bus_derived_state}",
+    )
+
+
 def run_probe(
     runtime_dir: Path | None = None,
     collaboration_dir: Path | None = None,
@@ -268,7 +348,6 @@ def run_probe(
     # Parse markdown state
     markdown_state = _parse_markdown_state(state_md_path, ticket_id)
 
-    # Compare states
     if markdown_state is None:
         return ProbeOutput(
             result=ProbeResult.DRIFTED,
@@ -280,28 +359,12 @@ def run_probe(
             message="STATE.md not found or state not parseable",
         )
 
-    drift_detected = bus_derived_state != markdown_state
-
-    if drift_detected:
-        return ProbeOutput(
-            result=ProbeResult.DRIFTED,
-            ticket_id=ticket_id,
-            bus_derived_state=bus_derived_state,
-            markdown_state=markdown_state,
-            drift_detected=True,
-            events_count=len(ticket_events),
-            message=f"Drift detected: bus={bus_derived_state}, markdown={markdown_state}",
-        )
-    else:
-        return ProbeOutput(
-            result=ProbeResult.MATCHED,
-            ticket_id=ticket_id,
-            bus_derived_state=bus_derived_state,
-            markdown_state=markdown_state,
-            drift_detected=False,
-            events_count=len(ticket_events),
-            message=f"State matched: {bus_derived_state}",
-        )
+    return _compare_bus_and_markdown_state(
+        ticket_id=ticket_id,
+        bus_derived_state=bus_derived_state,
+        markdown_state=markdown_state,
+        events_count=len(ticket_events),
+    )
 
 
 def main() -> int:

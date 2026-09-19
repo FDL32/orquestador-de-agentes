@@ -715,3 +715,154 @@ class TestStateProjectionWithPauseWOT010d:
 
         assert output.result == ProbeResult.MATCHED
         assert output.bus_derived_state == "COMPLETED"
+
+
+# =============================================================================
+# Tests for WOT-2026-070t: no degradar STATUS terminal a UNKNOWN
+# =============================================================================
+
+
+class TestRunProbeDoesNotDowngradeTerminalToUnknown:
+    """WOT-2026-070t: un evento residual no reconocido (p.ej. SESSION_CLOSE_RECORDED,
+    emitido DESPUES de archivar el bus del ticket) no debe pisar un STATUS terminal
+    ya persistido en STATE.md.
+
+    Reproduce el bug real medido en el destino (commit a2845eb, 2026-09-19):
+    STATE.md tenia ACTIVE_TICKET=WOT-2026-047i/STATUS=COMPLETED; el cierre archivo
+    el bus del ticket (moviendo STATE_CHANGED/SUPERVISOR_CLOSED a
+    archive/events.WOT-2026-047i.jsonl) y luego emitio SESSION_CLOSE_RECORDED en el
+    events.jsonl activo. derive_state_from_events no reconoce ese tipo -> UNKNOWN.
+    Sin el fix, sync_state_projection sobreescribia STATE.md a STATUS=UNKNOWN.
+    """
+
+    def test_unrecognized_residual_event_does_not_downgrade_completed(
+        self, tmp_path: Path
+    ) -> None:
+        """SESSION_CLOSE_RECORDED huerfano + STATE.md ya COMPLETED -> MATCHED, no DRIFT."""
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        # Bus del ticket ya archivado: solo queda el evento residual no
+        # reconocido por StateMachine.derive_state_from_events (reproduce
+        # a2845eb: SESSION_CLOSE_RECORDED, source=direct_commit).
+        events_path = runtime_dir / "events.jsonl"
+        events_path.write_text(
+            '{"event_type": "SESSION_CLOSE_RECORDED", "ticket_id": "WOT-2026-047i", '
+            '"payload": {"source": "direct_commit", "closeout_status": "WARN"}}\n',
+            encoding="utf-8",
+        )
+
+        # STATE.md ya declara el cierre correcto (formato canonico vivo).
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-047i\nSTATUS: COMPLETED\n",
+            encoding="utf-8",
+        )
+
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-047i\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        # MUTATION: sin el guard, esto seria DRIFTED con bus_derived_state=UNKNOWN,
+        # y sync_state_projection reescribiria STATE.md a STATUS: UNKNOWN.
+        assert output.result == ProbeResult.MATCHED
+        assert output.markdown_state == "COMPLETED"
+        assert output.drift_detected is False
+
+    def test_unrecognized_event_still_drifts_against_non_terminal_markdown(
+        self, tmp_path: Path
+    ) -> None:
+        """Control negativo: si STATE.md NO es terminal, UNKNOWN si debe marcar DRIFT.
+
+        El guard solo protege un STATUS ya terminal; un ticket vivo (p.ej.
+        IN_PROGRESS) con un evento no reconocido debe seguir senalando drift
+        real -- no queremos silenciar drift legitimo sobre tickets abiertos.
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        events_path = runtime_dir / "events.jsonl"
+        events_path.write_text(
+            '{"event_type": "SESSION_CLOSE_RECORDED", "ticket_id": "WOT-2026-047i", '
+            '"payload": {"source": "direct_commit"}}\n',
+            encoding="utf-8",
+        )
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-047i\nSTATUS: IN_PROGRESS\n",
+            encoding="utf-8",
+        )
+
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-047i\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        assert output.result == ProbeResult.DRIFTED
+        assert output.bus_derived_state == "UNKNOWN"
+        assert output.markdown_state == "IN_PROGRESS"
+        assert output.drift_detected is True
+
+    def test_legitimate_reopen_event_still_overrides_terminal_markdown(
+        self, tmp_path: Path
+    ) -> None:
+        """Control negativo: una reapertura REAL (STATE_CHANGED->IN_PROGRESS) debe
+        seguir ganando sobre un STATUS terminal en disco.
+
+        Reproduce el orden real de --reopen-terminal-ticket
+        (agent_controller.py::_handle_reopen_terminal_ticket): el evento de
+        reapertura se emite ANTES de invocar la sync, asi que
+        bus_derived_state nunca es UNKNOWN en ese flujo -- el guard nuevo no
+        debe interferir.
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        events_path = runtime_dir / "events.jsonl"
+        events_path.write_text(
+            '{"event_type": "STATE_CHANGED", "ticket_id": "WOT-2026-047i", '
+            '"payload": {"to_state": "IN_PROGRESS"}}\n',
+            encoding="utf-8",
+        )
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-047i\nSTATUS: COMPLETED\n",
+            encoding="utf-8",
+        )
+
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-047i\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        assert output.result == ProbeResult.DRIFTED
+        assert output.bus_derived_state == "IN_PROGRESS"
+        assert output.markdown_state == "COMPLETED"
+        assert output.drift_detected is True

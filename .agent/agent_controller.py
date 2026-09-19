@@ -3654,6 +3654,54 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
     return 0
 
 
+def _sync_state_after_bootstrap(plan_id: str, json_output: bool) -> None:
+    """Sync STATE.md to match the STATE_CHANGED event just emitted by bootstrap.
+
+    Before: `_handle_bootstrap_ticket` just emitted STATE_CHANGED->IN_PROGRESS
+        to the bus for `plan_id`; STATE.md may still declare a different
+        (stale) ACTIVE_TICKET from a previous cycle.
+    During: invokes `sync_state_projection`, best-effort (same pattern as
+        `_handle_reopen_terminal_ticket`): a sync failure must NOT fail the
+        bootstrap, which already emitted the correct bus event.
+    After: STATE.md matches the bus-derived state when the sync succeeds;
+        on failure, a `[WARN]` is printed to stderr (non-JSON mode only) with
+        a PII-safe detail (no raw absolute path), and the bootstrap still
+        returns success.
+
+    WOT-2026-070t: without this call, STATE.md kept declaring the previous
+    cycle's ACTIVE_TICKET even though the bus already had the new ticket's
+    STATE_CHANGED event (measured 3 times: WOT-2026-070g, WOT-2026-055t,
+    WOT-2026-047i).
+    """
+    try:
+        from scripts.state_projection_sync import sync_state_projection
+
+        sync_state_projection(
+            runtime_dir=get_runtime_dir() / "events",
+            collaboration_dir=get_collab_dir(),
+            ticket_id=plan_id,
+        )
+    except OSError as exc:
+        if exc.filename:
+            where = scope_gate._relativize_scope_path(exc.filename, PROJECT_ROOT)
+            detail = f"{exc.strerror} (errno {exc.errno}) en {where}"
+        else:
+            detail = f"{exc.strerror} (errno {exc.errno})"
+        if not json_output:
+            print(
+                f"[WARN] Ticket {plan_id} bootstrapped in bus, but projection sync "
+                f"failed: {detail}",
+                file=sys.stderr,
+            )
+    except Exception as exc:
+        if not json_output:
+            print(
+                f"[WARN] Ticket {plan_id} bootstrapped in bus, but projection sync "
+                f"failed: {exc}",
+                file=sys.stderr,
+            )
+
+
 def _handle_bootstrap_ticket(json_output: bool) -> int:
     """Handle --bootstrap-ticket flag.
 
@@ -3721,6 +3769,8 @@ def _handle_bootstrap_ticket(json_output: bool) -> int:
             "source": "bootstrap",
         },
     )
+
+    _sync_state_after_bootstrap(plan_id, json_output)
 
     if json_output:
         print(json.dumps({"status": "bootstrapped", "plan_id": plan_id}, indent=2))
