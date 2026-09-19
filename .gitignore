@@ -146,3 +146,11 @@ checkpoint/
 /MI_PROYECTO.bat
 /validate_template.bat
 /VERIFY_VERSION.sh
+
+# WOT-2026-070g: `.agent/planning/` es superficie del repo_destino (estado
+# operativo: contratos de ticket, DAGs, propuestas). El motor NO la versiona --
+# `MANIFEST.distribute` no la incluye, y AGENTS.md lo prohibe expresamente.
+# Medido 2026-09-19: un unico `ticket_contract_WOT-2026-062e.md` se colo en el
+# commit 1828fe2 y hacia FALLAR `versioned_filenames` en cada cierre de sesion.
+# Sin esta regla, el siguiente contrato se cuela igual: era norma, no barrera.
+.agent/planning/
