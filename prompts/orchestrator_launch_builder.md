@@ -62,6 +62,13 @@ implementes hasta que este guard de exit 0.
   escribir en `repo_destino`, no escribas en `execution_log.md`: detente y deja la
   justificacion en la salida del runner para que el Manager la registre. Si cambia
   el scope del ticket, detente.
+- COLISION DE AUTORIDAD (WOT-2026-070y, bucle L720): si tu `Builder Access
+  Surface` prohibe escribir en `repo_destino` Y tu `delivery_authority` es
+  `repo_destino` (que exige commitear justo ahi, ver "Registro y cierre"),
+  el contrato es auto-contradictorio. DETENTE con `CONTRACT_IMPOSSIBLE` y
+  reporta la combinacion al Orquestador para que corrija el contrato antes
+  de continuar. No intentes resolverlo por tu cuenta (p.ej. escribiendo pese
+  a la restriccion, o commiteando en la raiz equivocada).
 
 ## Prohibiciones duras (no negociables por CEM)
 
@@ -75,6 +82,11 @@ antes de que llegues a leer `AGENTS.md`.
 - NUNCA desactives `guard_paths` ni relajes un hook para avanzar. Si te bloquea,
   DETENTE y reporta al Orquestador.
 - NUNCA anadas dependencias sin aprobacion explicita (`uv add`, nunca `pip`).
+  Si un test de regresion exige estrictamente una dependencia nueva, DETENTE
+  con `DEPENDENCY_APPROVAL_NEEDED`, reporta al Orquestador/Manager la
+  dependencia, la razon y el comando propuesto, y no modifiques el fichero
+  de dependencias hasta recibir aprobacion explicita (WOT-2026-070y, bucle
+  L720: la prohibicion no tenia mecanismo de escalamiento nombrado).
 
 ## Memoria: consultala ANTES de medir (WOT-2026-057b)
 
@@ -381,6 +393,16 @@ canonico. Una suite focal verde, una corrida de background o un `last-run.json`
 de un commit anterior NO cuentan como suite canonica del ticket.
 
 ### Cierre cross-repo y replay closeout-only (CTL-2026-007b)
+
+**Alcance de esta seccion (WOT-2026-070y, bucle L720):** la secuencia
+numerada de "Replay closeout-only" mas abajo aplica EXCLUSIVAMENTE al caso
+donde la entrega ya esta commiteada y no quedan commits de archivado ni de
+entrega pendientes. Para el caso GENERAL con cambios pendientes, sigue
+primero "Registro y cierre" (archivado -> commit de entrega) y SOLO
+DESPUES corre la suite canonica sobre ese commit final, verificando
+`tested_commit_sha == HEAD`. Ejecutar la suite ANTES del commit de entrega
+invalida retroactivamente ese `tested_commit_sha` en cuanto el commit
+aterriza y mueve `HEAD`.
 
 Para un ticket `delivery_authority: repo_destino`, la suite canonica debe correr
 con el INTERPRETE del destino (sus deps), no con el del motor. `run_pytest_safe`
