@@ -1058,6 +1058,61 @@ class TestRunProbeReadsArchivedEvents:
         assert output.result == ProbeResult.MATCHED
         assert output.events_count == 1
 
+    def test_archive_contaminated_with_other_ticket_events_is_filtered(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-070z hardening (bucle L720, hallazgo confirmado por 5/5
+        lentes en fanout-dif): si archive/events.<ticket_id>.jsonl contuviera
+        eventos de OTRO ticket -- por un bug hipotetico futuro en
+        event_bus.py::archive_ticket_events, no reproducible hoy -- run_probe
+        NO debe mezclarlos en la derivacion de estado. El bus vivo ya se
+        filtra por ticket_id via _filter_events_for_ticket; el archive debe
+        recibir la misma defensa (antes no la tenia: devolvia el archivo
+        completo sin re-filtrar).
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        archive_dir = runtime_dir / "archive"
+        archive_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        # archive/events.WOT-2026-070v.jsonl contaminado: mezcla eventos del
+        # ticket correcto con eventos de OTRO ticket que nunca deberian estar
+        # ahi bajo el contrato normal de archive_ticket_events.
+        archive_path = archive_dir / "events.WOT-2026-070v.jsonl"
+        archive_path.write_text(
+            '{"event_type": "STATE_CHANGED", "ticket_id": "WOT-2026-999", '
+            '"payload": {"to_state": "BLOCKED"}}\n'
+            '{"event_type": "CLOSE_CONFIRMED", "ticket_id": "WOT-2026-070v", '
+            '"payload": {}}\n',
+            encoding="utf-8",
+        )
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-070v\nSTATUS: COMPLETED\n",
+            encoding="utf-8",
+        )
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-070v\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        # MUTATION: sin el hardening, events_count seria 2 (ambos eventos del
+        # archivo, incluido el de WOT-2026-999) y bus_derived_state podria
+        # verse afectado por el evento ajeno. Con el hardening, solo se
+        # cuenta el evento propio del ticket.
+        assert output.result == ProbeResult.MATCHED
+        assert output.bus_derived_state == "COMPLETED"
+        assert output.events_count == 1
+
     def test_no_archive_and_no_live_bus_still_bus_empty(self, tmp_path: Path) -> None:
         """Sin archive/ ni events.jsonl: debe seguir siendo BUS_EMPTY (no
         regresion del caso base).

@@ -266,17 +266,23 @@ def _read_archived_events_for_ticket(runtime_dir: Path, ticket_id: str) -> list[
     During: rejects ticket_id that does not match the canonical ticket
         format (WOT-2026-070v hardening: prevents path traversal such as
         "../../secrets" from ever reaching the filesystem join). Uses the
-        specific archive path for the ticket, not a glob.
-    After: returns the parsed events for that ticket's archive file, or an
-        empty list if the format is invalid, the file does not exist, or it
-        contains no parseable lines.
+        specific archive path for the ticket, not a glob. Re-filters the
+        parsed events by ticket_id (WOT-2026-070z hardening, bucle L720:
+        defense-in-depth against a hypothetical future bug in
+        event_bus.py::archive_ticket_events writing another ticket's events
+        under this ticket's archive filename -- mirrors the same filter the
+        live bus already applies via _filter_events_for_ticket).
+    After: returns the parsed events for that ticket's archive file (only
+        the ones whose own ticket_id field matches), or an empty list if
+        the format is invalid, the file does not exist, or it contains no
+        parseable lines.
     """
     if not ticket_id or not _TICKET_ID_FORMAT_RE.match(ticket_id):
         return []
     archive_path = runtime_dir / "archive" / f"events.{ticket_id}.jsonl"
     if not archive_path.exists():
         return []
-    return _read_events_jsonl(archive_path)
+    return _filter_events_for_ticket(_read_events_jsonl(archive_path), ticket_id)
 
 
 def run_probe(
