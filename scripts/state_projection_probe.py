@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from enum import Enum
@@ -36,6 +37,12 @@ if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
 from bus.state_machine import StateMachine, TicketState, is_terminal_state  # noqa: E402
+
+
+# Formato canonico de ticket_id (WOT-2026-070v CONTRACT_GAP fix): fullmatch,
+# no search -- construir archive_path con un ticket_id que no cumpla este
+# formato podria escapar de runtime_dir/archive/ (p.ej. "../../secrets").
+_TICKET_ID_FORMAT_RE = re.compile(r"^(?:WOT|WP|WT)-\d{4}-\w+$")
 
 
 class ProbeResult(str, Enum):
@@ -250,6 +257,28 @@ def _compare_bus_and_markdown_state(
     )
 
 
+def _read_archived_events_for_ticket(runtime_dir: Path, ticket_id: str) -> list[dict]:
+    """Read archive/events.<ticket_id>.jsonl for a single ticket, if present.
+
+    Before: runtime_dir is the events directory (contains events.jsonl and,
+        optionally, an archive/ subdirectory); ticket_id may be any string
+        (untrusted: it can come from work_plan.md or an explicit CLI arg).
+    During: rejects ticket_id that does not match the canonical ticket
+        format (WOT-2026-070v hardening: prevents path traversal such as
+        "../../secrets" from ever reaching the filesystem join). Uses the
+        specific archive path for the ticket, not a glob.
+    After: returns the parsed events for that ticket's archive file, or an
+        empty list if the format is invalid, the file does not exist, or it
+        contains no parseable lines.
+    """
+    if not ticket_id or not _TICKET_ID_FORMAT_RE.match(ticket_id):
+        return []
+    archive_path = runtime_dir / "archive" / f"events.{ticket_id}.jsonl"
+    if not archive_path.exists():
+        return []
+    return _read_events_jsonl(archive_path)
+
+
 def run_probe(
     runtime_dir: Path | None = None,
     collaboration_dir: Path | None = None,
@@ -267,6 +296,11 @@ def run_probe(
 
     During:
         - Reads events from events.jsonl (read-only).
+        - WOT-2026-070v: also reads archive/events.<ticket_id>.jsonl when
+          present (specific path, not a glob) and prepends those events --
+          archive holds older/closed history, events.jsonl holds the recent
+          tail -- so a ticket archived in the same run that emitted its last
+          event is no longer misreported as BUS_EMPTY.
         - Derives state using StateMachine.derive_state_from_events().
         - Parses STATE.md for comparison.
         - Compares bus-derived state vs markdown state.
@@ -304,8 +338,20 @@ def run_probe(
                 message="Could not determine ticket ID from work_plan.md",
             )
 
+    # WOT-2026-070v CONTRACT_GAP: leer tambien el archive especifico del
+    # ticket ANTES de los dos early-returns de BUS_EMPTY de abajo. Un ticket
+    # cuyo cierre archivo su bus en la MISMA corrida en que emitio su ultimo
+    # evento (session_closeout.py::_step_archive_event_bus) deja
+    # events.jsonl (vivo) sin evidencia de ese ticket; sin esta lectura el
+    # probe reporta BUS_EMPTY para un ticket que si tiene historia completa.
+    # Orden cronologico: archive (eventos antiguos, ya cerrados) + vivo
+    # (eventos recientes) -- ver event_bus.py::archive_ticket_events, que
+    # MUEVE eventos con os.replace (nunca copia), asi que vivo y archive son
+    # mutuamente excluyentes y no hay riesgo de duplicados.
+    archived_events = _read_archived_events_for_ticket(runtime_dir, ticket_id)
+
     # Read events from bus
-    if not events_path.exists():
+    if not events_path.exists() and not archived_events:
         return ProbeOutput(
             result=ProbeResult.BUS_EMPTY,
             ticket_id=ticket_id,
@@ -317,7 +363,8 @@ def run_probe(
         )
 
     all_events = _read_events_jsonl(events_path)
-    ticket_events = _filter_events_for_ticket(all_events, ticket_id)
+    ticket_events_live = _filter_events_for_ticket(all_events, ticket_id)
+    ticket_events = archived_events + ticket_events_live
 
     if not ticket_events:
         return ProbeOutput(

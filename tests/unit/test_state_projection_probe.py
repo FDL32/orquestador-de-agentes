@@ -866,3 +866,270 @@ class TestRunProbeDoesNotDowngradeTerminalToUnknown:
         assert output.bus_derived_state == "IN_PROGRESS"
         assert output.markdown_state == "COMPLETED"
         assert output.drift_detected is True
+
+
+# =============================================================================
+# Tests for WOT-2026-070v CONTRACT_GAP fix: leer archive/events.<ticket>.jsonl
+# =============================================================================
+
+
+class TestRunProbeReadsArchivedEvents:
+    """WOT-2026-070v: un ticket archivado en la MISMA corrida en que emitio su
+    ultimo evento no debe reportarse como BUS_EMPTY -- el probe debe leer
+    tambien archive/events.<ticket_id>.jsonl (path especifico, no glob).
+    """
+
+    def test_archive_only_no_live_bus(self, tmp_path: Path) -> None:
+        """Ticket con TODOS sus eventos ya archivados y events.jsonl inexistente.
+
+        Antes del fix: not events_path.exists() -> BUS_EMPTY inmediato, sin
+        mirar archive. Reproduce el CONTRACT_GAP real.
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        archive_dir = runtime_dir / "archive"
+        archive_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        # events.jsonl NO existe (bus vivo vacio tras el archivado)
+        archive_path = archive_dir / "events.WOT-2026-070v.jsonl"
+        archive_path.write_text(
+            '{"event_type": "CLOSE_CONFIRMED", "ticket_id": "WOT-2026-070v", '
+            '"payload": {}}\n',
+            encoding="utf-8",
+        )
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-070v\nSTATUS: COMPLETED\n",
+            encoding="utf-8",
+        )
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-070v\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        # MUTATION: sin el fix esto es BUS_EMPTY (events.jsonl no existe).
+        assert output.result == ProbeResult.MATCHED
+        assert output.bus_derived_state == "COMPLETED"
+        assert output.events_count == 1
+
+    def test_archive_only_live_bus_exists_but_empty_for_ticket(
+        self, tmp_path: Path
+    ) -> None:
+        """events.jsonl existe pero sin eventos del ticket; solo archive los tiene.
+
+        Cubre el segundo early-return (antes: `if not ticket_events`), no
+        solo el primero (`if not events_path.exists()`).
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        archive_dir = runtime_dir / "archive"
+        archive_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        # events.jsonl existe pero solo tiene eventos de OTRO ticket
+        events_path = runtime_dir / "events.jsonl"
+        events_path.write_text(
+            '{"event_type": "STATE_CHANGED", "ticket_id": "WOT-2026-999", '
+            '"payload": {"to_state": "IN_PROGRESS"}}\n',
+            encoding="utf-8",
+        )
+
+        archive_path = archive_dir / "events.WOT-2026-070v.jsonl"
+        archive_path.write_text(
+            '{"event_type": "CLOSE_CONFIRMED", "ticket_id": "WOT-2026-070v", '
+            '"payload": {}}\n',
+            encoding="utf-8",
+        )
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-070v\nSTATUS: COMPLETED\n",
+            encoding="utf-8",
+        )
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-070v\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        # MUTATION: sin el fix esto es BUS_EMPTY (`if not ticket_events`).
+        assert output.result == ProbeResult.MATCHED
+        assert output.bus_derived_state == "COMPLETED"
+
+    def test_archive_plus_live_events_combined_chronologically(
+        self, tmp_path: Path
+    ) -> None:
+        """Eventos en archive (antiguos) + vivo (recientes): la union debe
+        derivar el estado del ULTIMO evento cronologico (el del vivo).
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        archive_dir = runtime_dir / "archive"
+        archive_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        archive_path = archive_dir / "events.WOT-2026-070v.jsonl"
+        archive_path.write_text(
+            '{"event_type": "STATE_CHANGED", "ticket_id": "WOT-2026-070v", '
+            '"payload": {"to_state": "IN_PROGRESS"}}\n',
+            encoding="utf-8",
+        )
+
+        events_path = runtime_dir / "events.jsonl"
+        events_path.write_text(
+            '{"event_type": "STATE_CHANGED", "ticket_id": "WOT-2026-070v", '
+            '"payload": {"to_state": "READY_FOR_REVIEW"}}\n',
+            encoding="utf-8",
+        )
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-070v\nSTATUS: READY_FOR_REVIEW\n",
+            encoding="utf-8",
+        )
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-070v\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        assert output.result == ProbeResult.MATCHED
+        assert output.bus_derived_state == "READY_FOR_REVIEW"
+        assert output.events_count == 2
+
+    def test_archive_corrupt_jsonl_degrades_like_live_corrupt(
+        self, tmp_path: Path
+    ) -> None:
+        """Archive con lineas JSON invalidas: se saltan silenciosamente, igual
+        que el bus vivo (_read_events_jsonl ya tolera esto por diseno).
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        archive_dir = runtime_dir / "archive"
+        archive_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        archive_path = archive_dir / "events.WOT-2026-070v.jsonl"
+        archive_path.write_text(
+            "not valid json\n"
+            '{"event_type": "CLOSE_CONFIRMED", "ticket_id": "WOT-2026-070v", '
+            '"payload": {}}\n',
+            encoding="utf-8",
+        )
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-070v\nSTATUS: COMPLETED\n",
+            encoding="utf-8",
+        )
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-070v\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        assert output.result == ProbeResult.MATCHED
+        assert output.events_count == 1
+
+    def test_no_archive_and_no_live_bus_still_bus_empty(self, tmp_path: Path) -> None:
+        """Sin archive/ ni events.jsonl: debe seguir siendo BUS_EMPTY (no
+        regresion del caso base).
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            "ACTIVE_TICKET: WOT-2026-070v\nSTATUS: IN_PROGRESS\n",
+            encoding="utf-8",
+        )
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            "# Work Plan\n\n- **ID:** WOT-2026-070v\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        assert output.result == ProbeResult.BUS_EMPTY
+
+    def test_malformed_ticket_id_does_not_escape_archive_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """Path traversal: un ticket_id con formato invalido (p.ej. con '..')
+        no debe usarse para construir archive_path fuera de archive/.
+
+        No es el CONTRACT_GAP en si, sino un hallazgo colateral confirmado
+        por el bucle L720 (lector-FS BA01): _TICKET_ID_FORMAT_RE.match()
+        rechaza cualquier ticket_id que no siga el formato canonico antes de
+        construir la ruta, dejando archived_events=[] (equivalente a "sin
+        archive"), nunca una excepcion ni una lectura fuera de archive/.
+        """
+        runtime_dir = tmp_path / "events"
+        runtime_dir.mkdir()
+        collaboration_dir = tmp_path / "collaboration"
+        collaboration_dir.mkdir()
+
+        # Secreto fuera del arbol runtime_dir/archive/, simulando el blanco
+        # de un path traversal si no se validara el formato.
+        outside_secret = tmp_path / "outside_secret.jsonl"
+        outside_secret.write_text(
+            '{"event_type": "CLOSE_CONFIRMED", "ticket_id": "should-not-leak", '
+            '"payload": {}}\n',
+            encoding="utf-8",
+        )
+
+        malicious_ticket_id = "../outside_secret"
+
+        state_md_path = collaboration_dir / "STATE.md"
+        state_md_path.write_text(
+            f"ACTIVE_TICKET: {malicious_ticket_id}\nSTATUS: IN_PROGRESS\n",
+            encoding="utf-8",
+        )
+        work_plan_path = collaboration_dir / "work_plan.md"
+        work_plan_path.write_text(
+            f"# Work Plan\n\n- **ID:** {malicious_ticket_id}\n",
+            encoding="utf-8",
+        )
+
+        output = run_probe(
+            runtime_dir=runtime_dir,
+            collaboration_dir=collaboration_dir,
+        )
+
+        # No debe leer outside_secret.jsonl: sin bus vivo y sin archive
+        # valido, el resultado es BUS_EMPTY, nunca un estado derivado del
+        # fichero fuera de archive/.
+        assert output.result == ProbeResult.BUS_EMPTY
