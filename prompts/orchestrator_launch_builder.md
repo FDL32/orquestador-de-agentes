@@ -331,7 +331,14 @@ python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level unit -- {{TEST_FILES}}
 uv run ruff check {{PYTHON_FILES_TOUCHED}}
 uv run ruff format --check {{PYTHON_FILES_TOUCHED}}
 python .agent/agent_controller.py --validate --json --project-root <repo_destino>
+python <MOTOR_ROOT>/scripts/check_encoding_guard.py <archivos tocados>
 ```
+
+El encoding guard (WOT-2026-070y, bucle L720: antes solo aparecia citado en
+el "Informe de salida", violando M1 -- "mide DESDE Fase 0, no al redactar
+el informe") corre aqui, en cada iteracion del loop rapido, no solo al
+cierre: detectar mojibake o BOM AL FINAL obliga a re-trabajo que se evita
+corriendo el guard mientras aun estas escribiendo los archivos.
 
 `ruff` y `ruff format` aplican solo si el ticket toca archivos Python. Si el
 ticket toca solo PowerShell, shell, Markdown, prompts u otras superficies no
@@ -422,8 +429,11 @@ lo permite. Si no lo permite, imprime esta evidencia en la salida del runner:
 - evidencia de que el test de regresion falla sin el fix, cuando sea verificable;
 - commit o commits del REPO DE ENTREGA -- el que decide `delivery_authority`, igual que en el bullet de commit de mas abajo -- que contienen la entrega.
 
-Antes de `mark-ready`:
-- commitea en el REPO DE ENTREGA, que lo decide el `delivery_authority` declarado
+Antes de `mark-ready`, EN ESTE ORDEN (WOT-2026-070y, bucle L720: el orden
+anterior de esta lista se auto-contradecia -- el bullet de archivado decia
+"primero" pero aparecia despues del bullet de commit):
+- PRIMERO, si hay herencia operativa de un ticket anterior en `.agent/collaboration/` del `repo_motor`, archivala en un commit previo separado para que no contamine el scope gate. MECANISMO CANONICO, no improvises: `python <MOTOR_ROOT>/scripts/archive_collaboration_artifacts.py --project-root <RAIZ>`, donde `<RAIZ>` es la raiz CUYO `.agent/collaboration/` arrastra la herencia (el archivador resuelve `<project-root>/.agent/collaboration`, asi que apuntarlo a la otra raiz no archiva nada y da un `exit 0` vacuo). El commit de archivado va en ESA misma raiz, separado del commit de la entrega. Usa `--dry-run` antes y comprueba que LISTA ficheros: si lista 0, estas apuntando a la raiz equivocada. NUNCA borres: el archivador MUEVE a `_archive/`. Si ese script no cubre el artefacto concreto, DETENTE y reportalo en vez de decidir tu que se borra.
+- DESPUES, commitea en el REPO DE ENTREGA, que lo decide el `delivery_authority` declarado
   en el contrato del ticket, NO una raiz fija: `repo_motor` -> commit en el motor
   (su WORKTREE, nunca el checkout detached); `repo_destino` -> commit en el destino.
   Es el MISMO campo que resuelve el stamp `tested_commit_sha` en la seccion de cierre
@@ -431,8 +441,7 @@ Antes de `mark-ready`:
   DETENTE y reporta `DELIVERY_AUTHORITY_MISSING`: adivinar la raiz esta prohibido
   (WOT-2026-066i D2, un default silencioso en un guard fail-closed);
 - usa `{{TICKET_ID}}` en el mensaje del commit;
-- verifica que el diff revisable corresponde al contrato.
-- si hay herencia operativa de un ticket anterior en `.agent/collaboration/` del `repo_motor`, archivala primero en un commit previo separado para que no contamine el scope gate. MECANISMO CANONICO, no improvises: `python <MOTOR_ROOT>/scripts/archive_collaboration_artifacts.py --project-root <RAIZ>`, donde `<RAIZ>` es la raiz CUYO `.agent/collaboration/` arrastra la herencia (el archivador resuelve `<project-root>/.agent/collaboration`, asi que apuntarlo a la otra raiz no archiva nada y da un `exit 0` vacuo). El commit de archivado va en ESA misma raiz, separado del commit de la entrega. Usa `--dry-run` antes y comprueba que LISTA ficheros: si lista 0, estas apuntando a la raiz equivocada. NUNCA borres: el archivador MUEVE a `_archive/`. Si ese script no cubre el artefacto concreto, DETENTE y reportalo en vez de decidir tu que se borra.
+- verifica que el diff revisable corresponde al contrato;
 - si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `--pre-handoff` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
 Contrato de handoff canonico:
