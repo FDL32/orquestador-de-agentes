@@ -103,7 +103,9 @@ implementes hasta que este guard de exit 0.
 
 Estas cuatro NO admiten justificacion CEM, ni "el ticket lo pide", ni scope
 ampliado. `guard_paths` es un hook de tool-call: muerde en tu PRIMERA escritura,
-antes de que llegues a leer `AGENTS.md`.
+antes de que llegues a leer `<MOTOR_ROOT>/AGENTS.md` (las reglas transversales
+completas del repo -- estas cuatro son solo el subconjunto que este prompt
+transcribe para que no dependas de leerlo primero).
 
 - NUNCA leas ni escribas `privada/` ni ficheros `.env`.
 - NUNCA hardcodees tokens, passwords ni rutas sensibles. Variables de entorno,
@@ -371,7 +373,7 @@ Ejecuta y registra salida real en `execution_log.md`:
 python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level unit -- {{TEST_FILES}}
 uv run ruff check {{PYTHON_FILES_TOUCHED}}
 uv run ruff format --check {{PYTHON_FILES_TOUCHED}}
-python .agent/agent_controller.py --validate --json --project-root <repo_destino>
+python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root <repo_destino>
 python <MOTOR_ROOT>/scripts/check_encoding_guard.py <archivos tocados>
 ```
 
@@ -394,7 +396,7 @@ Para tickets Tier 3/4, seguridad, dependencias o bus/orquestacion compartida,
 ejecuta tambien:
 
 ```powershell
-python scripts/pip_audit_project.py
+python <MOTOR_ROOT>/scripts/pip_audit_project.py
 ```
 
 La validacion del `repo_destino` debe cerrar en `0 errors` y `0 warnings`.
@@ -410,7 +412,7 @@ deben usar esta misma terminologia.
   trabajas. NO es evidencia de cierre: NO autoriza declarar suite canonica,
   `READY_FOR_REVIEW` ni handoff.
 - **Cierre canonico** = la unica evidencia que autoriza handoff/cierre:
-  - suite canonica `python scripts/run_pytest_safe.py --level all` con
+  - suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all` con
     `last-run.json` en `status=finished`, `exit_code=0`, `level=all`,
     `args_mode=default_discovery` y `tested_commit_sha == HEAD` (commit que se entrega);
   - `validate --json --project-root <repo_destino>` en `0 errors / 0 warnings`;
@@ -493,7 +495,7 @@ anterior de esta lista se auto-contradecia -- el bullet de archivado decia
   (WOT-2026-066i D2, un default silencioso en un guard fail-closed);
 - usa `{{TICKET_ID}}` en el mensaje del commit;
 - verifica que el diff revisable corresponde al contrato;
-- si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `--pre-handoff` para recrear M3 en el commit actual y luego repite `mark-ready`.
+- si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: ver el comando exacto en "Contrato de handoff canonico" mas abajo.
 
 Contrato de handoff canonico:
 
@@ -510,21 +512,21 @@ Contrato de handoff canonico:
 Handoff:
 
 ```powershell
-python .agent/agent_controller.py --mark-ready --project-root <repo_destino>
+python <MOTOR_ROOT>/.agent/agent_controller.py --mark-ready --project-root <repo_destino>
 ```
 
 Si el scope gate pide override porque la entrega productiva vive en
 `repo_motor`, usa:
 
 ```powershell
-python .agent/agent_controller.py --mark-ready --project-root <repo_destino> --scope-override "<razon con commit del repo_motor>"
+python <MOTOR_ROOT>/.agent/agent_controller.py --mark-ready --project-root <repo_destino> --scope-override "<razon con commit del repo_motor>"
 ```
 
 Este override cubre UNICAMENTE el caso del scope gate. NO lo uses para un
 rechazo por `stale` / `expected HEAD`: ese caso se resuelve re-creando M3, como
 indica el parrafo siguiente.
 
-Si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `python .agent/agent_controller.py --pre-handoff --project-root <repo_destino> --json --force` para recrear M3 en el commit actual y luego repite `mark-ready`.
+Si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff --project-root <repo_destino> --json --force` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
 No hagas rondas vacias: cada nuevo `mark-ready` despues de un rechazo debe
 aportar diff, commit o evidencia nueva.
@@ -590,7 +592,7 @@ Reglas del informe:
   y `last-run.log`, y solo cuenta si `tested_commit_sha == HEAD`, `level=all`,
   `args_mode=default_discovery` y `exit_code=0`.
 - Una suite verde de un commit anterior NO cuenta. Si haces un commit nuevo en
-  `repo_motor`, debes re-correr `python scripts/run_pytest_safe.py --level all`
+  `repo_motor`, debes re-correr `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all`
   antes de reportar la suite canonica del ticket.
 - `Active ticket before`, `Events emitted` y `Derived state after` se derivan de
   `STATE.md`, `TURN.md` y `repo_destino/.agent/runtime/events/events.jsonl`; no
