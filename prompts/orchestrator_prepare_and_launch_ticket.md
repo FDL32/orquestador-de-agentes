@@ -95,6 +95,33 @@ Objetivo: `ticket_contract` congelable + `work_plan.md` + turno regenerado.
    (lee `TURN.md` y `execution_log.md` actuales). Si hay colision, STOP y
    coordina antes de tocar el bus — no fuerces el reset.
 
+## Paso 1.7 — Pre-flight del Builder (obligatorio para code/mixed)
+
+**Antes de lanzar el Builder**, verifica que el entorno puede soportar el ciclo
+completo. Esto previene problemas como ruff claim falso, dirty tree fantasma,
+M3 checkpoint failure y suite timeout.
+
+```powershell
+# 1. Ruff funciona en los archivos que el ticket va a tocar
+uv run ruff check <files_likely_touched_python>
+# Si falla: el entorno no tiene ruff o los archivos tienen errores preexistentes
+
+# 2. Pre-handoff guard no reporta archivos fantasma
+python <MOTOR_ROOT>/scripts/pre_handoff_guard.py --project-root <DESTINO> --ticket-id <TICKET_ID> --json
+# Verifica que dirty_files NO contiene archivos inexistentes
+
+# 3. M3 checkpoint es creatable (verifica permisos)
+python -c "from pathlib import Path; Path('<DESTINO>/.agent/collaboration').mkdir(parents=True, exist_ok=True); print('OK')"
+# Si falla: problema de permisos que bloqueara --mark-ready
+
+# 4. Suite canonica estimada (para code/mixed)
+# Si el entorno tiene timeout corto (<5min), documenta que la suite puede no completar
+python -c "import time; start=time.time(); print(f'Timestamp: {start}')"
+```
+
+Si algun check falla, STOP y resuelve antes de lanzar el Builder. Un Builder
+que arranca con un entorno roto produce reports falsos (medido: WOT-2026-072c).
+
 ## Paso 2 — Redactar el prompt de arranque del Builder
 
 Con `work_plan.md` ya auditado y `--bootstrap-ticket` verde, redacta el prompt
@@ -109,6 +136,35 @@ Antes de lanzar el Builder, corre el bucle de lentes sobre el bundle
 ensemble ya establecido en el proyecto (nonce -> fan-out -> `check_loop_execution`
 -> sintesis). No declares el ticket listo para Builder sin esta pasada si el
 ticket es `code`/`mixed` de blast radius no trivial.
+
+## Paso 3.5 — Verificación post-build del Builder (obligatorio para code/mixed)
+
+**Después de que el Builder entrega su reporte**, verifica INDEPENDIENTEMENTE
+sus claims antes de aceptar el cierre. Un Builder que miente sobre gates produce
+falsos verdes (medido: WOT-2026-072c — ruff claim falso, dirty tree fantasma).
+
+```powershell
+# 1. Verificar ruff sobre archivos Python del diff
+git show --name-only <commit_builder> | Select-String "\.py$"
+# Luego: uv run ruff check <archivos_py_encontrados>
+
+# 2. Verificar que los tests declarados existen y pasan
+python -m pytest <tests_declarados_por_builder> -x -q
+
+# 3. Verificar dirty tree: ¿los archivos marcados como dirty existen?
+git status --short
+# Si un archivo reportado como dirty no existe → bug en pre-handoff guard
+
+# 4. Verificar validate
+python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root <DESTINO>
+```
+
+Si algun claim del Builder es FALSO, emite `CHANGES` con el claim exacto y la
+evidencia de la verificación independiente. No aceptes claims sin verificar.
+
+**Regla:** "no aplica" NO es un veredicto válido para gates que el ticket
+debe ejecutar. El Builder debe declarar EXPLÍCITAMENTE "ejecuté X → resultado Y"
+o "no ejecuté X → razón Z". Un "no aplica" sin evidencia es un claim no verificado.
 
 ## Paso 4 — Commit, push y sync
 

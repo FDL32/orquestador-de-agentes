@@ -613,6 +613,19 @@ aproximados ni recordados; copia los numeros de la salida de los comandos):
 ```
 
 Reglas del informe:
+- **ACCOUNTABILITY DE GATES (WOT-2026-072c):** Cada gate DEBE declarar EXACTAMENTE:
+  1. El comando que ejecutaste
+  2. El exit code real
+  3. La salida literal (o los ultimos N lineas si es larga)
+
+  "no aplica" NO es un veredicto valido para gates que el ticket debe ejecutar.
+  Si el ticket toca archivos Python, DEBES ejecutar ruff. Si no los toca, declara
+  "no ejecuté ruff: ticket sin Python tocado" con la evidencia de que verificaste
+  (ej. `git show --name-only <commit> | grep '\.py$' → vacio`).
+
+  Un "no aplica" sin evidencia es un claim NO VERIFICADO y el Manager lo rechazara.
+  (Medido: WOT-2026-072c — Builder dijo "ruff no aplica" cuando el ticket toca
+  `agent_controller.py` y `test_agent_controller.py`.)
 - `Archivos tocados` se deriva de `git show --name-only <commit>` o del diff real
   entregado; no cites archivos "tocados sin cambios netos" ni archivos ausentes
   del commit.

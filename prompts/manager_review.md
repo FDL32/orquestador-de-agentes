@@ -67,6 +67,30 @@ worktree violada durante la implementacion". Esta es verificacion de
 CUMPLIMIENTO posterior al trabajo del Builder (la prevencion ya corrio en el
 preflight del Orquestador/Builder).
 
+## Paso 1c: Sanity check rapido (obligatorio para code/mixed)
+
+**Antes de la verificacion mecanica completa**, ejecuta estos 4 checks rapidos
+para detectar claims falsos del Builder (medido: WOT-2026-072c — ruff claim
+falso, dirty tree fantasma):
+
+```powershell
+# 1. Archivos Python del diff existen y son tocados?
+git show --name-only <commit_builder> | Select-String "\.py$"
+# Si hay Python files → ruff DEBE ejecutarse
+
+# 2. Ruff pasa sobre esos archivos?
+uv run ruff check <archivos_py_encontrados>
+
+# 3. Tests declarados existen?
+python -m pytest <tests_declarados> --collect-only -q 2>&1 | Select-String "test session starts"
+
+# 4. Dirty tree: archivos reportados como dirty existen?
+git status --short
+```
+
+Si algun check falla, el Builder tiene un claim falso. Registra el hallazgo
+en la tabla de claims y continua con la verificacion mecanica completa.
+
 ## Paso 2: Verificacion mecanica
 Ejecuta tu propia verificacion. No confies solo en el relato del Builder.
 
