@@ -19,6 +19,10 @@
 > **Origen:** instruccion de usuario dada en una sesion sobre `Amazon_Stock`
 > (2026-09), reconstruida aqui como plantilla reutilizable porque no existia
 > como artefacto versionado.
+>
+> **Sustituye a procesos ad-hoc:** este prompt reemplaza cualquier PASO 0-6
+> inline o proceso similar que se haya usado en sesiones anteriores. Si un
+> usuario pide "preparar ticket X" sin nombrar este prompt, enrútalo aquí.
 
 ---
 
@@ -29,6 +33,27 @@
 - **NO** sustituye a `contract_formation_pipeline.md` si el ticket todavia
   necesita descubrimiento/triage amplio (varios candidatos, prioridad dudosa,
   backlog sin cribar). Para eso, usa `prompts/backlog_triage.md` primero.
+
+## Paso 0 — Verifica el cierre del ticket anterior
+
+**Antes de tocar anything**, verifica que el ticket anterior cerró en las
+3 superficies. Un ticket archivado con proyecciones vivas bloquea el bootstrap
+y el Builder hereda estado stale (medido: WOT-2026-072c arrancó sobre
+WOT-2026-072b porque este paso se omitió).
+
+```powershell
+# 1. Backlog: el ticket anterior debe estar en done/ (no en queued/ o in_flight/)
+python <MOTOR_ROOT>/scripts/check_backlog_contract.py --project-root <DESTINO>
+
+# 2. Proyecciones: STATE.md y TURN.md no deben apuntar al ticket anterior
+#    (lee manualmente y verifica el ID del ticket activo)
+
+# 3. Bus: si hay duda, verifica que el bus no tiene eventos stale
+#    (python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root <DESTINO>)
+```
+
+Si el ticket anterior NO cerró: STOP. Resuelve el cierre antes de continuar.
+No fuerces un bootstrap sobre un workspace sucio.
 
 ## Paso 1 — Preparar el ticket completo
 
@@ -53,6 +78,15 @@ Objetivo: `ticket_contract` congelable + `work_plan.md` + turno regenerado.
    python <MOTOR_ROOT>/.agent/agent_controller.py --bootstrap-ticket --json --project-root .
    python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .
    ```
+
+   **Verificacion post-bootstrap (OBLIGATORIO):** `--bootstrap-ticket` devuelve
+   exit 0 sin materializar siempre las proyecciones. Verifica EXPLICITAMENTE:
+   - `STATE.md` contiene el nuevo ticket_id (no el anterior)
+   - `TURN.md` contiene `ROL=BUILDER` y el nuevo ticket_id
+   - `validate --json` devuelve 0 errores
+
+   Si `STATE.md`/`TURN.md` no cambiaron: repite `--bootstrap-ticket` con
+   `--force`. Si persiste, STOP — hay un problema de resolucion de root.
 
    **Si hay otra sesion en vuelo sobre el mismo `repo_destino`:** `--bootstrap-ticket`
    y `--reset-turn` tocan estado compartido (`TURN.md`, `work_plan.md`,
