@@ -574,3 +574,105 @@ def test_wiring_propagacion_closeout(tmp_path: Path, monkeypatch) -> None:
     assert pc.run_preflight_check(repo_limpio, closeout_mode=True) == 0
 
     assert pc.run_preflight_check(repo, closeout_mode=False) == 0
+
+
+# Seccion WOT-2026-071a: grandfather-cutoff-sha.
+
+
+def test_grandfather_cutoff_pre_cutoff_fails_without_flag(tmp_path: Path) -> None:
+    """DoD b-i sin_fix: commit pre-cutoff sin recibo -> SIN_RECIBO, exit 1.
+
+    Sin el flag, el guard se comporta igual que antes: cualquier alta sin
+    recibo falla, independientemente de si el commit es ancestro de dd5570f.
+    """
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-950a"), "alta historica sin recibo")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "SIN_RECIBO" in out
+    assert "VEREDICTO GLOBAL: FALLO" in out
+
+
+def test_grandfather_cutoff_pre_cutoff_warns_with_flag(tmp_path: Path) -> None:
+    """DoD b-i con_fix: commit pre-cutoff sin recibo + cutoff_sha -> WARN, exit 0.
+
+    Con el flag --grandfather-cutoff-sha, las altas cuyo commit es ancestro
+    del cutoff SHA se degradan a WARN_GRANDFATHERED y el veredicto global
+    NO falla. El informe cita el censo 17/30 (57%).
+    """
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-951a"), "alta historica sin recibo")
+    code, out = run_guard(repo, "--grandfather-cutoff-sha", "HEAD")
+    assert code == 0, out
+    assert "WARN_GRANDFATHERED" in out
+    assert "VEREDICTO GLOBAL: RECIBO_COHERENTE" in out
+    assert "17/30 (57%)" in out
+    assert "grandfathered: 1 alta(s) pre-cutoff" in out
+
+
+def test_grandfather_cutoff_post_cutoff_still_fails(tmp_path: Path) -> None:
+    """No-relajacion: commit post-cutoff sin recibo -> sigue FALLO.
+
+    Un commit que NO es ancestro del cutoff SHA (es decir, post-cutoff) sin
+    recibo sigue fallando como SIN_RECIBO, incluso con el flag.
+    """
+    repo = init_repo(tmp_path)
+    # Crear un commit que NO es ancestro de HEAD (es decir, post-cutoff
+    # en el contexto de la prueba, donde HEAD es el cutoff).
+    commit_alta(repo, row("WOT-2026-952a"), "alta historica sin recibo")
+    # Ahora creamos otro commit que es post-cutoff (no ancestro de HEAD).
+    (repo / BACKLOG_REL).write_text(
+        (repo / BACKLOG_REL).read_text(encoding="utf-8") + row("WOT-2026-953a"),
+        encoding="utf-8",
+    )
+    git(repo, "add", BACKLOG_REL)
+    git(repo, "commit", "-m", "post-cutoff alta sin recibo")
+    head = git(repo, "rev-parse", "HEAD").strip()
+    # El cutoff es el commit anterior (HEAD^), asi que HEAD es post-cutoff.
+    code, out = run_guard(repo, "--grandfather-cutoff-sha", f"{head}^")
+    assert code == 1, out
+    assert "SIN_RECIBO" in out
+    assert "WOT-2026-953a" in out
+    assert "VEREDICTO GLOBAL: FALLO" in out
+
+
+def test_grandfather_cutoff_default_unchanged(tmp_path: Path) -> None:
+    """Default intacto: sin flag, comportamiento identico al actual.
+
+    El guard sin --grandfather-cutoff-sha debe comportarse exactamente igual
+    que antes: altas sin recibo -> FALLO, con recibo -> COHERENTE.
+    """
+    repo = init_repo(tmp_path)
+    # Alta sin recibo -> fallo
+    commit_alta(repo, row("WOT-2026-960a"), "alta sin recibo")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "SIN_RECIBO" in out
+
+    # Alta con recibo -> coherente
+    repo2 = init_repo(tmp_path / "coherente")
+    surface = backlog_surface(repo2)
+    recibo = build_recibo(repo2, "WOT-2026-961a", row("WOT-2026-961a"), [surface])
+    commit_alta(repo2, row("WOT-2026-961a"), msg_with_recibo("alta con recibo", recibo))
+    code2, out2 = run_guard(repo2)
+    assert code2 == 0, out2
+    assert "RECIBO_COHERENTE" in out2
+
+
+def test_grandfather_cutoff_mutation_verify(tmp_path: Path) -> None:
+    """MUTACION: sin_fix/con_fix en el mismo repositorio.
+
+    sin_fix: guard sin cutoff sobre el rango historico -> exit != 0 (rojo)
+    con_fix: guard con cutoff sobre el mismo rango -> exit 0 (verde)
+    """
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-970a"), "alta historica sin recibo")
+    # sin_fix: sin flag -> rojo
+    code_red, out_red = run_guard(repo)
+    assert code_red == 1, out_red
+    assert "SIN_RECIBO" in out_red
+    # con_fix: con flag -> verde
+    code_green, out_green = run_guard(repo, "--grandfather-cutoff-sha", "HEAD")
+    assert code_green == 0, out_green
+    assert "WARN_GRANDFATHERED" in out_green
+    assert "VEREDICTO GLOBAL: RECIBO_COHERENTE" in out_green

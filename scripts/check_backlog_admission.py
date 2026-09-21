@@ -99,10 +99,12 @@ DEFAULT_ARCHIVES = (".agent/collaboration/_archive/backlog_done.md",)
 ID_RE = re.compile(r"\b[A-Z]{2,6}-\d{4}-\d{2,3}[a-z]?\b")
 
 VER_SIN_RECIBO = "SIN_RECIBO"
+VER_WARN_GRANDFATHERED = "WARN_GRANDFATHERED"
 VER_INCOHERENTE = "RECIBO_INCOHERENTE"
 VER_CONCURRENTE = "ALTA_CONCURRENTE"
 VER_COHERENTE = "RECIBO_COHERENTE"
 FAIL_VERDICTS = (VER_SIN_RECIBO, VER_INCOHERENTE, VER_CONCURRENTE)
+SEMI_FAIL_VERDICTS = (VER_WARN_GRANDFATHERED,)
 SEMANTIC_TIPOS = {"DUPLICADO_DE", "ABSORBE_A", "VINCULADA_A"}
 VALID_PROPUESTA_TIPOS = SEMANTIC_TIPOS | {"NUEVA"}
 RECIBO_VERSION = 1
@@ -681,30 +683,64 @@ def _registrar_sin_recibo(
     raw_id: str,
     subject: str,
     touched: set[str],
+    grandfathered: bool = False,
 ) -> None:
-    """Alta sin recibo: linea por-alta, hallazgo y registro sin recibo."""
-    lines.append(
-        f"ALTA {raw_id} en {sha[:12]} '{subject}' -> VEREDICTO: {VER_SIN_RECIBO}"
-    )
-    findings.append(
-        {
-            "commit": sha[:12],
-            "candidato_id": raw_id,
-            "veredicto": VER_SIN_RECIBO,
-            "motivos": [
-                f"alta de id nuevo {raw_id} en '{subject}' sin recibo de barrido"
-            ],
-        }
-    )
-    altas_procesadas.append(
-        {
-            "commit": sha,
-            "id": raw_id,
-            "touched": touched,
-            "veredicto": VER_SIN_RECIBO,
-            "recibo": False,
-        }
-    )
+    """Alta sin recibo: linea por-alta, hallazgo y registro sin recibo.
+
+    Si `grandfathered` es True, degrada a WARN_GRANDFATHERED citando el censo
+    17/30 (57%) de altas historicas sin recibo; el veredicto global no falla.
+    """
+    if grandfathered:
+        veredicto = VER_WARN_GRANDFATHERED
+        lines.append(
+            f"ALTA {raw_id} en {sha[:12]} '{subject}' -> VEREDICTO: {veredicto} "
+            f"(grandfathered pre-cutoff; censo 17/30 (57%) sin recibo)"
+        )
+        findings.append(
+            {
+                "commit": sha[:12],
+                "candidato_id": raw_id,
+                "veredicto": veredicto,
+                "motivos": [
+                    f"alta de id nuevo {raw_id} en '{subject}' sin recibo de barrido; "
+                    "degradada a WARN_GRANDFATHERED (commit ancestro del cutoff SHA; "
+                    "censo 17/30 (57%) sin recibo)"
+                ],
+            }
+        )
+        altas_procesadas.append(
+            {
+                "commit": sha,
+                "id": raw_id,
+                "touched": touched,
+                "veredicto": veredicto,
+                "recibo": False,
+                "grandfathered": True,
+            }
+        )
+    else:
+        lines.append(
+            f"ALTA {raw_id} en {sha[:12]} '{subject}' -> VEREDICTO: {VER_SIN_RECIBO}"
+        )
+        findings.append(
+            {
+                "commit": sha[:12],
+                "candidato_id": raw_id,
+                "veredicto": VER_SIN_RECIBO,
+                "motivos": [
+                    f"alta de id nuevo {raw_id} en '{subject}' sin recibo de barrido"
+                ],
+            }
+        )
+        altas_procesadas.append(
+            {
+                "commit": sha,
+                "id": raw_id,
+                "touched": touched,
+                "veredicto": VER_SIN_RECIBO,
+                "recibo": False,
+            }
+        )
 
 
 def _broken_recibo_findings(
@@ -758,6 +794,27 @@ def _recibos_huerfanos(
     return hallazgos
 
 
+def _is_ancestor(repo: Path, maybe_ancestor: str, commit: str) -> bool:
+    """Verifica si `maybe_ancestor` es ancestro de `commit` en `repo`."""
+    try:
+        _proc = subprocess.run(  # noqa: S603
+            [
+                "git.exe",
+                "-C",
+                str(repo),
+                "merge-base",
+                "--is-ancestor",
+                maybe_ancestor,
+                commit,
+            ],
+            capture_output=True,
+            check=False,
+        )
+        return _proc.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
 def _audit_commit(
     repo: Path,
     sha: str,
@@ -766,6 +823,7 @@ def _audit_commit(
     altas_procesadas: list[dict],
     lines: list[str],
     findings: list[dict],
+    cutoff_sha: str | None = None,
 ) -> tuple[int, int, int]:
     """Audita UN commit: (filas_anadidas, ids_extraidos, recibos_de_mensaje).
 
@@ -786,8 +844,18 @@ def _audit_commit(
     for raw_id in sorted(nuevos):
         recibo = _recibo_de_candidato(raw_id, recibo_files, msg_recibos)
         if recibo is None:
+            grandfathered = cutoff_sha is not None and _is_ancestor(
+                repo, sha, cutoff_sha
+            )
             _registrar_sin_recibo(
-                lines, findings, altas_procesadas, sha, raw_id, subject, touched
+                lines,
+                findings,
+                altas_procesadas,
+                sha,
+                raw_id,
+                subject,
+                touched,
+                grandfathered=grandfathered,
             )
             continue
         extra_lines, finding, registro = _veredicto_con_recibo(
@@ -810,6 +878,7 @@ def audit_range(
     surfaces: list[str],
     extra_recibos: list[dict] | None = None,
     revalidate: dict | None = None,
+    cutoff_sha: str | None = None,
 ) -> tuple[int, list[str], list[dict]]:
     """Auditoria del rango (o revalidacion single-recibo si revalidate).
 
@@ -842,7 +911,14 @@ def audit_range(
 
     for sha in commits:
         rows_n, ids_n, recibos_n = _audit_commit(
-            repo, sha, surfaces, recibo_files, altas_procesadas, lines, findings
+            repo,
+            sha,
+            surfaces,
+            recibo_files,
+            altas_procesadas,
+            lines,
+            findings,
+            cutoff_sha=cutoff_sha,
         )
         n_added_rows += rows_n
         n_ids += ids_n
@@ -863,16 +939,31 @@ def audit_range(
         f"+ {n_recibos_file} via --recibo-file",
     )
     fails = [f for f in findings if f.get("veredicto") in FAIL_VERDICTS]
+    grandfathered = [
+        f for f in findings if f.get("veredicto") == VER_WARN_GRANDFATHERED
+    ]
     if fails:
         lines.append(
             f"VEREDICTO GLOBAL: FALLO ({len(fails)} alta(s) sin recibo coherente)"
         )
+        if grandfathered:
+            lines.append(
+                f"  grandfathered: {len(grandfathered)} alta(s) pre-cutoff "
+                f"(censo 17/30 (57%) sin recibo)"
+            )
         return 1, lines, findings
     lines.append(f"VEREDICTO GLOBAL: {VER_COHERENTE}")
+    if grandfathered:
+        lines.append(
+            f"  grandfathered: {len(grandfathered)} alta(s) pre-cutoff "
+            f"(censo 17/30 (57%) sin recibo)"
+        )
     return 0, lines, findings
 
 
-def _audit_closeout(repo: Path) -> tuple[int, list[str], bool, list[dict]]:
+def _audit_closeout(
+    repo: Path, cutoff_sha: str | None = None
+) -> tuple[int, list[str], bool, list[dict]]:
     """Camino del closeout: rango por defecto + SKIP nombrado si no resuelve.
 
     Devuelve (exit_code, lineas_informe, skipped_real, hallazgos_json). El
@@ -898,7 +989,9 @@ def _audit_closeout(repo: Path) -> tuple[int, list[str], bool, list[dict]]:
             False,
             [],
         )
-    code, lines, findings = audit_range(repo, base, head, surfaces)
+    code, lines, findings = audit_range(
+        repo, base, head, surfaces, cutoff_sha=cutoff_sha
+    )
     return code, lines, False, findings
 
 
@@ -946,6 +1039,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Recibo a revalidar (obligatorio con --revalidate)",
     )
+    parser.add_argument(
+        "--grandfather-cutoff-sha",
+        default=None,
+        help="SHA de corte grandfather: las altas anteriores a este SHA "
+        "se degradan a WARN_GRANDFATHERED (nunca ERROR).",
+    )
     parser.add_argument("--json", action="store_true", help="Reporte JSON a stdout")
     args = parser.parse_args(argv)
 
@@ -964,10 +1063,18 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.base and args.head:
             code, lines, findings = audit_range(
-                repo, args.base, args.head, surfaces, extra_recibos=extra
+                repo,
+                args.base,
+                args.head,
+                surfaces,
+                extra_recibos=extra,
+                cutoff_sha=args.grandfather_cutoff_sha,
             )
         else:
-            code, lines, skipped, findings = _audit_closeout(repo)
+            code, lines, skipped, findings = _audit_closeout(
+                repo,
+                cutoff_sha=args.grandfather_cutoff_sha,
+            )
             if skipped:
                 print("\n".join(lines))
                 return 0
