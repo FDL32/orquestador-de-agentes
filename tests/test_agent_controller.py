@@ -6150,3 +6150,71 @@ class TestBootstrapTicketSyncsStateMd:
             "STATE.md fue reescrito (mtime cambio) pese a que el estado ya "
             "coincidia -- sync_state_projection no deberia escribir en MATCHED"
         )
+
+
+class TestAnalysisTicketInvariants:
+    """WOT-2026-072c: analysis tickets should skip BUILDER_EXIT/STATE_CHANGED invariants."""
+
+    def test_check_invariants_skips_post_closure_for_analysis(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Analysis tickets in COMPLETED state should not emit BUILDER_EXIT/STATE_CHANGED errors."""
+        plan_content = (
+            "# Work Plan: WOT-2026-072b\n\n"
+            "## Metadata\n"
+            "**ID:** WOT-2026-072b\n"
+            "**Estado:** COMPLETED\n"
+            "- **deliverable_type:** analysis\n\n"
+            "## Objetivo\n"
+            "Analysis ticket.\n"
+        )
+        log_content = "**Estado:** COMPLETED\n"
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        result = agent_controller._check_invariants(
+            plan_content, log_content, "COMPLETED"
+        )
+        errors = result["errors"]
+        warnings = result["warnings"]
+        assert not errors, f"Analysis ticket should have no errors: {errors}"
+        assert any("analysis" in w.lower() for w in warnings), (
+            f"Expected analysis skip warning, got: {warnings}"
+        )
+
+    def test_check_invariants_runs_post_closure_for_code(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Code tickets in COMPLETED state should still run post-closure invariants."""
+        plan_content = (
+            "# Work Plan: WOT-2026-099a\n\n"
+            "## Metadata\n"
+            "**ID:** WOT-2026-099a\n"
+            "**Estado:** COMPLETED\n"
+            "- **deliverable_type:** code\n\n"
+            "## Objetivo\n"
+            "Code ticket.\n"
+        )
+        log_content = "**Estado:** COMPLETED\n"
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        result = agent_controller._check_invariants(
+            plan_content, log_content, "COMPLETED"
+        )
+        warnings = result["warnings"]
+        assert not any("analysis" in w.lower() for w in warnings), (
+            f"Code ticket should not get analysis skip warning: {warnings}"
+        )
+
+    def test_check_bus_drift_skips_for_analysis(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_check_bus_drift should return [] for analysis tickets."""
+        plan_content = (
+            "# Work Plan: WOT-2026-072b\n\n"
+            "## Metadata\n"
+            "**ID:** WOT-2026-072b\n"
+            "**Estado:** COMPLETED\n"
+            "- **deliverable_type:** analysis\n"
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(agent_controller, "event_bus", MagicMock())
+        result = agent_controller._check_bus_drift(plan_content, "COMPLETED")
+        assert result == [], f"Analysis ticket bus drift should be empty: {result}"

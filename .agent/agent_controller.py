@@ -4458,6 +4458,11 @@ def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     plan_id = get_plan_id(plan_content)
     if is_invalid_plan_id(plan_id):
         return ["No active ticket found for bus drift check"]
+    # WOT-2026-072c: analysis tickets never emit STATE_CHANGED via --mark-ready,
+    # so bus drift checks that expect those events are false positives.
+    deliverable_type = _read_deliverable_type(plan_content)
+    if deliverable_type == "analysis":
+        return []
     if _ticket_events_archived(plan_id):
         return []
     # WOT-2026-024q: bus ABSENT for the ticket + commit landed in origin/main ->
@@ -4738,13 +4743,25 @@ def _check_invariants(plan_content: str, log_content: str, log_status: str) -> d
         result["warnings"].append("No active plan for invariant check")
         return result
 
+    # WOT-2026-072c: analysis tickets are read-only and never emit
+    # BUILDER_EXIT or STATE_CHANGED events via --mark-ready. Skip
+    # post-closure invariants that require those bus events.
+    deliverable_type = _read_deliverable_type(plan_content)
+    is_analysis = deliverable_type == "analysis"
+
     # Pre-closure invariants
     if log_status in ("IN_PROGRESS", "APPROVED", "PENDING"):
         result["warnings"].extend(_check_pre_closure_invariants(plan_id))
 
     # Post-closure invariants
     if log_status in ("READY_FOR_REVIEW", "COMPLETED"):
-        result.update(_check_post_closure_invariants(plan_id, log_status))
+        if is_analysis:
+            result["warnings"].append(
+                "Skipping BUILDER_EXIT/STATE_CHANGED invariants for analysis ticket "
+                f"{plan_id} (deliverable_type=analysis)"
+            )
+        else:
+            result.update(_check_post_closure_invariants(plan_id, log_status))
 
     return result
 
