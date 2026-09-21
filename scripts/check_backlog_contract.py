@@ -276,7 +276,7 @@ def _is_ticket_row(stripped: str) -> bool:
     cells cite ids in running text; only a row whose Ticket cell IS a ticket id
     counts as a live-queue ticket row.
     """
-    if not stripped.startswith("| "):
+    if not stripped.startswith("|"):
         return False
     cells = stripped.split("|")
     if len(cells) <= 3:

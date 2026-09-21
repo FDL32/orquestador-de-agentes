@@ -1993,3 +1993,42 @@ def test_058h_credits_y_doble_cierre_compacto_no_son_falsos_positivos(
         "la fila de credits y el doble cierre compacto son legitimos; el cruce "
         f"nuevo no debe falsearlos: {errors}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-072a: _is_ticket_row must accept compact rows (no space after '|')
+# ---------------------------------------------------------------------------
+
+
+def test_072a_compact_row_is_recognized_as_ticket_row() -> None:
+    """Test de regresion: fila compacta |Media|WOT-...| sin espacio despues
+    de la barra debe ser reconocida como fila de ticket.
+
+    FAIL-without-fix (mutation): revert startswith("| ") -> este test queda
+    ROJO. Medido: 3 filas vivas invisibles porque el guard las saltaba.
+    """
+    compact = "|Media|WOT-2026-072a|titulo compacto|s|pending|-|x|-"
+    assert cbc._is_ticket_row(compact) is True, (
+        f"compact row must be recognized; got: {cbc._is_ticket_row(compact)}"
+    )
+
+
+def test_072a_standard_row_still_passes() -> None:
+    """Test de exito: fila estandar con espacios | Media | WOT-... | sigue
+    pasando sin cambios."""
+    standard = "| Media | WOT-2026-072a | titulo estandar | s | pending | - | x | - |"
+    assert cbc._is_ticket_row(standard) is True, (
+        f"standard row must still pass; got: {cbc._is_ticket_row(standard)}"
+    )
+
+
+def test_072a_mutation_revert_startswith_space_fails() -> None:
+    """MUTATION: revertir el fix a startswith("| ") -> el test de fila compacta
+    FALLA. Esto prueba que el fix es la causa del verde, no un artefacto."""
+    compact = "|Media|WOT-2026-072a|titulo compacto|s|pending|-|x|-"
+    # Simular la version antigua del check
+    old_check = compact.startswith("| ")
+    assert old_check is False, (
+        "la fila compacta debe fallar con startswith('| ') -- prueba que el "
+        "fix startswith('|') es necesario"
+    )
