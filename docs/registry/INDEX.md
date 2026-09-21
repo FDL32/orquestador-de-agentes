@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 36 |
+| prompt | 37 |
 | reference | 33 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 42 |
-| **total** | **119** |
+| **total** | **120** |
 
 ## Entradas
 
@@ -49,6 +49,7 @@
 | prompt | `prompts/orchestrator_launch_builder.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline_codeonly.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_prepare_and_launch_ticket.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap_design.md` | active | system | shared | model-invoked | — |
