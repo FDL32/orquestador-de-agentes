@@ -798,7 +798,7 @@ def _is_ancestor(repo: Path, maybe_ancestor: str, commit: str) -> bool:
     """Verifica si `maybe_ancestor` es ancestro de `commit` en `repo`."""
     try:
         _proc = subprocess.run(  # noqa: S603
-            [
+            [  # noqa: S607
                 "git.exe",
                 "-C",
                 str(repo),
