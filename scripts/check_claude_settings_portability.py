@@ -221,7 +221,7 @@ def check_all_hook_commands_are_canonical(settings: dict) -> list[str]:
     return violations
 
 
-def _run_entrypoint_shell(sandbox: str) -> subprocess.CompletedProcess:
+def _run_entrypoint_shell(sandbox: str) -> tuple[subprocess.CompletedProcess, bool]:
     """Run the canonical entrypoint through shell, reproducing the production path.
 
     Production launches the entrypoint by shell (``python`` pelado), not via
@@ -236,32 +236,39 @@ def _run_entrypoint_shell(sandbox: str) -> subprocess.CompletedProcess:
     falls back to ``sys.executable`` with ``shell=False`` if unavailable);
     builds the command string ``python <entrypoint> <sandbox>``; launches it
     through the shell with the payload as stdin input.
-    After: returns the ``CompletedProcess`` so the caller can inspect
-    ``returncode``, ``stdout``, and ``stderr``.
+    After: returns a tuple ``(CompletedProcess, used_shell_path)`` where
+    ``used_shell_path`` is True when bash was found and the shell path was
+    exercised, False when the fallback (sys.executable, shell=False) was taken.
     """
     shell_exe = shutil.which("bash")  # Git Bash on Windows, sh on Unix
     if shell_exe is None:
         # Fallback to the direct executable path (no shell).  This is the same
         # path the old code took; it does NOT reproduce the production path.
-        return subprocess.run(  # noqa: S603
-            [sys.executable, str(_ENTRYPOINT), sandbox],
-            input=_BENIGN_PAYLOAD,
-            cwd=sandbox,
-            capture_output=True,
-            timeout=30,
+        return (
+            subprocess.run(  # noqa: S603
+                [sys.executable, str(_ENTRYPOINT), sandbox],
+                input=_BENIGN_PAYLOAD,
+                cwd=sandbox,
+                capture_output=True,
+                timeout=30,
+            ),
+            False,
         )
     # Production path: ``python <entrypoint> <sandbox>`` resolved by the shell.
     # bash's PATH on Windows includes the Windows PATH, so ``python`` resolves
     # the same way it does in production (cmd / Git Bash / WSL).
     cmd = f"python {shlex.quote(str(_ENTRYPOINT))} {shlex.quote(sandbox)}"
-    return subprocess.run(  # noqa: S602
-        cmd,
-        shell=True,
-        executable=shell_exe,
-        input=_BENIGN_PAYLOAD,
-        cwd=sandbox,
-        capture_output=True,
-        timeout=30,
+    return (
+        subprocess.run(  # noqa: S602
+            cmd,
+            shell=True,
+            executable=shell_exe,
+            input=_BENIGN_PAYLOAD,
+            cwd=sandbox,
+            capture_output=True,
+            timeout=30,
+        ),
+        True,
     )
 
 
@@ -279,7 +286,7 @@ def check_entrypoint_fails_closed() -> list[str]:
             # Trusted: runs the repo's own canonical entrypoint through shell
             # (not [sys.executable, ...] with shell=False) to reproduce the
             # exact production path where python is resolved by the shell.
-            result = _run_entrypoint_shell(sandbox)
+            result, _used_shell_path = _run_entrypoint_shell(sandbox)
         except subprocess.TimeoutExpired:
             return ["canonical entrypoint timed out; cannot confirm fail-closed"]
     if result.returncode == 0:

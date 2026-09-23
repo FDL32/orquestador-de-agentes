@@ -1186,10 +1186,9 @@ def test_copy_tree_dry_run_reports_at_directory_granularity(tmp_path):
         allowlist={".agent/planning/"},
     )
 
-    assert copied == [Path("planning")], (
-        "dry-run contract changed: it now descends into the directory. If this is "
-        "deliberate, the no-clobber guard must grow a dry_run branch and 025g applies."
-    )
+    # After WOT-2026-025g: dry-run reports per-file, not directory-level.
+    # Destination-owned files are skipped by no-clobber guard, so copied is empty.
+    assert copied == []
     # And the DECISIVE property: a dry-run must not touch the destination at all.
     owned = project_agent / "planning" / "ticket_contracts.md"
     assert (
@@ -1552,3 +1551,10 @@ def test_link_carries_motor_workspace_root_and_degrades_to_none(tmp_path):
     assert data["motor_workspace_root"] is None, (
         "un motor sin declaracion deja el campo a null, no a una ruta adivinada"
     )
+
+
+def test_merge_empty_source_returns_dest_canonical(tmp_path):
+    """Merge with empty source preserves destination content (may add trailing newline)."""
+    dest_content = "## Domain: legacy\n- rule\n"
+    result = merge_memory_rules("", dest_content)
+    assert result.strip() == dest_content.strip()
