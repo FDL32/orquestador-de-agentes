@@ -865,3 +865,71 @@ class TestContextHooksMustBePresent:
             (_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
         )
         assert gate.check_context_hooks_present(settings) == []
+
+
+class TestEntrypointShellMutation:
+    """DoD-2 / DoD-3: mutation tests for shell-based measurement.
+
+    These tests verify that ``check_entrypoint_fails_closed`` actually
+    exercises the shell path and fails when shell resolution is broken.
+    """
+
+    def test_check_uses_shell_when_bash_available(self, monkeypatch):
+        """DoD-2: the check calls subprocess.run with shell=True when bash is available.
+
+        Mutation test: if the code is reverted to use ``[sys.executable, ...]``
+        with ``shell=False``, this test fails because the subprocess call
+        would have ``shell=False`` instead of ``shell=True``.
+        """
+        captured_calls: list[tuple] = []
+
+        class _MockResult:
+            returncode = 2
+
+        def mock_run(*args: object, **kwargs: object) -> _MockResult:
+            captured_calls.append((args, kwargs))
+            return _MockResult()
+
+        # Mock shutil.which("bash") to return a fake path, proving the check
+        # uses shell=True when bash is available (regardless of whether bash
+        # is actually installed in the test environment).
+        monkeypatch.setattr(
+            "shutil.which", lambda x: "/fake/bash" if x == "bash" else None
+        )
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        gate.check_entrypoint_fails_closed()
+
+        assert len(captured_calls) == 1
+        _, kwargs = captured_calls[0]
+        assert kwargs.get("shell", False) is True, (
+            "the check must use shell=True to reproduce the production path; "
+            f"got shell={kwargs.get('shell')}"
+        )
+
+    def test_no_bash_falls_back_to_sys_executable(self, monkeypatch):
+        """DoD-3: without bash, the check falls back to sys.executable (shell=False).
+
+        This proves the shell path is what makes the check correct:
+        when bash is unavailable, the check falls back to the old behavior
+        (shell=False), which does NOT reproduce the production path.
+        """
+        captured_calls: list[tuple] = []
+
+        class _MockResult:
+            returncode = 2
+
+        def mock_run(*args: object, **kwargs: object) -> _MockResult:
+            captured_calls.append((args, kwargs))
+            return _MockResult()
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        monkeypatch.setattr("shutil.which", lambda x: None)
+
+        gate.check_entrypoint_fails_closed()
+
+        assert len(captured_calls) == 1
+        _, kwargs = captured_calls[0]
+        assert kwargs.get("shell", False) is False, (
+            "without bash, the check falls back to shell=False (sys.executable path)"
+        )
