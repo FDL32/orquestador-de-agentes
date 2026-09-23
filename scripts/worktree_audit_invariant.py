@@ -23,9 +23,13 @@ FRONTERA (hard): two snapshots and a comparison. It never mutates, never
 restores, never excludes. If it starts to resemble concurrency control, STOP and
 file it (024u/025c).
 
+"never excludes" se refiere a exclusion MUTUA (locks): no excluye archivos por
+su contenido o politica. Filtrar las salidas del PROPIO medidor, pasadas
+explicitamente por el llamador en ``ignore_paths``, no lo es.
+
 Before: ``worktree`` is a git working tree about to be measured.
 During: three read-only git queries per snapshot (``rev-parse HEAD``, ``status
-    --porcelain``, and the stash reflog). No writes of any kind.
+    --porcelain -z``, and the stash reflog). No writes of any kind.
 After: ``capture_state`` returns an opaque snapshot; ``verify_unchanged`` returns
     None when the state is identical and raises AuditInvariantViolationError
     otherwise. ``GitStateUnavailableError`` propagates when git cannot be read -- an
@@ -117,18 +121,100 @@ def _head_reflog_len(worktree: Path) -> int:
     return len([line for line in raw.splitlines() if line.strip()])
 
 
-def capture_state(worktree: Path) -> WorktreeState:
-    """Snapshot the tree identity immediately BEFORE a measurement."""
+def _parse_porcelain_z(porcelain_z: str, ignore_paths: frozenset[str]) -> str:
+    """Parse ``git status --porcelain -z`` output and reconstruct .status text.
+
+    Entries are NUL-separated. Each entry starts with a 2-char status, then a
+    optional space + rename-old path, then NUL. Renames consume two entries:
+    status+old_path\\0new_path\\0.
+
+    When *ignore_paths* is non-empty, entries whose path (or both old and new
+    for renames) match exactly are dropped. The remaining entries are
+    reconstructed to text form ``"{status} {path}\\n"`` joined by ``\\n``.
+
+    When *ignore_paths* is empty, the reconstructed text is byte-identical to
+    what ``git status --porcelain`` (without ``-z``) would produce for the same
+    tree -- provided there are no paths with spaces/unicode/renames.
+    """
+    if not porcelain_z:
+        return ""
+
+    entries: list[tuple[str, str]] = []  # (status, path)
+    raw_entries = porcelain_z.split("\0")
+    i = 0
+    while i < len(raw_entries):
+        entry = raw_entries[i]
+        if not entry:
+            i += 1
+            continue
+        if len(entry) >= 3:
+            status = entry[:2]
+            path = entry[3:] if entry[2] == " " else entry[2:]
+            # Handle renames: consume the next entry as the new path
+            if status[0] == "R" and i + 1 < len(raw_entries):
+                new_path = raw_entries[i + 1]
+                if new_path:
+                    # For filtering: drop only if BOTH old and new are in ignore_paths
+                    if (
+                        ignore_paths
+                        and path in ignore_paths
+                        and new_path in ignore_paths
+                    ):
+                        i += 2
+                        continue
+                    entries.append((status, new_path))
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            else:
+                if ignore_paths and path in ignore_paths:
+                    i += 1
+                    continue
+                entries.append((status, path))
+        i += 1
+
+    # Reconstruct text: "{status} {path}\n" joined by \n, with trailing \n
+    if not entries:
+        return ""
+    lines = [f"{status} {path}" for status, path in entries]
+    return "\n".join(lines) + "\n"
+
+
+def capture_state(
+    worktree: Path, *, ignore_paths: frozenset[str] = frozenset()
+) -> WorktreeState:
+    """Snapshot the tree identity immediately BEFORE a measurement.
+
+    Args:
+        worktree: The git working tree to snapshot.
+        ignore_paths: Exact relative paths to exclude from the status snapshot.
+            Uses NUL-separated porcelain parsing (``--porcelain -z``) so paths
+            with spaces/unicode are handled correctly. A rename is filtered
+            only when BOTH the old and new paths are in *ignore_paths*.
+    """
     return WorktreeState(
         head=_git(worktree, "rev-parse", "HEAD").strip(),
-        status=_git(worktree, "status", "--porcelain"),
+        status=_parse_porcelain_z(
+            _git(worktree, "status", "--porcelain", "-z"), ignore_paths
+        ),
         head_reflog_len=_head_reflog_len(worktree),
     )
 
 
-def verify_unchanged(worktree: Path, pre: WorktreeState) -> None:
-    """Raise if the tree moved since ``pre``; return None if it held still."""
-    post = capture_state(worktree)
+def verify_unchanged(
+    worktree: Path, pre: WorktreeState, *, ignore_paths: frozenset[str] = frozenset()
+) -> None:
+    """Raise if the tree moved since ``pre``; return None if it held still.
+
+    Args:
+        worktree: The git working tree to check.
+        pre: The pre-snapshot to compare against.
+        ignore_paths: Same as ``capture_state``; both pre and post use the
+            same set so the comparison is fair.
+    """
+    post = capture_state(worktree, ignore_paths=ignore_paths)
     if post == pre:
         return
 

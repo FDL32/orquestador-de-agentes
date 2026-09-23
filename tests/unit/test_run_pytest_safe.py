@@ -2017,7 +2017,7 @@ class TestStampSurvivesMutatingHooks:
 
         if capture_raises is not None:
 
-            def _raise_capture(_root):
+            def _raise_capture(_root, **_kw):
                 raise capture_raises
 
             monkeypatch.setattr(mod, "_invariant_capture_state", _raise_capture)
@@ -2032,14 +2032,14 @@ class TestStampSurvivesMutatingHooks:
             # capture the re-stamp makes, which may report a DIRTY tree.
             _captures = {"n": 0}
 
-            def _capture(_root):
+            def _capture(_root, **_kw):
                 _captures["n"] += 1
                 status = post_status if _captures["n"] > 1 else ""
                 return WorktreeState(head="h", status=status, head_reflog_len=1)
 
             monkeypatch.setattr(mod, "_invariant_capture_state", _capture)
 
-        def _verify(_root, _pre):
+        def _verify(_root, _pre, **_kw):
             if invariant_raises is not None:
                 raise invariant_raises
             return None

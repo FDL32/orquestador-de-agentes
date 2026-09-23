@@ -1630,8 +1630,19 @@ def main() -> int:  # noqa: C901
     # snapshot degrades to "cannot verify", never to a false "verified stable".
     _audit_state_pre = None
     _audit_state_pre_repr = None
+    # WOT-2026-073e (Pieza b): exclude the runner's own seal/log from the
+    # audit window so the runner's writes do not invalidate its own measurement.
+    _delivery_root = _delivery_repo_root()
+    _ignore_paths: frozenset[str] = frozenset()
+    for _lp in (LAST_RUN_JSON, LAST_RUN_LOG):
+        with contextlib.suppress(ValueError):
+            _ignore_paths = _ignore_paths | frozenset(
+                [str(_lp.resolve().relative_to(_delivery_root)).replace("\\", "/")]
+            )
     try:
-        _audit_state_pre = _invariant_capture_state(_delivery_repo_root())
+        _audit_state_pre = _invariant_capture_state(
+            _delivery_root, ignore_paths=_ignore_paths
+        )
         _audit_state_pre_repr = {
             "head": _audit_state_pre.head,
             "status_entries": len(_audit_state_pre.status.splitlines()),
@@ -1821,7 +1832,9 @@ def main() -> int:  # noqa: C901
         # the 2026-07-25 mistake (three verdicts, one tree, all meaningless).
         if _audit_state_pre is not None:
             try:
-                _invariant_verify_unchanged(_delivery_repo_root(), _audit_state_pre)
+                _invariant_verify_unchanged(
+                    _delivery_root, _audit_state_pre, ignore_paths=_ignore_paths
+                )
             except _AuditInvariantViolation as exc:
                 summary["audit_window_invalidated"] = str(exc)
                 print(f"[pytest-safe] {exc}")
@@ -1878,7 +1891,9 @@ def main() -> int:  # noqa: C901
                 # a real case, not a hypothetical one).
                 summary["stamp_scope"] = "revalidated_at_window_close"
                 try:
-                    _post = _invariant_capture_state(_delivery_repo_root())
+                    _post = _invariant_capture_state(
+                        _delivery_root, ignore_paths=_ignore_paths
+                    )
                     summary["stamp_tree_dirty"] = bool(_post.status.strip())
                     summary["stamp_status_entries"] = len(_post.status.splitlines())
                 except Exception as exc:

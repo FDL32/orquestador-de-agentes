@@ -710,6 +710,122 @@ class TestPreHandoffGuard:
         assert output["dirty_tree"] is False
         assert output["checkpoint_misaligned"] is False
 
+    def test_guard_ignores_tracked_last_run_seal(self, tmp_path: Path) -> None:
+        """WOT-2026-073e (Pieza a): a COMMITTED last-run.json must not appear
+        in dirty_files. The seal is a live surface of the pre-handoff guard.
+
+        The fixture COMMITS the seal, creates the M3 tag, REWRITES the seal,
+        and calls run_guard: the seal must NOT appear in dirty_files and
+        dirty_tree must be False. Control: test_guard_fails_dirty_tree must
+        still fail (negative control).
+        """
+        import sys
+
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        from pre_handoff_guard import run_guard
+
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        # Create and commit .agent directory
+        collab = repo / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Work Plan\n\n"
+            "## Metadata\n"
+            "- **delivery_authority:** repo_destino\n"
+            "- **deliverable_type:** code\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add .agent"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # Create the seal directory + seal file, then commit
+        seal_dir = repo / ".agent" / "runtime" / "pytest-safe"
+        seal_dir.mkdir(parents=True, exist_ok=True)
+        head_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        (seal_dir / "last-run.json").write_text(
+            json.dumps(
+                {
+                    "status": "finished",
+                    "exit_code": 0,
+                    "tested_commit_sha": head_sha,
+                    "level": "all",
+                    "args_mode": "default_discovery",
+                }
+            ),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "add", ".agent/runtime"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add last-run seal"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        commit_ticket_marker(repo, "WOT-2026-TEST")
+
+        # NOW capture HEAD (after seal + ticket commits) for the seal
+        head_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        (seal_dir / "last-run.json").write_text(
+            json.dumps(
+                {
+                    "status": "finished",
+                    "exit_code": 0,
+                    "tested_commit_sha": head_sha,
+                    "level": "all",
+                    "args_mode": "default_discovery",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Create M3 checkpoint on FINAL HEAD
+        create_checkpoint_tag(repo, "checkpoint/review-WOT-2026-TEST")
+
+        # Rewrite the seal (now dirty)
+        (seal_dir / "last-run.json").write_text(
+            json.dumps(
+                {
+                    "status": "finished",
+                    "exit_code": 0,
+                    "tested_commit_sha": head_sha,
+                    "level": "all",
+                    "args_mode": "default_discovery",
+                    "audit_state_pre": {
+                        "head": head_sha,
+                        "status_entries": 0,
+                        "head_reflog_len": 0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_guard(repo, "WOT-2026-TEST", motor_root=repo)
+
+        assert result["valid"] is True, f"expected valid, got: {result}"
+        assert result["dirty_tree"] is False, (
+            f"expected dirty_tree=False, got: {result}"
+        )
+        assert (
+            ".agent/runtime/pytest-safe/last-run.json" not in result["dirty_files"]
+        ), f"last-run.json must not appear in dirty_files: {result['dirty_files']}"
+
 
 class TestWorkPlanCommitGuard:
     """Integration tests for WOT-2026-009g: work_plan.md must be committed at handoff.
@@ -1127,6 +1243,73 @@ class TestCanonicalSuiteGreenGate:
         ok, diag = guard.assert_canonical_suite_green(motor, "code")
         assert ok is False
         assert "not_full_suite" in diag.get("reason", "")
+
+    def test_audit_window_invalidated_blocks_inherited_branch(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-073e (Pieza c): audit_window_invalidated blocks in the
+        inherited-failures branch. The canonical_suite_error must cite the
+        CONCRETE value of the field, not a generic message.
+
+        Uses a green seal (exit_code 0, all fields correct) PLUS
+        audit_window_invalidated non-empty -> must block with reason
+        == "audit_window_invalidated" and the concrete value in
+        canonical_suite_error.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        concrete_msg = "status --porcelain cambio (2 -> 3 entrada(s))"
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+                "level": "all",
+                "args_mode": "default_discovery",
+                "failed_test_ids": [],
+                "baseline_failed_test_ids": [],
+                "audit_window_invalidated": concrete_msg,
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert diag.get("reason") == "audit_window_invalidated"
+        assert concrete_msg in diag.get("canonical_suite_error", ""), (
+            f"canonical_suite_error must cite the concrete value: "
+            f"{diag.get('canonical_suite_error')}"
+        )
+
+    def test_audit_window_check_error_blocks_fresh_green_branch(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-073e (Pieza c): audit_window_check_error blocks in the
+        fresh_green branch. The canonical_suite_error must cite the CONCRETE
+        value of the field.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        concrete_msg = "git timeout after 30s"
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+                "level": "all",
+                "args_mode": "default_discovery",
+                "audit_window_check_error": concrete_msg,
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert diag.get("reason") == "audit_window_check_error"
+        assert concrete_msg in diag.get("canonical_suite_error", ""), (
+            f"canonical_suite_error must cite the concrete value: "
+            f"{diag.get('canonical_suite_error')}"
+        )
 
 
 # =============================================================================

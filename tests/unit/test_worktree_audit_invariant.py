@@ -209,3 +209,268 @@ def test_the_invariant_never_mutates_anything(tmp_path: Path) -> None:
 
     assert before == after
     assert not (repo / ".worktree-audit.lock").exists(), "must not create a lock"
+
+
+# =============================================================================
+# WOT-2026-073e (Pieza b): ignore_paths filtering with --porcelain -z
+# =============================================================================
+
+
+def test_b1_ignore_tracked_seal_does_not_invalidate(tmp_path: Path) -> None:
+    """(b1) Repo tracking the seal (last-run.json); capture with ignore_paths,
+    rewrite the seal, verify_unchanged -> no raise.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    seal_dir = repo / ".agent" / "runtime" / "pytest-safe"
+    seal_dir.mkdir(parents=True, exist_ok=True)
+    (seal_dir / "last-run.json").write_text('{"status": "finished"}', encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add seal",
+    )
+
+    ignore_paths = frozenset([".agent/runtime/pytest-safe/last-run.json"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+    (seal_dir / "last-run.json").write_text('{"status": "started"}', encoding="utf-8")
+    verify_unchanged(repo, pre, ignore_paths=ignore_paths)  # must not raise
+
+
+def test_b2_other_file_modified_still_invalidates(tmp_path: Path) -> None:
+    """(b2) Same fixture but modify a file OUTSIDE ignore_paths -> raises."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    seal_dir = repo / ".agent" / "runtime" / "pytest-safe"
+    seal_dir.mkdir(parents=True, exist_ok=True)
+    (seal_dir / "last-run.json").write_text('{"status": "finished"}', encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add seal",
+    )
+
+    ignore_paths = frozenset([".agent/runtime/pytest-safe/last-run.json"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+    (repo / "other.py").write_text("changed", encoding="utf-8")
+
+    try:
+        verify_unchanged(repo, pre, ignore_paths=ignore_paths)
+    except AuditInvariantViolationError as exc:
+        assert "INVALIDADA" in str(exc)
+    else:
+        raise AssertionError("modifying a non-ignored file must invalidate")
+
+
+def test_b3_no_ignore_paths_seal_rewrite_invalidates(tmp_path: Path) -> None:
+    """(b3) Without ignore_paths, rewriting the seal -> raises (default unchanged)."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    seal_dir = repo / ".agent" / "runtime" / "pytest-safe"
+    seal_dir.mkdir(parents=True, exist_ok=True)
+    (seal_dir / "last-run.json").write_text('{"status": "finished"}', encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add seal",
+    )
+
+    pre = capture_state(repo)  # no ignore_paths
+    (seal_dir / "last-run.json").write_text('{"status": "started"}', encoding="utf-8")
+
+    try:
+        verify_unchanged(repo, pre)  # must raise
+    except AuditInvariantViolationError as exc:
+        assert "INVALIDADA" in str(exc)
+    else:
+        raise AssertionError("seal rewrite without ignore_paths must invalidate")
+
+
+def test_b4_space_in_filename_ignored_path(tmp_path: Path) -> None:
+    """(b4) Verify -z format: a tracked file with a space in its name,
+    modified INSIDE ignore_paths -> no raise. With --porcelain without -z,
+    that path would arrive quoted and the text equality filter would silently fail.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    spaced = repo / "file with space.txt"
+    spaced.write_text("original", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add spaced file",
+    )
+
+    ignore_paths = frozenset(["file with space.txt"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+    spaced.write_text("modified", encoding="utf-8")
+    verify_unchanged(repo, pre, ignore_paths=ignore_paths)  # must not raise
+
+
+def test_b5_rename_from_ignored_to_outside_raises(tmp_path: Path) -> None:
+    """(b5) Rename of a file INSIDE ignore_paths TO a name OUTSIDE the set ->
+    raises (the rename is not masked).
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    old_name = repo / "seal.json"
+    old_name.write_text('{"status": "finished"}', encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add seal",
+    )
+
+    ignore_paths = frozenset(["seal.json"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+
+    # Rename to a name outside ignore_paths
+    old_name.rename(repo / "renamed.json")
+    _git(repo, "add", "-A")
+
+    try:
+        verify_unchanged(repo, pre, ignore_paths=ignore_paths)
+    except AuditInvariantViolationError as exc:
+        assert "INVALIDADA" in str(exc)
+    else:
+        raise AssertionError("rename from ignored to outside must invalidate")
+
+
+def test_b5bis_rename_from_outside_to_ignored_raises(tmp_path: Path) -> None:
+    """(b5-bis) Rename of a file FROM a name OUTSIDE ignore_paths TO a name
+    INSIDE the set -> raises (symmetric rule: a rename is only filtered if
+    BOTH old and new paths match exactly).
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    outside_name = repo / "other.txt"
+    outside_name.write_text("content", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add other",
+    )
+
+    ignore_paths = frozenset(["seal.json"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+
+    # Rename TO a name inside ignore_paths
+    outside_name.rename(repo / "seal.json")
+    _git(repo, "add", "-A")
+
+    try:
+        verify_unchanged(repo, pre, ignore_paths=ignore_paths)
+    except AuditInvariantViolationError as exc:
+        assert "INVALIDADA" in str(exc)
+    else:
+        raise AssertionError("rename to ignored name must invalidate")
+
+
+def test_b6_both_seal_files_ignored_together(tmp_path: Path) -> None:
+    """(b6) Repo tracking BOTH last-run.json AND last-run.log, both in
+    ignore_paths, both rewritten at the same time -> verify_unchanged no raise.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    seal_dir = repo / ".agent" / "runtime" / "pytest-safe"
+    seal_dir.mkdir(parents=True, exist_ok=True)
+    (seal_dir / "last-run.json").write_text('{"status": "finished"}', encoding="utf-8")
+    (seal_dir / "last-run.log").write_text("log line 1\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add seal files",
+    )
+
+    ignore_paths = frozenset(
+        [
+            ".agent/runtime/pytest-safe/last-run.json",
+            ".agent/runtime/pytest-safe/last-run.log",
+        ]
+    )
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+    (seal_dir / "last-run.json").write_text('{"status": "started"}', encoding="utf-8")
+    (seal_dir / "last-run.log").write_text("log line 2\n", encoding="utf-8")
+    verify_unchanged(repo, pre, ignore_paths=ignore_paths)  # must not raise
+
+
+def test_b7_status_byte_identical_without_ignore_paths(tmp_path: Path) -> None:
+    """(b7) Reconstruction: single modified entry, no ignore_paths -> the
+    .status of the resulting WorktreeState is BYTE-IDENTICAL to what the
+    current implementation with --porcelain (without -z) produces for the
+    same case.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    # Modify a file
+    (repo / "test.py").write_text("modified", encoding="utf-8")
+
+    # Capture with -z and no ignore_paths
+    state_z = capture_state(repo, ignore_paths=frozenset())
+
+    # Capture with plain --porcelain (current implementation)
+    plain_output = _git(repo, "status", "--porcelain").stdout
+
+    assert state_z.status == plain_output, (
+        f"-z reconstruction must be byte-identical to plain --porcelain "
+        f"when ignore_paths is empty and there are no spaces/renames.\n"
+        f"-z status: {state_z.status!r}\n"
+        f"plain status: {plain_output!r}"
+    )
+
+
+def test_b8_error_message_counts_entries_correctly(tmp_path: Path) -> None:
+    """(b8) verify_unchanged with an entry OUTSIDE ignore_paths that changes ->
+    the error message (``status --porcelain cambio (N -> M entradas)``) counts
+    entries correctly on the reconstructed status.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    (repo / "other.py").write_text("original", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "Add other",
+    )
+
+    ignore_paths = frozenset(["seal.json"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+
+    # Modify a file OUTSIDE ignore_paths
+    (repo / "other.py").write_text("modified", encoding="utf-8")
+
+    try:
+        verify_unchanged(repo, pre, ignore_paths=ignore_paths)
+    except AuditInvariantViolationError as exc:
+        error_str = str(exc)
+        assert "status --porcelain cambio" in error_str
+        assert "->" in error_str
+    else:
+        raise AssertionError(
+            "changing a non-ignored file must raise with correct message"
+        )

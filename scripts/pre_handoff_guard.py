@@ -53,6 +53,7 @@ LIVE_SURFACES_REL = {
     ".agent/runtime/memory/observations.jsonl",
     ".agent/context/project-map.json",
     "PROJECT.md",
+    ".agent/runtime/pytest-safe/last-run.json",
 }
 
 # Patrones glob de archivos excluidos del workspace (AGENTS.md: Excluidos del workspace)
@@ -685,6 +686,39 @@ def _degraded_runner_block(data: dict, base_diag: dict) -> dict | None:
     }
 
 
+def _audit_window_invalidated_block(data: dict, base_diag: dict) -> dict | None:
+    """Return a block diag when the audit window was invalidated or had an error.
+
+    WOT-2026-073e (Pieza c): a seal with ``audit_window_invalidated`` or
+    ``audit_window_check_error`` non-empty does NOT credit the handoff, even
+    when ``exit_code`` is 0. Fail-closed.
+
+    Before: data is the parsed last-run.json payload; base_diag carries the
+            shared canonical_suite_required/last_run_json/remediation fields.
+    During: reads ``audit_window_invalidated`` and ``audit_window_check_error``.
+            If either is truthy, returns a block diag with reason and the
+            concrete value of the offending field.
+    After: returns None when both fields are empty/absent, or a block diag
+           with reason="audit_window_invalidated"/"audit_window_check_error"
+           and the concrete value in ``canonical_suite_error``.
+    """
+    invalidated = data.get("audit_window_invalidated")
+    if invalidated:
+        return {
+            **base_diag,
+            "reason": "audit_window_invalidated",
+            "canonical_suite_error": str(invalidated),
+        }
+    check_error = data.get("audit_window_check_error")
+    if check_error:
+        return {
+            **base_diag,
+            "reason": "audit_window_check_error",
+            "canonical_suite_error": str(check_error),
+        }
+    return None
+
+
 def assert_canonical_suite_green(
     motor_root: Path,
     deliverable_type: str,
@@ -839,9 +873,15 @@ def assert_canonical_suite_green(
         # WOT-2026-058g: the inherited-failures branch must not accept a run
         # produced by the degraded runner either (checked independently of the
         # fresh_green branch so a mutation in one isolates from the other).
+        # WOT-2026-073e (Pieza c): audit window invalidated/check_error also
+        # blocks (checked independently of the fresh_green branch so a
+        # mutation in one isolates from the other).
         _inh_degraded = _degraded_runner_block(data, base_diag)
         if _inh_degraded is not None:
             return False, _inh_degraded
+        _inh_aw = _audit_window_invalidated_block(data, base_diag)
+        if _inh_aw is not None:
+            return False, _inh_aw
         return True, {
             "canonical_suite_required": True,
             "reason": "inherited_failures_subset",
@@ -935,6 +975,12 @@ def assert_canonical_suite_green(
     # WOT-2026-058g: a green-looking run produced by the degraded `unittest`
     # fallback is not a canonical suite run (checked independently of the
     # inherited-failures branch so a mutation in one isolates from the other).
+    # WOT-2026-073e (Pieza c): audit window invalidated/check_error also
+    # blocks (checked independently of the inherited-failures branch so a
+    # mutation in one isolates from the other).
+    _fresh_aw = _audit_window_invalidated_block(data, base_diag)
+    if _fresh_aw is not None:
+        return False, _fresh_aw
     _fresh_degraded = _degraded_runner_block(data, base_diag)
     if _fresh_degraded is not None:
         return False, _fresh_degraded
