@@ -1992,6 +1992,8 @@ class TestStampSurvivesMutatingHooks:
         capture_raises: BaseException | None = None,
         post_status: str = "",
         stream_pytest_override=None,
+        recorded: list | None = None,
+        seal_dir: Path | None = None,
     ) -> dict:
         """Drive main() with a delivery HEAD that CHANGES between the run-start
         stamp and the window close (that is what the mutating hooks do).
@@ -1999,11 +2001,13 @@ class TestStampSurvivesMutatingHooks:
         ``head_seq`` is consumed one value per _delivery_head_sha() call, so the
         first call (run start) and the last (re-stamp) can differ.
         """
-        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base = seal_dir or tmp_path / ".agent" / "runtime" / "pytest-safe"
         base.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+        if recorded is None:
+            recorded = []
         monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
         monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
         monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", base / "run_history.jsonl")
@@ -2018,6 +2022,7 @@ class TestStampSurvivesMutatingHooks:
         if capture_raises is not None:
 
             def _raise_capture(_root, **_kw):
+                recorded.append(("capture", _kw.get("ignore_paths")))
                 raise capture_raises
 
             monkeypatch.setattr(mod, "_invariant_capture_state", _raise_capture)
@@ -2033,6 +2038,7 @@ class TestStampSurvivesMutatingHooks:
             _captures = {"n": 0}
 
             def _capture(_root, **_kw):
+                recorded.append(("capture", _kw.get("ignore_paths")))
                 _captures["n"] += 1
                 status = post_status if _captures["n"] > 1 else ""
                 return WorktreeState(head="h", status=status, head_reflog_len=1)
@@ -2040,6 +2046,7 @@ class TestStampSurvivesMutatingHooks:
             monkeypatch.setattr(mod, "_invariant_capture_state", _capture)
 
         def _verify(_root, _pre, **_kw):
+            recorded.append(("verify", _kw.get("ignore_paths")))
             if invariant_raises is not None:
                 raise invariant_raises
             return None
@@ -2088,6 +2095,57 @@ class TestStampSurvivesMutatingHooks:
             "with a stable measurement window the stamp must be re-resolved at "
             "window close, so the handoff gate stops seeing a false stale_run"
         )
+
+    def test_audit_window_calls_ignore_the_runner_own_seal_and_log(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-073e (Pieza b): the three audit-window calls (pre-snapshot,
+        verify, re-stamp capture) receive the SAME ignore set, with the seal and
+        its log relative to the delivery root and '/'-separated.
+
+        Mutation: drop `ignore_paths=` from any of the three calls, or the
+        `.replace("\\\\", "/")`, and this goes RED.
+        """
+        mod = load_runner_module()
+        recorded: list = []
+        self._run_main(
+            mod,
+            tmp_path,
+            monkeypatch,
+            head_seq=["pre_hooks", "post_hooks"],
+            recorded=recorded,
+        )
+        expected = frozenset(
+            [
+                ".agent/runtime/pytest-safe/last-run.json",
+                ".agent/runtime/pytest-safe/last-run.log",
+            ]
+        )
+        assert [kind for kind, _ in recorded] == ["capture", "verify", "capture"], (
+            recorded
+        )
+        assert all(paths == expected for _, paths in recorded), recorded
+
+    def test_audit_window_ignore_set_is_empty_when_seal_is_outside_repo(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-073e (Pieza b): a seal outside the delivery repo cannot
+        alter its porcelain, so it is not added to the ignore set.
+        """
+        mod = load_runner_module()
+        recorded: list = []
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._run_main(
+            mod,
+            repo,
+            monkeypatch,
+            head_seq=["pre_hooks", "post_hooks"],
+            recorded=recorded,
+            seal_dir=tmp_path / "outside" / "pytest-safe",
+        )
+        assert recorded, "the audit window must still be captured"
+        assert all(paths == frozenset() for _, paths in recorded), recorded
 
     def test_stamp_is_not_refreshed_when_tree_moved_during_the_run(
         self, tmp_path: Path, monkeypatch

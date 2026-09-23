@@ -468,9 +468,86 @@ def test_b8_error_message_counts_entries_correctly(tmp_path: Path) -> None:
         verify_unchanged(repo, pre, ignore_paths=ignore_paths)
     except AuditInvariantViolationError as exc:
         error_str = str(exc)
-        assert "status --porcelain cambio" in error_str
-        assert "->" in error_str
+        assert "status --porcelain cambio (0 -> 1 entrada(s))" in error_str, error_str
     else:
         raise AssertionError(
             "changing a non-ignored file must raise with correct message"
         )
+
+
+def _commit_file(repo: Path, name: str, content: str) -> None:
+    (repo / name).write_text(content, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", f"Add {name}")
+
+
+def test_b7_rename_status_byte_identical_without_ignore_paths(tmp_path: Path) -> None:
+    """(b7-rename) `-z` emits a rename as ``R  new\\0orig\\0`` (NEW path first).
+    The reconstruction must still equal plain ``--porcelain``
+    (``R  orig -> new``): reading the pair in the wrong order drops the
+    destination.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _commit_file(repo, "a.txt", "contenido\n")
+    _git(repo, "mv", "a.txt", "b.txt")
+
+    state_z = capture_state(repo, ignore_paths=frozenset())
+    plain_output = _git(repo, "status", "--porcelain").stdout
+
+    assert state_z.status == plain_output, (state_z.status, plain_output)
+
+
+def test_b7_rename_destination_change_invalidates(tmp_path: Path) -> None:
+    """(b7-rename) A rename whose DESTINATION changes during the window must
+    invalidate, also without ignore_paths (the default path).
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _commit_file(repo, "a.txt", "contenido\n")
+    _git(repo, "mv", "a.txt", "b.txt")
+    pre = capture_state(repo)
+
+    _git(repo, "mv", "b.txt", "c.txt")
+
+    try:
+        verify_unchanged(repo, pre)
+    except AuditInvariantViolationError as exc:
+        assert "INVALIDADA" in str(exc)
+    else:
+        raise AssertionError("a rename moved to another destination must invalidate")
+
+
+def test_b7_copy_status_byte_identical_without_ignore_paths(tmp_path: Path) -> None:
+    """(b7-copy) A copy (``C``, with ``status.renames=copies``) is also a
+    two-entry pair in `-z`; it must reconstruct as plain ``--porcelain``.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _git(repo, "config", "status.renames", "copies")
+    _commit_file(repo, "a.txt", "linea1\nlinea2\nlinea3\nlinea4\n")
+    (repo / "b.txt").write_text("linea1\nlinea2\nlinea3\nlinea4\n", encoding="utf-8")
+    (repo / "a.txt").write_text("linea1\nlinea2\nlinea3\nlinea4\nx\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+
+    plain_output = _git(repo, "status", "--porcelain").stdout
+    assert "C  a.txt -> b.txt" in plain_output, plain_output
+
+    state_z = capture_state(repo, ignore_paths=frozenset())
+    assert state_z.status == plain_output, (state_z.status, plain_output)
+
+
+def test_b9_rename_with_both_paths_ignored_is_filtered(tmp_path: Path) -> None:
+    """(b9) The only branch that DROPS a rename: both the original and the new
+    path are in ignore_paths -> the rename is the runner's own write and does
+    not invalidate.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _commit_file(repo, "last-run.json", '{"status": "finished"}')
+    ignore_paths = frozenset(["last-run.json", "last-run.log"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+
+    _git(repo, "mv", "last-run.json", "last-run.log")
+
+    verify_unchanged(repo, pre, ignore_paths=ignore_paths)  # must not raise

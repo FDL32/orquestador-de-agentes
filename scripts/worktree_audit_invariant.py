@@ -124,17 +124,19 @@ def _head_reflog_len(worktree: Path) -> int:
 def _parse_porcelain_z(porcelain_z: str, ignore_paths: frozenset[str]) -> str:
     """Parse ``git status --porcelain -z`` output and reconstruct .status text.
 
-    Entries are NUL-separated. Each entry starts with a 2-char status, then a
-    optional space + rename-old path, then NUL. Renames consume two entries:
-    status+old_path\\0new_path\\0.
+    Entries are NUL-separated: a 2-char status, a space, the path, NUL. A
+    rename or copy (``R``/``C`` in either status column) consumes TWO entries
+    and git emits the NEW path first: ``status new_path\\0orig_path\\0``.
 
-    When *ignore_paths* is non-empty, entries whose path (or both old and new
-    for renames) match exactly are dropped. The remaining entries are
-    reconstructed to text form ``"{status} {path}\\n"`` joined by ``\\n``.
+    When *ignore_paths* is non-empty, entries whose path (or, for a rename or
+    copy, BOTH paths) match exactly are dropped. The rest are reconstructed as
+    ``"{status} {path}"`` -- ``"{status} {orig} -> {new}"`` for a pair, the
+    plain ``--porcelain`` form -- joined by ``\\n``.
 
     When *ignore_paths* is empty, the reconstructed text is byte-identical to
     what ``git status --porcelain`` (without ``-z``) would produce for the same
-    tree -- provided there are no paths with spaces/unicode/renames.
+    tree, renames included, provided no path needs quoting (spaces, unicode,
+    control characters).
     """
     if not porcelain_z:
         return ""
@@ -150,19 +152,20 @@ def _parse_porcelain_z(porcelain_z: str, ignore_paths: frozenset[str]) -> str:
         if len(entry) >= 3:
             status = entry[:2]
             path = entry[3:] if entry[2] == " " else entry[2:]
-            # Handle renames: consume the next entry as the new path
-            if status[0] == "R" and i + 1 < len(raw_entries):
-                new_path = raw_entries[i + 1]
-                if new_path:
-                    # For filtering: drop only if BOTH old and new are in ignore_paths
+            # -z emits a rename/copy as "status new\0orig\0": `path` is the NEW
+            # one and the next entry is the ORIGINAL.
+            is_pair = status[0] in "RC" or status[1] in "RC"
+            if is_pair and i + 1 < len(raw_entries):
+                orig_path = raw_entries[i + 1]
+                if orig_path:
                     if (
                         ignore_paths
                         and path in ignore_paths
-                        and new_path in ignore_paths
+                        and orig_path in ignore_paths
                     ):
                         i += 2
                         continue
-                    entries.append((status, new_path))
+                    entries.append((status, f"{orig_path} -> {path}"))
                     i += 2
                     continue
                 else:

@@ -876,12 +876,12 @@ def assert_canonical_suite_green(
         # WOT-2026-073e (Pieza c): audit window invalidated/check_error also
         # blocks (checked independently of the fresh_green branch so a
         # mutation in one isolates from the other).
-        _inh_degraded = _degraded_runner_block(data, base_diag)
-        if _inh_degraded is not None:
-            return False, _inh_degraded
         _inh_aw = _audit_window_invalidated_block(data, base_diag)
         if _inh_aw is not None:
             return False, _inh_aw
+        _inh_degraded = _degraded_runner_block(data, base_diag)
+        if _inh_degraded is not None:
+            return False, _inh_degraded
         return True, {
             "canonical_suite_required": True,
             "reason": "inherited_failures_subset",

@@ -1312,6 +1312,36 @@ class TestCanonicalSuiteGreenGate:
             f"{diag.get('canonical_suite_error')}"
         )
 
+    def test_audit_window_invalidated_blocks_fresh_green_branch(
+        self, tmp_path: Path
+    ) -> None:
+        """WOT-2026-073e (Pieza c): the incident's exact shape -- a green seal
+        (exit_code 0) that also carries audit_window_invalidated -- must not
+        be accredited by the fresh_green branch.
+        """
+        guard = self._import_guard()
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        concrete_msg = "status --porcelain cambio (0 -> 1 entrada(s))"
+        self._write_last_run(
+            motor,
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": self._head_sha(motor),
+                "level": "all",
+                "args_mode": "default_discovery",
+                "audit_window_invalidated": concrete_msg,
+            },
+        )
+        ok, diag = guard.assert_canonical_suite_green(motor, "code")
+        assert ok is False
+        assert diag.get("reason") == "audit_window_invalidated"
+        assert concrete_msg in diag.get("canonical_suite_error", ""), (
+            f"canonical_suite_error must cite the concrete value: "
+            f"{diag.get('canonical_suite_error')}"
+        )
+
 
 # =============================================================================
 # Tests for WOT-2026-010d: Pause/Resume functionality in pre_handoff_guard
