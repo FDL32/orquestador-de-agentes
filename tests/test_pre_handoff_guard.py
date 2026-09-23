@@ -1251,25 +1251,26 @@ class TestCanonicalSuiteGreenGate:
         inherited-failures branch. The canonical_suite_error must cite the
         CONCRETE value of the field, not a generic message.
 
-        Uses a green seal (exit_code 0, all fields correct) PLUS
-        audit_window_invalidated non-empty -> must block with reason
-        == "audit_window_invalidated" and the concrete value in
-        canonical_suite_error.
+        The payload must REACH the inherited branch: exit_code != 0 with a
+        non-empty failed_test_ids that is a subset of a level=all
+        baseline. A green payload (exit_code 0) would take the fresh_green
+        branch instead and leave this branch's check untested.
         """
         guard = self._import_guard()
         motor = tmp_path / "motor"
         init_git_repo(motor)
         concrete_msg = "status --porcelain cambio (2 -> 3 entrada(s))"
+        node_id = "tests/foo/test_bar.py::TestFoo::test_one"
         self._write_last_run(
             motor,
             {
                 "status": "finished",
-                "exit_code": 0,
+                "exit_code": 1,
                 "tested_commit_sha": self._head_sha(motor),
                 "level": "all",
                 "args_mode": "default_discovery",
-                "failed_test_ids": [],
-                "baseline_failed_test_ids": [],
+                "failed_test_ids": [node_id],
+                "baseline_failed_test_ids": [node_id],
                 "audit_window_invalidated": concrete_msg,
             },
         )
