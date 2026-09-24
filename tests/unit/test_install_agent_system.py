@@ -1163,18 +1163,23 @@ def test_copy_tree_does_not_clobber_destination_planning(tmp_path):
     assert _MOTOR_SEED not in owned.read_text(encoding="utf-8")
 
 
-def test_copy_tree_dry_run_reports_at_directory_granularity(tmp_path):
-    """Pins the REAL (and coarser) dry-run contract, so nobody re-asserts a lie.
+def test_copy_tree_dry_run_per_file_respects_no_clobber(tmp_path):
+    """Post-WOT-2026-025g: per-file dry-run still respects the no-clobber guard.
 
-    An earlier version of this test asserted that dry-run "does not list the
-    destination-owned file as copied" and passed -- but VACUOUSLY: copy_tree
-    returns at its is_dir() branch before reaching _copy_allowlisted_dir, so a
-    dry-run NEVER yields per-file entries and that assert was trivially true with
-    or without the no-clobber guard. It was also the only new test with no
-    mutation covering it. Caught by the sister audit (WOT-2026-024d).
+    History: an earlier version of copy_tree returned at its is_dir() branch
+    before reaching _copy_allowlisted_dir, so a dry-run NEVER yielded per-file
+    entries (directory-level granularity only, follow-up WOT-2026-025g). That
+    coarser contract was pinned here and caught a vacuous assertion in the
+    process (sister audit WOT-2026-024d): "dry-run does not list the
+    destination-owned file as copied" passed trivially because dry-run never
+    listed ANY file.
 
-    What is true and worth pinning: dry-run reports the DIRECTORY, and therefore
-    cannot announce which files a real run would preserve (follow-up 025g).
+    WOT-2026-025g moved the dry_run branch to descend into
+    _copy_allowlisted_dir, so dry-run now reports PER-FILE paths. This test
+    pins the property that matters after that change: for a destination that
+    already owns a file inside an allowlisted directory, dry-run's per-file
+    list must still EXCLUDE that file (no-clobber applies before granularity)
+    AND must not touch the destination's content.
     """
     template_agent = _build_motor_template(tmp_path)
     project_agent = _build_destination_with_own_cf(tmp_path)
@@ -1186,15 +1191,43 @@ def test_copy_tree_dry_run_reports_at_directory_granularity(tmp_path):
         allowlist={".agent/planning/"},
     )
 
-    assert copied == [Path("planning")], (
-        "dry-run contract changed: it now descends into the directory. If this is "
-        "deliberate, the no-clobber guard must grow a dry_run branch and 025g applies."
-    )
+    # The destination-owned file must not appear in the per-file dry-run list.
+    assert copied == []
     # And the DECISIVE property: a dry-run must not touch the destination at all.
     owned = project_agent / "planning" / "ticket_contracts.md"
     assert (
         owned.read_text(encoding="utf-8") == "DESTINATION-OWNED: ticket_contracts.md\n"
     )
+
+
+def test_copy_tree_dry_run_reports_per_file_granularity(tmp_path):
+    """WOT-2026-025g: dry-run must report per-file granularity for allowlisted dirs.
+
+    Before fix: dry-run returns [Path("subdir")] for a directory, even if it
+    contains allowlisted files.
+    After fix: dry-run returns [Path("subdir/allowed.txt")] for allowlisted
+    files, and excludes non-allowlisted siblings within the same directory.
+    """
+    source = tmp_path / "source"
+    subdir = source / "subdir"
+    subdir.mkdir(parents=True)
+    (subdir / "allowed.txt").write_text("hello", encoding="utf-8")
+    (subdir / "secret.txt").write_text("secret", encoding="utf-8")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    dest_subdir = dest / "subdir"
+    dest_subdir.mkdir()
+    (dest_subdir / "allowed.txt").write_text("old content", encoding="utf-8")
+
+    allowlist = {"subdir/allowed.txt"}
+
+    copied = copy_tree(source, dest, dry_run=True, allowlist=allowlist)
+
+    assert Path("subdir/allowed.txt") in copied
+    assert Path("subdir/secret.txt") not in copied
+    # Per-file granularity: the directory itself must not appear as an entry.
+    assert Path("subdir") not in copied
 
 
 def test_detect_destination_residues_excludes_destination_owned(tmp_path):

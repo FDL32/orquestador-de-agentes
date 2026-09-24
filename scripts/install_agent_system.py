@@ -726,20 +726,20 @@ def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handli
         dst_item = dest / item.name
 
         if item.is_dir():
-            if dry_run:
-                copied.append(rel)
-                continue
-
-            if dst_item.exists() and dst_item.is_file():
-                dst_item.unlink()
-
             if allowlist is not None:
                 # Recursive per-file allowlist validation
+                if not dry_run and dst_item.exists() and dst_item.is_file():
+                    dst_item.unlink()
                 children = _copy_allowlisted_dir(
                     item, dst_item, source, dest, allowlist, dry_run
                 )
                 copied.extend(children)
+            elif dry_run:
+                copied.append(rel)
+                continue
             else:
+                if dst_item.exists() and dst_item.is_file():
+                    dst_item.unlink()
                 shutil.copytree(
                     item,
                     dst_item,
@@ -1646,9 +1646,9 @@ def install_agent_system(
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
     if dry_run:
-        print(
-            f"\n[DRY-RUN] Install plan: {len(copied)} top-level entries would be copied."
-        )
+        # Count actual files (copied now contains per-file paths after WOT-2026-025g).
+        file_count = len(copied)
+        print(f"\n[DRY-RUN] Install plan: {file_count} files would be copied.")
         return 0
 
     # Validate hooks config integrity (critical for "no drift" policy)
@@ -1796,9 +1796,9 @@ def sync_agent_system(  # noqa: C901
         )
 
     if dry_run:
-        print(
-            f"\n[DRY-RUN] Sync plan: {len(copied)} top-level entries would be copied/updated."
-        )
+        # Count actual files (copied now contains per-file paths after 025g)
+        file_count = len(copied)
+        print(f"\n[DRY-RUN] Sync plan: {file_count} files would be copied/updated.")
         print(f"[DRY-RUN] Residues detected: {len(residues)}")
         if pruned:
             mode = "interactive" if prune else "automatic (strict)"
