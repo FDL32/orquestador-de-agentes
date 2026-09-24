@@ -87,47 +87,46 @@ def outer():
             "handler sin calificar debe resolver la top-level, no la anidada"
         )
 
-    def test_mutacion_ast_walk_sin_poda_misma_semantica(self):
-        """Mutation-verify MINIMA: reemplazar iter_child_nodes por ast.walk en la
-        funcion REAL (_find_top_level_function) MANTENIENDO la misma logica
-        ("primer match gana") NO cambia el resultado.
+    def test_mutacion_ast_walk_sin_poda_falla(self):
+        """Mutation-verify: reemplazar iter_child_nodes por ast.walk en la
+        funcion REAL (_find_top_level_function) SI colisiona scopes cuando
+        el nombre buscado solo existe ANIDADO (sin homonimo top-level).
 
-        Esto demuestra que la mutacion minima (solo cambiar iterador) no
-        colisiona scopes cuando se mantiene la semantica de retorno. La
-        diferencia real entre iter_child_nodes y ast.walk no es la colision
-        de scopes per se, sino que iter_child_nodes poda el arbol por defecto
-        (solo hijos directos) mientras que ast.walk visita TODOS los nodos.
+        El source del test anterior (top-level Y anidada con el mismo
+        nombre) no sirve para forzar la divergencia: ast.walk visita el
+        modulo antes que el cuerpo de ``outer``, asi que el primer match
+        de ambos iteradores es igual (la top-level). La divergencia real
+        aparece cuando NO hay top-level homonima: iter_child_nodes (poda a
+        hijos directos del modulo) debe devolver None, mientras que
+        ast.walk (recorre TODO el arbol) encuentra la anidada igualmente.
 
-        En este caso especifico, ast.walk visita handler(2) -> outer(5) ->
-        handler(6). El primer match es handler(2), igual que iter_child_nodes.
-        Por tanto, el mutation-verify minimo NO falla: la implementacion es
-        robusta porque usa iter_child_nodes que garantiza solo hijos directos.
-
-        Evidencia de mutacion minima (comando + exit_code):
-        - Produccion (iter_child_nodes): resolve_qualified_span("handler") -> (1, 2)
-        - Mutante (ast.walk, mismo return): resolve_qualified_span("handler") -> (1, 2)
-        - Resultado: IGUAL -> mutation-verify minimo no detecta diferencia
-        - Conclusion: iter_child_nodes es necesario por garantia de scope, no por
-          mutation-verify minimo (que en este caso da el mismo resultado).
+        Evidencia de mutacion (comando + exit_code):
+        - Produccion (iter_child_nodes): resolve_qualified_span("solo_anidada") -> None
+        - Mutante (ast.walk, mismo cuerpo de busqueda): -> (2, 3) (la anidada)
+        - Resultado: DISTINTO -> el mutante FALLA el assert de produccion.
         """
         import ast
 
         import scripts.ast_qualified_name_resolver as mod
 
         source = """\
-def handler():
-    pass
-
 def outer():
-    def handler():
+    def solo_anidada():
         return "nested"
-    return handler()
+    return solo_anidada()
 """
+        # Produccion: sin homonimo top-level, debe devolver None.
+        result = resolve_qualified_span(source, "solo_anidada")
+        assert result is None, (
+            "solo_anidada no tiene homonimo top-level: debe resolver None, "
+            "nunca la anidada"
+        )
+
         # Guardar la implementacion original
         original_find = mod._find_top_level_function
 
         def _mutated_find(tree, name):
-            """ast.walk sin poda, misma semantica: primer return gana."""
+            """ast.walk sin poda: visita TODO el arbol, no solo hijos directos."""
             for n in ast.walk(tree):
                 if (
                     isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -136,17 +135,20 @@ def outer():
                     return n
             return None
 
-        # Aplicar mutacion minima: solo cambia iterador
+        # Aplicar mutacion: solo cambia el iterador de busqueda
         mod._find_top_level_function = _mutated_find
 
         try:
-            result = resolve_qualified_span(source, "handler")
-            # Con ast.walk + primer return, handler resuelve la top-level (lineno=1)
-            # igual que iter_child_nodes. Mutation-minima = mismo resultado.
-            assert result == (1, 2), (
-                f"Con ast.walk mutado (mismo return), handler resuelve {result} "
-                "(esperado (1,2) igual que produccion). Mutation-minima no "
-                "detecta diferencia: la garantia de scope viene de iter_child_nodes."
+            mutated_result = resolve_qualified_span(source, "solo_anidada")
+            # Con ast.walk, la anidada SI se encuentra: colisiona con el
+            # contrato de "solo hijos directos del modulo".
+            assert mutated_result != result, (
+                f"Mutante (ast.walk) devolvio {mutated_result}, igual que "
+                f"produccion ({result}). El mutation-verify NO detecto la "
+                "diferencia: el test no cubre el defecto real."
+            )
+            assert mutated_result == (2, 3), (
+                f"Mutante debia resolver la anidada (2, 3), obtuvo {mutated_result}"
             )
         finally:
             # Restaurar implementacion original
