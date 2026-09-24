@@ -171,6 +171,17 @@ Regla: solo paralelizar planes con superficies e interfaces disjuntas o con
 dependencias compartidas estabilizadas por contrato. Si no se puede probar
 independencia, degradar a `requires_serialization` (no asumir paralelo).
 Cada ticket derivado recibe `Forbidden Surfaces` calculables desde el plan.
+
+**Prohibicion de rangos de linea en Forbidden Surfaces (WOT-2026-039l):** las
+`Forbidden Surfaces` que citan una funcion o metodo DEBEN declararse como
+`fichero::nombre_calificado` (resoluble por
+`scripts/ast_qualified_name_resolver.py`), y NUNCA como
+`fichero::nombre (:rango_de_lineas)`. Un rango de lineas es una medicion que
+caduca sola en el primer refactor. Caso medido: el probe `FP-20260722` declaro
+`send_to_profile (:320-358)`; tras el diff de WOT-2026-038o la funcion paso a
+llamarse `_transport_agent` y el check reporto una violacion INEXISTENTE
+(falso positivo).
+
 `Paralelizable` solo admite `yes` | `no` | `after PLAN-00x` (WOT-2026-007e).
 
 **Merge Regression Audit (WOT-2026-007e):** antes de integrar dos planes que
