@@ -676,3 +676,48 @@ def test_grandfather_cutoff_mutation_verify(tmp_path: Path) -> None:
     assert code_green == 0, out_green
     assert "WARN_GRANDFATHERED" in out_green
     assert "VEREDICTO GLOBAL: RECIBO_COHERENTE" in out_green
+
+
+def test_closeout_default_cutoff_grandfathers_known_debt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """_audit_closeout(cutoff_sha=None) usa GRANDFATHER_CUTOFF_SHA_DEFAULT.
+
+    DoD: el camino real de --session-close (prepush_check --closeout-mode ->
+    _audit_closeout sin cutoff_sha explicito) NUNCA paso el flag hasta este
+    fix, asi que CUALQUIER cierre de sesion posterior a la deuda historica de
+    6d341ff quedaba bloqueado por 56 altas que nadie pudo revisar
+    retroactivamente. El SHA real del motor no existe en este repo sintetico,
+    asi que el default se monkeypatchea al commit del repo de PRUEBA -- lo
+    que se ejercita es el CABLEADO (cutoff_sha=None -> usa la constante),
+    no el valor concreto del SHA (eso ya lo cubren D2/mutation-verify).
+    """
+    repo = init_repo(tmp_path)
+    cutoff = commit_alta(repo, row("WOT-2026-980a"), "alta historica sin recibo")
+    # Alta POST-cutoff, sigue exigiendo recibo real (el default no amnistia
+    # nada nuevo).
+    commit_alta(repo, row("WOT-2026-980b"), "alta reciente sin recibo")
+    monkeypatch.setattr(cba, "GRANDFATHER_CUTOFF_SHA_DEFAULT", cutoff)
+
+    code, lines, skipped, _findings = cba._audit_closeout(repo, cutoff_sha=None)
+    out = "\n".join(lines)
+    assert not skipped, out
+    assert code == 1, out
+    assert "WOT-2026-980a" in out and "WARN_GRANDFATHERED" in out
+    assert "WOT-2026-980b" in out and "SIN_RECIBO" in out
+
+
+def test_closeout_cutoff_empty_string_disables_grandfather(tmp_path: Path) -> None:
+    """cutoff_sha='' (string vacio explicito) desactiva el grandfather.
+
+    Distingue None (usa el default) de '' (opt-out explicito para quien
+    quiera auditar sin amnistia).
+    """
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-981a"), "alta sin recibo")
+    code, lines, skipped, _findings = cba._audit_closeout(repo, cutoff_sha="")
+    out = "\n".join(lines)
+    assert not skipped, out
+    assert code == 1, out
+    assert "SIN_RECIBO" in out
+    assert "WARN_GRANDFATHERED" not in out

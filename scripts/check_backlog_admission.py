@@ -95,6 +95,20 @@ ALGORITMO_REQUERIDO = "backlog_db_compare"
 UMBRAL_REQUERIDO = 0.12
 DEFAULT_BACKLOG = ".agent/collaboration/backlog.md"
 DEFAULT_ARCHIVES = (".agent/collaboration/_archive/backlog_done.md",)
+
+# Deuda declarada (WOT-2026-054m D7): el guard se introdujo (fea0ae9,
+# 2026-09-15) pero su cableado a prepush_check --closeout-mode nunca paso
+# cutoff_sha, asi que ninguna sesion ejecuto --session-close hasta que el
+# gate se activo de verdad. La fusion de buzon 6d341ff (2026-09-23,
+# "Bloque 5/8.bis") acumulo 56 altas sin recibo, ninguna revisable
+# retroactivamente (los sobres origen ya se drenaron). Amnistiadas a
+# WARN_GRANDFATHERED por este commit puntual, nunca por fecha: un cutoff
+# temporal se movería solo con cada commit nuevo; un SHA concreto es un
+# invariante fijo que no amnistia nada posterior (WOT-2026-024t: criterio
+# invariante, no medicion que caduca). Verificado 2026-09-24: 56/56 altas
+# de 6d341ff pasan a WARN_GRANDFATHERED; cualquier alta post-cutoff sin
+# recibo real sigue fallando SIN_RECIBO (no relaja el gate para nada nuevo).
+GRANDFATHER_CUTOFF_SHA_DEFAULT = "6d341ff3d40dfbeb468859f0ccba312f10f5f1cc"
 # Forma canonica de id del contrato (requisito F2.1): acepta legacy WP-/WT-.
 ID_RE = re.compile(r"\b[A-Z]{2,6}-\d{4}-\d{2,3}[a-z]?\b")
 
@@ -970,8 +984,19 @@ def _audit_closeout(
     tercer elemento es un BOOLEANO de skip, nunca la lista de hallazgos: los
     consumidores lo desempaquetan para decidir verde/skip, y confundirlos
     invierte el veredicto (falso verde exactamente cuando hay altas fallidas).
+
+    cutoff_sha=None usa GRANDFATHER_CUTOFF_SHA_DEFAULT (deuda declarada de
+    WOT-2026-054m D7): sin este default, el gate bloquea CUALQUIER cierre de
+    sesion con las 56 altas historicas de 6d341ff, que nunca pasaron por el
+    gate porque este nunca corrio en un cierre real hasta que se detecto
+    (2026-09-24). Pasar cutoff_sha="" explicito (string vacio) desactiva el
+    grandfather por completo, para quien necesite auditar sin amnistia.
     """
     surfaces = [DEFAULT_BACKLOG, *DEFAULT_ARCHIVES]
+    if cutoff_sha is None:
+        cutoff_sha = GRANDFATHER_CUTOFF_SHA_DEFAULT
+    elif cutoff_sha == "":
+        cutoff_sha = None
     try:
         base = git(repo, "merge-base", "origin/main", "HEAD").strip()
         head = git(repo, "rev-parse", "HEAD").strip()
