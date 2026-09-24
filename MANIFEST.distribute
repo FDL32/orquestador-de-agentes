@@ -91,8 +91,9 @@ skills/
 .agent/runtime/memory/memory_helpers.py
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
-# Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse en el motor.
-# El motor ya no distribuye estas superficies vivas (WOT-2026-020r, commit:5201482).
+# Las 5 proyecciones restantes de .agent/collaboration/ dejaron de trackearse.
+# work_plan.md se mantiene trackeado: pre-handoff guard exige commiteado (WOT-2026-009g).
+# El motor ya no distribuye estas 5 superficies vivas (WOT-2026-020r, commit:5201482).
 
 # =============================================================================
 # EXPLICITAMENTE EXCLUIDO (documentacion para claridad)
