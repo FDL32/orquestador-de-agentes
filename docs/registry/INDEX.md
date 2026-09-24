@@ -11,11 +11,11 @@
 | kind | total |
 |------|-------|
 | prompt | 37 |
-| reference | 33 |
+| reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 42 |
-| **total** | **120** |
+| skill | 43 |
+| **total** | **126** |
 
 ## Entradas
 
@@ -89,6 +89,11 @@
 | reference | `skills/session-close-observations/references/filter-rules.md` | active | system | shared | model-invoked | — |
 | reference | `skills/session-close-observations/references/schema.md` | active | system | shared | model-invoked | — |
 | reference | `skills/setup-agent-system/references/quickstart-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/test-audit/references/candidate-evidence.md` | active | system | shared | model-invoked | — |
+| reference | `skills/test-audit/references/edit-shape.md` | active | system | shared | model-invoked | — |
+| reference | `skills/test-audit/references/gate-checklist.md` | active | system | shared | model-invoked | — |
+| reference | `skills/test-audit/references/junk-patterns.md` | active | system | shared | model-invoked | — |
+| reference | `skills/test-audit/references/value-bar.md` | active | system | shared | model-invoked | — |
 | reference | `skills/version-changelog/references/changelog-template.md` | active | system | shared | model-invoked | — |
 | reference | `skills/version-changelog/references/semver-decision-guide.md` | active | system | shared | model-invoked | — |
 | script-consumer | `bus/skill_resolver.py` | active | system | shared | model-invoked | — |
@@ -139,5 +144,6 @@
 | skill | `skills/suite-optimization/SKILL.md` | active | agent | manager | model-invoked | /suite-optimization, optimizar-suite, suite-optimization |
 | skill | `skills/system-health-audit/SKILL.md` | active | agent | auditor | model-invoked | /audit-system-health, auditar-salud-sistema, system-health-audit |
 | skill | `skills/systematic-debugging/SKILL.md` | active | agent | shared | model-invoked | /debug, /systematic-debugging, debug |
+| skill | `skills/test-audit/SKILL.md` | active | agent | auditor | model-invoked | /test-audit, /tests-value, test-audit |
 | skill | `skills/test-driven-development/SKILL.md` | active | agent | shared | model-invoked | /tdd, /test-driven, tdd |
 | skill | `skills/version-changelog/SKILL.md` | active | agent | shared | model-invoked | /changelog, /release, version |
