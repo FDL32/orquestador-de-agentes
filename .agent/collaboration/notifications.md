@@ -1,3 +1,0 @@
-# Notifications
-
-No active notifications.
