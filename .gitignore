@@ -125,9 +125,9 @@ prompts/debug_*.md
 # WOT-2026-025b (DEC-025B-001): las live surfaces de .agent/collaboration/
 # dejaron de trackearse; el motor ya no versiona proyecciones de runtime
 # operativas (WOT-2026-020r, commit:5201482).
-# Excepcion: work_plan.md se mantiene trackeado (pre-handoff guard WOT-2026-009g).
 .agent/collaboration/STATE.md
 .agent/collaboration/TURN.md
+.agent/collaboration/work_plan.md
 .agent/collaboration/execution_log.md
 .agent/collaboration/notifications.md
 .agent/collaboration/review_queue.md
