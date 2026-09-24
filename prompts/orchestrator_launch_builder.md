@@ -378,12 +378,15 @@ Si el ticket toca evidencia git, review packets, scope gates o `mark-ready`:
 - verifica comportamiento con working tree sucio y commit real del ticket cuando
   el contrato lo pida.
 
-## Gates focales (loop rapido - NO autorizan handoff)
+## Gates focales (loop rapido - SI autorizan handoff a revision, WOT-2026-039m)
 
 Todo lo de esta seccion es **loop rapido** segun la politica WOT-2026-011g de
-la seccion siguiente: sirve para iterar mientras trabajas y para detectar fallos
-temprano, pero NINGUNO de estos comandos autoriza `READY_FOR_REVIEW`, declarar
-suite canonica ni handoff. La evidencia de cierre vive en "Cierre canonico".
+la seccion siguiente. Sirve para iterar mientras trabajas y, tras el cambio de
+secuencia de WOT-2026-039m, ES la evidencia que acompaña al handoff
+(`mark-ready`/`READY_FOR_REVIEW`): estos comandos NO sustituyen ni cuentan
+como la suite canonica del paso de Cierre final, que corre solo despues de
+la aprobacion del Manager y el permiso del usuario (ver "Cierre final tras
+aprobacion").
 
 Ejecuta y registra salida real en `execution_log.md`:
 
@@ -427,27 +430,54 @@ python <MOTOR_ROOT>/scripts/pip_audit_project.py
 
 La validacion del `repo_destino` debe cerrar en `0 errors` y `0 warnings`.
 
-## Loop rapido vs cierre canonico (politica WOT-2026-011g)
+## Loop rapido vs cierre canonico (politica WOT-2026-011g, re-secuenciada WOT-2026-039m)
 
 Esta es la fuente canonica de la distincion; los demas prompts y `QUICKSTART.md`
 deben usar esta misma terminologia.
 
+**Cambio de secuencia (WOT-2026-039m):** la suite canonica `--level all` YA NO
+es precondicion de `mark-ready`/`READY_FOR_REVIEW`. Motivo medido: exigirla
+ANTES de la revision del Manager obligaba a correrla dos veces completas
+cuando el veredicto era `CHANGES` (una vez pre-review, invalidada por el
+commit del fix, y otra vez post-fix) -- coste de ~20 min por ronda sin
+aportar nada a la revision, porque el Manager audita diff/gates focales/tests
+enfocados, no la suite completa. La suite ahora es el **ULTIMO paso absoluto**
+del ciclo, tras aprobacion del Manager Y permiso explicito del usuario. Ver
+"Contrato de handoff canonico" y "Cierre final tras aprobacion" mas abajo
+para la secuencia exacta.
+
 - **Loop rapido** = diagnostico local. Reruns focales (`pytest -k`,
   `--select-from-diff`, un archivo suelto), `--level unit`, mediciones de
   wall-clock en background, o tests aislados verdes. Sirve para iterar mientras
-  trabajas. NO es evidencia de cierre: NO autoriza declarar suite canonica,
-  `READY_FOR_REVIEW` ni handoff.
-- **Cierre canonico** = la unica evidencia que autoriza handoff/cierre:
-  - suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all` con
-    `last-run.json` en `status=finished`, `exit_code=0`, `level=all`,
-    `args_mode=default_discovery` y `tested_commit_sha == HEAD` (commit que se entrega);
-  - `validate --json --project-root <repo_destino>` en `0 errors / 0 warnings`;
+  trabajas y ES la evidencia que acompaña al handoff (ver "Gates focales"
+  arriba): no autoriza por si sola declarar la SUITE CANONICA como corrida, ni
+  sustituye el paso final de cierre.
+- **Handoff a revision** (`mark-ready` / `READY_FOR_REVIEW`) exige:
+  - gates focales de la seccion "Gates focales" verdes con salida real
+    (tests focales, ruff, ruff format, encoding guard, validate);
   - `--mark-ready` con eventos reales `BUILDER_EXIT` + `STATE_CHANGED -> READY_FOR_REVIEW`;
-  - cuando aplique, cierre canonico real (`--manager-approve`) confirmado por el bus.
+  - **NO exige la suite canonica `--level all` en este punto.**
+- **Cierre final** (unico paso que autoriza `--manager-approve`/commit de
+  cierre real) exige, EN ESTE ORDEN, DESPUES de que el Manager apruebe (ver
+  Manager Review Paso 5-bis) y el usuario de permiso explicito para cerrar:
+  1. suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all` con
+     `last-run.json` en `status=finished`, `exit_code=0`, `level=all`,
+     `args_mode=default_discovery` y `tested_commit_sha == HEAD` (commit que se cierra);
+  2. si la suite falla: NO se cierra. El ticket vuelve a `CHANGES` y repite
+     integramente los Pasos 1-5 de `manager_review.md` (no solo re-emitir el
+     Paso 5, no un parche puntual): un fallo de suite tras el `APROBADO`
+     del Paso 5 invalida esa aprobacion por completo, porque el Manager
+     aprobo sin haber visto ese resultado -- formula exacta unificada con
+     `manager_review.md` ("Reingreso unico tras fallo de suite", corregido
+     WOT-2026-039m tras hallazgo de auditoria adversarial sobre divergencia
+     "Paso 1" vs "Paso 5" entre estos dos prompts);
+  3. si la suite pasa: `--manager-approve` cierra canonicamente, confirmado
+     por el bus.
 
-Regla dura: nunca presentes evidencia de loop rapido como sustituto de cierre
-canonico. Una suite focal verde, una corrida de background o un `last-run.json`
-de un commit anterior NO cuentan como suite canonica del ticket.
+Regla dura: nunca presentes evidencia de loop rapido como sustituto de la
+suite canonica del paso de Cierre final. Una suite focal verde, una corrida
+de background o un `last-run.json` de un commit anterior NO cuentan como
+suite canonica del ticket.
 
 ### Cierre cross-repo y replay closeout-only (CTL-2026-007b)
 
@@ -565,6 +595,45 @@ Si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperab
 No hagas rondas vacias: cada nuevo `mark-ready` despues de un rechazo debe
 aportar diff, commit o evidencia nueva.
 
+## Cierre final tras aprobacion (WOT-2026-039m)
+
+Este paso NO lo ejecutas al entregar `READY_FOR_REVIEW`. Se ejecuta SOLO
+cuando se cumplen, EN ESTE ORDEN, las dos condiciones previas:
+
+1. El Manager emitio `APROBADO` en su Manager Review (sin haber corrido
+   todavia la suite canonica -- ese es precisamente el punto de este re-
+   secuenciado, ver `manager_review.md` Paso 5-bis).
+2. **El rol MANAGER** (no el Builder, no lo asumas por delegacion implicita)
+   pidio permiso EXPLICITO al usuario para cerrar, y el usuario lo dio. No
+   asumas el permiso por silencio ni por que el Manager ya aprobo: son dos
+   actos distintos del mismo actor Manager, y el segundo (pedir permiso) es
+   quien inicia este paso -- ver `manager_review.md` Paso 5-bis punto 1.
+
+Con ambas condiciones cumplidas:
+
+```powershell
+python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all
+```
+
+Verifica `last-run.json`: `status=finished`, `exit_code=0`, `level=all`,
+`args_mode=default_discovery`, `tested_commit_sha == HEAD` (el commit exacto
+que el Manager aprobo -- si hubo commits posteriores a la aprobacion, la
+suite corre sobre un commit distinto al aprobado y eso es un hallazgo, no un
+cierre valido).
+
+- Si la suite **falla**: NO cierres. Reporta el fallo al Manager como un
+  blocker nuevo. La aprobacion anterior queda invalidada por completo: el
+  ticket vuelve a `CHANGES` y el Manager repite integramente los Pasos 1-5
+  de `manager_review.md` sobre el commit actual (Clasificacion, gates
+  focales, tests, mutation-verify/CEM, y una nueva decision) -- no solo
+  re-emitir el Paso 5 sin re-ejecutar los pasos intermedios, y no un parche
+  puntual sobre el fallo de suite. El Manager aprobo sin haber visto este
+  resultado; no hay atajo. Formula exacta unificada con la regla de
+  "Reingreso unico tras fallo de suite" de `manager_review.md`.
+- Si la suite **pasa**: reporta el resultado (comando, `tested_commit_sha`,
+  exit code, linea final literal) y procede a `--manager-approve` (lo emite
+  el Manager, no el Builder) para el cierre canonico real.
+
 ## Criterio binario de salida
 - `validate --json` devuelve 0 errores y 0 warnings.
 - Los tests focales del ticket pasan.
@@ -592,7 +661,9 @@ aproximados ni recordados; copia los numeros de la salida de los comandos):
 - Tests: `<comando focal real de la superficie tocada>` -> <linea final literal>
 - Ruff: `uv run ruff check <paths>` -> <salida literal, o "no aplica: ticket sin Python tocado">
 - Ruff format: `uv run ruff format --check <paths>` -> <salida literal, o "no aplica: ticket sin Python tocado">
-- Suite canonica: `<comando o artefacto canonico leido>` -> <nivel, sha, exit code y linea final literal>
+- Suite canonica: NO APLICA EN ESTE INFORME (WOT-2026-039m: se ejecuta en
+  "Cierre final tras aprobacion", despues de que el Manager apruebe y el
+  usuario de permiso; no la corras ni la reportes aqui)
 - State-leak: <silencioso | STATE LEAK detectado>
 
 ### Bus / handoff
@@ -635,12 +706,25 @@ Reglas del informe:
   no la llames "suite completa" salvo que hayas pasado args explicitos de
   descubrimiento, por ejemplo `-- tests`);
   no sumes conteos parciales de archivos sueltos.
-- La suite canonica se lee desde `repo_motor/.agent/runtime/pytest-safe/last-run.json`
-  y `last-run.log`, y solo cuenta si `tested_commit_sha == HEAD`, `level=all`,
+- **(WOT-2026-039m) La suite canonica NO se corre ni se reporta en este
+  Builder Report.** Vive exclusivamente en "Cierre final tras aprobacion",
+  despues del veredicto del Manager y el permiso del usuario. Se lee desde
+  `repo_motor/.agent/runtime/pytest-safe/last-run.json` y `last-run.log` en
+  ESE paso, y solo cuenta si `tested_commit_sha == HEAD`, `level=all`,
   `args_mode=default_discovery` y `exit_code=0`.
-- Una suite verde de un commit anterior NO cuenta. Si haces un commit nuevo en
-  `repo_motor`, debes re-correr `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all`
-  antes de reportar la suite canonica del ticket.
+- Una suite verde de un commit anterior NO cuenta nunca como evidencia del
+  Cierre final. **Si hay un commit nuevo tras la aprobacion del Manager
+  (incluido un `git commit --amend` o rebase que cambie el SHA sin cambiar
+  contenido), NO corras la suite sobre ese commit para "completar" el
+  cierre** (corregido WOT-2026-039m tras hallazgo de auditoria adversarial:
+  esta instruccion decia antes "re-corre la suite sobre ese commit", lo que
+  contradecia "Cierre final tras aprobacion" y permitia leerse como que
+  bastaba repetir la suite sin nueva revision). Un commit nuevo tras la
+  aprobacion es, sin excepcion, un fallo de Cierre final: reportalo al
+  Manager como tal (ver "Cierre final tras aprobacion"), que invalida el
+  `APROBADO` anterior y repite integramente los Pasos 1-5 de
+  `manager_review.md` sobre el commit actual antes de que exista una suite
+  que cuente como Cierre final.
 - `Active ticket before`, `Events emitted` y `Derived state after` se derivan de
   `STATE.md`, `TURN.md` y `repo_destino/.agent/runtime/events/events.jsonl`; no
   los reconstruyas de memoria.

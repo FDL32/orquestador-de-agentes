@@ -22,7 +22,8 @@ canonico antes de aprobar.
   despues en su Builder phase (implementacion real del entregable), el
   resto de este prompt aplica integramente, incluida la barrera "loop
   rapido vs cierre canonico" del Paso 2 (suite canonica obligatoria para
-  cerrar `code`/`mixed`).
+  el Paso 5-bis tras `APROBADO`, ya no como precondicion del Paso 5 --
+  WOT-2026-039m).
 - Referencia cruzada: `prompts/contract_formation_pipeline.md` usa el mismo
   vocabulario `status: frozen`; confirma alli el estado del contrato antes
   de decidir que herramienta de cierre aplica.
@@ -153,13 +154,17 @@ Comprueba:
 - no hay scope creep material;
 - `ruff` termina con exit 0 cuando aplica;
 - `pytest` focal termina con exit 0 cuando aplica;
-- **loop rapido vs cierre canonico:** un `pytest` focal verde, `--select-from-diff`,
-  un test aislado o una corrida de background NO sustituyen la suite canonica del
-  ticket. Para aprobar un cierre de `code`/`mixed`, exige la suite canonica
-  (`run_pytest_safe --level all`, `last-run.json` con `tested_commit_sha == HEAD`
-  y `exit_code=0`); rechaza con `CHANGES` cualquier handoff que presente evidencia
-  de loop rapido como si fuera cierre canonico. Definicion canonica en
-  `prompts/orchestrator_launch_builder.md` (seccion Loop rapido vs cierre canonico).
+- **loop rapido vs cierre canonico (re-secuenciado WOT-2026-039m):** un `pytest`
+  focal verde, `--select-from-diff`, un test aislado o una corrida de background
+  siguen sin ser la suite canonica del ticket, pero **ya NO son motivo de
+  `CHANGES` por si solos**: la suite canonica (`run_pytest_safe --level all`,
+  `last-run.json` con `tested_commit_sha == HEAD` y `exit_code=0`) se movio al
+  paso de **Cierre final**, DESPUES de esta revision y del permiso del usuario
+  (ver Paso 5-bis). En este Paso 2, verifica los gates focales (tests
+  enfocados, ruff, encoding guard, validate) con evidencia real; NO exijas ni
+  esperes la suite `--level all` para emitir `APROBADO`. Definicion canonica en
+  `prompts/orchestrator_launch_builder.md` (seccion "Loop rapido vs cierre
+  canonico" y "Cierre final tras aprobacion").
 - `validate --json` devuelve 0 errores y, para cierre normal, 0 warnings;
 - si aparecen warnings, primero decide si son reparables. Para `bus_drift` por
   cierre `FALLBACK_SIN_TASK_TOOL`, exige la herramienta canonica
@@ -278,20 +283,45 @@ Incluye en el informe de salida la decision de triage cuando haya hallazgos de
 scope dudoso.
 
 ## Paso 5: Decision
-Emite uno de estos veredictos:
+Emite uno de estos veredictos (sin cambios respecto al contrato original;
+el re-secuenciado de WOT-2026-039m NO introduce un tercer veredicto):
 
 `APROBADO`
 
-Usalo solo cuando todos los pasos aplicables esten superados con evidencia
-verificada independientemente.
+Usalo cuando todos los pasos aplicables de ESTA revision (diff, gates
+focales, tests enfocados, mutation-verify, CEM) esten superados con
+evidencia verificada independientemente, **sin haber corrido todavia la
+suite canonica `--level all`** (esa suite ya no es precondicion de este
+Paso, ver Paso 2). `APROBADO` en `code`/`mixed` significa "el diff esta
+listo salvo la suite completa, que se corre a continuacion con permiso del
+usuario" -- ver Paso 5-bis. No ejecutes `--manager-approve` todavia: el
+Paso 5-bis es quien lo hace, tras la suite verde.
 
 `CHANGES`
 
-Usalo cuando exista cualquier blocker sin resolver. Lista blockers por severidad
-y da correccion exacta para cada uno.
+Usalo cuando exista cualquier blocker sin resolver. Lista blockers por
+severidad y da correccion exacta para cada uno -- este es el informe que
+recibe el Builder para su siguiente vuelta.
+
+**Reingreso unico tras fallo de suite en el Paso 5-bis (formula exacta,
+sin variantes -- WOT-2026-039m, corregido tras hallazgo de auditoria
+adversarial sobre divergencia "Paso 1" vs "Paso 5" entre este prompt y
+`orchestrator_launch_builder.md`):** un fallo de la suite canonica en el
+Paso 5-bis (o un commit nuevo tras la aprobacion, ver Paso 5-bis punto 2)
+produce `CHANGES` con el fallo de suite (o el commit no revisado) como
+primer blocker. Este `CHANGES` exige **repetir integramente los Pasos 1-5
+de esta Manager Review** sobre el commit actual -- Clasificacion, gates
+focales, tests, mutation-verify/CEM, y una nueva decision -- no solo
+re-emitir el Paso 5 sin re-ejecutar los pasos intermedios. El `APROBADO`
+anterior queda invalidado: reescribe `decision_<ticket_id>.json` a
+`"decision": "CHANGES"` en el mismo turno en que detectas el fallo,
+para que no quede una aprobacion persistida mientras se corrige.
 
 Ademas del veredicto en texto, escribe el decision artifact estructurado
-(canal primario del bridge; el transcript queda como fallback y evidencia):
+(canal primario del bridge; el transcript queda como fallback y evidencia).
+**Sin cambios respecto al contrato original** (WOT-2026-039m no amplia este
+JSON: solo reordena CUANDO se corre la suite, no que valores acepta el
+bridge):
 
 - Ruta: `.agent/runtime/reviews/decision_<ticket_id>.json` (en `repo_destino`).
 - Contenido JSON:
@@ -319,9 +349,62 @@ Para cualquier decision incluye una tabla:
 | Validate repo_destino | si/no | 0/0 o detalle |
 | Bus canonico | si/no | eventos relevantes |
 | Barrera de regresion | si/no/no aplica | prueba sin fix/con fix |
+| Suite canonica `--level all` | no aplica en este Paso (WOT-2026-039m) | se verifica en Paso 5-bis, tras permiso del usuario |
 
 No emitas `APROBADO` con blockers abiertos, claims no verificados que sean
 centrales para el ticket, o review packet incoherente con el commit real.
+
+## Paso 5-bis: Permiso del usuario + suite final (WOT-2026-039m)
+
+Aplica solo tras `APROBADO` (Paso 5) en un ticket `code`/`mixed` --
+exactamente el mismo alcance `code`/`mixed` que rige todo el re-secuenciado
+de la suite canonica (ver Paso 2 y "Cierre final tras aprobacion" en
+`orchestrator_launch_builder.md`; para `documentation`/`research`/`analysis`
+el `APROBADO` del Paso 5 sigue siendo el cierre normal, sin este paso). No
+lo saltes ni lo asumas implicito.
+
+1. **Con `APROBADO` ya emitido y su decision artifact escrito, el rol
+   MANAGER pide permiso explicito al usuario** para correr la suite
+   canonica y cerrar. No lo asumas por silencio, y no lo delegues al
+   Builder: el usuario autoriza el tiempo de la suite (~20 min) y el cierre
+   real, y quien se lo pide es el Manager, el mismo actor que acaba de
+   aprobar.
+2. Con permiso obtenido, el rol BUILDER ejecuta la suite canonica (el
+   Manager puede pedirsela; quien la corre y aporta la evidencia es el
+   Builder, igual que el resto de gates del ticket):
+   ```
+   python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all
+   ```
+   Verifica `last-run.json`: `status=finished`, `exit_code=0`, `level=all`,
+   `args_mode=default_discovery`, y `tested_commit_sha == HEAD` **del commit
+   que aprobaste en el Paso 5**. Si hubo cualquier commit nuevo desde la
+   aprobacion (incluido un `git commit --amend` o rebase que cambie el SHA
+   sin cambiar contenido: el chequeo es literal por SHA, no por contenido
+   percibido), la suite NUNCA corre sobre ese commit nuevo para "completar"
+   el cierre: es, sin excepcion, el caso del punto 3 (fallo -> `CHANGES` ->
+   repetir Pasos 1-5). Ninguna superficie de este contrato -- ni aqui ni en
+   `orchestrator_launch_builder.md` -- autoriza "basta con repetir la suite
+   sobre el commit nuevo" como sustituto de una revision nueva.
+3. **Si la suite falla (incluido el caso de commit nuevo del punto
+   anterior):** aplica la regla de reingreso del Paso 5 ("Reingreso unico
+   tras fallo de suite"): `CHANGES`, `decision_<ticket_id>.json` reescrito
+   de inmediato, y repeticion integra de los Pasos 1-5 sobre el commit
+   actual.
+4. **Si la suite pasa** sobre el commit aprobado: ejecuta
+   `--manager-approve` para el cierre canonico real, confirmado por el bus.
+
+Este paso es la UNICA via que autoriza `--manager-approve` para `code`/`mixed`.
+Para `documentation`/`research`/`analysis`, `APROBADO` en el Paso 5 sigue
+siendo el cierre normal (este paso no aplica, no exige suite ni permiso
+adicional).
+
+**Alcance declarado de este re-secuenciado (WOT-2026-039m):** cambia
+UNICAMENTE el proceso descrito en este prompt y en
+`orchestrator_launch_builder.md` -- CUANDO se corre la suite canonica, no
+que veredictos existen ni que valores acepta el bridge. No crea ningun
+estado o evento nuevo en `bus/state_machine.py`, `agent_controller.py` ni
+`bus/decision_parser.py`; el decision artifact sigue admitiendo unicamente
+`APROBADO`/`CHANGES`, exactamente como antes.
 
 ## Informe de salida (obligatorio en flujo por chat)
 
@@ -332,6 +415,7 @@ Cierra cada review con este bloque, ademas del decision artifact:
 
 ### Veredicto
 <APROBADO | CHANGES> — <frase con la razon principal>
+<Si APROBADO en ticket code/mixed: "pendiente de permiso del usuario + suite canonica --level all (Paso 5-bis) antes del cierre real">
 
 ### Claims del Builder vs evidencia
 | Claim del Builder | Verificacion independiente | Resultado |
