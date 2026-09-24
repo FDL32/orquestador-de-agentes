@@ -1646,9 +1646,9 @@ def install_agent_system(
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
     if dry_run:
-        print(
-            f"\n[DRY-RUN] Install plan: {len(copied)} top-level entries would be copied."
-        )
+        # Count actual files (copied now contains per-file paths after WOT-2026-025g).
+        file_count = len(copied)
+        print(f"\n[DRY-RUN] Install plan: {file_count} files would be copied.")
         return 0
 
     # Validate hooks config integrity (critical for "no drift" policy)
