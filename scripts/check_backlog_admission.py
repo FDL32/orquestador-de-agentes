@@ -799,7 +799,7 @@ def _is_ancestor(repo: Path, maybe_ancestor: str, commit: str) -> bool:
     try:
         _proc = subprocess.run(  # noqa: S603
             [  # noqa: S607
-                "git.exe",
+                "git",
                 "-C",
                 str(repo),
                 "merge-base",
