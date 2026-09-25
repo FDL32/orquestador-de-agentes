@@ -1061,7 +1061,7 @@ def _auto_archive_closed_artifacts() -> None:
         # Import the archive script as a module
         import importlib.util
 
-        # Script lives in the motor, not in the workspace (Model B)
+        # Script lives in the motor, not in the workspace (repo_motor/repo_destino topology)
         archive_spec = importlib.util.spec_from_file_location(
             "archive_collaboration_artifacts",
             _MOTOR_ROOT / "scripts" / "archive_collaboration_artifacts.py",
@@ -3984,7 +3984,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         return 1
 
     # Check that we are in a git repository.
-    # Model B: workspace (PROJECT_ROOT) and motor (_MOTOR_ROOT) are separate repos.
+    # repo_motor/repo_destino topology: workspace (PROJECT_ROOT) and motor (_MOTOR_ROOT) are separate repos.
     # If the workspace has no .git, fall back to the motor root for git operations
     # while keeping project_root for live-surface detection (surfaces live in workspace).
     project_root = PROJECT_ROOT.resolve()
@@ -4313,11 +4313,11 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
         needs_tag = not tag_aligned
 
     # --- Step 2: Create/refresh checkpoint M3 tag ---
-    # WT-2026-245b / WOT-AUDIT-M3: In Model B topology legacy code/mixed tickets
+    # WT-2026-245b / WOT-AUDIT-M3: In repo_motor/repo_destino topology legacy code/mixed tickets
     # tag repo_motor, while repo_destino-authority tickets tag git_root.
     if needs_tag:
         if motor_root != project_root and _delivery_authority_ph != "repo_destino":
-            # Model B: delegate to _try_motor_tag which always operates on motor_root
+            # repo_motor/repo_destino topology: delegate to _try_motor_tag which always operates on motor_root
             tag_ok, tag_err = _try_motor_tag(motor_root, plan_id, json_output)
             if not tag_ok:
                 print(tag_err, file=sys.stderr, flush=True)
@@ -4409,7 +4409,7 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
             # Using splitlines() avoids strip() eating the leading status space
             # on the first line of multi-line output.
             path = line_raw[3:].strip()
-            # Model B: git status runs in git_root (motor) but live surfaces are
+            # repo_motor/repo_destino topology: git status runs in git_root (motor) but live surfaces are
             # keyed on project_root (workspace). Check both resolved paths so that
             # auto-generated files like project-map.json are excluded regardless of
             # which root they fall under.
@@ -6719,7 +6719,7 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
             )
         return 0
 
-    # Model B keeps operational scripts in repo_motor. Preserve the local
+    # repo_motor/repo_destino topology keeps operational scripts in repo_motor. Preserve the local
     # project-root lookup only as a compatibility fallback for legacy installs.
     script_path = _MOTOR_ROOT / "scripts" / "session_closeout.py"
     if not script_path.exists():

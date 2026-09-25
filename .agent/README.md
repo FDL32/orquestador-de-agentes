@@ -12,7 +12,7 @@ python scripts/run_pytest_safe.py
 python .agent/agent_controller.py --validate
 ```
 
-#### Modelo B (motor separado del workspace):
+#### Topología repo_motor/repo_destino (motor separado del workspace):
 ```
 python orquestador_de_agentes/.agent/agent_controller.py --validate --json --force --project-root <workspace>
 ```
