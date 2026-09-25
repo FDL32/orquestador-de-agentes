@@ -268,6 +268,32 @@ Ordenar los pipelines por valor/riesgo: mas valor con menos riesgo primero.
 La higiene de suite o codigo muerto suele ir primero porque despeja el
 terreno para el resto.
 
+### TDS como senal de desempate
+
+Para desempatar dentro de un mismo grupo de pipelines o priorizar los de
+valor comparable, se puede recalcular el TDS (Technical Debt Score):
+
+```powershell
+python <MOTOR_ROOT>/scripts/backlog_priority_score.py --project-root <DESTINO_ROOT> --ticket <ID-DEL-TICKET> --format json
+```
+
+O para una corrida global sobre todo el backlog:
+
+```powershell
+python <MOTOR_ROOT>/scripts/backlog_priority_score.py --project-root <DESTINO_ROOT> --format json
+```
+
+El TDS aporta una senal numerica complementaria (severidad, reincidencia,
+desbloqueo, coste y antiguedad), pero NO participa en la clasificacion
+de aptitud (Fase 1): esa sigue siendo APTO_AUTONOMO/REQUIERE_HUMANO/
+DISENO_PRIMERO segun DoD, riesgo y politica. El TDS se usa como
+desempate dentro de los grupos de valor comparable.
+
+**Terminologia:** "recalcular TDS" designa la operacion puntual de un
+ticket; "re-triaje" se reserva para el proceso completo de
+`backlog_triage.md` (Fase 0 reconciliacion, Fase 1 clasificacion,
+Fase 2 agrupacion, Fase 3 sintesis).
+
 Salida obligatoria de esta fase:
 
 - Listar EXPLICITAMENTE los tickets `REQUIERE_HUMANO`, con motivo, separados

@@ -76,6 +76,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from contextlib import suppress
 from pathlib import Path
 
 
@@ -1123,6 +1124,63 @@ def _check_universe_coverage(
 _TOP_N_FALLBACK = 3
 
 
+def _build_shadow_corpus(
+    obligatorias: list[str],
+) -> tuple[list[Entry], list[str]]:
+    """Construye corpus Entries y lista de rutas absolutas para _compute_vecinos."""
+    entries: list[Entry] = []
+    abs_paths: list[str] = []
+    for relpath in obligatorias:
+        path_entries, _stats = load_backlog_rows(Path(relpath))
+        for e in path_entries:
+            entries.append(e)
+            if relpath not in abs_paths:
+                abs_paths.append(relpath)
+    return entries, abs_paths
+
+
+def _write_shadow_log_after_recibo(
+    git_root: Path,
+    candidato_id: str,
+    corpus_sha: str,
+    corpus: list[dict],
+    obligatorias: list[str],
+    row_text: str | None,
+) -> None:
+    """Calcula TDS del candidato y lo escribe en el shadow log del destino.
+
+    Importa backlog_priority_score de forma lazy para evitar ciclo.
+    El TDS se calcula con score_single_row() que reutiliza _compute_vecinos.
+    Cualquier excepcion es capturada y registrada, NUNCA bloquea.
+    """
+    # Import lazy para evitar ciclo con backlog_priority_score
+    from scripts import backlog_priority_score as bps
+
+    if not row_text:
+        return
+
+    # Construir corpus entries y obligatorias absolutas
+    abs_obligarias: list[str] = []
+    for rel in obligatorias:
+        target = git_root / rel
+        if target.is_file():
+            abs_obligarias.append(str(target))
+
+    entries, _ = _build_shadow_corpus(abs_obligarias)
+
+    # Convertir corpus dict -> BacklogRow para D computation
+    all_rows = bps._parse_rows_from_text(entries)
+
+    # Calcular TDS
+    try:
+        result = bps.score_single_row(row_text, all_rows, entries)
+    except Exception as _exc:
+        result = {"TDS": None, "error": str(_exc)}
+
+    # Escribir shadow log
+    bps._write_shadow_log(git_root, candidato_id, corpus_sha, result)
+
+
 def _compute_vecinos(
     git_root: Path, obligatorias: list[str], candidato_id: str, row_text: str | None
 ) -> tuple[list[dict], list[dict]]:
@@ -1321,6 +1379,13 @@ def _emit_recibo(args: argparse.Namespace) -> int:
     }
 
     print(json.dumps(recibo, ensure_ascii=False, separators=(",", ":")))
+
+    # Pieza B: shadow log TDS (no bloqueante)
+    with suppress(Exception):
+        _write_shadow_log_after_recibo(
+            git_root, candidato_id, corpus_sha, corpus, obligatorias, args.row_text
+        )
+
     return 0
 
 
