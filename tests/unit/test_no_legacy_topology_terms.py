@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -11,9 +13,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_PATTERN = re.compile(
     "|".join(
         [
-            r"Model\s+" + "B",
-            r"Modelo\s+" + "B",
-            "model[_-]" + "b",
+            r"\bModel\s+B\b",
+            r"\bModelo\s+B\b",
+            r"\bmodel[_-]b\b",
         ]
     ),
     re.IGNORECASE,
@@ -23,7 +25,6 @@ EXCLUDED_PATHS = {
     Path("tests/unit/test_no_legacy_topology_terms.py"),
 }
 EXCLUDED_PARTS = {
-    ".agent",
     ".codex",
     ".git",
     ".kilo",
@@ -50,17 +51,40 @@ EXCLUDED_PARTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Fase 2: .agent is no longer in EXCLUDED_PARTS; instead it is scanned
+# through `git ls-files` so that only TRACKED files under .agent/ are seen.
+# ---------------------------------------------------------------------------
+
+
+def _agent_tracked_files(root: Path) -> frozenset[Path]:
+    """Return the set of tracked files under .agent/ via ``git ls-files``."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", ".agent/"],
+            cwd=str(root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout.strip():
+            return frozenset(Path(p) for p in result.stdout.strip().splitlines())
+    except subprocess.CalledProcessError:
+        # git not available or .agent/ does not exist -- fall back to empty.
+        pass
+    return frozenset()
+
+
+@functools.lru_cache(maxsize=1)
+def _cached_agent_tracked(root: Path) -> frozenset[Path]:
+    """One-shot cache of ``_agent_tracked_files(root)``."""
+    return _agent_tracked_files(root)
+
+
 def _is_excluded(relative_path: Path) -> bool:
-    if relative_path in EXCLUDED_PATHS:
-        return True
-    return any(part in EXCLUDED_PARTS for part in relative_path.parts)
-
-
-def _is_ignored_negative_assert(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped.startswith("assert "):
-        return False
-    return " not in " in stripped
+    return relative_path in EXCLUDED_PATHS or any(
+        part in EXCLUDED_PARTS for part in relative_path.parts
+    )
 
 
 def _has_live_legacy_match(content: str) -> bool:
@@ -73,6 +97,13 @@ def _has_live_legacy_match(content: str) -> bool:
     return False
 
 
+def _is_ignored_negative_assert(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("assert "):
+        return False
+    return " not in " in stripped
+
+
 def _iter_candidate_files(root: Path):
     """Yield file paths under root, pruning EXCLUDED_PARTS directories early.
 
@@ -83,11 +114,26 @@ def _iter_candidate_files(root: Path):
     in-place filter stops os.walk from descending into excluded directories
     at all, producing the same file set without paying to enumerate what
     gets discarded anyway (WOT-2026-010k).
+
+    Fase 2 addition: when descending into ``.agent/`` the function filters
+    yielded paths through the tracked-file set from ``git ls-files .agent/``,
+    so non-versioned files under .agent/runtime/tmp/ (and similar) do not
+    fire the guard.  Applied unconditionally (not gated on ".git" being in
+    EXCLUDED_PARTS) so the function works correctly in synthetic trees too.
     """
+    agent_tracked = _cached_agent_tracked(root)
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDED_PARTS]
-        for filename in filenames:
-            yield Path(dirpath) / filename
+        rel_root = Path(dirpath).relative_to(root)
+        if len(rel_root.parts) >= 1 and rel_root.parts[0] == ".agent":
+            # Inside .agent/; keep only tracked files.
+            for filename in filenames:
+                fp = Path(dirpath) / filename
+                if fp.relative_to(root) in agent_tracked:
+                    yield fp
+        else:
+            for filename in filenames:
+                yield Path(dirpath) / filename
 
 
 def test_repo_has_no_live_retired_topology_terms() -> None:
@@ -237,3 +283,139 @@ def test_negative_assertions_are_not_treated_as_live_legacy_terms() -> None:
 def test_positive_live_legacy_terms_still_fail() -> None:
     content = 'message = "Model B is still the active name"\n'
     assert _has_live_legacy_match(content) is True
+
+
+# ---- WOT-2026-023z: Fase 3 tests -------------------------------------------
+
+
+def test_false_positive_substring_does_not_trigger() -> None:
+    """The regex with \\b must NOT match substring fragments like
+    'model-based testing' or 'EmbeddingModel_base'.
+
+    Mutation: remove \\b from LEGACY_PATTERN -> this test fails.
+    """
+    for line in [
+        "description = 'model-based testing framework'",
+        "class EmbeddingModel_base(BaseModel):",
+        "the model beyond the horizon",
+    ]:
+        assert _has_live_legacy_match(line) is False
+
+
+def test_real_term_still_triggers_with_boundary() -> None:
+    """Real uses of the retired term ('Model B', 'Modelo B') must still
+    trigger the guard with \\b in place.
+
+    Mutation: break the \\b pattern -> this test fails.
+    """
+    for line in [
+        "message = 'Model B is the name'",
+        "referencia a Modelo B en la doc",
+        "config = 'model-b-profile'",
+        "config = 'model_b'",
+    ]:
+        assert _has_live_legacy_match(line) is True
+
+
+def test_agent_dir_tracked_file_is_scanned(tmp_path) -> None:
+    """Integra: un fichero TRACKED bajo .agent/ con el termin real debe
+    disparar el guard (es codigo versionado).
+
+    Mutation: volver a poner '.agent' en EXCLUDED_PARTS -> esta prueba falla
+    porque el fichero tracked deja de detectarse.
+    """
+    init_git_repo = _make_git_init(tmp_path)
+    init_git_repo()
+
+    agent_dir = tmp_path / ".agent" / "subdir"
+    agent_dir.mkdir(parents=True)
+    tracked_file = agent_dir / "live_term.py"
+    tracked_file.write_text("x = 'Model B is here'\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", str(tracked_file.relative_to(tmp_path))],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "add tracked file"],
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
+    )
+
+    # _agent_tracked_files must know about it
+    tracked = _agent_tracked_files(tmp_path)
+    assert Path(".agent/subdir/live_term.py") in tracked
+
+    # _iter_candidate_files must yield it
+    seen = {p.name for p in _iter_candidate_files(tmp_path)}
+    assert "live_term.py" in seen
+
+    # The guard must detect the legacy term in it
+    content = tracked_file.read_text(encoding="utf-8")
+    assert _has_live_legacy_match(content) is True
+
+
+def test_agent_dir_untracked_file_is_ignored(tmp_path) -> None:
+    """Integra: un fichero NO trackeado bajo .agent/ con el termin real NO
+    debe disparar el guard (no es codigo versionado del repo).
+
+    Mutation: vaciar _agent_tracked_files() (devolver frozenset()) -> esta
+    prueba falla porque el untracked comienza a detectarse.
+    """
+    init_git_repo = _make_git_init(tmp_path)
+    init_git_repo()
+
+    agent_dir = tmp_path / ".agent" / "tmp"
+    agent_dir.mkdir(parents=True)
+    untracked_file = agent_dir / "scratch.py"
+    untracked_file.write_text("x = 'Model B in scratch'\n", encoding="utf-8")
+    # NOTE: NO git add / git commit -- it stays untracked.
+
+    # _agent_tracked_files must NOT know about it
+    tracked = _agent_tracked_files(tmp_path)
+    assert Path(".agent/tmp/scratch.py") not in tracked
+
+    # The guard must NOT yield it (because it is not tracked)
+    matches = [
+        path.name
+        for path in _iter_candidate_files(tmp_path)
+        if path.name == "scratch.py"
+        and _has_live_legacy_match(path.read_text(encoding="utf-8"))
+    ]
+    assert matches == [], (
+        f"Untracked file should not trigger the guard, but got: {matches}"
+    )
+
+
+def _make_git_init(tmp_path: Path):
+    """Create an init_git_repo-like helper scoped to *tmp_path*."""
+
+    def init_git_repo() -> None:
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "README.md").write_text("# Test Repo")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    return init_git_repo
