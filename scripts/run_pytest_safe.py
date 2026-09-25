@@ -1009,25 +1009,21 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
     try:
         if process.stdout is None:
             raise RuntimeError("pytest subprocess did not expose stdout")
-        for line in process.stdout:
-            try:
-                print(line, end="")
-            except UnicodeEncodeError:
-                # Fallback to ascii replacing if terminal doesn't support utf-8 (like windows cp1252)
-                print(line.encode("ascii", "replace").decode("ascii"), end="")
-            lines.append(line)
-        # WOT-2026-040v (Pieza 1.b): explicit timeout on process.wait() to
-        # prevent an indefinite lock hold if pytest hangs (alive but not
-        # progressing). acquire_lock() has no temporal expiration -- only a
-        # PID liveness check -- so without this timeout a stuck process would
-        # block the lock forever after the fix.
+        # WOT-2026-077a (Blocker 1): use process.communicate(timeout=...) to
+        # cover the ENTIRE process lifetime (stdout reading + wait) in a single
+        # call. The previous pattern (for line in process.stdout: ...;
+        # process.wait(timeout=...)) blocked indefinitely on the for-loop when
+        # pytest hung without producing new output -- the timeout never fired
+        # because the process never reached wait(). communicate() reads ALL
+        # output and waits for the process to terminate, both bounded by the
+        # same timeout.
         _max_runtime: int | float | None = None
         try:
             _max_runtime = float(os.environ.get("MAX_RUNTIME_SECONDS", "14400"))
         except (ValueError, TypeError):
             _max_runtime = 14400  # 4h default
         try:
-            returncode = process.wait(timeout=_max_runtime)
+            stdout_output, _ = process.communicate(timeout=_max_runtime)
         except subprocess.TimeoutExpired:
             process.terminate()
             try:
@@ -1039,6 +1035,17 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
             # Mark the run as "timeout" (not "aborted"): this distinguishes
             # an internal exceedance of the configured time limit from an
             # external process death.
+        else:
+            # Normal completion (no TimeoutExpired): stdout contains ALL output.
+            stdout_output = stdout_output or ""
+            returncode = process.returncode
+            # Stream output and build lines list for failed/error parsing.
+            for line in stdout_output.splitlines():
+                try:
+                    print(line, end="")
+                except UnicodeEncodeError:
+                    print(line.encode("ascii", "replace").decode("ascii"), end="")
+                lines.append(line)
     except KeyboardInterrupt:
         process.terminate()
         try:
