@@ -1044,6 +1044,11 @@ class TestErrorTestIdsInSummary:
             def wait(self):
                 return self.returncode
 
+            def communicate(self, timeout=None):
+                lines = self._stdout_lines[self._idx :]
+                self._idx = len(self._stdout_lines)
+                return "".join(lines), None
+
             def terminate(self):
                 pass
 

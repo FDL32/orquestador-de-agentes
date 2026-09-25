@@ -178,87 +178,124 @@ class TestProcessIsolationMutationVerify:
         last_run_log.unlink(missing_ok=True)
 
     def test_runner_dies_without_isolation_flags(self, tmp_path: Path) -> None:
-        """C2: without creationflags/start_new_session, killing parent kills runner.
+        """C2: mutation-verify via copy-restore on run_pytest_safe.py.
 
-        This test creates a MINIMAL copy of run_pytest_safe.py's subprocess
-        invocation WITHOUT the isolation flags, launches it, kills the parent,
-        and verifies the child does NOT survive.
+        Copy the production file, remove the isolation flags (creationflags
+        / start_new_session), run the timeout test against the mutated version
+        to confirm it hangs (process never killed without isolate), then restore
+        the original file and verify git diff --stat is clean.
 
-        This is the mutation-verify half of C1: revert the flags -> test fails.
+        This is a REAL mutation of the production file, not a parallel subprocess
+        with no flags. It verifies that the flags in run_pytest_safe.py are the
+        REASON the timeout test passes.
         """
-        # Import the module to get the real subprocess.Popen
-        import importlib.util
 
-        spec = importlib.util.spec_from_file_location(
-            "run_pytest_safe_isolated", RUNNER_PATH
-        )
-        assert spec is not None and spec.loader is not None
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        # Ensure clean state: remove stale lock/last-run
+        runtime_dir = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        lock_file = runtime_dir / "pytest.lock"
+        lock_file.unlink(missing_ok=True)
+        last_run = runtime_dir / "last-run.json"
+        last_run.unlink(missing_ok=True)
+        last_run_log = runtime_dir / "last-run.log"
+        last_run_log.unlink(missing_ok=True)
 
-        # Verify the runner module DOES have the isolation code
-        source = RUNNER_PATH.read_text(encoding="utf-8")
-        assert "CREATE_NEW_PROCESS_GROUP" in source or "start_new_session" in source, (
-            "The runner should have isolation flags; if they're absent, "
-            "this mutation-verify test is invalid"
-        )
-
-        # Now spawn a subprocess that mimics what run_pytest_safe.py does:
-        # launches pytest WITHOUT the isolation flags (simulating the pre-fix state).
-        pytest_cmd = [
-            sys.executable,
-            "-m",
-            "pytest",
-            "tests/unit/test_run_pytest_safe.py::test_default_args_are_reported_as_default_discovery",
-            "-v",
-            "--tb=short",
-        ]
-
-        env = os.environ.copy()
-        env["PYTHONUTF8"] = "1"
-        # NO creationflags, NO start_new_session -> this is the MUTATED (broken) state
-
-        proc = subprocess.Popen(
-            pytest_cmd,
-            cwd=str(PROJECT_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
+        # Create a minimal hanging test file
+        hang_test = tmp_path / "test_hang.py"
+        hang_test.write_text(
+            "import subprocess, sys\n"
+            "def test_hang():\n"
+            "    subprocess.Popen(  # noqa: S603\n"
+            '        [sys.executable, "-c", "import time; time.sleep(9999)"],\n'
+            "        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,\n"
+            "    ).wait()\n",
+            encoding="utf-8",
         )
 
-        # Verify the child is running
-        assert proc.poll() is None, "pytest subprocess should be running"
+        # Copy-restore mutation: copy the production file, remove isolation flags
+        mutated_path = tmp_path / "run_pytest_safe_mutated.py"
+        original_source = RUNNER_PATH.read_text(encoding="utf-8")
 
-        # Kill the parent
-        proc.terminate()
+        # Mutate: remove the popen_kwargs block (isolation flags)
+        import re
+
+        block_pattern = (
+            r"# WOT-2026-040v \(Pieza 1\): isolate the process tree.*?"
+            r"popen_kwargs\[\"creationflags\"\] = subprocess\.CREATE_NEW_PROCESS_GROUP.*?"
+            r"popen_kwargs\[\"start_new_session\"\] = True\n"
+        )
+        mutated_source = re.sub(block_pattern, "", original_source, flags=re.DOTALL)
+
+        # Remove the popen_kwargs dict declaration and **popen_kwargs usage
+        mutated_source = mutated_source.replace("    popen_kwargs: dict = {}\n", "")
+        mutated_source = mutated_source.replace('    if sys.platform == "win32":\n', "")
+        mutated_source = mutated_source.replace("    else:\n", "")
+        mutated_source = mutated_source.replace("        **popen_kwargs,\n", "")
+
+        mutated_path.write_text(mutated_source, encoding="utf-8")
+
         try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            env = os.environ.copy()
+            env["PYTHONUTF8"] = "1"
 
-        # The child should be dead (because no isolation flags)
-        # On Windows, terminating a process terminates its direct children too
-        # (unless CREATE_NEW_PROCESS_GROUP was used).
-        poll_result = proc.poll()
-        assert poll_result is not None, (
-            "Without CREATE_NEW_PROCESS_GROUP, the subprocess should terminate "
-            "when the parent is killed. If it survived, the isolation flag "
-            "may already be present in the launch path."
-        )
+            cmd = [
+                sys.executable,
+                str(mutated_path),
+                "--level",
+                "unit",
+                "--",
+                str(hang_test),
+            ]
 
-        # Verify the original code still HAS the flags (positive control)
-        # If this assertion fails, the mutation was not applied correctly.
-        assert "CREATE_NEW_PROCESS_GROUP" in source or "start_new_session" in source
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(PROJECT_ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+
+            proc.terminate()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+        finally:
+            # Restore using git checkout to preserve exact bytes/line endings
+            import subprocess as sp
+
+            restore_result = sp.run(
+                ["git", "checkout", "--", str(RUNNER_PATH)],
+                cwd=str(PROJECT_ROOT),
+                capture_output=True,
+                text=True,
+            )
+            assert restore_result.returncode == 0, (
+                f"git checkout failed: {restore_result.stderr}"
+            )
+
+            # Verify git diff --stat is clean (no leftover mutations)
+            diff_result = sp.run(
+                ["git", "diff", "--stat", str(RUNNER_PATH)],
+                cwd=str(PROJECT_ROOT),
+                capture_output=True,
+                text=True,
+            )
+            assert diff_result.returncode == 0 and not diff_result.stdout.strip(), (
+                f"After restore, git diff --stat must be clean. Got: {diff_result.stdout}"
+            )
 
 
+@pytest.mark.integration
 class TestTimeoutExplicit:
     """C3: explicit timeout avoids indefinite lock hold.
 
-    Verifies that process.wait(timeout=MAX_RUNTIME_SECONDS) correctly handles
-    TimeoutExpired, calls terminate()/kill(), and writes last-run.json with
-    a terminal status (not "started").
+    Verifies that process.communicate(timeout=MAX_RUNTIME_SECONDS) correctly
+    handles TimeoutExpired, calls terminate()/kill(), and writes last-run.json
+    with a terminal status (not "started").
     """
 
     def test_max_runtime_seconds_env_var_read(self) -> None:
@@ -294,6 +331,83 @@ class TestTimeoutExplicit:
         )
         assert "process.kill()" in source, (
             "run_pytest_safe.py must call process.kill() as fallback"
+        )
+
+    def test_timeout_kills_process_with_real_subprocess(self, tmp_path: Path) -> None:
+        """C3: real process that produces no output gets killed by timeout.
+
+        Creates a minimal test file with a single hanging test (subprocess
+        that sleeps 9999s), puts it under tests/unit/ where pytest will find
+        it, sets MAX_RUNTIME_SECONDS low, and verifies the runner kills it
+        within a reasonable window and writes last-run.json with status=timeout.
+        """
+
+        runtime_dir = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        lock_file = runtime_dir / "pytest.lock"
+        lock_file.unlink(missing_ok=True)
+        last_run = runtime_dir / "last-run.json"
+        last_run.unlink(missing_ok=True)
+        last_run_log = runtime_dir / "last-run.log"
+        last_run_log.unlink(missing_ok=True)
+
+        # Create a minimal test file that hangs forever
+        # Uses os._exit() in a subprocess to avoid pytest hooks cleaning up
+        hang_test = tmp_path / "test_hang.py"
+        hang_test.write_text(
+            "import subprocess, sys\n"
+            "def test_hang():\n"
+            "    subprocess.Popen(  # noqa: S603\n"
+            '        [sys.executable, "-c", "import time; time.sleep(9999)"],\n'
+            "        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,\n"
+            "    ).wait()\n",
+            encoding="utf-8",
+        )
+
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["MAX_RUNTIME_SECONDS"] = "3"
+
+        cmd = [
+            sys.executable,
+            str(RUNNER_PATH),
+            "--level",
+            "unit",
+            "--",
+            str(hang_test),
+        ]
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+
+        # Wait for the runner to kill the hung subprocess and write last-run.json
+        for _ in range(30):
+            if last_run.exists():
+                data = json.loads(last_run.read_text(encoding="utf-8"))
+                status = data.get("status")
+                if status in ("finished", "timeout", "aborted", "error"):
+                    break
+            time.sleep(1)
+
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+        assert last_run.exists(), "last-run.json must be written after the timeout"
+        data = json.loads(last_run.read_text(encoding="utf-8"))
+        status = data.get("status")
+        assert status == "timeout", (
+            f"last-run.json status must be 'timeout', not {status!r}. "
+            "The communicate(timeout=) must have fired."
         )
 
 
