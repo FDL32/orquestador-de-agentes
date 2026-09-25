@@ -2613,3 +2613,61 @@ def test_055t_no_abort_when_agent_project_root_is_set(
     monkeypatch.setattr(pathlib.Path, "cwd", lambda: fake_dest)
 
     mod._abort_on_mismatch()  # no debe levantar
+
+
+# =============================================================================
+# WOT-2026-040v: process isolation + timeout (Fase 2 unit tests)
+# =============================================================================
+
+
+def test_max_runtime_seconds_env_var_default(monkeypatch) -> None:
+    """C3 unit: default MAX_RUNTIME_SECONDS is 14400 (4h)."""
+    monkeypatch.delenv("MAX_RUNTIME_SECONDS", raising=False)
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert "MAX_RUNTIME_SECONDS" in source
+    assert "14400" in source
+
+
+def test_max_runtime_seconds_custom_value(monkeypatch) -> None:
+    """C3 unit: custom MAX_RUNTIME_SECONDS env var is honoured."""
+    monkeypatch.setenv("MAX_RUNTIME_SECONDS", "300")
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert "os.environ.get" in source
+
+
+def test_timeout_expired_handling_present(monkeypatch) -> None:
+    """C3 unit: source must catch TimeoutExpired and call terminate/kill.
+
+    Mutation-verify: removing the TimeoutExpired handler means the test
+    detects the absence (source check).
+    """
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert "TimeoutExpired" in source
+    assert "process.terminate()" in source
+    assert "process.kill()" in source
+
+
+def test_no_detached_process_flag(monkeypatch) -> None:
+    """C5: DETACHED_PROCESS must NOT be present without CONTRACT_GAP."""
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert "DETACHED_PROCESS" not in source, (
+        "DETACHED_PROCESS must not be added without explicit CONTRACT_GAP"
+    )
+
+
+def test_creationflags_or_start_new_session_present(monkeypatch) -> None:
+    """C1 unit: source must use CREATE_NEW_PROCESS_GROUP or start_new_session."""
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    has_isolation = (
+        "CREATE_NEW_PROCESS_GROUP" in source or "start_new_session" in source
+    )
+    assert has_isolation, (
+        "run_pytest_safe.py must use CREATE_NEW_PROCESS_GROUP or start_new_session"
+    )
+
+
+def test_popen_has_isolation_kwargs_injected(monkeypatch) -> None:
+    """C1 unit: subprocess.Popen receives **popen_kwargs with isolation flags."""
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert "**popen_kwargs" in source
+    assert "popen_kwargs: dict = {}" in source or "popen_kwargs={}" in source

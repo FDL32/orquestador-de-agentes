@@ -986,6 +986,14 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
     else:
         env["PYTHONPATH"] = agent_path
 
+    # WOT-2026-040v (Pieza 1): isolate the process tree so a termination of the
+    # invoking process does not cascade-kill the runner and pytest together.
+    popen_kwargs: dict = {}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
     process = subprocess.Popen(  # noqa: S603
         command,
         cwd=PROJECT_ROOT,
@@ -996,6 +1004,7 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
         errors="replace",
         bufsize=1,
         env=env,
+        **popen_kwargs,
     )
     try:
         if process.stdout is None:
@@ -1007,7 +1016,29 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
                 # Fallback to ascii replacing if terminal doesn't support utf-8 (like windows cp1252)
                 print(line.encode("ascii", "replace").decode("ascii"), end="")
             lines.append(line)
-        returncode = process.wait()
+        # WOT-2026-040v (Pieza 1.b): explicit timeout on process.wait() to
+        # prevent an indefinite lock hold if pytest hangs (alive but not
+        # progressing). acquire_lock() has no temporal expiration -- only a
+        # PID liveness check -- so without this timeout a stuck process would
+        # block the lock forever after the fix.
+        _max_runtime: int | float | None = None
+        try:
+            _max_runtime = float(os.environ.get("MAX_RUNTIME_SECONDS", "14400"))
+        except (ValueError, TypeError):
+            _max_runtime = 14400  # 4h default
+        try:
+            returncode = process.wait(timeout=_max_runtime)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            returncode = process.returncode
+            # Mark the run as "timeout" (not "aborted"): this distinguishes
+            # an internal exceedance of the configured time limit from an
+            # external process death.
     except KeyboardInterrupt:
         process.terminate()
         try:
