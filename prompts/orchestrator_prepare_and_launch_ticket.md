@@ -124,10 +124,40 @@ que arranca con un entorno roto produce reports falsos (medido: WOT-2026-072c).
 
 ## Paso 2 — Redactar el prompt de arranque del Builder
 
-Con `work_plan.md` ya auditado y `--bootstrap-ticket` verde, redacta el prompt
-de lanzamiento siguiendo **`prompts/orchestrator_launch_builder.md`** completo
-(578+ lineas — leelo entero, no muestrees por grep; regla M4). Sustituye
-`{{TICKET_ID}}` y deja el prompt listo para pegar en una sesion Builder nueva.
+**Lee los contratos SIEMPRE desde el worktree de ejecucion, nunca desde un
+checkout canonico de solo lectura (WOT-2026-076a).** En la topologia
+`repo_motor` + `repo_destino` puede existir mas de una copia local del mismo
+repo_motor (un checkout canonico de solo lectura y un worktree activo donde
+se commitea). Nada las mantiene sincronizadas automaticamente: un commit
+nuevo en el worktree no se propaga al canonico salvo `git pull`/`checkout`
+explicito alli. Leer el contrato "entero" (M4) desde la copia equivocada NO
+protege de nada -- M4 exige leer el fichero completo, no exige que sea el
+fichero correcto. Medido: un prompt de arranque redactado desde el checkout
+canonico cito la secuencia de suite PRE-039m porque el commit `4e15446`
+(WOT-2026-039m) aun no se habia propagado alli; el Builder siguio esa
+secuencia obsoleta al pie de la letra.
+
+Antes de leer `orchestrator_launch_builder.md`/`manager_review.md`, verifica
+paridad:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_prompt_parity.py --canonical-root <CHECKOUT_CANONICO> --worktree-root <MOTOR_ROOT>
+```
+
+Si el exit code no es 0, los contratos divergen: STOP, sincroniza el checkout
+canonico con el worktree (o, si no hay checkout canonico separado en esta
+maquina, ignora el chequeo y declara explicitamente que solo existe una
+copia), y no redactes el prompt hasta que el guard de exit 0.
+
+Con `work_plan.md` ya auditado, `--bootstrap-ticket` verde y la paridad de
+contratos confirmada, redacta el prompt de lanzamiento siguiendo
+**`prompts/orchestrator_launch_builder.md`** completo (578+ lineas — leelo
+entero DESDE EL WORKTREE `<MOTOR_ROOT>`, no muestrees por grep; regla M4).
+Sustituye `{{TICKET_ID}}` y embebe la identidad del contrato que exige su
+Paso 0 (`contract_head`, `contract_sha256` de cada fichero citado —
+ver `orchestrator_launch_builder.md` seccion "Paso 0: Verificacion de
+identidad del contrato"). Deja el prompt listo para pegar en una sesion
+Builder nueva.
 
 ## Paso 3 — Bucle adversarial sobre el ticket y el prompt
 

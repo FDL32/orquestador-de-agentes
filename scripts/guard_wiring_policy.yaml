@@ -116,6 +116,22 @@ known_unwired:
   # como subprocess -> parte de la suite canonica versionada.
   check_pii_tracked: WOT-2026-004y
 
+  # WOT-2026-076a: guard de paridad de contratos normativos entre el checkout
+  # canonico de solo lectura y el worktree de ejecucion. Su cableado natural
+  # es el Paso 2 de `orchestrator_prepare_and_launch_ticket.md` (invocacion
+  # explicita ANTES de redactar un prompt de arranque de Builder), un evento
+  # discreto de preparacion humana/agente, no un commit -- cablearlo en
+  # pre-commit correria en cada commit sin proposito (el prompt de arranque
+  # no cambia en cada commit). Analogo a check_publication_gate: BY-DESIGN
+  # invocacion manual en el punto de preparacion, no un hook automatico.
+  # Sigue siendo NORMA hasta que exista un orquestador programatico del Paso 2
+  # que lo invoque por codigo -- follow-up declarado, sin ficha propia todavia.
+  check_prompt_parity: >-
+    BY-DESIGN: invocacion manual en `orchestrator_prepare_and_launch_ticket.md`
+    Paso 2, al preparar un prompt de arranque de Builder -- evento discreto,
+    no un commit. Cablearlo en pre-commit correria sin proposito. Follow-up:
+    cablearlo por codigo si se automatiza el Paso 2 completo.
+
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
   pre_handoff_guard: scripts/pre_handoff_guard.py

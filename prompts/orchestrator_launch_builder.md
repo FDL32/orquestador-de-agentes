@@ -7,12 +7,13 @@ contract_id: cid-bui-implement-v1
 
 ## Referencia rapida: codigos de parada (WOT-2026-070y, bucle L720)
 
-Este prompt define 9 codigos que DETIENEN tu trabajo y exigen reportar al
+Este prompt define 10 codigos que DETIENEN tu trabajo y exigen reportar al
 Orquestador/Manager. Tabla consolidada para no buscarlos linealmente; cada
 uno se explica en detalle en su seccion propia (busca el codigo literal):
 
 | Codigo | Seccion | Disparador |
 |---|---|---|
+| `CONTRACT_MISMATCH` | Paso -1 | El hash del contrato citado en este prompt no coincide con el fichero real de tu worktree |
 | `PROJECT_ROOT_UNDETERMINED` | Paso 0 | No puedes determinar tu `<DESTINO>` con certeza antes de leer proyecciones |
 | `PREFLIGHT_FAILED` | Preflight | `validate --json` inicial no da 0 errors/0 warnings |
 | `RUNTIME_NOT_BOOTSTRAPPED` | Preflight | `work_plan.md`/proyecciones siguen ancladas a un ticket anterior |
@@ -22,6 +23,53 @@ uno se explica en detalle en su seccion propia (busca el codigo literal):
 | `EXTERNAL_STATE_DRIFT` | Fase 1 | `STATE.md`/`work_plan.md`/`TURN.md` cambiaron externamente durante la ejecucion |
 | `DELIVERY_AUTHORITY_MISSING` | Registro y cierre | El contrato no declara `delivery_authority` antes del commit |
 | `HANDOFF_IMPOSSIBLE` | Contrato de handoff canonico | No puedes emitir `BUILDER_EXIT`+`STATE_CHANGED` canonicos |
+
+## Paso -1: Verificacion de identidad del contrato (WOT-2026-076a)
+
+**Antes de seguir NINGUNA instruccion de este prompt**, verifica que el texto
+que estas leyendo es el mismo que existe en tu propio worktree de ejecucion
+(`<MOTOR_ROOT>`). Este paso existe porque el prompt que tienes delante pudo
+haber sido redactado por alguien (humano o agente) que leyo este contrato
+desde una copia DISTINTA del repo_motor -- un checkout canonico de solo
+lectura que puede estar parado en un commit anterior al de tu worktree real.
+
+Medido (WOT-2026-076a, 2026-09-25): un prompt de arranque cito la secuencia
+de suite canonica PRE-039m porque quien lo redacto leyo
+`orchestrator_launch_builder.md` desde un checkout que aun no tenia el commit
+`4e15446` (WOT-2026-039m). El Builder siguio esa secuencia obsoleta al pie de
+la letra -- su razonamiento fue correcto, el prompt recibido no lo era. Un
+bucle adversarial de 4 lentes (claude, codex, qwen3.6, gemma4) convirtio esto
+en norma: "el diseño asume confianza ciega en que el prompt de arranque es
+fiel al contrato vigente. El Builder no debe ejecutar contra un contrato que
+no puede verificar contra su propio arbol de trabajo."
+
+**Mecanismo:** el prompt de arranque que recibes DEBE declarar, para cada
+contrato normativo que cita (`orchestrator_launch_builder.md`,
+`manager_review.md`, cualquier `STRATEGY_`/`AUDIT_` del ticket), un bloque de
+identidad:
+
+```
+contract_path: <ruta absoluta del fichero en MOTOR_ROOT>
+contract_sha256: <hash SHA-256 del contenido en el momento de redactar el prompt>
+```
+
+Si el prompt que recibiste NO incluye este bloque de identidad para
+`orchestrator_launch_builder.md`, calcula tu mismo el hash de tu copia local
+y repórtalo en tu primer mensaje como contexto (no es motivo de parada por
+ausencia sola -- el prompt puede ser anterior a esta norma). Si el prompt SI
+declara `contract_sha256` para un contrato, verifica:
+
+```powershell
+Get-FileHash -Algorithm SHA256 <MOTOR_ROOT>/prompts/orchestrator_launch_builder.md
+```
+
+o el equivalente en tu entorno (`sha256sum` en Git Bash/WSL). Si el hash
+calculado NO coincide con `contract_sha256` declarado en el prompt, DETENTE
+con `CONTRACT_MISMATCH` antes de ejecutar cualquier otro paso: reporta ambos
+hashes, la ruta del fichero, y pide al Orquestador que regenere el prompt
+leyendo desde tu worktree real. No continues "porque probablemente es una
+diferencia menor" -- la divergencia que origino esta norma cambiaba una
+secuencia de proceso completa, no una errata cosmetica.
 
 ## Paso 0: Declara tu raiz ANTES de leer nada (WOT-2026-070q, reproducido en vivo 2026-09-20)
 
