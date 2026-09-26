@@ -98,7 +98,14 @@ def _config(*, trusted: bool = False, private_roots: list[str] | None = None):
 
 
 class _FakeTransport:
-    """Records calls; returns canned replies (empty string = no-aportacion)."""
+    """Records calls; returns canned replies (empty string = no-aportacion).
+
+    WOT-2026-046h: un elemento de `replies` que sea una instancia de
+    `Exception` se LANZA en vez de devolverse, para simular el canal `api`
+    real (`_transport_api`), que lanza `TransportError`/etc. ante un fallo de
+    red en vez de devolver texto (a diferencia del canal `agent`, que
+    antepone `_TRANSPORT_FAILED_PREFIX` como texto, WOT-2026-048g).
+    """
 
     def __init__(self, replies=None):
         self.calls: list[dict] = []
@@ -108,7 +115,10 @@ class _FakeTransport:
         self.calls.append(
             {"profile": profile, "messages": messages, "timeout": timeout}
         )
-        return self.replies.pop(0) if self.replies else "respuesta"
+        reply = self.replies.pop(0) if self.replies else "respuesta"
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
 
 
 # --------------------------------------------------------------------------- #
@@ -2890,7 +2900,7 @@ class TestBackendKeyMatchesProfile:
         MUTACION: comparar `profile["backend"]` en vez de la clave -> VERDE.
         """
         with pytest.raises(ValueError, match="no corresponde al perfil"):
-            self._run("challenger_nan_qwen3_6", "BA12", tmp_path)
+            self._run("challenger_nan_qwen", "BA12", tmp_path)
 
     def test_matching_key_passes(self, tmp_path):
         """CONTROL POSITIVO: la invocacion correcta no se molesta."""
@@ -3129,11 +3139,17 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
     scaffolding de WOT-2026-019o que apuntaba a APIs que el proyecto NO tiene
     (DEEPSEEK_API_KEY/DASHSCOPE_API_KEY AUSENTES; solo NAN_API_KEY definida).
     Un fallback a una API sin credencial es un fallback MUERTO -> se ELIMINAN.
-    nan es el UNICO canal api. Ningun perfil declara fallback_profile.
+    Ningun perfil declara fallback_profile.
     Integridad referencial defensiva: si algun dia se reintroduce un
     fallback_profile, debe ser string plano y apuntar a un perfil EXISTENTE.
     Mutation M2 (A8): reintroducir challenger_deepseek/deepseek_api hace este
-    test FALLAR (nan deja de ser el unico canal)."""
+    test FALLAR (nan deja de ser un backend directo muerto reintroducido).
+
+    ACTUALIZADO (decision usuario 2026-09-26/27, sesion de WOT-2026-046b): nan
+    dejo de ser el UNICO canal api -- se anadio `nvidia_api` como segundo canal
+    con credencial real (`NVIDIA_API_KEY` presente), no un fallback muerto.
+    El invariante que sigue vigente es "todo perfil channel=api usa un backend
+    CON credencial configurada", no "usa nan_api especificamente"."""
     config = ed.load_motor_config()
     profiles = config["ensemble_profiles"]
     backends = config["backends"]
@@ -3143,13 +3159,18 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
     assert "deepseek_api" not in backends, "backend directo muerto, eliminado (A8)"
     assert "qwen_api" not in backends, "backend directo muerto, eliminado (A8)"
 
-    # nan es el UNICO canal api: todo perfil channel=api usa backend nan_api.
+    # Todo perfil channel=api usa un backend de la lista viva con credencial
+    # declarada (nan_api o nvidia_api hoy; deepseek_api/qwen_api siguen fuera
+    # por A8 -- los asserts de arriba ya lo verifican).
+    live_api_backends = {"nan_api", "nvidia_api"}
     api_profiles = [p for p in profiles.values() if p.get("channel") == "api"]
-    assert api_profiles, "debe haber al menos un perfil api (los 4 nan)"
+    assert api_profiles, "debe haber al menos un perfil api"
     for prof in api_profiles:
-        assert prof["backend"] == "nan_api", (
-            "nan es el unico canal api (A8): un perfil api con otro backend "
-            "reintroduce un directo muerto"
+        assert prof["backend"] in live_api_backends, (
+            f"backend '{prof['backend']}' no es un canal api vivo conocido "
+            f"({live_api_backends}) -- si es un canal nuevo legitimo, anadelo "
+            "a live_api_backends; si es un directo muerto tipo A8, elimina el "
+            "perfil en vez de ampliar esta lista"
         )
 
     # Ningun perfil declara fallback_profile hoy; el invariante defensivo se
@@ -3665,6 +3686,132 @@ def test_048g_healthy_reply_keeps_counting_as_aportacion(tmp_path):
         "puede degradar lo legitimo"
     )
     assert row["failure_mode"] is None
+
+
+def test_046h_transport_exception_is_recorded_then_reraised(tmp_path):
+    """WOT-2026-046h: el canal `api` LANZA ante un fallo de transporte (a
+    diferencia del canal `agent`, que devuelve texto con
+    `_TRANSPORT_FAILED_PREFIX`, cubierto por el test 048g hermano). Antes de
+    este fix la excepcion escapaba de `run_loop_round` sin pasar nunca por
+    `_record_round`: CERO fila, indistinguible de "nadie lo intento".
+
+    Replica la clasificacion YA adjudicada por el bucle L1104 en
+    `_cmd_loop_round` (WOT-2026-048x): la fila es ADITIVA, la excepcion se
+    RE-LANZA (el caller sigue viendo el fallo, no puede confundirlo con una
+    respuesta valida) -- por eso este test usa `pytest.raises`, no una
+    llamada directa.
+
+    Mutation: quitar el try/except de `run_loop_round` alrededor de su
+    llamada a la primitiva de despacho pone este test en ROJO igual (la
+    excepcion sigue propagandose, pero sin dejar fila -> `len(rows) == 0`).
+    """
+    transport = _FakeTransport(
+        replies=[
+            ed.TransportError(
+                "HTTPError | HTTP 402 | monthly_cap_reached",
+                status=402,
+                body='{"error":{"type":"monthly_cap_reached"}}',
+            )
+        ]
+    )
+    with pytest.raises(ed.TransportError):
+        ed.run_loop_round(
+            "p_chal",
+            "audita esto",
+            config=_config(),
+            project_root=tmp_path,
+            ticket="WOT-TEST-046h",
+            task_type="code-review",
+            rol="challenger",
+            phase="fanout-comun",
+            loop_id="L720",
+            backend_key="BA11",
+            sensitivity="public",
+            transport=transport,
+        )
+
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, (
+        "un fallo de transporte del canal api debe dejar UNA fila (antes: 0, "
+        "la excepcion escapaba sin registrar nada)"
+    )
+    row = rows[0]
+    assert row["outcome"] == "no-aportacion", (
+        "un fallo de transporte no puede contar como intervencion valida; "
+        f"outcome={row['outcome']!r}"
+    )
+    assert row["failure_mode"] and row["failure_mode"].startswith("transport_failed"), (
+        f"failure_mode debe clasificarse como transport_failed; got {row.get('failure_mode')!r}"
+    )
+    assert "402" in row["failure_mode"], (
+        "el failure_mode conserva el detalle del error (status/tipo), no solo "
+        "la palabra generica 'transport_failed'"
+    )
+    assert row["output_chars"] == 0, (
+        "sin respuesta real del backend, output_chars debe ser 0 -- el "
+        "mensaje de la excepcion vive en failure_mode, no se fabrica un "
+        "reply de texto que inflaria esta metrica"
+    )
+
+
+def test_046h_unexpected_exception_is_classified_precisely_not_as_transport(
+    tmp_path,
+):
+    """Control de PRECISION (adjudicado por L1104, BA14): un `KeyError`/
+    `TypeError` NO es un fallo de transporte. Etiquetarlo como
+    `transport_failed` manda a buscar una caida de red donde hay un bug de
+    programacion. Mismo criterio que ya fija `_cmd_loop_round`; este test
+    prueba que `run_loop_round` (la ruta Python directa) lo respeta igual.
+    """
+    transport = _FakeTransport(replies=[KeyError("perfil_inexistente")])
+    with pytest.raises(KeyError):
+        ed.run_loop_round(
+            "p_chal",
+            "audita esto",
+            config=_config(),
+            project_root=tmp_path,
+            ticket="WOT-TEST-046h-unexpected",
+            task_type="code-review",
+            rol="challenger",
+            phase="fanout-comun",
+            loop_id="L720",
+            backend_key="BA11",
+            sensitivity="public",
+            transport=transport,
+        )
+
+    row = _rows(tmp_path)[0]
+    assert row["failure_mode"].startswith("unexpected"), (
+        "un KeyError debe clasificarse como 'unexpected', no como "
+        f"'transport_failed': failure_mode={row['failure_mode']!r}"
+    )
+
+
+def test_046h_dispatch_blocked_still_leaves_no_row(tmp_path):
+    """Control negativo: `DispatchBlockedError` (preflight de privacidad, que
+    bloquea ANTES de tocar red) sigue sin dejar fila -- el fix de 046h NO debe
+    ensanchar su alcance a un caso que por diseno no es una ronda ejecutada
+    (docstring de `run_loop_round`: "en ese caso NO hay fila, porque no hubo
+    ronda"). Si este test se pone rojo, el except de 046h esta capturando de
+    mas."""
+    with pytest.raises(ed.DispatchBlockedError):
+        ed.run_loop_round(
+            "p_chal",
+            "material",
+            config=_config(),
+            project_root=tmp_path,
+            ticket="WOT-TEST-046h-blocked",
+            task_type="code-review",
+            rol="challenger",
+            phase="fanout-comun",
+            loop_id="L720",
+            backend_key="BA11",
+            sensitivity="private",
+            transport=_FakeTransport(replies=["no deberia llegar"]),
+        )
+    assert not (tmp_path / ed.SCORECARD_REL).exists(), (
+        "un rechazo de preflight no ejecuto ninguna ronda: no debe dejar fila"
+    )
 
 
 # --- WOT-2026-048g: el modelo REPORTADO por el backend ----------------------

@@ -218,32 +218,37 @@ def is_substantive(row: dict) -> bool:
 def diagnose_silence(row: dict) -> str:
     """Por que callo esta ronda, y donde NO hay que buscar.
 
-    ALCANCE REAL, medido antes de escribir esto (479 rondas del scorecard,
-    `latency_ms is None` en 0): **una ronda muda con fila SIEMPRE es "hubo llamada
-    y la respuesta llego vacia"**. El caso "no hubo llamada" NO puede aparecer
-    aqui, porque `run_loop_round` calcula `latency_ms` DESPUES de que
-    `send_to_profile` retorne y no captura excepciones: si el transporte falla
-    (timeout, credenciales, `service_tier` invalido) la excepcion sube y NO se
-    escribe fila ninguna. Medido en vivo el 2026-07-29: un timeout de
-    `deepseek-v4-flash` en este mismo vuelo dejo CERO filas.
+    ACTUALIZADO (WOT-2026-046h, 2026-09-27): la premisa original de esta
+    funcion ("un fallo de transporte NO deja fila, `run_loop_round` no
+    captura excepciones") DEJO DE SER CIERTA a proposito. Medido en vivo
+    2026-09-26: 4 llamadas con HTTP 402 (cuota agotada) no dejaron NINGUNA
+    fila -- indistinguible de "nadie lo intento" -- y ese hueco (real, no
+    solo en `_cmd_loop_round`/WOT-2026-048x, sino tambien en la ruta Python
+    directa que usan los bucles de gobierno por chat) se cerro: ahora
+    `run_loop_round` registra ANTES de re-lanzar, con `failure_mode`
+    clasificado (`transport_failed` vs `unexpected`, adjudicado en L1104).
 
-    Por eso esta funcion NO infiere el transporte desde `latency_ms`: una version
-    previa lo hacia y era CODIGO MUERTO con un mensaje que habria mandado al
-    humano a revisar credenciales por un fallo de backend. La distincion que pide
-    el DoD (e) es REAL, pero su otro lado NO se observa en el scorecard: se
-    observa en la AUSENCIA de fila, que es cosa del recuento de lentes
-    (`min_distinct`), no de este diagnostico. El mensaje lo dice explicitamente
-    para que nadie vuelva a buscar el transporte en la fila equivocada.
+    ALCANCE REAL, re-medido tras el fix: una ronda muda SIN `failure_mode` es
+    "hubo llamada y la respuesta llego vacia" (la rama de abajo). Una ronda
+    con `failure_mode` poblado por un fallo de TRANSPORTE ahora SI aparece
+    aqui -- la rama `if failure_mode:` de mas abajo ya la cubre correctamente,
+    porque esa rama nunca asumio nada sobre EL ORIGEN del failure_mode, solo
+    que la adjudicacion (en sentido amplio: el propio registrador) ya
+    clasifico la ronda. Lo que SIGUE sin dejar fila es `DispatchBlockedError`
+    (el preflight de privacidad bloqueo ANTES de tocar red: no hubo ronda) --
+    ese caso se observa en la AUSENCIA de fila, cosa del recuento de lentes
+    (`min_distinct`), no de este diagnostico.
     """
     failure_mode = (row.get("failure_mode") or "").strip()
     if failure_mode:
-        # La adjudicacion ya clasifico esta ronda; su etiqueta manda sobre
-        # cualquier inferencia nuestra.
+        # La adjudicacion (o el registrador, tras WOT-2026-046h) ya clasifico
+        # esta ronda; su etiqueta manda sobre cualquier inferencia nuestra.
         return f"respuesta descartada por la adjudicacion: {failure_mode}"
     return (
         "hubo llamada y la respuesta llego VACIA: revisa el BACKEND o el bundle "
-        "enviado (tamano, formato). Un fallo de TRANSPORTE no deja fila: se "
-        "manifiesta como lente AUSENTE del recuento, no como ronda muda"
+        "enviado (tamano, formato). Un rechazo del preflight de privacidad "
+        "(DispatchBlockedError) no deja fila: se manifiesta como lente "
+        "AUSENTE del recuento, no como ronda muda"
     )
 
 

@@ -49,6 +49,12 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA14 | nan_api | deepseek-v4-flash-0731 | deprecated |
 | BA15 | nan_api | qwen3.8-flash | active |
 | BA16 | nan_api | glm5.3-flash | active |
+| BA17 | nvidia_api | z-ai/glm-5.3 | active |
+| BA18 | nvidia_api | z-ai/glm-5.3-flash | active |
+| BA19 | nvidia_api | deepseek-ai/deepseek-v4.1-flash | active |
+| BA20 | nvidia_api | moonshotai/kimi-k3 | active |
+| BA21 | nvidia_api | nvidia/nemotron-3-super-120b-a12b | active |
+| BA22 | nan_api | mimo-v2.6-flash | active |
 
 ## Loop shapes
 

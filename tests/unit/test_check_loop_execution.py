@@ -404,35 +404,42 @@ def test_truncated_evidencia_is_not_used_as_a_size_proxy():
 
 
 def test_silence_diagnosis_never_blames_transport_on_a_row():
-    """(e) DoD, con el ALCANCE que la medicion permite: una ronda muda CON FILA es
-    siempre "hubo llamada y respondio vacio". El otro lado ("no hubo llamada") no
-    es observable aqui -- `run_loop_round` calcula la latencia DESPUES de
-    `send_to_profile` y no captura excepciones, asi que un fallo de transporte no
-    llega a escribir fila (medido: `latency_ms is None` en 0 de 479 rondas reales;
-    y un timeout real de deepseek en el vuelo de este ticket dejo 0 filas).
+    """(e) DoD, ACTUALIZADO tras WOT-2026-046h (2026-09-27): una ronda muda
+    CON FILA y SIN `failure_mode` sigue siendo siempre "hubo llamada y
+    respondio vacio" -- eso no cambio. Lo que SI cambio es el otro lado: un
+    fallo de TRANSPORTE ahora SI llega a escribir fila (con `failure_mode`
+    poblado, cubierto por la rama `if failure_mode:` de la funcion), asi que
+    ya no es observable SOLO como lente ausente del recuento. Lo que sigue
+    sin dejar fila es un rechazo del preflight de privacidad
+    (`DispatchBlockedError`, la ronda nunca se ejecuto).
 
-    Pinea que el diagnostico NO culpe al transporte por la fila, y que REMITA a
-    donde si se ve (la lente ausente del recuento). Una version previa infería el
-    transporte desde `latency_ms is None`: era codigo muerto que habría mandado a
-    revisar credenciales ante un fallo de backend."""
+    Pinea que el diagnostico de una ronda muda SIN failure_mode NO culpe al
+    transporte, y que remita al caso que SI queda ausente
+    (`DispatchBlockedError`). Una version previa infería el transporte desde
+    `latency_ms is None`: era codigo muerto que habría mandado a revisar
+    credenciales ante un fallo de backend."""
     con_latencia = _muda("BA11")
     con_latencia["latency_ms"] = 4210
     sin_latencia = _muda("BA10")  # no ocurre en produccion, pero no debe mentir
     for row in (con_latencia, sin_latencia):
         msg = cle.diagnose_silence(row)
         assert "BACKEND" in msg
-        assert "TRANSPORTE" not in msg.split("Un fallo de TRANSPORTE")[0]
-        assert "no deja fila" in msg  # remite a donde SI se observa
+        assert "DispatchBlockedError" in msg  # remite a donde SI se observa
+        assert "no deja fila" in msg
 
     descartada = _muda("BA12")
     descartada["failure_mode"] = "no_contribution: missing_cite_block"
     assert "adjudicacion" in cle.diagnose_silence(descartada)
 
 
-def test_transport_failure_writes_no_row_at_all(tmp_path, monkeypatch):
-    """La PREMISA del test anterior, verificada en la ruta productiva en vez de
-    asumida: si `send_to_profile` levanta, `run_loop_round` propaga y NO escribe
-    fila. Por eso "no hubo llamada" se manifiesta como lente ausente."""
+def test_transport_failure_writes_a_row_then_reraises(tmp_path, monkeypatch):
+    """ACTUALIZADO (WOT-2026-046h, 2026-09-27): la PREMISA de este test era la
+    inversa hasta hoy ("un fallo de transporte NO debe dejar receipt"), y se
+    invirtio a proposito -- medido en vivo 2026-09-26, 4 fallos HTTP 402
+    reales no dejaron NINGUNA fila, indistinguible de "nadie lo intento".
+    Ahora `send_to_profile` levantando SI escribe fila (con `failure_mode`
+    clasificado) ANTES de re-lanzar -- verificado en la ruta productiva, no
+    asumido."""
     cfg = {
         "ensemble_profiles": {"p0": {"backend": "nan", "model": "m0"}},
         "backends": {"nan": {}},
@@ -460,7 +467,15 @@ def test_transport_failure_writes_no_row_at_all(tmp_path, monkeypatch):
             challenge_nonce="N1",
         )
     rows, _sha = ed._read_scorecard(tmp_path)
-    assert rows == [], "un fallo de transporte NO debe dejar receipt de ronda"
+    assert len(rows) == 1, "un fallo de transporte debe dejar UNA fila (WOT-2026-046h)"
+    # TimeoutError ES OSError (stdlib: TimeoutError.__mro__ incluye OSError),
+    # asi que la regla adjudicada en L1104 (transport_failed para
+    # TransportError/OSError) lo clasifica como transport_failed, no
+    # unexpected -- verificado, no asumido por el nombre de la excepcion.
+    assert rows[0]["failure_mode"].startswith("transport_failed"), (
+        f"TimeoutError es OSError: debe clasificar como 'transport_failed'; "
+        f"got {rows[0]['failure_mode']!r}"
+    )
 
 
 def test_end_to_end_silent_fanout_fails_through_run_loop_round(tmp_path, monkeypatch):

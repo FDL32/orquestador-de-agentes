@@ -2270,15 +2270,72 @@ def run_loop_round(
             f"y la barrera de independencia cuenta esa columna. Usa "
             f"--backend-key {expected_key}."
         )
+    # WOT-2026-046h: `send_to_profile` en el canal `api` (`_transport_api`) NO
+    # devuelve texto ante un fallo de transporte -- LANZA (`TransportError` por
+    # HTTP/SSE, `RuntimeError` por env var ausente, `json.JSONDecodeError` por
+    # cuerpo malformado). Antes de este fix esa excepcion escapaba de
+    # `run_loop_round` sin pasar por `_record_round`: CERO fila en el
+    # scorecard, indistinguible de "nadie lo intento". Medido en vivo
+    # 2026-09-26: 4 llamadas con HTTP 402 (cuota agotada) NO dejaron ninguna
+    # fila nueva.
+    #
+    # WOT-2026-048x YA HABIA CERRADO ESTE HUECO -- pero solo en `_cmd_loop_round`
+    # (el wrapper CLI, `ensemble_dispatch.py loop-round`), no aqui. Esta
+    # funcion (`run_loop_round`) es la que consumen los bucles de gobierno
+    # despachados directamente en Python (import + llamada), que es la ruta
+    # que uso este ticket. El try/except de abajo REPLICA la misma
+    # clasificacion adjudicada por el bucle L1104 -- NO la reinventa: la
+    # captura es ANCHA (ninguna excepcion se pierde sin fila) pero la ETIQUETA
+    # es PRECISA (`transport_failed` solo para `TransportError`/`OSError`;
+    # todo lo demas es `unexpected`, para no mandar a buscar una caida de red
+    # donde hay un bug de programacion). `DispatchBlockedError` se EXCLUYE a
+    # proposito, mismo motivo que en `_cmd_loop_round`: el preflight bloqueo
+    # ANTES de tocar red ("en ese caso NO hay fila, porque no hubo ronda") y
+    # sigue propagandose intacto, sin fila.
+    #
+    # Se registra y se RE-LANZA (igual que `_cmd_loop_round`): el caller (los
+    # scripts de bucle) sigue viendo la excepcion y no puede confundir un
+    # fallo con una respuesta valida; la fila es ADITIVA, no la sustituye.
     _t0 = time.perf_counter()
-    reply = send_to_profile(
-        profile_name,
-        [{"role": "user", "content": content}],
-        config=config,
-        sensitivity=sensitivity,
-        transport=transport,
-        project_root=project_root,
-    )
+    try:
+        reply = send_to_profile(
+            profile_name,
+            [{"role": "user", "content": content}],
+            config=config,
+            sensitivity=sensitivity,
+            transport=transport,
+            project_root=project_root,
+        )
+    except DispatchBlockedError:
+        raise
+    except Exception as exc:
+        latency_ms = round((time.perf_counter() - _t0) * 1000)
+        clase = (
+            "transport_failed"
+            if isinstance(exc, (TransportError, OSError))
+            else "unexpected"
+        )
+        _record_round(
+            project_root,
+            ticket=ticket,
+            task_type=task_type,
+            rol=rol,
+            profile=profile,
+            backend_version=_backend_version(config["backends"][profile["backend"]]),
+            ronda=ronda,
+            reply="",
+            input_bytes=len(content.encode("utf-8")),
+            context_kind=context_kind,
+            failure_mode=f"{clase}: {type(exc).__name__}: {exc}"[:300],
+            session_id=session_id,
+            latency_ms=latency_ms,
+            phase=phase,
+            loop_id=loop_id,
+            backend_key=backend_key,
+            commit_sha=commit_sha,
+            challenge_nonce=challenge_nonce,
+        )
+        raise
     latency_ms = round((time.perf_counter() - _t0) * 1000)
     _record_round(
         project_root,
@@ -2930,86 +2987,36 @@ def _cmd_loop_round(args, config) -> int:
     # rastro. La cobertura efectiva de un bucle era INCOMPUTABLE desde su propio
     # artefacto.
     #
-    # POR QUE AQUI Y NO EN `run_loop_round`: identica razon que el pre-check de
-    # `task_type` de mas arriba (WOT-2026-048i) -- `_record_round` EXIGE un
-    # `profile` dict, y en este handler el perfil SI es resoluble desde la
-    # config, asi que la fila queda ATRIBUIBLE (ticket, loop_id, backend_key) en
-    # vez de ser un registro huerfano.
-    #
-    # POR QUE `_record_round` NO BASTABA: ya clasifica `transport_failed`
-    # (`:1651`), pero solo cuando el transporte DEVUELVE texto marcado con
-    # `_TRANSPORT_FAILED_PREFIX` -- la ruta del canal `agent` (`:1022`). El canal
-    # `api` LANZA `TransportError` (`:640-673`), que sube por encima de
-    # `_record_round` y nunca llega a escribir. Ese es el hueco exacto, y es el
-    # que cerro este ticket.
-    #
-    # `DispatchBlockedError` se EXCLUYE a proposito: el docstring de
-    # `run_loop_round` declara que un bloqueo del preflight de privacidad NO deja
-    # fila "porque no hubo ronda", y eso es correcto -- el payload nunca salio.
-    # Registrarlo aqui inventaria una ronda que no existio.
-    #
-    # Se registra y se RE-LANZA: `main` sigue mapeando la excepcion a su exit
-    # code (2 para las de transporte). La fila es ADITIVA, no sustituye al fallo.
-    try:
-        reply = run_loop_round(
-            args.profile,
-            content,
-            config=config,
-            project_root=project_root,
-            ticket=args.ticket,
-            task_type=args.task_type,
-            rol=args.rol,
-            phase=args.phase,
-            loop_id=args.loop_id,
-            backend_key=args.backend_key,
-            sensitivity=args.data_sensitivity,
-            ronda=args.ronda,
-            context_kind=args.context_kind,
-            session_id=args.session_id,
-            commit_sha=args.commit_sha,
-            challenge_nonce=args.challenge_nonce,
-        )
-    except DispatchBlockedError:
-        raise
-    except Exception as exc:
-        # La captura es ANCHA a proposito (no perder NINGUNA fila), pero la
-        # ETIQUETA es PRECISA. Adjudicado por el bucle L1104, donde dos lentes
-        # chocaron y las dos tenian razon sobre cosas distintas: el lector-FS
-        # defendio la anchura ("el hueco era exactamente ese: excepciones
-        # inesperadas que subian sin rastro") y BA14 ataco la etiqueta ("si
-        # `run_loop_round` lanza un KeyError, el fix lo registra como
-        # `transport_failed` y la fila de auditoria queda mintiendo").
-        #
-        # Clasificar mal es PEOR que no registrar en un ticket cuyo proposito es
-        # hacer el registro fiable: un `transport_failed` falso manda a buscar
-        # una caida de red donde hay un bug de programacion.
-        clase = (
-            "transport_failed"
-            if isinstance(exc, (TransportError, OSError))
-            else "unexpected"
-        )
-        profile = (config.get("ensemble_profiles") or {}).get(args.profile)
-        if profile is not None:
-            _record_round(
-                project_root,
-                ticket=args.ticket,
-                task_type=args.task_type,
-                rol=args.rol,
-                profile=profile,
-                backend_version=None,
-                ronda=args.ronda,
-                reply="",
-                input_bytes=len(content.encode("utf-8")),
-                context_kind=args.context_kind,
-                failure_mode=f"{clase}: {type(exc).__name__}: {exc}"[:300],
-                session_id=args.session_id,
-                phase=args.phase,
-                loop_id=args.loop_id,
-                backend_key=args.backend_key,
-                commit_sha=args.commit_sha,
-                challenge_nonce=args.challenge_nonce,
-            )
-        raise
+    # WOT-2026-046h (2026-09-27): la clasificacion `transport_failed` vs
+    # `unexpected` que este bloque construia AQUI se MOVIO dentro de
+    # `run_loop_round` -- es la unica funcion que registra, tanto si la llama
+    # este wrapper CLI como si la llaman los bucles de gobierno por Python
+    # directo (import + llamada), que antes de este ticket quedaban SIN el
+    # fix (el hueco original de WOT-2026-048x solo cerraba la ruta CLI).
+    # Duplicar el try/except aqui TAMBIEN registraba una SEGUNDA fila para el
+    # mismo fallo (medido: `len(rows) == 2` en vez de 1, con la version
+    # duplicada) -- `run_loop_round` ya registra y RE-LANZA, asi que este
+    # wrapper solo necesita propagar; `main` sigue mapeando la excepcion a su
+    # exit code exactamente igual que antes (esta funcion no atrapa nada, la
+    # excepcion sube intacta).
+    reply = run_loop_round(
+        args.profile,
+        content,
+        config=config,
+        project_root=project_root,
+        ticket=args.ticket,
+        task_type=args.task_type,
+        rol=args.rol,
+        phase=args.phase,
+        loop_id=args.loop_id,
+        backend_key=args.backend_key,
+        sensitivity=args.data_sensitivity,
+        ronda=args.ronda,
+        context_kind=args.context_kind,
+        session_id=args.session_id,
+        commit_sha=args.commit_sha,
+        challenge_nonce=args.challenge_nonce,
+    )
     print(reply)
     return 0
 
