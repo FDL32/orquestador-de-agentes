@@ -106,6 +106,14 @@
         "method": "path_only"
       }
     },
+    "nvidia_api": {
+      "executable": "",
+      "args": [],
+      "timeout_s": 900,
+      "discovery": {
+        "method": "path_only"
+      }
+    },
     "default": {
       "executable": "",
       "args": [],
@@ -135,7 +143,7 @@
       "backend_key": "BA05",
       "repo_scope": "destino"
     },
-    "challenger_nan_deepseek_v4_flash": {
+    "challenger_nan_deepseek_flash": {
       "backend": "nan_api",
       "channel": "api",
       "model": "deepseek-v4-flash",
@@ -146,7 +154,7 @@
       "data_sensitivity": "public",
       "backend_key": "BA10"
     },
-    "challenger_nan_qwen3_6": {
+    "challenger_nan_qwen": {
       "backend": "nan_api",
       "channel": "api",
       "model": "qwen3.6",
@@ -157,7 +165,7 @@
       "data_sensitivity": "public",
       "backend_key": "BA11"
     },
-    "challenger_nan_mimo_v2_5": {
+    "challenger_nan_mimo": {
       "backend": "nan_api",
       "channel": "api",
       "model": "mimo-v2.5",
@@ -168,7 +176,7 @@
       "data_sensitivity": "public",
       "backend_key": "BA12"
     },
-    "challenger_nan_gemma4": {
+    "challenger_nan_gemma": {
       "backend": "nan_api",
       "channel": "api",
       "model": "gemma4",
@@ -189,7 +197,7 @@
       "backend_key": "BA06",
       "repo_scope": "destino"
     },
-    "challenger_nan_qwen3_8_flash": {
+    "challenger_nan_qwen_flash": {
       "backend": "nan_api",
       "channel": "api",
       "model": "qwen3.8-flash",
@@ -200,7 +208,7 @@
       "data_sensitivity": "public",
       "backend_key": "BA15"
     },
-    "challenger_nan_glm5_3_flash": {
+    "challenger_nan_glm_flash": {
       "backend": "nan_api",
       "channel": "api",
       "model": "glm5.3-flash",
@@ -210,12 +218,78 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA16"
+    },
+    "challenger_nvidia_glm": {
+      "backend": "nvidia_api",
+      "channel": "api",
+      "model": "z-ai/glm-5.3",
+      "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "api_key_env": "NVIDIA_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA17"
+    },
+    "challenger_nvidia_glm_flash": {
+      "backend": "nvidia_api",
+      "channel": "api",
+      "model": "z-ai/glm-5.3-flash",
+      "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "api_key_env": "NVIDIA_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA18"
+    },
+    "challenger_nvidia_deepseek_flash": {
+      "backend": "nvidia_api",
+      "channel": "api",
+      "model": "deepseek-ai/deepseek-v4.1-flash",
+      "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "api_key_env": "NVIDIA_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA19"
+    },
+    "challenger_nvidia_kimi": {
+      "backend": "nvidia_api",
+      "channel": "api",
+      "model": "moonshotai/kimi-k3",
+      "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "api_key_env": "NVIDIA_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA20"
+    },
+    "challenger_nvidia_nemotron": {
+      "backend": "nvidia_api",
+      "channel": "api",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "api_key_env": "NVIDIA_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA21"
+    },
+    "challenger_nan_mimo_flash": {
+      "backend": "nan_api",
+      "channel": "api",
+      "model": "mimo-v2.6-flash",
+      "api_base_url": "https://api.nan.builders/v1/chat/completions",
+      "api_key_env": "NAN_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA22"
     }
   },
   "ensemble_pipelines": {
     "review_adversarial": {
       "proposer": "proposer_claude",
-      "challenger": "challenger_nan_deepseek_v4_flash",
+      "challenger": "challenger_nan_deepseek_flash",
       "rubric": "prompts/audit_agent_output.md",
       "max_rounds": 2,
       "continue_if": "objecion-CONFIRMADA-con-evidencia",
@@ -282,6 +356,42 @@
       "BA16": {
         "backend": "nan_api",
         "model": "glm5.3-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA17": {
+        "backend": "nvidia_api",
+        "model": "z-ai/glm-5.3",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA18": {
+        "backend": "nvidia_api",
+        "model": "z-ai/glm-5.3-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA19": {
+        "backend": "nvidia_api",
+        "model": "deepseek-ai/deepseek-v4.1-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA20": {
+        "backend": "nvidia_api",
+        "model": "moonshotai/kimi-k3",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA21": {
+        "backend": "nvidia_api",
+        "model": "nvidia/nemotron-3-super-120b-a12b",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA22": {
+        "backend": "nan_api",
+        "model": "mimo-v2.6-flash",
         "backend_version": null,
         "status": "active"
       }
@@ -556,10 +666,10 @@
     "challenger": {
       "backend": "nan_api",
       "ensemble_profiles_ref": [
-        "challenger_nan_deepseek_v4_flash",
-        "challenger_nan_qwen3_6",
-        "challenger_nan_mimo_v2_5",
-        "challenger_nan_gemma4"
+        "challenger_nan_deepseek_flash",
+        "challenger_nan_qwen",
+        "challenger_nan_mimo",
+        "challenger_nan_gemma"
       ]
     }
   },

@@ -2796,15 +2796,23 @@ class TestBackendKeyMatchesProfile:
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {
-    "deepseek-v4-flash": "challenger_nan_deepseek_v4_flash",
-    "qwen3.6": "challenger_nan_qwen3_6",
-    "mimo-v2.5": "challenger_nan_mimo_v2_5",
-    "gemma4": "challenger_nan_gemma4",
+    # 2026-09-26: renombrado familia+slot (nunca version de modelo ni ranking
+    # de calidad/velocidad), mismo patron ya adoptado en nvidia_api. Veredicto
+    # ensemble 4/4 APLICAR (bucle v2, codex+nan/gemma4+nan/qwen3.6+nvidia/glm).
+    # backend_key de cada perfil NO cambia -- el historico del scorecard sigue
+    # anclado por esa clave, nunca por el nombre del perfil.
+    "deepseek-v4-flash": "challenger_nan_deepseek_flash",
+    "qwen3.6": "challenger_nan_qwen",
+    "mimo-v2.5": "challenger_nan_mimo",
+    "gemma4": "challenger_nan_gemma",
     # 2026-09-04: la API de nan expone `qwen3.8-flash` y `glm5.3-flash`
     # (verificado contra `GET /v1/models`) y no estaban declarados. Se anaden
     # con la MISMA forma canonica; el test sigue exigiendo un perfil por modelo.
-    "qwen3.8-flash": "challenger_nan_qwen3_8_flash",
-    "glm5.3-flash": "challenger_nan_glm5_3_flash",
+    "qwen3.8-flash": "challenger_nan_qwen_flash",
+    "glm5.3-flash": "challenger_nan_glm_flash",
+    # 2026-09-26: alta nueva, backend recien incorporado por el proveedor.
+    # Familia mimo queda simetrica a qwen/glm: slot normal + slot flash.
+    "mimo-v2.6-flash": "challenger_nan_mimo_flash",
 }
 
 
