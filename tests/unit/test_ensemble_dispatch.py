@@ -503,6 +503,116 @@ def test_leaders_requires_min_n(tmp_path):
     assert raw[:3] != b"\xef\xbb\xbf"
 
 
+def test_family_leaders_aggregates_across_transports(tmp_path):
+    """regenerate_family_leaders agrega POR FAMILIA cruzando transportes: 2
+    filas nan_api/glm5.3-flash + 3 filas nvidia_api/z-ai/glm-5.3, todas con
+    (ticket, ronda, rol) DISTINTOS (_adjudicated_cells deduplica por esa
+    clave -- 5 filas repetidas no producirian n=5) y outcome=adoptada, deben
+    agregar n=5 bajo familia "glm". Control positivo de que MODEL_FAMILY_MAP
+    cruza backend|model correctamente, y de que backend_leaders.json
+    (backend|model) sigue separando las celdas -- la agregacion es ADITIVA,
+    nunca sustituye el ranking existente."""
+    rows = [
+        ("nan_api", "glm5.3-flash"),
+        ("nan_api", "glm5.3-flash"),
+        ("nvidia_api", "z-ai/glm-5.3"),
+        ("nvidia_api", "z-ai/glm-5.3"),
+        ("nvidia_api", "z-ai/glm-5.3"),
+    ]
+    for i, (backend, model) in enumerate(rows):
+        ed.append_scorecard(
+            tmp_path,
+            {
+                "ts": f"t{i}",
+                "event": "ronda",
+                "ticket": f"WOT-FAM-{i:03d}a",
+                "rol": "challenger",
+                "task_type": "code-review",
+                "backend": backend,
+                "model": model,
+                "ronda": 1,
+                "outcome": None,
+                "evidencia": "e",
+                "input_bytes": 10,
+                "context_kind": "diff",
+            },
+        )
+        ed.adjudicate(
+            tmp_path,
+            ticket=f"WOT-FAM-{i:03d}a",
+            ronda=1,
+            rol="challenger",
+            outcome="adoptada",
+            evidence="cmd + salida",
+            adjudicator_backend="fake-adjudicator",
+        )
+
+    family_path = ed.regenerate_family_leaders(tmp_path)
+    assert family_path == tmp_path / ed.FAMILY_LEADERS_REL
+    family_leaders = json.loads(family_path.read_text(encoding="utf-8"))
+    cell = family_leaders["por_task_type"]["code-review"]
+    assert cell["lider"] == {"familia": "glm"}
+    assert cell["n_muestras"] == 5
+    assert cell["tasa_adoptadas"] == 1.0
+    assert family_leaders["unmapped_backend_model_pairs"] == []
+    assert family_leaders["scorecard_sha256"]
+
+    # ADITIVA: backend|model sigue separando las 2 celdas (nan_api|glm5.3-flash
+    # con n=2, nvidia_api|z-ai/glm-5.3 con n=3) -- ninguna alcanza LEADER_MIN_N
+    # sola, asi que backend_leaders.json NO declara lider para esta task_type,
+    # aunque la vista por familia SI lo hace con el total agregado.
+    backend_leaders = json.loads(
+        (tmp_path / ed.LEADERS_REL).read_text(encoding="utf-8")
+    )
+    backend_cell = backend_leaders["por_task_type"]["code-review"]
+    assert backend_cell["lider"] is None
+    assert "rotar" in backend_cell["nota"]
+
+
+def test_family_leaders_unmapped_pair_falls_back_without_losing_history(tmp_path):
+    """Una combinacion (backend, model) SIN entrada en MODEL_FAMILY_MAP cae a
+    familia "sin_familia" -- WARN listado, pero SIGUE contando (nunca se
+    pierde historico del scorecard por un mapeo incompleto)."""
+    for i in range(ed.LEADER_MIN_N):
+        ed.append_scorecard(
+            tmp_path,
+            {
+                "ts": f"t{i}",
+                "event": "ronda",
+                "ticket": f"WOT-UNMAPPED-{i:03d}a",
+                "rol": "challenger",
+                "task_type": "code-review",
+                "backend": "nan_api",
+                "model": "modelo-nunca-mapeado-v9",
+                "ronda": 1,
+                "outcome": None,
+                "evidencia": "e",
+                "input_bytes": 10,
+                "context_kind": "diff",
+            },
+        )
+        ed.adjudicate(
+            tmp_path,
+            ticket=f"WOT-UNMAPPED-{i:03d}a",
+            ronda=1,
+            rol="challenger",
+            outcome="adoptada",
+            evidence="cmd + salida",
+            adjudicator_backend="fake-adjudicator",
+        )
+
+    family_leaders = json.loads(
+        ed.regenerate_family_leaders(tmp_path).read_text(encoding="utf-8")
+    )
+    cell = family_leaders["por_task_type"]["code-review"]
+    assert cell["lider"] == {"familia": "sin_familia"}
+    assert cell["n_muestras"] == ed.LEADER_MIN_N
+    assert (
+        "('nan_api', 'modelo-nunca-mapeado-v9')"
+        in (family_leaders["unmapped_backend_model_pairs"])
+    )
+
+
 # --------------------------------------------------------------------------- #
 # WOT-2026-025y: scorecard hygiene -- session_id, TASK_TYPES, latency_ms,
 # adjudicator identity. Each test below pins a specific mutation branch from

@@ -234,6 +234,50 @@ EXPLORATION_POLICY = (
     "se auto-confirma)"
 )
 
+# WOT-2026-nomenclatura-familia (2026-09-26): mapeo (backend, model) -> familia,
+# EXPLICITO -- nunca heuristica por substring (un "glm" en un nombre de modelo
+# ajeno daria falso positivo). Poblado desde los perfiles nan_api/nvidia_api/
+# opencode vigentes en agents.json tras el renombrado familia+slot. Una
+# combinacion (backend, model) sin entrada cae a "sin_familia" en
+# regenerate_family_leaders (WARN en el artefacto, nunca excluida: no se
+# pierde historico del scorecard por mapeo incompleto). Se actualiza a mano al
+# dar de alta un backend nuevo, igual que ensemble_profiles.
+MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
+    ("nan_api", "deepseek-v4-flash"): "deepseek",
+    # BA14, status=deprecated en ensemble_registry: version historica anterior
+    # del mismo modelo, mismo transporte. Se mapea a la misma familia que su
+    # sucesor -- no se pierde historico del scorecard por deprecar el perfil.
+    ("nan_api", "deepseek-v4-flash-0731"): "deepseek",
+    ("nan_api", "gemma4"): "gemma",
+    ("nan_api", "glm5.3-flash"): "glm",
+    ("nan_api", "mimo-v2.5"): "mimo",
+    ("nan_api", "mimo-v2.6-flash"): "mimo",
+    ("nan_api", "qwen3.6"): "qwen",
+    ("nan_api", "qwen3.8-flash"): "qwen",
+    ("opencode", "opencode-go/glm-5.2"): "glm",
+    ("nvidia_api", "z-ai/glm-5.3"): "glm",
+    ("nvidia_api", "z-ai/glm-5.3-flash"): "glm",
+    ("nvidia_api", "deepseek-ai/deepseek-v4.1-flash"): "deepseek",
+    ("nvidia_api", "moonshotai/kimi-k3"): "kimi",
+    ("nvidia_api", "nvidia/nemotron-3-super-120b-a12b"): "nemotron",
+    # Backends mono-modelo (model=None por diseno VIGENTE, ver docstring de
+    # regenerate_leaders): la familia coincide con el propio backend.
+    ("codex", None): "codex",
+    ("claude", None): "claude",
+    # codex tiene filas HISTORICAS del scorecard (anteriores a la convencion
+    # model=None) con el modelo real anotado -- verificado sobre el scorecard
+    # real 2026-09-26: 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-luna',
+    # 'gpt-6-astra'. Todas mapean a la misma familia "codex" (es un backend
+    # mono-modelo: el modelo que corre por dentro no es el discriminante,
+    # igual que para model=None).
+    ("codex", "gpt-5.4"): "codex",
+    ("codex", "gpt-5.4-mini"): "codex",
+    ("codex", "gpt-5.5"): "codex",
+    ("codex", "gpt-5.6-luna"): "codex",
+    ("codex", "gpt-6-astra"): "codex",
+}
+FAMILY_LEADERS_REL = Path(".agent/runtime/ensemble/backend_family_leaders.json")
+
 PREMISE_CHECK_PREAMBLE = (
     "ROUND 0 - PREMISE CHECK (invariante del dispatcher): ANTES de refinar o "
     "proponer nada, verifica las premisas factuales del material siguiente. "
@@ -1702,6 +1746,91 @@ def regenerate_leaders(project_root: Path) -> Path:
     return out_path
 
 
+def regenerate_family_leaders(project_root: Path) -> Path:
+    """Proyeccion DERIVADA por FAMILIA de modelo, nunca editada a mano.
+
+    Hermana de `regenerate_leaders`: misma fuente (scorecard.jsonl), misma
+    deduplicacion via `_adjudicated_cells` (ultima adjudicacion por
+    (ticket, ronda, rol), supersede pisa por orden), mismo umbral
+    `LEADER_MIN_N`. La diferencia es la IDENTIDAD DE CELDA: aqui es la
+    FAMILIA (`MODEL_FAMILY_MAP[(backend, model)]`) en vez de `backend|model`.
+
+    Responde una pregunta DISTINTA a `regenerate_leaders`: "como rinde GLM en
+    general, cruzando nan_api/opencode/nvidia_api" -- nunca "que LENTE
+    concreta elegir para la proxima ronda" (esa sigue siendo
+    `backend_leaders.json`, sin tocar). Ambas proyecciones coexisten; esta no
+    reemplaza ni oculta la otra.
+
+    Before: `project_root` es el destino-rol con `scorecard.jsonl` en
+        `SCORECARD_REL`.
+    During: agrupa filas adjudicadas por `(task_type, familia)`. Una
+        combinacion `(backend, model)` sin entrada en `MODEL_FAMILY_MAP` cae a
+        familia `"sin_familia"` -- WARN en el artefacto (`unmapped_backend_
+        model_pairs`), NUNCA excluida del conteo: no se pierde historico del
+        scorecard por un mapeo incompleto.
+    After: escribe `FAMILY_LEADERS_REL` con su propio `scorecard_sha256`
+        (misma atestacion de staleness que `backend_leaders.json`) y retorna
+        la ruta.
+    """
+    rows, sha = _read_scorecard(project_root)
+    per_type: dict = {}
+    unmapped: set[tuple[str | None, str | None]] = set()
+    for row in _adjudicated_cells(rows).values():
+        task_type = row.get("task_type") or "desconocido"
+        backend, model = row.get("backend"), row.get("model")
+        familia = MODEL_FAMILY_MAP.get((backend, model))
+        if familia is None:
+            familia = "sin_familia"
+            unmapped.add((backend, model))
+        cells = per_type.setdefault(task_type, {})
+        cell = cells.setdefault(
+            familia,
+            {"familia": familia, "n": 0, "adoptadas": 0, "falsos": 0},
+        )
+        cell["n"] += 1
+        if row.get("outcome") == "adoptada":
+            cell["adoptadas"] += 1
+        if row.get("outcome") in ("falso-positivo", "error-factual"):
+            cell["falsos"] += 1
+
+    por_task_type: dict = {}
+    for task_type, cells in per_type.items():
+        best = max(
+            cells.values(),
+            key=lambda c: (c["adoptadas"] / c["n"] if c["n"] else 0.0, c["n"]),
+        )
+        if best["n"] >= LEADER_MIN_N:
+            por_task_type[task_type] = {
+                "lider": {"familia": best["familia"]},
+                "n_muestras": best["n"],
+                "tasa_adoptadas": round(best["adoptadas"] / best["n"], 3),
+                "falsos": best["falsos"],
+            }
+        else:
+            por_task_type[task_type] = {
+                "lider": None,
+                "nota": f"sin lider, rotar (n={best['n']} < {LEADER_MIN_N})",
+                "n_muestras": best["n"],
+            }
+
+    out = {
+        "generated_at": _now_iso(),
+        "scorecard_sha256": sha,
+        "leader_min_n": LEADER_MIN_N,
+        "por_task_type": por_task_type,
+        "unmapped_backend_model_pairs": sorted(str(p) for p in unmapped),
+        "derivado": (
+            "NUNCA editar a mano: regenerado desde scorecard.jsonl, agrupado "
+            "por familia (MODEL_FAMILY_MAP)"
+        ),
+    }
+    out_path = project_root / FAMILY_LEADERS_REL
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    return out_path
+
+
 def _backend_version(backend_cfg: dict) -> str | None:
     """Version del CLI del backend (best-effort); None para channel=api."""
     executable = backend_cfg.get("executable")
@@ -2908,6 +3037,8 @@ def _cmd_leaders(args, config) -> int:
     project_root = _resolve_project_root(args.project_root)
     out_path = regenerate_leaders(project_root)
     print(f"[leaders] proyeccion regenerada: {out_path}")
+    family_path = regenerate_family_leaders(project_root)
+    print(f"[leaders] proyeccion por familia regenerada: {family_path}")
     return 0
 
 
