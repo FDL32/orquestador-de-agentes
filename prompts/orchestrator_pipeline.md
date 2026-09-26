@@ -429,6 +429,54 @@ Herramientas de auditoria complementarias:
 - usa `<MOTOR_ROOT>/skills/repo-compare/SKILL.md` solo cuando el ticket compare
   contra repos o fuentes externas.
 
+## 1.b-bis Consulta ensemble ad-hoc (fuera de los bucles de gobierno formales)
+
+`<MOTOR_ROOT>/prompts/orchestrator_autonomous_ticket_batch.md` describe 3
+bucles de gobierno FORMALES y registrados (`CONTRACT_AUDIT`, `MANAGER_REVIEW`,
+`CLOSE`; consulta el registro vivo con la skill `/bucle` ->
+`scripts/discover_loops.py --json`, nunca hardcodees los `loop_id` aqui: el
+registro puede crecer o rotar). Esos 3 bucles son la UNICA via de gobierno de
+un ticket -- CONTRACT_AUDIT, MANAGER_REVIEW o CLOSE de un ticket real SIEMPRE
+pasan por el bucle formal, con `loop_id`, nonce (`ensemble_dispatch.py
+emit-nonce`) y `>=N` lentes de `backend_key` distinto. Esta seccion NO abre
+una via de escape a esa regla.
+
+Fuera de esos 3 puntos, un orquestador o Manager en flujo INTERACTIVO puede
+necesitar contrastar una decision de diseno o proceso (no un review de
+codigo de un ticket: por ejemplo, elegir entre varias vias de cierre de
+sesion, validar un renombrado de configuracion, evaluar un diseno antes de
+escribirlo) con varios backends. Esa consulta es legitima, pero:
+
+- **Se declara EXPLICITAMENTE antes de lanzarla, nunca despues ni en
+  silencio.** Frase canonica, greppable, en el mensaje que precede al
+  dispatch: `[AD-HOC CONTRAST] <motivo breve> | perfiles: <lista> | NO es
+  bucle formal L7xx/L8xx, sin loop_id/nonce`.
+- **No produce aprobacion, auditoria ni evidencia equivalente a un bucle
+  formal.** Es contraste, no gobierno: no autoriza ninguna transicion de
+  estado de ticket, no sustituye `CONTRACT_AUDIT`/`MANAGER_REVIEW`/`CLOSE`, y
+  no cuenta como evidencia de revision independiente en la seccion 6.
+- **Regla de migracion:** si la consulta ad-hoc cristaliza en una decision
+  que se va a ejecutar, esa ejecucion pasa a ser gobernada por el bucle
+  formal correspondiente (ticket con `loop_id` y nonce reales) antes de
+  cerrarse -- la consulta ad-hoc solo informo la decision, no la gobierna.
+- **Deja rastro del resultado** en el artefacto de la decision que informa
+  (backlog, work_plan, informe de cierre) -- si el resultado de la consulta
+  solo vive en la conversacion, se repite el problema de memoria privada que
+  esta seccion existe para evitar.
+- **`sensitivity` del payload se clasifica honestamente desde el ORIGEN del
+  script/comando, nunca se reclasifica despues.** Esta es una regla general
+  de dispatch (`privacy_preflight` en `ensemble_dispatch.py`), no exclusiva
+  del ad-hoc: la direccion que un harness fail-closed puede bloquear es
+  `private -> public` (una edicion posterior que afloja la clasificacion). Si
+  el contenido es genuinamente `public`, escribe el script de nuevo con esa
+  clasificacion desde la primera linea, no edites el campo de un script ya
+  escrito.
+
+Ver `<MOTOR_ROOT>/prompts/orchestrator_autonomous_ticket_batch.md` seccion
+"Ensemble governance loops" para la disciplina completa de los 3 bucles
+formales -- esta seccion no la duplica, solo cubre el hueco del flujo
+interactivo.
+
 ## 1.c Presupuesto operativo por fase
 
 Estos limites son presupuestos operativos recomendados para evitar que el
