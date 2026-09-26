@@ -85,8 +85,12 @@ if str(_MOTOR_ROOT) not in sys.path:
 
 try:
     from scripts.backlog_db_compare import load_backlog_rows
+    from scripts.find_similar_signals import _split_row as _split_row_cells
 except ImportError:  # pragma: no cover - ejecucion directa fuera del motor
     from backlog_db_compare import load_backlog_rows  # type: ignore[no-redef]
+    from find_similar_signals import (  # type: ignore[no-redef]
+        _split_row as _split_row_cells,
+    )
 
 RECIBO_MARKER = "BACKLOG-ADMISSION-RECIBO:"
 CORPUS_VERSION = "backlog-admission-corpus-v1"
@@ -187,12 +191,35 @@ def canonical_ids(text: str) -> set[str]:
     return set(ID_RE.findall(text))
 
 
+# Ambos layouts reales del repo ponen `Ticket` en celda 1 o celda 2
+# (`| Prioridad | Ticket | ... |` vs `| Ticket | Estado | ... |`; medido sobre
+# backlog.md + _archive/backlog_done.md, WOT-2026-077a cierre 2026-09-26).
+# Nunca cae mas alla: limitar la busqueda a estas dos celdas es lo que evita
+# que un ID MENCIONADO en prosa (celda Titulo/Nota) se lea como alta nueva.
+_TICKET_CELL_SEARCH_WIDTH = 2
+
+
+def _id_cells_of_row(body: str) -> set[str]:
+    """Ids de la(s) celda(s) de TICKET de una fila, nunca de su prosa.
+
+    Parte la fila en celdas (`_split_row_cells`, respeta pipes escapados) y
+    busca forma canonica SOLO en las primeras `_TICKET_CELL_SEARCH_WIDTH`
+    celdas. Una mencion de un ID dentro de la celda Titulo/Nota de OTRA fila
+    (p.ej. "se decidio no dar de alta WOT-2026-076b") queda fuera adrede: esa
+    celda vive fuera de la ventana de busqueda.
+    """
+    cells = _split_row_cells(body)
+    if not cells:
+        return set()
+    return canonical_ids(" ".join(cells[:_TICKET_CELL_SEARCH_WIDTH]))
+
+
 def row_line_ids(line: str) -> set[str]:
     """Ids de UNA linea anadida del diff, si tiene forma de fila (`|`)."""
     body = line[1:] if line.startswith("+") else line
     if not body.lstrip().startswith("|"):
         return set()
-    return canonical_ids(body)
+    return _id_cells_of_row(body)
 
 
 def _row_ids_of_content(content: bytes) -> set[str]:
@@ -200,7 +227,7 @@ def _row_ids_of_content(content: bytes) -> set[str]:
     ids: set[str] = set()
     for line in norm_newlines(content).decode("utf-8", "replace").splitlines():
         if line.lstrip().startswith("|"):
-            ids.update(canonical_ids(line))
+            ids.update(_id_cells_of_row(line))
     return ids
 
 

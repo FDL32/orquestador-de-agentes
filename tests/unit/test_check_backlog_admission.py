@@ -291,6 +291,33 @@ def test_edicion_que_preserva_id_no_dispara(tmp_path: Path) -> None:
     assert "altas detectadas: 0" in out
 
 
+def test_mencion_de_id_en_prosa_no_dispara(tmp_path: Path) -> None:
+    """WOT-2026-077a (cierre 2026-09-26): un ID ajeno mencionado en la PROSA de
+    una fila (celda Titulo/Nota, nunca la celda Ticket) NO es alta nueva.
+
+    Caso real que caza esto: ampliar la fila de un ticket existente con una
+    nota tipo "se decidio NO dar de alta WOT-2026-XXXXx, se amplia esta fila
+    en su lugar" -- el ID aparece en texto libre, no como ticket de la fila.
+    Antes del fix, `row_line_ids`/`_row_ids_of_content` corrian el regex de
+    ID sobre la FILA ENTERA (`canonical_ids(body)`), asi que ese ID mencionado
+    colaba como "alta nueva sin recibo" y bloqueaba el cierre canonico de un
+    ticket ajeno y limpio.
+    """
+    repo = init_repo(tmp_path, backlog_extra=row("WOT-2026-923a", "titulo original"))
+    mentioning_row = (
+        "| Media | WOT-2026-923a | titulo EDITADO [se decidio AMPLIAR esta "
+        "fila en vez de dar de alta WOT-2026-923b, ver barrido de similitud] "
+        "deliverable_type: code | s | pending | - | test | - |\n"
+    )
+    (repo / BACKLOG_REL).write_text(HEADER + mentioning_row, encoding="utf-8")
+    git(repo, "add", BACKLOG_REL)
+    git(repo, "commit", "-m", "amplia 923a, menciona 923b en prosa")
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "altas detectadas: 0" in out
+    assert "WOT-2026-923b" not in out
+
+
 def test_alta_commiteada_con_staging_vacio_dispara(tmp_path: Path) -> None:
     """DoD (e): el staging NO es el rango: alta YA COMMITEADA con staging vacio
     dispara igual."""
