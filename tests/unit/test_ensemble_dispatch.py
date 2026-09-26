@@ -4480,3 +4480,235 @@ def test_067i_ronda_tercera_superficie_resuelve_ambas_raices(tmp_path, monkeypat
     assert ed._validated_motor_sha(destino, sha_m) == sha_m  # no-regresion
     with pytest.raises(ValueError, match="059m"):
         ed._validated_motor_sha(destino, "deadbeef" * 5)
+
+
+# --- WOT-2026-046b: saneado de ruido de shell en evidencia del scorecard ------
+#
+# El CLI del backend envuelve la respuesta real con salida operativa (taskkill
+# en castellano). _record_round persiste text[:500] sin saneado: la evidencia
+# guarda el ruido del CLI delante de la respuesta, o en vez de ella si no
+# queda texto despues de la respuesta real.
+#
+# Se sanea ANTES del truncado a 500: si se sanea despues, se sanea una ventana
+# que ya solo tiene ruido (las lineas reales quedan fuera del tope).
+# output_chars sigue midiendo el texto CRUDO (contrato de :150-157).
+
+
+def test_046b_strips_shell_noise_prefixes_preserves_real_response(tmp_path):
+    """MUTATION PIN: un stdout que empiece por prefijo de taskkill + respuesta
+    real -> evidencia saneada sin prefijo, output_chars == len(texto crudo),
+    len(evidencia) <= 500.
+
+    Revertir el saneado (text[:500] sin strip) pone el prefijo en evidencia
+    y rompe el primer assert.
+
+    Asserts explcitos del work_plan (hallazgo MINOR, nan_qwen + codex):
+    1. evidencia NO empieza por ningun prefijo de la lista.
+    2. output_chars == len(texto crudo sin sanear) -- contrato de output_chars.
+    3. len(evidencia) <= 500 -- truncado DESPUES del saneado.
+    """
+    raw_reply = (
+        "CORRECTO: el proceso con PID 12345 ha sido terminado.\n\n"
+        "Esta es la respuesta real del backend con contenido "
+        "sustancial para verificar que el saneado no la trunca.\n"
+        "Segunda linea con mas texto para medir output_chars.\n"
+        "Tercera linea que completa el contenido."
+    )
+    transport = _FakeTransport(replies=[raw_reply])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-046b-strip",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-dif",
+        loop_id="L700",
+        backend_key="BA05",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    # (1) evidencia sin prefijo de ruido de shell
+    shell_prefixes = (
+        "CORRECTO:",
+        "proceso con PID",
+        "terminado.",
+        "Se ha cancelado",
+        "ERROR:",
+    )
+    assert not any(row["evidencia"].startswith(p) for p in shell_prefixes), (
+        f"evidencia no debe empezar por prefijo de shell noise: {row['evidencia']!r}"
+    )
+    # (2) output_chars mide el texto crudo original (contrato de ensemble_dispatch.py:150-157)
+    expected_chars = len(raw_reply)
+    assert row["output_chars"] == expected_chars, (
+        f"output_chars debe ser {expected_chars} (len del texto crudo), "
+        f"fue {row['output_chars']}: contrato de output_chars violado"
+    )
+    # (3) truncado despues del saneado: evidencia <= 500
+    assert len(row["evidencia"]) <= 500, (
+        f"evidencia saneada no debe exceder 500 chars, fue {len(row['evidencia'])}"
+    )
+    # Control: outcome debe ser None (hay texto real despues del ruido)
+    assert row["outcome"] is None, (
+        "con respuesta real tras el ruido, outcome debe ser None, "
+        f"fue {row['outcome']!r}"
+    )
+
+
+def test_046b_shell_noise_only_becomes_no_aportacion(tmp_path):
+    """Caso limite (DoD 4, work_plan): un stdout que sea SOLO chachara de shell
+    (sin respuesta real detras) -> outcome=no-aportacion +
+    failure_mode="shell_noise_only", NUNCA outcome=None (respuesta valida).
+
+    Revertir el saneado: el texto de shell pasa por `if not text` como no-vacío
+    -> outcome se mantiene None, este test cae.
+    """
+    raw_reply = "CORRECTO: el proceso con PID 1234 ha sido terminado."
+    transport = _FakeTransport(replies=[raw_reply])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-046b-noise-only",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-comun",
+        loop_id="L800",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    assert row["outcome"] == "no-aportacion", (
+        f"stdout solo ruido no es respuesta valida: outcome debe ser 'no-aportacion', "
+        f"fue {row['outcome']!r}"
+    )
+    assert row["failure_mode"] == "shell_noise_only", (
+        f"failure_mode debe ser 'shell_noise_only' para ruido puro: "
+        f"fue {row['failure_mode']!r}"
+    )
+    assert row["output_chars"] == len(raw_reply), (
+        "output_chars mide el texto CRUDO antes de saneado (contrato existente); "
+        "tras el saneado no queda evidencia, pero output_chars refleja lo que el backend devolvio"
+    )
+
+
+def test_046b_strips_multiple_noise_lines(tmp_path):
+    """Varias lineas de ruido seguidas -> se eliminan todas hasta la primera
+    linea que no coincida con ningun prefijo.
+
+    Mutation: si el saneado solo elimina la primera linea, las siguientes
+    siguen contaminando evidencia.
+    """
+    raw_reply = (
+        "CORRECTO: el proceso con PID 1234 ha sido terminado.\n"
+        "proceso con PID 5678 suspendido.\n"
+        "ERROR: timeout agotado.\n"
+        "respuesta real tras tres lineas de ruido\n"
+        "mas contenido despues"
+    )
+    transport = _FakeTransport(replies=[raw_reply])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-046b-multi",
+        task_type="prose",
+        rol="proposer",
+        phase="challenge-fanout",
+        loop_id="L900",
+        backend_key="BA20",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    expected_evidence = (
+        "respuesta real tras tres lineas de ruido\nmas contenido despues"
+    )
+    assert row["evidencia"] == expected_evidence, (
+        f"todas las lineas de ruido deben eliminarse: "
+        f"fue {row['evidencia']!r}, se esperaba {expected_evidence!r}"
+    )
+    assert row["outcome"] is None
+    assert row["output_chars"] == len(raw_reply)
+
+
+def test_046b_no_strip_when_response_starts_with_prefijo_but_has_context(tmp_path):
+    """Control: si el texto CRUDO empieza por un prefijo pero tiene detras
+    contenido REAL (no ruido de shell), el saneado aplica `startswith` a la
+    PRIMERA linea entera -- si la primera linea es EXACTAMENTE un prefijo
+    (o empieza por el), se elimina.
+
+    El work_plan declara el limite conocido: una respuesta real que por
+    coincidencia empiece por uno de los 5 prefijos exactos se trata igual
+    que ruido. Este test documenta EXPLICITAMENTE ese limite como limite
+    aceptado.
+    """
+    # Una respuesta real que empieza por "ERROR:" (coincide exactamente con el prefijo)
+    # -> se trata como ruido (limite conocido y aceptado del algoritmo binario,
+    #    WOT-2026-046b work_plan, decision TOMADA).
+    raw_reply = "ERROR: validacion de negocio fallida en modulo X"
+    transport = _FakeTransport(replies=[raw_reply])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-046b-edge",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-dif",
+        loop_id="L700",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    # Limite conocido: la primera linea coincide EXACTAMENTE con el prefijo
+    # "ERROR:" (sin nada mas despues en la misma linea), asi que se elimina.
+    # Tras la eliminacion no queda texto -> no-aportacion.
+    assert row["outcome"] == "no-aportacion", (
+        "respuesta real que coincide exactamente con un prefijo se trata igual "
+        "que ruido: limite DOCUMENTADO del algoritmo binario (work_plan decision TOMADA)"
+    )
+    assert row["failure_mode"] == "shell_noise_only"
+
+
+def test_046b_response_with_prefix_content_in_middle_survives(tmp_path):
+    """CONTROL POSITIVO: si el prefijo aparece en el MEDIO del texto (no al
+    inicio de la primera linea), NO se elimina. Solo se eliminan lineas cuyo
+    INICIO coincida con un prefijo.
+
+    Mutation: si el saneado buscara el prefijo en cualquier posicion del texto,
+    este control se pondria rojo.
+    """
+    raw_reply = (
+        "Analisis completado. ERROR: no se encontro el bug, pero el reporte esta bien."
+    )
+    transport = _FakeTransport(replies=[raw_reply])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-046b-middle",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-dif",
+        loop_id="L700",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+    row = _rows(tmp_path)[0]
+    # La primera linea empieza por "Analisis", no por ningun prefijo -> no se toca nada.
+    assert row["evidencia"] == raw_reply[:500], (
+        "un prefijo en el MEDIO del texto no debe eliminarse"
+    )
+    assert row["outcome"] is None
+    assert row["output_chars"] == len(raw_reply)

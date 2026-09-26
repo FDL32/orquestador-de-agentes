@@ -2127,6 +2127,24 @@ def _record_round(
     # evidencia. La derivacion original (texto vacio -> no-aportacion) se
     # conserva intacta cuando no se pasa override.
     text = (reply or "").strip()
+    # WOT-2026-046b: saneado de ruido de shell (CLI wrapper) del inicio del
+    # texto. Se aplica ANTES del truncado a 500 y ANTES del check de
+    # transporte fallido (048g) porque un transporte fallido cuyo texto empiece
+    # por uno de estos prefijos sigue siendo fallido; el saneado solo elimina
+    # la capa del CLI, no clasifica el transporte.
+    # Prefijos de ruido medidos en el corpus (taskkill en castellano, Codex):
+    _shell_prefixes = (
+        "CORRECTO:",
+        "proceso con PID",
+        "terminado.",
+        "Se ha cancelado",
+        "ERROR:",
+    )
+    _raw_chars = len(text)  # output_chars mide el texto CRUDO (DoD 2, contract)
+    _lines = text.splitlines() if text else []
+    while _lines and any(_lines[0].startswith(p) for p in _shell_prefixes):
+        _lines.pop(0)
+    text = "\n".join(_lines)
     # WOT-2026-048g: un transporte que fallo (rc != 0) NO es una intervencion.
     # Se deriva AQUI, en el registrador, y no solo en el bucle `run`, porque
     # `run_loop_round` -- la ruta que usa el gobierno por chat -- no pasa por el
@@ -2137,6 +2155,11 @@ def _record_round(
         rc_line = text[len(_TRANSPORT_FAILED_PREFIX) :].split("\n", 1)[0].strip()
         outcome_override = outcome_override or "no-aportacion"
         failure_mode = failure_mode or f"transport_failed: {rc_line}"
+    # WOT-2026-046b: si tras el saneado no queda texto, es backend mudo/caido,
+    # no una respuesta valida. El mismo mecanismo que 048g para rc != 0.
+    if not text:
+        outcome_override = outcome_override or "no-aportacion"
+        failure_mode = failure_mode or "shell_noise_only"
     append_scorecard(
         project_root,
         {
@@ -2166,11 +2189,11 @@ def _record_round(
             # emitido fuera.
             "commit_sha": commit_sha,
             "challenge_nonce": challenge_nonce,
-            # WOT-2026-043q: se mide sobre `text` (crudo, ya stripeado) y NO
+            # WOT-2026-043q: se mide sobre `text` (crudo, ANTES de saneado 046b) y NO
             # sobre `evidencia`, que va truncada a 500. 0 == el backend no
             # aporto nada; es el unico observable que distingue "corrio y callo"
             # de "corrio y respondio".
-            "output_chars": len(text),
+            "output_chars": _raw_chars,
             # WOT-2026-048g: el DECLARADO va en `model`; este es el que el
             # backend dijo usar. Que difieran es la senal que 047y no podia dar.
             "model_reported": profile.get(_REPORTED_MODEL_KEY),
