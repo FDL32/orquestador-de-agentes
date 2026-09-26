@@ -351,9 +351,11 @@ class TestTimeoutExplicit:
         last_run_log = runtime_dir / "last-run.log"
         last_run_log.unlink(missing_ok=True)
 
-        # Create a minimal test file that hangs forever
-        # Uses os._exit() in a subprocess to avoid pytest hooks cleaning up
-        hang_test = tmp_path / "test_hang.py"
+        # Create a minimal test file that hangs forever at PROJECT_ROOT.
+        # This location is NOT under tests/ (so it won't be auto-discovered
+        # by pytest's testpaths), but pytest WILL run it when passed explicitly.
+        # The file is cleaned up in the finally block below.
+        hang_test = PROJECT_ROOT / "_tmp_test_hang_for_c3.py"
         hang_test.write_text(
             "import subprocess, sys\n"
             "def test_hang():\n"
@@ -364,51 +366,69 @@ class TestTimeoutExplicit:
             encoding="utf-8",
         )
 
-        env = os.environ.copy()
-        env["PYTHONUTF8"] = "1"
-        env["MAX_RUNTIME_SECONDS"] = "3"
-
-        cmd = [
-            sys.executable,
-            str(RUNNER_PATH),
-            "--level",
-            "unit",
-            "--",
-            str(hang_test),
-        ]
-
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
-        )
-
-        # Wait for the runner to kill the hung subprocess and write last-run.json
-        for _ in range(30):
-            if last_run.exists():
-                data = json.loads(last_run.read_text(encoding="utf-8"))
-                status = data.get("status")
-                if status in ("finished", "timeout", "aborted", "error"):
-                    break
-            time.sleep(1)
-
-        proc.terminate()
         try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            env = os.environ.copy()
+            env["PYTHONUTF8"] = "1"
+            env["MAX_RUNTIME_SECONDS"] = "3"
 
-        assert last_run.exists(), "last-run.json must be written after the timeout"
-        data = json.loads(last_run.read_text(encoding="utf-8"))
-        status = data.get("status")
-        assert status == "timeout", (
-            f"last-run.json status must be 'timeout', not {status!r}. "
-            "The communicate(timeout=) must have fired."
-        )
+            cmd = [
+                sys.executable,
+                str(RUNNER_PATH),
+                "--level",
+                "unit",
+                "--",
+                str(hang_test),
+            ]
+
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(PROJECT_ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+
+            # Wait for the runner to kill the hung subprocess and write last-run.json
+            for _ in range(30):
+                if last_run.exists():
+                    data = json.loads(last_run.read_text(encoding="utf-8"))
+                    status = data.get("status")
+                    if status in ("finished", "timeout", "aborted", "error"):
+                        break
+                time.sleep(1)
+
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+            assert last_run.exists(), "last-run.json must be written after the timeout"
+            data = json.loads(last_run.read_text(encoding="utf-8"))
+            status = data.get("status")
+            assert status == "timeout", (
+                f"last-run.json status must be 'timeout', not {status!r}. "
+                "The communicate(timeout=) must have fired."
+            )
+            # WOT-2026-077a (Blocker 1 follow-up): a timed-out run must not
+            # lose whatever output pytest produced before it hung -- the
+            # `except TimeoutExpired` branch previously never populated
+            # `lines`, so last-run.log came out EMPTY for every timeout,
+            # discarding the exact diagnostic (which test was running) this
+            # ticket exists to preserve.
+            assert last_run_log.exists(), (
+                "last-run.log must be written even when the run times out"
+            )
+            log_text = last_run_log.read_text(encoding="utf-8")
+            assert log_text.strip(), (
+                "last-run.log must not be empty on timeout: partial pytest "
+                "output captured before the hang must be preserved, not "
+                "discarded"
+            )
+        finally:
+            hang_test.unlink(missing_ok=True)
 
 
 class TestReconcileDeadRunResilience:

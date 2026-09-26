@@ -670,7 +670,9 @@ class TestFailedTestIdsInSummary:
     ) -> None:
         """When exit_code==0, failed_test_ids must be [] in last-run.json."""
         mod = load_runner_module()
-        data = self._stub_main(mod, tmp_path, monkeypatch, stream_return=(0, [], []))
+        data = self._stub_main(
+            mod, tmp_path, monkeypatch, stream_return=(0, [], [], False)
+        )
         assert data.get("exit_code") == 0
         assert data.get("failed_test_ids") == [], (
             "failed_test_ids must be [] when exit_code==0"
@@ -686,7 +688,7 @@ class TestFailedTestIdsInSummary:
             "tests/foo/test_bar.py::TestFoo::test_two",
         ]
         data = self._stub_main(
-            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids, [])
+            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids, [], False)
         )
         assert data.get("exit_code") == 1
         assert data.get("failed_test_ids") == failing_ids, (
@@ -738,7 +740,7 @@ class TestFailedTestIdsInSummary:
         )
 
         # Stub helpers so main() runs without a real repo. Green run this time.
-        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], [], False))
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
         lock_obj = {
             "pid": 0,
@@ -951,7 +953,7 @@ class TestErrorTestIdsInSummary:
         mod = load_runner_module()
         error_ids = ["tests/fake.py::test_teardown_error"]
         data = self._stub_main(
-            mod, tmp_path, monkeypatch, stream_return=(1, [], error_ids)
+            mod, tmp_path, monkeypatch, stream_return=(1, [], error_ids, False)
         )
         assert data.get("exit_code") == 1
         assert data.get("failed_test_ids") == []
@@ -971,7 +973,7 @@ class TestErrorTestIdsInSummary:
             "tests/foo/test_bar.py::TestFoo::test_err",
         ]
         data = self._stub_main(
-            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids, error_ids)
+            mod, tmp_path, monkeypatch, stream_return=(1, failing_ids, error_ids, False)
         )
         assert data.get("exit_code") == 1
         assert data.get("failed_test_ids") == failing_ids
@@ -990,7 +992,9 @@ class TestErrorTestIdsInSummary:
     def test_error_test_ids_empty_when_green(self, tmp_path: Path, monkeypatch) -> None:
         """Green run: both failed_test_ids and error_test_ids are []."""
         mod = load_runner_module()
-        data = self._stub_main(mod, tmp_path, monkeypatch, stream_return=(0, [], []))
+        data = self._stub_main(
+            mod, tmp_path, monkeypatch, stream_return=(0, [], [], False)
+        )
         assert data.get("exit_code") == 0
         assert data.get("failed_test_ids") == []
         assert data.get("error_test_ids") == []
@@ -1067,11 +1071,14 @@ class TestErrorTestIdsInSummary:
         monkeypatch.setattr(mod.subprocess, "Popen", mock_popen)
 
         # Call the REAL stream_pytest (not a replica)
-        returncode, failed_ids, error_ids = mod.stream_pytest(["pytest", "tests/"])
+        returncode, failed_ids, error_ids, timed_out = mod.stream_pytest(
+            ["pytest", "tests/"]
+        )
 
         assert returncode == 1
         assert failed_ids == ["tests/unit/test_a.py::test_fail"]
         assert error_ids == ["tests/unit/test_b.py::test_teardown_err"]
+        assert timed_out is False
         # Critical: must not be empty - if _error_re is broken/removed, this fails
         assert len(error_ids) > 0, (
             "stream_pytest must capture ERROR lines via _error_re; "
@@ -1359,7 +1366,7 @@ class TestTelemetrySanityWarning:
         monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
         # exit_code 0, and stream_pytest must NOT overwrite our log.
-        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], [], False))
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha0")
         monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
         monkeypatch.setattr(mod, "release_lock", lambda: None)
@@ -1498,7 +1505,7 @@ class TestRunHistoryInSummary:
 
         def _fake_stream(cmd):
             last_run_log.write_text(log_text, encoding="utf-8")
-            return (0, [], [])
+            return (0, [], [], False)
 
         monkeypatch.setattr(mod, "stream_pytest", _fake_stream)
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "deadbeef")
@@ -1587,7 +1594,7 @@ class TestRunHistoryTestIsolation:
         monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
         monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
         monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", harness_hist)  # aislado
-        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], [], False))
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha0")
         monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
         monkeypatch.setattr(mod, "release_lock", lambda: None)
@@ -1649,7 +1656,7 @@ class TestRunHistoryTestIsolation:
         monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
-        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], []))
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], [], False))
         monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha0")
         monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
         monkeypatch.setattr(mod, "release_lock", lambda: None)
@@ -1909,7 +1916,7 @@ class TestSuiteRegressionReportWiring:
         """
         mod = load_runner_module()
         code, out = self._run_main(
-            mod, tmp_path, monkeypatch, stream_return=(0, [], [])
+            mod, tmp_path, monkeypatch, stream_return=(0, [], [], False)
         )
         assert code == 0
         assert "[suite-regression]" in out, (
@@ -1941,7 +1948,7 @@ class TestSuiteRegressionReportWiring:
         monkeypatch.setattr(srr, "analyze", _boom)
 
         code, _out = self._run_main(
-            mod, tmp_path, monkeypatch, stream_return=(0, [], [])
+            mod, tmp_path, monkeypatch, stream_return=(0, [], [], False)
         )
         assert code == 0, (
             "a reporter that raises must NOT change main()'s exit_code: "
@@ -1960,7 +1967,7 @@ class TestSuiteRegressionReportWiring:
         mod = load_runner_module()
         failing = ["tests/foo/test_bar.py::test_x"]
         code, out = self._run_main(
-            mod, tmp_path, monkeypatch, stream_return=(1, failing, [])
+            mod, tmp_path, monkeypatch, stream_return=(1, failing, [], False)
         )
         assert code == 1, "red suite must keep exit_code 1 with the reporter wired"
         assert "[suite-regression]" in out
@@ -2061,7 +2068,7 @@ class TestStampSurvivesMutatingHooks:
         monkeypatch.setattr(
             mod,
             "stream_pytest",
-            stream_pytest_override or (lambda cmd: (0, [], [])),
+            stream_pytest_override or (lambda cmd: (0, [], [], False)),
         )
         monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
         monkeypatch.setattr(mod, "release_lock", lambda: None)
