@@ -961,16 +961,22 @@ def select_test_runner(
     return command, "unittest"
 
 
-def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # noqa: C901
-    """Run pytest, stream output, and return (returncode, failed_test_ids, error_test_ids).
+def stream_pytest(  # noqa: C901
+    command: list[str],
+) -> tuple[int, list[str], list[str], bool]:
+    """Run pytest, stream output, and return (returncode, failed_test_ids,
+    error_test_ids, timed_out).
 
     WOT-2026-017a: parses lines matching ^FAILED\\s+(\\S+) from the stream to
     capture the node-ids of failing tests (stdlib-only, no plugin required).
     WOT-2026-016k: also parses ^ERROR\\s+(\\S+) to capture teardown-crash
     node-ids in a separate list, keeping FAILED != ERROR semantics.
-    Returns the returncode, the list of failed test node-ids, and the list of
+    WOT-2026-077a (Blocker 1): also returns `timed_out`, True iff the
+    process was killed after exceeding MAX_RUNTIME_SECONDS (subprocess.
+    TimeoutExpired), False on normal completion.
+    Returns the returncode, the list of failed test node-ids, the list of
     error test node-ids (both empty when returncode == 0 or when no matching
-    lines appear in the output).
+    lines appear in the output), and the timed_out flag.
     """
     import re
 
@@ -1022,9 +1028,11 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
             _max_runtime = float(os.environ.get("MAX_RUNTIME_SECONDS", "14400"))
         except (ValueError, TypeError):
             _max_runtime = 14400  # 4h default
+        timed_out = False
         try:
             stdout_output, _ = process.communicate(timeout=_max_runtime)
         except subprocess.TimeoutExpired:
+            timed_out = True
             process.terminate()
             try:
                 process.wait(timeout=10)
@@ -1035,17 +1043,33 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
             # Mark the run as "timeout" (not "aborted"): this distinguishes
             # an internal exceedance of the configured time limit from an
             # external process death.
+            # WOT-2026-077a (Blocker 1 follow-up): TimeoutExpired.output/
+            # .stdout come back None in practice (measured on Windows) even
+            # when the child wrote data before hanging -- the exception does
+            # not carry the buffered pipe content. Draining stdout with a
+            # second, short communicate() AFTER terminate()/kill() retrieves
+            # whatever was already buffered (the pipe is closing, so this
+            # call returns promptly instead of blocking again). Losing this
+            # is exactly the diagnostic (which test was running) this ticket
+            # exists to preserve.
+            try:
+                stdout_output, _ = process.communicate(timeout=5)
+            except (subprocess.TimeoutExpired, ValueError):
+                stdout_output = ""
         else:
             # Normal completion (no TimeoutExpired): stdout contains ALL output.
-            stdout_output = stdout_output or ""
             returncode = process.returncode
-            # Stream output and build lines list for failed/error parsing.
-            for line in stdout_output.splitlines():
-                try:
-                    print(line, end="")
-                except UnicodeEncodeError:
-                    print(line.encode("ascii", "replace").decode("ascii"), end="")
-                lines.append(line)
+
+        # Stream output and build lines list for failed/error parsing. Runs
+        # for BOTH branches: a timeout still has whatever the drain above
+        # recovered, and it must not be discarded (WOT-2026-077a follow-up).
+        stdout_output = stdout_output or ""
+        for line in stdout_output.splitlines():
+            try:
+                print(line, end="")
+            except UnicodeEncodeError:
+                print(line.encode("ascii", "replace").decode("ascii"), end="")
+            lines.append(line)
     except KeyboardInterrupt:
         process.terminate()
         try:
@@ -1069,7 +1093,7 @@ def stream_pytest(command: list[str]) -> tuple[int, list[str], list[str]]:  # no
         if m:
             error_ids.append(m.group(1))
 
-    return returncode, failed_ids, error_ids
+    return returncode, failed_ids, error_ids, timed_out
 
 
 _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|skipped|errors?)\b")
@@ -1798,9 +1822,15 @@ def main() -> int:  # noqa: C901
         print_default_discovery_notice(args_mode)
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
         state_snapshot = snapshot_canonical_state()
-        exit_code, failed_ids, error_ids = stream_pytest(command)
+        exit_code, failed_ids, error_ids, timed_out = stream_pytest(command)
         summary["status"] = "finished"
         summary["exit_code"] = exit_code
+        # WOT-2026-077a (Blocker 1): an internal MAX_RUNTIME_SECONDS exceedance
+        # must not be recorded as `status: finished` indistinguishable from a
+        # normal completion.
+        if timed_out:
+            summary["status"] = "timeout"
+            summary["timed_out"] = True
         # WOT-2026-055j: un `exit_code: 5` (pytest: NINGUN TEST RECOLECTADO) no
         # puede quedar registrado como `status: finished` indistinguible de una
         # corrida legitima. Ver helper _mark_no_tests_collected.
