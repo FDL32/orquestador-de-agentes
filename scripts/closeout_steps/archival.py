@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +18,35 @@ from scripts.manager_feedback_helpers import (
     extract_ticket_id_from_feedback as _canonical_extract_ticket_id_from_feedback,
     find_manager_feedback_files as _canonical_find_manager_feedback_files,
 )
+
+
+_COUNTS_RE = re.compile(r"^COUNTS archived=(\d+) recognized=(\d+) present=(\d+)$")
+
+
+def _parse_counts_protocol(stdout: str | None) -> tuple[int, int, int] | None:
+    """Parse the COUNTS line of the archive_execution_log.py protocol
+    (WOT-2026-068c, producer side since WOT-2026-068d).
+
+    Before: `stdout` is the captured stdout of the producer script (str or
+        None when the process produced no output).
+    During: Scans lines in order with the exact protocol regex and returns on
+        the FIRST exact match; SKIPPED/CONTENT lines are ignored. A missing
+        protocol line and a malformed COUNTS line are the SAME outcome.
+    After: Returns (archived, recognized, present) on match, or None when no
+        line matches (caller must fall back to the returncode criterion).
+        Never raises.
+    """
+    if not stdout:
+        return None
+    for line in stdout.splitlines():
+        match = _COUNTS_RE.match(line)
+        if match:
+            return (
+                int(match.group(1)),
+                int(match.group(2)),
+                int(match.group(3)),
+            )
+    return None
 
 
 def step_archive_collaboration(
@@ -124,10 +154,24 @@ def step_archive_execution_log(
             timeout=60,
         )
         if result.returncode == 0:
+            counts = _parse_counts_protocol(getattr(result, "stdout", None))
+            if counts is None:
+                return step_result_cls(
+                    name="archive_execution_log",
+                    status="PASS",
+                    detail="Execution log archived",
+                )
+            archived, recognized, present = counts
+            detail = (
+                "Execution log archived "
+                f"(archived={archived}, recognized={recognized}, "
+                f"present={present})"
+            )
+            status = "WARN" if present > 0 and recognized == 0 else "PASS"
             return step_result_cls(
                 name="archive_execution_log",
-                status="PASS",
-                detail="Execution log archived",
+                status=status,
+                detail=detail,
             )
         return step_result_cls(
             name="archive_execution_log",
