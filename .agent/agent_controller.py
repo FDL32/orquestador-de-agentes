@@ -3076,6 +3076,13 @@ def _run_pre_handoff_guard(plan_id: str, json_output: bool) -> dict:  # noqa: C9
             "--ticket-id",
             plan_id,
             "--json",
+            # WOT-2026-079d: la barrera de suite canonica se movio de fase, de
+            # --mark-ready a --manager-approve (ver
+            # _enforce_canonical_suite_before_approval). NO se relaja ningun
+            # criterio del guard: la misma verificacion, obligatoria y
+            # fail-closed, corre ahora en el punto que WOT-2026-039m ya
+            # declaraba como el correcto ("Cierre final tras aprobacion").
+            "--defer-suite-check",
         ]
         if _MOTOR_ROOT != PROJECT_ROOT and (_MOTOR_ROOT / ".git").exists():
             cmd += ["--motor-root", str(_MOTOR_ROOT)]
@@ -5079,6 +5086,92 @@ def _sync_markdowns_to_completed(ticket_id: str) -> None:
         write_file(STATE_FILE, updated_state)
 
 
+def _enforce_canonical_suite_before_approval(
+    ticket_id: str, json_output: bool
+) -> dict | None:
+    """WOT-2026-079d: barrera OBLIGATORIA de suite canonica en --manager-approve.
+
+    Reemplaza el bloque 2.b de pre_handoff_guard.assert_canonical_suite_green,
+    que WOT-2026-039m re-secuencio fuera de --mark-ready (Cierre final tras
+    aprobacion). Esta funcion es la barrera equivalente en su nueva fase: NO
+    relaja ningun criterio (mismo status/exit_code/tested_commit_sha/subset de
+    regresion que el guard original), solo cambia CUANDO se invoca.
+
+    Bucle L720 (WOT-2026-079d, 3/4 lentes convergentes): el check debe cubrir
+    TAMBIEN las rutas de backfill/idempotencia del handler, no solo el flujo
+    normal READY_FOR_REVIEW -> COMPLETED -- un cierre chat-driven que deja
+    execution_log.md en COMPLETED sin haber pasado nunca por --mark-ready
+    esquivaria el check si este solo viviera al final del flujo normal. Por
+    eso el CALLER (`_handle_manager_approve`) invoca esta funcion ANTES de
+    cualquiera de sus ramas de retorno que cierren el ticket (idempotente,
+    backfill o flujo normal), no solo antes de la cascada final.
+
+    Before: ticket_id es el ticket activo ya validado contra work_plan.md por
+        el caller. json_output controla el formato del mensaje de bloqueo.
+    During: lee deliverable_type y delivery_authority del work_plan.md activo,
+        resuelve el repo de entrega (PROJECT_ROOT o _MOTOR_ROOT segun
+        delivery_authority), e invoca assert_canonical_suite_green sobre el.
+    After: devuelve None si la suite esta verde (o el deliverable_type esta
+        exento); devuelve un dict de diagnostico si bloquea, para que el
+        caller lo imprima y retorne 1 SIN emitir ninguna cascada de cierre.
+    """
+    from scripts.pre_handoff_guard import (
+        assert_canonical_suite_green,
+        resolve_delivery_root,
+    )
+
+    plan_content = read_file(WORK_PLAN)
+    project_root = PROJECT_ROOT.resolve()
+    motor_root = _MOTOR_ROOT.resolve() if (_MOTOR_ROOT / ".git").exists() else None
+    delivery_authority = _read_delivery_authority(plan_content)
+    delivery_root = resolve_delivery_root(
+        project_root=project_root,
+        motor_root=motor_root,
+        delivery_authority=delivery_authority,
+    )
+    deliverable_type = _read_deliverable_type(plan_content)
+
+    try:
+        suite_ok, suite_diag = assert_canonical_suite_green(
+            delivery_root, deliverable_type
+        )
+    except Exception as exc:
+        suite_ok = False
+        suite_diag = {
+            "canonical_suite_required": True,
+            "reason": "guard_error",
+            "canonical_suite_error": (
+                f"{type(exc).__name__}: {exc}. Canonical-suite gate could not "
+                "run; blocking manager-approve (fail-closed)."
+            ),
+        }
+
+    if suite_ok:
+        return None
+
+    diagnostic = {
+        "error": "canonical_suite_not_green",
+        "ticket_id": ticket_id,
+        "canonical_suite": suite_diag,
+        "remediation": suite_diag.get(
+            "remediation",
+            "Run the canonical suite from repo_motor and commit first: "
+            "python scripts/run_pytest_safe.py --level all; then retry "
+            "--manager-approve.",
+        ),
+    }
+    if json_output:
+        print(json.dumps(diagnostic, indent=2))
+    else:
+        print(
+            f"[ERROR] Ticket {ticket_id}: canonical suite is not fresh-green "
+            f"(WOT-2026-079d, verified at --manager-approve). "
+            f"{diagnostic['remediation']}",
+            file=sys.stderr,
+        )
+    return diagnostic
+
+
 def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches across validation and closeout
     ticket_id: str, json_output: bool, force_mode: bool, dry_run: bool = False
 ) -> int:
@@ -5187,6 +5280,19 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
                     f"[INFO] Ticket {ticket_id} is already COMPLETED (SUPERVISOR_CLOSED event exists)."
                 )
             return 0
+
+    # WOT-2026-079d: barrera de suite canonica ANTES de cualquier rama que
+    # cierre el ticket -- incluida la de backfill de abajo. Un cierre
+    # chat-driven que dejo execution_log.md en COMPLETED sin pasar por
+    # --mark-ready no debe poder reconciliarse hacia el bus sin verificar la
+    # suite: eso reabriria exactamente el hueco que WOT-2026-010c cerraba.
+    # dry_run no bloquea (es un preview, no muta nada); force_mode tampoco
+    # exime esta barrera (--force en este handler cubre SOLO la validacion
+    # de ultimo commit, no la suite -- ver bloque WP-2026-188 mas abajo).
+    if not dry_run:
+        _suite_block = _enforce_canonical_suite_before_approval(ticket_id, json_output)
+        if _suite_block is not None:
+            return 1
 
     # Markdown says COMPLETED but the bus (canonical authority) has no
     # closeout: chat-driven closeouts leave this drift, and --validate then

@@ -19,6 +19,21 @@ def temp_bus(tmp_path: Path) -> EventBus:
     return EventBus(runtime_dir)
 
 
+@pytest.fixture(autouse=True)
+def _suite_gate_is_green():
+    """WOT-2026-079d: --manager-approve now enforces the canonical-suite gate
+    (moved from --mark-ready, see _enforce_canonical_suite_before_approval).
+    This test file exercises the CLOSEOUT CASCADE and COMMIT gate, not the
+    suite gate -- autouse-patch it green so those 17 tests keep isolating the
+    behavior they were written for. The suite gate itself has its own focal
+    coverage in tests/test_pre_handoff_guard.py::TestCanonicalSuiteGreenGate."""
+    with patch(
+        "agent_controller._enforce_canonical_suite_before_approval",
+        return_value=None,
+    ):
+        yield
+
+
 @pytest.fixture
 def mock_files(tmp_path: Path) -> dict:
     """Create mock collaboration files."""
@@ -765,6 +780,149 @@ class TestBackfillIgnoresReconciledEvents:
         assert _backfill_builder_exit(temp_bus, ticket) is True
         assert _backfill_builder_exit(temp_bus, ticket) is False, (
             "segunda pasada debe ser no-op: el backfill no puede acumular filas"
+        )
+
+
+class TestCanonicalSuiteGateMovedToManagerApprove:
+    """WOT-2026-079d: la suite canonica se re-secuencio (WOT-2026-039m) de
+    --mark-ready a --manager-approve. Estos tests exercitan la barrera REAL:
+    el override de esta fixture desactiva el autouse _suite_gate_is_green
+    del modulo (que patchea la funcion a verde para el resto de la suite)."""
+
+    @pytest.fixture(autouse=True)
+    def _suite_gate_is_green(self):
+        """Override del autouse del modulo: NO-OP, deja la funcion real viva."""
+        yield
+
+    def test_blocks_when_suite_not_green_even_via_backfill_path(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """CRITICO (bucle L720, 3/4 lentes convergentes, WOT-2026-079d):
+        un cierre chat-driven que deja execution_log.md en COMPLETED sin
+        haber pasado nunca por --mark-ready NO debe poder reconciliarse hacia
+        el bus sin verificar la suite -- eso reabriria el hueco que
+        WOT-2026-010c cerraba. MUTACION: si el check viviera solo al final
+        del flujo normal (como en la primera version de este fix), este test
+        pasaria con result=0 (el backfill jamas invocaria el check). Con el
+        check colocado ANTES de la rama de backfill, debe bloquear."""
+        from agent_controller import _handle_manager_approve
+
+        # Chat-driven drift: markdown dice COMPLETED, bus vacio -- exactamente
+        # el escenario de test_backfills_closeout_when_markdown_completed_but_bus_empty,
+        # pero SIN parchear _enforce_canonical_suite_before_approval a verde.
+        mock_files["exec_log"].write_text(
+            "# Execution Log\n\n## WP-TEST-001\n**Estado:** COMPLETED\n"
+        )
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
+            # _MOTOR_ROOT sin .git real -> resolve_delivery_root cae a
+            # project_root; sin last-run.json en ningun sitio -> bloquea.
+            patch("agent_controller._MOTOR_ROOT", tmp_path / "no_such_motor"),
+            patch("agent_controller.PROJECT_ROOT", tmp_path),
+        ):
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=False, force_mode=False
+            )
+
+        assert result == 1, (
+            "un cierre chat-driven (rama de backfill) no debe poder "
+            "reconciliarse hacia el bus sin la suite canonica verde"
+        )
+
+    def test_mark_ready_no_longer_requires_suite(self) -> None:
+        """MUTACION (a): --mark-ready ya no bloquea por falta de suite -- la
+        barrera se movio de fase, no desaparecio. Revertir _run_pre_handoff_guard
+        para que deje de pasar --defer-suite-check reproduciria el bloqueo
+        original (PREFLIGHT_FAILED) que este ticket resuelve."""
+        import inspect
+
+        import agent_controller
+
+        source = inspect.getsource(agent_controller._run_pre_handoff_guard)
+        assert "--defer-suite-check" in source, (
+            "_run_pre_handoff_guard debe pasar --defer-suite-check al CLI de "
+            "pre_handoff_guard.py; sin esto, --mark-ready vuelve a exigir la "
+            "suite y reproduce el bloqueo real medido en WOT-2026-068c"
+        )
+
+    def test_manager_approve_enforces_suite_before_cascade(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """MUTACION (c): el check de suite corre ANTES de la cascada de
+        cierre, nunca despues. Si _emit_manager_approve_cascade se emitiera
+        antes de _enforce_canonical_suite_before_approval, este test veria
+        REVIEW_DECISION/STATE_CHANGED en el bus pese a que la suite bloquea."""
+        from agent_controller import _handle_manager_approve
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
+            patch("agent_controller._MOTOR_ROOT", tmp_path / "no_such_motor"),
+            patch("agent_controller.PROJECT_ROOT", tmp_path),
+        ):
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=False, force_mode=False
+            )
+
+        assert result == 1
+        events = temp_bus.read_events(ticket_id="WP-TEST-001")
+        assert len(events) == 0, (
+            "ningun evento de cascada debe emitirse cuando la suite bloquea "
+            f"el cierre; eventos encontrados: {[e.event_type for e in events]}"
+        )
+
+    def test_documentation_ticket_exempt_from_suite_gate_at_manager_approve(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """CONTROL NEGATIVO: deliverable_type=documentation sigue exento del
+        check de suite en --manager-approve, igual que ya lo estaba en
+        --mark-ready (_SUITE_REQUIRED_TYPES). No penaliza tickets doc-only."""
+        from agent_controller import _handle_manager_approve
+
+        mock_files["work_plan"].write_text(
+            "# Plan de Trabajo: WP-TEST-001\n\n"
+            "## Metadata\n"
+            "- **ID:** WP-TEST-001\n"
+            "- **Estado:** APPROVED\n"
+            "- **deliverable_type:** documentation\n"
+        )
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
+            # Sin last-run.json en ningun sitio: si el check no eximiera
+            # 'documentation', esto bloquearia igual que el test CRITICO de
+            # arriba.
+            patch("agent_controller._MOTOR_ROOT", tmp_path / "no_such_motor"),
+            patch("agent_controller.PROJECT_ROOT", tmp_path),
+        ):
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=False, force_mode=False
+            )
+
+        assert result == 0, (
+            "deliverable_type=documentation debe seguir exento del check de "
+            "suite canonica en manager-approve"
         )
 
     def test_backfill_emits_when_bus_has_no_builder_exit_at_all(

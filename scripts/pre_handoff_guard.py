@@ -1193,6 +1193,7 @@ def run_guard(
     project_root: Path,
     ticket_id: str,
     motor_root: Path | None = None,
+    defer_suite_check: bool = False,
 ) -> dict:
     """
     Ejecutar el guard de handoff.
@@ -1202,6 +1203,18 @@ def run_guard(
         ticket_id: Ticket ID.
         motor_root: Motor root para resolver rutas ``### repo_motor`` en FLT
             namespaced. Si None, scope_discrepancy solo cubre rutas de destino.
+        defer_suite_check: WOT-2026-079d. NO es una relajacion de seguridad:
+            es un cambio de FASE. Si True, el bloque 2.b (assert_canonical_
+            suite_green) NO corre aqui porque la suite canonica se
+            re-secuencio (WOT-2026-039m) al "Cierre final tras aprobacion" --
+            la barrera equivalente y obligatoria corre en --manager-approve
+            (ver `_enforce_canonical_suite_before_approval` en
+            agent_controller.py), incluidas sus rutas de backfill/idempotencia
+            (WOT-2026-079d bucle L720: 3/4 lentes senalaron que un flag
+            llamado "skip" sugiere relajacion, no reubicacion -- de ahi el
+            nombre "defer"). Default False: preserva el comportamiento
+            historico para cualquier consumidor que no pase el flag
+            explicitamente (cero regresion).
 
     Returns:
         dict con:
@@ -1315,22 +1328,35 @@ def run_guard(
     _delivery_root = resolve_delivery_root(
         project_root=project_root, motor_root=motor_root, delivery_authority=_da
     )
-    try:
-        _dt = _read_deliverable_type_from_active_plan(project_root)
-        _suite_ok, _suite_diag = assert_canonical_suite_green(_delivery_root, _dt)
-        result["canonical_suite"] = _suite_diag
-        if not _suite_ok:
-            result["valid"] = False
-    except Exception as exc:
-        result["valid"] = False
+    if defer_suite_check:
+        # WOT-2026-079d: la suite se verifica en --manager-approve (Cierre
+        # final tras aprobacion, WOT-2026-039m), no aqui. Declarado, no
+        # silencioso: el diagnostico deja constancia del diferimiento
+        # explicito -- NO significa que la barrera se haya relajado, solo
+        # que corre en otra fase (ver docstring de defer_suite_check).
         result["canonical_suite"] = {
-            "canonical_suite_required": True,
-            "reason": "guard_error",
-            "canonical_suite_error": (
-                f"{type(exc).__name__}: {exc}. Canonical-suite gate could not "
-                "run; blocking handoff (fail-closed)."
-            ),
+            "canonical_suite_required": False,
+            "reason": "deferred_to_manager_approve",
+            "deferred_to": "manager-approve",
+            "deferred_per_ticket": "WOT-2026-079d",
         }
+    else:
+        try:
+            _dt = _read_deliverable_type_from_active_plan(project_root)
+            _suite_ok, _suite_diag = assert_canonical_suite_green(_delivery_root, _dt)
+            result["canonical_suite"] = _suite_diag
+            if not _suite_ok:
+                result["valid"] = False
+        except Exception as exc:
+            result["valid"] = False
+            result["canonical_suite"] = {
+                "canonical_suite_required": True,
+                "reason": "guard_error",
+                "canonical_suite_error": (
+                    f"{type(exc).__name__}: {exc}. Canonical-suite gate could not "
+                    "run; blocking handoff (fail-closed)."
+                ),
+            }
 
     # 2.c WOT-2026-010i: code/mixed packets must carry a visible productive
     # commit naming the ticket in the delivery repo. Doc-types are exempt.
@@ -1534,6 +1560,15 @@ def main() -> int:
         action="store_true",
         help="Output result as JSON",
     )
+    parser.add_argument(
+        "--defer-suite-check",
+        action="store_true",
+        help=(
+            "WOT-2026-079d: difiere el bloque 2.b (assert_canonical_suite_green) "
+            "a --manager-approve. NO relaja el criterio: la barrera equivalente "
+            "corre ahi (Cierre final tras aprobacion, WOT-2026-039m), no aqui."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1560,7 +1595,12 @@ def main() -> int:
             print("[WARN] Repository is not git-managed. Skipping guard checks.")
         return 0
 
-    result = run_guard(project_root, ticket_id, motor_root=motor_root)
+    result = run_guard(
+        project_root,
+        ticket_id,
+        motor_root=motor_root,
+        defer_suite_check=args.defer_suite_check,
+    )
 
     if args.json:
         print(json.dumps(result, indent=2))

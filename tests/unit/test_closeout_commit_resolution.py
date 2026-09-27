@@ -13,6 +13,7 @@ imitating the init_git_repo pattern from tests/test_pre_handoff_guard.py.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -28,6 +29,33 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     """Run a git command in repo, failing loudly on error."""
     return subprocess.run(
         ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    )
+
+
+def _head_sha(repo: Path) -> str:
+    return _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def _write_fresh_green_last_run(repo: Path) -> None:
+    """WOT-2026-079d: --manager-approve now enforces the canonical-suite gate
+    (moved from --mark-ready). These commit-resolution tests exercise the
+    commit gate, not the suite gate, so they need a fresh-green last-run.json
+    on the SAME repo used as the delivery root (delivery_authority=repo_motor
+    in manager_files -> resolve_delivery_root returns the mocked _MOTOR_ROOT,
+    which _drive_manager_approve points at this repo)."""
+    d = repo / ".agent" / "runtime" / "pytest-safe"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "last-run.json").write_text(
+        json.dumps(
+            {
+                "status": "finished",
+                "exit_code": 0,
+                "tested_commit_sha": _head_sha(repo),
+                "level": "all",
+                "args_mode": "default_discovery",
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -196,7 +224,13 @@ def manager_files(tmp_path: Path) -> dict:
 
 def _drive_manager_approve(repo: Path, files: dict, bus, force_mode: bool) -> int:
     """Run _handle_manager_approve with the real _check_last_commit against a
-    real git repo used as the closeout commit root."""
+    real git repo used as the closeout commit root.
+
+    WOT-2026-079d: manager_files declares delivery_authority=repo_motor, so
+    _enforce_canonical_suite_before_approval resolves the delivery root via
+    _MOTOR_ROOT. Mocked to `repo` (same repo _resolve_closeout_commit_root
+    already points at) so assert_canonical_suite_green reads THIS repo's
+    last-run.json, not the real motor's."""
     from agent_controller import _handle_manager_approve
 
     with (
@@ -208,6 +242,7 @@ def _drive_manager_approve(repo: Path, files: dict, bus, force_mode: bool) -> in
         patch("agent_controller.STATE_FILE", files["state"]),
         patch("agent_controller.AGENT_DIR", files["collab_dir"].parent),
         patch("agent_controller._resolve_closeout_commit_root", return_value=repo),
+        patch("agent_controller._MOTOR_ROOT", repo),
     ):
         return _handle_manager_approve(TICKET, json_output=False, force_mode=force_mode)
 
@@ -224,6 +259,7 @@ class TestManagerApproveBuriedCommit:
 
         bus = EventBus(tmp_path / "runtime" / "events")
         _buried_ticket_repo(repo)
+        _write_fresh_green_last_run(repo)
 
         result = _drive_manager_approve(repo, manager_files, bus, force_mode=False)
 
@@ -233,11 +269,13 @@ class TestManagerApproveBuriedCommit:
         self, repo: Path, manager_files: dict, tmp_path: Path
     ) -> None:
         """CONTROL NEGATIVO (DoD c): no ticket commit anywhere in history ->
-        blocked unless --force."""
+        blocked unless --force. Suite is fresh-green so the block is
+        attributable to the commit gate, not to WOT-2026-079d's suite gate."""
         from bus.event_bus import EventBus
 
         bus = EventBus(tmp_path / "runtime" / "events")
         _commit(repo, "churn.txt", "chore: unrelated work")
+        _write_fresh_green_last_run(repo)
 
         result = _drive_manager_approve(repo, manager_files, bus, force_mode=False)
 
@@ -248,11 +286,17 @@ class TestManagerApproveBuriedCommit:
     ) -> None:
         """CONTROL NEGATIVO (DoD c): --force still bypasses exactly this block.
         Same repo + same projections as the blocked case; only force_mode
-        differs, so a 0 here proves the escape hatch survived the fix."""
+        differs, so a 0 here proves the escape hatch survived the fix.
+
+        WOT-2026-079d: --force does NOT exempt the canonical-suite gate (by
+        design -- see _enforce_canonical_suite_before_approval), so the suite
+        must be fresh-green here too, or this would fail on the NEW gate
+        instead of proving the commit-gate escape hatch survived."""
         from bus.event_bus import EventBus
 
         bus = EventBus(tmp_path / "runtime_force" / "events")
         _commit(repo, "churn.txt", "chore: unrelated work")
+        _write_fresh_green_last_run(repo)
 
         result = _drive_manager_approve(repo, manager_files, bus, force_mode=True)
 
