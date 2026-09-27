@@ -2405,6 +2405,16 @@ class TestHandleManagerApproveIntegration:
         monkeypatch.setattr(
             agent_controller, "_emit_manager_approve_cascade", lambda bus, tid: None
         )
+        # WOT-2026-079d: the canonical-suite gate at manager-approve is
+        # exercised by its own focal suite (test_manager_approve.py). This
+        # class predates that gate and does not construct a fresh-green
+        # last-run.json, so patch it green to keep isolating the commit-gate
+        # behavior these tests were written for.
+        monkeypatch.setattr(
+            agent_controller,
+            "_enforce_canonical_suite_before_approval",
+            lambda ticket_id, json_output: None,
+        )
         # Patch commit check to return the supplied message
         monkeypatch.setattr(
             agent_controller,
@@ -2562,6 +2572,14 @@ class TestHandleManagerApproveDryRun:
             agent_controller,
             "_emit_manager_approve_cascade",
             lambda bus, tid: calls.append("cascade"),
+        )
+        # WOT-2026-079d: see TestHandleManagerApproveIntegration._setup for
+        # why this class patches the suite gate green instead of the gate's
+        # own focal coverage in test_manager_approve.py.
+        monkeypatch.setattr(
+            agent_controller,
+            "_enforce_canonical_suite_before_approval",
+            lambda ticket_id, json_output: None,
         )
         monkeypatch.setattr(
             agent_controller, "_check_last_commit", lambda root, tid: (True, "ok")
