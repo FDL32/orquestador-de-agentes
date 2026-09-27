@@ -283,6 +283,14 @@ sitios (`pre_handoff_guard`, `collect_system_health`), pero ambos corren DESPUES
 en la auditoria de salud. Te avisan cuando ya pagaste la corrida. El unico momento en que esa
 informacion AHORRA trabajo es antes del commit.
 
+**No uses `-k` como evidencia de cobertura de una funcion compartida** (medido 2026-09-27,
+WOT-2026-079d): el filtro selecciona por nombre de clase/fichero, no por grafo de call-sites. Corregir
+`_handle_manager_approve` y verificar solo con `-k "pre_handoff or manager_approve"` dio verde
+mientras dejaba pasar 3 regresiones reales en `tests/test_agent_controller.py`, que ejercita la MISMA
+funcion desde clases con nombres distintos al filtro. Solo la suite canonica completa (`--level all`)
+las detecto. La evidencia final de cobertura de una funcion compartida debe venir de la suite completa,
+nunca de un `-k` por nombre.
+
 ### Convencion de encoding y gap v1 (WOT-2026-010e)
 
 - **Preferir Write/Edit sobre heredoc** para contenido no-ASCII en archivos de
