@@ -1066,9 +1066,9 @@ def stream_pytest(  # noqa: C901
         stdout_output = stdout_output or ""
         for line in stdout_output.splitlines():
             try:
-                print(line, end="")
+                print(line)
             except UnicodeEncodeError:
-                print(line.encode("ascii", "replace").decode("ascii"), end="")
+                print(line.encode("ascii", "replace").decode("ascii"))
             lines.append(line)
     except KeyboardInterrupt:
         process.terminate()
@@ -1079,7 +1079,7 @@ def stream_pytest(  # noqa: C901
             process.wait()
         raise
     finally:
-        LAST_RUN_LOG.write_text("".join(lines), encoding="utf-8")
+        LAST_RUN_LOG.write_text("\n".join(lines), encoding="utf-8")
 
     failed_ids: list[str] = []
     for line in lines:

@@ -1085,6 +1085,69 @@ class TestErrorTestIdsInSummary:
             "if _error_re is removed or broken, error_ids stays empty"
         )
 
+    def test_stream_pytest_writes_last_run_log_with_real_newlines(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Regression test for WOT-2026-077a follow-up (2026-09-26..28):
+        stream_pytest's communicate() branch used `stdout_output.splitlines()`
+        (which strips line terminators) but then wrote LAST_RUN_LOG via
+        `"".join(lines)` -- no separator reintroduced. Every real `--level all`
+        run since commit c41430c collapsed last-run.log into ONE physical
+        line (measured: 10241 bytes, 0 newlines), which made
+        parse_run_metrics's `_parse_durations_table` (line-based parsing)
+        return an empty `top_slowest` on every completed run since then --
+        silently breaking the suite_optimization.md protocol and the
+        WOT-2026-025w disparador that both depend on that field.
+
+        Mutation: revert LAST_RUN_LOG.write_text to `"".join(lines)` -> this
+        goes RED (no newline between the two stdout lines below).
+        """
+        mod = load_runner_module()
+
+        class _MockProcess:
+            returncode = 0
+
+            def __init__(self, *a, **kw):
+                pass
+
+            @property
+            def stdout(self):
+                return self
+
+            def communicate(self, timeout=None):
+                return (
+                    "1.23s call     tests/unit/test_a.py::test_one\n"
+                    "4.56s call     tests/unit/test_b.py::test_two\n",
+                    None,
+                )
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+        monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **kw: _MockProcess())
+
+        last_run_log = tmp_path / "last-run.log"
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+
+        mod.stream_pytest(["pytest", "tests/"])
+
+        written = last_run_log.read_text(encoding="utf-8")
+        assert "\n" in written, (
+            "LAST_RUN_LOG must preserve real newlines between stdout lines; "
+            f"got a single physical line: {written!r}"
+        )
+        lines = written.splitlines()
+        assert lines == [
+            "1.23s call     tests/unit/test_a.py::test_one",
+            "4.56s call     tests/unit/test_b.py::test_two",
+        ]
+
 
 # =============================================================================
 # WOT-2026-020f: state_leak covers *_WOT-*.md + basetemp outside repo
