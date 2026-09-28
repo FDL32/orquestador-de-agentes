@@ -2913,6 +2913,160 @@ class TestBackendKeyMatchesProfile:
         assert "--backend-key BA06" in str(exc.value)
 
 
+# =============================================================================
+# WOT-2026-068k-followup: _classify_transport_failure (FP-014 seguimiento,
+# ronda adversarial Codex+GLM 2026-09-28). Casos REALES capturados en la
+# sesion que motivo el clasificador; los tests pinean el veredicto medido, no
+# uno hipotetico.
+# =============================================================================
+
+
+def test_classify_quota_needs_status_and_marker():
+    """Caso real: nan_api HTTP 402 con 'allowance exhausted' -> quota_exhausted.
+
+    Mutation: si el clasificador decidiera SOLO por status==402 (sin exigir
+    el marcador), este test seguiria en verde pero test_classify_400_sin_marcador_es_unknown
+    (abajo) se pondria rojo -- ambos juntos pinean que status SOLO no basta.
+    """
+    exc = ed.TransportError(
+        "HTTPError | HTTP 402 | Payment Required",
+        status=402,
+        body=(
+            '{"error":{"message":"deepseek-v4-flash allowance exhausted: '
+            '3,000,302,448 of 3,000,000,000 tokens used","type":'
+            '"monthly_cap_reached","code":"402"}}'
+        ),
+    )
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_QUOTA
+
+
+def test_classify_model_unavailable_needs_status_and_marker():
+    """Caso real: modelo retirado del perfil, HTTP 400 'is not supported'."""
+    exc = ed.TransportError(
+        "HTTPError | HTTP 400 | Bad Request",
+        status=400,
+        body=(
+            '{"error":{"type":"invalid_request_error","message":'
+            "\"The 'gpt-6-astra' model is not supported when using Codex "
+            'with a ChatGPT account."}}'
+        ),
+    )
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_MODEL_UNAVAILABLE
+
+
+def test_classify_network_timeout_no_status():
+    """Caso real: TimeoutError puro de socket, sin status HTTP (nvidia_api)."""
+    exc = TimeoutError("The read operation timed out")
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_NETWORK
+
+
+def test_classify_400_sin_marcador_es_unknown():
+    """ROJO previo del defecto adversarial (Codex, severidad media): un 400
+    generico SIN marcador de texto (ej. payload invalido, no modelo retirado)
+    NO debe clasificarse como model_unavailable solo por el status.
+
+    Mutation: si el clasificador volviera a decidir por status==400 en
+    solitario (regresion al diseño pre-ronda-adversarial), este test se
+    pondria rojo -- devolveria model_unavailable en vez de unknown.
+    """
+    exc = ed.TransportError(
+        "HTTPError | HTTP 400 | Bad Request",
+        status=400,
+        body='{"error":{"type":"invalid_request_error","message":"max_tokens must be a positive integer"}}',
+    )
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_UNKNOWN
+
+
+def test_classify_402_sin_marcador_es_unknown():
+    """Mismo principio que el test anterior, para la categoria cuota."""
+    exc = ed.TransportError(
+        "HTTPError | HTTP 402 | Payment Required",
+        status=402,
+        body='{"error":{"message":"card declined"}}',
+    )
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_UNKNOWN
+
+
+def test_classify_texto_no_reconocido_es_unknown():
+    """Un RuntimeError generico sin status/body (auth por-invocacion ausente,
+    p.ej.) no calza con ninguna categoria -- unknown es la respuesta correcta,
+    no un defecto."""
+    exc = RuntimeError("algo salio mal de forma no clasificada")
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_UNKNOWN
+
+
+def test_classify_504_status_sin_texto_es_network():
+    """status 504/524 solo, SIN texto reconocido, sigue clasificando como red
+    (a diferencia de cuota/modelo, el status HTTP de gateway timeout es
+    suficientemente inequivoco por si solo)."""
+    exc = ed.TransportError("Gateway error", status=504, body="")
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_NETWORK
+
+
+def test_smoke_profile_incluye_failure_class_en_fallo(monkeypatch):
+    """DoD: failure_class SIEMPRE presente en el dict de retorno de
+    smoke_profile, con la etiqueta correcta cuando falla."""
+
+    def _raising_send(*_a, **_kw):
+        raise ed.TransportError(
+            "HTTP 402",
+            status=402,
+            body='{"error":{"message":"allowance exhausted"}}',
+        )
+
+    monkeypatch.setattr(ed, "send_to_profile", _raising_send)
+    result = ed.smoke_profile("proposer_claude", config=_config())
+    assert result["alive"] is False
+    assert result["failure_class"] == ed._FAILURE_CLASS_QUOTA
+
+
+def test_smoke_profile_failure_class_none_en_exito(monkeypatch):
+    """DoD: failure_class es None explicito (no ausente) cuando alive=True."""
+
+    def _fake_send(profile_name, messages, **_kw):
+        return "PONG-019o"
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    result = ed.smoke_profile("proposer_claude", config=_config(), nonce="PONG-019o")
+    assert result["alive"] is True
+    assert "failure_class" in result
+    assert result["failure_class"] is None
+
+
+def test_preflight_profile_incluye_failure_class_en_fallo(monkeypatch):
+    """Mismo contrato que smoke_profile, para preflight_profile."""
+
+    def _raising_send(*_a, **_kw):
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(ed, "send_to_profile", _raising_send)
+    result = ed.preflight_profile("proposer_claude", config=_config())
+    assert result["alive"] is False
+    assert result["failure_class"] == ed._FAILURE_CLASS_NETWORK
+
+
+def test_preflight_profile_con_content_sample_trunca_y_usa_fragmento(monkeypatch):
+    """content_sample sustituye el prompt sintetico y se trunca al tope
+    declarado -- verifica que el mensaje enviado contiene el fragmento
+    truncado, no el bundle completo."""
+    captured = {}
+
+    def _fake_send(profile_name, messages, **_kw):
+        captured["messages"] = messages
+        return "algo PREFLIGHT-OK algo"
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    huge_sample = "X" * (ed._PREFLIGHT_SAMPLE_MAX_CHARS + 500)
+    ed.preflight_profile(
+        "proposer_claude", config=_config(), content_sample=huge_sample
+    )
+    sent_content = captured["messages"][0]["content"]
+    assert "FRAGMENTO" in sent_content
+    # El fragmento en el prompt no debe exceder el tope declarado.
+    fragment_start = sent_content.index("---FRAGMENTO---") + len("---FRAGMENTO---\n")
+    assert len(sent_content) - fragment_start <= ed._PREFLIGHT_SAMPLE_MAX_CHARS
+
+
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {

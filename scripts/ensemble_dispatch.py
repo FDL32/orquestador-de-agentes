@@ -908,6 +908,9 @@ def _collect_sse_content(resp, deadline: float, api_key: str | None) -> str:
     return content
 
 
+_API_MAX_TOKENS = 8192
+
+
 def _transport_api(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
 ) -> str:
@@ -923,6 +926,15 @@ def _transport_api(
     pineados) se lee y parsea EXACTAMENTE como antes. No hay flag por perfil
     ni fallback runtime a no-stream: un flag dejaria el 524 como default
     silencioso del proximo perfil.
+
+    `max_tokens` (medido 2026-09-28): el body no lo llevaba, y un modelo con
+    razonamiento interno (p.ej. mimo-v2.6-flash) puede agotar su presupuesto
+    de salida DENTRO del `reasoning_content` antes de emitir `content`, sin
+    limite del lado del cliente -- coincide con varios `empty_content_despite_
+    sentinel` del scorecard. `_API_MAX_TOKENS` acota la respuesta sin
+    silenciar el error: si el modelo sigue sin producir `content` dentro de
+    ese presupuesto, `_collect_sse_content`/el parser no-SSE siguen fallando
+    igual de explicito que antes (I6, sin cambiar esa rama).
     """
     key_env = profile["api_key_env"]
     api_key = os.environ.get(key_env)
@@ -936,6 +948,7 @@ def _transport_api(
             "messages": messages,
             "temperature": 0,
             "stream": True,
+            "max_tokens": _API_MAX_TOKENS,
         }
     ).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310 -- https exigido por el validador
@@ -1851,6 +1864,98 @@ def _backend_version(backend_cfg: dict) -> str | None:
         return None
 
 
+# WOT-2026-068k-followup (pedido explicito: "para que cuando un agente frio
+# lanza nvidia o nan o otro modelo, sepa cual es el problema y el usuario
+# pueda tomar medidas", 2026-09-28): `TransportError` ya guarda `.status` y
+# `.body` (redactado), pero nada los clasifica -- smoke/preflight solo pegan
+# el mensaje crudo en `detail`, y un agente sin el historial de esta sesion
+# no puede distinguir "hay que esperar al reset de cuota" de "hay que
+# cambiar el modelo del perfil" de "es un problema de red pasajero" sin leer
+# prosa libre. Las 3 categorias vienen de errores REALES vistos hoy mismo:
+# `monthly_cap_reached`/"allowance exhausted" (nan_api, HTTP 402),
+# `invalid_request_error`/"is not supported" (Codex, HTTP 400, modelo
+# retirado del perfil), y timeouts sin status HTTP (nvidia_api, socket).
+_FAILURE_CLASS_QUOTA = "quota_exhausted"
+_FAILURE_CLASS_MODEL_UNAVAILABLE = "model_unavailable"
+_FAILURE_CLASS_NETWORK = "network_timeout"
+_FAILURE_CLASS_UNKNOWN = "unknown"
+
+_QUOTA_MARKERS = (
+    "monthly_cap_reached",
+    "allowance exhausted",
+    "usage limit",
+    "rate_limit_exceeded",
+    "insufficient_quota",
+)
+# WOT-2026-068k-followup, ronda adversarial (Codex + GLM, 2026-09-28):
+# "invalid_request_error" RETIRADO -- ambas lentes lo senalaron como
+# demasiado generico (un 400 por prompt-demasiado-largo o parametro
+# invalido TAMBIEN trae ese type, y no es "modelo no disponible"). Los
+# marcadores restantes son especificos al caso real medido (Codex,
+# gpt-6-astra retirado del perfil).
+_MODEL_UNAVAILABLE_MARKERS = (
+    "is not supported",
+    "model_not_found",
+    "does not exist",
+    "unknown model",
+    "invalid model",
+)
+_NETWORK_MARKERS = (
+    "timeouterror",
+    "timed out",
+    "gateway timeout",
+    "connectionerror",
+    "connection refused",
+)
+
+
+def _classify_transport_failure(exc: Exception) -> str:
+    """Etiqueta corta y ESTABLE para un fallo de dispatch, legible sin contexto.
+
+    Before: `exc` es la excepcion capturada en el `except Exception` de
+        `smoke_profile`/`preflight_profile` (normalmente `TransportError`,
+        pero tambien `TimeoutError`/`RuntimeError` genericos de mas arriba
+        en la pila -- por eso NO asume `.status`/`.body`, los lee con
+        `getattr` y cae a texto libre si faltan).
+    During: puro, sin I/O. Combina `str(exc)` con `.body` (si existe) en un
+        solo texto en minusculas. WOT-2026-068k-followup (ronda adversarial
+        Codex+GLM, 2026-09-28): el `status` HTTP NUNCA basta solo -- Codex
+        midio que `status == 400`/`402` en solitario clasificaria cualquier
+        400 (payload invalido, auth mal formada) como "modelo no
+        disponible", y cualquier 402 no-de-cuota como "cuota". Cada
+        categoria exige status Y AL MENOS un marcador de texto del cuerpo;
+        el status por si solo NUNCA decide. Orden fijo (cuota -> modelo ->
+        red): un cuerpo de cuota que mencione "does not exist" en otro
+        campo (nombre de modelo dentro del mensaje) sigue siendo cuota.
+    After: una de `_FAILURE_CLASS_*` (nunca lanza). `unknown` es una
+        respuesta LEGITIMA, no un bug: significa que el texto no calzo con
+        ninguna familia conocida (incluye un status 400/402/504 SIN
+        marcador de texto reconocido) y un humano/agente debe leer `detail`
+        tal cual -- no se debe inferir mas alla de lo que el texto dice.
+    LIMITE CONOCIDO (declarado, no resuelto): un cuelgue SIN excepcion
+        (backend vivo segun smoke pero que nunca completa una ronda real,
+        ej. modelo degradado del lado del proveedor) no llega aqui -- solo
+        se clasifica lo que SI lanzo una excepcion. Si el wrapper agota su
+        propio timeout, la excepcion resultante (`TimeoutError`) cae en
+        `network_timeout`, aunque la causa real pueda ser "backend vivo
+        pero indeciso" en vez de "sin red" -- ambas lentes confirmaron que
+        hoy son indistinguibles desde fuera sin una señal adicional (ver
+        propuesta_classify_transport_failure_20260928.md, P3).
+    """
+    status = getattr(exc, "status", None)
+    body = getattr(exc, "body", None) or ""
+    haystack = f"{exc} {body}".lower()
+    has_quota_marker = any(marker in haystack for marker in _QUOTA_MARKERS)
+    has_model_marker = any(marker in haystack for marker in _MODEL_UNAVAILABLE_MARKERS)
+    if (status == 402 and has_quota_marker) or (status is None and has_quota_marker):
+        return _FAILURE_CLASS_QUOTA
+    if (status == 400 and has_model_marker) or (status is None and has_model_marker):
+        return _FAILURE_CLASS_MODEL_UNAVAILABLE
+    if any(marker in haystack for marker in _NETWORK_MARKERS) or status in (504, 524):
+        return _FAILURE_CLASS_NETWORK
+    return _FAILURE_CLASS_UNKNOWN
+
+
 def smoke_profile(
     profile_name: str,
     *,
@@ -1882,12 +1987,117 @@ def smoke_profile(
             "profile": profile_name,
             "alive": False,
             "detail": f"{type(exc).__name__}: {exc}",
+            "failure_class": _classify_transport_failure(exc),
         }
     alive = nonce in (reply or "")
     return {
         "profile": profile_name,
         "alive": alive,
         "detail": (reply or "")[:200].strip(),
+        "failure_class": None,
+    }
+
+
+# FP-014 (docs/KNOWN_FAILURE_PATTERNS.md): un smoke con nonce trivial
+# ("PONG-...") pasa en backends que luego cuelgan o fallan silenciosos con un
+# prompt real -- un modelo razonador puede responder al instante a "ping" y
+# agotar su presupuesto pensando sobre una pregunta con mas sustancia, sin
+# emitir nunca `content` (empty_content_despite_sentinel). Este prompt fuerza
+# un razonamiento MODERADO (una pregunta con 3 pasos, no una palabra) para
+# que el preflight detecte esa clase de fallo antes del fanout, sin gastar el
+# bundle real (varios KB) en la comprobacion.
+_PREFLIGHT_PROMPT = (
+    "Tienes tres tareas breves. (1) Suma 47 y 85. (2) Nombra un antonimo de "
+    "'rapido'. (3) Repite exactamente este token al final de tu respuesta: "
+    "{nonce}"
+)
+
+# WOT-2026-068k-followup (propuesta D, bucle L800 sobre docs/KNOWN_FAILURE_
+# PATTERNS.md FP-014, adjudicado por Codex): el prompt SINTETICO de arriba no
+# es representativo del payload real -- medido, un backend paso ese preflight
+# (`alive: true`) y fallo con `empty_content_despite_sentinel` contra un
+# bundle real de ~26 KB en la MISMA sesion. Un preflight con `content_sample`
+# usa un FRAGMENTO del contenido real (truncado a este tope) en vez del
+# prompt sintetico: acerca la señal al comportamiento bajo carga real sin
+# gastar el bundle completo (el ahorro de tiempo del preflight depende de
+# quedar MUY por debajo del payload real).
+_PREFLIGHT_SAMPLE_MAX_CHARS = 4000
+
+
+def preflight_profile(
+    profile_name: str,
+    *,
+    config: dict,
+    transport=None,
+    nonce: str = "PREFLIGHT-OK",
+    timeout: int = 60,
+    content_sample: str | None = None,
+) -> dict:
+    """Smoke de CONTENIDO NO TRIVIAL: detecta backends que solo responden a ping.
+
+    Before: `profile_name` existe en `ensemble_profiles`; `timeout` es
+        DELIBERADAMENTE mas corto que el timeout normal de dispatch (300s,
+        WOT-2026-063c) -- un preflight que tarda lo mismo que la ronda real
+        no ahorra nada, y el objetivo es descartar backends lentos/atascados
+        ANTES de comprometerse al fanout completo, no esperar su limite.
+        `content_sample` (opcional) es un fragmento del bundle REAL que va a
+        despacharse despues; si se pasa, sustituye a `_PREFLIGHT_PROMPT`
+        sintetico (propuesta D, adjudicada por Codex sobre el defecto
+        medido: el prompt sintetico NO predice el fallo con payload real).
+    During: si `content_sample` esta presente, lo trunca a
+        `_PREFLIGHT_SAMPLE_MAX_CHARS` y construye un prompt que pide analizar
+        el fragmento en una frase Y repetir el nonce -- fuerza al backend a
+        LEER y PROCESAR contenido de tamaño/naturaleza real, no solo una
+        pregunta trivial de 3 pasos. Sin `content_sample`, usa
+        `_PREFLIGHT_PROMPT` (compat: llamadas existentes sin el nuevo
+        parametro no cambian de comportamiento). Un modelo razonador que
+        agota su presupuesto sin emitir el nonce reproduce el MISMO fallo
+        (`empty_content_despite_sentinel` o timeout) que produciria con el
+        bundle real, pero en <=60s en vez de minutos.
+    After: dict `{"profile", "alive", "detail"}` -- `alive` es True solo si
+        el nonce aparece LITERAL en la respuesta (veredicto por contenido,
+        igual que `smoke_profile`; nunca por exit code). Un backend que
+        responde con contenido pero SIN el nonce exacto (deriva de
+        instrucciones) cuenta como no vivo para este preflight: el fanout
+        real exige seguir instrucciones de formato con precision. NO
+        garantiza que el bundle COMPLETO (mas grande que la muestra) vaya a
+        funcionar -- reduce el riesgo, no lo elimina (declarado en FP-014).
+    """
+    if content_sample:
+        sample = content_sample[:_PREFLIGHT_SAMPLE_MAX_CHARS]
+        prompt = (
+            "Este es un fragmento de un documento real (puede estar "
+            "truncado a mitad de frase, ignora eso). Resume su tema "
+            "principal en UNA frase, y despues repite exactamente este "
+            f"token: {nonce}\n\n---FRAGMENTO---\n{sample}"
+        )
+    else:
+        prompt = _PREFLIGHT_PROMPT.format(nonce=nonce)
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        reply = send_to_profile(
+            profile_name,
+            messages,
+            config=config,
+            sensitivity="public",
+            transport=transport,
+            timeout=timeout,
+        )
+    except DispatchBlockedError:
+        raise
+    except Exception as exc:  # mismo contrato STEP_SKIP que smoke_profile
+        return {
+            "profile": profile_name,
+            "alive": False,
+            "detail": f"{type(exc).__name__}: {exc}",
+            "failure_class": _classify_transport_failure(exc),
+        }
+    alive = nonce in (reply or "")
+    return {
+        "profile": profile_name,
+        "alive": alive,
+        "detail": (reply or "")[:200].strip(),
+        "failure_class": None,
     }
 
 
@@ -2663,6 +2873,47 @@ def _cmd_smoke(args, config) -> int:
     return 0 if alive else 1
 
 
+def _cmd_preflight(args, config) -> int:
+    """FP-014: valida backends candidatos ANTES de comprometerse al fanout.
+
+    Secuencial (no paralelo -- ver docstring de `preflight_profile`: cada
+    llamada ya usa timeout corto de 60s, y el proyecto no tiene precedente
+    de concurrencia en este modulo; paralelizar es una expansion de alcance
+    propia, no parte de este fix). Con N backends tipicos de un fanout (5),
+    el peor caso es 5*60s=300s -- comparable a UNA sola ronda con el timeout
+    normal, y muy por debajo de la hora perdida reintentando ciego contra un
+    backend colgado.
+    """
+    if args.profile:
+        names = [args.profile]
+    elif args.backend_keys:
+        wanted = {k.strip() for k in args.backend_keys.split(",") if k.strip()}
+        profiles = config.get("ensemble_profiles", {})
+        names = sorted(
+            name for name, prof in profiles.items() if prof.get("backend_key") in wanted
+        )
+        missing = wanted - {profiles[n]["backend_key"] for n in names}
+        if missing:
+            print(
+                f"[preflight] WARN: backend_key sin perfil en config: "
+                f"{sorted(missing)}",
+                file=sys.stderr,
+            )
+    else:
+        names = sorted(config.get("ensemble_profiles", {}))
+    results = [preflight_profile(name, config=config) for name in names]
+    print(json.dumps({"preflight": results}, ensure_ascii=False, indent=2))
+    alive = sum(1 for r in results if r["alive"])
+    print(
+        f"[preflight] {alive}/{len(results)} backends listos para fanout "
+        "(prompt no-trivial, veredicto por CONTENIDO); declara los NO vivos "
+        "en el recibo del bucle ANTES de emitir el nonce, no despues de que "
+        "cuelguen",
+        file=sys.stderr,
+    )
+    return 0 if alive == len(results) else 1
+
+
 def _cmd_run(args, config) -> int:
     project_root = _resolve_project_root(args.project_root)
     # WOT-2026-027s CAPA 1: la allowlist decide ANTES de leer. Fail-closed con
@@ -3353,6 +3604,16 @@ def main(argv: list[str] | None = None) -> int:
     p_smoke = sub.add_parser("smoke", help="round-trip por contenido")
     p_smoke.add_argument("--profile", help="perfil concreto (default: todos)")
 
+    p_preflight = sub.add_parser(
+        "preflight",
+        help="FP-014: valida backends con prompt NO trivial antes de un fanout",
+    )
+    p_preflight.add_argument("--profile", help="perfil concreto (default: todos)")
+    p_preflight.add_argument(
+        "--backend-keys",
+        help="lista separada por comas de backend_key a validar (ej. BA05,BA11,BA13)",
+    )
+
     p_run = sub.add_parser("run", help="ejecuta un pipeline")
     p_run.add_argument("--pipeline", required=True)
     p_run.add_argument("--ticket", required=True)
@@ -3466,6 +3727,7 @@ def main(argv: list[str] | None = None) -> int:
 
     handlers = {
         "smoke": _cmd_smoke,
+        "preflight": _cmd_preflight,
         "run": _cmd_run,
         "loop-round": _cmd_loop_round,
         "adjudicate": _cmd_adjudicate,

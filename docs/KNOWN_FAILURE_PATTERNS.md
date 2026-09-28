@@ -613,3 +613,129 @@ AGENTS.md): el patch apunta a `X` pero el codigo llama a `Y`.
   --strict`). Desbloquea promover este patron a memoria portable.
 - F2 (pendiente de abrir): fix de este mock-drift + deduplicacion de
   `UpgradeManager`.
+
+---
+
+## FP-014: `_transport_api` sin `max_tokens` -- modelo razonador agota su presupuesto en `reasoning_content` sin emitir `content`
+
+**Estado de evidencia:** VERIFICADO POR MUTATION-VERIFY (sesion 2026-09-28, bucle
+L720 sobre WOT-2026-068k)
+
+### Sintoma observable
+
+- Una ronda de `ensemble_dispatch.py loop-round` contra un backend `nan_api` o
+  `nvidia_api` cuyo modelo tiene razonamiento interno (campo
+  `reasoning_content` en la respuesta, ej. `mimo-v2.6-flash`) queda colgada
+  sin error explicito y sin CPU consumida (`tasklist` muestra `Tiempo de CPU:
+  0:00:00` en Windows) durante minutos, mucho mas alla del tiempo tipico de
+  esa misma ronda con un payload equivalente.
+- Cuando SI produce un veredicto, aparece como
+  `empty_content_despite_sentinel: el stream SSE cerro con centinela y
+  content vacio` en el scorecard (`ensemble_dispatch.py:902`), o como MUDA en
+  `check_loop_execution.py`.
+- Reproducido con `curl` directo (sin el wrapper): con `"max_tokens": 10`, el
+  modelo devuelve `"content": ""` y `"finish_reason": "length"`, con
+  `reasoning_content` mostrando que el presupuesto se agoto pensando ("*The
+  user just said 'ping'. This is*...") antes de emitir contenido.
+
+### Contrato / realidad verificada
+
+- `_transport_api` (`scripts/ensemble_dispatch.py`) construia el body sin el
+  campo `max_tokens`. Sin limite del lado del cliente, un modelo razonador
+  puede consumir un numero de tokens de salida arbitrariamente grande en
+  `reasoning_content` sin llegar nunca al `content` final ni al centinela
+  `[DONE]` del stream SSE (WOT-2026-063c).
+- El guard `empty_content_despite_sentinel` (I3, `ensemble_dispatch.py:900-907`)
+  ya rechazaba correctamente una respuesta con `content` vacio -- el defecto
+  no estaba ahi, sino en que el cliente nunca acotaba cuanto podia tardar el
+  modelo en llegar a ese vacio (o a emitir contenido real).
+- El tamano del bundle/payload de ENTRADA NO es la causa: medido contra el
+  scorecard historico, varios backend_key (BA05, BA11, BA13) tienen exitos
+  con `input_bytes` de hasta ~109 KB, mientras que el mismo backend
+  (`nan_mimo_flash`/BA22) fallaba con payloads de entrada mucho menores. El
+  eje real es la fiabilidad intrinseca de cada backend_key con modelos
+  razonadores, no el tamano del prompt.
+
+### Causa raiz probable
+
+Ausencia de `max_tokens` en el body de `_transport_api`. Un modelo con
+razonamiento interno no tiene limite de cliente sobre cuanto puede "pensar"
+antes de responder; con un prompt largo y complejo (7 preguntas de auditoria
+sobre un bundle de revision), el razonamiento puede crecer sin cota util.
+
+### Mitigacion aplicada (fix estructural, no solo temporal)
+
+- `_transport_api` ahora envia `"max_tokens": _API_MAX_TOKENS` (8192) en el
+  body de toda peticion `nan_api`/`nvidia_api`.
+- Mutation-verify (curl directo, mismo endpoint que `_transport_api`):
+  - `sin_fix` (equivalente, `max_tokens: 10`): `content=""`,
+    `finish_reason="length"`, `reasoning_content` no vacio -- confirma el
+    atasco.
+  - `con_fix` (`max_tokens: 8192`): `content` real y completo, solo 17
+    tokens de `reasoning_content` -- el limite generoso no fuerza
+    razonamiento largo, solo evita que crezca sin cota.
+- El guard `empty_content_despite_sentinel` NO se toco: sigue fallando
+  explicito si, incluso con 8192 tokens de presupuesto, el modelo no emite
+  `content` (I6 preservado).
+- Tests focales (`tests/unit/test_ensemble_dispatch.py -k transport_api`):
+  5/5 passed sin cambios -- ningun test fijaba la forma exacta del body.
+
+**LIMITE MEDIDO del fix (2026-09-28, mismo dia):** con un prompt SIMPLE
+("ping"), `max_tokens: 8192` resuelve el atasco (ver mutation-verify arriba).
+Con un prompt COMPLEJO real (bundle de auditoria de ~26 KB, 7 preguntas de
+revision), la MISMA ronda contra el MISMO backend (`nan_mimo_flash`/BA22)
+paso de "colgada sin resolver" a "`empty_content_despite_sentinel` en tiempo
+razonable" -- el fix convierte un cuelgue silencioso en un FALLO EXPLICITO
+rapido (mejora real: ya no bloquea la sesion indefinidamente), pero NO
+garantiza que el modelo produzca `content` con prompts complejos. Backends
+con este patron deben tratarse como NO FIABLES para bundles de auditoria
+grandes, no solo como "lentos": el guard barato es no usarlos para esa
+clase de payload, no subir mas `max_tokens` (subir el limite alarga el
+`reasoning_content` sin garantia de que ese margen adicional se traduzca en
+`content` real).
+
+### Barrera de preflight (IMPLEMENTADA 2026-09-28, cobertura PARCIAL medida)
+
+- El coste medido de este patron en una sola sesion: ~1 hora persiguiendo un
+  4o backend para completar un bucle 1->9->2, con multiples reintentos ciegos
+  contra el mismo backend_key colgado, antes de aislar la causa con una
+  prueba directa (`curl`) fuera del wrapper.
+- Implementado `ensemble_dispatch.py preflight` (`preflight_profile()` +
+  `_cmd_preflight`, mismo fichero): smoke de contenido NO trivial (pregunta
+  de 3 pasos -- suma, antonimo, repetir nonce -- en vez de un simple "ping"),
+  timeout corto (60s por defecto, vs 300s del dispatch real), veredicto por
+  CONTENIDO (el nonce debe aparecer literal en la respuesta, igual criterio
+  que `smoke_profile`). Uso: `ensemble_dispatch.py preflight --backend-keys
+  BA05,BA11,BA13,BA22`.
+- Secuencial, no paralelo: el proyecto no tenia precedente de concurrencia en
+  este modulo y anadirla es expansion de alcance propia. Peor caso con 5
+  backends: 5*60s=300s, comparable a UNA ronda con el timeout normal.
+
+**COBERTURA MEDIDA, NO ASUMIDA:** se ejecuto `preflight --profile
+challenger_nan_mimo_flash` (el backend que colgo/fallo hoy con el bundle
+real) DESPUES de confirmar su fallo con el bundle completo. Resultado:
+`alive: true`, respuesta correcta con el nonce -- **el preflight de 3 pasos
+NO reproduce el fallo que si aparece con el bundle real de ~26 KB / 7
+preguntas de auditoria**. Conclusion honesta: esta barrera detecta backends
+MUERTOS o con problemas de transporte basicos (cuota, timeout de red, 402/504),
+pero NO predice de forma fiable el patron "razona demasiado con contenido
+complejo y nunca emite `content`" -- ese patron parece depender del volumen/
+complejidad real del payload, no solo de que el prompt tenga "algo" de
+razonamiento. Sigue siendo valioso (evita perder tiempo con backends
+GENUINAMENTE caidos antes del fanout), pero NO es una garantia de que un
+backend que pasa el preflight aguantara el bundle real.
+
+### Fix estructural aun pendiente
+
+- Preflight con un fragmento REAL del bundle (no un prompt sintetico de 3
+  pasos) truncado a un tamano manejable, para acercar mas la señal al
+  comportamiento bajo el payload real -- candidato de mejora, no implementado.
+- Declarar explicitamente, en el recibo del bucle, que backends se probaron
+  en preflight, cuales pasaron, y que esa señal es PARCIAL (no predictiva del
+  100% de los fallos) -- para que quien lea el recibo no sobre-confie en un
+  preflight verde.
+
+### Tickets relacionados
+
+- (sesion ad-hoc 2026-09-28, sin ticket abierto aun; candidato a ficha nueva
+  para refinar el preflight con fragmento de bundle real)

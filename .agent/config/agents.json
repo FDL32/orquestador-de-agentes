@@ -190,7 +190,7 @@
     "challenger_opencode_glm_5_2": {
       "backend": "opencode",
       "channel": "agent",
-      "model": "opencode-go/glm-5.2",
+      "model": "opencode-go/glm-5.3-flash",
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
