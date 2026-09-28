@@ -45,6 +45,7 @@ from bus.state_machine import NON_TERMINAL_STATES, TicketState
 # WOT-2026-048g: import the deliverable_type regex from the landing guard to
 # avoid reimplementing the WOT-2026-040s correction (logical-row search).
 from scripts.check_backlog_commits_landed import _DELIVERABLE_TYPE_RE
+from scripts.prefix_resolver import resolve_ticket_alternation
 
 
 # WOT-2026-012a closed vocabulary for the LIVE queue. Terminal states
@@ -65,7 +66,12 @@ REACTIVATION_REQUIRED = ("blocked", "deferred", "completed-partial")
 # trigger" and is only valid for active states without one.
 REACTIVATION_PREFIXES = ("condition:", "commit:", "external:")
 # A bare ticket id (WOT-YYYY-NNNx / WT-...) is also a valid trigger.
-_TICKET_TRIGGER_RE = re.compile(r"^(?:WOT|WP|WT|CTL)-\d{4}-\w+$")
+# WOT-2026-068k: las 5 regexes de ids dejan de cablear la lista cerrada
+# (WOT|WP|WT|CTL) y se compilan desde el ticket_prefix del destino (link +
+# triada legacy) via `bind_ticket_prefix`. `main()` y las entradas con
+# path/root las enlazan solas (ensure_bound/resolve_and_bind); sin link que
+# declare el prefijo, el gate FALLA EXPLICITO -- nunca inventa politica.
+_TICKET_TRIGGER_RE: re.Pattern[str] | None = None
 
 # Vocabulary that is NEVER a valid structured trigger (vague prose).
 _VAGUE_REACTIVATION = {"n/a", "na", "pendiente", "pending", "tbd", "todo", "?"}
@@ -81,7 +87,7 @@ _TABLE_HEADER_COLS = (
     "Origen",
     "Reactivation",
 )
-_FICHA_RE = re.compile(r"^### (WOT|WP|WT|CTL)-\d{4}-\w+(?:\s+-\s+.+)?$")
+_FICHA_RE: re.Pattern[str] | None = None
 
 # WOT-2026-027t: a live-queue ticket row is a Prioridad-led markdown table row
 # whose Ticket cell (RAW split index 2: empty token, Prioridad, Ticket) is a bare
@@ -91,7 +97,7 @@ _FICHA_RE = re.compile(r"^### (WOT|WP|WT|CTL)-\d{4}-\w+(?:\s+-\s+.+)?$")
 # OUTSIDE the Vista rapida table body, so the fragmentation cannot silently
 # reappear. Cell-based (idx 2), never substring: a prose cell can cite a ticket
 # id (e.g. 'Depende de'), which must NOT match.
-_TICKET_ROW_CELL_RE = re.compile(r"^(?:WOT|WP|WT|CTL)-\d{4}-\w+$")
+_TICKET_ROW_CELL_RE: re.Pattern[str] | None = None
 
 # WOT-2026-052a: Prioridad words that identify a live-queue / archived-snapshot
 # table row. The Prioridad cell sits at RAW split index 1 (empty token,
@@ -146,7 +152,7 @@ _DELIVERABLE_TYPE_RAW_RE = re.compile(r"deliverable_type\s*[:=]\s*\S*")
 #                 `WOT-2026-STATE-RECON-A` produce el id fantasma
 #                 `WOT-2026-STATE` (fila viva de `WOT-2026-030b`).
 # Ambos los cazo la lente codex del bucle; ninguna de las cinco anteriores.
-_DEPENDS_ON_ID_RE = re.compile(r"(?<![\w-])(?:WOT|WP|WT|CTL)-\d{4}-[a-z0-9]+(?![\w-])")
+_DEPENDS_ON_ID_RE: re.Pattern[str] | None = None
 
 # WOT-2026-013j: a detailed ficha must NOT re-declare Files Likely Touched. The
 # canonical FLT lives ONLY in the frozen contract (ticket_contracts.md) and then
@@ -159,7 +165,104 @@ _DEPENDS_ON_ID_RE = re.compile(r"(?<![\w-])(?:WOT|WP|WT|CTL)-\d{4}-[a-z0-9]+(?![
 _FLT_DECLARATION_RE = re.compile(r"^\s*[-*]\s*\*\*Files Likely Touched", re.IGNORECASE)
 # WOT-2026-043t: ticket id SEARCHED inside a line (the constants above are anchored
 # with ^...$ for whole-cell matches and cannot find an id embedded in prose).
-_TICKET_ID_IN_TEXT_RE = re.compile(r"\b((?:WOT|WP|WT|CTL)-\d{4}-\w+)\b")
+_TICKET_ID_IN_TEXT_RE: re.Pattern[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-068k: patron de ids por-destino (ticket_prefix del link + triada
+# legacy WOT/WP/WT). Las 5 regex de arriba se compilan AQUI, nunca con una
+# lista fija en el propio modulo (el gate salia rc=0 sin inspeccionar las filas
+# de un destino cuyo prefijo no fuera de los cableados).
+# ---------------------------------------------------------------------------
+
+# Alternancia actualmente enlazada (None = sin enlazar). Fuente de verdad del
+# estado de enlace que ensure_bound consulta antes de resolver de nuevo.
+_BOUND_ALTERNATION: str | None = None
+
+
+def bind_ticket_prefix(alternation: str) -> None:
+    """Compila y enlaza las 5 regex de ids del modulo desde ``alternation``.
+
+    Before: ``alternation`` sale de ``prefix_resolver.resolve_ticket_alternation``
+        (re.escape ya aplicado, p.ej. ``"RDS|WOT|WP|WT"``).
+    During: muta los 5 globals del modulo en UN solo acto; sin I/O.
+    After: los 5 globals quedan listos para los puntos de uso y
+        ``_BOUND_ALTERNATION`` refleja la alternancia enlazada; cualquier acceso
+        posterior via ``_require(...)`` pasa a funcionar. Si el alternation no
+        compila, re.Error propaga (el resolvedor ya escapa, seria bug del
+        llamador, no politica).
+    """
+    global _TICKET_TRIGGER_RE, _FICHA_RE, _TICKET_ROW_CELL_RE
+    global _DEPENDS_ON_ID_RE, _TICKET_ID_IN_TEXT_RE, _BOUND_ALTERNATION
+    _TICKET_TRIGGER_RE = re.compile(rf"^(?:{alternation})-\d{{4}}-\w+$")
+    _FICHA_RE = re.compile(rf"^### ({alternation})-\d{{4}}-\w+(?:\s+-\s+.+)?$")
+    _TICKET_ROW_CELL_RE = re.compile(rf"^(?:{alternation})-\d{{4}}-\w+$")
+    _DEPENDS_ON_ID_RE = re.compile(
+        rf"(?<![\w-])(?:{alternation})-\d{{4}}-[a-z0-9]+(?![\w-])"
+    )
+    _TICKET_ID_IN_TEXT_RE = re.compile(rf"\b((?:{alternation})-\d{{4}}-\w+)\b")
+    _BOUND_ALTERNATION = alternation
+
+
+def unbind_ticket_patterns() -> None:
+    """Restablece las 5 regex a None (para tests y re-enlace limpio)."""
+    global _TICKET_TRIGGER_RE, _FICHA_RE, _TICKET_ROW_CELL_RE
+    global _DEPENDS_ON_ID_RE, _TICKET_ID_IN_TEXT_RE, _BOUND_ALTERNATION
+    _TICKET_TRIGGER_RE = None
+    _FICHA_RE = None
+    _TICKET_ROW_CELL_RE = None
+    _DEPENDS_ON_ID_RE = None
+    _TICKET_ID_IN_TEXT_RE = None
+    _BOUND_ALTERNATION = None
+
+
+def resolve_and_bind(start: Path) -> tuple[bool, str | None]:
+    """Resuelve el ``ticket_prefix`` del destino que empieza en ``start`` y enlaza.
+
+    Before: ``start`` es un camino dentro del destino (backlog, root, collab).
+    During: I/O de lectura del link (ascenso + AGENT_PROJECT_ROOT, ver
+        ``prefix_resolver.resolve_ticket_alternation``).
+    After: ``(True, None)`` y patrones enlazados; ``(False, motivo)`` cuando el
+        link no declara ``ticket_prefix`` -- el llamador DEBE fallar explicito
+        con ese motivo (nunca asumir un prefijo por defecto).
+    """
+    alternation, err = resolve_ticket_alternation(start)
+    if alternation is None:
+        return False, err
+    bind_ticket_prefix(alternation)
+    return True, None
+
+
+def ensure_bound(start: Path) -> tuple[bool, str | None]:
+    """Enlaza si nadie enlazo aun; si ya hay patrones, los reutiliza.
+
+    Rationale (por que NO re-resuelve siempre): las entradas de camino
+    (validate_backlog, validate_*(root), _partition...) se encadenan en el
+    mismo proceso (CLI main, prepush_check, --validate del controller): la
+    PRIMERA entrada resuelve desde su path y el resto hereda, evitando una
+    re-lectura por validador y manteniendo UN solo prefijo por corrida.
+    ``main()`` siempre llama a ``resolve_and_bind`` (resolucion fresca) antes de
+    cualquier cadena, de modo que el GATE nunca hereda un enlace stale.
+
+    After: ``(True, None)`` si hay patrones (ya enlazados o recien enlazados
+        desde ``start``); ``(False, motivo)`` si no los hay y el link no
+        declara el prefijo.
+    """
+    if _BOUND_ALTERNATION is not None:
+        return True, None
+    return resolve_and_bind(start)
+
+
+def _require(pat: re.Pattern[str] | None) -> re.Pattern[str]:
+    """Patron de ids enlazado; RuntimeError explicito si nadie enlazo el prefijo."""
+    if pat is None:
+        raise RuntimeError(
+            "ticket_prefix no resuelto: las regex de ids del gate estan sin "
+            "enlazar (bind_ticket_prefix/resolve_and_bind/ensure_bound desde el "
+            "motor_destination_link.json del destino) -- sin link declarado el "
+            "gate DEBE fallar explicito, no inventar politica"
+        )
+    return pat
 
 
 def resolve_destino_root(cli_value: str | None) -> tuple[Path | None, str | None]:
@@ -281,7 +384,7 @@ def _is_ticket_row(stripped: str) -> bool:
     cells = stripped.split("|")
     if len(cells) <= 3:
         return False
-    return bool(_TICKET_ROW_CELL_RE.match(cells[2].strip()))
+    return bool(_require(_TICKET_ROW_CELL_RE).match(cells[2].strip()))
 
 
 def _vista_rapida_body_span(lines: list[str]) -> range:
@@ -358,7 +461,9 @@ def _validate_reactivation(status: str, reactivation: str) -> str | None:
             return f"status '{status}' requires a structured Reactivation, got '-'"
         if react.lower() in _VAGUE_REACTIVATION:
             return f"vague Reactivation '{react}' for status '{status}'"
-        if react.startswith(REACTIVATION_PREFIXES) or _TICKET_TRIGGER_RE.match(react):
+        if react.startswith(REACTIVATION_PREFIXES) or _require(
+            _TICKET_TRIGGER_RE
+        ).match(react):
             return None
         return (
             f"Reactivation '{react}' for status '{status}' is not structured "
@@ -412,6 +517,16 @@ def validate_backlog(backlog_path: Path) -> list[str]:
     """Return a list of contract violations (empty == valid)."""
     if not backlog_path.exists():
         return [f"backlog not found: {backlog_path}"]
+    # WOT-2026-068k: fail-closed sobre el ticket_prefix del destino que posee
+    # este backlog. Sin link que lo declare, NO se audita con una politica
+    # inventada -- se devuelve la violacion explicita (el controller la filtra
+    # fuera de su subset activo; prepush_check la reporta como bloqueo).
+    bound, prefix_err = ensure_bound(backlog_path)
+    if not bound:
+        return [
+            f"[fail-closed] ticket_prefix no resoluble para {backlog_path}: "
+            f"{prefix_err}"
+        ]
     content = backlog_path.read_text(encoding="utf-8-sig")
 
     errors: list[str] = []
@@ -483,7 +598,7 @@ def _check_ficha_pointers(content: str, rows: list[str]) -> list[str]:
     for line in content.splitlines():
         if not line.startswith("### "):
             continue
-        m = _TICKET_ID_IN_TEXT_RE.search(line)
+        m = _require(_TICKET_ID_IN_TEXT_RE).search(line)
         if m:
             headers[m.group(1)] = headers.get(m.group(1), 0) + 1
 
@@ -492,7 +607,7 @@ def _check_ficha_pointers(content: str, rows: list[str]) -> list[str]:
         if len(cells) != len(_TABLE_HEADER_COLS):
             continue
         ticket_cell, desc = cells[1], cells[2]
-        m = _TICKET_ID_IN_TEXT_RE.search(ticket_cell)
+        m = _require(_TICKET_ID_IN_TEXT_RE).search(ticket_cell)
         if not m:
             continue
         ticket = m.group(1)
@@ -531,7 +646,7 @@ def _check_ficha_bodies(content: str) -> list[str]:
         )
         if is_ticket_ficha:
             current_ficha = line.rstrip().lstrip("# ").strip()
-            if not _FICHA_RE.match(line.rstrip()):
+            if not _require(_FICHA_RE).match(line.rstrip()):
                 errors.append(f"malformed ficha header: {line.rstrip()!r}")
             continue
         if _FLT_DECLARATION_RE.match(line):
@@ -688,7 +803,7 @@ def _row_ticket_id(stripped: str) -> str | None:
     if len(cells) <= 3:
         return None
     candidate = cells[2].strip()
-    return candidate if _TICKET_ROW_CELL_RE.match(candidate) else None
+    return candidate if _require(_TICKET_ROW_CELL_RE).match(candidate) else None
 
 
 def _ticket_row_ids(path: Path) -> list[str]:
@@ -756,7 +871,9 @@ def _partition_prioridad_rows(path: Path) -> tuple[list[str], list[str]]:
     canonical: list[str] = []
     skipped: list[str] = []
     for cell in _prio_ticket_cells(path):
-        (canonical if _TICKET_ROW_CELL_RE.match(cell) else skipped).append(cell)
+        (canonical if _require(_TICKET_ROW_CELL_RE).match(cell) else skipped).append(
+            cell
+        )
     return canonical, skipped
 
 
@@ -789,7 +906,7 @@ def _compact_closure_log_cells(path: Path) -> list[str]:
         if raw[1].strip() in _PRIORIDAD_WORDS:
             continue  # Prioridad-led: already inside the census universe.
         candidate = raw[1].strip()
-        if _TICKET_ROW_CELL_RE.match(candidate):
+        if _require(_TICKET_ROW_CELL_RE).match(candidate):
             cells.append(candidate)
     return cells
 
@@ -834,7 +951,7 @@ def _compact_terminal_closure_ids(path: Path) -> dict[str, set[str]]:
             continue  # Prioridad-led: belongs to the snapshot census, not here.
         tid = raw[1].strip()
         state = raw[2].strip()
-        if not _TICKET_ROW_CELL_RE.match(tid):
+        if not _require(_TICKET_ROW_CELL_RE).match(tid):
             continue
         if state not in _STATES_REQUIRING_LANDING:
             continue
@@ -859,6 +976,11 @@ def validate_live_archive_integrity(root: Path) -> list[str]:
     ONLY between two compact rows would be out of scope. The motivating bug
     (011b) and every real contradiction are Prioridad-led, which this covers.
     """
+    # WOT-2026-068k: patron por-destino; sin ticket_prefix declarado -> violacion
+    # explicita fail-closed, nunca escanear con lista cableada.
+    bound, prefix_err = ensure_bound(root)
+    if not bound:
+        return [f"[fail-closed] ticket_prefix no resoluble para {root}: {prefix_err}"]
     collab = root / ".agent" / "collaboration"
     live_ids = set(_ticket_row_ids(collab / "backlog.md"))
     archive_all = _ticket_row_ids(collab / "_archive" / "backlog_done.md")
@@ -984,7 +1106,7 @@ def _closure_ticket_id(stripped: str) -> str | None:
     if len(cells) < 3:
         return None
     candidate = cells[1].strip()
-    if not _TICKET_ROW_CELL_RE.match(candidate):
+    if not _require(_TICKET_ROW_CELL_RE).match(candidate):
         return None
     if not any(c.strip().startswith(("commit:", "commits:")) for c in cells[2:]):
         return None
@@ -1061,6 +1183,11 @@ def validate_archive_row_arity(root: Path) -> list[str]:
     of ``_compact_closure_log_states``), and the historical 6/7/8-cell id@1 rows
     are anchored in ``_CLOSURE_ARITY_LEGACY_BASELINE``.
     """
+    # WOT-2026-068k: patron por-destino; sin ticket_prefix declarado -> violacion
+    # explicita fail-closed, nunca escanear con lista cableada.
+    bound, prefix_err = ensure_bound(root)
+    if not bound:
+        return [f"[fail-closed] ticket_prefix no resoluble para {root}: {prefix_err}"]
     archive = root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
     if not archive.exists():
         return []
@@ -1243,7 +1370,7 @@ def _compact_closure_log_states(archive: Path) -> list[str]:
         raw = stripped.split("|")
         # Compact layout: id at raw index 1 (no Prioridad column). A Prioridad-led
         # row has its id at index 2 and is handled by the caller.
-        if len(raw) <= 2 or not _TICKET_ROW_CELL_RE.match(raw[1].strip()):
+        if len(raw) <= 2 or not _require(_TICKET_ROW_CELL_RE).match(raw[1].strip()):
             continue
         cells = [c.strip() for c in stripped.strip("|").split("|")]
         if len(cells) <= 1:
@@ -1271,6 +1398,11 @@ def validate_archive_states(root: Path) -> list[str]:
     After: one error per archived row whose state belongs to LIVE_STATES. No
         mutation.
     """
+    # WOT-2026-068k: patron por-destino; sin ticket_prefix declarado -> violacion
+    # explicita fail-closed, nunca escanear con lista cableada.
+    bound, prefix_err = ensure_bound(root)
+    if not bound:
+        return [f"[fail-closed] ticket_prefix no resoluble para {root}: {prefix_err}"]
     collab = root / ".agent" / "collaboration"
     archive = collab / "_archive" / "backlog_done.md"
     if not archive.exists():
@@ -1522,6 +1654,11 @@ def validate_archive_landing_evidence(root: Path) -> list[str]:
         documented here and its follow-up is census'd, not retired.
     After: one error per terminal row without landing evidence. No mutation.
     """
+    # WOT-2026-068k: patron por-destino; sin ticket_prefix declarado -> violacion
+    # explicita fail-closed, nunca escanear con lista cableada.
+    bound, prefix_err = ensure_bound(root)
+    if not bound:
+        return [f"[fail-closed] ticket_prefix no resoluble para {root}: {prefix_err}"]
     collab = root / ".agent" / "collaboration"
     archive = collab / "_archive" / "backlog_done.md"
     if not archive.exists():
@@ -1597,6 +1734,11 @@ def validate_archive_prose_preservation(root: Path) -> list[str]:
         ERROR, as is a censused row missing from the archive entirely.
     After: one error per destroyed prose entry.  No mutation.
     """
+    # WOT-2026-068k: patron por-destino; sin ticket_prefix declarado -> violacion
+    # explicita fail-closed, nunca escanear con lista cableada.
+    bound, prefix_err = ensure_bound(root)
+    if not bound:
+        return [f"[fail-closed] ticket_prefix no resoluble para {root}: {prefix_err}"]
     collab = root / ".agent" / "collaboration"
     archive = collab / "_archive" / "backlog_done.md"
     if not archive.exists():
@@ -1674,7 +1816,7 @@ def _terminal_ticket_states(archive: Path) -> dict[str, str]:
             if len(cells) <= 4:
                 continue
             state = _archive_row_state(cells)
-        elif len(raw) > 2 and _TICKET_ROW_CELL_RE.match(raw[1].strip()):
+        elif len(raw) > 2 and _require(_TICKET_ROW_CELL_RE).match(raw[1].strip()):
             # Layout compacto: | Ticket | Estado | Nota |
             tid = raw[1].strip()
             state = raw[2].strip().lower()
@@ -1710,6 +1852,11 @@ def validate_live_dependencies(root: Path) -> list[str]:
     sale verde, y el objeto no esta en su universo. Un bloqueo que apunta a un
     difunto es indistinguible de un bloqueo real, y congela al heredero.
     """
+    # WOT-2026-068k: patron por-destino; sin ticket_prefix declarado -> violacion
+    # explicita fail-closed, nunca escanear con lista cableada.
+    bound, prefix_err = ensure_bound(root)
+    if not bound:
+        return [f"[fail-closed] ticket_prefix no resoluble para {root}: {prefix_err}"]
     collab = root / ".agent" / "collaboration"
     backlog = collab / "backlog.md"
     archive = collab / "_archive" / "backlog_done.md"
@@ -1746,7 +1893,7 @@ def validate_live_dependencies(root: Path) -> list[str]:
         # `026u`->`028a`, ambos `completed`) quedaban invisibles. Es el MISMO patron
         # del denominador que este guard existe para cerrar, en su tercera forma.
         # `findall` sobre el patron de ticket captura el id venga como venga.
-        for dep in dict.fromkeys(_DEPENDS_ON_ID_RE.findall(raw)):
+        for dep in dict.fromkeys(_require(_DEPENDS_ON_ID_RE).findall(raw)):
             if dep not in terminal and dep not in live_ids:
                 # COLGANTE: el id no existe en NINGUNA superficie. `terminal.get`
                 # daria None y se leeria como "no cerrado" -- silencio sobre una
@@ -1787,6 +1934,15 @@ def main(argv: list[str] | None = None) -> int:
     root, root_error = resolve_destino_root(args.project_root)
     if root_error:
         print(f"[backlog-contract] {root_error}", file=sys.stderr)
+        return 2
+
+    # WOT-2026-068k: resolucion FRESCA del ticket_prefix del destino auditado
+    # (el gate nunca hereda un enlace stale de otro destino). Sin link que lo
+    # declare -> ERROR explicito + exit 2 (clase topologia/argumento), nunca
+    # escanear con la lista cableada ni inventar un prefijo por defecto.
+    bound, prefix_err = resolve_and_bind(root)
+    if not bound:
+        print(f"[backlog-contract] ERROR: {prefix_err}", file=sys.stderr)
         return 2
 
     backlog = root / ".agent" / "collaboration" / "backlog.md"

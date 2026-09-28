@@ -134,6 +134,13 @@ def test_destination_only_sha_lands_via_destino_root(
     audited against the motor (WARN, dead end). The fix resolves the home per
     row origin, so it lands. Rojo previo: fails without the fix."""
     _archive_row(world["dest"], "CTL-2026-013y", world["dest_sha"][:9])
+    # WOT-2026-068k: este fixture representa un destino CTL (su fila es CTL y
+    # conftest enlaza WOT por defecto); el parse del archive necesita el patron
+    # POR-DESTINO de ESTE destino para extraer la fila.
+    from scripts.check_backlog_commits_landed import bind_ticket_prefix
+    from scripts.prefix_resolver import ticket_prefix_alternation
+
+    bind_ticket_prefix(ticket_prefix_alternation("CTL"))
     assert _landed(world, monkeypatch, "CTL-2026-013y", world["dest_sha"]) is True
 
 

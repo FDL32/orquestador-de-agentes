@@ -229,6 +229,120 @@ def extract_prefix(ticket_or_project: str) -> str | None:
     return None
 
 
+# WOT-2026-068k: la triada legacy que AGENTS.md declara `legacy-compat` y que
+# el contrato frozen 061a (opcion A) exige incluir SIEMPRE ademas del prefijo
+# declarado. Distinta de la pareja (WP, WT) que usa _prefix_alternation de
+# check_contract_backlog_reconcile (WOT-2026-058p): ahi el prefijo declarado
+# suele SER WOT, aqui se suma explicitamente para cubrir el caso RDS/CTL sobre
+# un backlog con filas historicas WOT.
+LEGACY_TICKET_PREFIXES = ("WOT", "WP", "WT")
+
+
+def ticket_prefix_alternation(prefix: str | None) -> str | None:
+    """Alternancia regex declarativa: prefijo del destino + la triada legacy.
+
+    Before: ``prefix`` es el ``ticket_prefix`` leido del link (p.ej. "RDS"),
+        o None/vacio cuando el link no lo declara.
+    During: puro, sin I/O. Deduplica conservando el orden
+        (declarado primero, luego WOT, WP, WT) y escapa cada alternativa con
+        ``re.escape``.
+    After: devuelve p.ej. ``"RDS|WOT|WP|WT"`` / ``"WOT|WP|WT"``; None cuando
+        no hay prefijo declarado -- nunca inventa politica (NG-RAIZ: quien
+        decidir el patron es el link, no esta funcion). Nunca lanza.
+    """
+    if not prefix or not str(prefix).strip():
+        return None
+    seen: list[str] = []
+    for candidate in (str(prefix).strip(), *LEGACY_TICKET_PREFIXES):
+        if candidate not in seen:
+            seen.append(candidate)
+    return "|".join(re.escape(c) for c in seen)
+
+
+def find_destination_link(start: Path) -> Path | None:
+    """Camina hacia arriba desde ``start`` buscando el link del destino.
+
+    Before: ``start`` es un fichero o directorio DENTRO de un repo_destino
+        (backlog.md, queued/, la raiz misma). El camino ascendente es finito
+        y termina en la raiz del filesystem.
+    During: para cada ancestro (inclusive), comprueba
+        ``<ancestro>/.agent/config/motor_destination_link.json``.
+    After: la ruta del link encontrado o None. Solo lectura; nunca lanza.
+    """
+    current = start if start.is_dir() else start.parent
+    for candidate in (current, *current.parents):
+        link = candidate / LINK_REL
+        if link.exists():
+            return link
+    return None
+
+
+def resolve_ticket_alternation(
+    start: Path | None = None,
+) -> tuple[str | None, str | None]:
+    """Resuelve la alternancia de prefijos del destino que audita un gate.
+
+    WOT-2026-068k: unica puerta para que los gates de backlog dejen de
+    cablear su alternancia de prefijos como lista cerrada escrita a mano en
+    cada modulo. Politica fijada por el contrato frozen
+    061a (opcion A): el patron se CONSTRUYE desde el ``ticket_prefix``
+    declarado en el ``motor_destination_link.json`` del destino, mas la
+    triada legacy; si el link no lo declara, FALLA EXPLICITO.
+
+    Before: ``start`` (opcional) es un camino dentro del destino cuyo link
+        resolver (p.ej. el backlog, el queued/ o la raiz). Sin ``start`` se
+        cae a ``AGENT_PROJECT_ROOT``.
+    During: I/O de lectura exclusivamente: link por ascenso desde ``start``,
+        o desde ``AGENT_PROJECT_ROOT`` si no hay ``start``; ausencia total de
+        link y ausencia/vacio de ``ticket_prefix`` son el MISMO fallo
+        fail-closed (motivo nombrado).
+    After: ``("RDS|WOT|WP|WT", None)`` cuando el link lo declara; si no,
+        ``(None, "<motivo>")`` -- el llamador DEBE fallar explicito con ese
+        motivo, nunca asumir un prefijo por defecto. Nunca lanza.
+    """
+    origins: list[tuple[str, Path]] = []
+    if start is not None:
+        origins.append(("start", Path(start)))
+    env_root = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+    if env_root:
+        origins.append(("AGENT_PROJECT_ROOT", Path(env_root)))
+    if not origins:
+        return None, (
+            "ticket_prefix no resoluble: sin camino de origen y sin "
+            "AGENT_PROJECT_ROOT -- el motor no inventa politica de prefijos"
+        )
+    for _label, origin in origins:
+        try:
+            link = find_destination_link(origin)
+        except OSError:
+            continue
+        if link is None:
+            continue
+        try:
+            data = json.loads(link.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None, (
+                f"link ilegible en {link}: ticket_prefix no resoluble "
+                "(fail-closed, el motor no inventa politica)"
+            )
+        if not isinstance(data, dict):
+            return None, (
+                f"link malformado en {link}: ticket_prefix no resoluble "
+                "(fail-closed, el motor no inventa politica)"
+            )
+        alternation = ticket_prefix_alternation(data.get("ticket_prefix"))
+        if alternation is None:
+            return None, (
+                f"el link {link} no declara ticket_prefix (ausente o vacio) -- "
+                "fallar explicito, nunca asumir un prefijo por defecto"
+            )
+        return alternation, None
+    return None, (
+        "ticket_prefix no resoluble: ningun motor_destination_link.json "
+        "declarado encontrado desde el origen dado (ascenso + AGENT_PROJECT_ROOT)"
+    )
+
+
 def _git_executable() -> str | None:
     """Resolve the absolute path to the git executable, or None if missing.
 

@@ -682,3 +682,39 @@ def _isolate_controller_event_bus(request: pytest.FixtureRequest) -> None:
             before,
             request.node.nodeid,
         )
+
+
+@pytest.fixture(autouse=True)
+def _bind_default_ticket_prefix() -> None:
+    """WOT-2026-068k: enlace inicial de los gates de backlog por-destino.
+
+    Los gates (check_backlog_contract, check_backlog_commits_landed,
+    backlog_reconcile, check_dod_metric_freshness) construyen su patron de ids
+    desde el ``ticket_prefix`` del link del destino (fail-closed: sin link que
+    lo declare, FALLAN EXPLICITO -- ver prefix_resolver.resolve_ticket_alternation).
+    En produccion siempre hay link y ``main()`` re-enlaza FRESCO desde el
+    destino auditado; el caso que este fixture cubre es la capa LIBRARY en
+    proceso (prepush_check, agent_controller, session_closeout llamando
+    ``parse_archived_commits``/``validate_*`` sin pasar por ``main()`'): sin
+    enlace previo esos consumidores fallarian por un contexto de destino que
+    el fixture no reclamaba.
+
+    Estado inicial DETERMINISTA por test: los 4 modulos paquete se enlazan al
+    equivalente WOT construido con el MISMO resolvedor (no se copia la
+    alternancia a mano). Los tests fail-closed del propio WOT-2026-068k se
+    des-enlazan a proposito (``unbind_ticket_patterns``) o ejercen ``main()``,
+    que ignora el enlace heredado y resuelve del link -- por lo que el verde
+    de esos controles negativos no depende de este fixture.
+    """
+    from scripts.backlog_reconcile import bind_ticket_prefix as bind_br
+    from scripts.check_backlog_commits_landed import bind_ticket_prefix as bind_gl
+    from scripts.check_backlog_contract import bind_ticket_prefix as bind_cbc
+    from scripts.check_dod_metric_freshness import bind_ticket_prefix as bind_dod
+    from scripts.prefix_resolver import ticket_prefix_alternation
+
+    alternation = ticket_prefix_alternation("WOT")
+    assert alternation is not None
+    bind_cbc(alternation)
+    bind_gl(alternation)
+    bind_br(alternation)
+    bind_dod(alternation)

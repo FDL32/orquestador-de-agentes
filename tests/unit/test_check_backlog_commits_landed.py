@@ -13,7 +13,15 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.prefix_resolver import ticket_prefix_alternation
 
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -22,6 +30,23 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 gl = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(gl)
+
+
+@pytest.fixture(autouse=True)
+def _bind_ticket_prefix():
+    """WOT-2026-068k: los tests DIRECTOS (parse/census sin main) usan el patron
+    enlazado; main() lo re-enlaza desde el link del destino. El equivalente
+    WOT se construye con el MISMO resolvedor, sin copiar la alternancia."""
+    gl.bind_ticket_prefix(ticket_prefix_alternation("WOT"))
+
+
+def _write_dest_link(dest: Path, prefix: str = "WOT") -> None:
+    """Link del destino fixture: main() exige ticket_prefix fail-closed."""
+    cfg = dest / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": prefix}), encoding="utf-8"
+    )
 
 
 def _g(args, cwd):
@@ -91,6 +116,7 @@ def _archive_with(tmp_path, work, pairs):
         for tid, sha in pairs
     )
     (archive / "backlog_done.md").write_text(rows + "\n", encoding="utf-8")
+    _write_dest_link(dest)
     return dest
 
 
@@ -107,6 +133,7 @@ def _archive_raw(tmp_path, work, rows_text):
     archive = dest / ".agent" / "collaboration" / "_archive"
     archive.mkdir(parents=True, exist_ok=True)
     (archive / "backlog_done.md").write_text(rows_text, encoding="utf-8")
+    _write_dest_link(dest)
     return dest
 
 
@@ -1293,6 +1320,7 @@ def test_062d_pair_is_audited_against_root_that_holds_its_object(tmp_path, capsy
         f"| Alta | WOT-2026-062D | t | motor/x | completed | - | s | commit:{dest_sha} |\n",
         encoding="utf-8",
     )
+    _write_dest_link(work_d)
 
     rc = gl.main(
         [
@@ -1342,3 +1370,57 @@ def test_070g_absorbed_is_a_terminal_state_for_the_census():
         "(check_backlog_contract.py:1164): una fila absorbed con commit no puede "
         f"contarse como malformada; got {census}"
     )
+
+
+# =========================================================================== #
+# WOT-2026-068k -- patron de ids por-destino (link + triada legacy).
+# =========================================================================== #
+def test_068k_census_ve_filas_del_prefijo_del_destino():
+    """ROJO previo del defecto: con la lista cableada, en un destino RDS sus
+    propias filas no se extraian del archive (todas las clases del censo a 0).
+    Con el patron RDS|WOT|WP|WT la fila cuenta."""
+    gl.bind_ticket_prefix(ticket_prefix_alternation("RDS"))
+    row = (
+        "| Alta | RDS-2026-001a | trabajo deliverable_type: code | motor/x "
+        "| done | commit:abc1234 | origen | - |\n"
+    )
+    census = gl.census_archived(row)
+    assert census["required"] == 1
+    assert census["audited"] == 1
+    pairs = gl.parse_archived_commits(row)
+    assert pairs == [("RDS-2026-001a", "abc1234")]
+
+
+def test_068k_parse_conserva_legacy_wot_en_destino_rds():
+    """La triada WOT|WP|WT se incluye SIEMPRE ademas del prefijo declarado
+    (contrato frozen 061a, opcion A): las filas historicas WOT siguen auditables."""
+    gl.bind_ticket_prefix(ticket_prefix_alternation("RDS"))
+    row = (
+        "| Alta | WOT-2026-900a | t | motor/x | completed | - | s | commit:deadbeef |\n"
+    )
+    assert gl.parse_archived_commits(row) == [("WOT-2026-900a", "deadbeef")]
+
+
+def test_068k_main_falla_explicito_si_link_sin_ticket_prefix(tmp_path, monkeypatch):
+    """CONTROL NEGATIVO fail-closed: destino con archive legible pero link SIN
+    ticket_prefix -> EXIT_DEGRADED (3) con el motivo, nunca un escaneo con
+    politica inventada ni exit 0 silencioso."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    _origin, work = _make_repo(tmp_path)
+    sha = _commit(work, "s.txt", "s\n", "WOT-2026-0PP7: x")
+    dest = _archive_with(tmp_path, work, [("WOT-2026-0PP7", sha)])
+    (dest / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({}),
+        encoding="utf-8",  # sin ticket_prefix
+    )
+    rc = gl.main(
+        [
+            "--motor-root",
+            str(work),
+            "--project-root",
+            str(dest),
+            "--ref",
+            "origin/main",
+        ]
+    )
+    assert rc == gl.EXIT_DEGRADED

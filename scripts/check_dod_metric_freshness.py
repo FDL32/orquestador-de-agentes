@@ -45,6 +45,7 @@ from scripts.check_backlog_contract import (
     _extract_active_table,
     resolve_destino_root,
 )
+from scripts.prefix_resolver import resolve_ticket_alternation
 
 
 EXIT_OK = 0
@@ -74,10 +75,45 @@ _ANCHOR_RE = re.compile(
 # MEASURED 2026-08-27: live ids are not all numeric-suffixed --
 # `WOT-2026-STATE-RECON-A` is a real live row. A too-narrow id shape made the
 # guard report `<unknown>`, which would have entered the census as junk.
-_TICKET_ID_SPAN_RE = re.compile(
-    r"(?:WOT|WP|WT|CTL)-\d{4}-\w+(?:-\w+)*",
-    re.IGNORECASE,
-)
+#
+# WOT-2026-068k: el span se reconoce con el patron POR-DESTINO (ticket_prefix
+# del link + triada legacy), no con la lista cableada WOT|WP|WT|CTL -- en un
+# destino RDS la cola era invisible para la excision (falso positivo de
+# figura sobre ids propios, y `_row_ticket_id` devolvia <unknown>). Se compila
+# en `bind_ticket_prefix`; `main()` lo enlaza desde el link y FALLA EXPLICITO
+# si el link no declara ticket_prefix (fail-closed, nunca inventa politica).
+_TICKET_ID_SPAN_RE: re.Pattern[str] | None = None
+
+
+def bind_ticket_prefix(alternation: str) -> re.Pattern[str]:
+    """Compila y enlaza ``_TICKET_ID_SPAN_RE`` desde la alternancia por-destino.
+
+    Before: ``alternation`` es ``"RDS|WOT|WP|WT"`` (salida de
+        ``prefix_resolver.resolve_ticket_alternation``).
+    During: puro; muta el global del modulo (una sola fuente para
+        ``_strip_ticket_ids`` y ``_row_ticket_id``).
+    After: devuelve el patron compilado y lo deja en
+        ``_TICKET_ID_SPAN_RE``. Nunca lanza por formato de alternancia
+        (re.escape ya viene aplicado por el resolvedor).
+    """
+    global _TICKET_ID_SPAN_RE
+    _TICKET_ID_SPAN_RE = re.compile(
+        rf"(?:{alternation})-\d{{4}}-\w+(?:-\w+)*",
+        re.IGNORECASE,
+    )
+    return _TICKET_ID_SPAN_RE
+
+
+def _require_span_re() -> re.Pattern[str]:
+    """Patron de ids enlazado; falla explicito si nadie enlazo el prefijo."""
+    if _TICKET_ID_SPAN_RE is None:
+        raise RuntimeError(
+            "ticket_prefix no resuelto: llama a bind_ticket_prefix() con la "
+            "alternancia de prefix_resolver.resolve_ticket_alternation() "
+            "(main() lo hace desde el link; sin link declarado DEBE fallar)"
+        )
+    return _TICKET_ID_SPAN_RE
+
 
 # Sentence boundary for the anchor window. A backlog cell is not prose: the
 # separators that actually delimit one claim from the next are the cell pipe,
@@ -188,7 +224,7 @@ _DOD_METRIC_LEGACY_BASELINE: frozenset[str] = frozenset(
 
 def _strip_ticket_ids(text: str) -> str:
     """Blank out ticket-id spans, preserving offsets so slices stay aligned."""
-    return _TICKET_ID_SPAN_RE.sub(lambda m: " " * (m.end() - m.start()), text)
+    return _require_span_re().sub(lambda m: " " * (m.end() - m.start()), text)
 
 
 def _sentence_around(text: str, start: int, end: int) -> str:
@@ -209,7 +245,7 @@ def _row_ticket_id(row: str) -> str:
     cells = row.strip().strip("|").split("|")
     if len(cells) > 1:
         candidate = cells[1].strip()
-        if _TICKET_ID_SPAN_RE.fullmatch(candidate):
+        if _require_span_re().fullmatch(candidate):
             return candidate
     return "<unknown>"
 
@@ -245,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.backlog:
         backlog = Path(args.backlog)
+        prefix_origin = backlog
     else:
         dest_root, err = resolve_destino_root(args.project_root or args.workspace_root)
         if dest_root is None:
@@ -253,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return EXIT_SELF_FAIL
         backlog = dest_root / ".agent" / "collaboration" / "backlog.md"
+        prefix_origin = dest_root
 
     try:
         content = backlog.read_text(encoding="utf-8-sig")
@@ -266,6 +304,15 @@ def main(argv: list[str] | None = None) -> int:
     if err is not None:
         print(f"[dod-metric] ERROR: cannot parse live table: {err}", file=sys.stderr)
         return EXIT_SELF_FAIL
+
+    # WOT-2026-068k: patron de ids por-destino, fail-closed. Sin ticket_prefix
+    # declarado el guard no decide politica de ids -- ERROR explicito, nunca
+    # un escaneo con la lista cableada (que era invisible en destinos no-WOT).
+    alternation, prefix_err = resolve_ticket_alternation(prefix_origin)
+    if alternation is None:
+        print(f"[dod-metric] ERROR: {prefix_err}", file=sys.stderr)
+        return EXIT_SELF_FAIL
+    bind_ticket_prefix(alternation)
 
     violations = find_violations(rows)
     print(f"[dod-metric] live_rows={len(rows)} violations={len(violations)}")

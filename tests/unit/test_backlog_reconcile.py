@@ -17,7 +17,15 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
+
+import pytest
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.prefix_resolver import ticket_prefix_alternation
 
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -26,6 +34,15 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 br = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(br)
+
+
+@pytest.fixture(autouse=True)
+def _bind_ticket_prefix():
+    """WOT-2026-068k: los tests DIRECTOS (_signal_blocker_offqueue,
+    _collect_all) usan el patron enlazado; main() lo re-enlaza desde el link.
+    El equivalente WOT se construye con el MISMO resolvedor, sin copiar la
+    alternancia a mano."""
+    br.bind_ticket_prefix(ticket_prefix_alternation("WOT"))
 
 
 MOTOR_SHA = "a" * 40
@@ -57,8 +74,12 @@ _BACKLOG = """# Backlog (cola viva)
 """
 
 
-def _fake_workspace(tmp_path, *, with_link=False, dest_root_for_link=None):
-    """Build a fake destino workspace with a backlog + optional link + last-run."""
+def _fake_workspace(tmp_path, *, with_link=True, dest_root_for_link=None):
+    """Build a fake destino workspace with a backlog + optional link + last-run.
+
+    WOT-2026-068k: el link se escribe SIEMPRE y declara ``ticket_prefix`` --
+    main() lo exige fail-closed para construir su patron de ids por-destino
+    (antes el link solo servia a la topologia y podia faltar)."""
     ws = tmp_path / "ws"
     (ws / ".agent" / "collaboration").mkdir(parents=True)
     (ws / ".agent" / "collaboration" / "backlog.md").write_text(
@@ -74,7 +95,8 @@ def _fake_workspace(tmp_path, *, with_link=False, dest_root_for_link=None):
         cfg.mkdir(parents=True)
         target = str(dest_root_for_link if dest_root_for_link is not None else ws)
         (cfg / "motor_destination_link.json").write_text(
-            json.dumps({"destination_root": target}), encoding="utf-8"
+            json.dumps({"destination_root": target, "ticket_prefix": "WOT"}),
+            encoding="utf-8",
         )
     return ws
 
@@ -1074,3 +1096,42 @@ def test_067w_mutation_verify_revert_dual_scan(tmp_path, monkeypatch):
     assert b_mutant["commits_found"] == 0, (
         "mutation: without dual-scan, commits_found collapses to 0"
     )
+
+
+# --------------------------------------------------------------- WOT-2026-068k
+
+
+def test_068k_blocker_extraido_con_prefijo_del_destino():
+    """ROJO previo del defecto: con la lista cableada, en un destino RDS los
+    bloqueos propios NO se extraian de la celda 'Depende de' (el cross (f) era
+    invisible). Con el patron RDS|WOT|WP|WT si se extraen."""
+    br.bind_ticket_prefix(ticket_prefix_alternation("RDS"))
+    out = br._signal_blocker_offqueue(
+        "RDS-2026-001a, WOT-2026-900a", frozenset({"WOT-2026-900a"})
+    )
+    assert [o["blocker"] for o in out] == ["RDS-2026-001a"]
+    assert out[0]["present_in_live_queue"] is False
+
+
+def test_068k_link_sin_ticket_prefix_sale_por_exit_3(tmp_path, monkeypatch):
+    """CONTROL NEGATIVO fail-closed: link existente SIN ticket_prefix ->
+    exit 3 con el motivo nombrado, nunca un escaneo con politica inventada."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    (ws / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({"destination_root": str(ws)}),  # sin ticket_prefix
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    rc = br.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(ws),
+            "--out",
+            str(tmp_path / "o"),
+        ]
+    )
+    assert rc == 3

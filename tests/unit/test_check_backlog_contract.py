@@ -8,7 +8,16 @@ Every test reproduces a concrete contract violation and proves the gate blocks.
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
 from pathlib import Path
+
+import pytest
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.prefix_resolver import ticket_prefix_alternation
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +26,27 @@ MODULE_PATH = PROJECT_ROOT / "scripts" / "check_backlog_contract.py"
 _spec = importlib.util.spec_from_file_location("check_backlog_contract", MODULE_PATH)
 cbc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cbc)
+
+
+@pytest.fixture(autouse=True)
+def _wot_prefix_env(tmp_path: Path):
+    """WOT-2026-068k: cada test arranca COMO un destino real.
+
+    - Escribe el motor_destination_link.json declarando ``ticket_prefix: WOT``
+      (los tests que invocan ``main()`` resuelven su patron FRESCO desde ese
+      link, igual que en produccion).
+    - Enlaza las 5 regex del gate al equivalente WOT construido con el MISMO
+      resolvedor (los tests que llaman funciones directas sin pasar por main()
+      usan ese enlace; estado inicial determinista en CADA test, sin fuga
+      cruzada de un test RDS a uno WOT).
+    Los tests fail-closed propios sobrescriben/borran el link a proposito.
+    """
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": "WOT"}), encoding="utf-8"
+    )
+    cbc.bind_ticket_prefix(ticket_prefix_alternation("WOT"))
 
 
 _HEADER = (
@@ -692,8 +722,24 @@ def test_054i_closure_baseline_is_pinned() -> None:
 
 
 # ---------------------------------------------------------------------------
+def _write_ctl_link(tmp_path: Path) -> None:
+    """WOT-2026-068k: convierte tmp_path en un destino que DECLARA CTL.
+
+    Estos tests auditan filas CTL: con el patron por-destino solo se reconocen
+    si el link del destino las declara (antes la lista cableada WOT|WP|WT|CTL
+    las veia desde cualquier destino, que era exactamente el defecto). Se
+    des-enlaza para que ensure_bound resuelva FRESCO desde este link."""
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": "CTL"}), encoding="utf-8"
+    )
+    cbc.unbind_ticket_patterns()
+
+
 def test_ctl_closure_five_cell_schema_passes(tmp_path: Path) -> None:
     _write_backlog(tmp_path, _VALID_ROWS)
+    _write_ctl_link(tmp_path)
     _write_archive_closure_rows(
         tmp_path,
         "| CTL-2026-088d | completed | commit:abc | deliverable_type: code | nota limpia |\n",
@@ -703,6 +749,7 @@ def test_ctl_closure_five_cell_schema_passes(tmp_path: Path) -> None:
 
 def test_ctl_closure_schema_broken_arity_still_blocks(tmp_path: Path) -> None:
     _write_backlog(tmp_path, _VALID_ROWS)
+    _write_ctl_link(tmp_path)
     _write_archive_closure_rows(
         tmp_path,
         "| CTL-2026-088d | completed | commit:abc | deliverable_type: code | x | nota sobran |\n",
@@ -2032,3 +2079,72 @@ def test_072a_mutation_revert_startswith_space_fails() -> None:
         "la fila compacta debe fallar con startswith('| ') -- prueba que el "
         "fix startswith('|') es necesario"
     )
+
+
+# =========================================================================== #
+# WOT-2026-068k -- el gate construye su alternancia desde el ticket_prefix
+# del link (re.escape(prefix) + triada legacy WOT/WP/WT) y FALLA EXPLICITO
+# si el link no lo declara.
+# =========================================================================== #
+def _write_prefix_link(tmp_path: Path, prefix: str) -> None:
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": prefix}), encoding="utf-8"
+    )
+
+
+def test_068k_destino_rds_valida_sus_propias_filas(tmp_path: Path, capsys) -> None:
+    """ROJO previo del defecto (premisa del plan, medida como validadas=0->N):
+    con la lista cableada `(?:WOT|WP|WT|CTL)`, un destino RDS tenia
+    `validadas=0` -- sus propias filas eran invisibles y el gate salia OK sin
+    auditar NADA. Con el patron desde el link, la fila RDS cuenta; la fila
+    WOT historica sigue contando por la triada legacy."""
+    _write_backlog(
+        tmp_path,
+        "| Alta | RDS-2026-001a | Bien deliverable_type: code | s | pending | - | x | - |\n"
+        "| Baja | WOT-2026-002a | Historica deliverable_type: code | s | pending | - | x | - |\n",
+    )
+    _write_prefix_link(tmp_path, "RDS")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "validadas=2 saltadas=0" in out, out
+
+
+def test_068k_main_falla_explicito_si_link_sin_ticket_prefix(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """CONTROL NEGATIVO fail-closed (DoD): link EXISTE pero sin ticket_prefix ->
+    exit 2 con el motivo nombrado en stderr; nunca un escaneo con politica
+    inventada ni exit 0 silencioso."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    _write_backlog(tmp_path, _VALID_ROWS)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": ""}), encoding="utf-8"
+    )
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "ticket_prefix" in err, err
+
+
+def test_068k_validate_backlog_falla_explicito_sin_link(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """La capa LIBRARY devuelve la violacion fail-closed explicita (el controller
+    la filtra en su subset activo; prepush_check la reporta como bloqueo), en
+    vez de auditar con una lista fija heredada."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    _write_backlog(tmp_path, _VALID_ROWS)
+    (tmp_path / ".agent" / "config" / "motor_destination_link.json").unlink()
+    cbc.unbind_ticket_patterns()
+
+    errs = cbc.validate_backlog(tmp_path / ".agent" / "collaboration" / "backlog.md")
+    assert errs, "sin link declarado el validador DEBE fallar explicito"
+    assert "fail-closed" in errs[0]
+    assert "ticket_prefix" in errs[0]

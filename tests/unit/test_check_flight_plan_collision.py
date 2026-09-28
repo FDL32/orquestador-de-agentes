@@ -40,9 +40,24 @@ _SPEC.loader.exec_module(cfpc)
 
 
 # --------------------------------------------------------------------- helpers
-def _queued(tmp_path: Path) -> Path:
+def _write_link(destino_root: Path, prefix: str = "WOT") -> Path:
+    """Instala el motor_destination_link.json del destino (WOT-2026-068k).
+
+    El gate resuelve su patron de ids desde el ticket_prefix declarado en ese
+    link; sin él falla explicito. Los fixtures lo instalan como lo haria el
+    instalador en un destino real."""
+    cfg = destino_root / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    link = cfg / "motor_destination_link.json"
+    link.write_text(json.dumps({"ticket_prefix": prefix}), encoding="utf-8")
+    return link
+
+
+def _queued(tmp_path: Path, *, prefix: str | None = "WOT") -> Path:
     d = tmp_path / "queued"
     d.mkdir(parents=True, exist_ok=True)
+    if prefix is not None:
+        _write_link(tmp_path, prefix)
     return d
 
 
@@ -179,3 +194,79 @@ def test_reuses_validate_batch_dag_normalize_surface():
     from validate_batch_dag import _normalize_surface as vbd_norm
 
     assert cfpc._normalize_surface is vbd_norm
+
+
+# ------------------------------------------- WOT-2026-068k: prefijo por-destino
+def test_prefijo_no_canonico_rds_es_detectado(tmp_path):
+    """ROJO previo del defecto: con el patron cableado WOT|WP|WT|CTL la colision
+    de un destino RDS era INVISIBLE (find_collisions == [] -- el gate ni ve la
+    fila). Con el fix, el patron se construye desde el link y la colision sale."""
+    q = _queued(tmp_path, prefix="RDS")
+    _plan(q, "planA", tickets=["RDS-2026-001a"], surfaces=["scripts/a.py"])
+    _plan(q, "planB", tickets=["RDS-2026-001a"], surfaces=["scripts/b.py"])
+
+    collisions = cfpc.find_collisions(q)
+    assert collisions, "una colision RDS debe detectarse con prefijo RDS declarado"
+    assert any(c.key == "RDS-2026-001a" for c in collisions)
+
+    proc = _run_cli(q)
+    assert proc.returncode != 0
+    assert "RDS-2026-001a" in proc.stdout + proc.stderr
+
+
+def test_prefijo_legacy_wot_sigue_visible_en_destino_rds(tmp_path):
+    """Compatibilidad legacy: la triada WOT|WP|WT se incluye SIEMPRE ademas del
+    prefijo declarado (contrato frozen 061a, opcion A)."""
+    q = _queued(tmp_path, prefix="RDS")
+    _plan(q, "planA", tickets=["WOT-2026-999a"], surfaces=["scripts/a.py"])
+    _plan(q, "planB", tickets=["WOT-2026-999a"], surfaces=["scripts/b.py"])
+
+    collisions = cfpc.find_collisions(q)
+    assert any(c.key == "WOT-2026-999a" for c in collisions)
+
+
+def test_link_sin_ticket_prefix_falla_explicito(tmp_path, monkeypatch):
+    """CONTROL NEGATIVO fail-closed (WOT-2026-068k DoD): un link SIN
+    ticket_prefix (o ausente) produce un veredicto EXPLICITO -- kind "prefix"
+    con el motivo -- nunca un verde silencioso ni un default WOT."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    q = _queued(tmp_path, prefix=None)  # sin link
+    _plan(q, "planA", tickets=["WOT-2026-999a"], surfaces=["scripts/a.py"])
+    _plan(q, "planB", tickets=["WOT-2026-999b"], surfaces=["scripts/b.py"])
+
+    collisions = cfpc.find_collisions(q)
+    assert len(collisions) == 1
+    assert collisions[0].kind == "prefix"
+    assert "ticket_prefix" in collisions[0].render()
+
+    proc = _run_cli(q)
+    assert proc.returncode != 0
+    out = proc.stdout + proc.stderr
+    assert "ticket_prefix" in out
+
+    proc_json = subprocess.run(
+        [sys.executable, str(_SCRIPT), "--queued-dir", str(q), "--json"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc_json.returncode != 0
+    payload = json.loads(proc_json.stdout)
+    assert payload["ok"] is False
+    assert any(c["kind"] == "prefix" for c in payload["collisions"])
+
+
+def test_link_vacio_ticket_prefix_tambien_falla_explicito(tmp_path, monkeypatch):
+    """El caso literal del DoD: el link EXISTE pero su ticket_prefix esta vacio."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": ""}), encoding="utf-8"
+    )
+    q = _queued(tmp_path, prefix=None)
+    _plan(q, "planA", tickets=["WOT-2026-999a"], surfaces=["scripts/a.py"])
+
+    collisions = cfpc.find_collisions(q)
+    assert len(collisions) == 1
+    assert collisions[0].kind == "prefix"
+    assert "no declara ticket_prefix" in collisions[0].render()

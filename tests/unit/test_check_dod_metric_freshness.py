@@ -8,6 +8,7 @@ ALREADY obsolete (one demanded '243 auditorias' when there were 342; another
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import scripts.check_dod_metric_freshness as mod
 from scripts.check_dod_metric_freshness import (
     EXIT_OK,
     EXIT_SELF_FAIL,
@@ -23,6 +25,7 @@ from scripts.check_dod_metric_freshness import (
     find_violations,
     main,
 )
+from scripts.prefix_resolver import ticket_prefix_alternation
 
 
 HEADER = (
@@ -32,7 +35,26 @@ HEADER = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _bind_ticket_prefix():
+    """WOT-2026-068k: los tests DIRECTOS (sin main) usan el patron enlazado.
+
+    main() enlaza desde el link en produccion; aqui se enlaza el equivalente
+    WOT con el MISMO resolvedor (ticket_prefix_alternation) -- sin copiar la
+    alternancia a mano."""
+    mod.bind_ticket_prefix(ticket_prefix_alternation("WOT"))
+
+
+def _write_link(destino_root: Path, prefix: str = "WOT") -> None:
+    cfg = destino_root / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": prefix}), encoding="utf-8"
+    )
+
+
 def _backlog(tmp_path: Path, *rows: str) -> Path:
+    _write_link(tmp_path)
     path = tmp_path / "backlog.md"
     path.write_text(HEADER + "".join(r + "\n" for r in rows), encoding="utf-8")
     return path
@@ -180,3 +202,57 @@ def test_non_numeric_suffix_id_is_read_from_its_cell():
 
     row = "| Media | WOT-2026-STATE-RECON-A | t | motor | pending | - | x | none |"
     assert mod._row_ticket_id(row) == "WOT-2026-STATE-RECON-A"
+
+
+# --- WOT-2026-068k: patron por-destino -------------------------------------
+
+
+def test_destino_rds_excision_y_celda_de_fila(tmp_path):
+    """ROJO previo del defecto: con la lista cableada, en un destino RDS la
+    excision no veia los ids propios (cola `RDS-2026-001s` producia el token
+    falso `001s`) y `_row_ticket_id` devolvia <unknown>. Con el fix, el patron
+    se enlaza desde el link RDS y ambas operaciones ven la fila."""
+    _write_link(tmp_path, prefix="RDS")
+    mod.bind_ticket_prefix(ticket_prefix_alternation("RDS"))
+
+    row = _row("RDS-2026-001s", "depende de RDS-2026-002s y su cierre")
+    assert mod._row_ticket_id(row) == "RDS-2026-001s"
+    # Sin cifras declaradas -> limpio; y la cola del id NO genera el token
+    # falso `001s` (excision efectiva con el prefijo propio).
+    assert mod.find_violations([row]) == []
+
+    row_con_cifra = _row("RDS-2026-001s", "quedan 177 filas por drenar")
+    violations = mod.find_violations([row_con_cifra])
+    assert len(violations) == 1
+    assert "RDS-2026-001s" in violations[0]
+
+
+def test_main_falla_explicito_sin_ticket_prefix(tmp_path, monkeypatch):
+    """CONTROL NEGATIVO fail-closed: backlog legible y tabla parseable pero
+    SIN link declarado -> EXIT_SELF_FAIL con el motivo nombrado, nunca un
+    escaneo con politica inventada ni exit 0 silencioso."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    path = tmp_path / "backlog.md"
+    path.write_text(
+        HEADER + _row("WOT-2026-903a", "quedan 177 filas"), encoding="utf-8"
+    )
+
+    rc = main(["--backlog", str(path)])
+    assert rc == EXIT_SELF_FAIL
+
+
+def test_main_falla_explicito_con_link_sin_ticket_prefix(tmp_path, monkeypatch):
+    """El caso literal del DoD: el link EXISTE pero no declara ticket_prefix."""
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": ""}), encoding="utf-8"
+    )
+    path = tmp_path / "backlog.md"
+    path.write_text(
+        HEADER + _row("WOT-2026-903b", "quedan 177 filas"), encoding="utf-8"
+    )
+
+    rc = main(["--backlog", str(path)])
+    assert rc == EXIT_SELF_FAIL

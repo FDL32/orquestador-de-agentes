@@ -18,7 +18,10 @@ NON-GOALS (hard-stop, criterio adjudicado 2026-07-24):
   - NO reescribe el contrato un-DAG-un-veredicto de validate_batch_dag.
 
 REUSO: _normalize_surface se IMPORTA de validate_batch_dag (una sola fuente de la
-forma canonica de una ruta), no se reescribe.
+forma canonica de una ruta), no se reescribe. El patron de ids de ticket se
+CONSTRUYE desde el ticket_prefix del destino (WOT-2026-068k) via
+prefix_resolver.resolve_ticket_alternation, nunca se cablea: la triada cerrada
+WOT|WP|WT|CTL dejaba invisible cualquier fila de un destino con otro prefijo.
 
 CABLEADO: run_flight_plan_collision_check en prepush_check.py closeout (WARN inicial,
 is_blocking=False; el queued/ real ya esta sucio antes de introducir la barrera y
@@ -27,13 +30,19 @@ run_guard_wiring_orphan_check). Criterio de salida a bloqueante: WOT-2026-040r.
 
 Docstring-as-spec:
   Before: queued_dir es un directorio existente con planes *.json (o vacio).
-  During: lee cada *.json (read-only), extrae ticket-ids (fullmatch, robusto a
-          placeholders de grupo y a tickets polimorfico) y shared_surfaces
-          normalizadas; cruza los conjuntos entre planes. Sin I/O de escritura.
+          Su destino dueño debe declarar ticket_prefix en su
+          motor_destination_link.json (se resuelve por ascenso desde queued_dir).
+  During: lee cada *.json (read-only), extrae ticket-ids (fullmatch contra el
+          patron por-destino, robusto a placeholders de grupo y a tickets
+          polymorfico) y shared_surfaces normalizadas; cruza los conjuntos entre
+          planes. Sin I/O de escritura.
   After:  find_collisions() devuelve la lista de colisiones (vacia si ninguna);
-          main() imprime el reporte y devuelve exit 1 si hay >=1 colision, 0 si no,
-          2 si el directorio no existe. Un JSON ilegible es una colision-error
-          reportada (fail-closed), nunca un verde mudo.
+          si el ticket_prefix no es resoluble devuelve UNA colision-kind
+          "prefix" con el motivo (fail-closed explicito, nunca un verde mudo);
+          main() imprime el reporte y devuelve exit 1 si hay >=1 colision o el
+          fallo de prefijo, 0 si no, 2 si el directorio no existe. Un JSON
+          ilegible es una colision-error reportada (fail-closed), nunca un
+          verde mudo.
 """
 
 from __future__ import annotations
@@ -50,11 +59,12 @@ from typing import Any
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+_ROOT = _SCRIPTS_DIR.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
+from scripts.prefix_resolver import resolve_ticket_alternation  # noqa: E402
 from validate_batch_dag import _normalize_surface  # noqa: E402
-
-
-_TICKET_ID_RE = re.compile(r"^(?:WOT|WP|WT|CTL)-\d{4}-[0-9a-z]+$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -72,10 +82,29 @@ class Collision:
                 f"shared_surface {self.key!r} declarada en >=2 planes de "
                 f"queued/: {planos}"
             )
+        if self.kind == "prefix":
+            return f"ticket_prefix no resoluble: {self.key}"
         return f"error leyendo plan: {self.key}"
 
 
-def _iter_ticket_ids(value: Any) -> list[str]:
+def _ticket_id_re_for(queued_dir: Path) -> tuple[re.Pattern[str] | None, str | None]:
+    """Patron de ids del destino dueño de queued_ (WOT-2026-068k).
+
+    Before: queued_dir es un directorio de planes dentro de un repo_destino.
+    During: resuelve el ticket_prefix del link por ascenso desde queued_dir
+        (o AGENT_PROJECT_ROOT) y compila el fullmatch por-destino.
+    After: (patron, None) o (None, motivo fail-closed). Nunca lanza.
+    """
+    alternation, err = resolve_ticket_alternation(queued_dir)
+    if alternation is None:
+        return None, err
+    return (
+        re.compile(rf"^(?:{alternation})-\d{{4}}-[0-9a-z]+$", re.IGNORECASE),
+        None,
+    )
+
+
+def _iter_ticket_ids(value: Any, ticket_re: re.Pattern[str]) -> list[str]:
     ids: list[str] = []
     if not isinstance(value, list):
         return ids
@@ -85,16 +114,16 @@ def _iter_ticket_ids(value: Any) -> list[str]:
             candidate = item
         elif isinstance(item, dict):
             candidate = item.get("id")
-        if isinstance(candidate, str) and _TICKET_ID_RE.fullmatch(candidate.strip()):
+        if isinstance(candidate, str) and ticket_re.fullmatch(candidate.strip()):
             ids.append(candidate.strip())
     return ids
 
 
-def _plan_ticket_ids(data: dict[str, Any]) -> set[str]:
-    ids: set[str] = set(_iter_ticket_ids(data.get("tickets")))
+def _plan_ticket_ids(data: dict[str, Any], ticket_re: re.Pattern[str]) -> set[str]:
+    ids: set[str] = set(_iter_ticket_ids(data.get("tickets"), ticket_re))
     for group in data.get("groups") or []:
         if isinstance(group, dict):
-            ids.update(_iter_ticket_ids(group.get("tickets")))
+            ids.update(_iter_ticket_ids(group.get("tickets"), ticket_re))
     return ids
 
 
@@ -128,10 +157,13 @@ def _load_plans(queued_dir: Path) -> tuple[dict[str, dict[str, Any]], list[Colli
 
 
 def build_ticket_index(queued_dir: Path) -> dict[str, list[str]]:
+    ticket_re, err = _ticket_id_re_for(queued_dir)
+    if ticket_re is None:
+        raise RuntimeError(f"ticket_prefix no resoluble: {err}")
     plans, _ = _load_plans(queued_dir)
     index: dict[str, list[str]] = {}
     for name, data in plans.items():
-        for tid in _plan_ticket_ids(data):
+        for tid in _plan_ticket_ids(data, ticket_re):
             index.setdefault(tid, []).append(name)
     return index
 
@@ -148,10 +180,21 @@ def build_surface_index(queued_dir: Path) -> dict[str, list[str]]:
 def find_collisions(queued_dir: Path) -> list[Collision]:
     plans, collisions = _load_plans(queued_dir)
 
+    ticket_re, prefix_err = _ticket_id_re_for(queued_dir)
+    if ticket_re is None:
+        # Fail-closed explicito (WOT-2026-068k): sin prefijo declarado el gate
+        # no decide politica -- reporta el motivo como veredicto, nunca verde.
+        collisions.append(
+            Collision(
+                "prefix", prefix_err or "motivo no disponible", (queued_dir.name,)
+            )
+        )
+        return collisions
+
     ticket_index: dict[str, list[str]] = {}
     surface_index: dict[str, list[str]] = {}
     for name, data in plans.items():
-        for tid in _plan_ticket_ids(data):
+        for tid in _plan_ticket_ids(data, ticket_re):
             ticket_index.setdefault(tid, []).append(name)
         for surface in _plan_surfaces(data):
             surface_index.setdefault(surface, []).append(name)

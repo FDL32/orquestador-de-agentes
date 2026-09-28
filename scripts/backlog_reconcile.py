@@ -31,7 +31,8 @@ After:
         0 = collection OK.
         1 = collector self-failure (backlog unparseable, etc.) -- NEVER ticket-level.
         2 = argument/topology error (bad --motor-root).
-        3 = degraded topology (backlog link unresolved) when a full run was required.
+        3 = degraded topology (backlog link unresolved, or the link declares no
+            ticket_prefix -- WOT-2026-068k fail-closed) when a full run was required.
 """
 
 from __future__ import annotations
@@ -43,6 +44,13 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from scripts.prefix_resolver import resolve_ticket_alternation  # noqa: E402
 
 
 SCHEMA_VERSION = "backlog-reconcile-collector/v0"
@@ -72,9 +80,41 @@ _IDENT_RE = re.compile(r"`([^`]{2,60})`")
 _DEC_ACCEPTED_RE = re.compile(r"\baccept(?:ed|ada|ado)\b", re.IGNORECASE)
 # WOT-2026-041f cross (f): ticket-IDs inside a free-text "Depende de" cell, which
 # may hold several ("WOT-2026-027c, WOT-2026-026j") or a literal "-".
-_TICKET_ID_IN_CELL_RE = re.compile(
-    r"\b(?:WOT|WP|WT|CTL)-\d{4}-[0-9a-z]+\b", re.IGNORECASE
-)
+# WOT-2026-068k: el span se reconoce con el patron POR-DESTINO (ticket_prefix
+# del link + triada legacy), nunca con la lista cableada WOT|WP|WT|CTL -- en un
+# destino RDS los bloqueos propios no se extraian de la celda. Se compila en
+# `bind_ticket_prefix`; `main()` lo enlaza desde el link del destino y FALLA
+# EXPLICITO (exit 3, clase link/topologia) si el link no declara ticket_prefix.
+_TICKET_ID_IN_CELL_RE: re.Pattern[str] | None = None
+
+
+def bind_ticket_prefix(alternation: str) -> re.Pattern[str]:
+    """Compila y enlaza ``_TICKET_ID_IN_CELL_RE`` desde la alternancia por-destino.
+
+    Before: ``alternation`` sale de ``prefix_resolver.resolve_ticket_alternation``
+        (re.escape ya aplicado).
+    During: muta el global del modulo (una sola fuente para
+        ``_signal_blocker_offqueue``).
+    After: el patron compilado, dejado en ``_TICKET_ID_IN_CELL_RE``. Nunca lanza.
+    """
+    global _TICKET_ID_IN_CELL_RE
+    _TICKET_ID_IN_CELL_RE = re.compile(
+        rf"\b(?:{alternation})-\d{{4}}-[0-9a-z]+\b", re.IGNORECASE
+    )
+    return _TICKET_ID_IN_CELL_RE
+
+
+def _require_ticket_re() -> re.Pattern[str]:
+    """Patron de ids enlazado; falla explicito si nadie enlazo el prefijo."""
+    if _TICKET_ID_IN_CELL_RE is None:
+        raise RuntimeError(
+            "ticket_prefix no resuelto: llama a bind_ticket_prefix() con la "
+            "alternancia de prefix_resolver.resolve_ticket_alternation() "
+            "(main() lo hace desde el link; sin link declarado DEBE fallar)"
+        )
+    return _TICKET_ID_IN_CELL_RE
+
+
 # Live statuses that carry a blocker worth cross-checking (cross (f)). Distinct
 # from RECONCILE_STATES: 'blocked' rows do NOT enter reconciliation, but their
 # blocker is still checked against the live queue.
@@ -457,7 +497,7 @@ def _signal_blocker_offqueue(depends_cell: str, live_ids: frozenset[str]) -> lis
     """
     return [
         {"blocker": blocker, "present_in_live_queue": False}
-        for blocker in _TICKET_ID_IN_CELL_RE.findall(depends_cell or "")
+        for blocker in _require_ticket_re().findall(depends_cell or "")
         if blocker not in live_ids
     ]
 
@@ -677,6 +717,16 @@ def main(argv: list[str] | None = None) -> int:
     if table_err:
         print(f"[reconcile] ERROR: {table_err}", file=sys.stderr)
         return 1
+
+    # WOT-2026-068k: patron de ids por-destino, fail-closed. Sin ticket_prefix
+    # declarado el collector no decide politica de ids -- exit 3 (clase
+    # link/topologia), nunca escanear con la lista cableada (invisible en
+    # destinos no-WOT).
+    alternation, prefix_err = resolve_ticket_alternation(dest_root)
+    if alternation is None:
+        print(f"[reconcile] ERROR: {prefix_err}", file=sys.stderr)
+        return 3
+    bind_ticket_prefix(alternation)
 
     roots = {"MOTOR_ROOT": motor_root, "DESTINO_ROOT": dest_root}
 

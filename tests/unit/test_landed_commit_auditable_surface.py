@@ -17,6 +17,8 @@ son NO-REGRESION: siguen verdes sin tocarse.
 
 from __future__ import annotations
 
+import json
+import os
 import secrets
 import subprocess
 import sys
@@ -105,6 +107,13 @@ def _archive_row(dest: Path, ticket_id: str, sha: str) -> None:
         "|--------|--------|------|-----------|\n"
         f"| {ticket_id} | completed | cierre por landed commit | commit:{sha} |\n",
         encoding="utf-8",
+    )
+    # WOT-2026-068k: el archive es de un destino que DECLARA su prefijo; los
+    # consumidores (parse_archived_commits) resuelven el patron desde el link.
+    cfg = dest / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"ticket_prefix": ticket_id.split("-")[0]}), encoding="utf-8"
     )
 
 
@@ -195,6 +204,10 @@ def test_public_surface_is_importable_without_package(
         capture_output=True,
         text=True,
         timeout=120,
+        # WOT-2026-068k: el subprocesso NO hereda fixtures; el resolvedor de
+        # prefijo necesita el destino via AGENT_PROJECT_ROOT (su link declara
+        # el prefijo de la fila archivada).
+        env={**os.environ, "AGENT_PROJECT_ROOT": str(world["dest"])},
     )
 
     assert proc.returncode == 0, proc.stderr
@@ -285,5 +298,7 @@ def test_062d_surface_same_verdict_under_cli_sys_path(
         capture_output=True,
         text=True,
         timeout=120,
+        # WOT-2026-068k: ver test_public_surface_is_importable_without_package.
+        env={**os.environ, "AGENT_PROJECT_ROOT": str(world["dest"])},
     )
     assert proc.returncode == 0, proc.stderr

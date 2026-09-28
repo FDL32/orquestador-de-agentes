@@ -111,6 +111,12 @@ try:
 except ImportError:
     from landed_commit_surface import _pair_home_root  # type: ignore[no-redef]
 
+# WOT-2026-068k: resolvedor canonico del ticket_prefix (mismo dual-shape).
+try:
+    from scripts.prefix_resolver import resolve_ticket_alternation
+except ImportError:
+    from prefix_resolver import resolve_ticket_alternation  # type: ignore[no-redef]
+
 
 SCHEMA_VERSION = "backlog-commits-landed-guard/v1"
 
@@ -180,7 +186,51 @@ _COMMIT_PREFIX = "commit:"
 _COMMITS_PREFIX = "commits:"
 _COMMIT_CELL_PREFIXES = (_COMMIT_PREFIX, _COMMITS_PREFIX)
 # Ticket-ID shape: WOT-2026-021o / WT-2026-250c / WP-2026-... (prefix-YYYY-suffix).
-_TICKET_ID_RE = re.compile(r"^(?:WOT|WP|WT|CTL)-\d{4}-[0-9a-z]+$", re.IGNORECASE)
+# WOT-2026-068k: el shape se construye desde el ticket_prefix del destino
+# (link + triada legacy), nunca con la lista cableada WOT|WP|WT|CTL -- en un
+# destino RDS sus propias filas no se extraian del archive (census/audit
+# ciegos). Se compila en `bind_ticket_prefix`; `main()` lo enlaza desde el link
+# y FALLA EXPLICITO (EXIT_DEGRADED) si el link no declara ticket_prefix. El
+# camino LIBRARY (parse_archived_commits / census_archived sin main) lo enlaza
+# perezosamente desde AGENT_PROJECT_ROOT (lo exporta agent_controller) o lanza
+# RuntimeError -- nunca escanea con politica inventada.
+_TICKET_ID_RE: re.Pattern[str] | None = None
+
+
+def bind_ticket_prefix(alternation: str) -> re.Pattern[str]:
+    """Compila y enlaza ``_TICKET_ID_RE`` desde la alternancia por-destino.
+
+    Before: ``alternation`` sale de ``prefix_resolver.resolve_ticket_alternation``
+        (re.escape ya aplicado).
+    During: muta el global del modulo (una sola fuente para
+        ``_split_fused``/``parse_archived_commits``/``census_archived``).
+    After: el patron compilado, dejado en ``_TICKET_ID_RE``. Nunca lanza.
+    """
+    global _TICKET_ID_RE
+    _TICKET_ID_RE = re.compile(rf"^(?:{alternation})-\d{{4}}-[0-9a-z]+$", re.IGNORECASE)
+    return _TICKET_ID_RE
+
+
+def _require_ticket_re() -> re.Pattern[str]:
+    """Patron de ids enlazado, con auto-enlace perezoso por entorno.
+
+    Cadena: (1) ya enlazado (main() o un llamador explicito); (2)
+    ``AGENT_PROJECT_ROOT`` via el resolvedor canonico (agent_controller la
+    exporta en modo destino); (3) RuntimeError -- falla explicita, nunca un
+    escaneo con un prefijo por defecto inventado.
+    """
+    global _TICKET_ID_RE
+    if _TICKET_ID_RE is not None:
+        return _TICKET_ID_RE
+    alternation, err = resolve_ticket_alternation(None)
+    if alternation is not None:
+        return bind_ticket_prefix(alternation)
+    raise RuntimeError(
+        f"ticket_prefix no resuelto para el patron de ids: {err} "
+        "(bind_ticket_prefix explicito o AGENT_PROJECT_ROOT con link declarado)"
+    )
+
+
 # deliverable_type lives as a SUBSTRING inside the row's prose Titulo/comment cell
 # (e.g. `... deliverable_type: code | ...`), NOT as a discrete column. A positional
 # cell read returns 0 (wrong); the substring returns the real set. WOT-2026-024c.
@@ -359,7 +409,7 @@ def _split_fused(stripped: str) -> list[str]:
     for m in re.finditer(r"\|\s*\|", stripped):
         candidate = "|" + stripped[m.end() - 1 :]
         cells = _row_cells(candidate)
-        if cells and any(_TICKET_ID_RE.match(c) for c in cells):
+        if cells and any(_require_ticket_re().match(c) for c in cells):
             cuts.append((m.start(), m.end()))
     if not cuts:
         return [stripped]
@@ -414,11 +464,12 @@ def parse_archived_commits(content: str) -> list[tuple[str, str]]:
     each is audited (never collapse a group to its first member). A row is audited only
     if it has both a terminal-state cell and a commit(s) cell.
     """
+    ticket_re = _require_ticket_re()
     pairs: list[tuple[str, str]] = []
     for cells in _logical_rows(content):
         if not any(c in _TERMINAL_STATES for c in cells):
             continue
-        ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
+        ticket_id = next((c for c in cells if ticket_re.match(c)), None)
         commit_cell = _commit_cell(cells)
         if not ticket_id or not commit_cell:
             continue
@@ -460,6 +511,7 @@ def census_archived(content: str) -> dict:
     (``skipped_required_tickets``), and the map of duplicate ticket-ids
     (``duplicate_tickets``: id -> count). Pure string parsing; touches no git and no disk.
     """
+    ticket_re = _require_ticket_re()
     required = audited = skipped_required = skipped_legacy = 0
     skipped_required_tickets: list[str] = []
     malformed_evidence_tickets: list[str] = []
@@ -481,11 +533,11 @@ def census_archived(content: str) -> dict:
             # real run, which is how a new barrier gets switched off.
             if any(c == "superseded" for c in cells):
                 continue
-            ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
+            ticket_id = next((c for c in cells if ticket_re.match(c)), None)
             if ticket_id and _commit_cell(cells) is not None:
                 malformed_evidence_tickets.append(ticket_id)
             continue
-        ticket_id = next((c for c in cells if _TICKET_ID_RE.match(c)), None)
+        ticket_id = next((c for c in cells if ticket_re.match(c)), None)
         if not ticket_id:
             continue
         terminal_ids.append(ticket_id)
@@ -827,6 +879,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI dispatch wit
     except OSError as exc:
         print(f"[landed] ERROR: cannot read archive {archive}: {exc}", file=sys.stderr)
         return EXIT_SELF_FAIL
+
+    # WOT-2026-068k: patron de ids por-destino, fail-closed. Sin ticket_prefix
+    # declarado el guard no decide politica de ids -- EXIT_DEGRADED (clase
+    # link/topologia), nunca escanear con la lista cableada (invisible en
+    # destinos no-WOT).
+    alternation, prefix_err = resolve_ticket_alternation(dest_root)
+    if alternation is None:
+        print(f"[landed] ERROR: {prefix_err}", file=sys.stderr)
+        return EXIT_DEGRADED
+    bind_ticket_prefix(alternation)
 
     # WOT-2026-024c: compute the DENOMINATOR before auditing. `census` answers "how
     # many rows OUGHT to carry landing evidence", so ERROR=0 can be told apart from
