@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from bus.redact import redact_payload
 from scripts.memory_consolidate import (
     MEMORY_MD_LINE_CAP,
+    _apply_consolidation,
     dedupe,
     generate_memory_profile_md,
     generate_memory_rules_md,
@@ -277,6 +280,73 @@ def test_idempotency(tmp_path: Path) -> None:
     result2, _ = dedupe(result1)
     assert len(result1) == len(result2)
     assert [e["signal"] for e in result1] == [e["signal"] for e in result2]
+
+
+def test_apply_consolidation_does_not_duplicate_against_existing_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lesson already archived in a PREVIOUS month must not be re-archived.
+
+    Regression test for the bug measured 2026-09-28: `_apply_consolidation`
+    only checked `archive_file.exists()` for the CURRENT month, so a lesson
+    promoted months ago got concatenated again -- 11 real duplicates in the
+    first L1 rotation in months. The dedup key must also be computed on
+    REDACTED entries on both sides: the archive on disk is already redacted,
+    and comparing a raw `archivable` entry against it produces a false
+    negative when the topic contains redactable text (e.g. an email), which
+    is exactly what blocked the first commit of that rotation.
+
+    Mutation: revert to comparing only `archive_file.exists()` for the
+    current month -> this goes RED (the old-month duplicate reappears).
+    """
+    test_obs = tmp_path / "observations.jsonl"
+    test_obs.write_text("", encoding="utf-8")
+    test_memory_md = tmp_path / "MEMORY.md"
+    test_archive = tmp_path / "archive"
+    test_archive.mkdir()
+
+    monkeypatch.setattr("scripts.memory_consolidate.OBS", test_obs)
+    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_DIR", tmp_path)
+    monkeypatch.setattr("scripts.memory_consolidate.ARCHIVE_DIR", test_archive)
+    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_MD", test_memory_md)
+    monkeypatch.setattr(
+        "scripts.memory_consolidate.MEMORY_RULES_MD", tmp_path / "memory_rules.md"
+    )
+    monkeypatch.setattr(
+        "scripts.memory_consolidate.MEMORY_PROFILE_MD", tmp_path / "memory_profile.md"
+    )
+
+    old_month_file = test_archive / "observations.2020-01.jsonl"
+    already_archived = {
+        "signal": "leccion-vieja ya archivada, contacto old@example.com",
+        "source": "builder",
+        "topic": "leccion-vieja",
+        "source_ticket": "WOT-2026-010a",
+        "timestamp": "2020-01-15T00:00:00+00:00",
+    }
+    # The archive on disk is always stored REDACTED (memory_consolidate
+    # redacts on every write), so the fixture must reflect that.
+    old_month_file.write_text(
+        json.dumps(redact_payload(already_archived), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    duplicate_entry = dict(already_archived)  # same (topic, source_ticket)
+    stats = {"kept": 0, "deduped": 0, "dropped": 0, "archived": 1}
+
+    _apply_consolidation(
+        recent=[], archivable=[duplicate_entry], stats=stats, verbose=False
+    )
+
+    now = datetime.now(timezone.utc)
+    current_month_file = test_archive / f"observations.{now.strftime('%Y-%m')}.jsonl"
+    current_month_entries = (
+        parse_entries(current_month_file) if current_month_file.exists() else []
+    )
+    assert not [
+        e for e in current_month_entries if e.get("topic") == "leccion-vieja"
+    ], "a lesson already archived in ANOTHER month must NOT be re-archived"
+    assert len(parse_entries(old_month_file)) == 1
 
 
 def test_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
