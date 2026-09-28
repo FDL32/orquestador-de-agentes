@@ -30,6 +30,11 @@ During: expone subcomandos CLI:
     - `leaders`: regenera `backend_leaders.json` DERIVADO del scorecard
       (hash de la fuente; lider solo con n>=5; politica de exploracion
       documentada en el propio artefacto).
+    - `status` (WOT-2026-055o): deriva `backend_status.json` desde las filas
+      `task_type="exploracion"` del scorecard -- la fila mas reciente por
+      `backend_key`, con `checked_at` propio y `generated_at` para que un
+      agente frio compare la frescura en su bootstrap en vez de correr los
+      smoke tests el.
     Todo envio a backend pasa por `send_to_profile`, cuyo PRIMER paso es
     `privacy_preflight` (fail-closed): backend sin `trusted:true` +
     (`data_sensitivity != public` O rutas bajo `ensemble_private_roots`)
@@ -210,6 +215,12 @@ TASK_TYPES = {
     "contract-audit",
     "adjudication",
     "prompt-audit",
+    # WOT-2026-055o: trafico exploratorio (smoke/preflight/llamadas ad-hoc).
+    # Es un task_type PROPJO, no un alias de gobierno: sus filas NO tienen
+    # `phase`/`challenge_nonce` y `check_loop_execution` las excluye EXPLICITAMENTE
+    # de la barrera de independencia (defensa en profundidad, ver
+    # `structurally_valid_rounds`).
+    "exploracion",
 }
 
 # Fases de gobierno del bucle 1->9->2 (WOT-2026-040i): exigen challenge_nonce.
@@ -1759,6 +1770,80 @@ def regenerate_leaders(project_root: Path) -> Path:
     return out_path
 
 
+# WOT-2026-055o: proyeccion hermana de `backend_leaders.json`, misma regla
+# (derivada del scorecard, nunca editada a mano, regenerable).
+BACKEND_STATUS_REL = Path(".agent/runtime/ensemble/backend_status.json")
+
+
+def regenerate_backend_status(project_root: Path, *, config: dict) -> Path:
+    """Ultima fila de EXPLORACION por `backend_key` -> `backend_status.json`.
+
+    WOT-2026-055o. Responde a "que backends estan vivos HOY" sin que un agente
+    frio tenga que correr los smoke tests el (y gastar la cuota de todos).
+
+    Before: `project_root` es el destino-rol con `scorecard.jsonl`; `config`
+        es la config del motor (`ensemble_profiles`) usada SOLO para derivar
+        el nombre de perfil a partir de `backend_key` -- el scorecard no
+        guarda el nombre del perfil, solo su clave.
+    During: filtra `task_type == "exploracion"` y conserva, POR `backend_key`,
+        la fila con `ts` mas reciente (append-only: un `ts` ISO-8601 UTC se
+        ordena lexicograficamente igual que cronologicamente; en empate gana
+        la ULTIMA en el fichero). `ts` ausente/vacio ordena el mas antiguo.
+    After: escribe `BACKEND_STATUS_REL` con `generated_at`,
+        `scorecard_sha256` (misma atestacion de staleness que
+        `backend_leaders.json`), `freshness_hours_declared` (umbral que el
+        consumidor debe comparar contra `checked_at`, propuesto 24h -- el
+        artefacto DECLARA la frescura, nunca la asume) y `backends`, una
+        entrada por perfil con `{backend_key, profile, backend, model, alive,
+        latency_ms, checked_at, failure_mode}`. Retorna la ruta.
+    """
+    rows, sha = _read_scorecard(project_root)
+    profile_by_key = {
+        prof.get("backend_key"): name
+        for name, prof in (config.get("ensemble_profiles") or {}).items()
+        if prof.get("backend_key")
+    }
+    best: dict[str, dict] = {}
+    for row in rows:
+        if row.get("task_type") != "exploracion":
+            continue
+        key = row.get("backend_key")
+        if not key:
+            continue
+        prev = best.get(key)
+        ts = row.get("ts") or ""
+        if prev is None or ts >= (prev.get("ts") or ""):
+            best[key] = row
+    backends = []
+    for key in sorted(best):
+        row = best[key]
+        backends.append(
+            {
+                "backend_key": key,
+                "profile": profile_by_key.get(key),
+                "backend": row.get("backend"),
+                "model": row.get("model"),
+                "alive": row.get("outcome") == "alive",
+                "latency_ms": row.get("latency_ms"),
+                "checked_at": row.get("ts"),
+                "failure_mode": row.get("failure_mode"),
+            }
+        )
+    out = {
+        "generated_at": _now_iso(),
+        "scorecard_sha256": sha,
+        "freshness_hours_declared": 24,
+        "backends": backends,
+        "derivado": "NUNCA editar a mano: regenerado desde scorecard.jsonl "
+        "(ensemble_dispatch.py status)",
+    }
+    out_path = project_root / BACKEND_STATUS_REL
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    return out_path
+
+
 def regenerate_family_leaders(project_root: Path) -> Path:
     """Proyeccion DERIVADA por FAMILIA de modelo, nunca editada a mano.
 
@@ -1963,14 +2048,27 @@ def smoke_profile(
     transport=None,
     nonce: str = "PONG-019o",
     timeout: int = 90,
+    # WOT-2026-055o: destino-rol donde apendar la fila de EXPLORACION. None
+    # (default) = NO se registra, para que ninguna llamada de test o de un
+    # caller sin destino escriba en el scorecard por sorpresa. El CLI lo
+    # resuelve con `_exploration_root` (flag o AGENT_PROJECT_ROOT).
+    project_root: Path | None = None,
 ) -> dict:
-    """Smoke round-trip por CONTENIDO: el token debe volver en la respuesta."""
+    """Smoke round-trip por CONTENIDO: el token debe volver en la respuesta.
+
+    WOT-2026-055o: si se pasa `project_root`, cada intento (exito O excepcion)
+        deja UNA fila `task_type="exploracion"` en el scorecard via
+        `record_exploration_result`, cronometrada con `time.perf_counter()`.
+        `DispatchBlockedError` NO deja fila (no hubo ronda). Sin
+        `project_root` el comportamiento es IDENTICO al historico: cero filas.
+    """
     messages = [
         {
             "role": "user",
             "content": (f"Reply with exactly this token and nothing else: {nonce}"),
         }
     ]
+    _t0 = time.perf_counter()
     try:
         reply = send_to_profile(
             profile_name,
@@ -1981,8 +2079,21 @@ def smoke_profile(
             timeout=timeout,
         )
     except DispatchBlockedError:
+        # WOT-2026-055o: el preflight bloqueo ANTES de tocar red -- no hubo
+        # ronda, asi que NO se registra fila (mismo criterio que ya aplica
+        # `run_loop_round` para el canal de gobierno). Una fila aqui seria un
+        # fantasma de una comprobacion que nunca ocurrio.
         raise
     except Exception as exc:  # STEP_SKIP documentado: backend caido no aborta
+        if project_root is not None:
+            record_exploration_result(
+                project_root,
+                profile_name=profile_name,
+                config=config,
+                outcome="failed",
+                latency_ms=round((time.perf_counter() - _t0) * 1000),
+                failure_mode=f"{type(exc).__name__}: {exc}"[:300],
+            )
         return {
             "profile": profile_name,
             "alive": False,
@@ -1990,6 +2101,15 @@ def smoke_profile(
             "failure_class": _classify_transport_failure(exc),
         }
     alive = nonce in (reply or "")
+    if project_root is not None:
+        record_exploration_result(
+            project_root,
+            profile_name=profile_name,
+            config=config,
+            outcome="alive" if alive else "failed",
+            latency_ms=round((time.perf_counter() - _t0) * 1000),
+            failure_mode=None if alive else "smoke_nonce_ausente",
+        )
     return {
         "profile": profile_name,
         "alive": alive,
@@ -2032,6 +2152,8 @@ def preflight_profile(
     nonce: str = "PREFLIGHT-OK",
     timeout: int = 60,
     content_sample: str | None = None,
+    # WOT-2026-055o: mismo contrato que `smoke_profile` -- None = no registrar.
+    project_root: Path | None = None,
 ) -> dict:
     """Smoke de CONTENIDO NO TRIVIAL: detecta backends que solo responden a ping.
 
@@ -2062,6 +2184,9 @@ def preflight_profile(
         real exige seguir instrucciones de formato con precision. NO
         garantiza que el bundle COMPLETO (mas grande que la muestra) vaya a
         funcionar -- reduce el riesgo, no lo elimina (declarado en FP-014).
+        WOT-2026-055o: con `project_root`, cada intento deja ademas UNA fila
+        `task_type="exploracion"` (mismo contrato que `smoke_profile`;
+        `DispatchBlockedError` no deja fila).
     """
     if content_sample:
         sample = content_sample[:_PREFLIGHT_SAMPLE_MAX_CHARS]
@@ -2074,6 +2199,7 @@ def preflight_profile(
     else:
         prompt = _PREFLIGHT_PROMPT.format(nonce=nonce)
     messages = [{"role": "user", "content": prompt}]
+    _t0 = time.perf_counter()
     try:
         reply = send_to_profile(
             profile_name,
@@ -2084,8 +2210,20 @@ def preflight_profile(
             timeout=timeout,
         )
     except DispatchBlockedError:
+        # WOT-2026-055o: preflight de privacidad bloqueo ANTES de tocar red ->
+        # no hubo ronda -> NO se registra fila (mismo criterio que smoke_profile
+        # y que `run_loop_round`).
         raise
     except Exception as exc:  # mismo contrato STEP_SKIP que smoke_profile
+        if project_root is not None:
+            record_exploration_result(
+                project_root,
+                profile_name=profile_name,
+                config=config,
+                outcome="failed",
+                latency_ms=round((time.perf_counter() - _t0) * 1000),
+                failure_mode=f"{type(exc).__name__}: {exc}"[:300],
+            )
         return {
             "profile": profile_name,
             "alive": False,
@@ -2093,12 +2231,98 @@ def preflight_profile(
             "failure_class": _classify_transport_failure(exc),
         }
     alive = nonce in (reply or "")
+    if project_root is not None:
+        record_exploration_result(
+            project_root,
+            profile_name=profile_name,
+            config=config,
+            outcome="alive" if alive else "failed",
+            latency_ms=round((time.perf_counter() - _t0) * 1000),
+            failure_mode=None if alive else "preflight_nonce_ausente",
+        )
     return {
         "profile": profile_name,
         "alive": alive,
         "detail": (reply or "")[:200].strip(),
         "failure_class": None,
     }
+
+
+def record_exploration_result(
+    project_root: Path,
+    *,
+    profile_name: str,
+    config: dict,
+    outcome: str,
+    latency_ms: int,
+    failure_mode: str | None = None,
+) -> Path:
+    """Append UNA fila MINIMA de trafico EXPLORATORIO (WOT-2026-055o).
+
+    Before: `project_root` es el destino-rol (nunca el motor) con el scorecard
+        en `SCORECARD_REL`; `profile_name` existe en `ensemble_profiles`;
+        `outcome` es `"alive"` | `"failed"` (veredicto por CONTENIDO, igual que
+        el dict que devuelven `smoke_profile`/`preflight_profile`).
+    During: resuelve `backend`/`model`/`backend_key` DEL PERFIL y appenda UNA
+        linea via `append_scorecard` (bajo lock, UTF-8 sin BOM, normalizado a
+        `SCORECARD_FIELDS`). NO lleva `context_kind`/`input_bytes`/
+        `session_id`/bundle: la fila es un RESUMEN de latencia y vida del
+        backend, no un registro de auditoria de gobierno. Tampoco lleva
+        `phase`/`challenge_nonce`: no es una ronda de gobierno, y por eso
+        `phase_value_report` la descarta como legacy y
+        `check_loop_execution` la excluye de la barrera.
+    After: retorna la ruta del scorecard. `context_kind`/`input_bytes`/
+        `session_id` quedan en `None` (relleno de `append_scorecard`), nunca
+        poblados: fabricarlos mentiria sobre el tamano de un payload que no
+        existio.
+
+    POR QUE ESTA FUNCION Y NO `send_to_profile` (decision del bucle adversarial
+    2026-09-29, ambas lentes CONFORME): cablear el registro en la primitiva
+    produciria DOBLE CONTEO con los callers de gobierno (`run_loop_round`) que
+    ya registran por su cuenta. Un caller ad-hoc fuera de `smoke`/`preflight`
+    que quiera registrar exploracion la llama EXPLICITAMENTE.
+    """
+    if outcome not in ("alive", "failed"):
+        raise ValueError(
+            f"outcome '{outcome}' invalido para exploracion; usa 'alive' o 'failed'"
+        )
+    profile = config["ensemble_profiles"][profile_name]
+    return append_scorecard(
+        project_root,
+        {
+            "ts": _now_iso(),
+            "event": "ronda",
+            "task_type": "exploracion",
+            "backend": profile.get("backend"),
+            "model": profile.get("model"),
+            "backend_key": profile.get("backend_key"),
+            "latency_ms": latency_ms,
+            "outcome": outcome,
+            "failure_mode": failure_mode,
+        },
+    )
+
+
+def _exploration_root(raw: str | None) -> Path | None:
+    """Destino-rol donde apendar filas de exploracion; None = NO se registra.
+
+    WOT-2026-055o. Resuelve `raw` (el flag `--project-root` del CLI) y, si no
+    se dio, `AGENT_PROJECT_ROOT`. Devuelve None -- sin lanzar -- cuando no hay
+    destino utilizable: el motor NUNCA es un destino de runtime
+    (`_resolve_project_root` lo prohibe) y un smoke sin destino debe seguir
+    siendo un smoke, no un crash. La degradacion NO es muda: el caller avisa
+    por stderr, igual que `resolve_lens_repo_root` nombra su propio fallback.
+    """
+    candidato = raw if raw is not None else (os.environ.get("AGENT_PROJECT_ROOT") or "")
+    if not str(candidato).strip():
+        return None
+    try:
+        resuelto = Path(candidato).resolve()
+    except (OSError, ValueError):
+        return None
+    if resuelto == MOTOR_ROOT or not resuelto.is_dir():
+        return None
+    return resuelto
 
 
 def resolve_fallback_backend(
@@ -2853,6 +3077,19 @@ def adjudicate(
             "session_id": session_id,
             "adjudicator_backend": adjudicator_backend,
             "adjudicator_model": adjudicator_model,
+            # WOT-2026-055o: CLAVE HACIA ADELANTE. Copiados de `source` con el
+            # MISMO patron de las 6 lineas de arriba, para que
+            # `phase_value_report` una adjudicacion con su ronda de forma
+            # DETERMINISTA en vez de por heuristica de etiqueta libre (medido
+            # 2026-09-23: el join aproximado daba 144/257 sin match unico).
+            # Aditivo puro: ningun campo existente cambia de nombre ni
+            # semantica; las adjudicaciones ANTERIORES a este commit quedan
+            # honestamente NO-UNIBLES (sin estas claves), no emparejadas a ojo.
+            "phase": source.get("phase"),
+            "loop_id": source.get("loop_id"),
+            "backend_key": source.get("backend_key"),
+            "lens_scope": source.get("lens_scope"),
+            "challenge_nonce": source.get("challenge_nonce"),
         },
     )
     return regenerate_leaders(project_root)
@@ -2862,7 +3099,21 @@ def _cmd_smoke(args, config) -> int:
     names = (
         [args.profile] if args.profile else sorted(config.get("ensemble_profiles", {}))
     )
-    results = [smoke_profile(name, config=config) for name in names]
+    # WOT-2026-055o: el trafico exploratorio solo es registrable si hay un
+    # destino-rol resoluble. Sin el, el smoke sigue funcionando pero NO deja
+    # fila -- y eso se DECLARA, no se calla (mismo principio que el fallback
+    # nombrado de `resolve_lens_repo_root`).
+    project_root = _exploration_root(getattr(args, "project_root", None))
+    if project_root is None:
+        print(
+            "[smoke] WARN: sin destino resoluble (--project-root / "
+            "AGENT_PROJECT_ROOT): el trafico exploratorio NO se registrara "
+            "en el scorecard",
+            file=sys.stderr,
+        )
+    results = [
+        smoke_profile(name, config=config, project_root=project_root) for name in names
+    ]
     print(json.dumps({"smoke": results}, ensure_ascii=False, indent=2))
     alive = sum(1 for r in results if r["alive"])
     print(
@@ -2904,8 +3155,23 @@ def _cmd_preflight(args, config) -> int:
     content_sample = None
     if args.content_sample_file:
         content_sample = Path(args.content_sample_file).read_text(encoding="utf-8")
+    # WOT-2026-055o: mismo contrato que `_cmd_smoke` -- sin destino resoluble
+    # el preflight sigue corriendo pero no deja fila, y lo declara.
+    project_root = _exploration_root(getattr(args, "project_root", None))
+    if project_root is None:
+        print(
+            "[preflight] WARN: sin destino resoluble (--project-root / "
+            "AGENT_PROJECT_ROOT): el trafico exploratorio NO se registrara "
+            "en el scorecard",
+            file=sys.stderr,
+        )
     results = [
-        preflight_profile(name, config=config, content_sample=content_sample)
+        preflight_profile(
+            name,
+            config=config,
+            content_sample=content_sample,
+            project_root=project_root,
+        )
         for name in names
     ]
     print(json.dumps({"preflight": results}, ensure_ascii=False, indent=2))
@@ -3329,6 +3595,14 @@ def _cmd_leaders(args, config) -> int:
     return 0
 
 
+def _cmd_status(args, config) -> int:
+    """WOT-2026-055o: deriva `backend_status.json` desde lo ya explorado."""
+    project_root = _resolve_project_root(args.project_root)
+    out_path = regenerate_backend_status(project_root, config=config)
+    print(f"[status] proyeccion regenerada: {out_path}")
+    return 0
+
+
 # WOT-2026-059c: markers de stderr (MEDIDOS 2026-08-25 sobre git del motor real)
 # que clasifican un `git rev-parse --verify <sha>^{commit}` fallido como INVALIDO
 # ("el sha no resuelve a un commit") frente a UNKNOWN ("no pude comprobar"):
@@ -3609,12 +3883,27 @@ def main(argv: list[str] | None = None) -> int:
 
     p_smoke = sub.add_parser("smoke", help="round-trip por contenido")
     p_smoke.add_argument("--profile", help="perfil concreto (default: todos)")
+    # WOT-2026-055o: opcional a proposito -- el uso documentado
+    # (`ensemble_dispatch smoke` sin flags) sigue funcionando; sin el flag ni
+    # AGENT_PROJECT_ROOT el smoke corre pero NO deja fila de exploracion.
+    p_smoke.add_argument(
+        "--project-root",
+        default=None,
+        help="destino-rol donde registrar la fila de exploracion "
+        "(default: AGENT_PROJECT_ROOT; sin ninguno no se registra)",
+    )
 
     p_preflight = sub.add_parser(
         "preflight",
         help="FP-014: valida backends con prompt NO trivial antes de un fanout",
     )
     p_preflight.add_argument("--profile", help="perfil concreto (default: todos)")
+    p_preflight.add_argument(
+        "--project-root",
+        default=None,
+        help="destino-rol donde registrar la fila de exploracion "
+        "(default: AGENT_PROJECT_ROOT; sin ninguno no se registra)",
+    )
     p_preflight.add_argument(
         "--backend-keys",
         help="lista separada por comas de backend_key a validar (ej. BA05,BA11,BA13)",
@@ -3714,6 +4003,13 @@ def main(argv: list[str] | None = None) -> int:
     p_lead = sub.add_parser("leaders", help="regenerar backend_leaders.json")
     p_lead.add_argument("--project-root", required=True)
 
+    p_status = sub.add_parser(
+        "status",
+        help="deriva backend_status.json desde las filas de exploracion "
+        "(WOT-2026-055o): que backends estan vivos SIN correr smoke tests",
+    )
+    p_status.add_argument("--project-root", required=True)
+
     p_nonce = sub.add_parser(
         "emit-nonce",
         help="emitir un challenge_nonce ANTES de un fan-out de gobierno (WOT-2026-040b)",
@@ -3747,6 +4043,7 @@ def main(argv: list[str] | None = None) -> int:
         "loop-round": _cmd_loop_round,
         "adjudicate": _cmd_adjudicate,
         "leaders": _cmd_leaders,
+        "status": _cmd_status,
         "emit-nonce": _cmd_emit_nonce,
     }
     try:

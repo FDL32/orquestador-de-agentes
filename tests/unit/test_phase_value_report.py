@@ -37,12 +37,20 @@ def _row(
     phase: str | None = "CONTRACT_AUDIT",
     task_type: str = "contract-audit",
     backend_key: str | None = "BA10",
+    lens_scope: str | None = "motor",
     latency_ms: float | None = 20000.0,
     output_chars: int | None = 1500,
     outcome: str = "ok",
     evidencia: str = "raw/x.json (1500c)",
 ) -> dict:
-    """One scorecard row in the REAL measured shape."""
+    """One scorecard row in the REAL measured shape.
+
+    WOT-2026-055o: ``lens_scope`` joins a los ejes obligatorios, con el MISMO
+    tratamiento que ``phase``/``backend_key`` -- ausencia -> ``dropped_legacy``,
+    nunca un valor inventado. Se declara explicito para que los fixtures sigan
+    describiendo filas ACTUALES; pasar ``lens_scope=None`` reproduce una fila
+    legacy sin el campo (ese es el caso que cuentan los tests de denominador).
+    """
     rec: dict = {
         "event": "ronda",
         "task_type": task_type,
@@ -53,6 +61,8 @@ def _row(
         rec["phase"] = phase
     if backend_key is not None:
         rec["backend_key"] = backend_key
+    if lens_scope is not None:
+        rec["lens_scope"] = lens_scope
     if latency_ms is not None:
         rec["latency_ms"] = latency_ms
     if output_chars is not None:
@@ -282,3 +292,168 @@ def test_read_only_leaves_content_and_mtime_untouched(tmp_path: Path) -> None:
 def test_missing_project_root_exits_two(tmp_path: Path) -> None:
     """Same contract as pool_permanence_metric: invalid root -> rc 2, not a crash."""
     assert pvr.main(["--project-root", str(tmp_path / "nope")]) == 2
+
+
+# ------------------------------------------------------- WOT-2026-055o: ejes y JOIN
+def test_phase_value_report_separates_cells_by_lens_scope(tmp_path: Path) -> None:
+    """Dos filas con el MISMO task_type+phase+backend_key pero `lens_scope`
+    distinto -> DOS celdas, no una.
+
+    MUTATION: revertir la tupla `key` de `build_report` a
+    `(task_type, phase, backend_key)` -> una sola celda con rounds=2 y este
+    test cae. Sin el eje, una lente CON ojos y otra CIEGA del mismo modelo se
+    agregaban juntas y el informe mezclaba dos poblaciones con tasas de acierto
+    distintas.
+    """
+    rows = [
+        _row(phase="CONTRACT_AUDIT", backend_key="BA10", lens_scope="motor"),
+        _row(phase="CONTRACT_AUDIT", backend_key="BA10", lens_scope="destino"),
+    ]
+    _write(tmp_path, rows)
+    report = pvr.build_report(tmp_path)
+    cells = {
+        (c.task_type, c.phase, c.backend_key, c.lens_scope): c for c in report.cells
+    }
+    assert len(cells) == 2, f"el lens_scope debe partir la celda: {cells.keys()}"
+    assert cells[("contract-audit", "CONTRACT_AUDIT", "BA10", "motor")].rounds == 1
+    assert cells[("contract-audit", "CONTRACT_AUDIT", "BA10", "destino")].rounds == 1
+    header = pvr.format_table(report).splitlines()[0]
+    assert "scope" in header, "la tabla debe publicar el eje lens_scope"
+
+
+def test_phase_value_report_joins_ronda_with_adjudicacion_by_cohort_key(
+    tmp_path: Path,
+) -> None:
+    """Una ronda + su adjudicacion con las 4 claves coincidentes -> el JOIN las
+    une y la celda refleja el outcome.
+
+    NEGATIVO (y es la parte que mata la aproximacion): cambiando UNA clave de
+    la adjudicacion el JOIN NO las une -- la cohorte queda `sin_ronda`, con
+    `cohortes_completas=0` y cero adopciones en la celda, en vez de fundirse
+    por vocabulario libre en `ticket`/`ronda`/`rol`.
+    """
+    ronda = _row(
+        phase="CONTRACT_AUDIT",
+        backend_key="BA10",
+        lens_scope="motor",
+        task_type="contract-audit",
+    )
+    ronda.update(
+        {
+            "loop_id": "L700",
+            "challenge_nonce": "N1",
+            "ticket": "WOT-TEST-055o",
+            "rol": "challenger",
+            "ronda": 1,
+            "backend": "fake",
+            "model": "m2",
+        }
+    )
+    adj = dict(ronda)
+    adj.update({"event": "adjudicacion", "outcome": "adoptada"})
+    _write(tmp_path, [ronda, adj])
+
+    report = pvr.build_report(tmp_path)
+    assert report.adjudications_total == 1
+    assert report.adjudications_joinable == 1
+    assert report.adjudications_unjoinable_legacy == 0
+    assert (report.cohortes_intentadas, report.cohortes_completas) == (1, 1)
+    assert report.eligible == 1, "la adjudicacion no cuenta como ronda"
+    cell = report.cells[0]
+    assert (cell.adoptadas, cell.falsos) == (1, 0)
+    assert cell.efficacy == "1/0"
+    denom = pvr.format_denominator(report)
+    assert "cohortes_intentadas=1" in denom and "cohortes_completas=1" in denom
+    assert "adjudicaciones_excluidas_de_rondas=1" in denom
+
+    # ---- negativo: UNA clave cambiada -> sin union, jamas por aproximacion ----
+    ronda2 = _row(
+        phase="CONTRACT_AUDIT",
+        backend_key="BA10",
+        lens_scope="motor",
+        task_type="contract-audit",
+        latency_ms=5000.0,
+    )
+    ronda2.update(
+        {
+            "loop_id": "L700",
+            "ticket": "WOT-TEST-055o",
+            "rol": "challenger",
+            "ronda": 2,
+            "backend": "fake",
+            "model": "m2",
+        }
+    )
+    adj2 = dict(ronda2)
+    adj2.update({"event": "adjudicacion", "outcome": "adoptada", "backend_key": "BA99"})
+    path = tmp_path / pvr.SCORECARD_REL
+    path.write_text(
+        "".join(json.dumps(r) + "\n" for r in [ronda2, adj2]), encoding="utf-8"
+    )
+    report2 = pvr.build_report(tmp_path)
+    assert report2.adjudications_joinable == 1, "la clave esta completa"
+    assert (report2.cohortes_intentadas, report2.cohortes_completas) == (1, 0), (
+        "una adjudicacion cuya ronda no existe NO puede unirse: el contador "
+        "'sin ronda' la declara en vez de emparejarla por aproximacion"
+    )
+    assert report2.cells[0].adoptadas == 0, "fusion aproximada detectada"
+    assert "sin_ronda=1" in pvr.format_denominator(report2), (
+        "el denominador debe publicar la cohorte incompleta"
+    )
+
+
+def test_phase_value_report_declares_unjoinable_legacy_denominator(
+    tmp_path: Path,
+) -> None:
+    """Una adjudicacion SIN las 4 claves (anterior a WOT-2026-055o) cuenta en
+    `adjudications_unjoinable_legacy` y NUNCA se empareja.
+
+    CONTROL NEGATIVO duro: la fila legacy lleva `ticket`+`ronda`+`rol`
+    IDENTICOS a una ronda real presente en el fichero -- el vocabulario libre
+    casaria al 100% --, pero sin la clave hacia adelante no hay union.
+    """
+    ronda = _row(
+        phase="CONTRACT_AUDIT",
+        backend_key="BA10",
+        lens_scope="motor",
+        task_type="contract-audit",
+    )
+    ronda.update(
+        {
+            "loop_id": "L700",
+            "ticket": "WOT-TEST-055o",
+            "rol": "challenger",
+            "ronda": 1,
+            "backend": "fake",
+            "model": "m2",
+        }
+    )
+    legacy_adj = {
+        "event": "adjudicacion",
+        "task_type": "contract-audit",
+        "backend": "fake",
+        "model": "m2",
+        "ticket": "WOT-TEST-055o",
+        "ronda": 1,
+        "rol": "challenger",
+        "outcome": "adoptada",
+        "phase": "CONTRACT_AUDIT",
+        "backend_key": "BA10",
+        "lens_scope": "motor",
+        # SIN loop_id -> sin clave completa -> NO unible, por muy identico que
+        # este todo lo demas.
+    }
+    _write(tmp_path, [ronda, legacy_adj])
+
+    report = pvr.build_report(tmp_path)
+    assert report.adjudications_total == 1
+    assert report.adjudications_joinable == 0
+    assert report.adjudications_unjoinable_legacy == 1
+    assert (report.cohortes_intentadas, report.cohortes_completas) == (0, 0)
+    assert report.cells[0].adoptadas == 0, (
+        "la adjudicacion legacy NO debe unirse: emparejarla por etiqueta es "
+        "exactamente lo prohibido por la decision del operador 2026-09-23"
+    )
+    denom = pvr.format_denominator(report)
+    assert "no_unibles_legacy=1" in denom, denom
+    assert "cohortes_completas=0" in denom, denom

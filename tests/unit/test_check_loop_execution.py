@@ -1139,3 +1139,48 @@ def test_destination_sha_resolution_mutation_dest_only(tmp_path, capsys):
     assert rc == 1, "sin resolucion contra motor, sha del motor debe fallar"
     out = capsys.readouterr().out
     assert "no resuelve" in out or "FAIL" in out, out
+
+
+# --------------------------------------------------- WOT-2026-055o: exploracion
+def test_structurally_valid_rounds_excludes_exploracion_task_type():
+    """DEFENSA EN PROFUNDIDAD: una fila de trafico EXPLORATORIO que POR ERROR
+    llevara un `commit_sha` + `challenge_nonce` validos de un bucle de gobierno
+    real NO cuenta para la barrera de independencia.
+
+    Por que hace falta si el filtro de nonce ya la deja fuera: antes de
+    WOT-2026-055o el trafico exploratorio no dejaba fila, y despues de el SI
+    la deja (con `event="ronda"`); un caller exploratorio que reutilizara un
+    nonce real colaria. MUTATION: quitar el filtro explicito de `task_type` ->
+    la fila exploratoria cuenta y este test cae.
+
+    CONTROL POSITIVO: la MISMA fixture con un `task_type` de gobierno sigue
+    contando exactamente igual que antes.
+    """
+    emitted = [_emitted()]
+    exploratoria = {**_ronda("BA10"), "task_type": "exploracion"}
+    gobierno = [_ronda(bk) for bk in ("BA11", "BA12", "BA13")]
+    sc = [exploratoria, *gobierno]
+
+    valid = cle.structurally_valid_rounds(sc, emitted, commit_sha="abc")
+    assert [r["backend_key"] for r in valid] == ["BA11", "BA12", "BA13"], (
+        "la fila exploratoria NO puede colar en la barrera aunque su "
+        "commit_sha+nonce sean los de un bucle de gobierno real"
+    )
+    assert "BA10" not in {r["backend_key"] for r in valid}
+
+    # Efecto en el veredicto: con 4 min, 3 lentes reales NO alcanzan N.
+    verdict = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=4)
+    assert verdict["distinct_backends"] == ["BA11", "BA12", "BA13"]
+    assert verdict["ok"] is False
+
+    # CONTROL POSITIVO: misma fila, task_type de gobierno -> SI cuenta.
+    misma = [{**_ronda("BA10"), "task_type": "contract-audit"}, *gobierno]
+    valid_gov = cle.structurally_valid_rounds(misma, emitted, commit_sha="abc")
+    assert {r["backend_key"] for r in valid_gov} == {
+        "BA10",
+        "BA11",
+        "BA12",
+        "BA13",
+    }
+    verdict_gov = cle.audit_commit(misma, emitted, commit_sha="abc", min_distinct=4)
+    assert verdict_gov["ok"] is True

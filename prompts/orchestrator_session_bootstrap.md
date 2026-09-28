@@ -114,6 +114,10 @@ un veredicto, es "no medi").
   AUDIT.md reporta drift de version.
 - `QUICKSTART.md`: solo para operar el flujo terminal-driven.
 - `REPOSITORY_STRUCTURE.md`: solo para ubicar un subsistema desconocido.
+- `.agent/runtime/ensemble/backend_status.json`: que backends/APIs estan
+  configurados y su ultimo estado conocido (alive/latency_ms/checked_at).
+  Si `checked_at` tiene mas de 24h, declara la caducidad en vez de asumir
+  que el backend sigue vivo.
 
 ## Vocabulario canónico (no usar "workspace" a secas)
 

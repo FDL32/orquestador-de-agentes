@@ -347,6 +347,17 @@ def structurally_valid_rounds(
     for row in scorecard_rows:
         if row.get("event") != "ronda":
             continue
+        # WOT-2026-055o: DEFENSA EN PROFUNDIDAD contra el trafico EXPLORATORIO
+        # (smoke/preflight/llamadas ad-hoc), que a partir de este ticket SI
+        # deja fila en el scorecard con event="ronda". El filtro de nonce de
+        # abajo ya impide que una fila exploratoria NORMAL cuente (no lleva
+        # `challenge_nonce`), pero solo eso dejaba el riesgo en cero por
+        # AUSENCIA: si algun caller exploratorio reutilizara por error un
+        # commit_sha+challenge_nonce de un bucle de gobierno real, la fila
+        # SI colaria y contaria para la barrera de independencia. Aqui se
+        # excluye POR TIPO, antes (no en vez de) del filtro de nonce.
+        if row.get("task_type") == "exploracion":
+            continue
         if row.get("commit_sha") != commit_sha:
             continue
         bk = row.get("backend_key")

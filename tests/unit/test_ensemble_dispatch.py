@@ -702,6 +702,9 @@ def test_scorecard_fields_prefix_is_frozen():
 def test_task_types_enum_frozen():
     # WOT-2026-026k: "prompt-audit" anadido al enum cerrado (uso del nuevo
     # check_prompt_bias/review_bundle_contract vía run_pipeline).
+    # WOT-2026-055o: "exploracion" anadido -- trafico smoke/preflight, que
+    # ahora SI deja fila en el scorecard y que `check_loop_execution` excluye
+    # explicitamente de la barrera de independencia.
     assert {
         "code-gen",
         "code-review",
@@ -711,6 +714,7 @@ def test_task_types_enum_frozen():
         "contract-audit",
         "adjudication",
         "prompt-audit",
+        "exploracion",
     } == ed.TASK_TYPES
 
 
@@ -3065,6 +3069,248 @@ def test_preflight_profile_con_content_sample_trunca_y_usa_fragmento(monkeypatch
     # El fragmento en el prompt no debe exceder el tope declarado.
     fragment_start = sent_content.index("---FRAGMENTO---") + len("---FRAGMENTO---\n")
     assert len(sent_content) - fragment_start <= ed._PREFLIGHT_SAMPLE_MAX_CHARS
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-055o: clave hacia adelante de adjudicate + trafico exploratorio
+# --------------------------------------------------------------------------- #
+
+
+def _seed_round_with_cohort_keys(project_root: Path) -> None:
+    """Una ronda CON las 4 claves de cohorte + nonce (la forma post-055o)."""
+    ed.append_scorecard(
+        project_root,
+        {
+            "ts": "2026-09-29T10:00:00+00:00",
+            "event": "ronda",
+            "ticket": "WOT-TEST-055o",
+            "rol": "challenger",
+            "task_type": "contract-audit",
+            "backend": "fake",
+            "model": "m2",
+            "ronda": 1,
+            "outcome": None,
+            "evidencia": "e",
+            "input_bytes": 10,
+            "context_kind": "diff",
+            "phase": "CONTRACT_AUDIT",
+            "loop_id": "L700",
+            "backend_key": "BA11",
+            "lens_scope": "destino",
+            "challenge_nonce": "nonce-055o",
+        },
+    )
+
+
+def test_adjudicate_copies_phase_loop_id_backend_key_lens_scope_from_source(tmp_path):
+    """WOT-2026-055o, Tarea 1: la clave hacia adelante se COPIA de `source`,
+    con el mismo patron que task_type/backend/model.
+
+    MUTATION: quitar una de las 5 lineas nuevas del dict que appendea
+    `adjudicate()` -> esa clave sale `None` en la fila y el assert cae. Sin
+    estas claves, `phase_value_report` no puede unir ronda<->adjudicacion de
+    forma determinista (el join aproximado medido el 2026-09-23 daba 144/257).
+    """
+    _seed_round_with_cohort_keys(tmp_path)
+    ed.adjudicate(
+        tmp_path,
+        ticket="WOT-TEST-055o",
+        ronda=1,
+        rol="challenger",
+        outcome="adoptada",
+        evidence="pytest -k x -> exit 0",
+        adjudicator_backend="fake-adjudicator",
+    )
+    row = _rows(tmp_path)[-1]
+    assert row["event"] == "adjudicacion"
+    assert (
+        row["phase"],
+        row["loop_id"],
+        row["backend_key"],
+        row["lens_scope"],
+        row["challenge_nonce"],
+    ) == ("CONTRACT_AUDIT", "L700", "BA11", "destino", "nonce-055o"), (
+        "la fila de adjudicacion DEBE portar la clave hacia adelante copiada "
+        "de la ronda fuente; sin ella la union ronda<->adjudicacion es "
+        "imposible sin heuristica"
+    )
+
+
+def test_adjudicate_legacy_source_without_keys_still_appends(tmp_path):
+    """CONTROL NEGATIVO del cambio: un source LEGACY (sin las 5 claves) sigue
+    adjudicando sin lanzar, y las claves salen `None` -- el cambio es aditivo
+    y no rompe el camino historico."""
+    _seed_rounds(tmp_path, 1)  # fixture legacy: ni phase ni lens_scope
+    ed.adjudicate(
+        tmp_path,
+        ticket="WOT-TEST-000a",
+        ronda=1,
+        rol="challenger",
+        outcome="adoptada",
+        evidence="cmd",
+        adjudicator_backend="fake-adjudicator",
+    )
+    row = _rows(tmp_path)[-1]
+    assert row["event"] == "adjudicacion"
+    for key in (
+        "phase",
+        "loop_id",
+        "backend_key",
+        "lens_scope",
+        "challenge_nonce",
+    ):
+        assert row[key] is None, f"{key} debe ser None en un source legacy: {row}"
+
+
+def test_record_exploration_result_writes_minimal_row(tmp_path):
+    """WOT-2026-055o, Tarea 4.2: fila MINIMA de exploracion.
+
+    MUTATION: quitar la llamada a `append_scorecard` dentro del helper -> el
+    scorecard no se crea y este test cae (cero filas).
+    """
+    cfg = _config()
+    cfg["ensemble_profiles"]["p_chal"]["backend_key"] = "BA11"
+    ed.record_exploration_result(
+        tmp_path,
+        profile_name="p_chal",
+        config=cfg,
+        outcome="failed",
+        latency_ms=115400,
+        failure_mode="empty_content_despite_sentinel",
+    )
+    rows = _rows(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["event"] == "ronda"
+    assert row["task_type"] == "exploracion"
+    assert row["backend"] == "fake"
+    assert row["model"] == "m2"
+    assert row["backend_key"] == "BA11", "la clave se resuelve del PERFIL"
+    assert row["latency_ms"] == 115400
+    assert row["outcome"] == "failed"
+    assert row["failure_mode"] == "empty_content_despite_sentinel"
+    # Fila RESUMEN, no registro de auditoria de gobierno: sin bundle.
+    for absent in ("context_kind", "input_bytes", "session_id"):
+        assert row[absent] is None, f"{absent} no debe poblarse: {row}"
+
+
+def test_smoke_profile_records_exploration_on_success_and_failure(tmp_path):
+    """WOT-2026-055o, Tarea 4.3: AMBOS intentos dejan fila, con `outcome`
+    distinto.
+
+    CONTROL NEGATIVO del hallazgo real de esta sesion: un fallo de smoke como
+    `empty_content_despite_sentinel` (115.4s, OpenRouter) NO dejaba NINGUNA
+    fila antes de este fix -- el scorecard era ciego al trafico exploratorio.
+    """
+    cfg = _config()
+    ok = ed.smoke_profile(
+        "p_prop",
+        config=cfg,
+        transport=_FakeTransport(replies=["PONG-019o"]),
+        project_root=tmp_path,
+    )
+
+    def _boom(profile, backend_cfg, messages, timeout):
+        raise RuntimeError("empty_content_despite_sentinel")
+
+    bad = ed.smoke_profile("p_prop", config=cfg, transport=_boom, project_root=tmp_path)
+    assert ok["alive"] is True and bad["alive"] is False
+
+    rows = [r for r in _rows(tmp_path) if r["task_type"] == "exploracion"]
+    assert len(rows) == 2, (
+        f"exito y fallo deben dejar fila cada uno, hubo {len(rows)}: "
+        "0 = el fallo se pierde (el defecto original), 1 = solo se registra "
+        "el exito (sesgo de supervivencia)"
+    )
+    assert {r["outcome"] for r in rows} == {"alive", "failed"}
+    assert all(isinstance(r["latency_ms"], int) for r in rows)
+    assert rows[0]["failure_mode"] is None
+    assert "empty_content_despite_sentinel" in rows[1]["failure_mode"]
+
+    # Sin `project_root` no se registra: comportamiento historico intacto
+    # (nadie debe escribir en un scorecard que no le indicaron).
+    ed.smoke_profile(
+        "p_prop",
+        config=cfg,
+        transport=_FakeTransport(replies=["PONG-019o"]),
+    )
+    after = [r for r in _rows(tmp_path) if r["task_type"] == "exploracion"]
+    assert len(after) == 2, "sin project_root NO debe anadirse fila"
+
+
+def test_dispatch_blocked_does_not_record_exploration_row(tmp_path):
+    """WOT-2026-055o, Tarea 4.4: el preflight de privacidad bloquea ANTES de
+    tocar red -> NO hubo ronda -> CERO fila.
+
+    Mismo criterio que `run_loop_round` para el canal de gobierno. MUTATION:
+    quitar la exclusion de `DispatchBlockedError` -> la excepcion cae en el
+    `except Exception` y aparece una fila fantasma de una ronda que nunca
+    ocurrio, y este test cae.
+    """
+    cfg = _config(private_roots=["C:/repos/privado"])
+    with pytest.raises(ed.DispatchBlockedError):
+        ed.smoke_profile(
+            "p_prop",
+            config=cfg,
+            # el nonce viaja DENTRO del payload -> dispara el filtro por raiz
+            nonce="ver C:/repos/privado/secreto.md",
+            transport=_FakeTransport(replies=["PONG"]),
+            project_root=tmp_path,
+        )
+    assert not (tmp_path / ed.SCORECARD_REL).exists(), (
+        "un bloqueo del preflight no puede dejar fila: no hubo ronda que "
+        "registrar, y la fila fantasma contaria como trafico real"
+    )
+
+
+def test_status_command_writes_backend_status_json(tmp_path, monkeypatch):
+    """WOT-2026-055o, Tarea 6: `status` publica la fila MAS RECIENTE por
+    `backend_key`.
+
+    MUTATION: invertir el criterio de "mas reciente" -> para BA10 queda la
+    fila de las 08:00 (`alive=False`) en vez de la de las 10:00, y el assert
+    de `checked_at` cae.
+    """
+    cfg = _config()
+    cfg["ensemble_profiles"]["p_prop"]["backend_key"] = "BA10"
+    cfg["ensemble_profiles"]["p_chal"]["backend_key"] = "BA11"
+    monkeypatch.setattr(ed, "load_motor_config", lambda: cfg)
+    for ts, key, model, outcome in (
+        ("2026-09-29T08:00:00+00:00", "BA10", "m1", "failed"),
+        ("2026-09-29T09:00:00+00:00", "BA11", "m2", "failed"),
+        ("2026-09-29T10:00:00+00:00", "BA10", "m1", "alive"),
+    ):
+        ed.append_scorecard(
+            tmp_path,
+            {
+                "ts": ts,
+                "event": "ronda",
+                "task_type": "exploracion",
+                "backend": "fake",
+                "model": model,
+                "backend_key": key,
+                "latency_ms": 42,
+                "outcome": outcome,
+                "failure_mode": None if outcome == "alive" else "transporte",
+            },
+        )
+    rc = ed.main(["status", "--project-root", str(tmp_path)])
+    assert rc == 0
+
+    out = json.loads((tmp_path / ed.BACKEND_STATUS_REL).read_text(encoding="utf-8"))
+    assert out["generated_at"], "frescura declarada: sin generated_at no se puede datar"
+    assert out["scorecard_sha256"], "atestacion de staleness, igual que backend_leaders"
+    assert out["freshness_hours_declared"] == 24
+    entries = {e["backend_key"]: e for e in out["backends"]}
+    assert set(entries) == {"BA10", "BA11"}
+    assert entries["BA10"]["checked_at"] == "2026-09-29T10:00:00+00:00", (
+        "gano la fila VIEJA: el criterio de 'mas reciente' esta invertido"
+    )
+    assert entries["BA10"]["alive"] is True
+    assert entries["BA10"]["profile"] == "p_prop"
+    assert entries["BA10"]["latency_ms"] == 42
+    assert entries["BA11"]["alive"] is False
+    assert entries["BA11"]["failure_mode"] == "transporte"
 
 
 def test_cmd_preflight_content_sample_file_llega_a_preflight_profile(
