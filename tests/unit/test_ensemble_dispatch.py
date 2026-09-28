@@ -2944,6 +2944,43 @@ def test_classify_quota_needs_status_and_marker():
     assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_QUOTA
 
 
+def test_classify_429_rate_limit_es_quota():
+    """Caso real: backend OpenAI-compatible (Groq, doc oficial de
+    rate-limits, 2026-09-28) devuelve HTTP 429 con 'rate_limit_exceeded'
+    para exceso de cuota, NO 402 como nan_api/nvidia_api. Debe clasificar
+    IGUAL que el caso 402 -- un agente que solo reconociera 402 perderia
+    la senal de cuota agotada en cualquier backend OpenAI-compatible
+    estandar (429 es el status convencional de rate-limit en ese
+    ecosistema, no un caso exotico).
+
+    Mutation: si el clasificador solo aceptara status==402 (regresion al
+    diseno pre-Groq), este test se pondria rojo -- devolveria unknown en
+    vez de quota_exhausted.
+    """
+    exc = ed.TransportError(
+        "HTTPError | HTTP 429 | Too Many Requests",
+        status=429,
+        body=(
+            '{"error":{"message":"Rate limit reached for requests",'
+            '"type":"requests","code":"rate_limit_exceeded"}}'
+        ),
+    )
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_QUOTA
+
+
+def test_classify_429_sin_marcador_es_unknown():
+    """Mismo principio que test_classify_402_sin_marcador_es_unknown: un
+    429 SIN marcador de texto reconocido (ej. rate-limit de un proxy
+    intermedio, no del proveedor) no debe clasificarse como cuota solo
+    por el status."""
+    exc = ed.TransportError(
+        "HTTPError | HTTP 429 | Too Many Requests",
+        status=429,
+        body='{"error":{"message":"slow down"}}',
+    )
+    assert ed._classify_transport_failure(exc) == ed._FAILURE_CLASS_UNKNOWN
+
+
 def test_classify_model_unavailable_needs_status_and_marker():
     """Caso real: modelo retirado del perfil, HTTP 400 'is not supported'."""
     exc = ed.TransportError(
@@ -3600,7 +3637,47 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
     dejo de ser el UNICO canal api -- se anadio `nvidia_api` como segundo canal
     con credencial real (`NVIDIA_API_KEY` presente), no un fallback muerto.
     El invariante que sigue vigente es "todo perfil channel=api usa un backend
-    CON credencial configurada", no "usa nan_api especificamente"."""
+    CON credencial configurada", no "usa nan_api especificamente".
+
+    ACTUALIZADO (decision usuario 2026-09-28): se anadio `groq_api` como
+    tercer canal con credencial real (`GROQ_API_KEY`), backends BA30/BA31 --
+    Cerebras se evaluo y se descarto (sin tier gratuito real, solo credito de
+    prueba de 30 dias).
+
+    ACTUALIZADO (decision usuario 2026-09-28, misma sesion): se anadieron
+    `openrouter_api` y `aihubmix_api` como cuarto y quinto canal. Rango de
+    backend_key RESERVADO por bloques de 20 (no consecutivo tras BA31) para
+    poder anadir mas modelos del MISMO proveedor sin renumerar cuando el
+    catalogo gratuito rote: BA50-BA69 para openrouter_api (semilla: BA50),
+    BA70-BA89 para aihubmix_api (semilla: BA70).
+
+    Modelos de semilla VERIFICADOS contra fuente viva, no adivinados: un
+    primer intento con `openai/gpt-oss-120b:free` (OpenRouter) y
+    `glm-5.1-free` (AIHubMix) resulto ser INVENTADO -- ninguno de los dos
+    IDs existe. Corregido tras (a) `curl https://openrouter.ai/api/v1/models`
+    real (460 modelos, 16 con sufijo `:free`; `gpt-oss-120b` SOLO existe de
+    pago) y (b) fetch de `docs.aihubmix.com/en/blogs/free-ai-models` (el
+    slug real es `coding-glm-5.1-free`, no `glm-5.1-free`) + probe HTTP
+    POST contra el endpoint real (401 "no key provided", confirma modelo y
+    ruta validos sin necesitar credencial). Semillas finales: BA50 =
+    `cohere/north-mini-code:free` (elegido por ser familia NUEVA en el pool,
+    entrenado para agent harnesses; se descarto `nvidia/nemotron-3-super-
+    120b-a12b:free` de la lista real por duplicar el modelo YA presente en
+    nvidia_api/BA24), BA70 = `coding-glm-5.1-free` (variante coding,
+    58.4% SWE-bench Pro segun la doc de AIHubMix).
+
+    ACTUALIZADO (decision usuario 2026-09-28, misma sesion): se anadio
+    `tokenharbor_api` como sexto canal, backend_key BA90-BA109 (semilla:
+    BA90). El usuario aporto captura de pantalla del propio picker de
+    tokenharbor.ai/models con los 3 IDs literales del tier free
+    (`qwen3.8-flash:free`, `deepseek-v4.1-flash:free`,
+    `mimo-v2.6-flash:free`); RE-VERIFICADO contra `GET /v1/models` con
+    API key real (200, 63 modelos, los 3 IDs presentes) y probe POST
+    real contra `qwen3.8-flash:free` (200, respuesta real "pong").
+    Semilla elegida: `qwen3.8-flash:free` -- se descartaron
+    `deepseek-v4.1-flash:free` y `mimo-v2.6-flash:free` por duplicar
+    modelos YA presentes via nan_api (mimo-v2.6-flash es BA25; hay
+    perfiles nan con deepseek-v4-flash/deepseek-v4-flash-0731)."""
     config = ed.load_motor_config()
     profiles = config["ensemble_profiles"]
     backends = config["backends"]
@@ -3611,9 +3688,17 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
     assert "qwen_api" not in backends, "backend directo muerto, eliminado (A8)"
 
     # Todo perfil channel=api usa un backend de la lista viva con credencial
-    # declarada (nan_api o nvidia_api hoy; deepseek_api/qwen_api siguen fuera
-    # por A8 -- los asserts de arriba ya lo verifican).
-    live_api_backends = {"nan_api", "nvidia_api"}
+    # declarada (nan_api, nvidia_api, groq_api, openrouter_api o aihubmix_api
+    # hoy; deepseek_api/qwen_api siguen fuera por A8 -- los asserts de arriba
+    # ya lo verifican).
+    live_api_backends = {
+        "nan_api",
+        "nvidia_api",
+        "groq_api",
+        "openrouter_api",
+        "aihubmix_api",
+        "tokenharbor_api",
+    }
     api_profiles = [p for p in profiles.values() if p.get("channel") == "api"]
     assert api_profiles, "debe haber al menos un perfil api"
     for prof in api_profiles:

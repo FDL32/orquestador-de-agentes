@@ -341,6 +341,44 @@ medirse):
   `git add` de nuevo y repite el commit. Verifica antes que tus cambios sobrevivieron
   (`grep` de un token propio), porque el arreglo reescribe el fichero.
 
+### Nomenclatura de perfiles ensemble (`ensemble_profiles` en `agents.json`)
+
+Norma establecida 2026-09-28 tras censar los 20 perfiles vivos de
+`.agent/config/agents.json`: NO existia una norma escrita, solo un patron
+implicito que 19/20 perfiles ya seguian. Se fija por escrito porque el
+dashboard de ensembles necesita poder derivar backend+familia del NOMBRE del
+perfil sin tener que resolver `agents.json` en cada lectura.
+
+**Forma:** `<rol>_<backend>_<familia>[_<caracteristica>]`
+
+- `rol`: `proposer` o `challenger`.
+- `backend`: nombre corto SIN el sufijo `_api` (`nan`, `nvidia`, `groq`,
+  `openrouter`, `aihubmix`, `tokenharbor` para `channel=api`; el nombre del
+  agente para `channel=agent`: `claude`, `codex`, `opencode`).
+- `familia`: UNA palabra que identifica el modelo, SIN version ni tamano
+  (`qwen`, `mimo`, `glm`, `gemma`, `kimi`, `nemotron`, `deepseek`, `gptoss`,
+  `northcode`, `codingglm`). El campo `model` del perfil ya lleva la version
+  exacta -- el nombre del perfil no la duplica.
+- `caracteristica` (opcional): SOLO cuando distingue dos variantes del MISMO
+  backend+familia dentro del pool (ej. `challenger_nan_qwen` vs
+  `challenger_nan_qwen_flash`, ambos en `nan_api`). No se anade si no hay
+  ambiguedad que resolver.
+
+**Ejemplos correctos:** `challenger_groq_qwen`, `challenger_groq_gptoss`,
+`challenger_nvidia_glm_flash`, `challenger_tokenharbor_qwen_flash`.
+
+**Ejemplos INCORRECTOS (version/tamano colados en el nombre):**
+`challenger_groq_qwen38`, `challenger_groq_gptoss120b`,
+`challenger_aihubmix_codingglm51`, `challenger_tokenharbor_qwen38flash` --
+corregidos en la misma sesion que fijo esta norma.
+
+**Excepcion legacy declarada, NO retroactiva:** `challenger_opencode_glm_5_2`
+mantiene su nombre con version completa porque esta CITADO LITERAL en >5
+tests como fixture de identidad (`test_058y_*`, la lista `con_arbol` de
+`test_...475`, etc.); renombrarlo exige tocar esos tests en el mismo cambio,
+no es un rename aislado. No renombrar este perfil sin revisar primero
+`grep -rn "challenger_opencode_glm_5_2" tests/`.
+
 ## Archivado de colaboracion (WP-2026-100)
 
 - `scripts/archive_collaboration_artifacts.py` mueve `PLAN_WP-*.md` y `AUDIT_WP-*.md` cerrados a `.agent/collaboration/_archive/plan_audit/`.

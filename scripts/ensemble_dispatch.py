@@ -2012,9 +2012,14 @@ def _classify_transport_failure(exc: Exception) -> str:
         el status por si solo NUNCA decide. Orden fijo (cuota -> modelo ->
         red): un cuerpo de cuota que mencione "does not exist" en otro
         campo (nombre de modelo dentro del mensaje) sigue siendo cuota.
+        `status == 429` se trata igual que `402` (ambos exigen marcador):
+        los backends OpenAI-compatible (Groq confirmado en su doc de
+        rate-limits) devuelven 429 para rate-limit, no 402 -- un backend
+        `nan_api`/`nvidia_api` que ya usaba 402 y uno OpenAI-compatible
+        nuevo que use 429 deben caer en la MISMA clase `quota_exhausted`.
     After: una de `_FAILURE_CLASS_*` (nunca lanza). `unknown` es una
         respuesta LEGITIMA, no un bug: significa que el texto no calzo con
-        ninguna familia conocida (incluye un status 400/402/504 SIN
+        ninguna familia conocida (incluye un status 400/402/429/504 SIN
         marcador de texto reconocido) y un humano/agente debe leer `detail`
         tal cual -- no se debe inferir mas alla de lo que el texto dice.
     LIMITE CONOCIDO (declarado, no resuelto): un cuelgue SIN excepcion
@@ -2032,7 +2037,9 @@ def _classify_transport_failure(exc: Exception) -> str:
     haystack = f"{exc} {body}".lower()
     has_quota_marker = any(marker in haystack for marker in _QUOTA_MARKERS)
     has_model_marker = any(marker in haystack for marker in _MODEL_UNAVAILABLE_MARKERS)
-    if (status == 402 and has_quota_marker) or (status is None and has_quota_marker):
+    if (status in (402, 429) and has_quota_marker) or (
+        status is None and has_quota_marker
+    ):
         return _FAILURE_CLASS_QUOTA
     if (status == 400 and has_model_marker) or (status is None and has_model_marker):
         return _FAILURE_CLASS_MODEL_UNAVAILABLE
