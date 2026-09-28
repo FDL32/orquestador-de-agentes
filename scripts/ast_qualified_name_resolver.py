@@ -1,8 +1,12 @@
 """Resolver de nombre calificado a span de linea via AST podado.
 
 Este modulo proporciona una funcion que resuelve un nombre calificado
-(ej. ``mi_modulo.Clase.metodo`` o ``mi_funcion``) a un par de lineas
+(ej. ``Clase.metodo`` o ``mi_funcion``) a un par de lineas
 (lineno, end_lineno) dentro de un modulo Python dado su fuente como string.
+El nombre calificado NUNCA lleva el fichero: la convencion de
+`Forbidden Surfaces` es ``fichero::nombre_calificado`` (separador ``::``),
+y el llamante separa el fichero ANTES de invocar este helper -- solo la
+parte `ClaseOpcional.funcion` se le pasa (ver `resolve_qualified_span`).
 
 El recorrido usa ``ast.iter_child_nodes`` (poda de ambito por diseño)
 en vez de ``ast.walk`` sin filtro, para distinguir funciones top-level
