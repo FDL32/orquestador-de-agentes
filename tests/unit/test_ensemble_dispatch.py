@@ -3067,6 +3067,57 @@ def test_preflight_profile_con_content_sample_trunca_y_usa_fragmento(monkeypatch
     assert len(sent_content) - fragment_start <= ed._PREFLIGHT_SAMPLE_MAX_CHARS
 
 
+def test_cmd_preflight_content_sample_file_llega_a_preflight_profile(
+    monkeypatch, tmp_path
+):
+    """DoD WOT-2026-068k-followup: `--content-sample-file` del CLI debe llegar
+    como `content_sample` a `preflight_profile` (antes de este fix, el flag
+    no existia en el parser y `_cmd_preflight` nunca pasaba el parametro --
+    `preflight_profile(preflight_profile=...)` ya existia en Python pero
+    quedaba inalcanzable desde la linea de comandos)."""
+    sample_path = tmp_path / "bundle_sample.txt"
+    sample_content = "contenido real del bundle de auditoria"
+    sample_path.write_text(sample_content, encoding="utf-8")
+
+    captured = {}
+
+    def _fake_preflight_profile(name, *, config, content_sample=None, **_kw):
+        captured["content_sample"] = content_sample
+        return {"profile": name, "alive": True, "detail": "PREFLIGHT-OK"}
+
+    monkeypatch.setattr(ed, "preflight_profile", _fake_preflight_profile)
+
+    args = ed.argparse.Namespace(
+        profile="p_prop",
+        backend_keys=None,
+        content_sample_file=str(sample_path),
+    )
+    rc = ed._cmd_preflight(args, _config())
+
+    assert rc == 0
+    assert captured["content_sample"] == sample_content
+
+
+def test_cmd_preflight_sin_content_sample_file_pasa_none(monkeypatch):
+    """Compat: sin `--content-sample-file`, el CLI sigue pasando
+    `content_sample=None` (comportamiento identico al de antes del flag)."""
+    captured = {}
+
+    def _fake_preflight_profile(name, *, config, content_sample=None, **_kw):
+        captured["content_sample"] = content_sample
+        return {"profile": name, "alive": True, "detail": "PREFLIGHT-OK"}
+
+    monkeypatch.setattr(ed, "preflight_profile", _fake_preflight_profile)
+
+    args = ed.argparse.Namespace(
+        profile="p_prop", backend_keys=None, content_sample_file=None
+    )
+    rc = ed._cmd_preflight(args, _config())
+
+    assert rc == 0
+    assert captured["content_sample"] is None
+
+
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {

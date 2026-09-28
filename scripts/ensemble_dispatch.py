@@ -2901,7 +2901,13 @@ def _cmd_preflight(args, config) -> int:
             )
     else:
         names = sorted(config.get("ensemble_profiles", {}))
-    results = [preflight_profile(name, config=config) for name in names]
+    content_sample = None
+    if args.content_sample_file:
+        content_sample = Path(args.content_sample_file).read_text(encoding="utf-8")
+    results = [
+        preflight_profile(name, config=config, content_sample=content_sample)
+        for name in names
+    ]
     print(json.dumps({"preflight": results}, ensure_ascii=False, indent=2))
     alive = sum(1 for r in results if r["alive"])
     print(
@@ -3612,6 +3618,15 @@ def main(argv: list[str] | None = None) -> int:
     p_preflight.add_argument(
         "--backend-keys",
         help="lista separada por comas de backend_key a validar (ej. BA05,BA11,BA13)",
+    )
+    p_preflight.add_argument(
+        "--content-sample-file",
+        help=(
+            "ruta a un fichero con el bundle/contenido REAL que va a "
+            "despacharse despues; el preflight usa un fragmento truncado de "
+            "este fichero en vez del prompt sintetico (WOT-2026-068k-followup, "
+            "propuesta D: el prompt sintetico no predice fallos con payload real)"
+        ),
     )
 
     p_run = sub.add_parser("run", help="ejecuta un pipeline")
