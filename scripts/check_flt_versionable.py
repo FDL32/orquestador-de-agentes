@@ -191,14 +191,28 @@ def _parse_check_ignore_vz(stdout: str) -> dict[str, str]:
           renderiza como ``<source>:<line>:<pattern>`` -- la forma EXACTA
           ``.gitignore:<linea>:<patron>`` que el contrato exige nombrar.
         - Registros truncados/incompletos se ignoran.
+        - Un ``pattern`` con prefijo ``!`` es una regla de RE-INCLUSION
+          (negacion): git la reporta en ``check-ignore -v`` como el patron
+          que "matchea" la ruta, pero significa que la ruta NO esta
+          ignorada -- es versionable. Medido: para
+          ``orchestrator_pipeline/arranques/PROPUESTA_*.md`` bajo
+          ``!orchestrator_pipeline/arranques/PROPUESTA_*.md`` (.gitignore:125
+          del repo_destino), ``git add -n`` SI la anade y ``git status``
+          la reporta ``??`` (untracked normal, no ignorada). Sin este
+          filtro, el gate marcaba FAIL falsos-positivos sobre exactamente
+          las rutas que su propia excepcion de .gitignore permite
+          versionar.
 
     After:
-        - Retorna el dict pathname -> regla solo de las rutas ignoradas.
+        - Retorna el dict pathname -> regla solo de las rutas REALMENTE
+          ignoradas (patron sin prefijo ``!``).
     """
     records = [r for r in stdout.split("\0") if r != ""]
     rules: dict[str, str] = {}
     for i in range(0, len(records) - 3, 4):
         source, line, pattern, pathname = records[i : i + 4]
+        if pattern.startswith("!"):
+            continue
         rules[pathname] = f"{source}:{line}:{pattern}"
     return rules
 

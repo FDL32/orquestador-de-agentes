@@ -120,6 +120,60 @@ class TestMutationDirections:
         assert gate_errors(result) == []
 
 
+class TestNegatedGitignoreRule:
+    """Regresion: un patron ``!`` en .gitignore es RE-INCLUSION, no ignorado.
+
+    Medido en produccion (WOT-2026-080b, 2026-09-28): el FLT de un ticket
+    versionable segun ``orchestrator_pipeline/arranques/`` del repo_destino
+    real (regla ``!orchestrator_pipeline/arranques/PROPUESTA_*.md``) fue
+    marcado FAIL por el gate -- ``git add -n``/``git status`` confirmaban
+    que la ruta SI era versionable. Causa raiz: ``_parse_check_ignore_vz``
+    contaba cualquier registro de ``check-ignore -v -z`` como "ignorado" sin
+    comprobar el prefijo ``!`` del patron devuelto.
+    """
+
+    def test_negated_rule_is_versionable_not_a_violation(self, two_repos):
+        motor, destino = two_repos
+        (destino / ".gitignore").write_text(
+            "orchestrator_pipeline/arranques/*\n"
+            "!orchestrator_pipeline/arranques/PROPUESTA_*.md\n",
+            encoding="utf-8",
+        )
+        plan = _plan(
+            "- orchestrator_pipeline/arranques/PROPUESTA_test.md",
+            authority="repo_destino",
+        )
+        result = flt_paths_not_versionable(plan, motor_root=motor, project_root=destino)
+        assert result["status"] == "OK"
+        assert result["ignoradas"] == 0
+        assert result["violaciones"] == []
+        assert gate_errors(result) == []
+
+    def test_non_negated_sibling_under_same_dir_still_fails(self, two_repos):
+        """Control negativo: una ruta bajo el mismo directorio que NO casa
+        con la excepcion (?) sigue marcandose ignorada -- el fix no relaja
+        el caso real, solo excluye los registros ``!``."""
+        motor, destino = two_repos
+        (destino / ".gitignore").write_text(
+            "orchestrator_pipeline/arranques/*\n"
+            "!orchestrator_pipeline/arranques/PROPUESTA_*.md\n",
+            encoding="utf-8",
+        )
+        plan = _plan(
+            "- orchestrator_pipeline/arranques/otro_no_excepcionado.md",
+            authority="repo_destino",
+        )
+        result = flt_paths_not_versionable(plan, motor_root=motor, project_root=destino)
+        assert result["status"] == "FAIL"
+        assert result["ignoradas"] == 1
+        violation = result["violaciones"][0]
+        assert (
+            violation["ruta"]
+            == "orchestrator_pipeline/arranques/otro_no_excepcionado.md"
+        )
+        assert not violation["regla"].split(":", 2)[-1].startswith("!")
+
+
 class TestRootControl:
     """D4: DOS repos distintos; el repo medido es el que resuelve la ruta."""
 
