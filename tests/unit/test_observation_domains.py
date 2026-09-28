@@ -44,6 +44,10 @@ from bus.observation_domains import (  # noqa: E402
 
 _AP_SCHEMA = _MOTOR_ROOT / "skills" / "_shared" / "ap-schema.md"
 _CANONICO = _MOTOR_ROOT / "bus" / "observation_domains.py"
+# WOT-2026-025w: subarbol volatil gitignored (.gitignore:93) donde viven los
+# tmp_path de la sesion (re-enraizados ahi por tests/conftest.py) y las caches
+# que los fixtures dejan dentro (p.ej. .agent/runtime/uv-cache de `uv run`).
+_TEST_RUNTIME_ROOT = _MOTOR_ROOT / "tests" / "sandbox" / "test_runtime"
 
 
 class TestDerivacion:
@@ -187,6 +191,43 @@ def _colecciones_literales_de_dominios(arbol: ast.AST) -> list[int]:
     return lineas
 
 
+def _infractores_en_el_arbol() -> list[str]:
+    """Escanea el arbol del motor y devuelve las copias literales del enum.
+
+    Before (pre-condiciones): `_MOTOR_ROOT` resuelve a la raiz del motor con
+    sus ficheros trackeados presentes; no requiere ningun estado previo de
+    sesion.
+    During (proceso): itera `sorted(_MOTOR_ROOT.glob("**/*.py"))`, salta el
+    modulo canonico, `__pycache__`, los directorios excluidos por nombre
+    (.git/.venv/venv/node_modules/backups/.kilo) y -- WOT-2026-025w -- el
+    subarbol volatil `tests/sandbox/test_runtime` (gitignored en
+    `.gitignore:93`, 0 ficheros trackeados: `git ls-files
+    tests/sandbox/test_runtime` -> 0; precedente: `_safe_walk` ya lo poda
+    desde WOT-2026-013d). Lee y parsea con AST solo los ficheros restantes.
+    After (post-condiciones): devuelve la lista de `ruta:linea` de cada
+    coleccion literal hecha SOLO de dominios; nunca lanza (un SyntaxError
+    salta ese fichero).
+    """
+    infractores: list[str] = []
+    for py in sorted(_MOTOR_ROOT.glob("**/*.py")):
+        partes = set(py.parts)
+        if py == _CANONICO or "__pycache__" in partes:
+            continue
+        if partes & {".git", ".venv", "venv", "node_modules", "backups", ".kilo"}:
+            continue
+        if py.is_relative_to(_TEST_RUNTIME_ROOT):
+            continue
+        try:
+            arbol = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        infractores.extend(
+            f"{py.relative_to(_MOTOR_ROOT)}:{linea}"
+            for linea in _colecciones_literales_de_dominios(arbol)
+        )
+    return infractores
+
+
 class TestSinDuplicados:
     """Barrera estatica: nadie reintroduce una enumeracion literal.
 
@@ -196,24 +237,40 @@ class TestSinDuplicados:
     """
 
     def test_ninguna_copia_del_enum_en_el_arbol(self):
-        infractores: list[str] = []
-        for py in sorted(_MOTOR_ROOT.glob("**/*.py")):
-            partes = set(py.parts)
-            if py == _CANONICO or "__pycache__" in partes:
-                continue
-            if partes & {".git", ".venv", "venv", "node_modules", "backups", ".kilo"}:
-                continue
-            try:
-                arbol = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
-            except SyntaxError:
-                continue
-            infractores.extend(
-                f"{py.relative_to(_MOTOR_ROOT)}:{linea}"
-                for linea in _colecciones_literales_de_dominios(arbol)
-            )
+        infractores = _infractores_en_el_arbol()
         assert infractores == [], (
             "enumeracion literal de dominios fuera de bus/observation_domains.py; "
             "importa VALID_DOMAINS en vez de copiarla: " + ", ".join(infractores)
+        )
+
+    def test_el_scan_ignora_el_sandbox_volatil(self, tmp_path: Path):
+        """Regresion del piloto de optimizacion WOT-2026-025w.
+
+        FAIL-sin / PASS-con el podado de `tests/sandbox/test_runtime` en
+        `_infractores_en_el_arbol`. Before (sin el podado): este test planta
+        una copia literal del enum dentro de `tmp_path` (re-enraizado en el
+        sandbox volatil por `conftest.py`) y el scan la PARSEA como si fuera
+        fuente del proyecto -- el test falla con `infractores` apuntando al
+        fichero plantado. After (con el podado): el subarbol gitignored se
+        ignora y el test pasa.
+
+        Motivo medido (PASO 1b, corrida completa 2026-09-28T16:22:38Z):
+        el scan AST-parseaba 6044 de 6714 ficheros que vivian bajo el
+        sandbox (caches `uv-cache` de terceros que los fixtures dejan en
+        `tmp_path`), 19.9s de la llamada en sesion y 38.97s en suite.
+        La barrera NO pierde cobertura duradera: `git ls-files
+        tests/sandbox/test_runtime` -> 0 ficheros trackeados.
+        """
+        muestra = sorted(VALID_DOMAINS)[:5]
+        (tmp_path / "copia_enum.py").write_text(
+            "LISTA_COPIADA = [" + ", ".join(f'"{d}"' for d in muestra) + "]\n",
+            encoding="utf-8",
+        )
+        infractores = _infractores_en_el_arbol()
+        assert infractores == [], (
+            "el scan del arbol NO debe leer el sandbox volatil "
+            "tests/sandbox/test_runtime (WOT-2026-025w); fichero que lo "
+            "delata: " + ", ".join(infractores)
         )
 
 
