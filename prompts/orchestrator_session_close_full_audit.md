@@ -239,6 +239,72 @@ Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--
    - `TURN.md` puede quedar en `ROL=MANAGER`, `ACCION=CREATE_PLAN`, `Plan ID: N/A` inmediatamente despues del cierre. Eso NO bloquea el cierre si `validate --json` sigue en `0/0`. El siguiente bootstrap/arranque de ticket debe regenerarlo; no lo eleves a hallazgo si no rompe validacion.
 
 == BLOQUE 4: PROMOCION DE MEMORIA (decision, no escritura ciega) ==
+
+4.0 OPTIMIZACION DEL SISTEMA DE MEMORIA (opcional, solo si la evidencia lo
+pide). NO es parte del cierre obligatorio: es una capacidad que el cierre
+PUEDE disparar cuando el estado medido de L1/L2/L3 lo justifica. Hermana
+del disparador de suite (Bloque 3.6): mismo patron recolector->juez, mismas
+dos condiciones duras, mismo formato "SOLO un piloto por corrida".
+   - Disparador (MEDIBLE, no "por si acaso"). A diferencia del disparador de
+     suite, NO hay `run_history.jsonl` equivalente para memoria (no existe
+     tendencia entre corridas que medir hoy) -- el disparador es sobre
+     ESTADO ACTUAL. Dispara si se cumple CUALQUIERA:
+     (a) `grep -c "^#### R-" .agent/runtime/memory/memory_rules.md` >= 90%
+         de `MAX_L2_RULES` (scripts/memory_consolidate.py:46, hoy 30 ->
+         umbral 27);
+     (b) `MEMORY.md` desfasado: su fecha de generacion es mas antigua que
+         la entrada mas reciente del archive portable
+         (`.agent/runtime/memory/archive/observations.*.jsonl`) en mas de
+         7 dias;
+     (c) `python scripts/validate_observations.py --strict` sale != 0
+         (schema-drift activo: la Fase de promocion del paso 7 ya esta
+         bloqueada por el Bloque 4 principal, pero el drift en si mismo es
+         señal de que el sistema de memoria necesita atencion estructural,
+         no solo la entrada nueva).
+     (d) `python scripts/memory_consolidate.py --dry-run` reporta mas de
+         500 entradas totales en `observations.jsonl` (L1 vivo) SIN rotar
+         **Y** el ratio `dropped / total` (ruido) reportado por el mismo
+         dry-run supera 80% (medido 2026-09-28: el mecanismo de rotacion --
+         mover lo `archivable` a `archive/` y reescribir L1 solo con
+         `recent` -- YA EXISTE en `_apply_consolidation`,
+         scripts/memory_consolidate.py, pero es NORMA sin barrera: nada lo
+         invoca solo, y L1 acumulo 3313 entradas, **98.6% ruido**, sin que
+         ningun cierre lo rotara). **Correccion tras bucle de gobierno L720
+         (Codex, 2026-09-28):** un umbral de SOLO tamano absoluto (500) es
+         insuficiente -- un L1 grande pero mayormente sano (poco ruido) no
+         deberia disparar igual que uno dominado por ruido; de ahi la
+         condicion compuesta (tamano Y ruido), no tamano solo. Ambos
+         numeros (500, 80%) son KNOBS, no valores medidos optimos --
+         ajustalos si la cadencia real de escritura de L1 lo justifica.
+         Codex tambien senalo (NO VERIFICABLE con el fragmento parcial
+         revisado, confirmado limpio tras leer `main()` completo) que
+         `archivable` se recalcula dos veces (una implicita dentro de
+         `_run_pipeline`/`stats['archived']`, otra explicita en `main()`
+         antes de `_apply_consolidation`) -- redundancia de computo, NO
+         bug: ambas pasadas usan la MISMA logica (`split_by_age` sobre las
+         mismas entradas filtradas) y dan el mismo resultado. Declarado
+         aqui como candidato de limpieza NO bloqueante, fuera de alcance
+         de este umbral.
+     Los cuatro se computan de los ficheros REALES, no de memoria del
+     agente; CITA el numero/fecha/exit-code que obtuviste.
+   - Si dispara: `prompts/memory_optimization.md` (contract_id
+     cid-memory-optimization-v1). Es RECOLECTOR -> JUEZ: lee el estado real
+     de L1/L2/L3 + `get_memory_tier_status()`; NUNCA optimices desde la
+     intuicion ("parece que hay poca memoria" sin medir -- ver TRAMPA-1 del
+     prompt: un `MEMORY.md` desfasado no es "poca memoria", es "indice sin
+     regenerar").
+   - Non-goals que el cierre debe hacer respetar: NUNCA relaja
+     `validate_observations.py --strict`, NUNCA borra entradas del archive
+     sin el gate de evidencia ya existente, NUNCA resuelve por su cuenta
+     una decision de producto pendiente (WOT-2026-025o, WOT-2026-042e) --
+     esas son tickets propios, no piloto de este prompt. Un piloto exige
+     before/after medido y guard; sin las DOS condiciones duras del PASO 2
+     de `memory_optimization.md`, no se aplica.
+   - Si NO dispara: dilo con los NUMEROS reales (`L2 <N>/<MAX_L2_RULES>
+     reglas; MEMORY.md generado <fecha>, archive mas reciente <fecha>;
+     validate_observations.py exit 0`), no con la formula vacia. Si no
+     puedes computarlos: `disparador NO VERIFICABLE: <razon>`.
+
 7. `prompts/memory_upload.md` es GATE de pre-escritura (propose-before-write), NO un volcado al final. Para CADA aprendizaje:
    - Declara el destino ANTES de escribir: Claude privada / portable motor (repo_motor) / portable destino (repo_destino) / varios.
    - Distingue OBSERVACION (hecho objetivo, lo posee session-close-observations) de LEARNING (regla generalizable con evidencia, lo posee manager-session-closeout). No los mezcles en el mismo tier.
