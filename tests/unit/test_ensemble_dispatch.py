@@ -28,6 +28,7 @@ import sys
 import time
 import traceback
 import urllib.error
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -3638,7 +3639,12 @@ def test_run_loop_round_no_ping_pong_between_two_family_members(tmp_path, monkey
     fallback_calls: list[str] = []
 
     def fake_fallback_backend(
-        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+        pool_backend,
+        *,
+        config,
+        check_alive,
+        exclude_profiles=frozenset(),
+        project_root=None,
     ):
         fallback_calls.append(pool_backend)
         return "p_other"
@@ -3744,6 +3750,468 @@ def test_resolve_fallback_backend_real_path_excludes_already_tried_profiles(
         f"entre si) y elegir p_other -- secuencia real: {calls}. Si aparece "
         "p_prop una segunda vez, el bug de ping-pong (H5) sigue vivo en el "
         "camino delegado."
+    )
+
+
+def test_fallback_events_chain_same_nonce_distinguished_by_pair(tmp_path, monkeypatch):
+    """H3 Seccion 3 (PROPUESTA_h3_fuente_unica_failure_class.md): la llave de
+    correlacion con scorecard.jsonl es el PAR (challenge_nonce, failed_profile),
+    nunca el nonce solo. Dos intentos de sustitucion encadenados bajo el MISMO
+    nonce de ronda (p_prop falla -> p_chal sustituye y TAMBIEN falla -> p_third
+    responde) deben producir DOS filas con challenge_nonce IDENTICO pero
+    failed_profile distinto en cada una: si el par no las distingue, o si una
+    de las dos filas se pierde, este test falla."""
+
+    config = _config_with_glm_family()
+    config["ensemble_profiles"]["p_third"] = {
+        "backend": "fake",
+        "channel": "api",
+        "model": "m3",
+        "api_base_url": "https://fake.example/v1/chat/completions",
+        "api_key_env": "FAKE_API_KEY",
+        "data_sensitivity": "public",
+        "write": False,
+        "backend_key": "BA03",
+    }
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {
+            ("fake", "m1"): "glm",
+            ("fake", "m2"): "glm",
+            ("fake", "m3"): "glm",
+        },
+    )
+
+    def _fake_send(profile_name, messages, **_kw):
+        if profile_name in ("p_prop", "p_chal"):
+            raise ed.TransportError("EOF", status=None, body="stream truncado")
+        return "respuesta del tercero"
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    monkeypatch.setattr(ed, "smoke_profile", lambda name, *, config: {"alive": True})
+
+    reply = ed.run_loop_round(
+        "p_prop",
+        "contenido",
+        config=config,
+        project_root=tmp_path,
+        ticket="T-1",
+        task_type="exploracion",
+        rol="challenger",
+        phase="DESIGN_REVIEW",
+        loop_id="L-TEST",
+        backend_key="BA01",
+        sensitivity="public",
+        challenge_nonce="nonce-fijo-H3",
+    )
+
+    assert reply == "respuesta del tercero"
+    events_path = tmp_path / ed.FALLBACK_EVENTS_REL
+    assert events_path.exists()
+    lines = events_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2, (
+        f"dos intentos de sustitucion encadenados = dos eventos, hay {len(lines)}"
+    )
+    events = [json.loads(line) for line in lines]
+    assert {e["challenge_nonce"] for e in events} == {"nonce-fijo-H3"}, (
+        "ambos eventos deben heredar el MISMO challenge_nonce de la ronda"
+    )
+    assert [e["failed_profile"] for e in events] == ["p_prop", "p_chal"], (
+        "cada evento registra al perfil que acaba de fallar en ESE intento"
+    )
+    pairs = {(e["challenge_nonce"], e["failed_profile"]) for e in events}
+    assert len(pairs) == 2, (
+        f"el PAR (nonce, failed_profile) debe ser unico por evento, "
+        f"pares reales: {pairs}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cuarentena de backends + fallback definitivo Claude (sesion H3+H1,
+# 2026-09-29). Mismo bloque que los tests de fallback: mockean por nombre
+# en texto crudo, ANTES del marcador WOT-2026-025z a proposito.
+# ---------------------------------------------------------------------------
+
+
+def _write_quarantine(tmp_path, *, by_backend=None, by_profile=None):
+    path = tmp_path / ed.QUARANTINE_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-09-29T00:00:00+00:00",
+                "fallback_events_sha256": "deadbeef",
+                "by_backend": by_backend or {},
+                "by_profile": by_profile or {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _future_iso(hours: float = 1.0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+
+
+def test_read_quarantine_drops_expired_and_unreadable(tmp_path):
+    """Lectura: vencidas y `expires_at` ilegible NO bloquean (fail-open
+    declarado); vigentes si. Ausente o JSON corrupto -> dos tablas vacias."""
+    _write_quarantine(
+        tmp_path,
+        by_backend={
+            "nan_api": {
+                "reason_class": "quota_exhausted",
+                "expires_at": _future_iso(),
+            },
+            "old_api": {
+                "reason_class": "quota_exhausted",
+                "expires_at": "2000-01-01T00:00:00+00:00",
+            },
+            "bad_api": {"reason_class": "quota_exhausted", "expires_at": "no-date"},
+        },
+    )
+    q = ed.read_quarantine(tmp_path)
+    assert sorted(q["by_backend"]) == ["nan_api"], (
+        "solo la entrada vigente debe sobrevivir el filtro de lectura"
+    )
+    assert q["by_profile"] == {}
+
+    # ausente
+    empty = ed.read_quarantine(tmp_path / "no-existe")
+    assert empty == {"by_backend": {}, "by_profile": {}}
+
+    # corrupto
+    path = tmp_path / ed.QUARANTINE_REL
+    path.write_text("{esto no es json", encoding="utf-8")
+    assert ed.read_quarantine(tmp_path) == {"by_backend": {}, "by_profile": {}}
+
+
+def test_resolve_similar_fallback_quarantine_beats_ranking_order(tmp_path, monkeypatch):
+    """Precedencia (diseno 5-bis): el filtro de cuarentena se aplica ANTES
+    del ranking y sin gastar red. p_chal es el PRIMER candidato de familia
+    (y el que el ranking daria primero); si esta en cuarentena, jamas se le
+    invoca smoke y la familia cae al siguiente vivo."""
+    config = _config_with_glm_family()
+    config["ensemble_profiles"]["p_third"] = {
+        "backend": "fake",
+        "channel": "api",
+        "model": "m3",
+        "api_base_url": "https://fake.example/v1/chat/completions",
+        "api_key_env": "FAKE_API_KEY",
+        "data_sensitivity": "public",
+        "write": False,
+        "backend_key": "BA03",
+    }
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {
+            ("fake", "m1"): "glm",
+            ("fake", "m2"): "glm",
+            ("fake", "m3"): "glm",
+        },
+    )
+    _write_quarantine(
+        tmp_path,
+        by_profile={
+            "p_chal": {
+                "backend": "fake",
+                "reason_class": "network_timeout",
+                "source": "default_ttl",
+                "expires_at": _future_iso(),
+            }
+        },
+    )
+    probed: list[str] = []
+
+    def _alive(name, *, config):
+        probed.append(name)
+        return {"alive": True}
+
+    monkeypatch.setattr(ed, "smoke_profile", _alive)
+
+    chosen = ed.resolve_similar_fallback("p_prop", config=config, project_root=tmp_path)
+    assert chosen == "p_third"
+    assert probed == ["p_third"], (
+        f"p_chal esta en cuarentena: NO debe gastar smoke; probes: {probed}"
+    )
+
+
+def test_delegate_path_respects_quarantine(tmp_path, monkeypatch):
+    """Hallazgo 5 de la ronda: las DELEGACIONES a resolve_fallback_backend
+    son una ruta aparte por la que un perfil cuarentenado re-entraria si el
+    filtro solo viviera en same_family. Aqui no hay familia (mapa vacio),
+    asi que todo pasa por el delegado: p_quar es el primero en orden de
+    insercion y aun asi no debe ni sondearse."""
+    config = _config()
+    config["ensemble_profiles"]["p_quar"] = {
+        "backend": "vendor_b",
+        "channel": "api",
+        "model": "m8",
+        "api_base_url": "https://fake.example/v1/chat/completions",
+        "api_key_env": "FAKE_API_KEY",
+        "data_sensitivity": "public",
+        "write": False,
+        "backend_key": "BA08",
+    }
+    config["ensemble_profiles"]["p_ok"] = {
+        "backend": "vendor_c",
+        "channel": "api",
+        "model": "m9",
+        "api_base_url": "https://fake.example/v1/chat/completions",
+        "api_key_env": "FAKE_API_KEY",
+        "data_sensitivity": "public",
+        "write": False,
+        "backend_key": "BA09",
+    }
+    config["backends"]["vendor_b"] = dict(config["backends"]["fake"])
+    config["backends"]["vendor_c"] = dict(config["backends"]["fake"])
+    monkeypatch.setattr(ed, "MODEL_FAMILY_MAP", {})
+    _write_quarantine(
+        tmp_path,
+        by_profile={
+            "p_quar": {
+                "backend": "vendor_b",
+                "reason_class": "network_timeout",
+                "source": "default_ttl",
+                "expires_at": _future_iso(),
+            }
+        },
+    )
+    probed: list[str] = []
+
+    def _alive(name, *, config):
+        probed.append(name)
+        return {"alive": True}
+
+    monkeypatch.setattr(ed, "smoke_profile", _alive)
+
+    chosen = ed.resolve_similar_fallback("p_prop", config=config, project_root=tmp_path)
+    assert chosen == "p_ok"
+    assert probed == ["p_ok"], (
+        f"el delegado real debe filtrar p_quar antes del smoke; probes: {probed}"
+    )
+
+
+def test_regenerate_quarantine_scopes_by_cause(tmp_path):
+    """`quarantine --sync` deriva de fallback_events (unico portador de
+    failure_class): quota_exhausted -> by_backend con fecha del proveedor
+    (Caso A), network_timeout -> by_profile con TTL (Caso B), unknown NO
+    genera cuarentena, y un evento con fecha de reset YA pasada se purga."""
+    now = datetime.now(timezone.utc)
+    events = [
+        {
+            "ts": (now - timedelta(minutes=30)).isoformat(),
+            "failed_profile": "challenger_nan_glm_flash",
+            "failed_backend": "nan_api",
+            "failure_class": "quota_exhausted",
+            "failure_detail": (
+                "TransportError: HTTP 402 body=allowance exhausted, "
+                "counter resets on 2099-06-01 00:00 UTC, in 1d13h"
+            ),
+        },
+        {
+            "ts": (now - timedelta(minutes=10)).isoformat(),
+            "failed_profile": "challenger_nvidia_kimi",
+            "failed_backend": "nvidia_api",
+            "failure_class": "network_timeout",
+            "failure_detail": "socket timeout tras 90s, sin status HTTP",
+        },
+        {
+            "ts": (now - timedelta(minutes=5)).isoformat(),
+            "failed_profile": "challenger_groq_qwen",
+            "failed_backend": "groq_api",
+            "failure_class": "unknown",
+            "failure_detail": "HTTP 413 payload too large",
+        },
+        {
+            "ts": (now - timedelta(days=30)).isoformat(),
+            "failed_profile": "challenger_old",
+            "failed_backend": "old_api",
+            "failure_class": "quota_exhausted",
+            "failure_detail": "quota reset on 2000-01-01 00:00 UTC",
+        },
+    ]
+    path = tmp_path / ed.FALLBACK_EVENTS_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+
+    out = ed.regenerate_quarantine(tmp_path, config=_config())
+    data = json.loads(out.read_text(encoding="utf-8"))
+
+    assert list(data["by_backend"]) == ["nan_api"], (
+        "solo quota_exhausted vigente genera by_backend; el reset pasado "
+        "se purga y unknown no dispara nada"
+    )
+    quota = data["by_backend"]["nan_api"]
+    assert quota["source"] == "explicit_provider_date"
+    assert quota["expires_at"] == "2099-06-01T00:00:00+00:00"
+    assert quota["triggered_by_profile"] == "challenger_nan_glm_flash"
+    assert quota["renewal_count"] == 0
+
+    assert list(data["by_profile"]) == ["challenger_nvidia_kimi"]
+    net = data["by_profile"]["challenger_nvidia_kimi"]
+    assert net["source"] == "default_ttl"
+    assert net["reason_class"] == "network_timeout"
+    expires = datetime.fromisoformat(net["expires_at"])
+    assert expires > datetime.now(timezone.utc), "TTL de 1h desde el ultimo evento"
+    assert "groq_api" not in data["by_backend"]
+    assert data["fallback_events_sha256"]
+    assert "NUNCA editar a mano" in data["derivado"]
+
+
+def test_smoke_cli_skips_quarantined_unless_forced(tmp_path, monkeypatch, capsys):
+    """CLI smoke: perfil en cuarentena se OMITE con WARN por defecto (sin
+    gastar la llamada) y `--ignore-quarantine` es el intento explicito que
+    la regla dura del diseno prohibe bloquear."""
+    config = _config()
+    _write_quarantine(
+        tmp_path,
+        by_profile={
+            "p_prop": {
+                "backend": "fake",
+                "reason_class": "quota_exhausted",
+                "source": "explicit_provider_date",
+                "expires_at": _future_iso(),
+            }
+        },
+    )
+    probed: list[str] = []
+
+    def _alive(name, *, config, project_root=None):
+        probed.append(name)
+        return {"alive": True, "detail": "ok"}
+
+    monkeypatch.setattr(ed, "smoke_profile", _alive)
+
+    args = ed.argparse.Namespace(
+        profile="p_prop", project_root=str(tmp_path), ignore_quarantine=False
+    )
+    rc = ed._cmd_smoke(args, config)
+    out = capsys.readouterr()
+    assert rc == 1, "universo vacio (todo en cuarentena) jamas verde"
+    assert probed == [], "sin --ignore-quarantine NO se gasta la llamada"
+    assert "SKIP" in out.err and "ignore-quarantine" in out.err
+    payload = json.loads(out.out)
+    assert payload["skipped_quarantine"][0]["profile"] == "p_prop"
+    assert payload["smoke"] == []
+
+    args_force = ed.argparse.Namespace(
+        profile="p_prop", project_root=str(tmp_path), ignore_quarantine=True
+    )
+    rc_force = ed._cmd_smoke(args_force, config)
+    out_force = capsys.readouterr()
+    assert rc_force == 0
+    assert probed == ["p_prop"], "con la flag, el intento explicito SI corre"
+    assert "FORZADO" in out_force.err
+
+
+def test_ultimate_claude_fallback_runs_when_cascade_exhausted(tmp_path, monkeypatch):
+    """Fallback definitivo (decision del usuario 2026-09-29): la cascada se
+    agota (smoke dice muerto hasta para Claude -> DispatchBlockedError) y la
+    ronda se ejecuta igual via subagente de Claude, escribiendo el evento de
+    fallback que la brecha de la cuarentena declaraba ausente."""
+    config = _config()
+    config["backends"]["claude"] = dict(config["backends"]["fake"])
+    config["ensemble_profiles"]["proposer_claude"] = {
+        "backend": "claude",
+        "channel": "agent",
+        "model": None,
+        "backend_key": "BA01",
+        "write": False,
+    }
+    monkeypatch.setattr(ed, "MODEL_FAMILY_MAP", {})
+
+    def _fake_send(profile_name, messages, **_kw):
+        if profile_name == "proposer_claude":
+            return "respuesta del subagente claude"
+        raise ed.TransportError(
+            "HTTP 402",
+            status=402,
+            body='{"error":{"message":"allowance exhausted"}}',
+        )
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    monkeypatch.setattr(ed, "smoke_profile", lambda name, *, config: {"alive": False})
+
+    reply = ed.run_loop_round(
+        "p_prop",
+        "contenido",
+        config=config,
+        project_root=tmp_path,
+        ticket="T-1",
+        task_type="exploracion",
+        rol="challenger",
+        phase="DESIGN_REVIEW",
+        loop_id="L-TEST",
+        backend_key="BA01",
+        sensitivity="public",
+        challenge_nonce="n-ult",
+    )
+    assert reply == "respuesta del subagente claude"
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ed.FALLBACK_EVENTS_REL)
+        .read_text(encoding="utf-8")
+        .strip()
+        .splitlines()
+    ]
+    assert len(events) == 1, "el intento del fallback definitivo deja evento"
+    ev = events[0]
+    assert ev["fallback_profile"] == "proposer_claude"
+    assert ev["fallback_backend"] == "claude"
+    assert ev["fallback_backend_key"] == "BA01"
+    assert ev["failed_profile"] == "p_prop"
+    assert ev["failure_class"] == ed._FAILURE_CLASS_QUOTA
+    assert ev["challenge_nonce"] == "n-ult"
+
+
+def test_ultimate_claude_fallback_selection_edges(tmp_path):
+    """Seleccion del ultimo recurso: disponible -> elegido; ya intentado ->
+    no; en cuarentena vigente -> no (la precedencia 5-bis tambien aplica al
+    fallback definitivo, que es un intento AUTOMATICO)."""
+    config = _config()
+    config["backends"]["claude"] = dict(config["backends"]["fake"])
+    config["ensemble_profiles"]["proposer_claude"] = {
+        "backend": "claude",
+        "channel": "agent",
+        "model": None,
+        "backend_key": "BA01",
+        "write": False,
+    }
+    assert (
+        ed._ultimate_claude_fallback(
+            config, excluded=frozenset(), project_root=tmp_path
+        )
+        == "proposer_claude"
+    )
+    assert (
+        ed._ultimate_claude_fallback(
+            config,
+            excluded=frozenset({"proposer_claude"}),
+            project_root=tmp_path,
+        )
+        is None
+    )
+    _write_quarantine(
+        tmp_path,
+        by_profile={
+            "proposer_claude": {
+                "backend": "claude",
+                "reason_class": "network_timeout",
+                "source": "default_ttl",
+                "expires_at": _future_iso(),
+            }
+        },
+    )
+    assert (
+        ed._ultimate_claude_fallback(
+            config, excluded=frozenset(), project_root=tmp_path
+        )
+        is None
     )
 
 
@@ -5835,7 +6303,12 @@ def test_resolve_similar_fallback_filters_out_candidates_beyond_latency_ratio(
     fallback_calls: list[str] = []
 
     def fake_fallback_backend(
-        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+        pool_backend,
+        *,
+        config,
+        check_alive,
+        exclude_profiles=frozenset(),
+        project_root=None,
     ):
         fallback_calls.append(pool_backend)
         return "challenger_other_family"
@@ -5870,7 +6343,12 @@ def test_resolve_similar_fallback_falls_back_when_no_family_entry(
     fallback_calls: list[str] = []
 
     def fake_fallback_backend(
-        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+        pool_backend,
+        *,
+        config,
+        check_alive,
+        exclude_profiles=frozenset(),
+        project_root=None,
     ):
         fallback_calls.append(pool_backend)
         return "someone_else"
@@ -5899,7 +6377,12 @@ def test_resolve_similar_fallback_falls_back_when_family_has_no_other_member(
     fallback_calls: list[str] = []
 
     def fake_fallback_backend(
-        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+        pool_backend,
+        *,
+        config,
+        check_alive,
+        exclude_profiles=frozenset(),
+        project_root=None,
     ):
         fallback_calls.append(pool_backend)
         return "challenger_other_family"
@@ -5983,7 +6466,12 @@ def test_resolve_similar_fallback_respects_max_attempts_budget(tmp_path, monkeyp
     fallback_calls: list[str] = []
 
     def fake_fallback_backend(
-        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+        pool_backend,
+        *,
+        config,
+        check_alive,
+        exclude_profiles=frozenset(),
+        project_root=None,
     ):
         fallback_calls.append(pool_backend)
         return "challenger_other_family"

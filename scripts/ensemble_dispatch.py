@@ -69,7 +69,7 @@ import time
 import urllib.request
 from collections import Counter
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -116,6 +116,10 @@ LEADERS_REL = Path(".agent/runtime/ensemble/backend_leaders.json")
 # Registrar la evidencia AHORA no implica actuar automaticamente sobre ella
 # (mismo principio que loop_registry.md ya aplica a `status`: un fallo no
 # cambia nada por si solo, la decision de escalar es de quien lee el patron).
+# H3 (fuente unica de verdad, 2026-09-29): UNICO productor autorizado de
+# `failure_class` -- su valor viene SIEMPRE de `_classify_transport_failure`
+# y ningún consumidor debe re-derivarlo (ni desde `scorecard.jsonl::failure_mode`
+# ni reimplementando el parseo de excepcion/status/body).
 FALLBACK_EVENTS_REL = Path(".agent/runtime/ensemble/fallback_events.jsonl")
 # WOT-2026-040b: registro append-only de los challenge_nonce EMITIDOS antes de
 # cada fan-out de gobierno. Fuente externa contra la que check_loop_execution
@@ -1625,9 +1629,22 @@ def append_fallback_event(project_root: Path, event: dict) -> Path:
 
     Campos esperados: `ts`, `ticket`, `loop_id`, `phase`, `failed_profile`,
     `failed_backend`, `failure_class`, `failure_detail` (texto truncado),
-    `fallback_profile`, `fallback_backend`, `fallback_backend_key`. Se
-    normalizan por presencia (`event.get(k)`) para que un evento incompleto
+    `fallback_profile`, `fallback_backend`, `fallback_backend_key`,
+    `challenge_nonce` (H3, campo 12, opcional: `None` en rondas
+    exploratorias sin gobierno). La llave de correlacion con
+    `scorecard.jsonl` es el PAR `(challenge_nonce, failed_profile)` --
+    el nonce SOLO no distingue dos intentos de sustitucion encadenados
+    dentro de la misma ronda (misma sesion 2026-09-29, Seccion 0-bis de
+    `PROPUESTA_h3_fuente_unica_failure_class.md`). Se normalizan por
+    presencia (`event.get(k)`) para que un evento incompleto
     no rompa el append -- mejor un campo `None` visible que perder la fila.
+
+    FUENTE UNICA DE `failure_class` (H3, declaracion normativa): este
+    escritor es el UNICO productor autorizado de `failure_class` en
+    cualquier esquema persistido; su unico valor proviene de
+    `_classify_transport_failure`. Ningun consumidor (cuarentena,
+    ranking, avisos) debe re-derivar la clase por su cuenta desde
+    `scorecard.jsonl::failure_mode` (texto libre, dominio distinto).
     """
     path = project_root / FALLBACK_EVENTS_REL
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1643,6 +1660,7 @@ def append_fallback_event(project_root: Path, event: dict) -> Path:
         "fallback_profile",
         "fallback_backend",
         "fallback_backend_key",
+        "challenge_nonce",
     )
     normalized = {k: event.get(k) for k in fields}
     payload = (json.dumps(normalized, ensure_ascii=False) + "\n").encode("utf-8")
@@ -1904,6 +1922,307 @@ def regenerate_backend_status(project_root: Path, *, config: dict) -> Path:
         "(ensemble_dispatch.py status)",
     }
     out_path = project_root / BACKEND_STATUS_REL
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Cuarentena de backends/perfiles con expiracion
+# (PROPUESTA_cuarentena_backends_con_expiracion.md; ronda adversarial
+# EXPLORATORY-quarantine-design, 8 hallazgos, incorporados al diseno).
+# Artefacto DERIVADO de `fallback_events.jsonl` -- H3: esa fuente es la UNICA
+# que porta `failure_class`; `scorecard.jsonl` NO lo tiene y nunca se
+# re-deriva la clase aqui (declaracion de fuente unica en FALLBACK_EVENTS_REL).
+# ---------------------------------------------------------------------------
+QUARANTINE_REL = Path(".agent/runtime/ensemble/backend_quarantine.json")
+
+# Caso B del diseno (sin fecha explicita del proveedor): TTL corto. Borrador
+# de sesion declarado (no barrido); 1h acota el danio de un sobre-bloqueo si
+# la clasificacion es imperfecta (hallazgo 3 de la ronda: `quota_exhausted`
+# no prueba por si solo que la CUENTA sea compartida).
+_QUARANTINE_TTL = timedelta(hours=1)
+
+
+def _parse_provider_reset_at(detail: str | None) -> datetime | None:
+    """Caso A: fecha de reset del proveedor dentro de `failure_detail`.
+
+    Before: `detail` es el `failure_detail` persistido en un evento de
+        fallback (texto libre, TRUNCADO a 300 chars -- ver
+        `append_fallback_event`).
+    During: parser laxo (decision del diseno Seccion 2): busca
+        `YYYY-MM-DD HH:MM` con zona `UTC`/`Z` opcional. Zona ausente -> se
+        asume UTC (declarado, nunca zona local). Solo lectura, sin I/O.
+    After: `datetime` aware-UTC, o `None` si no hay fecha o es ilegible.
+        `None` NO es error: la causa cae a Caso B (TTL) -- jamas se inventa
+        una fecha. Limitacion heredada de la ronda (hallazgo 2, ALTA): si la
+        fecha quedo fuera del corte de 300 chars, es indistinguible de
+        "sin fecha explicita" y el TTL corto es el comportamiento correcto.
+    """
+    if not detail:
+        return None
+    m = re.search(r"(\d{4}-\d{2}-\d{2})[T ,]+(\d{2}:\d{2})(?::\d{2})?", detail)
+    if not m:
+        return None
+    try:
+        naive = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=timezone.utc)
+
+
+def read_quarantine(project_root: Path) -> dict:
+    """Carga `backend_quarantine.json` DESCARTANDO entradas vencidas al leer.
+
+    Before: `project_root` es el destino-rol (artefacto project_root-scoped,
+        igual que leaders/status).
+    During: lee el JSON; parsea `expires_at` por entrada; descarta vencidas
+        (`<= ahora`) y tambien entradas con `expires_at` ilegible -- una
+        cuarentena corrupta no debe bloquear (sobre-bloquear por datos
+        ilegibles es peor que no bloquear: la cuarentena OPTIMIZA, no es
+        autoridad). Sin paso de limpieza aparte: la Seccion 6 del diseno
+        recomienda filtrar en el momento de LEER, y asi se implementa.
+    After: `{"by_backend": {...}, "by_profile": {...}}` solo con vigentes.
+        Ausente o ilegible -> dos tablas vacias: **ausencia de artefacto NO
+        es cuarentena** (fail-open declarado: sin evidencia no se excluye a
+        nadie). Nunca lanza.
+    """
+    empty = {"by_backend": {}, "by_profile": {}}
+    path = project_root / QUARANTINE_REL
+    if not path.exists():
+        return empty
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return empty
+    now = datetime.now(timezone.utc)
+    out = {"by_backend": {}, "by_profile": {}}
+    for section in ("by_backend", "by_profile"):
+        entries = data.get(section)
+        if not isinstance(entries, dict):
+            continue
+        for key, entry in entries.items():
+            if not isinstance(entry, dict):
+                continue
+            try:
+                exp_dt = datetime.fromisoformat(
+                    str(entry.get("expires_at", "")).replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                continue
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+            if exp_dt <= now:
+                continue
+            out[section][key] = entry
+    return out
+
+
+def quarantine_reason(
+    profile_name: str, *, config: dict, quarantine: dict
+) -> str | None:
+    """Mensaje de WARN si `profile_name` esta en cuarentena vigente; `None` si no.
+
+    Orden de consulta (diseno Seccion 5): primero `by_backend[backend]`
+    (alcance `quota_exhausted`, clave = backend), despues
+    `by_profile[profile_name]` (alcance `network_timeout`). El dict ya llega
+    filtrado de vencidas de `read_quarantine`; esta funcion NO lee disco.
+    """
+    prof = (config.get("ensemble_profiles") or {}).get(profile_name) or {}
+    entry = (quarantine.get("by_backend") or {}).get(prof.get("backend"))
+    if entry is None:
+        entry = (quarantine.get("by_profile") or {}).get(profile_name)
+    if entry is None:
+        return None
+    return (
+        f"en cuarentena ({entry.get('reason_class')}) hasta "
+        f"{entry.get('expires_at')} [origen: {entry.get('source')}]"
+    )
+
+
+def _filter_quarantined(
+    names: list[str], *, config: dict, quarantine: dict
+) -> list[str]:
+    """Excluye de `names` los perfiles con cuarentena vigente, SIN gastar red.
+
+    Mismo contrato que la exclusion por familia/`exclude_profiles`: el
+    descarte ocurre ANTES de `check_alive`/ranking (Seccion 5-bis: la
+    cuarentena es el PRIMER filtro). Sin artefacto util -> lista intacta.
+    """
+    if not quarantine.get("by_backend") and not quarantine.get("by_profile"):
+        return names
+    return [
+        n
+        for n in names
+        if quarantine_reason(n, config=config, quarantine=quarantine) is None
+    ]
+
+
+def _split_quarantined(
+    names: list[str], *, config: dict, project_root: Path | None, force: bool, tag: str
+) -> tuple[list[str], list[dict]]:
+    """Filtro de cuarentena del CLI (`smoke`/`preflight`): skip por defecto.
+
+    Contrato unico de ambos comandos (diseno Seccion 5.2): WARN + omision
+    sin gastar la llamada; `force` = intento explicito del operador (la
+    regla dura prohibe BLOQUEARLO, aqui se avisa y se ejecuta). Retorna
+    `(nombres_a_ejecutar, omitidos)`; sin destino o sin nombres, sin cambios.
+    """
+    skipped: list[dict] = []
+    if project_root is None or not names:
+        return names, skipped
+    quarantine = read_quarantine(project_root)
+    runnable: list[str] = []
+    for name in names:
+        reason = quarantine_reason(name, config=config, quarantine=quarantine)
+        if reason and not force:
+            print(
+                f"[{tag}] SKIP '{name}': {reason} -- usa "
+                "--ignore-quarantine para forzar el intento",
+                file=sys.stderr,
+            )
+            skipped.append({"profile": name, "reason": reason})
+        else:
+            if reason and force:
+                print(
+                    f"[{tag}] WARN '{name}': {reason} -- intento "
+                    "FORZADO por --ignore-quarantine",
+                    file=sys.stderr,
+                )
+            runnable.append(name)
+    return runnable, skipped
+
+
+def _iso_or_now(raw: str | None, now: datetime) -> datetime:
+    """Parsea un `ts` ISO-8601; ilegible -> `now` (conservador, no inventa)."""
+    try:
+        ts = datetime.fromisoformat(str(raw or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return now
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+def _quarantine_buckets(raw: bytes, *, now: datetime) -> dict:
+    """Agrega los eventos de fallback por clave de cuarentena.
+
+    Un evento por rama: `quota_exhausted` -> (by_backend, backend),
+    `network_timeout` -> (by_profile, perfil); el resto de clases no
+    agrega nada (decision de la Seccion 3 + hallazgo 3 de la ronda).
+    """
+    buckets: dict[tuple[str, str], dict] = {}
+    for line in raw.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        cls = ev.get("failure_class")
+        if cls == _FAILURE_CLASS_QUOTA:
+            section, key = "by_backend", ev.get("failed_backend")
+        elif cls == _FAILURE_CLASS_NETWORK:
+            section, key = "by_profile", ev.get("failed_profile")
+        else:
+            continue
+        if not key:
+            continue
+        ts = _iso_or_now(ev.get("ts"), now)
+        reset = _parse_provider_reset_at(ev.get("failure_detail"))
+        b = buckets.get((section, key))
+        if b is None:
+            buckets[(section, key)] = {
+                "reason_class": cls,
+                "first_ts": ts,
+                "last_ts": ts,
+                "count": 1,
+                "triggered_by": ev.get("failed_profile"),
+                "evidence": ev.get("failure_detail"),
+                "reset_at": reset,
+            }
+        else:
+            b["first_ts"] = min(b["first_ts"], ts)
+            b["last_ts"] = max(b["last_ts"], ts)
+            b["count"] += 1
+            b["evidence"] = ev.get("failure_detail") or b["evidence"]
+            if reset is not None and (b["reset_at"] is None or reset > b["reset_at"]):
+                b["reset_at"] = reset
+    return buckets
+
+
+def _quarantine_tables(
+    buckets: dict, *, config: dict, now: datetime
+) -> tuple[dict, dict]:
+    """Convierte los agregados en las dos tablas del artefacto.
+
+    `expires_at` = fecha del proveedor (Caso A) o ultimo evento + TTL
+    (Caso B; un fallo repetido renueva la ventana). Claves ya vencidas no
+    se escriben (la re-infeccion las re-crea con su proximo evento).
+    """
+    by_backend: dict[str, dict] = {}
+    by_profile: dict[str, dict] = {}
+    for (section, key), b in buckets.items():
+        source = "explicit_provider_date" if b["reset_at"] else "default_ttl"
+        expires = b["reset_at"] if b["reset_at"] else b["last_ts"] + _QUARANTINE_TTL
+        if expires <= now:
+            continue
+        common = {
+            "reason_class": b["reason_class"],
+            "source": source,
+            "triggered_by_profile": b["triggered_by"],
+            "quarantined_since": b["first_ts"].isoformat(),
+            "expires_at": expires.isoformat(),
+            "evidence": b["evidence"],
+            "renewal_count": b["count"] - 1,
+        }
+        if section == "by_backend":
+            common["affected_profiles"] = sum(
+                1
+                for p in (config.get("ensemble_profiles") or {}).values()
+                if p.get("backend") == key
+            )
+            by_backend[key] = common
+        else:
+            entry = dict(common)
+            entry["backend"] = (
+                (config.get("ensemble_profiles") or {}).get(key) or {}
+            ).get("backend")
+            by_profile[key] = entry
+    return by_backend, by_profile
+
+
+def regenerate_quarantine(project_root: Path, *, config: dict) -> Path:
+    """Deriva `backend_quarantine.json` desde `fallback_events.jsonl` (H1/H3).
+
+    Before: `project_root` es el destino-rol con `fallback_events.jsonl`
+        (fuente UNICA de `failure_class`; ver declaracion en
+        `FALLBACK_EVENTS_REL`). `config` aporta `affected_profiles` y el
+        `backend` del perfil en `by_profile`.
+    During: agrega los eventos (`_quarantine_buckets`), convierte a tablas
+        con expiracion por causa (`_quarantine_tables`) y escribe.
+    After: escribe `QUARANTINE_REL` con `generated_at`,
+        `fallback_events_sha256` (atestacion de staleness -- la fuente es
+        fallback_events, NO scorecard, corregido por H1), las dos tablas y
+        `derivado: NUNCA editar a mano`. Tablas vacias = "sin cuarentena
+        activa" (el sync tambien LIMPIA). Retorna la ruta. Eventos
+        ilegibles se saltan; nunca lanza.
+    """
+    path = project_root / FALLBACK_EVENTS_REL
+    raw = path.read_bytes() if path.exists() else b""
+    now = datetime.now(timezone.utc)
+    buckets = _quarantine_buckets(raw, now=now)
+    by_backend, by_profile = _quarantine_tables(buckets, config=config, now=now)
+    out = {
+        "generated_at": now.isoformat(),
+        "fallback_events_sha256": hashlib.sha256(raw).hexdigest(),
+        "by_backend": by_backend,
+        "by_profile": by_profile,
+        "derivado": "NUNCA editar a mano: regenerado desde "
+        "fallback_events.jsonl (ensemble_dispatch.py quarantine --sync)",
+    }
+    out_path = project_root / QUARANTINE_REL
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
@@ -2404,6 +2723,7 @@ def resolve_fallback_backend(
     config: dict,
     check_alive=None,
     exclude_profiles: frozenset[str] = frozenset(),
+    project_root: Path | None = None,
 ) -> str:
     """Elige un perfil de backend con `backend` DISTINTO al del pool auditado.
 
@@ -2450,6 +2770,18 @@ def resolve_fallback_backend(
         for name, profile in profiles.items()
         if profile.get("backend") != pool_backend and name not in exclude_profiles
     ]
+    # Cuarentena (diseno Seccion 5): el filtro de exclusion se aplica en
+    # AMBOS constructores de candidatos -- el delegado aqui es una de las
+    # rutas por las que un perfil cuarentenado podria re-entrar (hallazgo 5
+    # de la ronda: "las delegaciones pueden volver a considerar perfiles
+    # cuarentenados"). `project_root=None` (llamantes de test/legacy) no
+    # consulta el artefacto; los llamantes productivos pasan el destino.
+    if project_root is not None and candidates:
+        candidates = _filter_quarantined(
+            candidates,
+            config=config,
+            quarantine=read_quarantine(project_root),
+        )
     if not candidates:
         raise DispatchBlockedError(
             f"sin candidatos de clase distinta a '{pool_backend}' en "
@@ -2600,6 +2932,10 @@ def resolve_similar_fallback(
     failed = profiles.get(failed_profile, {})
     familia = MODEL_FAMILY_MAP.get((failed.get("backend"), failed.get("model")))
     excluded = exclude_profiles | {failed_profile}
+    # Cuarentena: un solo disco-read por invocacion; el filtro se aplica
+    # ANTES del ranking (precedencia Seccion 5-bis: 1) cuarentena,
+    # 2) ranking de latencia, 3) leaders/status NO participan).
+    quarantine = read_quarantine(project_root)
 
     if familia is None:
         return resolve_fallback_backend(
@@ -2607,6 +2943,7 @@ def resolve_similar_fallback(
             config=config,
             check_alive=check_alive,
             exclude_profiles=excluded,
+            project_root=project_root,
         )
 
     same_family = [
@@ -2616,12 +2953,14 @@ def resolve_similar_fallback(
         and MODEL_FAMILY_MAP.get((profile.get("backend"), profile.get("model")))
         == familia
     ]
+    same_family = _filter_quarantined(same_family, config=config, quarantine=quarantine)
     if not same_family:
         return resolve_fallback_backend(
             failed.get("backend"),
             config=config,
             check_alive=check_alive,
             exclude_profiles=excluded,
+            project_root=project_root,
         )
 
     rows, _ = _read_scorecard(project_root)
@@ -2639,6 +2978,7 @@ def resolve_similar_fallback(
             config=config,
             check_alive=check_alive,
             exclude_profiles=excluded,
+            project_root=project_root,
         )
 
     tried: list[str] = []
@@ -2653,6 +2993,7 @@ def resolve_similar_fallback(
         config=config,
         check_alive=check_alive,
         exclude_profiles=excluded,
+        project_root=project_root,
     )
 
 
@@ -3147,6 +3488,49 @@ def run_loop_round(
     return reply
 
 
+def _ultimate_claude_fallback(
+    config: dict, *, excluded: frozenset[str], project_root: Path
+) -> str | None:
+    """Fallback DEFINITIVO: si la cascada se agota, ejecuta un subagente de Claude.
+
+    Decision del usuario (2026-09-29, sesion de implantacion H3+H1): cuando
+    `resolve_similar_fallback` no encuentra NINGUN sustituto
+    (`DispatchBlockedError`), en vez de rendir la ronda, se busca un perfil
+    del backend `claude` como ultimo recurso -- el caso que origino la
+    cuarentena era justamente "todos los candidatos agotados a la vez".
+
+    Before: `excluded` = perfiles ya intentados en la cadena + el fallo
+        original (jamas se re-propone Claude si ya fallo en esta cadena).
+        `project_root` alimenta el filtro de cuarentena: si Claude mismo
+        esta en cuarentena vigente, tampoco se usa (la precedencia 5-bis
+        manda, pero la regla dura "la cuarentena nunca bloquea un intento
+        EXPLICITO del operador" sigue intacta -- esto es un intento
+        AUTOMATICO).
+    During: itera `ensemble_profiles` en orden de insercion; selecciona el
+        primero con `backend == "claude"`, con `backend_key` presente (el
+        receipt debe nombrar a quien ejecuta), no excluido y no
+        cuarentenado. **NO aplica veto de smoke**: si llegamos aqui, el
+        smoke ya participo en el camino normal y agoto la cascada (con el
+        veto, este ultimo recurso seria inalcanzable -- el propio smoke que
+        dice "muerto" es quien provoco el DispatchBlockedError). La
+        verificacion ES la ronda real: `run_loop_round` registra el exito o
+        el fallo del subagente como cualquier otro sustituto.
+    After: el `profile_name` elegido, o `None` (Claude ausente, agotado o
+        cuarentenado) -- el caller propaga entonces la excepcion original.
+        Nunca lanza.
+    """
+    quarantine = read_quarantine(project_root)
+    for name, prof in (config.get("ensemble_profiles") or {}).items():
+        if prof.get("backend") != "claude" or name in excluded:
+            continue
+        if not prof.get("backend_key"):
+            continue
+        if quarantine_reason(name, config=config, quarantine=quarantine):
+            continue
+        return name
+    return None
+
+
 def _retry_with_similar_fallback(
     failed_profile_name: str,
     content: str,
@@ -3207,13 +3591,21 @@ def _retry_with_similar_fallback(
         evento persistido (el WARN es para quien mira la consola AHORA; el
         evento es para quien analice el patron DESPUES). Si
         `resolve_similar_fallback` no encuentra ningun candidato
-        (`DispatchBlockedError`, fail-cerrado), propaga la excepcion
-        ORIGINAL (`original_exc`), no la del fallback -- el caller debe ver
-        la causa raiz, no un blocker generico de "no hay candidatos". En ese
-        caso NO se escribe evento: no hubo fallback, solo un fallo sin
-        sustituto (el fallo original ya quedo en el scorecard via
-        `_record_round`).
+        (`DispatchBlockedError`, fail-cerrado), prueba el FALLBACK
+        DEFINITIVO `_ultimate_claude_fallback` (subagente de Claude,
+        decision del usuario 2026-09-29: intento REAL directo, sin veto de
+        smoke -- el smoke ya agoto la cascada): si hay un perfil `claude`
+        disponible, la ronda se ejecuta via el y el evento SI se escribe
+        (para ese caso cierra la brecha "sin fila en fallback_events NO
+        implica sin fallo" que declaro la Seccion 3 de la cuarentena). Solo
+        si el fallback definitivo TAMBIEN no esta disponible se propaga la
+        excepcion ORIGINAL (`original_exc`), no la del fallback -- el caller
+        debe ver la causa raiz -- y en ESE caso residual NO se escribe
+        evento: no hubo sustituto posible (Claude ausente/excluido/
+        cuarentenado); el fallo original ya quedo en el scorecard via
+        `_record_round`.
     """
+    fallback_route = "resolve_similar_fallback (WOT-2026-083b)"
     try:
         fallback_profile = resolve_similar_fallback(
             failed_profile_name,
@@ -3222,7 +3614,16 @@ def _retry_with_similar_fallback(
             exclude_profiles=tried_profiles,
         )
     except DispatchBlockedError:
-        raise original_exc from None
+        # Cascada agotada: exactamente el caso que origino el diseno de
+        # cuarentena (todos los perfiles de un backend caidos a la vez).
+        fallback_profile = _ultimate_claude_fallback(
+            config,
+            excluded=tried_profiles | {failed_profile_name},
+            project_root=project_root,
+        )
+        if fallback_profile is None:
+            raise original_exc from None
+        fallback_route = "fallback-definitivo-claude (2026-09-29)"
 
     failed_profile_cfg = config["ensemble_profiles"].get(failed_profile_name, {})
     fallback_profile_cfg = config["ensemble_profiles"][fallback_profile]
@@ -3242,12 +3643,13 @@ def _retry_with_similar_fallback(
             "fallback_profile": fallback_profile,
             "fallback_backend": fallback_profile_cfg.get("backend"),
             "fallback_backend_key": fallback_backend_key,
+            "challenge_nonce": challenge_nonce,
         },
     )
     print(
         f"[fallback] '{failed_profile_name}' fallo ({failure_class}); "
         f"sustituido por '{fallback_profile}' (backend_key={fallback_backend_key}) "
-        "via resolve_similar_fallback (WOT-2026-083b). Evento registrado en "
+        f"via {fallback_route}. Evento registrado en "
         f"{FALLBACK_EVENTS_REL}.",
         file=sys.stderr,
     )
@@ -3568,16 +3970,43 @@ def _cmd_smoke(args, config) -> int:
             "en el scorecard",
             file=sys.stderr,
         )
+    # Cuarentena (diseno Seccion 5.2): aviso ANTES de la llamada real, para
+    # que un agente frio no gaste el 402 que ya conocemos. Contrato comun
+    # en `_split_quarantined`: skip por defecto (WARN + JSON), y la regla
+    # dura "la cuarentena jamas bloquea un intento EXPLICITO del operador"
+    # se cumple via `--ignore-quarantine` (warn + ejecucion).
+    names, skipped = _split_quarantined(
+        names,
+        config=config,
+        project_root=project_root,
+        force=bool(getattr(args, "ignore_quarantine", False)),
+        tag="smoke",
+    )
     results = [
         smoke_profile(name, config=config, project_root=project_root) for name in names
     ]
-    print(json.dumps({"smoke": results}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {"smoke": results, "skipped_quarantine": skipped},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     alive = sum(1 for r in results if r["alive"])
     print(
         f"[smoke] {alive}/{len(results)} backends vivos (veredicto por "
-        "CONTENIDO, no por exit code)",
+        "CONTENIDO, no por exit code)"
+        + (f"; {len(skipped)} omitidos por cuarentena" if skipped else ""),
         file=sys.stderr,
     )
+    if skipped and not results:
+        print(
+            "[smoke] 0 por probar: TODOS los perfiles pedidos estan en "
+            "cuarentena (ver skipped_quarantine); usa --ignore-quarantine "
+            "para forzar",
+            file=sys.stderr,
+        )
+        return 1
     return 0 if alive else 1
 
 
@@ -3622,6 +4051,15 @@ def _cmd_preflight(args, config) -> int:
             "en el scorecard",
             file=sys.stderr,
         )
+    # Cuarentena: mismo contrato que `_cmd_smoke` via `_split_quarantined`
+    # (aviso antes de la llamada, skip por defecto, flag = intento explicito).
+    names, skipped = _split_quarantined(
+        names,
+        config=config,
+        project_root=project_root,
+        force=bool(getattr(args, "ignore_quarantine", False)),
+        tag="preflight",
+    )
     results = [
         preflight_profile(
             name,
@@ -3631,15 +4069,25 @@ def _cmd_preflight(args, config) -> int:
         )
         for name in names
     ]
-    print(json.dumps({"preflight": results}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {"preflight": results, "skipped_quarantine": skipped},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     alive = sum(1 for r in results if r["alive"])
     print(
         f"[preflight] {alive}/{len(results)} backends listos para fanout "
         "(prompt no-trivial, veredicto por CONTENIDO); declara los NO vivos "
         "en el recibo del bucle ANTES de emitir el nonce, no despues de que "
-        "cuelguen",
+        "cuelguen" + (f"; {len(skipped)} omitidos por cuarentena" if skipped else ""),
         file=sys.stderr,
     )
+    if not results:
+        # Universo vacio JAMAS verde: sin resultados (todos en cuarentena o
+        # config sin perfiles) rc=1, distinto del "todos vivos" rc=0.
+        return 1
     return 0 if alive == len(results) else 1
 
 
@@ -4377,6 +4825,35 @@ def _force_utf8_stdio() -> None:
             reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
+def _cmd_quarantine(args, config) -> int:
+    """CLI `quarantine --sync`: deriva `backend_quarantine.json` bajo demanda.
+
+    Mismo patron que `leaders`/`status` (Seccion 6 del diseno, decision
+    adoptada: derivado bajo demanda, NUNCA escritura lateral de otra
+    operacion -- hallazgo 8 de la ronda adversarial). Imprime un resumen
+    legible de las dos tablas resultantes y retorna 0 (la existencia del
+    artefacto es el artefacto; los lectores filtran vencidas aparte).
+    """
+    project_root = _resolve_project_root(args.project_root)
+    out = regenerate_quarantine(project_root, config=config)
+    data = json.loads(out.read_text(encoding="utf-8"))
+    print(
+        json.dumps(
+            {
+                "quarantine": {
+                    "path": str(out),
+                    "by_backend": sorted(data.get("by_backend") or {}),
+                    "by_profile": sorted(data.get("by_profile") or {}),
+                    "fallback_events_sha256": data.get("fallback_events_sha256"),
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     parser = argparse.ArgumentParser(
@@ -4396,6 +4873,13 @@ def main(argv: list[str] | None = None) -> int:
         help="destino-rol donde registrar la fila de exploracion "
         "(default: AGENT_PROJECT_ROOT; sin ninguno no se registra)",
     )
+    p_smoke.add_argument(
+        "--ignore-quarantine",
+        action="store_true",
+        help="fuerza el intento aunque el perfil este en cuarentena "
+        "vigente (por defecto se omite con WARN: regla dura del diseno "
+        "Seccion 5 -- la cuarentena jamas bloquea un intento explicito)",
+    )
 
     p_preflight = sub.add_parser(
         "preflight",
@@ -4411,6 +4895,12 @@ def main(argv: list[str] | None = None) -> int:
     p_preflight.add_argument(
         "--backend-keys",
         help="lista separada por comas de backend_key a validar (ej. BA05,BA11,BA13)",
+    )
+    p_preflight.add_argument(
+        "--ignore-quarantine",
+        action="store_true",
+        help="fuerza el intento aunque el perfil este en cuarentena "
+        "vigente (mismo contrato que smoke --ignore-quarantine)",
     )
     p_preflight.add_argument(
         "--content-sample-file",
@@ -4537,6 +5027,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_nonce.add_argument("--project-root", required=True)
 
+    p_quar = sub.add_parser(
+        "quarantine",
+        help="deriva backend_quarantine.json desde fallback_events.jsonl",
+    )
+    p_quar.add_argument(
+        "--sync",
+        action="store_true",
+        required=True,
+        help="regenera el artefacto (unico modo; derivado, nunca a mano)",
+    )
+    p_quar.add_argument("--project-root", required=True)
+
     args = parser.parse_args(argv)
     config = load_motor_config()
 
@@ -4549,6 +5051,7 @@ def main(argv: list[str] | None = None) -> int:
         "leaders": _cmd_leaders,
         "status": _cmd_status,
         "emit-nonce": _cmd_emit_nonce,
+        "quarantine": _cmd_quarantine,
     }
     try:
         return handlers[args.command](args, config)
