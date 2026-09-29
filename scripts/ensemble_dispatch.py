@@ -1108,6 +1108,27 @@ def _kill_process_tree(pid: int) -> None:
 # con `failure_mode`, en vez de contarla como intervencion valida.
 _TRANSPORT_FAILED_PREFIX = "[transport-failed] "
 
+# WOT-2026-086d: cola de STDERR que acompana a un rc != 0 del canal `agent`.
+# Codex escribe ahi la causa ("You've hit your usage limit ... try again at
+# HH:MM") con stdout vacio: sin esta cola la fila solo decia `rc=1`. Acotada
+# para no inflar la fila con un volcado entero.
+_AGENT_STDERR_TAIL_CHARS = 600
+_STDERR_MARKER = "[stderr] "
+
+# WOT-2026-086d: codigo de salida de `loop-round` cuando la ronda no aporto
+# (transporte fallido o respuesta vacia). 1 y 2 ya significan [BLOCKED] y
+# [ERROR] en `main`; 3 dice "la ronda corrio, se registro, y no vale".
+EXIT_NO_CONTRIBUTION = 3
+
+
+def _stderr_tail(stderr_text: str | None) -> str:
+    """Ultimos `_AGENT_STDERR_TAIL_CHARS` de stderr, sin ANSI; '' si no hay."""
+    if not stderr_text:
+        return ""
+    clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", stderr_text).strip()
+    return clean[-_AGENT_STDERR_TAIL_CHARS:]
+
+
 # WOT-2026-048g: el modelo que el CLI dice estar usando, en su banner de STDERR.
 # Medido 2026-08-03 sobre los dos backends CLI reales:
 #   opencode -> "> builder - glm-5.2"   (separador U+00B7 en la salida real)
@@ -1374,7 +1395,13 @@ def _transport_agent(
     # transporte. Ausente = 0 = conducta heredada (aditividad).
     rc = getattr(proc, "returncode", 0)
     if rc:
-        return f"{_TRANSPORT_FAILED_PREFIX}rc={rc}\n{out or ''}"
+        failed = f"{_TRANSPORT_FAILED_PREFIX}rc={rc}\n{out or ''}"
+        # WOT-2026-086d: la causa suele vivir en stderr; solo en el fallo, para
+        # no mezclar el banner de stderr (modelo, avisos) en una respuesta sana.
+        tail = _stderr_tail(err)
+        if tail:
+            failed = f"{failed.rstrip(chr(10))}\n{_STDERR_MARKER}{tail}"
+        return failed
     return out or ""
 
 
@@ -1798,6 +1825,9 @@ def _is_non_sample_round(row: dict) -> bool:
     if failure_mode in _CALLER_ERROR_FAILURE_MODES:
         return True
     lowered = failure_mode.lower()
+    # WOT-2026-086d: las filas del canal `agent` llevan la CLASE, no el texto.
+    if _FAILURE_CLASS_QUOTA in lowered:
+        return True
     return any(marker in lowered for marker in _QUOTA_MARKERS)
 
 
@@ -3371,7 +3401,11 @@ def _record_round(
     if text.startswith(_TRANSPORT_FAILED_PREFIX):
         rc_line = text[len(_TRANSPORT_FAILED_PREFIX) :].split("\n", 1)[0].strip()
         outcome_override = outcome_override or "no-aportacion"
-        failure_mode = failure_mode or f"transport_failed: {rc_line}"
+        # WOT-2026-086d: la clase sale de la MISMA taxonomia que los fallos del
+        # canal `api` (sin status HTTP: decide el marcador de texto), para que
+        # `quota_exhausted` se lea sin abrir la evidencia.
+        failure_class = _classify_transport_failure(RuntimeError(text))
+        failure_mode = failure_mode or f"transport_failed: {rc_line}; {failure_class}"
     # WOT-2026-046b: si tras el saneado no queda texto, es backend mudo/caido,
     # no una respuesta valida. El mismo mecanismo que 048g para rc != 0.
     if not text:
@@ -4644,6 +4678,17 @@ def _cmd_loop_round(args, config) -> int:
         challenge_nonce=args.challenge_nonce,
     )
     print(reply)
+    # WOT-2026-086d: el canal `agent` devuelve su fallo como TEXTO y una
+    # respuesta vacia tampoco aporta. Con `return 0` el lanzador daba la lente
+    # por ejecutada; la fila ya esta escrita (no-aportacion), aqui solo se
+    # hace visible en el codigo de salida.
+    if reply.startswith(_TRANSPORT_FAILED_PREFIX) or not reply.strip():
+        print(
+            "[NO-APORTA] la ronda se registro sin aportacion (transporte "
+            "fallido o respuesta vacia); mira failure_mode en scorecard.jsonl",
+            file=sys.stderr,
+        )
+        return EXIT_NO_CONTRIBUTION
     return 0
 
 
@@ -5062,6 +5107,12 @@ def main(argv: list[str] | None = None) -> int:
     p_loop = sub.add_parser(
         "loop-round",
         help="UNA ronda de un bucle de gobierno 1->9->2, registrada y atestiguable",
+        description=(
+            "UNA ronda de un bucle de gobierno, registrada en scorecard.jsonl. "
+            "Salida: 0 la ronda aporto; 1 [BLOCKED] (rechazada antes de llamar); "
+            "2 [ERROR]; 3 [NO-APORTA] la ronda corrio y se registro pero el "
+            "transporte fallo o la respuesta vino vacia (WOT-2026-086d)."
+        ),
     )
     p_loop.add_argument("--profile", required=True)
     p_loop.add_argument("--content-file", required=True)

@@ -6831,3 +6831,128 @@ def test_086b_run_loop_round_error_carries_the_hint(tmp_path):
             backend_key="BA01",
             sensitivity="public",
         )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-086d: un fallo del canal `agent` conserva y clasifica su causa.
+# --------------------------------------------------------------------------- #
+
+
+def _popen_returning(stdout: str, stderr: str, rc: int):
+    class _Popen:
+        pid = 4850
+        returncode = rc
+
+        def __init__(self, cmd, *a, **k):
+            pass
+
+        def communicate(self, input=None, timeout=None):
+            return (stdout, stderr)
+
+    return _Popen
+
+
+def test_086d_failed_agent_keeps_stderr_tail(monkeypatch):
+    """Codex escribe la causa en STDERR ("You've hit your usage limit ... try
+    again at 3:05 PM") y stdout suele venir vacio: antes el texto de fallo
+    solo llevaba `rc=N` + stdout y la causa se perdia. Mutation: no anexar
+    stderr -> RED."""
+    err = "\x1b[31mERROR\x1b[0m You've hit your usage limit. Try again at 3:05 PM."
+    monkeypatch.setattr(ed.subprocess, "Popen", _popen_returning("", err, 1))
+
+    out = ed._transport_agent(
+        {"backend": "codex", "channel": "agent"},
+        {"executable": "codex.cmd", "args": ["exec"]},
+        [{"role": "user", "content": "x"}],
+        timeout=10,
+    )
+    assert out.startswith(ed._TRANSPORT_FAILED_PREFIX)
+    assert "[stderr]" in out
+    assert "You've hit your usage limit" in out
+    assert "\x1b[" not in out, "los codigos ANSI no deben llegar al scorecard"
+
+
+def test_086d_stderr_tail_is_bounded(monkeypatch):
+    """Solo la COLA de stderr: un volcado largo no debe inflar la fila."""
+    err = "ruido\n" * 2000 + "causa final: usage limit"
+    monkeypatch.setattr(ed.subprocess, "Popen", _popen_returning("", err, 1))
+    out = ed._transport_agent(
+        {"backend": "codex", "channel": "agent"},
+        {"executable": "codex.cmd", "args": ["exec"]},
+        [{"role": "user", "content": "x"}],
+        timeout=10,
+    )
+    tail = out.split("[stderr]", 1)[1]
+    assert len(tail) <= ed._AGENT_STDERR_TAIL_CHARS + 1
+    assert "causa final: usage limit" in tail
+
+
+def test_086d_successful_agent_ignores_stderr(monkeypatch):
+    """CONTROL POSITIVO: con rc=0 el banner de stderr (modelo, avisos) NO se
+    mezcla en la respuesta."""
+    monkeypatch.setattr(
+        ed.subprocess, "Popen", _popen_returning("VEREDICTO: OK", "model: gpt-x", 0)
+    )
+    out = ed._transport_agent(
+        {"backend": "codex", "channel": "agent"},
+        {"executable": "codex.cmd", "args": ["exec"]},
+        [{"role": "user", "content": "x"}],
+        timeout=10,
+    )
+    assert out == "VEREDICTO: OK"
+
+
+def test_086d_failed_agent_row_carries_failure_class(tmp_path):
+    """La fila de la ronda nombra la CLASE del fallo (misma taxonomia que
+    `_classify_transport_failure`), no solo el rc: `quota_exhausted` debe ser
+    legible sin abrir la evidencia, y la ronda deja de contar en `leaders`
+    (WOT-2026-086b). Mutation: failure_mode sin clase -> RED."""
+    reply = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
+        "[stderr] You've hit your usage limit. Try again at 3:05 PM."
+    )
+    ed.run_loop_round(
+        "p_chal",
+        "audita esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-086d",
+        task_type="code-review",
+        rol="challenger",
+        phase="challenge-fanout",
+        loop_id="L800",
+        backend_key="BA05",
+        sensitivity="public",
+        transport=_FakeTransport(replies=[reply]),
+    )
+    row = _rows(tmp_path)[0]
+    assert row["failure_mode"].startswith("transport_failed: rc=1")
+    assert "quota_exhausted" in row["failure_mode"]
+    assert ed._is_non_sample_round(row), "una ronda sin cuota no es muestra de calidad"
+
+
+def test_086d_failed_agent_without_known_cause_is_unknown(tmp_path):
+    """Sin marcador reconocible la clase es `unknown`: no se inventa causa."""
+    reply = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\nCORRECTO: el proceso ha sido terminado."
+    )
+    ed.run_loop_round(
+        "p_chal",
+        "audita esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-086d",
+        task_type="code-review",
+        rol="challenger",
+        phase="challenge-fanout",
+        loop_id="L800",
+        backend_key="BA05",
+        sensitivity="public",
+        transport=_FakeTransport(replies=[reply]),
+    )
+    row = _rows(tmp_path)[0]
+    assert row["failure_mode"] == "transport_failed: rc=1; unknown"
+    assert not ed._is_non_sample_round(row), (
+        "un fallo sin causa conocida sigue siendo muestra (la lente recibio el "
+        "contenido): solo cuota y error del llamante se descartan"
+    )

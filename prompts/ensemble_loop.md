@@ -112,11 +112,14 @@ Revision de una propuesta sin commit: fase `DESIGN_REVIEW`, sin nonce, `loop_id`
 
 ### 3.6 Verificar cada ronda (un exit 0 no basta)
 
-1. `loop-round` puede salir con codigo 0 aunque la ronda fallara: en el canal `agent` devuelve el texto
-   `[transport-failed] rc=N` en vez de lanzar un error. Mira la salida y la fila del scorecard
-   (`outcome`, `failure_mode`, `output_chars`).
-2. Si falla el CLI de un agente, la causa esta en su stderr. Para saber si es cuota, ejecuta el CLI a mano
-   (codex responde "You've hit your usage limit ... try again at HH:MM").
+1. Codigos de salida de `loop-round`: 0 la ronda aporto; 1 `[BLOCKED]` (rechazada antes de llamar);
+   2 `[ERROR]`; 3 `[NO-APORTA]` (la ronda corrio y se registro, pero el transporte fallo o la respuesta vino
+   vacia). Aun con 0, mira la fila del scorecard (`outcome`, `failure_mode`, `output_chars`): una
+   sustitucion automatica puede haber respondido en lugar de la lente pedida.
+2. Si falla el CLI de un agente, la fila lleva `failure_mode: transport_failed: rc=N; <clase>` (misma
+   taxonomia que el canal `api`: `quota_exhausted`, `model_unavailable`, `network_timeout`, `unknown`) y
+   la `evidencia` incluye la cola de su stderr tras `[stderr]`. Un fallo del canal `agent` todavia NO pone
+   la lente en cuarentena ni lee la hora de reset: WOT-2026-086k.
 3. Si la sustitucion automatica cayo en `proposer_claude` (`BA01`) -- stderr muestra
    `[fallback] ... sustituido por 'proposer_claude'` --, esa respuesta NO es una lente independiente.
 4. Gobierno: `python scripts/check_loop_execution.py --commit-sha <sha> --project-root <destino>`.
@@ -157,5 +160,6 @@ Los cupos se comparten con los agentes de implantacion: preferir modelos sin lim
 - Formas `UNI/DBL/ROL/CHA-N` y `shape_id`: WOT-2026-086f.
 - `gov_stage`/`step`: WOT-2026-086g.
 - `smoke` rapido y paralelo: WOT-2026-086h.
+- Cuarentena por cuota del canal `agent` con su hora de reset ("try again at HH:MM"): WOT-2026-086k.
 - Estado unificado de proveedores y descubrimiento `/v1/models` en el arranque: WOT-2026-085a.
 - Comando `loop` con valores por defecto para chat: WOT-2026-086i.

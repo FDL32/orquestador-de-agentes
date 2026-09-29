@@ -253,3 +253,34 @@ def test_row_survives_any_failure_but_the_label_is_precise(
         f"'{failure_mode.split(':')[0]}': una fila de auditoria mal clasificada "
         "manda a investigar la causa equivocada"
     )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-086d: una ronda que no aporta NO sale con exit 0.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n",
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n[stderr] You've hit your usage limit.",
+        "",
+        "   \n",
+    ],
+)
+def test_086d_loop_round_without_contribution_exits_nonzero(
+    tmp_path, monkeypatch, capsys, reply
+):
+    """El canal `agent` devuelve `[transport-failed] rc=N` como TEXTO, y una
+    respuesta vacia tampoco aporta: en ambos casos el lanzador debe ver un
+    codigo distinto de 0 (antes: 0, y la lente se daba por ejecutada). La fila
+    se sigue escribiendo. Mutation: `return 0` incondicional -> RED."""
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: reply)
+
+    rc = ed.main(_argv(tmp_path, _payload(tmp_path)))
+
+    assert rc == ed.EXIT_NO_CONTRIBUTION
+    assert len(_rows(tmp_path)) == 1, "la fila de la ronda se registra igual"
+    assert "[NO-APORTA]" in capsys.readouterr().err
