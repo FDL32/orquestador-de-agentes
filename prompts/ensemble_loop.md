@@ -1,0 +1,161 @@
+# Contrato: como lanzar un bucle de ensemble
+
+contract_id: cid-ensemble-loop-v1
+source_of_truth: este prompt. Los prompts de gobierno (`orchestrator_autonomous_ticket_batch.md`,
+`orchestrator_pipeline.md`, `orchestrator_launch_builder.md`, `orchestrator_session_close_full_audit.md`)
+APUNTAN aqui para el procedimiento de despacho; si divergen, prevalece este prompt.
+
+Alcance: el procedimiento OPERATIVO para lanzar lentes contra proveedores reales
+(`scripts/ensemble_dispatch.py`) y verificar que el bucle cuenta. La FORMA del bucle de gobierno
+(1->9->2, fases CONTRACT_AUDIT / MANAGER_REVIEW / CLOSE) sigue definida en
+`orchestrator_autonomous_ticket_batch.md`; este contrato no la redefine. Origen: WOT-2026-086a.
+
+Todas las rutas relativas de este documento son del MOTOR (`<motor>/scripts/...`) salvo las que llevan
+`<destino>/`. Los artefactos de runtime del ensemble (`scorecard.jsonl`, `emitted_nonces.jsonl`,
+`backend_leaders.json`, `backend_quarantine.json`) viven en `<destino>/.agent/runtime/ensemble/`: pasa
+siempre `--project-root <destino>`.
+
+## 1. Vocabulario (obligatorio en informes y prompts)
+
+| Termino | Que es | Ejemplo |
+|---|---|---|
+| proveedor | la API o CLI que sirve modelos. En el codigo se llama `backend` | `nan_api`, `groq_api`, `codex` |
+| modelo / lente | un perfil de `ensemble_profiles`, identificado por su `backend_key` | `BA11` = nan qwen3.6 |
+| canal | `api` (sin acceso a ficheros) o `agent` (CLI con acceso a ficheros) | api: nan, groq, openrouter, nvidia, tokenharbor; agent: codex, opencode |
+| refuter | la lente final con acceso a ficheros | codex (`BA05`) |
+| emisor | quien emite el `challenge_nonce`; siempre el chat coordinador | `BA01` |
+
+"backend IA" en `AGENTS.md` significa otra cosa (el producto que ejecuta un rol: Claude Code, Codex).
+En este contrato no se usa "backend" suelto: se dice proveedor, modelo/lente o canal.
+
+## 2. Una sola puerta: `loop-round`
+
+Toda ronda de gobierno o de revision se lanza con `ensemble_dispatch.py loop-round`. Es la unica via que
+registra la fila en `scorecard.jsonl`, avisa si el bundle no cumple el protocolo y sustituye la lente si
+falla (familia -> rendimiento -> ultimo recurso).
+
+PROHIBIDO usar `send_to_profile` (import directo) para gobierno o revision: no registra, no sustituye y la
+ronda queda invisible para `leaders`, `status`, `check_loop_execution` y el dashboard. Es una primitiva
+interna.
+
+La cuarentena NO impide pedir un perfil concreto: `loop-round` lo llama aunque este en cuarentena. La
+cuarentena solo filtra a los SUSTITUTOS (`resolve_fallback_backend`, `resolve_similar_fallback`) y a
+`smoke`/`preflight`, que la saltan con `--ignore-quarantine`.
+
+## 3. Procedimiento
+
+### 3.1 Estado de los proveedores (antes de elegir lentes)
+
+    python scripts/ensemble_dispatch.py quarantine --sync --project-root <destino>
+    python scripts/ensemble_dispatch.py leaders --project-root <destino>
+    python scripts/ensemble_dispatch.py status --project-root <destino>
+
+`leaders` y `status` no se refrescan solos: regeneralos o declara su antiguedad (`generated_at`).
+`status` es la ultima exploracion por lente, no el estado de ahora: un `alive:false` sin `failure_mode`
+suele ser un timeout puntual, no una lente caida.
+
+Disponibilidad: para las lentes `api`, `smoke --profile <p>` o `preflight` antes de gastar el bundle.
+NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.278 tokens (medido
+2026-09-29) porque el CLI carga el contexto del repo. Su estado sale de su ultima ronda.
+
+### 3.2 Elegir lentes
+
+- Una lente por proveedor distinto, salvo que el usuario pida otra cosa.
+- Criterio de entrada al pool por defecto: al menos 80% de rondas utiles con 5 o mas rondas medidas.
+  Preferir modelos SIN limite de cuota: el ensemble comparte cupo con los agentes de implantacion.
+- `codex` es el refuter: no cuenta dentro de las N lentes del fan-out.
+- El mismo `backend_key` repetido NO son dos lentes.
+
+### 3.3 Preparar el bundle
+
+1. Tres marcadores obligatorios (los comprueba `scripts/check_loop_bundle_protocol.py`; `loop-round` avisa
+   si faltan): `INVENTARIO DE EVIDENCIA`; un presupuesto de exploracion (`PRESUPUESTO`, "no mas de ...");
+   y la instruccion de responder `NO VERIFICABLE` (literal, con espacio) en vez de afirmar lo que no puede
+   comprobar.
+2. Lentes `api` (sin ficheros): pega la evidencia (fragmentos y mediciones con su comando). Nunca les pidas
+   "comprueba si existe X".
+3. Lentes `agent` con `repo_scope: destino` (codex): su directorio de trabajo es el DESTINO y leen el motor
+   por ruta absoluta (desde WOT-2026-042v; `resolve_lens_repo_root` en `ensemble_dispatch.py`). Dales rutas
+   absolutas.
+   Si el destino no se resuelve, la fila lo declara en `lens_scope` (`motor:destino-no-resoluble`): en ese
+   caso la lente NO vio el destino y su "no existe" sobre un artefacto del destino no vale.
+4. Envia a cada lente solo lo que tiene que revisar. Un bundle de mas de 15 KB a un modelo razonador suele
+   acabar en `empty_content_despite_sentinel`: pasa antes
+   `preflight --content-sample-file <bundle> --backend-keys <lista>`. Limite medido: el preflight valida el
+   comienzo del bundle, no el bundle entero.
+5. Si generas el bundle con un heredoc de Bash, pon el delimitador entre comillas simples. Sin comillas,
+   Bash ejecuta las comillas invertidas del texto y borra palabras del bundle. Si el texto lleva apostrofos,
+   escribelo con una herramienta de ficheros en vez de con un heredoc.
+
+### 3.4 Rondas de gobierno: nonce antes de la ronda
+
+Las fases de gobierno (`CONTRACT_AUDIT`, `MANAGER_REVIEW`, `CLOSE`) exigen nonce (WOT-2026-040i). Sin el,
+`loop-round` bloquea sin gastar la llamada.
+
+    python scripts/ensemble_dispatch.py emit-nonce --commit-sha <sha> --loop-id <Lxxx registrado> \
+        --issuer-backend-key BA01 --project-root <destino>
+    python scripts/ensemble_dispatch.py loop-round --profile <perfil> --backend-key <BAxx> --rol challenger \
+        --content-file <bundle> --ticket <ID> --task-type <task_type> --phase <FASE> --loop-id <Lxxx> \
+        --commit-sha <sha> --challenge-nonce <nonce> --data-sensitivity public --project-root <destino>
+
+`--loop-id` debe existir en `ensemble_registry.loop_shapes` de `agents.json`; si no, `emit-nonce` avisa.
+Revision de una propuesta sin commit: fase `DESIGN_REVIEW`, sin nonce, `loop_id` `EXPLORATORY-<tema>`.
+
+`--task-type` debe estar en `TASK_TYPES`. Si no, `loop-round` rechaza, registra el intento con
+`failure_mode: usage-error` y sale con codigo distinto de 0.
+
+### 3.5 Lanzar
+
+- Lentes de proveedores distintos, en paralelo. Varias del mismo proveedor: como maximo 4 a la vez (nan
+  devolvio 429 con 8 concurrentes, medido 2026-09-29) o en secuencia con pausa.
+- No declares muda una lente hasta que su proceso haya terminado.
+
+### 3.6 Verificar cada ronda (un exit 0 no basta)
+
+1. `loop-round` puede salir con codigo 0 aunque la ronda fallara: en el canal `agent` devuelve el texto
+   `[transport-failed] rc=N` en vez de lanzar un error. Mira la salida y la fila del scorecard
+   (`outcome`, `failure_mode`, `output_chars`).
+2. Si falla el CLI de un agente, la causa esta en su stderr. Para saber si es cuota, ejecuta el CLI a mano
+   (codex responde "You've hit your usage limit ... try again at HH:MM").
+3. Si la sustitucion automatica cayo en `proposer_claude` (`BA01`) -- stderr muestra
+   `[fallback] ... sustituido por 'proposer_claude'` --, esa respuesta NO es una lente independiente.
+4. Gobierno: `python scripts/check_loop_execution.py --commit-sha <sha> --project-root <destino>`.
+
+## 4. Definicion unica de "lente independiente"
+
+Cuenta como lente independiente una ronda que cumpla TODO:
+- `event == "ronda"` con respuesta sustantiva segun `check_loop_execution.is_substantive` (no muda:
+  `output_chars != 0`, `outcome != "no-aportacion"`, evidencia no vacia);
+- `backend_key` distinto de las demas lentes contadas;
+- no es el emisor del nonce;
+- no es una sustitucion por `BA01`.
+
+Las ramas (`comun`/`dif`) y los prompts distintos NO multiplican lentes: solo cuentan `backend_key` distintos.
+
+## 5. Minimos por tipo de entrega
+
+Los fija `check_loop_execution.min_distinct_for(deliverable_type)`: `code`/`mixed` 4, `analysis` 3,
+`research`/`documentation` 2. `EXPLORATORY` no tiene barrera. Si tras las sustituciones no se llega al
+minimo: reintentar una vez con el siguiente candidato (nunca `BA01`); si sigue sin llegar, el informe declara
+el bucle `INSUFICIENTE` y no vale como gobierno.
+
+## 6. Informe de cada bucle
+
+Para cada lente pedida: `backend_key`, proveedor, resultado (`util`, `mudo`, `transport-failed`,
+`sin-cuota`, `bloqueada-privacidad`, `sustituida-por-<bk>`, `sustituida-por-BA01`) y si cuenta como
+independiente. Al final: lentes independientes conseguidas frente al minimo exigido, y el veredicto de cada
+una.
+
+## 7. Uso minimo
+
+Una cuenta por proveedor: nunca cuentas extra para esquivar limites. Sin agregadores de terceros entre el
+motor y el proveedor. En cada bundle, solo lo necesario. Ping o preflight antes de mandar un bundle grande.
+Los cupos se comparten con los agentes de implantacion: preferir modelos sin limite.
+
+## 8. Pendiente (todavia no existe; no lo invoques)
+
+- Formas `UNI/DBL/ROL/CHA-N` y `shape_id`: WOT-2026-086f.
+- `gov_stage`/`step`: WOT-2026-086g.
+- `smoke` rapido y paralelo: WOT-2026-086h.
+- Estado unificado de proveedores y descubrimiento `/v1/models` en el arranque: WOT-2026-085a.
+- Comando `loop` con valores por defecto para chat: WOT-2026-086i.

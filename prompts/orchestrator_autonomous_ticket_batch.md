@@ -495,12 +495,15 @@ each model owns, then a synthesis on the MAIN thread (never a subagent's verdict
   here: this prompt is portable and states the invariant, not one run's history.)
 - **`2` = synthesis = Claude -> Claude -> Codex.** Claude consolidates and
   VERIFIES each finding against the real tree (discards nan false-positives); a
-  second Claude pass hardens the synthesis; then Codex refutes it. Codex runs in
-  `cwd=repo_motor` and does NOT see the destino workspace -- a Codex "REFUTA:
-  does not exist" on a workspace artifact is a WRONG-SCOPE false negative;
-  resolve the probe conflict BY SCOPE, never by convenience (CEM: the conflict
-  IS the finding). Pass the prompt to Codex via STDIN, never argv (Windows
-  WinError 206 on prompts > ~32KB).
+  second Claude pass hardens the synthesis; then Codex refutes it. Codex
+  (`repo_scope: destino`) runs with `cwd=<destino>` and reads the motor by
+  absolute path (WOT-2026-042v), so it sees BOTH trees -- give it absolute
+  paths. Only when the round row says `lens_scope: motor:...` did it run
+  without the destino; then a Codex "REFUTA: does not exist" on a workspace
+  artifact is a WRONG-SCOPE false negative: resolve the probe conflict BY
+  SCOPE, never by convenience (CEM: the conflict IS the finding). Dispatch
+  procedure: `prompts/ensemble_loop.md`. Pass the prompt to Codex via STDIN,
+  never argv (Windows WinError 206 on prompts > ~32KB).
 
 CLOSE adds a **phase 2 (challenge)** after phase 1's `1->9->2`:
 - **`1` = collector (Claude).** Re-bundles phase 1's consolidated synthesis as

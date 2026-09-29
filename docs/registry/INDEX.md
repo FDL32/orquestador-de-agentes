@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 38 |
+| prompt | 39 |
 | reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 43 |
-| **total** | **127** |
+| **total** | **128** |
 
 ## Entradas
 
@@ -39,6 +39,7 @@
 | prompt | `prompts/backlog_triage.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/doc_optimization.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/ensemble_loop.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/escalate_to_motor.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/hermes_soul.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | shared | model-invoked | — |
