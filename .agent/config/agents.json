@@ -490,7 +490,7 @@
       },
       "BA06": {
         "backend": "opencode",
-        "model": "opencode-go/glm-5.2",
+        "model": "opencode-go/glm-5.3-flash",
         "backend_version": null,
         "status": "active"
       },

@@ -382,3 +382,57 @@ def test_status_enum_matches_the_documented_one():
         f"el enum vivo es {sorted(statuses)}; si cambia, actualiza la tabla de "
         "semantica en discover_loops.py (la proyeccion se genera desde ahi)"
     )
+
+
+# ---------------------------------------------------------------------------
+# (d) PROFILE<->REGISTRY PARITY: el hueco por el que vivio el drift de BA06
+# ---------------------------------------------------------------------------
+
+
+def test_ensemble_registry_backend_keys_match_live_profiles():
+    """Cada perfil vivo y su backend_key en el registro declaran EL MISMO modelo.
+
+    Hueco medido (WOT-2026-082a, 2026-09-29): las ramas existentes comparan
+    loop_registry.md contra ensemble_registry (a) y buscan referencias
+    colgantes (b), pero NINGUNA comparaba ensemble_registry contra
+    ensemble_profiles -- donde vivia el drift real: BA06 declaraba
+    `opencode-go/glm-5.2` mientras el perfil vivo (`challenger_opencode_glm_5_2`)
+    declara `opencode-go/glm-5.3-flash` desde el commit 055aba5. La suite
+    seguia verde porque el md y el registro eran coherentes ENTRE SI (ambos
+    mienten igual).
+
+    During: itera los PERFILES (no el registro), asi que los backend_keys
+    deprecated sin perfil vivo (BA14/BA17-19, historico intencional) quedan
+    fuera del alcance.
+
+    After: falla listando cada (perfil, backend_key, modelo-registro vs
+    modelo-perfil) divergente. MUTATION (worktree aislado, WOT-2026-082a):
+    revertir BA06 a glm-5.2 en agents.json -> ROJO con el mismatch listado;
+    con el fix -> VERDE.
+    """
+    config = _load_config()
+    profiles = config.get("ensemble_profiles", {})
+    backend_keys = config.get("ensemble_registry", {}).get("backend_keys", {})
+    mismatches = []
+    for name, prof in profiles.items():
+        bk = prof.get("backend_key")
+        if not bk:
+            continue
+        entry = backend_keys.get(bk)
+        if entry is None:
+            mismatches.append(
+                f"{name}: backend_key {bk} no existe en ensemble_registry"
+            )
+            continue
+        if (entry.get("backend"), entry.get("model")) != (
+            prof.get("backend"),
+            prof.get("model"),
+        ):
+            mismatches.append(
+                f"{name}: registro {bk} declara "
+                f"{entry.get('backend')}/{entry.get('model')} pero el perfil "
+                f"declara {prof.get('backend')}/{prof.get('model')}"
+            )
+    assert not mismatches, (
+        f"ensemble_registry miente sobre perfiles vivos (drift tipo BA06): {mismatches}"
+    )

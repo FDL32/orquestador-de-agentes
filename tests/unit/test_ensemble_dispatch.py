@@ -5248,3 +5248,72 @@ def test_046b_response_with_prefix_content_in_middle_survives(tmp_path):
     )
     assert row["outcome"] is None
     assert row["output_chars"] == len(raw_reply)
+
+
+def test_model_family_map_covers_all_ensemble_profiles():
+    """WOT-2026-082a: cada combinacion (backend, model) VIVA tiene familia propia.
+
+    Before: 12 de los 26 combos de `ensemble_profiles` no tenian entrada en
+    MODEL_FAMILY_MAP y caian a "sin_familia" (WARN `unmapped_backend_model_pairs`)
+    en la proyeccion `backend_family_leaders.json` (censo medido 2026-09-29:
+    26 live, 21 mapped, 12 missing).
+
+    During: carga la config REAL del motor (M9, motor-explicita:
+    `load_motor_config()` ignora AGENT_PROJECT_ROOT), recorre los 26 perfiles
+    del censo 2026-09-29 y exige (a) cobertura total del mapa, (b) las
+    familias decididas para las 12 altas y (c) la preservacion de la entrada
+    historica glm-5.2.
+
+    After: falla listando exactamente los combos sin cubrir o con familia
+    distinta de la decidida. MUTATION (worktree aislado, WOT-2026-082a):
+    sin las 12 entradas nuevas -> ROJO (12 combos listados); con el fix ->
+    VERDE. La cobertura es el INVARIANTE; el "26" es evidencia fechada del
+    censo, no una condicion del test (un perfil nuevo debe quedar cubierto,
+    sin que el test se rompa por el conteo).
+    """
+    config = ed.load_motor_config()
+    profiles = config.get("ensemble_profiles", {})
+    missing = sorted(
+        (name, prof.get("backend"), prof.get("model"))
+        for name, prof in profiles.items()
+        if (prof.get("backend"), prof.get("model")) not in ed.MODEL_FAMILY_MAP
+    )
+    assert not missing, (
+        "combos (backend, model) vivos sin familia en MODEL_FAMILY_MAP "
+        f"(censo 2026-09-29 tenia 12): {missing}"
+    )
+
+    # Familias decididas para las 12 altas de WOT-2026-082a. Autoridad de la
+    # familia: la CLAVE de cada perfil vivo (convencion de nomenclatura de
+    # AGENTS.md); `minimax` y `spacebunny` sin vocabulario previo adoptan el
+    # nombre del propio modelo (decision documentada en el commit del ticket).
+    expected_new = {
+        ("aihubmix_api", "coding-glm-5.1-free"): "codingglm",
+        ("aihubmix_api", "coding-minimax-m2.7-free"): "minimax",
+        ("aihubmix_api", "xiaomi-mimo-v2.5-free"): "mimo",
+        ("groq_api", "openai/gpt-oss-120b"): "gptoss",
+        ("groq_api", "qwen/qwen3.8-27b"): "qwen",
+        ("opencode", "opencode-go/glm-5.3-flash"): "glm",
+        ("openrouter_api", "cohere/north-mini-code:free"): "northcode",
+        ("openrouter_api", "nvidia/nemotron-3-ultra-550b-a55b:free"): "nemotron",
+        ("openrouter_api", "stealth/space-bunny-alpha"): "spacebunny",
+        ("tokenharbor_api", "deepseek-v4.1-flash:free"): "deepseek",
+        ("tokenharbor_api", "mimo-v2.6-flash:free"): "mimo",
+        ("tokenharbor_api", "qwen3.8-flash:free"): "qwen",
+    }
+    wrong = {
+        key: (ed.MODEL_FAMILY_MAP.get(key), familias)
+        for key, familias in expected_new.items()
+        if ed.MODEL_FAMILY_MAP.get(key) != familias
+    }
+    assert not wrong, (
+        f"familias distintas de las decididas (obtenido, esperado): {wrong}"
+    )
+
+    # Decision del operador 2026-09-29 (NO reabrir): el historico glm-5.2 se
+    # CONSERVA -- 384 filas reales del scorecard dependen de esa entrada
+    # (mismo precedente que BA14 deepseek-v4-flash-0731).
+    assert ed.MODEL_FAMILY_MAP.get(("opencode", "opencode-go/glm-5.2")) == "glm", (
+        "la entrada historica glm-5.2 no puede eliminarse: 384 filas del "
+        "scorecard la usan (precedente BA14, decision del operador 2026-09-29)"
+    )

@@ -248,7 +248,9 @@ EXPLORATION_POLICY = (
 # WOT-2026-nomenclatura-familia (2026-09-26): mapeo (backend, model) -> familia,
 # EXPLICITO -- nunca heuristica por substring (un "glm" en un nombre de modelo
 # ajeno daria falso positivo). Poblado desde los perfiles nan_api/nvidia_api/
-# opencode vigentes en agents.json tras el renombrado familia+slot. Una
+# opencode vigentes en agents.json tras el renombrado familia+slot, y desde los
+# perfiles groq_api/openrouter_api/aihubmix_api/tokenharbor_api dados de alta en
+# b3c77d2 (cobertura de los 26 combos vivos, WOT-2026-082a). Una
 # combinacion (backend, model) sin entrada cae a "sin_familia" en
 # regenerate_family_leaders (WARN en el artefacto, nunca excluida: no se
 # pierde historico del scorecard por mapeo incompleto). Se actualiza a mano al
@@ -266,11 +268,31 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("nan_api", "qwen3.6"): "qwen",
     ("nan_api", "qwen3.8-flash"): "qwen",
     ("opencode", "opencode-go/glm-5.2"): "glm",
+    # WOT-2026-082a: el perfil vivo paso a glm-5.3-flash en 055aba5. La
+    # entrada de arriba se CONSERVA (384 filas historicas de scorecard, mismo
+    # precedente que BA14) y esta cubre las rondas emitidas desde el cambio.
+    ("opencode", "opencode-go/glm-5.3-flash"): "glm",
     ("nvidia_api", "z-ai/glm-5.3"): "glm",
     ("nvidia_api", "z-ai/glm-5.3-flash"): "glm",
     ("nvidia_api", "deepseek-ai/deepseek-v4.1-flash"): "deepseek",
     ("nvidia_api", "moonshotai/kimi-k3"): "kimi",
     ("nvidia_api", "nvidia/nemotron-3-super-120b-a12b"): "nemotron",
+    # WOT-2026-082a: perfiles dados de alta en b3c77d2 (2026-09-29) que no
+    # tenian entrada -- caian a "sin_familia". Familias tomadas de la CLAVE
+    # de cada perfil vivo (convencion de nomenclatura de AGENTS.md); para
+    # `minimax` y `spacebunny` (sin vocabulario previo) se adopta el nombre
+    # del propio modelo, mismo patron mono-modelo que `codex`.
+    ("aihubmix_api", "coding-glm-5.1-free"): "codingglm",
+    ("aihubmix_api", "coding-minimax-m2.7-free"): "minimax",
+    ("aihubmix_api", "xiaomi-mimo-v2.5-free"): "mimo",
+    ("groq_api", "openai/gpt-oss-120b"): "gptoss",
+    ("groq_api", "qwen/qwen3.8-27b"): "qwen",
+    ("openrouter_api", "cohere/north-mini-code:free"): "northcode",
+    ("openrouter_api", "nvidia/nemotron-3-ultra-550b-a55b:free"): "nemotron",
+    ("openrouter_api", "stealth/space-bunny-alpha"): "spacebunny",
+    ("tokenharbor_api", "deepseek-v4.1-flash:free"): "deepseek",
+    ("tokenharbor_api", "mimo-v2.6-flash:free"): "mimo",
+    ("tokenharbor_api", "qwen3.8-flash:free"): "qwen",
     # Backends mono-modelo (model=None por diseno VIGENTE, ver docstring de
     # regenerate_leaders): la familia coincide con el propio backend.
     ("codex", None): "codex",
