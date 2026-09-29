@@ -1962,11 +1962,14 @@ def _parse_provider_reset_at(detail: str | None) -> datetime | None:
     """
     if not detail:
         return None
-    m = re.search(r"(\d{4}-\d{2}-\d{2})[T ,]+(\d{2}:\d{2})(?::\d{2})?", detail)
+    m = re.search(r"(\d{4}-\d{2}-\d{2})[T ,]+(\d{2}:\d{2})(?::(\d{2}))?", detail)
     if not m:
         return None
+    seconds = m.group(3) or "00"
     try:
-        naive = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M")
+        naive = datetime.strptime(
+            f"{m.group(1)} {m.group(2)}:{seconds}", "%Y-%m-%d %H:%M:%S"
+        )
     except ValueError:
         return None
     return naive.replace(tzinfo=timezone.utc)
@@ -3073,6 +3076,47 @@ def _load_receipt_checker():
 
 
 CANARY_LOG_REL = Path(".agent/runtime/ensemble/receipt_canary.jsonl")
+
+# ---------------------------------------------------------------------------
+# Inventario cerrado de artefactos de runtime (H2+H9, WOT-2026-084a)
+# Cada artefacto JSON/JSONL de lectura/escritura mecanizada bajo
+# `.agent/runtime/ensemble/` DEBE tener su constante `_REL` registrada aqui.
+# Los ficheros manuales sueltos (bundles, logs de sesion) NO forman parte de
+# este inventario -- ver `PROPUESTA_rotacion_runtime_ensemble.md` Seccion 4.
+# ---------------------------------------------------------------------------
+ENSEMBLE_RUNTIME_ARTIFACTS: dict[str, Path] = {
+    "SCORECARD_REL": SCORECARD_REL,
+    "LEADERS_REL": LEADERS_REL,
+    "FALLBACK_EVENTS_REL": FALLBACK_EVENTS_REL,
+    "EMITTED_NONCES_REL": EMITTED_NONCES_REL,
+    "FAMILY_LEADERS_REL": FAMILY_LEADERS_REL,
+    "BACKEND_STATUS_REL": BACKEND_STATUS_REL,
+    "QUARANTINE_REL": QUARANTINE_REL,
+    "CANARY_LOG_REL": CANARY_LOG_REL,
+}
+
+
+def _iter_ensemble_runtime_rel_constants() -> dict[str, Path]:
+    """Devuelve todas las constantes module-level `*_REL` que apuntan a
+    `.agent/runtime/ensemble/` (Path con esa subcadena en su repr).
+
+    This function introspects the module globals to find every constant whose
+    name ends with ``_REL`` and whose value is a ``pathlib.Path`` containing
+    ``"runtime/ensemble/"``.  Used by tests to verify that
+    ``ENSEMBLE_RUNTIME_ARTIFACTS`` is in sync with the actual constants defined
+    in this module -- a manual copy-pasted list is not enough to catch new
+    artefacts added without registration.
+    """
+    import sys as _sys
+
+    _mod = _sys.modules[__name__]
+    result: dict[str, Path] = {}
+    for _name, _val in vars(_mod).items():
+        if _name.endswith("_REL") and isinstance(_val, Path):
+            _repr = repr(_val)
+            if "runtime/ensemble/" in _repr:
+                result[_name] = _val
+    return result
 
 
 def _persist_canary_measurement(measurement: dict) -> None:

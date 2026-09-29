@@ -3855,6 +3855,20 @@ def _future_iso(hours: float = 1.0) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
+def test_parse_provider_reset_at_keeps_seconds():
+    """El regex captura segundos pero antes se descartaban al llamar
+    `strptime` solo con `%Y-%m-%d %H:%M` -- la cuarentena expiraba hasta 59s
+    antes de lo debido (hallazgo declarado 2026-09-29,
+    scripts/ensemble_dispatch.py:1965-1969)."""
+    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:45 UTC")
+    assert parsed == datetime(2026, 9, 29, 10, 15, 45, tzinfo=timezone.utc)
+
+
+def test_parse_provider_reset_at_without_seconds_still_works():
+    parsed = ed._parse_provider_reset_at("reset at 2026-09-29 10:15Z")
+    assert parsed == datetime(2026, 9, 29, 10, 15, 0, tzinfo=timezone.utc)
+
+
 def test_read_quarantine_drops_expired_and_unreadable(tmp_path):
     """Lectura: vencidas y `expires_at` ilegible NO bloquean (fail-open
     declarado); vigentes si. Ausente o JSON corrupto -> dos tablas vacias."""
@@ -6519,3 +6533,50 @@ def test_warn_phase_typo_silent_on_deliberately_new_phase(capsys):
 def test_warn_phase_typo_handles_none():
     """None (--phase ausente, aunque el CLI lo exige) no revienta."""
     ed._warn_phase_typo(None)  # no debe lanzar
+
+
+def test_ensemble_runtime_artifacts_registry_covers_all_rel_constants():
+    """ENSEMBLE_RUNTIME_ARTIFACTS keys must equal the set discovered by the
+    introspection function.  Today the registry does not exist -> RED via
+    AttributeError; after the fix -> GREEN."""
+    assert hasattr(ed, "ENSEMBLE_RUNTIME_ARTIFACTS")
+    registry_keys = set(ed.ENSEMBLE_RUNTIME_ARTIFACTS)
+    discovered_keys = set(ed._iter_ensemble_runtime_rel_constants())
+    assert registry_keys == discovered_keys, (
+        f"Desincronizacion: en registro pero no descubiertas={discovered_keys - registry_keys}, "
+        f"en discovered pero no en registro={registry_keys - discovered_keys}"
+    )
+
+
+def test_ensemble_runtime_artifacts_registry_detects_unregistered_constant(
+    monkeypatch,
+):
+    """Mutation-verify real: inject a fake `_REL` constant NOT present in
+    ENSEMBLE_RUNTIME_ARTIFACTS and verify the introspection function detects
+    it.  This test proves the DETECTOR works (not that the registry is always
+    in sync -- the distinction matters: this test must pass BEFORE and AFTER
+    the fix)."""
+    ed.FAKE_NEW_REL = Path(".agent/runtime/ensemble/fake.jsonl")
+    try:
+        discovered = ed._iter_ensemble_runtime_rel_constants()
+        assert "FAKE_NEW_REL" in discovered, (
+            "El detector no encontro FAKE_NEW_REL inyectado -> el mecanismo "
+            "de introspeccion no es fiable"
+        )
+        assert "FAKE_NEW_REL" not in ed.ENSEMBLE_RUNTIME_ARTIFACTS, (
+            "FAKE_NEW_REL no deberia estar en el registro estatico"
+        )
+    finally:
+        delattr(ed, "FAKE_NEW_REL")
+
+
+def test_ensemble_runtime_artifacts_registry_values_match_original_constants():
+    """For every entry in the registry, ENSEMBLE_RUNTIME_ARTIFACTS[name] must
+    equal the original constant value -- prevents the registry from having a
+    stale copy if someone edits one of them by hand."""
+    for _name, _registry_path in ed.ENSEMBLE_RUNTIME_ARTIFACTS.items():
+        _original = getattr(ed, _name)
+        assert _registry_path == _original, (
+            f"Registro desincronizado para {_name}: registry={_registry_path}, "
+            f"original={_original}"
+        )
