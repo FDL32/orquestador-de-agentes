@@ -3098,11 +3098,11 @@ ENSEMBLE_RUNTIME_ARTIFACTS: dict[str, Path] = {
 
 def _iter_ensemble_runtime_rel_constants() -> dict[str, Path]:
     """Devuelve todas las constantes module-level `*_REL` que apuntan a
-    `.agent/runtime/ensemble/` (Path con esa subcadena en su repr).
+    `.agent/runtime/ensemble/` (Path o str cuyo repr contiene esa subcadena).
 
     This function introspects the module globals to find every constant whose
-    name ends with ``_REL`` and whose value is a ``pathlib.Path`` containing
-    ``"runtime/ensemble/"``.  Used by tests to verify that
+    name ends with ``_REL`` and whose value is a ``pathlib.Path`` or ``str``
+    containing ``"runtime/ensemble/"``.  Used by tests to verify that
     ``ENSEMBLE_RUNTIME_ARTIFACTS`` is in sync with the actual constants defined
     in this module -- a manual copy-pasted list is not enough to catch new
     artefacts added without registration.
@@ -3112,10 +3112,16 @@ def _iter_ensemble_runtime_rel_constants() -> dict[str, Path]:
     _mod = _sys.modules[__name__]
     result: dict[str, Path] = {}
     for _name, _val in vars(_mod).items():
-        if _name.endswith("_REL") and isinstance(_val, Path):
-            _repr = repr(_val)
-            if "runtime/ensemble/" in _repr:
-                result[_name] = _val
+        if not _name.endswith("_REL"):
+            continue
+        _repr: str = repr(_val)
+        if "runtime/ensemble/" not in _repr:
+            continue
+        # Normalise str -> Path so the return type is uniform.
+        if isinstance(_val, Path):
+            result[_name] = _val
+        else:
+            result[_name] = Path(_val)
     return result
 
 

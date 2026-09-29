@@ -6590,3 +6590,27 @@ def test_ensemble_runtime_artifacts_registry_values_match_original_constants():
             f"Registro desincronizado para {_name}: registry={_registry_path}, "
             f"original={_original}"
         )
+
+
+def test_ensemble_runtime_rel_constants_detects_str_value():
+    """Introspection must detect `_REL` constants even when they are str (not
+    just Path).  This is Blocker 2 from WOT-2026-084a: the previous version
+    only filtered `isinstance(_val, Path)` and silently missed str values.
+    Verify the fix: inject a str `_REL`, confirm _iter_ensemble_runtime_rel
+    _constants returns it as Path."""
+    ed.STR_REL = ".agent/runtime/ensemble/str_test.jsonl"
+    try:
+        discovered = ed._iter_ensemble_runtime_rel_constants()
+        assert "STR_REL" in discovered, (
+            "La introspeccion no detecto una constante _REL de tipo str"
+        )
+        assert isinstance(discovered["STR_REL"], Path), (
+            "El valor devuelto debe ser Path, no str original"
+        )
+        # Use Path for comparison to avoid Windows/Linux separator issues.
+        expected = Path(".agent/runtime/ensemble/str_test.jsonl")
+        assert discovered["STR_REL"] == expected, (
+            f"El Path normalizado debe coincidir: {discovered['STR_REL']} != {expected}"
+        )
+    finally:
+        delattr(ed, "STR_REL")
