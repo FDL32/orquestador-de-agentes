@@ -62,10 +62,10 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA31 | groq_api | openai/gpt-oss-120b | active |
 | BA50 | openrouter_api | cohere/north-mini-code:free | active |
 | BA51 | openrouter_api | nvidia/nemotron-3-ultra-550b-a55b:free | active |
-| BA52 | openrouter_api | stealth/space-bunny-alpha | active |
-| BA70 | aihubmix_api | coding-glm-5.1-free | active |
-| BA71 | aihubmix_api | xiaomi-mimo-v2.5-free | active |
-| BA72 | aihubmix_api | coding-minimax-m2.7-free | active |
+| BA52 | openrouter_api | stealth/space-bunny-alpha | archived |
+| BA70 | aihubmix_api | coding-glm-5.1-free | archived |
+| BA71 | aihubmix_api | xiaomi-mimo-v2.5-free | archived |
+| BA72 | aihubmix_api | coding-minimax-m2.7-free | archived |
 | BA90 | tokenharbor_api | qwen3.8-flash:free | active |
 | BA91 | tokenharbor_api | deepseek-v4.1-flash:free | active |
 | BA92 | tokenharbor_api | mimo-v2.6-flash:free | active |

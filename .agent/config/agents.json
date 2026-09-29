@@ -362,50 +362,6 @@
       "data_sensitivity": "public",
       "backend_key": "BA51"
     },
-    "challenger_openrouter_spacebunny": {
-      "backend": "openrouter_api",
-      "channel": "api",
-      "model": "stealth/space-bunny-alpha",
-      "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
-      "api_key_env": "OPENROUTER_API_KEY",
-      "context": "diff-o-artefacto-publico",
-      "write": false,
-      "data_sensitivity": "public",
-      "backend_key": "BA52"
-    },
-    "challenger_aihubmix_codingglm": {
-      "backend": "aihubmix_api",
-      "channel": "api",
-      "model": "coding-glm-5.1-free",
-      "api_base_url": "https://aihubmix.com/v1/chat/completions",
-      "api_key_env": "AIHUBMIX_API_KEY",
-      "context": "diff-o-artefacto-publico",
-      "write": false,
-      "data_sensitivity": "public",
-      "backend_key": "BA70"
-    },
-    "challenger_aihubmix_mimo": {
-      "backend": "aihubmix_api",
-      "channel": "api",
-      "model": "xiaomi-mimo-v2.5-free",
-      "api_base_url": "https://aihubmix.com/v1/chat/completions",
-      "api_key_env": "AIHUBMIX_API_KEY",
-      "context": "diff-o-artefacto-publico",
-      "write": false,
-      "data_sensitivity": "public",
-      "backend_key": "BA71"
-    },
-    "challenger_aihubmix_minimax": {
-      "backend": "aihubmix_api",
-      "channel": "api",
-      "model": "coding-minimax-m2.7-free",
-      "api_base_url": "https://aihubmix.com/v1/chat/completions",
-      "api_key_env": "AIHUBMIX_API_KEY",
-      "context": "diff-o-artefacto-publico",
-      "write": false,
-      "data_sensitivity": "public",
-      "backend_key": "BA72"
-    },
     "challenger_tokenharbor_qwen_flash": {
       "backend": "tokenharbor_api",
       "channel": "api",
@@ -598,25 +554,25 @@
         "backend": "openrouter_api",
         "model": "stealth/space-bunny-alpha",
         "backend_version": null,
-        "status": "active"
+        "status": "archived"
       },
       "BA70": {
         "backend": "aihubmix_api",
         "model": "coding-glm-5.1-free",
         "backend_version": null,
-        "status": "active"
+        "status": "archived"
       },
       "BA71": {
         "backend": "aihubmix_api",
         "model": "xiaomi-mimo-v2.5-free",
         "backend_version": null,
-        "status": "active"
+        "status": "archived"
       },
       "BA72": {
         "backend": "aihubmix_api",
         "model": "coding-minimax-m2.7-free",
         "backend_version": null,
-        "status": "active"
+        "status": "archived"
       },
       "BA90": {
         "backend": "tokenharbor_api",
