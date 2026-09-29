@@ -3869,6 +3869,16 @@ def test_parse_provider_reset_at_without_seconds_still_works():
     assert parsed == datetime(2026, 9, 29, 10, 15, 0, tzinfo=timezone.utc)
 
 
+def test_parse_provider_reset_at_rejects_invalid_seconds():
+    """Segundos :60-:99 no son validos -> None. El fix captura el grupo de
+    segundos y strptime valida: 10:15:99 revienta en strptime y se convierte
+    a None (no se cae a :00)."""
+    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:99 UTC")
+    assert parsed is None
+    parsed = ed._parse_provider_reset_at("2026-09-29 10:15:60")
+    assert parsed is None
+
+
 def test_read_quarantine_drops_expired_and_unreadable(tmp_path):
     """Lectura: vencidas y `expires_at` ilegible NO bloquean (fail-open
     declarado); vigentes si. Ausente o JSON corrupto -> dos tablas vacias."""

@@ -1962,11 +1962,14 @@ def _parse_provider_reset_at(detail: str | None) -> datetime | None:
     """
     if not detail:
         return None
-    m = re.search(r"(\d{4}-\d{2}-\d{2})[T ,]+(\d{2}:\d{2})(?::\d{2})?", detail)
+    m = re.search(r"(\d{4}-\d{2}-\d{2})[T ,]+(\d{2}:\d{2})(?::(\d{2}))?", detail)
     if not m:
         return None
+    seconds = m.group(3) or "00"
     try:
-        naive = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M")
+        naive = datetime.strptime(
+            f"{m.group(1)} {m.group(2)}:{seconds}", "%Y-%m-%d %H:%M:%S"
+        )
     except ValueError:
         return None
     return naive.replace(tzinfo=timezone.utc)
