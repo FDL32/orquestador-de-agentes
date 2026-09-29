@@ -41,6 +41,27 @@ predica no cristalizar estado no puede cristalizarlo.)*
 
 ---
 
+## Paso 0: ¿hay una mejora a ESTE prompt ya verificada por bucle, sin aplicar todavia?
+
+Antes de recolectar nada, busca en
+`<DESTINO_ROOT>/.agent/planning/PROPUESTA_mejoras_session_hop_*.md` (o el
+patron equivalente si el arranque tambien va a citar
+`orchestrator_launch_builder.md`). Si existe una con una seccion de "bucle
+adversarial real corrido" y consenso `ADOPTAR`/`ADOPTAR CON CAMBIOS` para
+algun hallazgo, **aplica esa mejora AL ARRANQUE QUE ESTAS PRODUCIENDO
+AHORA**, aunque este prompt versionado todavia no la incluya — el arranque
+es el vehiculo mas rapido para que la mejora llegue a la sesion siguiente,
+sin esperar a que alguien edite y commitee este fichero primero. Decláralo
+explicitamente en el arranque: "Este arranque incorpora la correccion <N>
+de <ruta de la propuesta>, pendiente de aplicar a este prompt canonico."
+
+Si la MISMA correccion se aplica manualmente en 2 o mas arranques
+consecutivos, es momento de editar este prompt directamente — dejo de ser
+una excepcion puntual y se volvio parte del metodo (mismo umbral que la
+regla `prompt_override` de `orchestrator_session_close_full_audit.md`, ver
+su Bloque 2.5.d, aplicado aqui con umbral mas bajo porque el volumen de
+arranques reales es mucho menor que el de sesiones de trabajo).
+
 ## Paso 1: recolecta el ESTADO con el script, no de memoria
 
 ```bash
@@ -68,6 +89,26 @@ Y **detecta el MODO**, nunca lo des por sabido:
 `from runtime.project_root import is_motor_code_only`. Un vuelo reciente asumio
 `code-only` y midio `False`: era MODO DESTINO, con otro pipeline gobernante.
 
+**Si detectas drift entre el HEAD citado en un arranque previo y el HEAD real
+(medido 2026-09-29 en 3 sesiones reales, siempre benigno: avance de linea por
+trabajo paralelo, nunca ruptura), CLASIFICALO antes de reaccionar — no repitas
+la recoleccion completa por cualquier discrepancia, eso convertiria el caso
+normal en ceremonia de cada lanzamiento:**
+
+1. **Avance en linea** (`git merge-base --is-ancestor <HEAD-citado>
+   <HEAD-actual>` da exit 0): drift benigno, el caso normal de trabajo
+   paralelo. Re-mide SOLO los campos afectados por ese avance (el propio
+   HEAD, y si la suite citada corresponde a ese commit) — no repitas la
+   recoleccion completa. Decláralo como nota, no como alarma.
+2. **Ruptura de linaje** (el comando anterior da exit distinto de 0: el
+   commit citado ya NO es ancestro): esto SI invalida el arranque. Detente
+   y reportalo como hallazgo explicito antes de continuar — no sigas
+   usando ningun dato del arranque original.
+3. **Suite citada ya no corresponde al HEAD actual** (con o sin ruptura de
+   linaje): el dato de "suite verde" queda invalidado puntualmente, aunque
+   el resto del arranque siga siendo valido — decláralo asi, sin invalidar
+   todo el arranque por un solo campo obsoleto.
+
 ## Paso 3: nombra los CONTRATOS que gobiernan la sesion siguiente
 
 Por cada contrato: **ruta absoluta y numero de lineas**. La regla M4 exige leerlos
@@ -76,6 +117,18 @@ son muestreo, y el muestreo no ve lo que OMITES.
 
 Si el arranque va a ordenar un fan-out, **el contrato viaja por CONTENIDO en el bundle,
 nunca por ruta**: una lente ciega solo puede auditar coherencia interna.
+
+**Por cada contrato citado con `contract_sha256` en el arranque que produces,
+instruye explicitamente a la sesion siguiente a verificar SU hash, no solo el
+de `orchestrator_launch_builder.md`** (cuyo Paso -1 solo se nombra a si mismo
+por diseno: es el contrato que se esta ejecutando). Generaliza la tabla de
+identidad a "TODO contrato con hash declarado en este arranque se verifica
+antes de usarse" — medido 2026-09-29, 2 de 3 sesiones reales verificaron solo
+el hash que el Paso -1 nombraba, dejando sin comprobar el resto. **Matiz de
+accesibilidad:** si el contrato con hash declarado no esta accesible en el
+entorno de la sesion que ejecuta, no falles en falso ni asumas coincidencia —
+instruye "verificalo si es accesible; si no, decláralo pendiente de
+verificacion".
 
 ## Paso 4: verifica los slugs de memoria ANTES de citarlos
 
@@ -106,6 +159,28 @@ Un aviso vale si tiene medicion detras. Los que este repo tiene medidos y suelen
   `cat >>`/`printf` deja LF. Mezclarlas aborta el commit.
 - **Orden de trabajo:** la suite canonica va la **ULTIMA**. Cualquier commit posterior la
   invalida (`tested_commit_sha == HEAD`).
+- **Cifra de un documento de diseño != cifra real de filesystem** (medido
+  2026-09-29): una cifra citada de un documento de diseño sobre una superficie
+  con **crecimiento sin control declarado** (rotacion pendiente, cola sin
+  limite, "restos de sesiones anteriores") puede estar desactualizada sin que
+  ninguna auditoria de TEXTO lo detecte — 3 rondas adversariales sobre un
+  arranque no cazaron que "3-4 JSONL sin cubrir" eran en realidad 120 ficheros
+  sueltos; solo lo caza quien ejecuta el censo real (`find`/`Get-ChildItem`)
+  contra el disco. Si vas a citar una cifra asi, ejecuta el comando de censo
+  real ANTES de transportarla, y etiqueta la cifra del documento como
+  `[cifra de diseño, no re-verificada desde <fecha>]` si decides no re-medir.
+  **El comando exacto usado importa tanto como el resultado**: una medicion de
+  filesystem tambien puede ser inexacta (mal contada, mal filtrada) — cita
+  siempre el comando, no solo la cifra.
+- **Hallazgo NUEVO de tipo MEDICION lleva el mismo contrato de evidencia que
+  el Paso 1 exige al script**: si la sesion arrancada descubre por su cuenta
+  una cifra, un conteo, o la existencia/ausencia de un artefacto (no
+  transportado del arranque), su reporte lleva `command:` + `exit_code:`
+  explicitos, igual que el estado recolectado. Un hallazgo de este tipo sin
+  su comando de reproduccion es una afirmacion, no una medicion. Un hallazgo
+  de tipo INTERPRETACION (un juicio, una hipotesis, una lectura de intencion)
+  no necesita este formato, pero decláralo explicitamente como interpretacion
+  para que no se confunda con una medicion verificada.
 
 ## Paso 6: escribe LO QUE NO HACER
 
