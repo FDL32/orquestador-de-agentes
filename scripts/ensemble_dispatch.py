@@ -2083,9 +2083,10 @@ def quarantine_reason(
     """Mensaje de WARN si `profile_name` esta en cuarentena vigente; `None` si no.
 
     Orden de consulta (diseno Seccion 5): primero `by_backend[backend]`
-    (alcance `quota_exhausted`, clave = backend), despues
-    `by_profile[profile_name]` (alcance `network_timeout`). El dict ya llega
-    filtrado de vencidas de `read_quarantine`; esta funcion NO lee disco.
+    (cuota de un proveedor con `quota_scope: cuenta`, clave = backend),
+    despues `by_profile[profile_name]` (`network_timeout`, o cuota por modelo
+    desde WOT-2026-086c). El dict ya llega filtrado de vencidas de
+    `read_quarantine`; esta funcion NO lee disco.
     """
     prof = (config.get("ensemble_profiles") or {}).get(profile_name) or {}
     entry = (quarantine.get("by_backend") or {}).get(prof.get("backend"))
@@ -2163,12 +2164,37 @@ def _iso_or_now(raw: str | None, now: datetime) -> datetime:
     return ts
 
 
-def _quarantine_buckets(raw: bytes, *, now: datetime) -> dict:
+# WOT-2026-086c: alcance del cupo de un proveedor, declarado en
+# `agents.json::backends.<b>.quota_scope`. `modelo` (default): cada modelo
+# tiene su cupo (nan: gemma4/qwen3.6 ilimitados junto a modelos con cupo).
+# `cuenta`: el cupo es de la cuenta y agotarlo deja sin servicio a todos sus
+# modelos (tokenharbor). Decision del usuario 2026-09-29: cuarentena por
+# modelo por defecto, por proveedor solo con cupo de cuenta.
+QUOTA_SCOPES = frozenset({"modelo", "cuenta"})
+_DEFAULT_QUOTA_SCOPE = "modelo"
+
+
+def _quota_scope(backend: str | None, config: dict | None) -> str:
+    """`quota_scope` declarado del proveedor; ausente o no reconocido -> modelo.
+
+    Un valor desconocido NO amplia la cuarentena a todo el proveedor: un typo
+    no debe sobre-bloquear (la cuarentena optimiza, no es autoridad).
+    """
+    declared = ((config or {}).get("backends") or {}).get(backend or "", {})
+    scope = declared.get("quota_scope") if isinstance(declared, dict) else None
+    return scope if scope in QUOTA_SCOPES else _DEFAULT_QUOTA_SCOPE
+
+
+def _quarantine_buckets(
+    raw: bytes, *, now: datetime, config: dict | None = None
+) -> dict:
     """Agrega los eventos de fallback por clave de cuarentena.
 
-    Un evento por rama: `quota_exhausted` -> (by_backend, backend),
-    `network_timeout` -> (by_profile, perfil); el resto de clases no
-    agrega nada (decision de la Seccion 3 + hallazgo 3 de la ronda).
+    Un evento por rama: `network_timeout` -> (by_profile, perfil);
+    `quota_exhausted` -> (by_profile, perfil) salvo que el proveedor declare
+    `quota_scope: cuenta`, entonces (by_backend, backend) (WOT-2026-086c).
+    El resto de clases no agrega nada (decision de la Seccion 3 + hallazgo 3
+    de la ronda).
     """
     buckets: dict[tuple[str, str], dict] = {}
     for line in raw.decode("utf-8").splitlines():
@@ -2180,7 +2206,10 @@ def _quarantine_buckets(raw: bytes, *, now: datetime) -> dict:
             continue
         cls = ev.get("failure_class")
         if cls == _FAILURE_CLASS_QUOTA:
-            section, key = "by_backend", ev.get("failed_backend")
+            if _quota_scope(ev.get("failed_backend"), config) == "cuenta":
+                section, key = "by_backend", ev.get("failed_backend")
+            else:
+                section, key = "by_profile", ev.get("failed_profile")
         elif cls == _FAILURE_CLASS_NETWORK:
             section, key = "by_profile", ev.get("failed_profile")
         else:
@@ -2270,7 +2299,7 @@ def regenerate_quarantine(project_root: Path, *, config: dict) -> Path:
     path = project_root / FALLBACK_EVENTS_REL
     raw = path.read_bytes() if path.exists() else b""
     now = datetime.now(timezone.utc)
-    buckets = _quarantine_buckets(raw, now=now)
+    buckets = _quarantine_buckets(raw, now=now, config=config)
     by_backend, by_profile = _quarantine_tables(buckets, config=config, now=now)
     out = {
         "generated_at": now.isoformat(),

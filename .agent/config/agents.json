@@ -142,6 +142,7 @@
       "executable": "",
       "args": [],
       "timeout_s": 900,
+      "quota_scope": "cuenta",
       "discovery": {
         "method": "path_only"
       }

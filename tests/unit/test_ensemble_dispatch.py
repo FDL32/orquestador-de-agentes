@@ -4062,7 +4062,12 @@ def test_regenerate_quarantine_scopes_by_cause(tmp_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
 
-    out = ed.regenerate_quarantine(tmp_path, config=_config())
+    # WOT-2026-086c: la cuota va a by_backend SOLO si el proveedor declara
+    # `quota_scope: cuenta` (decision del usuario 2026-09-29); sin declararlo
+    # es por modelo (ver test_086c_*). Aqui se declara para ejercitar esa rama.
+    config = _config()
+    config["backends"]["nan_api"] = {"quota_scope": "cuenta"}
+    out = ed.regenerate_quarantine(tmp_path, config=config)
     data = json.loads(out.read_text(encoding="utf-8"))
 
     assert list(data["by_backend"]) == ["nan_api"], (
@@ -4084,6 +4089,93 @@ def test_regenerate_quarantine_scopes_by_cause(tmp_path):
     assert "groq_api" not in data["by_backend"]
     assert data["fallback_events_sha256"]
     assert "NUNCA editar a mano" in data["derivado"]
+
+
+def _quota_event(profile: str, backend: str, *, minutes_ago: int = 5) -> dict:
+    now = datetime.now(timezone.utc)
+    return {
+        "ts": (now - timedelta(minutes=minutes_ago)).isoformat(),
+        "failed_profile": profile,
+        "failed_backend": backend,
+        "failure_class": "quota_exhausted",
+        "failure_detail": "TransportError: HTTP 402 body=monthly_cap_reached",
+    }
+
+
+def _write_fallback_events(tmp_path, events: list[dict]) -> None:
+    path = tmp_path / ed.FALLBACK_EVENTS_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+
+
+def test_086c_quota_is_per_model_by_default(tmp_path):
+    """Sin `quota_scope` declarado, la cuota agotada de UN modelo pone en
+    cuarentena ESE perfil, no el proveedor entero (medido 2026-09-30: nan
+    gemma4/qwen3.6 sin limite quedaron fuera porque otro modelo agoto su cupo).
+    Mutation: devolver by_backend para quota_exhausted -> RED."""
+    config = _config()
+    config["ensemble_profiles"]["p_cupo"] = {"backend": "fake", "model": "m3"}
+    _write_fallback_events(tmp_path, [_quota_event("p_cupo", "fake")])
+
+    data = json.loads(
+        ed.regenerate_quarantine(tmp_path, config=config).read_text(encoding="utf-8")
+    )
+    assert data["by_backend"] == {}
+    assert list(data["by_profile"]) == ["p_cupo"]
+    entry = data["by_profile"]["p_cupo"]
+    assert entry["reason_class"] == "quota_exhausted"
+    assert entry["backend"] == "fake"
+
+    quarantine = ed.read_quarantine(tmp_path)
+    assert ed.quarantine_reason("p_cupo", config=config, quarantine=quarantine)
+    assert (
+        ed.quarantine_reason("p_prop", config=config, quarantine=quarantine) is None
+    ), "un modelo hermano del mismo proveedor NO hereda la cuarentena"
+
+
+def test_086c_quota_scope_cuenta_quarantines_the_whole_provider(tmp_path):
+    """`quota_scope: cuenta`: el cupo es de la cuenta, asi que cualquier
+    modelo del proveedor queda sin servicio y la cuarentena es por proveedor."""
+    config = _config()
+    config["backends"]["fake"]["quota_scope"] = "cuenta"
+    _write_fallback_events(tmp_path, [_quota_event("p_chal", "fake")])
+
+    data = json.loads(
+        ed.regenerate_quarantine(tmp_path, config=config).read_text(encoding="utf-8")
+    )
+    assert list(data["by_backend"]) == ["fake"]
+    assert data["by_profile"] == {}
+    quarantine = ed.read_quarantine(tmp_path)
+    assert ed.quarantine_reason("p_prop", config=config, quarantine=quarantine)
+
+
+def test_086c_unknown_quota_scope_value_falls_back_to_model(tmp_path):
+    """Un valor no reconocido no amplia la cuarentena: sobre-bloquear un
+    proveedor entero por un typo es peor que no bloquear (la cuarentena
+    optimiza, no es autoridad)."""
+    config = _config()
+    config["backends"]["fake"]["quota_scope"] = "cuentas"
+    _write_fallback_events(tmp_path, [_quota_event("p_chal", "fake")])
+
+    data = json.loads(
+        ed.regenerate_quarantine(tmp_path, config=config).read_text(encoding="utf-8")
+    )
+    assert data["by_backend"] == {}
+    assert list(data["by_profile"]) == ["p_chal"]
+
+
+def test_086c_real_config_declares_account_scope_only_where_measured():
+    """El agents.json real declara `quota_scope` con valores validos, y
+    tokenharbor (cupo por cuenta, medido 2026-09-29) lo declara `cuenta`."""
+    config = ed.load_motor_config()
+    scopes = {
+        name: cfg["quota_scope"]
+        for name, cfg in config["backends"].items()
+        if "quota_scope" in cfg
+    }
+    assert set(scopes.values()) <= ed.QUOTA_SCOPES
+    assert scopes.get("tokenharbor_api") == "cuenta"
+    assert scopes.get("nan_api", "modelo") == "modelo"
 
 
 def test_smoke_cli_skips_quarantined_unless_forced(tmp_path, monkeypatch, capsys):
