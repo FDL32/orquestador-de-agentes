@@ -49,12 +49,26 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA14 | nan_api | deepseek-v4-flash-0731 | deprecated |
 | BA15 | nan_api | qwen3.8-flash | active |
 | BA16 | nan_api | glm5.3-flash | active |
-| BA17 | nvidia_api | z-ai/glm-5.3 | active |
-| BA18 | nvidia_api | z-ai/glm-5.3-flash | active |
-| BA19 | nvidia_api | deepseek-ai/deepseek-v4.1-flash | active |
-| BA20 | nvidia_api | moonshotai/kimi-k3 | active |
-| BA21 | nvidia_api | nvidia/nemotron-3-super-120b-a12b | active |
-| BA22 | nan_api | mimo-v2.6-flash | active |
+| BA17 | nvidia_api | z-ai/glm-5.3 | deprecated |
+| BA18 | nvidia_api | z-ai/glm-5.3-flash | deprecated |
+| BA19 | nvidia_api | deepseek-ai/deepseek-v4.1-flash | deprecated |
+| BA20 | nvidia_api | z-ai/glm-5.3 | active |
+| BA21 | nvidia_api | z-ai/glm-5.3-flash | active |
+| BA22 | nvidia_api | deepseek-ai/deepseek-v4.1-flash | active |
+| BA23 | nvidia_api | moonshotai/kimi-k3 | active |
+| BA24 | nvidia_api | nvidia/nemotron-3-super-120b-a12b | active |
+| BA25 | nan_api | mimo-v2.6-flash | active |
+| BA30 | groq_api | qwen/qwen3.8-27b | active |
+| BA31 | groq_api | openai/gpt-oss-120b | active |
+| BA50 | openrouter_api | cohere/north-mini-code:free | active |
+| BA51 | openrouter_api | nvidia/nemotron-3-ultra-550b-a55b:free | active |
+| BA52 | openrouter_api | stealth/space-bunny-alpha | active |
+| BA70 | aihubmix_api | coding-glm-5.1-free | active |
+| BA71 | aihubmix_api | xiaomi-mimo-v2.5-free | active |
+| BA72 | aihubmix_api | coding-minimax-m2.7-free | active |
+| BA90 | tokenharbor_api | qwen3.8-flash:free | active |
+| BA91 | tokenharbor_api | deepseek-v4.1-flash:free | active |
+| BA92 | tokenharbor_api | mimo-v2.6-flash:free | active |
 
 ## Loop shapes
 
