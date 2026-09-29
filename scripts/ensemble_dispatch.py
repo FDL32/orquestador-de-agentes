@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import difflib
 import hashlib
 import importlib.util
 import json
@@ -107,6 +108,15 @@ from bus.subprocess_env import build_backend_env  # noqa: E402
 
 SCORECARD_REL = Path(".agent/runtime/ensemble/scorecard.jsonl")
 LEADERS_REL = Path(".agent/runtime/ensemble/backend_leaders.json")
+# WOT-2026-083b: un evento por CADA vez que resolve_similar_fallback sustituyo
+# un perfil caido. scorecard.jsonl ya registra las DOS rondas (la fallida y la
+# del sustituto) como filas independientes; este fichero las UNE en un evento
+# de DECISION explicito -- la fuente que un futuro `backend_quarantine.json`
+# (disenado, aun no implementado) leera para decidir si escala a cuarentena.
+# Registrar la evidencia AHORA no implica actuar automaticamente sobre ella
+# (mismo principio que loop_registry.md ya aplica a `status`: un fallo no
+# cambia nada por si solo, la decision de escalar es de quien lee el patron).
+FALLBACK_EVENTS_REL = Path(".agent/runtime/ensemble/fallback_events.jsonl")
 # WOT-2026-040b: registro append-only de los challenge_nonce EMITIDOS antes de
 # cada fan-out de gobierno. Fuente externa contra la que check_loop_execution
 # valida cada receipt. Vive en el runtime del destino-rol (nunca en repo_motor).
@@ -1608,6 +1618,40 @@ def append_scorecard(project_root: Path, row: dict) -> Path:
     return path
 
 
+def append_fallback_event(project_root: Path, event: dict) -> Path:
+    """Append-only de un evento de FALLBACK (WOT-2026-083b), mismo patron de
+    lock+write unico que `append_scorecard` pero esquema propio (no reutiliza
+    `SCORECARD_FIELDS`: es un evento de DECISION, no una fila de ronda).
+
+    Campos esperados: `ts`, `ticket`, `loop_id`, `phase`, `failed_profile`,
+    `failed_backend`, `failure_class`, `failure_detail` (texto truncado),
+    `fallback_profile`, `fallback_backend`, `fallback_backend_key`. Se
+    normalizan por presencia (`event.get(k)`) para que un evento incompleto
+    no rompa el append -- mejor un campo `None` visible que perder la fila.
+    """
+    path = project_root / FALLBACK_EVENTS_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = (
+        "ts",
+        "ticket",
+        "loop_id",
+        "phase",
+        "failed_profile",
+        "failed_backend",
+        "failure_class",
+        "failure_detail",
+        "fallback_profile",
+        "fallback_backend",
+        "fallback_backend_key",
+    )
+    normalized = {k: event.get(k) for k in fields}
+    payload = (json.dumps(normalized, ensure_ascii=False) + "\n").encode("utf-8")
+    with open(path, "ab") as f, _locked_for_append(f):
+        f.write(payload)
+        f.flush()
+    return path
+
+
 def emit_nonce(
     project_root: Path,
     *,
@@ -2359,6 +2403,7 @@ def resolve_fallback_backend(
     *,
     config: dict,
     check_alive=None,
+    exclude_profiles: frozenset[str] = frozenset(),
 ) -> str:
     """Elige un perfil de backend con `backend` DISTINTO al del pool auditado.
 
@@ -2371,7 +2416,8 @@ def resolve_fallback_backend(
         (round-trip real por CONTENIDO, nunca por exit code).
     During: recorre `ensemble_profiles` en orden estable (orden de
         insercion del dict de config), descarta los perfiles cuyo
-        `backend` coincide con `pool_backend`, y prueba cada candidato con
+        `backend` coincide con `pool_backend` O cuyo nombre este en
+        `exclude_profiles`, y prueba cada candidato con
         `check_alive(profile_name, config=config)` hasta encontrar uno
         vivo. `check_alive` debe devolver un dict con clave `alive: bool`
         (mismo contrato que `smoke_profile`).
@@ -2379,6 +2425,21 @@ def resolve_fallback_backend(
         distinta. Si no hay NINGUN candidato de clase distinta (o ninguno
         vivo), lanza `DispatchBlockedError` fail-cerrado: el caller NUNCA
         debe caer de vuelta a `pool_backend` en silencio.
+
+    HALLAZGO DE AUDITORIA FRIA (H5, 2026-09-29): `resolve_similar_fallback`
+        delega aqui en 4 puntos cuando la familia se agota, pero hasta esta
+        correccion NO propagaba su propio `exclude_profiles` -- el
+        parametro se detenia en la frontera de esa funcion. Esto reabria
+        exactamente el bug de ping-pong (medido en vivo: 3 llamadas reales
+        de red) que `exclude_profiles` existe para cerrar, porque este
+        delegado podia devolver un perfil YA intentado en la cadena si
+        pertenecia a una clase de backend distinta del `pool_backend`
+        actual (cierto con frecuencia en cadenas de 3+ pasos). El test
+        `test_run_loop_round_no_ping_pong_between_two_family_members`
+        maquillaba este camino real mockeando `resolve_fallback_backend`
+        por completo, asi que el hueco sobrevivio sin que ningun test lo
+        ejerciera -- lo cazo una auditoria fria de sesion nueva, no un
+        test propio.
     """
     if check_alive is None:
         check_alive = smoke_profile
@@ -2387,7 +2448,7 @@ def resolve_fallback_backend(
     candidates = [
         name
         for name, profile in profiles.items()
-        if profile.get("backend") != pool_backend
+        if profile.get("backend") != pool_backend and name not in exclude_profiles
     ]
     if not candidates:
         raise DispatchBlockedError(
@@ -2406,6 +2467,224 @@ def resolve_fallback_backend(
         f"ningun candidato de clase distinta a '{pool_backend}' esta vivo "
         f"(probados: {', '.join(tried)}); fallback fail-cerrado (WOT-2026-026k)"
     )
+
+
+def _profile_p50_latency_ms(
+    profile_name: str, *, config: dict, rows: list[dict]
+) -> float | None:
+    """P50 de latencia (ms) de un perfil en el scorecard, o None sin datos.
+
+    Before: `rows` es la lista de filas `event=="ronda"` de `_read_scorecard`
+        (ya leida por el caller, para no releer el fichero por candidato).
+    During: filtra filas cuyo (backend, model) coincide con el perfil, ordena
+        `latency_ms` y toma la mediana (n impar) o el promedio de los dos
+        centrales (n par) -- mismo criterio de "p50" ya usado en los censos
+        manuales de esta sesion (`phase_value_report.py` y las propuestas de
+        diseno de fallback).
+    After: retorna el p50 en ms, o `None` si el perfil no tiene ninguna fila
+        con `latency_ms` numerico (no se inventa un valor).
+    """
+    profile = config.get("ensemble_profiles", {}).get(profile_name, {})
+    backend, model = profile.get("backend"), profile.get("model")
+    latencies = sorted(
+        row["latency_ms"]
+        for row in rows
+        if row.get("backend") == backend
+        and row.get("model") == model
+        and isinstance(row.get("latency_ms"), (int, float))
+    )
+    if not latencies:
+        return None
+    mid = len(latencies) // 2
+    if len(latencies) % 2:
+        return float(latencies[mid])
+    return (latencies[mid - 1] + latencies[mid]) / 2.0
+
+
+def resolve_similar_fallback(
+    failed_profile: str,
+    *,
+    config: dict,
+    project_root: Path,
+    max_latency_ratio: float = 2.0,
+    min_samples_for_ranking: int = 10,
+    max_attempts: int = 3,
+    exclude_profiles: frozenset[str] = frozenset(),
+    check_alive=None,
+) -> str:
+    """Fallback en DOS pasos: familia de modelo, luego rendimiento similar.
+
+    WOT-2026-083a (diseno: `.agent/planning/PROPUESTA_fallback_familia_
+    rendimiento.md`, verificado por bucle adversarial real de 7 lentes antes
+    de implementar). Orden EXPLICITO del operador: primero se acota el
+    espacio por FAMILIA (`MODEL_FAMILY_MAP`), despues se descartan los
+    candidatos de esa familia cuyo rendimiento historico es demasiado lento.
+    Medido en esta sesion (scorecard real): la familia `glm` sola tiene una
+    dispersion de latencia de 6.4x entre backends (141s vs 900s) -- agrupar
+    solo por familia, sin filtrar por rendimiento, puede convertir un
+    fallback en una ronda mucho mas lenta que el perfil que fallo.
+
+    Before: `failed_profile` existe en `ensemble_profiles` y tiene una
+        entrada en `MODEL_FAMILY_MAP` (si no la tiene, este fallback no puede
+        acotar por familia y DELEGA integro en `resolve_fallback_backend`,
+        nunca inventa una familia). `check_alive` es inyectable para tests
+        hermeticos; por defecto usa `smoke_profile` (round-trip real por
+        CONTENIDO, igual que `resolve_fallback_backend`).
+    During:
+        1. Resuelve la familia de `failed_profile` via `MODEL_FAMILY_MAP`.
+        2. Lista candidatos vivos-en-config de la MISMA familia, excluyendo
+           `failed_profile`.
+        3. Si no hay familia o no hay candidatos de esa familia, DELEGA en
+           `resolve_fallback_backend` (mismo backend de origen que el pool
+           del perfil caido) -- es el paso 2 declarado por el operador
+           ("si family no da candidato aceptable, buscar por rendimiento"),
+           reusando el mecanismo YA EXISTENTE en vez de duplicar logica.
+        4. Calcula el p50 historico (`_profile_p50_latency_ms`) del perfil
+           caido y de cada candidato de la familia. Filtra los candidatos
+           cuyo p50 sea <= `p50(failed_profile) * max_latency_ratio`. Un
+           candidato SIN historico (`p50 is None`) se conserva (no se
+           descarta por falta de dato: usar el dato que haya, con aviso --
+           decision del operador en `PROPUESTA_loop_shapes_1-4-2_y_
+           seleccion_backend.md` seccion 3), pero se ordena DESPUES de los
+           que si tienen dato, nunca antes.
+        5. Si el filtro de rendimiento deja la lista vacia, DELEGA en
+           `resolve_fallback_backend` (mismo criterio que el paso 3): la
+           familia dio candidatos pero ninguno con rendimiento aceptable.
+        6. Prueba los candidatos supervivientes en orden de p50 ascendente
+           (mas rapido primero; los sin dato al final) con `check_alive`
+           hasta encontrar uno vivo.
+    After: retorna el `profile_name` elegido. Si ningun candidato de la
+        familia esta vivo, propaga a `resolve_fallback_backend` como ultimo
+        recurso (nunca devuelve un candidato muerto, nunca cae en silencio
+        al `failed_profile` original). Si `resolve_fallback_backend` tampoco
+        encuentra nada, su `DispatchBlockedError` fail-cerrado se propaga
+        sin capturar.
+
+    AVISO DE CONFIANZA (obligatorio, no opcional): si el candidato elegido
+        tiene menos de `min_samples_for_ranking` filas en el scorecard, el
+        caller DEBE anunciar la baja confianza del dato -- este metodo no
+        imprime nada (es una funcion pura de resolucion), pero el receipt
+        de la ronda subsiguiente es responsabilidad del caller. Ver DoD
+        pendiente en la propuesta de diseno: el umbral 10 es un borrador de
+        sesion, no un valor barrido contra la meseta real.
+
+    LIMITE DE GASTO (`max_attempts`, hallazgo de auditoria de cableado
+        2026-09-29): sin tope, una familia con muchos miembros vivos pero
+        todos caidos intentaria una llamada real de pago por candidato antes
+        de rendirse -- el `check_alive` por defecto (`smoke_profile`) golpea
+        la red de verdad. `max_attempts` acota cuantos candidatos de la
+        familia se prueban (los primeros N del orden por p50, el resto se
+        descarta) antes de delegar en `resolve_fallback_backend`; NO reduce
+        la seguridad fail-cerrada (`resolve_fallback_backend` sigue siendo
+        el ultimo recurso, con su propio fail-closed intacto), solo el COSTE
+        de la busqueda por familia.
+
+    PING-PONG ENTRE DOS MIEMBROS DE LA MISMA FAMILIA (`exclude_profiles`,
+        medido en vivo 2026-09-29): A falla -> se prueba B (companero de
+        familia) -> B TAMBIEN falla con un transporte distinto -> desde el
+        punto de vista de B, A es un companero de familia igual de valido,
+        asi que sin esta exclusion `run_loop_round` podria re-intentar A un
+        SEGUNDO ciclo completo. Medido: cadena real
+        openrouter/nemotron -> nvidia/nemotron -> openrouter/nemotron ->
+        proposer_claude (3 llamadas reales de red por errores SSE
+        transitorios, ninguna de cuota). `exclude_profiles` acumula, a lo
+        largo de la cadena de reintentos de `run_loop_round`, todos los
+        perfiles YA intentados (el original + cada sustituto fallido) y los
+        saca del universo de candidatos aqui, ANTES de rankear -- no depende
+        de que `max_attempts` los descarte por casualidad de orden.
+    """
+    if check_alive is None:
+        check_alive = smoke_profile
+
+    profiles = config.get("ensemble_profiles", {})
+    failed = profiles.get(failed_profile, {})
+    familia = MODEL_FAMILY_MAP.get((failed.get("backend"), failed.get("model")))
+    excluded = exclude_profiles | {failed_profile}
+
+    if familia is None:
+        return resolve_fallback_backend(
+            failed.get("backend"),
+            config=config,
+            check_alive=check_alive,
+            exclude_profiles=excluded,
+        )
+
+    same_family = [
+        name
+        for name, profile in profiles.items()
+        if name not in excluded
+        and MODEL_FAMILY_MAP.get((profile.get("backend"), profile.get("model")))
+        == familia
+    ]
+    if not same_family:
+        return resolve_fallback_backend(
+            failed.get("backend"),
+            config=config,
+            check_alive=check_alive,
+            exclude_profiles=excluded,
+        )
+
+    rows, _ = _read_scorecard(project_root)
+    ronda_rows = [r for r in rows if r.get("event") == "ronda"]
+    ordered = _rank_family_candidates_by_latency(
+        same_family,
+        failed_profile=failed_profile,
+        config=config,
+        rows=ronda_rows,
+        max_latency_ratio=max_latency_ratio,
+    )
+    if not ordered:
+        return resolve_fallback_backend(
+            failed.get("backend"),
+            config=config,
+            check_alive=check_alive,
+            exclude_profiles=excluded,
+        )
+
+    tried: list[str] = []
+    for name in ordered[:max_attempts]:
+        result = check_alive(name, config=config)
+        tried.append(f"{name}:{'alive' if result.get('alive') else 'dead'}")
+        if result.get("alive"):
+            return name
+
+    return resolve_fallback_backend(
+        failed.get("backend"),
+        config=config,
+        check_alive=check_alive,
+        exclude_profiles=excluded,
+    )
+
+
+def _rank_family_candidates_by_latency(
+    candidates: list[str],
+    *,
+    failed_profile: str,
+    config: dict,
+    rows: list[dict],
+    max_latency_ratio: float,
+) -> list[str]:
+    """Filtra por presupuesto de latencia y ordena por p50 ascendente.
+
+    Un candidato sin `latency_ms` propio en el scorecard se CONSERVA (usar el
+    dato que haya, con el caller responsable de avisar la baja confianza) y
+    se ordena AL FINAL, nunca antes de uno con dato real. Sin baseline del
+    perfil caido (`failed_profile` sin historico), no hay presupuesto que
+    aplicar: se devuelven todos los candidatos, sin filtrar.
+    """
+    failed_p50 = _profile_p50_latency_ms(failed_profile, config=config, rows=rows)
+    scored = [
+        (name, _profile_p50_latency_ms(name, config=config, rows=rows))
+        for name in candidates
+    ]
+    if failed_p50 is not None:
+        scored = [
+            (name, p50)
+            for name, p50 in scored
+            if p50 is None or p50 <= failed_p50 * max_latency_ratio
+        ]
+    scored.sort(key=lambda pair: (1, 0.0) if pair[1] is None else (0, pair[1]))
+    return [name for name, _ in scored]
 
 
 def _load_lens_filter():
@@ -2687,6 +2966,7 @@ def run_loop_round(
     session_id: str | None = None,
     commit_sha: str | None = None,
     challenge_nonce: str | None = None,
+    _tried_profiles: frozenset[str] = frozenset(),
 ) -> str:
     """UNA ronda de un bucle de GOBIERNO (`launched_from: chat`), registrada.
 
@@ -2821,7 +3101,29 @@ def run_loop_round(
             commit_sha=commit_sha,
             challenge_nonce=challenge_nonce,
         )
-        raise
+        if clase != "transport_failed":
+            raise
+        return _retry_with_similar_fallback(
+            profile_name,
+            content,
+            config=config,
+            project_root=project_root,
+            ticket=ticket,
+            task_type=task_type,
+            rol=rol,
+            phase=phase,
+            loop_id=loop_id,
+            sensitivity=sensitivity,
+            ronda=ronda,
+            context_kind=context_kind,
+            transport=transport,
+            session_id=session_id,
+            commit_sha=commit_sha,
+            challenge_nonce=challenge_nonce,
+            original_exc=exc,
+            failure_class=_classify_transport_failure(exc),
+            tried_profiles=_tried_profiles | {profile_name},
+        )
     latency_ms = round((time.perf_counter() - _t0) * 1000)
     _record_round(
         project_root,
@@ -2843,6 +3145,132 @@ def run_loop_round(
         challenge_nonce=challenge_nonce,
     )
     return reply
+
+
+def _retry_with_similar_fallback(
+    failed_profile_name: str,
+    content: str,
+    *,
+    config: dict,
+    project_root: Path,
+    ticket: str,
+    task_type: str,
+    rol: str,
+    phase: str,
+    loop_id: str,
+    sensitivity: str,
+    ronda: int,
+    context_kind: str,
+    transport,
+    session_id: str | None,
+    commit_sha: str | None,
+    challenge_nonce: str | None,
+    original_exc: Exception,
+    failure_class: str,
+    tried_profiles: frozenset[str],
+) -> str:
+    """Reintenta UNA vez con `resolve_similar_fallback` tras un transport_failed.
+
+    WOT-2026-083b (cableado del fallback automatico; hasta aqui
+    `resolve_similar_fallback` existia como funcion suelta, sin ningun
+    call-site real -- medido en auditoria de cableado 2026-09-29: una ronda
+    de gobierno que perdia una lente por HTTP 402 se quedaba con una lente
+    de menos, sin que nada intentara sustituirla).
+
+    Before: `original_exc` es la excepcion que disparo el fallback (para
+        propagarla intacta si el fallback tambien falla -- NUNCA se inventa
+        un fallo nuevo que oculte la causa raiz). `failure_class` es la
+        clasificacion FINA de `_classify_transport_failure` (quota_exhausted/
+        model_unavailable/network_timeout/unknown), no el `clase` grueso
+        (transport_failed/unexpected) del caller -- es lo que el futuro
+        lector de `fallback_events.jsonl` necesita para decidir alcance de
+        cuarentena (por-backend vs por-perfil, ver
+        `PROPUESTA_cuarentena_backends_con_expiracion.md` seccion 3).
+    During: pide un sustituto vivo (`resolve_similar_fallback`, familia ->
+        rendimiento, fail-cerrado si no hay ninguno) y, si lo encuentra,
+        reintenta la MISMA ronda con el perfil sustituto -- incluida su
+        propia clasificacion de fallo si el sustituto TAMBIEN falla (no hay
+        segundo nivel de fallback: `max_attempts` de `resolve_similar_fallback`
+        ya agoto sus propios candidatos; un fallo aqui es del PERFIL
+        SUSTITUTO, se registra igual, y se propaga). Registra el evento en
+        `fallback_events.jsonl` (`append_fallback_event`) ANTES de reintentar
+        -- el evento de DECISION queda escrito aunque el sustituto tambien
+        falle, porque el patron (que fallo, por que) ya ocurrio
+        independientemente del resultado del reintento.
+    After: devuelve la respuesta del sustituto, con la MISMA regla de
+        `backend_key` que el resto de este runner: la clave que se registra
+        es la del perfil que REALMENTE respondio (`fallback_profile`), nunca
+        la del perfil original que fallo -- mismo invariante que la
+        validacion de `expected_key` de mas arriba (2933-2949): un receipt
+        debe identificar a quien EJECUTO, no a quien se pidio. Imprime un
+        WARN a stderr (no silencioso) declarando el reemplazo, ADEMAS del
+        evento persistido (el WARN es para quien mira la consola AHORA; el
+        evento es para quien analice el patron DESPUES). Si
+        `resolve_similar_fallback` no encuentra ningun candidato
+        (`DispatchBlockedError`, fail-cerrado), propaga la excepcion
+        ORIGINAL (`original_exc`), no la del fallback -- el caller debe ver
+        la causa raiz, no un blocker generico de "no hay candidatos". En ese
+        caso NO se escribe evento: no hubo fallback, solo un fallo sin
+        sustituto (el fallo original ya quedo en el scorecard via
+        `_record_round`).
+    """
+    try:
+        fallback_profile = resolve_similar_fallback(
+            failed_profile_name,
+            config=config,
+            project_root=project_root,
+            exclude_profiles=tried_profiles,
+        )
+    except DispatchBlockedError:
+        raise original_exc from None
+
+    failed_profile_cfg = config["ensemble_profiles"].get(failed_profile_name, {})
+    fallback_profile_cfg = config["ensemble_profiles"][fallback_profile]
+    fallback_backend_key = fallback_profile_cfg.get("backend_key")
+
+    append_fallback_event(
+        project_root,
+        {
+            "ts": _now_iso(),
+            "ticket": ticket,
+            "loop_id": loop_id,
+            "phase": phase,
+            "failed_profile": failed_profile_name,
+            "failed_backend": failed_profile_cfg.get("backend"),
+            "failure_class": failure_class,
+            "failure_detail": f"{type(original_exc).__name__}: {original_exc}"[:300],
+            "fallback_profile": fallback_profile,
+            "fallback_backend": fallback_profile_cfg.get("backend"),
+            "fallback_backend_key": fallback_backend_key,
+        },
+    )
+    print(
+        f"[fallback] '{failed_profile_name}' fallo ({failure_class}); "
+        f"sustituido por '{fallback_profile}' (backend_key={fallback_backend_key}) "
+        "via resolve_similar_fallback (WOT-2026-083b). Evento registrado en "
+        f"{FALLBACK_EVENTS_REL}.",
+        file=sys.stderr,
+    )
+    return run_loop_round(
+        fallback_profile,
+        content,
+        config=config,
+        project_root=project_root,
+        ticket=ticket,
+        task_type=task_type,
+        rol=rol,
+        phase=phase,
+        loop_id=loop_id,
+        backend_key=fallback_backend_key,
+        sensitivity=sensitivity,
+        ronda=ronda,
+        context_kind=context_kind,
+        transport=transport,
+        session_id=session_id,
+        commit_sha=commit_sha,
+        challenge_nonce=challenge_nonce,
+        _tried_profiles=tried_profiles,
+    )
 
 
 def run_pipeline(
@@ -3441,6 +3869,48 @@ def _check_government_nonce(
         )
 
 
+_GOVERNMENT_PHASE_TYPO_CUTOFF = 0.8
+
+
+def _warn_phase_typo(phase: str | None) -> None:
+    """Aviso (nunca bloqueante) de una `--phase` que PARECE un typo de una
+    fase de gobierno real, para no depender solo de que el operador recuerde
+    la lista exacta (hallazgo de auditoria de cableado, 2026-09-29: una fase
+    NO reconocida pasa `_check_government_nonce` en silencio -- correcto
+    quando es una fase exploratoria deliberada tipo 'DESIGN_REVIEW', pero
+    indistinguible de un typo real como 'manager_reviw' sin este aviso).
+
+    Before: `phase` es el string crudo de `--phase` (puede ser None).
+    During: normaliza igual que `_check_government_nonce` (minuscula, guion
+        -> guion bajo) y compara por similitud (`difflib.get_close_matches`)
+        contra `GOVERNMENT_PHASES`. Una coincidencia EXACTA no avisa (es una
+        fase de gobierno real, ya la maneja `_check_government_nonce`); solo
+        avisa si esta CERCA pero no es exacta.
+    After: imprime un WARN a stderr y retorna. Nunca lanza, nunca bloquea --
+        una fase exploratoria nueva y deliberada debe poder declararse sin
+        friccion; esto es una red de seguridad para el typo, no un enum
+        cerrado nuevo.
+    """
+    if not phase:
+        return
+    normalized = phase.lower().replace("-", "_")
+    known = {p.lower().replace("-", "_") for p in GOVERNMENT_PHASES}
+    if normalized in known:
+        return
+    close = difflib.get_close_matches(
+        normalized, known, n=1, cutoff=_GOVERNMENT_PHASE_TYPO_CUTOFF
+    )
+    if close:
+        print(
+            f"[WARN] --phase '{phase}' no es una fase de gobierno reconocida, "
+            f"pero se parece a '{close[0]}' -- si querias decir esa fase, "
+            "corrigela (una fase NO reconocida pasa SIN exigir "
+            "--challenge-nonce). Si es una fase exploratoria nueva a "
+            "proposito, ignora este aviso.",
+            file=sys.stderr,
+        )
+
+
 def _cmd_loop_round(args, config) -> int:
     """UNA ronda de un bucle de GOBIERNO por CLI (WOT-2026-043z).
 
@@ -3485,6 +3955,11 @@ def _cmd_loop_round(args, config) -> int:
         )
     content_path = Path(args.content_file)
     _warn_bundle_protocol(content_path)
+
+    # Hallazgo de auditoria de cableado (2026-09-29): un typo en --phase cae
+    # SILENCIOSAMENTE en "no es gobierno" y pasa sin nonce. Aviso NO
+    # bloqueante antes de la barrera real.
+    _warn_phase_typo(args.phase)
 
     # WOT-2026-040i: las fases de gobierno del bucle 1->9->2 EXIGEN
     # challenge_nonce. Sin el, FALLA ANTES de gastar la llamada al backend.

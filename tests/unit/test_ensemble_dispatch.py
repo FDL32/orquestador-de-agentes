@@ -3401,6 +3401,352 @@ def test_cmd_preflight_sin_content_sample_file_pasa_none(monkeypatch):
     assert captured["content_sample"] is None
 
 
+# ---------------------------------------------------------------------------
+# Cableado real del fallback dentro de run_loop_round (WOT-2026-083b):
+# resolve_similar_fallback dejo de ser una funcion suelta. VIVE ANTES del
+# marcador WOT-2026-025z a proposito (mismo motivo que el bloque de arriba,
+# :1991): estos tests mockean `send_to_profile`/`smoke_profile` por nombre en
+# texto crudo, tokens prohibidos en el bloque POSTERIOR al marcador.
+# ---------------------------------------------------------------------------
+
+
+def _config_with_glm_family():
+    """2 perfiles de la MISMA familia ('glm', via monkeypatch de
+    MODEL_FAMILY_MAP): p_prop falla, p_chal es el companero vivo."""
+    config = _config()
+    config["ensemble_profiles"]["p_prop"]["backend_key"] = "BA01"
+    config["ensemble_profiles"]["p_chal"]["backend_key"] = "BA02"
+    return config
+
+
+def test_run_loop_round_auto_fallback_on_quota_exhausted(tmp_path, monkeypatch):
+    """Un transport_failed (cuota agotada) en el perfil pedido dispara
+    resolve_similar_fallback SOLO, sin que el caller tenga que invocarlo:
+    la ronda devuelve la respuesta del sustituto de la MISMA familia."""
+    config = _config_with_glm_family()
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {("fake", "m1"): "glm", ("fake", "m2"): "glm"},
+    )
+
+    calls: list[str] = []
+
+    def _fake_send(profile_name, messages, **_kw):
+        calls.append(profile_name)
+        if profile_name == "p_prop":
+            raise ed.TransportError(
+                "HTTP 402",
+                status=402,
+                body='{"error":{"message":"allowance exhausted"}}',
+            )
+        return "respuesta del sustituto"
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    monkeypatch.setattr(ed, "smoke_profile", lambda name, *, config: {"alive": True})
+
+    reply = ed.run_loop_round(
+        "p_prop",
+        "contenido",
+        config=config,
+        project_root=tmp_path,
+        ticket="T-1",
+        task_type="exploracion",
+        rol="challenger",
+        phase="DESIGN_REVIEW",
+        loop_id="L-TEST",
+        backend_key="BA01",
+        sensitivity="public",
+    )
+
+    assert reply == "respuesta del sustituto"
+    assert calls == ["p_prop", "p_chal"], (
+        "debe intentar el perfil pedido primero, y SOLO tras fallar, el "
+        "sustituto de la misma familia -- nunca al reves"
+    )
+
+
+def test_run_loop_round_auto_fallback_writes_event_with_correct_backend_key(
+    tmp_path, monkeypatch
+):
+    """El evento persistido en fallback_events.jsonl usa el backend_key REAL
+    del sustituto (BA02), nunca el del perfil que fallo (BA01) -- mismo
+    invariante que la validacion de expected_key: el receipt identifica a
+    quien EJECUTO."""
+    config = _config_with_glm_family()
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {("fake", "m1"): "glm", ("fake", "m2"): "glm"},
+    )
+
+    def _fake_send(profile_name, messages, **_kw):
+        if profile_name == "p_prop":
+            raise ed.TransportError(
+                "HTTP 402",
+                status=402,
+                body='{"error":{"message":"allowance exhausted"}}',
+            )
+        return "ok"
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    monkeypatch.setattr(ed, "smoke_profile", lambda name, *, config: {"alive": True})
+
+    ed.run_loop_round(
+        "p_prop",
+        "contenido",
+        config=config,
+        project_root=tmp_path,
+        ticket="T-1",
+        task_type="exploracion",
+        rol="challenger",
+        phase="DESIGN_REVIEW",
+        loop_id="L-TEST",
+        backend_key="BA01",
+        sensitivity="public",
+    )
+
+    events_path = tmp_path / ed.FALLBACK_EVENTS_REL
+    assert events_path.exists()
+    lines = events_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["failed_profile"] == "p_prop"
+    assert event["fallback_profile"] == "p_chal"
+    assert event["fallback_backend_key"] == "BA02"
+    assert event["failure_class"] == ed._FAILURE_CLASS_QUOTA
+    assert event["ticket"] == "T-1"
+    assert event["loop_id"] == "L-TEST"
+
+
+def test_run_loop_round_no_fallback_for_unexpected_errors(tmp_path, monkeypatch):
+    """Un error NO clasificado como transport_failed (bug de programacion,
+    p.ej. KeyError) NUNCA dispara el fallback -- se propaga tal cual, para
+    no enmascarar un defecto de codigo detras de 'ya respondio otro'."""
+    config = _config_with_glm_family()
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {("fake", "m1"): "glm", ("fake", "m2"): "glm"},
+    )
+
+    def _raising_send(*_a, **_kw):
+        raise KeyError("bug de programacion, no de transporte")
+
+    monkeypatch.setattr(ed, "send_to_profile", _raising_send)
+
+    with pytest.raises(KeyError):
+        ed.run_loop_round(
+            "p_prop",
+            "contenido",
+            config=config,
+            project_root=tmp_path,
+            ticket="T-1",
+            task_type="exploracion",
+            rol="challenger",
+            phase="DESIGN_REVIEW",
+            loop_id="L-TEST",
+            backend_key="BA01",
+            sensitivity="public",
+        )
+
+    events_path = tmp_path / ed.FALLBACK_EVENTS_REL
+    assert not events_path.exists(), (
+        "un error no-transporte no debe generar ni intento de fallback ni evento"
+    )
+
+
+def test_run_loop_round_no_candidate_raises_original_exception(tmp_path, monkeypatch):
+    """Sin ningun companero de familia vivo, se propaga la excepcion ORIGINAL
+    (el 402), no un DispatchBlockedError generico de 'no hay candidatos' --
+    el caller debe ver la causa raiz."""
+    config = _config()  # familia sin MODEL_FAMILY_MAP -> resolve_fallback_backend
+    monkeypatch.setattr(ed, "MODEL_FAMILY_MAP", {})
+
+    def _raising_send(*_a, **_kw):
+        raise ed.TransportError("HTTP 402", status=402, body="")
+
+    def _dead_check(name, *, config):
+        return {"alive": False}
+
+    monkeypatch.setattr(ed, "send_to_profile", _raising_send)
+    monkeypatch.setattr(ed, "smoke_profile", _dead_check)
+
+    with pytest.raises(ed.TransportError, match="HTTP 402"):
+        ed.run_loop_round(
+            "p_prop",
+            "contenido",
+            config=config,
+            project_root=tmp_path,
+            ticket="T-1",
+            task_type="exploracion",
+            rol="challenger",
+            phase="DESIGN_REVIEW",
+            loop_id="L-TEST",
+            backend_key="BA01",
+            sensitivity="public",
+        )
+
+    events_path = tmp_path / ed.FALLBACK_EVENTS_REL
+    assert not events_path.exists(), (
+        "sin candidato vivo no hay fallback: no se escribe evento"
+    )
+
+
+def test_run_loop_round_no_ping_pong_between_two_family_members(tmp_path, monkeypatch):
+    """Reproduce el incidente REAL medido 2026-09-29 (fallback_events.jsonl):
+    A falla -> se prueba B (companero de familia) -> B TAMBIEN falla -> sin
+    la correccion, B podria re-intentar A (A es companero valido DESDE el
+    punto de vista de B). Con `_tried_profiles`/`exclude_profiles`, A queda
+    excluido del universo de candidatos de B, y la cadena cae directo al
+    fallback generico -- NUNCA vuelve a intentar A."""
+    config = _config_with_glm_family()
+    config["ensemble_profiles"]["p_other"] = {
+        "backend": "fake",
+        "channel": "api",
+        "model": "m3",
+        "api_base_url": "https://fake.example/v1/chat/completions",
+        "api_key_env": "FAKE_API_KEY",
+        "data_sensitivity": "public",
+        "write": False,
+        "backend_key": "BA03",
+    }
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {("fake", "m1"): "glm", ("fake", "m2"): "glm"},
+    )
+
+    calls: list[str] = []
+
+    def _fake_send(profile_name, messages, **_kw):
+        calls.append(profile_name)
+        if profile_name == "p_other":
+            return "respuesta del fallback generico"
+        # AMBOS companeros de familia fallan (fallo transitorio, no de cuota)
+        raise ed.TransportError("EOF", status=None, body="stream truncado")
+
+    def _alive_check(name, *, config):
+        # resolve_similar_fallback SOLO decide si el candidato responde al
+        # smoke (vivo/muerto); el FALLO real de esta prueba ocurre despues,
+        # en send_to_profile (_fake_send) -- son dos primitivas distintas.
+        return {"alive": True}
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    monkeypatch.setattr(ed, "smoke_profile", _alive_check)
+
+    fallback_calls: list[str] = []
+
+    def fake_fallback_backend(
+        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+    ):
+        fallback_calls.append(pool_backend)
+        return "p_other"
+
+    monkeypatch.setattr(ed, "resolve_fallback_backend", fake_fallback_backend)
+
+    reply = ed.run_loop_round(
+        "p_prop",
+        "contenido",
+        config=config,
+        project_root=tmp_path,
+        ticket="T-1",
+        task_type="exploracion",
+        rol="challenger",
+        phase="DESIGN_REVIEW",
+        loop_id="L-TEST",
+        backend_key="BA01",
+        sensitivity="public",
+    )
+
+    assert reply == "respuesta del fallback generico"
+    assert calls == ["p_prop", "p_chal", "p_other"], (
+        "debe intentar p_prop, luego SU companero p_chal, y NUNCA volver a "
+        f"p_prop antes de caer al fallback generico -- secuencia real: {calls}"
+    )
+    assert fallback_calls == ["fake"]
+
+
+def test_resolve_fallback_backend_real_path_excludes_already_tried_profiles(
+    tmp_path, monkeypatch
+):
+    """H5 (auditoria fria 2026-09-29): el test hermano de ping-pong maquillaba
+    resolve_fallback_backend mockeandolo por completo, ocultando que el
+    delegado REAL no recibia exclude_profiles. Reproduce el incidente REAL
+    (openrouter/nemotron <-> nvidia/nemotron, backends DISTINTOS dentro de
+    la MISMA familia): p_prop (vendor_a) falla, su companero de familia
+    p_chal (vendor_b) TAMBIEN falla -- familia agotada, delega en
+    resolve_fallback_backend(pool_backend='vendor_b'). SIN exclude_profiles,
+    ese delegado ve a p_prop (vendor_a, clase DISTINTA de vendor_b) como
+    candidato "de clase distinta" valido de nuevo -- el ping-pong exacto que
+    exclude_profiles debe impedir. Solo p_other (un TERCER backend) es la
+    salida correcta."""
+    config = _config_with_glm_family()
+    # p_prop y p_chal son la familia GLM, pero de BACKENDS DISTINTOS entre si
+    # (como el incidente real): eso es lo que hace que, tras agotar la
+    # familia, resolve_fallback_backend(pool_backend=vendor_b) considere a
+    # p_prop (vendor_a) un candidato "de clase distinta" legitimo si no se
+    # le pasa exclude_profiles.
+    config["ensemble_profiles"]["p_prop"]["backend"] = "vendor_a"
+    config["ensemble_profiles"]["p_chal"]["backend"] = "vendor_b"
+    config["ensemble_profiles"]["p_other"] = {
+        "backend": "vendor_c",
+        "channel": "api",
+        "model": "m9",
+        "api_base_url": "https://fake.example/v1/chat/completions",
+        "api_key_env": "FAKE_API_KEY",
+        "data_sensitivity": "public",
+        "write": False,
+        "backend_key": "BA09",
+    }
+    config["backends"]["vendor_a"] = dict(config["backends"]["fake"])
+    config["backends"]["vendor_b"] = dict(config["backends"]["fake"])
+    config["backends"]["vendor_c"] = dict(config["backends"]["fake"])
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {("vendor_a", "m1"): "glm", ("vendor_b", "m2"): "glm"},
+    )
+    # NO se mockea resolve_fallback_backend: se ejerce el codigo real.
+    calls: list[str] = []
+
+    def _fake_send(profile_name, messages, **_kw):
+        calls.append(profile_name)
+        if profile_name == "p_other":
+            return "respuesta real del delegado"
+        # p_prop Y p_chal fallan -- agota la familia GLM completa.
+        raise ed.TransportError("EOF", status=None, body="stream truncado")
+
+    def _alive_check(name, *, config):
+        return {"alive": True}
+
+    monkeypatch.setattr(ed, "send_to_profile", _fake_send)
+    monkeypatch.setattr(ed, "smoke_profile", _alive_check)
+
+    reply = ed.run_loop_round(
+        "p_prop",
+        "contenido",
+        config=config,
+        project_root=tmp_path,
+        ticket="T-1",
+        task_type="exploracion",
+        rol="challenger",
+        phase="DESIGN_REVIEW",
+        loop_id="L-TEST",
+        backend_key="BA01",
+        sensitivity="public",
+    )
+
+    assert reply == "respuesta real del delegado"
+    assert calls == ["p_prop", "p_chal", "p_other"], (
+        "el DELEGADO REAL (resolve_fallback_backend, SIN mock) debe excluir "
+        "p_prop y p_chal (ya intentados, aunque sean de clases DISTINTAS "
+        f"entre si) y elegir p_other -- secuencia real: {calls}. Si aparece "
+        "p_prop una segunda vez, el bug de ping-pong (H5) sigue vivo en el "
+        "camino delegado."
+    )
+
+
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {
@@ -5317,3 +5663,371 @@ def test_model_family_map_covers_all_ensemble_profiles():
         "la entrada historica glm-5.2 no puede eliminarse: 384 filas del "
         "scorecard la usan (precedente BA14, decision del operador 2026-09-29)"
     )
+
+
+# ---------------------------------------------------------------------------
+# resolve_similar_fallback (WOT-2026-083a): fallback en cascada
+# familia -> rendimiento similar. Config y scorecard SINTETICOS (no el
+# agents.json real): estos tests fijan el COMPORTAMIENTO del algoritmo,
+# independiente de que perfiles existan hoy en produccion.
+# ---------------------------------------------------------------------------
+
+
+def _fallback_test_config() -> dict:
+    """3 perfiles GLM (familias identicas, rendimiento distinto) + 1 ajeno."""
+    return {
+        "ensemble_profiles": {
+            "challenger_glm_slow": {"backend": "vendor_a", "model": "glm-x"},
+            "challenger_glm_mid": {"backend": "vendor_b", "model": "glm-y"},
+            "challenger_glm_fast": {"backend": "vendor_c", "model": "glm-z"},
+            "challenger_other_family": {"backend": "vendor_d", "model": "qwen-w"},
+        }
+    }
+
+
+def _fallback_test_family_map(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {
+            ("vendor_a", "glm-x"): "glm",
+            ("vendor_b", "glm-y"): "glm",
+            ("vendor_c", "glm-z"): "glm",
+            ("vendor_d", "qwen-w"): "qwen",
+        },
+    )
+
+
+def _write_scorecard_rows(tmp_path: Path, rows: list[dict]) -> Path:
+    scorecard = tmp_path / ".agent" / "runtime" / "ensemble" / "scorecard.jsonl"
+    scorecard.parent.mkdir(parents=True, exist_ok=True)
+    with open(scorecard, "w", encoding="utf-8", newline="\n") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+    return tmp_path
+
+
+def test_resolve_similar_fallback_prefers_fastest_alive_in_same_family(
+    tmp_path, monkeypatch
+):
+    """Con 3 candidatos GLM vivos, elige el de menor p50, no el primero de la lista."""
+    _fallback_test_family_map(monkeypatch)
+    config = _fallback_test_config()
+    project_root = _write_scorecard_rows(
+        tmp_path,
+        [
+            {
+                "event": "ronda",
+                "backend": "vendor_a",
+                "model": "glm-x",
+                "latency_ms": 900_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "vendor_b",
+                "model": "glm-y",
+                "latency_ms": 150_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "vendor_c",
+                "model": "glm-z",
+                "latency_ms": 140_000,
+            },
+        ],
+    )
+
+    def check_alive(name, *, config):
+        return {"alive": True}
+
+    chosen = ed.resolve_similar_fallback(
+        "challenger_glm_slow",
+        config=config,
+        project_root=project_root,
+        check_alive=check_alive,
+    )
+    assert chosen == "challenger_glm_fast", (
+        "debe elegir el p50 mas bajo (140s) de la familia, no vendor_b (150s) "
+        "ni caer a resolve_fallback_backend"
+    )
+
+
+def test_resolve_similar_fallback_skips_dead_candidate_tries_next_fastest(
+    tmp_path, monkeypatch
+):
+    """Si el mas rapido esta muerto, prueba el siguiente por p50, no cualquiera."""
+    _fallback_test_family_map(monkeypatch)
+    config = _fallback_test_config()
+    project_root = _write_scorecard_rows(
+        tmp_path,
+        [
+            {
+                "event": "ronda",
+                "backend": "vendor_a",
+                "model": "glm-x",
+                "latency_ms": 900_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "vendor_b",
+                "model": "glm-y",
+                "latency_ms": 150_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "vendor_c",
+                "model": "glm-z",
+                "latency_ms": 140_000,
+            },
+        ],
+    )
+    calls: list[str] = []
+
+    def check_alive(name, *, config):
+        calls.append(name)
+        return {"alive": name != "challenger_glm_fast"}
+
+    chosen = ed.resolve_similar_fallback(
+        "challenger_glm_slow",
+        config=config,
+        project_root=project_root,
+        check_alive=check_alive,
+    )
+    assert chosen == "challenger_glm_mid"
+    assert calls == ["challenger_glm_fast", "challenger_glm_mid"], (
+        "debe probar en orden de p50 ascendente, no en orden de insercion del dict"
+    )
+
+
+def test_resolve_similar_fallback_filters_out_candidates_beyond_latency_ratio(
+    tmp_path, monkeypatch
+):
+    """Un candidato de la misma familia pero mucho mas lento NUNCA se propone
+    (queda filtrado por max_latency_ratio); el fallback cae a
+    resolve_fallback_backend en vez de proponer un candidato mas lento que el
+    perfil que fallo."""
+    _fallback_test_family_map(monkeypatch)
+    config = _fallback_test_config()
+    # El perfil que FALLA es el rapido (140s); el unico companero de familia
+    # vivo (vendor_a) es 900s -- 6.4x mas lento, por encima del ratio 2.0x.
+    project_root = _write_scorecard_rows(
+        tmp_path,
+        [
+            {
+                "event": "ronda",
+                "backend": "vendor_a",
+                "model": "glm-x",
+                "latency_ms": 900_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "vendor_c",
+                "model": "glm-z",
+                "latency_ms": 140_000,
+            },
+        ],
+    )
+    config["ensemble_profiles"] = {
+        "challenger_glm_fast": {"backend": "vendor_c", "model": "glm-z"},
+        "challenger_glm_slow": {"backend": "vendor_a", "model": "glm-x"},
+        "challenger_other_family": {"backend": "vendor_d", "model": "qwen-w"},
+    }
+    fallback_calls: list[str] = []
+
+    def fake_fallback_backend(
+        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+    ):
+        fallback_calls.append(pool_backend)
+        return "challenger_other_family"
+
+    monkeypatch.setattr(ed, "resolve_fallback_backend", fake_fallback_backend)
+
+    chosen = ed.resolve_similar_fallback(
+        "challenger_glm_fast",
+        config=config,
+        project_root=project_root,
+        max_latency_ratio=2.0,
+        check_alive=lambda name, *, config: {"alive": True},
+    )
+    assert chosen == "challenger_other_family"
+    assert fallback_calls == ["vendor_c"], (
+        "debe delegar en resolve_fallback_backend con el backend del perfil "
+        "caido cuando NINGUN companero de familia pasa el filtro de rendimiento"
+    )
+
+
+def test_resolve_similar_fallback_falls_back_when_no_family_entry(
+    tmp_path, monkeypatch
+):
+    """Un perfil sin entrada en MODEL_FAMILY_MAP delega integro, sin inventar familia."""
+    monkeypatch.setattr(ed, "MODEL_FAMILY_MAP", {})
+    config = {
+        "ensemble_profiles": {
+            "challenger_unmapped": {"backend": "vendor_x", "model": "mystery"},
+        }
+    }
+    project_root = _write_scorecard_rows(tmp_path, [])
+    fallback_calls: list[str] = []
+
+    def fake_fallback_backend(
+        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+    ):
+        fallback_calls.append(pool_backend)
+        return "someone_else"
+
+    monkeypatch.setattr(ed, "resolve_fallback_backend", fake_fallback_backend)
+
+    chosen = ed.resolve_similar_fallback(
+        "challenger_unmapped", config=config, project_root=project_root
+    )
+    assert chosen == "someone_else"
+    assert fallback_calls == ["vendor_x"]
+
+
+def test_resolve_similar_fallback_falls_back_when_family_has_no_other_member(
+    tmp_path, monkeypatch
+):
+    """Familia con un unico perfil vivo (el que fallo): no hay compañero, delega."""
+    _fallback_test_family_map(monkeypatch)
+    config = {
+        "ensemble_profiles": {
+            "challenger_glm_slow": {"backend": "vendor_a", "model": "glm-x"},
+            "challenger_other_family": {"backend": "vendor_d", "model": "qwen-w"},
+        }
+    }
+    project_root = _write_scorecard_rows(tmp_path, [])
+    fallback_calls: list[str] = []
+
+    def fake_fallback_backend(
+        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+    ):
+        fallback_calls.append(pool_backend)
+        return "challenger_other_family"
+
+    monkeypatch.setattr(ed, "resolve_fallback_backend", fake_fallback_backend)
+
+    chosen = ed.resolve_similar_fallback(
+        "challenger_glm_slow", config=config, project_root=project_root
+    )
+    assert chosen == "challenger_other_family"
+    assert fallback_calls == ["vendor_a"]
+
+
+def test_profile_p50_latency_ms_computes_median_and_handles_missing_data():
+    """Mediana real (par e impar) y None sin datos -- sin inventar un valor."""
+    config = {
+        "ensemble_profiles": {
+            "p": {"backend": "b", "model": "m"},
+            "empty": {"backend": "x", "model": "y"},
+        }
+    }
+    rows_odd = [
+        {"backend": "b", "model": "m", "latency_ms": 100},
+        {"backend": "b", "model": "m", "latency_ms": 300},
+        {"backend": "b", "model": "m", "latency_ms": 200},
+    ]
+    assert ed._profile_p50_latency_ms("p", config=config, rows=rows_odd) == 200.0
+
+    rows_even = [
+        {"backend": "b", "model": "m", "latency_ms": 100},
+        {"backend": "b", "model": "m", "latency_ms": 200},
+        {"backend": "b", "model": "m", "latency_ms": 300},
+        {"backend": "b", "model": "m", "latency_ms": 400},
+    ]
+    assert ed._profile_p50_latency_ms("p", config=config, rows=rows_even) == 250.0
+
+    assert ed._profile_p50_latency_ms("empty", config=config, rows=[]) is None
+
+
+# ---------------------------------------------------------------------------
+# Correcciones de auditoria de cableado (2026-09-29): limite de gasto en el
+# fallback + aviso de typo en --phase.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_similar_fallback_respects_max_attempts_budget(tmp_path, monkeypatch):
+    """Con max_attempts=1, prueba SOLO el candidato mas rapido y degrada al
+    fallback generico sin gastar llamadas en los otros 2 companeros de
+    familia, aunque uno de ellos SI estaria vivo."""
+    _fallback_test_family_map(monkeypatch)
+    config = _fallback_test_config()
+    project_root = _write_scorecard_rows(
+        tmp_path,
+        [
+            {
+                "event": "ronda",
+                "backend": "vendor_a",
+                "model": "glm-x",
+                "latency_ms": 900_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "vendor_b",
+                "model": "glm-y",
+                "latency_ms": 150_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "vendor_c",
+                "model": "glm-z",
+                "latency_ms": 140_000,
+            },
+        ],
+    )
+    calls: list[str] = []
+
+    def check_alive(name, *, config):
+        calls.append(name)
+        return {"alive": False}  # todos "muertos" para forzar agotar el budget
+
+    fallback_calls: list[str] = []
+
+    def fake_fallback_backend(
+        pool_backend, *, config, check_alive, exclude_profiles=frozenset()
+    ):
+        fallback_calls.append(pool_backend)
+        return "challenger_other_family"
+
+    monkeypatch.setattr(ed, "resolve_fallback_backend", fake_fallback_backend)
+
+    chosen = ed.resolve_similar_fallback(
+        "challenger_glm_slow",
+        config=config,
+        project_root=project_root,
+        max_attempts=1,
+        check_alive=check_alive,
+    )
+    assert chosen == "challenger_other_family"
+    assert calls == ["challenger_glm_fast"], (
+        "max_attempts=1 debe probar SOLO el primero (mas rapido) del orden "
+        "por p50, nunca los 3 companeros de familia"
+    )
+    assert fallback_calls == ["vendor_a"]
+
+
+def test_warn_phase_typo_flags_close_but_not_exact_match(capsys):
+    """Un typo cercano a una fase de gobierno real avisa por stderr."""
+    ed._warn_phase_typo("manager_reviw")
+    captured = capsys.readouterr()
+    assert "manager_review" in captured.err
+    assert "WARN" in captured.err
+
+
+def test_warn_phase_typo_silent_on_exact_government_phase(capsys):
+    """Una fase de gobierno EXACTA no genera aviso (la maneja otra barrera)."""
+    ed._warn_phase_typo("manager_review")
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_warn_phase_typo_silent_on_deliberately_new_phase(capsys):
+    """Una fase exploratoria nueva y NO parecida a ninguna de gobierno no
+    genera ruido -- no es un enum cerrado, es una red de seguridad de typo."""
+    ed._warn_phase_typo("DESIGN_REVIEW")
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_warn_phase_typo_handles_none():
+    """None (--phase ausente, aunque el CLI lo exige) no revienta."""
+    ed._warn_phase_typo(None)  # no debe lanzar
