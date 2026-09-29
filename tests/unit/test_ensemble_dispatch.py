@@ -6614,3 +6614,128 @@ def test_ensemble_runtime_rel_constants_detects_str_value():
         )
     finally:
         delattr(ed, "STR_REL")
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-086b: `leaders` no cuenta como muestra un intento que la lente
+# nunca recibio (error del llamante o cuota agotada).
+# --------------------------------------------------------------------------- #
+
+
+def _ronda_row(ticket: str, *, failure_mode, outcome="no-aportacion", ronda=1):
+    return {
+        "ts": "t",
+        "event": "ronda",
+        "ticket": ticket,
+        "rol": "challenger",
+        "task_type": "code-review",
+        "backend": "fake",
+        "model": "m2",
+        "ronda": ronda,
+        "outcome": outcome,
+        "evidencia": "(respuesta vacia)",
+        "input_bytes": 0,
+        "context_kind": "diff",
+        "failure_mode": failure_mode,
+    }
+
+
+@pytest.mark.parametrize(
+    "failure_mode",
+    [
+        "usage-error",
+        "missing-nonce",
+        "transport_failed: TransportError: HTTP 402 monthly_cap_reached",
+        "transport_failed: TransportError: HTTP 429 insufficient_quota",
+    ],
+)
+def test_086b_non_sample_rounds_do_not_enter_adjudicated_cells(failure_mode):
+    """Error del llamante o cuota agotada: la lente no evaluo el contenido,
+    asi que la fila no es muestra de calidad. Mutation: quitar el filtro de
+    `_adjudicated_cells` -> la celda aparece -> RED."""
+    rows = [_ronda_row("WOT-TEST-086b", failure_mode=failure_mode)]
+    assert ed._adjudicated_cells(rows) == {}
+
+
+def test_086b_real_silent_round_still_counts_as_no_aportacion():
+    """Control positivo: una ronda que SI llego a la lente y callo (sin
+    failure_mode, o con un fallo de transporte que no es cuota) sigue contando."""
+    rows = [
+        _ronda_row("WOT-TEST-086b-a", failure_mode=None),
+        _ronda_row(
+            "WOT-TEST-086b-b",
+            failure_mode="transport_failed: TransportError: timed out",
+        ),
+    ]
+    cells = ed._adjudicated_cells(rows)
+    assert set(cells) == {
+        ("WOT-TEST-086b-a", 1, "challenger"),
+        ("WOT-TEST-086b-b", 1, "challenger"),
+    }
+
+
+def test_086b_phantom_row_does_not_shadow_a_later_real_round():
+    """La fila fantasma entraba con `setdefault` y OCUPABA la clave (ticket,
+    ronda, rol): la ronda real posterior con la misma clave quedaba tapada."""
+    real = _ronda_row("WOT-TEST-086b", failure_mode=None)
+    real["evidencia"] = "ronda real"
+    rows = [_ronda_row("WOT-TEST-086b", failure_mode="usage-error"), real]
+    cells = ed._adjudicated_cells(rows)
+    assert cells[("WOT-TEST-086b", 1, "challenger")]["evidencia"] == "ronda real"
+
+
+def test_086b_leaders_ignores_usage_error_rows_but_scorecard_keeps_them(tmp_path):
+    """Extremo a extremo sobre la proyeccion: 5 intentos rechazados (n >=
+    LEADER_MIN_N) no deben producir celda ni lider fantasma, y las 5 filas
+    siguen en el scorecard (el registro del intento es aditivo, no se borra)."""
+    for i in range(5):
+        ed.append_scorecard(
+            tmp_path, _ronda_row(f"WOT-TEST-{i:03d}b", failure_mode="usage-error")
+        )
+    ed.regenerate_leaders(tmp_path)
+    leaders = json.loads((tmp_path / ed.LEADERS_REL).read_text(encoding="utf-8"))
+    cell = leaders["por_task_type"].get("code-review")
+    assert cell is None or cell.get("lider") is None
+    assert "fake|m2" not in json.dumps(leaders)
+    rows = _rows(tmp_path)
+    assert sum(r.get("failure_mode") == "usage-error" for r in rows) == 5
+
+
+@pytest.mark.parametrize(
+    ("given", "expected_hint"),
+    [
+        ("contract_audit", "contract-audit"),
+        ("Code-Review", "code-review"),
+        ("prompt_audit", "prompt-audit"),
+        ("tirage", "triage"),
+    ],
+)
+def test_086b_invalid_task_type_message_suggests_valid_value(given, expected_hint):
+    msg = ed._invalid_task_type_message(given)
+    assert "invalido; usa uno de" in msg
+    assert f"quisiste decir '{expected_hint}'" in msg
+
+
+def test_086b_invalid_task_type_message_without_close_match_has_no_hint():
+    msg = ed._invalid_task_type_message("zzzzzz")
+    assert "invalido; usa uno de" in msg
+    assert "quisiste decir" not in msg
+
+
+def test_086b_run_loop_round_error_carries_the_hint(tmp_path):
+    """El mensaje que ve el llamante (no solo la funcion auxiliar) lleva la
+    sugerencia: los tres puntos que rechazan `task_type` usan el mismo texto."""
+    with pytest.raises(ValueError, match="quisiste decir 'contract-audit'"):
+        ed.run_loop_round(
+            "p_chal",
+            "contenido",
+            config={"ensemble_profiles": {}, "backends": {}},
+            project_root=tmp_path,
+            ticket="WOT-TEST-086b",
+            task_type="contract_audit",
+            rol="challenger",
+            phase="premise_check",
+            loop_id="L720",
+            backend_key="BA01",
+            sensitivity="public",
+        )

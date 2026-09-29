@@ -237,6 +237,27 @@ TASK_TYPES = {
     "exploracion",
 }
 
+
+def _invalid_task_type_message(task_type: str) -> str:
+    """Texto del rechazo de un `task_type` fuera de `TASK_TYPES`, con sugerencia.
+
+    WOT-2026-086b: el rechazo se mantiene sin excepciones para alias; solo se
+    anade el valor valido mas probable (`contract_audit` -> `contract-audit`),
+    normalizando mayusculas, `_` y espacios antes de `difflib`. Sin candidato
+    razonable no se sugiere nada: una sugerencia inventada es peor que ninguna.
+    """
+    base = f"task_type '{task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
+    normalized = str(task_type).strip().lower().replace("_", "-").replace(" ", "-")
+    if normalized in TASK_TYPES:
+        hint = normalized
+    else:
+        close = difflib.get_close_matches(
+            normalized, sorted(TASK_TYPES), n=1, cutoff=0.6
+        )
+        hint = close[0] if close else None
+    return f"{base} (quisiste decir '{hint}'?)" if hint else base
+
+
 # Fases de gobierno del bucle 1->9->2 (WOT-2026-040i): exigen challenge_nonce.
 # Las fases NO de gobierno (p.ej. premise_check, smoke) siguen aceptando la
 # ausencia. La lista la deriva el lector `check_loop_execution` para su recuento.
@@ -1755,15 +1776,49 @@ def _read_scorecard(project_root: Path) -> tuple[list[dict], str]:
     return rows, sha
 
 
+# WOT-2026-086b: `failure_mode` de filas `ronda` en las que la lente NUNCA
+# recibio el contenido -- el intento lo rechazo el propio dispatcher antes de
+# llamar al proveedor. Se registran (el intento es auditable) pero no son
+# muestra de la calidad de la lente.
+_CALLER_ERROR_FAILURE_MODES = frozenset({"usage-error", "missing-nonce"})
+
+
+def _is_non_sample_round(row: dict) -> bool:
+    """True si la fila `ronda` no mide la calidad de la lente.
+
+    Before: `row` es una fila del scorecard; `failure_mode` es texto libre o None.
+    During: puro. Dos clases: error del llamante (`_CALLER_ERROR_FAILURE_MODES`,
+        igualdad exacta) y cuota agotada (algun `_QUOTA_MARKERS` en el texto,
+        los mismos que usa `_classify_transport_failure`). Un fallo de red o un
+        silencio real SI son muestra: la lente recibio el contenido y no aporto.
+    After: bool. Medido 2026-09-29: 5 filas `usage-error` de `contract_audit`
+        fabricaban un lider fantasma nan qwen3.6 con tasa 0.0.
+    """
+    failure_mode = row.get("failure_mode") or ""
+    if failure_mode in _CALLER_ERROR_FAILURE_MODES:
+        return True
+    lowered = failure_mode.lower()
+    return any(marker in lowered for marker in _QUOTA_MARKERS)
+
+
 def _adjudicated_cells(rows: list[dict]) -> dict:
-    """Ultima adjudicacion por (ticket, ronda, rol); supersede pisa por orden."""
+    """Ultima adjudicacion por (ticket, ronda, rol); supersede pisa por orden.
+
+    Una `ronda` con `outcome=no-aportacion` cuenta como adjudicada salvo que
+    `_is_non_sample_round` la descarte (WOT-2026-086b): antes entraba por
+    `setdefault` y ademas OCUPABA la clave, tapando una ronda real posterior.
+    """
     adjudicated: dict = {}
     for row in rows:
         key = (row.get("ticket"), row.get("ronda"), row.get("rol"))
         if row.get("event") in ("adjudicacion", "supersede"):
             if row.get("outcome") in ADJUDICATED_OUTCOMES:
                 adjudicated[key] = row
-        elif row.get("event") == "ronda" and row.get("outcome") == "no-aportacion":
+        elif (
+            row.get("event") == "ronda"
+            and row.get("outcome") == "no-aportacion"
+            and not _is_non_sample_round(row)
+        ):
             adjudicated.setdefault(key, row)
     return adjudicated
 
@@ -3393,9 +3448,7 @@ def run_loop_round(
         fila, porque no hubo ronda.
     """
     if task_type not in TASK_TYPES:
-        raise ValueError(
-            f"task_type '{task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
-        )
+        raise ValueError(_invalid_task_type_message(task_type))
     profile = config["ensemble_profiles"][profile_name]
     # WOT-2026-026t: `backend_key` es el RECIBO de quien ejecuto la ronda, y
     # `check_loop_execution` cuenta claves DISTINTAS para acreditar la
@@ -3754,9 +3807,7 @@ def run_pipeline(
         invalido (WOT-2026-025y, D2), listando `sorted(TASK_TYPES)`.
     """
     if task_type not in TASK_TYPES:
-        raise ValueError(
-            f"task_type '{task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
-        )
+        raise ValueError(_invalid_task_type_message(task_type))
     pipe = config["ensemble_pipelines"][pipeline_name]
     rounds_cap = int(pipe.get("max_rounds", 2))
     total_rounds = min(max_rounds or rounds_cap, rounds_cap)
@@ -4518,9 +4569,7 @@ def _cmd_loop_round(args, config) -> int:
                 commit_sha=args.commit_sha,
                 challenge_nonce=args.challenge_nonce,
             )
-        raise ValueError(
-            f"task_type '{args.task_type}' invalido; usa uno de {sorted(TASK_TYPES)}"
-        )
+        raise ValueError(_invalid_task_type_message(args.task_type))
     allowed, reason = payload_read_allowed(
         content_path, config.get("ensemble_payload_allowlist", [])
     )
