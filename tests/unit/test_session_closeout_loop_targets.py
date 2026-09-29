@@ -1097,6 +1097,44 @@ def test_declared_authority_read_from_destination_archive_plan(
     assert sha in (destino / TARGETS_REL).read_text(encoding="utf-8")
 
 
+def test_declared_authority_matches_human_spelling_with_space(
+    tmp_path: Path,
+) -> None:
+    """Regresion: `_DELIVERY_AUTHORITY_DECLARED_RE` solo reconocia
+    `delivery_authority` (snake_case) o `repo de autoridad` (espanol); la
+    grafia humana en ingles `**Delivery Authority:**` (con espacio, sin guion
+    bajo) no matcheaba y caia en D2 fail-closed pese a estar declarada.
+
+    Medido 2026-09-29 sobre el cierre real de WOT-2026-055o: su propio
+    `work_plan.md` (y el de su archivo original) usan exactamente esta
+    grafia, igual que 21+ `work_plan_*.md` historicos del mismo destino
+    (patron mayoritario, no caso aislado) -- confirma que el defecto vivia
+    en el regex, no en el dato.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    wp = destino / ".agent" / "collaboration" / "work_plan.md"
+    wp.parent.mkdir(parents=True, exist_ok=True)
+    wp.write_text(
+        "# Plan de Trabajo: fixture\n\n## Metadata\n"
+        "- **ID:** WOT-2026-902b\n"
+        "- **Delivery Authority:** repo_motor\n",
+        encoding="utf-8",
+    )
+    sha = _commit_file(motor, "src/b.py", "x = 2", "WOT-2026-902b: fix bug")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-902b"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert "FAIL_TARGETS_MISSING" not in result.detail
+    assert sha in (destino / TARGETS_REL).read_text(encoding="utf-8")
+
+
 def test_declared_authority_read_from_frozen_contract_block(
     tmp_path: Path,
 ) -> None:

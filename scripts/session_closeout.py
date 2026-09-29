@@ -1440,7 +1440,7 @@ def _git_log_shas_for_ticket(
 _VALID_DELIVERY_AUTHORITIES = frozenset({"repo_motor", "repo_destino"})
 
 _DELIVERY_AUTHORITY_DECLARED_RE = re.compile(
-    r"(?:delivery_authority|repo\s+de\s+autoridad)\s*:?\**\s*"
+    r"(?:delivery_authority|delivery\s+authority|repo\s+de\s+autoridad)\s*:?\**\s*"
     r"(`?)(repo_motor|repo_destino)\1",
     re.IGNORECASE,
 )
