@@ -340,7 +340,10 @@ def test_cco_consolidator_rule_allows_participant_lector_fs_in_chat_loop():
 def test_every_step_has_explicit_function_field(loop_id):
     config = _load_config()
     shape = config["ensemble_registry"]["loop_shapes"][loop_id]
-    for i, step in enumerate(shape["steps"]):
+    # WOT-2026-086f: alias legacy no tienen 'steps' propio, solo alias_of.
+    # Si tiene steps, cada step debe tener un campo 'function' explicito.
+    steps = shape.get("steps", [])
+    for i, step in enumerate(steps):
         assert "function" in step, f"{loop_id}.steps[{i}] missing 'function' field"
         assert step["function"] in ("participant", "consolidator")
 
@@ -436,3 +439,65 @@ def test_ensemble_registry_backend_keys_match_live_profiles():
     assert not mismatches, (
         f"ensemble_registry miente sobre perfiles vivos (drift tipo BA06): {mismatches}"
     )
+
+
+# ---------------------------------------------------------------------------
+# (e) WOT-2026-086f: formas parametricas, alias, sin backend_key fijo
+# ---------------------------------------------------------------------------
+
+
+def test_loop_shapes_zero_steps_with_backend_key():
+    """WOT-2026-086f DoD D1: ningun step de loop_shapes tiene `backend_key`.
+
+    Mutation: reintroducir un `backend_key` en un step de una forma nueva pone
+    ROJO este test.
+    """
+    config = _load_config()
+    shapes = config["ensemble_registry"]["loop_shapes"]
+    violations = []
+    for shape_id, shape in shapes.items():
+        for i, step in enumerate(shape.get("steps", [])):
+            if step.get("backend_key"):
+                violations.append(
+                    f"{shape_id}.steps[{i}].backend_key={step['backend_key']!r} "
+                    f"no debe existir (WOT-2026-086f DoD D1)"
+                )
+    assert violations == [], f"steps con backend_key encontrados: {violations}"
+
+
+def test_legacy_loop_ids_resolve_to_existing_form():
+    """WOT-2026-086f DoD D2: cada alias legacy resuelve a una forma existente.
+
+    El censo real (DEC-086F-001): L700->DBL-4, L710->DBL-3, L720->DBL-4,
+    L800->CHA-1. Los tests usan el registro vivo, no los valores exactos --
+    lo que importa es que el alias resuelva a una forma en loop_shapes.
+
+    Mutation: cambiar `alias_of` a un nombre que no exista en el registro
+    pone ROJO este test.
+    """
+    config = _load_config()
+    shapes = config["ensemble_registry"]["loop_shapes"]
+    for shape_id, shape in shapes.items():
+        alias_of = shape.get("alias_of")
+        if alias_of is not None:
+            assert alias_of in shapes, (
+                f"el alias '{shape_id}' apunta a '{alias_of}' que no existe "
+                f"en loop_shapes (WOT-2026-086f DoD D2)"
+            )
+
+
+def test_form_parametric_list_complete():
+    """WOT-2026-086f DoD D1: la lista cerrada de formas incluye las formas
+    UNI-N, DBL-N, ROL-N y CHA-N segun el parametrico.
+    """
+    config = _load_config()
+    shapes = config["ensemble_registry"]["loop_shapes"]
+    # Solo contar formas NO alias (las que no tienen alias_of)
+    forms = {sid for sid, shape in shapes.items() if "alias_of" not in shape}
+    # Rango exacto del registro vivo:
+    # UNI: 2..5, DBL: 2..6, ROL: 2..4, CHA: 1..5
+    for prefix, lo, hi in (("UNI", 2, 5), ("DBL", 2, 6), ("ROL", 2, 4), ("CHA", 1, 5)):
+        for n in range(lo, hi + 1):
+            assert f"{prefix}-{n}" in forms, (
+                f"falta la forma '{prefix}-{n}' en loop_shapes"
+            )

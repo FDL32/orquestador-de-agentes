@@ -4882,6 +4882,12 @@ def validate_loop_id(loop_id: str, config: dict) -> str | None:
     despacho, mismo registro): se valida ANTES de escribir, para no archivar una
     fila que ya nace invalida.
 
+    WOT-2026-086f (2026-09-30): los `loop_shapes` ahora incluyen formas
+    parametricas (`UNI-N`, `DBL-N`, `ROL-N`, `CHA-N`) y alias legacy (`L###`
+    -> `alias_of: <forma>`). La validacion RESUELVE el alias antes de verificar
+    la forma subyacente: un `loop_id` que es un alias `deprecated` pasa si la
+    forma resuelta es `active` (migra el alias sin romper la corrida).
+
     Before: `loop_id` es la cadena del CLI; `config` es el agents.json cargado.
     During: solo lee el registro. Sin red, sin escritura.
     After: retorna `None` si el bucle es `active` (o si el registro no declara
@@ -4922,6 +4928,26 @@ def validate_loop_id(loop_id: str, config: dict) -> str | None:
             f"check_loop_execution agrupa las rondas por el. Bucles ACTIVOS: "
             f"{', '.join(activos) or '(ninguno)'}."
         )
+    # WOT-2026-086f: resolver alias legacy (L### -> forma parametrica)
+    alias_of = meta.get("alias_of")
+    if alias_of is not None:
+        resolved = shapes.get(alias_of)
+        if resolved is None:
+            return (
+                f"[emit-nonce] WARN: el alias '{loop_id}' apunta a la forma "
+                f"'{alias_of}' que NO existe en el registro. Bucles ACTIVOS: "
+                f"{', '.join(activos) or '(ninguno)'}."
+            )
+        status = (resolved or {}).get("status")
+        if status != "active":
+            return (
+                f"[emit-nonce] WARN: el alias '{loop_id}' (-> '{alias_of}') esta "
+                f"'{status}' en el registro: no es recomendable para uso NUEVO. "
+                f"Activos: {', '.join(activos) or '(ninguno)'}. Se emite "
+                f"igualmente (un bucle retirado puede seguir en un loop_shape "
+                f"mientras se migra)."
+            )
+        return None
     status = (meta or {}).get("status")
     if status != "active":
         return (

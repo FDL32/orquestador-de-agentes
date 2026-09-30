@@ -499,6 +499,11 @@ def fabricated_nonce_rounds(
     aplicado a las mudas en WOT-2026-043q): un contador sin nombres obliga a
     re-medir a mano. Un receipt cuyo nonce no esta en el ledger para este
     commit (y loop, si se da) es un nonce fabricado.
+
+    WOT-2026-086f (correccion): filtra tambien las filas del scorecard por
+    `loop_id` (no solo el ledger de `emitted_nonces`). Sin este filtro, rondas
+    legitimas de OTRO bucle sobre el mismo sha salen marcadas FABRICADO (203 shas
+    afectados medidos).
     """
     valid_nonces = _valid_nonces_for(emitted, commit_sha, loop_id)
     issuers = {
@@ -511,6 +516,9 @@ def fabricated_nonce_rounds(
         if row.get("event") != "ronda":
             continue
         if row.get("commit_sha") != commit_sha:
+            continue
+        # WOT-2026-086f: filtrar por loop_id tambien en scorecard
+        if loop_id is not None and row.get("loop_id") not in (None, loop_id):
             continue
         bk = row.get("backend_key")
         nonce = row.get("challenge_nonce")

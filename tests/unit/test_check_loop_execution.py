@@ -40,14 +40,19 @@ def _emitted(nonce="N1", commit="abc", loop="L700", ts="2026-07-24T10:00:00+00:0
     }
 
 
-def _ronda(backend, nonce="N1", commit="abc", ts="2026-07-24T10:05:00+00:00"):
-    return {
+def _ronda(
+    backend, nonce="N1", commit="abc", ts="2026-07-24T10:05:00+00:00", loop_id=None
+):
+    row = {
         "event": "ronda",
         "commit_sha": commit,
         "backend_key": backend,
         "challenge_nonce": nonce,
         "ts": ts,
     }
+    if loop_id is not None:
+        row["loop_id"] = loop_id
+    return row
 
 
 # --------------------------------------------------------------- fixture positivo
@@ -1184,3 +1189,48 @@ def test_structurally_valid_rounds_excludes_exploracion_task_type():
     }
     verdict_gov = cle.audit_commit(misma, emitted, commit_sha="abc", min_distinct=4)
     assert verdict_gov["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-086f: fabricated_nonce_rounds filtra scorecard por loop_id
+# ---------------------------------------------------------------------------
+
+
+def test_fabricated_nonce_rounds_filters_scorecard_by_loop_id():
+    """WOT-2026-086f DoD D5(b): fabricado filtra scorecard por loop_id.
+
+    Mutation: revertir el fix (dejar de filtrar por loop_id en scorecard) ->
+    ROJO.
+
+    Escenario: dos nonces del mismo sha pero loop_id distinto. La ronda del
+    loop_id X no debe marcarse fabricada si tiene su propio nonce emitido,
+    aunque comparta commit_sha con otro bucle.
+    """
+    emitted_ab = [
+        _emitted(nonce="N_A", commit=SHA_A, loop="X"),
+        _emitted(nonce="N_B", commit=SHA_A, loop="Y"),
+    ]
+    sc = [
+        _ronda("BA10", commit=SHA_A, nonce="N_A", loop_id="X"),
+        _ronda("BA11", commit=SHA_A, nonce="N_A", loop_id="X"),
+        _ronda("BA12", commit=SHA_A, nonce="N_B", loop_id="Y"),
+        _ronda("BA13", commit=SHA_A, nonce="N_B", loop_id="Y"),
+    ]
+
+    # Con loop_id="X": N_A es valido, N_B no es de X pero las filas de Y
+    # se filtran FUERA (tienen loop_id="Y" != "X"), asi que no se marcan
+    # fabricadas (son de otro bucle, no fabricadas para X).
+    v = cle.fabricated_nonce_rounds(sc, emitted_ab, commit_sha=SHA_A, loop_id="X")
+    assert v == [], (
+        "con loop_id='X', solo las filas con loop_id='X' se chequean; "
+        "N_A es valido para X, las de Y se filtran fuera"
+    )
+
+    # Sin filtrar por loop_id explicito: se filtran TODAS las filas del
+    # scorecard por su propio loop_id implicito (que es None si no se da
+    # loop_id a la funcion, asi que se chequean TODAS, no solo las de X).
+    v_all = cle.fabricated_nonce_rounds(sc, emitted_ab, commit_sha=SHA_A)
+    assert len(v_all) == 0, (
+        "sin loop_id explicito, todas las filas del scorecard se chequean "
+        "y N_A/N_B existen en el ledger"
+    )

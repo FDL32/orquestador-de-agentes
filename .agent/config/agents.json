@@ -437,7 +437,8 @@
         "backend": "nan_api",
         "model": "mimo-v2.5",
         "backend_version": null,
-        "status": "active"
+        "status": "archived",
+        "archived_reason": "evidencia local de fallo: 1x HTTP 402 (2026-09-28), 3x HTTP 401 (2026-09-29). 'Retirado por el proveedor' NO verificable en modo read-only sin credenciales -- declarado como evidencia local, no como hecho externo confirmado."
       },
       "BA13": {
         "backend": "nan_api",
@@ -594,247 +595,113 @@
       }
     },
     "loop_shapes": {
+      "UNI-2": {
+        "name": "UNI-2",
+        "status": "active",
+        "steps": []
+      },
+      "UNI-3": {
+        "name": "UNI-3",
+        "status": "active",
+        "steps": []
+      },
+      "UNI-4": {
+        "name": "UNI-4",
+        "status": "active",
+        "steps": []
+      },
+      "UNI-5": {
+        "name": "UNI-5",
+        "status": "active",
+        "steps": []
+      },
+      "DBL-2": {
+        "name": "DBL-2",
+        "status": "active",
+        "steps": []
+      },
+      "DBL-3": {
+        "name": "DBL-3",
+        "status": "active",
+        "steps": []
+      },
+      "DBL-4": {
+        "name": "DBL-4",
+        "status": "active",
+        "steps": []
+      },
+      "DBL-5": {
+        "name": "DBL-5",
+        "status": "active",
+        "steps": []
+      },
+      "DBL-6": {
+        "name": "DBL-6",
+        "status": "active",
+        "steps": []
+      },
+      "ROL-2": {
+        "name": "ROL-2",
+        "status": "active",
+        "steps": []
+      },
+      "ROL-3": {
+        "name": "ROL-3",
+        "status": "active",
+        "steps": []
+      },
+      "ROL-4": {
+        "name": "ROL-4",
+        "status": "active",
+        "steps": []
+      },
+      "CHA-1": {
+        "name": "CHA-1",
+        "status": "active",
+        "steps": []
+      },
+      "CHA-2": {
+        "name": "CHA-2",
+        "status": "active",
+        "steps": []
+      },
+      "CHA-3": {
+        "name": "CHA-3",
+        "status": "active",
+        "steps": []
+      },
+      "CHA-4": {
+        "name": "CHA-4",
+        "status": "active",
+        "steps": []
+      },
+      "CHA-5": {
+        "name": "CHA-5",
+        "status": "active",
+        "steps": []
+      },
       "L700": {
+        "alias_of": "DBL-4",
         "name": "BUC-01",
         "launched_from": "chat",
-        "steps": [
-          {
-            "phase": "collector",
-            "function": "participant",
-            "backend_key": "BA01"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA10"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA11"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA12"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA13"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA10"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA11"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA12"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA13"
-          },
-          {
-            "phase": "fanout-lector-fs",
-            "function": "participant",
-            "backend_key": "BA01"
-          }
-        ],
         "status": "deprecated"
       },
-      "L800": {
-        "name": "CHA-01",
-        "launched_from": "chat",
-        "steps": [
-          {
-            "phase": "collector",
-            "function": "participant",
-            "backend_key": "BA01"
-          },
-          {
-            "phase": "challenge-fanout",
-            "function": "participant",
-            "backend_key": "BA01"
-          },
-          {
-            "phase": "challenge-fanout",
-            "function": "participant",
-            "backend_key": "BA10"
-          },
-          {
-            "phase": "challenge-fanout",
-            "function": "participant",
-            "backend_key": "BA11"
-          },
-          {
-            "phase": "challenge-fanout",
-            "function": "participant",
-            "backend_key": "BA12"
-          },
-          {
-            "phase": "challenge-fanout",
-            "function": "participant",
-            "backend_key": "BA13"
-          },
-          {
-            "phase": "challenge-fanout-lector-fs",
-            "function": "participant",
-            "backend_key": "BA01"
-          }
-        ],
-        "status": "active"
-      },
       "L710": {
+        "alias_of": "DBL-3",
         "name": "BUC-02",
         "launched_from": "chat",
-        "steps": [
-          {
-            "phase": "collector",
-            "function": "participant",
-            "backend_key": "BA01"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA10"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA11"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA12"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA13"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA05"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA06"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA10"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA11"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA12"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA13"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA05"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA06"
-          },
-          {
-            "phase": "fanout-lector-fs",
-            "function": "participant",
-            "backend_key": "BA01"
-          }
-        ],
         "status": "deprecated"
       },
       "L720": {
+        "alias_of": "DBL-4",
         "name": "BUC-03",
         "launched_from": "chat",
-        "steps": [
-          {
-            "phase": "collector",
-            "function": "participant",
-            "backend_key": "BA01"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA06"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA15"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA16"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA11"
-          },
-          {
-            "phase": "fanout-comun",
-            "function": "participant",
-            "backend_key": "BA05"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA06"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA15"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA16"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA11"
-          },
-          {
-            "phase": "fanout-dif",
-            "function": "participant",
-            "backend_key": "BA05"
-          },
-          {
-            "phase": "fanout-lector-fs",
-            "function": "participant",
-            "backend_key": "BA01"
-          }
-        ],
+        "status": "active"
+      },
+      "L800": {
+        "alias_of": "CHA-1",
+        "name": "CHA-01",
+        "launched_from": "chat",
         "status": "active"
       }
     },
@@ -865,7 +732,7 @@
       "ensemble_profiles_ref": [
         "challenger_nan_deepseek_flash",
         "challenger_nan_qwen",
-        "challenger_nan_mimo",
+        "challenger_nan_mimo_flash",
         "challenger_nan_gemma"
       ]
     }

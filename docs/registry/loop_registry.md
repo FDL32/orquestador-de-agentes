@@ -44,7 +44,7 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA06 | opencode | opencode-go/glm-5.3-flash | active |
 | BA10 | nan_api | deepseek-v4-flash | active |
 | BA11 | nan_api | qwen3.6 | active |
-| BA12 | nan_api | mimo-v2.5 | active |
+| BA12 | nan_api | mimo-v2.5 | archived |
 | BA13 | nan_api | gemma4 | active |
 | BA14 | nan_api | deepseek-v4-flash-0731 | deprecated |
 | BA15 | nan_api | qwen3.8-flash | active |
@@ -74,72 +74,131 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 
 | loop_id | name | launched_from | steps | status |
 |---------|------|----------------|-------|--------|
-| L700 | BUC-01 | chat | 10 | deprecated |
-| L710 | BUC-02 | chat | 14 | deprecated |
-| L720 | BUC-03 | chat | 12 | active |
-| L800 | CHA-01 | chat | 7 | active |
+| CHA-1 | CHA-1 |  | 0 | active |
+| CHA-2 | CHA-2 |  | 0 | active |
+| CHA-3 | CHA-3 |  | 0 | active |
+| CHA-4 | CHA-4 |  | 0 | active |
+| CHA-5 | CHA-5 |  | 0 | active |
+| DBL-2 | DBL-2 |  | 0 | active |
+| DBL-3 | DBL-3 |  | 0 | active |
+| DBL-4 | DBL-4 |  | 0 | active |
+| DBL-5 | DBL-5 |  | 0 | active |
+| DBL-6 | DBL-6 |  | 0 | active |
+| L700 | BUC-01 | chat | 0 | deprecated |
+| L710 | BUC-02 | chat | 0 | deprecated |
+| L720 | BUC-03 | chat | 0 | active |
+| L800 | CHA-01 | chat | 0 | active |
+| ROL-2 | ROL-2 |  | 0 | active |
+| ROL-3 | ROL-3 |  | 0 | active |
+| ROL-4 | ROL-4 |  | 0 | active |
+| UNI-2 | UNI-2 |  | 0 | active |
+| UNI-3 | UNI-3 |  | 0 | active |
+| UNI-4 | UNI-4 |  | 0 | active |
+| UNI-5 | UNI-5 |  | 0 | active |
 
 ## Steps by loop
+
+### CHA-1 (CHA-1)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### CHA-2 (CHA-2)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### CHA-3 (CHA-3)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### CHA-4 (CHA-4)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### CHA-5 (CHA-5)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### DBL-2 (DBL-2)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### DBL-3 (DBL-3)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### DBL-4 (DBL-4)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### DBL-5 (DBL-5)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### DBL-6 (DBL-6)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
 
 ### L700 (BUC-01)
 
 | phase | function | backend_key |
 |-------|----------|-------------|
-| collector | participant | BA01 |
-| fanout-comun | participant | BA10 |
-| fanout-comun | participant | BA11 |
-| fanout-comun | participant | BA12 |
-| fanout-comun | participant | BA13 |
-| fanout-dif | participant | BA10 |
-| fanout-dif | participant | BA11 |
-| fanout-dif | participant | BA12 |
-| fanout-dif | participant | BA13 |
-| fanout-lector-fs | participant | BA01 |
 
 ### L710 (BUC-02)
 
 | phase | function | backend_key |
 |-------|----------|-------------|
-| collector | participant | BA01 |
-| fanout-comun | participant | BA10 |
-| fanout-comun | participant | BA11 |
-| fanout-comun | participant | BA12 |
-| fanout-comun | participant | BA13 |
-| fanout-comun | participant | BA05 |
-| fanout-comun | participant | BA06 |
-| fanout-dif | participant | BA10 |
-| fanout-dif | participant | BA11 |
-| fanout-dif | participant | BA12 |
-| fanout-dif | participant | BA13 |
-| fanout-dif | participant | BA05 |
-| fanout-dif | participant | BA06 |
-| fanout-lector-fs | participant | BA01 |
 
 ### L720 (BUC-03)
 
 | phase | function | backend_key |
 |-------|----------|-------------|
-| collector | participant | BA01 |
-| fanout-comun | participant | BA06 |
-| fanout-comun | participant | BA15 |
-| fanout-comun | participant | BA16 |
-| fanout-comun | participant | BA11 |
-| fanout-comun | participant | BA05 |
-| fanout-dif | participant | BA06 |
-| fanout-dif | participant | BA15 |
-| fanout-dif | participant | BA16 |
-| fanout-dif | participant | BA11 |
-| fanout-dif | participant | BA05 |
-| fanout-lector-fs | participant | BA01 |
 
 ### L800 (CHA-01)
 
 | phase | function | backend_key |
 |-------|----------|-------------|
-| collector | participant | BA01 |
-| challenge-fanout | participant | BA01 |
-| challenge-fanout | participant | BA10 |
-| challenge-fanout | participant | BA11 |
-| challenge-fanout | participant | BA12 |
-| challenge-fanout | participant | BA13 |
-| challenge-fanout-lector-fs | participant | BA01 |
+
+### ROL-2 (ROL-2)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### ROL-3 (ROL-3)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### ROL-4 (ROL-4)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### UNI-2 (UNI-2)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### UNI-3 (UNI-3)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### UNI-4 (UNI-4)
+
+| phase | function | backend_key |
+|-------|----------|-------------|
+
+### UNI-5 (UNI-5)
+
+| phase | function | backend_key |
+|-------|----------|-------------|

@@ -116,3 +116,78 @@ def test_registro_vacio_no_bloquea(destino: Path) -> None:
     """
     assert ed.validate_loop_id("L999", {"ensemble_registry": {}}) is None
     assert ed.validate_loop_id("L999", {}) is None
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-086f: resolucion de alias
+# ---------------------------------------------------------------------------
+
+
+def _registry_with_alias() -> dict:
+    """Registro con forma activa, alias legacy y formas parametricas WOT-2026-086f."""
+    return {
+        "ensemble_registry": {
+            "statuses": ["active", "deprecated", "archived"],
+            "backend_keys": {"BA01": {"backend": "claude", "status": "active"}},
+            "loop_shapes": {
+                "DBL-4": {"name": "DBL-4", "status": "active", "steps": []},
+                "DBL-3": {"name": "DBL-3", "status": "active", "steps": []},
+                "UNI-4": {"name": "UNI-4", "status": "active", "steps": []},
+                "L700": {"alias_of": "DBL-4", "status": "deprecated", "name": "BUC-01"},
+                "L720": {"alias_of": "DBL-4", "status": "active", "name": "BUC-03"},
+                "L710": {"alias_of": "DBL-3", "status": "deprecated", "name": "BUC-02"},
+            },
+        }
+    }
+
+
+def test_alias_legacy_resuelve_a_forma_activa(destino: Path) -> None:
+    """WOT-2026-086f: L720 (alias of DBL-4) pasa sin WARN porque la forma es active.
+
+    Mutation: si DBL-4 estuviera deprecated, L720 deberia producir WARN.
+    """
+    warning = ed.validate_loop_id("L720", _registry_with_alias())
+    assert warning is None, "L720 -> DBL-4 (active) no debe generar WARN"
+
+
+def test_alias_deprecated_resuelve_a_forma_activa(destino: Path) -> None:
+    """WOT-2026-086f: L700 es deprecated como alias, pero resuelve a DBL-4 active.
+
+    El alias deprecated no bloquea la resolucion a una forma activa:
+    la validacion mira la forma, no el alias.
+    """
+    warning = ed.validate_loop_id("L700", _registry_with_alias())
+    assert warning is None, (
+        "L700 (deprecated alias -> DBL-4 active) no debe generar WARN: "
+        "la validacion WOT-2026-086f resuelve el alias y verifica la forma"
+    )
+
+
+def test_alias_apunta_a_forma_inexistente_avisa(destino: Path) -> None:
+    """WOT-2026-086f: si el alias apunta a una forma que no existe, se avisa."""
+    broken = {
+        "ensemble_registry": {
+            "statuses": ["active", "deprecated", "archived"],
+            "backend_keys": {},
+            "loop_shapes": {
+                "L999": {"alias_of": "DOES_NOT_EXIST", "status": "deprecated"},
+            },
+        }
+    }
+    warning = ed.validate_loop_id("L999", broken)
+    assert warning is not None, "alias a forma inexistente debe generar WARN"
+    assert "L999" in warning
+    assert "DOES_NOT_EXIST" in warning
+
+
+def test_forma_parametrica_pasa_sin_warning(destino: Path) -> None:
+    """WOT-2026-086f: las formas parametricas nuevas pasan como active."""
+    warning = ed.validate_loop_id("UNI-4", _registry_with_alias())
+    assert warning is None, "UNI-4 (forma parametrica active) no debe generar WARN"
+
+
+def test_forma_parametrica_inexistente_avisa(destino: Path) -> None:
+    """WOT-2026-086f: una forma que no existe produce WARN."""
+    warning = ed.validate_loop_id("UNI-99", _registry_with_alias())
+    assert warning is not None, "UNI-99 (no existe) debe generar WARN"
+    assert "UNI-99" in warning

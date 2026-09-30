@@ -92,17 +92,39 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
 Las fases de gobierno (`CONTRACT_AUDIT`, `MANAGER_REVIEW`, `CLOSE`) exigen nonce (WOT-2026-040i). Sin el,
 `loop-round` bloquea sin gastar la llamada.
 
-    python scripts/ensemble_dispatch.py emit-nonce --commit-sha <sha> --loop-id <Lxxx registrado> \
-        --issuer-backend-key BA01 --project-root <destino>
-    python scripts/ensemble_dispatch.py loop-round --profile <perfil> --backend-key <BAxx> --rol challenger \
-        --content-file <bundle> --ticket <ID> --task-type <task_type> --phase <FASE> --loop-id <Lxxx> \
-        --commit-sha <sha> --challenge-nonce <nonce> --data-sensitivity public --project-root <destino>
+`challenge_nonce es la identidad de ejecucion`: unico por emision, sin duplicados (953 nonces,
+953 distintos, medido 2026-09-30). `loop_id` designa la FORMA del bucle (`UNI-N`, `DBL-N`, `ROL-N`,
+`CHA-N`); el campo `challenge_nonce` es la identidad de la EJECUCION concreta. WOT-2026-086f: se rechazo
+anadir un campo nuevo `shape_id`/`run_id`; el nonce ya cumple ese rol.
 
-`--loop-id` debe existir en `ensemble_registry.loop_shapes` de `agents.json`; si no, `emit-nonce` avisa.
+     python scripts/ensemble_dispatch.py emit-nonce --commit-sha <sha> --loop-id <forma registrada> \
+         --issuer-backend-key BA01 --project-root <destino>
+     python scripts/ensemble_dispatch.py loop-round --profile <perfil> --backend-key <BAxx> --rol challenger \
+         --content-file <bundle> --ticket <ID> --task-type <task_type> --phase <FASE> --loop-id <forma> \
+         --commit-sha <sha> --challenge-nonce <nonce> --data-sensitivity public --project-root <destino>
+
+`--loop-id` debe ser una forma registrada en `ensemble_registry.loop_shapes` de `agents.json` (p.ej.
+`UNI-4`, `DBL-4`, `CHA-1`) o un alias legacy (`L700`, `L720`...) que resuelve a una forma. Si no,
+`emit-nonce` emite un WARN; si la forma resuelta esta `deprecated`, tambien avisa. `validate_loop_id` en
+`scripts/ensemble_dispatch.py` realiza la resolucion de alias y la validacion.
+
 Revision de una propuesta sin commit: fase `DESIGN_REVIEW`, sin nonce, `loop_id` `EXPLORATORY-<tema>`.
 
 `--task-type` debe estar en `TASK_TYPES`. Si no, `loop-round` rechaza, registra el intento con
 `failure_mode: usage-error` y sale con codigo distinto de 0.
+
+## 3.7 Compatibilidad de `loop_id` por lector
+
+| Lector | Antes (L###) | Despues (UNI/DBL/ROL/CHA-N + alias) |
+|---|---|---|
+| `scorecard.jsonl` | `loop_id` = `L700`/`L710`/`L720`/`L800` | Filas historicas intactas; las nuevas usan la forma directa |
+| `emitted_nonces.jsonl` | `loop_id` = `L###` | Igual: el ledger registra lo que se emite |
+| `check_loop_execution` | Agrupa por `loop_id` `L###` | Resuelve alias via `loop_shapes[loop_id].alias_of` |
+| `phase_value_report` (dashboard) | Filtra por `L###` | Acepta alias legacy y formas directas |
+| `leaders` | Backend leaders por `L###` | Mismo: los leaders se calculan por backend_key, no por forma |
+| `prepush_check` (token `loop=<id>`) | Token `loop=L700` | Acepta alias legacy y formas directas; `validate_loop_id` advierte si deprecated |
+| `fallback_events.jsonl` | Fallback por `L###` | Igual: los fallbacks son por backend_key/perfil |
+| `adjudicate` | Adjudica por `loop_id` `L###` | Resuelve alias antes de adjudicar |
 
 ### 3.5 Lanzar
 
@@ -157,7 +179,6 @@ Los cupos se comparten con los agentes de implantacion: preferir modelos sin lim
 
 ## 8. Pendiente (todavia no existe; no lo invoques)
 
-- Formas `UNI/DBL/ROL/CHA-N` y `shape_id`: WOT-2026-086f.
 - `gov_stage`/`step`: WOT-2026-086g.
 - `smoke` rapido y paralelo: WOT-2026-086h.
 - Cuarentena por cuota del canal `agent` con su hora de reset ("try again at HH:MM"): WOT-2026-086k.

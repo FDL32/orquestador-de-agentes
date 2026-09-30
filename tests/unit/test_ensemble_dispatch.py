@@ -4331,6 +4331,8 @@ def test_ultimate_claude_fallback_selection_edges(tmp_path):
     )
 
 
+# WOT-2026-086f: BA12 (mimo-v2.5) retirado: entrada eliminada de _NAN_MODELS.
+
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {
@@ -4341,7 +4343,6 @@ _NAN_MODELS = {
     # anclado por esa clave, nunca por el nombre del perfil.
     "deepseek-v4-flash": "challenger_nan_deepseek_flash",
     "qwen3.6": "challenger_nan_qwen",
-    "mimo-v2.5": "challenger_nan_mimo",
     "gemma4": "challenger_nan_gemma",
     # 2026-09-04: la API de nan expone `qwen3.8-flash` y `glm5.3-flash`
     # (verificado contra `GET /v1/models`) y no estaban declarados. Se anaden

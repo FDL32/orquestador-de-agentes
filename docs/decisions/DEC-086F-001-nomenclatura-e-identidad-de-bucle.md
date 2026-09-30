@@ -32,18 +32,44 @@ Se ratifica adoptar `UNI/DBL/ROL/CHA-N` como nombres de forma, sustituyendo el e
    `DBL-N`). Nunca se usan para escribir filas nuevas -- las filas nuevas llevan el nombre de forma
    directamente.
 
-### Alias historicos (solo lectura, no exhaustivos hasta que WOT-2026-086f los complete)
+### Alias historicos: CENSO REAL EJECUTADO (2026-09-30, sustituye la aproximacion original)
 
-| `loop_id` antiguo | `name` en `loop_shapes` | Alias `UNI/DBL/ROL/CHA-N` (con refuter contando en N) |
+**Aproximacion original de este DEC (INVALIDADA, conservada abajo solo como referencia historica):**
+
+| `loop_id` antiguo | `name` en `loop_shapes` | Alias aproximado (sobre `loop_shapes.steps`, sin censo) |
 |---|---|---|
-| `L700` | BUC-01 (deprecated) | `DBL-4` (medido: 4 nan sin refuter en su forma original) |
-| `L710` | BUC-02 (deprecated) | `DBL-6` (medido: 4 nan + codex + BA06) |
-| `L720` | BUC-03 (active) | `DBL-5` (BA05 refuter + 4 nan) |
-| `L800` | CHA-01 (active) | `CHA-4` a `CHA-5` segun si incluyo refuter en esa corrida (varia por ejecucion) |
+| `L700` | BUC-01 (deprecated) | `DBL-4` |
+| `L710` | BUC-02 (deprecated) | `DBL-6` |
+| `L720` | BUC-03 (active) | `DBL-5` |
+| `L800` | CHA-01 (active) | `CHA-4` a `CHA-5` |
 
-WOT-2026-086f debe cerrar la tabla completa con evidencia (censo real del scorecard), no dar estos
-valores por definitivos: son la primera aproximacion de este DEC, calculados sobre la descripcion de
-`loop_shapes.steps` en `agents.json`, no sobre un recuento fila a fila.
+**Censo real ejecutado sobre las 4900 filas del scorecard del destino (`is_substantive` REAL de
+`scripts/check_loop_execution.py`, agrupado por `(loop_id, challenge_nonce)`, excluyendo al emisor BA01;
+comando reproducible: importar `check_loop_execution` y `is_substantive` sobre cada fila `event==ronda`,
+agrupar por nonce, contar `backend_key` distintos). **El censo diverge de la aproximacion original en 3
+de 4 casos** -- se documenta la divergencia en vez de promediar o descartar el dato real (CEM: "el
+conflicto entre dos mediciones ES el hallazgo"):
+
+| `loop_id` | Corridas totales | Moda (tamano, topologia) | % de la moda | Alias REAL (censo) | Alias aproximado (DEC original) | Coincide |
+|---|---|---|---|---|---|---|
+| `L700` | 158 | 4, DBL/ROL | 69/158 = 43.7% | `DBL-4` | `DBL-4` | SI |
+| `L710` | 18 | 3, DBL/ROL | 10/18 = 55.6% | `DBL-3` | `DBL-6` | NO (diverge) |
+| `L720` | 156 | 4, DBL/ROL | 42/156 = 26.9% | `DBL-4` | `DBL-5` | NO (diverge) |
+| `L800` | 146 | 1, CHA | 32/146 = 21.9% | `CHA-1` | `CHA-4..5` | NO (diverge, y sin moda dominante clara) |
+
+**Nota sobre `L800`:** su distribucion es la mas dispersa de las 4 (la moda gana solo el 21.9% de las
+corridas; el resto se reparte en al menos 11 combinaciones distintas de tamano+topologia, desde `CHA-1`
+hasta `DBL-9`). Esto es un dato REAL sobre el comportamiento historico del bucle `challenge-fanout`, no un
+error de medicion: `L800` se ha usado con una variabilidad de composicion de lentes mucho mayor que
+`L700`/`L710`/`L720`. El alias `CHA-1` es el resultado correcto del criterio de moda tal como esta
+definido en esta Decision, pero un lector que necesite una unica forma "representativa" de `L800` debe
+saber que esa representatividad es debil.
+
+**Esta correccion NO reabre la Decision 1 de este DEC** (el vocabulario `UNI/DBL/ROL/CHA-N` sigue siendo
+el adoptado, el refuter sigue contando en N, el modo P/S sigue siendo campo aparte): solo sustituye los
+VALORES de la tabla de alias, que el propio DEC ya declaraba "no definitivos... primera aproximacion,
+calculados sobre la descripcion de `loop_shapes.steps`, no sobre un recuento fila a fila" (parrafo
+original conservado como cita, ver arriba). El censo fila a fila que faltaba ya se ejecuto.
 
 ---
 
