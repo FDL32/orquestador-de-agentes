@@ -469,11 +469,16 @@ def test_legacy_loop_ids_resolve_to_existing_form():
     """WOT-2026-086f DoD D2: cada alias legacy resuelve a una forma existente.
 
     El censo real (DEC-086F-001): L700->DBL-4, L710->DBL-3, L720->DBL-4,
-    L800->CHA-1. Los tests usan el registro vivo, no los valores exactos --
-    lo que importa es que el alias resuelva a una forma en loop_shapes.
+    L800->CHA-1. La forma generica (alias -> ALGUNA forma existente) cubre
+    alias futuros; lo que importa para L700/L710/L720/L800 es que resuelvan
+    EXACTAMENTE al mapping que DEC-086F-001 fijo, no a una forma cualquiera.
 
-    Mutation: cambiar `alias_of` a un nombre que no exista en el registro
-    pone ROJO este test.
+    Mutation: cambiar `alias_of` de cualquiera de los 4 a un nombre que no
+    exista en el registro pone ROJO la comprobacion generica; cambiarlo a
+    OTRA forma que SI existe (p.ej. L700 -> UNI-2 en vez de DBL-4) pone ROJO
+    la comprobacion especifica de abajo -- la generica sola no lo detecta
+    (hallazgo verificado del bucle de gobierno de este ticket, commit
+    52a68e0: codex BA05, nonce 49451d16afda9369b094eb6e4faa11f9).
     """
     config = _load_config()
     shapes = config["ensemble_registry"]["loop_shapes"]
@@ -484,6 +489,23 @@ def test_legacy_loop_ids_resolve_to_existing_form():
                 f"el alias '{shape_id}' apunta a '{alias_of}' que no existe "
                 f"en loop_shapes (WOT-2026-086f DoD D2)"
             )
+
+    expected_alias_mapping = {
+        "L700": "DBL-4",
+        "L710": "DBL-3",
+        "L720": "DBL-4",
+        "L800": "CHA-1",
+    }
+    for legacy_id, expected_target in expected_alias_mapping.items():
+        assert legacy_id in shapes, (
+            f"alias legacy '{legacy_id}' ausente de loop_shapes "
+            f"(DEC-086F-001 censo real)"
+        )
+        actual_target = shapes[legacy_id].get("alias_of")
+        assert actual_target == expected_target, (
+            f"'{legacy_id}' resuelve a '{actual_target}', se esperaba "
+            f"'{expected_target}' segun el censo real de DEC-086F-001"
+        )
 
 
 def test_form_parametric_list_complete():
