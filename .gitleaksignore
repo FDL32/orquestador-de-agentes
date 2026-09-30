@@ -3,3 +3,7 @@
 # para verificar la logica de redaccion de secretos. No es una credencial real.
 tests/test_redact.py:jwt:14
 tests/test_redact.py:jwt:43
+# MODEL_FAMILY_MAP de ensemble_dispatch.py: una entrada de mapa con el ID de un modelo
+# casa con la regla generica de claves; no es una credencial. Huella completa
+# (con commit) porque el CI escanea el historial con --log-opts=--all.
+93e59537124ac46d0e53e8e9446f156a6080fd1a:scripts/ensemble_dispatch.py:generic-api-key:340
