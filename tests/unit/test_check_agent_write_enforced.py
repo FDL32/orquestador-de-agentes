@@ -197,6 +197,92 @@ def test_warn_is_visible_not_silent(tmp_path, monkeypatch):
     )
 
 
+def test_dynamic_check_wired_into_preflight_runner(tmp_path, monkeypatch):
+    """WOT-2026-086 (DEC-086P10-001): `run_agent_write_enforced_check` tambien
+    corre la comprobacion DINAMICA cuando el `readonly_agent` estatico ya paso.
+
+    Mutation que aisla la rama: si el runner deja de llamar a
+    `find_dynamic_unenforced_pairs`, este test deja de detectar el agente
+    ausente y cae.
+    """
+    import scripts.check_agent_write_enforced as cawe
+    import scripts.prepush_check as pc
+
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "agents.json").write_text(
+        json.dumps(
+            _cfg(
+                {
+                    "p_destino": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_opencode",
+                        "repo_scope": "destino",
+                    }
+                },
+                {"b_opencode": {"executable": "opencode", "readonly_agent": "auditor"}},
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cawe, "_list_agents", lambda executable, cwd: ["build", "manager"]
+    )
+    project_root = tmp_path / "destino"
+    project_root.mkdir()
+
+    r = pc.run_agent_write_enforced_check(project_root)
+    assert r.passed is False, (
+        "el agente declarado ausente del cwd real debe verse: la restriccion "
+        f"era decorativa aunque la estatica pasara: {r.output}"
+    )
+    assert "auditor" in r.output
+    assert r.is_blocking is True, (
+        "bucle adversarial WOT-2026-086 (BA30/BA05, CRITICO): esto NO es deuda "
+        "preexistente como el WARN estatico -- es un vector de escritura real "
+        "confirmado; dejarlo pasar como WARN permitiria el push con la barrera "
+        "rota"
+    )
+
+
+def test_dynamic_check_passes_when_agent_is_present(tmp_path, monkeypatch):
+    """Control positivo: con el agente presente en el listado real, no hay WARN
+    dinamico (el estatico sigue siendo el unico que puede fallar)."""
+    import scripts.check_agent_write_enforced as cawe
+    import scripts.prepush_check as pc
+
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "agents.json").write_text(
+        json.dumps(
+            _cfg(
+                {
+                    "p_destino": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_opencode",
+                        "repo_scope": "destino",
+                    }
+                },
+                {"b_opencode": {"executable": "opencode", "readonly_agent": "auditor"}},
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cawe, "_list_agents", lambda executable, cwd: ["build", "auditor", "manager"]
+    )
+    project_root = tmp_path / "destino"
+    project_root.mkdir()
+
+    r = pc.run_agent_write_enforced_check(project_root)
+    assert r.passed is True
+    assert r.is_blocking is False
+
+
 class TestNativeSandboxCountsAsEnforcement:
     """Un sandbox nativo del CLI acredita `write: false` (incidente 2026-08-05).
 
@@ -267,3 +353,242 @@ class TestNativeSandboxCountsAsEnforcement:
             f"perfiles con write:false y vector sin enforcement: "
             f"{[p['profile'] for p in pairs]}"
         )
+
+
+class TestDynamicReadonlyAgentExistence:
+    """WOT-2026-086 (DEC-086P10-001): `readonly_agent` DECLARADO no es `readonly_agent`
+    QUE EXISTE desde el cwd real de la lente.
+
+    Incidente medido 2026-09-30: `challenger_opencode_glm_5_2` declara
+    `readonly_agent: auditor` y `repo_scope: destino`, pero `auditor.md` solo
+    vivia en `<motor>/.opencode/agents/`. Con `cwd=<destino>`, `opencode agent
+    list` no incluia `auditor` y `opencode run --agent auditor` caia al agente
+    por defecto (`build`, con edit+bash). La comprobacion ESTATICA de
+    `find_unenforced_pairs` (arriba) pasaba en verde: solo mira si el backend
+    DECLARA `readonly_agent`, nunca si existe donde se necesita.
+    """
+
+    def test_agent_missing_from_destino_listing_is_reported(self, monkeypatch):
+        """El agente declarado NO aparece en el listado del cwd real -> hallazgo.
+
+        Mutation que aisla la rama: si `find_dynamic_unenforced_pairs` deja de
+        comparar contra el listado real (o lo da por bueno sin comparar), esta
+        lista queda vacia y el test cae.
+        """
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "p_destino": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_opencode",
+                    "repo_scope": "destino",
+                }
+            },
+            "backends": {
+                "b_opencode": {"executable": "opencode", "readonly_agent": "auditor"}
+            },
+        }
+
+        def _fake_list(executable, cwd):
+            # Simula el listado REAL medido: el destino no tiene `auditor`.
+            if str(cwd) == str(destino):
+                return ["build", "compaction", "explore", "general", "plan", "manager"]
+            return ["build", "compaction", "auditor", "builder", "manager"]
+
+        import scripts.check_agent_write_enforced as cawe
+
+        motor = "C:/fake/motor"
+        destino = "C:/fake/destino"
+        monkeypatch.setattr(cawe, "_list_agents", _fake_list)
+        pairs = find_dynamic_unenforced_pairs(
+            config, motor_root=motor, project_root=destino
+        )
+        assert len(pairs) == 1, f"el agente ausente en destino debe detectarse: {pairs}"
+        assert pairs[0]["profile"] == "p_destino"
+        assert pairs[0]["missing_agent"] == "auditor"
+        assert pairs[0]["cwd"] == destino
+
+    def test_agent_present_in_destino_listing_passes(self, monkeypatch):
+        """Control positivo: si el agente SI aparece en el listado real, no hay hallazgo."""
+        import scripts.check_agent_write_enforced as cawe
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "p_destino": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_opencode",
+                    "repo_scope": "destino",
+                }
+            },
+            "backends": {
+                "b_opencode": {"executable": "opencode", "readonly_agent": "auditor"}
+            },
+        }
+        monkeypatch.setattr(
+            cawe,
+            "_list_agents",
+            lambda executable, cwd: ["build", "auditor", "manager"],
+        )
+        pairs = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert pairs == []
+
+    def test_profile_without_repo_scope_destino_checks_motor_cwd(self, monkeypatch):
+        """Un perfil SIN `repo_scope: destino` se comprueba contra el cwd del motor.
+
+        `resolve_lens_repo_root` (ya existente) decide el cwd real; esta funcion
+        no debe re-implementar esa resolucion, solo consumirla.
+        """
+        import scripts.check_agent_write_enforced as cawe
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "p_motor": {"channel": "agent", "write": False, "backend": "b_opencode"}
+            },
+            "backends": {
+                "b_opencode": {"executable": "opencode", "readonly_agent": "auditor"}
+            },
+        }
+        seen_cwds = []
+
+        def _fake_list(executable, cwd):
+            seen_cwds.append(str(cwd))
+            return ["build", "auditor", "manager"]
+
+        monkeypatch.setattr(cawe, "_list_agents", _fake_list)
+        pairs = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert pairs == []
+        assert seen_cwds == ["C:/fake/motor"], (
+            f"sin repo_scope:destino debe consultar el motor, no el destino: {seen_cwds}"
+        )
+
+    def test_list_agents_raises_on_nonzero_returncode(self, monkeypatch):
+        """Bucle adversarial WOT-2026-086 (5/5 lentes, BA13/BA24/BA30/BA05 con
+        severidad CRITICO/ALTO): un CLI que falla (rc!=0) NO debe parsearse
+        como listado valido. Un mensaje de error en stdout podria contener por
+        casualidad el nombre del agente buscado y producir un FALSO OK del
+        gate de seguridad.
+
+        Mutation: quitar la comprobacion de `returncode` hace que este test
+        falle (el nombre del agente en el "mensaje de error" se colaria como
+        listado valido en vez de lanzar).
+        """
+        import pytest
+        import scripts.check_agent_write_enforced as cawe
+
+        class _FailingProc:
+            returncode = 1
+            stdout = "auditor: agent not found in this directory\n"
+            stderr = "error: unknown command"
+
+        monkeypatch.setattr(cawe.subprocess, "run", lambda *a, **k: _FailingProc())
+        with pytest.raises(RuntimeError, match="rc=1"):
+            cawe._list_agents("opencode", "C:/fake/destino")
+
+    def test_list_agents_parses_stdout_on_success(self, monkeypatch):
+        """Control positivo: con rc=0 el parseo normal sigue funcionando."""
+        import scripts.check_agent_write_enforced as cawe
+
+        class _OkProc:
+            returncode = 0
+            stdout = "build (primary)\nauditor (primary)\nmanager (primary)\n"
+            stderr = ""
+
+        monkeypatch.setattr(cawe.subprocess, "run", lambda *a, **k: _OkProc())
+        names = cawe._list_agents("opencode", "C:/fake/motor")
+        assert names == ["build", "auditor", "manager"]
+
+    def test_listing_command_failure_is_reported_not_silently_passed(self, monkeypatch):
+        """Si `_list_agents` no puede ejecutarse (CLI ausente, error), se reporta,
+        nunca se da por bueno en silencio (misma disciplina fail-closed del resto
+        del gate)."""
+        import scripts.check_agent_write_enforced as cawe
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "p_destino": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_opencode",
+                    "repo_scope": "destino",
+                }
+            },
+            "backends": {
+                "b_opencode": {"executable": "opencode", "readonly_agent": "auditor"}
+            },
+        }
+
+        def _boom(executable, cwd):
+            raise OSError("opencode no encontrado")
+
+        monkeypatch.setattr(cawe, "_list_agents", _boom)
+        pairs = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert len(pairs) == 1
+        assert pairs[0]["missing_agent"] == "auditor"
+        assert "error" in pairs[0]
+
+    def test_static_pass_with_dynamic_fail_is_caught_by_cli(
+        self, tmp_path, monkeypatch
+    ):
+        """Extremo a extremo: la barrera ESTATICA da verde (declara readonly_agent)
+        pero la DINAMICA (agente ausente del cwd real) hace fallar el CLI.
+
+        Es exactamente el incidente medido: `find_unenforced_pairs` solo mira si
+        se DECLARA; el nuevo paso dinamico mira si EXISTE donde hace falta.
+        """
+        import scripts.check_agent_write_enforced as cawe
+
+        cfg_path = tmp_path / "agents.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "ensemble_profiles": {
+                        "p_destino": {
+                            "channel": "agent",
+                            "write": False,
+                            "backend": "b_opencode",
+                            "repo_scope": "destino",
+                        }
+                    },
+                    "backends": {
+                        "b_opencode": {
+                            "executable": "opencode",
+                            "readonly_agent": "auditor",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        # Estatico: pasaria solo (readonly_agent SI declarado).
+        assert (
+            find_unenforced_pairs(json.loads(cfg_path.read_text(encoding="utf-8")))
+            == []
+        )
+
+        monkeypatch.setattr(
+            cawe, "_list_agents", lambda executable, cwd: ["build", "manager"]
+        )
+        rc = cawe.main(
+            [
+                "--config",
+                str(cfg_path),
+                "--check-dynamic",
+                "--motor-root",
+                "C:/fake/motor",
+                "--project-root",
+                "C:/fake/destino",
+            ]
+        )
+        assert rc == 1, "la barrera dinamica debe fallar aunque la estatica pase"

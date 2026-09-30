@@ -1335,25 +1335,80 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
             is_blocking=False,
         )
     pairs = find_unenforced_pairs(config)
-    if not pairs:
+    if pairs:
+        detalle = "; ".join(f"{p['profile']} -> {p['backend']}" for p in pairs)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"WARN ({len(pairs)} par/es): declaran `write: false` sin poder "
+                f"enforcearlo, la restriccion es DECORATIVA -- {detalle}. "
+                "Deuda PREEXISTENTE (WOT-2026-048h nace WARN a proposito). Remedio: "
+                "declarar `readonly_agent` en esos backends; NO quitar `write: false` "
+                "(silencia el gate sin quitar el vector)."
+            ),
+            is_blocking=False,
+        )
+
+    # WOT-2026-086 (DEC-086P10-001): la comprobacion estatica de arriba ya paso
+    # (todo perfil con vector declara `readonly_agent`), pero eso no prueba que
+    # ese agente EXISTA desde el cwd real. Incidente medido 2026-09-30:
+    # `challenger_opencode_glm_5_2` declaraba `readonly_agent: auditor` +
+    # `repo_scope: destino`, y `auditor.md` solo vivia en
+    # `<motor>/.opencode/agents/` -- el estatico daba verde mientras la lente
+    # corria con permisos de escritura reales. Mismo contrato de WARN que
+    # arriba: el caso de EXCEPCION (no se pudo medir, ver abajo) sigue siendo
+    # WARN no-bloqueante -- es una medicion fallida, no un vector confirmado
+    # (CEM: "no medi" no es lo mismo que "hay un vector real"). El caso de
+    # AGENTE AUSENTE si es bloqueante (corregido tras bucle adversarial
+    # WOT-2026-086, 5/5 lentes, BA30/BA05 severidad CRITICO): es un vector de
+    # escritura CONFIRMADO hoy, no deuda preexistente como el WARN estatico de
+    # arriba -- dejarlo como WARN permitiria push con la barrera rota.
+    from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+    try:
+        dyn_pairs = find_dynamic_unenforced_pairs(
+            config, motor_root=str(_MOTOR_ROOT), project_root=str(project_root)
+        )
+    except Exception as exc:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"WARN: no se pudo ejecutar la comprobacion dinamica de "
+                f"readonly_agent: {type(exc).__name__}: {exc}"
+            ),
+            is_blocking=False,
+        )
+    if not dyn_pairs:
         return CheckResult(
             name=name,
             passed=True,
             output="OK: todo perfil con vector (channel: agent) y write:false enforcea.",
             is_blocking=False,
         )
-    detalle = "; ".join(f"{p['profile']} -> {p['backend']}" for p in pairs)
+
+    def _dyn_reason(p: dict) -> str:
+        if p.get("error"):
+            return p["error"]
+        return f"ausente en cwd={p['cwd']}"
+
+    detalle_dyn = "; ".join(
+        f"{p['profile']} -> {p['backend']} (agente '{p['missing_agent']}' "
+        f"{_dyn_reason(p)})"
+        for p in dyn_pairs
+    )
     return CheckResult(
         name=name,
         passed=False,
         output=(
-            f"WARN ({len(pairs)} par/es): declaran `write: false` sin poder "
-            f"enforcearlo, la restriccion es DECORATIVA -- {detalle}. "
-            "Deuda PREEXISTENTE (WOT-2026-048h nace WARN a proposito). Remedio: "
-            "declarar `readonly_agent` en esos backends; NO quitar `write: false` "
-            "(silencia el gate sin quitar el vector)."
+            f"BLOQUEA ({len(dyn_pairs)} par/es): el readonly_agent declarado "
+            f"NO existe desde el cwd real -- vector de escritura CONFIRMADO, "
+            f"no deuda preexistente: {detalle_dyn}. "
+            "Ver DEC-086P10-001: crea el agente en el cwd real (p.ej. copia el "
+            ".opencode/agents/<nombre>.md al destino) o corrige repo_scope."
         ),
-        is_blocking=False,
+        is_blocking=True,
     )
 
 
