@@ -44,8 +44,11 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA06 | opencode | opencode-go/glm-5.3-flash | active |
 | BA10 | nan_api | deepseek-v4-flash | active |
 | BA11 | nan_api | qwen3.6 | active |
+| BA110 | gemini_api | gemini-3.8-flash | active |
 | BA12 | nan_api | mimo-v2.5 | archived |
 | BA13 | nan_api | gemma4 | active |
+| BA130 | cohere_api | command-a-plus-05-2026 | active |
+| BA131 | cohere_api | north-mini-code-1-0 | active |
 | BA14 | nan_api | deepseek-v4-flash-0731 | deprecated |
 | BA15 | nan_api | qwen3.8-flash | active |
 | BA16 | nan_api | glm5.3-flash | active |

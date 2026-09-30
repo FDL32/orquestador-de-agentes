@@ -147,6 +147,24 @@
         "method": "path_only"
       }
     },
+    "gemini_api": {
+      "executable": "",
+      "args": [],
+      "timeout_s": 900,
+      "quota_scope": "cuenta",
+      "discovery": {
+        "method": "path_only"
+      }
+    },
+    "cohere_api": {
+      "executable": "",
+      "args": [],
+      "timeout_s": 900,
+      "quota_scope": "cuenta",
+      "discovery": {
+        "method": "path_only"
+      }
+    },
     "default": {
       "executable": "",
       "args": [],
@@ -383,6 +401,39 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA92"
+    },
+    "challenger_gemini_gemini": {
+      "backend": "gemini_api",
+      "channel": "api",
+      "model": "gemini-3.8-flash",
+      "api_base_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      "api_key_env": "GEMINI_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA110"
+    },
+    "challenger_cohere_command": {
+      "backend": "cohere_api",
+      "channel": "api",
+      "model": "command-a-plus-05-2026",
+      "api_base_url": "https://api.cohere.ai/compatibility/v1/chat/completions",
+      "api_key_env": "COHERE_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA130"
+    },
+    "challenger_cohere_northcode": {
+      "backend": "cohere_api",
+      "channel": "api",
+      "model": "north-mini-code-1-0",
+      "api_base_url": "https://api.cohere.ai/compatibility/v1/chat/completions",
+      "api_key_env": "COHERE_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA131"
     }
   },
   "ensemble_pipelines": {
@@ -579,6 +630,24 @@
       "BA92": {
         "backend": "tokenharbor_api",
         "model": "mimo-v2.6-flash:free",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA110": {
+        "backend": "gemini_api",
+        "model": "gemini-3.8-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA130": {
+        "backend": "cohere_api",
+        "model": "command-a-plus-05-2026",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA131": {
+        "backend": "cohere_api",
+        "model": "north-mini-code-1-0",
         "backend_version": null,
         "status": "active"
       }

@@ -329,6 +329,12 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("tokenharbor_api", "deepseek-v4.1-flash:free"): "deepseek",
     ("tokenharbor_api", "mimo-v2.6-flash:free"): "mimo",
     ("tokenharbor_api", "qwen3.8-flash:free"): "qwen",
+    # Canales directos de proveedor (gemini_api BA110-BA129, cohere_api
+    # BA130-BA149). north-mini-code-1-0 es el MISMO modelo que BA50 (via
+    # OpenRouter): misma familia, ruta directa y estable.
+    ("gemini_api", "gemini-3.8-flash"): "gemini",
+    ("cohere_api", "command-a-plus-05-2026"): "command",
+    ("cohere_api", "north-mini-code-1-0"): "northcode",
     # Backends mono-modelo (model=None por diseno VIGENTE, ver docstring de
     # regenerate_leaders): la familia coincide con el propio backend.
     ("codex", None): "codex",
