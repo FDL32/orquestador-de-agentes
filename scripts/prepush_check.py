@@ -1357,13 +1357,26 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
     # `repo_scope: destino`, y `auditor.md` solo vivia en
     # `<motor>/.opencode/agents/` -- el estatico daba verde mientras la lente
     # corria con permisos de escritura reales. Mismo contrato de WARN que
-    # arriba: el caso de EXCEPCION (no se pudo medir, ver abajo) sigue siendo
-    # WARN no-bloqueante -- es una medicion fallida, no un vector confirmado
-    # (CEM: "no medi" no es lo mismo que "hay un vector real"). El caso de
-    # AGENTE AUSENTE si es bloqueante (corregido tras bucle adversarial
-    # WOT-2026-086, 5/5 lentes, BA30/BA05 severidad CRITICO): es un vector de
-    # escritura CONFIRMADO hoy, no deuda preexistente como el WARN estatico de
-    # arriba -- dejarlo como WARN permitiria push con la barrera rota.
+    # arriba: el caso de MEDICION FALLIDA (CLI ausente, timeout, cwd invalido)
+    # sigue siendo WARN no-bloqueante -- "no medi" no es lo mismo que "hay un
+    # vector real" (CEM). El caso de AGENTE AUSENTE CONFIRMADO (rc=0, listado
+    # leido, el nombre no aparece) si es bloqueante (corregido tras bucle
+    # adversarial WOT-2026-086, 5/5 lentes, severidad ALTO/CRITICO): es un
+    # vector de escritura CONFIRMADO hoy, no deuda preexistente como el WARN
+    # estatico de arriba -- dejarlo como WARN permitiria push con la barrera
+    # rota.
+    #
+    # CORRECCION 2026-09-30 (bucle adversarial sobre ESTE MISMO commit, 5/5
+    # lentes convergieron en el mismo defecto, severidad ALTO/CRITICO en las 5):
+    # `find_dynamic_unenforced_pairs` NUNCA lanza -- captura la excepcion de
+    # `_list_agents` internamente y la devuelve como un elemento MAS de
+    # `dyn_pairs` con clave `error`. El `try/except` de aqui abajo (version
+    # anterior de este commit) era CODIGO MUERTO: nunca se disparaba, y TODO
+    # `dyn_pairs` (agente ausente confirmado O medicion fallida) se mapeaba a
+    # `is_blocking=True` por igual -- exactamente lo que la nota de arriba dice
+    # que NO debe pasar. Se separan aqui los dos casos por la presencia de la
+    # clave `error` en cada elemento de `dyn_pairs`, no por si la lista entera
+    # esta vacia.
     from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
 
     try:
@@ -1388,23 +1401,48 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
             is_blocking=False,
         )
 
-    def _dyn_reason(p: dict) -> str:
-        if p.get("error"):
-            return p["error"]
-        return f"ausente en cwd={p['cwd']}"
+    confirmed = [p for p in dyn_pairs if not p.get("error")]
+    measurement_failed = [p for p in dyn_pairs if p.get("error")]
 
-    detalle_dyn = "; ".join(
+    if not confirmed:
+        # Solo mediciones fallidas (CLI ausente, timeout, cwd invalido): WARN,
+        # nunca bloquea. "No medi" no es "hay un vector real".
+        detalle_err = "; ".join(
+            f"{p['profile']} -> {p['backend']} (agente '{p['missing_agent']}': "
+            f"{p['error']})"
+            for p in measurement_failed
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"WARN ({len(measurement_failed)} par/es): no se pudo medir si "
+                f"el readonly_agent existe desde el cwd real -- {detalle_err}. "
+                "Medicion fallida, no vector confirmado."
+            ),
+            is_blocking=False,
+        )
+
+    # Hay al menos un agente CONFIRMADO ausente (rc=0, listado leido, el
+    # nombre no aparece): vector de escritura real, bloqueante. Las mediciones
+    # fallidas (si las hay ademas) se reportan aparte, sin degradar el bloqueo.
+    detalle_confirmed = "; ".join(
         f"{p['profile']} -> {p['backend']} (agente '{p['missing_agent']}' "
-        f"{_dyn_reason(p)})"
-        for p in dyn_pairs
+        f"ausente en cwd={p['cwd']})"
+        for p in confirmed
     )
+    if measurement_failed:
+        detalle_confirmed += "; ADEMAS " + "; ".join(
+            f"{p['profile']} -> {p['backend']} sin medicion ({p['error']})"
+            for p in measurement_failed
+        )
     return CheckResult(
         name=name,
         passed=False,
         output=(
-            f"BLOQUEA ({len(dyn_pairs)} par/es): el readonly_agent declarado "
-            f"NO existe desde el cwd real -- vector de escritura CONFIRMADO, "
-            f"no deuda preexistente: {detalle_dyn}. "
+            f"BLOQUEA ({len(confirmed)} par/es confirmado/s): el readonly_agent "
+            f"declarado NO existe desde el cwd real -- vector de escritura "
+            f"CONFIRMADO, no deuda preexistente: {detalle_confirmed}. "
             "Ver DEC-086P10-001: crea el agente en el cwd real (p.ej. copia el "
             ".opencode/agents/<nombre>.md al destino) o corrige repo_scope."
         ),

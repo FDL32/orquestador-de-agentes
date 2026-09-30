@@ -247,6 +247,114 @@ def test_dynamic_check_wired_into_preflight_runner(tmp_path, monkeypatch):
     )
 
 
+def test_dynamic_check_cli_error_never_blocks(tmp_path, monkeypatch):
+    """Bucle adversarial WOT-2026-086, SEGUNDA RONDA (sobre el commit que ya
+    tenia el fix de arriba): 5/5 lentes convergieron en que este caso SI
+    bloqueaba, contradiciendo la propia politica documentada en el commit
+    ("medicion fallida no es vector confirmado").
+
+    Causa raiz medida: `find_dynamic_unenforced_pairs` NUNCA propaga la
+    excepcion de `_list_agents` -- la captura internamente y la mete en
+    `dyn_pairs` con clave `error`. El `try/except` de
+    `run_agent_write_enforced_check` (que solo atrapa una excepcion que ya no
+    llega) era CODIGO MUERTO, y `dyn_pairs` no vacio se mapeaba entero a
+    `is_blocking=True` sin mirar si el elemento traia `error`.
+
+    Mutation que aisla la rama: si el runner deja de distinguir `error` de
+    agente-ausente-confirmado (vuelve a tratar TODO `dyn_pairs` como
+    confirmado), este test cae porque `is_blocking` pasa a `True`.
+    """
+    import scripts.check_agent_write_enforced as cawe
+    import scripts.prepush_check as pc
+
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "agents.json").write_text(
+        json.dumps(
+            _cfg(
+                {
+                    "p_destino": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_opencode",
+                        "repo_scope": "destino",
+                    }
+                },
+                {"b_opencode": {"executable": "opencode", "readonly_agent": "auditor"}},
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    def _boom(executable, cwd):
+        raise FileNotFoundError("opencode: no such file or directory")
+
+    monkeypatch.setattr(cawe, "_list_agents", _boom)
+    project_root = tmp_path / "destino"
+    project_root.mkdir()
+
+    r = pc.run_agent_write_enforced_check(project_root)
+    assert r.passed is False, "una medicion fallida sigue siendo visible (no OK mudo)"
+    assert r.is_blocking is False, (
+        "CLI ausente/roto es MEDICION FALLIDA, no vector confirmado -- "
+        f"bloquear aqui rompe pushes legitimos en maquinas sin opencode: {r.output}"
+    )
+    assert "opencode" in r.output
+
+
+def test_dynamic_check_confirmed_agent_blocks_even_with_a_measurement_failure(
+    tmp_path, monkeypatch
+):
+    """Control: si HAY un agente confirmado ausente Y ADEMAS otro perfil no se
+    pudo medir, el bloqueo por el confirmado no debe degradarse a WARN."""
+    import scripts.check_agent_write_enforced as cawe
+    import scripts.prepush_check as pc
+
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "agents.json").write_text(
+        json.dumps(
+            _cfg(
+                {
+                    "p_confirmado": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_a",
+                        "repo_scope": "destino",
+                    },
+                    "p_sin_medir": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_b",
+                        "repo_scope": "destino",
+                    },
+                },
+                {
+                    "b_a": {"executable": "a_exe", "readonly_agent": "auditor"},
+                    "b_b": {"executable": "b_exe", "readonly_agent": "auditor"},
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_list(executable, cwd):
+        if executable == "a_exe":
+            return ["build", "manager"]  # confirmado: auditor ausente
+        raise TimeoutError("b_exe no respondio")
+
+    monkeypatch.setattr(cawe, "_list_agents", _fake_list)
+    project_root = tmp_path / "destino"
+    project_root.mkdir()
+
+    r = pc.run_agent_write_enforced_check(project_root)
+    assert r.is_blocking is True, "un confirmado real no se diluye por otro sin medir"
+    assert "p_confirmado" in r.output
+    assert "p_sin_medir" in r.output, "la medicion fallida se reporta, no se silencia"
+
+
 def test_dynamic_check_passes_when_agent_is_present(tmp_path, monkeypatch):
     """Control positivo: con el agente presente en el listado real, no hay WARN
     dinamico (el estatico sigue siendo el unico que puede fallar)."""
