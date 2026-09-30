@@ -43,17 +43,33 @@ predica no cristalizar estado no puede cristalizarlo.)*
 
 ## Paso 0: ¿hay una mejora a ESTE prompt ya verificada por bucle, sin aplicar todavia?
 
+(Paso 0 y umbral "2 arranques": origen `PROPUESTA_cierre_produce_mejor_arranque.md`
+§3-4, `sin verificar por bucle` a fecha de `fd3943e`.)
+
 Antes de recolectar nada, busca en
 `<DESTINO_ROOT>/.agent/planning/PROPUESTA_mejoras_session_hop_*.md` (o el
 patron equivalente si el arranque tambien va a citar
-`orchestrator_launch_builder.md`). Si existe una con una seccion de "bucle
-adversarial real corrido" y consenso `ADOPTAR`/`ADOPTAR CON CAMBIOS` para
-algun hallazgo, **aplica esa mejora AL ARRANQUE QUE ESTAS PRODUCIENDO
-AHORA**, aunque este prompt versionado todavia no la incluya — el arranque
-es el vehiculo mas rapido para que la mejora llegue a la sesion siguiente,
-sin esperar a que alguien edite y commitee este fichero primero. Decláralo
-explicitamente en el arranque: "Este arranque incorpora la correccion <N>
-de <ruta de la propuesta>, pendiente de aplicar a este prompt canonico."
+`orchestrator_launch_builder.md`).
+
+Antes de aplicar una propuesta, comprueba si su correccion **ya esta
+incorporada** a este prompt. Hazlo **por contenido o por cambio
+identificable**, no por coincidencia literal del texto de la propuesta:
+`git log --oneline -- prompts/session_hop.md` + lectura del paso afectado.
+- **Si ya esta:** no la re-apliques ni la declares pendiente. Tratala como
+  registro historico y cita el commit que la incorporo.
+- **Si no puedes verificar la correspondencia:** no la apliques
+  automaticamente. Declarala `estado no verificable` y pide revision.
+- **Si sigue sin incorporarse** y tiene una seccion de "bucle adversarial
+  real corrido" con consenso `ADOPTAR`/`ADOPTAR CON CAMBIOS` para algun
+  hallazgo, **aplica esa mejora AL ARRANQUE QUE ESTAS PRODUCIENDO AHORA**,
+  aunque este prompt versionado todavia no la incluya — el arranque es el
+  vehiculo mas rapido para que la mejora llegue a la sesion siguiente, sin
+  esperar a que alguien edite y commitee este fichero primero. Decláralo
+  explicitamente en el arranque: "Este arranque incorpora la correccion <N>
+  de <ruta de la propuesta>, pendiente de aplicar a este prompt canonico."
+
+Al editar este prompt con una propuesta, actualiza la linea `Estado:` de
+la propuesta a `APLICADA en <sha>`.
 
 Si la MISMA correccion se aplica manualmente en 2 o mas arranques
 consecutivos, es momento de editar este prompt directamente — dejo de ser
