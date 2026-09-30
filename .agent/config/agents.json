@@ -165,6 +165,15 @@
         "method": "path_only"
       }
     },
+    "mistral_api": {
+      "executable": "",
+      "args": [],
+      "timeout_s": 900,
+      "quota_scope": "cuenta",
+      "discovery": {
+        "method": "path_only"
+      }
+    },
     "default": {
       "executable": "",
       "args": [],
@@ -434,6 +443,28 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA131"
+    },
+    "challenger_mistral": {
+      "backend": "mistral_api",
+      "channel": "api",
+      "model": "mistral-large-2512",
+      "api_base_url": "https://api.mistral.ai/v1/chat/completions",
+      "api_key_env": "MISTRAL_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA150"
+    },
+    "challenger_mistral_codestral": {
+      "backend": "mistral_api",
+      "channel": "api",
+      "model": "codestral-2508",
+      "api_base_url": "https://api.mistral.ai/v1/chat/completions",
+      "api_key_env": "MISTRAL_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA151"
     }
   },
   "ensemble_pipelines": {
@@ -648,6 +679,18 @@
       "BA131": {
         "backend": "cohere_api",
         "model": "north-mini-code-1-0",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA150": {
+        "backend": "mistral_api",
+        "model": "mistral-large-2512",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA151": {
+        "backend": "mistral_api",
+        "model": "codestral-2508",
         "backend_version": null,
         "status": "active"
       }

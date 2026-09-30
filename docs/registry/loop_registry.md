@@ -51,6 +51,8 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA131 | cohere_api | north-mini-code-1-0 | active |
 | BA14 | nan_api | deepseek-v4-flash-0731 | deprecated |
 | BA15 | nan_api | qwen3.8-flash | active |
+| BA150 | mistral_api | mistral-large-2512 | active |
+| BA151 | mistral_api | codestral-2508 | active |
 | BA16 | nan_api | glm5.3-flash | active |
 | BA17 | nvidia_api | z-ai/glm-5.3 | deprecated |
 | BA18 | nvidia_api | z-ai/glm-5.3-flash | deprecated |

@@ -335,6 +335,10 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("gemini_api", "gemini-3.8-flash"): "gemini",
     ("cohere_api", "command-a-plus-05-2026"): "command",
     ("cohere_api", "north-mini-code-1-0"): "northcode",
+    # mistral_api BA150-BA169: IDs con fecha, nunca alias `-latest` (el
+    # scorecard agrega por modelo y un alias cambia bajo el perfil).
+    ("mistral_api", "mistral-large-2512"): "mistral",
+    ("mistral_api", "codestral-2508"): "codestral",
     # Backends mono-modelo (model=None por diseno VIGENTE, ver docstring de
     # regenerate_leaders): la familia coincide con el propio backend.
     ("codex", None): "codex",

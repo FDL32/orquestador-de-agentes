@@ -4631,6 +4631,7 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
         "tokenharbor_api",
         "gemini_api",
         "cohere_api",
+        "mistral_api",
     }
     api_profiles = [p for p in profiles.values() if p.get("channel") == "api"]
     assert api_profiles, "debe haber al menos un perfil api"
