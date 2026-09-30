@@ -93,6 +93,10 @@ ignore-vuln = [
     "GHSA-8988-9cw3-xx77", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver
     "GHSA-vxq7-64xx-v4gw", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver
     "GHSA-gh4c-6fx4-qh6g", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver (3er GHSA, mismo paquete/fix)
+    "PYSEC-2026-4011", # virtualenv >=21.7.12 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+    "PYSEC-2026-4012", # virtualenv >=21.7.11 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+    "PYSEC-2026-4013", # virtualenv >=21.7.13 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+    "PYSEC-2026-4014", # virtualenv >=21.7.12 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
 ]
 
 [tool.uv]
