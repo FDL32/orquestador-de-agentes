@@ -44,7 +44,10 @@ predica no cristalizar estado no puede cristalizarlo.)*
 ## Paso 0: ¿hay una mejora a ESTE prompt ya verificada por bucle, sin aplicar todavia?
 
 (Paso 0 y umbral "2 arranques": origen `PROPUESTA_cierre_produce_mejor_arranque.md`
-§3-4, `sin verificar por bucle` a fecha de `fd3943e`.)
+§3-4, `sin verificar por bucle` a fecha del commit que introdujo este Paso 0 --
+"prompts: aplica al canonico las mejoras de session_hop.md verificadas por bucle
+real"; localizalo con `git log --oneline -- prompts/session_hop.md` si necesitas
+el SHA exacto.)
 
 Antes de recolectar nada, busca en
 `<DESTINO_ROOT>/.agent/planning/PROPUESTA_mejoras_session_hop_*.md` (o el
