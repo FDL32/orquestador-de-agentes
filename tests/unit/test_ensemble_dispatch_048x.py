@@ -284,3 +284,41 @@ def test_086d_loop_round_without_contribution_exits_nonzero(
     assert rc == ed.EXIT_NO_CONTRIBUTION
     assert len(_rows(tmp_path)) == 1, "la fila de la ronda se registra igual"
     assert "[NO-APORTA]" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "CORRECTO: el proceso con PID 123 ha sido terminado.",
+        "ERROR: algo\nSe ha cancelado",
+    ],
+)
+def test_086d_loop_round_shell_noise_only_is_no_contribution(
+    tmp_path, monkeypatch, capsys, reply
+):
+    """Una respuesta que es SOLO ruido de shell se registra como
+    `shell_noise_only`; el codigo de salida debe decir lo mismo que la fila
+    (bucle L720 sobre f8f208a, 3/4 lentes API). Mutation: decidir el exit
+    sobre el texto crudo -> RED."""
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: reply)
+
+    rc = ed.main(_argv(tmp_path, _payload(tmp_path)))
+
+    assert _rows(tmp_path)[-1]["failure_mode"] == "shell_noise_only"
+    assert rc == ed.EXIT_NO_CONTRIBUTION
+    assert "[NO-APORTA]" in capsys.readouterr().err
+
+
+def test_086d_loop_round_real_answer_after_shell_noise_exits_zero(
+    tmp_path, monkeypatch
+):
+    """CONTROL POSITIVO: ruido de shell seguido de respuesta real SI aporta."""
+    reply = "CORRECTO: el proceso ha sido terminado.\nVEREDICTO: APROBADO"
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: reply)
+
+    rc = ed.main(_argv(tmp_path, _payload(tmp_path)))
+
+    assert rc == 0
+    assert _rows(tmp_path)[-1]["failure_mode"] is None

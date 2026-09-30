@@ -103,6 +103,7 @@ if str(_AGENT_DIR) not in sys.path:
     sys.path.append(str(_AGENT_DIR))
 
 from agents_config import load_agents_config  # noqa: E402
+from bus.redact import redact  # noqa: E402
 from bus.subprocess_env import build_backend_env  # noqa: E402
 
 
@@ -1122,11 +1123,42 @@ EXIT_NO_CONTRIBUTION = 3
 
 
 def _stderr_tail(stderr_text: str | None) -> str:
-    """Ultimos `_AGENT_STDERR_TAIL_CHARS` de stderr, sin ANSI; '' si no hay."""
+    """Ultimos `_AGENT_STDERR_TAIL_CHARS` de stderr, redactados; '' si no hay.
+
+    Orden deliberado (bucle L720 sobre f8f208a, 4/4 lentes API): se redacta con
+    `bus.redact` ANTES de truncar, porque un corte a mitad de un token dejaria
+    un fragmento que el patron ya no reconoce; despues se quitan las
+    secuencias ANSI y OSC y todo caracter de control salvo salto de linea y
+    tabulador.
+    """
     if not stderr_text:
         return ""
-    clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", stderr_text).strip()
+    clean = redact(stderr_text)
+    clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", clean)
+    clean = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?", "", clean)
+    clean = "".join(ch for ch in clean if ch >= " " or ch in "\n\t").strip()
     return clean[-_AGENT_STDERR_TAIL_CHARS:]
+
+
+# WOT-2026-046b: prefijos de ruido del CLI wrapper medidos en el corpus
+# (taskkill en castellano, Codex). Nivel de modulo desde WOT-2026-086d: el
+# registrador (`_record_round`) y el codigo de salida de `loop-round` deben
+# sanear IGUAL, o la fila dice `shell_noise_only` y el exit dice 0.
+_SHELL_NOISE_PREFIXES = (
+    "CORRECTO:",
+    "proceso con PID",
+    "terminado.",
+    "Se ha cancelado",
+    "ERROR:",
+)
+
+
+def _strip_leading_shell_noise(text: str) -> str:
+    """Quita las lineas INICIALES de ruido de shell; el resto queda intacto."""
+    lines = text.splitlines() if text else []
+    while lines and any(lines[0].startswith(p) for p in _SHELL_NOISE_PREFIXES):
+        lines.pop(0)
+    return "\n".join(lines)
 
 
 # WOT-2026-048g: el modelo que el CLI dice estar usando, en su banner de STDERR.
@@ -1825,6 +1857,11 @@ def _is_non_sample_round(row: dict) -> bool:
     if failure_mode in _CALLER_ERROR_FAILURE_MODES:
         return True
     lowered = failure_mode.lower()
+    # Bucle L720 sobre f8f208a (4/4 lentes API): un marcador de cuota solo
+    # significa cuota en una fila de TRANSPORTE fallido, cuyo texto escribio el
+    # proveedor; en cualquier otra fila es texto libre y la ronda es muestra.
+    if not lowered.startswith("transport_failed"):
+        return False
     # WOT-2026-086d: las filas del canal `agent` llevan la CLASE, no el texto.
     if _FAILURE_CLASS_QUOTA in lowered:
         return True
@@ -3378,20 +3415,9 @@ def _record_round(
     # texto. Se aplica ANTES del truncado a 500 y ANTES del check de
     # transporte fallido (048g) porque un transporte fallido cuyo texto empiece
     # por uno de estos prefijos sigue siendo fallido; el saneado solo elimina
-    # la capa del CLI, no clasifica el transporte.
-    # Prefijos de ruido medidos en el corpus (taskkill en castellano, Codex):
-    _shell_prefixes = (
-        "CORRECTO:",
-        "proceso con PID",
-        "terminado.",
-        "Se ha cancelado",
-        "ERROR:",
-    )
+    # la capa del CLI, no clasifica el transporte. Prefijos: `_SHELL_NOISE_PREFIXES`.
     _raw_chars = len(text)  # output_chars mide el texto CRUDO (DoD 2, contract)
-    _lines = text.splitlines() if text else []
-    while _lines and any(_lines[0].startswith(p) for p in _shell_prefixes):
-        _lines.pop(0)
-    text = "\n".join(_lines)
+    text = _strip_leading_shell_noise(text)
     # WOT-2026-048g: un transporte que fallo (rc != 0) NO es una intervencion.
     # Se deriva AQUI, en el registrador, y no solo en el bucle `run`, porque
     # `run_loop_round` -- la ruta que usa el gobierno por chat -- no pasa por el
@@ -4682,7 +4708,10 @@ def _cmd_loop_round(args, config) -> int:
     # respuesta vacia tampoco aporta. Con `return 0` el lanzador daba la lente
     # por ejecutada; la fila ya esta escrita (no-aportacion), aqui solo se
     # hace visible en el codigo de salida.
-    if reply.startswith(_TRANSPORT_FAILED_PREFIX) or not reply.strip():
+    if (
+        reply.startswith(_TRANSPORT_FAILED_PREFIX)
+        or not _strip_leading_shell_noise(reply.strip()).strip()
+    ):
         print(
             "[NO-APORTA] la ronda se registro sin aportacion (transporte "
             "fallido o respuesta vacia); mira failure_mode en scorecard.jsonl",

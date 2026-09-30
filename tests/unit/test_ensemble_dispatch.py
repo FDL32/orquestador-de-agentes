@@ -6956,3 +6956,52 @@ def test_086d_failed_agent_without_known_cause_is_unknown(tmp_path):
         "un fallo sin causa conocida sigue siendo muestra (la lente recibio el "
         "contenido): solo cuota y error del llamante se descartan"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Bucle L720 sobre f8f208a (nonce 1bd4d83c, 5/4 lentes): arreglos adjudicados.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "failure_mode",
+    [
+        "unexpected: KeyError: 'usage limit'",
+        "shell_noise_only",
+        "lente dijo: allowance exhausted en su propio analisis",
+    ],
+)
+def test_086b_quota_marker_outside_transport_failure_is_still_a_sample(failure_mode):
+    """Un marcador de cuota solo significa cuota en una fila de TRANSPORTE
+    fallido (el texto lo escribio el proveedor). Fuera de esa clase es texto
+    libre y la ronda sigue siendo muestra (4/4 lentes API, bucle L720).
+    Mutation: buscar el marcador en cualquier failure_mode -> RED."""
+    row = _ronda_row("WOT-TEST-086b", failure_mode=failure_mode)
+    assert not ed._is_non_sample_round(row)
+    assert ed._adjudicated_cells([row]) != {}
+
+
+def test_086d_stderr_tail_is_redacted_and_control_free(monkeypatch):
+    """La cola de stderr pasa por `bus.redact` (tokens, claves, correos, usuario
+    de rutas Windows) y pierde los caracteres de control, incluidos los
+    escapes OSC que el filtro de ANSI no cubria (4/4 lentes API).
+    Mutation: anexar la cola sin redactar -> RED."""
+    secret = "sk-" + "a" * 30
+    err = (
+        f"\x1b]0;titulo\x07Authorization: Bearer abc.def.ghi key={secret} "
+        "mail usuario@example.com en C:\\Users\\alguien\\x\x00 usage limit"
+    )
+    monkeypatch.setattr(ed.subprocess, "Popen", _popen_returning("", err, 1))
+    out = ed._transport_agent(
+        {"backend": "codex", "channel": "agent"},
+        {"executable": "codex.cmd", "args": ["exec"]},
+        [{"role": "user", "content": "x"}],
+        timeout=10,
+    )
+    tail = out.split("[stderr]", 1)[1]
+    assert secret not in tail
+    assert "usuario@example.com" not in tail
+    assert "alguien" not in tail
+    assert "abc.def.ghi" not in tail
+    assert not any(ord(c) < 32 and c not in "\n\t" for c in tail)
+    assert "usage limit" in tail, "la causa sobrevive a la redaccion"
