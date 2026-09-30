@@ -198,17 +198,6 @@
       "data_sensitivity": "public",
       "backend_key": "BA11"
     },
-    "challenger_nan_mimo": {
-      "backend": "nan_api",
-      "channel": "api",
-      "model": "mimo-v2.5",
-      "api_base_url": "https://api.nan.builders/v1/chat/completions",
-      "api_key_env": "NAN_API_KEY",
-      "context": "diff-o-artefacto-publico",
-      "write": false,
-      "data_sensitivity": "public",
-      "backend_key": "BA12"
-    },
     "challenger_nan_gemma": {
       "backend": "nan_api",
       "channel": "api",
