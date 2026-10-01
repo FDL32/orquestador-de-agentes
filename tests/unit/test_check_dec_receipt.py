@@ -16,6 +16,7 @@ guard previene vive en la frontera con ficheros de verdad.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -632,3 +633,154 @@ def test_061e_cli_warn_no_cambia_el_exit_code(tmp_path: Path) -> None:
     ]
     assert "1 ok" in proc.stdout
     assert "destino=1" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-061e R3: instancias que D1, D3 y D4 nombran literalmente
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("lineas", "esperado"),
+    [
+        pytest.param(
+            ["####### DEC-RDS-001 -- x"],
+            (0, 0, None),
+            id="siete_almohadillas_no_cuentan",
+        ),
+        pytest.param(
+            ["###### DEC-RDS-001 -- x"], (1, 1, None), id="seis_almohadillas_cuentan"
+        ),
+        pytest.param(["# DEC-RDS-001 -- x"], (1, 1, None), id="una_almohadilla_cuenta"),
+        pytest.param(
+            ["###DEC-RDS-001 -- x"], (0, 0, None), id="sin_espacio_no_es_candidata"
+        ),
+        pytest.param(
+            ["```", "### DEC-001 - a", "```"],
+            (1, 0, "### DEC-001 - a"),
+            id="las_de_bloques_de_codigo_cuentan",
+        ),
+        pytest.param(
+            ["   ### DEC-RDS-001 -- a", "\t### DEC-001 - b"],
+            (2, 1, "### DEC-001 - b"),
+            id="los_espacios_iniciales_se_recortan",
+        ),
+        pytest.param(
+            ["### DEC-001 - " + "x" * 150],
+            (1, 0, ("### DEC-001 - " + "x" * 150)[:100]),
+            id="el_ejemplo_se_recorta_a_100",
+        ),
+        pytest.param(
+            ["### DEC-001 - título"],
+            (1, 0, "### DEC-001 - título"),
+            id="se_lee_como_utf8",
+        ),
+    ],
+)
+def test_061e_diagnostico_tabla_de_instancias_de_d3(
+    tmp_path: Path, lineas: list[str], esperado: tuple[int, int, str | None]
+) -> None:
+    """D3: cada instancia que el DoD nombra literalmente, con su resultado exacto."""
+    registry = _write_registry_file(tmp_path / "decisions.md", lineas)
+    assert cdr.destino_heading_diagnostic(registry) == esperado
+
+
+def test_061e_diagnostico_bytes_no_utf8_no_lanza(tmp_path: Path) -> None:
+    """D3: lee con `errors="replace"`, asi que un byte invalido no lanza y se cuenta."""
+    registry = tmp_path / "decisions.md"
+    registry.write_bytes(b"### DEC-RDS-001 -- \xff\n### DEC-001 - b\n")
+    assert cdr.destino_heading_diagnostic(registry) == (2, 1, "### DEC-001 - b")
+
+
+def test_061e_diagnostico_oserror_en_la_lectura_devuelve_ceros(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D3: un `OSError` al leer devuelve `(0, 0, None)` sin lanzar."""
+    registry = _write_registry_file(tmp_path / "decisions.md", ["### DEC-001 - a"])
+
+    def _lectura_imposible(self: Path, *args: object, **kwargs: object) -> str:
+        raise OSError("lectura imposible")
+
+    monkeypatch.setattr(Path, "read_text", _lectura_imposible)
+    assert cdr.destino_heading_diagnostic(registry) == (0, 0, None)
+
+
+def test_061e_diagnostico_es_de_solo_lectura(tmp_path: Path) -> None:
+    """D3: `de solo lectura`; el fichero no cambia y no se crea nada."""
+    registry = _write_registry_file(
+        tmp_path / "decisions.md", ["### DEC-001 - a", "### DEC-RDS-001 -- b"]
+    )
+    antes = registry.read_bytes()
+    cdr.destino_heading_diagnostic(registry)
+    assert registry.read_bytes() == antes
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["decisions.md"]
+
+
+def test_061e_cli_dos_fichas_emiten_el_warn_una_sola_vez(tmp_path: Path) -> None:
+    """D4: `UNA vez por registro`; con 2 fichas el WARN no se repite por ficha."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    for nombre in ("FP-20261001-a.tickets.md", "FP-20261001-b.tickets.md"):
+        (inbox / nombre).write_text(
+            "Titulo: x\n**recibo:** DEC-no-aplica: prueba\n", encoding="utf-8"
+        )
+    registry = _write_registry_file(
+        tmp_path / "decisions.md", ["### DEC-001 - a", "### DEC-002 - b"]
+    )
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    warn_lines = [
+        line
+        for line in proc.stdout.splitlines()
+        if line.startswith("[dec-receipt] WARN")
+    ]
+    assert proc.returncode == 0
+    assert len(warn_lines) == 1
+
+
+def test_061e_schema_documentado_incluye_supersedes_y_la_frase_aclaratoria() -> None:
+    """D1: la linea `supersedes` y la frase tras el bloque son parte de lo ensenado."""
+    texto = " ".join(_SCHEMA_PROMPT.read_text(encoding="utf-8").split())
+    assert "- supersedes: DEC-<familia>-<NNN> | -" in texto
+    assert "(por ejemplo `010D-001` o `RDS-001`)" in texto
+    assert "el separador es ` -- `" in texto
+    assert "un id de un solo segmento como `DEC-012` no se carga" in texto
+
+
+def test_061e_ejemplo_no_conserva_ids_de_un_segmento_y_el_catalogo_cita_ids_que_existen() -> (
+    None
+):
+    """D1(b): ni decisions.md ni evidence_catalog.md conservan `DEC-00[12]`; el catalogo cita ids reales."""
+    base = _EXAMPLES_DIR / "python_service_minimal"
+    decisions = (base / "decisions.md").read_text(encoding="utf-8")
+    catalog = (base / "evidence_catalog.md").read_text(encoding="utf-8")
+    for texto in (decisions, catalog):
+        assert re.search(r"DEC-00[12]", texto) is None
+
+    headers = {
+        match.group(1)
+        for match in (
+            cdr._RE_DESTINO_HEADING.match(line.strip())
+            for line in decisions.splitlines()
+        )
+        if match
+    }
+    cited = set(re.findall(r"DEC-([A-Z0-9]+-\d+)", catalog))
+    assert cited, "el catalogo debe citar al menos un DEC-<familia>-<NNN>"
+    assert cited <= headers
+
+
+def test_061e_cli_warn_precede_a_la_linea_skip(tmp_path: Path) -> None:
+    """B3 (docstring: `antes del SKIP EXPLICITO`): el orden se asierta, no solo la presencia."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    registry = _write_registry_file(
+        tmp_path / "decisions.md",
+        ["### DEC-001 - a", "### DEC-002 - b", "### DEC-003 - c"],
+    )
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    assert proc.returncode == 0
+    assert proc.stdout.index("[dec-receipt] WARN") < proc.stdout.index("SKIP EXPLICITO")
