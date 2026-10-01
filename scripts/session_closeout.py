@@ -59,6 +59,9 @@ from scripts.closeout_steps.gates import (  # noqa: E402
     step_prepush_check as _step_prepush_check_impl,
     step_validate_ticket_prose as _step_validate_ticket_prose_impl,
 )
+from scripts.closeout_steps.memory_health import (  # noqa: E402
+    step_memory_health as _step_memory_health_impl,
+)
 from scripts.closeout_steps.observations import (  # noqa: E402
     step_memory_consolidate as _step_memory_consolidate_impl,
     step_session_observations as _step_session_observations_impl,
@@ -1139,6 +1142,22 @@ def _step_memory_consolidate(project_root: Path, dry_run: bool) -> StepResult:
     )
 
 
+def _step_memory_health(project_root: Path) -> StepResult:
+    """Measure memory health on the destination AND the motor (WOT-2026-089e)."""
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        motor_root = resolve_motor_root(project_root)
+    except ImportError:
+        motor_root = None
+    return _step_memory_health_impl(
+        project_root,
+        motor_root,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
+
+
 def _step_archive_collaboration(project_root: Path, dry_run: bool) -> StepResult:
     """Run archive_collaboration_artifacts.py."""
     return _step_archive_collaboration_impl(
@@ -2196,6 +2215,10 @@ def run_closeout(
                 detail="Skipped by --skip-slow",
             )
         )
+    # WOT-2026-089e: read-only trigger measurement of BOTH memory roots. It runs
+    # after the consolidation (so it sees the rotated destination) and also in
+    # dry-run; the motor L1 is never consolidated by a destination close.
+    report.steps.append(_step_memory_health(project_root))
     report.steps.append(
         _step_upstream_learnings_ttl_impl(project_root, step_result_cls=StepResult)
     )

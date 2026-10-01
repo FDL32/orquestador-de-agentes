@@ -325,3 +325,59 @@ def test_057b_dogfooding_workspace_rejects_paths_and_non_workspaces(
     (ws / ".agent").mkdir(parents=True)
     decl.write_text("workspace_real\n", encoding="utf-8")
     assert hook._dogfooding_workspace(motor) == ws
+
+
+def test_089e_hook_shows_the_memory_health_of_both_roots(tmp_path: Path) -> None:
+    """WOT-2026-089e (P0): el arranque muestra el estado de memoria, motor y destino.
+
+    El disparador de la optimizacion de memoria era prosa opcional; este hook es lo
+    unico que se ejecuta solo en cada arranque. Un destino sintetico con 600 lineas
+    de ruido tiene que aparecer como tal (hermetico respecto al L1 real del motor).
+
+    MUTACION ALCANZABLE: quitar `_health_line` de `main` -> este test cae.
+    """
+    destino = tmp_path / "destino"
+    mem = destino / ".agent" / "runtime" / "memory"
+    mem.mkdir(parents=True)
+    (destino / ".claude").mkdir()
+    noise = {
+        "topic": "tool_usage",
+        "signal": "Tool view_file called",
+        "source": "post_tool_hook",
+    }
+    (mem / "observations.jsonl").write_text(
+        "".join(json.dumps(noise) + "\n" for _ in range(600)), encoding="utf-8"
+    )
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "Salud de la memoria:" in ctx
+    assert "motor: L1" in ctx
+    assert "destino: L1 600 entradas (ruido 600)" in ctx
+    assert "DISPARA (d)" in ctx
+    assert "memory_optimization.md" in ctx
+
+
+def test_089e_the_health_line_is_fail_open(tmp_path: Path) -> None:
+    """Si la medicion no puede ejecutarse, el arranque sigue entregando la memoria.
+
+    Un motor declarado en el link que no tiene `check_memory_health.py` no puede
+    romper ni callar el hook: sin linea de salud y con la puerta de expansion.
+    """
+    destino = tmp_path / "destino"
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".claude").mkdir()
+    falso_motor = tmp_path / "motor_sin_scripts"
+    falso_motor.mkdir()
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(falso_motor)}), encoding="utf-8"
+    )
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "--recall" in ctx
+    assert "Salud de la memoria" not in ctx

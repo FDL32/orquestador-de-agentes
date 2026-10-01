@@ -83,6 +83,21 @@ def is_noise(signal: str) -> bool:
     return False
 
 
+def is_droppable_noise(entry: dict[str, Any]) -> bool:
+    """Decide whether the rotation may drop `entry` as noise.
+
+    Before: `entry` is a parsed observation (any dict; `signal` may be absent).
+    During: pure; no I/O. An entry with an `id` is a curated lesson and is NEVER
+        droppable, whatever the length or prefix of its signal: `is_noise` looks
+        only at the signal, so a short but real lesson would otherwise be
+        rotated away silently (WOT-2026-089e).
+    After: True only when the entry has no `id` and `is_noise(signal)` holds.
+    """
+    if entry.get("id"):
+        return False
+    return is_noise(entry.get("signal", ""))
+
+
 def parse_entries(path: Path) -> list[dict[str, Any]]:
     """Parse JSONL file, skipping malformed lines with warning."""
     entries = []
@@ -641,7 +656,7 @@ def _run_pipeline(
     if args.verbose:
         print(f"Loaded {total} entries from {OBS}")
 
-    filtered = [e for e in entries if not is_noise(e.get("signal", ""))]
+    filtered = [e for e in entries if not is_droppable_noise(e)]
     dropped = total - len(filtered)
 
     if args.verbose:
@@ -805,7 +820,7 @@ def main() -> None:
         return
 
     _, archivable = split_by_age(
-        [e for e in parse_entries(OBS) if not is_noise(e.get("signal", ""))],
+        [e for e in parse_entries(OBS) if not is_droppable_noise(e)],
         30 if args.since.endswith("d") else int(args.since[:-1]),
     )
     _apply_consolidation(recent, archivable, stats, args.verbose)

@@ -148,6 +148,8 @@ checkpoint/
 .agent/runtime/memory/memory_profile.md
 .agent/runtime/memory/memory_rules.md
 .agent/runtime/memory/UPSTREAM_LEARNINGS.md
+# Telemetria de tool calls (WOT-2026-089e): sumidero de post_tool_hook, no son lecciones
+.agent/runtime/telemetry/
 .agent/runtime/memory/closeout_lessons.md
 
 # Artefactos locales de QA (WOT-2026-015e, MANIFEST.distribute EXPLICITAMENTE EXCLUIDO)

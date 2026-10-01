@@ -15,6 +15,7 @@ from scripts.memory_consolidate import (
     dedupe,
     generate_memory_profile_md,
     generate_memory_rules_md,
+    is_droppable_noise,
     is_noise,
     parse_entries,
     regen_memory_md,
@@ -145,6 +146,58 @@ def test_is_noise_valid_entry() -> None:
     """Valid entries should not be marked as noise."""
     assert is_noise("This is a valid observation signal with enough length") is False
     assert is_noise("WP-2026-083 completed successfully after implementation") is False
+
+
+def test_089e_una_entrada_con_id_nunca_es_ruido_descartable() -> None:
+    """WOT-2026-089e: `is_noise` mira solo el signal; una leccion con `id` no rota."""
+    assert is_droppable_noise({"id": "obs-x", "signal": "Corta"}) is False
+    assert (
+        is_droppable_noise({"id": "obs-y", "signal": "Tool view_file called"}) is False
+    )
+    # Control negativo: sin `id` las mismas senales SI se descartan.
+    assert is_droppable_noise({"signal": "Corta"}) is True
+    assert is_droppable_noise({"signal": "Tool view_file called"}) is True
+    assert is_droppable_noise({}) is True
+
+
+def test_089e_la_rotacion_conserva_la_leccion_corta_con_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """El call-site de la rotacion usa el guard: con `id` se conserva, sin `id` se descarta.
+
+    Mutacion: volver a `is_noise(e.get("signal", ""))` en `main` descarta tambien la
+    leccion corta con `id` y el recuento baja de 2 a 1.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    base = {"timestamp": now, "source": "t", "domain": "testing"}
+    entries = [
+        {**base, "topic": "a", "id": "obs-corta", "signal": "Corta con id"},
+        {**base, "topic": "b", "signal": "Corta sin id"},
+        {**base, "topic": "c", "signal": "Tool view_file called"},
+        {
+            **base,
+            "topic": "d",
+            "signal": "Una observacion valida y con longitud suficiente",
+        },
+    ]
+    test_obs = tmp_path / "observations.jsonl"
+    test_obs.write_text(
+        "".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8"
+    )
+    monkeypatch.setattr("scripts.memory_consolidate.OBS", test_obs)
+    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_DIR", tmp_path)
+    monkeypatch.setattr("scripts.memory_consolidate.ARCHIVE_DIR", tmp_path / "archive")
+    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_MD", tmp_path / "MEMORY.md")
+    monkeypatch.setattr("scripts.memory_consolidate.REPORT", tmp_path / "REPORT.md")
+
+    import sys
+
+    from scripts import memory_consolidate
+
+    monkeypatch.setattr(sys, "argv", ["memory_consolidate.py", "--dry-run"])
+    memory_consolidate.main()
+
+    assert "Would keep 2 entries, drop 2" in capsys.readouterr().out
 
 
 def test_dedupe_within_window() -> None:

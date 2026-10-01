@@ -2300,3 +2300,123 @@ class TestWOT2026070vArchiveOrder:
         assert "archive_event_bus" in step_names, (
             f"archive_event_bus must run even when dry_run=True; steps: {step_names}"
         )
+
+
+class TestWOT2026089eMemoryHealthStep:
+    """WOT-2026-089e (P0): the memory-health step runs inside the real closeout.
+
+    The optimization trigger used to be optional prose that an agent computed by
+    hand on whatever root it had. These tests pin that the step is part of the
+    sequence that runs on its own (mutation: removing the call from
+    `run_closeout` turns them red), that it runs in dry-run mode too, and that a
+    fired trigger is a non-blocking WARN that names the prompt to apply.
+    """
+
+    @staticmethod
+    def _run(tmp_path: Path, *, dry_run: bool, health_stdout: str):
+        _write_work_plan(tmp_path, "WOT-2026-089e")
+        captured: list[CloseoutReport] = []
+        calls: list[tuple[str, list[str]]] = []
+
+        def _fake_run(script_name, args, project_root, timeout=120):
+            calls.append((script_name, list(args)))
+            stdout = health_stdout if script_name == "check_memory_health.py" else "ok"
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=stdout, stderr=""
+            )
+
+        def _capture(report: CloseoutReport, project_root: Path) -> Path:
+            captured.append(report)
+            return _generated_report_path(project_root, dry_run=True)
+
+        with (
+            patch("scripts.session_closeout._generate_report", side_effect=_capture),
+            patch("scripts.session_closeout._run_script", side_effect=_fake_run),
+        ):
+            run_closeout(tmp_path, dry_run=dry_run)
+        return captured[0].steps, calls
+
+    def _assert_step_in_sequence(self, tmp_path: Path, *, dry_run: bool) -> None:
+        steps, calls = self._run(tmp_path, dry_run=dry_run, health_stdout="{}")
+        names = [s.name for s in steps]
+        assert "memory_health" in names, names
+        assert names.index("memory_health") > names.index("memory_consolidate"), names
+        health_calls = [c for c in calls if c[0] == "check_memory_health.py"]
+        assert len(health_calls) == 1
+        assert "--project-root" in health_calls[0][1]
+        assert "--json" in health_calls[0][1]
+
+    def test_memory_health_runs_in_the_closeout_sequence(self, tmp_path: Path) -> None:
+        self._assert_step_in_sequence(tmp_path, dry_run=False)
+
+    def test_memory_health_also_runs_in_dry_run(self, tmp_path: Path) -> None:
+        self._assert_step_in_sequence(tmp_path, dry_run=True)
+
+    def test_fired_trigger_is_a_nonblocking_warn_naming_the_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        payload = {
+            "motor": {
+                "triggers": [
+                    {"id": "d", "fired": True, "detail": "L1 1774 entradas, ruido 97%"},
+                    {"id": "a", "fired": False, "detail": "L2 3/30"},
+                ],
+                "l1": {"parsed": 1774, "noise": 1721},
+                "l2": {"rules": 30, "max_rules": 30},
+            }
+        }
+        steps, _ = self._run(tmp_path, dry_run=True, health_stdout=json.dumps(payload))
+        step = next(s for s in steps if s.name == "memory_health")
+        assert step.status == "WARN"
+        assert step.blocking is False
+        assert "motor (d)" in step.detail
+        assert "memory_optimization.md" in step.detail
+        assert "(a)" not in step.detail
+
+    def test_clean_roots_pass_and_publish_the_denominator(self, tmp_path: Path) -> None:
+        payload = {
+            "destino": {
+                "triggers": [{"id": "a", "fired": False, "detail": "L2 17/30"}],
+                "l1": {"parsed": 54, "noise": 2},
+                "l2": {"rules": 17, "max_rules": 30},
+            }
+        }
+        steps, _ = self._run(tmp_path, dry_run=True, health_stdout=json.dumps(payload))
+        step = next(s for s in steps if s.name == "memory_health")
+        assert step.status == "PASS"
+        assert "L1 54 entries (noise 2)" in step.detail
+
+    def test_unparseable_output_is_a_warn_not_a_silent_pass(
+        self, tmp_path: Path
+    ) -> None:
+        steps, _ = self._run(tmp_path, dry_run=True, health_stdout="not json")
+        step = next(s for s in steps if s.name == "memory_health")
+        assert step.status == "WARN"
+        assert "not valid JSON" in step.detail
+
+    def test_remeasure_command_keeps_both_roots_and_drops_only_json(self) -> None:
+        """The command quoted in the WARN must be runnable as printed (no --json,
+        and the motor path intact)."""
+        from scripts.closeout_steps.memory_health import step_memory_health
+
+        payload = {
+            "motor": {
+                "triggers": [{"id": "d", "fired": True, "detail": "x"}],
+                "l1": {"parsed": 1, "noise": 1},
+                "l2": {"rules": 1, "max_rules": 30},
+            }
+        }
+
+        def _fake(script_name, args, project_root, timeout=120):
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(payload), stderr=""
+            )
+
+        step = step_memory_health(
+            Path("dest"),
+            Path("motor"),
+            run_script_fn=_fake,
+            step_result_cls=StepResult,
+        )
+        assert "--project-root dest --motor-root motor" in step.detail
+        assert "--json" not in step.detail

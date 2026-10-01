@@ -91,10 +91,8 @@ class TestSemanticLogger:
     def test_append_only(self):
         """Test que las observaciones se escriben append-only sin sobrescribir."""
         with (
-            patch("hooks.post_tool_hook.MEMORY_DIR", self.test_memory_dir),
-            patch(
-                "hooks.post_tool_hook.OBSERVATIONS_FILE", self.test_observations_file
-            ),
+            patch("hooks.post_tool_hook.TELEMETRY_DIR", self.test_memory_dir),
+            patch("hooks.post_tool_hook.TELEMETRY_FILE", self.test_observations_file),
         ):
             # Primera observaciÃ³n
             context1 = {
@@ -134,10 +132,8 @@ class TestSemanticLogger:
     def test_no_op_non_reading(self):
         """Test que herramientas no de lectura no afectan el contador pero sÃ­ se registran."""
         with (
-            patch("hooks.post_tool_hook.MEMORY_DIR", self.test_memory_dir),
-            patch(
-                "hooks.post_tool_hook.OBSERVATIONS_FILE", self.test_observations_file
-            ),
+            patch("hooks.post_tool_hook.TELEMETRY_DIR", self.test_memory_dir),
+            patch("hooks.post_tool_hook.TELEMETRY_FILE", self.test_observations_file),
         ):
             # Simular herramienta no de lectura (ej: edit_file)
             context = {
@@ -170,10 +166,8 @@ class TestSemanticLogger:
     def test_counter_reset(self):
         """Test que reset_counter funciona correctamente y no afecta observaciones existentes."""
         with (
-            patch("hooks.post_tool_hook.MEMORY_DIR", self.test_memory_dir),
-            patch(
-                "hooks.post_tool_hook.OBSERVATIONS_FILE", self.test_observations_file
-            ),
+            patch("hooks.post_tool_hook.TELEMETRY_DIR", self.test_memory_dir),
+            patch("hooks.post_tool_hook.TELEMETRY_FILE", self.test_observations_file),
         ):
             # Registrar algunas observaciones
             log_observation({"tool_name": "view_file", "context": "test1"})
@@ -195,10 +189,8 @@ class TestSemanticLogger:
     def test_memory_directory_creation(self):
         """Test que el directorio de memoria se crea automÃ¡ticamente."""
         with (
-            patch("hooks.post_tool_hook.MEMORY_DIR", self.test_memory_dir),
-            patch(
-                "hooks.post_tool_hook.OBSERVATIONS_FILE", self.test_observations_file
-            ),
+            patch("hooks.post_tool_hook.TELEMETRY_DIR", self.test_memory_dir),
+            patch("hooks.post_tool_hook.TELEMETRY_FILE", self.test_observations_file),
         ):
             # Antes de log_observation, el directorio no existe
             assert not self.test_memory_dir.exists()
@@ -211,10 +203,8 @@ class TestSemanticLogger:
     def test_jsonl_format(self):
         """Test que las observaciones estÃ¡n en formato JSONL vÃ¡lido."""
         with (
-            patch("hooks.post_tool_hook.MEMORY_DIR", self.test_memory_dir),
-            patch(
-                "hooks.post_tool_hook.OBSERVATIONS_FILE", self.test_observations_file
-            ),
+            patch("hooks.post_tool_hook.TELEMETRY_DIR", self.test_memory_dir),
+            patch("hooks.post_tool_hook.TELEMETRY_FILE", self.test_observations_file),
         ):
             context = {
                 "tool_name": "view_file",
@@ -234,3 +224,23 @@ class TestSemanticLogger:
                 assert obs["tool"] == "view_file"
                 assert obs["context"] == "Test context with unicode: Ã±Ã¡Ã©Ã­Ã³Ãº"
                 assert obs["session_id"] == "test-session-123"
+
+
+def test_089e_el_sumidero_por_defecto_es_la_telemetria_no_el_buffer_de_lecciones(
+    tmp_path, monkeypatch
+):
+    """WOT-2026-089e: sin parchear nada, la traza va a `telemetry/`, no a L1.
+
+    Mutacion: volver a escribir en `memory/observations.jsonl` deja la traza en el
+    buffer de lecciones (97 % del fichero) y este test se pone en rojo.
+    """
+    monkeypatch.chdir(tmp_path)
+    reset_counter()
+
+    log_observation({"tool_name": "view_file", "context": "x", "session_id": "s"})
+
+    telemetry = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    lessons = tmp_path / ".agent" / "runtime" / "memory" / "observations.jsonl"
+    assert telemetry.exists()
+    assert json.loads(telemetry.read_text(encoding="utf-8"))["tool"] == "view_file"
+    assert not lessons.exists()

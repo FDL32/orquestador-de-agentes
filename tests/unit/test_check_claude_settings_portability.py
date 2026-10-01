@@ -700,10 +700,17 @@ class TestInvariantCPayloadArrives:
             timeout=60,
         )
         assert result.returncode == 0, result.stderr.decode(errors="replace")
-        written = cwd / ".agent" / "runtime" / "memory" / "observations.jsonl"
+        # WOT-2026-089e: the trace goes to the TELEMETRY sink, never to the lessons
+        # buffer. The tooth stays: the artifact must exist where the hook writes it.
+        written = cwd / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
         assert written.exists(), (
             "the payload never reached post_tool_hook: the ImportError branch "
             "is disguising the failure again"
+        )
+        lessons_buffer = cwd / ".agent" / "runtime" / "memory" / "observations.jsonl"
+        assert not lessons_buffer.exists(), (
+            "the hook wrote the tool-call trace into the lessons buffer (L1): "
+            "the 97 % noise regression of WOT-2026-089e"
         )
         record = json.loads(written.read_text(encoding="utf-8").splitlines()[0])
         assert record["source"] == "post_tool_hook"

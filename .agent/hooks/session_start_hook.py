@@ -54,7 +54,8 @@ ilegible.
 
 Before: recibe el payload JSON de SessionStart por stdin (puede ir vacio).
 During: resuelve el project root, carga el indice via `get_bootstrap_context()`
-    y lo envuelve. Solo lectura; ninguna escritura en disco.
+    y lo envuelve; anade una linea de salud de la memoria (WOT-2026-089e, por
+    subproceso de `check_memory_health.py`). Solo lectura; ninguna escritura.
 After: imprime `{"additionalContext": ...}` por stdout y sale con 0 SIEMPRE.
     Ante cualquier error emite un contexto minimo que apunta al comando manual.
 """
@@ -63,6 +64,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -146,6 +148,92 @@ def _dogfooding_workspace(root: Path) -> Path | None:
         return None
 
 
+def _motor_root(root: Path) -> Path:
+    """Raiz del motor para este arranque: el link del destino, o el motor que aloja el hook.
+
+    Fallback al motor que ALOJA este hook. Sin link (destino recien creado, o el
+    propio motor) `bus/` no estaria en `sys.path` y el import fallaba con
+    `ModuleNotFoundError`, degradando a "sin memoria" por una razon que no es la
+    memoria. Aqui `__file__` SI es el ancla correcta -- al reves que en
+    `memory_loader._resolve_motor_root`, donde romperia el hermetismo de los
+    tests: este fichero VIVE en el motor y se copia con el, asi que su ubicacion
+    es la referencia mas fiable disponible.
+
+    Before: `root` es la raiz resuelta; el link puede faltar o traer basura.
+    During: solo lectura; puede lanzar si el link no es JSON (los llamantes lo
+        capturan: este hook es fail-open).
+    After: un directorio, nunca `None`.
+    """
+    motor = Path(__file__).resolve().parents[2]
+    link = root / ".agent" / "config" / "motor_destination_link.json"
+    if link.exists():
+        data = json.loads(link.read_text(encoding="utf-8"))
+        candidate = data.get("motor_root")
+        if isinstance(candidate, str) and Path(candidate).is_dir():
+            motor = Path(candidate)
+    return motor
+
+
+def _health_line(root: Path) -> str:
+    """Una linea con el estado de la memoria de motor y destino, o "" si no se puede medir.
+
+    WOT-2026-089e (P0). El disparador de `prompts/memory_optimization.md` era prosa
+    opcional del cierre; aqui se muestra al ABRIR la sesion, que es lo unico que se
+    ejecuta solo en cada arranque. Se llama a `scripts/check_memory_health.py` por
+    SUBPROCESO y no se importa: este hook no puede depender de `scripts/` (misma
+    frontera que `bus/`, ver `_dogfooding_workspace`). Se omite el validador (c)
+    para no frenar el arranque; el paso `memory_health` del cierre si lo ejecuta.
+
+    Before: `root` es la raiz resuelta.
+    During: un subproceso de solo lectura con timeout; fail-open (cualquier fallo,
+        timeout o salida invalida devuelve "").
+    After: una linea breve; con disparadores activos nombra el prompt a aplicar.
+    """
+    try:
+        motor = _motor_root(root)
+        script = motor / "scripts" / "check_memory_health.py"
+        if not script.is_file():
+            return ""
+        anchor = _dogfooding_workspace(root) or root
+        proc = subprocess.run(  # noqa: S603 - script propio del motor, args controlados
+            [
+                sys.executable,
+                str(script),
+                "--project-root",
+                str(anchor),
+                "--motor-root",
+                str(motor),
+                "--json",
+                "--skip-validate",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return ""
+        parts: list[str] = []
+        fired_any = False
+        for label, measure in json.loads(proc.stdout).items():
+            fired = [t["id"] for t in measure["triggers"] if t["fired"]]
+            fired_any = fired_any or bool(fired)
+            part = (
+                f"{label}: L1 {measure['l1']['parsed']} entradas "
+                f"(ruido {measure['l1']['noise']}), "
+                f"L2 {measure['l2']['rules']}/{measure['l2']['max_rules']}"
+            )
+            if fired:
+                part += f" -> DISPARA ({','.join(fired)})"
+            parts.append(part)
+        line = "Salud de la memoria: " + "; ".join(parts) + "."
+        if fired_any:
+            line += " Aplica prompts/memory_optimization.md."
+        return line
+    except Exception:
+        return ""
+
+
 def _load_context(root: Path) -> str:
     """Indice de memoria, o cadena vacia si no se puede cargar.
 
@@ -157,20 +245,7 @@ def _load_context(root: Path) -> str:
     try:
         import os
 
-        # Fallback al motor que ALOJA este hook. Sin link (destino recien
-        # creado, o el propio motor) `bus/` no estaria en `sys.path` y el import
-        # fallaba con `ModuleNotFoundError`, degradando a "sin memoria" por una
-        # razon que no es la memoria. Aqui `__file__` SI es el ancla correcta --
-        # al reves que en `memory_loader._resolve_motor_root`, donde romperia el
-        # hermetismo de los tests: este fichero VIVE en el motor y se copia con
-        # el, asi que su ubicacion es la referencia mas fiable disponible.
-        motor = Path(__file__).resolve().parents[2]
-        link = root / ".agent" / "config" / "motor_destination_link.json"
-        if link.exists():
-            data = json.loads(link.read_text(encoding="utf-8"))
-            candidate = data.get("motor_root")
-            if isinstance(candidate, str) and Path(candidate).is_dir():
-                motor = Path(candidate)
+        motor = _motor_root(root)
 
         # Anclar la memoria al root DONDE CORRE el hook. Sin esto el loader
         # resuelve por `__file__` -- el motor-- y el indice pierde el archive
@@ -218,6 +293,10 @@ def main() -> int:
             "**Memoria del proyecto**: no se pudo cargar el indice en el arranque."
             + _EXPANSION_HINT
         )
+
+    health = _health_line(root)
+    if health:
+        context += f"\n\n{health}\n"
 
     print(json.dumps({"additionalContext": context}, ensure_ascii=False))
     return 0

@@ -241,29 +241,55 @@ Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--
 
 == BLOQUE 4: PROMOCION DE MEMORIA (decision, no escritura ciega) ==
 
-4.0 OPTIMIZACION DEL SISTEMA DE MEMORIA (opcional, solo si la evidencia lo
-pide). NO es parte del cierre obligatorio: es una capacidad que el cierre
-PUEDE disparar cuando el estado medido de L1/L2/L3 lo justifica. Hermana
+4.0 OPTIMIZACION DEL SISTEMA DE MEMORIA (la MEDICION es automatica en cada
+`--session-close`; APLICAR el piloto es opcional, solo si dispara). El piloto
+NO es parte del cierre obligatorio: es una capacidad que el cierre PUEDE
+disparar cuando el estado medido de L1/L2/L3 lo justifica. Hermana
 del disparador de suite (Bloque 3.6): mismo patron recolector->juez, mismas
 dos condiciones duras, mismo formato "SOLO un piloto por corrida".
+   - RAIZ Y MEDICION MECANICA (WOT-2026-089e). Los cuatro criterios se miden
+     sobre DOS raices, SIEMPRE por separado y con la raiz EXPLICITA: el
+     `repo_motor` Y el `repo_destino`. NUNCA sobre "la raiz que tengas a
+     mano": los comandos de abajo son rutas relativas a CADA raiz, el cierre de
+     un destino consolida solo el destino, y por eso el L1 del motor llego a
+     97 % de ruido sin que nada lo viera (medido 2026-10-01: el 4.0 se calculo
+     sobre el destino, "L2 17/27, no dispara", con el motor en L2 30/30). La
+     medicion la hace un camino que corre solo -- el paso `memory_health` de
+     `--session-close` y la linea de salud del hook `session_start_hook.py` --
+     y a mano:
+         python scripts/check_memory_health.py --motor-root <repo_motor> --project-root <repo_destino>
+     Publica por raiz el denominador y cuales de (a)-(d) disparan. La linea de
+     salud del hook NO evalua (c) (`--skip-validate`, para no frenar el
+     arranque): (c) solo lo miden el paso de cierre y el script a mano. Si el
+     script y el texto de abajo divergen es un bug del script y prevalece este
+     texto (los umbrales viven en el script y un test los contrasta con este
+     bloque).
    - Disparador (MEDIBLE, no "por si acaso"). A diferencia del disparador de
      suite, NO hay `run_history.jsonl` equivalente para memoria (no existe
      tendencia entre corridas que medir hoy) -- el disparador es sobre
-     ESTADO ACTUAL. Dispara si se cumple CUALQUIERA:
+     ESTADO ACTUAL. Los comandos de (a)-(d) DEFINEN cada criterio; NO los
+     ejecutes a mano sobre la raiz que tengas a mano: usa
+     `check_memory_health.py` con la raiz explicita. Dispara si se cumple
+     CUALQUIERA:
      (a) `grep -c "^#### R-" .agent/runtime/memory/memory_rules.md` >= 90%
          de `MAX_L2_RULES` (scripts/memory_consolidate.py:46, hoy 30 ->
          umbral 27);
      (b) `MEMORY.md` desfasado: su fecha de generacion es mas antigua que
          la entrada mas reciente del archive portable
          (`.agent/runtime/memory/archive/observations.*.jsonl`) en mas de
-         7 dias;
-     (c) `python scripts/validate_observations.py --strict` sale != 0
-         (schema-drift activo: la Fase de promocion del paso 7 ya esta
+         7 dias (el script usa como proxy la fecha de MODIFICACION de los
+         ficheros, no la de su contenido);
+     (c) `python scripts/validate_observations.py --strict --file
+         <raiz>/.agent/runtime/memory/observations.jsonl` sale != 0 (SIN
+         `--file` valida SIEMPRE el L1 del MOTOR y no el de la raiz: medido
+         2026-10-01, desde el destino decia EXITOSA mientras el L1 del destino
+         fallaba con 3 errores) (schema-drift activo: la Fase de promocion del paso 7 ya esta
          bloqueada por el Bloque 4 principal, pero el drift en si mismo es
          señal de que el sistema de memoria necesita atencion estructural,
          no solo la entrada nueva).
      (d) `python scripts/memory_consolidate.py --dry-run` reporta mas de
-         500 entradas totales en `observations.jsonl` (L1 vivo) SIN rotar
+         500 entradas totales en `observations.jsonl` (L1 vivo; el script
+         cuenta las lineas parseadas de L1, que es lo que significa SIN rotar)
          **Y** el ratio `dropped / total` (ruido) reportado por el mismo
          dry-run supera 80% (medido 2026-09-28: el mecanismo de rotacion --
          mover lo `archivable` a `archive/` y reescribir L1 solo con
@@ -286,8 +312,9 @@ dos condiciones duras, mismo formato "SOLO un piloto por corrida".
          mismas entradas filtradas) y dan el mismo resultado. Declarado
          aqui como candidato de limpieza NO bloqueante, fuera de alcance
          de este umbral.
-     Los cuatro se computan de los ficheros REALES, no de memoria del
-     agente; CITA el numero/fecha/exit-code que obtuviste.
+     Los cuatro los calcula `check_memory_health.py` sobre los ficheros REALES
+     de CADA raiz, no la memoria del agente; CITA el resultado por raiz
+     (denominador incluido: entradas parseadas, ruido, reglas).
    - Si dispara: `prompts/memory_optimization.md` (contract_id
      cid-memory-optimization-v1). Es RECOLECTOR -> JUEZ: lee el estado real
      de L1/L2/L3 + `get_memory_tier_status()`; NUNCA optimices desde la
@@ -301,7 +328,7 @@ dos condiciones duras, mismo formato "SOLO un piloto por corrida".
      esas son tickets propios, no piloto de este prompt. Un piloto exige
      before/after medido y guard; sin las DOS condiciones duras del PASO 2
      de `memory_optimization.md`, no se aplica.
-   - Si NO dispara: dilo con los NUMEROS reales (`L2 <N>/<MAX_L2_RULES>
+   - Si NO dispara: dilo con los NUMEROS reales DE CADA RAIZ (`L2 <N>/<MAX_L2_RULES>
      reglas; MEMORY.md generado <fecha>, archive mas reciente <fecha>;
      validate_observations.py exit 0`), no con la formula vacia. Si no
      puedes computarlos: `disparador NO VERIFICABLE: <razon>`.

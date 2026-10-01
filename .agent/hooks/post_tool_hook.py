@@ -18,8 +18,13 @@ except ImportError:
 
 
 # Constants
-MEMORY_DIR = Path(".agent/runtime/memory")
-OBSERVATIONS_FILE = MEMORY_DIR / "observations.jsonl"
+# WOT-2026-089e: the tool-call trace is TELEMETRY, not a lesson. It used to be
+# appended to `memory/observations.jsonl` (the lessons buffer, L1), where it made
+# up 97 % of the lines (1705 of 1758 measured 2026-10-01) and was dropped by the
+# consolidation as noise anyway. It now has its own gitignored sink; the format,
+# the redaction and the append-only behaviour are unchanged.
+TELEMETRY_DIR = Path(".agent/runtime/telemetry")
+TELEMETRY_FILE = TELEMETRY_DIR / "tool_usage.jsonl"
 
 # Global counter for tool calls
 _tool_call_counter = 0
@@ -52,10 +57,10 @@ def log_observation(context: dict[str, Any]) -> None:
     observation["signal"] = redact(observation["signal"])
     observation["context"] = redact(observation["context"])
 
-    # Write directly to the observations file (which may be patched in tests)
+    # Write directly to the telemetry file (which may be patched in tests)
     with suppress(OSError, json.JSONDecodeError):
-        OBSERVATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with OBSERVATIONS_FILE.open("a", encoding="utf-8") as f:
+        TELEMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with TELEMETRY_FILE.open("a", encoding="utf-8") as f:
             f.write(json.dumps(observation, ensure_ascii=False) + "\n")
 
 

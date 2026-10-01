@@ -167,7 +167,7 @@ def test_log_observation_redacts_signal(
     """post_tool_hook redacts secrets in signal and context before writing."""
     monkeypatch.setattr(
         post_tool_hook_mod,
-        "OBSERVATIONS_FILE",
+        "TELEMETRY_FILE",
         tmp_path / "observations.jsonl",
     )
     # Reset global counter
@@ -199,7 +199,7 @@ def test_log_observation_redacts_jwt(
     """post_tool_hook redacts JWT tokens in context."""
     monkeypatch.setattr(
         post_tool_hook_mod,
-        "OBSERVATIONS_FILE",
+        "TELEMETRY_FILE",
         tmp_path / "observations.jsonl",
     )
     post_tool_hook_mod._tool_call_counter = 0
