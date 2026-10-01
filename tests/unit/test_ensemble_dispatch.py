@@ -4632,6 +4632,7 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
         "gemini_api",
         "cohere_api",
         "mistral_api",
+        "llm7_api",
     }
     api_profiles = [p for p in profiles.values() if p.get("channel") == "api"]
     assert api_profiles, "debe haber al menos un perfil api"
@@ -7009,3 +7010,60 @@ def test_086d_stderr_tail_is_redacted_and_control_free(monkeypatch):
     assert "abc.def.ghi" not in tail
     assert not any(ord(c) < 32 and c not in "\n\t" for c in tail)
     assert "usage limit" in tail, "la causa sobrevive a la redaccion"
+
+
+def _llm7_group_config_with_sibling(monkeypatch, profile_name):
+    """Config REAL del motor + un hermano de familia inyectado en otro backend."""
+    import copy
+
+    config = copy.deepcopy(ed.load_motor_config())
+    failed = config["ensemble_profiles"][profile_name]
+    config["ensemble_profiles"]["sibling_otro_proveedor"] = {
+        **failed,
+        "backend": "otro_api",
+        "model": "modelo-hermano",
+        "backend_key": "BA999",
+    }
+    family = ed.MODEL_FAMILY_MAP[(failed["backend"], failed["model"])]
+    monkeypatch.setitem(ed.MODEL_FAMILY_MAP, ("otro_api", "modelo-hermano"), family)
+    return config
+
+
+@pytest.mark.parametrize(
+    "profile_name", ["challenger_llm7_minimax", "challenger_llm7_nemo"]
+)
+def test_grupo_otros_cae_directo_a_claude_aunque_aparezca_un_hermano(
+    tmp_path, monkeypatch, profile_name
+):
+    """El grupo FALLBACK_DIRECTO_SIN_HERMANO salta la busqueda por familia.
+
+    Con un hermano de familia en otro proveedor, el perfil del grupo cae al
+    primer backend vivo (claude) y NO al hermano. Mutation: vaciar el grupo
+    hace que el mismo escenario devuelva el hermano -> el test falla.
+    """
+    config = _llm7_group_config_with_sibling(monkeypatch, profile_name)
+
+    def check_alive(name, *, config):
+        return {"alive": True}
+
+    chosen = ed.resolve_similar_fallback(
+        profile_name, config=config, project_root=tmp_path, check_alive=check_alive
+    )
+    assert config["ensemble_profiles"][chosen]["backend"] == "claude"
+
+    monkeypatch.setattr(ed, "FALLBACK_DIRECTO_SIN_HERMANO", frozenset())
+    chosen_sin_grupo = ed.resolve_similar_fallback(
+        profile_name, config=config, project_root=tmp_path, check_alive=check_alive
+    )
+    assert chosen_sin_grupo == "sibling_otro_proveedor", (
+        "fuera del grupo el hermano de familia debe ganar (control positivo)"
+    )
+
+
+def test_grupo_otros_solo_contiene_perfiles_existentes_de_llm7():
+    """Cada miembro del grupo debe corresponder a un perfil real (sin entradas muertas)."""
+    config = ed.load_motor_config()
+    present = {
+        (p.get("backend"), p.get("model")) for p in config["ensemble_profiles"].values()
+    }
+    assert present >= ed.FALLBACK_DIRECTO_SIN_HERMANO

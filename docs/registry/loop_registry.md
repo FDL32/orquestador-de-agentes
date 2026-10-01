@@ -55,6 +55,11 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA151 | mistral_api | codestral-2508 | active |
 | BA16 | nan_api | glm5.3-flash | active |
 | BA17 | nvidia_api | z-ai/glm-5.3 | deprecated |
+| BA170 | llm7_api | DeepSeek-V4-Flash-0731 | active |
+| BA171 | llm7_api | GLM-5.3-Flash | active |
+| BA172 | llm7_api | minimax-m2.7 | active |
+| BA173 | llm7_api | mistral-Nemo-Instruct-2407 | active |
+| BA174 | llm7_api | codestral-latest | active |
 | BA18 | nvidia_api | z-ai/glm-5.3-flash | deprecated |
 | BA19 | nvidia_api | deepseek-ai/deepseek-v4.1-flash | deprecated |
 | BA20 | nvidia_api | z-ai/glm-5.3 | active |

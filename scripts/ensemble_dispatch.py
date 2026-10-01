@@ -339,6 +339,15 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     # scorecard agrega por modelo y un alias cambia bajo el perfil).
     ("mistral_api", "mistral-large-2512"): "mistral",
     ("mistral_api", "codestral-2508"): "codestral",
+    # llm7_api BA170-BA189 (agregador; los IDs son los del catalogo de LLM7).
+    ("llm7_api", "DeepSeek-V4-Flash-0731"): "deepseek",
+    ("llm7_api", "GLM-5.3-Flash"): "glm",
+    ("llm7_api", "minimax-m2.7"): "minimax",
+    ("llm7_api", "mistral-Nemo-Instruct-2407"): "nemo",
+    # `codestral-latest` es un alias (LLM7 no publica el ID con fecha): el
+    # scorecard agrega por modelo y puede cambiar bajo el perfil. Aceptado
+    # por decision del usuario 2026-10-02; misma familia que codestral-2508.
+    ("llm7_api", "codestral-latest"): "codestral",
     # Backends mono-modelo (model=None por diseno VIGENTE, ver docstring de
     # regenerate_leaders): la familia coincide con el propio backend.
     ("codex", None): "codex",
@@ -355,6 +364,19 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("codex", "gpt-5.6-luna"): "codex",
     ("codex", "gpt-6-astra"): "codex",
 }
+# Grupo "otros" (decision del usuario 2026-10-02): modelos SIN hermano de
+# familia en otro proveedor. Su fallback NO busca por familia: delega directo
+# en `resolve_fallback_backend` (otro backend, primero vivo -> claude). Es un
+# grupo APARTE y no una familia a proposito: una familia `otros` los haria
+# hermanos entre si (minimax caeria a nemo, mismo backend y mismo cupo de
+# cuenta) y mezclaria sus estadisticas en `regenerate_family_leaders`.
+# Sacar un modelo de aqui cuando aparezca un segundo proveedor que lo sirva.
+FALLBACK_DIRECTO_SIN_HERMANO: frozenset[tuple[str, str | None]] = frozenset(
+    {
+        ("llm7_api", "minimax-m2.7"),
+        ("llm7_api", "mistral-Nemo-Instruct-2407"),
+    }
+)
 FAMILY_LEADERS_REL = Path(".agent/runtime/ensemble/backend_family_leaders.json")
 
 PREMISE_CHECK_PREAMBLE = (
@@ -3094,7 +3116,10 @@ def resolve_similar_fallback(
 
     profiles = config.get("ensemble_profiles", {})
     failed = profiles.get(failed_profile, {})
-    familia = MODEL_FAMILY_MAP.get((failed.get("backend"), failed.get("model")))
+    failed_key = (failed.get("backend"), failed.get("model"))
+    familia = MODEL_FAMILY_MAP.get(failed_key)
+    if failed_key in FALLBACK_DIRECTO_SIN_HERMANO:
+        familia = None
     excluded = exclude_profiles | {failed_profile}
     # Cuarentena: un solo disco-read por invocacion; el filtro se aplica
     # ANTES del ranking (precedencia Seccion 5-bis: 1) cuarentena,
