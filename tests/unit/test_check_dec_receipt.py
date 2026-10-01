@@ -784,3 +784,41 @@ def test_061e_cli_warn_precede_a_la_linea_skip(tmp_path: Path) -> None:
 
     assert proc.returncode == 0
     assert proc.stdout.index("[dec-receipt] WARN") < proc.stdout.index("SKIP EXPLICITO")
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-061e R4: la clausula `DEC-` de la candidata y los marcadores de D1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("lineas", "esperado"),
+    [
+        pytest.param(
+            ["## Notas", "### DEC-001 - a"],
+            (1, 0, "### DEC-001 - a"),
+            id="una_cabecera_sin_dec_no_es_candidata",
+        ),
+        pytest.param(
+            ["### DECISION-001 - a"],
+            (0, 0, None),
+            id="sin_guion_tras_dec_no_es_candidata",
+        ),
+        pytest.param(
+            ["### dec-001 - a"], (0, 0, None), id="dec_en_minusculas_no_es_candidata"
+        ),
+    ],
+)
+def test_061e_diagnostico_solo_cuenta_cabeceras_dec(
+    tmp_path: Path, lineas: list[str], esperado: tuple[int, int, str | None]
+) -> None:
+    r"""D3: la candidata casa `^#{1,6}\s+DEC-` literal (con `DEC-` en mayusculas y con guion)."""
+    registry = _write_registry_file(tmp_path / "decisions.md", lineas)
+    assert cdr.destino_heading_diagnostic(registry) == esperado
+
+
+def test_061e_schema_conserva_los_marcadores_literales_y_nombra_el_guard() -> None:
+    """D1: la cabecera del schema conserva `<familia>` y `<NNN>` LITERALES y la frase nombra el guard."""
+    texto = " ".join(_SCHEMA_PROMPT.read_text(encoding="utf-8").split())
+    assert "### DEC-<familia>-<NNN> -- <titulo corto>" in texto
+    assert "`scripts/check_dec_receipt.py` solo carga cabeceras de ese formato" in texto
