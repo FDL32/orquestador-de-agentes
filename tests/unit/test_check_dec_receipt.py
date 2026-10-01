@@ -531,3 +531,104 @@ def test_061e_cli_con_registro_inexistente_no_avisa_ni_lanza(tmp_path: Path) -> 
     assert proc.returncode == 1
     assert "WARN" not in proc.stdout
     assert "Traceback" not in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-061e R2: propiedades de D4/T2 sobre el WARN (B1-B4)
+# ---------------------------------------------------------------------------
+
+
+def test_061e_cli_warn_linea_exacta_y_una_sola_vez(tmp_path: Path) -> None:
+    """B1+B2 (D4: `EXACTAMENTE esta linea`, `UNA vez por registro`).
+
+    B1: la igualdad de lista contra la linea LITERAL completa fija nombre del
+    registro, conteo `0 de 3`, ejemplo y clausula `formato esperado`. B2: que la
+    lista tenga UN solo elemento fija que el WARN sale una unica vez (la ficha
+    es POST-cutoff: una anterior emitiria otro `[dec-receipt] WARN` de
+    grandfathering con el mismo prefijo y falsearia la cuenta).
+    """
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _write_ficha_061e(inbox)
+    registry = _write_registry_file(
+        tmp_path / "decisions.md",
+        ["### DEC-001 - a", "### DEC-002 - b", "### DEC-003 - c"],
+    )
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    warn_lines = [
+        line
+        for line in proc.stdout.splitlines()
+        if line.startswith("[dec-receipt] WARN")
+    ]
+    assert proc.returncode == 1
+    assert warn_lines == [
+        "[dec-receipt] WARN decisions.md: 0 de 3 cabeceras 'DEC-' cargables; "
+        "no cargable p.ej. '### DEC-001 - a'; formato esperado: "
+        "'### DEC-<familia>-<NNN> -- <titulo>'"
+    ]
+
+
+def test_061e_cli_warn_sale_en_el_camino_skip(tmp_path: Path) -> None:
+    """B3 (D4: `asi tambien sale en un SKIP`).
+
+    Inbox VACIO (el directorio existe, 0 fichas): el unico camino que retorna 0
+    sin validar ninguna ficha. El WARN debe salir igualmente, con la linea
+    exacta, antes del `SKIP EXPLICITO`.
+    """
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    registry = _write_registry_file(
+        tmp_path / "decisions.md",
+        ["### DEC-001 - a", "### DEC-002 - b", "### DEC-003 - c"],
+    )
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    warn_lines = [
+        line
+        for line in proc.stdout.splitlines()
+        if line.startswith("[dec-receipt] WARN")
+    ]
+    assert proc.returncode == 0
+    assert warn_lines == [
+        "[dec-receipt] WARN decisions.md: 0 de 3 cabeceras 'DEC-' cargables; "
+        "no cargable p.ej. '### DEC-001 - a'; formato esperado: "
+        "'### DEC-<familia>-<NNN> -- <titulo>'"
+    ]
+    assert "SKIP EXPLICITO" in proc.stdout
+
+
+def test_061e_cli_warn_no_cambia_el_exit_code(tmp_path: Path) -> None:
+    """B4 (T2/D4: `no cambia ningun codigo de salida`).
+
+    Registro MIXTO y la ficha literal de D6 (recibo `DEC-012-001 (destino)`):
+    el id SI existe en el registro, asi que el guard sale 0 mientras el WARN
+    explica que 1 de 2 cabeceras no carga. Si el WARN abriese el guard (o
+    subiese el exit), este test cae; el sentido contrario (WARN con rc=1) esta
+    en el test D6(a).
+    """
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _write_ficha_061e(inbox)
+    registry = _write_registry_file(
+        tmp_path / "decisions.md",
+        ["### DEC-012-001 -- a", "### DEC-001 - b"],
+    )
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    warn_lines = [
+        line
+        for line in proc.stdout.splitlines()
+        if line.startswith("[dec-receipt] WARN")
+    ]
+    assert proc.returncode == 0
+    assert warn_lines == [
+        "[dec-receipt] WARN decisions.md: 1 de 2 cabeceras 'DEC-' cargables; "
+        "no cargable p.ej. '### DEC-001 - b'; formato esperado: "
+        "'### DEC-<familia>-<NNN> -- <titulo>'"
+    ]
+    assert "1 ok" in proc.stdout
+    assert "destino=1" in proc.stdout
