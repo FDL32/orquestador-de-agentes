@@ -245,15 +245,20 @@ def _compare_patch_ids(git_root: Path, old_full: str, new_full: str) -> str | No
 
 
 def _metadata_differs(git_root: Path, old_full: str, new_full: str) -> bool | None:
-    """True/False si mensaje/autor/fecha/padres difieren; None si git fallo."""
+    """True/False si mensaje/autor/fecha/padres difieren; None si git fallo.
+
+    Solo se descarta la CABECERA `tree <sha>` (primera linea del objeto commit):
+    una linea del MENSAJE que empiece por `tree ` es contenido y debe contar.
+    """
     raws: dict[str, bytes] = {}
     for sha in (old_full, new_full):
         proc = _git_run(git_root, ["cat-file", "commit", sha])
         if proc is None or proc.returncode != 0:
             return None
-        raws[sha] = b"\n".join(
-            line for line in proc.stdout.split(b"\n") if not line.startswith(b"tree ")
-        )
+        lines = proc.stdout.split(b"\n")
+        if lines and lines[0].startswith(b"tree "):
+            lines = lines[1:]
+        raws[sha] = b"\n".join(lines)
     return raws[old_full] != raws[new_full]
 
 
@@ -441,6 +446,12 @@ def _exclusive_write(path: Path, data: bytes) -> None:
         handle.write(data)
 
 
+def _write_bytes(path: Path, data: bytes) -> None:
+    """Escritura binaria simple; seam unico para inyectar fallos de I/O."""
+    with open(path, "wb") as handle:
+        handle.write(data)
+
+
 def _replace_file(path: Path, data: bytes) -> None:
     """Escribe a un temporal del MISMO directorio y `os.replace` (atomico)."""
     tmp = path.with_name(f"{path.name}.tmp-remap-{os.getpid()}")
@@ -492,6 +503,67 @@ def _report_inprogress_error(remap_dir: Path, residual: list[Path]) -> None:
     )
 
 
+def _unlink_quiet(path: Path, what: str) -> None:
+    """Borra `path` sin propagar: un fallo se reporta como WARN."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"[remap] WARN: no pude borrar {what} {path}: {exc}", file=sys.stderr)
+
+
+def _cleanup_copies(copies: list[Path]) -> None:
+    """Borra SOLO copias creadas por ESTA ejecucion (jamas una copia previa)."""
+    for copy in copies:
+        _unlink_quiet(copy, "la copia")
+
+
+def _remove_sentinel(sentinel: Path) -> None:
+    """Borra el sentinela; si no puede, lo dice (bloqueara el proximo apply)."""
+    try:
+        sentinel.unlink(missing_ok=True)
+    except OSError as exc:
+        print(
+            f"[remap] WARN: no pude borrar el sentinela {sentinel}: {exc}; un "
+            f"--apply posterior se negara hasta que se resuelva a mano",
+            file=sys.stderr,
+        )
+
+
+def _restore_or_report(path: Path, copy: Path) -> bool:
+    """Restaura `path` desde `copy`; un fallo se reporta y devuelve False."""
+    try:
+        _restore(path, copy)
+        return True
+    except OSError as exc:
+        print(
+            f"[remap] ERROR: no pude restaurar {path}; se CONSERVA su copia "
+            f"{copy}: {exc}",
+            file=sys.stderr,
+        )
+        return False
+
+
+def _rollback(
+    replaced: list[Path],
+    copies: dict[Path, Path],
+    created_copies: list[Path],
+    sentinel: Path,
+) -> None:
+    """Rollback de un apply abortado: restaura, borra sentinela y limpia copias.
+
+    Un fallo al restaurar NO propaga (se reporta): ese fichero CONSERVA su copia
+    como red de recuperacion manual. El resto de copias creadas en esta
+    ejecucion se borran (D8: un apply abortado no deja artefactos huerfanos).
+    """
+    failed: set[Path] = set()
+    for path in reversed(replaced):
+        if not _restore_or_report(path, copies[path]):
+            failed.add(path)
+    _remove_sentinel(sentinel)
+    keep = {copies[path] for path in failed}
+    _cleanup_copies([copy for copy in created_copies if copy not in keep])
+
+
 def _apply_changes(
     project_root: Path,
     stamp: str,
@@ -507,73 +579,94 @@ def _apply_changes(
         residual ya paso en `main`.
     During: crea `<nombre>.pre-remap.<ts>` exclusivo por fichero, escribe el
         sentinela, verifica tamano+sha256 antes de cada `os.replace` y
-        reemplaza. Ante fallo del segundo fichero (escritura o cambio
-        concurrente) restaura los ya reemplazados y sale 2.
-    After: `EXIT_OK` con `remap_<ts>.json` escrito, o `EXIT_USAGE` sin
-        cambios parciales (restaurado lo reemplazado).
+        reemplaza. TODA excepcion (copia N, sentinela, reemplazo, restore del
+        rollback, informe) se captura: nunca escapa una traza y nunca quedan
+        copias huerfanas de ESTA ejecucion (la copia de un fichero cuyo restore
+        fallo se conserva, con su ruta reportada).
+    After: `EXIT_OK` con `remap_<ts>.json` escrito, o `EXIT_USAGE` con los
+        ficheros restaurados y `remap/` sin residuos de esta ejecucion.
     """
     remap_dir = project_root / REMAP_DIR_REL
-    remap_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        remap_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"[remap] ERROR: no pude crear {remap_dir}: {exc}", file=sys.stderr)
+        return EXIT_USAGE
     copies: dict[Path, Path] = {}
+    created_copies: list[Path] = []
     for path in changes:
         copy = remap_dir / f"{path.name}.pre-remap.{stamp}"
         try:
             _exclusive_write(copy, originals[path])
         except FileExistsError:
+            _cleanup_copies(created_copies)
             print(
                 f"[remap] ERROR: la copia ya existe y NUNCA se sobrescribe: {copy}",
                 file=sys.stderr,
             )
             return EXIT_USAGE
+        except OSError as exc:
+            _cleanup_copies(created_copies)
+            print(
+                f"[remap] ERROR: no pude crear la copia {copy}: {exc}",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        created_copies.append(copy)
         copies[path] = copy
     sentinel = remap_dir / f"remap_{stamp}.inprogress.json"
-    sentinel.write_bytes(
-        json.dumps(
-            {
-                "timestamp": stamp,
-                "project_root": str(project_root),
-                "ficheros": [
-                    {"fichero": str(path), "copia": str(copy)}
-                    for path, copy in copies.items()
-                ],
-            },
-            ensure_ascii=False,
-            indent=2,
-        ).encode("utf-8")
-    )
+    try:
+        _write_bytes(
+            sentinel,
+            json.dumps(
+                {
+                    "timestamp": stamp,
+                    "project_root": str(project_root),
+                    "ficheros": [
+                        {"fichero": str(path), "copia": str(copy)}
+                        for path, copy in copies.items()
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ).encode("utf-8"),
+        )
+    except OSError as exc:
+        _cleanup_copies(created_copies)
+        print(
+            f"[remap] ERROR: no pude escribir el sentinela {sentinel}: {exc}",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     replaced: list[Path] = []
     try:
         for path, data in changes.items():
             _verify_unchanged(path, initial_fingerprints[path])
             _replace_file(path, data)
             replaced.append(path)
-    except _ConcurrentWriteError as exc:
-        for path in reversed(replaced):
-            _restore(path, copies[path])
-        sentinel.unlink(missing_ok=True)
+    except (_ConcurrentWriteError, OSError) as exc:
+        _rollback(replaced, copies, created_copies, sentinel)
         print(
             f"[remap] ABORTADO: {exc}. Restaurado lo ya reemplazado; no se "
             f"escribio nada mas.",
             file=sys.stderr,
         )
         return EXIT_USAGE
+    report_path = remap_dir / f"remap_{stamp}.json"
+    try:
+        _write_bytes(
+            report_path,
+            json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
+        )
     except OSError as exc:
-        for path in reversed(replaced):
-            _restore(path, copies[path])
-        sentinel.unlink(missing_ok=True)
+        _rollback(replaced, copies, created_copies, sentinel)
         print(
-            f"[remap] ABORTADO al escribir: {exc}. Restaurado lo ya "
-            f"reemplazado; los dos ficheros quedan como antes.",
+            f"[remap] ERROR: no pude escribir {report_path}: {exc}; todo "
+            f"restaurado (apply abortado sin efecto).",
             file=sys.stderr,
         )
         return EXIT_USAGE
-    sentinel.unlink(missing_ok=True)
-    report_path = remap_dir / f"remap_{stamp}.json"
-    report_path.write_bytes(
-        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=False).encode(
-            "utf-8"
-        )
-    )
+    _remove_sentinel(sentinel)
     print(f"[remap] artefactos: {report_path}")
     return EXIT_OK
 

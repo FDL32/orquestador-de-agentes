@@ -733,6 +733,7 @@ def test_cambio_concurrente_antes_del_replace_aborta_y_restaura(
     assert (sc_path.read_bytes(), non_path.read_bytes()) == before
     assert "ABORTADO" in capsys.readouterr().err
     assert not list((_evidence_dir(repo) / "remap").glob("*.inprogress.json"))
+    assert _remap_copies(repo) == []
 
 
 def test_fallo_inyectado_en_el_segundo_fichero_restaura_el_primero(
@@ -766,6 +767,7 @@ def test_fallo_inyectado_en_el_segundo_fichero_restaura_el_primero(
     assert rc == 2
     assert (sc_path.read_bytes(), non_path.read_bytes()) == before
     assert "ABORTADO" in capsys.readouterr().err
+    assert _remap_copies(repo) == []
 
 
 def test_inprogress_residual_hace_salir_2_sin_restaurar(tmp_path, capsys):
@@ -910,3 +912,135 @@ def test_referencias_fuera_de_los_dos_jsonl_se_listan_y_no_se_reescriben(
         ref["fichero"] == "backend_status.json" and ref["ocurrencias"] >= 1
         for ref in report["referencias_externas"]
     )
+
+
+# ---------------------------------------------------------------------------
+# CHANGES del MANAGER_REVIEW (DBL-5, ancla d3dc5e9): limpieza y captura en los
+# caminos de error de _apply_changes, y cabecera del objeto commit
+# ---------------------------------------------------------------------------
+
+_STAMP = "20200101T000000000000Z"
+
+
+def _apply_args(repo: Path, old: str, new: str) -> list[str]:
+    return [
+        "--project-root",
+        str(repo),
+        "--git-root",
+        str(repo),
+        "--map",
+        f"{old}={new}",
+        "--apply",
+    ]
+
+
+def _remap_copies(repo: Path) -> list[str]:
+    remap_dir = _evidence_dir(repo) / "remap"
+    if not remap_dir.is_dir():
+        return []
+    return sorted(p.name for p in remap_dir.glob("*.pre-remap.*"))
+
+
+def test_fallo_al_escribir_el_sentinela_limpia_copias_y_sale_2(
+    tmp_path, capsys, monkeypatch
+):
+    """Blocker 1: un OSError al escribir el sentinela NO escapa; limpia copias."""
+    repo, old, new = _pair_fixture(tmp_path)
+    sc_path = _evidence_dir(repo) / "scorecard.jsonl"
+    non_path = _evidence_dir(repo) / "emitted_nonces.jsonl"
+    before = (sc_path.read_bytes(), non_path.read_bytes())
+    real = remap._write_bytes
+
+    def flaky(path, data):
+        if path.name.endswith(".inprogress.json"):
+            raise OSError("sentinela simulado")
+        return real(path, data)
+
+    monkeypatch.setattr(remap, "_write_bytes", flaky)
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    assert (sc_path.read_bytes(), non_path.read_bytes()) == before
+    assert _remap_copies(repo) == []
+    assert not list((_evidence_dir(repo) / "remap").glob("*.inprogress.json"))
+    assert "sentinela" in capsys.readouterr().err
+
+
+def test_fallo_en_la_copia_enesima_limpia_las_anteriores(tmp_path, capsys, monkeypatch):
+    """Blocker 3: si la copia N falla, las copias 1..N-1 de ESTA ejecucion se borran."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    sc_path = _evidence_dir(repo) / "scorecard.jsonl"
+    non_path = _evidence_dir(repo) / "emitted_nonces.jsonl"
+    before = (sc_path.read_bytes(), non_path.read_bytes())
+    remap_dir = _evidence_dir(repo) / "remap"
+    remap_dir.mkdir(parents=True)
+    preexisting = remap_dir / f"emitted_nonces.jsonl.pre-remap.{_STAMP}"
+    preexisting.write_bytes(b"previa")
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    assert (sc_path.read_bytes(), non_path.read_bytes()) == before
+    assert not (remap_dir / f"scorecard.jsonl.pre-remap.{_STAMP}").exists()
+    assert preexisting.read_bytes() == b"previa"
+    assert "NUNCA se sobrescribe" in capsys.readouterr().err
+
+
+def test_fallo_de_restore_en_rollback_sale_2_y_conserva_su_copia(
+    tmp_path, capsys, monkeypatch
+):
+    """Blocker 4: un fallo dentro del propio rollback no propaga; exit 2, sentinela
+    borrado y la copia del fichero no restaurado se CONSERVA como red manual."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    calls = {"n": 0}
+    real = remap._replace_file
+
+    def flaky(path, data):
+        calls["n"] += 1
+        if calls["n"] in (2, 3):
+            raise OSError("fallo simulado")
+        return real(path, data)
+
+    monkeypatch.setattr(remap, "_replace_file", flaky)
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "no pude restaurar" in err
+    remap_dir = _evidence_dir(repo) / "remap"
+    assert (remap_dir / f"scorecard.jsonl.pre-remap.{_STAMP}").exists()
+    assert not (remap_dir / f"emitted_nonces.jsonl.pre-remap.{_STAMP}").exists()
+    assert not list(remap_dir.glob("*.inprogress.json"))
+
+
+def test_metadata_differs_no_descarta_lineas_del_mensaje_que_empiezan_por_tree(
+    tmp_path,
+):
+    """Hallazgo 5: solo la CABECERA `tree <sha>` se descarta; una linea del
+    mensaje que empiece por `tree ` es contenido y cuenta como diferencia."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "seed.txt", "seed", "seed")
+    tree = _tree_of(repo, _rev(repo, "HEAD"))
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_AUTHOR_DATE": "2020-01-01T00:00:00+00:00",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "GIT_COMMITTER_DATE": "2020-01-01T00:00:00+00:00",
+    }
+
+    def _commit_msg(message: str) -> str:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "commit-tree", tree, "-m", message],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+        return out.stdout.strip()
+
+    old = _commit_msg("tree alpha\n\ncuerpo")
+    new = _commit_msg("tree beta\n\ncuerpo")
+    assert old != new
+    assert _tree_of(repo, old) == _tree_of(repo, new)
+    assert remap._metadata_differs(repo, old, new) is True
