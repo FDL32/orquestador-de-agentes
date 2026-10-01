@@ -149,6 +149,30 @@ entorno de la sesion que ejecuta, no falles en falso ni asumas coincidencia —
 instruye "verificalo si es accesible; si no, decláralo pendiente de
 verificacion".
 
+**Fuente de los contratos y frescura del checkout de consumo (si aplica).**
+Si tu topologia lee los contratos de un checkout de solo consumo distinto de
+`<MOTOR_ROOT>` (el principal, que puede ir por detras de `origin/main` y estar
+detached), mide su frescura ANTES de leer ninguno. La medicion es de solo
+lectura y SIN `git fetch`: `origin/main` es la referencia LOCAL y puede estar
+vieja respecto al remoto; declara esa limitacion. Comandos:
+`git -C <principal> rev-parse --short HEAD`, `git -C <principal> status --short`
+y `git -C <principal> rev-list --count HEAD..origin/main` (funciona con HEAD
+detached).
+- Recuento 0 y `status` vacio: lee del principal.
+- Recuento mayor que 0 o `status` no vacio: compara el sha256 de CADA contrato
+  citado entre el principal y `git -C <MOTOR_ROOT> show origin/main:<ruta>`. Los
+  que coinciden se citan desde el principal; los que difieren NO se leen del
+  principal: lee el blob de `origin/main` (solo lectura) y cita ESE hash, o pide
+  al operador `sync_principal.py`. Declara cuales difieren.
+- Si `origin/main` no se resuelve (`git -C <MOTOR_ROOT> rev-parse origin/main`
+  con rc distinto de 0), declara la verificacion pendiente: no asumas que el
+  principal esta al dia.
+- Si tu topologia no tiene un checkout de consumo separado, omite este punto.
+- No ejecutes `sync_principal.py` desde este prompt: es de solo lectura y esa
+  accion cambia lo que consumen los destinos; la decide el operador.
+(Origen: `PROPUESTA_session_hop_principal_20261001.md`, clase
+`handoff_prompt_defect`, verificada por bucle el 2026-10-01.)
+
 ## Paso 4: verifica los slugs de memoria ANTES de citarlos
 
 ```bash
