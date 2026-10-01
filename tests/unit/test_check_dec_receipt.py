@@ -822,3 +822,80 @@ def test_061e_schema_conserva_los_marcadores_literales_y_nombra_el_guard() -> No
     texto = " ".join(_SCHEMA_PROMPT.read_text(encoding="utf-8").split())
     assert "### DEC-<familia>-<NNN> -- <titulo corto>" in texto
     assert "`scripts/check_dec_receipt.py` solo carga cabeceras de ese formato" in texto
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-061e R5: pines de COMPORTAMIENTO (K1, K2, K5) y de lo que el
+# DOCUMENTO enseña (K3/K3b, K4) sobre las mutaciones supervivientes del censo
+# independiente de 221 mutaciones del Manager.
+# ---------------------------------------------------------------------------
+
+_WARN_UN_CABECERA = (
+    "[dec-receipt] WARN decisions.md: 0 de 1 cabeceras 'DEC-' cargables; "
+    "no cargable p.ej. '### DEC-001 - a'; formato esperado: "
+    "'### DEC-<familia>-<NNN> -- <titulo>'"
+)
+
+
+def test_061e_cli_warn_sale_con_una_sola_cabecera_antigua(tmp_path: Path) -> None:
+    """D4: `solo si candidatas > cargables`; el borde n=1 (0 de 1) tambien avisa."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "FP-20261001-a.tickets.md").write_text(
+        "Titulo: x\n**recibo:** DEC-no-aplica: prueba\n", encoding="utf-8"
+    )
+    registry = _write_registry_file(tmp_path / "decisions.md", ["### DEC-001 - a"])
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    warn_lines = [
+        line
+        for line in proc.stdout.splitlines()
+        if line.startswith("[dec-receipt] WARN")
+    ]
+    assert proc.returncode == 0
+    assert warn_lines == [_WARN_UN_CABECERA]
+
+
+def test_061e_cli_con_registro_inexistente_es_no_verificable(
+    tmp_path: Path,
+) -> None:
+    """D6(c): un recibo `(destino)` sin registro es NO VERIFICABLE, no un ERROR de `sin recibo`."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _write_ficha_061e(inbox)
+
+    proc = _run_cli_check_dec_receipt(tmp_path / "no_existe.md", inbox)
+
+    assert proc.returncode == 1
+    assert "NO VERIFICABLE" in proc.stdout
+    assert "destino=no pasado" in proc.stdout
+
+
+def test_061e_diagnostico_no_cuenta_prosa_sin_almohadilla(
+    tmp_path: Path,
+) -> None:
+    """D3: la candidata exige `#` al principio; una linea de prosa que empieza por `DEC-` no cuenta."""
+    registry = _write_registry_file(
+        tmp_path / "decisions.md", ["DEC-001 - nota en prosa", "### DEC-001 - a"]
+    )
+    assert cdr.destino_heading_diagnostic(registry) == (1, 0, "### DEC-001 - a")
+
+
+def test_061e_schema_ensena_el_id_familia_nnn_justo_despues_del_bloque() -> None:
+    """D1: la frase dice que el id es `<familia>-<NNN>` y va INMEDIATAMENTE despues del bloque del schema."""
+    texto = " ".join(_SCHEMA_PROMPT.read_text(encoding="utf-8").split())
+    assert "El id de la cabecera es `<familia>-<NNN>` (por ejemplo" in texto
+    assert "- date: YYYY-MM-DD ``` El id de la cabecera es `<familia>-<NNN>`" in texto
+
+
+def test_061e_ninguna_cabecera_antigua_en_todo_el_prompt() -> None:
+    """D1(a): el `grep -c` es sobre el FICHERO entero: 0 cabeceras antiguas y exactamente 1 nueva."""
+    lineas = _SCHEMA_PROMPT.read_text(encoding="utf-8").splitlines()
+    assert [ln for ln in lineas if ln.startswith("### DEC-001 - ")] == []
+    nuevas = [
+        ln
+        for ln in lineas
+        if ln.startswith("### DEC-<familia>-<NNN> -- <titulo corto>")
+    ]
+    assert len(nuevas) == 1
