@@ -162,6 +162,11 @@ EXPECTED_WIRED_REAL = {
     "check_guard_wiring",
     "check_handoff_committed",  # WOT-2026-040t(P1): cableado en prepush_check.py (closeout, BLOQUEANTE)
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
+    # WOT-2026-089e: cableado via `_run_script("check_memory_health.py")` en
+    # scripts/closeout_steps/memory_health.py, paso `memory_health` de
+    # `--session-close` (session_closeout.py). Call-site verificado: quitar esa
+    # llamada pone en rojo TestWOT2026089eMemoryHealthStep (WARN, no bloqueante).
+    "check_memory_health",
     "check_loop_execution",  # WOT-2026-040b: cableado via import estatico en prepush_check.py::run_loop_execution_check (closeout, WARN). Barrera de ejecucion del bucle 1->9->2.
     "check_motor_destination_integration",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_no_history_truncation",
