@@ -1,6 +1,6 @@
 # decisions.md -- python_service_minimal
 
-### DEC-001 -- Framework HTTP
+### DEC-EX-001 -- Framework HTTP
 
 - **tier:** T1b
 - **status:** accepted
@@ -16,7 +16,7 @@
 
 ---
 
-### DEC-002 -- Scope v1: solo endpoint health, sin persistencia
+### DEC-EX-002 -- Scope v1: solo endpoint health, sin persistencia
 
 - **tier:** T1a
 - **status:** accepted

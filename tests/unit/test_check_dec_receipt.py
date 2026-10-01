@@ -16,6 +16,8 @@ guard previene vive en la frontera con ficheros de verdad.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -304,3 +306,228 @@ def test_empty_inbox_skips_explicitly(capsys: pytest.CaptureFixture[str]) -> Non
     """0 fichas imprime SKIP EXPLICITO: un exit 0 mudo seria "no hice nada"."""
     assert cdr.main(["--motor-root", str(Path(__file__).resolve().parents[2])]) == 0
     assert "SKIP EXPLICITO" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-061e: el regex y los ficheros que el motor ENSENA no pueden divergir
+# ---------------------------------------------------------------------------
+
+
+_MOTOR_ROOT = Path(__file__).resolve().parents[2]
+_SCHEMA_PROMPT = _MOTOR_ROOT / "prompts" / "contract_formation_pipeline.md"
+_EXAMPLES_DIR = _MOTOR_ROOT / "docs" / "contract_formation" / "examples"
+
+
+def test_schema_documentado_del_registro_es_cargable_por_el_guard() -> None:
+    """D2: la cabecera del schema del prompt REAL carga con `_RE_DESTINO_HEADING`.
+
+    El defecto original (WOT-2026-061e) vivio porque ningun test unia documento
+    y regex: el prompt ensenaba un formato que el guard rechazaba. Cero
+    coincidencias NO es verde: el bloque debe tener EXACTAMENTE una cabecera
+    `### DEC-` y esa cabecera (con `<familia>`/`<NNN>` sustituidos) debe cargar.
+    """
+    lines = _SCHEMA_PROMPT.read_text(encoding="utf-8").splitlines()
+    starts = [i for i, line in enumerate(lines) if line.startswith("## 6.")]
+    assert starts, "el prompt debe conservar la seccion '## 6.' con el schema"
+    starts_at = starts[0]
+    ends = [i for i in range(starts_at + 1, len(lines)) if lines[i].startswith("## ")]
+    assert ends, "la seccion del schema debe cerrarse con otra seccion '## '"
+    schema_lines = [line.strip() for line in lines[starts_at : ends[0]]]
+
+    headings = [line for line in schema_lines if line.startswith("### DEC-")]
+    assert len(headings) == 1, (
+        "el bloque de schema debe tener EXACTAMENTE una cabecera '### DEC-'; "
+        f"encontradas {len(headings)}: {headings}"
+    )
+
+    heading = headings[0].replace("<familia>", "RDS").replace("<NNN>", "001")
+    match = cdr._RE_DESTINO_HEADING.match(heading)
+    assert match is not None, (
+        f"la cabecera del schema ({heading!r}) NO es cargable por el guard: el "
+        "documento ensena un formato que _RE_DESTINO_HEADING rechaza"
+    )
+    assert match.group(1) == "RDS-001"
+
+
+def test_ejemplos_de_decisions_son_cargables_por_el_guard() -> None:
+    """D2: cada cabecera del ejemplo REAL carga con `_RE_DESTINO_HEADING`.
+
+    Los ejemplos son la segunda superficie donde el motor ENSENA el formato.
+    Cero ficheros o cero cabeceras no es verde (control positivo explicito).
+    """
+    example_files = sorted(_EXAMPLES_DIR.glob("*/decisions.md"))
+    assert example_files, "debe existir al menos un ejemplo con decisions.md"
+
+    checked = 0
+    for path in example_files:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s.startswith("### DEC-"):
+                continue
+            checked += 1
+            assert cdr._RE_DESTINO_HEADING.match(s) is not None, (
+                f"{path.name}: la cabecera {s!r} NO es cargable por el guard; "
+                "el ejemplo ensena un formato que _RE_DESTINO_HEADING rechaza"
+            )
+    assert checked > 0, "los ejemplos deben contener al menos una cabecera '### DEC-'"
+
+
+def test_061e_el_regex_no_acepta_guion_simple_ni_id_de_un_segmento() -> None:
+    """D5: el invariante del guard NO se relaja (control negativo por formato)."""
+    assert cdr._RE_DESTINO_HEADING.match("### DEC-012 - x") is None
+    assert cdr._RE_DESTINO_HEADING.match("### DEC-001 -- x") is None
+    assert cdr._RE_DESTINO_HEADING.match("### DEC-010D-001 - x") is None
+
+
+def test_061e_el_regex_acepta_familia_numero_con_doble_guion() -> None:
+    """D5: el formato aceptado es `<familia>-<NNN>` con separador ` -- `."""
+    assert cdr._RE_DESTINO_HEADING.match("### DEC-010D-001 -- x").group(1) == "010D-001"
+    assert cdr._RE_DESTINO_HEADING.match("### DEC-RDS-001 -- x").group(1) == "RDS-001"
+
+
+def _write_registry_file(path: Path, headings: list[str], newline: str = "\n") -> Path:
+    path.write_text(newline.join(headings) + newline, encoding="utf-8")
+    return path
+
+
+def test_061e_diagnostico_12_cabeceras_en_el_formato_antiguo(tmp_path: Path) -> None:
+    """D3: 12 candidatas antiguas -> (12, 0, primera); el denominador es 12."""
+    headings = [f"### DEC-{i:03d} - titulo {i}" for i in range(1, 13)]
+    registry = _write_registry_file(tmp_path / "decisions.md", headings)
+    assert cdr.destino_heading_diagnostic(registry) == (
+        12,
+        0,
+        "### DEC-001 - titulo 1",
+    )
+
+
+def test_061e_diagnostico_mezcla_cuenta_exacto(tmp_path: Path) -> None:
+    """D3: la mezcla se cuenta exacta y el ejemplo es la PRIMERA no cargable."""
+    headings = [
+        "### DEC-001 - viejo",
+        "### DEC-RDS-001 -- nuevo",
+        "#### DEC-010D-002 -- anidado nuevo",
+        "### DEC-002 - viejo",
+        "### DEC-EX-003 -- nuevo",
+    ]
+    registry = _write_registry_file(tmp_path / "decisions.md", headings)
+    assert cdr.destino_heading_diagnostic(registry) == (
+        5,
+        3,
+        "### DEC-001 - viejo",
+    )
+
+
+def test_061e_diagnostico_todas_cargables_no_da_ejemplo(tmp_path: Path) -> None:
+    """D3: si todas cargan, no hay ejemplo que publicar -> None."""
+    headings = [
+        "### DEC-001-001 -- a",
+        "### DEC-RDS-002 -- b",
+        "#### DEC-010D-003 -- c",
+    ]
+    registry = _write_registry_file(tmp_path / "decisions.md", headings)
+    assert cdr.destino_heading_diagnostic(registry) == (3, 3, None)
+
+
+def test_061e_diagnostico_sin_fichero_es_cero(tmp_path: Path) -> None:
+    """D3: None y fichero ausente -> (0, 0, None) sin lanzar."""
+    assert cdr.destino_heading_diagnostic(None) == (0, 0, None)
+    assert cdr.destino_heading_diagnostic(tmp_path / "no_existe.md") == (0, 0, None)
+
+
+def test_061e_diagnostico_con_finales_crlf_cuenta_igual_que_con_lf(
+    tmp_path: Path,
+) -> None:
+    """D3: CRLF y LF dan el mismo recuento (splitlines + strip)."""
+    headings = [
+        "### DEC-001 - viejo",
+        "### DEC-RDS-001 -- nuevo",
+        "### DEC-002 - viejo",
+    ]
+    lf = _write_registry_file(tmp_path / "lf.md", headings)
+    crlf = _write_registry_file(tmp_path / "crlf.md", headings, newline="\r\n")
+    assert cdr.destino_heading_diagnostic(crlf) == cdr.destino_heading_diagnostic(lf)
+
+
+def _run_cli_check_dec_receipt(
+    registry: Path, inbox: Path
+) -> subprocess.CompletedProcess[str]:
+    """D6: MISMA ruta de produccion que arma `prepush_check.py` (argv identico)."""
+    return subprocess.run(
+        [
+            sys.executable,
+            str(_MODULE_PATH),
+            "--motor-root",
+            str(_MOTOR_ROOT),
+            "--destino-registry",
+            str(registry),
+            "--inbox",
+            str(inbox),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(_MOTOR_ROOT),
+    )
+
+
+def _write_ficha_061e(inbox: Path) -> Path:
+    ficha = inbox / "FP-20261001-prueba.tickets.md"
+    ficha.write_text(
+        "Titulo: prueba\n**recibo:** DEC-012-001 (destino)\n", encoding="utf-8"
+    )
+    return ficha
+
+
+def test_061e_cli_con_registro_no_cargable_avisa_y_sigue_fallando(
+    tmp_path: Path,
+) -> None:
+    """D6(a): el aviso publica `0 de 3` y el recibo (destino) SIGUE fallando."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _write_ficha_061e(inbox)
+    registry = _write_registry_file(
+        tmp_path / "decisions.md",
+        ["### DEC-001 - a", "### DEC-002 - b", "### DEC-003 - c"],
+    )
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    assert proc.returncode == 1
+    assert "[dec-receipt] WARN" in proc.stdout
+    assert "0 de 3" in proc.stdout
+    assert "[dec-receipt] ERROR" in proc.stdout
+
+
+def test_061e_cli_con_registro_renombrado_valida_el_recibo(tmp_path: Path) -> None:
+    """D6(b): CONTROL POSITIVO -- renombrar las cabeceras desbloquea el recibo."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _write_ficha_061e(inbox)
+    registry = _write_registry_file(
+        tmp_path / "decisions.md",
+        [
+            "### DEC-012-001 -- a",
+            "### DEC-012-002 -- b",
+            "### DEC-012-003 -- c",
+        ],
+    )
+
+    proc = _run_cli_check_dec_receipt(registry, inbox)
+
+    assert proc.returncode == 0
+    assert "WARN" not in proc.stdout
+
+
+def test_061e_cli_con_registro_inexistente_no_avisa_ni_lanza(tmp_path: Path) -> None:
+    """D6(c): sin registro no hay aviso (0 candidatas) ni traceback."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    _write_ficha_061e(inbox)
+
+    proc = _run_cli_check_dec_receipt(tmp_path / "no_existe.md", inbox)
+
+    assert proc.returncode == 1
+    assert "WARN" not in proc.stdout
+    assert "Traceback" not in proc.stderr

@@ -138,7 +138,7 @@ invalidated ──(re-contrato en genesis)──> draft
 
 **Schema de cada `DEC-*`:**
 ```
-### DEC-001 - <titulo corto>
+### DEC-<familia>-<NNN> -- <titulo corto>
 - tier: T1a | T1b | T1c | T2
 - status: pending | accepted | rejected | superseded
 - decided_by: user | agent-default
@@ -148,9 +148,13 @@ invalidated ──(re-contrato en genesis)──> draft
 - impact: <que cambia si se elige>
 - reversibility: alta | media | baja
 - invalidates: [OBJ-*/PLAN-*/TICKET- que se reabren si se revierte]
-- supersedes: DEC-00x | -
+- supersedes: DEC-<familia>-<NNN> | -
 - date: YYYY-MM-DD
 ```
+
+El id de la cabecera es `<familia>-<NNN>` (por ejemplo `010D-001` o `RDS-001`),
+el separador es ` -- `, y `scripts/check_dec_receipt.py` solo carga cabeceras de
+ese formato: un id de un solo segmento como `DEC-012` no se carga.
 
 Una `DEC-*` `T1a` no puede apoyarse solo en evidencia externa/inferida no
 corroborada. Si una `DEC-*` se revierte, propaga `invalidates`.

@@ -95,6 +95,11 @@ _RE_MOTOR_FILE = re.compile(r"^DEC-(.+?-\d+)-", re.IGNORECASE)
 # Registro del destino: cabeceras `### DEC-<id> -- titulo`.
 _RE_DESTINO_HEADING = re.compile(r"^#{1,6}\s+DEC-(.+?-\d+)\s*(?:--|$)")
 
+# Candidata del diagnostico (WOT-2026-061e): MISMA forma que el cargador trata
+# como intento de cabecera -- 1 a 6 `#`, espacio, `DEC-`. Sirve para publicar el
+# DENOMINADOR (lineas candidatas), no solo las que efectivamente cargaron.
+_RE_CANDIDATE_HEADING = re.compile(r"^#{1,6}\s+DEC-")
+
 
 def receipt_is_valid(receipt: str, registry: Mapping[str, set[str]] | set[str]) -> bool:
     """Funcion PURA: el recibo cita un DEC que existe en el registro dado.
@@ -176,6 +181,48 @@ def load_destino_registry(registry_file: Path | None) -> set[str] | None:
         if match:
             ids.add(match.group(1).upper())
     return ids
+
+
+def destino_heading_diagnostic(
+    registry_file: Path | None,
+) -> tuple[int, int, str | None]:
+    r"""Diagnostico de solo lectura: cuantas cabeceras intento cargar el guard.
+
+    ESPEJA a `load_destino_registry` (misma resolucion de ruta, misma lectura,
+    mismas lineas candidatas) para publicar el DENOMINADOR que hoy no sale en
+    ningun sitio: un registro con 12 cabeceras y 0 cargables no se distingue de
+    uno con 0 cabeceras cuando el unico resumen es `destino=0`
+    (WOT-2026-061e).
+
+    Before: recibe la MISMA ruta que el cargador, o `None`.
+    During: solo lectura. Cada linea `s = line.strip()` es CANDIDATA si casa
+        `^#{1,6}\s+DEC-` (como el cargador: cuenta las de bloques de codigo y
+        `####` a `######`; 7 o mas `#` no; sin manejo de BOM: limitacion
+        declarada) y CARGABLE si ademas casa `_RE_DESTINO_HEADING`. `ejemplo`
+        es la PRIMERA candidata no cargable, recortada a 100 caracteres.
+    After: `(candidatas, cargables, ejemplo)`; con `None`, fichero ausente u
+        `OSError` devuelve `(0, 0, None)` sin lanzar y sin mutar nada.
+    """
+    if registry_file is None or not registry_file.is_file():
+        return (0, 0, None)
+    try:
+        text = registry_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return (0, 0, None)
+
+    candidates = 0
+    loadable = 0
+    example: str | None = None
+    for line in text.splitlines():
+        s = line.strip()
+        if not _RE_CANDIDATE_HEADING.match(s):
+            continue
+        candidates += 1
+        if _RE_DESTINO_HEADING.match(s):
+            loadable += 1
+        elif example is None:
+            example = s[:100]
+    return (candidates, loadable, example)
 
 
 def is_grandfathered(name: str, cutoff: str = GRANDFATHER_CUTOFF) -> bool:
@@ -265,6 +312,21 @@ def main(argv: list[str] | None = None) -> int:
 
     motor_registry = load_motor_registry(args.motor_root)
     destino_registry = load_destino_registry(args.destino_registry)
+
+    # AVISO autoexplicativo (WOT-2026-061e): publica el DENOMINADOR (cabeceras
+    # candidatas vs cargadas) sin cambiar ningun codigo de salida. El veredicto
+    # sigue saliendo de los recibos; este WARN solo explica un `destino=0`.
+    if args.destino_registry is not None:
+        candidates, loadable, example = destino_heading_diagnostic(
+            args.destino_registry
+        )
+        if candidates > loadable:
+            print(
+                f"[dec-receipt] WARN {args.destino_registry.name}: {loadable} de "
+                f"{candidates} cabeceras 'DEC-' cargables; no cargable p.ej. "
+                f"'{example}'; formato esperado: "
+                f"'### DEC-<familia>-<NNN> -- <titulo>'"
+            )
 
     inboxes = [d for d in (args.inbox or []) if d.is_dir()]
     files = sorted(f for d in inboxes for f in d.glob("*.tickets.md"))
