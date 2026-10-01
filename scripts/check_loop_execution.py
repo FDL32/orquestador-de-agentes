@@ -86,6 +86,7 @@ Rechazos explicitos (fail-closed)
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -661,6 +662,104 @@ def resolve_input_commit_sha(project_root: Path, commit_sha: str) -> str:
     return sha40
 
 
+def _resolvable_shas(root: Path, shas: list[str]) -> set[str]:
+    """SHAs que resuelven a un COMMIT en `root` (resolucion en lote, D9).
+
+    Predicado unico `<sha>^{commit}` (el mismo de resolve_governed_commit_sha):
+    un abreviado que resuelve a un arbol o blob NO resuelve; `missing` y
+    `ambiguous` tampoco. Se usa aqui a PROPOSITO (y no en el otro sentido):
+    para la PISTA solo importa resoluble-si/no, y el peel convierte la
+    ambiguedad en `missing`, que es exactamente "no resoluble".
+
+    Before: `root` es una raiz git candidata; `shas` cadenas sin espacios.
+    During: UNA lectura `git cat-file --batch-check` en BYTES (sin shell ni
+        pipes: un pipe re-codifica). Sin escrituras.
+    After: subconjunto resoluble. Ante git no ejecutable, rc != 0 o salida mas
+        corta que la entrada devuelve set() (nada resoluble, sin excepcion).
+    """
+    clean = [s for s in shas if s and not any(c.isspace() for c in s)]
+    if not clean or not root.is_dir():
+        return set()
+    payload = b"".join(f"{s}^{{commit}}\n".encode() for s in clean)
+    try:
+        proc = subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), "cat-file", "--batch-check"],  # noqa: S607
+            input=payload,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if proc.returncode != 0:
+        return set()
+    lines = proc.stdout.decode("utf-8", errors="replace").splitlines()
+    if len(lines) < len(clean):
+        return set()
+    resolvable: set[str] = set()
+    for sha, line in zip(clean, lines, strict=False):
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "commit":
+            resolvable.add(sha)
+    return resolvable
+
+
+def _unresolvable_evidence_shas(project_root: Path) -> list[str]:
+    """SHAs citados por la evidencia que no resuelven ni en motor ni destino.
+
+    Conserva el orden de PRIMERA aparicion (scorecard primero, luego
+    emitted_nonces) para que la pista de `_print_remap_hint` sea determinista.
+    Un SHA resoluble en CUALQUIERA de las dos raices no es huerfano.
+    """
+    rows, _sha = _read_scorecard(project_root)
+    emitted = read_emitted_nonces(project_root)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for row in [*rows, *emitted]:
+        sha = row.get("commit_sha") if isinstance(row, dict) else None
+        if isinstance(sha, str) and sha and sha not in seen:
+            seen.add(sha)
+            ordered.append(sha)
+    if not ordered:
+        return []
+    roots = [MOTOR_ROOT]
+    if project_root.resolve() != MOTOR_ROOT.resolve():
+        roots.append(project_root)
+    resolvable: set[str] = set()
+    for root in roots:
+        resolvable |= _resolvable_shas(root, ordered)
+    return [sha for sha in ordered if sha not in resolvable]
+
+
+def _print_remap_hint(project_root: Path, affected: list[dict]) -> None:
+    """Pista DIAGNOSTICA (nunca un veredicto) en la ruta de fallo (D9).
+
+    Corre SOLO para commits del veredicto con 0 rondas (`per_nonce` vacio)
+    cuando la evidencia contiene SHAs no resolubles. Nombra
+    `scripts/remap_evidence_shas.py` y la regla (arbol Y patch-id identicos),
+    con hasta 3 SHAs (orden de primera aparicion) y su total. Es GLOBAL y no
+    afirma que esos SHAs pertenezcan al commit consultado. No cambia ningun
+    veredicto ni exit code.
+    """
+    if not affected:
+        return
+    try:
+        unresolvable = _unresolvable_evidence_shas(project_root)
+    except (OSError, ValueError) as exc:
+        print(f"[loop-exec]   PISTA no disponible: {exc}", file=sys.stderr)
+        return
+    if not unresolvable:
+        return
+    sample = ", ".join(unresolvable[:3])
+    for verdict in affected:
+        print(
+            f"[loop-exec]   PISTA {verdict['commit_sha']}: 0 rondas; la "
+            f"evidencia contiene {len(unresolvable)} SHA(s) no resolubles "
+            f"(posible reescritura de historia): {sample}. Si reescribiste "
+            f"historia, usa scripts/remap_evidence_shas.py: remapea solo "
+            f"pares con arbol Y patch-id identicos (git patch-id --stable)."
+        )
+
+
 def _print_verdict(v: dict) -> None:
     """Imprime UN veredicto por-commit y sus senales, todas NOMBRADAS.
 
@@ -757,6 +856,9 @@ def main(argv: list[str] | None = None) -> int:
         if v["orphan_nonces"] and v not in failures:
             failures.append(v)
     if failures:
+        # WOT-2026-088b (D9): pista GLOBAL y solo diagnostica en la ruta de
+        # fallo, para commits con 0 rondas; no altera veredictos ni exit code.
+        _print_remap_hint(project_root, [v for v in failures if not v["per_nonce"]])
         print(
             "\n[loop-exec] ERROR: el bucle 1->9->2 NO corrio (o corrio DEGRADADO) "
             "para el/los commit(s) de arriba.\n"

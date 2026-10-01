@@ -26,6 +26,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import check_loop_execution as cle  # noqa: E402
 import ensemble_dispatch as ed  # noqa: E402
+import remap_evidence_shas as remap  # noqa: E402
 
 
 def _emitted(nonce="N1", commit="abc", loop="L700", ts="2026-07-24T10:00:00+00:00"):
@@ -1234,3 +1235,179 @@ def test_fabricated_nonce_rounds_filters_scorecard_by_loop_id():
         "sin loop_id explicito, todas las filas del scorecard se chequean "
         "y N_A/N_B existen en el ledger"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-088b: pista de remapeo en la ruta de fallo (0 rondas + huerfanos)
+# ---------------------------------------------------------------------------
+
+
+def _round_for(repo: Path, sha: str, *, backend: str = "BA10") -> None:
+    """Ronda con un nonce NO emitido: fabrica, asi `per_nonce` queda vacio."""
+    ed.append_scorecard(
+        repo,
+        {
+            "event": "ronda",
+            "commit_sha": sha,
+            "backend_key": backend,
+            "challenge_nonce": "N-FAB",
+            "ts": "2099-01-01T00:00:00+00:00",
+        },
+    )
+
+
+def test_088b_cero_rondas_con_sha_huerfano_nombra_la_herramienta(tmp_path, capsys):
+    """D9: veredicto con 0 rondas + SHA no resoluble -> la salida de fallo
+    nombra `scripts/remap_evidence_shas.py`, la regla (arbol Y patch-id) y el
+    SHA no resoluble."""
+    repo, sha = _make_git_repo_with_commit(tmp_path / "repo")
+    orphan = "deadbeef" * 5
+    _round_for(repo, sha)
+    _round_for(repo, orphan, backend="BA11")
+    rc = cle.main(
+        [
+            "--project-root",
+            str(repo),
+            "--commit-sha",
+            sha,
+            "--deliverable-type",
+            "code",
+        ]
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "remap_evidence_shas" in out
+    assert "no resolubles" in out
+    assert "patch-id" in out
+    assert orphan in out
+
+
+def test_088b_sin_huerfanos_no_hay_pista(tmp_path, capsys):
+    """MUTACION (e): sin SHAs no resolubles la pista NO aparece (el rojo del
+    veredicto se mantiene: la pista no sustituye al fallo)."""
+    repo, sha = _make_git_repo_with_commit(tmp_path / "repo")
+    _round_for(repo, sha)
+    rc = cle.main(
+        [
+            "--project-root",
+            str(repo),
+            "--commit-sha",
+            sha,
+            "--deliverable-type",
+            "code",
+        ]
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "remap_evidence_shas" not in out
+    assert "[loop-exec] FAIL" in out
+
+
+def test_088b_la_pista_no_cambia_veredicto_ni_exit_code(tmp_path, capsys, monkeypatch):
+    """D9: la pista es DIAGNOSTICA; el mismo escenario con y sin huerfanos da
+    el MISMO exit code y el mismo veredicto por commit."""
+    repo, sha = _make_git_repo_with_commit(tmp_path / "repo")
+    _round_for(repo, sha)
+    _round_for(repo, "deadbeef" * 5, backend="BA11")
+    args = [
+        "--project-root",
+        str(repo),
+        "--commit-sha",
+        sha,
+        "--deliverable-type",
+        "code",
+    ]
+    rc_con = cle.main(args)
+    out_con = capsys.readouterr().out
+    assert rc_con == 1 and "PISTA" in out_con
+
+    monkeypatch.setattr(cle, "_unresolvable_evidence_shas", lambda _root: [])
+    rc_sin = cle.main(args)
+    out_sin = capsys.readouterr().out
+    assert rc_sin == 1
+    assert "PISTA" not in out_sin
+    assert "[loop-exec] FAIL" in out_sin and "0/4" in out_sin
+    assert "[loop-exec] FAIL" in out_con and "0/4" in out_con
+
+
+def test_088b_cli_de_produccion_bloquea_y_tras_remapear_pasa(tmp_path):
+    """D9/D10 end-to-end por la RUTA DE PRODUCCION (`sys.executable script`).
+
+    Repo temporal CON su propio `.git` (hermetico). Se reescribe el mensaje del
+    commit (mismo arbol y patch-id, SHA nuevo) y la evidencia queda citando el
+    viejo: el CLI falla para el commit nuevo. Tras remapear (`--apply`), pasa.
+    """
+    repo, old = _make_git_repo_with_commit(tmp_path / "repo")
+    tree = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", f"{old}^{{tree}}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    new = subprocess.run(
+        ["git", "-C", str(repo), "commit-tree", tree, "-m", "reworded"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert new != old
+
+    ed.emit_nonce(
+        repo,
+        commit_sha=old,
+        loop_id="L-088B",
+        issuer_role="orchestrator",
+        issuer_backend_key="BA01",
+        nonce="N-REMAP",
+    )
+    for bk in ("BA10", "BA11", "BA12", "BA13"):
+        ed.append_scorecard(
+            repo,
+            {
+                "event": "ronda",
+                "commit_sha": old,
+                "backend_key": bk,
+                "challenge_nonce": "N-REMAP",
+                "ts": "2099-01-01T00:00:00+00:00",
+                "loop_id": "L-088B",
+            },
+        )
+
+    script = SCRIPTS_DIR / "check_loop_execution.py"
+
+    def _cli(commit: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--project-root",
+                str(repo),
+                "--commit-sha",
+                commit,
+                "--deliverable-type",
+                "code",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    blocked = _cli(new)
+    assert blocked.returncode == 1, blocked.stdout + blocked.stderr
+    assert "0/4" in blocked.stdout
+
+    rc = remap.main(
+        [
+            "--project-root",
+            str(repo),
+            "--git-root",
+            str(repo),
+            "--map",
+            f"{old}={new}",
+            "--apply",
+        ]
+    )
+    assert rc == 0
+
+    passed = _cli(new)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert "4/4" in passed.stdout
