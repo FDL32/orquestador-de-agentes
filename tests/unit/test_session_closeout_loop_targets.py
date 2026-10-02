@@ -460,6 +460,14 @@ def test_dry_run_does_not_write_file(tmp_path: Path) -> None:
     _init_git_repo(repo)
     _link_motor(repo, repo)
     _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999a: implement feature")
+    # Con autoridad declarada el dry-run sigue siendo SKIP; sin ella ahora
+    # avisa (WOT-2026-089m), y el fixture original no la declaraba.
+    ficha = repo / ".agent" / "collaboration" / "backlog.md"
+    ficha.parent.mkdir(parents=True, exist_ok=True)
+    ficha.write_text(
+        "### WOT-2026-999a - x\n\n- **delivery_authority:** repo_motor.\n",
+        encoding="utf-8",
+    )
 
     result = session_closeout._step_write_loop_execution_targets(
         repo, ["WOT-2026-999a"], None, True
@@ -1629,3 +1637,135 @@ def test_commits_outside_the_window_are_not_absence_from_the_repo(
         "el mensaje no puede afirmar ausencia DEL REPO cuando solo midio su "
         f"ventana; detail={result.detail!r}"
     )
+
+
+# --- ficha del backlog como superficie de ULTIMO RECURSO de delivery_authority ---
+# Medido 2026-10-02 (cierre real de la sesion de WOT-2026-089l): la ficha de
+# `backlog.md` declaraba `**delivery_authority:** repo_motor` y el lector solo
+# miraba work_plan/ticket_contracts, asi que el paso 2 devolvio
+# FAIL_TARGETS_MISSING bloqueante sobre un dato que SI estaba declarado.
+
+
+def _setup_two_repos(tmp_path: Path) -> tuple[Path, Path]:
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    _init_git_repo(motor)
+    _init_git_repo(destino)
+    _link_motor(destino, motor)
+    return motor, destino
+
+
+def _write_backlog(destino: Path, text: str) -> None:
+    path = destino / ".agent" / "collaboration" / "backlog.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+_FICHA_902C = (
+    "# Backlog\n\n"
+    "### WOT-2026-902c - ficha sin contrato formado\n\n"
+    "- **Estado:** pending. **delivery_authority:** repo_motor. **Origen:** x.\n\n"
+    "### WOT-2026-902d - otra ficha\n\n"
+    "- **Estado:** pending. **delivery_authority:** repo_destino.\n"
+)
+
+
+def test_backlog_ficha_declares_authority_when_no_contract_surface(
+    tmp_path: Path,
+) -> None:
+    motor, destino = _setup_two_repos(tmp_path)
+    _write_backlog(destino, _FICHA_902C)
+    sha = _commit_file(motor, "src/c.py", "x = 3", "WOT-2026-902c: lanzador")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-902c"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert sha in (destino / TARGETS_REL).read_text(encoding="utf-8")
+
+
+def test_backlog_ficha_of_a_neighbour_does_not_declare_for_this_ticket(
+    tmp_path: Path,
+) -> None:
+    """Control negativo: la ficha 902d declara repo_destino; 902e no tiene
+    ficha. Debe seguir FAIL_TARGETS_MISSING (no se hereda del vecino)."""
+    motor, destino = _setup_two_repos(tmp_path)
+    _write_backlog(destino, _FICHA_902C)
+    _commit_file(motor, "src/e.py", "x = 5", "WOT-2026-902e: algo")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-902e"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert "FAIL_TARGETS_MISSING" in result.detail
+
+
+def test_backlog_table_row_mention_is_not_a_declaration(tmp_path: Path) -> None:
+    """Una FILA de tabla que cita el ticket y el campo no es su ficha: solo
+    cuenta el bloque bajo un encabezado `### <ID>`."""
+    motor, destino = _setup_two_repos(tmp_path)
+    _write_backlog(
+        destino,
+        "| Alta | WOT-2026-902f | cita delivery_authority: repo_motor en la fila |\n",
+    )
+    _commit_file(motor, "src/f.py", "x = 6", "WOT-2026-902f: algo")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-902f"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert "FAIL_TARGETS_MISSING" in result.detail
+
+
+def test_backlog_ficha_never_overrides_a_contract_surface(tmp_path: Path) -> None:
+    """El backlog es ULTIMO recurso: si el work_plan declara, gana, aunque la
+    ficha diga otra cosa (no puede cambiar el veredicto de lo que ya cerraba)."""
+    motor, destino = _setup_two_repos(tmp_path)
+    _write_backlog(destino, _FICHA_902C.replace("repo_motor", "repo_destino"))
+    wp = destino / ".agent" / "collaboration" / "work_plan.md"
+    wp.parent.mkdir(parents=True, exist_ok=True)
+    wp.write_text(
+        "# Plan\n\n- **ID:** WOT-2026-902c\n- **delivery_authority:** repo_motor\n",
+        encoding="utf-8",
+    )
+    sha = _commit_file(motor, "src/c2.py", "x = 7", "WOT-2026-902c: algo")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-902c"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert sha in (destino / TARGETS_REL).read_text(encoding="utf-8")
+
+
+def test_dry_run_predicts_missing_authority_instead_of_silent_skip(
+    tmp_path: Path,
+) -> None:
+    """El dry-run devolvia SKIP incondicional y el cierre real fallaba despues
+    (medido 2026-10-02). Ahora un ticket sin autoridad declarada se anuncia como
+    WARN con FAIL_TARGETS_MISSING y NO escribe nada."""
+    _motor, destino = _setup_two_repos(tmp_path)
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-902g"], None, True
+    )
+
+    assert result.status == "WARN", result.detail
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert not (destino / TARGETS_REL).exists()
+
+
+def test_dry_run_with_declared_authority_still_skips(tmp_path: Path) -> None:
+    _motor, destino = _setup_two_repos(tmp_path)
+    _write_backlog(destino, _FICHA_902C)
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-902c"], None, True
+    )
+
+    assert result.status == "SKIP"
+    assert "dry-run" in result.detail
+    assert not (destino / TARGETS_REL).exists()

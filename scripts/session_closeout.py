@@ -1514,6 +1514,51 @@ def _contract_block_for_ticket(text: str, ticket_id: str) -> str | None:
     return found
 
 
+def _backlog_ficha_block_for_ticket(text: str, ticket_id: str) -> str | None:
+    """El bloque de la FICHA de `ticket_id` en backlog.md (WOT-2026-089m).
+
+    Solo cuenta un encabezado `## `/`### ` que NOMBRA el ticket en su linea de
+    cabecera; las filas de tabla y las menciones del cuerpo de otra ficha no son
+    su ficha (mismo criterio que `_contract_block_for_ticket`). Gana el ultimo.
+    """
+    found: str | None = None
+    for block in re.split(r"(?m)^#{2,3} ", text or ""):
+        header = block.splitlines()[0] if block.splitlines() else ""
+        if re.match(rf"\s*{re.escape(ticket_id)}(?![0-9A-Za-z_])", header):
+            found = block
+    return found
+
+
+def _surface_text_for_ticket(path: Path, ticket_id: str) -> str | None:
+    """Texto de `path` que cuenta como contrato de `ticket_id`, o None.
+
+    Un work_plan solo cuenta si declara `ticket_id` como su `**ID:**`; de
+    `ticket_contracts.md` cuenta solo el bloque del ticket (nunca el fichero
+    entero). Cualquier otra superficie se lee entera. Nunca lanza.
+    """
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if path.name.startswith("work_plan"):
+        m = _WORK_PLAN_ID_RE.search(content)
+        return content if m is not None and m.group(1) == ticket_id else None
+    if path.name == "ticket_contracts.md":
+        return _contract_block_for_ticket(content, ticket_id)
+    return content
+
+
+def _authority_from_backlog_ficha(path: Path, ticket_id: str) -> str | None:
+    """`delivery_authority` de la ficha de `ticket_id` en `path`; None si no
+    se puede leer, no hay ficha o la ficha no lo declara (nunca lanza)."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    ficha = _backlog_ficha_block_for_ticket(content, ticket_id)
+    return _read_declared_authority_value(ficha) if ficha is not None else None
+
+
 def _declared_authority_from_surfaces(
     ticket_id: str, surfaces: list[Path]
 ) -> str | None:
@@ -1530,28 +1575,20 @@ def _declared_authority_from_surfaces(
     por orden de lectura.
     """
     first: str | None = None
+    fallback: str | None = None
     for path in surfaces:
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        if path.name == "backlog.md":
+            fallback = _authority_from_backlog_ficha(path, ticket_id)
             continue
-        if path.name.startswith("work_plan"):
-            m = _WORK_PLAN_ID_RE.search(content)
-            if m is None or m.group(1) != ticket_id:
-                continue
-        elif path.name == "ticket_contracts.md":
-            block = _contract_block_for_ticket(content, ticket_id)
-            if block is None:
-                continue
-            content = block
-        value = _read_declared_authority_value(content)
+        content = _surface_text_for_ticket(path, ticket_id)
+        value = _read_declared_authority_value(content) if content else None
         if value is None:
             continue
         if first is None:
             first = value
         elif value != first:
             return None
-    return first
+    return first or fallback
 
 
 def _glob_work_plans(base: Path, ticket_id: str) -> list[Path]:
@@ -1587,6 +1624,10 @@ def _root_authority_surfaces(root: Path, ticket_id: str) -> list[Path]:
     surfaces.extend(
         _glob_work_plans(root / ".agent" / "collaboration" / "_archive", ticket_id)
     )
+    # Ultimo recurso (WOT-2026-089m): la ficha del backlog. Solo la consulta
+    # `_declared_authority_from_surfaces` cuando NINGUNA superficie anterior
+    # declara, asi que no puede cambiar el veredicto de un ticket con contrato.
+    surfaces.append(root / BACKLOG_REL)
     return surfaces
 
 
@@ -2016,6 +2057,56 @@ def _finalize_targets_result(
     return StepResult(name=name, status=worst_status, detail=detail)
 
 
+def _dry_run_targets_prediction(
+    project_root: Path, ticket_ids: list[str]
+) -> StepResult:
+    """Dry-run del writer: SKIP, salvo que el cierre real fallaria (WOT-2026-089m).
+
+    Antes devolvia SKIP incondicional y el cierre real fallaba despues en
+    FAIL_TARGETS_MISSING (medido 2026-10-02): un dry-run que oculta un FAIL
+    bloqueante no previsualiza nada. La resolucion de autoridad es de SOLO
+    LECTURA (no corre git log ni toca el fichero de targets), asi que se puede
+    adelantar; el resultado es WARN (no bloqueante: es una prediccion).
+    """
+    skip = StepResult(
+        name="write_loop_execution_targets",
+        status="SKIP",
+        detail="Skipped in dry-run mode",
+    )
+    setup = _resolve_writer_setup(project_root, None)
+    if isinstance(setup, StepResult):
+        return skip
+    predicted: list[str] = []
+    for ticket_id in ticket_ids:
+        declared = _read_declared_delivery_authority(
+            ticket_id,
+            project_root,
+            setup.motor_root,
+            setup.extract_prefix_fn,
+            setup.resolve_prefix_fn,
+        )
+        *_, fail_detail = _resolve_authoritative_repo(
+            ticket_id,
+            setup.motor_root,
+            setup.extract_prefix_fn,
+            setup.resolve_prefix_fn,
+            declared_authority=declared,
+            project_root=project_root,
+        )
+        if fail_detail:
+            predicted.append(fail_detail)
+    if not predicted:
+        return skip
+    return StepResult(
+        name="write_loop_execution_targets",
+        status="WARN",
+        detail=(
+            "dry-run (prediccion, el cierre real FALLARIA bloqueante): "
+            + "; ".join(predicted)
+        ),
+    )
+
+
 def _step_write_loop_execution_targets(
     project_root: Path,
     ticket_ids: list[str],
@@ -2064,7 +2155,7 @@ def _step_write_loop_execution_targets(
     """
     name = "write_loop_execution_targets"
     if dry_run:
-        return StepResult(name=name, status="SKIP", detail="Skipped in dry-run mode")
+        return _dry_run_targets_prediction(project_root, ticket_ids)
 
     setup = _resolve_writer_setup(project_root, window_start)
     if isinstance(setup, StepResult):
