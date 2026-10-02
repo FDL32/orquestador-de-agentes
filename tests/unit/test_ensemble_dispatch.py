@@ -4331,6 +4331,188 @@ def test_ultimate_claude_fallback_selection_edges(tmp_path):
     )
 
 
+# --------------------------------------------------------------------------- #
+# Perfil LEGACY: fuera de TODA seleccion automatica, invocable por nombre
+# --------------------------------------------------------------------------- #
+
+
+def _legacy_config() -> dict:
+    """Legacy + sustituto con MISMO backend, modelo y backend_key (caso real BA06)."""
+    return {
+        "ensemble_profiles": {
+            "glm_viejo": {
+                "backend": "vendor_old",
+                "model": "glm-old",
+                "backend_key": "BA06",
+                "status": "legacy",
+                "replaced_by": "glm_nuevo",
+            },
+            "glm_nuevo": {
+                "backend": "vendor_old",
+                "model": "glm-old",
+                "backend_key": "BA06",
+            },
+            "glm_otro": {
+                "backend": "vendor_b",
+                "model": "glm-b",
+                "backend_key": "BA07",
+            },
+            "claude_x": {"backend": "claude", "model": None, "backend_key": "BA01"},
+        }
+    }
+
+
+def _legacy_family_map(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {
+            ("vendor_old", "glm-old"): "glm",
+            ("vendor_b", "glm-b"): "glm",
+            ("claude", None): "claude",
+        },
+    )
+
+
+def test_selectable_profiles_excluye_legacy_sin_mutar_ni_reordenar():
+    config = _legacy_config()
+    before = list(config["ensemble_profiles"])
+    selectable = ed.selectable_profiles(config)
+    assert list(selectable) == ["glm_nuevo", "glm_otro", "claude_x"]
+    assert list(config["ensemble_profiles"]) == before, "no muta la config"
+    assert ed.is_legacy_profile(config["ensemble_profiles"]["glm_viejo"])
+    assert not ed.is_legacy_profile({"status": "active"})
+    assert not ed.is_legacy_profile(None)
+
+
+def test_legacy_nunca_es_candidato_de_fallback_por_backend():
+    probed: list[str] = []
+
+    def check_alive(name, *, config):
+        probed.append(name)
+        return {"alive": True}
+
+    chosen = ed.resolve_fallback_backend(
+        "otro_backend", config=_legacy_config(), check_alive=check_alive
+    )
+    assert "glm_viejo" not in probed
+    assert chosen == "glm_nuevo"
+
+
+def test_legacy_nunca_es_candidato_de_fallback_por_familia(tmp_path, monkeypatch):
+    _legacy_family_map(monkeypatch)
+    probed: list[str] = []
+
+    def check_alive(name, *, config):
+        probed.append(name)
+        return {"alive": True}
+
+    chosen = ed.resolve_similar_fallback(
+        "glm_otro",
+        config=_legacy_config(),
+        project_root=tmp_path,
+        check_alive=check_alive,
+    )
+    assert chosen == "glm_nuevo"
+    assert "glm_viejo" not in probed
+
+
+def test_legacy_que_falla_sigue_resolviendo_su_fallback(tmp_path, monkeypatch):
+    """El perfil CAIDO puede ser el legacy (invocado por nombre): debe resolver."""
+    _legacy_family_map(monkeypatch)
+    chosen = ed.resolve_similar_fallback(
+        "glm_viejo",
+        config=_legacy_config(),
+        project_root=tmp_path,
+        check_alive=lambda name, *, config: {"alive": True},
+    )
+    assert chosen != "glm_viejo"
+
+
+def test_smoke_global_no_prueba_el_legacy(tmp_path, monkeypatch):
+    probed: list[str] = []
+
+    def _alive(name, *, config, project_root=None):
+        probed.append(name)
+        return {"alive": True, "detail": "ok"}
+
+    monkeypatch.setattr(ed, "smoke_profile", _alive)
+    args = ed.argparse.Namespace(
+        profile=None, project_root=str(tmp_path), ignore_quarantine=False
+    )
+    assert ed._cmd_smoke(args, _legacy_config()) == 0
+    assert "glm_viejo" not in probed
+    assert set(probed) == {"glm_nuevo", "glm_otro", "claude_x"}
+
+
+@pytest.mark.parametrize("backend_keys", [None, "BA06"])
+def test_preflight_global_y_por_backend_key_no_incluyen_el_legacy(
+    tmp_path, monkeypatch, backend_keys
+):
+    """Con BA06 duplicado, --backend-keys seleccionaria LOS DOS sin el filtro."""
+    probed: list[str] = []
+
+    def _alive(name, *, config, content_sample=None, project_root=None):
+        probed.append(name)
+        return {"alive": True, "detail": "ok"}
+
+    monkeypatch.setattr(ed, "preflight_profile", _alive)
+    args = ed.argparse.Namespace(
+        profile=None,
+        backend_keys=backend_keys,
+        content_sample_file=None,
+        project_root=str(tmp_path),
+        ignore_quarantine=False,
+    )
+    ed._cmd_preflight(args, _legacy_config())
+    assert "glm_viejo" not in probed
+    if backend_keys:
+        assert probed == ["glm_nuevo"]
+
+
+def test_estado_exploratorio_mapea_backend_key_al_sustituto_no_al_legacy(tmp_path):
+    """El mapa backend_key->perfil gana por ORDEN: no debe depender de el."""
+    config = _legacy_config()
+    # Orden adverso a proposito: el legacy DESPUES del sustituto.
+    config["ensemble_profiles"] = {
+        k: config["ensemble_profiles"][k]
+        for k in ("glm_nuevo", "glm_otro", "claude_x", "glm_viejo")
+    }
+    _write_scorecard_rows(
+        tmp_path,
+        [
+            {
+                "event": "ronda",
+                "task_type": "exploracion",
+                "backend_key": "BA06",
+                "ts": "2026-10-02T00:00:00Z",
+                "alive": True,
+            }
+        ],
+    )
+    path = ed.regenerate_backend_status(tmp_path, config=config)
+    backends = json.loads(path.read_text(encoding="utf-8"))["backends"]
+    assert [b["profile"] for b in backends] == ["glm_nuevo"]
+
+
+def test_invocar_el_legacy_por_nombre_avisa_pero_envia(capsys):
+    """Marca BLANDA (decision del usuario): no se bloquea, se avisa."""
+    config = _config()
+    config["ensemble_profiles"]["p_prop"]["status"] = "legacy"
+    config["ensemble_profiles"]["p_prop"]["replaced_by"] = "p_chal"
+    transport = _FakeTransport(replies=["ok"])
+    reply = ed.send_to_profile(
+        "p_prop",
+        [{"role": "user", "content": "hola"}],
+        config=config,
+        sensitivity="public",
+        transport=transport,
+    )
+    err = capsys.readouterr().err
+    assert reply == "ok" and len(transport.calls) == 1
+    assert "LEGACY" in err and "p_chal" in err
+
+
 # WOT-2026-086f: BA12 (mimo-v2.5) retirado: entrada eliminada de _NAN_MODELS.
 
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="

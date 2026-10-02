@@ -377,6 +377,37 @@ FALLBACK_DIRECTO_SIN_HERMANO: frozenset[tuple[str, str | None]] = frozenset(
         ("llm7_api", "mistral-Nemo-Instruct-2407"),
     }
 )
+# Perfil LEGACY (decision del usuario 2026-10-02, marca BLANDA): se conserva en
+# `ensemble_profiles` por los tests e historico que lo citan por nombre, pero
+# queda FUERA de toda seleccion automatica (fallback, smoke/preflight globales,
+# `--backend-keys`, mapa backend_key->perfil). Invocarlo por nombre explicito
+# sigue funcionando y avisa por stderr con `replaced_by`. Toda ruta que ELIJA
+# perfiles por si misma debe pasar por `selectable_profiles`, no por
+# `config["ensemble_profiles"]` a pelo: asi una ruta nueva no reabre el hueco.
+PROFILE_STATUS_LEGACY = "legacy"
+
+
+def is_legacy_profile(profile: object) -> bool:
+    """True si el perfil declara `status: legacy` (nunca por heuristica de nombre)."""
+    return isinstance(profile, dict) and profile.get("status") == PROFILE_STATUS_LEGACY
+
+
+def selectable_profiles(config: dict) -> dict[str, dict]:
+    """Perfiles ELEGIBLES por seleccion automatica: `ensemble_profiles` sin legacy.
+
+    Before: `config` es la config del motor ya cargada.
+    During: filtra por `status`, conservando el orden de insercion (del que
+        depende `resolve_fallback_backend`).
+    After: dict nuevo; no muta `config`. Los validadores que auditan TODOS los
+        perfiles (incluido el legacy) siguen leyendo `ensemble_profiles`.
+    """
+    return {
+        name: prof
+        for name, prof in (config.get("ensemble_profiles") or {}).items()
+        if not is_legacy_profile(prof)
+    }
+
+
 FAMILY_LEADERS_REL = Path(".agent/runtime/ensemble/backend_family_leaders.json")
 
 PREMISE_CHECK_PREAMBLE = (
@@ -1584,6 +1615,13 @@ def send_to_profile(
         se pudo resolver, la etiqueta lo dice.
     """
     profile = config["ensemble_profiles"][profile_name]
+    if is_legacy_profile(profile):
+        print(
+            f"[ensemble] WARN: el perfil '{profile_name}' es LEGACY (sustituido "
+            f"por '{profile.get('replaced_by')}'); sigue invocable por nombre "
+            "pero no entra en ninguna seleccion automatica",
+            file=sys.stderr,
+        )
     backend_cfg = config["backends"][profile["backend"]]
     # WOT-2026-042v: el ambito se resuelve AQUI porque este es el UNICO camino
     # de salida hacia un backend (lo declara el docstring, y el canary de
@@ -2038,7 +2076,7 @@ def regenerate_backend_status(project_root: Path, *, config: dict) -> Path:
     rows, sha = _read_scorecard(project_root)
     profile_by_key = {
         prof.get("backend_key"): name
-        for name, prof in (config.get("ensemble_profiles") or {}).items()
+        for name, prof in selectable_profiles(config).items()
         if prof.get("backend_key")
     }
     best: dict[str, dict] = {}
@@ -2950,7 +2988,7 @@ def resolve_fallback_backend(
     if check_alive is None:
         check_alive = smoke_profile
 
-    profiles = config.get("ensemble_profiles", {})
+    profiles = selectable_profiles(config)
     candidates = [
         name
         for name, profile in profiles.items()
@@ -3137,7 +3175,7 @@ def resolve_similar_fallback(
 
     same_family = [
         name
-        for name, profile in profiles.items()
+        for name, profile in selectable_profiles(config).items()
         if name not in excluded
         and MODEL_FAMILY_MAP.get((profile.get("backend"), profile.get("model")))
         == familia
@@ -4180,9 +4218,7 @@ def adjudicate(
 
 
 def _cmd_smoke(args, config) -> int:
-    names = (
-        [args.profile] if args.profile else sorted(config.get("ensemble_profiles", {}))
-    )
+    names = [args.profile] if args.profile else sorted(selectable_profiles(config))
     # WOT-2026-055o: el trafico exploratorio solo es registrable si hay un
     # destino-rol resoluble. Sin el, el smoke sigue funcionando pero NO deja
     # fila -- y eso se DECLARA, no se calla (mismo principio que el fallback
@@ -4250,7 +4286,7 @@ def _cmd_preflight(args, config) -> int:
         names = [args.profile]
     elif args.backend_keys:
         wanted = {k.strip() for k in args.backend_keys.split(",") if k.strip()}
-        profiles = config.get("ensemble_profiles", {})
+        profiles = selectable_profiles(config)
         names = sorted(
             name for name, prof in profiles.items() if prof.get("backend_key") in wanted
         )
@@ -4262,7 +4298,7 @@ def _cmd_preflight(args, config) -> int:
                 file=sys.stderr,
             )
     else:
-        names = sorted(config.get("ensemble_profiles", {}))
+        names = sorted(selectable_profiles(config))
     content_sample = None
     if args.content_sample_file:
         content_sample = Path(args.content_sample_file).read_text(encoding="utf-8")
