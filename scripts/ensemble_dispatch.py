@@ -1618,7 +1618,8 @@ def send_to_profile(
     if is_legacy_profile(profile):
         print(
             f"[ensemble] WARN: el perfil '{profile_name}' es LEGACY (sustituido "
-            f"por '{profile.get('replaced_by')}'); sigue invocable por nombre "
+            f"por '{profile.get('replaced_by') or 'SIN replaced_by DECLARADO'}'); "
+            "sigue invocable por nombre "
             "pero no entra en ninguna seleccion automatica",
             file=sys.stderr,
         )

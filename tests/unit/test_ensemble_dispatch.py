@@ -4426,7 +4426,10 @@ def test_legacy_que_falla_sigue_resolviendo_su_fallback(tmp_path, monkeypatch):
         project_root=tmp_path,
         check_alive=lambda name, *, config: {"alive": True},
     )
-    assert chosen != "glm_viejo"
+    assert chosen == "glm_nuevo", (
+        "el sustituto (misma familia, primero en el orden) debe ganar; "
+        "`!= glm_viejo` aceptaria cualquier perfil"
+    )
 
 
 def test_smoke_global_no_prueba_el_legacy(tmp_path, monkeypatch):
@@ -4511,6 +4514,22 @@ def test_invocar_el_legacy_por_nombre_avisa_pero_envia(capsys):
     err = capsys.readouterr().err
     assert reply == "ok" and len(transport.calls) == 1
     assert "LEGACY" in err and "p_chal" in err
+
+
+def test_legacy_sin_replaced_by_avisa_sin_decir_none(capsys):
+    """Un legacy mal declarado no debe imprimir `sustituido por 'None'`."""
+    config = _config()
+    config["ensemble_profiles"]["p_prop"]["status"] = "legacy"
+    transport = _FakeTransport(replies=["ok"])
+    ed.send_to_profile(
+        "p_prop",
+        [{"role": "user", "content": "hola"}],
+        config=config,
+        sensitivity="public",
+        transport=transport,
+    )
+    err = capsys.readouterr().err
+    assert "'None'" not in err and "SIN replaced_by DECLARADO" in err
 
 
 # WOT-2026-086f: BA12 (mimo-v2.5) retirado: entrada eliminada de _NAN_MODELS.
