@@ -131,6 +131,12 @@ Procedimiento (PowerShell **elevado**): `status` (ver la ACL), `apply` (vista pr
 `%USERPROFILE%\sandbox_acl_backup`, aplica y verifica), `rollback -Apply` (quita solo esa ACE y comprueba que el resto de la ACL queda idéntico).
 Si `minimal` no basta para un agente concreto, `apply -Rights rx -Apply`.
 
-Estado de la prueba: el ciclo aplicar y deshacer está ensayado y con tests sobre un directorio propio (no exige admin) y la vista previa y la negativa sin admin se
-prueban sobre `C:\` sin modificarla. **No se ha aplicado sobre `C:\`** y no está probado que con ella `opencode` arranque dentro del contenedor: es la
-hipótesis a verificar justo después.
+**Resultado de aplicarlo (2026-10-02, `-Rights minimal`, aplicado por el operador):** la ACE queda como `(Rc,S,REA,RA)` en `C:\`, con copia de seguridad en
+`%USERPROFILE%\sandbox_acl_backup`. Dentro del contenedor: `lstat` de `C:\` **pasa**; listar `C:\`, listar `C:\Users` y leer `.codex\auth.json` siguen **denegados**;
+el canario y `verify` siguen en verde. **Resuelve el error `EPERM lstat 'C:\'` pero NO arregla `opencode` 1.18.34:** con la ruta real ya no falla al instante y se
+queda en su primera petición al modelo con un hilo al 100 % de CPU (~1 s de CPU por segundo, ~530 MB, sin procesos hijos y con 3 conexiones TLS establecidas con
+Cloudflare, o sea con red). Causa del bucle sin determinar; descartadas ripgrep, loopback, vigilancia de ficheros y repo git. Siguiente diagnóstico propuesto:
+Process Monitor (Sysinternals), que exige admin.
+
+Estado de la prueba antes de aplicarlo: el ciclo aplicar y deshacer está ensayado con tests sobre un directorio propio (no exige admin) y la vista previa y la
+negativa sin admin se prueban sobre `C:\` sin modificarla.
