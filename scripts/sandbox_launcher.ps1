@@ -222,8 +222,23 @@ function Invoke-Canary($letter) {
 }
 
 # ---------------------------------------------------------------- comandos
+function Assert-OwnRoot {
+  # Una raiz que ya existe y no es nuestra NO se toca: ni ACE ni borrado. Es nuestra si lleva el marcador, o si tiene el
+  # arbol que crea `up` (work, home y tools: migracion de raices creadas antes de que existiera el marcador).
+  $marker = Join-Path $Root '.agent_sandbox_root'
+  if (-not (Test-Path $Root)) { return }
+  if (Test-Path $marker) { return }
+  $content = @(Get-ChildItem $Root -Force -ErrorAction SilentlyContinue)
+  if ($content.Count -eq 0) { return }
+  $names = $content | ForEach-Object { $_.Name }
+  if (($names -contains 'work') -and ($names -contains 'home') -and ($names -contains 'tools')) { return }
+  throw "la raiz $Root existe, no esta vacia y no la creo este lanzador (falta el marcador .agent_sandbox_root): no se toca"
+}
 function Cmd-Up {
+  Assert-OwnRoot
   $sid = [SbxAc]::Create($ContainerName)
+  New-Item -ItemType Directory -Force $Root | Out-Null
+  Set-Content (Join-Path $Root '.agent_sandbox_root') $ContainerName -Encoding ascii
   foreach ($d in 'work', 'work\.tmp', 'home', 'tools', 'outside') { New-Item -ItemType Directory -Force (Join-Path $Root $d) | Out-Null }
   Set-Content (Join-Path $Root 'work\CANARY_IN.txt') 'dentro-del-alcance' -Encoding ascii
   Set-Content (Join-Path $Root 'outside\CANARY_OUT.txt') 'fuera-del-alcance' -Encoding ascii
@@ -300,7 +315,16 @@ function Cmd-Snapshot {
   if ($rc -ne 0) { throw 'tar fallo al extraer el snapshot' }
   Say "snapshot de $Ref en $dst (sin .git)"
 }
+function Assert-PurgeAllowed {
+  $full = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+  $protected = @([IO.Path]::GetPathRoot($full).TrimEnd('\'), $env:USERPROFILE.TrimEnd('\'), $env:SystemRoot.TrimEnd('\'), $env:ProgramFiles.TrimEnd('\'), $env:SystemDrive)
+  if ($protected -contains $full) { throw "rechazado: -Purge sobre un directorio protegido ($full)" }
+  if (-not (Test-Path (Join-Path $Root '.agent_sandbox_root'))) {
+    throw "rechazado: $Root no lleva el marcador .agent_sandbox_root, asi que no lo creo este lanzador. Ejecuta 'up' para reclamarlo o borralo tu a mano"
+  }
+}
 function Cmd-Down {
+  if ($Purge -and (Test-Path $Root)) { Assert-PurgeAllowed }
   $sid = Get-Sid
   if ($sid) { foreach ($p in $Root, "$Root\tools", "$Root\work", "$Root\home") { Clear-Ace $p $sid } }
   [void][SbxAc]::Delete($ContainerName)

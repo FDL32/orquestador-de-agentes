@@ -78,8 +78,13 @@ switch ($Command) {
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $bk = Join-Path $BackupDir "acl_${stamp}.txt"
     & icacls $Target /save $bk | Out-Null
+    # fail-closed: sin copia de seguridad verificada NO se cambia nada (antes se decia "copia de seguridad" sin comprobarla)
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $bk) -or (Get-Item $bk).Length -eq 0) {
+      Say "ERROR: no se pudo guardar la copia de seguridad de la ACL (icacls /save rc=$LASTEXITCODE). No se ha cambiado nada."
+      exit 1
+    }
     (& icacls $Target) | Set-Content (Join-Path $BackupDir "acl_${stamp}_antes.txt") -Encoding utf8
-    Say "copia de seguridad: $bk"
+    Say "copia de seguridad: $bk ($((Get-Item $bk).Length) bytes)"
     if (Test-OurAce) { Say 'la ACE del contenedor ya existe; se sustituye'; & icacls $Target /remove:g "*$sid" | Out-Null }
     & icacls $Target /grant "*${sid}:$spec" | Out-Null
     if ($LASTEXITCODE -ne 0) { Say "ERROR: icacls fallo (rc=$LASTEXITCODE)"; exit 1 }

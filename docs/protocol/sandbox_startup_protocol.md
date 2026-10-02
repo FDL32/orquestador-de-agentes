@@ -44,6 +44,9 @@
 - **`snapshot` antes que `clone`** para revisión: `opencode` se **cuelga dentro del contenedor al detectar un repo git** (medido, incluso con
   un repo de un archivo) y funciona sobre la exportación sin `.git`.
 - **El canario no se desactiva** (`-NoCanary` existe solo para depurar el lanzador).
+- **`-Purge` y `up` solo actúan sobre una raíz que creó este lanzador** (lleva el marcador `.agent_sandbox_root`, o el árbol `work`/`home`/`tools` de una
+  raíz anterior al marcador, que `up` migra). Una raíz ajena y no vacía se rechaza, y `-Purge` nunca borra la raíz del disco, el perfil de usuario ni los
+  directorios del sistema. Medido el 2026-10-02: antes de este guard, `down -Purge` borraba cualquier directorio pasado en `-Root`.
 - **Un IDE que no pasa por el lanzador no está protegido**, aunque tenga sandbox propio: decláralo en el informe del arranque.
 
 ## 5. Puntos de enganche por IDE

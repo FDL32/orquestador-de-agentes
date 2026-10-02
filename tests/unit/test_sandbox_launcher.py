@@ -282,3 +282,63 @@ def test_root_acl_ciclo_aplicar_y_deshacer_sobre_directorio_propio(tmp_path):
     assert rb.returncode == 0, rb.stdout + rb.stderr
     assert "ACE del contenedor presente = False" in rb.stdout
     assert "el resto de la ACL no cambio: True" in rb.stdout
+
+
+# --------------------------------------------------------------------------- blast radius de -Purge y copia de seguridad
+@pytestmark_int
+def test_purge_rehusa_un_directorio_ajeno_que_el_lanzador_no_creo(tmp_path):
+    """Medido: `down -Purge` borraba CUALQUIER `-Root`, aunque no lo hubiera creado el lanzador (sin marcador)."""
+    ajeno = tmp_path / "datos_del_usuario"
+    ajeno.mkdir()
+    (ajeno / "importante.txt").write_text("no es del sandbox", encoding="utf-8")
+    nombre = f"sbx_test_{uuid.uuid4().hex[:8]}"
+    r = _ps("down", "-Root", str(ajeno), "-ContainerName", nombre, "-Purge")
+    assert r.returncode != 0, "debia rechazar el borrado de un directorio sin marcador"
+    assert (ajeno / "importante.txt").exists(), "el fichero ajeno se borro"
+    assert "rechazado" in (r.stdout + r.stderr)
+
+
+@pytestmark_int
+def test_purge_borra_su_propia_raiz_control_positivo(sbx):
+    """Sin este control, el test anterior pasaria tambien si `-Purge` no borrara nunca nada."""
+    run, root, _ = sbx
+    assert run("up").returncode == 0
+    assert (root / ".agent_sandbox_root").exists(), "up debe dejar el marcador"
+    r = run("down", "-Purge")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not root.exists(), "con marcador, -Purge debe borrar su propia raiz"
+
+
+@pytestmark_int
+def test_up_no_toca_una_raiz_ajena_no_vacia(tmp_path):
+    ajeno = tmp_path / "ajeno"
+    ajeno.mkdir()
+    (ajeno / "otro.txt").write_text("x", encoding="utf-8")
+    nombre = f"sbx_test_{uuid.uuid4().hex[:8]}"
+    try:
+        r = _ps("up", "-Root", str(ajeno), "-ContainerName", nombre, "-Tools", "git")
+        assert r.returncode != 0
+        assert not (ajeno / ".agent_sandbox_root").exists(), (
+            "no debe reclamar una raiz ajena"
+        )
+        assert not (ajeno / "work").exists()
+    finally:
+        _ps("down", "-Root", str(ajeno), "-ContainerName", nombre)
+
+
+@pytest.mark.skipif(not IS_WIN, reason="icacls es de Windows")
+def test_root_acl_no_dice_copia_de_seguridad_si_no_la_pudo_hacer(tmp_path):
+    """Medido: el script imprimia `copia de seguridad: <ruta>` sin comprobar `icacls /save`."""
+    inexistente = tmp_path / "no_existe"
+    r = _root_acl(
+        "apply",
+        "-Target",
+        str(inexistente),
+        "-BackupDir",
+        str(tmp_path / "bk"),
+        "-Apply",
+        "-SkipElevationCheck",
+    )
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "copia de seguridad:" not in r.stdout, "afirma una copia que no se hizo"
+    assert "No se ha cambiado nada" in r.stdout
