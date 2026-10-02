@@ -35,6 +35,7 @@ param(
   [string]$Source,
   [string]$Name,
   [string]$Ref = 'HEAD',
+  [string[]]$Paths = @(),
   [string[]]$PassEnv = @(),
   [int]$TimeoutSec = 0,
   [switch]$Net,
@@ -280,8 +281,16 @@ function Cmd-Snapshot {
   $dst = Join-Path $Root "work\$Name"
   if (Test-Path $dst) { throw "ya existe $dst" }
   New-Item -ItemType Directory -Force $dst | Out-Null
-  & cmd /c "git -C `"$Source`" archive --format=tar $Ref | tar -x -C `"$dst`""
+  # -Paths limita la exportacion a los ficheros necesarios (radio de dano minimo cuando el agente tiene red)
+  $tar = Join-Path $env:TEMP ('sbx_' + [guid]::NewGuid().ToString('N') + '.tar')
+  $gitArgs = @('-C', $Source, 'archive', '--format=tar', '-o', $tar, $Ref)
+  if ($Paths.Count -gt 0) { $gitArgs += '--'; $gitArgs += $Paths }
+  & git @gitArgs
   if ($LASTEXITCODE -ne 0) { throw 'git archive fallo' }
+  & (Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe') -x -f $tar -C $dst
+  $rc = $LASTEXITCODE
+  [IO.File]::Delete($tar)
+  if ($rc -ne 0) { throw 'tar fallo al extraer el snapshot' }
   Say "snapshot de $Ref en $dst (sin .git)"
 }
 function Cmd-Down {

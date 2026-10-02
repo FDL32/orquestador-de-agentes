@@ -99,6 +99,15 @@ Sin `-NullStdin` (ACP usa stdin) y con los mensajes del lanzador en stderr. `ope
 
 ## 8. Pendiente y límites declarados
 
+- **`opencode` 1.18.34 dentro del contenedor (medido 2026-10-02, ronda sin credenciales):** el mismo binario, **fuera** del contenedor, responde
+  "OK" en 7 s con el nivel gratuito y sin clave, así que el servicio y la versión sirven (la 1.16.2 recibe un HTTP 426 y exige la 1.18.0 o superior).
+  **Dentro** se queda parado sin error (`booting location services`). Con la ruta real en vez de la unidad `subst` falla al instante con
+  `EPERM: lstat 'C:\'`: **el agente recorre los directorios padre hasta la raíz del disco y el contenedor no puede consultar `C:\`.** Es la
+  misma causa que ya impedía arrancar a `node` sin sus banderas y a `git` fuera de una raíz propia; `subst` solo convierte el error en un
+  cuelgue. Descartado como causa: la descarga de `ripgrep` (preinstalado y verificado), el loopback (funciona dentro), la vigilancia de ficheros
+  (variables de desactivación sin efecto) y el repo git (el snapshot no tiene `.git`). **Sin admin no hay arreglo conocido**; con admin bastaría una
+  ACE de solo lectura, *solo esta carpeta*, para el contenedor sobre `C:\` (ver la ficha). Mientras tanto: **`opencode` 1.18.x no es viable dentro del
+  contenedor** y las lentes con ficheros siguen sin un candidato probado.
 - `claude -p` arranca dentro del contenedor y se queda parado justo tras su inicialización, sin error (causa sin aislar; sin credenciales no se
   puede descartar el almacén de credenciales de Windows). `opencode` sí funciona sobre un snapshot, pero **no se ha probado una ronda con
   credenciales**, que es lo que falta para llamarlo integrado.

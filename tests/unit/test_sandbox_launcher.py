@@ -178,3 +178,30 @@ def test_canario_aborta_si_la_barrera_esta_rota(sbx):
     assert "CANARIO" in (rota.stdout + rota.stderr)
     # el punto de entrada para IDE/CI tambien da rc != 0 con la barrera rota
     assert run("verify").returncode != 0
+
+
+@pytestmark_int
+def test_snapshot_con_paths_exporta_solo_esos_ficheros_y_sin_git(sbx):
+    run, root, _ = sbx
+    repo_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=SCRIPT.parent,
+    ).stdout.strip()
+    snap = run(
+        "snapshot",
+        "-Source",
+        repo_root,
+        "-Name",
+        "doc",
+        "-Paths",
+        "scripts/sandbox_launcher.ps1",
+    )
+    assert snap.returncode == 0, snap.stdout + snap.stderr
+    exportados = [p for p in (root / "work" / "doc").rglob("*") if p.is_file()]
+    assert [p.name for p in exportados] == ["sandbox_launcher.ps1"], exportados
+    assert not (root / "work" / "doc" / ".git").exists(), (
+        "el snapshot no debe llevar historial"
+    )
