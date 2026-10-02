@@ -7,3 +7,7 @@ tests/test_redact.py:jwt:43
 # casa con la regla generica de claves; no es una credencial. Huella completa
 # (con commit) porque el CI escanea el historial con --log-opts=--all.
 93e59537124ac46d0e53e8e9446f156a6080fd1a:scripts/ensemble_dispatch.py:generic-api-key:340
+# Mismo caso para el alta de LLM7 (bd0147d): el ID de modelo `mistral-Nemo-Instruct-2407`
+# en MODEL_FAMILY_MAP y en su grupo de fallback. Es un nombre de modelo, no una credencial.
+bd0147d58cb8da6bdba7c0af10092dc30e1f4803:scripts/ensemble_dispatch.py:generic-api-key:346
+bd0147d58cb8da6bdba7c0af10092dc30e1f4803:scripts/ensemble_dispatch.py:generic-api-key:377
