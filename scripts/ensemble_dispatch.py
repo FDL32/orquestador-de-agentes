@@ -55,7 +55,9 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import difflib
+import gzip
 import hashlib
 import importlib.util
 import json
@@ -82,7 +84,11 @@ except ImportError:  # pragma: no cover -- POSIX
 try:  # POSIX
     import fcntl
 except ImportError:  # pragma: no cover -- Windows
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
+if msvcrt is not None:  # Windows: tipos Win32 para `_win32_open_share_delete`
+    from ctypes import wintypes as _ctypes_wintypes
+else:  # pragma: no cover -- POSIX
+    _ctypes_wintypes = None  # type: ignore[assignment]  # type: ignore[assignment]
 
 
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
@@ -108,6 +114,15 @@ from bus.subprocess_env import build_backend_env  # noqa: E402
 
 
 SCORECARD_REL = Path(".agent/runtime/ensemble/scorecard.jsonl")
+# WOT-2026-079a (D1, Decision 2.1 de DEC-079A-001): umbral de rotacion por
+# TAMANO en BYTES, fijado como constante de modulo (mecanismo de
+# "configurable" decidido en el plan: NO env var, NO fichero de config;
+# un test que necesite un umbral bajo lo sobreescribe con
+# `monkeypatch.setattr` sobre este modulo, nunca inyectando un parametro
+# nuevo en la firma publica de `append_scorecard`, que no cambia). Solo
+# `scorecard.jsonl` rota; los otros 3 JSONL (`_NON_ROTATING_ENSEMBLE_JSONL`)
+# solo WARNAN de tamano con esta MISMA constante (reusada, no una segunda).
+SCORECARD_ROTATION_THRESHOLD_BYTES = 10 * 1024 * 1024
 LEADERS_REL = Path(".agent/runtime/ensemble/backend_leaders.json")
 # WOT-2026-083b: un evento por CADA vez que resolve_similar_fallback sustituyo
 # un perfil caido. scorecard.jsonl ya registra las DOS rondas (la fallida y la
@@ -126,6 +141,21 @@ FALLBACK_EVENTS_REL = Path(".agent/runtime/ensemble/fallback_events.jsonl")
 # cada fan-out de gobierno. Fuente externa contra la que check_loop_execution
 # valida cada receipt. Vive en el runtime del destino-rol (nunca en repo_motor).
 EMITTED_NONCES_REL = Path(".agent/runtime/ensemble/emitted_nonces.jsonl")
+# WOT-2026-079a (D1): los 3 JSONL del ensemble que NO rotan en este ticket
+# (via REFUTADA: rotarlos ampliaba superficie sobre el guard sin necesidad).
+# Si alguno supera el mismo umbral (la MISMA constante
+# `SCORECARD_ROTATION_THRESHOLD_BYTES`, reusada, no una segunda paralela),
+# `ensemble_dispatch.py status` emite `[ensemble-size] WARN <fichero> <bytes>
+# B > <umbral> B owner=WOT-2026-079a` por stderr, sin cambiar el exit code.
+# `adversarial_findings_raw.jsonl` no tiene constante REL propia en este
+# modulo (ningun escritor suyo vive aqui; `remap_evidence_shas.py` la declara
+# en su inventario): la ruta se fija aqui como literal para que el WARN la
+# nombre igualmente.
+_NON_ROTATING_ENSEMBLE_JSONL = (
+    EMITTED_NONCES_REL,
+    FALLBACK_EVENTS_REL,
+    Path(".agent/runtime/ensemble/adversarial_findings_raw.jsonl"),
+)
 # Campos de una fila de emision. issuer_role/issuer_backend_key documentan QUIEN
 # emitio (el gate exige que ese backend_key NO cuente como lente ejecutora para N);
 # issued_before_ts fija el orden emision-antes-que-receipt que prueba la ceremonia
@@ -1745,6 +1775,96 @@ def _locked_for_append(handle):
             )
 
 
+# WOT-2026-079a (resolucion de CG-WOT-2026-079a, Opcion A con alcance corregido
+# por medicion -- PROPUESTA_CG-WOT-2026-079a, probes 1/2/2b): en Windows, el
+# rename/replace del activo bajo lock exige que TODOS los handles abiertos
+# simultaneamente sobre el nombre compartan `FILE_SHARE_DELETE` (probe 1: con
+# un solo escritor sin el flag, el rename falla con WinError 32; la `open()` de
+# CPython omite el flag). Los UNICOS 2 puntos que abren `SCORECARD_REL` bajo
+# `_locked_for_append` (censo verificado linea a linea, seccion 8 del CG) son
+# `append_scorecard` y `_rotate_scorecard`: ambos abren via
+# `_open_append_handle`, que en Windows crea el handle con `CreateFileW` +
+# `FILE_SHARE_DELETE` y lo adjunta a un fd CRT con `msvcrt.open_osfhandle`
+# (mismo `msvcrt.locking` byte 0 de siempre via `_locked_for_append`; el flag
+# NO afecta al byte-range lock, que sigue excluyendo lectura concurrente por
+# diseno -- probe 2, parte 2). POSIX sin cambios: `open("ab")` de siempre
+# (flock advisory + rename con handle abierto ya funcionan ahi).
+_SCORECARD_WIN32_ACCESS = 0x80000000 | 0x40000000  # GENERIC_READ | GENERIC_WRITE
+_SCORECARD_WIN32_SHARE = 0x1 | 0x2 | 0x4  # FILE_SHARE_READ | WRITE | DELETE
+_SCORECARD_WIN32_OPEN_ALWAYS = 4
+_SCORECARD_WIN32_OPEN_EXISTING = 3
+_SCORECARD_WIN32_ATTRIBUTE_NORMAL = 0x80
+_WIN32_ERROR_FILE_NOT_FOUND = (2, 3)  # ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND
+
+
+def _win32_open_share_delete(path: Path, *, create: bool = True):
+    """Abre `path` con `FILE_SHARE_DELETE` (Windows, resolucion del CG 079a).
+
+    Before: `path` es el scorecard activo; `msvcrt` disponible (plataforma
+        Windows). Si `CreateFileW` falla, propaga el OSError de Win32; con
+        `create=False` un fichero ausente levanta `FileNotFoundError`.
+    During: `CreateFileW` con GENERIC_READ|GENERIC_WRITE,
+        FILE_SHARE_READ|WRITE|DELETE y OPEN_ALWAYS (create=True) u
+        OPEN_EXISTING (create=False); el handle Win32 se adjunta a un fd CRT
+        via `msvcrt.open_osfhandle` con `_O_APPEND` (el write de
+        `append_scorecard` aterriza al final, igual que con `open("ab")`) y
+        `_O_BINARY`. El fd toma PROPIEDAD del handle: cerrar el fichero Python
+        cierra el handle Win32 (sin leak).
+    After: file object binario (append si create, read/write si no) usable por
+        `_locked_for_append` (seek + `msvcrt.locking` sobre su fileno) o para
+        LEER el activo sin bloquear el rename/replace de una rotacion
+        concurrente: un handle de lectura SIN el flag bloquea el
+        `os.replace`/`os.rename` del rotador igual que un escritor (simetria
+        del probe 4 del CG, medida contra el lector unificado en el test
+        `test_reader_never_sees_partial_or_duplicated_sets`).
+    """
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateFileW.restype = _ctypes_wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        _ctypes_wintypes.LPCWSTR,
+        _ctypes_wintypes.DWORD,
+        _ctypes_wintypes.DWORD,
+        _ctypes_wintypes.LPVOID,
+        _ctypes_wintypes.DWORD,
+        _ctypes_wintypes.DWORD,
+        _ctypes_wintypes.HANDLE,
+    ]
+    handle = kernel32.CreateFileW(
+        str(path),
+        _SCORECARD_WIN32_ACCESS,
+        _SCORECARD_WIN32_SHARE,
+        None,
+        _SCORECARD_WIN32_OPEN_ALWAYS if create else _SCORECARD_WIN32_OPEN_EXISTING,
+        _SCORECARD_WIN32_ATTRIBUTE_NORMAL,
+        None,
+    )
+    invalid = _ctypes_wintypes.HANDLE(-1).value
+    if not handle or handle == invalid:
+        err = ctypes.GetLastError()
+        if err in _WIN32_ERROR_FILE_NOT_FOUND:
+            raise FileNotFoundError(2, "no such file", str(path))
+        raise ctypes.WinError(err)
+    flags = (
+        os.O_APPEND | getattr(os, "O_BINARY", 0)
+        if create
+        else getattr(os, "O_BINARY", 0)
+    )
+    fd = msvcrt.open_osfhandle(handle, flags)
+    return os.fdopen(fd, "ab" if create else "rb+")
+
+
+def _open_append_handle(path: Path):
+    """Handle de escritura/lock del scorecard para SUS 2 puntos de apertura.
+
+    Windows: `FILE_SHARE_DELETE` via `_win32_open_share_delete` (sin el flag en
+    estos handles, el rename de la rotacion falla con WinError 32 -- probe 1).
+    POSIX: `open(path, "ab")` de siempre.
+    """
+    if msvcrt is not None:
+        return _win32_open_share_delete(path)
+    return open(path, "ab")
+
+
 def append_scorecard(project_root: Path, row: dict) -> Path:
     """Append-only, UTF-8 SIN BOM, una linea JSON (claves normalizadas) por evento.
 
@@ -1754,9 +1874,17 @@ def append_scorecard(project_root: Path, row: dict) -> Path:
     con PROCESOS concurrentes -- hacia donde empuja el sistema-- dos appends
     pueden entrelazarse y partir una linea. El formato de linea y
     SCORECARD_FIELDS no cambian (contrato de WOT-2026-025y).
+
+    WOT-2026-079a (D1): ANTES de cada append se comprueba el tamano del
+    activo; si YA supera `SCORECARD_ROTATION_THRESHOLD_BYTES`, rota
+    INMEDIATAMENTE (la rotacion ocurre en el append que CRUZA la visita
+    siguiente al que supero el umbral, no en el que lo supera exactamente).
+    Sin firma nueva: el umbral se lee de la constante de modulo (mutable por
+    `monkeypatch.setattr` en tests).
     """
     path = project_root / SCORECARD_REL
     path.parent.mkdir(parents=True, exist_ok=True)
+    _maybe_rotate_scorecard(path)
     normalized = {k: row.get(k) for k in SCORECARD_FIELDS}
     payload = (json.dumps(normalized, ensure_ascii=False) + "\n").encode("utf-8")
     # binario a proposito: sin traduccion de saltos de linea y con el payload
@@ -1767,10 +1895,648 @@ def append_scorecard(project_root: Path, row: dict) -> Path:
     # ms/fila con fsync vs 1.118 sin el (~20%). Una lente del MANAGER_REVIEW
     # estimo "100x mas lento" y pidio quitarlo; la cifra real es mucho menor,
     # pero se retira igualmente por ALCANCE, no por coste.
-    with open(path, "ab") as f, _locked_for_append(f):
-        f.write(payload)
-        f.flush()
-    return path
+    #
+    # WOT-2026-079a (REVALIDACION escritor-side, la pieza que cierra la perdida
+    # medida 119/120): entre el `rename` y el `replace` de una rotacion
+    # concurrente hay una ventana en la que el `OPEN_ALWAYS` de ESTE escritor
+    # crea un fichero que el `replace` posterior pisa -- el handle queda
+    # huerfano (inode fuera del arbol) y la fila se escribe a un fichero que
+    # nadie volvera a leer. Tras tomar el lock se compara el inode del handle
+    # con el del path AHORA (`st_ino` como comparacion PUNTUAL handle-vs-path,
+    # NO como identidad de lector D11: ahi sigue baneado); si difieren, el
+    # handle es huerfano: cerrar y re-abrir sobre el activo actual.
+    for _ in range(4):
+        with _open_append_handle(path) as f, _locked_for_append(f):
+            try:
+                same_inode = os.fstat(f.fileno()).st_ino == os.stat(path).st_ino
+            except OSError:
+                # FileNotFoundError: la rotacion en vuelo aun no repuso el
+                # activo. PermissionError: colision transitoria del stat.
+                same_inode = False
+            if same_inode:
+                f.write(payload)
+                f.flush()
+                return path
+    raise RuntimeError(
+        "append_scorecard: el handle no convergio con el activo tras 4 "
+        "revalidaciones (rotaciones concurrentes en cadena); la fila NO se "
+        "escribio para no perderla en un inode huerfano (WOT-2026-079a). "
+        "Reintente el append."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-079a: rotacion por tamano del scorecard (D1-D4, D6) y lectura
+# unificada activo+archivados (D5, D7, D8, D10, D11).
+# --------------------------------------------------------------------------- #
+
+# Nombre archivado: `<stem>.<YYYYMMDD-HHMMSS>[-N].jsonl` (D2) y su variante
+# comprimida `.jsonl.gz` (D8). `scorecard_summary.<mismo-ts>[-N].json` (D6) NO
+# casa con esta regex y queda invisible para el lector, igual que los
+# temporales de rotacion (`*.rotate-*.tmp`).
+_SCORECARD_ARCHIVE_NAME_RE = re.compile(
+    r"^scorecard\.\d{8}-\d{6}(?:-\d+)?\.jsonl(?:\.gz)?$"
+)
+# Esperas del protocolo de lectura consistente (D11): 3 reintentos.
+_SCORECARD_RETRY_DELAYS_S = (0.05, 0.1, 0.2)
+
+
+def _maybe_rotate_scorecard(path: Path) -> Path | None:
+    """D1: dispara la rotacion cuando el activo YA supera el umbral en BYTES.
+
+    Se comprueba ANTES de cada `append_scorecard`; la rotacion ocurre en el
+    append siguiente al que CRUZO el umbral (el que lo supero exactamente
+    completa su escritura normal). El umbral se lee de la constante de modulo
+    en cada llamada (mutable por tests, sin firma nueva).
+    """
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return None
+    if size <= SCORECARD_ROTATION_THRESHOLD_BYTES:
+        return None
+    return _rotate_scorecard(path)
+
+
+def _rotate_scorecard(path: Path) -> Path:
+    """UNA rotacion completa del activo, bajo el MISMO lock del append (D3).
+
+    El lock de escritura (`_locked_for_append`) es el que ya serializa los
+    appends: nigun escritor puede interleave con la secuencia de rename. La
+    comprobacion de tamano se RE-HACE dentro del lock via `os.stat(path)` (NO
+    via el handle: un handle abierto ANTES de la rotacion de otro proceso
+    apuntaria al inode viejo ya renombrado y mediria el archivado). El handle
+    se abre via `_open_append_handle` (con `FILE_SHARE_DELETE` en Windows:
+    sin el flag en TODOS los handles abiertos sobre el nombre, el rename falla
+    con WinError 32 -- probe 1 del CG).
+
+    El resumen L2 se genera DESPUES de soltar el lock y cerrar el handle
+    (`_write_rotation_summary`), leyendo desde el ARCHIVADO: el byte-range lock
+    sigue anclado al fichero fisico via el handle aunque este renombrado, y
+    leer bajo el lock todavia vivo falla igual que M2 (probe 2b del CG).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _open_append_handle(path) as f, _locked_for_append(f):
+        try:
+            if path.stat().st_size <= SCORECARD_ROTATION_THRESHOLD_BYTES:
+                return path  # otro proceso acabo de rotar: nada que hacer
+        except FileNotFoundError:
+            return path  # rotacion en vuelo: el append recreara el activo
+        archived = _rotate_scorecard_locked(path)
+    _write_rotation_summary(archived)
+    return archived
+
+
+def _scorecard_summary_name(archived_name: str) -> str:
+    """D6: `scorecard.<ts>[-N].jsonl` -> `scorecard_summary.<ts>[-N].json`.
+
+    El resumen lleva el MISMO timestamp (y el mismo sufijo de colision) que su
+    archivado hermano, para que el par sea emparejable por nombre.
+    """
+    stem = (
+        archived_name[: -len(".jsonl.gz")]
+        if archived_name.endswith(".jsonl.gz")
+        else archived_name[: -len(".jsonl")]
+    )
+    return f"scorecard_summary.{stem.split('.', 1)[1]}.json"
+
+
+def _nearest_rank(values: list[float], pct: float) -> float:
+    """Percentil nearest-rank FIJADO por D6: `sorted(vals)[ceil(p/100*n) - 1]`.
+
+    Sin interpolacion (declarado en el plan para que el test lo fije exacto).
+    """
+    ordered = sorted(values)
+    rank = math.ceil(pct / 100 * len(ordered))
+    return ordered[max(rank, 1) - 1]
+
+
+def _summary_value_rates(rows: list[dict], field: str) -> dict[str, float]:
+    """Tasa por valor distinto observado en el tramo (D6).
+
+    Cada valor distinto del campo cuenta; None/ausente entra como clave propia
+    `"_ausente"` -- NUNCA se descarta en silencio. NOTA MEDIDA (declarada en el
+    commit): `scorecard.jsonl` NO porta `failure_class` (fuente unica =
+    `fallback_events.jsonl`, declaracion H3 del modulo: la clase NUNCA se
+    re-deriva aqui), asi que en produccion `failure_class_rate` vale
+    `{"_ausente": 1.0}` por celda; el codigo es generico por si el campo
+    aparece en el futuro.
+    """
+    counts: Counter[str] = Counter()
+    for row in rows:
+        value = row.get(field)
+        counts[str(value) if value is not None else "_ausente"] += 1
+    total = len(rows)
+    return {key: counts[key] / total for key in sorted(counts)}
+
+
+def _scorecard_summary_payload(raw: bytes) -> dict:
+    """Schema JSON EXACTO del resumen L2 (D6) sobre el tramo rotado.
+
+    Parseo TOLERANTE a proposito: el tramo va a archivarse y el resumen no
+    puede wedgear al escritor; una linea invalida no entra al agregado (el
+    archivado la WARNera en cada lectura futura, y el schema no tiene campo
+    para contarla -- declarado en el commit). `covers_from`/`covers_to` son el
+    minimo/maximo del `ts` REAL del tramo (nunca el momento de la rotacion ni
+    un nombre de mes). Una celda sin ningun `latency_ms` numerico publica
+    `None` en sus percentiles (ausencia declarada, no cero imputado).
+    """
+    rows: list[dict] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+    by_cell: dict[str, list[dict]] = {}
+    for row in rows:
+        key = f"{row.get('backend')}|{row.get('model')}"
+        by_cell.setdefault(key, []).append(row)
+    cells: dict[str, dict] = {}
+    for key, cell_rows in by_cell.items():
+        latencies = [
+            float(row["latency_ms"])
+            for row in cell_rows
+            if isinstance(row.get("latency_ms"), (int, float))
+            and not isinstance(row.get("latency_ms"), bool)
+        ]
+        cells[key] = {
+            "n": len(cell_rows),
+            "latency_ms_p50": _nearest_rank(latencies, 50) if latencies else None,
+            "latency_ms_p90": _nearest_rank(latencies, 90) if latencies else None,
+            "outcome_rate": _summary_value_rates(cell_rows, "outcome"),
+            "failure_class_rate": _summary_value_rates(cell_rows, "failure_class"),
+        }
+    tss = sorted(str(row["ts"]) for row in rows if row.get("ts"))
+    return {
+        "covers_from": tss[0] if tss else None,
+        "covers_to": tss[-1] if tss else None,
+        "by_backend_model": cells,
+    }
+
+
+def _rotate_scorecard_locked(path: Path) -> Path:
+    """Secuencia de rotacion con el lock YA tomado (D2, D4).
+
+    Orden (D4): el activo NUEVO (vacio) se crea en temporal ANTES del rename
+    del viejo. El resumen L2 NO vive aqui: se genera FUERA del lock por
+    `_write_rotation_summary` (probe 2b del CG: el byte-range lock sigue
+    anclado al fichero fisico via el handle aunque este renombrado, y leer el
+    archivado con el lock vivo falla igual que M2). Un corte simulado entre
+    cada par de pasos deja estado RECUPERABLE (nunca sin remedio):
+      - corte antes del rename: activo intacto; sin archivado ni resumen; el
+        temporal huerfano se barre al inicio de la siguiente rotacion;
+      - corte tras el rename y antes del replace: archivado COMPLETO y visible
+        (requisito simetrico de D11) y activo ausente -> el siguiente
+        `append_scorecard` lo recrea vacio (self-heal);
+      - corte durante el resumen: archivado y activo ya sanos; el resumen a
+        medias queda en `*.tmp`, que no casa ni con la regex de archivados ni
+        con el nombre final del resumen (nunca un L2 a medias con nombre
+        definitivo).
+    """
+    try:
+        if path.stat().st_size == 0:
+            return path  # umbral cruzado pero ya vaciado por otra rotacion
+    except FileNotFoundError:
+        return path
+    ts_name = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    archived = path.with_name(f"{path.stem}.{ts_name}.jsonl")
+    collision = 0
+    while archived.exists():  # D2: mismo segundo bajo el mismo lock -> -1, -2...
+        collision += 1
+        archived = path.with_name(f"{path.stem}.{ts_name}-{collision}.jsonl")
+    # Barrer temporales huerfanos de rotaciones muertas: bajo el lock no hay
+    # ninguna rotacion viva en curso, todo `*.rotate-*.tmp` es residuo.
+    for stale in path.parent.glob(f"{path.stem}.rotate-*.tmp"):
+        with contextlib.suppress(OSError):
+            stale.unlink()
+    new_active_tmp = path.with_name(
+        f"{path.stem}.rotate-{os.getpid()}-{time.time_ns()}.tmp"
+    )
+    new_active_tmp.write_bytes(b"")  # D4: activo nuevo (vacio) ANTES del rename
+    _retry_fs_op(os.rename, path, archived)  # archivado COMPLETO y visible (D11)
+    _retry_fs_op(os.replace, new_active_tmp, path)  # activo vacio, atomico
+    return archived
+
+
+def _write_rotation_summary(archived: Path) -> Path:
+    """Resumen L2 del tramo (D6), FUERA del lock (probe 2b del CG).
+
+    El byte-range lock del rotador sigue anclado al fichero fisico via su
+    handle aunque el fichero ya este renombrado: leer el archivado dentro del
+    bloque `with` falla con PermissionError 13 igual que la lectura del activo.
+    Esta funcion corre DESPUES de que `_rotate_scorecard` solto el lock y cerro
+    el handle, y lee desde `archived` (inmutable, fuera de todo lock). El
+    resumen se escribe en temporal y se renombra atomicamente: un corte aqui
+    deja el `*.tmp` huerfano (barrido de la rotacion siguiente), nunca un L2 a
+    medias con su nombre definitivo.
+    """
+    summary = archived.with_name(_scorecard_summary_name(archived.name))
+    summary_tmp = archived.with_name(
+        f"scorecard.rotate-{os.getpid()}-{time.time_ns()}-summary.tmp"
+    )
+    summary_tmp.write_text(
+        json.dumps(
+            _scorecard_summary_payload(_read_scorecard_source_bytes(archived)),
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _retry_fs_op(os.replace, summary_tmp, summary)
+    return summary
+
+
+def _scorecard_archive_sort_key(path: Path) -> tuple[str, int]:
+    """Clave de orden D10 de un archivado: (timestamp, sufijo -N numerico).
+
+    El nombre completo NO sirve como clave lexicografica: `-1` (0x2D) ordena
+    ANTES que `.` (0x2E), asi que `scorecard.<ts>-1.jsonl` quedaria delante de
+    `scorecard.<ts>.jsonl` cuando la rotacion base ocurrio PRIMERO. El contrato
+    (D10) fija: por nombre lexicografico para el timestamp, el sufijo de
+    colision NUMERICAMENTE (base=0, luego -1, -2...). El parseo va por GRUPOS
+    de regex (no por split sobre `-`): el timestamp YA contiene un guion
+    (`YYYYMMDD-HHMMSS`) y un split ingenuo se lo come (`int('000000-1')`).
+    """
+    match = re.match(
+        r"^scorecard\.(\d{8}-\d{6})(?:-(\d+))?\.jsonl(?:\.gz)?$", path.name
+    )
+    if match is None:  # pragma: no cover - solo se llama con nombres validados
+        return (path.name, 0)
+    return (match.group(1), int(match.group(2) or 0))
+
+
+def _list_scorecard_archives(ensemble_dir: Path) -> list[Path]:
+    """Archivados del scorecard en el directorio, ORDENADOS por clave D10.
+
+    Nunca devuelve el activo ni los resumenes L2: solo nombres que casan con
+    `_SCORECARD_ARCHIVE_NAME_RE`. El orden NO es el orden de lectura (D5 ordena
+    las filas por `ts` real); es el orden del `sha` combinado (D10).
+    """
+    if not ensemble_dir.is_dir():
+        return []
+    return sorted(
+        (p for p in ensemble_dir.iterdir() if _SCORECARD_ARCHIVE_NAME_RE.match(p.name)),
+        key=_scorecard_archive_sort_key,
+    )
+
+
+# Reintentos FINOS de lectura (distintos de los de D11): el byte-range lock de
+# un ESCRITOR vivo (el append en curso, o el stray-append de un handle abierto
+# antes de un rename) excluye la lectura por segundo handle en Windows incluso
+# con `FILE_SHARE_DELETE` (probe 2 parte 2 del CG: el flag resuelve
+# rename/replace/delete, NO el lock). La ventana dura sub-milisegundos: 5/15/45
+# ms la cubren con holgura sin serializar lectores (el lock NUNCA lo toma el
+# lector).
+_SCORECARD_READ_RETRIES_S = (0.005, 0.015, 0.045)
+# Reintentos de las OPERACIONES de FS de la rotacion (rename/replace): en
+# Windows pueden fallar con WinError 5/32 TRANSITORIAMENTE aunque todos los
+# handles abiertos compartan `FILE_SHARE_DELETE` (el byte-range lock de un
+# escritor en su ventana de append, o un escaneo del antivirus). Cada operacion
+# es atomica (si levanto, no ocurrio) y la secuencia D4 es recuperable en cada
+# corte: reintentar SOLO la operacion fallida es seguro.
+_SCORECARD_FS_RETRIES_S = (0.01, 0.03, 0.09)
+
+
+def _retry_fs_op(op, /, *args):
+    """Ejecuta una operacion de FS de la rotacion con reintentos finos.
+
+    Solo reintenta `PermissionError` (WinError 5/32 transitorio); cualquier
+    otro error propaga igual (y los cortes simulados de los tests D4 usan
+    OSError generico justo para no ser reintentados). POSIX pasa directo.
+    """
+    if msvcrt is None:
+        return op(*args)
+    for attempt in range(len(_SCORECARD_FS_RETRIES_S) + 1):
+        try:
+            return op(*args)
+        except PermissionError:  # noqa: PERF203 - reintento fino deliberado
+            if attempt >= len(_SCORECARD_FS_RETRIES_S):
+                raise
+            time.sleep(_SCORECARD_FS_RETRIES_S[attempt])
+    raise PermissionError(f"{op} no convergio")  # pragma: no cover
+
+
+def _read_scorecard_source_bytes(path: Path) -> bytes:
+    """Bytes crudos de una fuente, `.jsonl` o `.jsonl.gz` (D8, transparente).
+
+    En Windows abre con `FILE_SHARE_DELETE` (probe 4 del CG en sentido
+    inverso: un handle de lectura SIN el flag bloquea el rename/replace del
+    rotador) y reintenta ante `PermissionError` del byte-range lock de un
+    escritor vivo (ver `_SCORECARD_READ_RETRIES_S`). POSIX: `read_bytes()` de
+    siempre (flock es advisory y no bloquea lecturas). Sirve para el ACTIVO y
+    para los ARCHIVADOS (el stray-append de un handle anterior a un rename
+    puede dejar su lock vivo sobre el fichero fisico ya renombrado).
+    """
+    gz = path.name.endswith(".gz")
+    for attempt in range(len(_SCORECARD_READ_RETRIES_S) + 1):
+        try:
+            if gz:
+                with gzip.open(path, "rb") as f:
+                    return f.read()
+            if msvcrt is not None:
+                f = _win32_open_share_delete(path, create=False)
+                try:
+                    return f.read()
+                finally:
+                    f.close()
+            return path.read_bytes()
+        except PermissionError:  # noqa: PERF203 - reintento fino deliberado
+            if attempt >= len(_SCORECARD_READ_RETRIES_S):
+                raise
+            time.sleep(_SCORECARD_READ_RETRIES_S[attempt])
+    raise OSError(f"lectura de {path} no convergio")  # pragma: no cover
+
+
+def _parse_scorecard_source(raw: bytes, *, name: str, strict: bool) -> list[dict]:
+    """Parsea las filas de UNA fuente con la politica por tipo (D5, enmienda).
+
+    - strict=True (el ACTIVO): `json.loads` por linea SIN capturar, igual que
+      `_read_scorecard` hoy -- una linea invalida LANZA (la corrupcion del
+      ledger activo es un estado de crash que no se calla).
+    - strict=False (ARCHIVADOS, inmutables): tolerante SIEMPRE -- la linea
+      invalida se cuenta y SALTA con WARN nombrando fichero y numero de linea;
+      un archivado truncado por un crash previo no puede repararse y un lector
+      estricto ahi romperia el guard PARA SIEMPRE. Las lineas vacias se saltan
+      en silencio en ambos casos (comportamiento preservado).
+    """
+    text = raw.decode("utf-8", errors="strict" if strict else "replace")
+    rows: list[dict] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        if not strict:
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                print(
+                    f"[scorecard-archive] WARN fila ilegible en {name}:{lineno} "
+                    f"saltada: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            if isinstance(obj, dict):
+                rows.append(obj)
+            else:
+                print(
+                    f"[scorecard-archive] WARN fila no-objeto en {name}:{lineno} "
+                    "saltada",
+                    file=sys.stderr,
+                )
+            continue
+        rows.append(json.loads(line))
+    return rows
+
+
+def _active_scorecard_identity(path: Path) -> tuple[int, int] | None:
+    """Identidad del activo (D11, criterio EXACTO del plan): (st_size, mtime_ns).
+
+    La MISMA tupla en POSIX y Windows -- NUNCA `st_ino`: su inestabilidad medida
+    en Windows tras `os.replace` es la pieza que la enmienda cierra. Un rename
+    real no se detecta comparando esta tupla en aislamiento (el lector abre por
+    RUTA): se detecta por el RELISTADO del directorio en el protocolo.
+    """
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def _scorecard_snapshot_stable(
+    id1: tuple[int, int] | None,
+    id2: tuple[int, int] | None,
+    archives1: list[str],
+    archives2: list[str],
+) -> bool:
+    """Criterio de estabilidad del protocolo D11 (con la correccion del plan).
+
+    Reintenta si el conjunto de archivados cambio; si el activo aparecio o
+    desaparecio; si su tamano DISMINUYO; o si el tamano se mantuvo con
+    `mtime_ns` distinto (reescritura in situ). Crecer con `mtime_ns` avanzado
+    es APPEND BENIGNO: el lector devuelve la instantanea del paso 1.
+    """
+    if archives1 != archives2:
+        return False
+    if id1 == id2:
+        return True
+    if id1 is None or id2 is None:
+        return False
+    size1, _mtime1 = id1
+    size2, _mtime2 = id2
+    return size2 > size1
+
+
+def _scorecard_snapshot_rows(project_root: Path) -> list[dict]:
+    """Filas del scorecard (activo + archivados) bajo el protocolo D11.
+
+    Un intento = (1) identidad del activo + lectura del activo (ESTRICTO);
+    (2) listado y lectura de los archivados (TOLERANTES, WARN nombrado);
+    (3) re-identidad del activo y re-listado. Reintenta (50/100/200 ms) si el
+    conjunto de archivados cambio, la identidad del activo cambio sin ser
+    append benigno, o el tamano disminuyo. Agotados los 3 reintentos, lanza
+    `ScorecardRotationRaceError` (se propaga; NINGUN exit code nuevo del
+    guard). El requisito simetrico lo cumple la rotacion: el archivado queda
+    visible y COMPLETO (rename) antes de vaciar/reemplazar el activo.
+
+    Un activo que desaparece ENTRE el stat y la lectura (ventana del rename de
+    una rotacion concurrente) se trata como activo ausente en ESE intento: el
+    re-listado + re-identidad del mismo intento fuerza el reintento si la
+    rotacion aun no repuso el activo, y una instantanea consistente
+    (sin-activo + esos archivados) si ya repuso todo. Un `PermissionError`
+    transitorio (stat/open en la ventana rename/replace, o el byte-range lock
+    de un escritor que agoto los reintentos finos) REINTENTA al nivel de
+    intento con las mismas esperas de D11; solo se propaga si agota.
+    """
+    active_path = project_root / SCORECARD_REL
+    ensemble_dir = active_path.parent
+    attempts = len(_SCORECARD_RETRY_DELAYS_S) + 1
+    for attempt in range(attempts):
+        try:
+            return _scorecard_snapshot_rows_attempt(active_path, ensemble_dir)
+        except PermissionError:
+            if attempt + 1 >= attempts:
+                raise
+        except _ScorecardUnstableError:
+            if attempt + 1 >= attempts:
+                raise ScorecardRotationRaceError(
+                    "scorecard.jsonl no se estabilizo durante la lectura "
+                    "unificada tras 3 reintentos (rotacion concurrente): "
+                    "identidad del activo o conjunto de archivados cambio en "
+                    "cada intento. Reintenta la operacion; NINGUN exit code "
+                    "nuevo del guard (WOT-2026-079a D11)."
+                ) from None
+        time.sleep(_SCORECARD_RETRY_DELAYS_S[attempt])
+    raise ScorecardRotationRaceError(  # pragma: no cover - inalcanzable
+        "scorecard.jsonl: intentos de lectura agotados (WOT-2026-079a D11)."
+    )
+
+
+def _scorecard_snapshot_rows_attempt(
+    active_path: Path, ensemble_dir: Path
+) -> list[dict]:
+    """UN intento del protocolo D11 (cuerpo de `_scorecard_snapshot_rows`)."""
+    id1 = _active_scorecard_identity(active_path)
+    try:
+        active_raw = _read_scorecard_source_bytes(active_path) if id1 else b""
+    except FileNotFoundError:
+        active_raw = None  # el rename de una rotacion se colo en la ventana
+    # strict ante linea invalida del ACTIVO: lanza igual que hoy (D5). La
+    # lectura estricta FUERA del lock es el riesgo preexistente de
+    # `_read_scorecard` (medido en el contrato): no se amplia aqui.
+    active_rows = (
+        _parse_scorecard_source(active_raw or b"", name=active_path.name, strict=True)
+        if active_raw is not None and id1
+        else []
+    )
+    archives1 = [p.name for p in _list_scorecard_archives(ensemble_dir)]
+    archived_rows: list[dict] = []
+    for archive_name in archives1:
+        archive_path = ensemble_dir / archive_name
+        archived_rows.extend(
+            _parse_scorecard_source(
+                _read_scorecard_source_bytes(archive_path),
+                name=archive_name,
+                strict=False,
+            )
+        )
+    id2 = _active_scorecard_identity(active_path)
+    archives2 = [p.name for p in _list_scorecard_archives(ensemble_dir)]
+    effective_id1 = id1 if active_raw is not None else None
+    if _scorecard_snapshot_stable(effective_id1, id2, archives1, archives2):
+        # D5: orden CRONOLOGICO por `ts` real de cada fila, nunca por
+        # `Path.glob()` ni por nombre de fichero. Sort estable: filas con
+        # el mismo `ts` (o sin el: "" ordena primero, "el mas antiguo",
+        # mismo criterio que `regenerate_backend_status`) conservan el
+        # orden de lectura archivados-antes/activo-ultimo.
+        return sorted(
+            [*archived_rows, *active_rows],
+            key=lambda row: str(row.get("ts") or ""),
+        )
+    raise _ScorecardUnstableError()
+
+
+class _ScorecardUnstableError(Exception):
+    """Senal INTERNA: la instantanea del intento no estabilizo (D11)."""
+
+
+class ScorecardRotationRaceError(RuntimeError):
+    """D11: la lectura unificada no estabilizo tras 3 reintentos.
+
+    Se PROPAGA tal cual (sin exit code nuevo del guard): el mensaje fijo
+    explica el reintento y la causa. La pieza mas incierta del diseno
+    (`st_ino` en Windows) quedo cerrada por la correccion del plan: la
+    identidad del activo es `(st_size, mtime_ns)` en TODAS las plataformas.
+    """
+
+
+def read_scorecard_unified(project_root: Path) -> Iterator[dict]:
+    """Lectura UNIFICADA del scorecard: archivados + activo, orden por `ts` (D5/D7).
+
+    Nombre y firma FIJADOS por `T-079A-001`/`DEC-079A-001` (Decision 1): vive
+    aqui, es la UNICA excepcion al Forbidden Surface de `WOT-2026-055o` y
+    `phase_value_report.py` la consume en vez de parsear por su cuenta. El
+    ACTIVO es estricto (lanza ante linea invalida, igual que hoy); los
+    ARCHIVADOS son SIEMPRE tolerantes (WARN nombrado con fichero y linea).
+    Soporta transparentemente `.jsonl` y `.jsonl.gz` (D8). Bajo rotacion
+    concurrente aplica el protocolo de reintentos de D11 y puede lanzar
+    `ScorecardRotationRaceError`.
+
+    Before: `project_root` es el destino-rol con `.agent/runtime/ensemble/`.
+    During: protocolo D11 (leer activo+archivados, re-verificar identidad y
+        listado, hasta 3 reintentos), orden cronologico por `ts` real.
+    After: Iterator[dict] sobre la instantanea consistente; sin escrituras.
+    """
+    return iter(_scorecard_snapshot_rows(project_root))
+
+
+def _scorecard_sha256_unified(project_root: Path) -> str:
+    """Formula del `sha` combinado (D10) bajo el mismo protocolo D11.
+
+    Sin archivados: `sha256(bytes del activo).hexdigest()` EXACTO (identidad
+    con el `_read_scorecard` historico; activo ausente o vacio -> `H(b"")`).
+    Con archivados: `sha256("\\n".join(H(f) for f in ordenados)).hexdigest()`,
+    delimitador `\\n`, archivados por la clave D10 (timestamp lexicografico,
+    sufijo `-N` numerico) y el ACTIVO AL FINAL. Declarado (D10): los
+    `scorecard_sha256` guardados en artefactos derivados quedan OBSOLETOS
+    hasta su regeneracion normal; la rotacion NO los regenera.
+
+    Nota de coste declarada (D13): las filas (`read_scorecard_unified`) y este
+    hash hacen DOS pasadas de lectura independientes; bajo rotacion concurrente
+    pueden salir de instantaneas adyacentes (el `sha` es metadato de staleness
+    que el consumidor recomputa, no una clave de integridad fila a fila).
+    """
+    active_path = project_root / SCORECARD_REL
+    ensemble_dir = active_path.parent
+    attempts = len(_SCORECARD_RETRY_DELAYS_S) + 1
+    for attempt in range(attempts):
+        try:
+            return _scorecard_sha256_attempt(active_path, ensemble_dir)
+        except PermissionError:
+            if attempt + 1 >= attempts:
+                raise
+        except _ScorecardUnstableError:
+            if attempt + 1 >= attempts:
+                raise ScorecardRotationRaceError(
+                    "scorecard.jsonl no se estabilizo durante el calculo del "
+                    "sha combinado tras 3 reintentos (rotacion concurrente): "
+                    "identidad del activo o conjunto de archivados cambio en "
+                    "cada intento (WOT-2026-079a D10/D11)."
+                ) from None
+        time.sleep(_SCORECARD_RETRY_DELAYS_S[attempt])
+    raise ScorecardRotationRaceError(  # pragma: no cover - inalcanzable
+        "scorecard.jsonl: intentos del sha agotados (WOT-2026-079a D10/D11)."
+    )
+
+
+def _scorecard_sha256_attempt(active_path: Path, ensemble_dir: Path) -> str:
+    """UN intento del sha combinado (cuerpo de `_scorecard_sha256_unified`)."""
+    id1 = _active_scorecard_identity(active_path)
+    try:
+        active_raw = _read_scorecard_source_bytes(active_path) if id1 else b""
+    except FileNotFoundError:
+        active_raw = None
+    archives1 = [p.name for p in _list_scorecard_archives(ensemble_dir)]
+    archive_raws = [
+        _read_scorecard_source_bytes(ensemble_dir / name) for name in archives1
+    ]
+    id2 = _active_scorecard_identity(active_path)
+    archives2 = [p.name for p in _list_scorecard_archives(ensemble_dir)]
+    effective_id1 = id1 if active_raw is not None else None
+    if _scorecard_snapshot_stable(effective_id1, id2, archives1, archives2):
+        if not archive_raws:
+            # D10, identidad EXACTA con hoy: sin archivados el sha es
+            # sha256(bytes del activo) -- NUNCA el join de un solo
+            # elemento (eso seria sha256(H(activo)), OTRO valor).
+            return hashlib.sha256(active_raw or b"").hexdigest()
+        # `archive_raws` ya sigue el orden de `archives1`, y
+        # `_list_scorecard_archives` devuelve las rutas en el ORDEN D10
+        # (timestamp lexicografico, sufijo -N numerico): no se re-ordena.
+        digests = [hashlib.sha256(raw).hexdigest() for raw in archive_raws]
+        digests.append(hashlib.sha256(active_raw or b"").hexdigest())
+        return hashlib.sha256("\n".join(digests).encode("utf-8")).hexdigest()
+    raise _ScorecardUnstableError()
+
+
+def _read_scorecard(project_root: Path) -> tuple[list[dict], str]:
+    """(rows, sha) del scorecard UNIFICADO (D7, enmienda): misma firma que hoy.
+
+    Las filas pasan SIEMPRE por el nombre de modulo `read_scorecard_unified`
+    (activo+archivados, orden por `ts`): la busqueda se resuelve en cada
+    llamada sobre el namespace del modulo, de modo que la mutacion de D12
+    (`monkeypatch.setattr(ensemble_dispatch, "read_scorecard_unified", <stub
+    activo-solo>)`) produzca el veredicto 0-rondas que la prueba de la ruta de
+    produccion espera, sobre el MISMO objeto de funcion que
+    `check_loop_execution.py` y `pool_permanence_metric.py` importaron por
+    nombre plano. NINGUNO de los dos ficheros se edita: heredan la lectura
+    unificada por esta reescritura interna.
+    """
+    rows = list(read_scorecard_unified(project_root))
+    return rows, _scorecard_sha256_unified(project_root)
 
 
 def append_fallback_event(project_root: Path, event: dict) -> Path:
@@ -1894,16 +2660,6 @@ def read_emitted_nonces(project_root: Path) -> list[dict]:
         except json.JSONDecodeError as exc:
             print(f"[WARN] fila de nonce ilegible, saltada: {exc}", file=sys.stderr)
     return rows
-
-
-def _read_scorecard(project_root: Path) -> tuple[list[dict], str]:
-    path = project_root / SCORECARD_REL
-    raw = path.read_bytes() if path.exists() else b""
-    sha = hashlib.sha256(raw).hexdigest()
-    rows = [
-        json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()
-    ]
-    return rows, sha
 
 
 # WOT-2026-086b: `failure_mode` de filas `ronda` en las que la lente NUNCA
@@ -4821,9 +5577,33 @@ def _cmd_leaders(args, config) -> int:
     return 0
 
 
+def _warn_oversized_ensemble_jsonl(project_root: Path) -> None:
+    """D1 (WOT-2026-079a): WARN de tamano sobre los 3 JSONL que NO rotan.
+
+    `emitted_nonces.jsonl`, `fallback_events.jsonl` y
+    `adversarial_findings_raw.jsonl` no rotan en este ticket (via REFUTADA en
+    la enmienda); si superan el MISMO umbral del scorecard (misma constante,
+    reusada), `status` lo nombra por stderr con el ticket dueno de la decision
+    de NO rotarlos (literal `WOT-2026-079a`), sin cambiar el exit code.
+    """
+    for rel in _NON_ROTATING_ENSEMBLE_JSONL:
+        candidate = project_root / rel
+        try:
+            size = candidate.stat().st_size
+        except FileNotFoundError:
+            continue
+        if size > SCORECARD_ROTATION_THRESHOLD_BYTES:
+            print(
+                f"[ensemble-size] WARN {rel.as_posix()} {size} B > "
+                f"{SCORECARD_ROTATION_THRESHOLD_BYTES} B owner=WOT-2026-079a",
+                file=sys.stderr,
+            )
+
+
 def _cmd_status(args, config) -> int:
     """WOT-2026-055o: deriva `backend_status.json` desde lo ya explorado."""
     project_root = _resolve_project_root(args.project_root)
+    _warn_oversized_ensemble_jsonl(project_root)
     out_path = regenerate_backend_status(project_root, config=config)
     print(f"[status] proyeccion regenerada: {out_path}")
     return 0

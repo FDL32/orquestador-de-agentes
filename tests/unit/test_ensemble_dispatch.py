@@ -21,10 +21,15 @@ it pins:
 from __future__ import annotations
 
 import email.message
+import gzip
+import hashlib
 import inspect
 import io
 import json
+import os
+import subprocess
 import sys
+import threading
 import time
 import traceback
 import urllib.error
@@ -39,7 +44,9 @@ _SCRIPTS_DIR = _MOTOR_ROOT / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import check_loop_execution as cle  # noqa: E402  (WOT-2026-079a D12)
 import ensemble_dispatch as ed  # noqa: E402
+import pool_permanence_metric as ppm  # noqa: E402  (WOT-2026-079a D12)
 
 
 _AGENT_DIR = _MOTOR_ROOT / ".agent"
@@ -7274,3 +7281,750 @@ def test_grupo_otros_solo_contiene_perfiles_existentes_de_llm7():
         (p.get("backend"), p.get("model")) for p in config["ensemble_profiles"].values()
     }
     assert present >= ed.FALLBACK_DIRECTO_SIN_HERMANO
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-079a: rotacion por tamano (D1-D4, D6) y lectura unificada
+# activo+archivados (D5, D8, D10, D11, D12) del scorecard.
+# --------------------------------------------------------------------------- #
+
+
+def _sc_row(ts: str, **overrides) -> dict:
+    """Fila de ronda con el schema REAL del scorecard (claves normalizadas)."""
+    row = {
+        "ts": ts,
+        "event": "ronda",
+        "ticket": "WOT-TEST-079a",
+        "rol": "proposer",
+        "task_type": "code-review",
+        "backend": "fake",
+        "model": "m1",
+        "backend_key": "BA10",
+        "ronda": 1,
+        "outcome": "ok",
+        "evidencia": "raw/x.json (10c)",
+        "output_chars": 10,
+        "latency_ms": 1000.0,
+    }
+    row.update(overrides)
+    return row
+
+
+def _write_active(project_root: Path, rows: list[dict]) -> Path:
+    path = project_root / ed.SCORECARD_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return path
+
+
+def _archives(project_root: Path) -> list[Path]:
+    return ed._list_scorecard_archives((project_root / ed.SCORECARD_REL).parent)
+
+
+def _archive_ts_lines(archive: Path) -> list[str]:
+    return [
+        json.loads(line)["ts"]
+        for line in archive.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+# ---- WOT-2026-079a: D1, umbral de rotacion
+def test_rotation_fires_on_the_append_after_crossing_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D1: el append que CRUZA el umbral escribe normal; el SIGUIENTE rota.
+
+    El umbral se fija a `size(fila1) + 1` MEDIDO (no asumido: el tamano de una
+    fila normalizada con los nulls de SCORECARD_FIELDS no es evidente), de modo
+    que la secuencia fila1 (bajo umbral) -> fila2 (cruza) -> fila3 (rota antes
+    de escribir) sea determinista en cualquier plataforma."""
+    ed.append_scorecard(tmp_path, _sc_row("2026-10-01T00:00:00Z"))
+    assert _archives(tmp_path) == []
+    size_after_one = (tmp_path / ed.SCORECARD_REL).stat().st_size
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", size_after_one + 1)
+
+    ed.append_scorecard(tmp_path, _sc_row("2026-10-01T00:00:01Z"))
+    assert (tmp_path / ed.SCORECARD_REL).stat().st_size > size_after_one + 1
+    assert _archives(tmp_path) == [], "el append que cruza el umbral NO rota"
+
+    ed.append_scorecard(tmp_path, _sc_row("2026-10-01T00:00:02Z"))
+    archives = _archives(tmp_path)
+    assert len(archives) == 1, "el siguiente append rota INMEDIATAMENTE"
+    assert _archive_ts_lines(archives[0]) == [
+        "2026-10-01T00:00:00Z",
+        "2026-10-01T00:00:01Z",
+    ]
+    assert [r["ts"] for r in _rows(tmp_path)] == ["2026-10-01T00:00:02Z"]
+    summaries = list(
+        (tmp_path / ed.SCORECARD_REL).parent.glob("scorecard_summary.*.json")
+    )
+    assert len(summaries) == 1, "la rotacion genera su resumen L2 hermano"
+
+
+def test_status_warns_oversized_non_rotating_jsonl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """D1: los 3 JSONL que NO rotan WARNAn con fichero y dueno, sin exit code."""
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 64)
+    nonces = tmp_path / ed.EMITTED_NONCES_REL
+    nonces.parent.mkdir(parents=True, exist_ok=True)
+    nonces.write_text("x" * 100, encoding="utf-8")
+
+    rc = ed.main(["status", "--project-root", str(tmp_path)])
+    captured = capsys.readouterr()
+
+    assert rc == 0, "el WARN no cambia el exit code"
+    assert "[ensemble-size] WARN" in captured.err
+    assert "emitted_nonces.jsonl" in captured.err
+    assert "owner=WOT-2026-079a" in captured.err
+
+
+# ---- WOT-2026-079a: D2, nombrado del archivado
+def test_two_rotations_in_the_same_second_never_collide(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D2: mismo segundo bajo el mismo lock -> sufijo -1, nunca sobrescribir."""
+    fixed = datetime(2026, 10, 2, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr(ed, "datetime", _FixedClock)
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
+    path = _write_active(tmp_path, [_sc_row("2026-10-01T00:00:00Z")])
+
+    first = ed._rotate_scorecard(path)
+    assert first.name == "scorecard.20261002-120000.jsonl"
+
+    _write_active(tmp_path, [_sc_row("2026-10-01T00:00:01Z")])
+    second = ed._rotate_scorecard(path)
+    assert second.name == "scorecard.20261002-120000-1.jsonl"
+    assert first.exists() and second.exists(), "ningun archivado se sobrescribe"
+    summaries = sorted(p.name for p in path.parent.glob("scorecard_summary.*.json"))
+    assert summaries == [
+        "scorecard_summary.20261002-120000-1.json",
+        "scorecard_summary.20261002-120000.json",
+    ], "cada archivado lleva su resumen hermano con el mismo timestamp"
+
+
+# ---- WOT-2026-079a: D3, concurrencia real
+def test_concurrent_appends_during_rotation_lose_no_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D3: 3 hilos escribiendo mientras el umbral dispara rotaciones -> 0 perdidas."""
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 2048)
+    errors: list[Exception] = []
+
+    def writer(worker: int) -> None:
+        try:
+            for i in range(40):
+                ed.append_scorecard(
+                    tmp_path,
+                    _sc_row(
+                        f"2026-10-01T00:{worker:02d}:{i:02d}Z",
+                        backend_key=f"BA{worker}",
+                    ),
+                )
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(w,)) for w in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == [], "excepciones no capturadas durante la concurrencia"
+    archived = sum(len(_archive_ts_lines(a)) for a in _archives(tmp_path))
+    total = archived + len(_rows(tmp_path))
+    assert total == 120, f"filas perdidas durante rotaciones concurrentes: {total}"
+    assert archived > 0, "la rotacion no ocurrio: el test no ejercita el lock"
+
+    final_path = ed.append_scorecard(tmp_path, _sc_row("2026-10-01T01:00:00Z"))
+    assert final_path.exists() and _rows(tmp_path)[-1]["ts"] == "2026-10-01T01:00:00Z"
+
+
+def test_concurrent_process_appends_during_rotation_lose_no_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D3 en PROCESOS reales (no mockeados), como exige la resolucion del CG.
+
+    2 procesos independientes escriben con `append_scorecard` (cada uno abre su
+    handle via `_open_append_handle`, con `FILE_SHARE_DELETE` en Windows)
+    mientras el umbral bajo dispara rotaciones: el rename de la rotacion de un
+    proceso no puede chocar con el handle abierto del otro (probe 1 del CG).
+    """
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 2048)
+    worker = tmp_path / "worker_079a.py"
+    worker.write_text(
+        "\n".join(
+            [
+                "import sys",
+                "sys.path.insert(0, sys.argv[1])",
+                "import ensemble_dispatch as ed",
+                "ed.SCORECARD_ROTATION_THRESHOLD_BYTES = 2048",
+                "root, wid, n = sys.argv[2], int(sys.argv[3]), int(sys.argv[4])",
+                "for i in range(n):",
+                "    ed.append_scorecard(",
+                "        root,",
+                "        {",
+                '            "ts": f"2026-10-01T00:{wid:02d}:{i:02d}Z",',
+                '            "event": "ronda",',
+                '            "ticket": "WOT-TEST-079a",',
+                '            "task_type": "code-review",',
+                '            "backend": "fake",',
+                '            "model": "m1",',
+                '            "backend_key": f"BA{wid}",',
+                '            "outcome": "ok",',
+                '            "output_chars": 10,',
+                '            "latency_ms": 1000.0,',
+                "        },",
+                "    )",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    procs = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(worker),
+                str(_SCRIPTS_DIR),
+                str(tmp_path),
+                str(w),
+                "30",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for w in range(2)
+    ]
+    outs = [proc.communicate() for proc in procs]
+    for proc, (_out, err) in zip(procs, outs, strict=True):
+        assert proc.returncode == 0, f"worker fallo: {err}"
+
+    archived = sum(len(_archive_ts_lines(a)) for a in _archives(tmp_path))
+    total = archived + len(_rows(tmp_path))
+    assert total == 60, f"filas perdidas durante rotaciones entre procesos: {total}"
+    assert archived > 0, "la rotacion no ocurrio entre procesos: codepath no ejercitado"
+
+
+# ------------------------------------------------------------------ D4 (corte simulado)
+def test_crash_before_rename_leaves_active_intact_and_sweeps_stale_tmp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4 paso a->b: corte antes del rename; la rotacion siguiente barre el residual."""
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
+    path = _write_active(tmp_path, [_sc_row("2026-10-01T00:00:00Z")])
+    ensemble_dir = path.parent
+
+    calls = {"n": 0}
+    real_rename = os.rename
+
+    def flaky_rename(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("corte simulado antes del rename")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", flaky_rename)
+    with pytest.raises(OSError):
+        ed._rotate_scorecard(path)
+
+    assert len(_rows(tmp_path)) == 1, "el activo quedo tocado por el corte"
+    assert _archives(tmp_path) == []
+    assert not list(ensemble_dir.glob("scorecard_summary.*.json"))
+    assert list(ensemble_dir.glob("scorecard.rotate-*.tmp")), (
+        "el temporal creado antes del rename debe existir para probar el barrido"
+    )
+
+    # la rotacion siguiente barre el temporal huerfano y completa
+    ed._rotate_scorecard(path)
+    assert not list(ensemble_dir.glob("scorecard.rotate-*.tmp"))
+    assert len(_archives(tmp_path)) == 1 and len(_rows(tmp_path)) == 0
+
+
+def test_crash_after_rename_recovers_with_complete_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4 paso b->c: corte tras el rename; archivado COMPLETO y self-heal."""
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
+    path = _write_active(tmp_path, [_sc_row("2026-10-01T00:05:00Z")])
+
+    calls = {"n": 0}
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("corte simulado tras el rename del viejo")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    with pytest.raises(OSError):
+        ed._rotate_scorecard(path)
+
+    archives = _archives(tmp_path)
+    assert len(archives) == 1 and _archive_ts_lines(archives[0]) == [
+        "2026-10-01T00:05:00Z"
+    ], "el archivado debe estar COMPLETO y visible tras el corte"
+    assert not path.exists(), "el activo queda ausente en la ventana del corte"
+    assert not list(path.parent.glob("scorecard_summary.*.json")), (
+        "el resumen no debe existir si la secuencia no completo"
+    )
+
+    # self-heal: el siguiente append recrea el activo vacio y escribe
+    ed.append_scorecard(tmp_path, _sc_row("2026-10-01T00:06:00Z"))
+    assert [r["ts"] for r in _rows(tmp_path)] == ["2026-10-01T00:06:00Z"]
+
+
+def test_crash_during_summary_never_leaves_partial_l2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4 paso c->d: corte en el resumen; nunca un L2 a medias con nombre final.
+
+    Con el mecanismo re-congelado del CG, el resumen L2 se genera FUERA del
+    lock (probe 2b: el byte-range lock sigue anclado al fichero fisico via el
+    handle aunque este renombrado); el corte simulado cae en ese punto."""
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
+    path = _write_active(tmp_path, [_sc_row("2026-10-01T00:07:00Z")])
+
+    calls = {"n": 0}
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 2:  # 1 = activo (ok), 2 = resumen (corte)
+            raise OSError("corte simulado durante el resumen L2")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    with pytest.raises(OSError):
+        ed._rotate_scorecard(path)
+
+    assert len(_rows(tmp_path)) == 0 and len(_archives(tmp_path)) == 1
+    assert not list(path.parent.glob("scorecard_summary.*.json")), (
+        "ningun resumen con nombre definitivo tras un corte a medias"
+    )
+    assert list(path.parent.glob("scorecard.rotate-*.tmp")), (
+        "el temporal del resumen queda para el barrido de la rotacion siguiente"
+    )
+    # la rotacion siguiente (con contenido) barre el huerfano y completa su L2
+    _write_active(tmp_path, [_sc_row("2026-10-01T00:08:00Z")])
+    ed._rotate_scorecard(path)
+    assert not list(path.parent.glob("scorecard.rotate-*.tmp"))
+    assert len(list(path.parent.glob("scorecard_summary.*.json"))) == 1
+
+
+# ---- WOT-2026-079a: D5, lectura unificada
+def test_unified_reading_orders_by_real_ts_not_file_names(tmp_path: Path) -> None:
+    """D5 (mutacion): nombres alfabetico 1001<1002<activo, ts en OTRO orden."""
+    ensemble = (tmp_path / ed.SCORECARD_REL).parent
+    ensemble.mkdir(parents=True, exist_ok=True)
+    (ensemble / "scorecard.20261002-000000.jsonl").write_text(
+        json.dumps(_sc_row("2026-10-04T00:00:00Z")) + "\n", encoding="utf-8"
+    )
+    (ensemble / "scorecard.20261001-000000.jsonl").write_text(
+        json.dumps(_sc_row("2026-10-02T00:00:00Z")) + "\n", encoding="utf-8"
+    )
+    _write_active(tmp_path, [_sc_row("2026-10-03T00:00:00Z")])
+
+    rows = list(ed.read_scorecard_unified(tmp_path))
+
+    assert [r["ts"] for r in rows] == [
+        "2026-10-02T00:00:00Z",
+        "2026-10-03T00:00:00Z",
+        "2026-10-04T00:00:00Z",
+    ], "la fusion debe reordenar por ts REAL, no por nombre ni glob"
+
+
+def test_archive_corrupt_line_warns_and_active_corrupt_raises(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """D5 (politica): archivado tolerante con WARN nombrado; activo estricto."""
+    ensemble = (tmp_path / ed.SCORECARD_REL).parent
+    ensemble.mkdir(parents=True, exist_ok=True)
+    (ensemble / "scorecard.20261001-000000.jsonl").write_text(
+        json.dumps(_sc_row("2026-10-02T00:00:00Z")) + "\n{ broken\n",
+        encoding="utf-8",
+    )
+    _write_active(tmp_path, [_sc_row("2026-10-03T00:00:00Z")])
+
+    rows = list(ed.read_scorecard_unified(tmp_path))
+    err = capsys.readouterr().err
+
+    assert [r["ts"] for r in rows] == [
+        "2026-10-02T00:00:00Z",
+        "2026-10-03T00:00:00Z",
+    ], "la fila valida del archivado no se pierde"
+    assert "[scorecard-archive] WARN" in err
+    assert "scorecard.20261001-000000.jsonl:2" in err, (
+        "el WARN debe nombrar fichero y linea"
+    )
+
+    # el ACTIVO con linea invalida SIGUE lanzando (comportamiento preservado)
+    path = tmp_path / ed.SCORECARD_REL
+    path.write_text(
+        json.dumps(_sc_row("2026-10-04T00:00:00Z")) + "\n{ broken\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(json.JSONDecodeError):
+        list(ed.read_scorecard_unified(tmp_path))
+
+
+# ---- WOT-2026-079a: D8, gzip de archivados
+def test_unified_reader_supports_gzip_archives(tmp_path: Path) -> None:
+    """D8: la lectura unificada soporta transparentemente `.jsonl.gz`."""
+    ensemble = (tmp_path / ed.SCORECARD_REL).parent
+    ensemble.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(_sc_row("2026-10-01T00:00:00Z")) + "\n"
+    (ensemble / "scorecard.20261001-000000.jsonl.gz").write_bytes(
+        gzip.compress(payload.encode("utf-8"))
+    )
+    _write_active(tmp_path, [_sc_row("2026-10-02T00:00:00Z")])
+
+    rows = list(ed.read_scorecard_unified(tmp_path))
+
+    assert [r["ts"] for r in rows] == [
+        "2026-10-01T00:00:00Z",
+        "2026-10-02T00:00:00Z",
+    ]
+
+
+# ---- WOT-2026-079a: D10, formula del sha
+def test_sha_is_identical_to_legacy_without_archives(tmp_path: Path) -> None:
+    """D10: sin archivados, sha == sha256(bytes del activo) EXACTO (hoy).
+
+    El esperado se calcula sobre los BYTES REALES en disco (leidos de vuelta,
+    no sobre el string del fixture): en Windows `write_text` traduce los saltos
+    a CRLF y el sha atestigua los bytes del fichero, no los del literal."""
+    rows_text = "".join(json.dumps(r) + "\n" for r in [_sc_row("2026-10-01T00:00:00Z")])
+    path = tmp_path / ed.SCORECARD_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(rows_text, encoding="utf-8")
+    disk_bytes = path.read_bytes()
+
+    rows, sha = ed._read_scorecard(tmp_path)
+
+    assert len(rows) == 1
+    assert sha == hashlib.sha256(disk_bytes).hexdigest()
+
+
+def test_sha_of_empty_active_is_h_of_empty_bytes(tmp_path: Path) -> None:
+    """D10: activo vacio sin archivados -> H(b\"\"), identidad con hoy."""
+    _write_active(tmp_path, [])
+    rows, sha = ed._read_scorecard(tmp_path)
+    assert rows == []
+    assert sha == hashlib.sha256(b"").hexdigest()
+
+
+def test_sha_combined_orders_archives_numerically_active_last(
+    tmp_path: Path,
+) -> None:
+    """D10: orden estable (base antes que -1 NUMERICAMENTE), activo al final;
+    alta/baja de un archivado cambia el sha. Los digests del esperado se
+    calculan sobre los BYTES REALES en disco (lea el comentario de
+    `test_sha_is_identical_to_legacy_without_archives`)."""
+    ensemble = (tmp_path / ed.SCORECARD_REL).parent
+    ensemble.mkdir(parents=True, exist_ok=True)
+    (ensemble / "scorecard.20261001-000000.jsonl").write_text(
+        '{"ts": "2026-10-01T00:00:00Z"}\n', encoding="utf-8"
+    )
+    (ensemble / "scorecard.20261001-000000-1.jsonl").write_text(
+        '{"ts": "2026-10-01T00:00:30Z"}\n', encoding="utf-8"
+    )
+    (ensemble / "scorecard.20261001-000000-10.jsonl").write_text(
+        '{"ts": "2026-10-01T00:00:40Z"}\n', encoding="utf-8"
+    )
+    (tmp_path / ed.SCORECARD_REL).write_text(
+        '{"ts": "2026-10-02T00:00:00Z"}\n', encoding="utf-8"
+    )
+    disk_digests = [
+        hashlib.sha256((ensemble / name).read_bytes()).hexdigest()
+        for name in (
+            "scorecard.20261001-000000.jsonl",
+            "scorecard.20261001-000000-1.jsonl",
+            "scorecard.20261001-000000-10.jsonl",
+        )
+    ]
+    disk_digests.append(
+        hashlib.sha256((tmp_path / ed.SCORECARD_REL).read_bytes()).hexdigest()
+    )
+
+    _rows_out, sha = ed._read_scorecard(tmp_path)
+
+    expected = hashlib.sha256("\n".join(disk_digests).encode("utf-8")).hexdigest()
+    assert sha == expected, (
+        "el sha debe ordenar base < -1 < -10 (numerico), activo AL FINAL"
+    )
+
+    (ensemble / "scorecard.20261001-000000-10.jsonl").unlink()
+    _rows_out2, sha_after = ed._read_scorecard(tmp_path)
+    assert sha_after != sha, "bajar un archivado debe cambiar el sha combinado"
+
+    (ensemble / "scorecard.20261001-000000-10.jsonl").write_text(
+        '{"ts": "2026-10-01T00:00:40Z"}\n', encoding="utf-8"
+    )
+    _rows_out3, sha_restored = ed._read_scorecard(tmp_path)
+    assert sha_restored == sha, "el orden del sha debe ser ESTABLE"
+
+
+# ---- WOT-2026-079a: D11, protocolo de lectura
+def test_retry_protocol_exhaustion_raises_race_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D11: inestabilidad persistente -> 3 reintentos (50/100/200) y excepcion."""
+    ensemble = (tmp_path / ed.SCORECARD_REL).parent
+    ensemble.mkdir(parents=True, exist_ok=True)
+    (ensemble / "scorecard.20261001-000000.jsonl").write_text(
+        '{"ts": "2026-10-01T00:00:00Z"}\n', encoding="utf-8"
+    )
+    _write_active(tmp_path, [_sc_row("2026-10-02T00:00:00Z")])
+
+    real_list = ed._list_scorecard_archives
+    flips = {"n": 0}
+
+    def flaky_list(ensemble_dir: Path) -> list[Path]:
+        flips["n"] += 1
+        names = [p.name for p in real_list(ensemble_dir)]
+        return [ensemble_dir / name for name in names[: flips["n"] % 2]]
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(ed, "_list_scorecard_archives", flaky_list)
+    monkeypatch.setattr(ed.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    with pytest.raises(ed.ScorecardRotationRaceError):
+        list(ed.read_scorecard_unified(tmp_path))
+
+    assert sorted(sleeps) == [0.05, 0.1, 0.2], (
+        "3 reintentos con las esperas fijadas, ni una mas"
+    )
+
+
+def test_protocol_detects_real_rename_via_directory_relisting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D11: un rename REAL entre el paso 1 y el 3 se detecta por el relistado."""
+    path = _write_active(tmp_path, [_sc_row("2026-10-01T00:00:00Z")])
+    ensemble = path.parent
+    real_read = ed._read_scorecard_source_bytes
+    state = {"n": 0}
+
+    def rotating_read(source: Path) -> bytes:
+        if source.name == ed.SCORECARD_REL.name and state["n"] == 0:
+            state["n"] = 1
+            # rotacion real: rename del activo a archivado + activo nuevo vacio
+            os.rename(source, ensemble / "scorecard.20261001-000000.jsonl")
+            (ensemble / ed.SCORECARD_REL.name).write_bytes(b"")
+        return real_read(source)
+
+    monkeypatch.setattr(ed, "_read_scorecard_source_bytes", rotating_read)
+
+    rows = list(ed.read_scorecard_unified(tmp_path))
+
+    assert [r["ts"] for r in rows] == ["2026-10-01T00:00:00Z"], (
+        "el protocolo perdio el tramo renombrado: el relistado no vio el "
+        "archivado nuevo o la identidad no dispara el reintento"
+    )
+
+
+def test_reader_never_sees_partial_or_duplicated_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D12 (lectura concurrente): un hilo rota mientras otro lee."""
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1024)
+    all_rows = [_sc_row(f"2026-10-01T00:00:{i:02d}Z") for i in range(30)]
+    stop = threading.Event()
+    errors: list[Exception] = []
+    snapshots: list[list[str]] = []
+
+    def writer() -> None:
+        try:
+            for row in all_rows:
+                ed.append_scorecard(tmp_path, row)
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            stop.set()
+
+    def reader() -> None:
+        try:
+            while not stop.is_set():
+                snapshots.append([r["ts"] for r in ed.read_scorecard_unified(tmp_path)])
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == [], f"excepciones en lectura concurrente: {errors}"
+    assert snapshots, "el lector nunca llego a leer"
+    for ts_list in snapshots:
+        assert ts_list == sorted(ts_list), (
+            f"instantanea parcial (fuera de orden) o con duplicados: {ts_list}"
+        )
+        assert len(ts_list) == len(set(ts_list)), "filas duplicadas en la lectura"
+
+
+# ---- WOT-2026-079a: D12, ruta de produccion
+def _d12_fixture(project_root: Path) -> str:
+    """Repo temporal con `.git` PROPIO + nonce emitido + 4 rondas + adjudicacion."""
+    subprocess.run(["git", "init"], cwd=project_root, check=True, capture_output=True)
+    (project_root / "file.txt").write_text("contenido\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(project_root), "add", "file.txt"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "-c",
+            "user.email=fixture@test",
+            "-c",
+            "user.name=fixture",
+            "commit",
+            "-m",
+            "fixture 079a",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    sha = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    ensemble = (project_root / ed.SCORECARD_REL).parent
+    ensemble.mkdir(parents=True, exist_ok=True)
+    nonce = "N079A" + "a" * 20
+    emitted = {
+        "ts": "2026-10-01T00:00:00Z",
+        "issuer_role": "orchestrator",
+        "issuer_backend_key": "BA9",
+        "issued_before_ts": "2026-10-01T00:00:00Z",
+        "commit_sha": sha,
+        "loop_id": "L900",
+        "challenge_nonce": nonce,
+        "resolved_against": "repo_destino",
+    }
+    (ensemble / "emitted_nonces.jsonl").write_text(
+        json.dumps(emitted) + "\n", encoding="utf-8"
+    )
+    rounds = [
+        _sc_row(
+            f"2026-10-01T00:01:0{i}Z",
+            backend_key=f"BA{i}",
+            challenge_nonce=nonce,
+            commit_sha=sha,
+            loop_id="L900",
+        )
+        for i in range(4)
+    ]
+    adjudication = _sc_row(
+        "2026-10-01T00:02:00Z",
+        event="adjudicacion",
+        backend_key="BA1",
+        challenge_nonce=nonce,
+        commit_sha=sha,
+        loop_id="L900",
+        outcome="adoptada",
+    )
+    _write_active(project_root, [*rounds, adjudication])
+    return sha
+
+
+def _run_check_loop(project_root: Path, sha: str) -> subprocess.CompletedProcess:
+    """La RUTA DE PRODUCCION: subprocess con el CLI real del guard."""
+    return subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPTS_DIR / "check_loop_execution.py"),
+            "--project-root",
+            str(project_root),
+            "--commit-sha",
+            sha,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_production_path_preserves_verdict_across_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """D12: el guard por subprocess da 4/4 ANTES y DESPUES de rotar; la
+    mutacion activo-solo (sobre el nombre de modulo que `_read_scorecard`
+    resuelve) lo pone en 0 rondas sin tocar `check_loop_execution.py` ni
+    `pool_permanence_metric.py`."""
+    sha = _d12_fixture(tmp_path)
+
+    pool_before = ppm.format_table(
+        ppm.compute_conversion_rates(ed._read_scorecard(tmp_path)[0])
+    )
+    leaders_before_path = ed.regenerate_leaders(tmp_path)
+    leaders_before = json.loads(leaders_before_path.read_text(encoding="utf-8"))
+
+    before = _run_check_loop(tmp_path, sha)
+    assert before.returncode == 0, before.stdout + before.stderr
+    assert "4/4" in before.stdout
+
+    # forzar la rotacion: el tramo (4 rondas + adjudicacion) pasa a archivado
+    # (mecanismo re-congelado del CG: _rotate_scorecard completo, con el L2
+    # fuera del lock; el umbral bajo hace rotar el tramo entero)
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
+    ed._rotate_scorecard(tmp_path / ed.SCORECARD_REL)
+    assert len(_rows(tmp_path)) == 0 and len(_archives(tmp_path)) == 1
+
+    pool_after = ppm.format_table(
+        ppm.compute_conversion_rates(ed._read_scorecard(tmp_path)[0])
+    )
+    leaders_after = json.loads(
+        ed.regenerate_leaders(tmp_path).read_text(encoding="utf-8")
+    )
+    after = _run_check_loop(tmp_path, sha)
+    assert after.returncode == 0, after.stdout + after.stderr
+    assert "4/4" in after.stdout, "el veredicto cambio tras rotar"
+    assert pool_after == pool_before, "pool_permanence_metric cambio tras rotar"
+    volatile = {"generated_at", "scorecard_sha256"}
+    leaders_before_cmp = {k: v for k, v in leaders_before.items() if k not in volatile}
+    leaders_after_cmp = {k: v for k, v in leaders_after.items() if k not in volatile}
+    assert leaders_after_cmp == leaders_before_cmp, (
+        "regenerate_leaders cambio tras rotar"
+    )
+
+    # MUTACION (mecanismo declarado en el commit): el subprocess no hereda el
+    # monkeypatch, asi que el par antes/despues corre por subprocess REAL y la
+    # mutacion corre in-process sobre el MISMO modulo plano que el CLI importa;
+    # el stub ignora archivados y solo devuelve las filas del activo.
+    def active_only(project_root: Path):
+        active = project_root / ed.SCORECARD_REL
+        raw = active.read_bytes() if active.exists() else b""
+        return iter(
+            json.loads(line)
+            for line in raw.decode("utf-8").splitlines()
+            if line.strip()
+        )
+
+    monkeypatch.setattr(ed, "read_scorecard_unified", active_only)
+    assert cle.main(["--project-root", str(tmp_path), "--commit-sha", sha]) == 1
+    mutated = capsys.readouterr()
+    assert "0/4" in mutated.out, "la mutacion debe dejar 0 rondas visibles"
+
+    ppm.main(["--project-root", str(tmp_path)])
+    mutated_pool = capsys.readouterr()
+    assert "Sin datos" in mutated_pool.out, (
+        "la mutacion debe dejar a pool_permanence sin filas visibles"
+    )

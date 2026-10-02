@@ -58,7 +58,6 @@ daba 144/257 sin match unico).
 from __future__ import annotations
 
 import argparse
-import json
 import statistics
 import sys
 from dataclasses import dataclass, field
@@ -69,14 +68,24 @@ MOTOR_ROOT = Path(__file__).resolve().parent.parent
 if str(MOTOR_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(MOTOR_ROOT / "scripts"))
 
-# SCORECARD_REL se IMPORTA (no se duplica la ruta canonica); `is_substantive` se
-# IMPORTA (no se reimplementa): dos definiciones divergentes de "sustantiva"
-# harian que este informe contradiga a `check_loop_execution` sobre las MISMAS
-# filas. El PARSEO, en cambio, es propio a proposito -- ver `_iter_rows`.
+# WOT-2026-079a (D7/DEC-079A-001): SCORECARD_REL sigue IMPORTANDOSE (no se
+# duplica la ruta canonica; los fixtures de test la usan) y el PARSEO propio
+# `_iter_rows` se RETIRA: la lectura pasa por `read_scorecard_unified`, la
+# funcion de union activo+archivados COMPARTIDA (unica excepcion permitida al
+# Forbidden Surface de WOT-2026-055o). `is_substantive` se IMPORTA (no se
+# reimplementa): dos definiciones divergentes de "sustantiva" harian que este
+# informe contradiga a `check_loop_execution` sobre las MISMAS filas.
 from check_loop_execution import is_substantive  # noqa: E402
+
+# Re-export DOCUMENTAL: `SCORECARD_REL` ya no se usa dentro de este modulo (la
+# lectura va por `read_scorecard_unified(project_root)`), pero los fixtures de
+# `test_phase_value_report.py` lo consumen como ruta canonica importada (nunca
+# duplicada). Mantener aqui es el punto unico de importacion; un noqa evita que
+# el autofix de F401 lo vuelva a retirar.
 from ensemble_dispatch import (  # noqa: E402
     ADJUDICATED_OUTCOMES,
-    SCORECARD_REL,
+    SCORECARD_REL,  # noqa: F401
+    read_scorecard_unified,
 )
 
 
@@ -145,39 +154,6 @@ class Report:
     cohortes_intentadas: int = 0
     cohortes_completas: int = 0
     cells: list[Cell] = field(default_factory=list)
-
-
-def _iter_rows(path: Path) -> tuple[list[dict], int]:
-    """Parse the jsonl defensively; return (rows, unparsable_count).
-
-    NOT `_read_scorecard`, and the reason is measured: that helper does
-    ``json.loads`` per line with no ``try/except`` (``ensemble_dispatch.py``
-    around :1015-1022) and raises ``JSONDecodeError`` on a half-written line --
-    verified on a fixture. The scorecard is appended concurrently, so a truncated
-    last line is a real state, not a hypothetical one. Since `ensemble_dispatch`
-    is a Forbidden Surface for this ticket, the defensive parse lives here while
-    the canonical PATH (``SCORECARD_REL``) is still imported rather than copied.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return [], 0
-    rows: list[dict] = []
-    unparsable = 0
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            unparsable += 1
-            continue
-        if isinstance(obj, dict):
-            rows.append(obj)
-        else:
-            unparsable += 1
-    return rows, unparsable
 
 
 def _cell_key(row: dict) -> tuple[str, str, str, str] | None:
@@ -362,9 +338,21 @@ def _apply_cohorts(buckets: dict[tuple, Cell], join: dict, report: Report) -> No
 
 
 def build_report(project_root: Path) -> Report:
-    """Aggregate the scorecard READ-ONLY. Never raises on bad input."""
-    rows, unparsable = _iter_rows(project_root / SCORECARD_REL)
-    report = Report(total_rows=len(rows), dropped_unparsable=unparsable)
+    """Aggregate the scorecard READ-ONLY via the SHARED unified reader (D7).
+
+    WOT-2026-079a: la lectura es `read_scorecard_unified` (activo+archivados,
+    orden por `ts` real). Politica por tipo (DEC-079A-001 Decision 2.2): una
+    linea invalida del ACTIVO LANZA (`JSONDecodeError`) -- la semantica estricta
+    del ledger vivo sustituye al "never raises" del parseo defensivo propio que
+    este modulo tenia antes; una linea invalida de un ARCHIVADO se salta con
+    WARN DENTRO del lector unificado y NO llega a este contador
+    (`dropped_unparsable` queda en 0: el conteo vive en el canal de WARN del
+    lector, cuyo Iterator no tiene canal de retorno). Sin rotacion el resultado
+    es identico al historico (la funcion unificada es identidad sobre un activo
+    sano y ya ordenado).
+    """
+    rows = list(read_scorecard_unified(project_root))
+    report = Report(total_rows=len(rows), dropped_unparsable=0)
 
     buckets = _aggregate_rounds(rows, report)
     # JOIN ronda<->adjudicacion (WOT-2026-055o): la eficacia se agrega SOLO
@@ -388,9 +376,14 @@ def format_denominator(report: Report) -> str:
     (MANAGER_REVIEW finding, lens deepseek): an earlier version inserted
     ``descartadas_ilegibles=N`` in the middle of it whenever a corrupt line showed
     up. Fixing a shape and then extending it is the same defect as not fixing one
-    -- a consumer that parses this line positionally breaks. Unparsable lines are
-    still reported (the contract requires counting them), but on their OWN line,
-    where they cannot deform the contracted one.
+    -- a consumer that parses this line positionally breaks.
+
+    WOT-2026-079a: con la lectura unificada, una linea corrupta del ACTIVO lanza
+    ANTES de llegar aqui (politica estricta de `DEC-079A-001`) y una de un
+    ARCHIVADO se salta con WARN dentro del lector (sin canal hacia este
+    contador): `dropped_unparsable` llega en 0 desde `build_report` y la linea
+    extra no aparece. La rama se conserva para que la forma nunca cambie si el
+    campo vuelve a poblarse.
 
     WOT-2026-055o: los contadores de cohorte van TAMBIEN en su propia linea, y
     SOLO cuando hay adjudicaciones que contar -- con cero adjudicaciones la

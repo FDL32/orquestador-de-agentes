@@ -18,6 +18,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SPEC = importlib.util.spec_from_file_location(
@@ -169,20 +171,91 @@ def test_contracted_denominator_line_is_never_extended(tmp_path: Path) -> None:
     MANAGER_REVIEW finding (lens deepseek): an earlier version spliced
     ``descartadas_ilegibles=N`` INTO the contracted line whenever a corrupt row
     appeared. Fixing a shape and then extending it defeats the point -- anything
-    parsing it positionally breaks on the rare input. Extra counts get their own
-    line; the contracted one never changes shape.
+    parsing it positionally breaks on the rare input.
+
+    WOT-2026-079a: con la lectura unificada, la fila corrupta de un ARCHIVADO
+    vive en el canal de WARN del lector y nunca llega al informe; la corrupta
+    del ACTIVO lanza antes de construir linea alguna (pinned por
+    ``test_corrupt_line_in_active_raises_strict``). El pin de esta prueba: la
+    linea contratada no cambia de forma y la linea extra no aparece.
     """
     path = tmp_path / pvr.SCORECARD_REL
     path.parent.mkdir(parents=True, exist_ok=True)
 
     path.write_text(json.dumps(_row()) + "\n", encoding="utf-8")
-    clean = pvr.format_denominator(pvr.build_report(tmp_path)).splitlines()[0]
+    clean = pvr.format_denominator(pvr.build_report(tmp_path))
 
-    path.write_text(json.dumps(_row()) + "\n{ broken\n", encoding="utf-8")
-    out = pvr.format_denominator(pvr.build_report(tmp_path)).splitlines()
+    archive = path.parent / "scorecard.20261001-000000.jsonl"
+    archive.write_text("{ broken\n", encoding="utf-8")
+    out = pvr.format_denominator(pvr.build_report(tmp_path))
 
-    assert out[0] == clean, "the contracted line changed shape because of a corrupt row"
-    assert len(out) == 2 and "descartadas_ilegibles=1" in out[1], out
+    assert out == clean, "la linea contratada cambio por una fila corrupta"
+    assert "descartadas_ilegibles" not in out, out
+
+
+# ---------------------------------------------------------------------- WOT-2026-079a (D7)
+def test_no_local_reimplementation_of_scorecard_parsing() -> None:
+    """Criterio estructural BINARIO (D7): el dashboard no reimplementa.
+
+    `_iter_rows` (el parseo defensivo propio) ya NO existe en el modulo, y el
+    modulo importa `read_scorecard_unified` desde `ensemble_dispatch` (la
+    excepcion unica al Forbidden Surface de WOT-2026-055o).
+    """
+    source = Path(pvr.__file__).read_text(encoding="utf-8")
+    assert "def _iter_rows" not in source, (
+        "el parseo defensivo propio volvio: la lectura debe ser la compartida"
+    )
+    assert "read_scorecard_unified" in source
+    assert "from ensemble_dispatch import" in source
+
+
+def test_dashboard_invokes_the_shared_unified_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D7 funcional: el dashboard DEBE invocar `read_scorecard_unified`.
+
+    El stub lanza ``AssertionError`` ante argumentos incorrectos (firma
+    fijada: un solo `project_root`); si el dashboard no la invocara en
+    absoluto, la asercion de la llamada cae porque el stub nunca registro el
+    pase. Parchea la instancia que `build_report` resuelve (el nombre en el
+    propio modulo, leccion `module-imported-under-two-names-is-two-instances`).
+    """
+    calls: list[Path] = []
+
+    def stub(project_root):
+        if not isinstance(project_root, Path):
+            raise AssertionError(f"firma incorrecta: {project_root!r}")
+        calls.append(project_root)
+        return iter([_row()])
+
+    _write(tmp_path, [])  # el fichero real existe pero el stub lo tapa
+    monkeypatch.setattr(pvr, "read_scorecard_unified", stub)
+    report = pvr.build_report(tmp_path)
+
+    assert calls == [tmp_path], "el dashboard no invoco el lector compartido"
+    assert report.total_rows == 1
+
+
+def test_dashboard_includes_archived_rows_after_rotation(tmp_path: Path) -> None:
+    """D7 no-regresion: mismo resultado sin rotacion; con rotacion simulada
+    (activo vacio + archivado), el informe INCLUYE las filas archivadas."""
+    rows = [
+        _row(phase="CLOSE", backend_key="BA10"),
+        _row(phase="CLOSE", backend_key="BA11"),
+    ]
+    _write(tmp_path, rows)
+    clean = pvr.build_report(tmp_path)
+
+    active = tmp_path / pvr.SCORECARD_REL
+    archive = active.parent / "scorecard.20261001-000000.jsonl"
+    archive.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    active.write_text("", encoding="utf-8")  # el tramo vivo se vacio al rotar
+    rotated = pvr.build_report(tmp_path)
+
+    assert rotated.total_rows == clean.total_rows == 2
+    assert {(c.phase, c.backend_key): c.rounds for c in rotated.cells} == {
+        (c.phase, c.backend_key): c.rounds for c in clean.cells
+    }, "una fila archivada se perdio para el dashboard"
 
 
 def test_substantive_splits_measured_from_fail_open(tmp_path: Path) -> None:
@@ -234,11 +307,14 @@ def test_sparse_table_emits_only_cells_with_data(tmp_path: Path) -> None:
     assert all(c.rounds > 0 for c in report.cells)
 
 
-def test_corrupt_line_is_skipped_and_counted_not_crash(tmp_path: Path) -> None:
-    """The scorecard is appended concurrently: a half-written last line is real.
+def test_corrupt_line_in_active_raises_strict(tmp_path: Path) -> None:
+    """WOT-2026-079a (D5 / DEC-079A-001 Decision 2.2): el ACTIVO es ESTRICTO.
 
-    ``_read_scorecard`` raises JSONDecodeError here (measured), so this report
-    parses defensively on its own.
+    La semantica del ledger vivo se PRESERVA: una linea truncada (estado real
+    de crash del append concurrente) no se calla. El parseo defensivo propio
+    fue RETIRADO por el contrato y la lectura pasa por
+    `read_scorecard_unified`, que lanza igual que `_read_scorecard` lanzaba
+    siempre sobre el activo.
     """
     path = tmp_path / pvr.SCORECARD_REL
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,9 +322,28 @@ def test_corrupt_line_is_skipped_and_counted_not_crash(tmp_path: Path) -> None:
         json.dumps(_row()) + "\n{ this is not json\n" + json.dumps(_row()) + "\n",
         encoding="utf-8",
     )
+    with pytest.raises(json.JSONDecodeError):
+        pvr.build_report(tmp_path)
+
+
+def test_corrupt_line_in_archive_is_skipped_with_warn(tmp_path: Path) -> None:
+    """WOT-2026-079a (D5): los ARCHIVADOS son SIEMPRE tolerantes.
+
+    Una linea ilegible en un archivado (inmutable: no tiene arreglo) se salta
+    con WARN nombrando fichero y linea, el informe se construye con las filas
+    validas (del activo Y del archivado) y NUNCA lanza.
+    """
+    path = tmp_path / pvr.SCORECARD_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_row()) + "\n", encoding="utf-8")
+    archive = path.parent / "scorecard.20261001-000000.jsonl"
+    archive.write_text(
+        json.dumps(_row(phase="CLOSE", backend_key="BA11")) + "\n{ broken\n",
+        encoding="utf-8",
+    )
     report = pvr.build_report(tmp_path)
-    assert report.eligible == 2
-    assert report.dropped_unparsable == 1
+    assert report.total_rows == 2  # activo + la fila valida del archivado
+    assert report.dropped_unparsable == 0  # el conteo vive en el WARN del lector
 
 
 def test_empty_scorecard_says_no_data_rc_zero(tmp_path: Path) -> None:
