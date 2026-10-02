@@ -626,16 +626,22 @@ def test_non_wot_ticket_commits_in_destino(tmp_path: Path) -> None:
 
 
 def test_non_wot_ticket_commits_in_motor_is_fail(tmp_path: Path) -> None:
-    """Non-WOT ticket with commits in the motor (wrong repo) but NOT in the
-    destino -> FAIL_TARGETS_MISSING.
+    """Non-WOT ticket DECLARING `delivery_authority: repo_destino`, with its
+    commits in the motor (wrong repo) but NOT in the destino ->
+    FAIL_TARGETS_MISSING.
 
-    The control query detects commits in the non-authoritative repo.
+    The control query detects commits in the non-authoritative repo. La
+    declaracion es load-bearing (WOT-2026-073d): sin ella el ticket no tiene
+    ninguna superficie propia y el contrato nuevo lo EXCLUYE con WARN en vez de
+    fallar por ausencia; con ella se ejercita de verdad la consulta de control
+    que el titulo promete.
     """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
     _init_git_repo(motor)
     _init_git_repo(destino)
     _link_motor(destino, motor)
+    _declare_authority(destino, "CTL-2026-002", "repo_destino")
 
     _commit_file(motor, "src/a.py", "x = 1", "CTL-2026-002: fix bug")
 
@@ -685,24 +691,30 @@ def test_wot_ticket_commits_in_motor_two_repos(tmp_path: Path) -> None:
     assert sha in content, f"sha {sha} missing from {content!r}"
 
 
-def test_unresolvable_prefix_without_declared_authority_fails_closed(
+def test_unresolvable_prefix_with_declared_repo_destino_fails_closed(
     tmp_path: Path,
 ) -> None:
-    """Ticket con prefijo no resoluble y SIN `delivery_authority` declarado
-    -> FAIL blocking, nombrando el ticket.
+    """Ticket que DECLARA `repo_destino` y cuyo prefijo no resuelve a ninguna
+    raiz -> FAIL blocking, nombrando el ticket.
 
     WOT-2026-066i (D2): la rama WARN-skip de prefijo no resoluble queda
-    RETIRADA -- la ausencia del campo declarado es fail-closed (el censo D5 del
-    contrato: los tickets sin campo "caen en D2"). Un skip silencioso dejaria
-    fuera del ambito los commits de un ticket que el cierre no sabe donde
-    buscar: el falso verde exacto que D2 impide. (Antes de 066i este caso
-    devolvia WARN_PREFIX_UNRESOLVABLE; ver execution_log del ticket.)
+    RETIRADA -- declarar `repo_destino` y no poder localizar esa raiz es
+    fail-closed: un skip silencioso dejaria fuera del ambito los commits de un
+    ticket que el cierre no sabe donde buscar (el falso verde exacto que D2
+    impide). (Antes de 066i este caso devolvia WARN_PREFIX_UNRESOLVABLE; ver
+    execution_log del ticket.)
+
+    WOT-2026-073d: el fixture gana la declaracion (rama :1804, que hasta hoy
+    ningun test cubria). SIN declaracion el ticket no tiene superficie propia y
+    el contrato nuevo lo EXCLUYE con WARN -- eso lo pinean los tests de
+    exclusion, no este.
     """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
     _init_git_repo(motor)
     _init_git_repo(destino)
     _link_motor(destino, motor)
+    _declare_authority(destino, "ZZZ-2026-001", "repo_destino")
 
     _commit_file(destino, "src/a.py", "x = 1", "ZZZ-2026-001: unknown prefix")
 
@@ -754,14 +766,17 @@ def test_control_query_skipped_when_same_repo(tmp_path: Path) -> None:
 
 
 def test_mixed_results_one_fail_one_pass(tmp_path: Path) -> None:
-    """Two tickets: one WITHOUT declared authority (D2 -> FAIL), one WOT
-    DECLARING repo_motor with commits (PASS). Overall status is FAIL
-    blocking, the detail names the failed ticket, and the targets file is
-    NOT written (a batch with a misresolved ticket writes no partial scope).
+    """Two tickets: one WITH a backlog row but WITHOUT declared authority
+    (D2 -> FAIL), one WOT DECLARING repo_motor with commits (PASS). Overall
+    status is FAIL blocking, the detail names the failed ticket, and the
+    targets file is NOT written (a batch with a misresolved ticket writes no
+    partial scope).
 
     WOT-2026-066i: antes de D2 el ticket sin campo daba WARN
     (WARN_PREFIX_UNRESOLVABLE) y el mixto salia WARN con fichero escrito; la
-    ausencia declarada ahora es fail-closed.
+    ausencia declarada ahora es fail-closed. WOT-2026-073d: la fila de backlog
+    del fixture es load-bearing -- sin NINGUNA superficie el ticket se
+    EXCLUIRIA con WARN y el lote dejaria de ser mixto.
     """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
@@ -769,6 +784,7 @@ def test_mixed_results_one_fail_one_pass(tmp_path: Path) -> None:
     _init_git_repo(destino)
     _link_motor(destino, motor)
     _declare_authority(destino, "WOT-2026-999c", "repo_motor")
+    _write_backlog(destino, "| Alta | ZZZ-2026-001 | fila sin delivery_authority |\n")
 
     sha = _commit_file(motor, "src/a.py", "x = 1", "WOT-2026-999c: feature")
 
@@ -1186,14 +1202,18 @@ def test_declared_authority_read_from_frozen_contract_block(
     assert sha in (destino / TARGETS_REL).read_text(encoding="utf-8")
 
 
-def test_wot_without_declared_authority_fails_closed(tmp_path: Path) -> None:
-    """D5(i): fixture `WOT-` SIN `delivery_authority` declarado -> FAIL
-    blocking nombrando el ticket.
+def test_wot_without_row_in_any_backlog_warns_excluded(tmp_path: Path) -> None:
+    """D5(i) + WOT-2026-073d: fixture `WOT-` SIN `delivery_authority` y SIN
+    fila/ficha propia en ninguna superficie de backlog -> WARN no bloqueante
+    que lo EXCLUYE de la certificacion (no FAIL).
 
-    Con el caso especial hardcodeado vivo, el ticket resolveria motor_root y
-    daria PASS: este test MATA el hardcode por comportamiento (no por grep).
-    Bajo D2, la ausencia del campo declarado es fail-closed (un default
-    silencioso esta prohibido en un guard fail-closed; WOT-2026-066i D2).
+    Un ticket que nunca tuvo fila no puede declarar `delivery_authority` por
+    ninguna via: bloquear el cierre por ese dato era un falso FAIL
+    (WOT-2026-073d). El caso "tiene fila/contrato pero le falta el campo" SI
+    sigue fail-closed: lo pinea
+    `test_ticket_with_backlog_row_but_no_authority_still_fails`. Antes del fix
+    (D2, WOT-2026-066i) este MISMO fixture (ticket sin fila, commit real)
+    pinea FAIL/blocking: el contrato cambia, el fixture no.
     """
     motor = tmp_path / "motor"
     destino = tmp_path / "destino"
@@ -1206,10 +1226,10 @@ def test_wot_without_declared_authority_fails_closed(tmp_path: Path) -> None:
         destino, ["WOT-2026-666x"], None, False
     )
 
-    assert result.status == "FAIL", result.detail
-    assert result.blocking is True
-    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert result.status == "WARN", result.detail
+    assert result.blocking is False
     assert "WOT-2026-666x" in result.detail
+    assert "excluido" in result.detail
     assert not (destino / TARGETS_REL).exists()
 
 
@@ -1280,10 +1300,17 @@ def test_trivial_topology_without_declared_authority_fails_closed(
     Antes del fix B1 este caso devolvia motor_root con fail_detail vacio para
     los TRES valores de `declared_authority` (None/repo_motor/repo_destino):
     la rama ignoraba el campo declarado entero.
+
+    WOT-2026-073d: el fixture gana una fila de backlog (contrato registrado)
+    para fijar que la ausencia CON superficie sigue siendo FAIL. La exclusion
+    con WARN queda reservada a tickets sin NINGUNA superficie propia
+    (`test_wot_without_row_in_any_backlog_warns_excluded`), tambien en esta
+    topologia: la comprobacion es previa a la resolucion.
     """
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     _link_motor(repo, repo)
+    _write_backlog(repo, "| Alta | WOT-2026-667b | ficha sin campo |\n")
     _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-667b: feature")
 
     result = session_closeout._step_write_loop_execution_targets(
@@ -1301,8 +1328,9 @@ def test_neighbor_archive_plan_does_not_leak_authority(tmp_path: Path) -> None:
     """B3: el glob `work_plan_<ID>*.md` no puede devolver la autoridad de un
     ticket VECINO. El fichero del vecino (otro id completo) ni siquiera entra
     en las superficies del glob, y el guard del `**ID:**` dentro del fichero
-    neutralizaria una colision de nombre. El ticket sin declaracion propia
-    cae en D2 (FAIL), nunca hereda la del vecino.
+    neutralizaria una colision de nombre. El ticket sin superficie propia se
+    EXCLUYE con WARN (WOT-2026-073d) sin heredar la autoridad del vecino: el
+    veredicto ni la nombra ni la resuelve (antes del cambio, D2 lo daba FAIL).
     """
     repo = tmp_path / "repo"
     _init_git_repo(repo)
@@ -1321,11 +1349,12 @@ def test_neighbor_archive_plan_does_not_leak_authority(tmp_path: Path) -> None:
         repo, ["WOT-2026-666x"], None, False
     )
 
-    assert result.status == "FAIL", result.detail
-    assert result.blocking is True
-    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert result.status == "WARN", result.detail
+    assert result.blocking is False
+    assert "excluido" in result.detail
     assert "WOT-2026-666x" in result.detail
     assert "WOT-2026-666y" not in result.detail
+    assert not (repo / TARGETS_REL).exists()
 
 
 def test_frozen_contract_wins_over_archived_plan(tmp_path: Path) -> None:
@@ -1689,7 +1718,9 @@ def test_backlog_ficha_of_a_neighbour_does_not_declare_for_this_ticket(
     tmp_path: Path,
 ) -> None:
     """Control negativo: la ficha 902d declara repo_destino; 902e no tiene
-    ficha. Debe seguir FAIL_TARGETS_MISSING (no se hereda del vecino)."""
+    ficha ni contrato propio. No hereda la autoridad del vecino: con
+    WOT-2026-073d queda EXCLUIDO con WARN y el veredicto ni nombra ni resuelve
+    la autoridad ajena (antes del cambio, D2 lo daba por FAIL)."""
     motor, destino = _setup_two_repos(tmp_path)
     _write_backlog(destino, _FICHA_902C)
     _commit_file(motor, "src/e.py", "x = 5", "WOT-2026-902e: algo")
@@ -1698,8 +1729,13 @@ def test_backlog_ficha_of_a_neighbour_does_not_declare_for_this_ticket(
         destino, ["WOT-2026-902e"], None, False
     )
 
-    assert result.status == "FAIL", result.detail
-    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert result.status == "WARN", result.detail
+    assert result.blocking is False
+    assert "excluido" in result.detail
+    assert "WOT-2026-902e" in result.detail
+    assert "902d" not in result.detail
+    assert "repo_destino" not in result.detail
+    assert not (destino / TARGETS_REL).exists()
 
 
 def test_backlog_table_row_mention_is_not_a_declaration(tmp_path: Path) -> None:
@@ -1745,9 +1781,14 @@ def test_dry_run_predicts_missing_authority_instead_of_silent_skip(
     tmp_path: Path,
 ) -> None:
     """El dry-run devolvia SKIP incondicional y el cierre real fallaba despues
-    (medido 2026-10-02). Ahora un ticket sin autoridad declarada se anuncia como
-    WARN con FAIL_TARGETS_MISSING y NO escribe nada."""
+    (medido 2026-10-02). Ahora un ticket CON fila/contrato pero sin autoridad
+    declarada se anuncia como WARN con FAIL_TARGETS_MISSING y NO escribe nada.
+
+    WOT-2026-073d: el fixture gana una fila de backlog; SIN fila ni contrato el
+    ticket se EXCLUYE con WARN -- esa prediccion la pinea
+    `test_dry_run_predicts_warn_for_ticket_without_backlog_row`."""
     _motor, destino = _setup_two_repos(tmp_path)
+    _write_backlog(destino, "| Alta | WOT-2026-902g | fila sin delivery_authority |\n")
 
     result = session_closeout._step_write_loop_execution_targets(
         destino, ["WOT-2026-902g"], None, True
@@ -1768,4 +1809,113 @@ def test_dry_run_with_declared_authority_still_skips(tmp_path: Path) -> None:
 
     assert result.status == "SKIP"
     assert "dry-run" in result.detail
+    assert not (destino / TARGETS_REL).exists()
+
+
+def test_ticket_with_backlog_row_but_no_authority_still_fails(
+    tmp_path: Path,
+) -> None:
+    """CONTROL NEGATIVO (WOT-2026-073d): un ticket CON fila propia en
+    `backlog.md` (tabla `| Alta | WOT-2026-XXXxx | ... |`) pero SIN declarar
+    `delivery_authority` en ningun sitio SIGUE FAIL bloqueante.
+
+    Es el caso que el Non-Goal prohibe relajar: el dato SI podia declararse
+    (hay registro de la fila) y se omitio -> D2 fail-closed intacto. La fila de
+    tabla cuenta como EXISTENCIA (no se excluye); el valor del campo solo se
+    lee de la ficha `###` (WOT-2026-089m), que aqui no existe -> ausencia.
+    """
+    motor, destino = _setup_two_repos(tmp_path)
+    _write_backlog(destino, "| Alta | WOT-2026-906a | ficha sin delivery_authority |\n")
+    _commit_file(motor, "src/a.py", "x = 1", "WOT-2026-906a: feature")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-906a"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert "WOT-2026-906a" in result.detail
+    assert not (destino / TARGETS_REL).exists()
+
+
+def test_ticket_with_archive_only_row_is_not_excluded(tmp_path: Path) -> None:
+    """WOT-2026-073d: una fila SOLO en `_archive/backlog_done.md` tambien es
+    "fila propia" (el ticket tuvo registro): no se excluye; sin el campo
+    declarado sigue FAIL (D2). La exclusion exige ausencia en AMBAS superficies
+    de backlog, viva y archivada.
+    """
+    motor, destino = _setup_two_repos(tmp_path)
+    archive = destino / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "backlog_done.md").write_text(
+        "| Media | WOT-2026-906b | ficha archivada sin campo |\n",
+        encoding="utf-8",
+    )
+    _commit_file(motor, "src/b.py", "x = 2", "WOT-2026-906b: feature")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-906b"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_MISSING" in result.detail
+    assert not (destino / TARGETS_REL).exists()
+
+
+def test_ticket_has_backlog_row_helper_checks_both_surfaces(tmp_path: Path) -> None:
+    """WOT-2026-073d: `_ticket_has_backlog_row` cubre las DOS superficies y las
+    DOS formas de fila propia (`### <ID>` y fila de tabla), y no lanza cuando
+    ninguna superficie existe.
+
+    Secuencia: ninguna superficie -> False; solo backlog.md vivo -> True; solo
+    el archive (tras vaciar la viva) -> True; una mencion de pasada DENTRO de
+    la fila de OTRO ticket -> False (el id se lee de su celda, nunca del texto
+    libre: control negativo de forma).
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    ticket = "WOT-2026-906c"
+    assert session_closeout._ticket_has_backlog_row(root, ticket) is False
+
+    _write_backlog(root, "| Alta | WOT-2026-906c | ficha viva |\n")
+    assert session_closeout._ticket_has_backlog_row(root, ticket) is True
+
+    _write_backlog(root, "")
+    archive = root / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "backlog_done.md").write_text(
+        f"### {ticket} - ficha archivada\n\ntexto\n", encoding="utf-8"
+    )
+    assert session_closeout._ticket_has_backlog_row(root, ticket) is True
+
+    (archive / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-906d | mencion de WOT-2026-906c en prosa |\n",
+        encoding="utf-8",
+    )
+    assert session_closeout._ticket_has_backlog_row(root, ticket) is False
+
+
+def test_dry_run_predicts_warn_for_ticket_without_backlog_row(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-073d: el dry-run predice la EXCLUSION con WARN para un ticket
+    sin fila ni contrato propio (ni un PASS ciego ni un FAIL fantasma).
+
+    El cierre real devolveria WARN (excluido); el dry-run debe anticipar ese
+    mismo veredicto reutilizando la comprobacion
+    (`_dry_run_targets_prediction` tiene logica propia: no pasa por
+    `_process_ticket_targets`).
+    """
+    _motor, destino = _setup_two_repos(tmp_path)
+
+    result = session_closeout._step_write_loop_execution_targets(
+        destino, ["WOT-2026-906e"], None, True
+    )
+
+    assert result.status == "WARN", result.detail
+    assert "WOT-2026-906e" in result.detail
+    assert "excluido" in result.detail
+    assert "FAIL_TARGETS_MISSING" not in result.detail
     assert not (destino / TARGETS_REL).exists()

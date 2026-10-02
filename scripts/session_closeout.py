@@ -1529,6 +1529,57 @@ def _backlog_ficha_block_for_ticket(text: str, ticket_id: str) -> str | None:
     return found
 
 
+def _backlog_table_row_for_ticket(text: str, ticket_id: str) -> bool:
+    """Fila de tabla de backlog cuyo ID es `ticket_id` (WOT-2026-073d).
+
+    Before: `text` es el contenido crudo de una superficie de backlog.
+    During: recorre las lineas que empiezan por `|` y compara el ID contra su
+        CELDA exacta (segunda celda del formato `| <prioridad> | <ID> | ...`),
+        nunca contra el texto libre de la linea: una mencion de pasada dentro
+        de la fila de OTRO ticket no es fila propia (leccion
+        `spurious-hit-needs-negative-control`).
+    After: True si existe una fila de tabla del ticket; False en cualquier otro
+        caso. No lanza (entrada None o vacia -> False).
+    """
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.split("|")]
+        if len(cells) > 2 and cells[2] == ticket_id:
+            return True
+    return False
+
+
+def _ticket_has_backlog_row(project_root: Path, ticket_id: str) -> bool:
+    """True si `ticket_id` tiene fila/ficha propia en alguna superficie de backlog.
+
+    Before: `project_root` es la raiz del repo_destino; las DOS superficies de
+        backlog son `backlog.md` (cola viva, `BACKLOG_REL`) y
+        `_archive/backlog_done.md` (archive, `BACKLOG_ARCHIVE_REL`).
+    During: en cada superficie legible busca las DOS formas reales de fila
+        propia: el bloque de ficha `## `/`### <ID>` (reusa
+        `_backlog_ficha_block_for_ticket`, WOT-2026-089m) y la fila de tabla
+        `| <prioridad> | <ID> | ...` (`_backlog_table_row_for_ticket`). Una
+        mencion en prosa o en la fila de OTRO ticket no cuenta; este criterio
+        es de EXISTENCIA, no de valor declarado.
+    After: True si cualquiera de las dos superficies registra una fila/ficha
+        propia; False si ninguna la tiene (incluye "ninguna superficie
+        existe"). `OSError`/`UnicodeDecodeError` degradan a superficie ausente:
+        nunca lanza.
+    """
+    for rel in (BACKLOG_REL, BACKLOG_ARCHIVE_REL):
+        try:
+            content = (project_root / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _backlog_ficha_block_for_ticket(content, ticket_id) is not None:
+            return True
+        if _backlog_table_row_for_ticket(content, ticket_id):
+            return True
+    return False
+
+
 def _surface_text_for_ticket(path: Path, ticket_id: str) -> str | None:
     """Texto de `path` que cuenta como contrato de `ticket_id`, o None.
 
@@ -1629,6 +1680,34 @@ def _root_authority_surfaces(root: Path, ticket_id: str) -> list[Path]:
     # declara, asi que no puede cambiar el veredicto de un ticket con contrato.
     surfaces.append(root / BACKLOG_REL)
     return surfaces
+
+
+def _ticket_has_contract_surface(project_root: Path, ticket_id: str) -> bool:
+    """True si el ticket tiene contrato propio fuera del backlog (WOT-2026-073d).
+
+    Before: `project_root` es la raiz del repo_destino.
+    During: consulta las MISMAS superficies que `_root_authority_surfaces` (plan
+        vivo, work_plan per-ticket vivos en `collaboration/` y `planning/`,
+        contrato frozen y work_plan archivados) reusando
+        `_surface_text_for_ticket` (guard del `**ID:**`/bloque) y
+        `_glob_work_plans`. NO toca la resolucion de autoridad: solo responde a
+        la pregunta de EXISTENCIA de contrato.
+    After: True si alguna superficie declara el ticket como contrato propio
+        (aunque omita `delivery_authority`); False si ninguna. Cada lectura
+        fallida degrada a superficie ausente: nunca lanza.
+    """
+    candidates = [
+        project_root / ".agent" / "collaboration" / "work_plan.md",
+        *_glob_work_plans(project_root / ".agent" / "collaboration", ticket_id),
+        *_glob_work_plans(project_root / ".agent" / "planning", ticket_id),
+        project_root / ".agent" / "planning" / "ticket_contracts.md",
+        *_glob_work_plans(
+            project_root / ".agent" / "collaboration" / "_archive", ticket_id
+        ),
+    ]
+    return any(
+        _surface_text_for_ticket(path, ticket_id) is not None for path in candidates
+    )
 
 
 def _read_declared_delivery_authority(
@@ -1832,6 +1911,43 @@ class _TicketTargetResult:
     blocking: bool = False
 
 
+def _no_own_surface_warn_detail(ticket_id: str) -> str:
+    """Detail WARN de exclusion por ausencia total de superficie (WOT-2026-073d).
+
+    Un ticket sin fila/ficha en ninguna superficie de backlog y sin contrato
+    propio no puede declarar `delivery_authority` por ninguna via: se EXCLUYE
+    de la certificacion con un WARN que lo nombra, sin fabricar el campo y sin
+    relajar el FAIL de un ticket que SI tiene donde declararlo.
+    """
+    return (
+        f"{ticket_id}: sin fila/ficha propia en ninguna superficie de backlog "
+        "(backlog.md, _archive/backlog_done.md) ni contrato propio "
+        "(work_plan/ticket_contracts); excluido de la certificacion de gobierno, "
+        "no se fabrica delivery_authority (WOT-2026-073d)"
+    )
+
+
+def _excluded_no_own_surface(
+    declared: str | None, project_root: Path, ticket_id: str
+) -> bool:
+    """True si procede la EXCLUSION WARN por ausencia total de superficie.
+
+    Before: `declared` es el valor leido de las superficies (o None);
+        `project_root` la raiz del destino; `ticket_id` el ticket.
+    During: exige las TRES condiciones: nadie declaro el campo Y no hay
+        fila/ficha en ninguna superficie de backlog Y no hay contrato propio
+        (work_plan/ticket_contracts). Es la comprobacion compartida por el
+        cierre real y por su dry-run (WOT-2026-073d).
+    After: True solo cuando el campo no puede existir estructuralmente; False
+        en cuanto una superficie propia existe (el FAIL D2 sigue su curso).
+    """
+    return (
+        declared is None
+        and not _ticket_has_backlog_row(project_root, ticket_id)
+        and not _ticket_has_contract_surface(project_root, ticket_id)
+    )
+
+
 def _process_ticket_targets(
     ticket_id: str,
     project_root: Path,
@@ -1846,17 +1962,27 @@ def _process_ticket_targets(
     WOT-2026-048b. WOT-2026-066i: resuelve la raiz autoritativa por el
     `delivery_authority` DECLARADO del ticket (la ausencia es FAIL bloqueante,
     D2), busca ahi los commits y corre una consulta de control cuando la raiz
-    autoritativa esta vacia.
+    autoritativa esta vacia. WOT-2026-073d: un ticket SIN fila/ficha propia en
+    ninguna superficie de backlog y SIN contrato propio se EXCLUYE con WARN
+    antes de resolver; el ticket CON superficie que omite el campo sigue
+    fail-closed (D2).
     """
-    if read_authority_fn is None:
 
-        def _default_read_authority(tid: str) -> str | None:
-            return _read_declared_delivery_authority(
-                tid, project_root, motor_root, extract_prefix_fn, resolve_prefix_fn
-            )
+    def _default_read_authority(tid: str) -> str | None:
+        return _read_declared_delivery_authority(
+            tid, project_root, motor_root, extract_prefix_fn, resolve_prefix_fn
+        )
 
-        read_authority_fn = _default_read_authority
+    # Reparto de ciclomatica: el `or` sustituye al `if is None` (equivalente en
+    # la practica: un callable inyectado siempre es truthy) y deja sitio a la
+    # rama nueva de WOT-2026-073d sin rebasar el umbral C901 de la funcion.
+    read_authority_fn = read_authority_fn or _default_read_authority
     declared = read_authority_fn(ticket_id)
+    if _excluded_no_own_surface(declared, project_root, ticket_id):
+        # WOT-2026-073d: sin fila ni contrato propio el campo no puede existir
+        # estructuralmente -> exclusion WARN. Un ticket CON superficie que omite
+        # el campo sigue por `_resolve_authoritative_repo` (FAIL D2 intacto).
+        return _TicketTargetResult([], "WARN", _no_own_surface_warn_detail(ticket_id))
     authoritative_root, other_root, skip, warn, fail_detail = (
         _resolve_authoritative_repo(
             ticket_id,
@@ -2077,6 +2203,7 @@ def _dry_run_targets_prediction(
     if isinstance(setup, StepResult):
         return skip
     predicted: list[str] = []
+    excluded: list[str] = []
     for ticket_id in ticket_ids:
         declared = _read_declared_delivery_authority(
             ticket_id,
@@ -2085,6 +2212,11 @@ def _dry_run_targets_prediction(
             setup.extract_prefix_fn,
             setup.resolve_prefix_fn,
         )
+        if _excluded_no_own_surface(declared, project_root, ticket_id):
+            # WOT-2026-073d: replica la comprobacion del cierre real para que el
+            # dry-run prediga la EXCLUSION (WARN), no un FAIL que ya no ocurre.
+            excluded.append(_no_own_surface_warn_detail(ticket_id))
+            continue
         *_, fail_detail = _resolve_authoritative_repo(
             ticket_id,
             setup.motor_root,
@@ -2095,15 +2227,23 @@ def _dry_run_targets_prediction(
         )
         if fail_detail:
             predicted.append(fail_detail)
-    if not predicted:
+    if not predicted and not excluded:
         return skip
+    parts: list[str] = []
+    if predicted:
+        parts.append(
+            "dry-run (prediccion, el cierre real FALLARIA bloqueante): "
+            + "; ".join(predicted)
+        )
+    if excluded:
+        parts.append(
+            "dry-run (prediccion, el cierre real EXCLUIRIA con WARN): "
+            + "; ".join(excluded)
+        )
     return StepResult(
         name="write_loop_execution_targets",
         status="WARN",
-        detail=(
-            "dry-run (prediccion, el cierre real FALLARIA bloqueante): "
-            + "; ".join(predicted)
-        ),
+        detail=" | ".join(parts),
     )
 
 
