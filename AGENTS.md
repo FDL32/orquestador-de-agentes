@@ -379,6 +379,14 @@ tests como fixture de identidad (`test_058y_*`, la lista `con_arbol` de
 no es un rename aislado. No renombrar este perfil sin revisar primero
 `grep -rn "challenger_opencode_glm_5_2" tests/`.
 
+**Estado desde 2026-10-02:** ese perfil esta marcado `status: legacy` con
+`replaced_by: challenger_opencode_glm_flash` (mismo backend, modelo y `BA06`; el
+nombre viejo mentia: su modelo es `glm-5.3-flash`, no 5.2). Marca BLANDA: sigue
+invocable por nombre (avisa por stderr) pero queda fuera de toda seleccion
+automatica (`selectable_profiles` en `scripts/ensemble_dispatch.py`). Una ruta
+nueva que elija perfiles por si sola debe pasar por esa funcion, no por
+`config["ensemble_profiles"]` a pelo.
+
 ## Archivado de colaboracion (WP-2026-100)
 
 - `scripts/archive_collaboration_artifacts.py` mueve `PLAN_WP-*.md` y `AUDIT_WP-*.md` cerrados a `.agent/collaboration/_archive/plan_audit/`.

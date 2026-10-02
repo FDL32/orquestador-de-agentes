@@ -5825,7 +5825,9 @@ def test_058y_ratio_is_the_adjudicated_option_b():
     INVARIANTE, no medicion: se asertan las DOS clases a la vez, de modo que
     mover un perfil de una a otra sin decision explicita rompa el test.
     """
-    profiles = _real_agents_config()["ensemble_profiles"]
+    # Solo perfiles SELECCIONABLES: el legacy (mismo BA06) esta fuera de la
+    # seleccion automatica y no es una lente mas -- el sustituto ocupa su sitio.
+    profiles = ed.selectable_profiles(_real_agents_config())
     con_arbol = sorted(
         name
         for name, p in profiles.items()
@@ -5833,9 +5835,13 @@ def test_058y_ratio_is_the_adjudicated_option_b():
     )
     assert con_arbol == [
         "challenger_codex",
-        "challenger_opencode_glm_5_2",
+        "challenger_opencode_glm_flash",
         "proposer_claude",
     ], f"opcion B (equilibrada) = BA05 + BA06 + BA01; hoy: {con_arbol}"
+    claves = sorted(profiles[name]["backend_key"] for name in con_arbol)
+    assert claves == ["BA01", "BA05", "BA06"], (
+        "3 lentes con arbol = 3 backend_key DISTINTAS, no 3 perfiles cualesquiera"
+    )
 
 
 # --- WOT-2026-059m: la ronda no acepta un commit_sha que no resuelve ----------

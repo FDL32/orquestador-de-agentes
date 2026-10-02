@@ -253,6 +253,18 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA06",
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_glm_flash"
+    },
+    "challenger_opencode_glm_flash": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode-go/glm-5.3-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA06",
       "repo_scope": "destino"
     },
     "challenger_nan_qwen_flash": {
