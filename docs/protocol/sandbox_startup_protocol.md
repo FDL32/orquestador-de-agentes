@@ -116,3 +116,21 @@ Sin `-NullStdin` (ACP usa stdin) y con los mensajes del lanzador en stderr. `ope
 - El modo interactivo (`shell`) arranca y muestra el prompt dentro del contenedor, pero su uso real con teclado en un terminal de IDE **no se ha probado**.
 - El lanzador solo termina el proceso principal por plazo (`-TimeoutSec`); no mata el árbol de hijos.
 - Persistencia: el mapeo `subst` no sobrevive a un reinicio; el lanzador lo recrea.
+
+## 9. Paso único con admin: consulta de la raíz del disco (decisión del operador)
+
+Por qué: los agentes recorren los directorios padre hasta la raíz del disco y el contenedor no puede consultar `C:\` (sección 8). Sin admin no hay
+arreglo conocido: la ACL de `C:\` ya tiene una ACE para una *capacidad de grupo* (`S-1-15-3-65536-…`), pero `CreateProcess` rechaza esa SID
+(`win32=87`) y ninguno de 78 nombres de capacidad conocidos la produce, así que no se puede reutilizar sin admin.
+
+Qué hace `scripts/sandbox_root_acl.ps1`: añade **una** ACE para el SID de **nuestro** contenedor (derivado de su nombre) sobre `C:\`, solo esa carpeta y
+sin herencia. Con `-Rights minimal` (por defecto) concede leer atributos, atributos extendidos, permisos y sincronizar: permite `lstat` pero **no
+listar nombres** (medido sobre la raíz del sandbox). Con `-Rights rx` añade listar y recorrer; git lo necesita en **su** raíz, no en `C:\`.
+
+Procedimiento (PowerShell **elevado**): `status` (ver la ACL), `apply` (vista previa; no cambia nada), `apply -Apply` (copia de seguridad en
+`%USERPROFILE%\sandbox_acl_backup`, aplica y verifica), `rollback -Apply` (quita solo esa ACE y comprueba que el resto de la ACL queda idéntico).
+Si `minimal` no basta para un agente concreto, `apply -Rights rx -Apply`.
+
+Estado de la prueba: el ciclo aplicar y deshacer está ensayado y con tests sobre un directorio propio (no exige admin) y la vista previa y la negativa sin admin se
+prueban sobre `C:\` sin modificarla. **No se ha aplicado sobre `C:\`** y no está probado que con ella `opencode` arranque dentro del contenedor: es la
+hipótesis a verificar justo después.

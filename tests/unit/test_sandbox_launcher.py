@@ -205,3 +205,80 @@ def test_snapshot_con_paths_exporta_solo_esos_ficheros_y_sin_git(sbx):
     assert not (root / "work" / "doc" / ".git").exists(), (
         "el snapshot no debe llevar historial"
     )
+
+
+# --------------------------------------------------------------------------- sandbox_root_acl.ps1 (paso unico con admin)
+ROOT_ACL = Path(__file__).resolve().parents[2] / "scripts" / "sandbox_root_acl.ps1"
+
+
+def _root_acl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ROOT_ACL),
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_root_acl_es_ascii_y_sin_rutas_de_usuario():
+    raw = ROOT_ACL.read_bytes()
+    assert all(b < 128 for b in raw), "caracteres no ASCII en el script"
+    assert not re.search(r"[A-Za-z]:\\Users\\[A-Za-z0-9_.-]+", raw.decode("ascii"))
+
+
+@pytest.mark.skipif(not IS_WIN, reason="icacls es de Windows")
+def test_root_acl_vista_previa_no_cambia_nada_y_sin_admin_se_niega():
+    """Barrera: sin `-Apply` solo informa; con `-Apply` y sin elevar sobre la raiz real, se niega (rc 2)."""
+    antes = subprocess.run(
+        ["icacls", "C:\\"], capture_output=True, text=True, check=False
+    ).stdout
+    prev = _root_acl("apply")
+    assert prev.returncode == 0, prev.stdout + prev.stderr
+    assert "VISTA PREVIA" in prev.stdout
+    assert "icacls" in prev.stdout and "/grant" in prev.stdout
+    elevated = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent())"
+            ".IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    if elevated != "True":
+        negada = _root_acl("apply", "-Apply")
+        assert negada.returncode == 2, negada.stdout + negada.stderr
+        assert "elevado" in negada.stdout
+    despues = subprocess.run(
+        ["icacls", "C:\\"], capture_output=True, text=True, check=False
+    ).stdout
+    assert antes == despues, "la vista previa o la negativa modificaron la ACL de C:\\"
+
+
+@pytestmark_int
+def test_root_acl_ciclo_aplicar_y_deshacer_sobre_directorio_propio(tmp_path):
+    r"""El mismo mecanismo que se usara sobre C:\, ensayado sobre un directorio propio (no exige admin)."""
+    objetivo = tmp_path / "acl_target"
+    objetivo.mkdir()
+    copia = tmp_path / "bk"
+    comun = ["-Target", str(objetivo), "-BackupDir", str(copia), "-SkipElevationCheck"]
+    ap = _root_acl("apply", *comun, "-Apply")
+    assert ap.returncode == 0, ap.stdout + ap.stderr
+    assert "ACE presente = True" in ap.stdout
+    assert list(copia.glob("acl_*.txt")), "no se creo la copia de seguridad"
+    rb = _root_acl("rollback", *comun, "-Apply")
+    assert rb.returncode == 0, rb.stdout + rb.stderr
+    assert "ACE del contenedor presente = False" in rb.stdout
+    assert "el resto de la ACL no cambio: True" in rb.stdout

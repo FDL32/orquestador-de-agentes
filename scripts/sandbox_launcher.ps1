@@ -41,6 +41,7 @@ param(
   [switch]$Net,
   [switch]$NoCanary,
   [switch]$NullStdin,
+  [string[]]$ExtraCap = @(),
   [switch]$Purge
 )
 $ErrorActionPreference = 'Stop'
@@ -88,14 +89,20 @@ public static class SbxAc {
   static IntPtr Inheritable(int std) { IntPtr h = GetStdHandle(std); if (h != IntPtr.Zero && h != (IntPtr)(-1)) SetHandleInformation(h, 1, 1); return h; }
 
   // Devuelve el codigo de salida del hijo (99 si se corto por plazo, -1 si no pudo crearse). El hijo hereda stdin/stdout/stderr del lanzador.
-  public static int Run(string name, string exe, string args, string cwd, bool net, int timeoutMs, bool nullStdin, out string error) {
+  public static int Run(string name, string exe, string args, string cwd, bool net, int timeoutMs, bool nullStdin, string[] extraCaps, out string error) {
     error = "";
     IntPtr acsid; if (DeriveAppContainerSidFromAppContainerName(name, out acsid) != 0) { error = "derive"; return -1; }
-    IntPtr capSid = IntPtr.Zero, capArr = IntPtr.Zero; uint capN = 0;
-    if (net) {
-      ConvertStringSidToSid("S-1-15-3-1", out capSid);
-      capArr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(SIDATTR)));
-      SIDATTR a = new SIDATTR(); a.sid = capSid; a.attr = 4; Marshal.StructureToPtr(a, capArr, false); capN = 1;
+    System.Collections.Generic.List<string> capStrs = new System.Collections.Generic.List<string>();
+    if (net) capStrs.Add("S-1-15-3-1");
+    if (extraCaps != null) foreach (string c in extraCaps) if (!string.IsNullOrEmpty(c)) capStrs.Add(c);
+    IntPtr capArr = IntPtr.Zero; uint capN = (uint)capStrs.Count;
+    if (capN > 0) {
+      int esz = Marshal.SizeOf(typeof(SIDATTR));
+      capArr = Marshal.AllocHGlobal(esz * (int)capN);
+      for (int i = 0; i < capStrs.Count; i++) {
+        IntPtr cs; if (!ConvertStringSidToSid(capStrs[i], out cs)) { error = "capability sid invalido: " + capStrs[i]; return -1; }
+        SIDATTR a = new SIDATTR(); a.sid = cs; a.attr = 4; Marshal.StructureToPtr(a, (IntPtr)((long)capArr + (long)i * esz), false);
+      }
     }
     SECCAP sc = new SECCAP(); sc.sid = acsid; sc.caps = capArr; sc.n = capN;
     IntPtr scp = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(SECCAP))); Marshal.StructureToPtr(sc, scp, false);
@@ -207,8 +214,8 @@ function Invoke-Canary($letter) {
   # dentro debe leerse; fuera NO. Si falla cualquiera de las dos, el agente no arranca.
   $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
   $e = ''
-  $in = [SbxAc]::Run($ContainerName, $cmd, "/c type ${letter}:\work\CANARY_IN.txt >nul 2>&1", "${letter}:\work", $false, 20000, $false, [ref]$e)
-  $out = [SbxAc]::Run($ContainerName, $cmd, "/c type ${letter}:\outside\CANARY_OUT.txt >nul 2>&1", "${letter}:\work", $false, 20000, $false, [ref]$e)
+  $in = [SbxAc]::Run($ContainerName, $cmd, "/c type ${letter}:\work\CANARY_IN.txt >nul 2>&1", "${letter}:\work", $false, 20000, $false, [string[]]@(), [ref]$e)
+  $out = [SbxAc]::Run($ContainerName, $cmd, "/c type ${letter}:\outside\CANARY_OUT.txt >nul 2>&1", "${letter}:\work", $false, 20000, $false, [string[]]@(), [ref]$e)
   if ($in -ne 0) { throw "CANARIO: no se puede leer DENTRO del alcance (rc=$in). Alcance mal calculado: no se arranca." }
   if ($out -eq 0) { throw "CANARIO: se pudo leer FUERA del alcance. Barrera rota: no se arranca." }
   Say "canario OK (dentro lee, fuera no)"
@@ -254,7 +261,7 @@ function Cmd-Run($interactiveShell) {
   }
   $work = if ($Cwd) { if ([IO.Path]::IsPathRooted($Cwd)) { $Cwd } else { "${l}:\work\$Cwd" } } else { "${l}:\work" }
   $e = ''
-  $rc = [SbxAc]::Run($ContainerName, $exePath, $argLine, $work, [bool]$Net, ($TimeoutSec * 1000), [bool]$NullStdin, [ref]$e)
+  $rc = [SbxAc]::Run($ContainerName, $exePath, $argLine, $work, [bool]$Net, ($TimeoutSec * 1000), [bool]$NullStdin, [string[]]$ExtraCap, [ref]$e)
   if ($rc -eq -1) { throw "no se pudo lanzar: $e" }
   exit $rc
 }
