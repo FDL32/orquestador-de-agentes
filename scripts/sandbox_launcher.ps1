@@ -210,6 +210,31 @@ function Set-CleanEnv($letter) {
 }
 
 # ---------------------------------------------------------------- canario fail-closed
+# WOT-2026-089n (sesion piloto sandbox): sincroniza la credencial de Claude Code de
+# la cuenta ACTIVA (cc-watch, intercambio externo via CLAUDE_CONFIG_DIR) dentro del
+# home del sandbox, para que `claude -p` dentro del contenedor use la MISMA cuenta que
+# esta activa fuera en ese momento, sin generar ni mantener un token aparte.
+#
+# Before: el sandbox ya esta montado (home existe bajo la raiz).
+# During: lee CLAUDE_CONFIG_DIR (o el default del perfil activo si no esta fijada) y
+#   copia SOLO el fichero .credentials.json de esa cuenta a <home>\.claude\.credentials.json.
+#   No copia ninguna otra cosa de la cuenta (ni historial, ni stats, ni settings): el
+#   sandbox no necesita mas que el token para autenticar.
+# After: si el fichero fuente no existe, NO lanza error (el agente seguira sin poder
+#   autenticar y fallara de forma visible al usarlo, que es preferible a abortar un
+#   `run` que no necesitaba `claude`); si existe, lo copia y devuelve $true.
+function Sync-ClaudeCredentials($home_) {
+  $cfgDir = $env:CLAUDE_CONFIG_DIR
+  if ([string]::IsNullOrWhiteSpace($cfgDir)) { $cfgDir = Join-Path $env:USERPROFILE '.claude' }
+  $src = Join-Path $cfgDir '.credentials.json'
+  if (-not (Test-Path $src)) { Say "AVISO: no se encontro credencial de Claude en $cfgDir (sin autenticar dentro)"; return $false }
+  $dstDir = Join-Path $home_ '.claude'
+  New-Item -ItemType Directory -Force $dstDir | Out-Null
+  Copy-Item $src (Join-Path $dstDir '.credentials.json') -Force
+  Say "credencial de Claude sincronizada desde $cfgDir (cuenta activa ahora)"
+  return $true
+}
+
 function Invoke-Canary($letter) {
   # dentro debe leerse; fuera NO. Si falla cualquiera de las dos, el agente no arranca.
   $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
@@ -265,6 +290,11 @@ function Cmd-Status {
 function Cmd-Run($interactiveShell) {
   if (-not (Test-Profile) -or -not (Test-Path (Join-Path $Root 'tools'))) { $null = Cmd-Up }
   $l = Mount-Drive
+  # Leida ANTES de Set-CleanEnv: esa funcion borra CLAUDE_CONFIG_DIR del entorno del
+  # proceso lanzador (no esta en la lista blanca), asi que hay que capturar la cuenta
+  # activa primero. Solo aplica cuando el agente a lanzar es `claude` (el unico backend
+  # de esta sesion que la usa); los demas backends no se ven afectados.
+  if (-not $interactiveShell -and $Exe -eq 'claude') { $null = Sync-ClaudeCredentials (Join-Path $Root 'home') }
   Set-CleanEnv $l
   if (-not $NoCanary) { Invoke-Canary $l }
   if ($interactiveShell) { $exePath = Join-Path $env:SystemRoot 'System32\cmd.exe'; $argLine = '' }
