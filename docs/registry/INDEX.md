@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 39 |
+| prompt | 40 |
 | reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 43 |
-| **total** | **128** |
+| **total** | **129** |
 
 ## Entradas
 
@@ -37,6 +37,7 @@
 | prompt | `prompts/audit_ticket_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/backlog_admit.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/backlog_triage.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/builder_invocation_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/doc_optimization.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/ensemble_loop.md` | active | system | shared | model-invoked | — |

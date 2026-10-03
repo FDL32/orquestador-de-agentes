@@ -13,6 +13,10 @@
 - Claude Code: backend IA principal en esta instalacion.
 - Codex / GitHub Copilot: backends IA soportados si leen este archivo dentro del arbol.
 - Goose / Claw: **[DEPRECATED - WT-2026-254a]** motores orquestados por `scripts/orquestador.py`. No usar en proyectos nuevos; reemplazados por Claude Code como backend IA principal.
+- **No confundir Builder real con lente de ensemble:** una tarea de implementacion, lectura o
+  escritura con filesystem usa el CLI directo del agente y `prompts/builder_invocation_contract.md`;
+  una revision adversarial corta usa `ensemble_dispatch.py loop-round` y `prompts/ensemble_loop.md`.
+  `ensemble_dispatch.py` no es un mecanismo generico para encargar tareas.
 
 ## Resumen del entorno
 
@@ -278,18 +282,14 @@ sesion es legitimo, y bloquearlo forzaria a correr la suite entre cada par de co
 desperdicio que se quiere evitar. La barrera BLOQUEANTE (no publicar con suite stale) ya existe y
 vive en `pre_handoff_guard`.
 
-Por que no bastaba lo que ya habia: la comprobacion `tested_commit_sha == HEAD` existia en DOS
-sitios (`pre_handoff_guard`, `collect_system_health`), pero ambos corren DESPUES -- en el handoff o
-en la auditoria de salud. Te avisan cuando ya pagaste la corrida. El unico momento en que esa
-informacion AHORRA trabajo es antes del commit.
-
-**No uses `-k` como evidencia de cobertura de una funcion compartida** (medido 2026-09-27,
-WOT-2026-079d): el filtro selecciona por nombre de clase/fichero, no por grafo de call-sites. Corregir
-`_handle_manager_approve` y verificar solo con `-k "pre_handoff or manager_approve"` dio verde
-mientras dejaba pasar 3 regresiones reales en `tests/test_agent_controller.py`, que ejercita la MISMA
-funcion desde clases con nombres distintos al filtro. Solo la suite canonica completa (`--level all`)
-las detecto. La evidencia final de cobertura de una funcion compartida debe venir de la suite completa,
-nunca de un `-k` por nombre.
+**No uses `-k` como evidencia de cobertura de una funcion compartida.** El filtro selecciona por
+nombre de clase/fichero, no por grafo de call-sites: una funcion ejercitada desde clases con
+nombres distintos al filtro puede quedar sin cubrir aunque `-k` de verde. La evidencia final de
+cobertura de una funcion compartida debe venir de la suite canonica completa (`--level all`),
+nunca de un `-k` por nombre. Rationale completo (por que la comprobacion previa no bastaba, caso
+medido WOT-2026-079d con 3 regresiones reales que `-k` dejo pasar): memoria de
+`repo_motor`, `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`
+(2026-09-27).
 
 ### Convencion de encoding y gap v1 (WOT-2026-010e)
 
