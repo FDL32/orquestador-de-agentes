@@ -39,7 +39,14 @@
       "executable": "kilo.exe",
       "args": [
         "run",
-        "--auto"
+        "--auto",
+        "--format",
+        "json"
+      ],
+      "prompt_via_stdin": true,
+      "model_flag": [
+        "-m",
+        "{model}"
       ],
       "discovery": {
         "method": "vscode_extension",
