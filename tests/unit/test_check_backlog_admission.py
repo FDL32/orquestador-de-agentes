@@ -748,3 +748,160 @@ def test_closeout_cutoff_empty_string_disables_grandfather(tmp_path: Path) -> No
     assert code == 1, out
     assert "SIN_RECIBO" in out
     assert "WARN_GRANDFATHERED" not in out
+
+
+def test_closeout_extra_recibos_resolves_sin_recibo(tmp_path: Path) -> None:
+    """_audit_closeout(extra_recibos=...) resuelve SIN_RECIBO (WOT-2026-089q).
+
+    DoD: antes de este fix, el UNICO llamante real de produccion
+    (`run_backlog_admission_check` en prepush_check.py) invocaba
+    `_audit_closeout(project_root)` sin forma de inyectar un recibo generado
+    FUERA del mensaje del commit -- asi que `--recibo-file` (ya documentado
+    en el CLI) era alcanzable por invocacion manual pero INALCANZABLE desde
+    `--session-close` real (medido dos veces: sesion 2026-09-26 y 2026-10-02,
+    mismo hallazgo exacto). Mutation-verify: SIN `extra_recibos`, la alta
+    sigue SIN_RECIBO (no hay regresion de comportamiento); CON el recibo
+    correcto via `extra_recibos`, pasa a RECIBO_COHERENTE.
+    """
+    repo = init_repo(tmp_path)
+    row_text = row("WOT-2026-982a")
+    corpus = [
+        backlog_surface(repo),
+        {"path": ARCHIVE_REL, "tipo": "archive", "repo": "alta", "entradas": 0},
+    ]
+    recibo = build_recibo(repo, "WOT-2026-982a", row_text, corpus)
+    sha = commit_alta(repo, row_text, "alta con recibo externo")
+
+    # sin_fix: sin extra_recibos, sigue fallando igual que antes del cambio.
+    code_sin, lines_sin, skipped_sin, _f = cba._audit_closeout(repo, extra_recibos=None)
+    out_sin = "\n".join(lines_sin)
+    assert not skipped_sin, out_sin
+    assert code_sin == 1, out_sin
+    assert "SIN_RECIBO" in out_sin
+
+    # con_fix: con el recibo correcto inyectado, la misma alta pasa.
+    code_con, lines_con, skipped_con, _f2 = cba._audit_closeout(
+        repo, extra_recibos=[recibo]
+    )
+    out_con = "\n".join(lines_con)
+    assert not skipped_con, out_con
+    assert code_con == 0, out_con
+    assert "RECIBO_COHERENTE" in out_con
+    assert "SIN_RECIBO" not in out_con
+    assert sha  # el commit auditado es el que recibio el recibo externo
+
+
+def test_run_backlog_admission_check_reads_recibo_files_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """run_backlog_admission_check lee BACKLOG_ADMISSION_RECIBO_FILES (WOT-2026-089q).
+
+    DoD: el call-site real de produccion (prepush_check.py) debe poder
+    consumir recibos externos via variable de entorno, retrocompatible
+    (variable vacia/ausente = comportamiento identico al anterior al fix).
+    """
+    repo = init_repo(tmp_path)
+    row_text = row("WOT-2026-983a")
+    corpus = [
+        backlog_surface(repo),
+        {"path": ARCHIVE_REL, "tipo": "archive", "repo": "alta", "entradas": 0},
+    ]
+    recibo = build_recibo(repo, "WOT-2026-983a", row_text, corpus)
+    commit_alta(repo, row_text, "alta con recibo externo via env")
+
+    recibo_path = tmp_path / "recibo_983a.json"
+    recibo_path.write_text(json.dumps(recibo, ensure_ascii=False), encoding="utf-8")
+
+    # sin_fix: sin la variable, sigue bloqueando (no-regresion).
+    monkeypatch.delenv("BACKLOG_ADMISSION_RECIBO_FILES", raising=False)
+    result_sin = run_backlog_admission_check(repo)
+    assert result_sin.passed is False, result_sin.output
+    assert "SIN_RECIBO" in result_sin.output
+
+    # con_fix: con la variable apuntando al recibo externo, pasa.
+    monkeypatch.setenv("BACKLOG_ADMISSION_RECIBO_FILES", str(recibo_path))
+    result_con = run_backlog_admission_check(repo)
+    assert result_con.passed is True, result_con.output
+    assert "RECIBO_COHERENTE" in result_con.output
+
+
+def test_run_backlog_admission_check_recibo_file_missing_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Un fichero de BACKLOG_ADMISSION_RECIBO_FILES inexistente falla CERRADO.
+
+    DoD (hallazgo de revision por bucle adversarial, Codex/BA05): la carga de
+    `_load_recibo_file` debe vivir DENTRO del `try` fail-closed de
+    `run_backlog_admission_check`, nunca antes -- un fichero inexistente o
+    con JSON invalido debe producir CheckResult(passed=False), no una
+    excepcion sin capturar que tumbe el pipeline de cierre entero.
+    """
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-984a"), "alta sin recibo")
+
+    monkeypatch.setenv(
+        "BACKLOG_ADMISSION_RECIBO_FILES", str(tmp_path / "no_existe.json")
+    )
+    result = run_backlog_admission_check(repo)
+    assert result.passed is False, result.output
+    assert "medicion fallida" in result.output or "SIN_RECIBO" in result.output
+
+
+def test_run_backlog_admission_check_recibo_file_invalid_json_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Un fichero de recibo con JSON invalido falla CERRADO, no crashea."""
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-985a"), "alta sin recibo")
+
+    bad_path = tmp_path / "recibo_roto.json"
+    bad_path.write_text("{esto no es json valido", encoding="utf-8")
+    monkeypatch.setenv("BACKLOG_ADMISSION_RECIBO_FILES", str(bad_path))
+
+    result = run_backlog_admission_check(repo)
+    assert result.passed is False, result.output
+    assert "medicion fallida" in result.output
+
+
+def test_audit_closeout_call_without_extra_recibos_kwarg_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Llamada POSICIONAL/sin kwarg nuevo se comporta EXACTAMENTE igual que
+    antes del fix (hallazgo de revision, tokenharbor_qwen/BA90): no basta con
+    probar `extra_recibos=None` explicito -- un llamante que invoque
+    `_audit_closeout(repo)` o `_audit_closeout(repo, cutoff_sha)` (como ya
+    hacian el resto de tests de este fichero, sin tocar el parametro nuevo
+    en absoluto) debe seguir dando el MISMO resultado que antes del cambio.
+    """
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-986a"), "alta sin recibo, sin extra_recibos")
+
+    # Firma vieja exacta: solo repo, sin mencionar extra_recibos.
+    _code, lines, skipped, _f = cba._audit_closeout(repo)
+    out = "\n".join(lines)
+    assert not skipped, out
+    assert "SIN_RECIBO" in out or "WARN_GRANDFATHERED" in out
+
+    # Firma vieja con cutoff_sha posicional, tampoco toca extra_recibos.
+    code2, lines2, skipped2, _f2 = cba._audit_closeout(repo, "")
+    out2 = "\n".join(lines2)
+    assert not skipped2, out2
+    assert code2 == 1, out2
+    assert "SIN_RECIBO" in out2
+
+
+def test_run_backlog_admission_check_empty_env_var_unchanged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """BACKLOG_ADMISSION_RECIBO_FILES="" (vacia, no ausente) no cambia nada.
+
+    Distingue "variable ausente" (delenv) de "variable presente pero vacia"
+    (setenv con string vacio) -- ambas deben degradar a extra_recibos=None.
+    """
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-987a"), "alta sin recibo")
+
+    monkeypatch.setenv("BACKLOG_ADMISSION_RECIBO_FILES", "")
+    result = run_backlog_admission_check(repo)
+    assert result.passed is False, result.output
+    assert "SIN_RECIBO" in result.output

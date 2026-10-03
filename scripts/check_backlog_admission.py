@@ -1003,7 +1003,9 @@ def audit_range(
 
 
 def _audit_closeout(
-    repo: Path, cutoff_sha: str | None = None
+    repo: Path,
+    cutoff_sha: str | None = None,
+    extra_recibos: list[dict] | None = None,
 ) -> tuple[int, list[str], bool, list[dict]]:
     """Camino del closeout: rango por defecto + SKIP nombrado si no resuelve.
 
@@ -1018,6 +1020,17 @@ def _audit_closeout(
     gate porque este nunca corrio en un cierre real hasta que se detecto
     (2026-09-24). Pasar cutoff_sha="" explicito (string vacio) desactiva el
     grandfather por completo, para quien necesite auditar sin amnistia.
+
+    extra_recibos=None (WOT-2026-089q, hacia adelante -- no retroactivo): antes
+    de este cambio, el UNICO llamante real de produccion (`run_backlog_admission_check`
+    en `prepush_check.py`) invocaba esta funcion sin forma de inyectar un recibo
+    generado FUERA del mensaje del commit, asi que las 2 vias de escape ya
+    documentadas en el CLI (`--recibo-file`, `--grandfather-cutoff-sha`) eran
+    alcanzables por CLI directo pero COMPLETAMENTE INALCANZABLES desde
+    `--session-close` real (medido 2 veces: sesion 2026-09-26 y esta sesion,
+    2026-10-02, mismo hallazgo exacto en ambas). Este parametro, retrocompatible
+    (default None = comportamiento identico al de antes), permite que un
+    llamante que SI tenga recibos externos verificados los inyecte.
     """
     surfaces = [DEFAULT_BACKLOG, *DEFAULT_ARCHIVES]
     if cutoff_sha is None:
@@ -1042,7 +1055,7 @@ def _audit_closeout(
             [],
         )
     code, lines, findings = audit_range(
-        repo, base, head, surfaces, cutoff_sha=cutoff_sha
+        repo, base, head, surfaces, extra_recibos=extra_recibos, cutoff_sha=cutoff_sha
     )
     return code, lines, False, findings
 

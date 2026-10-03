@@ -2605,14 +2605,45 @@ def run_backlog_admission_check(project_root: Path) -> CheckResult:
 
     Before: `project_root` es el repo del backlog (destino en esta topologia).
     During: delega en `check_backlog_admission._audit_closeout` (read-only).
+        WOT-2026-089q (hacia adelante, no retroactivo): lee opcionalmente
+        `BACKLOG_ADMISSION_RECIBO_FILES` (rutas de recibo JSON externos,
+        separadas por `;`) y las inyecta como `extra_recibos`. Antes de este
+        cambio, el guard era fail-closed SIN via de escape alcanzable desde
+        `--session-close` real -- las 2 vias documentadas en el CLI
+        (`--recibo-file`, `--grandfather-cutoff-sha`) solo llegaban por
+        invocacion manual con `--base`/`--head`, nunca por este call-site
+        (medido 2 veces: sesion 2026-09-26 y 2026-10-02). Variable VACIA por
+        defecto = comportamiento identico al de antes del cambio.
+
+        MODELO DE AMENAZA DECLARADO (hallazgo convergente de bucle adversarial,
+        3/3 lentes: Codex, nvidia_deepseek, tokenharbor_qwen, 2026-10-02): el
+        recibo cargado desde `BACKLOG_ADMISSION_RECIBO_FILES` NO esta firmado
+        ni autenticado -- `_load_recibo_file` solo valida FORMA (JSON valido,
+        dict) y `_veredicto_con_recibo` valida COHERENCIA (el corpus_sha se
+        re-deriva contra el estado REAL del backlog en la revision padre del
+        commit auditado, y el candidato_contenido_sha contra la fila REAL
+        anadida). Esto hace que un recibo fabricado SIN re-derivar esos dos
+        hashes desde el arbol git real sea detectado como RECIBO_INCOHERENTE
+        (probado: medido en esta misma sesion, ver tests de mutation-verify).
+        Lo que NO protege: quien controle el entorno del proceso Y tenga
+        acceso de escritura al arbol en el momento exacto de la auditoria
+        podria, en teoria, fabricar un recibo que SI re-derive correctamente
+        -- este guard es disciplina operativa para un operador de confianza
+        (mismo nivel de confianza que ya tiene quien ejecuta `--session-close`
+        localmente), NUNCA un control de seguridad contra un actor con
+        capacidad de modificar el repo y el entorno a la vez. Si este guard
+        necesita convertirse en control de seguridad real (recibo firmado,
+        atado criptograficamente al commit), es cambio de alcance mayor,
+        fuera de esta correccion -- fichar como ticket nuevo si se necesita.
     After: CheckResult passed=True si 0 altas o todas con recibo coherente;
         passed=False (bloqueante) con el veredicto por alta si no.
     """
     try:
-        from scripts.check_backlog_admission import _audit_closeout
+        from scripts.check_backlog_admission import _audit_closeout, _load_recibo_file
     except ImportError:
         from check_backlog_admission import (  # type: ignore[no-redef]
             _audit_closeout,
+            _load_recibo_file,
         )
 
     name = "Backlog Admission Guard (WOT-2026-054m)"
@@ -2626,7 +2657,19 @@ def run_backlog_admission_check(project_root: Path) -> CheckResult:
             skipped=True,
         )
     try:
-        code, lines, skipped, _findings = _audit_closeout(project_root)
+        extra_recibos: list[dict] = []
+        recibo_paths_env = os.environ.get("BACKLOG_ADMISSION_RECIBO_FILES", "").strip()
+        if recibo_paths_env:
+            for raw_path in recibo_paths_env.split(";"):
+                raw_path = raw_path.strip()
+                if not raw_path:
+                    continue
+                extra_recibos.extend(
+                    r for r in _load_recibo_file(Path(raw_path)) if isinstance(r, dict)
+                )
+        code, lines, skipped, _findings = _audit_closeout(
+            project_root, extra_recibos=extra_recibos or None
+        )
     except Exception as exc:  # fail-closed: una medicion rota no es un verde
         return CheckResult(
             name=name,
