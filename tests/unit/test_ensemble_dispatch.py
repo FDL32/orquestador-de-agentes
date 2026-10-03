@@ -696,7 +696,10 @@ def test_scorecard_fields_prefix_is_frozen():
         # comparando lo incomparable. Al final, igual que todos los anteriores:
         # el prefijo de 16 es frozen.
         "lens_scope",
-    ], "los 12 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+        # WOT-2026-089n: channel (api | agent | None) distingue labs sin
+        # filesystem de labs con filesystem real. Al final, mismo mecanismo.
+        "channel",
+    ], "los 13 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
     # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
     # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
     # colapsaria en silencio (la 2a pisa la 1a) sin error. Invariante: la
@@ -2755,6 +2758,73 @@ def test_042v_scorecard_row_records_the_effective_scope(tmp_path):
     assert fila["lens_scope"] == "destino", (
         f"la fila registro lens_scope={fila.get('lens_scope')!r}: el ambito no "
         "esta llegando al scorecard y las dos poblaciones siguen mezcladas"
+    )
+
+
+def test_089n_scorecard_row_records_the_declared_channel(tmp_path):
+    """El canal DECLARADO del perfil (api | agent) llega al registro.
+
+    Sin esta columna, analizar rendimiento S (sin filesystem, un turno de
+    bundle) vs F (con filesystem real, CLI con herramientas) exige un join
+    manual contra agents.json por backend_key -- y el dato puede desfasarse
+    si el perfil cambia de canal despues de que la fila ya se escribio.
+    """
+    transport = _FakeTransport(replies=["ok"])
+    config = _config()
+    config["ensemble_profiles"]["p_chal"]["channel"] = "agent"
+    destino = tmp_path / "repo_destino"
+    destino.mkdir()
+
+    ed.run_loop_round(
+        "p_chal",
+        "revisa esto",
+        config=config,
+        project_root=destino,
+        ticket="WOT-TEST-089n",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-dif",
+        loop_id="L089n",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+
+    fila = _rows(destino)[0]
+    assert fila["channel"] == "agent", (
+        f"la fila registro channel={fila.get('channel')!r}: el canal no esta "
+        "llegando al scorecard y S/F siguen indistinguibles sin un join externo"
+    )
+
+
+def test_089n_scorecard_row_records_api_channel(tmp_path):
+    """Caso negativo: un perfil `channel: api` registra 'api', no None ni
+    'agent' por defecto -- distingue AUSENCIA de dato de valor real."""
+    transport = _FakeTransport(replies=["ok"])
+    config = _config()
+    config["ensemble_profiles"]["p_chal"]["channel"] = "api"
+    destino = tmp_path / "repo_destino"
+    destino.mkdir()
+
+    ed.run_loop_round(
+        "p_chal",
+        "revisa esto",
+        config=config,
+        project_root=destino,
+        ticket="WOT-TEST-089n-b",
+        task_type="code-review",
+        rol="challenger",
+        phase="fanout-dif",
+        loop_id="L089n",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+    )
+
+    fila = _rows(destino)[0]
+    assert fila["channel"] == "api", (
+        f"la fila registro channel={fila.get('channel')!r}: un perfil api "
+        "debe registrar 'api' literal, no degradar a otro valor"
     )
 
 

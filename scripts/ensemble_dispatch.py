@@ -241,6 +241,15 @@ SCORECARD_FIELDS = [
     # WOT-2026-025y documenta (el prefijo frozen son los 16 primeros campos;
     # 037b, 040b, 043q y 048g ya crecieron por aqui), asi que no lo rompe.
     "lens_scope",
+    # WOT-2026-089n (sesion piloto Kilo/nan): CANAL declarado del perfil
+    # (`api` | `agent` | None). Sin este campo el scorecard no distingue
+    # labs sin filesystem (api, un solo turno de bundle) de labs CON
+    # filesystem real (agent, CLI con herramientas) -- la misma clase de
+    # mezcla de poblaciones que motivo `lens_scope` (042v), pero en el eje
+    # S/F de la propuesta de lentes por familia, no en el eje de ambito.
+    # None = el perfil no declaro `channel` (no deberia ocurrir en produccion,
+    # es AUSENCIA de dato, no un tercer valor). Al final, prefijo frozen.
+    "channel",
 ]
 
 ADJUDICATED_OUTCOMES = {
@@ -4308,6 +4317,10 @@ def _record_round(
             # la ronda no paso por el dispatcher (fila historica o caller que no
             # despacha): AUSENCIA de dato, que no es lo mismo que `motor`.
             "lens_scope": profile.get(_LENS_SCOPE_KEY),
+            # WOT-2026-089n: canal DECLARADO del perfil (api | agent | None).
+            # Permite analizar rendimiento por S (sin filesystem) vs F (con
+            # filesystem) sin un join manual contra agents.json.
+            "channel": profile.get("channel"),
         },
     )
 
