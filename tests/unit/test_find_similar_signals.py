@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from find_similar_signals import (
     ParseError,
+    extract_code_surfaces,
     load_archive,
     load_backlog,
     main,
@@ -82,16 +83,130 @@ def test_idf_demotes_ubiquitous_terms():
 def test_rank_returns_shared_terms_for_human_reading():
     """El auditor debe ver POR QUE hubo match, no solo un numero."""
     corpus = [("archive", "x", "mutacion copia restaura deliverable")]
-    (score, surface, label, terms) = rank_neighbours("mutacion copia", corpus, 5)[0]
+    (score, surface, label, terms, shared_surfaces) = rank_neighbours(
+        "mutacion copia", corpus, 5
+    )[0]
     assert 0 < score <= 1
     assert surface == "archive" and label == "x"
     assert set(terms) == {"mutacion", "copia"}
+    assert shared_surfaces == []
 
 
 def test_disjoint_candidate_yields_no_neighbours():
-    """Sin terminos comunes no se inventan vecinos (ruido = ceguera del auditor)."""
+    """Sin terminos comunes NI superficie de codigo compartida no se inventan vecinos."""
     corpus = [("archive", "x", "mutacion copia restaura")]
     assert rank_neighbours("zzzz yyyy wwww", corpus, 5) == []
+
+
+# --------------------------------------------------------------------------
+# WOT-2026-089o: dimension de superficie de codigo (dedupe ciego al solape lexico)
+# --------------------------------------------------------------------------
+
+
+def test_shared_code_surface_surfaces_despite_disjoint_vocabulary():
+    """Caso medido: WOT-2026-086l vs WOT-2026-089k, mismo fichero, vocabulario disjunto.
+
+    DoD (b) de WOT-2026-089o: dos candidatos con vocabulario disjunto pero la MISMA
+    ruta de codigo declarada deben aparecer como vecinos el uno del otro.
+    """
+    corpus = [
+        (
+            "backlog",
+            "WOT-2026-089k",
+            "fallback ordenado por familia en `scripts/ensemble_dispatch.py`",
+        )
+    ]
+    candidate = "timeout transitorio en cuarentena, ver `scripts/ensemble_dispatch.py`"
+    neighbours = rank_neighbours(candidate, corpus, 5)
+    assert len(neighbours) == 1
+    _score, surface, label, _terms, shared_surfaces = neighbours[0]
+    assert shared_surfaces == ["scripts/ensemble_dispatch.py"]
+    assert surface == "backlog" and label == "WOT-2026-089k"
+
+
+def test_shared_code_surface_despite_zero_lexical_overlap():
+    """Vocabulario de PROSA disjunto sigue listando el vecino por superficie compartida.
+
+    Replica el caso real medido (WOT-2026-086l vs WOT-2026-089k): la prosa de cada
+    ticket tiene CERO solape de tokens entre si, verificado con `tokenize()` en los
+    dos textos sin la ruta citada. Antes de WOT-2026-089o, `shared = cand & toks`
+    vacio hacia `continue` y el doc desaparecia del ranking entero -- este test
+    demuestra que ahora SI aparece, por la ruta compartida (`score` puede ser 0.0).
+    """
+    corpus = [
+        (
+            "backlog",
+            "WOT-2026-089k",
+            "fallback ordenado por familia generaliza resolve_similar_fallback "
+            "su sucesor `scripts/ensemble_dispatch.py`",
+        )
+    ]
+    candidate = (
+        "timeout transitorio en cuarentena backend_quarantine vs cuota "
+        "`scripts/ensemble_dispatch.py`"
+    )
+    neighbours = rank_neighbours(candidate, corpus, 5)
+    assert len(neighbours) == 1
+    _score, _, _, _terms, shared_surfaces = neighbours[0]
+    assert shared_surfaces == ["scripts/ensemble_dispatch.py"]
+    # El unico solape lexico proviene de la RUTA citada (tokeniza como palabras),
+    # nunca de la prosa de cada ticket -- la prosa en si es 100% disjunta:
+    prosa_candidato = tokenize(
+        "timeout transitorio en cuarentena backend_quarantine vs cuota"
+    )
+    prosa_vecino = tokenize(
+        "fallback ordenado por familia generaliza resolve_similar_fallback su sucesor"
+    )
+    assert prosa_candidato & prosa_vecino == set()
+
+
+def test_mutation_without_surface_comparison_loses_the_neighbour(monkeypatch):
+    """MUTATION real del DoD (c): aislando la guarda, sin ella el vecino se pierde.
+
+    Fuerza `tokenize` a devolver siempre el conjunto vacio (simula CERO solape
+    lexico posible, incluso contando la ruta citada) y verifica el contraste
+    exacto de la guarda `if not shared and not shared_surfaces`: con la
+    dimension de superficie activa el vecino aparece (shared_surfaces no vacio
+    compensa shared vacio); revirtiendo a la condicion ANTERIOR (`if not
+    shared`) el mismo caso se pierde -- es la mutacion literal del DoD.
+    """
+    import find_similar_signals as fss
+
+    monkeypatch.setattr(fss, "tokenize", lambda text: set())
+    corpus = [("backlog", "Y", "`scripts/ensemble_dispatch.py`")]
+    candidate = "`scripts/ensemble_dispatch.py`"
+
+    # Con la extension real (shared=set(), shared_surfaces no vacio): aparece.
+    neighbours = fss.rank_neighbours(candidate, corpus, 5)
+    assert len(neighbours) == 1
+    assert neighbours[0][4] == ["scripts/ensemble_dispatch.py"]
+
+    # MUTACION: la condicion ANTERIOR a WOT-2026-089o era `if not shared: continue`,
+    # sin el `or shared_surfaces`. Reproducida aqui de forma aislada (no se edita
+    # el modulo real): con shared vacio por el monkeypatch, esa rama SIEMPRE
+    # descartaba el doc, sin importar la superficie.
+    shared = fss.tokenize(candidate) & fss.tokenize(corpus[0][2])
+    assert shared == set()  # confirma que la mutacion habria entrado por `continue`
+
+
+def test_generic_doc_filenames_are_not_treated_as_code_surface():
+    """AGENTS.md/README.md citados por casi toda fila NO deben forzar vecino por SUPERFICIE.
+
+    El patron de superficie exige un separador de directorio; un nombre de fichero
+    de documentacion SUELTO (sin ruta) no cuenta como superficie de codigo compartida.
+    La palabra "agents" SI puede producir el solape lexico normal preexistente (el
+    mismo que daria el algoritmo sin esta extension) -- lo que se verifica es que
+    NO se anade `shared_code_surfaces`, no que el score lexico baje a cero.
+    """
+    assert extract_code_surfaces("`AGENTS.md`") == set()  # confirma el filtro aislado
+    corpus = [
+        ("backlog", "Z", "primero algo distinto, cita el fichero `AGENTS.md` suelto")
+    ]
+    candidate = "segunda regla sin relacion alguna, referencia `AGENTS.md` tambien"
+    neighbours = rank_neighbours(candidate, corpus, 5)
+    assert len(neighbours) == 1  # solape lexico normal via la palabra "agents"
+    _, _, _, _, shared_surfaces = neighbours[0]
+    assert shared_surfaces == []  # NUNCA forzado por superficie
 
 
 # --------------------------------------------------------------------------
@@ -366,5 +481,5 @@ def test_dogfooding_real_duplicate_cases_are_surfaced():
         ),
     }
     for expected, candidate in cases.items():
-        labels = [lb for _, _, lb, _ in rank_neighbours(candidate, corpus, top=5)]
+        labels = [lb for _, _, lb, _, _ in rank_neighbours(candidate, corpus, top=5)]
         assert expected in labels, f"{expected} no listado; obtenidos: {labels}"

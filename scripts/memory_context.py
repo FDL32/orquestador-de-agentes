@@ -267,7 +267,7 @@ def _rank_by_similarity(observations: list[dict], query: str | None) -> list[dic
     # esta correccion el ranker castiga justo la virtud del corpus.
     query_terms = {t for t in tokenize(query) if t}
     by_index: dict[int, tuple[float, float]] = {}
-    for score, surface, _label, terms in ranked:
+    for score, surface, _label, terms, _shared_surfaces in ranked:
         covered = (
             len(query_terms & set(terms)) / len(query_terms) if query_terms else 0.0
         )

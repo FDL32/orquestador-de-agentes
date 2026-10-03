@@ -35,6 +35,14 @@ After (post-condiciones y errores):
     NO es un fallo y jamas bloquea una promocion). Exit 2 = error de parseo/uso, que
     es un estado distinto de "no hay similares" para que ningun consumidor confunda
     "limpio" con "no llegue a mirar".
+
+Dimension de SUPERFICIE DE CODIGO (WOT-2026-089o, aditivo, no reemplaza el solape
+lexico): dos entradas que citan la MISMA ruta de codigo entre backticks (p.ej.
+`scripts/ensemble_dispatch.py`) se listan SIEMPRE como vecinas, incluso con score
+lexico 0.0 -- caso medido: WOT-2026-086l y WOT-2026-089k tocan el mismo fichero con
+vocabulario disjunto y el dedupe lexico nunca las comparaba entre si. No sustituye
+el ranking por Jaccard/IDF (sigue siendo la senal primaria cuando hay solape
+lexico); anade una segunda via de deteccion que el solape de vocabulario no cubre.
 """
 
 from __future__ import annotations
@@ -75,6 +83,32 @@ _TOKEN_RE = re.compile(rf"[a-z0-9_]{{{_MIN_TOKEN_LEN},}}")
 # Identificador de ticket: patron CANONICO importado de `bus/ticket_id.py`
 # (WT-2026-245c / WOT-2026-040f). Este lector solo necesita reconocer la FORMA
 # para no etiquetar una fila con su prosa; la fuente unica vive en el bus.
+
+# WOT-2026-089o: ruta de CODIGO citada entre backticks (``scripts/x.py``, no
+# `AGENTS.md`/docs sueltos -- esos son genericos y citados por casi toda fila,
+# asi que forzarlos como vecino produce ruido, no senal). Exige al menos un
+# separador de directorio O una extension de script/config, para no capturar
+# nombres de fichero de documentacion aislados.
+_CODE_SURFACE_RE = re.compile(
+    r"`([a-zA-Z_][a-zA-Z0-9_./\\-]*/[a-zA-Z0-9_./\\-]+\.(?:py|json|jsonl|ps1|sh|toml|yml|yaml))`"
+)
+
+
+def extract_code_surfaces(text: str | None) -> set[str]:
+    """Rutas de codigo citadas entre backticks en el texto (DoD (a) de WOT-2026-089o).
+
+    Dos tickets con vocabulario disjunto pero la MISMA ruta de codigo declarada
+    colisionan en la practica aunque el solape lexico sea nulo -- caso medido:
+    WOT-2026-086l vs WOT-2026-089k, ambos tocan scripts/ensemble_dispatch.py sin
+    compartir una palabra de Jaccard. Normaliza separadores (\\ -> /) para que
+    una ruta citada con backslash en Windows y otra con forward-slash cuenten
+    como la MISMA superficie.
+    """
+    if not text:
+        return set()
+    if not isinstance(text, str):
+        text = str(text)
+    return {m.replace("\\", "/") for m in _CODE_SURFACE_RE.findall(text)}
 
 
 def tokenize(text: str | None) -> set[str]:
@@ -225,18 +259,24 @@ def _row_label(cells: list[str], ticket_col: int) -> str:
 
 def rank_neighbours(
     candidate: str, corpus: list[tuple[str, str, str]], top: int
-) -> list[tuple[float, str, str, list[str]]]:
+) -> list[tuple[float, str, str, list[str], list[str]]]:
     """Ordena el corpus por Jaccard ponderado por IDF contra el candidato.
 
-    Devuelve [(score, surface, label, terminos_compartidos)] de mayor a menor,
-    truncado a `top` y descartando los de solape nulo.
+    Devuelve [(score, surface, label, terminos_compartidos, superficie_compartida)]
+    de mayor a menor, truncado a `top`. Un doc con superficie de CODIGO compartida
+    (WOT-2026-089o) se incluye SIEMPRE, incluso con score lexico 0 -- el defecto que
+    esta extension corrige es justamente que dos tickets que tocan el MISMO fichero
+    con vocabulario disjunto puntuaban 0 y desaparecian del ranking entero.
     """
-    docs = [(surface, label, tokenize(text)) for surface, label, text in corpus]
+    docs = [
+        (surface, label, tokenize(text), extract_code_surfaces(text))
+        for surface, label, text in corpus
+    ]
     total = len(docs)
     if not total:
         return []
     df: Counter[str] = Counter()
-    for _, _, toks in docs:
+    for _, _, toks, _ in docs:
         df.update(toks)
     # IDF suavizado y SIEMPRE POSITIVO. El `1 +` interno es lo que evita que un
     # termino presente en TODO el corpus reciba peso <= 0: con `log(total/(1+df))`
@@ -247,18 +287,27 @@ def rank_neighbours(
     idf = {w: math.log(1 + total / (1 + c)) for w, c in df.items()}
 
     cand = tokenize(candidate)
-    scored: list[tuple[float, str, str, list[str]]] = []
-    for surface, label, toks in docs:
+    cand_surfaces = extract_code_surfaces(candidate)
+    scored: list[tuple[float, str, str, list[str], list[str]]] = []
+    for surface, label, toks, doc_surfaces in docs:
+        shared_surfaces = sorted(cand_surfaces & doc_surfaces)
         shared = cand & toks
-        if not shared:
+        if not shared and not shared_surfaces:
             continue
-        num = sum(idf.get(w, 0.0) for w in shared)
-        den = sum(idf.get(w, 0.0) for w in (cand | toks))
-        if den <= 0:
-            continue
-        terms = sorted(shared, key=lambda w: idf.get(w, 0.0), reverse=True)[:6]
-        scored.append((num / den, surface, label, terms))
-    scored.sort(key=lambda t: (-t[0], t[1], t[2]))
+        if shared:
+            num = sum(idf.get(w, 0.0) for w in shared)
+            den = sum(idf.get(w, 0.0) for w in (cand | toks))
+            score = num / den if den > 0 else 0.0
+            terms = sorted(shared, key=lambda w: idf.get(w, 0.0), reverse=True)[:6]
+        else:
+            # Solape lexico nulo, solo superficie de codigo compartida: el caso
+            # que WOT-2026-089o fichó -- se lista con score 0.0, nunca se descarta.
+            score = 0.0
+            terms = []
+        scored.append((score, surface, label, terms, shared_surfaces))
+    # Orden: primero los que tienen superficie compartida (senal mas fuerte que
+    # el lexico solo), despues por score descendente.
+    scored.sort(key=lambda t: (not t[4], -t[0], t[1], t[2]))
     return scored[:top]
 
 
@@ -315,6 +364,18 @@ def _load_corpus(
     return corpus, coverage
 
 
+def _print_neighbour(
+    index: int, neighbour: tuple[float, str, str, list[str], list[str]]
+) -> None:
+    """Imprime UN vecino en formato texto (extraido de main para bajar su complejidad)."""
+    score, surface, label, terms, shared_surfaces = neighbour
+    print(f"  {index}. [{score:.4f}] {surface}:{label}")
+    if terms:
+        print(f"     terminos compartidos: {', '.join(terms)}")
+    if shared_surfaces:
+        print(f"     SUPERFICIE DE CODIGO COMPARTIDA: {', '.join(shared_surfaces)}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -365,8 +426,9 @@ def main(argv: list[str] | None = None) -> int:
                             "surface": surf,
                             "label": lb,
                             "shared_terms": terms,
+                            "shared_code_surfaces": shared_surfaces,
                         }
-                        for s, surf, lb, terms in neighbours
+                        for s, surf, lb, terms, shared_surfaces in neighbours
                     ],
                     "note": "score alto NO es duplicado confirmado; lee cada entrada entera",
                 },
@@ -390,9 +452,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"\n{len(neighbours)} vecino(s) mas proximo(s), de mayor a menor solape:\n")
-    for i, (score, surface, label, terms) in enumerate(neighbours, 1):
-        print(f"  {i}. [{score:.4f}] {surface}:{label}")
-        print(f"     terminos compartidos: {', '.join(terms)}")
+    for i, neighbour in enumerate(neighbours, 1):
+        _print_neighbour(i, neighbour)
     print(
         "\nAVISO: el score mide solape de vocabulario, NO equivalencia semantica.\n"
         "Un score alto NO es un duplicado confirmado y uno bajo NO lo descarta.\n"
