@@ -31,13 +31,23 @@ Reglas que NO deben romperse.
 
 ## Frontmatter Obligatorio
 
+> Fuente de verdad: `REQUIRED_FIELDS` en `skills/validate_all.py`. Si ese set cambia, actualiza
+> esta tabla en el mismo commit.
+
 | Campo | Descripción | Ejemplo |
 |-------|-------------|---------|
-| name | Nombre kebab-case | `man-review-code` |
+| name | Nombre kebab-case (`manager-`/`builder-` para esos roles, sin prefijo corto) | `manager-review-implementation` |
 | version | Semver | `1.0.0` |
 | description | Una línea clara | `Revisar código del Builder` |
-| author | Creador | `agent-system` |
+| author | Creador | `agent` |
 | tags | Categorías | `[manager, review]` |
+| role | `user \| shared \| manager \| builder \| auditor` | `manager` |
+| stage | `setup \| plan \| implement \| quality \| review \| close \| memory \| support \| meta` | `review` |
+| writes_memory | boolean | `false` |
+| quality_gate | boolean | `false` |
+
+**Recomendado (no exigido por el validador):** `triggers` — lista de comandos/alias que activan
+la skill. Su ausencia no falla `validate_all.py`, pero impide el discovery por trigger.
 
 ## Body: Secciones Requeridas
 

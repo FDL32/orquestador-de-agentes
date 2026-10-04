@@ -21,7 +21,8 @@ This skill implements the V1 "dream cycle" pattern adapted from gbrain: a manual
 
 ### When to Invoke
 
-- At session close (after `project-finalize` Paso 9c)
+- At session close (after `project-finalize` Paso 9e, which itself requires Paso 9d —
+  `session_close_observations.py` — to have run first)
 - When `observations.jsonl` has grown significantly
 - Before starting a new work cycle to clean up memory
 - When requested via `/consolidate`, `/memory`, or `/dream-cycle` triggers
@@ -150,5 +151,6 @@ If agents are appending during consolidation:
 
 ## Related Skills
 
-- `project-finalize`: Invoke this skill at Paso 9d (optional session close)
+- `project-finalize`: Invoke this skill at Paso 9e (optional session close; depends on Paso 9d
+  having run first)
 - `local-audit`: Run after consolidation to verify compatibility

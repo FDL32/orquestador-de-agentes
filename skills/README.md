@@ -120,9 +120,12 @@ Verifica:
 
 ## Convenciones
 
-- `man-[accion]` - Skills del Manager
-- `bui-[accion]` - Skills del Builder
-- `[accion]` - Skills compartidas
+- `manager-[accion]` - Skills del Manager
+- `builder-[accion]` - Skills del Builder
+- `[accion]` - Skills compartidas / auditor / usuario (sin prefijo de rol)
+- (el prefijo corto `man-`/`bui-` fue el diseño original pero nunca se adopto como nombre de
+  carpeta; sigue vivo solo en `contract_id` historicos como `cid-man-review-v2` o
+  `cid-bui-implement-v1`, que no se renombran)
 - `_shared/` - Inventario y referencias compartidas, fuera del discovery de skills
 - `SKILL.md` - frontmatter con taxonomia operativa
 - `references/` - documentacion de apoyo

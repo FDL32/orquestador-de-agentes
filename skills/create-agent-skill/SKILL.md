@@ -45,10 +45,17 @@ Buscar en el sistema actual:
 mkdir -p skills/[nombre-skill]/references
 ```
 
-**Convención de nombres:**
-- `man-[accion]` - Skills del Manager
-- `bui-[accion]` - Skills del Builder
-- `[accion]` - Skills compartidas (sin prefijo)
+**Convención de nombres** (verificada contra las 43 skills reales en disco; `man-`/`bui-` fue el
+diseño original pero NUNCA se adopto — las 8 skills de Manager/Builder usan el nombre completo):
+- `manager-[accion]` - Skills del Manager
+- `builder-[accion]` - Skills del Builder
+- `[accion]` - Skills compartidas / auditor / usuario (sin prefijo de rol)
+
+**NO confundir con `contract_id`:** algunos `contract_id` historicos usan el prefijo corto
+(`cid-man-review-v2`, `cid-bui-implement-v1`) porque se acunaron antes de fijar esta convencion.
+Esos identificadores estan VIVOS y citados en skills activas (`builder-implement-from-plan`,
+`builder-run-quality-gates`, `manager-review-implementation`) — no se renombran. El prefijo corto
+solo esta prohibido para el NOMBRE DE CARPETA de una skill nueva.
 
 ### Paso 4: Escribir SKILL.md
 
@@ -117,7 +124,11 @@ python skills/validate_all.py
 
 Verificar:
 - [ ] Frontmatter YAML válido
-- [ ] Campos requeridos: name, version, description, author, tags
+- [ ] Campos requeridos (ver `REQUIRED_FIELDS` en `skills/validate_all.py`, fuente de verdad —
+  no copiar esta lista a mano en otro sitio): name, version, description, author, tags, role,
+  stage, writes_memory, quality_gate
+- [ ] `triggers` presente (recomendado para todas las skills activables por comando; no es
+  requerido por `validate_all.py`, pero su ausencia impide el discovery por trigger)
 - [ ] Cuerpo no supera 250 líneas
 - [ ] References no superan 80 líneas
 - [ ] Carpeta `references/` existe
@@ -158,4 +169,6 @@ skills/[nombre-skill]/
 - **MÁXIMO** 250 líneas en SKILL.md
 - **MÁXIMO** 80 líneas por reference
 - **SIEMPRE** validar con `validate_all.py`
-- **USAR** prefijos man-/bui- según corresponda
+- **USAR** nombre completo `manager-`/`builder-` según corresponda (NO el prefijo corto
+  `man-`/`bui-`, que es el nombre de carpeta de una skill nueva — no confundir con un
+  `contract_id` historico existente, que no se renombra)

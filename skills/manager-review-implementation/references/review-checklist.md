@@ -94,6 +94,14 @@
 - [ ] AP-D01 Scope cleanup destructivo: Builder no usa `git checkout`, `git reset` ni `git revert` sobre archivos fuera de `Files Likely Touched`; si detecta discrepancia, la reporta en `execution_log.md` y pide actualizacion de scope.
 - [ ] AP-D02 Artefacto generado sin proteccion: artefactos generados o de runtime (`.agent/context/project-map.json`, `events.jsonl`) quedan excluidos de hooks mutadores y no se reescriben en `pre-push`.
 - [ ] AP-D03 Handoff sin ancla de recuperacion: Builder creo M3 (`checkpoint/review-<ticket>`) explicitamente antes de `--mark-ready`; el guard de handoff paso sin bloquear por falta de checkpoint; si hubo discrepancias de scope, se usaron checkpoints en lugar de limpieza destructiva.
+- [ ] AP-D04 Allowlist/exclusion sin test de regresion: si el diff anade un patron nuevo a
+      `EXCLUDE_PATTERNS`/allowlist/skip de un gate de seguridad (secret-scan, publication gate,
+      redaction), existe un test con comando literal + fixture path que prueba que un input
+      malicioso real sigue bloqueando.
+- [ ] AP-D05 Green local no-hermetico: ningun test nuevo depende de un artefacto versionado o de
+      runtime de forma no-hermetica (p.ej. `assert (repo / "ruta").exists()` o lectura de
+      `.agent/`/`.session/` runtime) sin fixture propia en `tmp_path`, o sin `pytest.skip`
+      explicito si el artefacto es opcional/desindexado.
 
 ## Handoff limpio - comprobaciones pre-review
 - [ ] No hay eventos `HANDOFF_BLOCKED` en el bus para este ticket (o si los hay, fueron resueltos explicitamente).

@@ -36,13 +36,23 @@ Usa esta checklist antes de aprobar cualquier `work_plan.md`. Las preguntas son 
 
 ## TP Check
 
+> El bloque `## TP Check` que el AUDIT reproduce verifica EXCLUSIVAMENTE TP-01..TP-05 (asi lo
+> exige `validate_ticket_prose.py:detect_audit_malformed_tp_check`, que busca literalmente los
+> prefijos `TP-01:`..`TP-05:`). TP-06 y TP-07 son checks reales pero NO van dentro de ese bloque
+> canonico — ver la nota aparte justo despues.
+
 - [ ] TP-01 Contradiccion secuencial: el plan no pide acciones incompatibles sobre el mismo recurso.
 - [ ] TP-02 Criterio no verificable: cada aceptacion tiene un verificador literal.
 - [ ] TP-03 Deriva de ambito implicita: los archivos tocados estan enumerados sin comodines.
 - [ ] TP-04 Semantica blanda: no hay "si procede" ni "stale" sin definicion operativa.
-- [ ] TP-05 Paridad PLAN/AUDIT rota: el plan y el audit describen la misma secuencia y los mismos observables.
-- [ ] TP-05 Paridad PLAN/AUDIT rota: los verbos y condiciones de `Blockers` y `Fases` permanecen alineados.
-- [ ] TP-07 Alcance condicional: el plan no delega a "si existe", "si se anade" o "si aplica" una decision de alcance que deberia estar cerrada.
+- [ ] TP-05 Paridad PLAN/AUDIT rota: el plan y el audit describen la misma secuencia, los mismos
+      observables, y los verbos/condiciones de `Blockers` y `Fases` permanecen alineados.
+
+**Checks adicionales sobre el PLAN/AUDIT, fuera del bloque canonico `## TP Check`:**
+- [ ] TP-06 TP Check no canonico: el `## TP Check` del AUDIT verifica SOLO que el PLAN esta libre
+      de TP-01..TP-05 (ver nota arriba) — nunca criterios de diseno del entregable.
+- [ ] TP-07 Alcance condicional: el plan no delega a "si existe", "si se anade" o "si aplica" una
+      decision de alcance que deberia estar cerrada.
 
 ## Redaccion para prompts
 

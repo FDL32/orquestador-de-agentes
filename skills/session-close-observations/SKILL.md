@@ -24,7 +24,8 @@ Esta skill es invocada por Builder, Manager o Supervisor al cerrar una sesion pa
 - Al finalizar un WP (Work Plan) completado
 - Al cerrar una sesion de trabajo larga (>2 horas)
 - Cuando hay decisiones arquitectonicas o patrones descubiertos
-- Antes de ejecutar `memory-consolidate` (Paso 9d de `project-finalize`)
+- Antes de ejecutar `memory-consolidate` (Paso 9e de `project-finalize`; esta skill es el Paso 9d,
+  prerequisito de 9e)
 
 ### Cuando NO activar
 
@@ -142,9 +143,9 @@ La skill no tiene output directo en stdout. Su efecto es:
 
 ## Integration
 
-Esta skill se invoca en `project-finalize` entre:
-- Paso 9c: `local_audit.py` (snapshot de auditoria)
-- Paso 9d: `memory_consolidate.py` (consolidacion de memoria)
+Esta skill (`session_close_observations.py`) ES el Paso 9d de `project-finalize`, entre:
+- Paso 9c: `local_audit.py` (snapshot de auditoria) — anterior
+- Paso 9e: `memory_consolidate.py` (consolidacion de memoria) — posterior, depende de este 9d
 
 Comandos tipicos:
 ```bash
