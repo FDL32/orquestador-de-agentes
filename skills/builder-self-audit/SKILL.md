@@ -274,21 +274,25 @@ Si hay drift → corrige la documentación antes de continuar. Frescura document
 
 ### Paso 6 — Gate completo del proyecto
 
-
+Este paso es el **gate de CIERRE FINAL** sobre todo el proyecto. No es el gate FOCAL de
+`builder-run-quality-gates` (que corre tras cada cambio sustancial, por `deliverable_type`); la
+prohibicion de esa skill de "NO saltar el dispatcher invocando ruff/pytest manualmente" aplica al
+gate focal, no a este cierre final. Usa el MISMO dispatcher para evitar que los dos mecanismos
+diverjan (el dispatcher ejecuta `ruff check` -> `ruff format --check` ->
+`run_pytest_safe.py --level all` -> `pip_audit_project.py` condicional; ver
+`builder-run-quality-gates/SKILL.md`):
 
 ```bash
 
-ruff check . --exclude .agent
-
-python scripts/run_pytest_safe.py
+python scripts/run_gates_dispatch.py
 
 ```
 
 
 
-- ✅ Ambos pasan → puedes reportar
+- ✅ Pasa → puedes reportar
 
-- ❌ Alguno falla → corrige y vuelve al inicio del gate
+- ❌ Falla → corrige y vuelve al inicio del gate
 
 
 

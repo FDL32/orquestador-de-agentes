@@ -40,11 +40,11 @@ el prompt canónico, no esta skill:
 
 Si esta skill y el prompt divergen, prevalece el prompt.
 
-## Dispatch table (informativo)
+## Dispatch table (informativo — secuencia real de `run_code_gates()` en `scripts/run_gates_dispatch.py`)
 
 | deliverable_type | Gates ejecutados |
 |---|---|
-| code | ruff + pytest-safe + pip-audit wrapper (condicional, invocado directo por el dispatcher) |
+| code | `ruff check .` -> `ruff format --check .` -> `run_pytest_safe.py --level all` (si hay tests locales) -> `pip_audit_project.py` (condicional por politica) |
 | mixed | code gates + deliverable existence check |
 | documentation | deliverable existence check |
 | research | deliverable existence check |
