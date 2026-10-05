@@ -58,6 +58,64 @@ def _validate_yaml(fm_text: str) -> str | None:
     return None
 
 
+def _split_frontmatter(content: str) -> tuple[str | None, str, int]:
+    """Cut a markdown text into (frontmatter_text, body, body_line_offset).
+
+    Before: ``content`` is the full text of a markdown file.
+    During: applies THE frontmatter cut of this module -- anchored at line 1
+            (``startswith("---")``) and ``split("---", 2)`` -- so no caller ever
+            looks for "the first ``---``" on its own (32/48 prompts use ``---`` as
+            a horizontal rule; DEC-router-prompts-001 D4).
+    After: ``frontmatter_text`` is None when there is no block; ``body`` is the
+           text after the closing ``---`` line; ``body_line_offset`` is the
+           number of lines the block consumed (0 without frontmatter).
+    """
+    if not content.startswith("---"):
+        return None, content, 0
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None, content, 0
+    body = parts[2]
+    for newline in ("\r\n", "\n"):
+        if body.startswith(newline):
+            body = body[len(newline) :]
+            break
+    consumed = content[: len(content) - len(body)]
+    return parts[1], body, consumed.count("\n")
+
+
+def read_prompt_parts(path: Path) -> tuple[dict[str, Any], str | None, str, int]:
+    """Parse a markdown file into (frontmatter_data, error, body, body_line_offset).
+
+    Before: ``path`` points to a markdown file (it may not exist).
+    During: reads it once (utf-8-sig) and applies ``_split_frontmatter``; the
+            frontmatter is validated exactly like ``parse_frontmatter``.
+    After: ``error`` follows ``parse_frontmatter`` (None, "NO_FRONTMATTER",
+           "IO_ERROR: ..." or "YAML_INVALIDO: ..."); ``data`` is {} on any error;
+           ``body``/``offset`` are always the post-frontmatter text and its line
+           offset, so the PROMPT-SUMMARY window can be counted from there (T5).
+    """
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            content = f.read()
+    except Exception as e:
+        return {}, f"IO_ERROR: {e}", "", 0
+
+    fm_raw, body, offset = _split_frontmatter(content)
+    if fm_raw is None:
+        return {}, "NO_FRONTMATTER", body, offset
+
+    fm_text = fm_raw.strip()
+    if not fm_text:
+        return {}, "NO_FRONTMATTER", body, offset
+
+    yaml_error = _validate_yaml(fm_text)
+    if yaml_error:
+        return {}, yaml_error, body, offset
+
+    return _parse_fm_lines(fm_text), None, body, offset
+
+
 def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str | None]:
     """Parse YAML frontmatter from a markdown file.
 
@@ -66,29 +124,12 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str | None]:
       - error == "NO_FRONTMATTER": file has no frontmatter block
       - error is a string: YAML parsing error description
       - data is empty dict on any error
+
+    Delegates on ``read_prompt_parts`` (single cut, DEC-router-prompts-001); the
+    signature and the returned values are unchanged.
     """
-    try:
-        with open(path, encoding="utf-8-sig") as f:
-            content = f.read()
-    except Exception as e:
-        return {}, f"IO_ERROR: {e}"
-
-    if not content.startswith("---"):
-        return {}, "NO_FRONTMATTER"
-
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {}, "NO_FRONTMATTER"
-
-    fm_text = parts[1].strip()
-    if not fm_text:
-        return {}, "NO_FRONTMATTER"
-
-    yaml_error = _validate_yaml(fm_text)
-    if yaml_error:
-        return {}, yaml_error
-
-    return _parse_fm_lines(fm_text), None
+    data, error, _body, _offset = read_prompt_parts(path)
+    return data, error
 
 
 def _scan_skills_dir(directory: Path | None) -> dict[str, dict[str, Any]]:
@@ -527,17 +568,22 @@ def check_naming(bundle_root: Path | None = None) -> list[str]:
 
     Before: bundle_root resolves to the motor root (auto if None). prompts/ and
             skills/ may or may not exist.
-    During: validates every prompts/*.md stem against snake_case and every
-            skills/<dir> name against kebab-case (DEC-008D-001). Directories
-            starting with "_" (e.g. _shared) and non-.md files are skipped.
-            Names in KNOWN_LEGACY_NAMES are tolerated (declared legacy debt).
+    During: validates every prompts/*.md and prompts/_shared/*.md stem against
+            snake_case and every skills/<dir> name against kebab-case
+            (DEC-008D-001). prompts/_shared/ is checked explicitly
+            (DEC-router-prompts-001 T8: the router lists those modules, so their
+            names are surface too). skills/ directories starting with "_" and
+            non-.md files are skipped. Names in KNOWN_LEGACY_NAMES are tolerated.
     After: returns a list of human-readable violation strings (empty == clean).
            No side effects, no I/O beyond directory listing.
     """
     if bundle_root is None:
         bundle_root = _get_bundle_root()
-    return _check_prompt_names(bundle_root / "prompts") + _check_skill_names(
-        bundle_root / "skills"
+    prompts_dir = bundle_root / "prompts"
+    return (
+        _check_prompt_names(prompts_dir)
+        + _check_prompt_names(prompts_dir / "_shared")
+        + _check_skill_names(bundle_root / "skills")
     )
 
 
@@ -678,11 +724,18 @@ def build_catalog(bundle_root: Path | None = None) -> dict[str, Any]:
     # (frontmatter `status:`) via the same _derive_status() used for skills, not
     # assumed "active" by layout. Vocabulary stays active|deprecated|draft: a
     # legacy stub declaring `status: deprecated` no longer publishes as active.
+    # DEC-router-prompts-001: the prompt's frontmatter `role` (scalar) reaches the
+    # catalog through the same _derive_role() used for skills (default shared).
     entries += [
         _catalog_entry(
-            "prompt", p, root, status=_derive_status(parse_frontmatter(p)[0])
+            "prompt",
+            p,
+            root,
+            status=_derive_status(fm),
+            role=_derive_role(fm),
         )
         for p in sorted((root / "prompts").glob("*.md"))
+        for fm in (parse_frontmatter(p)[0],)
     ]
     entries += [
         _catalog_entry("reference", p, root)
@@ -755,7 +808,9 @@ def generate_index(bundle_root: Path | None = None) -> Path:
     catalog = build_catalog(root)
     index_path = root / INDEX_REL_PATH
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(render_index(catalog), encoding="utf-8")
+    # LF explicito: .gitattributes fija `*.md eol=lf` y el hook mixed-line-ending
+    # (--fix=lf) abortaba el commit cada vez que se regeneraba en Windows (CRLF).
+    index_path.write_text(render_index(catalog), encoding="utf-8", newline="\n")
     return index_path
 
 
@@ -779,23 +834,505 @@ def check_index_stale(bundle_root: Path | None = None) -> tuple[bool, str]:
     return False, ""
 
 
+# --------------------------------------------------------------------------
+# DEC-router-prompts-001: phase router of the prompts (generated projection).
+# Source of truth: each prompt's frontmatter (role / cycle_phase / route_kind)
+# plus its WOT-2026-022o PROMPT-SUMMARY. ROUTER.md is derived on every call and
+# checked by --check-index (pre-commit hook check-index-stale, always_run).
+# --------------------------------------------------------------------------
+
+ROUTER_REL_PATH = "docs/registry/ROUTER.md"
+ROUTER_AUTOGEN_MARKER = (
+    "<!-- AUTOGENERATED by discover_skills.py --generate-index (router)"
+)
+# Read before opening any prompt, so it must stay short: a WARN, never a block
+# (doc_optimization.md PASO 5: WARN first).
+ROUTER_MAX_LINES_WARN = 150
+
+# D1: temporal phases of the cycle (NOT the dispatcher's --phase vocabulary).
+CYCLE_PHASES: tuple[str, ...] = (
+    "F0-arranque-sesion",
+    "F1-backlog",
+    "F2-contrato",
+    "F3-auditoria-contrato",
+    "F4-lanzamiento",
+    "F5-implementacion",
+    "F6-revision",
+    "F7-cierre-sesion",
+    "F8-meta-auditoria",
+)
+# D2: closed enum. Named route_kind because the catalog already has a `kind`.
+ROUTE_KINDS: tuple[str, ...] = ("entry", "modo", "modulo", "mantenimiento", "externo")
+# D3: canonical roles of AGENTS.md (never a backend); `role` is a scalar.
+CANONICAL_ROLES: tuple[str, ...] = ("orchestrator", "manager", "builder", "auditor")
+# D2: external artifacts consumed whole by another system; exempt from metadata.
+EXTERNAL_ALLOWLIST: frozenset[str] = frozenset({"hermes_soul.md"})
+# D4: (role rule, cycle_phase rule) per route_kind.
+_ROUTE_RULES: dict[str, tuple[str, str]] = {
+    "entry": ("required", "required"),
+    "modo": ("required", "required"),
+    "modulo": ("optional", "forbidden"),
+    "mantenimiento": ("required", "forbidden"),
+    "externo": ("forbidden", "forbidden"),
+}
+# D5: loop defaults per cycle phase -> (dispatcher --phase, is governance,
+# --task-type, note). Validated against ensemble_dispatch by the tests (T7).
+PHASE_LOOP_PARAMS: dict[str, tuple[str, bool, str, str]] = {
+    "F1-backlog": ("TRIAGE_AUDIT", False, "triage", ""),
+    "F3-auditoria-contrato": ("CONTRACT_AUDIT", True, "contract-audit", ""),
+    "F6-revision": (
+        "MANAGER_REVIEW",
+        True,
+        "code-review",
+        "`prose` si el entregable es documentation/research/analysis (decision provisional)",
+    ),
+    "F7-cierre-sesion": ("CLOSE", True, "contract-audit", ""),
+}
+PROMPT_SUMMARY_MARKER = "<!-- PROMPT-SUMMARY"
+# T5: the block must close within these lines AFTER the frontmatter.
+PROMPT_SUMMARY_SCAN_LINES = 12
+_SUMMARY_KEYS = ("what", "when", "not")
+_MAX_LISTED_CITERS = 5
+
+
+def prompt_summary(body: str) -> dict[str, str]:
+    """Return the what/when/not of the PROMPT-SUMMARY block of a prompt body.
+
+    Before: ``body`` is the text AFTER the frontmatter (``read_prompt_parts``).
+    During: scans only the first PROMPT_SUMMARY_SCAN_LINES lines for the marker
+            and its closing ``-->`` (both must fall inside the window).
+    After: {key: value} for the keys found; {} if absent or not closed in time.
+    """
+    lines = body.splitlines()[:PROMPT_SUMMARY_SCAN_LINES]
+    start = next((i for i, ln in enumerate(lines) if PROMPT_SUMMARY_MARKER in ln), None)
+    if start is None:
+        return {}
+    end = next((i for i in range(start, len(lines)) if lines[i].strip() == "-->"), None)
+    if end is None:
+        return {}
+    summary: dict[str, str] = {}
+    for line in lines[start + 1 : end]:
+        key, sep, value = line.partition(":")
+        if sep and key.strip() in _SUMMARY_KEYS:
+            summary[key.strip()] = value.strip()
+    return summary
+
+
+def validate_route_metadata(name: str, fm: dict[str, Any]) -> list[str]:
+    """Validate the routing frontmatter of one prompt against DEC D1-D4.
+
+    Before: ``name`` is the prompt path relative to prompts/; ``fm`` its parsed
+            frontmatter (``read_prompt_parts``).
+    During: checks route_kind (closed enum; externo only via allowlist), the
+            per-kind obligations of role/cycle_phase, role as ONE canonical role
+            and cycle_phase values within D1.
+    After: list of human-readable errors (empty == valid). No I/O.
+    """
+    kind = fm.get("route_kind")
+    if not isinstance(kind, str) or kind not in ROUTE_KINDS:
+        return [f"{name}: route_kind {kind!r} fuera del enum {list(ROUTE_KINDS)}"]
+    errors: list[str] = []
+    if kind == "externo" and Path(name).name not in EXTERNAL_ALLOWLIST:
+        errors.append(
+            f"{name}: route_kind externo solo para la allowlist {sorted(EXTERNAL_ALLOWLIST)}"
+        )
+    role_rule, phase_rule = _ROUTE_RULES[kind]
+    errors += _role_errors(name, kind, fm.get("role"), role_rule)
+    errors += _phase_errors(name, kind, fm.get("cycle_phase"), phase_rule)
+    return errors
+
+
+def _role_errors(name: str, kind: str, role: Any, rule: str) -> list[str]:
+    """D3/D4: `role` obligation per route_kind and ONE canonical role."""
+    if role in (None, ""):
+        return (
+            [f"{name}: role obligatorio para route_kind {kind}"]
+            if rule == "required"
+            else []
+        )
+    if rule == "forbidden":
+        return [f"{name}: role no aplica a route_kind {kind}"]
+    if not isinstance(role, str) or role not in CANONICAL_ROLES:
+        return [f"{name}: role {role!r} debe ser UN valor de {list(CANONICAL_ROLES)}"]
+    return []
+
+
+def _phase_errors(name: str, kind: str, phases: Any, rule: str) -> list[str]:
+    """D1/D4: `cycle_phase` obligation per route_kind and values within D1.
+
+    `cycle_phase: []` parses as [""] (`_parse_fm_lines`): empty strings are
+    dropped first, so an empty list means "absent", not an odd value.
+    """
+    values = phases if isinstance(phases, list) else [phases]
+    values = [v for v in values if v not in (None, "")]
+    if not values:
+        if rule == "required":
+            return [f"{name}: cycle_phase obligatoria para route_kind {kind}"]
+        return []
+    if rule == "forbidden":
+        return [f"{name}: cycle_phase prohibida para route_kind {kind} (DEC D4)"]
+    unknown = [v for v in values if v not in CYCLE_PHASES]
+    return (
+        [f"{name}: cycle_phase con valores fuera de D1: {unknown}"] if unknown else []
+    )
+
+
+def _prompt_files(root: Path) -> list[Path]:
+    """prompts/*.md followed by prompts/_shared/*.md (the router universe)."""
+    prompts_dir = root / "prompts"
+    return sorted(prompts_dir.glob("*.md")) + sorted(
+        (prompts_dir / "_shared").glob("*.md")
+    )
+
+
+def _citation_pattern(module_path: Path) -> re.Pattern[str]:
+    """Regex of a citation of ``module_path`` (DEC D4, executable definition).
+
+    The file name needs a boundary on BOTH sides: ``foo.x.md``, ``x.md.bak`` and
+    ``x.mdx`` name other files; ``x.md.`` at the end of a sentence still counts.
+    """
+    name = re.escape(module_path.stem) + r"\.md"
+    if module_path.parent.name == "_shared":
+        prefixed = rf"(?<!skills/)_shared/{name}"
+    else:
+        prefixed = rf"prompts/{name}"
+    bare = rf"(?<![A-Za-z0-9_./\-]){name}"
+    return re.compile(rf"(?:{prefixed}|{bare})(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])")
+
+
+def _strip_summary_block(text: str) -> str:
+    """Remove the PROMPT-SUMMARY block of a text, only if it is well formed.
+
+    The block counts only when its closing ``-->`` falls within
+    PROMPT_SUMMARY_SCAN_LINES lines of the marker (same window as
+    ``prompt_summary``); an unclosed block removes nothing, so it can never
+    hide a real citation that comes after it.
+    """
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if PROMPT_SUMMARY_MARKER in ln), None)
+    if start is None:
+        return text
+    window = range(start, min(len(lines), start + PROMPT_SUMMARY_SCAN_LINES))
+    end = next((i for i in window if lines[i].strip() == "-->"), None)
+    if end is None:
+        return text
+    return "".join(lines[:start] + lines[end + 1 :])
+
+
+def module_citations(module_path: Path, root: Path) -> list[str]:
+    """Return who cites a module: names relative to prompts/, or ``AGENTS.md``.
+
+    Before: ``module_path`` is a prompt file under ``root``/prompts.
+    During: searches prompts/*.md, prompts/_shared/*.md and AGENTS.md (the
+            module itself excluded) for a literal occurrence of its file with
+            extension: the prefixed path, or ``<name>.md`` as a token. Prose
+            mentions with the path COUNT on purpose (navigation heuristic, not
+            "who really uses it"); a bare word without ``.md`` does not.
+            A well-formed PROMPT-SUMMARY block is skipped: its ``not:`` line
+            says "this is NOT <file>", routing metadata, not a citation.
+            Windows separators are normalised to ``/`` first, so
+            ``skills\\_shared\\x.md`` is excluded like ``skills/_shared/x.md``.
+    After: sorted list of citing names (empty == orphan module, T9 fails).
+    """
+    pattern = _citation_pattern(module_path)
+    target = module_path.resolve()
+    citers: list[str] = []
+    candidates = [*_prompt_files(root), root / "AGENTS.md"]
+    for path in candidates:
+        if not path.is_file() or path.resolve() == target:
+            continue
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        text = _strip_summary_block(text).replace("\\", "/")
+        if pattern.search(text):
+            if path.name == "AGENTS.md" and path.parent == root:
+                citers.append("AGENTS.md")
+            else:
+                citers.append(path.relative_to(root / "prompts").as_posix())
+    return sorted(citers)
+
+
+def _route_entries(root: Path) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Split the router universe into (adopted entries, pending names, exempt names)."""
+    entries: list[dict[str, Any]] = []
+    pending: list[str] = []
+    exempt: list[str] = []
+    for path in _prompt_files(root):
+        rel = path.relative_to(root / "prompts").as_posix()
+        if rel in EXTERNAL_ALLOWLIST:
+            exempt.append(rel)
+            continue
+        fm, _error, body, offset = read_prompt_parts(path)
+        kind = fm.get("route_kind")
+        if not kind:
+            pending.append(rel)
+            continue
+        phases = fm.get("cycle_phase") or []
+        if isinstance(phases, str):
+            phases = [phases]
+        role = fm.get("role")
+        entries.append(
+            {
+                "rel": rel,
+                "path": path,
+                "kind": kind,
+                "role": role if isinstance(role, str) else "",
+                "phases": [p for p in phases if p],
+                "summary": prompt_summary(body),
+                # One read per file: frontmatter lines + body lines.
+                "lines": offset + len(body.splitlines()),
+            }
+        )
+    return entries, pending, exempt
+
+
+def router_metadata_errors(bundle_root: Path | None = None) -> list[str]:
+    """Validate every routed file of the universe (DEC D4 + T6 + T9).
+
+    Before: ``bundle_root`` is the motor root (auto if None).
+    During: for each prompt that declares ``route_kind``: runs
+            ``validate_route_metadata`` and, for a ``modulo``, requires at least
+            one citation (``module_citations``); an allowlisted external file
+            must carry no routing frontmatter.
+    After: list of errors (empty == the router can be generated); used by
+           --generate-index (refuses to write) and --check-index (fails), so
+           invalid metadata never reaches ROUTER.md silently.
+    """
+    root = bundle_root or _get_bundle_root()
+    errors: list[str] = []
+    for path in _prompt_files(root):
+        rel = path.relative_to(root / "prompts").as_posix()
+        fm = read_prompt_parts(path)[0]
+        if rel in EXTERNAL_ALLOWLIST:
+            if fm.get("route_kind"):
+                errors.append(
+                    f"{rel}: externo exento, no lleva frontmatter de enrutado (T6)"
+                )
+            continue
+        if not fm.get("route_kind"):
+            continue
+        errors += validate_route_metadata(rel, fm)
+        if fm.get("route_kind") == "modulo" and not module_citations(path, root):
+            errors.append(
+                f"{rel}: modulo sin ninguna cita en prompts/ ni AGENTS.md (T9)"
+            )
+    return errors
+
+
+def _cell(value: Any) -> str:
+    """One markdown table cell: single line, pipes escaped, '-' when empty."""
+    text = " ".join(str(value).split()).replace("|", "\\|")
+    return text or "-"
+
+
+def build_router(bundle_root: Path | None = None) -> str:
+    """Render ROUTER.md from the adopted prompts (deterministic projection).
+
+    Before: ``bundle_root`` is the motor root (auto if None).
+    During: reads the routing frontmatter + PROMPT-SUMMARY of every prompt in
+            prompts/ and prompts/_shared/ and the citations of each modulo.
+    After: the full markdown text; prompts without ``route_kind`` are counted as
+           pending and NOT routed; the external allowlist is declared, not routed.
+    """
+    root = bundle_root or _get_bundle_root()
+    entries, pending, exempt = _route_entries(root)
+    lines = _router_header(len(entries), len(entries) + len(pending), exempt)
+    lines += _router_cycle_section(_of_kind(entries, "entry"))
+    lines += _router_table(
+        "## Modos (encadenan fases por ticket)",
+        "| Prompt | Fases | Rol | Cuando | NO es | Lineas |",
+        [
+            f"| `prompts/{e['rel']}` | {_cell(', '.join(e['phases']))} | {_cell(e['role'])}"
+            f" | {_summary_cell(e, 'when')} | {_summary_cell(e, 'not')} | {e['lines']} |"
+            for e in _of_kind(entries, "modo")
+        ],
+    )
+    lines += _router_table(
+        "## Fuera del ciclo (mantenimiento)",
+        "| Prompt | Rol | Cuando | NO es | Lineas |",
+        [
+            f"| `prompts/{e['rel']}` | {_cell(e['role'])} | {_summary_cell(e, 'when')}"
+            f" | {_summary_cell(e, 'not')} | {e['lines']} |"
+            for e in _of_kind(entries, "mantenimiento")
+        ],
+    )
+    lines += _router_table(
+        "## Modulos (no los abras tu: te los cita otro prompt)",
+        "| Modulo | Lo citan | Que es | Lineas |",
+        [
+            f"| `prompts/{e['rel']}` | {_cell(_citers_cell(module_citations(e['path'], root)))}"
+            f" | {_summary_cell(e, 'what')} | {e['lines']} |"
+            for e in _of_kind(entries, "modulo")
+        ],
+    )
+    lines += _router_roles_section(entries)
+    return "\n".join(lines)
+
+
+def _of_kind(entries: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+    """Adopted entries of one route_kind, sorted by path (deterministic output)."""
+    return sorted((e for e in entries if e["kind"] == kind), key=lambda e: e["rel"])
+
+
+def _summary_cell(entry: dict[str, Any], key: str) -> str:
+    """One PROMPT-SUMMARY field of an entry as a table cell."""
+    return _cell(entry["summary"].get(key, ""))
+
+
+def _citers_cell(citers: list[str]) -> str:
+    """List the citers, or collapse them to 'transversal (N)' above the limit."""
+    if len(citers) > _MAX_LISTED_CITERS:
+        return f"transversal ({len(citers)})"
+    return ", ".join(citers)
+
+
+def _router_header(adopted: int, total: int, exempt: list[str]) -> list[str]:
+    """Marker, title, how to read it and the adoption status of the router."""
+    exempt_note = f" (exento: {', '.join(exempt)})" if exempt else ""
+    return [
+        f"{ROUTER_AUTOGEN_MARKER}; do not edit by hand (DEC-router-prompts-001). -->",
+        "# Router de prompts por fase (proyeccion generada)",
+        "",
+        "> Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).",
+        "> Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.",
+        "> Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.",
+        f"> Adoptados: {adopted} de {total}{exempt_note}. Los no adoptados aun NO aparecen"
+        " aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.",
+        "",
+    ]
+
+
+def _router_cycle_section(entry_prompts: list[dict[str, Any]]) -> list[str]:
+    """'Ciclo por fase': one row per entry and phase, F5 fixed, loop defaults (D5)."""
+    lines = [
+        "## Ciclo por fase (abre UNO)",
+        "",
+        "| Fase | Rol | Abre | Cuando | NO es | Lineas | Bucle (`--phase` / `--task-type`) |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for phase in CYCLE_PHASES:
+        if phase == "F5-implementacion":
+            lines.append(
+                f"| {phase} | builder | (ninguno) | Tu contrato es el prompt que recibiste"
+                " + `work_plan.md` | No abras `prompts/` para buscar | - | - |"
+            )
+            continue
+        loop = PHASE_LOOP_PARAMS.get(phase)
+        loop_cell = f"{loop[0]} / {loop[2]}{' (*)' if loop[3] else ''}" if loop else "-"
+        lines.extend(
+            f"| {phase} | {_cell(e['role'])} | `prompts/{e['rel']}` | {_summary_cell(e, 'when')}"
+            f" | {_summary_cell(e, 'not')} | {e['lines']} | {loop_cell} |"
+            for e in entry_prompts
+            if phase in e["phases"]
+        )
+    lines.append("")
+    lines += [f"(*) {phase}: {p[3]}." for phase, p in PHASE_LOOP_PARAMS.items() if p[3]]
+    lines += [
+        "Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracion`"
+        " (loop_id `EXPLORATORY-<tema>`, sin nonce).",
+        "",
+    ]
+    return lines
+
+
+def _router_table(title: str, header: str, rows: list[str]) -> list[str]:
+    """A titled markdown table; omitted entirely when it has no rows."""
+    if not rows:
+        return []
+    separator = "|" + "---|" * header.count(" | ") + "---|"
+    return [title, "", header, separator, *rows, ""]
+
+
+def _router_roles_section(entries: list[dict[str, Any]]) -> list[str]:
+    """'Por rol': deterministic anchors (### Rol: <role>) for native-agent pointers."""
+    lines = ["## Por rol", ""]
+    for role in CANONICAL_ROLES:
+        mine = sorted((e for e in entries if e["role"] == role), key=lambda e: e["rel"])
+        if not mine:
+            continue
+        lines += [f"### Rol: {role}", ""]
+        lines += [
+            f"- `prompts/{e['rel']}` ({', '.join(e['phases']) if e['phases'] else e['kind']})"
+            for e in mine
+        ]
+        lines.append("")
+    return lines
+
+
+def generate_router(bundle_root: Path | None = None) -> Path:
+    """Write docs/registry/ROUTER.md from the live prompts. Returns its path."""
+    root = bundle_root or _get_bundle_root()
+    router_path = root / ROUTER_REL_PATH
+    router_path.parent.mkdir(parents=True, exist_ok=True)
+    # LF explicito, como generate_index (`*.md eol=lf` + hook --fix=lf).
+    router_path.write_text(build_router(root), encoding="utf-8", newline="\n")
+    return router_path
+
+
+def check_router_stale(bundle_root: Path | None = None) -> tuple[bool, str]:
+    """Check whether ROUTER.md matches the projection of the live prompts.
+
+    Returns (is_stale, diagnostic): stale when missing or divergent.
+    """
+    root = bundle_root or _get_bundle_root()
+    router_path = root / ROUTER_REL_PATH
+    expected = build_router(root)
+    if not router_path.exists():
+        return True, f"{ROUTER_REL_PATH} does not exist; run --generate-index."
+    if router_path.read_text(encoding="utf-8") != expected:
+        return True, (
+            f"{ROUTER_REL_PATH} is stale vs the live prompts (DEC-router-prompts-001). "
+            "Regenerate with: python scripts/discover_skills.py --generate-index"
+        )
+    return False, ""
+
+
 def _dispatch_catalog_flags() -> None:
-    """Handle the WOT-2026-008c catalog/index CLI flags; SystemExit if matched."""
+    """Handle the WOT-2026-008c catalog/index CLI flags; SystemExit if matched.
+
+    --generate-index and --check-index cover BOTH projections: INDEX.md
+    (catalog) and ROUTER.md (DEC-router-prompts-001), so the existing
+    always-run pre-commit hook check-index-stale guards the router too.
+    """
     if "--catalog" in sys.argv:
         print(json.dumps(build_catalog(), indent=2, ensure_ascii=False))
         raise SystemExit(0)
 
     if "--generate-index" in sys.argv:
+        root = _get_bundle_root()
+        metadata_errors = router_metadata_errors(root)
+        if metadata_errors:
+            for error in metadata_errors:
+                print(f"[ROUTER] {error}", file=sys.stderr)
+            print(
+                "[ROUTER] invalid routing metadata; nothing generated.", file=sys.stderr
+            )
+            raise SystemExit(1)
         path = generate_index()
-        print(f"[OK] Generated {path.relative_to(_get_bundle_root())}")
+        router = generate_router()
+        print(f"[OK] Generated {path.relative_to(root)}")
+        print(f"[OK] Generated {router.relative_to(root)}")
+        router_lines = len(router.read_text(encoding="utf-8").splitlines())
+        if router_lines > ROUTER_MAX_LINES_WARN:
+            print(
+                f"[WARN] {ROUTER_REL_PATH} has {router_lines} lines "
+                f"(> {ROUTER_MAX_LINES_WARN}); it is read before every prompt.",
+                file=sys.stderr,
+            )
         raise SystemExit(0)
 
     if "--check-index" in sys.argv:
-        is_stale, diag = check_index_stale()
-        if is_stale:
-            print(f"[STALE] {diag}", file=sys.stderr)
+        failures = [
+            f"[STALE] {diag}"
+            for stale, diag in (check_index_stale(), check_router_stale())
+            if stale
+        ]
+        failures += [f"[ROUTER] {error}" for error in router_metadata_errors()]
+        if failures:
+            for line in failures:
+                print(line, file=sys.stderr)
             raise SystemExit(1)
         print("[OK] INDEX.md is in sync with the live discovery catalog.")
+        print("[OK] ROUTER.md is in sync with the live prompts.")
         raise SystemExit(0)
 
 
