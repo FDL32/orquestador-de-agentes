@@ -1,4 +1,5 @@
 # Prompt: Auditoria del Batch Autonomo de Tickets (Auditor Aislado)
+**[AUDITOR]** -- ver tambien el EJECUTOR: `prompts/orchestrator_autonomous_ticket_batch.md`
 
 > **Modo:** READ-ONLY. Esta auditoria NUNCA modifica codigo, backlog, tickets,
 > DAG-JSON, ledger de aprendizaje ni estado operativo. Solo escribe sus propios

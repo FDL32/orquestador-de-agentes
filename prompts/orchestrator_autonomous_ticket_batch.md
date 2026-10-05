@@ -1,4 +1,5 @@
 # Orchestrator Autonomous Ticket Batch (Executor)
+**[EJECUTOR]** -- ver tambien el AUDITOR: `prompts/audit_autonomous_ticket_batch.md`
 
 > Executor that consumes the DAG produced by `/backlog-triage`
 > (`prompts/backlog_triage.md`, schema `autonomous-batch-dag/v1`) and closes
