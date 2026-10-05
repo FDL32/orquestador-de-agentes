@@ -1,4 +1,13 @@
+---
+role: orchestrator
+route_kind: mantenimiento
+---
 # Prompt: Optimizacion de documentacion basada en evidencia (medir -> mover -> verificar)
+<!-- PROMPT-SUMMARY
+what: Protocolo medir -> mover -> verificar para trasladar contenido de un fichero siempre-cargado a una referencia, con guard de no-degradacion de sus consumidores.
+when: Cuando el cierre transitivo de lo siempre-cargado (CLAUDE.md, AGENTS.md y sus @imports) supera el presupuesto (~5 % de la ventana efectiva).
+not: NO es para anadir contenido nuevo ni para recortar prompts por longitud; hermanos: suite_optimization.md (segundos de suite) y memory_optimization.md (memoria).
+-->
 
 > **Modo:** propone y (opcionalmente) aplica UN traslado de contenido desde un fichero
 > SIEMPRE-CARGADO hacia una referencia, guiado por EVIDENCIA, con disciplina CEM: NUNCA mover

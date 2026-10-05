@@ -1,4 +1,13 @@
+---
+role: orchestrator
+route_kind: modulo
+---
 # Contrato: como lanzar un bucle de ensemble
+<!-- PROMPT-SUMMARY
+what: Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta.
+when: Cada vez que una fase pide una revision adversarial (CONTRACT_AUDIT, MANAGER_REVIEW, CLOSE o DESIGN_REVIEW de una propuesta).
+not: NO sirve para encargar una tarea a un backend (eso es un Builder real: builder_invocation_contract.md) ni define la forma 1->9->2 del bucle de gobierno (orchestrator_autonomous_ticket_batch.md).
+-->
 
 contract_id: cid-ensemble-loop-v1
 source_of_truth: este prompt. Los prompts de gobierno (`orchestrator_autonomous_ticket_batch.md`,

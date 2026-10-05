@@ -1,3 +1,8 @@
+---
+role: orchestrator
+cycle_phase: [F4-lanzamiento, F5-implementacion, F6-revision]
+route_kind: modo
+---
 # Orchestrator Pipeline Prompt
 
 <!-- PROMPT-SUMMARY

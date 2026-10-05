@@ -1,7 +1,15 @@
 ---
 legacy_aliases: [review_manager]
+role: manager
+cycle_phase: [F6-revision]
+route_kind: entry
 ---
 # Manager Review Prompt
+<!-- PROMPT-SUMMARY
+what: Plantilla del rol manager para revisar la entrega del Builder de un ticket: verificacion mecanica propia, barrera de regresion (mutation-verify), checklist CEM y veredicto APROBADO/CHANGES con decision artifact.
+when: Tras la entrega del Builder (fase MANAGER_REVIEW) de un ticket de implementacion.
+not: NO cierra tickets de Contract Formation en status frozen (eso es validate_contract_formation.py) ni audita el contrato antes del Builder (audit_ticket_contract.md).
+-->
 
 Eres el MANAGER del ticket `{{TICKET_ID}}` en el motor
 `orquestador_de_agentes`.

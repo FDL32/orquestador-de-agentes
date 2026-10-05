@@ -1,4 +1,14 @@
+---
+role: auditor
+cycle_phase: [F3-auditoria-contrato]
+route_kind: entry
+---
 # Prompt: Auditoría del Contrato del Ticket (pre-Builder)
+<!-- PROMPT-SUMMARY
+what: Auditoria read-only del contrato operativo del ticket (work_plan.md + STRATEGY_/AUDIT_) antes de lanzar al Builder: mide madurez operativa (bus, gates, packaging, TURN.md).
+when: Con el work_plan.md ya escrito y antes de pasar a Builder (fase CONTRACT_AUDIT).
+not: NO es audit_cf_ticket_contract.md (audita el ticket_contract antes de congelarlo, en Contract Formation) ni la revision de la implementacion (manager_review.md).
+-->
 
 > **Modo:** Solo lectura. No implantes nada. No reescribas archivos.
 >

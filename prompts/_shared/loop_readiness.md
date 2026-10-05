@@ -1,4 +1,12 @@
+---
+route_kind: modulo
+---
 # Loop-readiness gate (cid-loop-readiness-v0)
+<!-- PROMPT-SUMMARY
+what: Gate que decide si una tarea es apta para /goal autonomo: 4 condiciones conjuntas (recurrente, verificacion automatizable, presupuesto declarado, artefacto nombrado) mas una denylist.
+when: Antes de activar /goal autonomo para un ticket o un lote (al lanzar la ejecucion).
+not: NO es el bucle adversarial de ensemble (ensemble_loop.md) ni el checker de cumplimiento del objetivo (audit_goal_completion.md).
+-->
 
 > Fuente unica de verdad sobre si una tarea es apta para /goal autonomo.
 > Adoptada en WOT-2026-014s (loop-engineering, 2026-06-27).
