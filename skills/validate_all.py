@@ -33,7 +33,9 @@ REQUIRED_FIELDS = {
     "quality_gate",
 }
 
-VALID_ROLES = {"builder", "manager", "shared", "user", "auditor"}
+# DEC-router-skills-001 D-S2 added "orchestrator" so the 3 orchestrate-* skills
+# can declare their real pipeline role instead of role: shared.
+VALID_ROLES = {"builder", "manager", "shared", "user", "auditor", "orchestrator"}
 VALID_STAGES = {
     "setup",
     "plan",
@@ -205,7 +207,7 @@ def _validate_field_content(frontmatter: dict[str, object]) -> list[str]:
     role = frontmatter.get("role")
     if not isinstance(role, str) or role not in VALID_ROLES:
         errors.append(
-            "El campo 'role' debe ser uno de: builder, manager, shared, user, auditor"
+            "El campo 'role' debe ser uno de: " + ", ".join(sorted(VALID_ROLES))
         )
 
     stage = frontmatter.get("stage")

@@ -1,10 +1,10 @@
 ---
 name: orchestrate-pipeline
 version: 1.0.0
-description: Coordinar por chat un pipeline multi-ticket en repo_destino usando Manager, Builder, reviews y cierre canonico
+description: Coordinar por chat un pipeline multi-ticket en repo_destino usando Manager, Builder, reviews y cierre canonico. Usar cuando se orquesta el pipeline por-ticket en modo destino con bus vivo (bootstrap -> builder -> review -> cierre por bus). No usar para el modo motor code-only (ver orchestrator_pipeline_codeonly.md) ni para el ejecutor de batch autonomo (ver orchestrator_autonomous_ticket_batch.md) ni para el bootstrap de sesion.
 triggers: [/pipeline, orchestrate-pipeline, run-backlog, ejecutar-backlog, implantar-planes]
 author: agent
-role: shared
+role: orchestrator
 stage: meta
 writes_memory: false
 quality_gate: false

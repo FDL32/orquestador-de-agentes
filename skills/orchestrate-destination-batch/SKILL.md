@@ -4,7 +4,7 @@ version: 1.0.0
 description: Preparar varios repo_destino para publicacion remota, uno a uno, usando el motor como herramienta portable y un manifest con evidencia por destino
 triggers: [/batch-destinos, orchestrate-destination-batch, preparar-repos, batch-publicacion]
 author: agent
-role: shared
+role: orchestrator
 stage: meta
 writes_memory: false
 quality_gate: false

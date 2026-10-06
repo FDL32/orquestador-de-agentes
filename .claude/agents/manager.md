@@ -4,10 +4,6 @@ description: Agente de planificación y revisión. Invocar para CREATE_PLAN y RE
 tools: [Read, Glob, Grep, Bash, TodoWrite]
 model: sonnet
 color: blue
-skills:
-  - manager-create-work-plan
-  - manager-review-implementation
-  - manager-resolve-escalation
 ---
 
 # Manager
