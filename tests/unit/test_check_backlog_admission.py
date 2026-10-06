@@ -25,6 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from scripts import check_backlog_admission as cba
 from scripts.prepush_check import run_backlog_admission_check
 
@@ -905,3 +906,114 @@ def test_run_backlog_admission_check_empty_env_var_unchanged(
     result = run_backlog_admission_check(repo)
     assert result.passed is False, result.output
     assert "SIN_RECIBO" in result.output
+
+
+# Seccion WOT-2026-090s: todo consumidor real expone la via del recibo externo.
+
+
+def _alta_con_recibo_externo(tmp_path: Path, cid: str) -> tuple[Path, Path]:
+    """Repo con una alta SIN recibo en el mensaje y su recibo coherente en disco."""
+    repo = init_repo(tmp_path)
+    row_text = row(cid)
+    corpus = [
+        backlog_surface(repo),
+        {"path": ARCHIVE_REL, "tipo": "archive", "repo": "alta", "entradas": 0},
+    ]
+    recibo = build_recibo(repo, cid, row_text, corpus)
+    commit_alta(repo, row_text, "alta con recibo externo")
+    recibo_path = tmp_path / f"recibo_{cid}.json"
+    recibo_path.write_text(json.dumps(recibo, ensure_ascii=False), encoding="utf-8")
+    return repo, recibo_path
+
+
+def _consumir_cli_modo_directo(
+    repo: Path, recibo: Path | None, _mp
+) -> tuple[bool, str]:
+    base = git(repo, "merge-base", "origin/main", "HEAD").strip()
+    head = git(repo, "rev-parse", "HEAD").strip()
+    extra = ["--recibo-file", str(recibo)] if recibo else []
+    code, out = run_guard(repo, "--base", base, "--head", head, *extra)
+    return code == 0, out
+
+
+def _consumir_cli_modo_cierre(repo: Path, recibo: Path | None, _mp) -> tuple[bool, str]:
+    extra = ["--recibo-file", str(recibo)] if recibo else []
+    code, out = run_guard(repo, *extra)
+    return code == 0, out
+
+
+def _consumir_prepush_check(repo: Path, recibo: Path | None, mp) -> tuple[bool, str]:
+    if recibo:
+        mp.setenv("BACKLOG_ADMISSION_RECIBO_FILES", str(recibo))
+    else:
+        mp.delenv("BACKLOG_ADMISSION_RECIBO_FILES", raising=False)
+    result = run_backlog_admission_check(repo)
+    return result.passed, result.output
+
+
+# Consumidores reales del guard en el motor. El cuarto, el hook pre-push que
+# instala cada destino (`scripts/check_backlog_admission_hook.py`), vive en el
+# repo del destino y se prueba alli: el motor no conoce sus hooks. El quinto,
+# `--session-close`, llega a `prepush_check` por un subproceso: lo cubre
+# test_session_close_hereda_la_via_de_recibo.
+CONSUMIDORES = {
+    "cli_modo_directo": _consumir_cli_modo_directo,
+    "cli_modo_cierre": _consumir_cli_modo_cierre,
+    "prepush_check": _consumir_prepush_check,
+}
+
+
+@pytest.mark.parametrize("consumidor", sorted(CONSUMIDORES))
+def test_consumidores_exponen_la_via_de_recibo_externo(
+    tmp_path: Path, monkeypatch, consumidor: str
+) -> None:
+    """WOT-2026-090s (b): cada consumidor real acepta el recibo externo.
+
+    El CLI documenta `--recibo-file`, pero en modo cierre (sin --base/--head,
+    que es como lo invoca el hook pre-push del destino) lo DESCARTABA en
+    silencio. Medido 2026-10-06 en el destino real: 15 recibos coherentes ->
+    15 SIN_RECIBO sin rango y RECIBO_COHERENTE con rango. Cada caso exige las
+    dos mitades: sin recibo el consumidor bloquea (no es un verde vacuo) y con
+    recibo pasa. Mutation-verify: quitar `extra_recibos` de la rama de cierre
+    de `main()` pone rojo el caso `cli_modo_cierre`.
+    """
+    repo, recibo = _alta_con_recibo_externo(tmp_path, "WOT-2026-990a")
+    consumir = CONSUMIDORES[consumidor]
+
+    ok_sin, out_sin = consumir(repo, None, monkeypatch)
+    assert not ok_sin, out_sin
+    assert "SIN_RECIBO" in out_sin
+
+    ok_con, out_con = consumir(repo, recibo, monkeypatch)
+    assert ok_con, out_con
+    assert "RECIBO_COHERENTE" in out_con
+    assert "SIN_RECIBO" not in out_con
+
+
+def test_session_close_hereda_la_via_de_recibo(tmp_path: Path, monkeypatch) -> None:
+    """WOT-2026-090s (b): `--session-close` entrega la variable a prepush_check.
+
+    El cierre lanza prepush_check como SUBPROCESO via
+    `closeout_steps.support.run_script`; la via del recibo externo
+    (`BACKLOG_ADMISSION_RECIBO_FILES`) solo llega si ese runner hereda el
+    entorno. Se prueba el runner real con un script sonda en vez del cierre
+    entero: el consumidor final ya es el caso `prepush_check` de arriba.
+    Mutation-verify: un `env` que no parta de `os.environ` pone este test rojo.
+    """
+    from scripts.closeout_steps.support import run_script
+
+    sonda = tmp_path / "scripts" / "sonda_env_wot_2026_090s.py"
+    sonda.parent.mkdir(parents=True)
+    sonda.write_text(
+        "import os\n"
+        "print(os.environ.get('BACKLOG_ADMISSION_RECIBO_FILES', '<ausente>'))\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BACKLOG_ADMISSION_RECIBO_FILES", "a.json;b.json")
+
+    result = run_script(
+        "sonda_env_wot_2026_090s.py", [], tmp_path, scripts_dir="scripts"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "a.json;b.json"

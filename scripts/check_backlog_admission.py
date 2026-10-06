@@ -1091,7 +1091,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=Path,
         default=None,
-        help="Recibo JSON externo (repetible)",
+        help="Recibo JSON externo (repetible; vale con y sin --base/--head)",
     )
     parser.add_argument(
         "--revalidate",
@@ -1136,9 +1136,13 @@ def main(argv: list[str] | None = None) -> int:
                 cutoff_sha=args.grandfather_cutoff_sha,
             )
         else:
+            # WOT-2026-090s: los recibos de --recibo-file valen tambien sin
+            # --base/--head. Esta rama los descartaba en silencio, y es la que
+            # usa el hook pre-push del destino.
             code, lines, skipped, findings = _audit_closeout(
                 repo,
                 cutoff_sha=args.grandfather_cutoff_sha,
+                extra_recibos=extra or None,
             )
             if skipped:
                 print("\n".join(lines))
