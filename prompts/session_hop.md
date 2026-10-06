@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F7-cierre-sesion, F0-arranque-sesion]
+route_kind: entry
+---
 # Prompt: Session Hop (arranque de sesion con continuidad medida)
+<!-- PROMPT-SUMMARY
+what: Puente entre sesiones, de solo lectura sobre el codigo y el estado operativo: produce un arranque para la sesion siguiente con el METODO heredado y el ESTADO re-medido (cada dato con su comando y exit code) y, como mucho, lo escribe en orchestrator_pipeline/arranques/; no muta backlog, STATE, work_plan, bus ni codigo.
+when: Al cerrar una sesion para dejar continuidad medida, o al preparar el arranque de la sesion siguiente a partir del estado recolectado.
+not: NO define el rol ni el metodo de la sesion siguiente (prompts/orchestrator_session_bootstrap.md), NO lee el estado operativo de UN ticket (.claude/commands/pause-work.md, .claude/commands/resume-work.md, .claude/commands/session-report.md) y NO ejecuta el trabajo de la sesion: solo lo prepara.
+-->
 
 > **Modo:** Solo lectura sobre el codigo y el estado operativo. Este prompt NUNCA muta
 > `backlog.md`, `STATE.md`, `work_plan.md`, el bus ni codigo. Produce un ARRANQUE para

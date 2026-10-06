@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F1-backlog]
+route_kind: entry
+---
 # Prompt de alta de backlog con recibo
+<!-- PROMPT-SUMMARY
+what: Alta de un ticket nuevo como fila de backlog.md con recibo mecanico BACKLOG-ADMISSION-RECIBO, emitido por backlog_db_compare.py y contrastado por el guard check_backlog_admission.py.
+when: Tras decidir en el PASO 0 del protocolo de hallazgos que la senal merece una fila NUEVA, antes de commitear el alta.
+not: NO es el triaje pre-pipeline (prompts/backlog_triage.md), NO escala hallazgos del motor al buzon (prompts/escalate_to_motor.md) y NO cubre los otros dos flujos del PASO 0 (prompts/_shared/finding_triage_protocol.md).
+-->
 
 contract_id: cid-backlog-admit-v1
 Skill canonica: skills/backlog-admit/SKILL.md
