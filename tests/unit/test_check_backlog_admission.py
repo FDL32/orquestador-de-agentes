@@ -20,6 +20,7 @@ tests/test_pre_handoff_guard.py); subprocess de git NUNCA mockeado (D8).
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
@@ -955,7 +956,9 @@ def _consumir_prepush_check(repo: Path, recibo: Path | None, mp) -> tuple[bool, 
 # instala cada destino (`scripts/check_backlog_admission_hook.py`), vive en el
 # repo del destino y se prueba alli: el motor no conoce sus hooks. El quinto,
 # `--session-close`, llega a `prepush_check` por un subproceso: lo cubre
-# test_session_close_hereda_la_via_de_recibo.
+# test_session_close_entrega_la_via_de_recibo_a_prepush_check. La lista se
+# contrasta con los call-sites reales en
+# test_todo_call_site_de_audit_closeout_pasa_extra_recibos.
 CONSUMIDORES = {
     "cli_modo_directo": _consumir_cli_modo_directo,
     "cli_modo_cierre": _consumir_cli_modo_cierre,
@@ -977,6 +980,9 @@ def test_consumidores_exponen_la_via_de_recibo_externo(
     recibo pasa. Mutation-verify: quitar `extra_recibos` de la rama de cierre
     de `main()` pone rojo el caso `cli_modo_cierre`.
     """
+    # Hermetico: la variable exportada en el shell no debe colarse en la
+    # mitad "sin recibo" de ningun consumidor.
+    monkeypatch.delenv("BACKLOG_ADMISSION_RECIBO_FILES", raising=False)
     repo, recibo = _alta_con_recibo_externo(tmp_path, "WOT-2026-990a")
     consumir = CONSUMIDORES[consumidor]
 
@@ -990,30 +996,107 @@ def test_consumidores_exponen_la_via_de_recibo_externo(
     assert "SIN_RECIBO" not in out_con
 
 
-def test_session_close_hereda_la_via_de_recibo(tmp_path: Path, monkeypatch) -> None:
-    """WOT-2026-090s (b): `--session-close` entrega la variable a prepush_check.
+def test_session_close_entrega_la_via_de_recibo_a_prepush_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """WOT-2026-090s (b): el paso real del cierre entrega la variable.
 
-    El cierre lanza prepush_check como SUBPROCESO via
-    `closeout_steps.support.run_script`; la via del recibo externo
-    (`BACKLOG_ADMISSION_RECIBO_FILES`) solo llega si ese runner hereda el
-    entorno. Se prueba el runner real con un script sonda en vez del cierre
-    entero: el consumidor final ya es el caso `prepush_check` de arriba.
-    Mutation-verify: un `env` que no parta de `os.environ` pone este test rojo.
+    `--session-close` ejecuta `session_closeout._step_prepush_check`, que lanza
+    prepush_check.py como SUBPROCESO (gates.step_prepush_check -> _run_script
+    -> closeout_steps.support.run_script). La via del recibo externo
+    (`BACKLOG_ADMISSION_RECIBO_FILES`) solo llega si esa cadena hereda el
+    entorno. Con un project_root temporal sin link de motor, el runner resuelve
+    `<root>/scripts/prepush_check.py`: aqui, una sonda que sale con 0 solo si
+    recibe la variable. Dos mitades: sin variable el paso da FAIL; con ella,
+    PASS. Mutation-verify: un `env` que no parta de `os.environ` en el runner
+    pone roja la mitad PASS.
     """
-    from scripts.closeout_steps.support import run_script
+    from scripts.session_closeout import _step_prepush_check
 
-    sonda = tmp_path / "scripts" / "sonda_env_wot_2026_090s.py"
+    sonda = tmp_path / "scripts" / "prepush_check.py"
     sonda.parent.mkdir(parents=True)
     sonda.write_text(
         "import os\n"
-        "print(os.environ.get('BACKLOG_ADMISSION_RECIBO_FILES', '<ausente>'))\n",
+        "import sys\n"
+        "valor = os.environ.get('BACKLOG_ADMISSION_RECIBO_FILES')\n"
+        "sys.exit(0 if valor == 'a.json;b.json' else 1)\n",
         encoding="utf-8",
     )
+
+    monkeypatch.delenv("BACKLOG_ADMISSION_RECIBO_FILES", raising=False)
+    sin = _step_prepush_check(tmp_path, dry_run=False)
+    assert sin.status == "FAIL", sin.detail
+
     monkeypatch.setenv("BACKLOG_ADMISSION_RECIBO_FILES", "a.json;b.json")
+    con = _step_prepush_check(tmp_path, dry_run=False)
+    assert con.status == "PASS", con.detail
 
-    result = run_script(
-        "sonda_env_wot_2026_090s.py", [], tmp_path, scripts_dir="scripts"
-    )
 
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "a.json;b.json"
+def test_cli_modo_cierre_no_relaja_la_coherencia(tmp_path: Path) -> None:
+    """WOT-2026-090s (a): reenviar el recibo NO relaja su contraste.
+
+    El recibo externo pasa ahora tambien por la rama de cierre del CLI; debe
+    contrastarse igual que en modo directo. Un recibo con N mentiroso llega
+    por --recibo-file y el guard sigue en ROJO con RECIBO_INCOHERENTE.
+    """
+    repo = init_repo(tmp_path)
+    row_text = row("WOT-2026-991a")
+    corpus = [
+        backlog_surface(repo),
+        {"path": ARCHIVE_REL, "tipo": "archive", "repo": "alta", "entradas": 0},
+    ]
+    recibo = build_recibo(repo, "WOT-2026-991a", row_text, corpus)
+    recibo["corpus"][0]["entradas"] += 1
+    recibo["entradas_censadas"] += 1
+    commit_alta(repo, row_text, "alta con recibo externo incoherente")
+    recibo_file = tmp_path / "recibo_incoherente.json"
+    recibo_file.write_text(json.dumps(recibo, ensure_ascii=False), encoding="utf-8")
+
+    code, out = run_guard(repo, "--recibo-file", str(recibo_file))
+
+    assert code == 1, out
+    assert "RECIBO_INCOHERENTE" in out
+    assert "VEREDICTO GLOBAL: RECIBO_COHERENTE" not in out
+
+
+def _call_sites_de_audit_closeout(scripts_dir: Path) -> list[tuple[str, bool]]:
+    """(fichero:linea, pasa extra_recibos) de cada llamada real en scripts/."""
+    sites: list[tuple[str, bool]] = []
+    for py in sorted(scripts_dir.rglob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else getattr(func, "id", None)
+            )
+            if name == "_audit_closeout":
+                where = f"{py.relative_to(scripts_dir.parent).as_posix()}:{node.lineno}"
+                sites.append(
+                    (where, any(kw.arg == "extra_recibos" for kw in node.keywords))
+                )
+    return sites
+
+
+def test_todo_call_site_de_audit_closeout_pasa_extra_recibos() -> None:
+    """WOT-2026-090s (b): enumera MECANICAMENTE los consumidores del guard.
+
+    Familia `obs-grandfather-cutoff-flag-exists-but-consumer-never-passes-it`,
+    cuarta instancia: la via existe y un consumidor no la pasa (09-24 el
+    cutoff, 09-26 y 10-02 los recibos en el cierre, 10-06 la rama de cierre
+    del CLI). Una lista escrita a mano no ve al consumidor nuevo; este test
+    recorre con `ast` todas las llamadas a `_audit_closeout` de scripts/ y
+    exige `extra_recibos=` en cada una. Sobre la revision anterior al fix
+    habria nombrado `scripts/check_backlog_admission.py` (la rama de cierre de
+    `main()`). El minimo de 2 llamadas evita un verde vacuo si la funcion se
+    renombra.
+    """
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    sites = _call_sites_de_audit_closeout(scripts_dir)
+
+    assert len(sites) >= 2, sites
+    sin_via = [where for where, pasa in sites if not pasa]
+    assert not sin_via, f"llamadas a _audit_closeout sin extra_recibos: {sin_via}"
