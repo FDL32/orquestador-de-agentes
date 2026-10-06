@@ -690,7 +690,7 @@ def test_051a_timestamped_name_still_demands_its_pair(tmp_path: Path) -> None:
 # sat in a group while absent from `tickets[]`, and the validator returned
 # exit 0 both before AND after that incoherence -- the barrier existed and did
 # not bite where the failure happens. Contract:
-# prompts/orchestrator_autonomous_ticket_batch.md:741.
+# prompts/orchestrator_autonomous_ticket_batch.md, seccion del bloque PREDICATE.
 # ---------------------------------------------------------------------------
 
 
@@ -806,7 +806,7 @@ def test_046h_invalid_evidence_label_rejected(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("label", ["VERIFICADO", "INFERIDO", "REQUIERE_HUMANO"])
 def test_046h_contract_declared_labels_are_accepted(tmp_path: Path, label: str) -> None:
-    """El enum lo fija el prompt PRODUCTOR (`prompts/backlog_triage.md:364`:
+    """El enum lo fija el prompt PRODUCTOR (`prompts/backlog_triage.md, Fase 1 y Salida obligatoria (evidence_label)`:
     "VERIFICADO|INFERIDO|REQUIERE_HUMANO"), no la memoria del implementador.
 
     Regresion medida el 2026-08-22, primer uso real de la barrera: el enum se

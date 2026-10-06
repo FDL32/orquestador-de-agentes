@@ -55,7 +55,7 @@ from scripts.prefix_resolver import resolve_ticket_alternation  # noqa: E402
 
 SCHEMA_VERSION = "backlog-reconcile-collector/v0"
 
-# Live-queue statuses that enter reconciliation (mirror backlog_triage.md l.65 and
+# Live-queue statuses that enter reconciliation (mirror backlog_triage.md, Fase 0 (Reconciliacion) and
 # check_backlog_contract LIVE_STATES; terminal states never appear in the table).
 RECONCILE_STATES = ("pending", "deferred", "completed-partial")
 
