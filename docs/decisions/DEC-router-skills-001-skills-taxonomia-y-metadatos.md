@@ -241,7 +241,7 @@ desincronizado del `SKILL.md` real debe fallar el gate de frescura).
 - Toda skill-puntero sin `cycle_phase` propio resuelve al de su `source_prompt`; toda skill
   autocontenida declara el suyo. Ninguna skill queda sin `cycle_phase` resoluble, SALVO las
   skills-puntero cuyo prompt es `mantenimiento` (enmienda de D-S1, exencion derivada del
-  `route_kind` real del prompt). Todo valor resuelto es uno de los 9 de D-S1.
+  `route_kind` real del prompt). Todo valor resuelto pertenece al vocabulario de fases de D-S1.
 - Toda skill con `role` en `CONTRACT_OPT_IN_ROLES` (incluido `orchestrator` tras esta DEC) con
   `source_prompt`/`contract_id` declarado pasa `--check-contract`; ninguna skill con esos campos
   declarados escapa al gate por razon de `role`.
@@ -250,7 +250,7 @@ desincronizado del `SKILL.md` real debe fallar el gate de frescura).
 - Todo stub en `.claude/skills/<n>/SKILL.md` tiene `description` identica a la de
   `skills/<n>/SKILL.md`; un gate de frescura falla si divergen.
 - `ROUTER.md` referencia toda skill-puntero por su columna `skill`; ninguna skill-puntero queda
-  sin esa columna, SALVO la que apunta a un prompt `modulo` (excepcion declarada en D-S6). Cada
+  sin esa columna, SALVO las que apuntan a un prompt `modulo` (excepcion declarada en D-S6). Cada
   prompt tiene como mucho una skill-puntero, tenga o no fila en el ROUTER (donde la tiene, la
   columna solo puede mostrar una).
 - Ningun stub desplegado usa el nombre de un comando versionado de `.claude/commands/` (excepcion
