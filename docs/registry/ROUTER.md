@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 6 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 9 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -35,7 +35,10 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 | Prompt | Rol | Skill | Cuando | NO es | Lineas |
 |---|---|---|---|---|---|
+| `prompts/audit_git_publication.md` | auditor | `audit-git-publication` | Antes de una primera publicacion o de una revision de exposicion de un repo_destino. | NO instala el destino (skills/setup-agent-system/SKILL.md), NO es el gate pre-push de estado vivo (scripts/check_destino_publish_ready.py) y NO publica, commitea ni borra nada. | 189 |
+| `prompts/audit_post_change_system_health.md` | auditor | `system-health-audit` | Despues de cambios en el motor y/o en un repo_destino, para saber si el sistema sigue sano de extremo a extremo. | NO es la meta-auditoria de un pipeline cerrado (skills/audit-pipeline/SKILL.md), ni el listo-para-publicar de un repo (skills/audit-git-publication/SKILL.md), ni un snapshot rapido (skills/local-audit/SKILL.md); el reporte del recolector no es el veredicto. | 208 |
 | `prompts/doc_optimization.md` | orchestrator | `doc-optimization` | Cuando el cierre transitivo de lo siempre-cargado (CLAUDE.md, AGENTS.md y sus @imports) supera el presupuesto (~5 % de la ventana efectiva). | NO es para anadir contenido nuevo ni para recortar prompts por longitud; hermanos: suite_optimization.md (segundos de suite) y memory_optimization.md (memoria). | 218 |
+| `prompts/suite_optimization.md` | orchestrator | `suite-optimization` | Cuando la suite canonica es lenta y hay una corrida completa en run_history.jsonl de la que derivar el objetivo. | NO es una auditoria de calidad de tests (skills/test-audit/SKILL.md), NO activa xdist (familia 020p, sesion dedicada) y NO optimiza a ciegas desde la atribucion de pytest. | 158 |
 
 ## Modulos (no los abras tu: te los cita otro prompt)
 
@@ -51,6 +54,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 - `prompts/doc_optimization.md` (mantenimiento)
 - `prompts/ensemble_loop.md` (modulo)
 - `prompts/orchestrator_pipeline.md` (F4-lanzamiento, F5-implementacion, F6-revision)
+- `prompts/suite_optimization.md` (mantenimiento)
 
 ### Rol: manager
 
@@ -58,4 +62,6 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 ### Rol: auditor
 
+- `prompts/audit_git_publication.md` (mantenimiento)
+- `prompts/audit_post_change_system_health.md` (mantenimiento)
 - `prompts/audit_ticket_contract.md` (F3-auditoria-contrato)

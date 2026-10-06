@@ -1,4 +1,13 @@
+---
+role: orchestrator
+route_kind: mantenimiento
+---
 # Prompt: Optimizacion de suite basada en evidencia (recolector -> juez)
+<!-- PROMPT-SUMMARY
+what: Juez que lee la evidencia de run_history.jsonl y propone, o aplica, UN piloto de optimizacion de la suite del motor sin relajar asserts ni tocar barreras git reales (salvo mejora de fixture demostrablemente segura).
+when: Cuando la suite canonica es lenta y hay una corrida completa en run_history.jsonl de la que derivar el objetivo.
+not: NO es una auditoria de calidad de tests (skills/test-audit/SKILL.md), NO activa xdist (familia 020p, sesion dedicada) y NO optimiza a ciegas desde la atribucion de pytest.
+-->
 
 > **Modo:** propone y (opcionalmente) aplica UN piloto de optimizacion de la
 > suite de tests del motor, guiado por EVIDENCIA (run_history.jsonl + durations),

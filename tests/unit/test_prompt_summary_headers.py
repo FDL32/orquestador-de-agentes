@@ -52,6 +52,9 @@ ADOPTED = (
     "_shared/loop_readiness.md",
     "orchestrator_pipeline.md",
     "doc_optimization.md",
+    "audit_git_publication.md",
+    "audit_post_change_system_health.md",
+    "suite_optimization.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)

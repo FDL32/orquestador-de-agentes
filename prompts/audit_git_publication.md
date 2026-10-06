@@ -1,4 +1,13 @@
+---
+role: auditor
+route_kind: mantenimiento
+---
 # Prompt: Auditoria Git de Publicacion
+<!-- PROMPT-SUMMARY
+what: Auditoria dry-run de si un repo_destino puede publicarse en Git sin secretos, PII, artefactos privados ni deuda sin decision, con classify_publication.py y doble pasada (A verificacion, B refutacion).
+when: Antes de una primera publicacion o de una revision de exposicion de un repo_destino.
+not: NO instala el destino (skills/setup-agent-system/SKILL.md), NO es el gate pre-push de estado vivo (scripts/check_destino_publish_ready.py) y NO publica, commitea ni borra nada.
+-->
 
 contract_id: cid-audit-git-publication-v1
 Skill canonica: skills/audit-git-publication/SKILL.md
