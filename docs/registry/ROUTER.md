@@ -4,12 +4,16 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 21 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 25 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
 | Fase | Rol | Abre | Skill | Cuando | NO es | Lineas | Bucle (`--phase` / `--task-type`) |
 |---|---|---|---|---|---|---|---|
+| F0-arranque-sesion | orchestrator | `prompts/orchestrator_destination_bootstrap.md` | - | Primera interaccion con un agente nuevo en un repo_destino, al recuperar una sesion comprimida que perdio el contexto del destino, o al retomar un ticket sin mapa fresco. | NO arranca sesiones en el repo_motor (prompts/orchestrator_session_bootstrap.md), NO deja continuidad medida para la sesion siguiente (prompts/session_hop.md), NO instala ni sincroniza el destino (skills/setup-agent-system/SKILL.md) y NO ejecuta el backlog por si mismo (prompts/orchestrator_pipeline.md). | 153 | - |
+| F0-arranque-sesion | orchestrator | `prompts/orchestrator_refactor_bootstrap.md` | - | Sesion nueva centrada en refactor, reingenieria u optimizacion Python, o repo legacy sin tests donde primero hay que fijar comportamiento con tests de caracterizacion. | NO es un ticket del ciclo canonico ni debe abrirse a mitad de implementacion (prompts/orchestrator_pipeline.md), NO es el arranque general del motor (prompts/orchestrator_session_bootstrap.md), NO es el arranque de un repo_destino (prompts/orchestrator_destination_bootstrap.md) y NO deja continuidad medida entre sesiones (prompts/session_hop.md). | 84 | - |
+| F0-arranque-sesion | orchestrator | `prompts/orchestrator_session_bootstrap.md` | - | Al iniciar una conversacion nueva con un agente que operara el motor (backend nuevo, post-compactacion, sesion de pipeline multi-ticket con Manager y Builder como subagentes); se pega el bloque de codigo como PRIMER mensaje. | NO es el arranque de una sesion de diseno (prompts/orchestrator_session_bootstrap_design.md), NO sirve en un repo_destino (prompts/orchestrator_destination_bootstrap.md), NO transporta continuidad medida entre sesiones (prompts/session_hop.md) y NO es el pipeline de ejecucion (prompts/orchestrator_pipeline.md); a mitad de un ticket con work_plan activo, lee el work_plan. | 351 | - |
+| F0-arranque-sesion | manager | `prompts/orchestrator_session_bootstrap_design.md` | - | Al arrancar una sesion de planning que deja planes y fichas sin pisar a la sesion de desarrollo; no implementa, no commitea y no toca el backlog vivo. | NO es el arranque de una sesion de desarrollo (prompts/orchestrator_session_bootstrap.md), NO es el metodo de triaje canonico que extiende (prompts/backlog_triage.md), NO es el pipeline de ejecucion (prompts/orchestrator_pipeline.md) y NO es su cierre (prompts/orchestrator_session_close_full_audit_design.md). | 218 | - |
 | F0-arranque-sesion | orchestrator | `prompts/session_hop.md` | `session-hop` | Al cerrar una sesion para dejar continuidad medida, o al preparar el arranque de la sesion siguiente a partir del estado recolectado. | NO define el rol ni el metodo de la sesion siguiente (prompts/orchestrator_session_bootstrap.md), NO lee el estado operativo de UN ticket (.claude/commands/pause-work.md, .claude/commands/resume-work.md, .claude/commands/session-report.md) y NO ejecuta el trabajo de la sesion: solo lo prepara. | 332 | - |
 | F1-backlog | orchestrator | `prompts/backlog_admit.md` | `backlog-admit` | Tras decidir en el PASO 0 del protocolo de hallazgos que la senal merece una fila NUEVA, antes de commitear el alta. | NO es el triaje pre-pipeline (prompts/backlog_triage.md), NO escala hallazgos del motor al buzon (prompts/escalate_to_motor.md) y NO cubre los otros dos flujos del PASO 0 (prompts/_shared/finding_triage_protocol.md). | 146 | TRIAGE_AUDIT / triage |
 | F1-backlog | manager | `prompts/backlog_triage.md` | `backlog-triage` | Antes de lanzar el pipeline orquestado o un batch autonomo, para decidir que pipeline lanzar sobre el backlog vivo. | NO ejecuta el pipeline ni muta el backlog (prompts/orchestrator_pipeline.md), NO audita un pipeline ya cerrado (prompts/audit_pipeline.md) y NO da de alta tickets (prompts/backlog_admit.md). | 493 | TRIAGE_AUDIT / triage |
@@ -70,8 +74,11 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 - `prompts/escalate_to_motor.md` (F1-backlog)
 - `prompts/orchestrator_autonomous_ticket_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_destination_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
+- `prompts/orchestrator_destination_bootstrap.md` (F0-arranque-sesion)
 - `prompts/orchestrator_pipeline.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_pipeline_codeonly.md` (F4-lanzamiento, F5-implementacion, F6-revision)
+- `prompts/orchestrator_refactor_bootstrap.md` (F0-arranque-sesion)
+- `prompts/orchestrator_session_bootstrap.md` (F0-arranque-sesion)
 - `prompts/orchestrator_session_close_full_audit.md` (F7-cierre-sesion)
 - `prompts/session_hop.md` (F7-cierre-sesion, F0-arranque-sesion)
 - `prompts/suite_optimization.md` (mantenimiento)
@@ -80,6 +87,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 - `prompts/backlog_triage.md` (F1-backlog)
 - `prompts/manager_review.md` (F6-revision)
+- `prompts/orchestrator_session_bootstrap_design.md` (F0-arranque-sesion)
 
 ### Rol: builder
 

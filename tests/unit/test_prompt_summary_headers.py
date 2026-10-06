@@ -67,11 +67,15 @@ ADOPTED = (
     "orchestrator_autonomous_ticket_batch.md",
     "orchestrator_destination_batch.md",
     "orchestrator_launch_builder.md",
+    "orchestrator_session_bootstrap.md",
+    "orchestrator_session_bootstrap_design.md",
+    "orchestrator_destination_bootstrap.md",
+    "orchestrator_refactor_bootstrap.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)
 # 022o pilot not yet adopted: keeps its original guarantee (summary present).
-SUMMARY_ONLY = ("orchestrator_session_bootstrap.md",)
+SUMMARY_ONLY: tuple[str, ...] = ()
 
 
 def _universe() -> list[str]:

@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F0-arranque-sesion]
+route_kind: entry
+---
 # Destination Bootstrap Prompt
+<!-- PROMPT-SUMMARY
+what: Arranque canonico de sesion en un repo_destino del motor: corre los guards de prefijo y topologia, resuelve motor_root desde motor_destination_link.json, genera el mapa compacto con destination_context.py y valida el estado canonico antes de operar.
+when: Primera interaccion con un agente nuevo en un repo_destino, al recuperar una sesion comprimida que perdio el contexto del destino, o al retomar un ticket sin mapa fresco.
+not: NO arranca sesiones en el repo_motor (prompts/orchestrator_session_bootstrap.md), NO deja continuidad medida para la sesion siguiente (prompts/session_hop.md), NO instala ni sincroniza el destino (skills/setup-agent-system/SKILL.md) y NO ejecuta el backlog por si mismo (prompts/orchestrator_pipeline.md).
+-->
 
 Pega este bloque al iniciar una sesion en un `repo_destino` (proyecto que consume
 el motor `orquestador_de_agentes` como dependencia externa). Proporciona el arranque

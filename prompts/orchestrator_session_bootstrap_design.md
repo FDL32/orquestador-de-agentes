@@ -1,4 +1,14 @@
+---
+role: manager
+cycle_phase: [F0-arranque-sesion]
+route_kind: entry
+---
 # Prompt: Arranque de SESIoN DE DISEnO (planning, read-only)
+<!-- PROMPT-SUMMARY
+what: Arranque de una sesion de diseno en paralelo a desarrollo, de solo lectura sobre el codigo y el backlog vivo: tria el backlog con el metodo de backlog_triage y ESCRIBE solo sus artefactos (planes de vuelo en flight_plans/queued y su INDEX.md, fichas nuevas en backlog_inbox e informes en reports/), con recibo de decisiones obligatorio.
+when: Al arrancar una sesion de planning que deja planes y fichas sin pisar a la sesion de desarrollo; no implementa, no commitea y no toca el backlog vivo.
+not: NO es el arranque de una sesion de desarrollo (prompts/orchestrator_session_bootstrap.md), NO es el metodo de triaje canonico que extiende (prompts/backlog_triage.md), NO es el pipeline de ejecucion (prompts/orchestrator_pipeline.md) y NO es su cierre (prompts/orchestrator_session_close_full_audit_design.md).
+-->
 
 > **Modo:** READ-ONLY sobre el codigo. Una SESIoN DE DISEnO triar el backlog, disena planes de
 > vuelo y redacta fichas de tickets, EN PARALELO a una SESIoN DE DESARROLLO que puede estar
