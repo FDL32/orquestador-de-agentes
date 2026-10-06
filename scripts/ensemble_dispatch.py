@@ -387,6 +387,12 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     # scorecard agrega por modelo y puede cambiar bajo el perfil. Aceptado
     # por decision del usuario 2026-10-02; misma familia que codestral-2508.
     ("llm7_api", "codestral-latest"): "codestral",
+    # kiosapi_api BA190-BA191 (2026-10-03/04): agregador "New API" (grupo
+    # Free, requiere verificacion Telegram previa). Transporte/cuenta
+    # independiente de nan/nvidia/llm7 para las mismas familias -- redundancia
+    # real si esos backends fallan, no duplicado de familia nueva.
+    ("kiosapi_api", "deepseek-v4.1-flash-free"): "deepseek",
+    ("kiosapi_api", "glm-5.3-flash-free"): "glm",
     # Backends mono-modelo (model=None por diseno VIGENTE, ver docstring de
     # regenerate_leaders): la familia coincide con el propio backend.
     ("codex", None): "codex",

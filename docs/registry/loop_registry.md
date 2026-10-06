@@ -62,6 +62,8 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA174 | llm7_api | codestral-latest | active |
 | BA18 | nvidia_api | z-ai/glm-5.3-flash | deprecated |
 | BA19 | nvidia_api | deepseek-ai/deepseek-v4.1-flash | deprecated |
+| BA190 | kiosapi_api | deepseek-v4.1-flash-free | active |
+| BA191 | kiosapi_api | glm-5.3-flash-free | active |
 | BA20 | nvidia_api | z-ai/glm-5.3 | active |
 | BA21 | nvidia_api | z-ai/glm-5.3-flash | active |
 | BA22 | nvidia_api | deepseek-ai/deepseek-v4.1-flash | active |

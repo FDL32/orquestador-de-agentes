@@ -137,14 +137,6 @@
         "method": "path_only"
       }
     },
-    "aihubmix_api": {
-      "executable": "",
-      "args": [],
-      "timeout_s": 900,
-      "discovery": {
-        "method": "path_only"
-      }
-    },
     "tokenharbor_api": {
       "executable": "",
       "args": [],
@@ -182,6 +174,15 @@
       }
     },
     "llm7_api": {
+      "executable": "",
+      "args": [],
+      "timeout_s": 900,
+      "quota_scope": "cuenta",
+      "discovery": {
+        "method": "path_only"
+      }
+    },
+    "kiosapi_api": {
       "executable": "",
       "args": [],
       "timeout_s": 900,
@@ -548,6 +549,28 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA174"
+    },
+    "challenger_kiosapi_deepseek_flash": {
+      "backend": "kiosapi_api",
+      "channel": "api",
+      "model": "deepseek-v4.1-flash-free",
+      "api_base_url": "https://kiosapi.com/v1/chat/completions",
+      "api_key_env": "KIOSAPI_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA190"
+    },
+    "challenger_kiosapi_glm_flash": {
+      "backend": "kiosapi_api",
+      "channel": "api",
+      "model": "glm-5.3-flash-free",
+      "api_base_url": "https://kiosapi.com/v1/chat/completions",
+      "api_key_env": "KIOSAPI_API_KEY",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA191"
     }
   },
   "ensemble_pipelines": {
@@ -804,6 +827,18 @@
       "BA174": {
         "backend": "llm7_api",
         "model": "codestral-latest",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA190": {
+        "backend": "kiosapi_api",
+        "model": "deepseek-v4.1-flash-free",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA191": {
+        "backend": "kiosapi_api",
+        "model": "glm-5.3-flash-free",
         "backend_version": null,
         "status": "active"
       }

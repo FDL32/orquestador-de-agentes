@@ -4897,20 +4897,22 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
     assert "qwen_api" not in backends, "backend directo muerto, eliminado (A8)"
 
     # Todo perfil channel=api usa un backend de la lista viva con credencial
-    # declarada (nan_api, nvidia_api, groq_api, openrouter_api o aihubmix_api
-    # hoy; deepseek_api/qwen_api siguen fuera por A8 -- los asserts de arriba
+    # declarada (nan_api, nvidia_api, groq_api, openrouter_api, kiosapi_api
+    # hoy; aihubmix_api se retiro del pool en WOT-2026-086e -- sin perfiles
+    # vivos, fuera de live_api_backends; deepseek_api/qwen_api siguen fuera
+    # por A8 -- los asserts de arriba
     # ya lo verifican).
     live_api_backends = {
         "nan_api",
         "nvidia_api",
         "groq_api",
         "openrouter_api",
-        "aihubmix_api",
         "tokenharbor_api",
         "gemini_api",
         "cohere_api",
         "mistral_api",
         "llm7_api",
+        "kiosapi_api",
     }
     api_profiles = [p for p in profiles.values() if p.get("channel") == "api"]
     assert api_profiles, "debe haber al menos un perfil api"
