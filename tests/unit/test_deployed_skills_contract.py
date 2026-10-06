@@ -10,6 +10,7 @@ Neither invariant had an executable guard before the rollout: the stub
 generator only scopes by deployment, it never inspects the description.
 """
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -63,3 +64,38 @@ def test_deployed_skill_description_has_guide_phrases(
 @pytest.mark.parametrize("name,fm", _deployed_frontmatters())
 def test_deployed_skill_cycle_phase_resolves(name: str, fm: dict[str, Any]) -> None:
     assert _derive_cycle_phase(fm, ROOT), f"{name}: cycle_phase not resolvable"
+
+
+# "(ver X)" targets: a skill dir, a prompt, or a script. A dead cross-reference in a
+# description rots silently (nobody opens it until the model follows it).
+_SEE_RE = re.compile(r"\(ver ([^)]*)\)")
+
+
+def _dead_see_references(description: str) -> list[str]:
+    dead = []
+    for group in _SEE_RE.findall(description):
+        for token in re.split(r"\s+o\s+|,\s*", group):
+            token = token.strip()
+            if not re.fullmatch(r"[A-Za-z0-9_.\-]+", token):
+                continue  # prose such as "(ver mas abajo)" is not a reference
+            candidates = (
+                ROOT / "skills" / token,
+                ROOT / "prompts" / token,
+                ROOT / "prompts" / f"{token}.md",
+                ROOT / "scripts" / token,
+            )
+            if not any(c.exists() for c in candidates):
+                dead.append(token)
+    return dead
+
+
+def test_see_reference_checker_flags_a_dead_target() -> None:
+    assert _dead_see_references("X. No usar para Y (ver skill-que-no-existe).") == [
+        "skill-que-no-existe"
+    ]
+    assert _dead_see_references("X. No usar para Y (ver systematic-debugging).") == []
+
+
+@pytest.mark.parametrize("name,fm", _deployed_frontmatters())
+def test_deployed_skill_see_references_resolve(name: str, fm: dict[str, Any]) -> None:
+    assert _dead_see_references(str(fm.get("description", ""))) == [], name
