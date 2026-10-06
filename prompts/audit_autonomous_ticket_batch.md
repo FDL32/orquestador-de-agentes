@@ -1,4 +1,14 @@
+---
+role: auditor
+cycle_phase: [F8-meta-auditoria]
+route_kind: entry
+---
 # Prompt: Auditoria del Batch Autonomo de Tickets (Auditor Aislado)
+<!-- PROMPT-SUMMARY
+what: Auditoria aislada (fresh-context, solo lectura) de un batch autonomo de tickets: re-deriva el PREDICATE de 8 condiciones comando a comando, audita las decisiones de parada y recuperacion del ejecutor y propone, sin ejecutarlo, el cierre de sesion.
+when: Despues del cierre o parada de un batch ejecutado por prompts/orchestrator_autonomous_ticket_batch.md, cuando ya no quedan grupos ejecutables; exige el batch_run de la corrida.
+not: NO la corre el agente que ejecuto el batch (aislamiento B1/B3), NO audita una cadena ticket a ticket (prompts/audit_pipeline.md o prompts/audit_pipeline_codeonly.md) y NO cierra la sesion ni ejecuta --session-close.
+-->
 
 > **Modo:** READ-ONLY. Esta auditoria NUNCA modifica codigo, backlog, tickets,
 > DAG-JSON, ledger de aprendizaje ni estado operativo. Solo escribe sus propios

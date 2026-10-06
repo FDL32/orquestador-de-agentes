@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 9 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 13 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -13,6 +13,10 @@
 | F3-auditoria-contrato | auditor | `prompts/audit_ticket_contract.md` | - | Con el work_plan.md ya escrito y antes de pasar a Builder (fase CONTRACT_AUDIT). | NO es audit_cf_ticket_contract.md (audita el ticket_contract antes de congelarlo, en Contract Formation) ni la revision de la implementacion (manager_review.md). | 374 | CONTRACT_AUDIT / contract-audit |
 | F5-implementacion | builder | (ninguno) | - | Tu contrato es el prompt que recibiste + `work_plan.md` | No abras `prompts/` para buscar | - | - |
 | F6-revision | manager | `prompts/manager_review.md` | `manager-review-implementation` | Tras la entrega del Builder (fase MANAGER_REVIEW) de un ticket de implementacion. | NO cierra tickets de Contract Formation en status frozen (eso es validate_contract_formation.py) ni audita el contrato antes del Builder (audit_ticket_contract.md). | 447 | MANAGER_REVIEW / code-review (*) |
+| F7-cierre-sesion | auditor | `prompts/orchestrator_session_close_full_audit.md` | `session-close-full-audit` | Al cerrar una sesion que toco codigo del motor o del destino, ANTES de agent_controller.py --session-close; a mitad de vuelo solo los Bloques 1, 2 y 2.5 (sin 2.5.f ni 2.5.g), nunca los Bloques 3 a 5. | NO es el cierre operativo (prompts/orchestrator_session_close_chat.md), NO arranca una sesion (prompts/orchestrator_session_bootstrap.md) y NO corre el Bloque 3 con un ticket IN_PROGRESS. | 432 | CLOSE / contract-audit |
+| F8-meta-auditoria | auditor | `prompts/audit_autonomous_ticket_batch.md` | `audit-autonomous-ticket-batch` | Despues del cierre o parada de un batch ejecutado por prompts/orchestrator_autonomous_ticket_batch.md, cuando ya no quedan grupos ejecutables; exige el batch_run de la corrida. | NO la corre el agente que ejecuto el batch (aislamiento B1/B3), NO audita una cadena ticket a ticket (prompts/audit_pipeline.md o prompts/audit_pipeline_codeonly.md) y NO cierra la sesion ni ejecuta --session-close. | 661 | - |
+| F8-meta-auditoria | auditor | `prompts/audit_pipeline.md` | `audit-pipeline` | Despues del cierre global del pipeline de un repo_destino, cuando ya no quedan tickets ejecutables. | NO es un tercer Review por ticket (prompts/manager_review.md), NO es para el motor en CODE-ONLY MODE (prompts/audit_pipeline_codeonly.md) y NO reabre tickets ni toca backlog ni motor. | 495 | - |
+| F8-meta-auditoria | auditor | `prompts/audit_pipeline_codeonly.md` | `audit-pipeline-codeonly` | Despues del cierre de una cadena de tickets del motor ejecutada con orchestrate-pipeline-codeonly, sin destino externo ni bus vivo. | NO es para un repo_destino con bus vivo, closeouts y pipeline_closeout (prompts/audit_pipeline.md) y NO reabre tickets ni toca backlog, codigo ni motor. | 514 | - |
 
 (*) F6-revision: `prose` si el entregable es documentation/research/analysis (decision provisional).
 Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracion` (loop_id `EXPLORATORY-<tema>`, sin nonce).
@@ -62,6 +66,10 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 ### Rol: auditor
 
+- `prompts/audit_autonomous_ticket_batch.md` (F8-meta-auditoria)
 - `prompts/audit_git_publication.md` (mantenimiento)
+- `prompts/audit_pipeline.md` (F8-meta-auditoria)
+- `prompts/audit_pipeline_codeonly.md` (F8-meta-auditoria)
 - `prompts/audit_post_change_system_health.md` (mantenimiento)
 - `prompts/audit_ticket_contract.md` (F3-auditoria-contrato)
+- `prompts/orchestrator_session_close_full_audit.md` (F7-cierre-sesion)

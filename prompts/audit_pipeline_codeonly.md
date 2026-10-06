@@ -1,4 +1,14 @@
+---
+role: auditor
+cycle_phase: [F8-meta-auditoria]
+route_kind: entry
+---
 # Prompt: Meta-Auditoria del Pipeline en Bucle (variante CODE-ONLY)
+<!-- PROMPT-SUMMARY
+what: Variante de la meta-auditoria de pipeline para una cadena de tickets del motor cerrada en CODE-ONLY MODE (worktree _dev, cierre commit-directo, sin bus): evidencia por commits y bloques de cierre del workspace, aterrizaje en origin/main y SEAMS entre tickets.
+when: Despues del cierre de una cadena de tickets del motor ejecutada con orchestrate-pipeline-codeonly, sin destino externo ni bus vivo.
+not: NO es para un repo_destino con bus vivo, closeouts y pipeline_closeout (prompts/audit_pipeline.md) y NO reabre tickets ni toca backlog, codigo ni motor.
+-->
 
 > **Modo:** Solo lectura sobre el sistema auditado. Esta auditoria NUNCA
 > modifica codigo, backlog, tickets ni estado operativo. Solo escribe sus

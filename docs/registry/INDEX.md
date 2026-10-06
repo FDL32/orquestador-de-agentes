@@ -22,7 +22,7 @@
 | kind | path | status | owner | role | invocation | aliases |
 |------|------|--------|-------|------|------------|---------|
 | prompt | `prompts/audit_agent_output.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/audit_autonomous_ticket_batch.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_autonomous_ticket_batch.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/audit_bus.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_cf_plan_graph.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_cf_repo_charter.md` | active | system | shared | model-invoked | — |
@@ -30,8 +30,8 @@
 | prompt | `prompts/audit_complete_motor_destination.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_git_publication.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/audit_goal_completion.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/audit_pipeline.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/audit_pipeline_codeonly.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/audit_pipeline.md` | active | system | auditor | model-invoked | — |
+| prompt | `prompts/audit_pipeline_codeonly.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/audit_portability_legacy_surface.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_post_change_system_health.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/audit_ticket_contract.md` | active | system | auditor | model-invoked | — |
@@ -57,7 +57,7 @@
 | prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap_design.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_chat.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit_design.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/session_hop.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | orchestrator | model-invoked | — |

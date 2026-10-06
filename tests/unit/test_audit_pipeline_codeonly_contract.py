@@ -5,7 +5,7 @@ PINNED CONTRACT (defined HERE, per convention -- see
 test_prompt_summary_headers.py for the sibling pattern this test follows):
 
     In the "Integridad del motor SIN bus" section of
-    ``prompts/audit_pipeline_codeonly.md`` (~lines 259-280), a sub-block titled
+    ``prompts/audit_pipeline_codeonly.md`` (~lines 269-290), a sub-block titled
     "Check de frontera code-only (WOT-2026-023y)" MUST exist and pin, verbatim
     in spirit:
 

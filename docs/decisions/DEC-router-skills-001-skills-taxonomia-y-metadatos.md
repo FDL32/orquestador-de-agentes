@@ -50,7 +50,7 @@ decision explicita, para no duplicar semantica con un nombre distinto).
 
 **Evidencia:** `session-close-full-audit` declara `role: auditor`, `stage: review`
 (`skills/session-close-full-audit/SKILL.md:7-8`) pero su `source_prompt`
-(`prompts/orchestrator_session_close_full_audit.md`, linea 12) es de cierre de sesion F7 — caso
+(`prompts/orchestrator_session_close_full_audit.md`, linea 22) es de cierre de sesion F7 — caso
 real de divergencia que motiva permitir la declaracion explicita en vez de forzar herencia ciega.
 
 ### D-S2. Rol `orchestrator`
