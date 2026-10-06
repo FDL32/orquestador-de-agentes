@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F4-lanzamiento, F5-implementacion, F6-revision]
+route_kind: modo
+---
 # Prompt: Pipeline code-only (dogfooding del motor, cierre commit-directo)
+<!-- PROMPT-SUMMARY
+what: Pipeline multi-ticket del motor en modo code-only que MUTA codigo en la worktree _dev: por ticket el Manager escribe work_plan, STRATEGY y AUDIT, el Builder implementa, hay dos revisiones (la 2a en contexto fresco) y cada ticket se cierra con commit directo, sin bus; ademas del codigo escribe execution_log y STATE, archiva el ticket cerrado en el backlog del WORKSPACE y puede promocionar memoria.
+when: Solo si el ticket tiene delivery_authority repo_motor, se trabaja en la worktree _dev y el motor esta en CODE-ONLY MODE; el push va agrupado al final de la sesion y con autorizacion explicita del usuario.
+not: NO es el pipeline canonico con bus vivo (prompts/orchestrator_pipeline.md), NO es el triaje que decide que pipeline lanzar (prompts/backlog_triage.md) y NO es la meta-auditoria de la cadena cerrada (prompts/audit_pipeline_codeonly.md).
+-->
 
 > **Modo:** MUTA codigo del motor en la worktree `_dev`. Este pipeline SI escribe
 > codigo y cierra tickets, a diferencia de sus hermanas read-only (/backlog-triage,

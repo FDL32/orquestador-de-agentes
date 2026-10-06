@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F4-lanzamiento, F5-implementacion, F6-revision]
+route_kind: modo
+---
 # Orchestrator Destination Batch Prompt
+<!-- PROMPT-SUMMARY
+what: Orquestador de lote sobre varios repo_destino: clasifica cada destino con batch_destination_controller.py (script de solo lectura; el flujo SI escribe en cada destino), conduce Contract Formation y el pipeline por ticket con los prompts canonicos, audita el cierre y deja cada repo en un estado de publicacion explicito antes de pasar al siguiente, con un manifest global reanudable fuera de los destinos.
+when: Cuando hay que preparar y auditar varios repo_destino para publicacion remota en un unico lote secuencial; un bloqueo local detiene ese destino y no el lote, salvo fallo sistemico.
+not: NO sustituye al pipeline por destino (prompts/orchestrator_pipeline.md), a Contract Formation (prompts/contract_formation_pipeline.md) ni a la auditoria de publicacion (prompts/audit_git_publication.md); no crea repos remotos ni hace push (permiso humano) y nunca declara publicable un destino solo por el veredicto del script.
+-->
 
 > Meta-prompt para un orquestador EXTERNO que prepara varios `repo_destino`
 > para publicacion remota usando el motor `orquestador_de_agentes` como

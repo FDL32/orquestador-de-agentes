@@ -63,6 +63,9 @@ ADOPTED = (
     "backlog_triage.md",
     "escalate_to_motor.md",
     "session_hop.md",
+    "orchestrator_pipeline_codeonly.md",
+    "orchestrator_autonomous_ticket_batch.md",
+    "orchestrator_destination_batch.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)

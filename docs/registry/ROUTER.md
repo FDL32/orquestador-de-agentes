@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 17 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 20 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -38,7 +38,10 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 | Prompt | Fases | Rol | Skill | Cuando | NO es | Lineas |
 |---|---|---|---|---|---|---|
+| `prompts/orchestrator_autonomous_ticket_batch.md` | F4-lanzamiento, F5-implementacion, F6-revision | orchestrator | `orchestrate-autonomous-ticket-batch` | Tras un triage con DAG validado y fresco y con el recibo de aislamiento de arranque RESUELTO por un tercero; gobierna el vuelo por grupos hasta DONE o hasta un GROUP_STOP_REPORT. | NO es el pipeline por ticket (prompts/orchestrator_pipeline.md ni prompts/orchestrator_pipeline_codeonly.md), NO es el triaje que produce el DAG (prompts/backlog_triage.md), NO es su auditor (prompts/audit_autonomous_ticket_batch.md) y nunca ejecuta tickets REQUIERE_HUMANO ni DISENO_PRIMERO. | 926 |
+| `prompts/orchestrator_destination_batch.md` | F4-lanzamiento, F5-implementacion, F6-revision | orchestrator | `orchestrate-destination-batch` | Cuando hay que preparar y auditar varios repo_destino para publicacion remota en un unico lote secuencial; un bloqueo local detiene ese destino y no el lote, salvo fallo sistemico. | NO sustituye al pipeline por destino (prompts/orchestrator_pipeline.md), a Contract Formation (prompts/contract_formation_pipeline.md) ni a la auditoria de publicacion (prompts/audit_git_publication.md); no crea repos remotos ni hace push (permiso humano) y nunca declara publicable un destino solo por el veredicto del script. | 251 |
 | `prompts/orchestrator_pipeline.md` | F4-lanzamiento, F5-implementacion, F6-revision | orchestrator | `orchestrate-pipeline` | Para orquestar el pipeline por-ticket en modo destino con bus vivo: bootstrap -> builder -> review -> cierre por bus. | NO es el modo motor code-only (ver orchestrator_pipeline_codeonly.md) ni el ejecutor de batch autonomo (ver orchestrator_autonomous_ticket_batch.md) ni el bootstrap de sesion. | 1436 |
+| `prompts/orchestrator_pipeline_codeonly.md` | F4-lanzamiento, F5-implementacion, F6-revision | orchestrator | `orchestrate-pipeline-codeonly` | Solo si el ticket tiene delivery_authority repo_motor, se trabaja en la worktree _dev y el motor esta en CODE-ONLY MODE; el push va agrupado al final de la sesion y con autorizacion explicita del usuario. | NO es el pipeline canonico con bus vivo (prompts/orchestrator_pipeline.md), NO es el triaje que decide que pipeline lanzar (prompts/backlog_triage.md) y NO es la meta-auditoria de la cadena cerrada (prompts/audit_pipeline_codeonly.md). | 265 |
 
 ## Fuera del ciclo (mantenimiento)
 
@@ -64,7 +67,10 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 - `prompts/doc_optimization.md` (mantenimiento)
 - `prompts/ensemble_loop.md` (modulo)
 - `prompts/escalate_to_motor.md` (F1-backlog)
+- `prompts/orchestrator_autonomous_ticket_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
+- `prompts/orchestrator_destination_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_pipeline.md` (F4-lanzamiento, F5-implementacion, F6-revision)
+- `prompts/orchestrator_pipeline_codeonly.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/session_hop.md` (F7-cierre-sesion, F0-arranque-sesion)
 - `prompts/suite_optimization.md` (mantenimiento)
 

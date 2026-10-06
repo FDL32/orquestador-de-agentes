@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F4-lanzamiento, F5-implementacion, F6-revision]
+route_kind: modo
+---
 # Orchestrator Autonomous Ticket Batch (Executor)
+<!-- PROMPT-SUMMARY
+what: Ejecutor autonomo que consume el DAG de /backlog-triage y cierra el maximo de tickets con barreras duras por ticket, delegando cada uno en el pipeline canonico del modo detectado; un vuelo crea commits, mueve filas del backlog al archivo, escribe en el bus, el ledger y la memoria y puede publicar con push, ademas del recibo de aislamiento y de batch_run con su PREDICATE; nunca se audita a si mismo.
+when: Tras un triage con DAG validado y fresco y con el recibo de aislamiento de arranque RESUELTO por un tercero; gobierna el vuelo por grupos hasta DONE o hasta un GROUP_STOP_REPORT.
+not: NO es el pipeline por ticket (prompts/orchestrator_pipeline.md ni prompts/orchestrator_pipeline_codeonly.md), NO es el triaje que produce el DAG (prompts/backlog_triage.md), NO es su auditor (prompts/audit_autonomous_ticket_batch.md) y nunca ejecuta tickets REQUIERE_HUMANO ni DISENO_PRIMERO.
+-->
 
 > Executor that consumes the DAG produced by `/backlog-triage`
 > (`prompts/backlog_triage.md`, schema `autonomous-batch-dag/v1`) and closes

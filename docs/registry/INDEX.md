@@ -46,12 +46,12 @@
 | prompt | `prompts/manager_review.md` | active | system | manager | model-invoked | — |
 | prompt | `prompts/memory_optimization.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/orchestrator_destination_batch.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/orchestrator_destination_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_launch_builder.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline.md` | active | system | orchestrator | model-invoked | — |
-| prompt | `prompts/orchestrator_pipeline_codeonly.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_pipeline_codeonly.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_prepare_and_launch_ticket.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_refactor_bootstrap.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_bootstrap.md` | active | system | shared | model-invoked | — |
