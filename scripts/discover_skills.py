@@ -1442,19 +1442,30 @@ def check_router_stale(bundle_root: Path | None = None) -> tuple[bool, str]:
 # --------------------------------------------------------------------------
 
 _SKILL_STUB_SUBDIR = Path(".claude") / "skills"
+_COMMANDS_SUBDIR = Path(".claude") / "commands"
 
 
 def _stub_names(bundle_root: Path, names: list[str] | None) -> list[str]:
-    """Resolve which skill dir names to generate/check stubs for."""
+    """Resolve which skill dir names to generate/check stubs for.
+
+    With ``names=None`` (the --all-skills scope) a skill whose name a versioned
+    `.claude/commands/<name>.md` already uses is skipped: a stub with that name
+    would compete for the same `/name` and hide one of the two entries
+    (DEC-router-skills-001 D-S4, excepcion 2026-10-06: `session-hop`). An
+    explicit ``names`` list is honoured as given.
+    """
     if names is not None:
         return list(names)
     skills_dir = bundle_root / "skills"
     if not skills_dir.exists():
         return []
+    commands_dir = bundle_root / _COMMANDS_SUBDIR
     return sorted(
         p.name
         for p in skills_dir.iterdir()
-        if p.is_dir() and not p.name.startswith(("_", "."))
+        if p.is_dir()
+        and not p.name.startswith(("_", "."))
+        and not (commands_dir / f"{p.name}.md").exists()
     )
 
 

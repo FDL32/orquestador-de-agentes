@@ -9,8 +9,11 @@ DEC-router-skills-001 DoD: every DEPLOYED skill (one with a stub under
   the cycle and its prompt carries no phase (DEC-router-prompts-001 D2/D4), so
   there is nothing to inherit and nothing honest to force (DEC-router-skills-001,
   enmienda 2026-10-06). The exemption is read from the prompt's REAL frontmatter.
+  Resolved values must be among the 9 of D-S1.
+- No deployed stub uses the name of a versioned `.claude/commands/<name>.md`, and
+  no prompt has two skill-punteros (D-S4 / D-S6).
 
-Neither invariant had an executable guard before the rollout: the stub
+None of these had an executable guard before the rollout: the stub
 generator only scopes by deployment, it never inspects the description.
 """
 
@@ -26,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from discover_skills import (  # noqa: E402
+    CYCLE_PHASES,
     _deployed_stub_names,
     _derive_cycle_phase,
     _resolve_skill_path,
@@ -103,41 +107,85 @@ def test_phase_rule_exempts_only_maintenance_pointers(tmp_path: Path) -> None:
     assert _phase_missing(own, tmp_path) is False  # fase propia sigue permitida
 
 
+def _phases_outside_enum(fm: dict[str, Any], root: Path) -> list[str]:
+    """Resolved `cycle_phase` values that are not one of the 9 of D-S1 (D1)."""
+    return [v for v in _derive_cycle_phase(fm, root) if v not in CYCLE_PHASES]
+
+
+def test_enum_checker_flags_a_phase_outside_d1(tmp_path: Path) -> None:
+    assert _phases_outside_enum({"cycle_phase": ["F5-implementation"]}, tmp_path) == [
+        "F5-implementation"
+    ]
+    assert _phases_outside_enum({"cycle_phase": ["F5-implementacion"]}, tmp_path) == []
+
+
 @pytest.mark.parametrize("name,fm", _deployed_frontmatters())
 def test_deployed_skill_cycle_phase_resolves(name: str, fm: dict[str, Any]) -> None:
     assert not _phase_missing(fm, ROOT), f"{name}: cycle_phase not resolvable"
+    assert _phases_outside_enum(fm, ROOT) == [], name
 
 
 def _duplicate_pointers(root: Path) -> list[tuple[str, str, str]]:
-    """(prompt, first skill, second skill) for every prompt with 2+ pointer skills."""
+    """(prompt, first skill, second skill) for every prompt with 2+ pointer skills.
+
+    Groups by the RESOLVED prompt path, so `prompts/x.md` and `./prompts/x.md`
+    count as the same prompt; an unresolvable path falls back to its raw text.
+    """
     seen: dict[str, str] = {}
     dups = []
     for skill_dir in sorted(p for p in (root / "skills").iterdir() if p.is_dir()):
         fm, _error = parse_frontmatter(skill_dir / "SKILL.md")
         source = fm.get("source_prompt")
-        if not source:
+        if not isinstance(source, str) or not source:
             continue
-        if source in seen:
-            dups.append((source, seen[source], skill_dir.name))
-        seen.setdefault(source, skill_dir.name)
+        resolved = _resolve_skill_path(source, root)
+        key = resolved.as_posix() if resolved is not None else source
+        if key in seen:
+            dups.append((source, seen[key], skill_dir.name))
+        seen.setdefault(key, skill_dir.name)
     return dups
 
 
 def test_duplicate_pointer_checker_flags_two_skills_on_one_prompt(
     tmp_path: Path,
 ) -> None:
-    skill = "---\nname: {n}\nsource_prompt: prompts/p.md\n---\n# {n}\n"
-    _write(tmp_path / "skills" / "a" / "SKILL.md", skill.format(n="a"))
+    skill = "---\nname: {n}\nsource_prompt: {sp}\n---\n# {n}\n"
+    _write(
+        tmp_path / "skills" / "a" / "SKILL.md", skill.format(n="a", sp="prompts/p.md")
+    )
     assert _duplicate_pointers(tmp_path) == []
-    _write(tmp_path / "skills" / "b" / "SKILL.md", skill.format(n="b"))
-    assert _duplicate_pointers(tmp_path) == [("prompts/p.md", "a", "b")]
+    _write(
+        tmp_path / "skills" / "b" / "SKILL.md", skill.format(n="b", sp="./prompts/p.md")
+    )
+    assert _duplicate_pointers(tmp_path) == [("./prompts/p.md", "a", "b")]
 
 
 def test_each_prompt_has_at_most_one_pointer_skill() -> None:
-    """D-S6: ROUTER.md shows ONE skill per prompt (`skill_pointer_for_prompt`
-    picks the first by dir name), so a second pointer to the same prompt would
-    vanish from the router without any error."""
+    """D-S6: every prompt has at most one skill-puntero, whether or not it has a
+    row in ROUTER.md. Where it does, the `skill` column can only show one
+    (`skill_pointer_for_prompt` picks the first by dir name), so a second
+    pointer would vanish from the router without any error."""
     assert _duplicate_pointers(ROOT) == []
+
+
+def _stubs_shadowing_commands(root: Path) -> list[str]:
+    """Deployed stub names that a versioned `.claude/commands/<name>.md` also uses."""
+    commands = root / ".claude" / "commands"
+    return [n for n in _deployed_stub_names(root) if (commands / f"{n}.md").exists()]
+
+
+def test_shadow_checker_flags_a_stub_named_like_a_command(tmp_path: Path) -> None:
+    _write(tmp_path / ".claude" / "skills" / "x" / "SKILL.md", "---\nname: x\n---\n")
+    assert _stubs_shadowing_commands(tmp_path) == []
+    _write(tmp_path / ".claude" / "commands" / "x.md", "Comando x.\n")
+    assert _stubs_shadowing_commands(tmp_path) == ["x"]
+
+
+def test_no_deployed_stub_shadows_a_command() -> None:
+    """DEC-router-skills-001 D-S4 (excepcion 2026-10-06): a stub and a command
+    with the same name compete for the same `/name`, and one of the two entries
+    is hidden. `session-hop` keeps its command and gets no stub."""
+    assert _stubs_shadowing_commands(ROOT) == []
 
 
 # "(ver X)" targets: a skill dir, a prompt, or a script. A dead cross-reference in a
