@@ -116,11 +116,18 @@ stub no se regenera, el gate falla y bloquea `--generate-index`/`--check-index`)
 
 **Excepcion declarada (2026-10-06, Tramo B):** `session-hop` NO recibe stub. Su nombre ya lo
 ocupa el comando versionado `.claude/commands/session-hop.md`, que tambien remite a
-`prompts/session_hop.md` y anade pasos propios (recolector `collect_session_state.py`); un stub
+`prompts/session_hop.md` (desde la decision de abajo, solo como puntero); un stub
 con el mismo nombre compite por el mismo `/session-hop` y deja tapada una de las dos entradas.
 Se conserva el comando hasta que el usuario decida retirarlo o convertirlo. El generador lo
 salta tambien con `--all-skills` (`_stub_names` excluye los nombres de `.claude/commands/`), y
 `test_no_deployed_stub_shadows_a_command` falla si un stub desplegado usa el nombre de un comando. Con esto el despliegue cierra en 42/43 por decision, no por olvido.
+
+**Decision del usuario (2026-10-06):** se CONSERVA el comando y se adelgaza a puntero puro. Su
+version anterior re-declaraba la regla METODO/ESTADO, el etiquetado `[snapshot <fecha>]` y la
+"Restriccion dura" del prompt (tercera copia, contra "skill apunta, prompt gobierna"). Convertirlo
+en stub queda APLAZADO: exige reabrir la decision D1+D5 del ticket de `session-hop`, que fija el
+comando (`test_las_cuatro_piezas_existen`), y la unica ganancia medida es la description que Claude
+Code muestra (hoy la primera linea del comando, en vez del "Usar cuando / No usar para" de la skill).
 
 **Medido (PASO 1a del tramo 2, worktree aislado en `main`@`dc0fd6e`, limpiado tras el probe):** un
 generador produjo 44 stubs (43 reales + 1 de prueba `probe-largo` con description de 1200
