@@ -1,11 +1,12 @@
 ---
 name: graphify
 version: 2.0.0
-description: Construir grafo de conocimiento persistente del codebase para exploración eficiente con mínimo consumo de tokens
+description: Construye un grafo de conocimiento persistente del codebase para explorarlo con poco consumo de tokens. Usar cuando el proyecto supera 30 ficheros fuente o 5.000 palabras, o es la segunda sesion sobre el mismo codigo. No usar para proyectos pequenos donde leer los ficheros sale mas barato; si el grafo ya existe, actualizalo con --update en vez de reconstruirlo.
 triggers: [/graphify, graph, map]
 author: agent
 role: shared
 stage: support
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

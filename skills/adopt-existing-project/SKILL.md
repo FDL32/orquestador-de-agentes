@@ -1,11 +1,12 @@
 ---
 name: adopt-existing-project
 version: 1.0.0
-description: Adecuar un proyecto Python YA EXISTENTE (legacy o con motor viejo embebido) al motor portable, orquestando las skills/scripts existentes en el orden correcto sin reinventar el flujo
+description: Adecuar un proyecto Python YA EXISTENTE (legacy o con motor viejo embebido) al motor portable, orquestando las skills y scripts existentes en el orden correcto. Usar cuando se incorpora un repo con codigo previo como repo_destino. No usar para un destino nuevo o limpio (ver setup-agent-system) ni para crear un proyecto desde cero (ver scaffold-python-project).
 triggers: [/adopt-project, /adopt-existing, /adecuar-proyecto]
 author: agent
 role: user
 stage: setup
+cycle_phase: [F0-arranque-sesion]
 writes_memory: false
 quality_gate: false
 tags: [core, system, destination, host-extends, migration]

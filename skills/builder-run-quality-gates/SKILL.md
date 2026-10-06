@@ -1,11 +1,12 @@
 ---
 name: builder-run-quality-gates
 version: 2.0.0
-description: Ejecutar gates apropiados según deliverable_type del WP activo
+description: Ejecutar los quality gates que corresponden al deliverable_type del work_plan activo mediante run_gates_dispatch.py. Usar cuando el Builder termino un cambio sustancial y necesita validarlo antes de pedir review. No usar para autorizar el handoff, porque un exit 0 no autoriza BUILDER_EXIT ni READY_FOR_REVIEW (ver builder-self-audit).
 triggers: [/gates, quality-gates, /check]
 author: agent
 role: builder
 stage: quality
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: true
 tags: [core, system]

@@ -1,11 +1,12 @@
 ---
 name: builder-write-deliverable
 version: 2.0.0
-description: Generar un deliverable markdown (no-código) dado descripción, output_path y acceptance criteria
+description: Generar un deliverable markdown (no codigo) a partir de su descripcion, output_path y acceptance criteria del work_plan. Usar cuando el ticket es documental y el ciclo no debe invocar ruff ni pytest. No usar para implementar codigo (ver builder-implement-from-plan).
 triggers: [/write-deliverable, /deliverable, /write-doc]
 author: agent
 role: builder
 stage: implement
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

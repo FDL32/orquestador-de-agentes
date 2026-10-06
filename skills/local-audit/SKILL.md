@@ -1,11 +1,12 @@
 ---
 name: local-audit
 version: 2.0.0
-description: Genera un snapshot rapido y estructurado del estado actual del repositorio, util para arranque de sesion y antes de comparaciones con otros repositorios.
+description: Genera un snapshot rapido y estructurado del estado del repositorio (version, estado del agente, salud, skills) con scripts/local_audit.py. Usar cuando arranca una sesion o antes de comparar con otro repositorio. No usar para auditar la salud del sistema tras un cambio (ver system-health-audit) ni para auditar codigo (ver code-audit).
 triggers: [/local-audit, /repo-audit, /snapshot]
 author: agent
 role: auditor
 stage: support
+cycle_phase: [F0-arranque-sesion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

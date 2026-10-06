@@ -1,11 +1,12 @@
 ---
 name: create-agent-skill
 version: 2.0.0
-description: Meta-skill para crear nuevas micro-skills siguiendo el estándar Agent Skills
+description: Meta-skill para crear una micro-skill nueva siguiendo el estandar Agent Skills (frontmatter validado, triggers, workflow). Usar cuando se necesita una skill nueva para una accion concreta y repetible. No usar para editar a mano una skill existente ni para un contrato de gobierno (los prompts de prompts/ gobiernan y la skill solo apunta).
 triggers: [/create-skill, skill-create, /new]
 author: agent
 role: shared
 stage: meta
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

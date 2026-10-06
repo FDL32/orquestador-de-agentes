@@ -1,11 +1,12 @@
 ---
 name: session-close-observations
 version: 2.0.0
-description: Generar observaciones curadas al final de cada sesion para memoria auto-mejorable
+description: Genera observaciones curadas al final de una sesion para la memoria auto-mejorable, que luego se filtran y pueden promoverse a observations.jsonl. Usar cuando se completa un WP, se cierra una sesion larga o se descubre un patron o una decision arquitectonica. No usar para consolidar la memoria (ver memory-consolidate).
 triggers: [/session-close, /close-observations, /generate-observations]
 author: agent
 role: shared
 stage: close
+cycle_phase: [F7-cierre-sesion]
 writes_memory: true
 quality_gate: false
 tags: [core, system, memory]

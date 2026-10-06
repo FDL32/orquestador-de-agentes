@@ -4,7 +4,7 @@ name: builder-self-audit
 
 version: 2.0.0
 
-description: Auditoría obligatoria que el Builder ejecuta antes de reportar cualquier tarea como completada. Valida tipo de archivo, completitud multi-archivo, regresión y gates globales.
+description: Auditoria obligatoria del Builder antes de reportar una tarea como completada, que cubre tipo de archivo, completitud multi-archivo, regresion y gates globales. Usar cuando el Builder va a declarar terminada su entrega. No usar para ejecutar solo los gates (ver builder-run-quality-gates) ni para la revision del Manager (ver manager-review-implementation).
 
 triggers: [/self-audit, audit, /inspect]
 
@@ -13,6 +13,7 @@ author: agent
 role: builder
 
 stage: review
+cycle_phase: [F5-implementacion]
 
 writes_memory: false
 

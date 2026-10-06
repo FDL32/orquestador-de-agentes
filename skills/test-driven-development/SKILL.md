@@ -1,10 +1,11 @@
 ---
 name: test-driven-development
 version: 2.0.0
-description: Metodología estructurada en ciclos Red/Green/Refactor para asegurar que la implementación cumple los requisitos desde el inicio y mantiene la base de código libre de regresiones.
+description: Metodologia Red/Green/Refactor que escribe el test primero, el codigo minimo despues y refactoriza, para cumplir los requisitos sin regresiones. Usar cuando se implementa logica nueva o se corrige un bug determinista reproducible. No usar para PoC exploratorios, tareas solo documentales ni refactors puros cubiertos por la suite.
 author: agent
 role: shared
 stage: implement
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [process, testing, methodology]

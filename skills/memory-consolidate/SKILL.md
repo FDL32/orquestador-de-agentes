@@ -1,11 +1,12 @@
 ---
 name: memory-consolidate
 version: 2.0.0
-description: Dedupe + filter + archive observations.jsonl deterministic V1 of Dream Cycle pattern
+description: Consolida de forma determinista observations.jsonl, deduplicando, filtrando ruido y archivando entradas antiguas, sin LLM ni cron. Usar cuando se cierra la sesion tras session_close_observations o cuando observations.jsonl ha crecido mucho. No usar para escribir observaciones nuevas (ver session-close-observations).
 triggers: [/consolidate, /memory, /dream-cycle]
 author: agent
 role: shared
 stage: memory
+cycle_phase: [F7-cierre-sesion]
 writes_memory: true
 quality_gate: false
 tags: [core, system]

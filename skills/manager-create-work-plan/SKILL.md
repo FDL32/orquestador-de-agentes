@@ -1,11 +1,12 @@
 ---
 name: manager-create-work-plan
 version: 2.0.0
-description: Skill para que el Manager cree planes de implementación estructurados con fases, tareas y criterios de aceptación
+description: Crea el work_plan estructurado que ejecutara el Builder, con fases, tareas, riesgos y criterios de aceptacion medibles. Usar cuando el usuario pide una funcionalidad o un cambio y el Manager debe formar el contrato. No usar para revisar una entrega (ver manager-review-implementation) ni si el requisito es ambiguo (primero grill-work-plan).
 triggers: [/plan, create-plan, /schedule]
 author: agent
 role: manager
 stage: plan
+cycle_phase: [F2-contrato]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

@@ -6,6 +6,7 @@ triggers: [/agent-setup, /agent-install, /init]
 author: agent
 role: user
 stage: setup
+cycle_phase: [F0-arranque-sesion]
 writes_memory: false
 quality_gate: false
 tags: [core, system, destination, host-extends]

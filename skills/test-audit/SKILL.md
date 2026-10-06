@@ -1,11 +1,12 @@
 ---
 name: test-audit
 version: 1.0.0
-description: Auditar la suite de tests para detectar cobertura de bajo valor, acoplamiento a implementacion y tests duplicados, sin bajar la confianza real
+description: Audita la suite de tests para hallar cobertura de bajo valor, acoplamiento a la implementacion y tests duplicados sin bajar la confianza real. Usar cuando la suite es lenta o sospechas de tests cosmeticos. No usar para borrar tests que fallan en la baseline (puede ser un bug de producto) ni para auditar codigo muerto (ver code-audit).
 triggers: [/test-audit, test-audit, /tests-value]
 author: agent
 role: auditor
 stage: review
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system, testing]

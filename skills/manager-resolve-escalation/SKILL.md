@@ -1,11 +1,12 @@
 ---
 name: manager-resolve-escalation
 version: 2.0.0
-description: Skill para que el Manager resuelva bloqueos y escalaciones del Builder con decisiones documentadas
+description: Resuelve un bloqueo o una escalacion del Builder con una decision documentada, clasificando el bloqueo y comparando opciones con sus trade-offs. Usar cuando el Builder queda BLOCKED dentro del ticket. No usar para escalar al motor un hallazgo detectado desde un destino (ver escalate-to-motor).
 triggers: [/escalate, escalation, /resolve]
 author: agent
 role: manager
 stage: review
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

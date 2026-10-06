@@ -1,11 +1,12 @@
 ---
 name: scaffold-python-project
 version: 2.0.0
-description: Crear estructura completa de proyecto Python nuevo con seguridad integrada
+description: Crea la estructura completa de un proyecto Python nuevo con seguridad integrada. Usar cuando se arranca un proyecto desde cero. No usar para un proyecto que ya existe (ver adopt-existing-project o secure-existing-project).
 triggers: [/scaffold, /new-project, /scaffold-python]
 author: agent
 role: shared
 stage: setup
+cycle_phase: [F0-arranque-sesion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

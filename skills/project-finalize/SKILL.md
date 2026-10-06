@@ -1,11 +1,12 @@
 ---
 name: project-finalize
 version: 2.0.0
-description: Cierre profesional de un proyecto con auditoria, limpieza, documentacion, versionado y verificacion final sin romper el flujo Manager -> Builder
+description: Cierre profesional de un proyecto o fase importante con auditoria, limpieza, documentacion, versionado y verificacion final. Usar cuando el usuario pide dejar el repo listo para entrega, handoff o mantenimiento. No usar para cerrar una sesion de trabajo (ver manager-session-closeout) ni para publicar en Git (ver audit-git-publication).
 triggers: [/finalize, close, /finish]
 author: agent
 role: shared
 stage: close
+cycle_phase: [F7-cierre-sesion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

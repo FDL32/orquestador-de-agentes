@@ -1,11 +1,12 @@
 ---
 name: refactor-manager
 version: 2.0.0
-description: Protocolo de reingeniería segura con 5 fases (análisis → plan → refactor → validación → iteración)
+description: Dirige una refactorizacion segura de codigo Python en 5 fases (analisis, plan, refactor, validacion, iteracion) con los cambios aprobados antes de ejecutarse. Usar cuando hay que reestructurar codigo sin cambiar su comportamiento. No usar para un fix puntual (ver systematic-debugging) ni para una funcionalidad nueva (ver manager-create-work-plan).
 triggers: [/refactor, refactor-manager, refactor]
 author: agent
 role: shared
 stage: review
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

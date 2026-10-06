@@ -1,11 +1,12 @@
 ---
 name: secure-existing-project
 version: 2.1.0
-description: Aplicar arquitectura de seguridad privada/publica a proyecto Python existente
+description: Aplica la arquitectura de seguridad privada/publica a un proyecto Python existente con credenciales expuestas (fallback por convencion, no la solucion final). Usar cuando un proyecto ya existente guarda secretos en el arbol. No usar para un proyecto nuevo (ver scaffold-python-project) ni cuando keyring o SOPS resuelven el caso.
 triggers: [/secure, /security-audit, /harden]
 author: agent
 role: shared
 stage: support
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

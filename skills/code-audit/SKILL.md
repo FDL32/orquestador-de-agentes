@@ -1,11 +1,12 @@
 ---
 name: code-audit
 version: 2.1.0
-description: Auditoría sistemática de código Python detectando dead code, technical debt, y archivos inactivos usando vulture, deadcode, ruff y git log
+description: Auditoria sistematica de codigo Python que detecta dead code, deuda tecnica y archivos inactivos con vulture, deadcode, ruff y git log. Usar cuando se quiere un censo de codigo muerto o deuda antes de limpiar o refactorizar. No usar para auditar la suite de tests (ver test-audit) ni para revisar el cambio de un ticket (ver manager-review-implementation).
 triggers: [/code-audit, code-quality, /deadcode]
 author: agent
 role: auditor
 stage: review
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

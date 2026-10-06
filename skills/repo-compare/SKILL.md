@@ -1,11 +1,12 @@
 ---
 name: repo-compare
 version: 2.1.0
-description: Comparar proyecto local con repositorio GitHub para detectar funcionalidades de alto valor
+description: Compara el proyecto local con un repositorio de GitHub para detectar funcionalidades portables de alto valor, partiendo de AUDIT.md como contexto local. Usar cuando recibes una URL de GitHub y quieres saber que merece adoptarse. No usar para evaluar el propio repo (ver local-audit) ni sin un repo concreto que comparar.
 triggers: [/repo-compare, /compare, /gh-compare]
 author: agent
 role: shared
 stage: support
+cycle_phase: [F1-backlog]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

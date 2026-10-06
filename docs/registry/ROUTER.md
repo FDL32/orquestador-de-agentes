@@ -19,7 +19,11 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 ## Skills autocontenidas por fase
 
-- **F5-implementacion**: `systematic-debugging`
+- **F0-arranque-sesion**: `adopt-existing-project`, `local-audit`, `scaffold-python-project`, `setup-agent-system`
+- **F1-backlog**: `repo-compare`
+- **F2-contrato**: `deep-research`, `grill-work-plan`, `manager-create-work-plan`
+- **F5-implementacion**: `builder-run-quality-gates`, `builder-self-audit`, `builder-write-deliverable`, `code-audit`, `create-agent-skill`, `graphify`, `manager-resolve-escalation`, `refactor-manager`, `secure-existing-project`, `systematic-debugging`, `test-audit`, `test-driven-development`
+- **F7-cierre-sesion**: `manager-session-closeout`, `memory-consolidate`, `project-finalize`, `session-close-observations`, `version-changelog`
 
 ## Modos (encadenan fases por ticket)
 

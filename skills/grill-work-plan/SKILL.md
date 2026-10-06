@@ -1,11 +1,12 @@
 ---
 name: grill-work-plan
 version: 1.0.0
-description: Pre-plan interrogation skill that resolves ambiguous terminology before a work plan is created
+description: Interroga una peticion ambigua, una pregunta a la vez y con respuesta recomendada, para fijar la terminologia antes de crear el work_plan. Usar cuando el requisito del usuario tiene terminos difusos que cambiarian el plan. No usar para un requisito que ya es preciso (ver manager-create-work-plan).
 triggers: [/grill-plan, /grill, grill-wp]
 author: agent
 role: manager
 stage: plan
+cycle_phase: [F2-contrato]
 writes_memory: false
 quality_gate: false
 tags: [core, system]
