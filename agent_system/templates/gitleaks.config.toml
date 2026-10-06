@@ -97,3 +97,23 @@ description = "fixture sintetico del test de saneado de key en el transporte SSE
 regexes = [
   '''sk-live-063c-SSEKEY-9f2c47ab''',
 ]
+
+# WOT-2026-089l: control positivo del lanzador de sandbox -- el test prueba
+# que una variable con forma de secreto en el entorno del PADRE NO llega al
+# proceso hijo salvo con -PassEnv explicito. El literal tiene que EXISTIR
+# para que el assert "no aparecio en stdout" / "aparecio con -PassEnv" tenga
+# sentido: sin el literal no hay nada que probar que se bloquea.
+#
+# PROCEDENCIA SINTETICA VERIFICADA (mismo contrato que WOT-2026-063c arriba):
+#  1. `git log --all -S'valor-secreto-123'` devuelve UN commit (baaca3f, el
+#     que crea el test).
+#  2. El literal solo aparece en tests/unit/test_sandbox_launcher.py; cero
+#     hits fuera de tests/.
+#  3. La variable `SBXTEST_SECRET_KEY` es local al test (inyectada en el
+#     dict `env` del propio caso), ausente de scripts/, bus/ y
+#     agent_system/: no existe ruta productiva que la lea.
+[[allowlists]]
+description = "fixture sintetico del test de aislamiento de entorno del sandbox launcher (WOT-2026-089l). NO es una credencial: prueba que el entorno del hijo no hereda secretos del padre salvo -PassEnv explicito. Procedencia sintetica verificada, ver comentario."
+regexes = [
+  '''valor-secreto-123''',
+]
