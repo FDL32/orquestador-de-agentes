@@ -49,7 +49,7 @@
 | prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | shared | model-invoked | — |
-| prompt | `prompts/orchestrator_launch_builder.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/orchestrator_launch_builder.md` | active | system | builder | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_pipeline_codeonly.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_prepare_and_launch_ticket.md` | active | system | shared | model-invoked | — |

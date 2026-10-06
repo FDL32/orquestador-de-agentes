@@ -1,4 +1,13 @@
+---
+role: builder
+route_kind: modulo
+---
 # Launch Builder Prompt
+<!-- PROMPT-SUMMARY
+what: Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager.
+when: El Orquestador lo rellena con el ticket y lo entrega al abrir la sesion Builder, despues de auditar el contrato y verificar la paridad de prompts; nunca se abre por iniciativa propia.
+not: NO es el procedimiento para redactar y lanzar ese arranque (prompts/orchestrator_prepare_and_launch_ticket.md), NO es la revision del Manager (prompts/manager_review.md) y NO es la skill de invocacion del Builder (skills/builder-implement-from-plan/SKILL.md).
+-->
 
 Eres el BUILDER del ticket `{{TICKET_ID}}` en el motor `orquestador_de_agentes`.
 

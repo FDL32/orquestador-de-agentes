@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 20 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 21 de 47 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -58,6 +58,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 |---|---|---|---|
 | `prompts/_shared/loop_readiness.md` | audit_goal_completion.md, orchestrator_destination_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Gate que decide si una tarea es apta para /goal autonomo: 4 condiciones conjuntas (recurrente, verificacion automatizable, presupuesto declarado, artefacto nombrado) mas una denylist. | 294 |
 | `prompts/ensemble_loop.md` | AGENTS.md, builder_invocation_contract.md, orchestrator_autonomous_ticket_batch.md | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 195 |
+| `prompts/orchestrator_launch_builder.md` | transversal (10) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 827 |
 
 ## Por rol
 
@@ -78,6 +79,10 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 - `prompts/backlog_triage.md` (F1-backlog)
 - `prompts/manager_review.md` (F6-revision)
+
+### Rol: builder
+
+- `prompts/orchestrator_launch_builder.md` (modulo)
 
 ### Rol: auditor
 
