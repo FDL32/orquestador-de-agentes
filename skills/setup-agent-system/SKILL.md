@@ -1,7 +1,7 @@
 ---
 name: setup-agent-system
 version: 2.1.0
-description: Instalar o sincronizar un repo_destino para usar el motor externo orquestador_de_agentes con link portable, perfil host-project y preflight verificable
+description: Instalar o sincronizar un repo_destino para usar el motor externo orquestador_de_agentes con link portable, perfil host-project y preflight verificable. Usar cuando se instala el sistema en un destino nuevo, se sincroniza uno ya instalado, o se verifica su enlace al motor. No usar para un proyecto YA EXISTENTE con motor viejo embebido (ver adopt-existing-project) ni para crear un proyecto Python desde cero (ver scaffold-python-project).
 triggers: [/agent-setup, /agent-install, /init]
 author: agent
 role: user

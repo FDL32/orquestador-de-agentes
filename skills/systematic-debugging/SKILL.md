@@ -1,10 +1,11 @@
 ---
 name: systematic-debugging
 version: 2.0.0
-description: Proceso riguroso de cuatro fases para diagnosticar y corregir errores, priorizando la investigación de causa raíz y limitando los intentos iterativos ciegos a un umbral estricto.
+description: Proceso riguroso de cuatro fases para diagnosticar y corregir errores, priorizando la investigación de causa raíz y limitando los intentos iterativos ciegos a un umbral estricto. Usar cuando un error no es trivial y la causa no es obvia a primera vista. No usar para typos o fallos de linter (corrigelos directo).
 author: agent
 role: shared
 stage: implement
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [process, debugging, methodology]

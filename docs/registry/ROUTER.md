@@ -8,26 +8,30 @@
 
 ## Ciclo por fase (abre UNO)
 
-| Fase | Rol | Abre | Cuando | NO es | Lineas | Bucle (`--phase` / `--task-type`) |
-|---|---|---|---|---|---|---|
-| F3-auditoria-contrato | auditor | `prompts/audit_ticket_contract.md` | Con el work_plan.md ya escrito y antes de pasar a Builder (fase CONTRACT_AUDIT). | NO es audit_cf_ticket_contract.md (audita el ticket_contract antes de congelarlo, en Contract Formation) ni la revision de la implementacion (manager_review.md). | 374 | CONTRACT_AUDIT / contract-audit |
-| F5-implementacion | builder | (ninguno) | Tu contrato es el prompt que recibiste + `work_plan.md` | No abras `prompts/` para buscar | - | - |
-| F6-revision | manager | `prompts/manager_review.md` | Tras la entrega del Builder (fase MANAGER_REVIEW) de un ticket de implementacion. | NO cierra tickets de Contract Formation en status frozen (eso es validate_contract_formation.py) ni audita el contrato antes del Builder (audit_ticket_contract.md). | 447 | MANAGER_REVIEW / code-review (*) |
+| Fase | Rol | Abre | Skill | Cuando | NO es | Lineas | Bucle (`--phase` / `--task-type`) |
+|---|---|---|---|---|---|---|---|
+| F3-auditoria-contrato | auditor | `prompts/audit_ticket_contract.md` | - | Con el work_plan.md ya escrito y antes de pasar a Builder (fase CONTRACT_AUDIT). | NO es audit_cf_ticket_contract.md (audita el ticket_contract antes de congelarlo, en Contract Formation) ni la revision de la implementacion (manager_review.md). | 374 | CONTRACT_AUDIT / contract-audit |
+| F5-implementacion | builder | (ninguno) | - | Tu contrato es el prompt que recibiste + `work_plan.md` | No abras `prompts/` para buscar | - | - |
+| F6-revision | manager | `prompts/manager_review.md` | `manager-review-implementation` | Tras la entrega del Builder (fase MANAGER_REVIEW) de un ticket de implementacion. | NO cierra tickets de Contract Formation en status frozen (eso es validate_contract_formation.py) ni audita el contrato antes del Builder (audit_ticket_contract.md). | 447 | MANAGER_REVIEW / code-review (*) |
 
 (*) F6-revision: `prose` si el entregable es documentation/research/analysis (decision provisional).
 Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracion` (loop_id `EXPLORATORY-<tema>`, sin nonce).
 
+## Skills autocontenidas por fase
+
+- **F5-implementacion**: `systematic-debugging`
+
 ## Modos (encadenan fases por ticket)
 
-| Prompt | Fases | Rol | Cuando | NO es | Lineas |
-|---|---|---|---|---|---|
-| `prompts/orchestrator_pipeline.md` | F4-lanzamiento, F5-implementacion, F6-revision | orchestrator | Para orquestar el pipeline por-ticket en modo destino con bus vivo: bootstrap -> builder -> review -> cierre por bus. | NO es el modo motor code-only (ver orchestrator_pipeline_codeonly.md) ni el ejecutor de batch autonomo (ver orchestrator_autonomous_ticket_batch.md) ni el bootstrap de sesion. | 1436 |
+| Prompt | Fases | Rol | Skill | Cuando | NO es | Lineas |
+|---|---|---|---|---|---|---|
+| `prompts/orchestrator_pipeline.md` | F4-lanzamiento, F5-implementacion, F6-revision | orchestrator | `orchestrate-pipeline` | Para orquestar el pipeline por-ticket en modo destino con bus vivo: bootstrap -> builder -> review -> cierre por bus. | NO es el modo motor code-only (ver orchestrator_pipeline_codeonly.md) ni el ejecutor de batch autonomo (ver orchestrator_autonomous_ticket_batch.md) ni el bootstrap de sesion. | 1436 |
 
 ## Fuera del ciclo (mantenimiento)
 
-| Prompt | Rol | Cuando | NO es | Lineas |
-|---|---|---|---|---|
-| `prompts/doc_optimization.md` | orchestrator | Cuando el cierre transitivo de lo siempre-cargado (CLAUDE.md, AGENTS.md y sus @imports) supera el presupuesto (~5 % de la ventana efectiva). | NO es para anadir contenido nuevo ni para recortar prompts por longitud; hermanos: suite_optimization.md (segundos de suite) y memory_optimization.md (memoria). | 218 |
+| Prompt | Rol | Skill | Cuando | NO es | Lineas |
+|---|---|---|---|---|---|
+| `prompts/doc_optimization.md` | orchestrator | `doc-optimization` | Cuando el cierre transitivo de lo siempre-cargado (CLAUDE.md, AGENTS.md y sus @imports) supera el presupuesto (~5 % de la ventana efectiva). | NO es para anadir contenido nuevo ni para recortar prompts por longitud; hermanos: suite_optimization.md (segundos de suite) y memory_optimization.md (memoria). | 218 |
 
 ## Modulos (no los abras tu: te los cita otro prompt)
 

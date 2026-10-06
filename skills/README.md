@@ -21,33 +21,13 @@ Flujo minimo de mejora continua:
 
 ## 2. Tabla operativa
 
-| Skill | Role | Stage | writes_memory | quality_gate | Descripcion |
-|---|---|---|---|---|---|
-| `grill-work-plan` | `manager` | `plan` | `false` | `false` | Interrogacion pre-plan para resolver terminologia ambigua antes de crear un work plan |
-| `setup-agent-system` | `user` | `setup` | `false` | `false` | Instalar y configurar el sistema de agentes con flujo oficial por etapas y compatibilidad legacy Manager+Builder en un proyecto existente |
-| `manager-create-work-plan` | `manager` | `plan` | `false` | `false` | Crear planes de implementacion estructurados con fases, tareas y criterios de aceptacion |
-| `manager-review-implementation` | `manager` | `review` | `false` | `false` | Revisar trabajo del Builder segun el plan aprobado y criterios de calidad |
-| `manager-resolve-escalation` | `manager` | `review` | `false` | `false` | Resolver bloqueos y escalaciones del Builder con decisiones documentadas |
-| `builder-implement-from-plan` | `builder` | `implement` | `false` | `false` | Ejecutar un plan aprobado |
-| `builder-write-deliverable` | `builder` | `implement` | `false` | `false` | Generar un deliverable markdown (no-codigo) desde descripcion y criterios de aceptacion |
-| `builder-run-quality-gates` | `builder` | `quality` | `false` | `true` | Validar codigo con ruff y pytest segun el tipo de entregable |
-| `builder-self-audit` | `builder` | `review` | `false` | `false` | Auto-auditoria obligatoria antes de reportar cualquier tarea como completada |
-| `test-driven-development` | `shared` | `implement` | `false` | `false` | Metodologia Red/Green/Refactor para mantener la base de codigo libre de regresiones |
-| `systematic-debugging` | `shared` | `implement` | `false` | `false` | Proceso riguroso de cuatro fases para diagnosticar y corregir errores |
-| `code-audit` | `shared` | `review` | `false` | `false` | Auditoria sistematica de dead code, deuda tecnica y archivos inactivos |
-| `refactor-manager` | `shared` | `review` | `false` | `false` | Protocolo de reingenieria segura con analisis, plan, refactor, validacion e iteracion |
-| `project-finalize` | `shared` | `close` | `false` | `false` | Cierre profesional con auditoria, limpieza, documentacion, versionado y verificacion final |
-| `version-changelog` | `shared` | `close` | `false` | `false` | Gestion semantica de versiones y CHANGELOG.md siguiendo SemVer y Keep a Changelog |
-| `session-close-observations` | `shared` | `close` | `true` | `false` | Generar observaciones curadas al final de cada sesion para memoria auto-mejorable |
-| `manager-session-closeout` | `manager` | `close` | `true` | `false` | Cerrar sesiones con learnings clasificados por scope y puente hacia mejora continua |
-| `memory-consolidate` | `shared` | `memory` | `true` | `false` | Dedupe, filter y archive de `observations.jsonl` |
-| `create-agent-skill` | `shared` | `meta` | `false` | `false` | Meta-skill para crear nuevas micro-skills siguiendo el estandar Agent Skills |
-| `graphify` | `shared` | `support` | `false` | `false` | Construir grafo de conocimiento persistente del codebase para exploracion eficiente |
-| `local-audit` | `shared` | `support` | `false` | `false` | Generar un snapshot rapido y estructurado del estado del repositorio |
-| `repo-compare` | `shared` | `support` | `false` | `false` | Comparar proyecto local con repositorio GitHub para detectar funcionalidades de valor |
-| `secure-existing-project` | `shared` | `support` | `false` | `false` | Aplicar arquitectura de seguridad privada/publica a proyecto Python existente |
-| `scaffold-python-project` | `shared` | `setup` | `false` | `false` | Crear estructura completa de proyecto Python nuevo con seguridad integrada |
-| `deep-research` | `shared` | `support` | `false` | `false` | Skill documental para producir contexto estructurado antes de abrir un WP |
+> DEC-router-skills-001 D-S6: esta tabla ya no se mantiene a mano (documentaba 25/43, desactualizada).
+> La proyeccion completa y generada de las skills-puntero vive en
+> [`docs/registry/ROUTER.md`](../docs/registry/ROUTER.md) (columna `Skill` de cada fila de prompt,
+> mas la seccion "Skills autocontenidas por fase" para las que no apuntan a un prompt). Para el
+> listado tecnico crudo de las 43 (role/stage/flags), usa `python scripts/discover_skills.py --json`
+> o `docs/registry/INDEX.md`.
+> Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
 
 ## 3. Bucle de mejora continua
 

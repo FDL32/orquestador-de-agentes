@@ -15,8 +15,8 @@ not: NO es el modo motor code-only (ver orchestrator_pipeline_codeonly.md) ni el
 > de un `repo_destino`, usando el motor `orquestador_de_agentes` como fuente
 > canonica de prompts, skills y scripts.
 >
-> Skill canonica: `skills/orchestrate-pipeline/SKILL.md`
-> contract_id: `cid-orchestrator-pipeline-v1`
+Skill canonica: skills/orchestrate-pipeline/SKILL.md
+contract_id: cid-orchestrator-pipeline-v1
 > source_of_truth: este prompt. La skill es wrapper operativo y mapa de
 > herramientas; si divergen, prevalece `prompts/orchestrator_pipeline.md`.
 >

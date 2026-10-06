@@ -6,8 +6,8 @@
 > forma contrato, ejecuta el pipeline por ticket, audita y deja cada repo en un
 > estado de publicacion explicito antes de pasar al siguiente.
 >
-> Skill canonica: `skills/orchestrate-destination-batch/SKILL.md`
-> contract_id: `cid-orchestrator-destination-batch-v1`
+Skill canonica: skills/orchestrate-destination-batch/SKILL.md
+contract_id: cid-orchestrator-destination-batch-v1
 > source_of_truth: este prompt. La skill es wrapper operativo; si divergen,
 > prevalece `prompts/orchestrator_destination_batch.md`.
 >

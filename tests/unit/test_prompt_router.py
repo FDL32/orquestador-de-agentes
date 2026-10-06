@@ -32,6 +32,8 @@ from scripts.discover_skills import (
     prompt_summary,
     read_prompt_parts,
     router_metadata_errors,
+    skill_pointer_for_prompt,
+    standalone_skills_by_phase,
     validate_route_metadata,
 )
 
@@ -473,3 +475,178 @@ def test_route_kinds_enum_is_exactly_the_dec_d2_enum():
     # Set equality: adding or dropping a kind without a DEC change turns this red.
     assert set(ROUTE_KINDS) == {"entry", "modo", "modulo", "mantenimiento", "externo"}
     assert len(ROUTE_KINDS) == 5
+
+
+def _add_skill(root: Path, dir_name: str, source_prompt: str) -> None:
+    """Seed one skill-puntero under root/skills/<dir_name>/SKILL.md."""
+    skill_dir = root / "skills" / dir_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {dir_name}\nsource_prompt: {source_prompt}\n---\n",
+        encoding="utf-8",
+    )
+
+
+class TestSkillPointerForPrompt:
+    """DEC-router-skills-001 D-S6: ROUTER.md gains a `skill` column for every
+    prompt that a skill-puntero points to via source_prompt."""
+
+    def test_finds_the_pointing_skill(self, tmp_path: Path) -> None:
+        root = _seed(
+            tmp_path,
+            {"audit_x.md": _prompt({"route_kind": "entry"}, "Audit X")},
+        )
+        _add_skill(root, "audit-x", "prompts/audit_x.md")
+        assert skill_pointer_for_prompt("audit_x.md", root) == "audit-x"
+
+    def test_no_pointing_skill_returns_none(self, tmp_path: Path) -> None:
+        root = _seed(
+            tmp_path,
+            {"audit_x.md": _prompt({"route_kind": "entry"}, "Audit X")},
+        )
+        assert skill_pointer_for_prompt("audit_x.md", root) is None
+
+    def test_shared_subdir_prompt_matches_by_relative_path(
+        self, tmp_path: Path
+    ) -> None:
+        root = _seed(
+            tmp_path, {"_shared/gate.md": _prompt({"route_kind": "modulo"}, "Gate")}
+        )
+        _add_skill(root, "gate-skill", "prompts/_shared/gate.md")
+        assert skill_pointer_for_prompt("_shared/gate.md", root) == "gate-skill"
+
+    def test_real_bundle_manager_review_implementation_points_to_its_prompt(
+        self,
+    ) -> None:
+        """Integration: the live binding already used by --check-contract."""
+        root = _get_live_bundle_root()
+        assert (
+            skill_pointer_for_prompt("manager_review.md", root)
+            == "manager-review-implementation"
+        )
+
+
+def _get_live_bundle_root() -> Path:
+    from scripts.discover_skills import _get_bundle_root
+
+    return _get_bundle_root()
+
+
+class TestStandaloneSkillsByPhase:
+    """D-S6: autocontenidas (no source_prompt) group by their OWN cycle_phase
+    for the router's new section -- they are invisible to _route_entries
+    (which only scans prompts/), so they need their own query."""
+
+    def _seed_skills_only(self, root: Path, skills: dict[str, dict[str, str]]) -> Path:
+        (root / "skills").mkdir(parents=True, exist_ok=True)
+        for dir_name, fm in skills.items():
+            skill_dir = root / "skills" / dir_name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            fm_text = "".join(f"{k}: {v}\n" for k, v in fm.items())
+            (skill_dir / "SKILL.md").write_text(
+                f"---\n{fm_text}---\n", encoding="utf-8"
+            )
+        return root
+
+    def test_standalone_skill_groups_under_its_phase(self, tmp_path: Path) -> None:
+        root = self._seed_skills_only(
+            tmp_path,
+            {
+                "debug-x": {
+                    "name": "debug-x",
+                    "cycle_phase": "[F5-implementacion]",
+                }
+            },
+        )
+        by_phase = standalone_skills_by_phase(root)
+        assert by_phase["F5-implementacion"] == ["debug-x"]
+
+    def test_pointer_skill_excluded(self, tmp_path: Path) -> None:
+        """A skill WITH source_prompt is not standalone: D-S1 says it
+        inherits/overrides via the prompt, it is not an independent entry."""
+        root = self._seed_skills_only(
+            tmp_path,
+            {
+                "pointer-x": {
+                    "name": "pointer-x",
+                    "source_prompt": "prompts/p.md",
+                    "cycle_phase": "[F6-revision]",
+                }
+            },
+        )
+        by_phase = standalone_skills_by_phase(root)
+        assert "F6-revision" not in by_phase
+
+    def test_skill_without_cycle_phase_excluded(self, tmp_path: Path) -> None:
+        root = self._seed_skills_only(tmp_path, {"no-phase": {"name": "no-phase"}})
+        by_phase = standalone_skills_by_phase(root)
+        assert by_phase == {}
+
+    def test_real_bundle_systematic_debugging_is_f5(self) -> None:
+        root = _get_live_bundle_root()
+        by_phase = standalone_skills_by_phase(root)
+        assert "systematic-debugging" in by_phase.get("F5-implementacion", [])
+
+
+class TestRouterStandaloneSection:
+    """D-S6: ROUTER.md gains a standalone-skills-by-phase section."""
+
+    def test_section_header_present(self, tmp_path: Path) -> None:
+        root = _seed(tmp_path, {})
+        (root / "skills" / "debug-x").mkdir(parents=True)
+        (root / "skills" / "debug-x" / "SKILL.md").write_text(
+            "---\nname: debug-x\ncycle_phase: [F5-implementacion]\n---\n",
+            encoding="utf-8",
+        )
+        text = build_router(root)
+        assert "Skills autocontenidas por fase" in text
+        assert "debug-x" in text
+        assert "F5-implementacion" in text
+
+
+class TestRouterSkillColumn:
+    """D-S6: the generated ROUTER.md surfaces the skill column end-to-end."""
+
+    def test_entry_prompt_with_pointer_skill_shows_skill_column(
+        self, tmp_path: Path
+    ) -> None:
+        root = _seed(
+            tmp_path,
+            {
+                "audit_x.md": _prompt(
+                    {
+                        "role": "auditor",
+                        "cycle_phase": "[F3-auditoria-contrato]",
+                        "route_kind": "entry",
+                    },
+                    "Audit X",
+                )
+            },
+        )
+        _add_skill(root, "audit-x", "prompts/audit_x.md")
+        text = build_router(root)
+        assert "audit-x" in text
+
+    def test_entry_prompt_without_pointer_skill_shows_dash(
+        self, tmp_path: Path
+    ) -> None:
+        root = self._tree_no_skills(tmp_path)
+        text = build_router(root)
+        # The existing fixture's audit_x.md has no pointer skill: must not
+        # silently omit the column, must render the "no skill" placeholder.
+        assert "`prompts/audit_x.md`" in text
+
+    def _tree_no_skills(self, root: Path) -> Path:
+        return _seed(
+            root,
+            {
+                "audit_x.md": _prompt(
+                    {
+                        "role": "auditor",
+                        "cycle_phase": "[F3-auditoria-contrato]",
+                        "route_kind": "entry",
+                    },
+                    "Audit X",
+                )
+            },
+        )

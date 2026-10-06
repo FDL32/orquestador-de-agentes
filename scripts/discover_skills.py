@@ -132,10 +132,13 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str | None]:
     return data, error
 
 
-def _scan_skills_dir(directory: Path | None) -> dict[str, dict[str, Any]]:
+def _scan_skills_dir(
+    directory: Path | None, bundle_root: Path | None = None
+) -> dict[str, dict[str, Any]]:
     discovered = {}
     if not directory or not directory.exists() or not directory.is_dir():
         return discovered
+    phase_root = bundle_root or _get_bundle_root()
     for skill_dir in sorted(directory.iterdir()):
         if not skill_dir.is_dir():
             continue
@@ -165,6 +168,9 @@ def _scan_skills_dir(directory: Path | None) -> dict[str, dict[str, Any]]:
             # owns the artifact" (frontmatter role, default "shared"). They may
             # coincide when no author is declared.
             "role": _derive_role(fm),
+            # DEC-router-skills-001 D-S1: own cycle_phase, else inherited from
+            # source_prompt. Empty tuple if neither resolves.
+            "cycle_phase": _derive_cycle_phase(fm, phase_root),
             "aliases": list(triggers),
             # WOT-2026-010s: hybrid user/model-invoked taxonomy. Additive metadata;
             # does NOT affect trigger_map (triggers: stays the dispatch contract).
@@ -231,6 +237,50 @@ def _derive_role(fm: dict[str, Any]) -> str:
     return "shared"
 
 
+def _own_cycle_phase(fm: dict[str, Any]) -> tuple[str, ...]:
+    """Normalize a skill/prompt frontmatter's own `cycle_phase` into a tuple.
+
+    `cycle_phase: []` parses as [""] upstream; empty strings are dropped so an
+    empty list reads as "absent", matching the prompt-side `_phase_errors`.
+    """
+    raw = fm.get("cycle_phase")
+    values = raw if isinstance(raw, list) else [raw]
+    return tuple(v for v in values if isinstance(v, str) and v)
+
+
+def _derive_cycle_phase(fm: dict[str, Any], bundle_root: Path) -> tuple[str, ...]:
+    """DEC-router-skills-001 D-S1: resolve a skill's `cycle_phase`.
+
+    Before: ``fm`` is a skill's parsed frontmatter; ``bundle_root`` is the
+            motor root (for resolving `source_prompt`).
+    During: a skill's OWN `cycle_phase` always wins if declared (explicit
+            override, e.g. when a pointer-skill needs a narrower phase than
+            its prompt). Absent that, a pointer-skill (`source_prompt` set)
+            inherits the `cycle_phase` of that prompt's frontmatter -- "skill
+            apunta, prompt gobierna". An autocontenida with neither resolves
+            to an empty tuple (no herencia posible; not an error here, the
+            router/guard layer decides whether that is acceptable for its
+            route_kind).
+    After: a tuple of CYCLE_PHASES values (unvalidated against the enum here;
+           callers that need the enum check reuse `_phase_errors`). Never
+           raises: a missing/unreadable source_prompt resolves to "nothing to
+           inherit", not an exception.
+    """
+    own = _own_cycle_phase(fm)
+    if own:
+        return own
+    source_prompt = fm.get("source_prompt")
+    if not isinstance(source_prompt, str) or not source_prompt:
+        return ()
+    prompt_path = _resolve_skill_path(source_prompt, bundle_root)
+    if prompt_path is None or not prompt_path.exists():
+        return ()
+    prompt_fm, error = parse_frontmatter(prompt_path)
+    if error:
+        return ()
+    return _own_cycle_phase(prompt_fm)
+
+
 def _auto_host_skills_dir(bundle_root: Path) -> Path | None:
     """Resolve the host .agent/skills dir for host-first precedence, if any."""
     for candidate in (
@@ -258,8 +308,8 @@ def discover_skills(
     if host_skills_dir is None:
         host_skills_dir = _auto_host_skills_dir(bundle_root)
 
-    bundle_skills = _scan_skills_dir(skills_dir)
-    host_skills = _scan_skills_dir(host_skills_dir)
+    bundle_skills = _scan_skills_dir(skills_dir, bundle_root)
+    host_skills = _scan_skills_dir(host_skills_dir, bundle_root)
 
     host_triggers = set()
     for skill in host_skills.values():
@@ -325,7 +375,11 @@ def _error(message: str) -> list[str]:
 # system-health-audit) keep their source_prompt/contract_id enforcement after
 # moving from role: manager to role: auditor. Shared->auditor skills without a
 # contract still pass (the source_prompt/contract_id guard below lets them).
-CONTRACT_OPT_IN_ROLES = ("manager", "builder", "auditor")
+# DEC-router-skills-001 D-S2 added "orchestrator" so the 3 orchestrate-* skills
+# (orchestrate-autonomous-ticket-batch, orchestrate-destination-batch,
+# orchestrate-pipeline) stop escaping this gate under role: shared despite
+# declaring source_prompt/contract_id.
+CONTRACT_OPT_IN_ROLES = ("manager", "builder", "auditor", "orchestrator")
 
 
 def _validate_frontmatter_contract_opt_in(
@@ -704,7 +758,7 @@ def build_catalog(bundle_root: Path | None = None) -> dict[str, Any]:
     root = bundle_root or _get_bundle_root()
 
     # Skills: reuse the frontmatter-derived metadata from discover_skills().
-    discovered = _scan_skills_dir(root / "skills")
+    discovered = _scan_skills_dir(root / "skills", root)
     entries: list[dict[str, Any]] = [
         _catalog_entry(
             "skill",
@@ -1051,6 +1105,66 @@ def module_citations(module_path: Path, root: Path) -> list[str]:
     return sorted(citers)
 
 
+def skill_pointer_for_prompt(prompt_rel: str, root: Path) -> str | None:
+    """DEC-router-skills-001 D-S6: the skill-dir name whose `source_prompt`
+    points at ``prompt_rel`` (e.g. "manager_review.md" or "_shared/gate.md"),
+    or None if no skill-puntero declares this prompt as its source.
+
+    Reuses the same bidirectional binding `_check_contract` already relies
+    on (`source_prompt: prompts/<prompt_rel>`), so the router column and the
+    contract gate can never silently disagree about which skill points at a
+    prompt. At most one skill is expected to point at a given prompt in
+    practice; if more than one does, the first found (sorted by dir name)
+    wins -- deterministic, not a validated invariant here.
+    """
+    skills_dir = root / "skills"
+    if not skills_dir.exists():
+        return None
+    expected = f"prompts/{prompt_rel}"
+    for skill_dir in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_file.exists():
+            continue
+        fm, error = parse_frontmatter(skill_file)
+        if error:
+            continue
+        if fm.get("source_prompt") == expected:
+            return skill_dir.name
+    return None
+
+
+def standalone_skills_by_phase(root: Path) -> dict[str, list[str]]:
+    """DEC-router-skills-001 D-S6: group autocontenida skills by cycle_phase.
+
+    Before: ``root`` is the motor root.
+    During: scans ``skills/*/SKILL.md``; a skill is "standalone" for this
+            section when it declares NO `source_prompt` (a pointer-skill's
+            phase comes from D-S1's herencia/override and is already shown
+            via its prompt's row -- listing it again here would duplicate
+            it). Skills with no own `cycle_phase` are not groupable; they
+            are absent from the pending-prompts-style gap this section
+            fills, not an error.
+    After: {cycle_phase: [skill_dir_name, ...]}, each list sorted; only
+           phases with at least one skill are present as keys.
+    """
+    skills_dir = root / "skills"
+    by_phase: dict[str, list[str]] = {}
+    if not skills_dir.exists():
+        return by_phase
+    for skill_dir in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_file.exists():
+            continue
+        fm, error = parse_frontmatter(skill_file)
+        if error or fm.get("source_prompt"):
+            continue
+        for phase in _own_cycle_phase(fm):
+            by_phase.setdefault(phase, []).append(skill_dir.name)
+    for names in by_phase.values():
+        names.sort()
+    return by_phase
+
+
 def _route_entries(root: Path) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     """Split the router universe into (adopted entries, pending names, exempt names)."""
     entries: list[dict[str, Any]] = []
@@ -1080,6 +1194,8 @@ def _route_entries(root: Path) -> tuple[list[dict[str, Any]], list[str], list[st
                 "summary": prompt_summary(body),
                 # One read per file: frontmatter lines + body lines.
                 "lines": offset + len(body.splitlines()),
+                # D-S6: which skill-puntero (if any) points at this prompt.
+                "skill": skill_pointer_for_prompt(rel, root),
             }
         )
     return entries, pending, exempt
@@ -1137,21 +1253,23 @@ def build_router(bundle_root: Path | None = None) -> str:
     entries, pending, exempt = _route_entries(root)
     lines = _router_header(len(entries), len(entries) + len(pending), exempt)
     lines += _router_cycle_section(_of_kind(entries, "entry"))
+    lines += _router_standalone_skills_section(standalone_skills_by_phase(root))
     lines += _router_table(
         "## Modos (encadenan fases por ticket)",
-        "| Prompt | Fases | Rol | Cuando | NO es | Lineas |",
+        "| Prompt | Fases | Rol | Skill | Cuando | NO es | Lineas |",
         [
             f"| `prompts/{e['rel']}` | {_cell(', '.join(e['phases']))} | {_cell(e['role'])}"
-            f" | {_summary_cell(e, 'when')} | {_summary_cell(e, 'not')} | {e['lines']} |"
+            f" | {_skill_cell(e)} | {_summary_cell(e, 'when')} | {_summary_cell(e, 'not')}"
+            f" | {e['lines']} |"
             for e in _of_kind(entries, "modo")
         ],
     )
     lines += _router_table(
         "## Fuera del ciclo (mantenimiento)",
-        "| Prompt | Rol | Cuando | NO es | Lineas |",
+        "| Prompt | Rol | Skill | Cuando | NO es | Lineas |",
         [
-            f"| `prompts/{e['rel']}` | {_cell(e['role'])} | {_summary_cell(e, 'when')}"
-            f" | {_summary_cell(e, 'not')} | {e['lines']} |"
+            f"| `prompts/{e['rel']}` | {_cell(e['role'])} | {_skill_cell(e)}"
+            f" | {_summary_cell(e, 'when')} | {_summary_cell(e, 'not')} | {e['lines']} |"
             for e in _of_kind(entries, "mantenimiento")
         ],
     )
@@ -1201,26 +1319,33 @@ def _router_header(adopted: int, total: int, exempt: list[str]) -> list[str]:
     ]
 
 
+def _skill_cell(entry: dict[str, Any]) -> str:
+    """D-S6: the pointer-skill's name as a table cell, or '-' if none."""
+    skill = entry.get("skill")
+    return f"`{skill}`" if skill else "-"
+
+
 def _router_cycle_section(entry_prompts: list[dict[str, Any]]) -> list[str]:
     """'Ciclo por fase': one row per entry and phase, F5 fixed, loop defaults (D5)."""
     lines = [
         "## Ciclo por fase (abre UNO)",
         "",
-        "| Fase | Rol | Abre | Cuando | NO es | Lineas | Bucle (`--phase` / `--task-type`) |",
-        "|---|---|---|---|---|---|---|",
+        "| Fase | Rol | Abre | Skill | Cuando | NO es | Lineas | Bucle (`--phase` / `--task-type`) |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for phase in CYCLE_PHASES:
         if phase == "F5-implementacion":
             lines.append(
-                f"| {phase} | builder | (ninguno) | Tu contrato es el prompt que recibiste"
+                f"| {phase} | builder | (ninguno) | - | Tu contrato es el prompt que recibiste"
                 " + `work_plan.md` | No abras `prompts/` para buscar | - | - |"
             )
             continue
         loop = PHASE_LOOP_PARAMS.get(phase)
         loop_cell = f"{loop[0]} / {loop[2]}{' (*)' if loop[3] else ''}" if loop else "-"
         lines.extend(
-            f"| {phase} | {_cell(e['role'])} | `prompts/{e['rel']}` | {_summary_cell(e, 'when')}"
-            f" | {_summary_cell(e, 'not')} | {e['lines']} | {loop_cell} |"
+            f"| {phase} | {_cell(e['role'])} | `prompts/{e['rel']}` | {_skill_cell(e)}"
+            f" | {_summary_cell(e, 'when')} | {_summary_cell(e, 'not')} | {e['lines']}"
+            f" | {loop_cell} |"
             for e in entry_prompts
             if phase in e["phases"]
         )
@@ -1231,6 +1356,26 @@ def _router_cycle_section(entry_prompts: list[dict[str, Any]]) -> list[str]:
         " (loop_id `EXPLORATORY-<tema>`, sin nonce).",
         "",
     ]
+    return lines
+
+
+def _router_standalone_skills_section(by_phase: dict[str, list[str]]) -> list[str]:
+    """DEC-router-skills-001 D-S6: skills autocontenidas por fase.
+
+    Autocontenidas (sin source_prompt) never appear in the prompt-driven
+    tables above (those only scan prompts/); this section is their only
+    entry point in ROUTER.md. Omitted entirely when there are none yet
+    (the piloto only has 1: systematic-debugging).
+    """
+    if not by_phase:
+        return []
+    lines = ["## Skills autocontenidas por fase", ""]
+    for phase in CYCLE_PHASES:
+        names = by_phase.get(phase)
+        if not names:
+            continue
+        lines.append(f"- **{phase}**: {', '.join(f'`{n}`' for n in names)}")
+    lines.append("")
     return lines
 
 
@@ -1286,6 +1431,197 @@ def check_router_stale(bundle_root: Path | None = None) -> tuple[bool, str]:
     return False, ""
 
 
+# --------------------------------------------------------------------------
+# DEC-router-skills-001 D-S4: .claude/skills/<n>/SKILL.md stubs so Claude
+# Code's native skill_listing can find a skill without duplicating its full
+# source. Scoped to a `names` subset (the 4-skill pilot) so the generator can
+# also be exercised against all 43 real skills WITHOUT committing that
+# (tramo 3 PASO 1 pieza 3: "verificalo en el worktree, no lo commitees sobre
+# las 43"). Canal: this stub is read ONLY by Claude Code's native listing;
+# every other agent/channel keeps using ROUTER.md (D-S6).
+# --------------------------------------------------------------------------
+
+_SKILL_STUB_SUBDIR = Path(".claude") / "skills"
+
+
+def _stub_names(bundle_root: Path, names: list[str] | None) -> list[str]:
+    """Resolve which skill dir names to generate/check stubs for."""
+    if names is not None:
+        return list(names)
+    skills_dir = bundle_root / "skills"
+    if not skills_dir.exists():
+        return []
+    return sorted(
+        p.name
+        for p in skills_dir.iterdir()
+        if p.is_dir() and not p.name.startswith(("_", "."))
+    )
+
+
+def _build_skill_stub(skill_dir_name: str, fm: dict[str, Any]) -> str:
+    """Render one stub's content: name + description + a one-line pointer."""
+    skill_name = fm.get("name", skill_dir_name)
+    description = fm.get("description", "")
+    rel_skill_path = f"skills/{skill_dir_name}/SKILL.md"
+    return (
+        f"---\nname: {skill_name}\ndescription: {description}\n---\n\n"
+        f"Lee `{rel_skill_path}`.\n"
+    )
+
+
+def generate_skill_stubs(
+    bundle_root: Path | None = None,
+    names: list[str] | None = None,
+    stub_root: Path | None = None,
+) -> list[Path]:
+    """Write .claude/skills/<n>/SKILL.md stubs for the given skill names.
+
+    Before: ``names`` is a subset of real skill-dir names (None = all real
+            skills found under ``bundle_root/skills``, used to verify the
+            generator at scale without committing the 43 stubs -- see
+            module header). ``stub_root`` lets a test isolate WHERE stubs
+            land (default: ``bundle_root/.claude/skills``) without touching
+            the real ``skills/`` source.
+    During: reads each real ``skills/<n>/SKILL.md`` frontmatter and writes a
+            minimal stub (name + description + a `Lee skills/<n>/SKILL.md`
+            pointer) with LF line endings, creating parent dirs as needed.
+            A skill whose SKILL.md is missing or unparsable is skipped (not
+            an error here; `--check-contract`/`validate_all.py` already
+            guard the real SKILL.md).
+    After: returns the list of stub paths written, in the same order as the
+           resolved names.
+    """
+    root = bundle_root or _get_bundle_root()
+    out_root = stub_root if stub_root is not None else root / _SKILL_STUB_SUBDIR
+    written: list[Path] = []
+    for skill_dir_name in _stub_names(root, names):
+        skill_file = root / "skills" / skill_dir_name / "SKILL.md"
+        if not skill_file.exists():
+            continue
+        fm, error = parse_frontmatter(skill_file)
+        if error:
+            continue
+        stub_dir = out_root / skill_dir_name
+        stub_dir.mkdir(parents=True, exist_ok=True)
+        stub_path = stub_dir / "SKILL.md"
+        stub_path.write_text(
+            _build_skill_stub(skill_dir_name, fm), encoding="utf-8", newline="\n"
+        )
+        written.append(stub_path)
+    return written
+
+
+def check_skill_stubs_stale(
+    bundle_root: Path | None = None,
+    names: list[str] | None = None,
+    stub_root: Path | None = None,
+) -> tuple[bool, str]:
+    """Check whether the stubs for ``names`` match their live SKILL.md source.
+
+    Returns (is_stale, diagnostic): stale when any stub is missing or its
+    rendered content diverges from what `generate_skill_stubs` would write
+    today (name/description drift, e.g. the real SKILL.md changed its
+    description and the stub was not regenerated).
+    """
+    root = bundle_root or _get_bundle_root()
+    out_root = stub_root if stub_root is not None else root / _SKILL_STUB_SUBDIR
+    stale: list[str] = []
+    for skill_dir_name in _stub_names(root, names):
+        skill_file = root / "skills" / skill_dir_name / "SKILL.md"
+        if not skill_file.exists():
+            continue
+        fm, error = parse_frontmatter(skill_file)
+        if error:
+            continue
+        expected = _build_skill_stub(skill_dir_name, fm)
+        stub_path = out_root / skill_dir_name / "SKILL.md"
+        if not stub_path.exists():
+            stale.append(f"{skill_dir_name}: stub missing at {stub_path}")
+            continue
+        if stub_path.read_text(encoding="utf-8") != expected:
+            stale.append(f"{skill_dir_name}: stub is stale vs live SKILL.md")
+    if stale:
+        return True, (
+            "; ".join(stale)
+            + ". Regenerate with: python scripts/discover_skills.py --generate-skill-stubs"
+        )
+    return False, ""
+
+
+def _deployed_stub_names(bundle_root: Path) -> list[str]:
+    """Names of skills that already have a stub on disk under .claude/skills/.
+
+    Used as the CLI default scope for --check-skill-stubs/--generate-skill-
+    stubs, so the gate only watches what has actually been deployed so far
+    (the pilot's 4 skills today) instead of demanding all 43 have a stub
+    before the batch rollout (a separate tramo, per DEC-router-skills-001).
+    """
+    stub_dir = bundle_root / _SKILL_STUB_SUBDIR
+    if not stub_dir.exists():
+        return []
+    return sorted(
+        p.name for p in stub_dir.iterdir() if p.is_dir() and (p / "SKILL.md").exists()
+    )
+
+
+def _generate_skill_stubs_cli() -> None:
+    """CLI body of --generate-skill-stubs; always SystemExit (never returns).
+
+    Default scope: only what is ALREADY deployed under .claude/skills/ (the
+    pilot's subset today). --all-skills opts into generating the full 43 --
+    reserved for the batch rollout tramo; never the default, so re-running
+    this flag can never silently create new stubs beyond what was explicitly
+    deployed (a real bug caught during the pilot, see test_discover_skills.
+    TestGenerateSkillStubsCliScope).
+    """
+    root = _get_bundle_root()
+    if "--all-skills" in sys.argv:
+        names = None
+    else:
+        names = _deployed_stub_names(root)
+        if not names:
+            print(
+                "[SKILL-STUBS] no stubs deployed yet under .claude/skills/; "
+                "pass --all-skills to generate the full 43 (batch rollout only).",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+    paths = generate_skill_stubs(root, names=names)
+    for path in paths:
+        print(f"[OK] Generated {path.relative_to(root)}")
+    raise SystemExit(0)
+
+
+def _check_index_cli() -> None:
+    """CLI body of --check-index; always SystemExit (never returns).
+
+    Covers INDEX.md, ROUTER.md (DEC-router-prompts-001) and, when any skill
+    stub is deployed (D-S4), the stub/SKILL.md freshness gate -- scoped to
+    what is deployed, never demanding all 43 before the batch rollout.
+    """
+    root = _get_bundle_root()
+    failures = [
+        f"[STALE] {diag}"
+        for stale, diag in (check_index_stale(), check_router_stale())
+        if stale
+    ]
+    failures += [f"[ROUTER] {error}" for error in router_metadata_errors()]
+    deployed = _deployed_stub_names(root)
+    if deployed:
+        stub_stale, stub_diag = check_skill_stubs_stale(root, names=deployed)
+        if stub_stale:
+            failures.append(f"[SKILL-STUBS] {stub_diag}")
+    if failures:
+        for line in failures:
+            print(line, file=sys.stderr)
+        raise SystemExit(1)
+    print("[OK] INDEX.md is in sync with the live discovery catalog.")
+    print("[OK] ROUTER.md is in sync with the live prompts.")
+    if deployed:
+        print(f"[OK] {len(deployed)} skill stub(s) in sync with their SKILL.md.")
+    raise SystemExit(0)
+
+
 def _dispatch_catalog_flags() -> None:
     """Handle the WOT-2026-008c catalog/index CLI flags; SystemExit if matched.
 
@@ -1320,20 +1656,11 @@ def _dispatch_catalog_flags() -> None:
             )
         raise SystemExit(0)
 
+    if "--generate-skill-stubs" in sys.argv:
+        _generate_skill_stubs_cli()
+
     if "--check-index" in sys.argv:
-        failures = [
-            f"[STALE] {diag}"
-            for stale, diag in (check_index_stale(), check_router_stale())
-            if stale
-        ]
-        failures += [f"[ROUTER] {error}" for error in router_metadata_errors()]
-        if failures:
-            for line in failures:
-                print(line, file=sys.stderr)
-            raise SystemExit(1)
-        print("[OK] INDEX.md is in sync with the live discovery catalog.")
-        print("[OK] ROUTER.md is in sync with the live prompts.")
-        raise SystemExit(0)
+        _check_index_cli()
 
 
 def main() -> None:

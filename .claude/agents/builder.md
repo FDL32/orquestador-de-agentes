@@ -5,10 +5,6 @@ tools: [Read, Write, Edit, Bash, Glob, Grep, TodoWrite]
 model: sonnet
 color: green
 maxTurns: 50
-skills:
-  - builder-implement-from-plan
-  - builder-self-audit
-  - builder-run-quality-gates
 ---
 
 # Builder

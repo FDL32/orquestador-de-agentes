@@ -7,15 +7,20 @@ Covers: bidirectional prompt<->skill contract validation.
 """
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from scripts.discover_skills import (
     _check_contract,
+    _deployed_stub_names,
+    _derive_cycle_phase,
     _derive_disable_model_invocation,
     _get_bundle_root,
     _resolve_skill_path,
+    check_skill_stubs_stale,
     discover_skills,
     extract_frontmatter,
+    generate_skill_stubs,
     parse_frontmatter,
 )
 
@@ -399,6 +404,45 @@ class TestCheckContract:
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
         assert _check_contract() == 0
 
+    def test_orchestrator_contract_valid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DEC-router-skills-001 D-S2: role: orchestrator opts into the contract
+        (enforced), closing the gap where the 3 orchestrate-* skills escaped
+        --check-contract under role: shared despite declaring source_prompt/
+        contract_id."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "orch-x").mkdir(parents=True)
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "skills" / "orch-x" / "SKILL.md").write_text(
+            "---\nname: orch-x\nrole: orchestrator\nsource_prompt: prompts/orch.md\n"
+            "contract_id: cid-orch-v1\n---\n"
+        )
+        (bundle / "prompts" / "orch.md").write_text(
+            "# Orch\nSkill canonica: skills/orch-x/SKILL.md\ncontract_id: cid-orch-v1\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 0
+
+    def test_orchestrator_contract_enforced_not_silently_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Anti-false-green guarantee for D-S2: an orchestrator skill with a
+        broken contract_id must FAIL, proving orchestrator is genuinely in the
+        opt-in and not silently skipped like role: shared."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "orch-x").mkdir(parents=True)
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "skills" / "orch-x" / "SKILL.md").write_text(
+            "---\nname: orch-x\nrole: orchestrator\nsource_prompt: prompts/orch.md\n"
+            "contract_id: cid-orch-v1\n---\n"
+        )
+        (bundle / "prompts" / "orch.md").write_text(
+            "# Orch\nSkill canonica: skills/orch-x/SKILL.md\ncontract_id: cid-WRONG\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 1
+
 
 class TestCheckContractIntegration:
     """Integration tests using the real bundle root."""
@@ -429,6 +473,242 @@ class TestCheckContractIntegration:
         # And the legacy stub still resolves (frontmatter declares the alias).
         fm, _ = parse_frontmatter(bundle / "prompts" / "manager_review.md")
         assert fm.get("legacy_aliases") == ["review_manager"]
+
+
+class TestDeriveCyclePhase:
+    """DEC-router-skills-001 D-S1: a pointer-skill without its own cycle_phase
+    inherits it from its source_prompt; one that declares its own uses that
+    value; an autocontenida (no source_prompt) with no cycle_phase resolves to
+    an empty tuple (no herencia posible)."""
+
+    def test_pointer_skill_inherits_from_source_prompt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "motor"
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "prompts" / "p.md").write_text(
+            "---\nrole: manager\ncycle_phase: [F6-revision]\nroute_kind: entry\n---\n# P\n"
+        )
+        fm = {"source_prompt": "prompts/p.md"}
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _derive_cycle_phase(fm, bundle) == ("F6-revision",)
+
+    def test_skill_with_own_cycle_phase_overrides_inheritance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "motor"
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "prompts" / "p.md").write_text(
+            "---\nrole: manager\ncycle_phase: [F6-revision]\nroute_kind: entry\n---\n# P\n"
+        )
+        fm = {"source_prompt": "prompts/p.md", "cycle_phase": ["F7-cierre-sesion"]}
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _derive_cycle_phase(fm, bundle) == ("F7-cierre-sesion",)
+
+    def test_autocontenida_without_source_prompt_uses_own_value(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "motor"
+        fm = {"cycle_phase": ["F5-implementacion"]}
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _derive_cycle_phase(fm, bundle) == ("F5-implementacion",)
+
+    def test_no_source_prompt_and_no_own_value_resolves_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "motor"
+        fm: dict[str, Any] = {}
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _derive_cycle_phase(fm, bundle) == ()
+
+    def test_source_prompt_missing_cycle_phase_resolves_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the prompt itself has no cycle_phase (e.g. route_kind: modulo,
+        where it's forbidden), the skill inherits nothing rather than erroring."""
+        bundle = tmp_path / "motor"
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "prompts" / "p.md").write_text(
+            "---\nrole: manager\nroute_kind: modulo\n---\n# P\n"
+        )
+        fm = {"source_prompt": "prompts/p.md"}
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _derive_cycle_phase(fm, bundle) == ()
+
+    def test_discover_exposes_cycle_phase_per_skill(self) -> None:
+        """Integration: discover_skills() surfaces cycle_phase (possibly empty
+        tuple) for every real skill, without raising."""
+        result = discover_skills()
+        assert result["skills"], "expected at least one discovered skill"
+        for skill in result["skills"]:
+            assert "cycle_phase" in skill
+            assert isinstance(skill["cycle_phase"], tuple)
+
+    def test_manager_review_implementation_inherits_f6(self) -> None:
+        """manager-review-implementation has no own cycle_phase and its
+        source_prompt (prompts/manager_review.md) is F6-revision."""
+        result = discover_skills()
+        skills_by_dir = {Path(s["path"]).name: s for s in result["skills"]}
+        entry = skills_by_dir["manager-review-implementation"]
+        assert entry["cycle_phase"] == ("F6-revision",)
+
+
+class TestGenerateSkillStubs:
+    """DEC-router-skills-001 D-S4: generate .claude/skills/<n>/SKILL.md stubs
+    (name + description + a one-line pointer) for Claude Code's native skill
+    listing, with a freshness gate guarding against stub/source drift."""
+
+    def _setup_bundle(self, tmp_path: Path) -> Path:
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "my-skill").mkdir(parents=True)
+        (bundle / "skills" / "my-skill" / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: Hace una cosa util.\n---\nBody\n"
+        )
+        return bundle
+
+    def test_generates_stub_with_name_and_description(self, tmp_path: Path) -> None:
+        bundle = self._setup_bundle(tmp_path)
+        paths = generate_skill_stubs(bundle, names=["my-skill"])
+        assert len(paths) == 1
+        stub = bundle / ".claude" / "skills" / "my-skill" / "SKILL.md"
+        assert stub in paths
+        content = stub.read_text(encoding="utf-8")
+        assert "name: my-skill" in content
+        assert "description: Hace una cosa util." in content
+        assert "skills/my-skill/SKILL.md" in content
+
+    def test_names_filter_restricts_scope(self, tmp_path: Path) -> None:
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "a").mkdir(parents=True)
+        (bundle / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: A.\n---\n"
+        )
+        (bundle / "skills" / "b").mkdir(parents=True)
+        (bundle / "skills" / "b" / "SKILL.md").write_text(
+            "---\nname: b\ndescription: B.\n---\n"
+        )
+        generate_skill_stubs(bundle, names=["a"])
+        assert (bundle / ".claude" / "skills" / "a" / "SKILL.md").exists()
+        assert not (bundle / ".claude" / "skills" / "b" / "SKILL.md").exists()
+
+    def test_names_none_generates_all(self, tmp_path: Path) -> None:
+        bundle = tmp_path / "motor"
+        for n in ("a", "b", "c"):
+            (bundle / "skills" / n).mkdir(parents=True)
+            (bundle / "skills" / n / "SKILL.md").write_text(
+                f"---\nname: {n}\ndescription: {n.upper()}.\n---\n"
+            )
+        paths = generate_skill_stubs(bundle, names=None)
+        assert len(paths) == 3
+        for n in ("a", "b", "c"):
+            assert (bundle / ".claude" / "skills" / n / "SKILL.md").exists()
+
+    def test_fresh_stub_is_not_stale(self, tmp_path: Path) -> None:
+        bundle = self._setup_bundle(tmp_path)
+        generate_skill_stubs(bundle, names=["my-skill"])
+        is_stale, diag = check_skill_stubs_stale(bundle, names=["my-skill"])
+        assert is_stale is False
+        assert diag == ""
+
+    def test_missing_stub_is_stale(self, tmp_path: Path) -> None:
+        bundle = self._setup_bundle(tmp_path)
+        is_stale, diag = check_skill_stubs_stale(bundle, names=["my-skill"])
+        assert is_stale is True
+        assert "my-skill" in diag
+
+    def test_stub_desynced_description_is_stale(self, tmp_path: Path) -> None:
+        """Mutation guard: editing the REAL SKILL.md after the stub was
+        generated, without regenerating, must be caught as drift."""
+        bundle = self._setup_bundle(tmp_path)
+        generate_skill_stubs(bundle, names=["my-skill"])
+        (bundle / "skills" / "my-skill" / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: Descripcion CAMBIADA.\n---\nBody\n"
+        )
+        is_stale, diag = check_skill_stubs_stale(bundle, names=["my-skill"])
+        assert is_stale is True
+        assert "my-skill" in diag
+
+    def test_stub_regenerated_after_source_change_is_fresh_again(
+        self, tmp_path: Path
+    ) -> None:
+        bundle = self._setup_bundle(tmp_path)
+        generate_skill_stubs(bundle, names=["my-skill"])
+        (bundle / "skills" / "my-skill" / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: Descripcion CAMBIADA.\n---\nBody\n"
+        )
+        generate_skill_stubs(bundle, names=["my-skill"])
+        is_stale, _ = check_skill_stubs_stale(bundle, names=["my-skill"])
+        assert is_stale is False
+
+    def test_real_bundle_all_43_skills_generate_without_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Verifies the generator runs end-to-end over the real 43 skills
+        (not just the 4-skill pilot subset) -- tramo 3 PASO 1 pieza 3:
+        'verificalo en el worktree, no lo commitees sobre las 43'. Reads the
+        REAL skills/ of this bundle but writes stubs into an isolated
+        tmp_path via stub_root, so nothing lands in the real .claude/skills/.
+        """
+        bundle = _get_bundle_root()
+        paths = generate_skill_stubs(bundle, names=None, stub_root=tmp_path)
+        assert len(paths) == 43
+        for p in paths:
+            assert p.exists()
+            assert p.parent.parent == tmp_path
+
+
+class TestDeployedStubNames:
+    """CLI wiring for --check-index: watches only what is deployed, never
+    demands all 43 before the batch rollout (separate tramo)."""
+
+    def test_empty_when_no_stub_dir(self, tmp_path: Path) -> None:
+        assert _deployed_stub_names(tmp_path) == []
+
+    def test_lists_only_dirs_with_a_skill_md(self, tmp_path: Path) -> None:
+        stub_dir = tmp_path / ".claude" / "skills"
+        (stub_dir / "a").mkdir(parents=True)
+        (stub_dir / "a" / "SKILL.md").write_text("---\nname: a\n---\n")
+        (stub_dir / "b-empty").mkdir(parents=True)  # no SKILL.md inside
+        assert _deployed_stub_names(tmp_path) == ["a"]
+
+    def test_real_bundle_deployed_stubs_pass_check_index_scope(self) -> None:
+        """Integration: whatever is deployed today in THIS bundle's real
+        .claude/skills/ (the 4-skill pilot) must be internally consistent
+        (fresh), proving the --check-index wiring would pass as-is."""
+        bundle = _get_bundle_root()
+        deployed = _deployed_stub_names(bundle)
+        assert deployed, "expected the pilot's stubs to be deployed already"
+        is_stale, diag = check_skill_stubs_stale(bundle, names=deployed)
+        assert is_stale is False, diag
+
+
+class TestGenerateSkillStubsCliScope:
+    """Regression guard: --generate-skill-stubs must NEVER default to all 43
+    (that is the batch-rollout tramo, opt-in only via --all-skills). This was
+    a real bug caught during the pilot: the first CLI wiring defaulted to
+    names=None (= all 43) and generated 39 stubs beyond the pilot's 4,
+    requiring a manual cleanup before this guard was written."""
+
+    def test_default_scope_never_exceeds_deployed_names(self) -> None:
+        import subprocess
+        import sys as _sys
+
+        bundle = _get_bundle_root()
+        before = set(_deployed_stub_names(bundle))
+        result = subprocess.run(
+            [_sys.executable, "scripts/discover_skills.py", "--generate-skill-stubs"],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        after = set(_deployed_stub_names(bundle))
+        assert result.returncode == 0, result.stderr
+        assert after == before, (
+            "generating without --all-skills must not create stubs beyond "
+            f"what was already deployed; before={sorted(before)} "
+            f"after={sorted(after)}"
+        )
 
 
 class TestDisableModelInvocation:
