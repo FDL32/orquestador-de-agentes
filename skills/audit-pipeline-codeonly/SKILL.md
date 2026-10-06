@@ -1,7 +1,7 @@
 ---
 name: audit-pipeline-codeonly
 version: 1.0.0
-description: Meta-auditoria post-cadena read-only de un pipeline del MOTOR ejecutado en CODE-ONLY MODE (worktree _dev, cierre commit-directo sin bus); evidencia por commits git + bloques de cierre del workspace, integridad por git status + check_motor_pristine + aterrizaje en origin/main
+description: Meta-auditoria de una cadena de tickets del motor cerrada en CODE-ONLY MODE (worktree _dev, cierre commit-directo sin bus), con evidencia por commits y bloques de cierre del workspace, aterrizaje en origin/main y costuras entre tickets. Usar cuando termina una cadena ejecutada con orchestrate-pipeline-codeonly, sin destino externo ni bus vivo. No usar para un repo_destino con bus vivo (ver audit-pipeline); no reabre tickets ni toca backlog ni codigo.
 triggers: [/audit-pipeline-codeonly, audit-pipeline-codeonly, auditar-pipeline-codeonly]
 author: agent
 role: auditor

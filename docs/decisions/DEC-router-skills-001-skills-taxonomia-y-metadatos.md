@@ -53,6 +53,17 @@ decision explicita, para no duplicar semantica con un nombre distinto).
 (`prompts/orchestrator_session_close_full_audit.md`, linea 22) es de cierre de sesion F7 — caso
 real de divergencia que motiva permitir la declaracion explicita en vez de forzar herencia ciega.
 
+**Enmienda 2026-10-06 (Tramo B, tras adoptar los prompts de las punteras en el router):** la
+herencia no siempre tiene de donde leer, porque `DEC-router-prompts-001` D4 deja sin fase dos tipos
+de prompt. (a) Una puntero cuyo prompt es `mantenimiento` queda EXENTA de `cycle_phase`: ese
+`route_kind` esta "fuera del ciclo" (D2) y su `cycle_phase` es "ausente" (D4), y `ROUTER.md` ya la
+lista con su skill en la seccion "Fuera del ciclo (mantenimiento)"; forzarle una fase contradiria la
+taxonomia del prompt que la skill solo apunta. Si una de ellas DECLARA fase propia, sigue permitido.
+La exencion se deriva del `route_kind` real del prompt, nunca de una lista a mano. (b) Una puntero
+cuyo prompt es `modulo` (prompt con `cycle_phase` PROHIBIDA) declara la suya propia; hoy el unico
+caso es `builder-implement-from-plan` -> `[F5-implementacion]`. Esa fase satisface el invariante pero
+NO anade descubribilidad: no hay seccion del ROUTER que la muestre (ver la excepcion de D-S6).
+
 ### D-S2. Rol `orchestrator`
 
 `orchestrator` se anade a `VALID_ROLES` de `skills/validate_all.py` (hoy: builder, manager,
@@ -162,6 +173,14 @@ esta implementada todavia; el piloto debe generarla y validarla. `skills/README.
 137 lineas, 25 filas de tabla, con prosa narrativa fuera de la tabla) sustituye SOLO su tabla
 desactualizada por un puntero al router extendido; la prosa narrativa se conserva sin cambios.
 
+**Excepcion declarada (enmienda 2026-10-06):** una puntero cuyo prompt es `modulo` no tiene fila
+propia en el ROUTER, porque la tabla de modulos no lleva columna `skill` por diseno
+(`DEC-router-prompts-001` D2: un modulo "NO se abre por iniciativa propia; lo ordena u ofrece otro
+fichero"). Hoy afecta solo a `builder-implement-from-plan`. Para Claude Code sigue visible por su
+stub (D-S4); para el resto de canales llega a traves del prompt que ordena el modulo. Anadir la
+columna a esa tabla o listar la skill entre las autocontenidas se descarto: lo primero cambia
+codigo y la proyeccion generada, lo segundo rompe la regla de que alli solo van autocontenidas.
+
 ### D-S7. Lint de referencias: ticket aparte, con fixtures y helper reutilizable
 
 Se ficha como ticket separado (no entra en el alcance de esta DEC), con dos condiciones: (a) sus
@@ -207,7 +226,9 @@ desincronizado del `SKILL.md` real debe fallar el gate de frescura).
 ## 5. Definicion de cierre (DoD), como INVARIANTES
 
 - Toda skill-puntero sin `cycle_phase` propio resuelve al de su `source_prompt`; toda skill
-  autocontenida declara el suyo. Ninguna skill queda sin `cycle_phase` resoluble.
+  autocontenida declara el suyo. Ninguna skill queda sin `cycle_phase` resoluble, SALVO una
+  puntero cuyo prompt sea `mantenimiento` (enmienda de D-S1, exencion derivada del `route_kind`
+  real del prompt).
 - Toda skill con `role` en `CONTRACT_OPT_IN_ROLES` (incluido `orchestrator` tras esta DEC) con
   `source_prompt`/`contract_id` declarado pasa `--check-contract`; ninguna skill con esos campos
   declarados escapa al gate por razon de `role`.
@@ -216,7 +237,8 @@ desincronizado del `SKILL.md` real debe fallar el gate de frescura).
 - Todo stub en `.claude/skills/<n>/SKILL.md` tiene `description` identica a la de
   `skills/<n>/SKILL.md`; un gate de frescura falla si divergen.
 - `ROUTER.md` referencia toda skill-puntero por su columna `skill`; ninguna de las 18 queda sin
-  esa columna.
+  esa columna, SALVO la que apunta a un prompt `modulo` (excepcion declarada en D-S6). Cada prompt
+  tiene como mucho una skill-puntero (la columna solo puede mostrar una).
 - `.claude/agents/manager.md` y `.claude/agents/builder.md` no declaran `skills:`.
 - No es criterio de cierre ninguna cifra de esta sesion (44 stubs, 1200 caracteres, 26643
   caracteres de listing): esas cifras son evidencia fechada de ESTA medicion, no un invariante a
@@ -258,3 +280,10 @@ A/B/C ya resueltos en `skills-audit-fixes` (fusionada antes de esta DEC).
   inducida). Ronda 2 APPROVE tras corregir el lenguaje de v3 en las 3 secciones senaladas, sin
   cambiar ninguna decision de fondo. Matiz no bloqueante: `CANONICAL_ROLES` (prompts) vs
   `VALID_ROLES` (skills) son nombres distintos para conjuntos distintos; no es un defecto de v3.
+- R3, 2026-10-06 (`EXPLORATORY-skills-tramo-b`, DESIGN_REVIEW de las enmiendas de D-S1/D-S6 antes
+  de desplegar las 16 punteras): Codex (BA05, filesystem) CHANGES por condiciones de procedimiento
+  (fijar la base `prompts-adopt-b1a@517fa6c` y re-derivar si se mueve; enmendar DEC, DoD y test a
+  la vez; unicidad prompt -> skill); nan glm5.3-flash via Kilo (filesystem) APPROVE, con la
+  precision adoptada de que la fase del modulo no anade descubribilidad. Las dos lentes avalan la
+  exencion de mantenimiento y la fase propia del modulo con excepcion declarada; las dos
+  descartan un check semantico skill<->prompt por no determinista.

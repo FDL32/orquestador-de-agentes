@@ -1,7 +1,7 @@
 ---
 name: audit-git-publication
 version: 1.0.0
-description: Auditoria dry-run de un repo Git antes de publicarlo, detectando secretos en tree e historia, archivos privados trackeados, rutas/PII, DECIDE pendiente y acciones manuales necesarias
+description: Auditoria dry-run de si un repo_destino puede publicarse en Git sin secretos, PII, artefactos privados ni deuda sin decision, con classify_publication.py y doble pasada de verificacion y refutacion. Usar cuando se prepara la primera publicacion de un repo_destino o una revision de su exposicion. No usar para instalar el destino (ver setup-agent-system) ni como gate pre-push de estado vivo (ver check_destino_publish_ready.py); no publica, no commitea ni borra nada.
 triggers: [/audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git]
 author: agent
 role: auditor

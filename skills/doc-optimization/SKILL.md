@@ -1,7 +1,7 @@
 ---
 name: doc-optimization
 version: 1.0.0
-description: Propone y (opcionalmente) aplica UN traslado de contenido desde un fichero SIEMPRE-CARGADO hacia una referencia, guiado por el invariante relativo del 5 por ciento de la ventana, con disciplina CEM -- sin mover refutaciones, sin mover lo que un consumidor programatico consume, sin resumir la evidencia al moverla
+description: Protocolo medir, mover y verificar para trasladar contenido de un fichero siempre-cargado (CLAUDE.md, AGENTS.md y sus @imports) a una referencia, con guard de no-degradacion de sus consumidores. Usar cuando el cierre transitivo de lo siempre-cargado supera el presupuesto (~5 % de la ventana efectiva). No usar para anadir contenido nuevo, recortar prompts por longitud, acelerar la suite (ver suite-optimization) ni optimizar la memoria (ver memory_optimization).
 triggers: [/doc-optimization, doc-optimization, optimizar-documentacion]
 author: agent
 role: manager

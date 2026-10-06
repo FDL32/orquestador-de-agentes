@@ -1,7 +1,7 @@
 ---
 name: session-close-full-audit
 version: 0.1.0
-description: Pasada adversarial de cierre de sesion; encadena las 3 auditorias de salud, anade auditoria esceptica de los diffs generados en la sesion (audit_agent_output) y solo entonces deja proceder al cierre canonico y a la promocion de memoria; read-only por defecto
+description: Auditoria adversarial previa al cierre canonico de una sesion, que encadena tres auditorias de salud y una pasada adversarial sobre el codigo generado; el cierre lo ejecuta agent_controller.py --session-close y en modo FINAL tambien registra follow-ups y propone memoria. Usar cuando se cierra una sesion que toco codigo del motor o del destino, antes de --session-close (a mitad de vuelo solo los Bloques 1, 2 y 2.5). No usar para el cierre operativo (ver orchestrator_session_close_chat) ni para arrancar una sesion (ver orchestrator_session_bootstrap), y nunca con un ticket IN_PROGRESS en el Bloque 3.
 triggers: [/close-full-audit, /session-close-full-audit, auditar-cierre-completo-sesion]
 author: agent
 role: auditor
