@@ -1,4 +1,13 @@
+---
+role: orchestrator
+route_kind: mantenimiento
+---
 # Prompt: Optimizacion de memoria basada en evidencia (recolector -> juez)
+<!-- PROMPT-SUMMARY
+what: Recolector->juez que propone (y opcionalmente aplica) UN piloto de optimizacion del SISTEMA de memoria (L1/L2/L3), guiado por evidencia medida, nunca relajando el schema ni el contrato de bus/memory_loader.py sin declararlo.
+when: Cuando el disparador medible de salud de memoria (ver orchestrator_session_close_full_audit.md Bloque 4.0) dispara sobre MOTOR o DESTINO.
+not: NO es memory_upload.md (gate de promocion de UNA leccion); NO es scripts/memory_consolidate.py (el mecanismo que este prompt puede decidir afinar).
+-->
 
 > **Modo:** propone y (opcionalmente) aplica UN piloto de optimizacion del
 > SISTEMA de memoria del motor (no de una leccion individual), guiado por

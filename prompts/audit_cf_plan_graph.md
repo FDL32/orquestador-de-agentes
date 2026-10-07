@@ -1,4 +1,14 @@
+---
+role: auditor
+cycle_phase: [F2-contrato]
+route_kind: entry
+---
 # Prompt: Auditoria del Plan Graph (Contract Formation)
+<!-- PROMPT-SUMMARY
+what: Auditoria adversarial de la descomposicion en PLAN-* de plan_graph.md, centrada en el claim de paralelismo entre planes (Impact Simulation).
+when: Tras redactar o modificar plan_graph.md, con repo_charter.md ya auditado, antes de redactar ticket_contracts.md.
+not: NO redefine Impact Simulation (fuente: audit_agent_output.md 2.c, aqui se enruta); NO es audit_cf_repo_charter.md (eslabon anterior) ni audit_cf_ticket_contract.md (siguiente).
+-->
 
 > **Modo:** Solo lectura. No implantes nada. No reescribas archivos.
 > Auditoria adversarial de la descomposicion en `PLAN-*` y, sobre todo, del claim

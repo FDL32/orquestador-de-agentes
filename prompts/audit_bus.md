@@ -1,4 +1,13 @@
+---
+role: auditor
+route_kind: mantenimiento
+---
 # Prompt: Auditoria del Bus y las Interacciones entre Agentes
+<!-- PROMPT-SUMMARY
+what: Diagnostico read-only del estado runtime del sistema multi-agente (bus de eventos, supervisor, Builder, Manager y sus interacciones); identifica fallos y drift.
+when: Cuando el bus/supervisor se comporta de forma inesperada o hay que diagnosticar antes de recuperar/arrancar limpio un ticket.
+not: NO ejecuta comandos de recuperacion (solo-lectura, propone); NO es el cierre de sesion (orchestrator_session_close_full_audit.md) ni la salud de 3 capas (audit_post_change_system_health.md).
+-->
 
 > **Modo:** Solo lectura. No implantes nada. No reescribas archivos.
 > No ejecutes comandos de recuperacion durante esta auditoria.

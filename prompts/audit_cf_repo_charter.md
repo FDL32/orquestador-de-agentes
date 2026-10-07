@@ -1,4 +1,14 @@
+---
+role: auditor
+cycle_phase: [F2-contrato]
+route_kind: entry
+---
 # Prompt: Auditoria del Repo Charter (Contract Formation)
+<!-- PROMPT-SUMMARY
+what: Auditoria adversarial de la idea/charter de un repo ANTES de descomponerlo en planes y tickets (Contract Formation, fase 2 de contract_formation_pipeline.md).
+when: Tras redactar o modificar repo_charter.md, antes de pasar a plan_graph.md.
+not: NO redefine Intent Audit/Impact Simulation (fuente: audit_agent_output.md 2.b/2.c, aqui se enrutan); NO es audit_cf_plan_graph.md (siguiente eslabon) ni audit_ticket_contract.md (fase distinta, post-work_plan).
+-->
 
 > **Modo:** Solo lectura. No implantes nada. No reescribas archivos.
 > Auditoria adversarial de la *idea/charter* de un repo ANTES de descomponerlo en

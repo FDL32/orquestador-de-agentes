@@ -1,4 +1,13 @@
+---
+role: auditor
+route_kind: modulo
+---
 # Audit Goal Completion (Isolated Goal-Checker)
+<!-- PROMPT-SUMMARY
+what: Checker AISLADO del orquestador-ejecutor que verifica el cumplimiento de un /goal autonomo (maker/checker, Isolating Maker from Checker). route_kind: modulo porque lo invoca OTRO prompt como referencia (igual que loop_budget.md/loop_hard_stop.md), nunca un agente directamente en una fase fija del ciclo.
+when: Al cerrar un /goal autonomo, SIEMPRE en una sesion/contexto distinto del que ejecuto el goal (aislamiento obligatorio).
+not: NO lo ejecuta el mismo agente que corrio el /goal; NO es la revision de un ticket de implementacion normal (manager_review.md).
+-->
 
 > Prompt canonico para verificar el cumplimiento de un /goal autonomo con un
 > checker AISLADO del orquestador-ejecutor.

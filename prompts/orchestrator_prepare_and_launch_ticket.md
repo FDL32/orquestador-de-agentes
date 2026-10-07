@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F2-contrato, F3-auditoria-contrato, F4-lanzamiento]
+route_kind: entry
+---
 # Prompt: Preparar Ticket y Prompt de Arranque (atajo por chat)
+<!-- PROMPT-SUMMARY
+what: Enrutador corto por chat que encadena, para UN ticket puntual, "preparar contrato + work_plan -> auditar -> redactar prompt de arranque del Builder -> bucle adversarial -> cierre" sin recorrer a mano cada prompt canonico.
+when: Cuando el usuario pide "preparar ticket X" por chat sin nombrar un prompt concreto, sobre un ticket ya triado.
+not: NO redefine criterios/gates/maquina de estados (remite a orchestrator_pipeline.md seccion "1.b Herramientas por fase", su source_of_truth); NO es un pipeline alternativo, es un atajo de chat sobre esa tabla.
+-->
 
 > **Que es:** un ENRUTADOR corto para pedir por chat, en una sola instruccion, la
 > secuencia completa "preparar contrato + work_plan -> auditar -> redactar prompt

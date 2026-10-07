@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 27 de 49 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 37 de 49 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -18,9 +18,16 @@
 | F1-backlog | orchestrator | `prompts/backlog_admit.md` | `backlog-admit` | Tras decidir en el PASO 0 del protocolo de hallazgos que la senal merece una fila NUEVA, antes de commitear el alta. | NO es el triaje pre-pipeline (prompts/backlog_triage.md), NO escala hallazgos del motor al buzon (prompts/escalate_to_motor.md) y NO cubre los otros dos flujos del PASO 0 (prompts/_shared/finding_triage_protocol.md). | 146 | TRIAGE_AUDIT / triage |
 | F1-backlog | manager | `prompts/backlog_triage.md` | `backlog-triage` | Antes de lanzar el pipeline orquestado o un batch autonomo, para decidir que pipeline lanzar sobre el backlog vivo. | NO ejecuta el pipeline ni muta el backlog (prompts/orchestrator_pipeline.md), NO audita un pipeline ya cerrado (prompts/audit_pipeline.md) y NO da de alta tickets (prompts/backlog_admit.md). | 493 | TRIAGE_AUDIT / triage |
 | F1-backlog | orchestrator | `prompts/escalate_to_motor.md` | `escalate-to-motor` | Cuando el destino detecta un defecto, deuda o propuesta que pertenece al MOTOR y no al destino; se invoca en el chat del destino. | NO es el pipeline de tickets del destino (prompts/orchestrator_pipeline.md), NO es la escalacion intra-repo Builder a Manager (skills/manager-resolve-escalation/SKILL.md) y NO autoriza a tocar repo_motor: el sobre aterriza en el buzon del workspace del motor o queda en fallback declarado. | 261 | TRIAGE_AUDIT / triage |
+| F2-contrato | auditor | `prompts/audit_cf_plan_graph.md` | - | Tras redactar o modificar plan_graph.md, con repo_charter.md ya auditado, antes de redactar ticket_contracts.md. | NO redefine Impact Simulation (fuente: audit_agent_output.md 2.c, aqui se enruta); NO es audit_cf_repo_charter.md (eslabon anterior) ni audit_cf_ticket_contract.md (siguiente). | 77 | - |
+| F2-contrato | auditor | `prompts/audit_cf_repo_charter.md` | - | Tras redactar o modificar repo_charter.md, antes de pasar a plan_graph.md. | NO redefine Intent Audit/Impact Simulation (fuente: audit_agent_output.md 2.b/2.c, aqui se enrutan); NO es audit_cf_plan_graph.md (siguiente eslabon) ni audit_ticket_contract.md (fase distinta, post-work_plan). | 81 | - |
+| F2-contrato | auditor | `prompts/audit_cf_ticket_contract.md` | - | Tras redactar un ticket_contract en status: draft, antes de pasar a status: frozen y materializar work_plan.md. | NO es prompts/audit_ticket_contract.md (ese audita el work_plan.md YA ESCRITO, fase F3, madurez operativa; este audita el ticket_contract ANTES de existir el work_plan.md, intencion y suficiencia). | 176 | - |
+| F2-contrato | orchestrator | `prompts/orchestrator_prepare_and_launch_ticket.md` | - | Cuando el usuario pide "preparar ticket X" por chat sin nombrar un prompt concreto, sobre un ticket ya triado. | NO redefine criterios/gates/maquina de estados (remite a orchestrator_pipeline.md seccion "1.b Herramientas por fase", su source_of_truth); NO es un pipeline alternativo, es un atajo de chat sobre esa tabla. | 231 | - |
 | F3-auditoria-contrato | auditor | `prompts/audit_ticket_contract.md` | - | Con el work_plan.md ya escrito y antes de pasar a Builder (fase CONTRACT_AUDIT). | NO es audit_cf_ticket_contract.md (audita el ticket_contract antes de congelarlo, en Contract Formation) ni la revision de la implementacion (manager_review.md). | 374 | CONTRACT_AUDIT / contract-audit |
+| F3-auditoria-contrato | orchestrator | `prompts/orchestrator_prepare_and_launch_ticket.md` | - | Cuando el usuario pide "preparar ticket X" por chat sin nombrar un prompt concreto, sobre un ticket ya triado. | NO redefine criterios/gates/maquina de estados (remite a orchestrator_pipeline.md seccion "1.b Herramientas por fase", su source_of_truth); NO es un pipeline alternativo, es un atajo de chat sobre esa tabla. | 231 | CONTRACT_AUDIT / contract-audit |
+| F4-lanzamiento | orchestrator | `prompts/orchestrator_prepare_and_launch_ticket.md` | - | Cuando el usuario pide "preparar ticket X" por chat sin nombrar un prompt concreto, sobre un ticket ya triado. | NO redefine criterios/gates/maquina de estados (remite a orchestrator_pipeline.md seccion "1.b Herramientas por fase", su source_of_truth); NO es un pipeline alternativo, es un atajo de chat sobre esa tabla. | 231 | - |
 | F5-implementacion | builder | (ninguno) | - | Tu contrato es el prompt que recibiste + `work_plan.md` | No abras `prompts/` para buscar | - | - |
 | F6-revision | manager | `prompts/manager_review.md` | `manager-review-implementation` | Tras la entrega del Builder (fase MANAGER_REVIEW) de un ticket de implementacion. | NO cierra tickets de Contract Formation en status frozen (eso es validate_contract_formation.py) ni audita el contrato antes del Builder (audit_ticket_contract.md). | 447 | MANAGER_REVIEW / code-review (*) |
+| F7-cierre-sesion | orchestrator | `prompts/memory_upload.md` | - | En el cierre de sesion, tras manager-session-closeout/session-close-observations, antes de promocionar cualquier entrada a memoria portable. | NO es un volcado automatico al final de la sesion; NO mezcla OBSERVACION (hecho objetivo) con LEARNING (regla generalizable) en el mismo tier. | 275 | CLOSE / contract-audit |
 | F7-cierre-sesion | orchestrator | `prompts/orchestrator_session_close_full_audit.md` | `session-close-full-audit` | Al cerrar una sesion que toco codigo del motor o del destino, ANTES de agent_controller.py --session-close; a mitad de vuelo solo los Bloques 1, 2 y 2.5 (sin 2.5.f ni 2.5.g), nunca los Bloques 3 a 5. | NO es el cierre operativo (prompts/orchestrator_session_close_chat.md), NO arranca una sesion (prompts/orchestrator_session_bootstrap.md) y NO corre el Bloque 3 con un ticket IN_PROGRESS. | 432 | CLOSE / contract-audit |
 | F7-cierre-sesion | orchestrator | `prompts/session_hop.md` | `session-hop` | Al cerrar una sesion para dejar continuidad medida, o al preparar el arranque de la sesion siguiente a partir del estado recolectado. | NO define el rol ni el metodo de la sesion siguiente (prompts/orchestrator_session_bootstrap.md), NO lee el estado operativo de UN ticket (.claude/commands/pause-work.md, .claude/commands/resume-work.md, .claude/commands/session-report.md) y NO ejecuta el trabajo de la sesion: solo lo prepara. | 365 | CLOSE / contract-audit |
 | F8-meta-auditoria | auditor | `prompts/audit_autonomous_ticket_batch.md` | `audit-autonomous-ticket-batch` | Despues del cierre o parada de un batch ejecutado por prompts/orchestrator_autonomous_ticket_batch.md, cuando ya no quedan grupos ejecutables; exige el batch_run de la corrida. | NO la corre el agente que ejecuto el batch (aislamiento B1/B3), NO audita una cadena ticket a ticket (prompts/audit_pipeline.md o prompts/audit_pipeline_codeonly.md) y NO cierra la sesion ni ejecuta --session-close. | 661 | - |
@@ -52,9 +59,13 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 | Prompt | Rol | Skill | Cuando | NO es | Lineas |
 |---|---|---|---|---|---|
+| `prompts/audit_bus.md` | auditor | - | Cuando el bus/supervisor se comporta de forma inesperada o hay que diagnosticar antes de recuperar/arrancar limpio un ticket. | NO ejecuta comandos de recuperacion (solo-lectura, propone); NO es el cierre de sesion (orchestrator_session_close_full_audit.md) ni la salud de 3 capas (audit_post_change_system_health.md). | 323 |
+| `prompts/audit_complete_motor_destination.md` | auditor | - | Analisis periodico de arquitectura/portabilidad, NO una accion inmediata (produce blueprint de tickets futuros). | NO muta el arbol; NO es la auditoria de salud post-cambio (audit_post_change_system_health.md, mas acotada y frecuente) ni la de superficie legacy (audit_portability_legacy_surface.md, inventario puntual). | 617 |
 | `prompts/audit_git_publication.md` | auditor | `audit-git-publication` | Antes de una primera publicacion o de una revision de exposicion de un repo_destino. | NO instala el destino (skills/setup-agent-system/SKILL.md), NO es el gate pre-push de estado vivo (scripts/check_destino_publish_ready.py) y NO publica, commitea ni borra nada. | 189 |
+| `prompts/audit_portability_legacy_surface.md` | auditor | - | Cuando se sospecha acumulacion de deuda/legacy en el motor y hace falta un censo antes de decidir que retirar o extraer. | NO edita, renombra ni parchea nada (solo lectura); NO es la auditoria estrategica completa (audit_complete_motor_destination.md, alcance mayor). | 169 |
 | `prompts/audit_post_change_system_health.md` | auditor | `system-health-audit` | Despues de cambios en el motor y/o en un repo_destino, para saber si el sistema sigue sano de extremo a extremo. | NO es la meta-auditoria de un pipeline cerrado (skills/audit-pipeline/SKILL.md), ni el listo-para-publicar de un repo (skills/audit-git-publication/SKILL.md), ni un snapshot rapido (skills/local-audit/SKILL.md); el reporte del recolector no es el veredicto. | 208 |
 | `prompts/doc_optimization.md` | orchestrator | `doc-optimization` | Cuando el cierre transitivo de lo siempre-cargado (CLAUDE.md, AGENTS.md y sus @imports) supera el presupuesto (~5 % de la ventana efectiva). | NO es para anadir contenido nuevo ni para recortar prompts por longitud; hermanos: suite_optimization.md (segundos de suite) y memory_optimization.md (memoria). | 218 |
+| `prompts/memory_optimization.md` | orchestrator | - | Cuando el disparador medible de salud de memoria (ver orchestrator_session_close_full_audit.md Bloque 4.0) dispara sobre MOTOR o DESTINO. | NO es memory_upload.md (gate de promocion de UNA leccion); NO es scripts/memory_consolidate.py (el mecanismo que este prompt puede decidir afinar). | 188 |
 | `prompts/suite_optimization.md` | orchestrator | `suite-optimization` | Cuando la suite canonica es lenta y hay una corrida completa en run_history.jsonl de la que derivar el objetivo. | NO es una auditoria de calidad de tests (skills/test-audit/SKILL.md), NO activa xdist (familia 020p, sesion dedicada) y NO optimiza a ciegas desde la atribucion de pytest. | 158 |
 
 ## Modulos (no los abras tu: te los cita otro prompt)
@@ -62,6 +73,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 | Modulo | Lo citan | Que es | Lineas |
 |---|---|---|---|
 | `prompts/_shared/loop_readiness.md` | audit_goal_completion.md, orchestrator_destination_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Gate que decide si una tarea es apta para /goal autonomo: 4 condiciones conjuntas (recurrente, verificacion automatizable, presupuesto declarado, artefacto nombrado) mas una denylist. | 294 |
+| `prompts/audit_goal_completion.md` | audit_autonomous_ticket_batch.md, orchestrator_autonomous_ticket_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Checker AISLADO del orquestador-ejecutor que verifica el cumplimiento de un /goal autonomo (maker/checker, Isolating Maker from Checker). route_kind: modulo porque lo invoca OTRO prompt como referencia (igual que loop_budget.md/loop_hard_stop.md), nunca un agente directamente en una fase fija del ciclo. | 180 |
 | `prompts/ensemble_loop.md` | AGENTS.md, builder_invocation_contract.md, manager_orchestrator_loop_adapter_motor.md, orchestrator_autonomous_ticket_batch.md | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 225 |
 | `prompts/manager_orchestrator_loop_adapter_motor.md` | AGENTS.md, builder_invocation_contract.md | Adaptador del MOTOR al nucleo portable manager_orchestrator_loop.md: traduce cada capacidad del nucleo a los comandos y ficheros REALES de este repositorio, fija los minimos por tipo de entrega y declara la diferencia de identidad (D2). | 82 |
 | `prompts/orchestrator_launch_builder.md` | transversal (10) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 834 |
@@ -76,11 +88,14 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 - `prompts/escalate_to_motor.md` (F1-backlog)
 - `prompts/manager_orchestrator_loop.md` (F1-backlog, F2-contrato, F3-auditoria-contrato, F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/manager_orchestrator_loop_adapter_motor.md` (modulo)
+- `prompts/memory_optimization.md` (mantenimiento)
+- `prompts/memory_upload.md` (F7-cierre-sesion)
 - `prompts/orchestrator_autonomous_ticket_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_destination_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_destination_bootstrap.md` (F0-arranque-sesion)
 - `prompts/orchestrator_pipeline.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_pipeline_codeonly.md` (F4-lanzamiento, F5-implementacion, F6-revision)
+- `prompts/orchestrator_prepare_and_launch_ticket.md` (F2-contrato, F3-auditoria-contrato, F4-lanzamiento)
 - `prompts/orchestrator_refactor_bootstrap.md` (F0-arranque-sesion)
 - `prompts/orchestrator_session_bootstrap.md` (F0-arranque-sesion)
 - `prompts/orchestrator_session_close_full_audit.md` (F7-cierre-sesion)
@@ -100,8 +115,15 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 ### Rol: auditor
 
 - `prompts/audit_autonomous_ticket_batch.md` (F8-meta-auditoria)
+- `prompts/audit_bus.md` (mantenimiento)
+- `prompts/audit_cf_plan_graph.md` (F2-contrato)
+- `prompts/audit_cf_repo_charter.md` (F2-contrato)
+- `prompts/audit_cf_ticket_contract.md` (F2-contrato)
+- `prompts/audit_complete_motor_destination.md` (mantenimiento)
 - `prompts/audit_git_publication.md` (mantenimiento)
+- `prompts/audit_goal_completion.md` (modulo)
 - `prompts/audit_pipeline.md` (F8-meta-auditoria)
 - `prompts/audit_pipeline_codeonly.md` (F8-meta-auditoria)
+- `prompts/audit_portability_legacy_surface.md` (mantenimiento)
 - `prompts/audit_post_change_system_health.md` (mantenimiento)
 - `prompts/audit_ticket_contract.md` (F3-auditoria-contrato)

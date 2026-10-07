@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F7-cierre-sesion]
+route_kind: entry
+---
 # Prompt: Subida de Memoria
+<!-- PROMPT-SUMMARY
+what: GATE de pre-escritura (propose-before-write) para CADA aprendizaje: declara su destino (Claude privada / portable motor / portable destino / varios) antes de escribirlo, y exige evidencia verificable o degrada/descarta.
+when: En el cierre de sesion, tras manager-session-closeout/session-close-observations, antes de promocionar cualquier entrada a memoria portable.
+not: NO es un volcado automatico al final de la sesion; NO mezcla OBSERVACION (hecho objetivo) con LEARNING (regla generalizable) en el mismo tier.
+-->
 
 Revisa la última implantación del Builder, la revisión del Manager y el ciclo de planificación.
 

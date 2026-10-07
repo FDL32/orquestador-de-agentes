@@ -1,4 +1,13 @@
+---
+role: auditor
+route_kind: mantenimiento
+---
 # Audit: Complete Motor-Destination System
+<!-- PROMPT-SUMMARY
+what: Auditoria estrategica en profundidad del sistema motor-destino completo (autonomia, fiabilidad Builder/Manager, portabilidad, calidad, consistencia runtime/prompts/skills/memoria/docs).
+when: Analisis periodico de arquitectura/portabilidad, NO una accion inmediata (produce blueprint de tickets futuros).
+not: NO muta el arbol; NO es la auditoria de salud post-cambio (audit_post_change_system_health.md, mas acotada y frecuente) ni la de superficie legacy (audit_portability_legacy_surface.md, inventario puntual).
+-->
 
 Eres un auditor principal de arquitectura y sistemas multiagente.
 

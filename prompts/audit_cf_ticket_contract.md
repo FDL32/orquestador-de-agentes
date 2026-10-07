@@ -1,4 +1,14 @@
+---
+role: auditor
+cycle_phase: [F2-contrato]
+route_kind: entry
+---
 # Prompt: Auditoria del Ticket Contract (Contract Formation)
+<!-- PROMPT-SUMMARY
+what: Auditoria adversarial de UN ticket_contract de ticket_contracts.md ANTES de congelarlo (status: frozen) y convertirlo en work_plan.md; mide intencion y suficiencia, predecesor de audit_ticket_contract.md (F3).
+when: Tras redactar un ticket_contract en status: draft, antes de pasar a status: frozen y materializar work_plan.md.
+not: NO es prompts/audit_ticket_contract.md (ese audita el work_plan.md YA ESCRITO, fase F3, madurez operativa; este audita el ticket_contract ANTES de existir el work_plan.md, intencion y suficiencia).
+-->
 
 > **Modo:** Solo lectura. No implantes nada. No reescribas archivos.
 > Auditoria adversarial de un `ticket_contract` ANTES de congelarlo (`status: frozen`)
