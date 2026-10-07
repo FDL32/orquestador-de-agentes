@@ -82,6 +82,12 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
    si faltan): `INVENTARIO DE EVIDENCIA`; un presupuesto de exploracion (`PRESUPUESTO`, "no mas de ...");
    y la instruccion de responder `NO VERIFICABLE` (literal, con espacio) en vez de afirmar lo que no puede
    comprobar.
+1-bis. (WOT-2026-059n) Si el bundle declara `CANAL: agent` (o declara reenvio de su salida a un proceso
+   ejecutor), anade tambien `ROL DE LA LENTE: REVISOR/AUDITOR` (o `EJECUTOR`, si es un encargo real de
+   implementacion). `check_loop_bundle_protocol.py` BLOQUEA si el canal declarado tiene capacidad ejecutora
+   y falta esta seccion; sin `CANAL:` declarado en absoluto, solo avisa (deuda de adopcion, no se bloquea
+   retroactivamente). Origen: un bundle `agent` sin framing dejo a una lente con filesystem real confundir
+   una propuesta de diseno con un encargo de implementacion.
 2. Lentes `api` (sin ficheros): pega la evidencia (fragmentos y mediciones con su comando). Nunca les pidas
    "comprueba si existe X".
 3. Lentes `agent` con `repo_scope: destino` (codex): su directorio de trabajo es el DESTINO y leen el motor

@@ -48,6 +48,15 @@ _CANONICO = _MOTOR_ROOT / "bus" / "observation_domains.py"
 # tmp_path de la sesion (re-enraizados ahi por tests/conftest.py) y las caches
 # que los fixtures dejan dentro (p.ej. .agent/runtime/uv-cache de `uv run`).
 _TEST_RUNTIME_ROOT = _MOTOR_ROOT / "tests" / "sandbox" / "test_runtime"
+# WOT-2026-059n: mismo tipo de superficie que lo de arriba (gitignored,
+# .gitignore:17) pero por el OTRO lado -- scratch de TRABAJO del agente, no de
+# fixtures de test. MEDIDO 2026-10-07: scripts auxiliares de una sesion previa
+# de vuelo (.agent/runtime/tmp/vuelo_memoria_v3/*.py, p.ej. h1_robustez_f4.py,
+# measure_robust_f4.py) definian listas literales de muestra de VALID_DOMAINS
+# para sus propios probes y el scan los leia como si fueran codigo del arbol
+# portable, dando falso rojo por basura temporal legitima. AGENTS.md ya
+# declara este directorio "Excluido del workspace: runtime transitorio".
+_RUNTIME_TMP_ROOT = _MOTOR_ROOT / ".agent" / "runtime" / "tmp"
 
 
 class TestDerivacion:
@@ -203,7 +212,11 @@ def _infractores_en_el_arbol() -> list[str]:
     subarbol volatil `tests/sandbox/test_runtime` (gitignored en
     `.gitignore:93`, 0 ficheros trackeados: `git ls-files
     tests/sandbox/test_runtime` -> 0; precedente: `_safe_walk` ya lo poda
-    desde WOT-2026-013d). Lee y parsea con AST solo los ficheros restantes.
+    desde WOT-2026-013d). Tambien poda -- WOT-2026-059n -- el scratch de
+    trabajo `.agent/runtime/tmp` (gitignored en `.gitignore:17`, 0 ficheros
+    trackeados: `git ls-files .agent/runtime/tmp` -> 0): mismo motivo que el
+    anterior, lado scratch del AGENTE en vez de fixtures de TEST. Lee y
+    parsea con AST solo los ficheros restantes.
     After (post-condiciones): devuelve la lista de `ruta:linea` de cada
     coleccion literal hecha SOLO de dominios; nunca lanza (un SyntaxError
     salta ese fichero).
@@ -216,6 +229,8 @@ def _infractores_en_el_arbol() -> list[str]:
         if partes & {".git", ".venv", "venv", "node_modules", "backups", ".kilo"}:
             continue
         if py.is_relative_to(_TEST_RUNTIME_ROOT):
+            continue
+        if py.is_relative_to(_RUNTIME_TMP_ROOT):
             continue
         try:
             arbol = ast.parse(py.read_text(encoding="utf-8", errors="replace"))

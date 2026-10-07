@@ -105,6 +105,15 @@ known_unwired:
   # La deuda se declara aqui, con dueno, para que no entre como huerfano silencioso.
   check_dod_metric_freshness: WOT-2026-034c
 
+  # WOT-2026-059n: nace STANDALONE (CLI manual) por el mismo motivo que
+  # check_dod_metric_freshness arriba -- su consumidor natural es un PROMPT
+  # (`session_hop.md`, que redacta el arranque de continuidad entre sesiones),
+  # no un script Python con invocador de frontera propio. Cablearlo exigiria
+  # tocar ese prompt gobernante, fuera de la superficie de la sesion que lo creo
+  # (bucle adversarial Codex sobre contradiccion 52/51 commits, 2026-10-07). La
+  # deuda se declara aqui, con dueno, para que no entre como huerfano silencioso.
+  check_document_self_contradiction: WOT-2026-059n
+
   # WOT-2026-004y: guard PII tracked en el destino (`tools/check_pii_tracked.py`).
   # Cableado REAL en el destino: `.git/hooks/pre-commit` -> `tools/pre_commit_check.py`
   # (versionado) -> subprocess en `verificar_pii_tracked()` de ese fichero.

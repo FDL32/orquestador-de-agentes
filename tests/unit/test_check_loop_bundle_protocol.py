@@ -165,3 +165,67 @@ class TestRefutacionPrevia035a:
         assert has_refutation_section("REFUTACION PREVIA: censado")
         assert has_refutation_section("refutacion-previa: censado")
         assert not has_refutation_section("hablo de refutacion en general")
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-059n: la QUINTA invariante (rol de la lente), fail-closed ACOTADO.
+# Origen: bucle adversarial ad-hoc (Codex BA05, 2026-10-07) sobre una
+# propuesta de Claude -- Codex refuto el opt-in-por-flag puro ("la omision es
+# peor que el falso positivo") pero el fail-closed TOTAL (ausencia de CANAL =
+# ejecutor) rompia 3/11 tests existentes: censo real mostro 1/5 bundles del
+# repo declarando CANAL hoy, luego fail-closed total habria puesto en rojo
+# retroactivamente el 80% de la poblacion viva -- la misma trampa que
+# REFUTATION_INVARIANT ya evito. Diseno final: bloquea solo cuando el CANAL
+# DECLARADO es ejecutor; la ausencia de declaracion cae a WARN.
+# ---------------------------------------------------------------------------
+
+
+class TestRoleFraming059n:
+    def test_canal_agent_sin_framing_bloquea(self, tmp_path):
+        text = _TRES_NATALES + "CANAL: agent\n"
+        assert _run(tmp_path, text) == 1
+
+    def test_canal_agent_con_framing_pasa(self, tmp_path):
+        text = (
+            _TRES_NATALES
+            + "CANAL: agent\nROL DE LA LENTE: REVISOR, no implementes nada.\n"
+        )
+        assert _run(tmp_path, text) == 0
+
+    def test_sin_canal_declarado_avisa_pero_no_bloquea(self, tmp_path):
+        """Fail-closed ACOTADO: la ausencia de CANAL es deuda de adopcion,
+        no capacidad ejecutora presunta -- evita el rojo retroactivo medido.
+        """
+        assert _run(tmp_path, _TRES_NATALES) == 0
+
+    def test_canal_api_sin_framing_no_necesita_nada(self, tmp_path):
+        """Un canal declarado SIN capacidad ejecutora no exige framing."""
+        text = _TRES_NATALES + "CANAL: api\n"
+        assert _run(tmp_path, text) == 0
+
+    def test_reenvio_declarado_hereda_capacidad_ejecutora(self, tmp_path):
+        """Canal api PERO con reenvio declarado a un ejecutor -> SI bloquea.
+
+        Es el argumento central de Codex: la lente sin filesystem puede ser
+        inerte y aun asi heredar el riesgo si su salida se reenvia.
+        """
+        text = _TRES_NATALES + "CANAL: api\nSE REENVIA A UN PROCESO EJECUTOR\n"
+        assert _run(tmp_path, text) == 1
+
+    def test_canal_agent_con_framing_variante_cuenta(self):
+        from scripts.check_loop_bundle_protocol import has_role_framing_section
+
+        assert has_role_framing_section("ROL DE LA LENTE: ejecutor")
+        assert has_role_framing_section("rol de la lente es revisor")
+        assert not has_role_framing_section("hablo del rol en general")
+
+    def test_executor_capability_fail_closed_scope(self):
+        """Documenta el LIMITE exacto del fail-closed: bloquea con canal
+        ejecutor DECLARADO, nunca con canal ausente.
+        """
+        from scripts.check_loop_bundle_protocol import bundle_has_executor_capability
+
+        assert bundle_has_executor_capability("CANAL: agent")
+        assert not bundle_has_executor_capability("CANAL: api")
+        assert not bundle_has_executor_capability("sin declaracion de canal")
+        assert bundle_has_executor_capability("texto libre\nFORWARDS TO EXECUTOR\n")

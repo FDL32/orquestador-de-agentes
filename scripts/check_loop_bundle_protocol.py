@@ -53,6 +53,7 @@ After: exit 0 si los tres estan declarados; exit 1 nombrando los que faltan,
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -101,6 +102,103 @@ def has_refutation_section(text: str) -> bool:
     """True iff the bundle DECLARES its prior-refutation section."""
     upper = text.upper()
     return any(m.upper() in upper for m in REFUTATION_INVARIANT[2])
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-059n: ROL DE LA LENTE, la quinta invariante.
+# Origen: bucle adversarial ad-hoc (Codex BA05, 2026-10-07) sobre una propuesta
+# de Claude. La pregunta de diseno era opt-in vs natal; Codex REFUTO el opt-in
+# puro con un argumento verificado: la propiedad relevante no es "la lente
+# puede ejecutar" (falso para canal api) sino "algo RIO ABAJO de su salida
+# ejecuta" -- una respuesta de una lente sin filesystem puede reenviarse
+# automaticamente a un proceso ejecutor, y entonces hereda el riesgo aunque
+# ella misma sea inerte.
+#
+# Por eso esto NO es opt-in por flag manual (el fallo por omision -- alguien
+# lanza un bundle ejecutor y olvida el flag -- es silencioso, y en una barrera
+# de seguridad una omision silenciosa es peor que un falso positivo visible,
+# segun el propio Codex). En vez de eso, la activacion es una PROPIEDAD
+# DETECTABLE del bundle: declara su CANAL DE DESTINO. Si el canal DECLARADO
+# tiene capacidad ejecutora (`agent`) o declara reenvio a un proceso ejecutor,
+# el bundle DEBE declarar el framing de rol (REVISOR/AUDITOR vs EJECUTOR).
+#
+# CORRECCION 2026-10-07 tras medir el censo real (1/5 bundles del repo
+# declaraban CANAL ese dia): el primer diseno trataba la AUSENCIA TOTAL de
+# CANAL como ejecutor (fail-closed total), y eso ponia en rojo retroactivo el
+# 80% de la poblacion viva -- la misma trampa que REFUTATION_INVARIANT ya
+# evito a proposito. El argumento de Codex ("la omision es peor que el falso
+# positivo") hablaba de alguien que YA declara apuntar a un canal ejecutor y
+# olvida el framing, no de todo bundle que nunca tuvo este concepto. Diseno
+# final: fail-closed ACOTADO al canal DECLARADO ejecutor; la ausencia total de
+# CANAL cae a WARN (deuda de adopcion), nunca a bloqueo.
+#
+# Vive FUERA de INVARIANTS por el mismo motivo que REFUTATION_INVARIANT: las
+# tres natales BLOQUEAN SIEMPRE y meter esta ahi pondria en rojo de golpe todo
+# bundle historico dirigido a canal api puro, que hoy es legal y no necesita
+# framing de rol.
+# ---------------------------------------------------------------------------
+ROLE_FRAMING_INVARIANT = (
+    "rol_de_la_lente",
+    "declarar si la lente es REVISORA/AUDITORA o EJECUTORA cuando el canal "
+    "destino (o un reenvio declarado) tiene capacidad ejecutora",
+    ("ROL DE LA LENTE:", "ROL DE LA LENTE ES"),
+)
+
+# Canales SIN capacidad ejecutora propia. Cualquier otro valor DECLARADO
+# (excepto la AUSENCIA de declaracion, ver bundle_has_executor_capability) se
+# trata como ejecutor.
+_NON_EXECUTOR_CHANNELS = ("api", "text", "texto")
+
+# Si el bundle declara que su salida se reenvia a un proceso que SI ejecuta,
+# hereda capacidad ejecutora aunque el canal declarado sea puro texto.
+_FORWARDING_MARKERS = (
+    "REENVIO A EJECUTOR",
+    "SE REENVIA A UN PROCESO EJECUTOR",
+    "FORWARDS TO EXECUTOR",
+)
+
+
+def _declared_channel(text: str) -> str | None:
+    """Extrae el canal declarado por el bundle (CANAL: <valor>), o None."""
+    match = re.search(r"CANAL\s*:\s*([A-Za-z_]+)", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).strip().lower()
+
+
+def bundle_has_executor_capability(text: str) -> bool:
+    """True si el bundle DECLARA explicitamente capacidad ejecutora rio abajo.
+
+    Fail-closed ACOTADO (correccion 2026-10-07 tras medir el censo real: 1/5
+    bundles del repo declaraban CANAL hoy -- un fail-closed sobre la AUSENCIA
+    total de canal habria puesto en rojo el 80% de la poblacion viva el mismo
+    dia, la trampa que REFUTATION_INVARIANT ya evito a proposito). El
+    argumento de Codex ("la omision es peor que el falso positivo") hablaba
+    de alguien que YA declara apuntar a un canal ejecutor y olvida el
+    framing -- no de todo bundle que nunca tuvo este concepto. Por eso:
+    bloquea cuando el canal DECLARADO es ejecutor (o hay reenvio declarado);
+    la AUSENCIA de declaracion de canal cae a WARN (ver has_role_framing_section
+    y el dispatch en main()), igual que el resto de invariantes opt-in de
+    este fichero.
+    """
+    upper = text.upper()
+    if any(m in upper for m in _FORWARDING_MARKERS):
+        return True
+    channel = _declared_channel(text)
+    if channel is None:
+        return False
+    return channel not in _NON_EXECUTOR_CHANNELS
+
+
+def bundle_declares_channel(text: str) -> bool:
+    """True si el bundle declara CANAL explicitamente (ejecutor o no)."""
+    return _declared_channel(text) is not None
+
+
+def has_role_framing_section(text: str) -> bool:
+    """True iff the bundle DECLARES its lens-role framing."""
+    upper = text.upper()
+    return any(m.upper() in upper for m in ROLE_FRAMING_INVARIANT[2])
 
 
 def check_bundle(text: str) -> list[str]:
@@ -155,9 +253,38 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    if not missing:
+    # WOT-2026-059n: la quinta invariante (rol de la lente) se activa por
+    # PROPIEDAD DEL BUNDLE (canal ejecutor declarado, o ausencia de canal =
+    # fail-closed), no por flag manual -- ver docstring de
+    # ROLE_FRAMING_INVARIANT para el porque.
+    role_framing_blocking = False
+    role_framing_ok = has_role_framing_section(text)
+    if not role_framing_ok:
+        if bundle_has_executor_capability(text):
+            role_framing_blocking = True
+            print(
+                f"[loop-bundle] BLOQUEA: {path.name} declara un canal con "
+                f"capacidad ejecutora (o reenvio declarado) y le falta la "
+                f"seccion 'ROL DE LA LENTE:' ({ROLE_FRAMING_INVARIANT[1]}).",
+                file=sys.stderr,
+            )
+        elif not bundle_declares_channel(text):
+            print(
+                f"[loop-bundle] WARN: {path.name} no declara CANAL ni "
+                f"'ROL DE LA LENTE:'. Sin CANAL declarado esto NO bloquea "
+                f"(deuda de adopcion); declarar CANAL: agent exigiria "
+                f"tambien el framing de rol.",
+                file=sys.stderr,
+            )
+        # canal declarado y NO ejecutor (api/text/texto): ni WARN ni bloqueo,
+        # el framing de rol no aplica a ese destinatario.
+
+    if not missing and not role_framing_blocking:
         print(f"[loop-bundle] OK: los 3 invariantes estan declarados en {path.name}")
         return 0
+
+    if role_framing_blocking and not missing:
+        return 1
 
     print(
         f"[loop-bundle] BLOQUEA: al bundle {path.name} le faltan "
