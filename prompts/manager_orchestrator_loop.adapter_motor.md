@@ -32,8 +32,8 @@ sobre el estado del destino.
 
 | Capacidad | Como la cubre este motor | Comando o fichero | Nivel degradado |
 |---|---|---|---|
-| LECTOR_FS | CLI Kilo directo como agente con filesystem (canal nan-FS); Codex como lente final con ficheros por `loop-round` con bundle de FICHEROS | `prompts/builder_invocation_contract.md` seccion 1; `python scripts/ensemble_dispatch.py loop-round --profile <perfil-agent> --content-file <bundle>` | sin verificador no hay bucle de GOBIERNO, solo EXPLORATORIO |
-| LENTE_TEXTO | lentes de canal `api` por `loop-round` con bundle autocontenido, contrato por contenido | `python scripts/ensemble_dispatch.py loop-round --profile <perfil-api> --content-file <bundle>` | el bucle sigue con lectores; se declara |
+| LECTOR_FS | CLI Kilo directo como agente con filesystem (canal nan-FS); Codex como lente final con ficheros por `loop-round` con bundle de FICHEROS | `prompts/builder_invocation_contract.md` seccion 1; comando completo en `prompts/ensemble_loop.md` seccion 3.4 | sin verificador no hay bucle de GOBIERNO, solo EXPLORATORIO |
+| LENTE_TEXTO | lentes de canal `api` por `loop-round` con bundle autocontenido, contrato por contenido | comando completo en `prompts/ensemble_loop.md` seccion 3.4 | el bucle sigue con lectores; se declara |
 | EJECUTOR | CLI Kilo directo como Builder real; o el propio Manager en modo implementador=manager del nucleo (seccion 9) | `prompts/builder_invocation_contract.md`; nucleo seccion 9 | modo implementador=manager (nucleo, seccion 9) |
 | EVIDENCIA | git: foto antes/despues del arbol, commit o revert | `git -C <destino> status --porcelain`; `git -C <destino> diff` | sin VCS: sha256 por fichero de las rutas declaradas |
 | REGISTRO_TRABAJO | backlog vivo del destino, validado por el gate de contrato | `<destino>/.agent/collaboration/backlog.md`; `python scripts/check_backlog_contract.py --project-root <destino>` | una tabla versionada |

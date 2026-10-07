@@ -35,6 +35,20 @@ CONTRACT_ID = "cid-manager-orchestrator-loop-adapter-motor-v1"
 IMPLEMENTS = "cid-manager-orchestrator-loop-v1"
 _SHA_RE = re.compile(r"[0-9a-f]{64}")
 
+_REPO_PREFIXES = ("scripts/", "prompts/", "docs/", "tests/", ".agent/", "skills/")
+_PATH_SUFFIXES = (".py", ".md", ".json", ".jsonl")
+_CODE_SPAN_RE = re.compile(r"`([^`]+)`")
+_SCRIPT_RE = re.compile(r"scripts/[A-Za-z0-9_./-]+\.py\Z")
+_SUBCOMMAND_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
+
+# Paths that live in the DESTINO, not in the motor worktree: they CANNOT exist here.
+# Declared with their motive so a NEW destino path in the table must be added here.
+DESTINO_PATHS = {
+    "<destino>/.agent/collaboration/backlog.md": "backlog vivo del DESTINO (estado operativo)",
+    "<destino>/.agent/runtime/ensemble/scorecard.jsonl": "scorecard de rondas del DESTINO (runtime)",
+    "<destino>/.agent/collaboration/backlog_inbox/": "buzon de tareas del DESTINO (estado operativo)",
+}
+
 
 def _perfil_schema() -> dict:
     """The ``SCHEMA: perfil`` block of the nucleo (single source via the contract test)."""
@@ -98,6 +112,77 @@ def _assert_nucleo_sha(path: Path) -> None:
     assert real in cited, f"el adaptador no cita el sha256 real del nucleo ({real})"
 
 
+def _table_text(path: Path) -> str:
+    """The adapter's markdown table rows: lines whose stripped form starts with ``|``."""
+    return "\n".join(
+        ln
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.strip().startswith("|")
+    )
+
+
+def _cited_tokens(path: Path) -> list[tuple[str, str]]:
+    """(span, token) for each token inside each backtick span of the adapter table."""
+    return [
+        (span, token.strip(";,()'\"[]{}"))
+        for span in _CODE_SPAN_RE.findall(_table_text(path))
+        for token in span.split()
+    ]
+
+
+def _assert_cited_paths_exist(path: Path) -> None:
+    """Every source path cited in the table exists in the worktree (or is declared).
+
+    A token ending in a source suffix that starts with a repo prefix must exist in
+    THIS worktree; one that starts with ``<destino>/`` must be in ``DESTINO_PATHS``;
+    any other such token is an unknown origin and fails the test.
+    """
+    checked = 0
+    for span, token in _cited_tokens(path):
+        if not token.endswith(_PATH_SUFFIXES):
+            continue
+        if token.startswith(_REPO_PREFIXES):
+            assert (ROOT / token).exists(), (
+                f"ruta citada pero inexistente en el worktree: {token!r} (span {span!r})"
+            )
+            checked += 1
+        elif token.startswith("<destino>/"):
+            assert token in DESTINO_PATHS, (
+                f"ruta del DESTINO no declarada en DESTINO_PATHS: {token!r}"
+            )
+        else:
+            raise AssertionError(
+                f"ruta citada de origen desconocido: {token!r} (span {span!r})"
+            )
+    assert checked > 0, "el adaptador no cita ninguna ruta del repo: verde vacuo"
+
+
+def _cited_subcommands(path: Path) -> list[tuple[str, str]]:
+    """(script, subcommand) for scripts cited in the table as ``script.py <sub>``."""
+    pairs: list[tuple[str, str]] = []
+    for span, _token in _cited_tokens(path):
+        parts = span.split()
+        for idx, part in enumerate(parts):
+            if not _SCRIPT_RE.match(part) or idx + 1 >= len(parts):
+                continue
+            sub = parts[idx + 1].strip(";,()'\"[]{}")
+            if _SUBCOMMAND_RE.match(sub):
+                pairs.append((part, sub))
+    return pairs
+
+
+def _assert_subcommands_in_parser(path: Path) -> None:
+    """Each cited ``script.py <sub>`` must declare ``<sub>`` in its own parser."""
+    seen = 0
+    for script, sub in _cited_subcommands(path):
+        text = (ROOT / script).read_text(encoding="utf-8")
+        assert re.search(rf'add_parser\(\s*["\']{re.escape(sub)}["\']', text), (
+            f"subcomando {sub!r} de {script!r} no aparece en su parser"
+        )
+        seen += 1
+    assert seen > 0, "no se cito ningun script con subcomando: la prueba no midio nada"
+
+
 def _without_line(text: str, predicate) -> str:
     """Rejoin the text without the first line matching ``predicate`` (LF-normalised)."""
     lines = text.splitlines()
@@ -136,6 +221,25 @@ def test_adapter_cites_real_nucleo_sha256() -> None:
 
 def test_profile_minimos_match_min_distinct_for() -> None:
     _assert_minimos(PROFILE)
+
+
+def test_adapter_cited_paths_exist_in_worktree() -> None:
+    _assert_cited_paths_exist(ADAPTER)
+
+
+def test_adapter_cited_subcommands_exist_in_parser() -> None:
+    _assert_subcommands_in_parser(ADAPTER)
+
+
+def test_mutation_nonexistent_cited_path_fails(tmp_path: Path) -> None:
+    text = ADAPTER.read_text(encoding="utf-8")
+    target = "prompts/ensemble_loop.md"
+    mutated = text.replace(target, "prompts/ensemble_loop_inexistente.md")
+    assert mutated != text, "la mutacion no encontro la ruta citada"
+    copy = tmp_path / ADAPTER.name
+    copy.write_text(mutated, encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_cited_paths_exist(copy)
 
 
 def test_mutation_dropping_a_capability_row_fails(tmp_path: Path) -> None:
