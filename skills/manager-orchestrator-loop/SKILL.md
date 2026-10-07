@@ -11,7 +11,7 @@ quality_gate: false
 tags: [core, process, orchestrator, portable]
 source_prompt: prompts/manager_orchestrator_loop.md
 contract_id: cid-manager-orchestrator-loop-v1
-nucleo_sha256: 335c0854073261de747e409f75b3084bad5195cd52f63ce1310987900fe0b6eb
+nucleo_sha256: faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba
 ---
 
 # manager-orchestrator-loop
@@ -24,7 +24,7 @@ prompt gobierna").
 
 - **Nucleo:** `prompts/manager_orchestrator_loop.md`
   - `contract_id: cid-manager-orchestrator-loop-v1`
-  - `sha256: 335c0854073261de747e409f75b3084bad5195cd52f63ce1310987900fe0b6eb`
+  - `sha256: faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba`
 
 ## Adaptador de referencia
 
@@ -49,7 +49,7 @@ mismo sha256 que se declara aqui:
 python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <ruta_al_nucleo>
 ```
 
-El resultado debe ser `335c0854073261de747e409f75b3084bad5195cd52f63ce1310987900fe0b6eb`.
+El resultado debe ser `faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba`.
 Si no coincide, o si el nucleo no es accesible, DETENTE e informa al
 orquestador. No continuar con un nucleo de hash diferente.
 

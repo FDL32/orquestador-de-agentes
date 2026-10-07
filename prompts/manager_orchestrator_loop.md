@@ -133,6 +133,11 @@ NIVEL MINIMO, no un escape de la validacion.
 5. El ancla de la ronda contiene el objeto revisado, y el asunto de la ronda coincide con el del
    ancla. (b)
 6. Si no se llega al minimo: INSUFICIENTE. Nunca se simula. (a)
+7. **N8 - un commit, un bucle anclado**: los hallazgos ADOPTADOS de un mismo bucle se aplican en
+   UN solo commit, y ese commit lleva anclado UN bucle de verificacion (una ronda cuyo ancla ES
+   ese commit, no el objeto original). No se aplica un commit por hallazgo ni se da por cerrado
+   un bucle cuyos cambios quedaron repartidos en varios commits sin ancla. La suite va al final,
+   despues del ultimo commit. (b)
 
 ## 5. Estados y mapeo de las once fases
 
