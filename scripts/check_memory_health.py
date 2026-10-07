@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +57,11 @@ L1_NOISE_RATIO = 0.80
 MEMORY_STALE_DAYS = 7
 
 _SECONDS_PER_DAY = 86400
+
+# Header lines `memory_consolidate` writes under `Total rules:` in memory_rules.md
+# (WOT-2026-058b). Read one by one so a file with only one of them still degrades.
+_CANDIDATES_RE = re.compile(r"^Candidates:\s*(\d+)\s*$", re.MULTILINE)
+_EXPELLED_RE = re.compile(r"^Expelled by cap:\s*(\d+)\s*$", re.MULTILINE)
 
 
 def _memory_dir(root: Path) -> Path:
@@ -95,12 +101,24 @@ def _measure_l1(path: Path) -> dict[str, Any]:
 
 
 def _count_l2_rules(path: Path) -> dict[str, Any]:
+    """Count the L2 rules and read the cap denominator `memory_consolidate` publishes.
+
+    Before: `path` is the L2 file (`memory_rules.md`); it may not exist or may predate
+        the `Candidates:` and `Expelled by cap:` header lines (WOT-2026-058b).
+    During: read-only; counts the `#### R-` lines and reads each header line alone.
+    After: dict with `present`, `rules`, `candidates` and `expelled`; the last two are
+        ints, or None when their line is absent (old format) or the file is missing.
+    """
     if not path.is_file():
-        return {"present": False, "rules": 0}
+        return {"present": False, "rules": 0, "candidates": None, "expelled": None}
     text = path.read_text(encoding="utf-8", errors="replace")
+    candidates = _CANDIDATES_RE.search(text)
+    expelled = _EXPELLED_RE.search(text)
     return {
         "present": True,
         "rules": sum(1 for ln in text.splitlines() if ln.startswith("#### R-")),
+        "candidates": int(candidates.group(1)) if candidates else None,
+        "expelled": int(expelled.group(1)) if expelled else None,
     }
 
 
@@ -158,11 +176,16 @@ def measure_root(root: Path, *, run_validate: bool = True) -> dict[str, Any]:
 
     ratio = (l1["noise"] / l1["parsed"]) if l1["parsed"] else 0.0
     l2_threshold = L2_TRIGGER_FRACTION * MAX_L2_RULES
+    if l2["candidates"] is None or l2["expelled"] is None:
+        published = "candidatas n/d"
+    else:
+        published = f"expulsadas {l2['expelled']} de {l2['candidates']} candidatas"
     triggers = [
         {
             "id": "a",
             "fired": l2["rules"] >= l2_threshold,
-            "detail": f"L2 {l2['rules']}/{MAX_L2_RULES} reglas (umbral {l2_threshold:g})",
+            "detail": f"L2 {l2['rules']}/{MAX_L2_RULES} reglas "
+            f"(umbral {l2_threshold:g}); {published}",
         },
         {
             "id": "b",

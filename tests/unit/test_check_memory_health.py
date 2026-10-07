@@ -234,3 +234,61 @@ def test_the_script_thresholds_match_the_close_prompt_block_4_0() -> None:
     assert f"{L1_MIN_ENTRIES} entradas" in criteria["d"]
     assert f"{round(L1_NOISE_RATIO * 100)}%" in criteria["d"]
     assert "check_memory_health.py --motor-root <repo_motor>" in block
+
+
+def test_058b_l2_header_publishes_expelled_and_fires_criterion_a(tmp_path) -> None:
+    """Con el tope lleno, (a) muestra cuantas candidatas expulso el cap.
+
+    Fija el acoplamiento que hace visible el corte: 30 reglas disparan (a) y su
+    detail publica `expulsadas E de C candidatas` leido de la cabecera de L2.
+    """
+    root = _root(tmp_path, "r4", lessons=1)
+    mem = root / ".agent" / "runtime" / "memory"
+    (mem / "memory_rules.md").write_text(
+        "Total rules: 30\n"
+        "Candidates: 40\n"
+        "Expelled by cap: 10\n"
+        + "".join(f"#### R-{i:03d}\ntexto\n\n" for i in range(30)),
+        encoding="utf-8",
+    )
+    measure = measure_root(root, run_validate=False)
+    assert measure["l2"]["rules"] == 30
+    assert measure["l2"]["candidates"] == 40
+    assert measure["l2"]["expelled"] == 10
+    detail_a = next(t["detail"] for t in measure["triggers"] if t["id"] == "a")
+    assert "expulsadas 10 de 40" in detail_a
+    assert "a" in _fired(measure)
+
+
+def test_058b_old_l2_format_reads_as_na_and_does_not_raise(tmp_path) -> None:
+    """Un L2 de formato anterior degrada a n/d sin lanzar.
+
+    Fija que la ausencia de las dos lineas de cabecera no rompe la medicion: solo
+    deja candidates y expelled en None y el detail de (a) en `candidatas n/d`.
+    """
+    root = _root(tmp_path, "r5", rules=30)
+    measure = measure_root(root, run_validate=False)
+    assert measure["l2"]["candidates"] is None
+    assert measure["l2"]["expelled"] is None
+    detail_a = next(t["detail"] for t in measure["triggers"] if t["id"] == "a")
+    assert "n/d" in detail_a
+
+
+def test_058b_a_single_header_line_degrades_field_by_field(tmp_path) -> None:
+    """Con UNA sola de las dos lineas, cada campo se lee por separado.
+
+    Fija que `Candidates` y `Expelled by cap` se leen de forma independiente: con
+    solo `Candidates`, este se lee (40) y `expelled` queda None, y el detail dice n/d.
+    """
+    root = _root(tmp_path, "r6", lessons=1)
+    mem = root / ".agent" / "runtime" / "memory"
+    (mem / "memory_rules.md").write_text(
+        "Total rules: 30\n"
+        "Candidates: 40\n" + "".join(f"#### R-{i:03d}\ntexto\n\n" for i in range(30)),
+        encoding="utf-8",
+    )
+    measure = measure_root(root, run_validate=False)
+    assert measure["l2"]["candidates"] == 40
+    assert measure["l2"]["expelled"] is None
+    detail_a = next(t["detail"] for t in measure["triggers"] if t["id"] == "a")
+    assert "n/d" in detail_a

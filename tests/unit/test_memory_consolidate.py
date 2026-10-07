@@ -12,6 +12,7 @@ from bus.redact import redact_payload
 from scripts.memory_consolidate import (
     MEMORY_MD_LINE_CAP,
     _apply_consolidation,
+    _extract_rules_from_entries,
     dedupe,
     generate_memory_profile_md,
     generate_memory_rules_md,
@@ -753,3 +754,77 @@ def test_signal_truncation_marks_cut_in_projections() -> None:
     rules_md = generate_memory_rules_md([entry])
     assert SIGNAL_TRUNCATION_MARKER in rules_md
     assert long_signal in rules_md  # full signal preserved in the rule body
+
+
+# =============================================================================
+# Tests WOT-2026-058b: L2 publishes its cap denominator (candidates vs expelled)
+# =============================================================================
+
+
+def _rule_entries(n: int, *, prefix: str = "regla") -> list[dict]:
+    """N entradas rule-like con signal distinto (>=60 chars) y dominio explicito."""
+    return [
+        {
+            "signal": f"Always verify the {prefix} number {i} before merging; "
+            "this must be re-measured with a command.",
+            "domain": "testing",
+            "source_ticket": f"WOT-2026-{i:03d}a",
+            "topic": "t",
+        }
+        for i in range(n)
+    ]
+
+
+def _header_int(content: str, label: str) -> int:
+    """Lee el entero de la linea de cabecera `label: N` del propio texto."""
+    for line in content.splitlines():
+        if line.startswith(f"{label}: "):
+            return int(line.split(": ", 1)[1])
+    raise AssertionError(f"cabecera ausente: {label}")
+
+
+@pytest.mark.parametrize("max_rules", [0, -1, 1, 29, 30, 31, 10**9])
+def test_058b_candidates_count_every_signal_regardless_of_cap(max_rules: int) -> None:
+    """El denominador no depende del tope; el tope solo corta cuantas reglas se guardan.
+
+    Fija el borde `max_rules <= 0` (guarda 0, no 1) y que `candidates` cuenta cada
+    signal distinto que pasa el filtro aunque quede fuera del tope.
+    """
+    result = _extract_rules_from_entries(_rule_entries(40), max_rules=max_rules)
+    assert result["candidates"] == 40
+    assert len(result["rules"]) == min(max(max_rules, 0), 40)
+    assert result["truncated"] == (len(result["rules"]) < 40)
+
+
+def test_058b_a_repeated_signal_counts_once_even_across_domains() -> None:
+    """Una signal repetida en dos dominios es UNA candidata, no dos.
+
+    Fija que `candidates` cuenta signals distintos, no entradas: `seen_signals` se
+    consulta antes de contar.
+    """
+    a = _rule_entries(1)[0]
+    b = {**a, "domain": "otro-dominio"}
+    result = _extract_rules_from_entries([a, b])
+    assert result["candidates"] == 1
+    assert len(result["rules"]) == 1
+
+
+def test_058b_memory_rules_header_publishes_candidates_and_expelled() -> None:
+    """La cabecera publica Total rules, Candidates y Expelled by cap, con E == C - N.
+
+    Fija que el corte deja de ser mudo: la propia cabecera lleva el numerador y el
+    denominador, leidos de vuelta del texto generado.
+    """
+    content = generate_memory_rules_md(_rule_entries(40))
+    assert "Total rules: 30" in content
+    assert "Candidates: 40" in content
+    assert "Expelled by cap: 10" in content
+
+    content_small = generate_memory_rules_md(_rule_entries(5))
+    assert "Expelled by cap: 0" in content_small
+
+    for text in (content, content_small):
+        total = _header_int(text, "Total rules")
+        candidates = _header_int(text, "Candidates")
+        expelled = _header_int(text, "Expelled by cap")
+        assert expelled == candidates - total

@@ -320,18 +320,26 @@ def _infer_wing(entry: dict[str, Any]) -> str:
 
 def _extract_rules_from_entries(
     entries: list[dict[str, Any]], max_rules: int = MAX_L2_RULES
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Extract rule-like observations grouped by domain.
 
-    Before: Requires a list of consolidated observation dicts.
+    Before: Requires a list of consolidated observation dicts and an integer
+            cap `max_rules` (a cap <= 0 keeps no rule).
     During: Filters observations that carry explicit 'domain' or have
             'topic' values resembling patterns/rules. Groups by domain.
             Assigns a 'wing' via _infer_wing() for hierarchical grouping.
-    After: Returns a deduplicated, deterministically sorted list of
-           rule dicts with 'domain', 'signal', 'rule_id', 'source_ticket', 'wing'.
+            Counts EVERY distinct signal that passes the filter as a
+            candidate and keeps the first `max_rules` of them in list order:
+            the cap cuts by position, not by relevance (WOT-2026-058b).
+    After: Returns {"rules": [...], "candidates": int, "truncated": bool}.
+           `rules` is the deduplicated, deterministically sorted list of rule
+           dicts with 'domain', 'signal', 'rule_id', 'source_ticket', 'wing';
+           `candidates` counts distinct signals before the cap; `truncated`
+           is True when the cap left at least one of them out.
     """
     seen_signals: set[str] = set()
     rules: list[dict[str, Any]] = []
+    candidates = 0
 
     for entry in entries:
         signal = (entry.get("signal") or "").strip()
@@ -367,24 +375,30 @@ def _extract_rules_from_entries(
             continue
 
         seen_signals.add(signal)
-        domain = entry.get("domain") or entry.get("topic", "general")
-        rules.append(
-            {
-                "domain": str(domain),
-                "signal": signal,
-                "source_ticket": entry.get("source_ticket", "unknown"),
-                "wing": _infer_wing(entry),
-            }
-        )
-        if len(rules) >= max_rules:
-            break
+        # Every distinct signal that passes the filter is a candidate, whether or
+        # not it fits under the cap: it is the denominator memory_rules.md publishes.
+        candidates += 1
+        if len(rules) < max_rules:
+            domain = entry.get("domain") or entry.get("topic", "general")
+            rules.append(
+                {
+                    "domain": str(domain),
+                    "signal": signal,
+                    "source_ticket": entry.get("source_ticket", "unknown"),
+                    "wing": _infer_wing(entry),
+                }
+            )
 
     # Sort deterministically by (domain, signal)
     rules.sort(key=lambda r: (r["domain"], r["signal"]))
     # Assign stable rule IDs
     for i, rule in enumerate(rules, 1):
         rule["rule_id"] = f"R-{i:03d}"
-    return rules
+    return {
+        "rules": rules,
+        "candidates": candidates,
+        "truncated": candidates > len(rules),
+    }
 
 
 def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
@@ -395,15 +409,20 @@ def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
             groups by wing (engine/meta/project) then by domain, and renders
             a parseable markdown document with ``## Wing: <wing>`` and
             ``### Domain: <slug>`` section headers.
-    After: Returns a markdown string with deterministic rule IDs and
-           a header documenting generation timestamp and stats.
+    After: Returns a markdown string with deterministic rule IDs and a header
+           that publishes ``Total rules``, ``Candidates`` (distinct rule-like
+           signals before the cap) and ``Expelled by cap`` (candidates the
+           MAX_L2_RULES cap left out; WOT-2026-058b).
     """
-    rules = _extract_rules_from_entries(entries)
+    extraction = _extract_rules_from_entries(entries)
+    rules = extraction["rules"]
 
     lines = [
         "# Memory Rules (L2)",
         "",
         f"Total rules: {len(rules)}",
+        f"Candidates: {extraction['candidates']}",
+        f"Expelled by cap: {extraction['candidates'] - len(rules)}",
         "",
         "Rules derived deterministically from observations.jsonl. "
         "Each rule carries an ID (R-XXX), domain, wing, source ticket, and signal text.",
@@ -539,19 +558,24 @@ def _regenerate_l2_l3(
         Las proyecciones se generan sobre la UNION de ambas: archivar cambia
         DONDE vive el dato (L1), no si el agente puede LEERLO (L2/L3). El orden
         es `recent` primero, DELIBERADO: los topes de abajo se llenan con lo
-        reciente ANTES de admitir archivadas, de modo que este fix nunca puede
-        expulsar una leccion nueva (medido con los datos reales del destino:
-        62 recent + 2 archivable -> 0 expulsadas, 1 recuperada).
+        reciente ANTES de admitir archivadas, de modo que sumar archivadas NUNCA
+        desplaza a una reciente (medido con los datos reales del destino:
+        62 recent + 2 archivable -> 0 expulsadas, 1 recuperada). Lo que SI
+        expulsa lecciones nuevas es el TOPE, DENTRO de `recent` (punto 1 de la
+        lista de abajo).
     After:
         Retorna None. No lanza.
 
-    ALCANCE REAL Y SUS TRES LIMITES (review de Manager 2026-07-27: la version
+    ALCANCE REAL Y SUS CUATRO LIMITES (review de Manager 2026-07-27: la version
     anterior de este docstring afirmaba sin matiz que "L2 y L3 siguen nombrando
     las lecciones archivadas", y eso es FALSO en los dos primeros casos):
 
     1. L2 tiene tope `MAX_L2_RULES` (30) y `_extract_rules_from_entries` corta
        EN ORDEN DE LISTA. Si `recent` ya aporta 30 reglas, la union admite CERO
        archivadas: el fix se ANULA en silencio justo cuando la memoria crece.
+       Desde el vuelo memoria v3, memory_rules.md publica Candidates y
+       Expelled by cap (WOT-2026-058b, DoD (c)) y check_memory_health los
+       muestra junto a L2 30/30, asi que el corte deja de ser mudo.
     2. L3 tiene tope `MAX_L3_OBSERVATIONS_PROFILE` (10) y
        `generate_memory_profile_md` REORDENA por timestamp descendente antes de
        cortar, asi que una archivada solo aparece si hay MENOS de 10 recientes:
@@ -565,7 +589,7 @@ def _regenerate_l2_l3(
        docstring declarara "tres limites" como si fueran exhaustivos -- el propio
        fix media su alcance con vara mas floja que la que predicaba.
 
-    Los tres son deuda DECLARADA, no resuelta: dueno WOT-2026-042e, que por eso
+    Los cuatro son deuda DECLARADA, no resuelta: dueno WOT-2026-042e, que por eso
     queda en `completed-partial` y no en `completed`.
     """
     projected = list(recent) + list(archivable or [])
