@@ -1135,3 +1135,39 @@ def test_068k_link_sin_ticket_prefix_sale_por_exit_3(tmp_path, monkeypatch):
         ]
     )
     assert rc == 3
+
+
+# --------------------------------------------------------------- WOT-2026-061f
+
+
+def test_061f_blocker_con_guiones_multiples_no_genera_divergencia_falsa():
+    """ROJO previo (WOT-2026-061f): el reconocedor trunca en el primer guion
+    extra (WOT-2026-STATE-RECON-A -> 'WOT-2026-STATE') y, como el id truncado
+    no esta en live_ids, el cross (f) emite una divergencia FALSA de bloqueante
+    fuera de cola. Con el fix el id completo se extrae y el bloqueante vivo no
+    genera divergencia."""
+    live = frozenset({"WOT-2026-STATE-RECON-A"})
+    assert br._signal_blocker_offqueue("WOT-2026-STATE-RECON-A", live) == []
+
+
+def test_061f_blocker_con_prefijo_dec_no_genera_divergencia_falsa():
+    """ROJO previo (WOT-2026-061f): el reconocedor pierde el prefijo DEC-
+    (DEC-WOT-2026-047b -> 'WOT-2026-047b') y emite una divergencia FALSA aunque
+    el bloqueante este vivo. Con el fix el id completo se extrae y el
+    bloqueante vivo no genera divergencia."""
+    live = frozenset({"DEC-WOT-2026-047b"})
+    assert br._signal_blocker_offqueue("DEC-WOT-2026-047b", live) == []
+
+
+def test_061f_celda_prosa_larga_sin_sobre_captura():
+    """Caso adversarial del sobre FP-20260830 (celdas reales de 044u/044y): un
+    id citado dentro de prosa no debe sobre-capturarse con la cola de
+    segmentos con guion anadida al patron; se extrae solo el id y sigue
+    reportandose fuera de cola porque live_ids esta vacio. Pasa igual antes y
+    despues del fix (control contra silenciar de mas)."""
+    cell = (
+        "- [WOT-2026-044t CITADO pero INEXISTENTE en ambas superficies "
+        "(medido 2026-08-06): nunca se creo]"
+    )
+    out = br._signal_blocker_offqueue(cell, frozenset())
+    assert [o["blocker"] for o in out] == ["WOT-2026-044t"]

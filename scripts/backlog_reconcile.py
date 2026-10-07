@@ -85,6 +85,9 @@ _DEC_ACCEPTED_RE = re.compile(r"\baccept(?:ed|ada|ado)\b", re.IGNORECASE)
 # destino RDS los bloqueos propios no se extraian de la celda. Se compila en
 # `bind_ticket_prefix`; `main()` lo enlaza desde el link del destino y FALLA
 # EXPLICITO (exit 3, clase link/topologia) si el link no declara ticket_prefix.
+# WOT-2026-061f: el id admite segmentos con guion (WOT-2026-STATE-RECON-A) y el
+# prefijo DEC- (DEC-WOT-2026-047b); sin ellos el id extraido queda truncado o
+# sin prefijo, no esta en live_ids y el cross (f) emite falsos fuera-de-cola.
 _TICKET_ID_IN_CELL_RE: re.Pattern[str] | None = None
 
 
@@ -99,7 +102,8 @@ def bind_ticket_prefix(alternation: str) -> re.Pattern[str]:
     """
     global _TICKET_ID_IN_CELL_RE
     _TICKET_ID_IN_CELL_RE = re.compile(
-        rf"\b(?:{alternation})-\d{{4}}-[0-9a-z]+\b", re.IGNORECASE
+        rf"\b(?:DEC-)?(?:{alternation})-\d{{4}}-[0-9a-z]+(?:-[0-9a-z]+)*\b",
+        re.IGNORECASE,
     )
     return _TICKET_ID_IN_CELL_RE
 
