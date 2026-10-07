@@ -13,8 +13,15 @@ pequenos y ejecutables.
 Separar con evidencia estas categorias:
 
 - `canonical-motor`: artefacto vivo y canonico del motor
-- `legacy-stub-declared`: stub declarado explicitamente, por ejemplo con
-  `# Legacy alias:`
+- `legacy-stub-declared`: artefacto legacy cuya compatibilidad se declara hoy
+  por DOS vias, en superficies distintas:
+  - alias en frontmatter: el prompt canonico declara `legacy_aliases: [viejo]`
+    en su YAML (p.ej. `manager_review.md` -> `review_manager`); lo consume
+    `discover_skills.py::_declared_prompt_aliases` para tolerar el stub en la
+    gate de nombres (DEC-008D-001);
+  - cabecera de autoidentificacion: el propio stub se nombra en una cabecera
+    `# Legacy alias: <canonico>`; el bootstrap de migracion la excluye de su
+    comprobacion de prosa legacy (`tests/test_migration_bootstrap.py`).
 - `destination-kept`: artefacto que debe vivir en destino y no en motor
 - `candidate-to-retire`: compatibilidad ya sin consumidor vivo verificable
 - `candidate-to-extract`: artefacto del motor cuyo uso real parece pertenecer
@@ -52,7 +59,8 @@ Y audita como minimo estas superficies:
 Reconstruye la superficie real con comandos reproducibles:
 
 - lista de prompts/skills/scripts versionados;
-- lista de archivos con marcador `# Legacy alias:`;
+- lista de archivos con cada forma de declaracion legacy: alias en frontmatter
+  `legacy_aliases:` y cabecera `# Legacy alias:` (dos superficies distintas);
 - consumidores vivos verificables de cada stub o candidato;
 - referencias solo historicas o documentales, separadas de consumidores vivos.
 
