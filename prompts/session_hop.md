@@ -289,6 +289,39 @@ Es la seccion que mas evita incidentes. Deriva del rol de la sesion siguiente: s
 DISENO, su zona prohibida; si es de VUELO, los tickets `DISENO_PRIMERO`/`REQUIERE_HUMANO`
 que no debe ejecutar y las superficies que colisionan con otra sesion en curso.
 
+## Paso 6-bis: audita el arranque contra si mismo antes de entregarlo
+
+(Origen: `WOT-2026-059n`, bucle adversarial Codex BA05, 2026-10-07 -- caso real
+`arranque_borrador_v1.md` afirmando "52" y "51" commits por delante del mismo
+estado git en secciones distintas. Guard determinista:
+`scripts/check_document_self_contradiction.py`, declarado `known_unwired` hasta
+que este paso lo cablease -- ver `scripts/guard_wiring_policy.yaml`.)
+
+Antes de entregar el bloque de Salida (o de escribirlo a
+`orchestrator_pipeline/arranques/`), corre:
+
+```bash
+python <MOTOR_ROOT>/scripts/check_document_self_contradiction.py <ruta-del-borrador-del-arranque>
+```
+
+Si el arranque solo existe como bloque pegable (no se escribio a fichero todavia),
+vuelcalo primero a un fichero temporal y audita ese fichero -- el guard no lee
+stdin.
+
+- **`exit 0`:** sin contradicciones detectables por el guard. No es garantia de
+  que el arranque sea correcto (el guard solo compara el documento CONTRA SI
+  MISMO, nunca contra el estado real); sigue aplicando el resto de este prompt.
+- **`exit 1`:** el arranque afirma el mismo predicado con dos valores distintos.
+  Re-ejecuta el comando real que produjo cada numero (Paso 1/2) y corrige el
+  borrador a un unico valor consistente ANTES de entregarlo. No declares el
+  arranque terminado con esta salida sin corregir.
+- **`exit 2`:** ruta irresoluble -- revisa el path, no es un hallazgo del
+  documento.
+
+El guard solo cubre los predicados que declara (`commits por delante`,
+`commits adelante`, `lineas`); no sustituye la revision del resto del
+contenido.
+
 ## Paso 7: el sello, si aplica
 
 Si la sesion siguiente es un vuelo autonomo, necesita
