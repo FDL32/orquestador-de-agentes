@@ -1,4 +1,14 @@
+---
+role: auditor
+cycle_phase: [F8-meta-auditoria]
+route_kind: entry
+---
 # Prompt: Meta-Auditoria del Pipeline en Bucle
+<!-- PROMPT-SUMMARY
+what: Meta-auditoria retrospectiva y transversal de un pipeline multi-ticket ya cerrado en un repo_destino con bus: re-deriva cada closeout desde git, tests y bus (doble pasada A/B) y emite informe y decision artifact con veredicto.
+when: Despues del cierre global del pipeline de un repo_destino, cuando ya no quedan tickets ejecutables.
+not: NO es un tercer Review por ticket (prompts/manager_review.md), NO es para el motor en CODE-ONLY MODE (prompts/audit_pipeline_codeonly.md) y NO reabre tickets ni toca backlog ni motor.
+-->
 
 > **Modo:** Solo lectura sobre el sistema auditado. Esta auditoria NUNCA
 > modifica codigo, backlog, tickets ni estado operativo. Solo escribe sus

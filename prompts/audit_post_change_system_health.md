@@ -1,4 +1,13 @@
+---
+role: auditor
+route_kind: mantenimiento
+---
 # Prompt: Auditoria de Salud Post-Cambio del Sistema (Post-Change System Health Audit)
+<!-- PROMPT-SUMMARY
+what: Auditoria periodica de salud de las tres capas (repo_motor, repo_destino e integracion) tras cambios: un recolector determinista junta la evidencia y el agente la audita en solo lectura.
+when: Despues de cambios en el motor y/o en un repo_destino, para saber si el sistema sigue sano de extremo a extremo.
+not: NO es la meta-auditoria de un pipeline cerrado (skills/audit-pipeline/SKILL.md), ni el listo-para-publicar de un repo (skills/audit-git-publication/SKILL.md), ni un snapshot rapido (skills/local-audit/SKILL.md); el reporte del recolector no es el veredicto.
+-->
 
 contract_id: cid-system-health-audit-v0
 Skill canonica: skills/system-health-audit/SKILL.md

@@ -1,4 +1,14 @@
+---
+role: manager
+cycle_phase: [F1-backlog]
+route_kind: entry
+---
 # Prompt: Triage del Backlog (analisis pre-pipeline)
+<!-- PROMPT-SUMMARY
+what: Planificador pre-pipeline de solo lectura: reconcilia el backlog con git, clasifica la aptitud de cada ticket, propone un DAG de grupos con pipelines y recomienda por cual empezar; solo escribe su informe y su JSON en orchestrator_pipeline/reports/.
+when: Antes de lanzar el pipeline orquestado o un batch autonomo, para decidir que pipeline lanzar sobre el backlog vivo.
+not: NO ejecuta el pipeline ni muta el backlog (prompts/orchestrator_pipeline.md), NO audita un pipeline ya cerrado (prompts/audit_pipeline.md) y NO da de alta tickets (prompts/backlog_admit.md).
+-->
 
 > **Modo:** Solo lectura sobre el backlog y el repositorio. Este triage NUNCA
 > muta `backlog.md`, codigo ni estado operativo. Solo escribe sus propios

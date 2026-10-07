@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F0-arranque-sesion]
+route_kind: entry
+---
 # Refactor Bootstrap Prompt
+<!-- PROMPT-SUMMARY
+what: Arranque de sesion de refactor o reingenieria Python: carga el protocolo canonico de 5 fases de skills/refactor-manager (analisis, plan, refactor, validacion, iteracion) y fija reglas de preservacion de comportamiento y aprobacion humana antes de tocar codigo.
+when: Sesion nueva centrada en refactor, reingenieria u optimizacion Python, o repo legacy sin tests donde primero hay que fijar comportamiento con tests de caracterizacion.
+not: NO es un ticket del ciclo canonico ni debe abrirse a mitad de implementacion (prompts/orchestrator_pipeline.md), NO es el arranque general del motor (prompts/orchestrator_session_bootstrap.md), NO es el arranque de un repo_destino (prompts/orchestrator_destination_bootstrap.md) y NO deja continuidad medida entre sesiones (prompts/session_hop.md).
+-->
 
 Pega este bloque al iniciar una sesion de refactor / reingenieria / optimizacion sobre un proyecto Python. Hermano de `orchestrator_session_bootstrap.md`: apunta a archivos canonicos en lugar de embeber contenido para no gastar la ventana de contexto.
 

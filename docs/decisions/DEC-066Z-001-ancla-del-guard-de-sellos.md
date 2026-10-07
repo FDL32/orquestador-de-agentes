@@ -46,7 +46,7 @@ prioridad:
 
 ### 2. La VIA A queda RECHAZADA, y el motivo es de procedencia, no de coste
 
-`prompts/orchestrator_autonomous_ticket_batch.md:221-224` declara el orden de
+`prompts/orchestrator_autonomous_ticket_batch.md:231-234` declara el orden de
 escritura de los dos artefactos:
 
 > *"The executor writes `start_context_isolation.json` in the destino-rol reports

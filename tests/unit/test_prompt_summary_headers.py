@@ -52,11 +52,30 @@ ADOPTED = (
     "_shared/loop_readiness.md",
     "orchestrator_pipeline.md",
     "doc_optimization.md",
+    "audit_git_publication.md",
+    "audit_post_change_system_health.md",
+    "suite_optimization.md",
+    "orchestrator_session_close_full_audit.md",
+    "audit_pipeline.md",
+    "audit_pipeline_codeonly.md",
+    "audit_autonomous_ticket_batch.md",
+    "backlog_admit.md",
+    "backlog_triage.md",
+    "escalate_to_motor.md",
+    "session_hop.md",
+    "orchestrator_pipeline_codeonly.md",
+    "orchestrator_autonomous_ticket_batch.md",
+    "orchestrator_destination_batch.md",
+    "orchestrator_launch_builder.md",
+    "orchestrator_session_bootstrap.md",
+    "orchestrator_session_bootstrap_design.md",
+    "orchestrator_destination_bootstrap.md",
+    "orchestrator_refactor_bootstrap.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)
 # 022o pilot not yet adopted: keeps its original guarantee (summary present).
-SUMMARY_ONLY = ("orchestrator_session_bootstrap.md",)
+SUMMARY_ONLY: tuple[str, ...] = ()
 
 
 def _universe() -> list[str]:

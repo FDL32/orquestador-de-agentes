@@ -9,7 +9,7 @@ Fable 5, Haiku 4.5, Opus 5 (1M context), ...) sin fuente verificada. El costo
 no es el trailer en si: es que una identidad de modelo hardcodeada en un
 artefacto reutilizable (un mensaje de commit se re-lee, se compara, se cita)
 se vuelve "la verdad" cuando en realidad no hay ninguna fuente runtime que
-garantice que ESE modelo ejecuto ESE cambio. `prompts/orchestrator_pipeline_codeonly.md:186`
+garantice que ESE modelo ejecuto ESE cambio. `prompts/orchestrator_pipeline_codeonly.md:196`
 ya manda firmar con la identidad REAL y OMITIR si no se puede determinar; eso
 es NORMA en prosa. Este guard es la BARRERA.
 
@@ -146,7 +146,7 @@ def crystallization_issues(message: str) -> list[str]:
                 "Sin fuente runtime fiable del modelo, una identidad concreta es "
                 "cristalizacion no verificable. Firmar solo con el proveedor "
                 "(p.ej. 'Claude <noreply@...>') o con identidad humana, o "
-                "OMITIR el trailer (orchestrator_pipeline_codeonly.md:186)."
+                "OMITIR el trailer (orchestrator_pipeline_codeonly.md:196)."
             )
     return issues
 

@@ -1,9 +1,13 @@
+---
+role: orchestrator
+cycle_phase: [F0-arranque-sesion]
+route_kind: entry
+---
 # Session Bootstrap Prompt
-
 <!-- PROMPT-SUMMARY
-what: Bloque de arranque canonico que orienta a un agente/backend nuevo sobre orquestador_de_agentes apuntando a archivos canonicos, sin gastar contexto embebiendo docs.
-when: Al iniciar una conversacion nueva (nuevo agente o backend, post-compactacion, recuperacion de sesion); se pega tal cual como PRIMER mensaje.
-not: NO es el pipeline de ejecucion de tickets (ver orchestrator_pipeline.md) ni un contrato normativo; es solo el briefing de arranque.
+what: Bloque de arranque canonico de una sesion de desarrollo/orquestacion sobre el motor: 3 comandos deterministas, herramientas por repo, vocabulario y reglas duras, apuntando a archivos canonicos sin embeberlos.
+when: Al iniciar una conversacion nueva con un agente que operara el motor (backend nuevo, post-compactacion, sesion de pipeline multi-ticket con Manager y Builder como subagentes); se pega el bloque de codigo como PRIMER mensaje.
+not: NO es el arranque de una sesion de diseno (prompts/orchestrator_session_bootstrap_design.md), NO sirve en un repo_destino (prompts/orchestrator_destination_bootstrap.md), NO transporta continuidad medida entre sesiones (prompts/session_hop.md) y NO es el pipeline de ejecucion (prompts/orchestrator_pipeline.md); a mitad de un ticket con work_plan activo, lee el work_plan.
 -->
 
 Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo (Claude Code, Codex, OpenCode o cualquier backend) que vaya a operar sobre `orquestador_de_agentes`. Esta optimizado para orientar al agente sin gastar la ventana de contexto inicial cargando documentacion completa: apunta a archivos canonicos en lugar de embeber contenido.

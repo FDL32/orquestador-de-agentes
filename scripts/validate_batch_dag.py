@@ -663,7 +663,7 @@ def _errors_live_backlog(data: dict[str, Any], backlog_text: str) -> list[str]:
 
 # ---------------------------------------------------------------------------
 # WOT-2026-046h: condition 3 (`contabilidad_completa`) had NO teeth.
-# `prompts/orchestrator_autonomous_ticket_batch.md:741` fixes the accounting
+# `prompts/orchestrator_autonomous_ticket_batch.md, seccion del bloque PREDICATE` fixes the accounting
 # universe as the tickets listed in `groups[]` (WOT-2026-025q), and requires
 # that a `tickets[]` entry belonging to NO group be ENUMERATED as excluded,
 # "never silently omitted". The validator checked NEITHER half: measured on
@@ -827,7 +827,7 @@ def _errors_accounting(data: dict[str, Any]) -> list[str]:
 # from the JSON -- so it enforces the part that IS checkable: the label must be
 # PRESENT and one of the contract's values. An absent label is the silent case.
 # La FUENTE del enum es el prompt que PRODUCE el artefacto:
-# `prompts/backlog_triage.md:364` declara "VERIFICADO|INFERIDO|REQUIERE_HUMANO".
+# `prompts/backlog_triage.md, Fase 1 y Salida obligatoria (evidence_label)` declara "VERIFICADO|INFERIDO|REQUIERE_HUMANO".
 # Medido 2026-08-22, primer uso real de esta barrera: se habia escrito
 # `NO_VERIFICADO` (que no aparece en NINGUN prompt ni skill del motor) y se
 # habia OMITIDO `REQUIERE_HUMANO` (presente en multiples DAGs reales del

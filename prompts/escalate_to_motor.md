@@ -1,12 +1,17 @@
+---
+role: orchestrator
+cycle_phase: [F1-backlog]
+route_kind: entry
+---
 # Escalate to Motor — contrato de redaccion de un escalado destino -> motor
 
 contract_id: cid-escalate-to-motor-v1
 Skill canonica: skills/escalate-to-motor/SKILL.md
 
 <!-- PROMPT-SUMMARY
-what: Contrato de redaccion para que un repo_destino escale un hallazgo del MOTOR como ficha del buzon `backlog_inbox/`, con recibo reejecutable, procedencia por claim y condicion de rechazo declarada.
-when: El usuario (o el agente que opera un destino) detecta un defecto, deuda o propuesta que pertenece al MOTOR y no al destino. Se invoca en el chat del destino.
-not: NO es el pipeline de tickets del destino, NO es `manager-resolve-escalation` (que es Builder->Manager intra-repo) y NO autoriza a escribir en `repo_motor`.
+what: Contrato de redaccion de un escalado destino a motor: ficha FP en el buzon backlog_inbox del WORKSPACE DEL MOTOR (no del destino), con recibo reejecutable, procedencia por claim y condicion de rechazo declarada.
+when: Cuando el destino detecta un defecto, deuda o propuesta que pertenece al MOTOR y no al destino; se invoca en el chat del destino.
+not: NO es el pipeline de tickets del destino (prompts/orchestrator_pipeline.md), NO es la escalacion intra-repo Builder a Manager (skills/manager-resolve-escalation/SKILL.md) y NO autoriza a tocar repo_motor: el sobre aterriza en el buzon del workspace del motor o queda en fallback declarado.
 -->
 
 ## 0. Que es esto y que NO es
@@ -24,7 +29,7 @@ DEC); aqui no se re-declara ninguno de esos criterios — se remite a el.
 
 ## 1. Regla de autoridad (leela antes de escribir nada)
 
-El invariante del motor **no es de ruta, es de AUTORIDAD**. La linea 141 del cierre
+El invariante del motor **no es de ruta, es de AUTORIDAD**. La linea 151 del cierre
 canonico prohibe TRES cosas, no una:
 
 > "NO escribir el follow-up en `repo_motor`, NI en el repo_destino de ESTA sesion,
@@ -39,7 +44,7 @@ Consecuencias directas para ti:
 - **No escribas el hallazgo solo en el backlog de TU destino.** Eso lo entierra.
 - **Si el buzon no es alcanzable** (destino en otra maquina, sin filesystem
   compartido, sin `motor_destination_link.json` resoluble): **DETENTE**. Nunca
-  fabriques la ruta ni la inventes. Es la misma salida que impone la linea 141.
+  fabriques la ruta ni la inventes. Es la misma salida que impone la linea 151.
   Emite el sobre en el chat **precedido de la linea literal**
   `[FALLBACK-ESCALADO-NO-ATERRIZADO]` y con el contenido integro que habria ido al
   fichero. **Di explicitamente que NO esta aterrizado y que un humano debe copiarlo

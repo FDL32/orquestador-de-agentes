@@ -1,4 +1,14 @@
+---
+role: orchestrator
+cycle_phase: [F7-cierre-sesion]
+route_kind: entry
+---
 # Prompt: Auditoria Adversarial de Cierre de Sesion
+<!-- PROMPT-SUMMARY
+what: Auditoria adversarial y cierre canonico de una sesion: encadena tres auditorias de salud y una pasada adversarial sobre el codigo generado y, en modo FINAL con la sesion verde, ejecuta el cierre (Bloque 3: agent_controller.py --session-close, que archiva la colaboracion y muta el estado), escribe los follow-ups en backlog.md (Bloque 5) y propone la memoria.
+when: Al cerrar una sesion que toco codigo del motor o del destino, ANTES de agent_controller.py --session-close; a mitad de vuelo solo los Bloques 1, 2 y 2.5 (sin 2.5.f ni 2.5.g), nunca los Bloques 3 a 5.
+not: NO es el cierre operativo (prompts/orchestrator_session_close_chat.md), NO arranca una sesion (prompts/orchestrator_session_bootstrap.md) y NO corre el Bloque 3 con un ticket IN_PROGRESS.
+-->
 
 contract_id: cid-session-close-full-audit-v0
 Skill canonica: skills/session-close-full-audit/SKILL.md
