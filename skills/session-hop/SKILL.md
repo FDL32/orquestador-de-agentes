@@ -1,7 +1,7 @@
 ---
 name: session-hop
 version: 1.0.0
-description: Prepara el arranque de una sesion nueva heredando el METODO de la anterior y RE-MIDIENDO el estado, en vez de copiarlo
+description: Puente entre sesiones, de solo lectura, que produce el arranque de la sesion siguiente con el METODO heredado y el ESTADO re-medido (cada dato con su comando y exit code) y como mucho lo escribe en orchestrator_pipeline/arranques/. Usar cuando se prepara el arranque de la sesion siguiente con continuidad medida, al final de una sesion o desde el estado ya recolectado. No usar para la auditoria adversarial previa al cierre (ver session-close-full-audit), para definir el rol o el metodo de la sesion siguiente (ver orchestrator_session_bootstrap), para leer el estado de UN ticket (comandos /pause-work, /resume-work y /session-report) ni para ejecutar el trabajo de la sesion; no cierra la sesion.
 triggers: [/session-hop, session-hop]
 author: agent
 role: manager

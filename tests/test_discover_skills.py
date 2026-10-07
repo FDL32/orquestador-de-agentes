@@ -651,10 +651,39 @@ class TestGenerateSkillStubs:
         """
         bundle = _get_bundle_root()
         paths = generate_skill_stubs(bundle, names=None, stub_root=tmp_path)
-        assert len(paths) == 43
+        # D-S4 excepcion 2026-10-06: a skill named like a versioned command
+        # (`session-hop`) gets no stub, so the full scope is 43 minus those.
+        commands = bundle / ".claude" / "commands"
+        skills = [
+            p.name
+            for p in (bundle / "skills").iterdir()
+            if p.is_dir() and not p.name.startswith(("_", "."))
+        ]
+        expected = [n for n in skills if not (commands / f"{n}.md").exists()]
+        assert len(skills) == 43
+        assert len(paths) == len(expected)
+        assert not (tmp_path / "session-hop").exists()
         for p in paths:
             assert p.exists()
             assert p.parent.parent == tmp_path
+
+    def test_all_skills_scope_skips_a_name_taken_by_a_command(
+        self, tmp_path: Path
+    ) -> None:
+        """Mutation for the D-S4 exception: the same skill gets a stub until a
+        versioned command with its name appears; then --all-skills skips it."""
+        for name in ("a", "b"):
+            skill_dir = tmp_path / "skills" / name
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: d\n---\n", encoding="utf-8"
+            )
+        out = tmp_path / "out"
+        assert len(generate_skill_stubs(tmp_path, names=None, stub_root=out)) == 2
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "commands" / "b.md").write_text("x\n", encoding="utf-8")
+        paths = generate_skill_stubs(tmp_path, names=None, stub_root=tmp_path / "o2")
+        assert [p.parent.name for p in paths] == ["a"]
 
 
 class TestDeployedStubNames:

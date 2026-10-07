@@ -1,11 +1,12 @@
 ---
 name: builder-implement-from-plan
 version: 2.0.0
-description: Implementar nueva funcionalidad basado en especificacion
+description: Implementa en orden las tareas de un work_plan aprobado como rol builder, bajo el contrato de ejecucion de orchestrator_launch_builder (identidad y paridad del contrato, preflight, tests, gates focales, commit segun delivery_authority y handoff canonico al Manager). Usar cuando el controlador indica ROL ACTIVO BUILDER con accion IMPLEMENT sobre un plan aprobado. No usar para redactar o lanzar el arranque del Builder (ver orchestrator_prepare_and_launch_ticket), para revisar la entrega (ver manager-review-implementation) ni para un deliverable solo documental (ver builder-write-deliverable).
 triggers: [/implement, implement, /code]
 author: agent
 role: builder
 stage: implement
+cycle_phase: [F5-implementacion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]

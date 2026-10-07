@@ -1,7 +1,7 @@
 ---
 name: audit-pipeline
 version: 1.0.0
-description: Meta-auditoria post-pipeline read-only sobre el sistema auditado en un repo_destino, con doble pasada adversarial e informe consolidado
+description: Meta-auditoria retrospectiva de un pipeline multi-ticket ya cerrado en un repo_destino con bus, que re-deriva cada closeout desde git, tests y bus en doble pasada A/B y emite informe y decision artifact. Usar cuando el pipeline de un repo_destino ha cerrado y ya no quedan tickets ejecutables. No usar para revisar un ticket concreto (ver manager-review-implementation) ni para el motor en CODE-ONLY MODE (ver audit-pipeline-codeonly); no reabre tickets ni toca backlog.
 triggers: [/audit-pipeline, audit-pipeline, auditar-pipeline]
 author: agent
 role: auditor

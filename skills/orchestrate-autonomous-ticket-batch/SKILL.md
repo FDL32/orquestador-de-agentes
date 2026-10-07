@@ -1,7 +1,7 @@
 ---
 name: orchestrate-autonomous-ticket-batch
 version: 1.0.0
-description: Ejecuta un batch autonomo de tickets consumiendo el DAG de grupos que produce backlog-triage; cierra el maximo de tickets CON GARANTIAS (Tier 0-1) con hard-stop y GROUP_STOP_REPORT, congela solo el subgrafo del grupo caido y sigue con los independientes; detecta el modo (destino con bus vivo / motor code-only) y DELEGA en el pipeline por ticket que corresponda, sin duplicar la logica de cierre de ninguno
+description: Ejecutor autonomo que consume el DAG de backlog-triage y cierra el maximo de tickets con barreras duras por ticket, delegando cada uno en el pipeline canonico del modo detectado; crea commits, mueve filas al archivo, escribe bus, ledger y memoria, puede publicar con push y nunca se audita a si mismo. Usar cuando hay un triage con DAG validado y fresco y un tercero ha resuelto el recibo de aislamiento de arranque. No usar para un pipeline por ticket (ver orchestrate-pipeline, orchestrate-pipeline-codeonly), para producir el DAG (ver backlog-triage) ni para auditar el batch (ver audit-autonomous-ticket-batch); nunca ejecuta tickets REQUIERE_HUMANO ni DISENO_PRIMERO.
 triggers: [/orchestrate-autonomous-ticket-batch, orchestrate-autonomous-ticket-batch, batch-autonomo-de-tickets]
 author: agent
 role: orchestrator

@@ -53,6 +53,22 @@ decision explicita, para no duplicar semantica con un nombre distinto).
 (`prompts/orchestrator_session_close_full_audit.md`, linea 22) es de cierre de sesion F7 — caso
 real de divergencia que motiva permitir la declaracion explicita en vez de forzar herencia ciega.
 
+**Enmienda 2026-10-06 (Tramo B, tras adoptar los prompts de las punteras en el router):** la
+herencia no siempre tiene de donde leer, porque `DEC-router-prompts-001` D4 deja sin fase dos tipos
+de prompt. (a) Una puntero cuyo prompt es `mantenimiento` queda EXENTA de `cycle_phase`: ese
+`route_kind` esta "fuera del ciclo" (D2) y su `cycle_phase` es "ausente" (D4), y `ROUTER.md` ya la
+lista con su skill en la seccion "Fuera del ciclo (mantenimiento)"; forzarle una fase contradiria la
+taxonomia del prompt que la skill solo apunta. La regla general de D-S1 (la fase propia de una
+skill siempre gana) no se toca: si alguna vez una de ellas declarase fase, seria un metadato del USO
+de la skill, que no mete al prompt en el ciclo ni cambia su `route_kind`; hoy ninguna lo hace. La
+exencion se deriva del `route_kind` real del prompt, nunca de una lista a mano. (b) Una puntero
+cuyo prompt es `modulo` (prompt con `cycle_phase` PROHIBIDA) declara la suya propia; hoy el unico
+caso es `builder-implement-from-plan` -> `[F5-implementacion]`. No choca con D4: la regla de no
+escribir a mano la relacion de un modulo con las fases rige para el PROMPT modulo (la deriva el
+router de sus citadores); la fase de la skill es la de su propio uso (el Builder implementa). Esa
+fase satisface el invariante pero NO anade descubribilidad: no hay seccion del ROUTER que la
+muestre (ver la excepcion de D-S6).
+
 ### D-S2. Rol `orchestrator`
 
 `orchestrator` se anade a `VALID_ROLES` de `skills/validate_all.py` (hoy: builder, manager,
@@ -97,6 +113,21 @@ se alcanza por el despliegue por lotes, no por la ejecucion por defecto: asi el 
 stubs de skills cuyo `description` aun no tiene "Usar cuando"/"No usar para". Con gate de
 frescura (misma arquitectura que `ROUTER.md`: si el `SKILL.md` real cambia su `description` y el
 stub no se regenera, el gate falla y bloquea `--generate-index`/`--check-index`).
+
+**Excepcion declarada (2026-10-06, Tramo B):** `session-hop` NO recibe stub. Su nombre ya lo
+ocupa el comando versionado `.claude/commands/session-hop.md`, que tambien remite a
+`prompts/session_hop.md` (desde la decision de abajo, solo como puntero); un stub
+con el mismo nombre compite por el mismo `/session-hop` y deja tapada una de las dos entradas.
+Se conserva el comando hasta que el usuario decida retirarlo o convertirlo. El generador lo
+salta tambien con `--all-skills` (`_stub_names` excluye los nombres de `.claude/commands/`), y
+`test_no_deployed_stub_shadows_a_command` falla si un stub desplegado usa el nombre de un comando. Con esto el despliegue cierra en 42/43 por decision, no por olvido.
+
+**Decision del usuario (2026-10-06):** se CONSERVA el comando y se adelgaza a puntero puro. Su
+version anterior re-declaraba la regla METODO/ESTADO, el etiquetado `[snapshot <fecha>]` y la
+"Restriccion dura" del prompt (tercera copia, contra "skill apunta, prompt gobierna"). Convertirlo
+en stub queda APLAZADO: exige reabrir la decision D1+D5 del ticket de `session-hop`, que fija el
+comando (`test_las_cuatro_piezas_existen`), y la unica ganancia medida es la description que Claude
+Code muestra (hoy la primera linea del comando, en vez del "Usar cuando / No usar para" de la skill).
 
 **Medido (PASO 1a del tramo 2, worktree aislado en `main`@`dc0fd6e`, limpiado tras el probe):** un
 generador produjo 44 stubs (43 reales + 1 de prueba `probe-largo` con description de 1200
@@ -162,6 +193,14 @@ esta implementada todavia; el piloto debe generarla y validarla. `skills/README.
 137 lineas, 25 filas de tabla, con prosa narrativa fuera de la tabla) sustituye SOLO su tabla
 desactualizada por un puntero al router extendido; la prosa narrativa se conserva sin cambios.
 
+**Excepcion declarada (enmienda 2026-10-06):** una puntero cuyo prompt es `modulo` no tiene fila
+propia en el ROUTER, porque la tabla de modulos no lleva columna `skill` por diseno
+(`DEC-router-prompts-001` D2: un modulo "NO se abre por iniciativa propia; lo ordena u ofrece otro
+fichero"). Hoy afecta solo a `builder-implement-from-plan`. Para Claude Code sigue visible por su
+stub (D-S4); para el resto de canales llega a traves del prompt que ordena el modulo. Anadir la
+columna a esa tabla o listar la skill entre las autocontenidas se descarto: lo primero cambia
+codigo y la proyeccion generada, lo segundo rompe la regla de que alli solo van autocontenidas.
+
 ### D-S7. Lint de referencias: ticket aparte, con fixtures y helper reutilizable
 
 Se ficha como ticket separado (no entra en el alcance de esta DEC), con dos condiciones: (a) sus
@@ -207,7 +246,9 @@ desincronizado del `SKILL.md` real debe fallar el gate de frescura).
 ## 5. Definicion de cierre (DoD), como INVARIANTES
 
 - Toda skill-puntero sin `cycle_phase` propio resuelve al de su `source_prompt`; toda skill
-  autocontenida declara el suyo. Ninguna skill queda sin `cycle_phase` resoluble.
+  autocontenida declara el suyo. Ninguna skill queda sin `cycle_phase` resoluble, SALVO las
+  skills-puntero cuyo prompt es `mantenimiento` (enmienda de D-S1, exencion derivada del
+  `route_kind` real del prompt). Todo valor resuelto pertenece al vocabulario de fases de D-S1.
 - Toda skill con `role` en `CONTRACT_OPT_IN_ROLES` (incluido `orchestrator` tras esta DEC) con
   `source_prompt`/`contract_id` declarado pasa `--check-contract`; ninguna skill con esos campos
   declarados escapa al gate por razon de `role`.
@@ -215,8 +256,12 @@ desincronizado del `SKILL.md` real debe fallar el gate de frescura).
   el trinquete de adopcion solo permite mejorar esta cobertura, nunca reducirla.
 - Todo stub en `.claude/skills/<n>/SKILL.md` tiene `description` identica a la de
   `skills/<n>/SKILL.md`; un gate de frescura falla si divergen.
-- `ROUTER.md` referencia toda skill-puntero por su columna `skill`; ninguna de las 18 queda sin
-  esa columna.
+- `ROUTER.md` referencia toda skill-puntero por su columna `skill`; ninguna skill-puntero queda
+  sin esa columna, SALVO las que apuntan a un prompt `modulo` (excepcion declarada en D-S6). Cada
+  prompt tiene como mucho una skill-puntero, tenga o no fila en el ROUTER (donde la tiene, la
+  columna solo puede mostrar una).
+- Ningun stub desplegado usa el nombre de un comando versionado de `.claude/commands/` (excepcion
+  de D-S4: `session-hop` se queda sin stub).
 - `.claude/agents/manager.md` y `.claude/agents/builder.md` no declaran `skills:`.
 - No es criterio de cierre ninguna cifra de esta sesion (44 stubs, 1200 caracteres, 26643
   caracteres de listing): esas cifras son evidencia fechada de ESTA medicion, no un invariante a
@@ -258,3 +303,18 @@ A/B/C ya resueltos en `skills-audit-fixes` (fusionada antes de esta DEC).
   inducida). Ronda 2 APPROVE tras corregir el lenguaje de v3 en las 3 secciones senaladas, sin
   cambiar ninguna decision de fondo. Matiz no bloqueante: `CANONICAL_ROLES` (prompts) vs
   `VALID_ROLES` (skills) son nombres distintos para conjuntos distintos; no es un defecto de v3.
+- R3, 2026-10-06 (`EXPLORATORY-skills-tramo-b`, DESIGN_REVIEW de las enmiendas de D-S1/D-S6 antes
+  de desplegar las 16 punteras): Codex (BA05, filesystem) CHANGES por condiciones de procedimiento
+  (fijar la base `prompts-adopt-b1a@517fa6c` y re-derivar si se mueve; enmendar DEC, DoD y test a
+  la vez; unicidad prompt -> skill); nan glm5.3-flash via Kilo (filesystem) APPROVE, con la
+  precision adoptada de que la fase del modulo no anade descubribilidad. Las dos lentes avalan la
+  exencion de mantenimiento y la fase propia del modulo con excepcion declarada; las dos
+  descartan un check semantico skill<->prompt por no determinista.
+- R4, 2026-10-06 (bucle de gobierno `DBL-4` MANAGER_REVIEW sobre `0a024ed`, nonce
+  `e0ef560465de5ca9d24fef040adcc9f5`): rama comun BA11, BA13, BA15 (nan) + BA92 (sustituta de BA25,
+  tokenharbor), rama dif BA11, BA13, BA15; BA16 y BA10 cayeron a BA01 (no cuentan); lector Claude
+  con filesystem; sintesis en dos pasadas Claude; refutacion final Codex (BA05). Lentes
+  independientes: 4 + Codex. Hallazgos aceptados y aplicados en el commit siguiente: la description
+  de `session-close-full-audit` aflojaba la barrera de 2.5.f/2.5.g; el stub de `session-hop`
+  chocaba con su comando (excepcion de D-S4, tambien en el generador); omisiones de tres
+  descriptions; redaccion del DoD; enum de fases y unicidad por ruta resuelta en el test.
