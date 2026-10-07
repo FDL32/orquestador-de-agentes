@@ -14,8 +14,8 @@
 | reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 43 |
-| **total** | **130** |
+| skill | 44 |
+| **total** | **131** |
 
 ## Entradas
 
@@ -128,6 +128,7 @@
 | skill | `skills/grill-work-plan/SKILL.md` | active | agent | manager | model-invoked | /grill, /grill-plan, grill-wp |
 | skill | `skills/local-audit/SKILL.md` | active | agent | auditor | model-invoked | /local-audit, /repo-audit, /snapshot |
 | skill | `skills/manager-create-work-plan/SKILL.md` | active | agent | manager | model-invoked | /plan, /schedule, create-plan |
+| skill | `skills/manager-orchestrator-loop/SKILL.md` | active | agent | manager | model-invoked | /manager-loop, /manager-orchestrator, /proceso-manager |
 | skill | `skills/manager-resolve-escalation/SKILL.md` | active | agent | manager | model-invoked | /escalate, /resolve, escalation |
 | skill | `skills/manager-review-implementation/SKILL.md` | active | agent | manager | model-invoked | /approve, /review, code-review |
 | skill | `skills/manager-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
