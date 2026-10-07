@@ -403,7 +403,7 @@ def test_apply_consolidation_does_not_duplicate_against_existing_archive(
 
 
 def test_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Dry-run mode should not write any files."""
+    """Dry-run mode should not write any versioned files."""
     test_obs = tmp_path / "observations.jsonl"
     original_content = '{"test": "entry"}\n'
     test_obs.write_text(original_content, encoding="utf-8")
@@ -411,12 +411,16 @@ def test_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     test_memory_md = tmp_path / "MEMORY.md"
     test_report = tmp_path / "REPORT.md"
     test_archive = tmp_path / "archive"
+    tmp_dir = tmp_path / "runtime" / "tmp"
 
     monkeypatch.setattr("scripts.memory_consolidate.OBS", test_obs)
     monkeypatch.setattr("scripts.memory_consolidate.MEMORY_DIR", tmp_path)
     monkeypatch.setattr("scripts.memory_consolidate.ARCHIVE_DIR", test_archive)
     monkeypatch.setattr("scripts.memory_consolidate.MEMORY_MD", test_memory_md)
     monkeypatch.setattr("scripts.memory_consolidate.REPORT", test_report)
+    monkeypatch.setattr(
+        "scripts.memory_consolidate.TMP_REPORT", tmp_dir / "CONSOLIDATION_REPORT.md"
+    )
 
     import sys
 
@@ -428,40 +432,64 @@ def test_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
     assert test_obs.read_text(encoding="utf-8") == original_content
     assert not test_memory_md.exists()
-    assert test_report.exists()
-    assert "DRY-RUN" in test_report.read_text(encoding="utf-8")
+    assert not test_report.exists(), (
+        "dry-run must NOT write to REPORT (versioned path); "
+        "the report goes to a gitignored tmp path instead (WOT-2026-091b)"
+    )
+    # dry-run report goes to TMP_REPORT (gitignored), not REPORT
+    assert (tmp_dir / "CONSOLIDATION_REPORT.md").exists()
+    assert "DRY-RUN" in (tmp_dir / "CONSOLIDATION_REPORT.md").read_text(
+        encoding="utf-8"
+    )
 
 
-def test_dry_run_flag_alias_no_write(
+def test_091b_dry_run_no_versioned_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """--dry-run should be accepted as an explicit CLI alias."""
-    test_obs = tmp_path / "observations.jsonl"
-    original_content = '{"test": "entry"}\n'
-    test_obs.write_text(original_content, encoding="utf-8")
+    """WOT-2026-091b: dry-run must NOT write CONSOLIDATION_REPORT.md to the versioned path.
 
-    test_memory_md = tmp_path / "MEMORY.md"
-    test_report = tmp_path / "REPORT.md"
-    test_archive = tmp_path / "archive"
+    DoD (WOT-2026-091b criterion 4.0d): `--dry-run` no escribe NINGUN fichero
+    versionado (imprime a stdout o escribe en una ruta gitignored). El criterio
+    4.0(d) del cierre usa un modo que no escribe.
+
+    Mutation: volver a `REPORT.write_text(...)` en `write_report` sin condicional
+    de `dry_run` hace que el test FALLA porque `REPORT.exists()` es True.
+    """
+    test_obs = tmp_path / "observations.jsonl"
+    test_obs.write_text('{"test": "entry"}\n', encoding="utf-8")
+
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    report_path = memory_dir / "CONSOLIDATION_REPORT.md"
+    tmp_dir = tmp_path / "runtime" / "tmp"
 
     monkeypatch.setattr("scripts.memory_consolidate.OBS", test_obs)
-    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_DIR", tmp_path)
-    monkeypatch.setattr("scripts.memory_consolidate.ARCHIVE_DIR", test_archive)
-    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_MD", test_memory_md)
-    monkeypatch.setattr("scripts.memory_consolidate.REPORT", test_report)
+    monkeypatch.setattr("scripts.memory_consolidate.MEMORY_DIR", memory_dir)
+    monkeypatch.setattr(
+        "scripts.memory_consolidate.ARCHIVE_DIR", memory_dir / "archive"
+    )
+    monkeypatch.setattr(
+        "scripts.memory_consolidate.MEMORY_MD", memory_dir / "MEMORY.md"
+    )
+    monkeypatch.setattr("scripts.memory_consolidate.REPORT", report_path)
+    monkeypatch.setattr(
+        "scripts.memory_consolidate.TMP_REPORT", tmp_dir / "CONSOLIDATION_REPORT.md"
+    )
 
     import sys
 
     from scripts import memory_consolidate
 
-    monkeypatch.setattr(sys, "argv", ["memory_consolidate.py", "--dry-run"])
-
+    monkeypatch.setattr(sys, "argv", ["memory_consolidate.py"])
     memory_consolidate.main()
 
-    assert test_obs.read_text(encoding="utf-8") == original_content
-    assert not test_memory_md.exists()
-    assert test_report.exists()
-    assert "DRY-RUN" in test_report.read_text(encoding="utf-8")
+    # Criterion: versioned REPORT must NOT exist after dry-run
+    assert not report_path.exists(), (
+        "WOT-2026-091b DoD: --dry-run must NOT write to the versioned "
+        "CONSOLIDATION_REPORT.md path"
+    )
+    # The report is written to the gitignored tmp path instead
+    assert tmp_dir.exists()
 
 
 def test_regen_memory_md_line_cap() -> None:
