@@ -71,6 +71,7 @@ ADOPTED = (
     "orchestrator_session_bootstrap_design.md",
     "orchestrator_destination_bootstrap.md",
     "orchestrator_refactor_bootstrap.md",
+    "manager_orchestrator_loop.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)
