@@ -191,6 +191,9 @@ append `--project-root <destino>` to commands that operate on project state.
 - Migrar config: `python .agent/agents_config.py --migrate [--dry-run] [--project-root <workspace>]`
 - Comparar con repo GitHub: skill `/repo-compare`
 - Orquestar backlog por chat: skill `/pipeline` (`prompts/orchestrator_pipeline.md`)
+- Orquestar un OBJETIVO como Manager (estrategia -> planes -> Builders -> bucles F/S): nucleo portable
+  `prompts/manager_orchestrator_loop.md` + su adaptador a este motor `prompts/manager_orchestrator_loop.adapter_motor.md`
+  (skill `manager-orchestrator-loop`). No confundir con `/pipeline`, que ejecuta tickets ya formados.
 - Meta-auditar pipeline cerrado: skill `/audit-pipeline`
 - Auditar publicacion Git: skill `/audit-git-publication`
 - Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista: `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. El script RECOLECTA (read-only: por defecto no toca ningun fichero TRACKED); el agente AUDITA. Salida en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`. El registro en `INDEX.md` (fichero tracked en el workspace) es opt-in via `--publish-index`, OFF por defecto (WOT-2026-023x). Ver `prompts/audit_post_change_system_health.md`.

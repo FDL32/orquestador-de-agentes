@@ -379,6 +379,9 @@ Use the current ticket, then update:
 - `.agent/collaboration/notifications.md`
 - `.agent/collaboration/STATE.md`
 
+Si lo que te piden es orquestar un OBJETIVO (no un ticket ya formado): actua de Manager con el nucleo portable
+`prompts/manager_orchestrator_loop.md` y su adaptador `prompts/manager_orchestrator_loop.adapter_motor.md`.
+
 ## 6. Comandos diarios
 
 > Comandos de instalación y sincronización: ver [AGENTS.md sección "Comandos principales"](AGENTS.md#comandos-principales). Esta sección cubre solo los comandos del ciclo diario (validate, tests, lint).
