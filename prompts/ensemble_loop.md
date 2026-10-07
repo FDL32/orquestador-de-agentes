@@ -72,7 +72,8 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
 - Una lente por proveedor distinto, salvo que el usuario pida otra cosa.
 - Criterio de entrada al pool por defecto: al menos 80% de rondas utiles con 5 o mas rondas medidas.
   Preferir modelos SIN limite de cuota: el ensemble comparte cupo con los agentes de implantacion.
-- `codex` es el refuter: no cuenta dentro de las N lentes del fan-out.
+- `codex` es el refuter: cuenta como lente independiente si su ronda es sustantiva y supera los filtros
+  del checker (no es el emisor del nonce ni una sustitucion por `BA01`; ver seccion 4).
 - El mismo `backend_key` repetido NO son dos lentes.
 
 ### 3.3 Preparar el bundle
@@ -122,18 +123,15 @@ Revision de una propuesta sin commit: fase `DESIGN_REVIEW`, sin nonce, `loop_id`
 `--task-type` debe estar en `TASK_TYPES`. Si no, `loop-round` rechaza, registra el intento con
 `failure_mode: usage-error` y sale con codigo distinto de 0.
 
-## 3.7 Compatibilidad de `loop_id` por lector
+Valores por fase del ciclo (literal de `PHASE_LOOP_PARAMS` en `scripts/discover_skills.py`, validado por
+tests contra `ensemble_dispatch`):
 
-| Lector | Antes (L###) | Despues (UNI/DBL/ROL/CHA-N + alias) |
-|---|---|---|
-| `scorecard.jsonl` | `loop_id` = `L700`/`L710`/`L720`/`L800` | Filas historicas intactas; las nuevas usan la forma directa |
-| `emitted_nonces.jsonl` | `loop_id` = `L###` | Igual: el ledger registra lo que se emite |
-| `check_loop_execution` | Agrupa por `loop_id` `L###` | Resuelve alias via `loop_shapes[loop_id].alias_of` |
-| `phase_value_report` (dashboard) | Filtra por `L###` | Acepta alias legacy y formas directas |
-| `leaders` | Backend leaders por `L###` | Mismo: los leaders se calculan por backend_key, no por forma |
-| `prepush_check` (token `loop=<id>`) | Token `loop=L700` | Acepta alias legacy y formas directas; `validate_loop_id` advierte si deprecated |
-| `fallback_events.jsonl` | Fallback por `L###` | Igual: los fallbacks son por backend_key/perfil |
-| `adjudicate` | Adjudica por `loop_id` `L###` | Resuelve alias antes de adjudicar |
+| Fase del ciclo | --phase | --task-type | Nota |
+|---|---|---|---|
+| F1-backlog | TRIAGE_AUDIT | triage | - |
+| F3-auditoria-contrato | CONTRACT_AUDIT | contract-audit | - |
+| F6-revision | MANAGER_REVIEW | code-review | `prose` si el entregable es documentation/research/analysis (decision provisional) |
+| F7-cierre-sesion | CLOSE | contract-audit | - |
 
 ### 3.5 Lanzar
 
@@ -154,6 +152,32 @@ Revision de una propuesta sin commit: fase `DESIGN_REVIEW`, sin nonce, `loop_id`
 3. Si la sustitucion automatica cayo en `proposer_claude` (`BA01`) -- stderr muestra
    `[fallback] ... sustituido por 'proposer_claude'` --, esa respuesta NO es una lente independiente.
 4. Gobierno: `python scripts/check_loop_execution.py --commit-sha <sha> --project-root <destino>`.
+
+### 3.7 Compatibilidad de `loop_id` por lector
+
+| Lector | Antes (L###) | Despues (UNI/DBL/ROL/CHA-N + alias) |
+|---|---|---|
+| `scorecard.jsonl` | `loop_id` = `L700`/`L710`/`L720`/`L800` | Filas historicas intactas; las nuevas usan la forma directa |
+| `emitted_nonces.jsonl` | `loop_id` = `L###` | Igual: el ledger registra lo que se emite |
+| `check_loop_execution` | Agrupa por `loop_id` `L###` | Resuelve alias via `loop_shapes[loop_id].alias_of` |
+| `phase_value_report` (dashboard) | Filtra por `L###` | Acepta alias legacy y formas directas |
+| `leaders` | Backend leaders por `L###` | Mismo: los leaders se calculan por backend_key, no por forma |
+| `prepush_check` (token `loop=<id>`) | Token `loop=L700` | Acepta alias legacy y formas directas; `validate_loop_id` advierte si deprecated |
+| `fallback_events.jsonl` | Fallback por `L###` | Igual: los fallbacks son por backend_key/perfil |
+| `adjudicate` | Adjudica por `loop_id` `L###` | Resuelve alias antes de adjudicar |
+
+### 3.8 Mudez por modelo, lector efectivo y bundle por canal
+
+Tres hechos medidos en la propuesta v3 del proceso portable (secciones 4.4 y 4.6), que este procedimiento
+hereda:
+
+- La mudez depende del MODELO, no de un tamano global: un bundle que un modelo responde puede dejar mudo a
+  otro. El umbral de 3.3 es una senal, no una regla universal.
+- Una lente con ficheros cuenta como LECTORA solo si hay recibo de lectura (llamadas a herramientas de
+  lectura en el log del CLI) y su salida cita `ruta:linea` comprobable; si responde sin leer, cuenta como
+  lente sin ficheros y se declara.
+- El bundle va POR CANAL: el de FICHEROS lleva rutas absolutas y la lista "verifica X en <ruta>", sin
+  framing de lente sin ficheros; el de TEXTO lleva el contenido (contrato por contenido) y su framing.
 
 ## 4. Definicion unica de "lente independiente"
 

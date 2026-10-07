@@ -61,7 +61,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 | Modulo | Lo citan | Que es | Lineas |
 |---|---|---|---|
 | `prompts/_shared/loop_readiness.md` | audit_goal_completion.md, orchestrator_destination_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Gate que decide si una tarea es apta para /goal autonomo: 4 condiciones conjuntas (recurrente, verificacion automatizable, presupuesto declarado, artefacto nombrado) mas una denylist. | 294 |
-| `prompts/ensemble_loop.md` | AGENTS.md, builder_invocation_contract.md, orchestrator_autonomous_ticket_batch.md | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 195 |
+| `prompts/ensemble_loop.md` | AGENTS.md, builder_invocation_contract.md, orchestrator_autonomous_ticket_batch.md | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 219 |
 | `prompts/orchestrator_launch_builder.md` | transversal (10) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 827 |
 
 ## Por rol
