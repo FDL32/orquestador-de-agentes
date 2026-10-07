@@ -364,8 +364,15 @@ Si en Fase 0 detectas prompts, skills, scripts u otros artefactos versionados
 en el `repo_motor` que parezcan legacy o destino-only, NO los retires ni los
 mezcles con el ticket activo. Distingue explicitamente:
 
-- `legacy-stub-declared`: artefacto con marcador explicito como
-  `# Legacy alias:`
+- `legacy-stub-declared`: artefacto legacy cuya compatibilidad se declara hoy
+  por DOS vias, en superficies distintas:
+  - alias en frontmatter: el prompt canonico declara `legacy_aliases: [viejo]`
+    en su YAML (p.ej. `manager_review.md` -> `review_manager`); lo consume
+    `discover_skills.py::_declared_prompt_aliases` para tolerar el stub en la
+    gate de nombres (DEC-008D-001);
+  - cabecera de autoidentificacion: el propio stub se nombra en una cabecera
+    `# Legacy alias: <canonico>`; el bootstrap de migracion la excluye de su
+    comprobacion de prosa legacy (`tests/test_migration_bootstrap.py`).
 - `canonical-motor`: artefacto canonico vivo del motor
 - `candidate-to-retire` / `candidate-to-extract`: sospecha de deuda o
   portabilidad no resuelta
