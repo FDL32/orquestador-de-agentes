@@ -533,7 +533,7 @@ CLOSE adds a **phase 2 (challenge)** after phase 1's `1->9->2`:
 each governance fan-out, the orchestrator emits a challenge nonce EXTERNAL to the
 executor:
 
-    python scripts/ensemble_dispatch.py emit-nonce --commit-sha <sha> --loop-id <L700|L800> \
+    python scripts/ensemble_dispatch.py emit-nonce --commit-sha <sha> --loop-id <L720|L800> \
         --issuer-backend-key BA01 --project-root <destino>
 
 Pass that nonce (and the `--commit-sha <sha>` under review) into every `run_loop_round`
