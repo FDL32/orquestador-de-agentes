@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 41 |
+| prompt | 42 |
 | reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 44 |
-| **total** | **131** |
+| **total** | **132** |
 
 ## Entradas
 
@@ -43,6 +43,7 @@
 | prompt | `prompts/ensemble_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/escalate_to_motor.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/hermes_soul.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/manager_orchestrator_loop.adapter_motor.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/manager_orchestrator_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | manager | model-invoked | — |
 | prompt | `prompts/memory_optimization.md` | active | system | shared | model-invoked | — |

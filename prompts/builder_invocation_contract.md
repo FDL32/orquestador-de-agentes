@@ -83,3 +83,5 @@ El vocabulario canonico de roles (`AGENTS.md`, seccion "Backends y roles") defin
 y un rol; este contrato no lo redefine. `AGENTS.md` enlaza aqui para el PROCEDIMIENTO operativo de
 invocacion de un Builder real, de la misma forma que enlaza a `ensemble_loop.md` para el procedimiento
 de un bucle de ensemble.
+
+El ADAPTADOR del motor al nucleo portable del proceso Manager-Builder (`prompts/manager_orchestrator_loop.adapter_motor.md`) traduce cada capacidad de ese nucleo a los comandos reales de este repositorio; la invocacion de un Builder real descrita en la seccion 1 cubre ahi la capacidad LECTOR_FS.
