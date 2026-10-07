@@ -28,9 +28,8 @@ prompt gobierna").
 
 ## Adaptador de referencia
 
-- `prompts/manager_orchestrator_loop.adapter_motor.md` (puede no existir aun;
-  se creara en WOT-2026-093e). Si existe, el nucleo lo declara como la pieza
-  que traduce cada capacidad a los comandos reales del motor.
+- `prompts/manager_orchestrator_loop.adapter_motor.md`: traduce cada capacidad del
+  nucleo a los comandos reales de este motor (si divergen, prevalece el nucleo).
 
 ## Contraproporcion (regla del repo: "skill apunta, prompt gobierna")
 
