@@ -12,11 +12,11 @@ not: NO redefine roles, estados, reglas de validez ni esquemas: eso vive en prom
 contract_id: cid-manager-orchestrator-loop-adapter-motor-v1
 implements: cid-manager-orchestrator-loop-v1
 nucleo: prompts/manager_orchestrator_loop.md
-nucleo_sha256: 335c0854073261de747e409f75b3084bad5195cd52f63ce1310987900fe0b6eb
+nucleo_sha256: faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba
 
 Este documento es el ADAPTADOR del motor `orquestador_de_agentes` al NUCLEO portable
 `prompts/manager_orchestrator_loop.md` (contrato `cid-manager-orchestrator-loop-v1`,
-sha256 `335c0854073261de747e409f75b3084bad5195cd52f63ce1310987900fe0b6eb`). No gobierna:
+sha256 `faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba`). No gobierna:
 traduce. Si algo de aqui diverge del nucleo, prevalece el nucleo.
 
 ## 1. Que cubre este adaptador y que no
@@ -67,3 +67,16 @@ El perfil que declara, por capacidad, su comando, su version, una prueba de vida
 nivel degradado es `prompts/manager_orchestrator_loop.profile_motor.json`; se valida
 contra `SCHEMA: perfil` del nucleo antes de lanzar nada. Un perfil que no declare un
 lector con ficheros hace que la revision sea EXPLORATORIA, no de GOBIERNO.
+
+## 6. Cierre de bucle: un commit, un bucle anclado (N8)
+
+La regla 7 del nucleo (un commit, un bucle anclado) se traduce asi en este motor: todos
+los hallazgos ADOPTADOS de un mismo bucle se aplican en UN solo commit, y ese commit es
+el ANCLA del bucle de verificacion. El nonce se emite POR COMMIT, antes del fan-out:
+
+    python scripts/ensemble_dispatch.py emit-nonce --commit-sha <sha> --loop-id <shape> --issuer-backend-key <BA> --project-root <destino>
+
+Las rondas se lanzan contra ese sha y la barrera `scripts/check_loop_execution.py`
+acredita el commit por sus lentes. No se abre un commit por hallazgo, y un bucle cuyos
+cambios quedaron repartidos en varios commits sin su ancla no se da por cerrado: la
+barrera reporta 0/4. La suite canonica va al final, tras el ultimo commit.

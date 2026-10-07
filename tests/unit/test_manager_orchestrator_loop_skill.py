@@ -18,7 +18,7 @@ SKILL_FILE = ROOT / "skills" / "manager-orchestrator-loop" / "SKILL.md"
 CORE_FILE = ROOT / "prompts" / "manager_orchestrator_loop.md"
 
 # Hash declarado en la skill (nucleo_sha256 del frontmatter).
-DECLARED_SHA = "335c0854073261de747e409f75b3084bad5195cd52f63ce1310987900fe0b6eb"
+DECLARED_SHA = "faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba"
 
 
 def _file_sha256(path: Path) -> str:
