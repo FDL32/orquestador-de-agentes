@@ -192,7 +192,7 @@ append `--project-root <destino>` to commands that operate on project state.
 - Comparar con repo GitHub: skill `/repo-compare`
 - Orquestar backlog por chat: skill `/pipeline` (`prompts/orchestrator_pipeline.md`)
 - Orquestar un OBJETIVO como Manager (estrategia -> planes -> Builders -> bucles F/S): nucleo portable
-  `prompts/manager_orchestrator_loop.md` + su adaptador a este motor `prompts/manager_orchestrator_loop.adapter_motor.md`
+  `prompts/manager_orchestrator_loop.md` + su adaptador a este motor `prompts/manager_orchestrator_loop_adapter_motor.md`
   (skill `manager-orchestrator-loop`). No confundir con `/pipeline`, que ejecuta tickets ya formados.
 - Meta-auditar pipeline cerrado: skill `/audit-pipeline`
 - Auditar publicacion Git: skill `/audit-git-publication`

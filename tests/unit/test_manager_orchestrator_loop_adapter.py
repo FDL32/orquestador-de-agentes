@@ -1,6 +1,6 @@
 """Contract test for the motor adapter + profile of the portable process (WOT-2026-093e).
 
-The adapter (``prompts/manager_orchestrator_loop.adapter_motor.md``) translates every
+The adapter (``prompts/manager_orchestrator_loop_adapter_motor.md``) translates every
 capability of the portable nucleo (``prompts/manager_orchestrator_loop.md``) to a REAL
 command or file of this repo; the profile (``...profile_motor.json``) declares each
 capability for the nucleus ``SCHEMA: perfil`` check.
@@ -28,8 +28,8 @@ from tests.unit.test_manager_orchestrator_loop_contract import _extract, _valida
 
 ROOT = Path(__file__).resolve().parents[2]
 NUCLEO = ROOT / "prompts" / "manager_orchestrator_loop.md"
-ADAPTER = ROOT / "prompts" / "manager_orchestrator_loop.adapter_motor.md"
-PROFILE = ROOT / "prompts" / "manager_orchestrator_loop.profile_motor.json"
+ADAPTER = ROOT / "prompts" / "manager_orchestrator_loop_adapter_motor.md"
+PROFILE = ROOT / "prompts" / "manager_orchestrator_loop_profile_motor.json"
 
 CONTRACT_ID = "cid-manager-orchestrator-loop-adapter-motor-v1"
 IMPLEMENTS = "cid-manager-orchestrator-loop-v1"

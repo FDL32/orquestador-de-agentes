@@ -11,7 +11,7 @@ quality_gate: false
 tags: [core, process, orchestrator, portable]
 source_prompt: prompts/manager_orchestrator_loop.md
 contract_id: cid-manager-orchestrator-loop-v1
-nucleo_sha256: faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba
+nucleo_sha256: 909543817393de016021657c85fa298fd1db768c5702f2aff86bde93df1bd19b
 ---
 
 # manager-orchestrator-loop
@@ -24,11 +24,11 @@ prompt gobierna").
 
 - **Nucleo:** `prompts/manager_orchestrator_loop.md`
   - `contract_id: cid-manager-orchestrator-loop-v1`
-  - `sha256: faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba`
+  - `sha256: 909543817393de016021657c85fa298fd1db768c5702f2aff86bde93df1bd19b`
 
 ## Adaptador de referencia
 
-- `prompts/manager_orchestrator_loop.adapter_motor.md`: traduce cada capacidad del
+- `prompts/manager_orchestrator_loop_adapter_motor.md`: traduce cada capacidad del
   nucleo a los comandos reales de este motor (si divergen, prevalece el nucleo).
 
 ## Contraproporcion (regla del repo: "skill apunta, prompt gobierna")
@@ -48,7 +48,7 @@ mismo sha256 que se declara aqui:
 python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <ruta_al_nucleo>
 ```
 
-El resultado debe ser `faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba`.
+El resultado debe ser `909543817393de016021657c85fa298fd1db768c5702f2aff86bde93df1bd19b`.
 Si no coincide, o si el nucleo no es accesible, DETENTE e informa al
 orquestador. No continuar con un nucleo de hash diferente.
 

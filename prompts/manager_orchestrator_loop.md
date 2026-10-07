@@ -10,6 +10,9 @@ when: Cuando un Manager orquesta un objetivo con bucles de revision adversarial 
 not: NO sirve para despachar lentes contra un proveedor concreto ni para encargar una tarea a un backend: eso vive en `prompts/ensemble_loop.md` y `prompts/builder_invocation_contract.md`, que el ADAPTADOR traduce a cada sistema.
 -->
 
+contract_id: cid-manager-orchestrator-loop-v1
+Skill canonica: skills/manager-orchestrator-loop/SKILL.md
+
 ## 0. Que es y como se usa
 
 Este documento es el NUCLEO del proceso Manager-Builder. Es una especificacion ejecutable y
