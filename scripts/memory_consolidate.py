@@ -37,6 +37,7 @@ ARCHIVE_DIR = MEMORY_DIR / "archive"
 OBS = MEMORY_DIR / "observations.jsonl"
 MEMORY_MD = MEMORY_DIR / "MEMORY.md"
 REPORT = MEMORY_DIR / "CONSOLIDATION_REPORT.md"
+TMP_REPORT = AGENT_DIR / "runtime" / "tmp" / "CONSOLIDATION_REPORT.md"
 
 NOISE_PREFIXES = ("Tool ",)
 MIN_SIGNAL_LEN = 30
@@ -581,7 +582,14 @@ def _regenerate_l2_l3(
 
 
 def write_report(stats: dict[str, Any], dry_run: bool = True) -> None:
-    """Write CONSOLIDATION_REPORT.md."""
+    """Write CONSOLIDATION_REPORT.md.
+
+    Before: `stats` contains the pipeline results; `dry_run` controls mode.
+    During: when dry_run is True, the report goes to a gitignored tmp path
+            (`TMP_REPORT`) so it is never versioned; when False, it writes
+            to the canonical `REPORT` path as before.
+    After: Returns None. No output to stdout.
+    """
     now = datetime.now(timezone.utc).isoformat()
     mode = "DRY-RUN" if dry_run else "APPLIED"
 
@@ -635,7 +643,9 @@ def write_report(stats: dict[str, Any], dry_run: bool = True) -> None:
 
     report_lines.append("")
 
-    REPORT.write_text("\n".join(report_lines), encoding="utf-8")
+    target = TMP_REPORT if dry_run else REPORT
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(report_lines), encoding="utf-8")
 
 
 def _run_pipeline(
@@ -810,7 +820,8 @@ def main() -> None:
     write_report(stats, dry_run=dry_run)
 
     if args.verbose:
-        print(f"Report written to {REPORT}")
+        target = TMP_REPORT if dry_run else REPORT
+        print(f"Report written to {target}")
 
     if dry_run:
         print(
