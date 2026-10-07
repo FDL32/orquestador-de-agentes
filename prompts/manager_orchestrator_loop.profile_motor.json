@@ -1,0 +1,79 @@
+{
+  "version": "1",
+  "minimos_por_tipo": {
+    "code": 4,
+    "mixed": 4,
+    "analysis": 3,
+    "research": 2,
+    "documentation": 2
+  },
+  "verificadores_minimos_gobierno": 1,
+  "capacidades": {
+    "LECTOR_FS": {
+      "comando": "CLI Kilo directo como agente con filesystem (canal nan-FS) segun prompts/builder_invocation_contract.md; Codex como lente final con ficheros via scripts/ensemble_dispatch.py loop-round con bundle de ficheros",
+      "version": "n/a: el CLI lo aporta cada corrida; no hay una version unica declarable",
+      "prueba_de_vida": "python scripts/ensemble_dispatch.py status --project-root <destino>",
+      "nivel_degradado": "sin verificador no hay bucle de GOBIERNO, solo EXPLORATORIO"
+    },
+    "LENTE_TEXTO": {
+      "comando": "python scripts/ensemble_dispatch.py loop-round con perfiles de canal api",
+      "version": "n/a: dispatcher del motor (scripts/ensemble_dispatch.py)",
+      "prueba_de_vida": "python scripts/ensemble_dispatch.py status --project-root <destino>",
+      "nivel_degradado": "el bucle sigue con lectores; se declara"
+    },
+    "EJECUTOR": {
+      "comando": "CLI Kilo directo como Builder real segun prompts/builder_invocation_contract.md; o el Manager en modo implementador=manager",
+      "version": "n/a: el CLI lo aporta cada corrida",
+      "prueba_de_vida": "python scripts/discover_skills.py --check-index",
+      "nivel_degradado": "modo implementador=manager (nucleo, seccion 9)"
+    },
+    "EVIDENCIA": {
+      "comando": "git",
+      "version": "git del entorno (ver git --version)",
+      "prueba_de_vida": "git -C <destino> status --porcelain",
+      "nivel_degradado": "sin VCS: sha256 por fichero de las rutas declaradas"
+    },
+    "REGISTRO_TRABAJO": {
+      "comando": "backlog vivo del destino; python scripts/check_backlog_contract.py",
+      "version": "n/a: gate del motor (scripts/check_backlog_contract.py)",
+      "prueba_de_vida": "python scripts/check_backlog_contract.py --project-root <destino>",
+      "nivel_degradado": "una tabla versionada"
+    },
+    "REGISTRO_RONDAS": {
+      "comando": "<destino>/.agent/runtime/ensemble/scorecard.jsonl via scripts/ensemble_dispatch.py",
+      "version": "n/a: JSONL local del destino",
+      "prueba_de_vida": "python scripts/ensemble_dispatch.py leaders --project-root <destino>",
+      "nivel_degradado": "un JSONL local"
+    },
+    "BARRERAS": {
+      "comando": "python scripts/check_loop_execution.py (minimos: min_distinct_for); python scripts/prepush_check.py",
+      "version": "n/a: gates del motor",
+      "prueba_de_vida": "python scripts/check_loop_execution.py --help",
+      "nivel_degradado": "se declaran los que faltan; ningun cierre los da por pasados"
+    },
+    "CANAL_SESIONES": {
+      "comando": "<destino>/.agent/collaboration/backlog_inbox/ con la norma de reclamo",
+      "version": "n/a: buzon de ficheros del destino",
+      "prueba_de_vida": "ls <destino>/.agent/collaboration/backlog_inbox/",
+      "nivel_degradado": "el USUARIO hace de bus (riesgo declarado)"
+    },
+    "DECISIONES": {
+      "comando": "docs/decisions/ (un fichero por decision del USUARIO)",
+      "version": "n/a: registro de ficheros del motor",
+      "prueba_de_vida": "ls docs/decisions/",
+      "nivel_degradado": "un fichero por ciclo"
+    },
+    "IDENTIDAD": {
+      "comando": ".agent/config/agents.json -> ensemble_registry.backend_keys",
+      "version": "n/a: registro del motor; WOT-2026-088c aun no garantiza clave -> modelo unico",
+      "prueba_de_vida": "python scripts/ensemble_dispatch.py leaders --project-root <destino>",
+      "nivel_degradado": "el lanzador anota proveedor y modelo de cada respuesta"
+    },
+    "ESCALADO": {
+      "comando": "chat con el USUARIO",
+      "version": "n/a: canal humano, sin version",
+      "prueba_de_vida": "n/a: no hay comando; se declara la parada con las dos posturas",
+      "nivel_degradado": "se para el ciclo y se declara"
+    }
+  }
+}

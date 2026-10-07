@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 26 de 48 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 27 de 49 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -63,6 +63,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 |---|---|---|---|
 | `prompts/_shared/loop_readiness.md` | audit_goal_completion.md, orchestrator_destination_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Gate que decide si una tarea es apta para /goal autonomo: 4 condiciones conjuntas (recurrente, verificacion automatizable, presupuesto declarado, artefacto nombrado) mas una denylist. | 294 |
 | `prompts/ensemble_loop.md` | AGENTS.md, builder_invocation_contract.md, orchestrator_autonomous_ticket_batch.md | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 219 |
+| `prompts/manager_orchestrator_loop.adapter_motor.md` | builder_invocation_contract.md | Adaptador del MOTOR al nucleo portable manager_orchestrator_loop.md: traduce cada capacidad del nucleo a los comandos y ficheros REALES de este repositorio, fija los minimos por tipo de entrega y declara la diferencia de identidad (D2). | 69 |
 | `prompts/orchestrator_launch_builder.md` | transversal (10) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 827 |
 
 ## Por rol
@@ -73,6 +74,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 - `prompts/doc_optimization.md` (mantenimiento)
 - `prompts/ensemble_loop.md` (modulo)
 - `prompts/escalate_to_motor.md` (F1-backlog)
+- `prompts/manager_orchestrator_loop.adapter_motor.md` (modulo)
 - `prompts/manager_orchestrator_loop.md` (F1-backlog, F2-contrato, F3-auditoria-contrato, F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_autonomous_ticket_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/orchestrator_destination_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
