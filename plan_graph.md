@@ -85,6 +85,45 @@
   charter lista `related_plans: [PLAN-002]` y no nombra a PLAN-004, PLAN-005 ni a este.
   No se corrige aqui por el mismo motivo (semantica del charter, requiere DEC propia).
 
+## PLAN-007 - Guard de obligaciones que un prompt de Builder debe transportar
+- objetivo: OBJ-002 (el instrumento que audita la flota conoce su denominador y falla
+  honestamente: un prompt de Builder que omite una obligacion de su canonico es un universo
+  medido como conforme sin serlo)
+- tickets: [WOT-2026-067z]
+- depends_on: -
+- superficies_archivo: [scripts/check_builder_prompt_obligations.py (nuevo),
+  tests/unit/test_check_builder_prompt_obligations.py (nuevo),
+  scripts/prepush_check.py (solo ANADIR una funcion run_* y su llamada),
+  prompts/orchestrator_launch_builder.md (solo ANADIR UNA linea marcador de obligaciones),
+  prompts/orchestrator_prepare_and_launch_ticket.md (solo ANADIR un paso pre-lanzamiento),
+  tests/fixtures/guard_wiring_wired_baseline.yaml (solo si check_guard_wiring lo exige para
+  el guard nuevo)]
+- interfaces: [CLI del guard (--project-root para el censo, --prompt para un borrador),
+  derivacion de obligaciones desde el marcador `BUILDER-CLOSURE-OBLIGATIONS` del canonico]
+- shared_dependencies: [la nocion de denominador declarado que OBJ-002 exige a todo
+  instrumento de auditoria; `check_launch_prompt_paths.audit()` (universo de prompts de
+  Builder: owner UNICO PLAN-005, 007 solo lo IMPORTA); `prompts/orchestrator_launch_builder.md`
+  (canonico del que se derivan las obligaciones); `scripts/prepush_check.py` (superficie de
+  cableado compartida con PLAN-005)]
+- origen: ficha WOT-2026-067z del backlog del destino. Se abre plan propio en vez de ampliar
+  PLAN-005, siguiendo DEC-067N-001 [B] y el precedente de PLAN-006: PLAN-005 audita RUTAS en
+  prompts de arranque (`check_launch_prompt_paths.py`); 007 audita OBLIGACIONES TRANSPORTADAS,
+  con script, test y semantica de fallo distintos. Los ficheros son disjuntos; lo compartido
+  es una IMPORTACION de solo lectura del universo.
+- DEFECTO QUE ATACA, medido 2026-10-07 (SNAPSHOT, no criterio) con el universo de PLAN-005
+  (`audit()[1]`): 23 prompts de Builder, de los que `--mark-ready` falta en 9,
+  `HANDOFF_IMPOSSIBLE` en 13 y solo 9 son conformes en ambos. La ficha (2026-09-11) medio
+  5 de 8 y 0 de 8: ambas cifras caducaron en semanas porque el universo crece y los
+  prompts nuevos arrastran lo que encuentran. Un numero fijado aqui se pudriria igual; por
+  eso el DoD del ticket es un invariante y no una cifra.
+- LIMITE HEREDADO, declarado: el universo es el de PLAN-005, que hoy NO ve los
+  `LAUNCH_BUILDER_*` dentro de `.agent/planning/` (`WOT-2026-068s`, vivo). 007 no lo arregla
+  ni lo duplica: cuando 068s aterrice, el denominador de 007 crece solo. Reimplementar el
+  universo aqui crearia dos definiciones de "prompt de Builder" que divergirian.
+- NOTA: misma omision PRE-EXISTENTE que declaran PLAN-005 y PLAN-006 -- `OBJ-002` lista
+  `related_plans: [PLAN-002]` y no nombra a este. No se corrige aqui (semantica del charter,
+  requiere DEC propia).
+
 ## Impact Simulation
 
 | Plan | Superficies | Shared deps | Conflicto esperado | Mitigacion | Paralelizable |
@@ -95,6 +134,7 @@
 | PLAN-004 | .claude/settings.json + hooks de destinos externos | el censo de 002 | 004 necesita el denominador que 002 produce | serializar tras 002 | after PLAN-002 |
 | PLAN-005 | scripts/check_launch_prompt_paths.py + su test | ninguna de codigo; comparte con 002 y 004 la NOCION de denominador declarado (OBJ-002), no una API | ninguno de ARCHIVO con 001/002/003/004 (superficies disjuntas). SI hay conflicto SEMANTICO: 002, 004 y 005 cuelgan de OBJ-002 con censos distintos (002 destinos, 005 universo de prompts) y sus denominadores pueden DIVERGIR sin que nadie revalide | par 002+005 en Merge Regression Audit (abajo): la coherencia de denominadores se audita en merge, no se presume. Si 005 inspeccionase superficies de destinos, se serializa tras 004 por REQUIERE_HUMANO | yes |
 | PLAN-006 | scripts/backlog_reconcile.py + su test | ninguna de codigo; comparte con 002, 004 y 005 la NOCION de denominador declarado (OBJ-002), no una API | ninguno de ARCHIVO con 001-005 (superficies disjuntas). Conflicto SEMANTICO de la misma clase que el par 002+005: 006 declara un denominador propio (el universo de tickets recolectados) que puede DIVERGIR de los otros censos de OBJ-002 sin que nadie revalide | par 005+006 en Merge Regression Audit: la coherencia de denominadores se audita en merge, no se presume. 006 es read-only sobre el backlog y no toca superficies de destinos, asi que no se serializa tras 004 | yes |
+| PLAN-007 | scripts/check_builder_prompt_obligations.py + su test (nuevos); ADITIVO en scripts/prepush_check.py, prompts/orchestrator_launch_builder.md y prompts/orchestrator_prepare_and_launch_ticket.md | `check_launch_prompt_paths.audit()` (universo; owner PLAN-005, 007 solo lo importa); el canonico `orchestrator_launch_builder.md`; `prepush_check.py` (cableado, comparte con 005) | de ARCHIVO: ninguno con 001-006 en los dos ficheros nuevos; `prepush_check.py` lo comparten 005 y 007, y `prompts/**` lo cubre PLAN-001, ambos con edicion ADITIVA. SEMANTICO: 005 y 007 cuentan EL MISMO universo, asi que sus denominadores deben COINCIDIR (a diferencia del par 002+005, que cuentan cosas distintas); y `WOT-2026-068s` (vivo) ensanchara ese universo | par 005+007 en Merge Regression Audit (abajo): el denominador de 007 debe igualar el de 005 sobre la misma raiz, y se re-mide tras cualquier cambio de `audit()`. 007 no define universo propio. La edicion de `prompts/**` es UNA linea marcador y UN paso: `check_distribution_agnostic` exit 0 sobre la union | yes |
 
 Reglas aplicadas:
 - PLAN-004 degradado a `after PLAN-002`: endurecer sin medir es operar a ciegas (no es
@@ -122,6 +162,14 @@ Reglas aplicadas:
   `LIKELY_PENDING`/`NEEDS_HUMAN_VERIFY` (su docstring lo declara: *"This script NEVER
   classifies"*); NO renombrar ni retirar campos de `findings.json`, solo ANADIR; NO mutar
   `backlog.md` (el recolector es read-only sobre el backlog).
+- **PLAN-007 (067z)**: NO tocar `scripts/check_launch_prompt_paths.py` ni su test (superficie
+  de PLAN-005 y de `WOT-2026-068s`, vivo); NO declarar un universo propio de prompts de
+  Builder -- se IMPORTA `audit()`; NO curar a mano la lista de obligaciones en el script --
+  se DERIVA del marcador del canonico; NO reescribir prosa del canonico -- solo ANADIR una
+  linea marcador; NO hacer bloqueante el cableado de `prepush_check` (el censo vivo ya viola
+  la regla, un bloqueo seria un falso-rojo heredado; su criterio de salida es otro ticket);
+  NO tocar `closure_invariants.py` ni relajar el invariante `BUILDER_EXIT`; NO corregir los
+  prompts defectuosos del destino (son artefactos del destino, no superficie del motor).
 
 ## Merge Regression Audit
 Antes de integrar resultados de planes que tocaron superficies vecinas:
@@ -140,6 +188,16 @@ Antes de integrar resultados de planes que tocaron superficies vecinas:
   resuelve es el `failure_mode` literal de OBJ-002: *"se salta en silencio y el censo sale
   verde"*. Sin este par, la independencia de 005 seria declarada y no verificada, que es lo
   que la cabecera prohibe.
+- **005 + 007** (y `WOT-2026-068s`, vivo) cuentan **LA MISMA COSA**: ambos enumeran
+  prompts de arranque de Builder, y 007 obtiene su universo IMPORTANDO `audit()` de 005. A
+  diferencia del par 002+005, aqui los denominadores SI deben coincidir elemento a elemento
+  sobre la misma raiz. Revalidar: (1) `len(audit(raiz)[1])` y el denominador que publica 007
+  son iguales; (2) tras cualquier cambio de `check_launch_prompt_paths.py` (incluido 068s),
+  007 se re-mide y su test de acople sigue verde; (3) 007 no define un segundo criterio de
+  "prompt de Builder". Si divergen, hay dos definiciones del mismo concepto: re-serializar.
+- **001 + 007** comparten `prompts/**`: revalidar que la UNICA linea marcador y el UNICO paso
+  anadidos por 007 no rompen `check_distribution_agnostic` (nada que viaja nombra esta
+  maquina) ni `check_prompt_parity`.
 - Gates sobre la union: suite `--level all` completa (no solo los tests de cada plan);
   `check_distribution_agnostic` exit 0; CI verde.
 - Si la auditoria de merge falla, el paralelismo era ilegitimo: re-serializar y abrir
