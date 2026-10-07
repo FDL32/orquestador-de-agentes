@@ -35,6 +35,10 @@ rellenar el perfil a mano; (2) cargarlo desde una skill que lo apunta con su has
 herramienta del sistema que hace el preflight, prepara los bundles por canal, lanza, fotografia y
 registra.
 
+Los niveles (a)/(b)/(c) remiten a los casos de la propuesta de diseno de origen; el nucleo no los
+reproduce. Origen: propuesta v3 del proceso Manager-Builder (sha256
+`f2eb3e3a2ade460c79c19a02f5cb3a5d123504259c823c0292c12cd9d5bec218`).
+
 ## 1. Vocabulario
 
 | Termino | Que es |
@@ -163,7 +167,10 @@ Este nucleo mapea las ONCE FASES del patron del usuario a esos estados 1:1:
 - **Bundle de TEXTO**: contrato por contenido + framing sin ficheros + tamano maximo POR MODELO
   (declarado en el perfil). Nunca se le pide a una lente de texto "comprueba si existe X". (a)
 - **Integridad**: el bundle lleva la version de la plantilla y el hash de cada fuente incrustada, y
-  el validador comprueba que cada seccion termina donde dice, no solo los marcadores. (a)
+  el validador comprueba que cada seccion termina donde dice, no solo los marcadores. La integridad
+  del bundle (version de plantilla, sha256 de cada fuente incrustada y fin de cada seccion) la valida
+  el ADAPTADOR o la HERRAMIENTA del sistema antes de lanzar; el nucleo fija el contrato, no el
+  validador. (a)
 - En el bucle de una propuesta, la lente de FICHEROS recibe tambien el prompt canonico que la
   propuesta modifica. (b)
 - **Prompt del ejecutor**: generalizado desde la plantilla canonica; declara objetivo, tipo de
@@ -177,50 +184,59 @@ Este nucleo mapea las ONCE FASES del patron del usuario a esos estados 1:1:
 
 ## 7. Esquemas ejecutables
 
-Los tres esquemas usan un subconjunto minimo de JSON Schema: `type`, `required`, `properties`,
-`enum`, `items`, `minItems`, `minLength`. El perfil se valida antes de lanzar; la adjudicacion y la
-ronda se validan al registrar.
+Los cuatro esquemas usan un subconjunto minimo de JSON Schema: `type`, `required`, `properties`,
+`enum`, `items`, `minItems`, `minLength`. El perfil se valida antes de lanzar; la adjudicacion y las
+rondas se validan al registrar. Una capacidad que el perfil NO declara se rige por su nivel degradado
+de la seccion 3.
 
-**SCHEMA: perfil** (que cubre cada capacidad, su nivel degradado y la version)
+**SCHEMA: perfil** (que cubre cada capacidad, su nivel degradado, su version y los minimos del tipo)
 
 ```json
 {
   "type": "object",
-  "required": ["version", "capacidades"],
+  "required": ["version", "minimos_por_tipo", "verificadores_minimos_gobierno", "capacidades"],
   "properties": {
     "version": {"type": "string", "minLength": 1},
+    "minimos_por_tipo": {"type": "object"},
+    "verificadores_minimos_gobierno": {"type": "integer"},
     "capacidades": {
       "type": "object",
       "required": ["LECTOR_FS", "EJECUTOR", "EVIDENCIA", "REGISTRO_RONDAS", "IDENTIDAD"],
       "properties": {
-        "LECTOR_FS": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "LENTE_TEXTO": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "EJECUTOR": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "EVIDENCIA": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "REGISTRO_TRABAJO": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "REGISTRO_RONDAS": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "BARRERAS": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "CANAL_SESIONES": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "DECISIONES": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "IDENTIDAD": {"type": "object", "required": ["comando", "nivel_degradado"]},
-        "ESCALADO": {"type": "object", "required": ["comando", "nivel_degradado"]}
+        "LECTOR_FS": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "LENTE_TEXTO": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "EJECUTOR": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "EVIDENCIA": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "REGISTRO_TRABAJO": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "REGISTRO_RONDAS": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "BARRERAS": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "CANAL_SESIONES": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "DECISIONES": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "IDENTIDAD": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]},
+        "ESCALADO": {"type": "object", "required": ["comando", "version", "prueba_de_vida", "nivel_degradado"]}
       }
     }
   }
 }
 ```
 
+`minimos_por_tipo` lleva, por tipo de entrega del sistema, un entero >= 1 de identidades
+independientes; `verificadores_minimos_gobierno` es un entero >= 1. Ambos son parametros del
+ADAPTADOR, no numeros fijos del nucleo.
+
 **EJEMPLO BUENO: perfil**
 
 ```json
 {
   "version": "1",
+  "minimos_por_tipo": {"code": 3, "documentation": 2},
+  "verificadores_minimos_gobierno": 1,
   "capacidades": {
-    "LECTOR_FS": {"comando": "cli-lector", "nivel_degradado": "EXPLORATORIO"},
-    "EJECUTOR": {"comando": "cli-ejecutor", "nivel_degradado": "implementador-manager"},
-    "EVIDENCIA": {"comando": "vcs", "nivel_degradado": "hash-por-fichero"},
-    "REGISTRO_RONDAS": {"comando": "jsonl", "nivel_degradado": "declarado"},
-    "IDENTIDAD": {"comando": "registro", "nivel_degradado": "manual"}
+    "LECTOR_FS": {"comando": "cli-lector", "version": "1", "prueba_de_vida": "responde con cita a una ruta dada", "nivel_degradado": "EXPLORATORIO"},
+    "EJECUTOR": {"comando": "cli-ejecutor", "version": "1", "prueba_de_vida": "escribe un artefacto con su log", "nivel_degradado": "implementador-manager"},
+    "EVIDENCIA": {"comando": "vcs", "version": "1", "prueba_de_vida": "foto antes y despues del arbol", "nivel_degradado": "hash-por-fichero"},
+    "REGISTRO_RONDAS": {"comando": "jsonl", "version": "1", "prueba_de_vida": "una fila por ronda registrada", "nivel_degradado": "declarado"},
+    "IDENTIDAD": {"comando": "registro", "version": "1", "prueba_de_vida": "clave a proveedor y modelo", "nivel_degradado": "manual"}
   }
 }
 ```
@@ -230,11 +246,29 @@ ronda se validan al registrar.
 ```json
 {
   "version": "1",
+  "minimos_por_tipo": {"code": 3, "documentation": 2},
+  "verificadores_minimos_gobierno": 1,
   "capacidades": {
-    "EJECUTOR": {"comando": "cli-ejecutor", "nivel_degradado": "implementador-manager"},
-    "EVIDENCIA": {"comando": "vcs", "nivel_degradado": "hash-por-fichero"},
-    "REGISTRO_RONDAS": {"comando": "jsonl", "nivel_degradado": "declarado"},
-    "IDENTIDAD": {"comando": "registro", "nivel_degradado": "manual"}
+    "EJECUTOR": {"comando": "cli-ejecutor", "version": "1", "prueba_de_vida": "escribe un artefacto con su log", "nivel_degradado": "implementador-manager"},
+    "EVIDENCIA": {"comando": "vcs", "version": "1", "prueba_de_vida": "foto antes y despues del arbol", "nivel_degradado": "hash-por-fichero"},
+    "REGISTRO_RONDAS": {"comando": "jsonl", "version": "1", "prueba_de_vida": "una fila por ronda registrada", "nivel_degradado": "declarado"},
+    "IDENTIDAD": {"comando": "registro", "version": "1", "prueba_de_vida": "clave a proveedor y modelo", "nivel_degradado": "manual"}
+  }
+}
+```
+
+**EJEMPLO MALO: perfil -- sin minimos_por_tipo**
+
+```json
+{
+  "version": "1",
+  "verificadores_minimos_gobierno": 1,
+  "capacidades": {
+    "LECTOR_FS": {"comando": "cli-lector", "version": "1", "prueba_de_vida": "responde con cita a una ruta dada", "nivel_degradado": "EXPLORATORIO"},
+    "EJECUTOR": {"comando": "cli-ejecutor", "version": "1", "prueba_de_vida": "escribe un artefacto con su log", "nivel_degradado": "implementador-manager"},
+    "EVIDENCIA": {"comando": "vcs", "version": "1", "prueba_de_vida": "foto antes y despues del arbol", "nivel_degradado": "hash-por-fichero"},
+    "REGISTRO_RONDAS": {"comando": "jsonl", "version": "1", "prueba_de_vida": "una fila por ronda registrada", "nivel_degradado": "declarado"},
+    "IDENTIDAD": {"comando": "registro", "version": "1", "prueba_de_vida": "clave a proveedor y modelo", "nivel_degradado": "manual"}
   }
 }
 ```
@@ -244,7 +278,7 @@ ronda se validan al registrar.
 ```json
 {
   "type": "object",
-  "required": ["lente_pedida", "lente_que_respondio", "identidad", "hallazgo", "tipo", "verificacion", "efecto", "adoptado"],
+  "required": ["lente_pedida", "lente_que_respondio", "identidad", "hallazgo", "tipo", "verificacion", "efecto", "correcto", "util", "adoptado", "motivo"],
   "properties": {
     "lente_pedida": {"type": "string", "minLength": 1},
     "lente_que_respondio": {"type": "string", "minLength": 1},
@@ -303,14 +337,14 @@ ronda se validan al registrar.
 }
 ```
 
-**SCHEMA: ronda** (la ronda de una lente; un lector con ficheros debe citar lo que leyo)
+**SCHEMA: ronda_ficheros** (la ronda de una lente CON ficheros; exige recibo y citas `ruta:linea`)
 
 ```json
 {
   "type": "object",
   "required": ["canal", "lente", "recibo_de_lectura", "salida", "citas"],
   "properties": {
-    "canal": {"type": "string", "enum": ["FICHEROS", "TEXTO"]},
+    "canal": {"type": "string", "enum": ["FICHEROS"]},
     "lente": {"type": "string", "minLength": 1},
     "recibo_de_lectura": {
       "type": "object",
@@ -326,11 +360,27 @@ ronda se validan al registrar.
 }
 ```
 
-Toda ronda registra al menos una evidencia citada: para una lente con FICHEROS son referencias
-`ruta:linea`; para una lente sin ficheros son referencias a los fragmentos del bundle en que apoya
-su hallazgo.
+**SCHEMA: ronda_texto** (la ronda de una lente SIN ficheros; sin recibo; referencias al bundle)
 
-**EJEMPLO BUENO: ronda**
+```json
+{
+  "type": "object",
+  "required": ["canal", "lente", "salida", "referencias", "no_verificables"],
+  "properties": {
+    "canal": {"type": "string", "enum": ["TEXTO"]},
+    "lente": {"type": "string", "minLength": 1},
+    "salida": {"type": "string", "minLength": 1},
+    "referencias": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "no_verificables": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  }
+}
+```
+
+Una lente con FICHEROS cita al menos una referencia `ruta:linea` comprobable; una lente sin ficheros
+declara sus `referencias` a los fragmentos del bundle en que apoya su hallazgo (puede ser lista
+vacia) y su lista de `no_verificables` sobre los hechos.
+
+**EJEMPLO BUENO: ronda_ficheros**
 
 ```json
 {
@@ -342,15 +392,38 @@ su hallazgo.
 }
 ```
 
-**EJEMPLO MALO: ronda -- lector con ficheros sin citas**
+**EJEMPLO MALO: ronda_ficheros -- lector con ficheros sin citas**
 
 ```json
 {
   "canal": "FICHEROS",
   "lente": "lente-a",
-  "recibo_de_lectura": {"llamadas": 0, "leyo": false},
+  "recibo_de_lectura": {"llamadas": 24, "leyo": true},
   "salida": "lo he revisado y esta bien",
   "citas": []
+}
+```
+
+**EJEMPLO BUENO: ronda_texto**
+
+```json
+{
+  "canal": "TEXTO",
+  "lente": "lente-b",
+  "salida": "el contrato del bundle no fija el tamano maximo por modelo",
+  "referencias": ["fragmento 3 del bundle: reglas de validez"],
+  "no_verificables": ["si la ruta citada existe en el arbol"]
+}
+```
+
+**EJEMPLO MALO: ronda_texto -- sin campo no_verificables**
+
+```json
+{
+  "canal": "TEXTO",
+  "lente": "lente-b",
+  "salida": "el contrato del bundle no fija el tamano maximo por modelo",
+  "referencias": ["fragmento 3 del bundle: reglas de validez"]
 }
 ```
 
@@ -364,7 +437,8 @@ entregable, fallo de transporte); y lecciones aplicadas antes frente a corregida
 **Propiedad de mejora continua medible:** si los planes derivan de una estrategia unica, el ULTIMO
 plan debe salir MUCHO mejor que el primero. Criterio operativo del USUARIO: en tres ciclos de una
 misma estrategia bajan los incidentes repetidos y suben las lecciones preventivas. Si la serie no
-mejora, el ciclo se declara estancado y se escala. (a)
+mejora, el ciclo se declara estancado y se escala. Propiedad exigida por diseno, pendiente de medir
+en tres ciclos de una misma estrategia. (c)
 
 ## 9. Modo implementador=manager
 

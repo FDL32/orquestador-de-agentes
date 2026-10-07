@@ -1,10 +1,10 @@
 """Contract test for the portable Manager-Builder process nucleo (WOT-2026-093c).
 
 ``prompts/manager_orchestrator_loop.md`` is a PORTABLE, general specification:
-three JSON schemas that use a MINIMAL subset of JSON Schema (``type``,
+four JSON schemas that use a MINIMAL subset of JSON Schema (``type``,
 ``required``, ``properties``, ``enum``, ``items``, ``minItems``, ``minLength``)
-plus a GOOD and a BAD example each; a portability grep; and the ``contract_id``
-with the eleven phases of the user's pattern.
+plus at least a GOOD and a BAD example each; a portability grep; and the
+``contract_id`` with the eleven phases of the user's pattern.
 
 No ``jsonschema`` dependency: ``_validate`` implements ONLY that subset, and the
 mutation tests below prove the checks have teeth (they exercise the same
@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 NUCLEO = ROOT / "prompts" / "manager_orchestrator_loop.md"
 
 CONTRACT_ID = "cid-manager-orchestrator-loop-v1"
-SCHEMA_NAMES = {"perfil", "adjudicacion", "ronda"}
+SCHEMA_NAMES = {"perfil", "adjudicacion", "ronda_ficheros", "ronda_texto"}
 
 _SCHEMA_RE = re.compile(r"SCHEMA: ([a-z_]+)")
 _GOOD_RE = re.compile(r"EJEMPLO BUENO: ([a-z_]+)")
@@ -140,12 +140,16 @@ def _next_json_block(lines: list[str], start: int) -> dict | None:
     return json.loads("\n".join(buf))
 
 
-def _extract(path: Path) -> tuple[dict, dict, dict]:
-    """Return (schemas, good examples, bad examples) keyed by schema name."""
+def _extract(path: Path) -> tuple[dict, dict, list[tuple[str, str, dict]]]:
+    """Return (schemas, good examples, bad examples) keyed by schema name.
+
+    ``bads`` is a LIST of ``(schema_name, reason, instance)`` so a schema may
+    carry more than one bad example (the perfil keeps two).
+    """
     lines = path.read_text(encoding="utf-8").splitlines()
     schemas: dict[str, dict] = {}
     goods: dict[str, dict] = {}
-    bads: dict[str, tuple[str, dict]] = {}
+    bads: list[tuple[str, str, dict]] = []
     for i, raw in enumerate(lines):
         line = raw.strip()
         if not line.startswith("**"):
@@ -164,19 +168,21 @@ def _extract(path: Path) -> tuple[dict, dict, dict]:
         elif bad_match:
             block = _next_json_block(lines, i + 1)
             assert block is not None, f"sin bloque json tras {line!r}"
-            bads[bad_match.group(1)] = (bad_match.group(2), block)
+            bads.append((bad_match.group(1), bad_match.group(2), block))
     return schemas, goods, bads
 
 
 def _assert_examples(path: Path) -> None:
-    """Every GOOD example validates; every BAD example does NOT (>= 3 bads)."""
+    """Every GOOD example validates; every BAD example does NOT (>= 1 per schema)."""
     schemas, goods, bads = _extract(path)
     assert set(schemas) == SCHEMA_NAMES, f"esquemas hallados: {sorted(schemas)}"
     for name, instance in goods.items():
         errors = _validate(instance, schemas[name])
         assert not errors, f"EJEMPLO BUENO {name} no valida: {errors}"
-    assert len(bads) >= 3, f"se exigen >=3 EJEMPLO MALO, hay {len(bads)}"
-    for name, (reason, instance) in bads.items():
+    bad_names = {name for name, _reason, _instance in bads}
+    for name in SCHEMA_NAMES:
+        assert name in bad_names, f"se exige al menos un EJEMPLO MALO para {name}"
+    for name, reason, instance in bads:
         errors = _validate(instance, schemas[name])
         assert errors, f"EJEMPLO MALO {name} ({reason}) valida y no deberia"
 
