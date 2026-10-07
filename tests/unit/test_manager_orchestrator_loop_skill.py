@@ -123,3 +123,29 @@ class TestManagerOrchestratorLoopSkill:
                 f"Skill re-declares normative criterion '{criterion}' - "
                 "'skill apunta, prompt gobierna'"
             )
+
+    def test_skill_does_not_summarize_core_vocabulary(
+        self, skill_file: Path = SKILL_FILE
+    ):
+        """The skill must not enumerate the core's states or capabilities (a summary drifts).
+
+        Before: the core defines its states and capability names in its own sections.
+        During: scans the skill body for those names.
+        After: fails if any appears (the first version listed the state machine and a
+            stale list of schemas). Parametrizable path for mutation-verify on a copy.
+        """
+        content = skill_file.read_text(encoding="utf-8")
+        core_terms = [
+            "PROMPT_EJECUTOR",
+            "LECTOR_FS",
+            "LENTE_TEXTO",
+            "ESTRATEGIA ->",
+            "-> DIVISION",
+            "ronda_ficheros",
+            "ronda_texto",
+            "VERIFICADOR DE HECHOS",
+        ]
+        found = [t for t in core_terms if t in content]
+        assert not found, (
+            f"Skill summarizes core vocabulary {found}: 'skill apunta, prompt gobierna'"
+        )

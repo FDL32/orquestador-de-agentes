@@ -55,16 +55,9 @@ orquestador. No continuar con un nucleo de hash diferente.
 
 ## Que gobierna el nucleo
 
-El nucleo (`prompts/manager_orchestrator_loop.md`) define:
-
-- Roles: MANAGER, EJECUTOR (Builder), LENTE, VERIFICADOR, USUARIO.
-- Contrato de capacidades: LECTOR_FS, LENTE_TEXTO, EJECUTOR, EVIDENCIA, etc.
-- Reglas de validez de un bucle F/S (identidad, recibo de lectura, minimos).
-- Maquina de estados: OBJETIVO -> ANALISIS -> ESTRATEGIA -> [bucle] -> DIVISION
-  -> [bucle por plan] -> PROMPT_EJECUTOR -> [bucle] -> EJECUCION -> REVISION -> CIERRE -> MEJORA.
-- Plantillas por canal (bundle de ficheros vs bundle de texto).
-- Esquemas ejecutables (adjudicacion por ronda, metricas).
-- Metricas de mejora continua por ciclo.
+Todo el contenido normativo (roles, capacidades, validez de un bucle, estados, plantillas, esquemas y metricas) vive
+SOLO en `prompts/manager_orchestrator_loop.md`: leelo entero. Esta skill no lo resume a proposito: un resumen deriva del
+nucleo en cuanto este cambia (paso en su primera version: el resumen ya citaba esquemas que el nucleo habia renombrado).
 
 ## Distincion con skills hermanas
 
