@@ -144,13 +144,13 @@ No saltar pasos; usar el primer manifest disponible para determinar rutas canón
 
 ### `orquestador.py`
 
-- Lee `project_manifest.toml` para rutas canónicas.
+- Lanzador de skills locales (v3.0): descubre triggers vía `discover_skills.py --json`.
 
-- Valida estado desde `.version_manifest.json`.
+- Ejecuta una skill por trigger: lee el `SKILL.md`, extrae la sección `[Workflow]` y la muestra.
 
-- Construye contexto usando allowlist/denylist desde manifest.
+- CLI con flags: `--skill` (trigger), `--query` (instrucción), `--file` (fichero con instrucción).
 
-- Registra ejecución en `execution_log.md`.
+- No lee manifests del proyecto ni escribe en `execution_log.md`.
 
 
 
