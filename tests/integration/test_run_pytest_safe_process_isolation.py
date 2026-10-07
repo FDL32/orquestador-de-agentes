@@ -6,12 +6,25 @@ process tree from the invoking process.
 
 These are REAL process tests (not mocked Popen): they spawn run_pytest_safe.py
 as a subprocess, kill the runner process, and verify the expected behaviour.
+
+WOT-2026-090v: the tests no longer operate on the real repository. Every test
+that spawns run_pytest_safe.py does so from a minimal MIRROR workspace built in
+tmp_path (`scripts/` + `runtime/` + `.agent/`) and points the runner at it via
+AGENT_PROJECT_ROOT, so its lock, `last-run.*` and `run_history.jsonl` land under
+tmp_path. The previous `git checkout -- RUNNER_PATH` restore of the real runner
+(and the `unlink` of the real runtime files) is gone: nothing here writes or
+mutates the real `scripts/run_pytest_safe.py` or the real runtime telemetry.
+The teardown kills the process tree each test launched, so no `sleep(9999)`
+grandchild is left orphaned.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -23,13 +36,92 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = PROJECT_ROOT / "scripts" / "run_pytest_safe.py"
 
+REAL_RUNTIME_DIR = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
+# Only the run-history line count is a stable anchor: the outer canonical runner
+# rewrites the real last-run.* around (and during) this very suite, so those two
+# are NOT asserted here (WOT-2026-090v).
+REAL_RUN_HISTORY = REAL_RUNTIME_DIR / "run_history.jsonl"
 
-def _find_runner_process(pid: int) -> bool:
-    """Check if a process with the given PID is still running.
 
-    Uses Windows tasklist (consistent with the project's environment) or
-    POSIX os.kill(pid, 0) as fallback.
+# ---------------------------------------------------------------------------
+# WOT-2026-090v helpers: mirror workspace, process-tree teardown, PID probes.
+# ---------------------------------------------------------------------------
+
+
+def _make_mirror_root(base: Path) -> Path:
+    """Build a minimal stand-in workspace under *base* for the runner.
+
+    The runner resolves its project root from AGENT_PROJECT_ROOT and imports
+    ``runtime.project_root`` / ``scripts.*`` relative to its OWN location, so a
+    bare copy of ``run_pytest_safe.py`` does NOT work: it needs ``runtime/`` and
+    ``scripts/`` as siblings. Importing ``runtime`` also executes
+    ``runtime/__init__.py``, which pulls in ``bus.event_bus`` (via
+    ``ui_state_projector``), so ``bus/`` is required too. Copying these three
+    plus an empty ``.agent/`` gives the runner everything it resolves, while
+    every write falls under *base*.
+
+    Before: *base* is a writable tmp directory.
+    During: copies PROJECT_ROOT/{scripts,runtime,bus} (skipping __pycache__)
+        under ``base/mirror`` and creates ``base/mirror/.agent``.
+    After: returns the mirror root. The real repository is read-only here.
     """
+    root = base / "mirror"
+    (root / ".agent").mkdir(parents=True, exist_ok=True)
+    for package in ("scripts", "runtime", "bus"):
+        shutil.copytree(
+            PROJECT_ROOT / package,
+            root / package,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+    return root
+
+
+def _spawn_kwargs() -> dict:
+    """Popen kwargs that make the spawned runner killable as a group on POSIX."""
+    if sys.platform == "win32":
+        return {}
+    return {"start_new_session": True}
+
+
+def _kill_process_tree(pid: int) -> None:
+    """Kill *pid* and every descendant it launched (WOT-2026-090v DoD-b).
+
+    Without this, terminating the runner leaves the pytest process -- and the
+    ``sleep(9999)`` grandchild created by a hang test -- alive forever. On
+    Windows ``taskkill /T /F`` walks the process tree; on POSIX the target is a
+    session/group leader (we spawn it with start_new_session, and the runner
+    spawns pytest the same way) so ``killpg`` reaps the group. Failures are
+    swallowed: teardown must never mask the test verdict.
+    """
+    if pid <= 0:
+        return
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            capture_output=True,
+            text=True,
+        )
+        return
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def _kill_recorded_pid(pid_file: Path) -> None:
+    """Kill the PID recorded in *pid_file* (a launched grandchild), if any."""
+    try:
+        pid = int(pid_file.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return
+    _kill_process_tree(pid)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort liveness probe, consistent with the project's environment."""
+    if pid <= 0:
+        return False
     if sys.platform == "win32":
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
@@ -37,17 +129,83 @@ def _find_runner_process(pid: int) -> bool:
             text=True,
             timeout=5,
         )
-        # tasklist returns the process name in the output if alive
-        return pid in result.stdout and result.returncode == 0
-    else:
-        try:
-            os.kill(pid, 0)
+        return result.returncode == 0 and str(pid) in result.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _write_probe_test(path: Path, body: str, pid_file: Path) -> None:
+    """Write a tiny self-contained pytest file that records its own PID.
+
+    The recorded PID lets the teardown reap the pytest process even after the
+    runner that started it was killed (WOT-2026-090v DoD-b). *body* is the test
+    body and may use ``time``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "import os\n"
+        "import time\n"
+        "\n"
+        "\n"
+        "def test_probe():\n"
+        f"    open({str(pid_file)!r}, 'w', encoding='ascii').write(str(os.getpid()))\n"
+        f"    {body}\n",
+        encoding="utf-8",
+    )
+
+
+def _write_hang_test(path: Path, grandchild_pid_file: Path) -> None:
+    """Write a hang test that spawns a ``sleep(9999)`` and records its PID.
+
+    The recorded grandchild PID is the orphan WOT-2026-090v exists to reap: the
+    runner kills pytest on timeout, but that leaves pytest's sleeping child
+    behind unless the teardown kills it explicitly.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "import subprocess, sys\n"
+        "\n"
+        "\n"
+        "def test_hang():\n"
+        "    child = subprocess.Popen(  # noqa: S603\n"
+        "        [sys.executable, '-c', 'import time; time.sleep(9999)'],\n"
+        "        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,\n"
+        "    )\n"
+        f"    open({str(grandchild_pid_file)!r}, 'w', encoding='ascii').write(\n"
+        "        str(child.pid)\n"
+        "    )\n"
+        "    child.wait()\n",
+        encoding="utf-8",
+    )
+
+
+def _wait_for(predicate, timeout: float, interval: float = 0.5) -> bool:
+    """Poll *predicate* until true or *timeout* seconds elapse."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
             return True
-        except ProcessLookupError:
-            return False
-        except OSError:
-            # Foreign PID on Windows raises SystemError, not ProcessLookupError
-            return True
+        time.sleep(interval)
+    return predicate()
+
+
+def _count_lines(path: Path) -> int:
+    """Number of non-blank lines in *path* (0 when missing/unreadable)."""
+    try:
+        return sum(
+            1 for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()
+        )
+    except OSError:
+        return 0
+
+
+def _mirror_last_run(root: Path) -> Path:
+    return root / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
 
 
 class TestProcessIsolationReal:
@@ -61,98 +219,91 @@ class TestProcessIsolationReal:
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, all processes in the tree die
     regardless of CREATE_NEW_PROCESS_GROUP. The test DETECTS and reports
     this condition explicitly instead of failing silently.
-    """
 
-    @pytest.fixture(autouse=True)
-    def _clean_state(self):
-        """Ensure no stale lock or last-run before each test."""
-        runtime_dir = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = runtime_dir / "pytest.lock"
-        lock_file.unlink(missing_ok=True)
-        last_run = runtime_dir / "last-run.json"
-        last_run.unlink(missing_ok=True)
-        last_run_log = runtime_dir / "last-run.log"
-        last_run_log.unlink(missing_ok=True)
-        yield
-        lock_file.unlink(missing_ok=True)
-        last_run_log.unlink(missing_ok=True)
+    WOT-2026-090v: runs against the tmp_path mirror; the real runtime is never
+    touched and the launched process tree is reaped in the teardown.
+    """
 
     def test_runner_survives_parent_kill(self, tmp_path: Path) -> None:
         """C1: kill the parent process -> runner + pytest should survive.
 
-        Spawns run_pytest_safe.py as a subprocess, finds its PID, kills it,
-        then checks that the pytest subprocess is still alive and eventually
-        completes (last-run.json gets status=finished).
+        Spawns run_pytest_safe.py as a subprocess from the mirror root, finds
+        its PID, kills it, then checks that the pytest subprocess is still alive
+        and eventually completes (last-run.json gets status=finished).
         """
-        # Spawn run_pytest_safe.py with a quick test subset
+        root = _make_mirror_root(tmp_path)
+        pytest_pid_file = tmp_path / "pytest_pid.txt"
+        probe = root / "tests" / "test_slow_probe.py"
+        _write_probe_test(probe, "time.sleep(4)", pytest_pid_file)
+
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
+        env["AGENT_PROJECT_ROOT"] = str(root)
         cmd = [
             sys.executable,
-            str(RUNNER_PATH),
+            str(root / "scripts" / "run_pytest_safe.py"),
             "--level",
             "unit",
             "--",
-            "tests/unit/test_run_pytest_safe.py::test_default_args_are_reported_as_default_discovery",
+            str(probe),
         ]
 
         proc = subprocess.Popen(
             cmd,
-            cwd=str(PROJECT_ROOT),
+            cwd=str(root),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
+            **_spawn_kwargs(),
         )
 
-        # Wait a bit for pytest subprocess to start
-        time.sleep(2)
-
-        # Kill the run_pytest_safe.py process itself
-        proc.terminate()
+        last_run = _mirror_last_run(root)
         try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            # Wait until pytest is actually running before killing the runner.
+            _wait_for(pytest_pid_file.exists, timeout=30)
 
-        # Now check: is the pytest subprocess still alive?
-        # On Windows with CREATE_NEW_PROCESS_GROUP, the pytest child should
-        # survive even after the parent run_pytest_safe.py is killed.
-        # We check by looking at last-run.json: if it gets status=finished,
-        # the runner survived and completed normally.
-        last_run = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+            # Kill the run_pytest_safe.py process itself (NOT its tree: the
+            # isolation flags are supposed to keep the pytest child alive).
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
-        # Wait for the pytest subprocess to finish (with generous timeout)
-        completed = False
-        for _ in range(30):
-            if last_run.exists():
+            # Wait for the pytest subprocess to finish (with generous timeout).
+            completed = _wait_for(
+                lambda: (
+                    last_run.exists()
+                    and json.loads(last_run.read_text(encoding="utf-8")).get("status")
+                    == "finished"
+                ),
+                timeout=30,
+                interval=1.0,
+            )
+
+            if completed:
                 data = json.loads(last_run.read_text(encoding="utf-8"))
-                if data.get("status") == "finished":
-                    completed = True
-                    break
-            time.sleep(1)
-
-        if completed:
-            # SUCCESS: runner survived the parent kill
-            data = json.loads(last_run.read_text(encoding="utf-8"))
-            assert data.get("status") == "finished", (
-                "run_pytest_safe.py runner survived parent termination "
-                "and completed normally"
-            )
-        else:
-            # If last-run.json was never updated, it could mean:
-            # 1. Job Object killed the whole tree (limitation declared in ticket)
-            # 2. Some other issue
-            # We detect and report this explicitly rather than failing silently.
-            pytest.skip(
-                "Runner did not survive parent kill. This may indicate a Windows "
-                "Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE is present in "
-                "the harness environment, which kills all child processes "
-                "independently of CREATE_NEW_PROCESS_GROUP. This is a known "
-                "limitation of WOT-2026-040v."
-            )
+                assert data.get("status") == "finished", (
+                    "run_pytest_safe.py runner survived parent termination "
+                    "and completed normally"
+                )
+            else:
+                # If last-run.json was never updated, it could mean:
+                # 1. Job Object killed the whole tree (limitation declared in ticket)
+                # 2. Some other issue
+                # We detect and report this explicitly rather than failing silently.
+                pytest.skip(
+                    "Runner did not survive parent kill. This may indicate a Windows "
+                    "Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE is present in "
+                    "the harness environment, which kills all child processes "
+                    "independently of CREATE_NEW_PROCESS_GROUP. This is a known "
+                    "limitation of WOT-2026-040v."
+                )
+        finally:
+            _kill_process_tree(proc.pid)
+            _kill_recorded_pid(pytest_pid_file)
 
 
 class TestProcessIsolationMutationVerify:
@@ -161,131 +312,105 @@ class TestProcessIsolationMutationVerify:
     With CREATE_NEW_PROCESS_GROUP / start_new_session REVERTED, the runner
     must NOT survive parent termination (i.e. the test from C1 should fail
     when the fix is absent).
+
+    WOT-2026-090v (a): the mutation is applied to a COPY of the runner inside a
+    tmp_path mirror, never to the real ``RUNNER_PATH``.
+    WOT-2026-090v (b): the teardown kills the whole launched process tree.
+    WOT-2026-090v (c): the runner's runtime lands under the mirror; the real
+    ``run_history.jsonl`` gains no line.
     """
 
-    @pytest.fixture(autouse=True)
-    def _clean_state(self):
-        runtime_dir = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = runtime_dir / "pytest.lock"
-        lock_file.unlink(missing_ok=True)
-        last_run = runtime_dir / "last-run.json"
-        last_run.unlink(missing_ok=True)
-        last_run_log = runtime_dir / "last-run.log"
-        last_run_log.unlink(missing_ok=True)
-        yield
-        lock_file.unlink(missing_ok=True)
-        last_run_log.unlink(missing_ok=True)
-
     def test_runner_dies_without_isolation_flags(self, tmp_path: Path) -> None:
-        """C2: mutation-verify via copy-restore on run_pytest_safe.py.
+        """C2: mutation-verify on a COPY of run_pytest_safe.py (copy-restore)."""
+        root = _make_mirror_root(tmp_path)
+        mirror_runner = root / "scripts" / "run_pytest_safe.py"
+        original_source = mirror_runner.read_text(encoding="utf-8")
+        real_original_source = RUNNER_PATH.read_text(encoding="utf-8")
 
-        Copy the production file, remove the isolation flags (creationflags
-        / start_new_session), run the timeout test against the mutated version
-        to confirm it hangs (process never killed without isolate), then restore
-        the original file and verify git diff --stat is clean.
+        grandchild_pid_file = tmp_path / "sleep_pid.txt"
+        hang_test = root / "tests" / "test_hang.py"
+        _write_hang_test(hang_test, grandchild_pid_file)
 
-        This is a REAL mutation of the production file, not a parallel subprocess
-        with no flags. It verifies that the flags in run_pytest_safe.py are the
-        REASON the timeout test passes.
-        """
-
-        # Ensure clean state: remove stale lock/last-run
-        runtime_dir = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = runtime_dir / "pytest.lock"
-        lock_file.unlink(missing_ok=True)
-        last_run = runtime_dir / "last-run.json"
-        last_run.unlink(missing_ok=True)
-        last_run_log = runtime_dir / "last-run.log"
-        last_run_log.unlink(missing_ok=True)
-
-        # Create a minimal hanging test file
-        hang_test = tmp_path / "test_hang.py"
-        hang_test.write_text(
-            "import subprocess, sys\n"
-            "def test_hang():\n"
-            "    subprocess.Popen(  # noqa: S603\n"
-            '        [sys.executable, "-c", "import time; time.sleep(9999)"],\n'
-            "        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,\n"
-            "    ).wait()\n",
-            encoding="utf-8",
-        )
-
-        # Copy-restore mutation: copy the production file, remove isolation flags
-        mutated_path = tmp_path / "run_pytest_safe_mutated.py"
-        original_source = RUNNER_PATH.read_text(encoding="utf-8")
-
-        # Mutate: remove the popen_kwargs block (isolation flags)
+        # Mutate the COPY: remove the isolation flags (creationflags /
+        # start_new_session) that WOT-2026-040v added. The removal is exact and
+        # contiguous: a loose ``replace("    else:\n", "")`` would delete every
+        # unrelated ``else:`` in the file and turn the copy into a SyntaxError
+        # that never runs (the pre-WOT-2026-090v mutation had exactly that
+        # defect and, asserting nothing behavioural, never noticed).
         import re
 
-        block_pattern = (
-            r"# WOT-2026-040v \(Pieza 1\): isolate the process tree.*?"
-            r"popen_kwargs\[\"creationflags\"\] = subprocess\.CREATE_NEW_PROCESS_GROUP.*?"
-            r"popen_kwargs\[\"start_new_session\"\] = True\n"
+        block_pattern = re.compile(
+            r"    popen_kwargs: dict = \{\}\n"
+            r"    if sys\.platform == \"win32\":\n"
+            r"        popen_kwargs\[\"creationflags\"\] = "
+            r"subprocess\.CREATE_NEW_PROCESS_GROUP\n"
+            r"    else:\n"
+            r"        popen_kwargs\[\"start_new_session\"\] = True\n"
         )
-        mutated_source = re.sub(block_pattern, "", original_source, flags=re.DOTALL)
-
-        # Remove the popen_kwargs dict declaration and **popen_kwargs usage
-        mutated_source = mutated_source.replace("    popen_kwargs: dict = {}\n", "")
-        mutated_source = mutated_source.replace('    if sys.platform == "win32":\n', "")
-        mutated_source = mutated_source.replace("    else:\n", "")
+        mutated_source = block_pattern.sub("", original_source, count=1)
         mutated_source = mutated_source.replace("        **popen_kwargs,\n", "")
+        # Guard against a silent no-op mutation (the mutation must change code).
+        assert mutated_source != original_source, (
+            "mutation removed nothing: the isolation-flags block was not found"
+        )
+        compile(mutated_source, str(mirror_runner), "exec")
+        mirror_runner.write_text(mutated_source, encoding="utf-8")
 
-        mutated_path.write_text(mutated_source, encoding="utf-8")
+        before_real_history = _count_lines(REAL_RUN_HISTORY)
 
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["AGENT_PROJECT_ROOT"] = str(root)
+        cmd = [
+            sys.executable,
+            str(mirror_runner),
+            "--level",
+            "unit",
+            "--",
+            str(hang_test),
+        ]
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            **_spawn_kwargs(),
+        )
         try:
-            env = os.environ.copy()
-            env["PYTHONUTF8"] = "1"
-
-            cmd = [
-                sys.executable,
-                str(mutated_path),
-                "--level",
-                "unit",
-                "--",
-                str(hang_test),
-            ]
-
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(PROJECT_ROOT),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=env,
-            )
-
-            proc.terminate()
+            # Let the mutated runner reach the hang test, then kill its tree
+            # while it is still alive so taskkill /T can walk runner+pytest+sleep.
+            _wait_for(grandchild_pid_file.exists, timeout=30)
+            _kill_process_tree(proc.pid)
             try:
-                proc.wait(timeout=30)
+                proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-
         finally:
-            # Restore using git checkout to preserve exact bytes/line endings
-            import subprocess as sp
+            _kill_process_tree(proc.pid)
+            _kill_recorded_pid(grandchild_pid_file)
 
-            restore_result = sp.run(
-                ["git", "checkout", "--", str(RUNNER_PATH)],
-                cwd=str(PROJECT_ROOT),
-                capture_output=True,
-                text=True,
-            )
-            assert restore_result.returncode == 0, (
-                f"git checkout failed: {restore_result.stderr}"
-            )
-
-            # Verify git diff --stat is clean (no leftover mutations)
-            diff_result = sp.run(
-                ["git", "diff", "--stat", str(RUNNER_PATH)],
-                cwd=str(PROJECT_ROOT),
-                capture_output=True,
-                text=True,
-            )
-            assert diff_result.returncode == 0 and not diff_result.stdout.strip(), (
-                f"After restore, git diff --stat must be clean. Got: {diff_result.stdout}"
+        # (c) the real runner was not mutated, and the runtime was redirected.
+        assert RUNNER_PATH.read_text(encoding="utf-8") == real_original_source, (
+            "the real scripts/run_pytest_safe.py was modified: the mutation is "
+            "still operating on the real repo"
+        )
+        mirror_runtime = root / ".agent" / "runtime" / "pytest-safe"
+        assert mirror_runtime.resolve().is_relative_to(root.resolve())
+        assert (mirror_runtime / "last-run.json").exists(), (
+            "the runner must write its runtime under the mirror root"
+        )
+        assert _count_lines(REAL_RUN_HISTORY) == before_real_history, (
+            "the real run_history.jsonl gained a line: runtime redirection failed"
+        )
+        # (b) the launched grandchild must be dead after teardown.
+        if grandchild_pid_file.exists():
+            recorded = int(grandchild_pid_file.read_text(encoding="ascii").strip())
+            assert not _wait_for(lambda: _pid_alive(recorded), timeout=5), (
+                f"orphan sleep process {recorded} survived teardown"
             )
 
 
@@ -296,6 +421,9 @@ class TestTimeoutExplicit:
     Verifies that process.communicate(timeout=MAX_RUNTIME_SECONDS) correctly
     handles TimeoutExpired, calls terminate()/kill(), and writes last-run.json
     with a terminal status (not "started").
+
+    WOT-2026-090v: runs against the tmp_path mirror and reaps the hang test's
+    sleeping grandchild (which the runner's terminate() leaves orphaned).
     """
 
     def test_max_runtime_seconds_env_var_read(self) -> None:
@@ -336,71 +464,56 @@ class TestTimeoutExplicit:
     def test_timeout_kills_process_with_real_subprocess(self, tmp_path: Path) -> None:
         """C3: real process that produces no output gets killed by timeout.
 
-        Creates a minimal test file with a single hanging test (subprocess
-        that sleeps 9999s), puts it under tests/unit/ where pytest will find
-        it, sets MAX_RUNTIME_SECONDS low, and verifies the runner kills it
-        within a reasonable window and writes last-run.json with status=timeout.
+        Creates a minimal hanging test under the mirror, sets
+        MAX_RUNTIME_SECONDS low, and verifies the runner kills it within a
+        reasonable window and writes last-run.json with status=timeout.
         """
+        root = _make_mirror_root(tmp_path)
+        grandchild_pid_file = tmp_path / "sleep_pid.txt"
+        hang_test = root / "tests" / "test_hang_c3.py"
+        _write_hang_test(hang_test, grandchild_pid_file)
 
-        runtime_dir = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        lock_file = runtime_dir / "pytest.lock"
-        lock_file.unlink(missing_ok=True)
-        last_run = runtime_dir / "last-run.json"
-        last_run.unlink(missing_ok=True)
-        last_run_log = runtime_dir / "last-run.log"
-        last_run_log.unlink(missing_ok=True)
+        last_run = _mirror_last_run(root)
+        last_run_log = root / ".agent" / "runtime" / "pytest-safe" / "last-run.log"
 
-        # Create a minimal test file that hangs forever at PROJECT_ROOT.
-        # This location is NOT under tests/ (so it won't be auto-discovered
-        # by pytest's testpaths), but pytest WILL run it when passed explicitly.
-        # The file is cleaned up in the finally block below.
-        hang_test = PROJECT_ROOT / "_tmp_test_hang_for_c3.py"
-        hang_test.write_text(
-            "import subprocess, sys\n"
-            "def test_hang():\n"
-            "    subprocess.Popen(  # noqa: S603\n"
-            '        [sys.executable, "-c", "import time; time.sleep(9999)"],\n'
-            "        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,\n"
-            "    ).wait()\n",
-            encoding="utf-8",
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["AGENT_PROJECT_ROOT"] = str(root)
+        env["MAX_RUNTIME_SECONDS"] = "3"
+
+        cmd = [
+            sys.executable,
+            str(root / "scripts" / "run_pytest_safe.py"),
+            "--level",
+            "unit",
+            "--",
+            str(hang_test),
+        ]
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            **_spawn_kwargs(),
         )
-
         try:
-            env = os.environ.copy()
-            env["PYTHONUTF8"] = "1"
-            env["MAX_RUNTIME_SECONDS"] = "3"
-
-            cmd = [
-                sys.executable,
-                str(RUNNER_PATH),
-                "--level",
-                "unit",
-                "--",
-                str(hang_test),
-            ]
-
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(PROJECT_ROOT),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=env,
+            # Wait for the runner to kill the hung subprocess and write
+            # last-run.json with a terminal status.
+            _wait_for(
+                lambda: (
+                    last_run.exists()
+                    and json.loads(last_run.read_text(encoding="utf-8")).get("status")
+                    in ("finished", "timeout", "aborted", "error")
+                ),
+                timeout=30,
+                interval=1.0,
             )
 
-            # Wait for the runner to kill the hung subprocess and write last-run.json
-            for _ in range(30):
-                if last_run.exists():
-                    data = json.loads(last_run.read_text(encoding="utf-8"))
-                    status = data.get("status")
-                    if status in ("finished", "timeout", "aborted", "error"):
-                        break
-                time.sleep(1)
-
-            proc.terminate()
             try:
-                proc.wait(timeout=10)
+                proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
@@ -428,7 +541,8 @@ class TestTimeoutExplicit:
                 "discarded"
             )
         finally:
-            hang_test.unlink(missing_ok=True)
+            _kill_process_tree(proc.pid)
+            _kill_recorded_pid(grandchild_pid_file)
 
 
 class TestReconcileDeadRunResilience:
