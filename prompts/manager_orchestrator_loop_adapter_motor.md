@@ -12,11 +12,11 @@ not: NO redefine roles, estados, reglas de validez ni esquemas: eso vive en prom
 contract_id: cid-manager-orchestrator-loop-adapter-motor-v1
 implements: cid-manager-orchestrator-loop-v1
 nucleo: prompts/manager_orchestrator_loop.md
-nucleo_sha256: faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba
+nucleo_sha256: 909543817393de016021657c85fa298fd1db768c5702f2aff86bde93df1bd19b
 
 Este documento es el ADAPTADOR del motor `orquestador_de_agentes` al NUCLEO portable
 `prompts/manager_orchestrator_loop.md` (contrato `cid-manager-orchestrator-loop-v1`,
-sha256 `faaa1c2bc5b84da03a02d0bc410584fa7f9e8388c34f2e237ac7e22919d92eba`). No gobierna:
+sha256 `909543817393de016021657c85fa298fd1db768c5702f2aff86bde93df1bd19b`). No gobierna:
 traduce. Si algo de aqui diverge del nucleo, prevalece el nucleo.
 
 ## 1. Que cubre este adaptador y que no
@@ -64,7 +64,7 @@ INSUFICIENTE; nunca se simula.
 ## 5. Perfil del motor
 
 El perfil que declara, por capacidad, su comando, su version, una prueba de vida y su
-nivel degradado es `prompts/manager_orchestrator_loop.profile_motor.json`; se valida
+nivel degradado es `prompts/manager_orchestrator_loop_profile_motor.json`; se valida
 contra `SCHEMA: perfil` del nucleo antes de lanzar nada. Un perfil que no declare un
 lector con ficheros hace que la revision sea EXPLORATORIA, no de GOBIERNO.
 

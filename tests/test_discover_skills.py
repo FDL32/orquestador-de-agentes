@@ -640,10 +640,10 @@ class TestGenerateSkillStubs:
         is_stale, _ = check_skill_stubs_stale(bundle, names=["my-skill"])
         assert is_stale is False
 
-    def test_real_bundle_all_43_skills_generate_without_error(
+    def test_real_bundle_all_skills_generate_without_error(
         self, tmp_path: Path
     ) -> None:
-        """Verifies the generator runs end-to-end over the real 43 skills
+        """Verifies the generator runs end-to-end over the real skills
         (not just the 4-skill pilot subset) -- tramo 3 PASO 1 pieza 3:
         'verificalo en el worktree, no lo commitees sobre las 43'. Reads the
         REAL skills/ of this bundle but writes stubs into an isolated
@@ -652,7 +652,7 @@ class TestGenerateSkillStubs:
         bundle = _get_bundle_root()
         paths = generate_skill_stubs(bundle, names=None, stub_root=tmp_path)
         # D-S4 excepcion 2026-10-06: a skill named like a versioned command
-        # (`session-hop`) gets no stub, so the full scope is 43 minus those.
+        # (`session-hop`) gets no stub, so the full scope is all skills minus those.
         commands = bundle / ".claude" / "commands"
         skills = [
             p.name
@@ -660,7 +660,8 @@ class TestGenerateSkillStubs:
             if p.is_dir() and not p.name.startswith(("_", "."))
         ]
         expected = [n for n in skills if not (commands / f"{n}.md").exists()]
-        assert len(skills) == 43
+        # Invariante ("Criterio invariante, evidencia fechada", AGENTS.md): todas las skills reales, no el piloto de 4 (2026-10-07: 44).
+        assert len(skills) > 4
         assert len(paths) == len(expected)
         assert not (tmp_path / "session-hop").exists()
         for p in paths:

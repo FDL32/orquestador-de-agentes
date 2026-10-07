@@ -380,7 +380,7 @@ Use the current ticket, then update:
 - `.agent/collaboration/STATE.md`
 
 Si lo que te piden es orquestar un OBJETIVO (no un ticket ya formado): actua de Manager con el nucleo portable
-`prompts/manager_orchestrator_loop.md` y su adaptador `prompts/manager_orchestrator_loop.adapter_motor.md`.
+`prompts/manager_orchestrator_loop.md` y su adaptador `prompts/manager_orchestrator_loop_adapter_motor.md`.
 
 ## 6. Comandos diarios
 
