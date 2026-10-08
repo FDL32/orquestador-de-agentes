@@ -142,6 +142,24 @@ def _process_backtick_tokens(line: str, paths: set[Path]) -> None:
             paths.add(p.resolve())
 
 
+# Single source of truth for subheadings that mark a FLT bucket as non-deliverable
+# (sources to read, or Manager-only gates) -- both _extract_paths_from_generic_sections
+# and _extract_flt_paths must agree on this list, or one of the two silently treats a
+# Manager-only/Read-inspect-only path as a real deliverable while the other does not.
+# Includes both the hyphenated form ("Manager-only", used in the heading contract
+# documented at _extract_flt_paths's docstring and in prompts/templates) and the
+# space-separated form (kept for backward compatibility with any existing heading
+# written that way) -- previously only "manager only" (space) was listed here, which
+# never matched the real "Manager-only" (hyphen) heading the contract promises.
+_SKIP_SUBHEADER_MARKERS = (
+    "read/inspect",
+    "read-only",
+    "read only",
+    "manager only",
+    "manager-only",
+)
+
+
 def _extract_paths_from_generic_sections(content: str) -> set[Path]:
     """Extract deliverable paths from non-FLT sections (Deliverables, must create/modify).
 
@@ -182,13 +200,7 @@ def _extract_paths_from_generic_sections(content: str) -> set[Path]:
 
             if in_section and _heading_level(line_stripped) > 2:
                 skip_subsection = any(
-                    marker in line_lower
-                    for marker in (
-                        "read/inspect",
-                        "read-only",
-                        "read only",
-                        "manager only",
-                    )
+                    marker in line_lower for marker in _SKIP_SUBHEADER_MARKERS
                 )
                 continue
 
@@ -206,9 +218,6 @@ def _extract_paths_from_generic_sections(content: str) -> set[Path]:
             _process_backtick_tokens(line_stripped, paths)
 
     return paths
-
-
-_SKIP_SUBHEADER_MARKERS = ("read/inspect", "read-only", "read only", "manager only")
 
 
 def _flt_subheading_namespace(heading_lower: str) -> str | None:
