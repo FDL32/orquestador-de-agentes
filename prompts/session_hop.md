@@ -253,9 +253,17 @@ Un aviso vale si tiene medicion detras. Los que este repo tiene medidos y suelen
   veredicto: es una lente MUDA**. Y una lente sin filesystem puede **fabricar** evidencia
   (medido: declaro BLOCKER sobre ficheros de 338, 1761 y 117 lineas diciendo que no
   existian).
-- **`privacy_preflight`:** un slug de >=39 chars con guiones se clasifica "token opaco de
-  alta entropia" (umbral 4.0 bits/char) y **bloquea el envio**. **Acorta el nombre; no
-  relajes el guard.**
+- **`privacy_preflight`:** bloquea el envio si el payload contiene un token sin espacios de **32 o mas**
+  caracteres (`[A-Za-z0-9+=_-]`) que mezcle **minusculas, mayusculas y digitos** y tenga entropia
+  **>= 4.0** bits/caracter. La frontera no son 39: es **32**. Manten los identificadores por debajo de
+  32 caracteres o sin mezclar las tres clases; una ruta (precedida de `/` o `\`) o un nombre con
+  extension no bloquean, pero esa excepcion vive solo en esta rama (la rama hexadecimal de abajo no la
+  hereda). Rama aparte: un valor hexadecimal de 32 o mas caracteres bloquea desde 3.0 bits/caracter si,
+  en los **48 caracteres anteriores**, termina justo antes una etiqueta de credencial (`api_key`,
+  `secret`, `token`, `password`, `auth`, `bearer`, `credential`...), con como mucho separadores
+  (`:`, `=`, comillas, espacios) entre la etiqueta y el valor -- no basta con que la etiqueta aparezca
+  en cualquier punto de esos 48 caracteres. **No relajes el guard.** Si una lente sale con 0 B, revisa
+  tambien su stderr antes de declararla muda: ahi es donde se ve el bloqueo.
 - **Line endings:** no MEZCLES vias de escritura en un fichero. `Write`/`Edit` deja CRLF;
   `cat >>`/`printf` deja LF. Mezclarlas aborta el commit.
 - **Orden de trabajo:** la suite canonica va la **ULTIMA**. Cualquier commit posterior la
