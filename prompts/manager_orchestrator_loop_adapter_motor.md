@@ -19,6 +19,51 @@ Este documento es el ADAPTADOR del motor `orquestador_de_agentes` al NUCLEO port
 sha256 `909543817393de016021657c85fa298fd1db768c5702f2aff86bde93df1bd19b`). No gobierna:
 traduce. Si algo de aqui diverge del nucleo, prevalece el nucleo.
 
+## 0. Como arrancar (recibiste este documento y no sabes por donde empezar)
+
+Este adaptador es una TABLA DE CAPACIDADES, no un prompt de tarea. Si te lo han pegado
+sin un objetivo adjunto, el documento no te dice que hacer -- te dice con que comando
+real se cubre cada pieza una vez que ya sabes que vas a montar un bucle. Dos sintomas
+medidos (2026-10-08, sesion fria + prompt pegado sin tarea; sesion con tarea que gasto
+~350k tokens explorando antes de lanzar nada):
+
+1. **Declara el objetivo con esta forma estandar ANTES de cualquier otra cosa** (el
+   humano la rellena, o el agente se la pide con estas tres lineas exactas si faltan):
+
+       OBJETIVO: <una frase: que decision o documento debe producir/auditar el bucle>
+       ALCANCE: <fichero(s) o ruta(s) concreta(s) sobre los que corre, o "nuevo documento">
+       ENTREGABLE: <que archivo/fila/commit debe existir al cerrar el bucle>
+
+   Sin estas tres lineas, la seccion 2 de este adaptador no se puede instanciar: cada
+   fila de la tabla necesita saber QUE se esta revisando. **No empieces a explorar el
+   repo** (censar perfiles, localizar `kilo.exe`, leer memoria completa) mientras falte
+   cualquiera de las tres -- pidelas primero.
+2. **Si el humano NO tiene nada concreto que encomendar** ("por donde empiezo", "mira a
+   ver que hace falta"): no te quedes parado pidiendo mas detalle indefinidamente. Cae a
+   **sesion generica**: usa `skills/backlog-triage/SKILL.md` (modo lectura, propone
+   candidatos del backlog vivo) o, si el objetivo es revisar la salud del propio sistema
+   de bucles, `prompts/audit_complete_motor_destination.md`. El resultado de cualquiera de
+   las dos rellena las tres lineas de OBJETIVO/ALCANCE/ENTREGABLE de arriba antes de
+   lanzar ninguna ronda -- la sesion generica PRODUCE el objetivo, no lo sustituye.
+3. **Con objetivo ya declarado:** NO releas `builder_invocation_contract.md` ni
+   `ensemble_loop.md` enteros para recordar el comando -- ya estan resueltos ahi.
+   - Para lanzar un **Builder real con filesystem** (leer/escribir/implementar, no dar
+     veredicto): el comando canonico completo (Kilo CLI, flags, orden exacto) vive en
+     `prompts/builder_invocation_contract.md` seccion 1. Los modelos `nan` ya validados
+     (`deepseek-v4-flash`, `qwen3.6`, `qwen3.8-flash`, `glm5.3-flash`, `gemma4`,
+     `mimo-v2.6-flash`) estan en `.agent/config/agents.json` ->
+     `ensemble_profiles` (perfiles `challenger_nan_*`); no hace falta localizar el
+     ejecutable a mano, la config ya declara `backends.kilo.executable`.
+   - Para lanzar una **ronda de revision adversarial** (veredicto corto, no implementacion):
+     el comando completo vive en `prompts/ensemble_loop.md` seccion 3.4.
+   - La distincion entre ambos (cuando usar cada uno) es la tabla de
+     `prompts/builder_invocation_contract.md` seccion 0 -- leela si dudas cual aplica,
+     no inventes un tercer mecanismo.
+4. **No localices rutas que ya estan declaradas.** Antes de un `find`/`grep` recursivo
+   para localizar un ejecutable o un fichero de config, comprueba si `agents.json` o este
+   adaptador ya lo nombran. La exploracion cuesta contexto que el bucle necesita para las
+   rondas reales.
+
 ## 1. Que cubre este adaptador y que no
 
 El nucleo define, en terminos GENERALES, capacidades, roles, validez de un bucle,
