@@ -11,17 +11,89 @@ not: NO es orchestrator_autonomous_ticket_batch.md (ese exige DAG fresco de /bac
 -->
 
 contract_id: cid-manager-orchestrator-loop-backlog-v1
-source_of_truth: este prompt.
+source_of_truth: prompts/manager_orchestrator_loop.md (nucleo) para las reglas de
+validez 1/2/4/6 (seccion 4) y el esquema de metricas M3 (seccion 6 de este prompt,
+que REUSA el `SCHEMA: adjudicacion` del nucleo). Este prompt es `source_of_truth`
+SOLO para lo que le es propio: el vocabulario de serie/ticket (seccion 1), la
+ausencia de votacion por lentes (seccion 2), los 6 pasos del bucle ligero
+(seccion 5), y las EXCEPCIONES explicitamente declaradas que NO se remiten: la
+regla de validez 3 (contador GLOBAL de reintentos por ticket, corregida por bucle
+de gobierno real) y la regla de validez 5 (hueco N8 declarado, propio de este
+bucle). **Las secciones donde el objeto del hijo difiere del nucleo (regla 3,
+regla 5) se mantienen INTEGRAS en este prompt y NO se remiten al nucleo** bajo
+ninguna circunstancia; cualquier redaccion futura que elimine esta excepcion
+reintroduce el riesgo de perder esas correcciones (adoptado tras bucle de
+gobierno con 5 lentes independientes, 2026-10-08).
 nucleo_referenciado: prompts/manager_orchestrator_loop.md (contract_id
-cid-manager-orchestrator-loop-v1) -- ESTE prompt copia su ESTRUCTURA de 10
-secciones y REUSA su vocabulario/schemas donde el objeto coincide (ver seccion 0);
-donde el objeto difiere (tickets del backlog, no planes/estrategias), adapta sin
-redefinir en paralelo.
+cid-manager-orchestrator-loop-v1) -- ESTE prompt REMITE a su ESTRUCTURA y REUSA su
+vocabulario/schemas donde el objeto coincide (ver seccion 0); donde el objeto
+difiere (tickets del backlog, no planes/estrategias) o donde existe una
+correccion local (regla 3, regla 5), este prompt declara la seccion como
+ESPECIALIZACION explicita y la mantiene completa, sin redefinir en paralelo lo
+que ya remite.
 
 Origen: sesion 2026-10-08, verificado con bucle de gobierno real (Codex BA05 +
 2 lentes `nan` con filesystem real via Kilo headless), 3/3 veredictos `ADOPTAR CON
 CAMBIOS` convergentes en que faltaban reglas de parada explicitas; reestructurado
 despues para copiar el esqueleto del nucleo en vez de una adaptacion ligera.
+**Revision posterior (sesion 2026-10-08, bucle de gobierno DESIGN_REVIEW con 5
+lentes independientes -- nan/qwen y nan/gemma con filesystem real via Kilo,
+groq/qwen, nvidia/nemotron y cohere/command sin filesystem -- 5/5 ADOPTAR CON
+CAMBIOS): este prompt REDECLARABA integramente las reglas de validez 1/2/4/6 y el
+schema de metricas del nucleo en vez de REMITIR, violando el principio "skill
+apunta, prompt gobierna" (AGENTS.md, X-09) un nivel arriba del caso que esa norma
+cubria. Corregido aqui: las secciones compartidas REMITEN; las EXCEPCIONES (regla
+3, regla 5) permanecen explicitas.
+
+## 0.pre Como arrancar (anti-exploracion; adoptado tras bucle de gobierno 2026-10-08)
+
+Esta seccion existe porque el adaptador del nucleo
+(`manager_orchestrator_loop_adapter_motor.md`, seccion 0) ya resolvio el mismo
+sintoma para su propio prompt -- una sesion gasto ~350k tokens explorando el
+repo antes de lanzar nada -- y esa correccion no se habia propagado aqui. Si te
+pegaron este prompt sin un objetivo adjunto, el documento no te dice que hacer:
+te dice COMO ejecutar un bucle una vez que ya sabes QUE serie de tickets vas a
+limpiar.
+
+1. **Declara la serie con esta forma ANTES de cualquier otra cosa** (el humano
+   la rellena, o la pides con estas tres lineas exactas si faltan):
+
+       OBJETIVO: <una frase: que serie de tickets vas a filtrar y cerrar>
+       ALCANCE: <el criterio exacto: [LINEA: <nombre>] o el grep libre sobre el backlog>
+       ENTREGABLE: <cada ticket de la serie termina en APPROVE o BLOCKED, con su entrada M3>
+
+   Sin estas tres lineas, el paso 1 de la seccion 5 (Filtrar) no se puede
+   ejecutar: necesita saber QUE criterio aplicar sobre el backlog. **No
+   explores el backlog entero ni el repo** (leer todas las fichas, censar
+   subsistemas) mientras falte cualquiera de las tres -- pidelas primero.
+2. **Si el humano NO tiene un criterio concreto** ("limpia lo que haga falta",
+   "mira que hay pendiente"): no te quedes parado pidiendo mas detalle
+   indefinidamente. Cae a **sesion generica**: usa `skills/backlog-triage/SKILL.md`
+   (modo lectura, propone candidatos y agrupa por LINEA). Su resultado rellena
+   el ALCANCE de arriba antes de congelar la serie -- la sesion generica
+   PRODUCE el criterio, no lo sustituye.
+3. **Con la serie ya declarada:** NO releas `builder_invocation_contract.md`,
+   `orchestrator_pipeline_codeonly.md` ni `manager_review.md` enteros para
+   recordar un comando -- ya estan resueltos en la seccion 3 (contrato de
+   capacidades) de este prompt. Si dudas si tu ticket necesita revision
+   adversarial de lentes (no la tiene este bucle por defecto), la tabla de
+   `builder_invocation_contract.md` seccion 0 resuelve esa duda puntual; no
+   inventes un mecanismo nuevo.
+4. **Si el objetivo es ambiguo** ("mejora estos tickets", "revisalos todos"):
+   no lo tomes por concreto al azar ni lo descartes como vacio. Pide
+   aclaracion con UNA pregunta especifica. Si tras dos intentos sigue sin
+   concretarse, cae al fallback del punto 2.
+5. **No releas rutas que ya estan declaradas** en la seccion 3 (contrato de
+   capacidades) o la seccion 4 (reglas de validez). Explorar de mas cuesta el
+   contexto que el bucle necesita para las iteraciones reales.
+
+> **Nota de M4 (declarada tras bucle de gobierno, 4/5 lentes la pidieron):**
+> esta seccion y la tabla de capacidades (seccion 3) son senal de ENRUTADO
+> rapido, no exencion de lectura. M4 (`AGENTS.md`, "Prompt/contrato citado =>
+> LEELO ENTERO") sigue aplicando intacto cuando vayas a REDACTAR contra un
+> contrato citado (p.ej. `orchestrator_pipeline_codeonly.md` antes de lanzar un
+> Builder) o a adjudicar sobre el. Si queda cualquier duda tras el enrutado,
+> abre el contrato completo antes de proceder.
 
 ## 0. Que es y relacion con `manager_orchestrator_loop.md`
 
@@ -106,13 +178,16 @@ generico del nucleo, porque este prompt ya es especifico de `orquestador_de_agen
 
 ## 4. Reglas de validez del bucle
 
-1. **La serie se CONGELA al filtrar (paso 1 de la seccion 5).** Tickets nuevos que
-   aparezcan en el backlog mientras el bucle corre NO entran en esta iteracion --
-   quedan para la siguiente pasada. (a) Sin esto, "hasta agotarla" no tiene un
-   final verificable.
-2. **Reconciliar antes de procesar.** Un ticket que ya no es `pending` al momento
-   de reconciliar (completado, duplicado, premisa obsoleta) se EXCLUYE de la serie
-   activa, nunca se procesa "por si acaso". (a)
+Las reglas 1, 2, 4 y 6 de esta seccion REMITEN al nucleo (`manager_orchestrator_loop.md`
+seccion 4, reglas de validez 1-7) -- aplican IGUAL, sin redeclaracion de texto: la
+regla de congelar la serie al filtrar, la de reconciliar antes de procesar, la de
+que un estado terminal escribe su entrada de metrica antes de avanzar, y la
+condicion de terminacion por lista completa recorrida. **Las reglas 3 y 5 son
+EXCEPCIONES propias de este bucle, NO remitidas, porque el objeto (tickets con
+reintentos de Contract Formation/Review) no tiene contraparte en el nucleo
+(que opera sobre planes/estrategias, no sobre contadores de reintento de
+ticket):**
+
 3. **Reintentos tienen tope, y el tope es un CONTADOR GLOBAL POR TICKET, no por
    fase.** 2 **intentos totales** (el primero + 1 reintento, nunca "1 + 2") en la
    SUMA de Contract Formation + MANAGER_REVIEW para ese ticket antes de
@@ -124,15 +199,10 @@ generico del nucleo, porque este prompt ya es especifico de `orquestador_de_agen
    otra vez)... indefinidamente sin agotar NUNCA ningun contador individual.**
    El re-preparo de un ticket tras un `CHANGES` de Review consume el MISMO
    contador que ya gasto Contract Formation, no uno nuevo. Sin esto, "tope"
-   es cosmetico: el ticket nunca muere.
-4. **`BLOCKED` es un estado TERMINAL de esta iteracion, no un fallo del bucle.**
-   El bucle sigue con el siguiente ticket; `BLOCKED` se registra en el backlog con
-   evidencia del motivo, nunca se omite en silencio. **Ademas, CADA estado
-   terminal (`BLOCKED` o el cierre normal del ticket) escribe OBLIGATORIAMENTE
-   su entrada M3 (seccion 6) antes de avanzar al siguiente ticket** -- sin esta
-   obligacion explicita, un `BLOCKED` silencioso (sin fila de metrica) es
-   indistinguible de un hallazgo nunca ocurrido, y la seccion 7 (automejora)
-   queda ciega a el. (a) (hallazgo C, nvidia/glm-flash BA21, 2026-10-08)
+   es cosmetico: el ticket nunca muere. **Esta regla NO se remite al nucleo
+   bajo ninguna circunstancia** (verificado por bucle de gobierno de 5 lentes
+   independientes, 2026-10-08: el nucleo no tiene logica de reintentos de
+   ticket, asi que remitir esta regla la perderia).
 5. **N8 del nucleo aplica por TICKET, no por serie:** los hallazgos adoptados de
    un ticket se aplican en UN commit, y ese commit es el ancla de su propia
    verificacion (gates + suite). No se abre un commit por hallazgo dentro de un
@@ -150,10 +220,6 @@ generico del nucleo, porque este prompt ya es especifico de `orquestador_de_agen
      cierra con `APPROVE` (revert entre intentos), o (b) se acepta un commit
      por intento con su propio ancla de verificacion parcial. Declarar la
      decision tomada antes de empezar la serie, no durante.
-6. **Condicion de terminacion:** el bucle termina cuando la serie CONGELADA del
-   paso 1 se agota -- cada ticket en estado terminal (`APPROVE` o `BLOCKED`).
-   Nunca por "parece que ya no quedan": siempre por recorrer la lista entera y
-   poder enumerar el estado final de cada uno. (a)
 
 ## 5. El bucle (6 pasos + reglas de parada por paso)
 
@@ -195,16 +261,18 @@ generico del nucleo, porque este prompt ya es especifico de `orquestador_de_agen
 
 ## 6. Esquema ejecutable: entrada de metrica por iteracion
 
-Reuso del schema M3 del nucleo (seccion 7, "adjudicacion"). **CORRECCION tras
-bucle de gobierno (Gemini BA110, verificado contra el schema real del nucleo,
-2026-10-08): la version anterior de esta seccion se llamaba a si misma "FIEL"
-pero omitia 4 campos `required` del schema original (`correcto`, `util`,
-`adoptado`, `motivo`), necesarios para que el informe de cierre (seccion 7.2)
-pueda calcular una tasa de adopcion real, como exige la seccion 8 del nucleo
-("Metricas por ciclo"). Quedan recuperados abajo.** Se omiten unicamente
-`lente_pedida`/`lente_que_respondio`/`identidad` del original: esos SI son
-especificos de la votacion de lentes que este bucle no tiene (sustituidos por
-`ticket_id`/`rol_que_actuo`, que identifican la iteracion sin votacion).
+**REMITE al `SCHEMA: adjudicacion` del nucleo** (`manager_orchestrator_loop.md`
+seccion 7) -- mismos campos `required`, mismos `enum`, misma regla de que una
+entrada sin `evidencia` verificable se descarta. **Diferencia DECLARADA, no
+redeclaracion:** este bucle no vota con lentes de identidad distinta (seccion 2),
+asi que sustituye los 3 campos especificos de esa votacion
+(`lente_pedida`/`lente_que_respondio`/`identidad`) por 2 campos propios que
+identifican la iteracion sin votacion (`ticket_id`/`rol_que_actuo`); el resto de
+campos del schema del nucleo (`hallazgo`, `tipo`, `verificacion`, `efecto`,
+`correcto`, `util`, `adoptado`, `motivo`) se mantienen IDENTICOS, y se anaden
+`prompt_senalado`/`evidencia` (ya presentes en el espiritu del nucleo, seccion
+1.2) para que el informe de cierre (seccion 7.2) pueda calcular una tasa de
+adopcion real.
 
 ```json
 {

@@ -164,6 +164,24 @@ antes de `orchestrator_pipeline.md`. El pipeline de implantacion es autonomo
 cuando el contrato esta congelado; la fase de definicion requiere decisiones del
 usuario.
 
+## Enrutado rapido: veredicto o tarea (adoptado tras bucle de gobierno, 2026-10-08)
+
+Antes de abrir un contrato completo solo para decidir CUAL superficie usar (no
+para ejecutar contra ella), esta tabla resuelve la pregunta de 1 bit:
+
+| Si la sesion necesita... | Usa | Contrato completo (leer SOLO si hay duda real) |
+|---|---|---|
+| Un VEREDICTO corto sobre algo que ya existe (codigo, prompt, propuesta) | Bucle de ensemble, `scripts/ensemble_dispatch.py loop-round` | `prompts/ensemble_loop.md` |
+| Que un agente HAGA algo con filesystem (leer, escribir, implementar) | Invocacion directa de CLI (Kilo/Codex/OpenCode como AGENTE) | `prompts/builder_invocation_contract.md` |
+| Revision adversarial de una ESTRATEGIA/PLAN/PROMPT antes de que existan como tickets | Nucleo de gobierno | `prompts/manager_orchestrator_loop.md` |
+| Limpiar una SERIE de tickets YA EXISTENTE en el backlog | Bucle ligero sobre backlog | `prompts/manager_orchestrator_loop_backlog.md` |
+
+**Esta tabla es SOLO senal de enrutado, no exencion de lectura.** M4
+(`AGENTS.md`, "Prompt/contrato citado => LEELO ENTERO") sigue aplicando intacto
+cuando vayas a REDACTAR contra el contrato elegido o a EJECUTAR una accion
+basada en el. Si tras elegir la superficie queda cualquier duda sobre su
+contenido exacto, abre el contrato completo antes de proceder.
+
 ## Modo ORQUESTADOR de pipeline multi-ticket (paso 0)
 
 Si la sesion va a encadenar tickets del backlog con Manager y Builder como

@@ -544,6 +544,24 @@ builder-run-quality-gates, manager-create-work-plan, manager-review-implementati
 refactor-manager, session-close-full-audit, setup-agent-system -- candidatas a re-declaracion (una parte solo
 menciona el marcador). La matriz de ownership de artefactos asociada vive en `prompts/_shared/artifact_ownership.md`.
 
+### Gobierno prompt-hijo<->prompt-nucleo: extension de X-09 un nivel arriba (2026-10-08)
+
+El mismo principio de X-09 ("skill apunta, prompt gobierna") se aplica un nivel arriba: cuando un
+prompt declara `nucleo_referenciado` (un prompt-hijo especializa un nucleo portable, como
+`manager_orchestrator_loop_backlog.md` especializa a `manager_orchestrator_loop.md`), el prompt-hijo
+REMITE a las secciones del nucleo que coinciden en OBJETO, no las REDECLARA en prosa paralela. Si
+el objeto diverge de verdad (el hijo cubre un caso que el nucleo no contempla), el hijo puede
+reescribir esa seccion COMPLETA, pero debe etiquetarla explicitamente como EXCEPCION/ESPECIALIZACION
+-- nunca una copia silenciosa que se desincroniza en la siguiente correccion del nucleo.
+
+Motivo medido (bucle de gobierno DESIGN_REVIEW, 5 lentes independientes, 2026-10-08):
+`manager_orchestrator_loop_backlog.md` declaraba `source_of_truth: este prompt` pese a listar
+`nucleo_referenciado`, y redeclaraba integramente las reglas de validez 1/2/4/6 y el schema de
+metricas del nucleo. Una correccion real aplicada al nucleo (contador de reintentos, bucle
+nvidia/glm-flash BA21) tuvo que aplicarse una SEGUNDA VEZ a mano en el prompt-hijo porque este no
+remitia -- si hubiera remitido, la correccion se habria heredado automaticamente. Ver el prompt-hijo
+corregido como ejemplo del patron aplicado.
+
 ## Atribuciones externas (CREDITS.md)
 
 Cuando un WP incorpora una idea/patrón de un repositorio externo:
