@@ -16,6 +16,49 @@ if TYPE_CHECKING:
     from scripts.session_closeout import StepResult
 
 
+# WOT-2026-081c: under --skip-gates the prepush CLI still runs every check and
+# prints the full report; only the closing verdict is degraded to exit 0. These
+# are the two stable anchors in that stdout that separate a degraded rc==0 from
+# a clean one, so the closeout step never reports a faked "all passed".
+_DEGRADED_PREFLIGHT_BANNER = "PREFLIGHT CON FALLOS pero --skip-gates activo"
+_PREFLIGHT_FAIL_PREFIX = "[FAIL] "
+
+
+def _extract_degraded_prepush_failures(
+    stdout: str,
+) -> list[tuple[str, list[str]]]:
+    """Extract ``[FAIL] <check>`` names and their leading diagnostic lines.
+
+    Before: ``stdout`` is the captured prepush_check.py report.
+    During: reads only lines that start with ``[FAIL] `` at column zero -- the
+        report (_print_preflight_report) prints exactly one such row per
+        blocking failure, while a check's own diagnostic lines are indented, so
+        a nested ``[FAIL]`` inside a tool's output is not mistaken for a check
+        row. The diagnostic lines printed under a row are indented with six
+        spaces; the first few are captured as context.
+    After: returns one ``(name, context_lines)`` per blocking failure, in report
+        order. Empty when no parseable row exists (caller then falls back to the
+        degradation banner). Pure function: no I/O, no mutation.
+    """
+    failures: list[tuple[str, list[str]]] = []
+    lines = stdout.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith(_PREFLIGHT_FAIL_PREFIX):
+            index += 1
+            continue
+        name = line[len(_PREFLIGHT_FAIL_PREFIX) :].strip()
+        context: list[str] = []
+        probe = index + 1
+        while probe < len(lines) and lines[probe].startswith("      "):
+            context.append(lines[probe].strip())
+            probe += 1
+        failures.append((name, context[:3]))
+        index = probe
+    return failures
+
+
 def step_prepush_check(
     project_root: Path,
     dry_run: bool,
@@ -38,6 +81,12 @@ def step_prepush_check(
     That is the invocation WOT-2026-040j consumed as closeout evidence. The
     status is the whole fix: the callers that treat this gate as blocking key off
     it (see session_closeout.overall_status and the early cut in run_closeout).
+
+    WOT-2026-081c: a degraded ``rc==0`` (--skip-gates swallowed real blocking
+    failures) must not read as PASS. The rc==0 branch parses ``result.stdout``
+    for the degradation banner and/or ``[FAIL] <check>`` rows; when present it
+    returns status WARN, blocking=False, with the failures in ``detail``. A
+    clean rc==0 with neither anchor keeps the PASS literal.
     """
     if dry_run:
         return step_result_cls(
@@ -61,6 +110,34 @@ def step_prepush_check(
             timeout=300,
         )
         if result.returncode == 0:
+            stdout = result.stdout or ""
+            failures = _extract_degraded_prepush_failures(stdout)
+            if failures:
+                rendered = "; ".join(
+                    f"{name} ({' | '.join(context)})" if context else name
+                    for name, context in failures
+                )
+                return step_result_cls(
+                    name="prepush_check",
+                    status="WARN",
+                    detail=(
+                        "PREFLIGHT degradado por --skip-gates: "
+                        f"{len(failures)} check(s) bloqueante(s) fallaron: "
+                        f"{rendered}"
+                    ),
+                    blocking=False,
+                )
+            if _DEGRADED_PREFLIGHT_BANNER in stdout:
+                return step_result_cls(
+                    name="prepush_check",
+                    status="WARN",
+                    detail=(
+                        "PREFLIGHT degradado por --skip-gates: fallos bloqueantes "
+                        "ignorados por decision del operador (banner detectado, "
+                        "sin lineas [FAIL] parseables)"
+                    ),
+                    blocking=False,
+                )
             return step_result_cls(
                 name="prepush_check",
                 status="PASS",
