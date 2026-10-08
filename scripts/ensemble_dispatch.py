@@ -68,6 +68,7 @@ import secrets
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections import Counter
 from collections.abc import Iterator
@@ -3225,6 +3226,216 @@ def regenerate_quarantine(project_root: Path, *, config: dict) -> Path:
     return out_path
 
 
+# ---------------------------------------------------------------------------
+# Jerarquia de cuota por modelo nan_api, lectura ex-ante via GET /v1/usage
+# (PROPUESTA_jerarquia_cuota_modelos_nan_20261008.md, destino
+# orquestador_de_agentes_workspace/.agent/planning/; bucles de gobierno
+# EXPLORATORY-cuota-nan y EXPLORATORY-cuota-nan-redaccion, 2026-10-08).
+#
+# Complementa, NO sustituye, la cuarentena reactiva de arriba: la cuarentena
+# bloquea DESPUES de un 402 real; esto da una preferencia de ORDEN basada en
+# consumo leido EN VIVO antes de gastar la llamada. Nunca es gate duro (la
+# propuesta Seccion 3 lo declara explicito): un modelo "dentro de su margen"
+# sigue siendo usable, solo se prefiere otro para trabajo pesado.
+# ---------------------------------------------------------------------------
+USAGE_REL = Path(".agent/runtime/ensemble/nan_usage_quota.json")
+
+# Margen reservado para bucles adversariales (propuesta del operador,
+# 2026-10-08): los ultimos N tokens de cada modelo CON limite declarado
+# quedan preferidos para rondas de gobierno, nunca para Builders pesados.
+_USAGE_GOVERNANCE_MARGIN_TOKENS = 50_000_000
+
+# Tabla de limites ESTATICA: fuente es el panel web del operador en
+# nan.builders, NO una API -- ningun endpoint verificado expone el limite en
+# si (GET /v1/usage da solo USADO, GET /v1/models no trae campo de limite;
+# ver Seccion 4 preguntas 1 y 3 de la propuesta). Un valor `None` significa
+# "sin limite declarado" (gemma4/qwen3.6, confirmado por el operador
+# 2026-10-08 + apoyado por consumo bajo en ventana de 90 dias: qwen3.6
+# 57.7M, gemma4 7.9M, verificado con llamada real el mismo dia).
+#
+# MANTENIMIENTO: esta tabla NO se autoactualiza. Si el proveedor cambia un
+# limite, la unica deteccion hoy es REACTIVA -- un 402 real cuyo
+# `failure_detail` declare una cifra distinta a la de aqui (ver
+# `_parse_provider_reset_at`, mismo patron de parseo de texto libre, para
+# una extension futura que compare esa cifra contra esta tabla y emita WARN
+# en `quarantine --sync`). Revisar esta tabla si se recibe un WARN de ese
+# tipo, o periodicamente contra el panel del operador.
+_NAN_QUOTA_LIMITS_FUENTE = "panel del operador en nan.builders, revisado 2026-10-08"
+_NAN_QUOTA_LIMITS: dict[str, int | None] = {
+    "deepseek-v4-flash": 3_000_000_000,
+    "glm5.3-flash": 2_000_000_000,
+    "mimo-v2.6-flash": 1_000_000_000,
+    "qwen3.8-flash": 500_000_000,
+    "qwen3.6": None,
+    "gemma4": None,
+}
+
+
+def _usage_api_base_url(config: dict) -> str:
+    """Deriva la URL de `GET /v1/usage` desde `api_base_url` de un perfil
+    `nan_api` ya declarado en `agents.json` -- nunca hardcodea el dominio
+    del proveedor por su cuenta: si `api_base_url` cambia (migracion de
+    dominio, version de API), esta funcion lo sigue sin tocarse.
+    """
+    for profile in (config.get("ensemble_profiles") or {}).values():
+        if profile.get("backend") != "nan_api":
+            continue
+        base = profile.get("api_base_url", "")
+        if base.endswith("/chat/completions"):
+            return base[: -len("/chat/completions")] + "/usage"
+    raise ValueError("ningun perfil nan_api con api_base_url en agents.json")
+
+
+def fetch_usage_report(
+    *, start_date: str, end_date: str, config: dict, timeout: int = 30
+) -> dict:
+    """GET /v1/usage real, con paginacion seguida hasta `has_more: false`.
+
+    Before: `start_date`/`end_date` en forma `YYYY-MM-DD`; el llamante los
+        fija SIEMPRE (nunca se omite: la ventana por defecto de 30 dias
+        rodantes mezcla dos ciclos de facturacion, medido 2026-10-08 --
+        propuesta Seccion 4 pregunta 1). `NAN_API_KEY` debe estar en el
+        entorno (mismo `api_key_env` que los perfiles `challenger_nan_*`).
+    During: sigue `next_cursor` mientras `has_more` sea verdadero, acumula
+        `by_model` de cada pagina sumando por `model` (el agregado
+        `totals.by_model` de cada pagina NO es acumulativo entre paginas:
+        cada respuesta solo agrega SU PROPIA pagina de filas `data`, asi
+        que sumar page a page es necesario para el total real del rango).
+        Un fallo de transporte (red, 429, 5xx) propaga `TransportError`
+        SIN reintentar -- el llamante (`regenerate_usage_quota`) decide el
+        fail-closed, esta funcion no lo decide por el caller.
+    After: devuelve `{"by_model": {modelo: total_tokens}, "all_time": {...},
+        "pages_read": N}`. Nunca escribe nada; solo lectura.
+    """
+    base_url = _usage_api_base_url(config)
+    api_key = os.environ.get("NAN_API_KEY")
+    if not api_key:
+        raise RuntimeError("NAN_API_KEY no esta en el entorno")
+    by_model: dict[str, int] = {}
+    all_time: dict | None = None
+    cursor: str | None = None
+    pages_read = 0
+    while True:
+        params = {"start_date": start_date, "end_date": end_date, "limit": "500"}
+        if cursor:
+            params["cursor"] = cursor
+        url = base_url + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(  # noqa: S310 -- https exigido
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": ENSEMBLE_USER_AGENT,
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                raw_body = resp.read()
+        except (TransportError, json.JSONDecodeError):
+            raise
+        except Exception as exc:
+            raise _sanitized_transport_error(exc, api_key) from None
+        page = json.loads(raw_body)
+        pages_read += 1
+        for row in page.get("totals", {}).get("by_model", []):
+            model = row.get("model")
+            tokens = row.get("total_tokens", 0)
+            if model:
+                by_model[model] = by_model.get(model, 0) + tokens
+        all_time = page.get("all_time", all_time)
+        if not page.get("has_more"):
+            break
+        cursor = page.get("next_cursor")
+        if not cursor:
+            break
+    return {"by_model": by_model, "all_time": all_time, "pages_read": pages_read}
+
+
+def regenerate_usage_quota(
+    project_root: Path, *, config: dict, start_date: str, end_date: str
+) -> Path:
+    """Deriva `nan_usage_quota.json`: `cuota_restante`/`margen_consumido`
+    por modelo `nan_api`, leyendo `GET /v1/usage` EN VIVO.
+
+    Before: `project_root` es el destino-rol donde escribir el artefacto
+        (mismo patron que `leaders`/`status`/`quarantine`). `start_date`/
+        `end_date` los fija el llamante (CLI); esta funcion NO decide la
+        ventana, solo la consume -- declarada en la propuesta como
+        aproximacion al ciclo real de facturacion, que sigue sin
+        confirmarse (ver _NAN_QUOTA_LIMITS arriba).
+    During: llama `fetch_usage_report`. Si falla (red, auth, rate limit
+        propio del endpoint), NO propaga la excepcion: cada modelo CON
+        limite declarado queda en estado `"desconocido"`
+        (`margen_consumido: true`, fail-closed hacia el margen reservado --
+        propuesta Seccion 2-bis, "el coste de negar un Builder pesado por
+        un dato ausente es bajo; el de asumir margen intacto sin evidencia
+        es alto"). Un modelo SIN limite declarado (gemma4/qwen3.6) nunca
+        tiene margen que proteger, asi que un fallo de lectura no cambia su
+        estado: siempre preferente para volumen.
+    After: escribe `USAGE_REL` con una fila por modelo de `_NAN_QUOTA_LIMITS`,
+        `generated_at`, `window` consultada, y `fetch_error` (string o None)
+        si la lectura en vivo fallo. Retorna la ruta. Nunca lanza.
+    """
+    fetch_error: str | None = None
+    usage: dict[str, int] = {}
+    try:
+        report = fetch_usage_report(
+            start_date=start_date, end_date=end_date, config=config
+        )
+        usage = report["by_model"]
+    except Exception as exc:
+        fetch_error = f"{type(exc).__name__}: {exc}"
+
+    models: dict[str, dict] = {}
+    for model, limit in _NAN_QUOTA_LIMITS.items():
+        if limit is None:
+            models[model] = {
+                "limite_declarado": None,
+                "usado_en_vivo": usage.get(model),
+                "cuota_restante": None,
+                "margen_consumido": False,
+                "estado": "sin_limite",
+            }
+            continue
+        used = usage.get(model)
+        if used is None:
+            models[model] = {
+                "limite_declarado": limit,
+                "usado_en_vivo": None,
+                "cuota_restante": None,
+                "margen_consumido": True,
+                "estado": "desconocido",
+            }
+            continue
+        restante = limit - used
+        margen_tocado = used > (limit - _USAGE_GOVERNANCE_MARGIN_TOKENS)
+        models[model] = {
+            "limite_declarado": limit,
+            "usado_en_vivo": used,
+            "cuota_restante": restante,
+            "margen_consumido": margen_tocado,
+            "estado": "margen_reservado" if margen_tocado else "con_holgura",
+        }
+
+    out = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "window": {"start_date": start_date, "end_date": end_date},
+        "limites_fuente": _NAN_QUOTA_LIMITS_FUENTE,
+        "margen_gobierno_tokens": _USAGE_GOVERNANCE_MARGIN_TOKENS,
+        "fetch_error": fetch_error,
+        "models": models,
+        "derivado": "NUNCA editar a mano: regenerado desde GET /v1/usage "
+        "(ensemble_dispatch.py usage --sync). Preferencia de ORDEN, "
+        "nunca gate duro -- ver PROPUESTA_jerarquia_cuota_modelos_nan_"
+        "20261008.md seccion 3.",
+    }
+    out_path = project_root / USAGE_REL
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    return out_path
+
+
 def regenerate_family_leaders(project_root: Path) -> Path:
     """Proyeccion DERIVADA por FAMILIA de modelo, nunca editada a mano.
 
@@ -4089,6 +4300,7 @@ ENSEMBLE_RUNTIME_ARTIFACTS: dict[str, Path] = {
     "BACKEND_STATUS_REL": BACKEND_STATUS_REL,
     "QUARANTINE_REL": QUARANTINE_REL,
     "CANARY_LOG_REL": CANARY_LOG_REL,
+    "USAGE_REL": USAGE_REL,
 }
 
 
@@ -5953,6 +6165,42 @@ def _cmd_quarantine(args, config) -> int:
     return 0
 
 
+def _cmd_usage(args, config) -> int:
+    """CLI `usage --sync`: deriva `nan_usage_quota.json` bajo demanda.
+
+    Mismo patron que `quarantine --sync` (derivado bajo demanda, nunca
+    efecto lateral de una ronda). `--start-date`/`--end-date` son
+    obligatorios (nunca un default que pueda mezclar ciclos de
+    facturacion, ver `fetch_usage_report`). Imprime un resumen legible por
+    modelo y retorna 0 incluso si la lectura en vivo fallo -- el
+    `fetch_error` queda en el artefacto, es informacion, no un fallo del
+    comando (fail-closed ya resuelto dentro de `regenerate_usage_quota`).
+    """
+    project_root = _resolve_project_root(args.project_root)
+    out = regenerate_usage_quota(
+        project_root,
+        config=config,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
+    data = json.loads(out.read_text(encoding="utf-8"))
+    print(
+        json.dumps(
+            {
+                "usage": {
+                    "path": str(out),
+                    "window": data.get("window"),
+                    "fetch_error": data.get("fetch_error"),
+                    "models": data.get("models"),
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     parser = argparse.ArgumentParser(
@@ -6144,6 +6392,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_quar.add_argument("--project-root", required=True)
 
+    p_usage = sub.add_parser(
+        "usage",
+        help="deriva nan_usage_quota.json desde GET /v1/usage (jerarquia de "
+        "cuota nan_api, preferencia de orden, nunca gate duro)",
+    )
+    p_usage.add_argument(
+        "--sync",
+        action="store_true",
+        required=True,
+        help="regenera el artefacto (unico modo; derivado, nunca a mano)",
+    )
+    p_usage.add_argument(
+        "--start-date",
+        required=True,
+        help="YYYY-MM-DD; el llamante decide la ventana (sin default: la "
+        "ventana por defecto del endpoint mezcla ciclos de facturacion, "
+        "ver PROPUESTA_jerarquia_cuota_modelos_nan_20261008.md seccion 4)",
+    )
+    p_usage.add_argument("--end-date", required=True, help="YYYY-MM-DD")
+    p_usage.add_argument("--project-root", required=True)
+
     args = parser.parse_args(argv)
     config = load_motor_config()
 
@@ -6157,6 +6426,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": _cmd_status,
         "emit-nonce": _cmd_emit_nonce,
         "quarantine": _cmd_quarantine,
+        "usage": _cmd_usage,
     }
     try:
         return handlers[args.command](args, config)

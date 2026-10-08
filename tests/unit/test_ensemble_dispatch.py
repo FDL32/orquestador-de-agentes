@@ -4255,6 +4255,221 @@ def test_086c_real_config_declares_account_scope_only_where_measured():
     assert scopes.get("nan_api", "modelo") == "modelo"
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-095f: jerarquia de cuota nan_api (GET /v1/usage), implementando
+# PROPUESTA_jerarquia_cuota_modelos_nan_20261008.md tras 3 bucles de
+# gobierno (EXPLORATORY-cuota-nan, -redaccion, y verificacion con llamadas
+# reales 2026-10-08).
+# ---------------------------------------------------------------------------
+
+
+def _nan_config():
+    """Config minima con un perfil nan_api real, para _usage_api_base_url."""
+    return {
+        "schema_version": "1.3",
+        "backends": {"nan_api": {"executable": "", "args": []}},
+        "ensemble_profiles": {
+            "challenger_nan_deepseek_flash": {
+                "backend": "nan_api",
+                "channel": "api",
+                "model": "deepseek-v4-flash",
+                "api_base_url": "https://api.nan.builders/v1/chat/completions",
+                "api_key_env": "NAN_API_KEY",
+                "data_sensitivity": "public",
+                "write": False,
+            },
+        },
+        "ensemble_private_roots": [],
+    }
+
+
+def test_usage_api_base_url_derives_from_chat_completions():
+    """La URL de usage se deriva de api_base_url, nunca hardcodeada aparte."""
+    url = ed._usage_api_base_url(_nan_config())
+    assert url == "https://api.nan.builders/v1/usage"
+
+
+def test_usage_api_base_url_raises_without_nan_profile():
+    with pytest.raises(ValueError, match="ningun perfil nan_api"):
+        ed._usage_api_base_url(_config())
+
+
+def test_fetch_usage_report_follows_pagination(monkeypatch):
+    """Sigue next_cursor hasta has_more:false y SUMA by_model entre paginas
+    (cada pagina solo agrega su propia porcion de filas data)."""
+    monkeypatch.setenv("NAN_API_KEY", "fake-key")
+    pages = [
+        {
+            "object": "usage.report",
+            "data": [],
+            "totals": {
+                "by_model": [{"model": "deepseek-v4-flash", "total_tokens": 100}]
+            },
+            "all_time": {"total_tokens": 999},
+            "has_more": True,
+            "next_cursor": "cursor-1",
+        },
+        {
+            "object": "usage.report",
+            "data": [],
+            "totals": {
+                "by_model": [{"model": "deepseek-v4-flash", "total_tokens": 50}]
+            },
+            "all_time": {"total_tokens": 999},
+            "has_more": False,
+        },
+    ]
+    calls = []
+
+    class _FakeResp:
+        def __init__(self, body):
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps(self._body).encode("utf-8")
+
+    def _fake_urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        return _FakeResp(pages[len(calls) - 1])
+
+    monkeypatch.setattr(ed.urllib.request, "urlopen", _fake_urlopen)
+    report = ed.fetch_usage_report(
+        start_date="2026-10-01", end_date="2026-10-08", config=_nan_config()
+    )
+    assert report["by_model"] == {"deepseek-v4-flash": 150}, (
+        "las dos paginas deben SUMARSE, no quedarse con la ultima sola"
+    )
+    assert report["pages_read"] == 2
+    assert len(calls) == 2
+    assert "cursor-1" in calls[1], "la segunda llamada debe llevar el cursor"
+
+
+def test_fetch_usage_report_without_api_key_raises(monkeypatch):
+    monkeypatch.delenv("NAN_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="NAN_API_KEY"):
+        ed.fetch_usage_report(
+            start_date="2026-10-01", end_date="2026-10-08", config=_nan_config()
+        )
+
+
+def test_regenerate_usage_quota_three_states(tmp_path, monkeypatch):
+    """Los 3 estados declarados en la propuesta (Seccion 2-bis): con_holgura,
+    margen_reservado (dentro de los ultimos 50M), y sin_limite (gemma4/
+    qwen3.6, pase lo que pase con el fetch)."""
+    monkeypatch.setenv("NAN_API_KEY", "fake-key")
+
+    def _fake_fetch(*, start_date, end_date, config, timeout=30):
+        return {
+            "by_model": {
+                # Con holgura: muy por debajo del limite - margen.
+                "deepseek-v4-flash": 100_000_000,
+                # Dentro del margen de gobierno: limite - 50M < usado < limite.
+                "qwen3.8-flash": 480_000_000,
+            },
+            "all_time": None,
+            "pages_read": 1,
+        }
+
+    monkeypatch.setattr(ed, "fetch_usage_report", _fake_fetch)
+    out = ed.regenerate_usage_quota(
+        tmp_path, config=_nan_config(), start_date="2026-10-01", end_date="2026-10-08"
+    )
+    data = json.loads(out.read_text(encoding="utf-8"))
+    models = data["models"]
+
+    assert models["deepseek-v4-flash"]["estado"] == "con_holgura"
+    assert models["deepseek-v4-flash"]["margen_consumido"] is False
+    assert models["deepseek-v4-flash"]["cuota_restante"] == 2_900_000_000
+
+    assert models["qwen3.8-flash"]["estado"] == "margen_reservado"
+    assert models["qwen3.8-flash"]["margen_consumido"] is True, (
+        "480M > 500M - 50M(margen) = 450M: debe estar DENTRO del margen reservado"
+    )
+
+    assert models["qwen3.6"]["estado"] == "sin_limite"
+    assert models["qwen3.6"]["margen_consumido"] is False
+    assert models["gemma4"]["estado"] == "sin_limite"
+
+    assert data["fetch_error"] is None
+    assert data["derivado"].startswith("NUNCA editar a mano")
+
+
+def test_regenerate_usage_quota_fetch_failure_is_fail_closed(tmp_path, monkeypatch):
+    """Mutation (teeth): si fetch_usage_report lanza, cada modelo CON limite
+    queda desconocido con margen_consumido:True (fail-closed hacia el margen
+    reservado, Seccion 2-bis). Sin este fail-closed, un fallo de red dejaria
+    el margen en False (optimista) y el test se pone ROJO."""
+    monkeypatch.setenv("NAN_API_KEY", "fake-key")
+
+    def _boom(*, start_date, end_date, config, timeout=30):
+        raise ed.TransportError("fallo simulado", status=500, body=None)
+
+    monkeypatch.setattr(ed, "fetch_usage_report", _boom)
+    out = ed.regenerate_usage_quota(
+        tmp_path, config=_nan_config(), start_date="2026-10-01", end_date="2026-10-08"
+    )
+    data = json.loads(out.read_text(encoding="utf-8"))
+    models = data["models"]
+
+    for model in (
+        "deepseek-v4-flash",
+        "glm5.3-flash",
+        "mimo-v2.6-flash",
+        "qwen3.8-flash",
+    ):
+        assert models[model]["estado"] == "desconocido"
+        assert models[model]["margen_consumido"] is True, (
+            f"{model}: un fallo de lectura debe ser fail-closed, nunca optimista"
+        )
+        assert models[model]["usado_en_vivo"] is None
+
+    # Los modelos SIN limite nunca tienen margen que proteger: un fallo de
+    # lectura no les cambia el estado.
+    assert models["qwen3.6"]["estado"] == "sin_limite"
+    assert models["qwen3.6"]["margen_consumido"] is False
+
+    assert data["fetch_error"] is not None
+
+
+def test_usage_cli_sync_prints_summary(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NAN_API_KEY", "fake-key")
+
+    def _fake_fetch(*, start_date, end_date, config, timeout=30):
+        return {"by_model": {}, "all_time": None, "pages_read": 0}
+
+    monkeypatch.setattr(ed, "fetch_usage_report", _fake_fetch)
+    rc = ed.main(
+        [
+            "usage",
+            "--sync",
+            "--start-date",
+            "2026-10-01",
+            "--end-date",
+            "2026-10-08",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["usage"]["window"] == {
+        "start_date": "2026-10-01",
+        "end_date": "2026-10-08",
+    }
+    assert out["usage"]["models"]["qwen3.6"]["estado"] == "sin_limite"
+
+
+def test_usage_cli_requires_start_and_end_date():
+    with pytest.raises(SystemExit):
+        ed.main(["usage", "--sync", "--project-root", "."])
+
+
 def test_smoke_cli_skips_quarantined_unless_forced(tmp_path, monkeypatch, capsys):
     """CLI smoke: perfil en cuarentena se OMITE con WARN por defecto (sin
     gastar la llamada) y `--ignore-quarantine` es el intento explicito que
