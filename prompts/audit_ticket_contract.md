@@ -111,6 +111,24 @@ Recorre ítem por ítem.
    (`o modulo equivalente`, `solo si...`, etc.), ponla en una linea separada sin
    backticks de ruta: el parser de FLT espera una ruta por bullet.
 
+   **Convencion real del subencabezado FLT (medido WOT-2026-097a, 2026-10-08, censo de
+   53 `work_plan.md` historicos):** declara los deliverables de Builder como bullets
+   FLAT, SIN ningun subencabezado `### ` antes -- caen correctamente al namespace de
+   `delivery_authority`. Si necesitas separar fuentes de solo lectura, usa exactamente
+   `### Read/inspect only` DESPUES de los bullets flat (patron usado 4 veces en el
+   historico real). **NO uses `### Builder` como subencabezado explicito:**
+   `scope_gate.py::_parse_flt_section` (a diferencia de
+   `check_deliverables_exist.py::_extract_flt_paths`, que si lo reconoce) clasifica
+   cualquier `###` que no sea `repo_motor`/`repo_destino` como namespace desconocido y
+   DESCARTA silenciosamente esas rutas sin que lleguen al fallback por
+   `delivery_authority` -- produce el falso positivo `scope: No repo_motor paths in
+   Files Likely Touched` pese a que el fichero si esta declarado. Este comportamiento
+   esta FIJADO por `tests/unit/test_scope_gate_topology.py::test_unknown_namespace_lines_ignored`
+   (WOT-2026-009b): es una decision de diseño ya testeada, no un bug a corregir sobre
+   la marcha -- si un ticket futuro necesita que el motor reconozca mas subencabezados,
+   es un ticket propio de Contract Formation sobre `scope_gate.py`, no una correccion
+   de ultima hora en un ticket documental.
+
 9. **Dual-contract sync (`work_plan.md` ↔ `STRATEGY_WOT-*`)**
    ¿Toda corrección está aplicada en ambos archivos? El scope gate lee `work_plan.md`; el Builder lee `STRATEGY_WOT-*` (legacy-compat: `PLAN_WT-*`, `PLAN_WP-*`). Una corrección en solo uno de los dos pasa inadvertida y requiere rondas adicionales.
 

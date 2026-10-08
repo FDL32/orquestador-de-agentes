@@ -1272,6 +1272,93 @@ def _check_deliverable_type_file_congruence(content: str, value: str) -> list[st
     ]
 
 
+# WOT-2026-097a (2026-10-08): el ÚNICO uso real en el historico de "### Builder"
+# explicito como subencabezado de FLT fue este mismo ticket -- CERO precedentes en 53
+# work_plan.md archivados. scope_gate.py::_parse_flt_section solo reconoce
+# "repo_motor"/"repo_destino" como namespace valido; cualquier otro "### <algo>" (salvo
+# los marcadores de skip de abajo) cae a namespace "unknown" y sus rutas se DESCARTAN
+# silenciosamente en parse_flt_raw_buckets -- nunca llegan al fallback por
+# delivery_authority. Efecto medido: produce el warning opaco "scope: No repo_motor
+# paths in Files Likely Touched" pese a que el fichero SI esta declarado, varios pasos
+# despues de la causa real. Replica de _SKIP_SUBHEADER_MARKERS
+# (scripts/check_deliverables_exist.py:211) -- mismos 4 marcadores, misma fuente de
+# verdad conceptual; no se importa cruzado para no introducir una dependencia nueva
+# entre agent_controller.py y scripts/.
+# NOTA: check_deliverables_exist.py:211 declara "manager only" (espacio) pero su propio
+# docstring (:283) documenta "Manager-only" (guion) como el heading real esperado --
+# defecto latente preexistente en el modulo de referencia (ese marcador con espacio
+# nunca casa "Manager-only" real porque .lower() no inserta espacios donde hay guiones).
+# Esta copia incluye AMBAS variantes para no heredar ese bug silenciosamente.
+_FLT_SKIP_SUBHEADER_MARKERS = (
+    "read/inspect",
+    "read-only",
+    "read only",
+    "manager only",
+    "manager-only",
+)
+
+
+def _flt_heading_is_unrecognized(heading: str) -> bool:
+    """True when a `### <heading>` is neither a known namespace nor a skip marker."""
+    lowered = heading.lower()
+    if lowered in ("repo_motor", "repo_destino"):
+        return False
+    return not any(marker in lowered for marker in _FLT_SKIP_SUBHEADER_MARKERS)
+
+
+def _check_flt_unrecognized_subheadings(content: str) -> list[str]:
+    """Warn (never error) when FLT uses a `### ` subheading the motor cannot route.
+
+    Before: Requires work_plan.md content as string.
+    During: Scans '## Files Likely Touched' for any `### <heading>` that is
+        neither repo_motor/repo_destino nor one of the documented skip markers
+        (Read/inspect only, Manager-only), using the same start/end detection
+        as scope_gate._parse_flt_section so the two scans never disagree on
+        section boundaries. Only flags a heading that actually has at least
+        one path bullet under it (an empty heading has nothing to lose).
+    After: Returns a list of warning strings naming each unrecognized heading
+        with >=1 path under it, with the fix (use flat bullets, or one of the
+        two recognized namespaces). Empty list when none found.
+    """
+    headings_with_paths: dict[str, bool] = {}
+    in_flt = False
+    current_heading: str | None = None
+    for raw in content.split("\n"):
+        line = raw.strip()
+        if line == "## Files Likely Touched":
+            in_flt = True
+            current_heading = None
+            continue
+        if in_flt and line.startswith("## ") and not line.startswith("### "):
+            break
+        if not in_flt:
+            continue
+        if line.startswith("### "):
+            heading = line[4:].strip()
+            current_heading = heading if _flt_heading_is_unrecognized(heading) else None
+            if current_heading:
+                headings_with_paths.setdefault(heading, False)
+            continue
+        if current_heading is None or not line or line.startswith("---"):
+            continue
+        normalized = scope_gate._normalize_flt_line(line)
+        if normalized and scope_gate._looks_like_path_token(normalized):
+            headings_with_paths[current_heading] = True
+
+    flagged = [h for h, has_path in headings_with_paths.items() if has_path]
+    if not flagged:
+        return []
+    return [
+        f"work_plan.md Files Likely Touched usa el subencabezado '### {h}', que "
+        "scope_gate.py no reconoce (solo 'repo_motor'/'repo_destino', o un marcador "
+        "de skip como 'Read/inspect only'/'Manager-only'). Sus rutas se descartaran "
+        "silenciosamente del whitelist de scope. Usa bullets flat (sin subencabezado) "
+        "para deliverables de Builder, o '### Read/inspect only' para fuentes de "
+        "contexto. Ver prompts/audit_ticket_contract.md item 8."
+        for h in flagged
+    ]
+
+
 def _read_deliverable_type(content: str, default: str = "code") -> str:
     """Read normalized deliverable_type from work_plan.md content."""
     match = _DELIVERABLE_TYPE_RE.search(content or "")
@@ -6465,10 +6552,11 @@ def _collect_deliverable_type_warnings(plan_content: str) -> dict[str, list[str]
     """Helper for _handle_validate: returns {file: [warnings]} or {} if clean."""
     if not plan_content:
         return {}
-    deliverable_warnings = _check_deliverable_type(plan_content)
-    if not deliverable_warnings:
+    all_warnings = list(_check_deliverable_type(plan_content))
+    all_warnings.extend(_check_flt_unrecognized_subheadings(plan_content))
+    if not all_warnings:
         return {}
-    return {"work_plan.md": deliverable_warnings}
+    return {"work_plan.md": all_warnings}
 
 
 def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: C901

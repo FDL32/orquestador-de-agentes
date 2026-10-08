@@ -5032,6 +5032,137 @@ class TestDeliverableTypeFileCongruence:
         assert agent_controller._check_deliverable_type(plan) == []
 
 
+class TestFltUnrecognizedSubheadings:
+    """WOT-2026-097a (follow-up): warn when FLT uses a '### ' subheading that
+    scope_gate.py cannot route (neither repo_motor/repo_destino nor a documented
+    skip marker). Measured against the real corpus: '### Builder' explicit has
+    ZERO historical precedent across 53 archived work_plan.md; the pattern that
+    IS used (flat Builder bullets + optional '### Read/inspect only') must stay
+    silent. scope_gate.py itself is NOT touched: tests/unit/test_scope_gate_topology.py
+    ::test_unknown_namespace_lines_ignored pins "unknown namespace is discarded"
+    as intentional design -- this check only surfaces the mistake at --validate
+    time, at the point of authoring, instead of several steps later as the opaque
+    'scope: No repo_motor paths' warning.
+    """
+
+    def test_explicit_builder_subheading_warns(self):
+        """The exact pattern that triggered this ticket: '### Builder' with paths."""
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **delivery_authority:** repo_motor\n"
+            "## Files Likely Touched\n"
+            "### Builder\n"
+            "- prompts/some_prompt.md\n"
+        )
+        warnings = agent_controller._check_flt_unrecognized_subheadings(plan)
+        assert warnings, "unrecognized '### Builder' with a real path must warn"
+        assert "### Builder" in warnings[0]
+        assert "scope_gate.py" in warnings[0]
+
+    def test_flat_builder_bullets_do_not_warn(self):
+        """The real, used pattern: Builder deliverables as flat bullets (no '### ')."""
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **delivery_authority:** repo_motor\n"
+            "## Files Likely Touched\n"
+            "- scripts/run_pytest_safe.py\n"
+            "- tests/unit/test_run_pytest_safe.py\n"
+        )
+        assert agent_controller._check_flt_unrecognized_subheadings(plan) == []
+
+    def test_read_inspect_only_subheading_does_not_warn(self):
+        """The real, used pattern: flat Builder + '### Read/inspect only' after."""
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **delivery_authority:** repo_motor\n"
+            "## Files Likely Touched\n"
+            "- scripts/run_pytest_safe.py\n"
+            "### Read/inspect only (contexto, NO entregables)\n"
+            "- .agent/runtime/pytest-safe/last-run.json\n"
+        )
+        assert agent_controller._check_flt_unrecognized_subheadings(plan) == []
+
+    def test_manager_only_subheading_does_not_warn(self):
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **delivery_authority:** repo_motor\n"
+            "## Files Likely Touched\n"
+            "- scripts/thing.py\n"
+            "### Manager-only\n"
+            "- scripts/gate.py\n"
+        )
+        assert agent_controller._check_flt_unrecognized_subheadings(plan) == []
+
+    def test_unrecognized_subheading_with_no_paths_does_not_warn(self):
+        """An empty/unused heading has nothing to lose from the discard."""
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **delivery_authority:** repo_motor\n"
+            "## Files Likely Touched\n"
+            "### Notas\n"
+            "Solo texto explicativo, sin bullets de ruta.\n"
+        )
+        assert agent_controller._check_flt_unrecognized_subheadings(plan) == []
+
+    def test_recognized_namespaces_do_not_warn(self):
+        import agent_controller
+
+        plan = (
+            "# WP\n"
+            "- **delivery_authority:** repo_motor\n"
+            "## Files Likely Touched\n"
+            "### repo_motor\n"
+            "- scripts/thing.py\n"
+            "### repo_destino\n"
+            "- .agent/collaboration/backlog.md\n"
+        )
+        assert agent_controller._check_flt_unrecognized_subheadings(plan) == []
+
+    def test_mutation_verify_matches_real_scope_gate_discard(self):
+        """MUTATION: the warned heading must be exactly the one whose paths
+        scope_gate.py._parse_flt_section discards as namespace 'unknown' --
+        ties this check to the real parser behavior, not an independent guess.
+        """
+        import agent_controller
+        import scope_gate
+
+        plan = (
+            "# WP\n"
+            "- **delivery_authority:** repo_motor\n"
+            "## Files Likely Touched\n"
+            "### Builder\n"
+            "- prompts/some_prompt.md\n"
+        )
+        warnings = agent_controller._check_flt_unrecognized_subheadings(plan)
+        assert warnings
+
+        _, entries = scope_gate._parse_flt_section(plan.split("\n"))
+        unknown_paths = [p for ns, p in entries if ns == "unknown"]
+        assert unknown_paths == ["prompts/some_prompt.md"], (
+            "the real parser must actually discard this path as 'unknown' -- "
+            "otherwise this test is not reproducing the defect it claims to catch"
+        )
+
+        buckets = scope_gate.parse_flt_raw_buckets(
+            plan, delivery_authority="repo_motor"
+        )
+        assert "prompts/some_prompt.md" not in buckets["motor"], (
+            "if the real discard ever stops happening (e.g. scope_gate.py changes "
+            "without updating this check), this warning becomes stale noise -- "
+            "re-evaluate whether the check is still needed"
+        )
+
+
 class TestValidateJsonTotals:
     """WOT-2026-014q: _handle_validate JSON must expose total_errors and total_warnings as ints."""
 
