@@ -73,6 +73,7 @@ ADOPTED = (
     "orchestrator_refactor_bootstrap.md",
     "manager_orchestrator_loop.md",
     "manager_orchestrator_loop_adapter_motor.md",
+    "manager_orchestrator_loop_backlog.md",
     "audit_cf_repo_charter.md",
     "audit_cf_plan_graph.md",
     "audit_cf_ticket_contract.md",
