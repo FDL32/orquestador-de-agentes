@@ -24,7 +24,10 @@ _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
-from bus.portable_memory_archive import record_key  # noqa: E402
+from bus.portable_memory_archive import (  # noqa: E402
+    generate_stable_id,
+    record_key,
+)
 from bus.redact import redact_payload  # noqa: E402
 
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
@@ -728,6 +731,59 @@ def _redact_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return redact_payload(entry)
 
 
+def _archive_new_entries(archivable: list[dict[str, Any]], verbose: bool) -> None:
+    """Dedup y escribe `archivable` al archive del mes en curso.
+
+    Helper extraido de `_apply_consolidation` para mantener su complejidad
+    bajo el umbral de ruff C901; mismo comportamiento, sin cambio de logica.
+
+    Dedup contra TODOS los meses del archive, no solo el del mes actual --
+    `archive_file.exists()` a secas solo miraba el fichero de hoy y dejaba
+    pasar duplicados ya promovidos en meses anteriores. La comparacion se
+    hace SIEMPRE sobre entradas ya redactadas (ambos lados):
+    `redact_payload()` toca cualquier campo string, incluidos
+    `topic`/`source_ticket` que usa `record_key()`, y el archive en disco
+    ya esta redactado -- comparar crudo contra redactado produce falsos
+    negativos (mismo bug, otra via).
+
+    WOT-2026-045e DoD (e)/(j): asigna id ANTES de comparar por record_key.
+    Si se comparara antes de asignar id, dos entradas SIN id que
+    colisionan por record_key con contenido DISTINTO serian
+    indistinguibles de un duplicado legitimo.
+    """
+    now = datetime.now(timezone.utc)
+    archive_file = ARCHIVE_DIR / f"observations.{now.strftime('%Y-%m')}.jsonl"
+
+    existing_keys: set[tuple[str, str | None]] = set()
+    for other_file in sorted(ARCHIVE_DIR.glob("observations.*.jsonl")):
+        for entry in parse_entries(other_file):
+            existing_keys.add(record_key(_redact_entry(entry)))
+
+    archivable_redacted = [_redact_entry(e) for e in archivable]
+    for _entry in archivable_redacted:
+        _entry["id"] = generate_stable_id(_entry)
+    new_archivable = [
+        e for e in archivable_redacted if record_key(e) not in existing_keys
+    ]
+    skipped = len(archivable) - len(new_archivable)
+
+    if archive_file.exists():
+        existing = parse_entries(archive_file)
+        lines_to_write = [
+            json.dumps(_redact_entry(e), ensure_ascii=False) for e in existing
+        ] + [json.dumps(e, ensure_ascii=False) for e in new_archivable]
+    else:
+        lines_to_write = [json.dumps(e, ensure_ascii=False) for e in new_archivable]
+    archive_file.write_text(
+        "\n".join(lines_to_write) + "\n" if lines_to_write else "",
+        encoding="utf-8",
+    )
+    if verbose:
+        print(f"Archived {len(new_archivable)} entries to {archive_file}")
+        if skipped:
+            print(f"Skipped {skipped} entries already present in another archive month")
+
+
 def _apply_consolidation(
     recent: list[dict[str, Any]],
     archivable: list[dict[str, Any]],
@@ -746,44 +802,7 @@ def _apply_consolidation(
         print(f"Backup created: {backup_path}")
 
     if archivable:
-        now = datetime.now(timezone.utc)
-        archive_file = ARCHIVE_DIR / f"observations.{now.strftime('%Y-%m')}.jsonl"
-
-        # Dedup contra TODOS los meses del archive, no solo el del mes actual --
-        # `archive_file.exists()` a secas solo miraba el fichero de hoy y dejaba
-        # pasar duplicados ya promovidos en meses anteriores. La comparacion se
-        # hace SIEMPRE sobre entradas ya redactadas (ambos lados):
-        # `redact_payload()` toca cualquier campo string, incluidos
-        # `topic`/`source_ticket` que usa `record_key()`, y el archive en disco
-        # ya esta redactado -- comparar crudo contra redactado produce falsos
-        # negativos (mismo bug, otra via).
-        existing_keys: set[tuple[str, str | None]] = set()
-        for other_file in sorted(ARCHIVE_DIR.glob("observations.*.jsonl")):
-            for entry in parse_entries(other_file):
-                existing_keys.add(record_key(_redact_entry(entry)))
-
-        archivable_redacted = [_redact_entry(e) for e in archivable]
-        new_archivable = [
-            e for e in archivable_redacted if record_key(e) not in existing_keys
-        ]
-        skipped = len(archivable) - len(new_archivable)
-
-        if archive_file.exists():
-            existing = parse_entries(archive_file)
-            lines_to_write = [
-                json.dumps(_redact_entry(e), ensure_ascii=False) for e in existing
-            ] + [json.dumps(e, ensure_ascii=False) for e in new_archivable]
-        else:
-            lines_to_write = [json.dumps(e, ensure_ascii=False) for e in new_archivable]
-        archive_file.write_text(
-            "\n".join(lines_to_write) + "\n" if lines_to_write else "", encoding="utf-8"
-        )
-        if verbose:
-            print(f"Archived {len(new_archivable)} entries to {archive_file}")
-            if skipped:
-                print(
-                    f"Skipped {skipped} entries already present in another archive month"
-                )
+        _archive_new_entries(archivable, verbose)
 
     new_lines = [json.dumps(_redact_entry(e), ensure_ascii=False) for e in recent]
     OBS.write_text("\n".join(new_lines) + "\n" if new_lines else "", encoding="utf-8")

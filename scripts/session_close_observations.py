@@ -26,6 +26,7 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
 from bus import observation_domains  # noqa: E402  # origen: LEA-2026-002o
+from bus.portable_memory_archive import generate_stable_id  # noqa: E402
 from bus.redact import redact  # noqa: E402
 
 
@@ -252,8 +253,16 @@ def append_observations(entries: list[dict[str, Any]]) -> None:
     """Append observations to file.
 
     Before: Requires list of validated entries.
-    During: Appends each entry as JSON line.
-    After: File updated with new entries.
+    During: Redacts secrets/PII, THEN generates a stable `id` for any
+        entry that does not already carry one (WOT-2026-045e DoD
+        (d)/(j)). The id is derived from the REDACTED content (via
+        `bus.portable_memory_archive.generate_stable_id`), never from
+        the raw pre-redaction content: hashing before redaction would
+        make the id unstable across re-processing of the same raw
+        entry whenever redaction masks a different substring. Entries
+        that already have a non-empty `id` keep it unchanged
+        (idempotent identity).
+    After: File updated with new entries, each carrying a stable `id`.
     """
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     with open(OBS_FILE, "a", encoding="utf-8") as f:
@@ -263,6 +272,10 @@ def append_observations(entries: list[dict[str, Any]]) -> None:
                 entry["signal"] = redact(entry["signal"])
             if "text" in entry:
                 entry["text"] = redact(entry["text"])
+            # WOT-2026-045e DoD (d)/(j): asigna id ANTES de que
+            # cualquier consumidor pueda compararlo por
+            # record_key/contenido.
+            entry["id"] = generate_stable_id(entry)
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 

@@ -66,6 +66,11 @@ MOTOR_ROOT = Path(__file__).resolve().parent.parent
 if str(MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(MOTOR_ROOT))
 
+# WOT-2026-045e: unica fuente de verdad de "contenido identico/distinto",
+# compartida con el fail-closed en escritura de reconcile_portable_memory.py.
+from bus.portable_memory_archive import fingerprint  # noqa: E402
+
+
 ARCHIVE_DIR_REL = Path(".agent/runtime/memory/archive")
 
 EXIT_OK = 0
@@ -137,15 +142,13 @@ def find_identity_collisions(paths: list[Path]) -> dict[tuple[str, str], set[str
     identidad: es un duplicado exacto que el dedup resuelve correctamente. Solo CONTENIDO
     DISTINTO bajo la misma clave es el caso peligroso.
 
-    La huella de contenido se calcula sobre el registro SIN su propio `id` (para no
-    depender de que `id` este presente ni de si fue regenerado): dos registros con el
-    mismo contenido util producen la misma huella aunque a uno le falte el `id`.
+    La huella de contenido se calcula con `bus.portable_memory_archive.fingerprint`
+    (WOT-2026-045e): es la MISMA funcion que usa el fail-closed en el punto de
+    escritura de `scripts/reconcile_portable_memory.py` (`_promote_one`/
+    `_reconcile_all`). Reutilizar una sola definicion evita que este guard
+    POST-HOC y el fail-closed EN ESCRITURA diverjan sobre que es "identico"
+    o "distinto" para el mismo par de records.
     """
-
-    def _fingerprint(rec: dict) -> str:
-        body = {k: v for k, v in rec.items() if k != "id"}
-        return json.dumps(body, sort_keys=True, ensure_ascii=False)
-
     by_key: dict[tuple[str, str], set[str]] = {}
     for path in paths:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -157,7 +160,7 @@ def find_identity_collisions(paths: list[Path]) -> dict[tuple[str, str], set[str
                 # El schema-check ya reporta JSON invalido; aqui lo saltamos.
                 continue
             key = (rec.get("topic", ""), rec.get("source_ticket", ""))
-            by_key.setdefault(key, set()).add(_fingerprint(rec))
+            by_key.setdefault(key, set()).add(fingerprint(rec))
     return {
         key: fps
         for key, fps in by_key.items()

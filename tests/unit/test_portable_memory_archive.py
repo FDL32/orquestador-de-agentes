@@ -41,6 +41,8 @@ from bus import memory_loader  # noqa: E402
 from bus.portable_memory_archive import (  # noqa: E402
     CorruptArchiveError,
     dedup_key,
+    fingerprint,
+    generate_stable_id,
     iter_archive_months,
     read_archive_observations,
 )
@@ -1504,3 +1506,57 @@ def test_057b_review_context_has_a_declared_budget(
         "el review recorta y NO lo declara: un recorte mudo en la puerta que "
         "decide APPROVE/CHANGES es el falso verde que este ticket corrige"
     )
+
+
+def test_generate_stable_id_is_idempotent_on_existing_id() -> None:
+    """WOT-2026-045e: un record que YA tiene `id` lo conserva TAL CUAL (no se
+    reemplaza). Es el requisito de identidad: una vez asignado, no cambia.
+
+    Mutation: si `generate_stable_id` ignorara el id existente y siempre
+    regenerara uno nuevo, esto fallaria -- RED.
+    """
+    record = {"id": "obs-ya-existente", "topic": "x", "signal": "y"}
+    assert generate_stable_id(record) == "obs-ya-existente"
+
+
+def test_generate_stable_id_derives_from_content_when_missing() -> None:
+    """WOT-2026-045e DoD (a): sin `id`, se deriva un id NO VACIO, estable
+    (mismo contenido -> mismo id en invocaciones repetidas) y con el prefijo
+    `obs-` (convergencia declarada con `migrate_observations._generate_stable_id`).
+    """
+    record = {"topic": "x", "signal": "y", "source_ticket": "WOT-2026-045e"}
+    first = generate_stable_id(dict(record))
+    second = generate_stable_id(dict(record))
+    assert first, "debe generar un id no vacio"
+    assert first.startswith("obs-"), f"formato esperado obs-<hash>: {first}"
+    assert first == second, "el mismo contenido debe producir el mismo id"
+
+
+def test_generate_stable_id_differs_for_distinct_content() -> None:
+    """Dos records con contenido DISTINTO bajo el mismo topic/source_ticket
+    deben recibir ids DISTINTOS -- es la propiedad que hace posible distinguir
+    el caso DoD (j) (ambos sin id, record_key colisiona, contenido distinto).
+    """
+    a = {"topic": "x", "source_ticket": "WOT-2026-045e", "signal": "senal A"}
+    b = {"topic": "x", "source_ticket": "WOT-2026-045e", "signal": "senal B"}
+    assert generate_stable_id(a) != generate_stable_id(b)
+
+
+def test_fingerprint_ignores_the_id_field() -> None:
+    """La huella de contenido NO depende de `id`: dos records con el mismo
+    contenido util pero `id` distinto (o uno sin id) deben producir la MISMA
+    huella -- es lo que permite comparar "identico vs distinto" sin que la
+    propia asignacion de id contamine la comparacion.
+    """
+    with_id = {"id": "obs-aaa", "topic": "x", "signal": "misma senal"}
+    without_id = {"topic": "x", "signal": "misma senal"}
+    assert fingerprint(with_id) == fingerprint(without_id)
+
+
+def test_fingerprint_detects_distinct_content_under_the_same_key() -> None:
+    """La huella SI distingue contenido distinto bajo topic/source_ticket
+    iguales (el caso que el fail-closed de reconcile_portable_memory.py debe
+    cazar)."""
+    a = {"topic": "x", "source_ticket": "t", "signal": "senal A"}
+    b = {"topic": "x", "source_ticket": "t", "signal": "senal B"}
+    assert fingerprint(a) != fingerprint(b)
