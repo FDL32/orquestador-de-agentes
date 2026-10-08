@@ -950,6 +950,51 @@ class TestMotorWorktreeRoot:
         assert blocked is True
         assert "fuera del repo" in reason
 
+    def test_self_pointing_link_does_not_shadow_sibling_worktree(self, monkeypatch):
+        """WOT-2026-NOTICKET (P5): a self-referential motor_destination_link.json
+        must not prevent Source 4 from reaching a real sibling worktree.
+
+        Before: ``canonical`` (``.git`` DIRECTORY, like a real repo_destino
+        session root) carries its OWN ``motor_destination_link.json`` whose
+        ``destination_root`` points back at ``canonical`` itself -- the real
+        layout measured on disk (the destino's link always names itself, since
+        the link's job is "which destino does this motor serve", and here
+        ``repo_root`` already IS the destino, not the motor). Before the fix,
+        Source 2 (``_resolve_extra_root``) resolved this self-pointing link and
+        returned ``repo_root`` itself as ``extra_root``, so ``_is_within_repo``
+        was trivially False and the write was blocked -- Source 4 was never
+        even tried, even though it alone would have accepted a sibling
+        worktree (see ``test_sibling_worktree_allowed``, which only covers a
+        session root that is ITSELF a worktree, never a canonical checkout
+        with a self-pointing link).
+        During: a real sibling worktree (``wt_flight``, ``.git`` FILE with a
+        valid two-way binding) is the target, with ``AGENT_PROJECT_ROOT``
+        unset so Source 1 does not short-circuit the comparison.
+        After (fixed): Source 2 now skips a ``destination_root`` equal to
+        ``repo_root`` (it resolves to nothing new) and falls through to
+        Source 4, which accepts the sibling worktree.
+        """
+        link = self.canonical / ".agent" / "config" / "motor_destination_link.json"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.write_text(
+            json.dumps(
+                {
+                    "motor_root": str(self.canonical),
+                    "destination_root": str(self.canonical),
+                }
+            ),
+            encoding="utf-8",
+        )
+        flight = self._make_worktree("wt_self_link_flight")
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        blocked, reason = _is_protected_path(
+            str(flight / "src" / "main.py"),
+            DEFAULT_ALLOWLIST,
+            {},
+            repo_root=self.canonical,
+        )
+        assert blocked is False, reason
+
 
 class TestEnvIsolation:
     """WOT-2026-021r: teardown_method must RESTORE a pre-existing

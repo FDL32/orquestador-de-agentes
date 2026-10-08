@@ -292,6 +292,13 @@ def _resolve_extra_root(repo_root: Path, path_obj: Path | None = None) -> Path |
     from ``<repo_root>/.agent/config/motor_destination_link.json`` -- same
     fail-safe read pattern as ``resolve_guard_paths`` in
     ``claude_guard_entry.py`` and ``motor_checkpoint.py::resolve_destino_root``.
+    A self-pointing link (``destination_root == repo_root``, the real shape
+    when ``repo_root`` already IS the destino rather than the motor) resolves
+    to nothing NEW, so it is skipped and the chain falls through to Source
+    3/4 instead of returning early with a no-op root -- without this, a
+    destino session could never reach a sibling worktree of ITSELF, because
+    its own link (which always names itself) would short-circuit before
+    Source 4 is ever tried.
     Source 3 (WOT-2026-020a, fallback after source 2): walk the target path's
     ancestors looking for a ``motor_destination_link.json`` whose ``motor_root``
     resolves to ``repo_root`` -- the real topology where the link lives in the
@@ -332,7 +339,12 @@ def _resolve_extra_root(repo_root: Path, path_obj: Path | None = None) -> Path |
             candidate = Path(destination_root).resolve()
         except (OSError, ValueError):
             candidate = None
-        if candidate is not None and candidate.exists() and _has_repo_marker(candidate):
+        if (
+            candidate is not None
+            and candidate != repo_root
+            and candidate.exists()
+            and _has_repo_marker(candidate)
+        ):
             return candidate
 
     if path_obj is not None:
