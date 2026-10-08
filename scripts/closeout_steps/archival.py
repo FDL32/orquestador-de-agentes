@@ -132,6 +132,152 @@ def step_archive_collaboration(
         )
 
 
+def step_archive_arranques(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    run_script_fn,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Run archive_arranques.py --json (WOT-2026-089p: renovacion periodica).
+
+    Antes de este step, el archivado de `orchestrator_pipeline/arranques/`
+    (DEC-067L-001) era PURAMENTE MANUAL -- ningun camino que corra solo lo
+    invocaba, solo `check_arranques_index` validaba la consistencia de lo que
+    YA estaba en `_archive/`. Medido 2026-10-08: 51/101 ficheros NO-CITADOs
+    acumulados sin mover desde la unica corrida real (2026-09-10).
+
+    Se cablea aqui, al CIERRE de sesion, no en `prepush_check` (que es
+    read-only por diseño) ni en cada commit (demasiado frecuente para una
+    operacion que compara contra TODO el historial de commits). El cierre es
+    tambien el momento en que el trabajo de la sesion YA deberia estar
+    commiteado, lo que hace a la guarda de `git status`/antiguedad de
+    `archive_arranques.py` doblemente segura: incluso si algo quedara sin
+    commitear, la guarda lo deja SKIPPED, nunca lo mueve.
+    """
+    if dry_run:
+        return step_result_cls(
+            name="archive_arranques",
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+    try:
+        result = run_script_fn(
+            "archive_arranques.py",
+            ["--project-root", str(project_root), "--json"],
+            project_root,
+            timeout=120,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return step_result_cls(
+            name="archive_arranques",
+            status="WARN",
+            detail=f"Archive arranques could not run: {exc}",
+        )
+    stdout = getattr(result, "stdout", None) or ""
+    stderr = getattr(result, "stderr", None) or ""
+    if result.returncode not in (0, 1):
+        return step_result_cls(
+            name="archive_arranques",
+            status="WARN",
+            detail=f"Archive arranques returned exit {result.returncode}: {stdout[:300]}",
+        )
+    if result.returncode == 1:
+        # ArchiveError (indice inconsistente, denominador 0, superficie de
+        # citacion ausente, git no en PATH): el script imprime a STDERR y no
+        # emite JSON en este camino (archive_arranques.py:main). No es una
+        # mutacion parcial -- `archive()` es todo-o-nada -- pero el operador
+        # debe ver el motivo real, no un generico.
+        return step_result_cls(
+            name="archive_arranques",
+            status="WARN",
+            detail=f"archive_arranques.py exit 1: {stderr.strip()[:300] or stdout[:300]}",
+        )
+    try:
+        import json as _json
+
+        report = _json.loads(stdout.strip().splitlines()[-1]) if stdout.strip() else {}
+    except (ValueError, IndexError):
+        report = {}
+    moved = len(report.get("moved", []))
+    skipped = len(report.get("skipped", []))
+    detail = (
+        f"denominator={report.get('denominator', '?')} moved={moved} "
+        f"skipped={skipped} (sucio o reciente, no tocado)"
+    )
+    return step_result_cls(
+        name="archive_arranques",
+        status="PASS",
+        detail=detail,
+    )
+
+
+def step_purge_arranques_archive(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    run_script_fn,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Run purge_arranques_archive.py --json (WOT-2026-089p: TTL de retencion).
+
+    Decision del usuario (2026-10-08): lo que lleva TTL_DAYS (90, borde superior
+    de "dos o tres meses") en `_archive/` SIN re-citacion se BORRA, no solo se
+    mueve -- excepcion deliberada a `DEC-067L-001` para la segunda mitad del
+    ciclo de vida (ver docstring de `purge_arranques_archive.py`). Corre DESPUES
+    de `step_archive_arranques` en el mismo cierre: solo tiene sentido purgar
+    tras haber archivado lo nuevo.
+    """
+    if dry_run:
+        return step_result_cls(
+            name="purge_arranques_archive",
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+    try:
+        result = run_script_fn(
+            "purge_arranques_archive.py",
+            ["--project-root", str(project_root), "--json"],
+            project_root,
+            timeout=120,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return step_result_cls(
+            name="purge_arranques_archive",
+            status="WARN",
+            detail=f"Purge arranques archive could not run: {exc}",
+        )
+    stdout = getattr(result, "stdout", None) or ""
+    stderr = getattr(result, "stderr", None) or ""
+    if result.returncode != 0:
+        return step_result_cls(
+            name="purge_arranques_archive",
+            status="WARN",
+            detail=(
+                f"purge_arranques_archive.py exit {result.returncode}: "
+                f"{stderr.strip()[:300] or stdout[:300]}"
+            ),
+        )
+    try:
+        import json as _json
+
+        report = _json.loads(stdout.strip().splitlines()[-1]) if stdout.strip() else {}
+    except (ValueError, IndexError):
+        report = {}
+    purged = len(report.get("purged", []))
+    recited = len(report.get("recited", []))
+    detail = (
+        f"ttl_days={report.get('ttl_days', '?')} "
+        f"denominator={report.get('denominator', '?')} purged={purged} "
+        f"recited_protected={recited}"
+    )
+    return step_result_cls(
+        name="purge_arranques_archive",
+        status="PASS",
+        detail=detail,
+    )
+
+
 def step_archive_execution_log(
     project_root: Path,
     dry_run: bool,

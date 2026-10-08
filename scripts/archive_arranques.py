@@ -28,15 +28,28 @@ SUBSTRING en la union de las tres superficies. Medido 2026-09-10: stem substring
 (un falso-CITADO solo conserva de mas; el falso-NO-CITADO moveria evidencia citada),
 y es la que el contrato fija.
 
+GUARDA DE TRABAJO ACTIVO (WOT-2026-089p, 2026-10-08): un NO-CITADO no es sinonimo de
+MUERTO. Medido en vivo: un bucle de gobierno de la MISMA sesion que revela este hueco
+clasifico como NO-CITADO el prompt de arranque ACTIVO (`ARRANQUE_closeout_preflight_v3.md`)
+y una propuesta recien aprobada (`PROPUESTA_..._v4_familias.md`) -- ninguno de los dos
+esta citado desde backlog/commits todavia porque la sesion que los escribio no habia
+cerrado. Cablear la ejecucion periodica (ver abajo) sin esta guarda archivaria trabajo en
+curso. Un NO-CITADO solo es ARCHIVABLE si pasa AMBAS comprobaciones:
+  (a) no aparece en `git status --porcelain` del `project_root` (ni untracked ni modified)
+  (b) su mtime es mas antiguo que `MIN_AGE_DAYS` (ver abajo)
+Fallar (a) o (b) lo deja en una tercera categoria, SKIPPED (no CITADO, no ARCHIVADO), que
+se imprime por separado para que el operador vea que sigue en la raiz y por que.
+
 Docstring-as-spec:
   Before: `project_root` es un repo_destino con `orchestrator_pipeline/arranques/`
-      y, para el `git log`, un arbol git con `.git` PROPIO (hermetico: sin el, el
-      walk-up alcanzaria otro repo). `git` debe estar en PATH.
+      y, para el `git log`/`git status`, un arbol git con `.git` PROPIO (hermetico:
+      sin el, el walk-up alcanzaria otro repo). `git` debe estar en PATH.
   During: lee las dos colas publicadas (read-only), ejecuta `git -C <root> log`
       (fail-closed: sin git o con rc != 0 ABORTA, porque un censo incompleto
-      moveria evidencia). Clasifica y, salvo `--dry-run`, MUEVE los no citados a
-      `_archive/` y anade su fila al INDEX.
-  After: devuelve un reporte con el DENOMINADOR y las dos listas. `main()` publica
+      moveria evidencia). Clasifica en CITADO / SKIPPED (sucio o reciente) / ARCHIVABLE
+      y, salvo `--dry-run`, MUEVE solo los ARCHIVABLE a `_archive/` y anade su fila al
+      INDEX.
+  After: devuelve un reporte con el DENOMINADOR y las tres listas. `main()` publica
       el denominador SIEMPRE (un `exit 0` con denominador 0 es verde vacuo) y
       devuelve 0 con exito, 1 si `archive()` detecta un INDEX inconsistente, 2 si
       la invocacion no midio (falta el tree/dir, git ausente).
@@ -50,6 +63,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -72,6 +86,11 @@ MOTIVO = (
     "no citado desde backlog.md vivo, _archive/backlog_done.md ni mensajes de "
     "commit publicados (DEC-067L-001)"
 )
+# WOT-2026-089p: un NO-CITADO con menos de MIN_AGE_DAYS de antiguedad se trata como
+# trabajo en curso, no como historico. 7 dias cubre con margen una sesion larga que se
+# retome tras el fin de semana sin haber cerrado todavia.
+MIN_AGE_DAYS = 7
+MIN_AGE_SECONDS = MIN_AGE_DAYS * 86400
 _BACKLOG_SURFACES = (
     Path(".agent") / "collaboration" / "backlog.md",
     Path(".agent") / "collaboration" / "_archive" / "backlog_done.md",
@@ -95,12 +114,19 @@ class ArchiveError(RuntimeError):
 
 @dataclass
 class ArchiveReport:
-    """Resultado de una corrida (dry-run o real), con el denominador publicado."""
+    """Resultado de una corrida (dry-run o real), con el denominador publicado.
+
+    `uncited` = `skipped` + `archivable` (WOT-2026-089p): se conserva por
+    compatibilidad con consumidores que solo distinguian CITADO/NO-CITADO antes de
+    la guarda de trabajo activo; el desglose nuevo vive en los dos campos separados.
+    """
 
     arranques_dir: Path
     denominator: int
     cited: list[str] = field(default_factory=list)
     uncited: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    archivable: list[str] = field(default_factory=list)
     moved: list[str] = field(default_factory=list)
     dry_run: bool = False
     index_path: Path | None = None
@@ -111,6 +137,8 @@ class ArchiveReport:
             "denominator": self.denominator,
             "cited": list(self.cited),
             "uncited": list(self.uncited),
+            "skipped": list(self.skipped),
+            "archivable": list(self.archivable),
             "moved": list(self.moved),
             "dry_run": self.dry_run,
             "index_path": str(self.index_path) if self.index_path else None,
@@ -190,14 +218,86 @@ def load_citation_blob(project_root: Path) -> str:
     return "\n".join(parts)
 
 
-def classify(arranques_dir: Path, blob: str) -> tuple[list[Path], list[Path]]:
-    """(citados, no citados) por SUBSTRING del stem en el blob de superficies."""
+def _git_dirty_names(project_root: Path) -> set[str]:
+    """Basenames con cambios sin commitear (untracked o modified) en `project_root`.
+
+    WOT-2026-089p: fail-closed igual que `_git_log_surface` -- un censo de "sucio"
+    incompleto moveria trabajo en curso, que es el riesgo que esta guarda existe para
+    cerrar. `git status --porcelain` da rutas relativas al repo; solo nos importa el
+    basename porque `root_files` ya acota a una unica carpeta.
+
+    `-uall` es OBLIGATORIO: sin el, un directorio untracked ENTERO (ej. la primera
+    vez que `orchestrator_pipeline/` aparece sin nada previamente tracked dentro) se
+    colapsa en UNA linea `?? orchestrator_pipeline/` -- el basename resultante
+    ("orchestrator_pipeline") nunca coincide con el de ningun arranque, y la guarda
+    quedaria ciega ante EXACTAMENTE el caso que debe cazar (medido con un test que
+    fallaba en falso-limpio antes de este flag).
+    """
+    git = shutil.which("git")
+    if not git:
+        raise ArchiveError(
+            "git no esta en PATH: no se puede leer el estado sucio; se aborta para "
+            "no mover trabajo en curso."
+        )
+    proc = subprocess.run(  # noqa: S603
+        [git, "-C", str(project_root), "status", "--porcelain", "-uall"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise ArchiveError(
+            f"git status fallo en {project_root} (rc={proc.returncode}): "
+            f"{proc.stderr.strip()[:200]}. Se aborta: no se puede confirmar que un "
+            "NO-CITADO este limpio."
+        )
+    names: set[str] = set()
+    for line in proc.stdout.splitlines():
+        # Formato porcelain: "XY ruta" o "XY ruta -> ruta_nueva" (renames). Tomamos
+        # el ultimo componente de cada ruta que aparezca en la linea.
+        rest = line[3:] if len(line) > 3 else line
+        for part in rest.split(" -> "):
+            part = part.strip().strip('"')
+            if part:
+                names.add(Path(part).name)
+    return names
+
+
+def classify(
+    arranques_dir: Path,
+    blob: str,
+    *,
+    dirty_names: set[str] | None = None,
+    now: float | None = None,
+    min_age_seconds: int = MIN_AGE_SECONDS,
+) -> tuple[list[Path], list[Path], list[Path]]:
+    """(citados, skipped, archivables).
+
+    `dirty_names` es opcional por compatibilidad con llamadas read-only que no
+    necesitan la guarda (p.ej. un censo que solo cuenta CITADO/NO-CITADO sin
+    pretender mover nada). Cuando es `None`, NINGUN NO-CITADO pasa a `archivables`
+    (todos quedan `skipped`) -- fail-closed: sin saber que esta sucio, no se mueve
+    nada, nunca se asume limpio por omision.
+    """
     cited: list[Path] = []
-    uncited: list[Path] = []
+    skipped: list[Path] = []
+    archivables: list[Path] = []
+    reference_time = now if now is not None else time.time()
     for path in root_files(arranques_dir):
         key = path.stem if path.suffix == ".md" else path.name
-        (cited if key in blob else uncited).append(path)
-    return cited, uncited
+        if key in blob:
+            cited.append(path)
+            continue
+        if dirty_names is None or path.name in dirty_names:
+            skipped.append(path)
+            continue
+        age_seconds = reference_time - path.stat().st_mtime
+        if age_seconds < min_age_seconds:
+            skipped.append(path)
+            continue
+        archivables.append(path)
+    return cited, skipped, archivables
 
 
 def append_index_rows(index_path: Path, rows: tuple[str, ...]) -> None:
@@ -210,23 +310,40 @@ def append_index_rows(index_path: Path, rows: tuple[str, ...]) -> None:
 
 
 def archive(
-    project_root: Path, *, dry_run: bool = False, today: str | None = None
+    project_root: Path,
+    *,
+    dry_run: bool = False,
+    today: str | None = None,
+    min_age_seconds: int = MIN_AGE_SECONDS,
 ) -> ArchiveReport:
-    """Clasifica y (salvo dry-run) mueve los NO citados, indexa y verifica."""
+    """Clasifica y (salvo dry-run) mueve los ARCHIVABLE, indexa y verifica.
+
+    WOT-2026-089p: ya NO mueve todo lo NO-CITADO. Un NO-CITADO sucio (en `git
+    status --porcelain`) o reciente (`mtime` dentro de `min_age_seconds`) se
+    reporta como `skipped`, no como `archivable` -- la guarda que evita mover
+    trabajo en curso de una sesion todavia abierta. `min_age_seconds` es
+    inyectable para tests (fixtures que commitean justo antes de llamar y cuyo
+    `mtime` es "ahora" por construccion); el CLI real siempre usa el default.
+    """
     project_root = Path(project_root)
     arranques_dir = project_root / ARRANQUES_REL
     files = root_files(arranques_dir)
     blob = load_citation_blob(project_root)
-    cited, uncited = classify(arranques_dir, blob)
+    dirty_names = _git_dirty_names(project_root)
+    cited, skipped, archivable = classify(
+        arranques_dir, blob, dirty_names=dirty_names, min_age_seconds=min_age_seconds
+    )
 
     report = ArchiveReport(
         arranques_dir=arranques_dir,
         denominator=len(files),
         cited=[p.name for p in cited],
-        uncited=[p.name for p in uncited],
+        uncited=[p.name for p in skipped] + [p.name for p in archivable],
+        skipped=[p.name for p in skipped],
+        archivable=[p.name for p in archivable],
         dry_run=dry_run,
     )
-    if dry_run or not uncited:
+    if dry_run or not archivable:
         return report
 
     archive_dir = arranques_dir / ARCHIVE_DIRNAME
@@ -243,7 +360,7 @@ def archive(
     # de excepcion. Validar primero hace la operacion todo-o-nada por construccion.
     plan: list[tuple[Path, Path, str]] = []
     collisions: list[str] = []
-    for path in uncited:
+    for path in archivable:
         destination = archive_dir / path.name
         if destination.exists():
             collisions.append(path.name)
@@ -283,12 +400,15 @@ def _print_report(report: ArchiveReport, *, as_json: bool) -> None:
     )
     print(
         f"[arranques-archive] CITADOS: {len(report.cited)} | "
-        f"NO CITADOS: {len(report.uncited)}"
+        f"NO CITADOS: {len(report.uncited)} (SKIPPED: {len(report.skipped)} | "
+        f"ARCHIVABLE: {len(report.archivable)})"
     )
     for name in report.cited:
-        print(f"  CITADO    {name}")
-    for name in report.uncited:
-        print(f"  NO-CITADO {name}")
+        print(f"  CITADO     {name}")
+    for name in report.skipped:
+        print(f"  SKIPPED    {name}  (sucio o <{MIN_AGE_DAYS}d, trabajo en curso)")
+    for name in report.archivable:
+        print(f"  ARCHIVABLE {name}")
     if not report.dry_run:
         print(
             f"[arranques-archive] movidos: {len(report.moved)} -> {report.index_path}"

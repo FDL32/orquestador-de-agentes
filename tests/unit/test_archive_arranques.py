@@ -163,7 +163,7 @@ def test_uncited_file_moves_with_identical_sha256(tmp_path):
     root_file = _arranques(tmp_path) / "ARRANQUE_libre.md"
     before = _sha256(root_file)
 
-    report = aa.archive(tmp_path)
+    report = aa.archive(tmp_path, min_age_seconds=0)
 
     assert report.moved == ["ARRANQUE_libre.md"]
     assert not root_file.exists(), "el no citado debe DESAPARECER de la raiz"
@@ -191,7 +191,7 @@ def test_negative_control_commit_cited_file_is_not_moved(tmp_path):
     )
     assert empty.returncode == 0, empty.stderr
 
-    report = aa.archive(tmp_path)
+    report = aa.archive(tmp_path, min_age_seconds=0)
 
     assert "ARRANQUE_referenciado.md" in report.cited
     assert not report.moved
@@ -205,7 +205,7 @@ def test_index_has_one_row_per_moved_file(tmp_path):
     _init_repo(tmp_path)
     _commit_all(tmp_path, "init")
 
-    report = aa.archive(tmp_path, today="2026-09-10")
+    report = aa.archive(tmp_path, today="2026-09-10", min_age_seconds=0)
 
     index = _arranques(tmp_path) / "_archive" / "INDEX.md"
     rows = cai.parse_index_filenames(index)
@@ -278,7 +278,7 @@ def test_archive_flow_enforces_index_consistency(tmp_path):
     _commit_all(tmp_path, "init")
 
     with pytest.raises(aa.ArchiveError):
-        aa.archive(tmp_path)
+        aa.archive(tmp_path, min_age_seconds=0)
 
 
 # ------------------------------------------------------------------ seguridad de movimiento
@@ -292,7 +292,7 @@ def test_archive_refuses_to_overwrite_existing_history(tmp_path):
     _commit_all(tmp_path, "init")
 
     with pytest.raises(aa.ArchiveError):
-        aa.archive(tmp_path)
+        aa.archive(tmp_path, min_age_seconds=0)
     # El historico NO se sobrescribe.
     assert (archive / "ARRANQUE_libre.md").read_text(encoding="utf-8") == "ya existia\n"
 
@@ -317,7 +317,7 @@ def test_collision_late_in_the_batch_leaves_no_file_moved(tmp_path):
     _commit_all(tmp_path, "init")
 
     with pytest.raises(aa.ArchiveError):
-        aa.archive(tmp_path)
+        aa.archive(tmp_path, min_age_seconds=0)
 
     # El historico previo sigue intacto...
     assert (archive / "ARRANQUE_zzz.md").read_text(encoding="utf-8") == "ya existia\n"
@@ -394,3 +394,47 @@ def test_index_in_root_is_not_archivable(tmp_path):
 
     assert report.denominator == 1, "INDEX.md no entra en el denominador"
     assert report.uncited == ["ARRANQUE_a.md"]
+
+
+# ------------------------------------------------------------------ guarda de trabajo activo (WOT-2026-089p)
+def test_dirty_uncited_file_is_skipped_not_archived(tmp_path):
+    """Rojo de WOT-2026-089p: un NO-CITADO sin commitear NUNCA se mueve.
+
+    Caso real que motiva la guarda: un bucle de gobierno clasifico como
+    NO-CITADO el prompt de arranque ACTIVO de la sesion, que todavia no se
+    habia commiteado. Sin esta guarda, `archive()` lo moveria igual que a
+    cualquier otro historico.
+    """
+    _make_project(tmp_path, {})
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init vacio")
+    # Se crea DESPUES del commit inicial -> queda untracked (sucio).
+    (_arranques(tmp_path) / "ARRANQUE_en_curso.md").write_text(
+        "trabajo activo\n", encoding="utf-8"
+    )
+
+    report = aa.archive(tmp_path, min_age_seconds=0)
+
+    assert report.moved == []
+    assert "ARRANQUE_en_curso.md" in report.skipped
+    assert "ARRANQUE_en_curso.md" not in report.archivable
+    assert (_arranques(tmp_path) / "ARRANQUE_en_curso.md").exists()
+
+
+def test_fresh_uncited_file_is_skipped_until_min_age(tmp_path):
+    """Rojo de WOT-2026-089p: un NO-CITADO COMMITEADO pero reciente tampoco se mueve.
+
+    Cubre el caso que la guarda de `git status` sola NO resuelve: un fichero ya
+    commiteado (limpio) pero escrito hace minutos, que sigue siendo la
+    referencia activa de la sesion en curso.
+    """
+    _make_project(tmp_path, {"ARRANQUE_reciente.md": "recien commiteado\n"})
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+
+    report = aa.archive(tmp_path)  # min_age_seconds=MIN_AGE_SECONDS (default real)
+
+    assert report.moved == []
+    assert "ARRANQUE_reciente.md" in report.skipped
+    assert "ARRANQUE_reciente.md" not in report.archivable
+    assert (_arranques(tmp_path) / "ARRANQUE_reciente.md").exists()

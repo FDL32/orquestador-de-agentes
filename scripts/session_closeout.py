@@ -48,10 +48,12 @@ from bus.state_machine import terminal_state_strings  # noqa: E402
 from bus.ticket_id import TICKET_ID_PATTERN  # noqa: E402
 from scripts.closeout_steps.archival import (  # noqa: E402
     _can_prove_close as _archival_can_prove_close,
+    step_archive_arranques as _step_archive_arranques_impl,
     step_archive_collaboration as _step_archive_collaboration_impl,
     step_archive_event_bus as _step_archive_event_bus_impl,
     step_archive_execution_log as _step_archive_execution_log_impl,
     step_archive_manager_feedback as _step_archive_manager_feedback_impl,
+    step_purge_arranques_archive as _step_purge_arranques_archive_impl,
 )
 from scripts.closeout_steps.gates import (  # noqa: E402
     step_local_audit as _step_local_audit_impl,
@@ -1161,6 +1163,26 @@ def _step_memory_health(project_root: Path) -> StepResult:
 def _step_archive_collaboration(project_root: Path, dry_run: bool) -> StepResult:
     """Run archive_collaboration_artifacts.py."""
     return _step_archive_collaboration_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
+
+
+def _step_archive_arranques(project_root: Path, dry_run: bool) -> StepResult:
+    """Run archive_arranques.py (WOT-2026-089p: renovacion periodica cableada)."""
+    return _step_archive_arranques_impl(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=StepResult,
+    )
+
+
+def _step_purge_arranques_archive(project_root: Path, dry_run: bool) -> StepResult:
+    """Run purge_arranques_archive.py (WOT-2026-089p: TTL de retencion)."""
+    return _step_purge_arranques_archive_impl(
         project_root,
         dry_run,
         run_script_fn=_run_script,
@@ -2455,6 +2477,8 @@ def run_closeout(
     )
     report.steps.append(_step_cleanup_builder_session(project_root, dry_run))
     report.steps.append(_step_archive_collaboration(project_root, dry_run))
+    report.steps.append(_step_archive_arranques(project_root, dry_run))
+    report.steps.append(_step_purge_arranques_archive(project_root, dry_run))
     report.steps.append(_step_rotate_review_queue(project_root, dry_run))
     report.steps.append(_step_archive_manager_feedback(project_root, dry_run, events))
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -45,6 +46,9 @@ def _table_cells(line: str) -> list[str] | None:
     if not stripped.startswith("|"):
         return None
     return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+_PURGED_MOTIVO_RE = re.compile(r"^PURGADO \d{4}-\d{2}-\d{2}: ")
 
 
 def parse_index_filenames(index_path: Path) -> list[str]:
@@ -78,6 +82,31 @@ def parse_index_filenames(index_path: Path) -> list[str]:
     return names
 
 
+def _purged_filenames(index_path: Path) -> set[str]:
+    """Nombres cuya fila lleva el prefijo `PURGADO <fecha>:` en la celda Motivo.
+
+    WOT-2026-089p: una fila PURGADO describe un fichero que `purge_arranques_archive.py`
+    BORRO deliberadamente tras su TTL (DEC-067L-001 ya no aplica a esa fila: la
+    excepcion de borrado esta documentada, no es un desajuste). La celda Motivo es la
+    CUARTA (indice 3); una fila con menos de 4 celdas no puede ser PURGADO.
+    """
+    if not index_path.exists():
+        return set()
+    purged: set[str] = set()
+    for line in index_path.read_text(encoding="utf-8").splitlines():
+        cells = _table_cells(line)
+        if not cells or len(cells) != 4:
+            continue
+        first = cells[0]
+        if not first or first.lower() == _HEADER_FIRST_CELL:
+            continue
+        if set(first) <= {"-", ":", " "}:
+            continue
+        if _PURGED_MOTIVO_RE.match(cells[3]):
+            purged.add(first)
+    return purged
+
+
 def check_index_consistency(arranques_dir: Path) -> list[str]:
     """Hallazgos de cuadre entre `_archive/` y su `INDEX.md` (AMBAS direcciones).
 
@@ -87,6 +116,13 @@ def check_index_consistency(arranques_dir: Path) -> list[str]:
         dos conjuntos.
     After: lista ordenada de hallazgos, uno por desajuste, en las dos direcciones.
         Vacia = cuadra. Read-only.
+
+    EXCEPCION (WOT-2026-089p): una fila ausente de disco cuyo Motivo lleva el
+    prefijo `PURGADO <fecha>:` NO es un hallazgo -- es el rastro deliberado de
+    `purge_arranques_archive.py`, que borra el fichero pero EDITA la fila en vez
+    de eliminarla (para no perder la traza de que existio). Sin esta excepcion,
+    cablear la purga en el cierre haria que el guard siguiente la reportara como
+    desajuste real.
     """
     archive = arranques_dir / ARCHIVE_DIRNAME
     if not archive.is_dir():
@@ -94,7 +130,9 @@ def check_index_consistency(arranques_dir: Path) -> list[str]:
     on_disk = sorted(
         p.name for p in archive.iterdir() if p.is_file() and p.name != INDEX_FILENAME
     )
-    rows = parse_index_filenames(archive / INDEX_FILENAME)
+    index_path = archive / INDEX_FILENAME
+    rows = parse_index_filenames(index_path)
+    purged = _purged_filenames(index_path)
     row_set = set(rows)
     disk_set = set(on_disk)
 
@@ -108,7 +146,7 @@ def check_index_consistency(arranques_dir: Path) -> list[str]:
         f"{ARCHIVE_DIRNAME}/{INDEX_FILENAME} nombra {name!r}, ausente de "
         f"{ARCHIVE_DIRNAME}/"
         for name in dict.fromkeys(rows)
-        if name not in disk_set
+        if name not in disk_set and name not in purged
     )
     return findings
 
