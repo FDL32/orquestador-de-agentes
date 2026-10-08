@@ -11,39 +11,47 @@ not: NO es orchestrator_autonomous_ticket_batch.md (ese exige DAG fresco de /bac
 -->
 
 contract_id: cid-manager-orchestrator-loop-backlog-v1
-source_of_truth: prompts/manager_orchestrator_loop.md (nucleo) para las reglas de
-validez 1/2/4/6 (seccion 4) y el esquema de metricas M3 (seccion 6 de este prompt,
-que REUSA el `SCHEMA: adjudicacion` del nucleo). Este prompt es `source_of_truth`
-SOLO para lo que le es propio: el vocabulario de serie/ticket (seccion 1), la
-ausencia de votacion por lentes (seccion 2), los 6 pasos del bucle ligero
-(seccion 5), y las EXCEPCIONES explicitamente declaradas que NO se remiten: la
-regla de validez 3 (contador GLOBAL de reintentos por ticket, corregida por bucle
-de gobierno real) y la regla de validez 5 (hueco N8 declarado, propio de este
-bucle). **Las secciones donde el objeto del hijo difiere del nucleo (regla 3,
-regla 5) se mantienen INTEGRAS en este prompt y NO se remiten al nucleo** bajo
-ninguna circunstancia; cualquier redaccion futura que elimine esta excepcion
-reintroduce el riesgo de perder esas correcciones (adoptado tras bucle de
-gobierno con 5 lentes independientes, 2026-10-08).
+source_of_truth: este prompt para TODAS las reglas de validez de la seccion 4
+(1-6) -- son propias del objeto "serie de tickets" y NO tienen contraparte 1:1
+en el nucleo (verificado letra por letra, ver nota de correccion abajo). El
+schema de metricas (seccion 6) SI remite al `SCHEMA: adjudicacion` del nucleo
+(mismos campos `required`, mismo criterio de descarte sin evidencia), con la
+diferencia de 3 campos declarada explicitamente ahi.
 nucleo_referenciado: prompts/manager_orchestrator_loop.md (contract_id
-cid-manager-orchestrator-loop-v1) -- ESTE prompt REMITE a su ESTRUCTURA y REUSA su
-vocabulario/schemas donde el objeto coincide (ver seccion 0); donde el objeto
-difiere (tickets del backlog, no planes/estrategias) o donde existe una
-correccion local (regla 3, regla 5), este prompt declara la seccion como
-ESPECIALIZACION explicita y la mantiene completa, sin redefinir en paralelo lo
-que ya remite.
+cid-manager-orchestrator-loop-v1) -- comparte VOCABULARIO y ESTRUCTURA de
+secciones (ver seccion 0) donde el objeto coincide; el schema de metricas
+remite literalmente. Las reglas de validez NO remiten: su objeto (series de
+tickets con reconciliacion, congelado, BLOCKED+M3, condicion de terminacion) no
+tiene equivalente numerado en el nucleo (que opera sobre identidades de lentes,
+minimos de votos e insuficiencia).
 
 Origen: sesion 2026-10-08, verificado con bucle de gobierno real (Codex BA05 +
 2 lentes `nan` con filesystem real via Kilo headless), 3/3 veredictos `ADOPTAR CON
 CAMBIOS` convergentes en que faltaban reglas de parada explicitas; reestructurado
 despues para copiar el esqueleto del nucleo en vez de una adaptacion ligera.
-**Revision posterior (sesion 2026-10-08, bucle de gobierno DESIGN_REVIEW con 5
-lentes independientes -- nan/qwen y nan/gemma con filesystem real via Kilo,
-groq/qwen, nvidia/nemotron y cohere/command sin filesystem -- 5/5 ADOPTAR CON
-CAMBIOS): este prompt REDECLARABA integramente las reglas de validez 1/2/4/6 y el
-schema de metricas del nucleo en vez de REMITIR, violando el principio "skill
-apunta, prompt gobierna" (AGENTS.md, X-09) un nivel arriba del caso que esa norma
-cubria. Corregido aqui: las secciones compartidas REMITEN; las EXCEPCIONES (regla
-3, regla 5) permanecen explicitas.
+
+**CORRECCION (sesion 2026-10-08, MANAGER_REVIEW sobre el commit `08d2a2c`, lente
+nan/deepseek-v4-flash con filesystem real, verificada letra por letra contra el
+nucleo):** un bucle de gobierno DESIGN_REVIEW previo (5 lentes independientes,
+mismo dia) adjudico que las reglas 1/2/4/6 de esta seccion "redeclaraban"
+integramente el texto del nucleo y debian REMITIR en vez de redeclarar. **Esa
+premisa era FALSA y ninguna de las 5 lentes la verifico contra el contenido
+real**: las reglas 1/2/4/6 del NUCLEO (`manager_orchestrator_loop.md` seccion 4)
+tratan de identidades/claves de lentes, exclusiones de conteo, minimos por tipo
+de entrega e insuficiencia -- NINGUNA menciona congelar una serie, reconciliar,
+`BLOCKED`+M3 ni condicion de terminacion por lista recorrida, que es lo que las
+reglas 1/2/4/6 de ESTE prompt contienen. La correspondencia solo existia por
+COINCIDENCIA DE NUMERO DE POSICION en una lista, no por identidad de contenido
+-- el mismo patron que `obs-premise-cited-from-code-not-reasoned` (memoria,
+2026-07-15) advierte: una premisa razonada por semejanza estructural, nunca
+citada comparando el texto real. La aplicacion de esa adjudicacion (commit
+`08d2a2c`) sustituyo el texto operativo de las 4 reglas por una remision vacia
+y dejo 2 referencias colgantes en la seccion 5 (citaba "regla de validez 1" y
+"regla de validez 6" como si siguieran conteniendo ese contenido). **Revertido
+aqui**: las reglas 1/2/4/6 recuperan su texto completo original. Solo la
+seccion 6 (schema de metricas) remite de verdad al nucleo, porque ESA remision
+SI se verifico contra el `SCHEMA: adjudicacion` real (mismos campos, mismo
+criterio) antes de aplicarse.
 
 ## 0.pre Como arrancar (anti-exploracion; adoptado tras bucle de gobierno 2026-10-08)
 
@@ -178,16 +186,23 @@ generico del nucleo, porque este prompt ya es especifico de `orquestador_de_agen
 
 ## 4. Reglas de validez del bucle
 
-Las reglas 1, 2, 4 y 6 de esta seccion REMITEN al nucleo (`manager_orchestrator_loop.md`
-seccion 4, reglas de validez 1-7) -- aplican IGUAL, sin redeclaracion de texto: la
-regla de congelar la serie al filtrar, la de reconciliar antes de procesar, la de
-que un estado terminal escribe su entrada de metrica antes de avanzar, y la
-condicion de terminacion por lista completa recorrida. **Las reglas 3 y 5 son
-EXCEPCIONES propias de este bucle, NO remitidas, porque el objeto (tickets con
-reintentos de Contract Formation/Review) no tiene contraparte en el nucleo
-(que opera sobre planes/estrategias, no sobre contadores de reintento de
-ticket):**
+**Las 6 reglas de esta seccion son PROPIAS de este bucle (source_of_truth: este
+prompt).** Ninguna remite al nucleo: verificado letra por letra que las reglas
+1/2/4/6 del nucleo (`manager_orchestrator_loop.md` seccion 4) tratan de
+identidades/claves de lentes, exclusiones de conteo, minimos por tipo de entrega
+e insuficiencia -- ninguna menciona congelar una serie, reconciliar, `BLOCKED`
+o condicion de terminacion. La correspondencia de NUMERO entre ambas secciones
+4 es coincidencia posicional, no identidad de contenido (correccion tras
+MANAGER_REVIEW con lente nan/deepseek-v4-flash, 2026-10-08; ver nota en el
+frontmatter).
 
+1. **La serie se CONGELA al filtrar (paso 1 de la seccion 5).** Tickets nuevos que
+   aparezcan en el backlog mientras el bucle corre NO entran en esta iteracion --
+   quedan para la siguiente pasada. (a) Sin esto, "hasta agotarla" no tiene un
+   final verificable.
+2. **Reconciliar antes de procesar.** Un ticket que ya no es `pending` al momento
+   de reconciliar (completado, duplicado, premisa obsoleta) se EXCLUYE de la serie
+   activa, nunca se procesa "por si acaso". (a)
 3. **Reintentos tienen tope, y el tope es un CONTADOR GLOBAL POR TICKET, no por
    fase.** 2 **intentos totales** (el primero + 1 reintento, nunca "1 + 2") en la
    SUMA de Contract Formation + MANAGER_REVIEW para ese ticket antes de
@@ -220,6 +235,18 @@ ticket):**
      cierra con `APPROVE` (revert entre intentos), o (b) se acepta un commit
      por intento con su propio ancla de verificacion parcial. Declarar la
      decision tomada antes de empezar la serie, no durante.
+4. **`BLOCKED` es un estado TERMINAL de esta iteracion, no un fallo del bucle.**
+   El bucle sigue con el siguiente ticket; `BLOCKED` se registra en el backlog con
+   evidencia del motivo, nunca se omite en silencio. **Ademas, CADA estado
+   terminal (`BLOCKED` o el cierre normal del ticket) escribe OBLIGATORIAMENTE
+   su entrada M3 (seccion 6) antes de avanzar al siguiente ticket** -- sin esta
+   obligacion explicita, un `BLOCKED` silencioso (sin fila de metrica) es
+   indistinguible de un hallazgo nunca ocurrido, y la seccion 7 (automejora)
+   queda ciega a el. (a) (hallazgo C, nvidia/glm-flash BA21, 2026-10-08)
+6. **Condicion de terminacion:** el bucle termina cuando la serie CONGELADA del
+   paso 1 se agota -- cada ticket en estado terminal (`APPROVE` o `BLOCKED`).
+   Nunca por "parece que ya no quedan": siempre por recorrer la lista entera y
+   poder enumerar el estado final de cada uno. (a)
 
 ## 5. El bucle (6 pasos + reglas de parada por paso)
 
@@ -262,17 +289,20 @@ ticket):**
 ## 6. Esquema ejecutable: entrada de metrica por iteracion
 
 **REMITE al `SCHEMA: adjudicacion` del nucleo** (`manager_orchestrator_loop.md`
-seccion 7) -- mismos campos `required`, mismos `enum`, misma regla de que una
-entrada sin `evidencia` verificable se descarta. **Diferencia DECLARADA, no
-redeclaracion:** este bucle no vota con lentes de identidad distinta (seccion 2),
-asi que sustituye los 3 campos especificos de esa votacion
-(`lente_pedida`/`lente_que_respondio`/`identidad`) por 2 campos propios que
-identifican la iteracion sin votacion (`ticket_id`/`rol_que_actuo`); el resto de
-campos del schema del nucleo (`hallazgo`, `tipo`, `verificacion`, `efecto`,
-`correcto`, `util`, `adoptado`, `motivo`) se mantienen IDENTICOS, y se anaden
-`prompt_senalado`/`evidencia` (ya presentes en el espiritu del nucleo, seccion
-1.2) para que el informe de cierre (seccion 7.2) pueda calcular una tasa de
-adopcion real.
+seccion 7) -- mismos campos `required`, misma regla de que una entrada sin
+`evidencia` verificable se descarta. **Diferencias DECLARADAS, no
+redeclaracion (corregidas tras MANAGER_REVIEW con lente nan/deepseek-v4-flash,
+2026-10-08 -- la version anterior decia "mismos enum" sin serlo):** este bucle
+no vota con lentes de identidad distinta (seccion 2), asi que sustituye los 3
+campos especificos de esa votacion (`lente_pedida`/`lente_que_respondio`/`identidad`)
+por 2 campos propios que identifican la iteracion sin votacion
+(`ticket_id`/`rol_que_actuo`); se anaden `prompt_senalado`/`evidencia` (ya
+presentes en el espiritu del nucleo, seccion 1.2) para que el informe de cierre
+(seccion 7.2) pueda calcular una tasa de adopcion real; y el enum de
+`verificacion` DIFIERE del nucleo -- este prompt usa `no_verificable` (el nucleo
+usa `no_verificable_a_verificador`, especifico de su rol VERIFICADOR DE HECHOS
+que este bucle no tiene). El resto de campos (`hallazgo`, `tipo`, `efecto`,
+`correcto`, `util`, `adoptado`, `motivo`) y sus enums SI son identicos.
 
 ```json
 {
