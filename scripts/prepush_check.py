@@ -266,7 +266,7 @@ def run_ruff_check(project_root: Path) -> CheckResult:
         CheckResult con el estado del check de ruff.
     """
     return run_subprocess_check(
-        cmd=["uv", "run", "ruff", "check", ".", *_ruff_exclude_args()],
+        cmd=["uv", "run", "--isolated", "ruff", "check", ".", *_ruff_exclude_args()],
         name="Ruff Check",
         project_root=project_root,
     )
