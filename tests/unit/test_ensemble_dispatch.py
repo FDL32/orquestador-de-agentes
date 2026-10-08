@@ -6133,10 +6133,30 @@ def test_058y_calibration_survives_with_at_least_four_blind_lenses():
 
 
 def test_058y_ratio_is_the_adjudicated_option_b():
-    """La decision ADJUDICADA es 3 con arbol / 4 ciegas, no 'las que salgan'.
+    """La decision ADJUDICADA es 9 con arbol / 4 ciegas, no 'las que salgan'.
 
     INVARIANTE, no medicion: se asertan las DOS clases a la vez, de modo que
     mover un perfil de una a otra sin decision explicita rompa el test.
+    El criterio de "con arbol" es `channel != api AND repo_scope ==
+    destino` -- NO filtra por `write`, asi que un perfil `write: true` con
+    arbol real sigue contando en este cubo (es "con arbol", no "con arbol
+    Y verificablemente read-only"; esos son ejes distintos).
+
+    AMPLIACION 2026-10-08/09 (decision de producto explicita del usuario):
+    el pool con-arbol crece de 3 a 9, anadiendo 6 perfiles `kilo` con los
+    modelos `nan/*` REALES (Kilo expone el mismo namespace `nan/` que
+    `nan_api`, pero por `channel: agent` con arbol real). Estos 6 perfiles
+    se declaran `write: true` (HONESTO, no `write: false` sin enforcement):
+    Kilo no tiene sandbox nativo ni allowlist de tools verificable en argv
+    (`has_native_sandbox`), y un agente creado via `kilo agent create` con
+    `permission.edit=deny` en su frontmatter NO se refleja en la regla
+    efectiva de `kilo agent list` (sigue siendo `{permission:*,
+    action:allow}`) -- mismo patron de riesgo que el incidente historico
+    WOT-2026-086 (DEC-086P10-001). Su unica barrera hoy es la contencion
+    del propio modelo (verificado: un agente con permiso denegado en su
+    frontmatter se nego a escribir en una prueba real, pero por
+    razonamiento, no por permiso tecnico). Pendiente: sandbox de SO para
+    contener Kilo con enforcement tecnico real.
     """
     # Solo perfiles SELECCIONABLES: el legacy (mismo BA06) esta fuera de la
     # seleccion automatica y no es una lente mas -- el sustituto ocupa su sitio.
@@ -6148,13 +6168,27 @@ def test_058y_ratio_is_the_adjudicated_option_b():
     )
     assert con_arbol == [
         "challenger_codex",
+        "challenger_kilo_deepseek_flash",
+        "challenger_kilo_gemma",
+        "challenger_kilo_glm_flash",
+        "challenger_kilo_mimo_flash",
+        "challenger_kilo_qwen",
+        "challenger_kilo_qwen_flash",
         "challenger_opencode_glm_flash",
         "proposer_claude",
-    ], f"opcion B (equilibrada) = BA05 + BA06 + BA01; hoy: {con_arbol}"
+    ], f"opcion B (ampliada 2026-10-08) = 9 con arbol; hoy: {con_arbol}"
     claves = sorted(profiles[name]["backend_key"] for name in con_arbol)
-    assert claves == ["BA01", "BA05", "BA06"], (
-        "3 lentes con arbol = 3 backend_key DISTINTAS, no 3 perfiles cualesquiera"
-    )
+    assert claves == [
+        "BA01",
+        "BA02",
+        "BA03",
+        "BA04",
+        "BA05",
+        "BA06",
+        "BA07",
+        "BA08",
+        "BA09",
+    ], "9 lentes con arbol = 9 backend_key DISTINTAS, no 9 perfiles cualesquiera"
 
 
 # --- WOT-2026-059m: la ronda no acepta un commit_sha que no resuelve ----------

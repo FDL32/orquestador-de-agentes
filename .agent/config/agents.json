@@ -275,6 +275,72 @@
       "backend_key": "BA06",
       "repo_scope": "destino"
     },
+    "challenger_kilo_deepseek_flash": {
+      "backend": "kilo",
+      "channel": "agent",
+      "model": "nan/deepseek-v4-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": true,
+      "write_enforcement_note": "Kilo no ofrece sandbox nativo ni allowlist de tools verificable en argv (has_native_sandbox); un agente creado via 'kilo agent create' con permission.edit=deny en su frontmatter no se refleja en la regla efectiva de 'kilo agent list' (sigue siendo permission:* action:allow). Prueba real 2026-10-09: el agente se nego a escribir, pero por razonamiento del propio modelo, no por un permiso tecnico bloqueante -- mismo patron de riesgo que WOT-2026-086 (DEC-086P10-001). Declarado write:true a proposito para no mentirle a check_agent_write_enforced.py. Pendiente: sandbox de SO para contener Kilo.",
+      "data_sensitivity": "public",
+      "backend_key": "BA07",
+      "repo_scope": "destino"
+    },
+    "challenger_kilo_qwen": {
+      "backend": "kilo",
+      "channel": "agent",
+      "model": "nan/qwen3.6",
+      "context": "diff-o-artefacto-publico",
+      "write": true,
+      "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
+      "data_sensitivity": "public",
+      "backend_key": "BA08",
+      "repo_scope": "destino"
+    },
+    "challenger_kilo_gemma": {
+      "backend": "kilo",
+      "channel": "agent",
+      "model": "nan/gemma4",
+      "context": "diff-o-artefacto-publico",
+      "write": true,
+      "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
+      "data_sensitivity": "public",
+      "backend_key": "BA09",
+      "repo_scope": "destino"
+    },
+    "challenger_kilo_qwen_flash": {
+      "backend": "kilo",
+      "channel": "agent",
+      "model": "nan/qwen3.8-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": true,
+      "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
+      "data_sensitivity": "public",
+      "backend_key": "BA02",
+      "repo_scope": "destino"
+    },
+    "challenger_kilo_glm_flash": {
+      "backend": "kilo",
+      "channel": "agent",
+      "model": "nan/glm5.3-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": true,
+      "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
+      "data_sensitivity": "public",
+      "backend_key": "BA03",
+      "repo_scope": "destino"
+    },
+    "challenger_kilo_mimo_flash": {
+      "backend": "kilo",
+      "channel": "agent",
+      "model": "nan/mimo-v2.6-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": true,
+      "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
+      "data_sensitivity": "public",
+      "backend_key": "BA04",
+      "repo_scope": "destino"
+    },
     "challenger_nan_qwen_flash": {
       "backend": "nan_api",
       "channel": "api",
@@ -592,9 +658,45 @@
         "backend_version": null,
         "status": "active"
       },
+      "BA02": {
+        "backend": "kilo",
+        "model": "nan/qwen3.8-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA03": {
+        "backend": "kilo",
+        "model": "nan/glm5.3-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA04": {
+        "backend": "kilo",
+        "model": "nan/mimo-v2.6-flash",
+        "backend_version": null,
+        "status": "active"
+      },
       "BA05": {
         "backend": "codex",
         "model": "gpt-5.6-luna",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA07": {
+        "backend": "kilo",
+        "model": "nan/deepseek-v4-flash",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA08": {
+        "backend": "kilo",
+        "model": "nan/qwen3.6",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA09": {
+        "backend": "kilo",
+        "model": "nan/gemma4",
         "backend_version": null,
         "status": "active"
       },
