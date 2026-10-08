@@ -370,6 +370,122 @@ def test_extract_candidates_from_ticket_unknown_id(
 
 
 # =============================================================================
+# Tests para el mapeo deliverable_type -> applies_to (WOT-2026-089f)
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "deliverable_type,expected_applies_to",
+    [
+        ("code", "code"),
+        ("mixed", "mixed"),
+        ("documentation", "docs"),
+        ("research", "all"),
+        ("analysis", "all"),
+    ],
+)
+def test_extract_candidates_maps_deliverable_type_to_valid_applies_to(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deliverable_type: str,
+    expected_applies_to: str,
+) -> None:
+    """WOT-2026-089f: the ticket-completion candidate's applies_to must be a
+    member of VALID_APPLIES_TO ({code, mixed, docs, all}), never the raw
+    deliverable_type value -- they are distinct vocabularies (research/
+    analysis do not even exist in VALID_APPLIES_TO)."""
+    collab_dir = tmp_path / "collaboration"
+    collab_dir.mkdir()
+    fake_plan = collab_dir / "work_plan.md"
+    fake_plan.write_text(
+        "# Work Plan - WOT-2026-089f\n"
+        "## Metadata\n"
+        "- **ID:** WOT-2026-089f\n"
+        f"- **deliverable_type:** {deliverable_type}\n",
+        encoding="utf-8",
+    )
+
+    import scripts.session_close_observations as sco
+
+    monkeypatch.setattr(sco, "AGENT_DIR", tmp_path)
+
+    candidates = sco.extract_candidates_from_ticket("WOT-2026-089f")
+    completion_candidates = [
+        c for c in candidates if c.get("topic") == "ticket-completion"
+    ]
+    assert len(completion_candidates) == 1
+    assert completion_candidates[0]["applies_to"] == expected_applies_to
+
+
+def test_extract_candidates_unknown_deliverable_type_maps_to_all(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """WOT-2026-089f: when deliverable_type cannot be parsed from work_plan.md
+    (regex miss), applies_to must still be a valid enum member -- never the
+    literal string 'unknown', which is not in VALID_APPLIES_TO. Mapped to
+    'all' deliberately (same conservative choice as research/analysis),
+    never the raw fallback value."""
+    collab_dir = tmp_path / "collaboration"
+    collab_dir.mkdir()
+    fake_plan = collab_dir / "work_plan.md"
+    fake_plan.write_text(
+        "# Work Plan - WOT-2026-089f\n## Metadata\n- **ID:** WOT-2026-089f\n",
+        encoding="utf-8",
+    )
+
+    import scripts.session_close_observations as sco
+
+    monkeypatch.setattr(sco, "AGENT_DIR", tmp_path)
+
+    candidates = sco.extract_candidates_from_ticket("WOT-2026-089f")
+    completion_candidates = [
+        c for c in candidates if c.get("topic") == "ticket-completion"
+    ]
+    assert len(completion_candidates) == 1
+    assert completion_candidates[0]["applies_to"] == "all"
+
+
+def test_extract_candidates_completion_applies_to_always_in_valid_enum(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """WOT-2026-089f, control de no-regresion: para CUALQUIER deliverable_type
+    presente en el work_plan (incluido uno futuro no contemplado por el
+    mapeo), el applies_to generado debe seguir siendo miembro de
+    VALID_APPLIES_TO -- barrera contra una futura ampliacion del mapeo que
+    reintroduzca un valor crudo sin pasar por validate_applies_to."""
+    import scripts.session_close_observations as sco
+    from scripts.validate_observations import VALID_APPLIES_TO
+
+    monkeypatch.setattr(sco, "AGENT_DIR", tmp_path)
+    collab_dir = tmp_path / "collaboration"
+    collab_dir.mkdir()
+
+    for deliverable_type in (
+        "code",
+        "mixed",
+        "documentation",
+        "research",
+        "analysis",
+        "some-future-unmapped-type",
+    ):
+        fake_plan = collab_dir / "work_plan.md"
+        fake_plan.write_text(
+            "# Work Plan - WOT-2026-089f\n"
+            "## Metadata\n"
+            "- **ID:** WOT-2026-089f\n"
+            f"- **deliverable_type:** {deliverable_type}\n",
+            encoding="utf-8",
+        )
+        candidates = sco.extract_candidates_from_ticket("WOT-2026-089f")
+        completion = [c for c in candidates if c.get("topic") == "ticket-completion"]
+        assert len(completion) == 1
+        assert completion[0]["applies_to"] in VALID_APPLIES_TO, (
+            f"deliverable_type={deliverable_type!r} produjo "
+            f"applies_to={completion[0]['applies_to']!r}, fuera del enum valido"
+        )
+
+
+# =============================================================================
 # Tests para load_candidates_from_file (WP-2026-136)
 # =============================================================================
 

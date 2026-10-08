@@ -400,6 +400,40 @@ def process_candidates(
     return appended, rejected_reasons
 
 
+# WOT-2026-089f: deliverable_type (work_plan vocabulary: code, documentation,
+# research, analysis, mixed) and applies_to (observation schema vocabulary:
+# code, mixed, docs, all -- see scripts/validate_observations.VALID_APPLIES_TO)
+# are DISTINCT enums. research/analysis are not even members of applies_to,
+# so writing deliverable_type raw produced schema-invalid observations on
+# every documentation/research/analysis ticket close.
+_DELIVERABLE_TYPE_TO_APPLIES_TO = {
+    "code": "code",
+    "mixed": "mixed",
+    "documentation": "docs",
+}
+
+
+def _deliverable_type_to_applies_to(deliverable_type: str) -> str:
+    """Map a work_plan deliverable_type to a valid applies_to enum member.
+
+    Before: deliverable_type is a raw string parsed from work_plan.md (or
+    the literal fallback "unknown" when parsing fails).
+    During: code/mixed/documentation map 1:1 to their applies_to counterpart.
+    research and analysis map to "all": review_observations.py's
+    observation_matches_dtype() filters observations shown to a Manager by
+    the applies_to field, so mapping a research/analysis lesson to "docs"
+    would silently hide it from a Manager reviewing a code ticket -- the
+    asymmetric cost (a hidden-but-relevant lesson) outweighs "all" being
+    occasionally over-broad. Any other value (including "unknown" and any
+    future deliverable_type not yet in this map) also maps to "all"
+    deliberately, never passed through raw -- a raw value is never a
+    guaranteed member of VALID_APPLIES_TO.
+    After: returns a string that is always a member of
+    scripts.validate_observations.VALID_APPLIES_TO.
+    """
+    return _DELIVERABLE_TYPE_TO_APPLIES_TO.get(deliverable_type, "all")
+
+
 def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
     """Extract candidate observations from work plan ticket.
 
@@ -422,6 +456,7 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
             if not deliverable_match:
                 deliverable_match = re.search(r"deliverable_type:\s*(\w+)", content)
             deliverable = deliverable_match.group(1) if deliverable_match else "unknown"
+            applies_to = _deliverable_type_to_applies_to(deliverable)
 
             # Extract title
             title_match = re.search(r"Titulo:\s*(.+)", content)
@@ -434,7 +469,7 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
                     "signal": f"Ticket {ticket_id} completado: {title} (deliverable_type={deliverable})",
                     "domain": "delivery-hygiene",
                     "confidence": 0.9,
-                    "applies_to": deliverable,
+                    "applies_to": applies_to,
                     "impact": "medium",
                     "source_ticket": ticket_id,
                     "topic": "ticket-completion",
