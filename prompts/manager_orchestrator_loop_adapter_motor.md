@@ -49,17 +49,23 @@ medidos (2026-10-08, sesion fria + prompt pegado sin tarea; sesion con tarea que
    `ensemble_loop.md` enteros para recordar el comando -- ya estan resueltos ahi.
    - Para lanzar un **Builder real con filesystem** (leer/escribir/implementar, no dar
      veredicto): el comando canonico completo (Kilo CLI, flags, orden exacto) vive en
-     `prompts/builder_invocation_contract.md` seccion 1. Los modelos `nan` ya validados
-     (`deepseek-v4-flash`, `qwen3.6`, `qwen3.8-flash`, `glm5.3-flash`, `gemma4`,
-     `mimo-v2.6-flash`) estan en `.agent/config/agents.json` ->
-     `ensemble_profiles` (perfiles `challenger_nan_*`); no hace falta localizar el
+     `prompts/builder_invocation_contract.md` seccion 1. Los perfiles `nan` ya validados
+     (`challenger_nan_deepseek_flash`, `challenger_nan_qwen`, `challenger_nan_qwen_flash`,
+     `challenger_nan_glm_flash`, `challenger_nan_gemma`, `challenger_nan_mimo_flash`) estan
+     en `.agent/config/agents.json` -> `ensemble_profiles`; no hace falta localizar el
      ejecutable a mano, la config ya declara `backends.kilo.executable`.
    - Para lanzar una **ronda de revision adversarial** (veredicto corto, no implementacion):
      el comando completo vive en `prompts/ensemble_loop.md` seccion 3.4.
    - La distincion entre ambos (cuando usar cada uno) es la tabla de
      `prompts/builder_invocation_contract.md` seccion 0 -- leela si dudas cual aplica,
      no inventes un tercer mecanismo.
-4. **No localices rutas que ya estan declaradas.** Antes de un `find`/`grep` recursivo
+4. **Si el humano da un objetivo pero es ambiguo** ("optimiza el motor", "mejora la
+   velocidad", "revisa los tests"): no lo tomes por concreto (rellenando
+   OBJETIVO/ALCANCE/ENTREGABLE al azar) ni lo descartes como vacio (cayendo al
+   fallback del punto 2). Pide aclaracion con UNA pregunta especifica que
+   desambigue la incognita mas critica. Si tras dos intentos de aclaracion sigue
+   sin concretarse, cae al fallback de sesion generica del punto 2.
+5. **No localices rutas que ya estan declaradas.** Antes de un `find`/`grep` recursivo
    para localizar un ejecutable o un fichero de config, comprueba si `agents.json` o este
    adaptador ya lo nombran. La exploracion cuesta contexto que el bucle necesita para las
    rondas reales.
