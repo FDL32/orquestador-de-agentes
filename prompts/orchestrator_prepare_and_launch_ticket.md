@@ -105,6 +105,21 @@ Objetivo: `ticket_contract` congelable + `work_plan.md` + turno regenerado.
    (lee `TURN.md` y `execution_log.md` actuales). Si hay colision, STOP y
    coordina antes de tocar el bus — no fuerces el reset.
 
+   **Alternativa declarada (NO sustituto del STOP):** antes de darte por bloqueada
+   puedes, en vez de STOP-y-esperar pasivamente, armar un monitor sobre la condicion
+   EXACTA de desbloqueo y seguir con otro trabajo mientras tanto (monitoriza y sigue).
+   El STOP de arriba sigue siendo la via por defecto cuando no armes monitor. Un
+   monitor bien disenado cumple las 5 condiciones de la especificacion minima (fuente:
+   `.agent/planning/INFORME_colisiones_sesiones_concurrentes_20261008.md`, Seccion 6.ter):
+   1. Condicion especifica por RECURSO + TICKET + OPERACION (nunca generica); un error
+      de lectura o un estado desconocido NUNCA significa "libre" (fail-closed por defecto).
+   2. Identidad del monitor, cancelacion, caducidad (TTL) y limite de reintentos;
+      DESARME explicito tras exito o abandono.
+   3. Backoff con espera creciente + jitter aleatorio (N sesiones no despiertan a la vez).
+   4. Al despertar: ADQUIRIR exclusion, RE-VALIDAR la condicion y SOLO ENTONCES actuar
+      (idempotente); nunca asumir que "la condicion ya se cumplio" basta.
+   5. Un vencimiento (TTL agotado) debe INFORMAR y CONSERVAR el guard, nunca relajarlo.
+
 ## Paso 1.7 — Pre-flight del Builder (obligatorio para code/mixed)
 
 **Antes de lanzar el Builder**, verifica que el entorno puede soportar el ciclo
