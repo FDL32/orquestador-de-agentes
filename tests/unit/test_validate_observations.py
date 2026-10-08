@@ -740,3 +740,45 @@ def test_047f_archive_still_validates_strictly(tmp_path: Path) -> None:
     success, errors = validate_file(archive, strict=True)
     assert not success, "confidence out of [0,1] must still be rejected"
     assert any("confidence" in e for e in errors)
+
+
+def test_067p_duplicate_applies_to_key_is_rejected(tmp_path: Path) -> None:
+    """WOT-2026-067p: a line with a repeated JSON key (e.g. applies_to
+    written twice) must FAIL validation, not silently keep the last value.
+
+    json.loads's default dict construction accepts duplicate keys and keeps
+    only the last one -- RFC 8259 leaves this undefined, and the old
+    behavior let a corrupted entry validate as if nothing was wrong.
+    """
+    from validate_observations import validate_file
+
+    # Hand-written raw JSON line with "applies_to" appearing TWICE -- cannot
+    # be produced via a Python dict (dicts cannot hold duplicate keys), so
+    # this bypasses _write_jsonl/_LESSON and writes the raw text directly.
+    duplicated_line = (
+        '{"timestamp": "2026-08-02T10:00:00+00:00", "topic": "lesson", '
+        '"signal": "test duplicate key", "source": "manual", '
+        '"domain": "testing", "confidence": 0.9, '
+        '"applies_to": "code", "applies_to": "all", '
+        '"source_ticket": "WOT-2026-067p"}\n'
+    )
+    path = tmp_path / "observations.jsonl"
+    path.write_text(duplicated_line, encoding="utf-8")
+
+    success, errors = validate_file(path, strict=True)
+    assert not success, "a line with a duplicated JSON key must fail validation"
+    assert any("duplicada" in e and "applies_to" in e for e in errors), (
+        f"expected a duplicate-key error naming applies_to, got: {errors}"
+    )
+
+
+def test_067p_canonical_entry_without_duplicates_still_valid(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-067p (b), control positivo: an entry with NO duplicate keys
+    must keep validating exactly as before the object_pairs_hook change."""
+    from validate_observations import validate_file
+
+    path = _write_jsonl(tmp_path / "observations.jsonl", [_LESSON])
+    success, errors = validate_file(path, strict=True)
+    assert success, f"a canonical entry without duplicates must still pass: {errors}"

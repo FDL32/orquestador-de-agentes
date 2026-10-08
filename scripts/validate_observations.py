@@ -366,6 +366,27 @@ def validate_observation(
     return errors
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``object_pairs_hook`` for ``json.loads``: raise on a duplicate key.
+
+    Before: ``pairs`` is the raw list of (key, value) tuples json.loads
+    extracted from a single JSON object, IN ORDER, before building a dict.
+    During: counts key occurrences; if any key appears more than once,
+    raises ValueError naming the duplicated key (RFC 8259 leaves repeated
+    keys as undefined behavior -- json.loads's default dict construction
+    would otherwise silently keep the LAST value and drop the first).
+    After: returns a plain dict identical to what json.loads would have
+    built anyway, when no key repeats.
+    """
+    seen: dict[str, int] = {}
+    for key, _value in pairs:
+        seen[key] = seen.get(key, 0) + 1
+    duplicated = [key for key, count in seen.items() if count > 1]
+    if duplicated:
+        raise ValueError(f"clave JSON duplicada: {', '.join(sorted(duplicated))}")
+    return dict(pairs)
+
+
 def validate_file(
     observations_path: Path, *, strict: bool = True
 ) -> tuple[bool, list[str]]:
@@ -395,11 +416,19 @@ def validate_file(
         if not line:
             continue
 
-        # Parse JSON
+        # Parse JSON -- object_pairs_hook catches duplicate keys within a
+        # single JSON object. json.loads's default dict construction keeps
+        # the LAST value of a repeated key and silently drops the first
+        # (undefined behavior per RFC 8259) -- a two-value applies_to or
+        # domain entry would validate as if only the kept value existed.
+        # WOT-2026-067p.
         try:
-            record = json.loads(line)
+            record = json.loads(line, object_pairs_hook=_reject_duplicate_keys)
         except json.JSONDecodeError as e:
             errors.append(f"linea {line_num}: JSON invalido: {e}")
+            continue
+        except ValueError as e:
+            errors.append(f"linea {line_num}: {e}")
             continue
 
         # Must be a dict
