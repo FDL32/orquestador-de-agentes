@@ -2878,10 +2878,20 @@ def _print_preflight_report(results: list[CheckResult]) -> bool:
     """Print one line per check and return whether a blocking check failed.
 
     Before: `results` es la secuencia de checks ya ejecutados.
-    During: imprime `[OK]`/`[FAIL]` por check. Imprime el `output` cuando el
+    During: imprime una de TRES etiquetas por check, derivada de los CAMPOS
+        `passed` e `is_blocking` (nunca de una lista de nombres de checks):
+        `passed=True` -> `[OK]`; `passed=False and is_blocking=True` ->
+        `[FAIL]`; `passed=False and is_blocking=False` -> `[WARN]`. El
+        discriminante es el CAMPO `is_blocking` porque es DINAMICO en al menos
+        un gate (`run_handoff_state_sha_check` lo fija con
+        `is_blocking=strict`, controlado por `HANDOFF_STATE_SHA_STRICT`): una
+        lista fija de nombres "no bloqueantes" daria `[WARN]` a un check que ya
+        bloquea el dia que ese toggle se active. Imprime el `output` cuando el
         check FALLA (diagnostico) y tambien cuando PASO SIN EJECUTARSE
         (procedencia del SKIP).
-    After: devuelve True si algun check bloqueante fallo. No muta nada.
+    After: devuelve True si algun check bloqueante fallo. Un `[WARN]` NO
+        cambia el veredicto: solo `passed=False and is_blocking=True` marca
+        `blocking_failed`. No muta nada.
 
     Por que un SKIP tiene que imprimirse aunque `passed` sea True: un gate que
     no se ha ejecutado NO es un gate que corrio y paso, y el informe es lo
@@ -2895,7 +2905,12 @@ def _print_preflight_report(results: list[CheckResult]) -> bool:
     blocking_failed = False
 
     for result in results:
-        status = "[OK]" if result.passed else "[FAIL]"
+        if result.passed:
+            status = "[OK]"
+        elif result.is_blocking:
+            status = "[FAIL]"
+        else:
+            status = "[WARN]"
         blocking_marker = "" if result.is_blocking else " (informacional)"
         print(f"{status} {result.name}{blocking_marker}")
 

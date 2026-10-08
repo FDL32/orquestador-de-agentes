@@ -515,6 +515,110 @@ class TestRuffFormatOptOut:
 
         assert result.passed is False
 
+    def test_check_no_bloqueante_fallido_se_renderiza_warn(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Un check que falla pero no bloquea se marca `[WARN]`, no `[FAIL]`.
+
+        Hasta WOT-2026-058n el reporter usaba un binario `[OK]`/`[FAIL]`, asi
+        que un check no bloqueante fallido se imprimia indistinguible de uno
+        que aborta el cierre, aunque el exit code siguiera siendo 0.
+        """
+        results = [
+            CheckResult(
+                name="Validate All (informacional)",
+                passed=False,
+                output="algo",
+                is_blocking=False,
+            )
+        ]
+        _print_preflight_report(results)
+        printed = capsys.readouterr().out
+
+        assert "[WARN]" in printed
+        assert "[FAIL]" not in printed
+
+    def test_check_bloqueante_fallido_sigue_siendo_fail(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Un check bloqueante fallido conserva `[FAIL]`."""
+        results = [
+            CheckResult(
+                name="Ruff Check",
+                passed=False,
+                output="algo",
+                is_blocking=True,
+            )
+        ]
+        _print_preflight_report(results)
+        printed = capsys.readouterr().out
+
+        assert "[FAIL]" in printed
+        assert "[WARN]" not in printed
+
+    def test_warn_no_cambia_el_veredicto_del_reporte(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Un unico WARN no marca el reporte como bloqueado (D2).
+
+        Si alguien "arregla" el bug contando los WARN en `blocking_failed`,
+        este test cae: el unico check no bloqueante fallido debe devolver
+        False.
+        """
+        results = [
+            CheckResult(
+                name="Validate All (informacional)",
+                passed=False,
+                output="algo",
+                is_blocking=False,
+            )
+        ]
+        blocking_failed = _print_preflight_report(results)
+        capsys.readouterr()
+
+        assert blocking_failed is False
+
+    def test_warn_mantiene_la_visibilidad_del_output(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """El diagnostico de un WARN sigue imprimiendose bajo su etiqueta."""
+        results = [
+            CheckResult(
+                name="Validate All (informacional)",
+                passed=False,
+                output="DIAGNOSTICO_WARN_DISTINTIVO",
+                is_blocking=False,
+            )
+        ]
+        _print_preflight_report(results)
+        printed = capsys.readouterr().out
+
+        assert "DIAGNOSTICO_WARN_DISTINTIVO" in printed
+
+    def test_check_informativo_pasado_sigue_siendo_ok(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Frontera superior (D4): un check informacional que PASA es `[OK]`.
+
+        La matriz nueva solo aplica a checks fallidos: no debe sobre-aplicarse
+        a los que pasaron. Y el marcador ` (informacional)` se conserva.
+        """
+        results = [
+            CheckResult(
+                name="Validate All (informacional)",
+                passed=True,
+                output="x",
+                is_blocking=False,
+            )
+        ]
+        _print_preflight_report(results)
+        printed = capsys.readouterr().out
+
+        assert "[OK]" in printed
+        assert " (informacional)" in printed
+        assert "[WARN]" not in printed
+        assert "[FAIL]" not in printed
+
 
 class TestAgentControllerValidate:
     """Tests for agent_controller --validate integration."""
