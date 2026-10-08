@@ -4465,10 +4465,13 @@ def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     plan_id = get_plan_id(plan_content)
     if is_invalid_plan_id(plan_id):
         return ["No active ticket found for bus drift check"]
-    # WOT-2026-072c: analysis tickets never emit STATE_CHANGED via --mark-ready,
-    # so bus drift checks that expect those events are false positives.
+    # WOT-2026-072c (ampliado WOT-2026-095g): analysis/documentation/research
+    # nunca emiten STATE_CHANGED via --mark-ready, asi que los checks de bus
+    # drift que esperan esos eventos son falsos positivos para los tres
+    # (mismo contrato de AGENTS.md que agrupa los tres tipos, ver
+    # _check_invariants arriba).
     deliverable_type = _read_deliverable_type(plan_content)
-    if deliverable_type == "analysis":
+    if deliverable_type in _BUS_EXEMPT_DELIVERABLE_TYPES:
         return []
     if _ticket_events_archived(plan_id):
         return []
@@ -4738,6 +4741,19 @@ def _check_post_closure_invariants(plan_id: str, log_status: str) -> dict:
     return result
 
 
+# WOT-2026-072c (ampliado WOT-2026-095g): tickets analysis/documentation/
+# research son read-only o documentales y nunca emiten BUILDER_EXIT ni
+# STATE_CHANGED via --mark-ready -- AGENTS.md ya agrupa los tres bajo el
+# mismo contrato en tres sitios (quality gates dispatch, review bridge,
+# Seccion "deliverable_type"): "no debe exigirse commit de codigo ni
+# pytest/ruff salvo que el plan toque codigo". Antes de este fix, solo
+# "analysis" estaba exento aqui, divergiendo de ese contrato -- medido
+# en WOT-2026-089n (deliverable_type=documentation, cerrado por commit
+# directo 2026-10-06, CI de --validate en rojo desde entonces con
+# "Missing BUILDER_EXIT"/"Missing STATE_CHANGED" por este hueco).
+_BUS_EXEMPT_DELIVERABLE_TYPES = ("analysis", "documentation", "research")
+
+
 def _check_invariants(plan_content: str, log_content: str, log_status: str) -> dict:
     """
     Check pre and post-closure invariants.
@@ -4750,11 +4766,8 @@ def _check_invariants(plan_content: str, log_content: str, log_status: str) -> d
         result["warnings"].append("No active plan for invariant check")
         return result
 
-    # WOT-2026-072c: analysis tickets are read-only and never emit
-    # BUILDER_EXIT or STATE_CHANGED events via --mark-ready. Skip
-    # post-closure invariants that require those bus events.
     deliverable_type = _read_deliverable_type(plan_content)
-    is_analysis = deliverable_type == "analysis"
+    is_bus_exempt = deliverable_type in _BUS_EXEMPT_DELIVERABLE_TYPES
 
     # Pre-closure invariants
     if log_status in ("IN_PROGRESS", "APPROVED", "PENDING"):
@@ -4762,10 +4775,11 @@ def _check_invariants(plan_content: str, log_content: str, log_status: str) -> d
 
     # Post-closure invariants
     if log_status in ("READY_FOR_REVIEW", "COMPLETED"):
-        if is_analysis:
+        if is_bus_exempt:
             result["warnings"].append(
-                "Skipping BUILDER_EXIT/STATE_CHANGED invariants for analysis ticket "
-                f"{plan_id} (deliverable_type=analysis)"
+                "Skipping BUILDER_EXIT/STATE_CHANGED invariants for "
+                f"{deliverable_type} ticket {plan_id} "
+                f"(deliverable_type={deliverable_type})"
             )
         else:
             result.update(_check_post_closure_invariants(plan_id, log_status))

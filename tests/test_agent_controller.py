@@ -6236,3 +6236,78 @@ class TestAnalysisTicketInvariants:
         monkeypatch.setattr(agent_controller, "event_bus", MagicMock())
         result = agent_controller._check_bus_drift(plan_content, "COMPLETED")
         assert result == [], f"Analysis ticket bus drift should be empty: {result}"
+
+
+class TestDocumentationResearchTicketInvariants:
+    """WOT-2026-095g: amplia WOT-2026-072c a documentation/research, que
+    AGENTS.md ya agrupa con analysis bajo el mismo contrato (quality gates
+    dispatch, review bridge) pero que _check_invariants/_check_bus_drift
+    dejaban fuera -- medido en WOT-2026-089n (deliverable_type=documentation,
+    cerrado por commit directo, CI de --validate en rojo desde 2026-10-06)."""
+
+    @pytest.mark.parametrize("dtype", ["documentation", "research"])
+    def test_check_invariants_skips_post_closure_for_doc_and_research(
+        self, dtype: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mutation (teeth): revertir la tupla a solo ("analysis",) deja
+        esto en rojo -- documentation/research dejarian de estar exentos."""
+        plan_content = (
+            "# Work Plan: WOT-2026-095g\n\n"
+            "## Metadata\n"
+            "**ID:** WOT-2026-095g\n"
+            "**Estado:** COMPLETED\n"
+            f"- **deliverable_type:** {dtype}\n\n"
+            "## Objetivo\n"
+            f"{dtype.capitalize()} ticket.\n"
+        )
+        log_content = "**Estado:** COMPLETED\n"
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        result = agent_controller._check_invariants(
+            plan_content, log_content, "COMPLETED"
+        )
+        errors = result["errors"]
+        warnings = result["warnings"]
+        assert not errors, f"{dtype} ticket should have no errors: {errors}"
+        assert any(dtype in w for w in warnings), (
+            f"Expected {dtype} skip warning, got: {warnings}"
+        )
+
+    @pytest.mark.parametrize("dtype", ["documentation", "research"])
+    def test_check_bus_drift_skips_for_doc_and_research(
+        self, dtype: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_check_bus_drift should return [] for documentation/research too."""
+        plan_content = (
+            "# Work Plan: WOT-2026-095g\n\n"
+            "## Metadata\n"
+            "**ID:** WOT-2026-095g\n"
+            "**Estado:** COMPLETED\n"
+            f"- **deliverable_type:** {dtype}\n"
+        )
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+        monkeypatch.setattr(agent_controller, "event_bus", MagicMock())
+        result = agent_controller._check_bus_drift(plan_content, "COMPLETED")
+        assert result == [], f"{dtype} ticket bus drift should be empty: {result}"
+
+    def test_check_invariants_still_runs_post_closure_for_code_regression(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regresion: code tickets NO deben colarse en la exencion ampliada."""
+        plan_content = (
+            "# Work Plan: WOT-2026-095h\n\n"
+            "## Metadata\n"
+            "**ID:** WOT-2026-095h\n"
+            "**Estado:** COMPLETED\n"
+            "- **deliverable_type:** code\n\n"
+            "## Objetivo\n"
+            "Code ticket.\n"
+        )
+        log_content = "**Estado:** COMPLETED\n"
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", False)
+        result = agent_controller._check_invariants(
+            plan_content, log_content, "COMPLETED"
+        )
+        warnings = result["warnings"]
+        assert not any(
+            "documentation" in w or "research" in w or "analysis" in w for w in warnings
+        ), f"Code ticket should not get any bus-exempt skip warning: {warnings}"
