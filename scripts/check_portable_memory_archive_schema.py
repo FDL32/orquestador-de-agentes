@@ -68,7 +68,7 @@ if str(MOTOR_ROOT) not in sys.path:
 
 # WOT-2026-045e: unica fuente de verdad de "contenido identico/distinto",
 # compartida con el fail-closed en escritura de reconcile_portable_memory.py.
-from bus.portable_memory_archive import fingerprint  # noqa: E402
+from bus.portable_memory_archive import fingerprint, is_lesson  # noqa: E402
 
 
 ARCHIVE_DIR_REL = Path(".agent/runtime/memory/archive")
@@ -148,6 +148,10 @@ def find_identity_collisions(paths: list[Path]) -> dict[tuple[str, str], set[str
     `_reconcile_all`). Reutilizar una sola definicion evita que este guard
     POST-HOC y el fail-closed EN ESCRITURA diverjan sobre que es "identico"
     o "distinto" para el mismo par de records.
+
+    Entradas de telemetria autogenerada SIN `id` (is_lesson() == False y sin
+    `id`) quedan EXCLUIDAS del universo de colision; una leccion real escrita a
+    mano conserva su `id` y sigue contando -- WOT-2026-067v.
     """
     by_key: dict[tuple[str, str], set[str]] = {}
     for path in paths:
@@ -158,6 +162,18 @@ def find_identity_collisions(paths: list[Path]) -> dict[tuple[str, str], set[str
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 # El schema-check ya reporta JSON invalido; aqui lo saltamos.
+                continue
+            # WOT-2026-067v (Via B): telemetria de cierre autogenerada
+            # (session_close_observations.py, topics "architecture" /
+            # "ticket-completion") no es una leccion. OJO: is_lesson() excluye
+            # esos topics por TOPIC a secas (no por procedencia), asi que una
+            # leccion real escrita a mano que reuse uno de ellos tambien daria
+            # is_lesson() == False. El `and not rec.get("id")` preserva
+            # exactamente esas lecciones reales: la telemetria de plantilla
+            # NUNCA lleva `id`, mientras que una leccion promovida SI. Sin este
+            # filtro, 14 claves de plantilla (37 entradas, ninguna con id)
+            # bloqueaban el guard con colisiones falsas.
+            if not is_lesson(rec) and not rec.get("id"):
                 continue
             key = (rec.get("topic", ""), rec.get("source_ticket", ""))
             by_key.setdefault(key, set()).add(fingerprint(rec))
