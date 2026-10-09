@@ -75,6 +75,121 @@ FORBIDDEN_VERDICTS = (
     "BLOQUEANTE",
 )
 
+# WOT-2026-085a: la cuarentena de ensemble se DERIVA EN MEMORIA al arranque.
+# El subprocess importa `ensemble_dispatch` y reutiliza SUS constantes de ruta
+# (`FALLBACK_EVENTS_REL`, `QUARANTINE_REL`), sin duplicarlas en este modulo.
+#
+# D7: un fallo de esta pieza NUNCA bloquea el arranque. El subprocess que
+# importa `ensemble_dispatch` corre con un timeout EXPLICITO y bajo (medido:
+# ~80 ms en esta maquina); el default de `_run` (120 s) seria un umbral que no
+# declara intencion.
+QUARANTINE_TIMEOUT_S = 5
+
+# D3/D7: los 4 casos de causa se declaran con textos DISTINTOS y no
+# fusionables. "fuente vacia" (0 eventos) es una medicion valida; "no medido"
+# es ignorancia. El operador actua distinto en cada uno.
+LABEL_LINK = "cuarentena: enlace motor-destino no disponible"
+LABEL_MODULE = "cuarentena: modulo no disponible"
+LABEL_EMPTY = "fuente vacia (0 eventos)"
+
+# El subprocess `python -c` replica `collect_mode` (aislamiento por import). El
+# script imprime UNA linea JSON (ASCII puro via `ensure_ascii`, para no depender
+# del encoding de stdout en Windows) y devuelve siempre 0 cuando pudo emitirla;
+# el recolector externo traduce rc!=0 / stdout no-JSON a "no medido".
+_QUARANTINE_SCRIPT_TEMPLATE = """
+import hashlib
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def _emit(payload):
+    sys.stdout.write(json.dumps(payload, ensure_ascii=True))
+    sys.stdout.write("\\n")
+    sys.stdout.flush()
+    raise SystemExit(0)
+
+
+_project_root = Path(__PROJECT_ROOT__)
+_link = _project_root / ".agent" / "config" / "motor_destination_link.json"
+try:
+    _motor = Path(
+        json.loads(_link.read_text(encoding="utf-8"))["motor_root"]
+    ).resolve()
+except (OSError, ValueError, KeyError, TypeError):
+    _motor = None
+if _motor is None or not _motor.exists():
+    _emit({"status": "no_link", "cause": __LABEL_LINK__})
+
+try:
+    sys.path.insert(0, str(_motor / "scripts"))
+    import ensemble_dispatch as _ed
+
+    _config = _ed.load_motor_config()
+    _src = _project_root / _ed.FALLBACK_EVENTS_REL
+    _raw = _src.read_bytes() if _src.exists() else b""
+    _now = datetime.now(timezone.utc)
+    _buckets = _ed._quarantine_buckets(_raw, now=_now, config=_config)
+    _by_backend, _by_profile = _ed._quarantine_tables(
+        _buckets, config=_config, now=_now
+    )
+except Exception as _exc:
+    _emit(
+        {
+            "status": "no_module",
+            "cause": __LABEL_MODULE__ + " (" + type(_exc).__name__ + ": " + str(_exc) + ")",
+        }
+    )
+
+_events = 0
+_skipped = 0
+_last_ts = None
+for _line in _raw.decode("utf-8", "replace").splitlines():
+    if not _line.strip():
+        continue
+    try:
+        _ev = json.loads(_line)
+    except ValueError:
+        _skipped += 1
+        continue
+    _events += 1
+    _ts = _ev.get("ts")
+    if isinstance(_ts, str) and (_last_ts is None or _ts > _last_ts):
+        _last_ts = _ts
+
+_disk = None
+_dpath = _project_root / _ed.QUARANTINE_REL
+if _dpath.exists():
+    try:
+        _ddata = json.loads(_dpath.read_text(encoding="utf-8"))
+        _disk = {
+            "generated_at": _ddata.get("generated_at"),
+            "fallback_events_sha256": _ddata.get("fallback_events_sha256"),
+            "coincide_fuente": (
+                _ddata.get("fallback_events_sha256")
+                == hashlib.sha256(_raw).hexdigest()
+            ),
+        }
+    except (OSError, ValueError):
+        _disk = None
+
+_emit(
+    {
+        "status": "empty" if _events == 0 else "measured",
+        "cause": None,
+        "by_backend": _by_backend,
+        "by_profile": _by_profile,
+        "events": _events,
+        "skipped": _skipped,
+        "source_present": _src.exists(),
+        "source_sha256": hashlib.sha256(_raw).hexdigest(),
+        "last_event_ts": _last_ts,
+        "disk": _disk,
+    }
+)
+"""
+
 
 def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> dict:
     """Ejecuta un comando read-only y devuelve su recibo.
@@ -267,6 +382,69 @@ def collect_mode(motor_root: Path) -> dict:
     }
 
 
+def collect_quarantine(motor_root: Path, project_root: Path) -> dict:
+    """Cuarentena ensemble DERIVADA EN MEMORIA desde `fallback_events.jsonl`.
+
+    Before: `project_root` es el destino-rol (fuente UNICA: `fallback_events.jsonl`
+        resuelto via el link motor-destino, D7). `motor_root` se usa como `cwd`
+        del subprocess. Ninguno se modifica.
+    During: lanza un `python -c` aislado (`timeout` explicito y bajo) que importa
+        `ensemble_dispatch` y aplica `_quarantine_buckets` + `_quarantine_tables`
+        SIN invocar `quarantine --sync` y SIN escribir `backend_quarantine.json`
+        (DEC-085A-001 Decision 1). Traduce el recibo a una causa declarada.
+    After: dict con `command`, `exit_code`, `by_backend`, `by_profile` (vacios si
+        no hubo medicion) y `cause` (None = medicion valida). Distingue 4 casos
+        no fusionables (D3/D7): fuente vacia, no medido (rc!=0), enlace
+        motor-destino ausente, modulo no disponible. NUNCA lanza.
+    """
+    script = (
+        _QUARANTINE_SCRIPT_TEMPLATE.replace("__PROJECT_ROOT__", repr(str(project_root)))
+        .replace("__LABEL_LINK__", repr(LABEL_LINK))
+        .replace("__LABEL_MODULE__", repr(LABEL_MODULE))
+    )
+    rec = _run(
+        [sys.executable, "-c", script],
+        cwd=motor_root,
+        timeout=QUARANTINE_TIMEOUT_S,
+    )
+    result = {
+        "command": rec["command"],
+        "exit_code": rec["exit_code"],
+        "by_backend": {},
+        "by_profile": {},
+        "cause": None,
+        "status": "no_measure",
+        "events": None,
+        "skipped": None,
+        "source_present": None,
+        "source_sha256": None,
+        "last_event_ts": None,
+        "disk": None,
+    }
+    payload = None
+    if rec["exit_code"] == 0 and rec["stdout"]:
+        try:
+            payload = json.loads(rec["stdout"])
+        except ValueError:
+            payload = None
+    if not isinstance(payload, dict):
+        # D3/D7: subprocess caido / stdout corrupto -> "no medido" (rc=N),
+        # DISTINTO de "fuente vacia" y de las causas de enlace/modulo.
+        result["cause"] = f"no medido (rc={rec['exit_code']})"
+        return result
+    result["status"] = payload.get("status", "measured")
+    result["cause"] = payload.get("cause")
+    result["by_backend"] = payload.get("by_backend") or {}
+    result["by_profile"] = payload.get("by_profile") or {}
+    result["events"] = payload.get("events")
+    result["skipped"] = payload.get("skipped")
+    result["source_present"] = payload.get("source_present")
+    result["source_sha256"] = payload.get("source_sha256")
+    result["last_event_ts"] = payload.get("last_event_ts")
+    result["disk"] = payload.get("disk")
+    return result
+
+
 def build_report(motor_root: Path, project_root: Path, slugs: list[str]) -> dict:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -283,6 +461,7 @@ def build_report(motor_root: Path, project_root: Path, slugs: list[str]) -> dict
         "gates": collect_gates(motor_root, project_root),
         "memory_slugs": collect_memory_slugs(motor_root, slugs),
         "inbox": collect_inbox(project_root),
+        "quarantine": collect_quarantine(motor_root, project_root),
     }
 
 
@@ -367,7 +546,69 @@ def render_markdown(rep: dict) -> str:
     out.append(f"- `flight_plans/queued/`: {len(i['queued'])}")
     out.append(f"- `flight_plans/in_flight/`: {len(i['in_flight'])}")
     out.append("")
+    out.extend(_render_quarantine(rep.get("quarantine") or {}))
     return "\n".join(out)
+
+
+def _render_quarantine(q: dict) -> list[str]:
+    """Seccion de cuarentena: datos + causa declarada, NUNCA veredicto.
+
+    Distingue explicitamente las 4 causas (D3/D7) para que un operador sepa si
+    "no hay nadie en cuarentena" o "no se pudo medir", y declara la antiguedad
+    del artefacto en disco (D4) en vez de asumirlo vigente.
+    """
+    out = ["### Cuarentena de ensemble (arranque)", ""]
+    out.append(
+        "- repo medido: repo_motor (fuente: `fallback_events.jsonl` del destino, "
+        "derivada EN MEMORIA; nunca se invoca `quarantine --sync`)."
+    )
+    out.append(f"- `exit_code: {q.get('exit_code')}`")
+    cause = q.get("cause")
+    if cause:
+        out.append(f"- **{cause}**")
+    else:
+        by_backend = q.get("by_backend") or {}
+        by_profile = q.get("by_profile") or {}
+        for name, entry in sorted(by_backend.items()):
+            out.append(
+                f"- backend `{name}` EN CUARENTENA hasta `{entry.get('expires_at')}` "
+                f"({entry.get('reason_class')})."
+            )
+        for name, entry in sorted(by_profile.items()):
+            out.append(
+                f"- perfil `{name}` EN CUARENTENA hasta `{entry.get('expires_at')}` "
+                f"({entry.get('reason_class')}, backend `{entry.get('backend')}`)."
+            )
+        if not by_backend and not by_profile:
+            events = q.get("events")
+            if q.get("status") == "empty" or events == 0:
+                out.append(f"- **{LABEL_EMPTY}**: no hay ninguna lente en cuarentena.")
+            else:
+                out.append(
+                    f"- sin cuarentena vigente ({events} evento(s) leido(s), "
+                    f"{q.get('skipped')} saltado(s); ninguna vigente ahora mismo)."
+                )
+        last_ts = q.get("last_event_ts")
+        out.append(
+            f"- ultimo evento de la fuente: `{last_ts}`"
+            if last_ts
+            else "- ultimo evento de la fuente: (ninguno)."
+        )
+        disk = q.get("disk")
+        if disk:
+            coincide = str(bool(disk.get("coincide_fuente"))).lower()
+            out.append(
+                f"- `backend_quarantine.json` EN DISCO: `generated_at: "
+                f"{disk.get('generated_at')}`, `coincide_fuente: {coincide}` "
+                "(sha256 del `fallback_events.jsonl` fuente). No se asume vigente."
+            )
+        else:
+            out.append(
+                "- `backend_quarantine.json` EN DISCO: ausente (sin artefacto stale "
+                "que desmentir)."
+            )
+    out.append("")
+    return out
 
 
 def main() -> int:
