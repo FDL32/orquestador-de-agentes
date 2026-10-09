@@ -241,6 +241,4 @@ Los cupos se comparten con los agentes de implantacion: preferir modelos sin lim
 ## 8. Pendiente (todavia no existe; no lo invoques)
 
 - `gov_stage`/`step`: WOT-2026-086g.
-- `smoke` rapido y paralelo: WOT-2026-086h.
-- Estado unificado de proveedores y descubrimiento `/v1/models` en el arranque: WOT-2026-085a.
 - Comando `loop` con valores por defecto para chat: WOT-2026-086i.

@@ -67,11 +67,13 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
 from collections import Counter
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1044,10 +1046,15 @@ def _sse_events(resp, deadline: float, api_key: str | None) -> Iterator[str]:
             data_lines.append(line[5:].lstrip())
 
 
-def _collect_sse_content(resp, deadline: float, api_key: str | None) -> str:
+def _collect_sse_content(
+    resp, deadline: float, api_key: str | None, *, allow_reasoning: bool = False
+) -> str:
     """Consume un stream SSE acumulando `delta.content` hasta el centinela.
 
     Before: `resp` SSE, `deadline` absoluto, `api_key` para saneado.
+        `allow_reasoning` (WOT-2026-086h) es opt-in de la ruta SMOKE: cuando
+        es True y no hubo `content`, la deliberacion `reasoning_content` se
+        devuelve con el prefijo `_REASONING_ONLY_MARKER` en vez de fallar.
     During: recorre `_sse_events`; tras el centinela [DONE] NO se lee ni se
         parsea nada mas (I1: es la unica ruta de exito; basura posterior al
         centinela no puede tumbar una ronda completa). Un `data:` con JSON
@@ -1055,41 +1062,77 @@ def _collect_sse_content(resp, deadline: float, api_key: str | None) -> str:
         (I4, frontera heredada de :1768): se propaga `JSONDecodeError` con su
         `doc` ya redactado (I5) y levantado FUERA del `except` para que ni
         `__cause__` ni `__context__` arrastren el crudo con la key.
-    After: retorna el contenido acumulado. Si llego el centinela con content
-        vacio, FALLO EXPLICITO `empty_content_despite_sentinel` (I3): nunca
+    After: retorna el contenido acumulado. Default (`allow_reasoning=False`,
+        ruta de gobierno/loop-round): si llego el centinela con content
+        vacio, FALLO EXPLICITO `empty_content_despite_sentinel` (I3) -- nunca
         una ronda "exitosa" de 0 chars y nunca fallback a `reasoning_content`
-        (devolveria deliberacion cruda sin nonce ni formato). Con cualquier
-        fallo de framing/deadline/socket no devuelve parcial: lanza.
+        (devolveria deliberacion cruda sin nonce ni formato). Con
+        `allow_reasoning=True` y reasoning presente, retorna el marcador +
+        deliberacion (el caller smoke lo clasifica `ok_razonador`). Con
+        cualquier fallo de framing/deadline/socket no devuelve parcial: lanza.
     """
     parts: list[str] = []
+    reasoning_parts: list[str] = []
     for event_data in _sse_events(resp, deadline, api_key):
         if event_data.strip() == "[DONE]":
             break
-        try:
-            payload = json.loads(event_data)
-        except json.JSONDecodeError as exc:
-            parse_failure: json.JSONDecodeError | None = json.JSONDecodeError(
-                exc.msg, _redact_secret(exc.doc, api_key), exc.pos
-            )
-        else:
-            parse_failure = None
+        payload, parse_failure = _parse_sse_event(event_data, api_key)
         if parse_failure is not None:
             raise parse_failure
-        for choice in payload.get("choices") or []:
-            delta = choice.get("delta") or {}
-            piece = delta.get("content")
-            if isinstance(piece, str) and piece:
-                parts.append(piece)
+        _accumulate_sse_deltas(payload, parts, reasoning_parts, allow_reasoning)
     content = "".join(parts)
-    if not content:
-        raise TransportError(
-            "empty_content_despite_sentinel: el stream SSE cerro con centinela "
-            "y content vacio (no se devuelve una ronda de 0 chars, ni "
-            "deliberacion de reasoning_content como veredicto)",
-            status=None,
-            body=None,
+    if content:
+        return content
+    # WOT-2026-086h: un razonador que agota su presupuesto pensando y emite
+    # `reasoning_content` sin `content` SI respondio (falso negativo medido:
+    # hoy queda marcado no-vivo/unknown). En la ruta smoke opt-in se devuelve
+    # con marcador para clasificarlo `ok_razonador`; el default conserva el
+    # fallo explicito de abajo (lo pina
+    # test_063c_content_vacio_con_centinela_es_fallo_explicito).
+    if allow_reasoning:
+        reasoning = "".join(reasoning_parts)
+        if reasoning:
+            return _REASONING_ONLY_MARKER + reasoning
+    raise TransportError(
+        "empty_content_despite_sentinel: el stream SSE cerro con centinela "
+        "y content vacio (no se devuelve una ronda de 0 chars, ni "
+        "deliberacion de reasoning_content como veredicto)",
+        status=None,
+        body=None,
+    )
+
+
+def _parse_sse_event(
+    event_data: str, api_key: str | None
+) -> tuple[dict | None, json.JSONDecodeError | None]:
+    """Parsea un payload SSE; retorna `(payload, fallo)` SIN levantar.
+
+    El fallo se CONSTRUYE aqui (con `doc` ya redactado, I5) pero se levanta
+    FUERA, en `_collect_sse_content`: el interprete reasigna `__context__` al
+    ejecutar el `raise` DENTRO del `except`, y ahi volveria el crudo con la
+    key (lo pina test_063c_sanea_la_key_ante_chunk_malformado).
+    """
+    try:
+        return json.loads(event_data), None
+    except json.JSONDecodeError as exc:
+        return None, json.JSONDecodeError(
+            exc.msg, _redact_secret(exc.doc, api_key), exc.pos
         )
-    return content
+
+
+def _accumulate_sse_deltas(
+    payload: dict, parts: list[str], reasoning_parts: list[str], allow_reasoning: bool
+) -> None:
+    """Acumula `delta.content` (siempre) y `delta.reasoning_content` (opt-in)."""
+    for choice in payload.get("choices") or []:
+        delta = choice.get("delta") or {}
+        piece = delta.get("content")
+        if isinstance(piece, str) and piece:
+            parts.append(piece)
+        if allow_reasoning:
+            rpiece = delta.get("reasoning_content")
+            if isinstance(rpiece, str) and rpiece:
+                reasoning_parts.append(rpiece)
 
 
 _API_MAX_TOKENS = 8192
@@ -1119,6 +1162,13 @@ def _transport_api(
     silenciar el error: si el modelo sigue sin producir `content` dentro de
     ese presupuesto, `_collect_sse_content`/el parser no-SSE siguen fallando
     igual de explicito que antes (I6, sin cambiar esa rama).
+
+    WOT-2026-086h (aditivo): `backend_cfg` puede declarar `max_tokens` (ruta
+    smoke rapida, `--max-tokens 64`); ausente = `_API_MAX_TOKENS` historico.
+    `backend_cfg["_allow_reasoning_content"]` activa la ruta opt-in de
+    `ok_razonador` (el razonador que emite reasoning sin content). Ambos son
+    LECTURAS del dict copiado que el llamador smoke inyecta; el default de
+    `loop-round` (backend_cfg sin esas claves) no cambia.
     """
     key_env = profile["api_key_env"]
     api_key = os.environ.get(key_env)
@@ -1126,13 +1176,15 @@ def _transport_api(
         raise RuntimeError(
             f"auth por-invocacion: la variable {key_env} no esta en el entorno"
         )
+    max_tokens = backend_cfg.get("max_tokens") or _API_MAX_TOKENS
+    allow_reasoning = bool(backend_cfg.get("_allow_reasoning_content"))
     body = json.dumps(
         {
             "model": profile.get("model"),
             "messages": messages,
             "temperature": 0,
             "stream": True,
-            "max_tokens": _API_MAX_TOKENS,
+            "max_tokens": max_tokens,
         }
     ).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310 -- https exigido por el validador
@@ -1175,7 +1227,9 @@ def _transport_api(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             if _response_is_sse(resp):
-                streamed = _collect_sse_content(resp, deadline, api_key)
+                streamed = _collect_sse_content(
+                    resp, deadline, api_key, allow_reasoning=allow_reasoning
+                )
             else:
                 raw_body = resp.read()
     except (TransportError, json.JSONDecodeError):
@@ -1187,7 +1241,17 @@ def _transport_api(
     if streamed is not None:
         return streamed
     data = json.loads(raw_body.decode("utf-8"))
-    return data["choices"][0]["message"]["content"]
+    message = data["choices"][0]["message"]
+    # WOT-2026-086h: misma ruta opt-in que el SSE, para un 200 no-stream que
+    # devuelve reasoning sin content. Con `content` ausente Y sin reasoning,
+    # se conserva el KeyError historico (no se silencia).
+    if (
+        allow_reasoning
+        and not message.get("content")
+        and message.get("reasoning_content")
+    ):
+        return _REASONING_ONLY_MARKER + message["reasoning_content"]
+    return message["content"]
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -3690,6 +3754,42 @@ _FAILURE_CLASS_QUOTA = "quota_exhausted"
 _FAILURE_CLASS_MODEL_UNAVAILABLE = "model_unavailable"
 _FAILURE_CLASS_NETWORK = "network_timeout"
 _FAILURE_CLASS_UNKNOWN = "unknown"
+# WOT-2026-086h (DEC-086H-001 Decision 1): ADICIONES puras a
+# `_classify_transport_failure`. Las 4 clases de arriba NO cambian de
+# significado ni de cobertura -- sus fixtures existentes siguen dando la misma
+# clase (p.ej. status 504 sin texto sigue siendo `network_timeout`, no se
+# re-clasifica). Estas dos cubren familias que HOY caian en `unknown`:
+# `sin_acceso` (401/403 de auth) y `proveedor_caido` (502/503 de gateway; el
+# 504/524 lo sigue capturando `network_timeout`, ver NO-REGRESION en el
+# docstring de `_classify_transport_failure`).
+_FAILURE_CLASS_SIN_ACCESO = "sin_acceso"
+_FAILURE_CLASS_PROVEEDOR_CAIDO = "proveedor_caido"
+# Taxonomia del SMOKE (las 8 clases de DEC-086H-001 Decision 1). `ok` y
+# `ok_razonador` son respuestas VALIDAS (no fallos de transporte);
+# `lento`/`respuesta_sin_token` solo se producen en la ruta smoke rapida con
+# `--timeout` corto y NUNCA emanan de `_classify_transport_failure` (que
+# conserva `network_timeout`/`unknown` para el resto del sistema, incluido
+# `loop-round`).
+_SMOKE_CLASS_OK = "ok"
+_SMOKE_CLASS_OK_REASONER = "ok_razonador"
+_SMOKE_CLASS_LENTO = "lento"
+# Nombre de variable SIN "token" a proposito: el linter de seguridad (S105)
+# confunde un literal de clase con un secreto si el identificador lo dice. El
+# VALOR si es el literal de la taxonomia `respuesta_sin_token`.
+_SMOKE_CLASS_SIN_NONCE = "respuesta_sin_token"
+# Marcador interno que `_collect_sse_content` (via `_transport_api`) antepone
+# a la deliberacion `reasoning_content` cuando la ruta smoke pide
+# explicitamente `_allow_reasoning_content` y NO hubo `content`. Permite que
+# `smoke_profile(..., probe=True)` distinga `ok_razonador` (disponible) de un
+# fallo de transporte sin tocar el contrato de retorno (str) de
+# `send_to_profile`.
+_REASONING_ONLY_MARKER = "\x00ensemble-smoke-reasoning-only\x00"
+# Estados HTTP cuyo solo status ya es inequivoco (mismo criterio que
+# `network_timeout` con 504/524): 401/403 = sin acceso, 502/503 = proveedor
+# caido. Se comprueban ANTES de la rama de red; el 504/524 NO entra aqui
+# (NO-REGRESION: su fixture existente exige `network_timeout`).
+_ACCESS_DENIED_STATUSES = (401, 403)
+_PROVIDER_DOWN_STATUSES = (502, 503)
 
 _QUOTA_MARKERS = (
     "monthly_cap_reached",
@@ -3748,6 +3848,10 @@ def _classify_transport_failure(exc: Exception) -> str:
         ninguna familia conocida (incluye un status 400/402/429/504 SIN
         marcador de texto reconocido) y un humano/agente debe leer `detail`
         tal cual -- no se debe inferir mas alla de lo que el texto dice.
+    NO-REGRESION (WOT-2026-086h): las 4 clases historicas conservan su
+        cobertura EXACTA. Las dos nuevas (`sin_acceso` 401/403,
+        `proveedor_caido` 502/503) son adiciones puras sobre inputs que hoy
+        devolvian `unknown`; el 504/524 sigue siendo `network_timeout`.
     LIMITE CONOCIDO (declarado, no resuelto): un cuelgue SIN excepcion
         (backend vivo segun smoke pero que nunca completa una ronda real,
         ej. modelo degradado del lado del proveedor) no llega aqui -- solo
@@ -3769,6 +3873,14 @@ def _classify_transport_failure(exc: Exception) -> str:
         return _FAILURE_CLASS_QUOTA
     if (status == 400 and has_model_marker) or (status is None and has_model_marker):
         return _FAILURE_CLASS_MODEL_UNAVAILABLE
+    # WOT-2026-086h (ADICIONES puras): 401/403 y 502/503 caian hoy en
+    # `unknown`; ahora tienen clase propia. El 504/524 NO se toca aqui a
+    # proposito (NO-REGRESION: sigue siendo `network_timeout`, su fixture
+    # existente lo pina).
+    if status in _ACCESS_DENIED_STATUSES:
+        return _FAILURE_CLASS_SIN_ACCESO
+    if status in _PROVIDER_DOWN_STATUSES:
+        return _FAILURE_CLASS_PROVEEDOR_CAIDO
     if any(marker in haystack for marker in _NETWORK_MARKERS) or status in (504, 524):
         return _FAILURE_CLASS_NETWORK
     return _FAILURE_CLASS_UNKNOWN
@@ -3786,6 +3898,17 @@ def smoke_profile(
     # caller sin destino escriba en el scorecard por sorpresa. El CLI lo
     # resuelve con `_exploration_root` (flag o AGENT_PROJECT_ROOT).
     project_root: Path | None = None,
+    # WOT-2026-086h: ruta smoke rapida OPT-IN. `backend_cfg_override` es una
+    # COPIA del backend_cfg del perfil (con `timeout_s`/`max_tokens` forzados
+    # por el operador); `smoke_profile` la inyecta via un `config` COPIADO, de
+    # forma que `send_to_profile` la use para ESA llamada sin tocar su linea
+    # de precedencia (`timeout = int(backend_cfg.get("timeout_s") or timeout)`).
+    # `None` (default) = comportamiento historico exacto: el `backend_cfg` vivo
+    # del motor, sin copia. `probe=True` activa la taxonomia de 8 clases del
+    # smoke (ok/ok_razonador/respuesta_sin_token/lento) y anade la clave `class`;
+    # `False` (default) conserva el dict historico sin `class`.
+    backend_cfg_override: dict | None = None,
+    probe: bool = False,
 ) -> dict:
     """Smoke round-trip por CONTENIDO: el token debe volver en la respuesta.
 
@@ -3794,6 +3917,14 @@ def smoke_profile(
         `record_exploration_result`, cronometrada con `time.perf_counter()`.
         `DispatchBlockedError` NO deja fila (no hubo ronda). Sin
         `project_root` el comportamiento es IDENTICO al historico: cero filas.
+
+    WOT-2026-086h: con `backend_cfg_override` se pasa a `send_to_profile` un
+        `config` COPIADO cuyo `backends[<backend>]` ES el override. La copia
+        (no mutacion) evita colar el timeout de un vuelo al `backends` vivo
+        compartido (varios perfiles comparten dict). El default (`None`) deja
+        el camino de `resolve_fallback_backend`/`resolve_similar_fallback`
+        EXACTAMENTE como estaba. Con `probe=True`, un razonador que solo
+        emite `reasoning_content` cuenta como `ok_razonador` disponible.
     """
     messages = [
         {
@@ -3801,12 +3932,15 @@ def smoke_profile(
             "content": (f"Reply with exactly this token and nothing else: {nonce}"),
         }
     ]
+    call_config = _config_with_backend_override(
+        config, profile_name, backend_cfg_override
+    )
     _t0 = time.perf_counter()
     try:
         reply = send_to_profile(
             profile_name,
             messages,
-            config=config,
+            config=call_config,
             sensitivity="public",
             transport=transport,
             timeout=timeout,
@@ -3818,6 +3952,7 @@ def smoke_profile(
         # fantasma de una comprobacion que nunca ocurrio.
         raise
     except Exception as exc:  # STEP_SKIP documentado: backend caido no aborta
+        failure_class = _classify_transport_failure(exc)
         if project_root is not None:
             record_exploration_result(
                 project_root,
@@ -3827,13 +3962,19 @@ def smoke_profile(
                 latency_ms=round((time.perf_counter() - _t0) * 1000),
                 failure_mode=f"{type(exc).__name__}: {exc}"[:300],
             )
-        return {
-            "profile": profile_name,
-            "alive": False,
-            "detail": f"{type(exc).__name__}: {exc}",
-            "failure_class": _classify_transport_failure(exc),
-        }
-    alive = nonce in (reply or "")
+        return _smoke_result(
+            profile_name,
+            alive=False,
+            detail=f"{type(exc).__name__}: {exc}",
+            failure_class=failure_class,
+            probe=probe,
+            reasoning_only=False,
+        )
+    reasoning_only = isinstance(reply, str) and reply.startswith(_REASONING_ONLY_MARKER)
+    cleaned = reply[len(_REASONING_ONLY_MARKER) :] if reasoning_only else (reply or "")
+    # El modelo que SI responde via deliberacion (reasoning sin content) esta
+    # disponible: cuenta como vivo (DEC-086H-001 Decision 1).
+    alive = True if reasoning_only else (nonce in cleaned)
     if project_root is not None:
         record_exploration_result(
             project_root,
@@ -3843,12 +3984,198 @@ def smoke_profile(
             latency_ms=round((time.perf_counter() - _t0) * 1000),
             failure_mode=None if alive else "smoke_nonce_ausente",
         )
+    return _smoke_result(
+        profile_name,
+        alive=alive,
+        detail=cleaned[:200].strip(),
+        failure_class=None,
+        probe=probe,
+        reasoning_only=reasoning_only,
+    )
+
+
+def _config_with_backend_override(
+    config: dict, profile_name: str, backend_cfg_override: dict | None
+) -> dict:
+    """`config` COPIADO con `backends[<backend>]` sustituido por el override.
+
+    WOT-2026-086h. `None` -> devuelve `config` sin copia (camino historico).
+    La copia superficial evita mutar el `backends` vivo compartido (varios
+    perfiles comparten el mismo dict de backend en el motor real).
+    """
+    if backend_cfg_override is None:
+        return config
+    backend_key = config["ensemble_profiles"][profile_name]["backend"]
     return {
+        **config,
+        "backends": {**config.get("backends", {}), backend_key: backend_cfg_override},
+    }
+
+
+def _smoke_result(
+    profile_name: str,
+    *,
+    alive: bool,
+    detail: str,
+    failure_class: str | None,
+    probe: bool,
+    reasoning_only: bool,
+) -> dict:
+    """Dict de resultado del smoke; con `probe=True` anade `class` (taxonomia)."""
+    result = {
         "profile": profile_name,
         "alive": alive,
-        "detail": (reply or "")[:200].strip(),
-        "failure_class": None,
+        "detail": detail,
+        "failure_class": failure_class,
     }
+    if probe:
+        result["class"] = _smoke_class(
+            alive=alive, failure_class=failure_class, reasoning_only=reasoning_only
+        )
+    return result
+
+
+def _smoke_class(
+    *, alive: bool, failure_class: str | None, reasoning_only: bool
+) -> str:
+    """Etiqueta de la taxonomia de 8 del smoke para un resultado."""
+    if reasoning_only:
+        return _SMOKE_CLASS_OK_REASONER
+    if alive:
+        return _SMOKE_CLASS_OK
+    if failure_class:
+        return _classify_smoke_failure(failure_class)
+    return _SMOKE_CLASS_SIN_NONCE
+
+
+def _classify_smoke_failure(failure_class: str | None) -> str:
+    """Mapea una clase de TRANSPORTE a la taxonomia de 8 del smoke.
+
+    WOT-2026-086h. En la ruta smoke con `--timeout` corto, un
+    `network_timeout` de `_classify_transport_failure` es la senal de un
+    backend LENTO (no de una caida confirmada): se reclasifica `lento`, que
+    DEC-086H-001 Decision 1 declara "NO se excluye del pool". Las clases de
+    cuota/modelo/acceso/caida se propagan tal cual; `unknown` se conserva como
+    fallback honesto (no todas las excepciones caen en las 8).
+    """
+    if failure_class == _FAILURE_CLASS_NETWORK:
+        return _SMOKE_CLASS_LENTO
+    if failure_class in (
+        _FAILURE_CLASS_QUOTA,
+        _FAILURE_CLASS_MODEL_UNAVAILABLE,
+        _FAILURE_CLASS_SIN_ACCESO,
+        _FAILURE_CLASS_PROVEEDOR_CAIDO,
+    ):
+        return failure_class
+    return failure_class or _FAILURE_CLASS_UNKNOWN
+
+
+def _provider_models_url(api_base_url: str) -> str:
+    """Deriva el endpoint `/models` del proveedor desde su `api_base_url`.
+
+    WOT-2026-086h: los backends OpenAI-compatible declaran en el perfil
+    `api_base_url = <base>/v1/chat/completions`; el catalogo vive en
+    `<base>/v1/models` (mismo host, mismo prefijo `/v1`). Se retira el sufijo
+    `/chat/completions` SOLO si esta; si no, se anade `/models` al base tal
+    cual (nunca se inventa un host ni una ruta distinta).
+    """
+    base = str(api_base_url or "").rstrip("/")
+    suffix = "/chat/completions"
+    if base.endswith(suffix):
+        base = base[: -len(suffix)]
+    return f"{base}/models"
+
+
+def fetch_provider_models(
+    api_key_env: str, api_base_url: str, timeout: int
+) -> set[str]:
+    """GET `<base>/models` del proveedor; retorna el set de IDs de modelo.
+
+    WOT-2026-086h (DEC-086H-001 Decision 3). Esquema VERIFICADO en la
+    implementacion (2026-10-09, una verificacion empirica real):
+
+    - nan (`GET https://api.nan.builders/v1/models`, HTTP 200):
+      `{"object":"models","data":[{"id":"glm5.3-flash","object":"model",
+      "created":...,"owned_by":"openai"}, ...]}` -- 13 ids.
+    - groq (`GET https://api.groq.com/openai/v1/models`, HTTP 200):
+      misma forma `{"object":"models","data":[...]}`; cada entrada trae
+      ADEMAS `name` (etiqueta legible, p.ej. "Canopy Labs Orpheus Arabic
+      Saudi") junto al `id` ("canopylabs/orpheus-arabic-saudi").
+
+    El campo que identifica el modelo que viaja en `body["model"]` de
+    chat-completions es `id` EXACTO y sensible a mayusculas; `name` NO se usa.
+    Por eso el match contra `profile["model"]` es por IGUALDAD EXACTA de `id`.
+
+    Before: `api_key_env` nombra una env var ya declarada en el perfil;
+        `api_base_url` es la del perfil (mismo host para perfiles del mismo
+        `backend`); `timeout` corto (el del smoke). `api_key_env` ausente del
+        entorno -> RuntimeError (mismo contrato que `_transport_api`).
+    During: GET autenticado (`Authorization: Bearer`) con el User-Agent del
+        motor; los fallos de red/HTTP se sanean como `TransportError` (misma
+        via que `_transport_api`: la key NUNCA se filtra).
+    After: set de ids `str`; `data` ausente o no-lista -> `TransportError`
+        (contrato de respuesta incumplido, fail-closed en vez de adivinar).
+    """
+    api_key = os.environ.get(api_key_env)
+    if not api_key:
+        raise RuntimeError(
+            f"auth por-invocacion: la variable {api_key_env} no esta en el entorno"
+        )
+    url = _provider_models_url(api_base_url)
+    req = urllib.request.Request(  # noqa: S310 -- https exigido por el validador
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": ENSEMBLE_USER_AGENT,
+        },
+        method="GET",
+    )
+    # Mismo patron que `_transport_api`: el saneado se CONSTRUYE dentro del
+    # except y se LEVANTA fuera, para que ni `__cause__` ni `__context__`
+    # arrastren el HTTPError crudo con la key.
+    sanitized: TransportError | None = None
+    raw: bytes = b""
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            raw = resp.read()
+    except Exception as exc:
+        sanitized = _sanitized_transport_error(exc, api_key)
+    if sanitized is not None:
+        raise sanitized
+    data = json.loads(raw.decode("utf-8"))
+    entries = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        raise TransportError(
+            "respuesta /v1/models sin lista `data`",
+            status=None,
+            body="",
+        )
+    return {
+        entry["id"]
+        for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    }
+
+
+def _fetch_models_for_group(
+    names: list[str], *, config: dict, timeout: int
+) -> set[str] | None:
+    """UNA llamada `/v1/models` por PROVEEDOR (no por perfil).
+
+    WOT-2026-086h: perfiles que comparten `backend` (p.ej. los 3 `nan_api`)
+    comparten host, asi que el catalogo se pide UNA vez usando el primer
+    perfil del grupo. `None` = no verificable (sin `api_base_url`/`api_key_env`
+    o fallo de red/HTTP), y el caller DEGRADA a completion minima SOLO para
+    ese proveedor (nunca inventa un endpoint), con WARN a stderr.
+    """
+    if not names:
+        return None
+    profile = config["ensemble_profiles"][names[0]]
+    api_base_url = profile.get("api_base_url")
+    api_key_env = profile.get("api_key_env")
+    if not api_base_url or not api_key_env:
+        return None
+    return fetch_provider_models(api_key_env, api_base_url, timeout)
 
 
 # FP-014 (docs/KNOWN_FAILURE_PATTERNS.md): un smoke con nonce trivial
@@ -5380,8 +5707,294 @@ def adjudicate(
     return regenerate_leaders(project_root)
 
 
-def _cmd_smoke(args, config) -> int:
-    names = [args.profile] if args.profile else sorted(selectable_profiles(config))
+def _resolve_smoke_names(args, config, profiles: dict) -> tuple[list[str], int] | None:
+    """Universo del smoke: `(names, denominador)`, o `None` si el perfil no existe."""
+    explicit_profile = getattr(args, "profile", None)
+    if explicit_profile:
+        if explicit_profile not in profiles:
+            print(
+                f"[smoke] ERROR: perfil '{explicit_profile}' no existe en "
+                "ensemble_profiles",
+                file=sys.stderr,
+            )
+            return None
+        return [explicit_profile], 1
+    names = sorted(selectable_profiles(config))
+    return names, len(names)
+
+
+def _filter_agent_channel(
+    names: list[str],
+    profiles: dict,
+    explicit_profile: str | None,
+    include_agents: bool,
+) -> tuple[list[str], list[dict]]:
+    """Canal `agent` (Forbidden Surface, DEC-086H-001): excluido por defecto.
+
+    Coste medido: un PONG a codex costo 11.278 tokens. Solo se incluye con
+    `--include-agents` o pidiendo ESE perfil con `--profile` (WARN de coste).
+    """
+    agent_explicit = (
+        explicit_profile is not None
+        and profiles.get(explicit_profile, {}).get("channel") == "agent"
+    )
+    kept: list[str] = []
+    saltados: list[dict] = []
+    for name in names:
+        channel = profiles.get(name, {}).get("channel")
+        if channel == "agent" and not (include_agents or agent_explicit):
+            print(
+                f"[smoke] SKIP '{name}': canal 'agent' excluido por defecto "
+                "(coste alto medido: un PONG a codex costo 11.278 tokens); "
+                f"usa --include-agents o --profile {name} para incluirlo",
+                file=sys.stderr,
+            )
+            saltados.append({"profile": name, "reason": "canal_agent"})
+            continue
+        if channel == "agent":
+            print(
+                f"[smoke] WARN '{name}': canal 'agent' incluido explicitamente "
+                "-- COSTE ALTO (medido: 11.278 tokens por PONG a codex)",
+                file=sys.stderr,
+            )
+        kept.append(name)
+    return kept, saltados
+
+
+def _group_by_backend(names: list[str], profiles: dict) -> dict[str, list[str]]:
+    """Agrupa perfiles por PROVEEDOR real (`backend`), preservando el orden."""
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        groups.setdefault(profiles.get(name, {}).get("backend"), []).append(name)
+    return groups
+
+
+def _fetch_models_by_backend(
+    groups: dict[str, list[str]], *, config: dict, timeout: int, models_fetcher
+) -> dict[str, set[str] | None]:
+    """UNA llamada `/v1/models` por PROVEEDOR, en paralelo entre proveedores.
+
+    Un fallo de descubrimiento NO aborta: se registra `None` (= no verificable,
+    el caller degrada a completion minima SOLO para ese proveedor) con WARN.
+    """
+    models_by_backend: dict[str, set[str] | None] = {}
+    workers = max(1, len(groups))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                models_fetcher, group_names, config=config, timeout=timeout
+            ): backend
+            for backend, group_names in groups.items()
+        }
+        for fut in as_completed(futures):
+            backend = futures[fut]
+            try:
+                models_by_backend[backend] = fut.result()
+            except Exception as exc:  # degradar, no abortar el smoke
+                print(
+                    f"[smoke] WARN: /v1/models no verificable para '{backend}': "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                models_by_backend[backend] = None
+    return models_by_backend
+
+
+def _probe_one_profile(
+    name: str,
+    *,
+    profiles: dict,
+    config: dict,
+    models_by_backend: dict[str, set[str] | None],
+    semaphores: dict[str, threading.Semaphore],
+    max_tokens: int,
+    timeout: int,
+    transport,
+    project_root: Path | None,
+) -> dict:
+    """Prueba UN perfil: `/v1/models` ausente -> skip; si no, smoke con tope."""
+    profile = profiles[name]
+    backend = profile.get("backend")
+    model = profile.get("model")
+    models = models_by_backend.get(backend)
+    if models is not None and model not in models:
+        # Modelo retirado/ausente: NO se gasta completion.
+        return {
+            "profile": name,
+            "alive": False,
+            "detail": (
+                f"modelo '{model}' ausente de /v1/models del proveedor '{backend}'"
+            ),
+            "failure_class": _FAILURE_CLASS_MODEL_UNAVAILABLE,
+            "class": _FAILURE_CLASS_MODEL_UNAVAILABLE,
+            "skipped_reason": "modelo_ausente_en_models",
+        }
+    with semaphores[backend]:
+        backend_cfg = config.get("backends", {}).get(backend, {})
+        # COPIA (nunca mutacion del dict compartido de `backends`):
+        # `timeout_s` forzado = techo EFECTIVO de la ruta smoke; `max_tokens`
+        # al body; `_allow_reasoning_content` activa `ok_razonador`.
+        # `send_to_profile` ve esta copia via el `config` copiado que
+        # `smoke_profile` construye.
+        override = {
+            **backend_cfg,
+            "timeout_s": timeout,
+            "max_tokens": max_tokens,
+            "_allow_reasoning_content": True,
+        }
+        return smoke_profile(
+            name,
+            config=config,
+            transport=transport,
+            project_root=project_root,
+            backend_cfg_override=override,
+            probe=True,
+            timeout=timeout,
+        )
+
+
+def _probe_all_profiles(
+    names: list[str],
+    groups: dict[str, list[str]],
+    *,
+    config: dict,
+    models_by_backend: dict[str, set[str] | None],
+    max_concurrent: int,
+    max_tokens: int,
+    timeout: int,
+    transport,
+    project_root: Path | None,
+) -> dict[str, dict]:
+    """Smoke en paralelo con un `ThreadPoolExecutor` compartido + semaforo POR
+    PROVEEDOR.
+
+    Workers = tope x n_proveedores (deriva del runtime, sin total fijo): los
+    grupos de proveedores corren a la vez y cada uno queda acotado a
+    `max_concurrent` por su semaforo. Un perfil que revienta NO aborta el resto.
+    """
+    profiles = config["ensemble_profiles"]
+    workers = max(1, max_concurrent * max(1, len(groups)))
+    semaphores = {backend: threading.Semaphore(max_concurrent) for backend in groups}
+    results_by_name: dict[str, dict] = {}
+
+    def probe_one(name: str) -> tuple[str, dict]:
+        return name, _probe_one_profile(
+            name,
+            profiles=profiles,
+            config=config,
+            models_by_backend=models_by_backend,
+            semaphores=semaphores,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            transport=transport,
+            project_root=project_root,
+        )
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(probe_one, name): name for name in names}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                name, result = fut.result()
+            except Exception as exc:  # un perfil no aborta el smoke
+                result = {
+                    "profile": name,
+                    "alive": False,
+                    "detail": f"{type(exc).__name__}: {exc}",
+                    "failure_class": _FAILURE_CLASS_UNKNOWN,
+                    "class": _FAILURE_CLASS_UNKNOWN,
+                }
+            results_by_name[name] = result
+    return results_by_name
+
+
+def _emit_smoke_report(
+    names: list[str],
+    results_by_name: dict[str, dict],
+    *,
+    denominador: int,
+    saltados: list[dict],
+    skipped: list[dict],
+) -> int:
+    """Agrega en el orden ORIGINAL de `names` (JSON deterministico) y reporta.
+
+    Consistencia: `inspeccionados + len(saltados) == denominador`. Exit 1 si
+    `inspeccionados == 0` (universo vacio jamas verde); 0 si algun vivo.
+    """
+    ordered = [results_by_name[name] for name in names if name in results_by_name]
+    saltados = list(saltados)
+    saltados.extend(
+        {"profile": result["profile"], "reason": result["skipped_reason"]}
+        for result in ordered
+        if result.get("skipped_reason")
+    )
+    inspeccionados = sum(1 for result in ordered if not result.get("skipped_reason"))
+    vivos = sum(1 for result in ordered if result.get("alive"))
+    print(
+        json.dumps(
+            {
+                "smoke": ordered,
+                "denominador": denominador,
+                "inspeccionados": inspeccionados,
+                "vivos": vivos,
+                "saltados": saltados,
+                "skipped_quarantine": skipped,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    print(
+        f"[smoke] {vivos}/{inspeccionados} backends vivos ({denominador} en el "
+        f"denominador, {len(saltados)} saltados; veredicto por CONTENIDO, no "
+        "por exit code)",
+        file=sys.stderr,
+    )
+    if inspeccionados == 0:
+        print(
+            "[smoke] 0 por inspeccionar: todos los perfiles del denominador se "
+            "saltaron (cuarentena/canal_agent/modelo_ausente_en_models); usa "
+            "--ignore-quarantine/--include-agents para forzar",
+            file=sys.stderr,
+        )
+        return 1
+    return 0 if vivos else 1
+
+
+def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
+    """Smoke rapido (WOT-2026-086h): paralelo por proveedor, con /v1/models.
+
+    Before: `args` trae `profile`, `project_root`, `ignore_quarantine`,
+        `timeout` (15), `max_tokens` (64), `include_agents`,
+        `max_concurrent_per_provider` (4). `models_fetcher`/`transport` son
+        hooks OPT-IN de test (default: `_fetch_models_for_group` y el
+        transporte real de `send_to_profile`).
+    During: (1) resuelve el universo y separa canal `agent` (excluido por
+        defecto) y cuarentena; (2) UNA llamada `/v1/models` por PROVEEDOR;
+        (3) smoke en paralelo con un `ThreadPoolExecutor` compartido de
+        `max_concurrent * n_proveedores` workers y un semaforo POR PROVEEDOR
+        que impone el tope de 4 (los grupos de proveedores corren a la vez;
+        el tope NO es un total global); (4) un modelo ausente de `/v1/models`
+        se marca `model_unavailable` SIN gastar completion; (5) agrega en el
+        orden original de `names` (JSON deterministico).
+    After: imprime el JSON con `denominador`/`inspeccionados`/`vivos`/
+        `saltados` (consistente: `inspeccionados + len(saltados) ==
+        denominador`) y retorna 0 si hay algun vivo, 1 si `inspeccionados==0`
+        o ninguno vivo. Un perfil que falla NO aborta el resto.
+    """
+    if models_fetcher is None:
+        models_fetcher = _fetch_models_for_group
+    timeout = int(getattr(args, "timeout", 15) or 15)
+    max_tokens = int(getattr(args, "max_tokens", 64) or 64)
+    include_agents = bool(getattr(args, "include_agents", False))
+    max_concurrent = int(getattr(args, "max_concurrent_per_provider", 4) or 4)
+    profiles = config.get("ensemble_profiles") or {}
+
+    resolved = _resolve_smoke_names(args, config, profiles)
+    if resolved is None:
+        return 2
+    names, denominador = resolved
+
     # WOT-2026-055o: el trafico exploratorio solo es registrable si hay un
     # destino-rol resoluble. Sin el, el smoke sigue funcionando pero NO deja
     # fila -- y eso se DECLARA, no se calla (mismo principio que el fallback
@@ -5394,6 +6007,8 @@ def _cmd_smoke(args, config) -> int:
             "en el scorecard",
             file=sys.stderr,
         )
+    saltados: list[dict] = []
+
     # Cuarentena (diseno Seccion 5.2): aviso ANTES de la llamada real, para
     # que un agente frio no gaste el 402 que ya conocemos. Contrato comun
     # en `_split_quarantined`: skip por defecto (WARN + JSON), y la regla
@@ -5406,32 +6021,38 @@ def _cmd_smoke(args, config) -> int:
         force=bool(getattr(args, "ignore_quarantine", False)),
         tag="smoke",
     )
-    results = [
-        smoke_profile(name, config=config, project_root=project_root) for name in names
-    ]
-    print(
-        json.dumps(
-            {"smoke": results, "skipped_quarantine": skipped},
-            ensure_ascii=False,
-            indent=2,
-        )
+    saltados.extend({"profile": s["profile"], "reason": "cuarentena"} for s in skipped)
+
+    names, agent_skips = _filter_agent_channel(
+        names, profiles, getattr(args, "profile", None), include_agents
     )
-    alive = sum(1 for r in results if r["alive"])
-    print(
-        f"[smoke] {alive}/{len(results)} backends vivos (veredicto por "
-        "CONTENIDO, no por exit code)"
-        + (f"; {len(skipped)} omitidos por cuarentena" if skipped else ""),
-        file=sys.stderr,
-    )
-    if skipped and not results:
-        print(
-            "[smoke] 0 por probar: TODOS los perfiles pedidos estan en "
-            "cuarentena (ver skipped_quarantine); usa --ignore-quarantine "
-            "para forzar",
-            file=sys.stderr,
+    saltados.extend(agent_skips)
+
+    groups = _group_by_backend(names, profiles)
+    results_by_name: dict[str, dict] = {}
+    if names:
+        models_by_backend = _fetch_models_by_backend(
+            groups, config=config, timeout=timeout, models_fetcher=models_fetcher
         )
-        return 1
-    return 0 if alive else 1
+        results_by_name = _probe_all_profiles(
+            names,
+            groups,
+            config=config,
+            models_by_backend=models_by_backend,
+            max_concurrent=max_concurrent,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            transport=transport,
+            project_root=project_root,
+        )
+
+    return _emit_smoke_report(
+        names,
+        results_by_name,
+        denominador=denominador,
+        saltados=saltados,
+        skipped=skipped,
+    )
 
 
 def _cmd_preflight(args, config) -> int:
@@ -6401,6 +7022,37 @@ def main(argv: list[str] | None = None) -> int:
         help="fuerza el intento aunque el perfil este en cuarentena "
         "vigente (por defecto se omite con WARN: regla dura del diseno "
         "Seccion 5 -- la cuarentena jamas bloquea un intento explicito)",
+    )
+    # WOT-2026-086h: smoke rapido (DEC-086H-001 Decision 4).
+    p_smoke.add_argument(
+        "--timeout",
+        type=int,
+        default=15,
+        help="techo EFECTIVO de cada ping (segundos): gana a "
+        "backends.<b>.timeout_s EN ESTA RUTA (default 15). No cambia "
+        "loop-round, que sigue respetando timeout_s",
+    )
+    p_smoke.add_argument(
+        "--max-tokens",
+        type=int,
+        default=64,
+        help="max_tokens del body HTTP del ping (default 64); acota el "
+        "presupuesto de salida de la comprobacion",
+    )
+    p_smoke.add_argument(
+        "--include-agents",
+        action="store_true",
+        help="incluye tambien los perfiles channel=agent (codex/opencode/"
+        "claude/kilo): COSTE ALTO (medido: 11.278 tokens por PONG a codex); "
+        "por defecto se omiten",
+    )
+    p_smoke.add_argument(
+        "--max-concurrent-per-provider",
+        type=int,
+        default=4,
+        help="tope de pings SIMULTANEOS por proveedor (default 4; medido "
+        "2026-09-29: 8 concurrentes da 429 en nan). Los distintos proveedores "
+        "corren a la vez entre si",
     )
 
     p_preflight = sub.add_parser(

@@ -2401,6 +2401,487 @@ def test_063c_sse_con_charset_activa_la_ruta_de_stream(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# WOT-2026-086h: smoke rapido (paralelo por proveedor, timeout efectivo,
+# /v1/models, taxonomia de 8 clases, filtro canal `agent`). DEC-086H-001.
+# VIVEN ANTES del marcador WOT-2026-025z: usan `smoke_profile`/`_transport_api`/
+# `urllib`/`monkeypatch.setenv`, tokens prohibidos tras ese marcador.
+# --------------------------------------------------------------------------- #
+
+
+def _smoke_args(**overrides):
+    base = {
+        "profile": None,
+        "project_root": None,
+        "ignore_quarantine": False,
+        "timeout": 15,
+        "max_tokens": 64,
+        "include_agents": False,
+        "max_concurrent_per_provider": 4,
+    }
+    base.update(overrides)
+    return ed.argparse.Namespace(**base)
+
+
+def _smoke_config(*, timeout_s=900):
+    """Dos proveedores API con un perfil cada uno (backend timeout_s alto)."""
+    backend = {"executable": "", "args": [], "discovery": {"method": "path_only"}}
+    return {
+        "backends": {
+            "provA": {**backend, "timeout_s": timeout_s},
+            "provB": {**backend, "timeout_s": timeout_s},
+        },
+        "ensemble_profiles": {
+            "a_one": {
+                "backend": "provA",
+                "channel": "api",
+                "model": "ma",
+                "api_base_url": "https://a.example/v1/chat/completions",
+                "api_key_env": "KEY_A",
+                "data_sensitivity": "public",
+                "write": False,
+            },
+            "b_one": {
+                "backend": "provB",
+                "channel": "api",
+                "model": "mb",
+                "api_base_url": "https://b.example/v1/chat/completions",
+                "api_key_env": "KEY_B",
+                "data_sensitivity": "public",
+                "write": False,
+            },
+        },
+        "ensemble_private_roots": [],
+    }
+
+
+def _no_models_fetcher(names, *, config, timeout):
+    return None
+
+
+def test_086h_smoke_paralelo_entre_proveedores_barrier():
+    """M1/D1: N perfiles de PROVEEDORES DISTINTOS corren a la vez, no en serie.
+
+    Barrier(2) (no reloj): si el smoke fuera secuencial, el primer `wait()`
+    agotaria su timeout y levantaria BrokenBarrierError -> los dos perfiles
+    caerian como no vivos -> rc != 0 (rojo).
+    """
+    config = _smoke_config()
+    barrier = threading.Barrier(2, timeout=5)
+    seen: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        seen.append(profile["backend"])
+        barrier.wait()
+        return "PONG-019o"
+
+    rc = ed._cmd_smoke(
+        _smoke_args(), config, models_fetcher=_no_models_fetcher, transport=transport
+    )
+    assert set(seen) == {"provA", "provB"}
+    assert rc == 0
+
+
+def test_086h_smoke_timeout_efectivo_gana_al_timeout_s_del_backend():
+    """M5/D1: `--timeout` es el TECHO EFECTIVO en la ruta smoke (15, no 900)."""
+    config = _smoke_config(timeout_s=900)
+    seen: dict[str, int] = {}
+
+    def transport(profile, backend_cfg, messages, timeout):
+        seen[profile["backend"]] = timeout
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(timeout=15),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert seen == {"provA": 15, "provB": 15}
+
+
+def test_086h_loop_round_fuera_de_smoke_respeta_timeout_s_control_negativo():
+    """Control negativo de M5: fuera de smoke, `timeout_s` del backend manda."""
+    config = _smoke_config(timeout_s=900)
+    seen: dict[str, int] = {}
+
+    def transport(profile, backend_cfg, messages, timeout):
+        seen["t"] = timeout
+        return "ok"
+
+    ed.send_to_profile(
+        "a_one",
+        [{"role": "user", "content": "x"}],
+        config=config,
+        sensitivity="public",
+        transport=transport,
+    )
+    assert seen["t"] == 900
+
+
+def test_086h_max_tokens_del_backend_cfg_llega_al_body(monkeypatch):
+    """D1: `--max-tokens` (via backend_cfg copiado) llega al body HTTP real."""
+    capture: dict = {}
+    body = json.dumps({"choices": [{"message": {"content": "PONG-019o"}}]}).encode()
+    _install_063c_transport(monkeypatch, _FakePlainResp(body), capture)
+    out = ed._transport_api(
+        _profile_063c(),
+        {"max_tokens": 64},
+        [{"role": "user", "content": "x"}],
+        timeout=5,
+    )
+    assert out == "PONG-019o"
+    assert capture["body"]["max_tokens"] == 64
+
+
+def test_086h_max_tokens_ausente_conserva_el_default_historico(monkeypatch):
+    """Control: sin `max_tokens` en backend_cfg -> `_API_MAX_TOKENS` (no cambia)."""
+    capture: dict = {}
+    body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+    _install_063c_transport(monkeypatch, _FakePlainResp(body), capture)
+    ed._transport_api(
+        _profile_063c(), {}, [{"role": "user", "content": "x"}], timeout=5
+    )
+    assert capture["body"]["max_tokens"] == ed._API_MAX_TOKENS
+
+
+def test_086h_ok_razonador_sse_sin_content_cuenta_como_disponible(monkeypatch):
+    """M4/D2: 200 SSE con `reasoning_content` sin `content` -> ok_razonador."""
+    lines = (
+        _sse_event(
+            json.dumps({"choices": [{"delta": {"reasoning_content": "pensando"}}]})
+        )
+        + _SSE_DONE
+    )
+    monkeypatch.setattr(
+        ed.urllib.request, "urlopen", lambda req, timeout=None: _FakeSSEStream(lines)
+    )
+    monkeypatch.setenv("FAKE_API_KEY", "sk-test")
+    result = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        backend_cfg_override={"_allow_reasoning_content": True},
+        probe=True,
+        timeout=15,
+    )
+    assert result["alive"] is True, "el razonador SI respondio: no es un fallo"
+    assert result["class"] == ed._SMOKE_CLASS_OK_REASONER
+
+
+def test_086h_dos_clases_de_transporte_historicas_no_cambian():
+    """D2 no-regresion: las 4 clases actuales intactas + las 2 adiciones."""
+    assert (
+        ed._classify_transport_failure(
+            ed.TransportError(
+                "HTTP 402",
+                status=402,
+                body='{"error":{"message":"allowance exhausted"}}',
+            )
+        )
+        == ed._FAILURE_CLASS_QUOTA
+    )
+    assert (
+        ed._classify_transport_failure(
+            ed.TransportError("HTTP 400", status=400, body='"is not supported"')
+        )
+        == ed._FAILURE_CLASS_MODEL_UNAVAILABLE
+    )
+    assert (
+        ed._classify_transport_failure(TimeoutError("The read operation timed out"))
+        == ed._FAILURE_CLASS_NETWORK
+    )
+    assert (
+        ed._classify_transport_failure(
+            ed.TransportError("Gateway error", status=504, body="")
+        )
+        == ed._FAILURE_CLASS_NETWORK
+    )
+    assert (
+        ed._classify_transport_failure(RuntimeError("nada reconocible"))
+        == ed._FAILURE_CLASS_UNKNOWN
+    )
+    assert (
+        ed._classify_transport_failure(ed.TransportError("x", status=403, body=""))
+        == ed._FAILURE_CLASS_SIN_ACCESO
+    )
+    assert (
+        ed._classify_transport_failure(ed.TransportError("x", status=502, body=""))
+        == ed._FAILURE_CLASS_PROVEEDOR_CAIDO
+    )
+
+
+def test_086h_fetch_provider_models_usa_el_campo_id(monkeypatch):
+    """D3: el catalogo se lee de `data[].id` (exacto, case-sensitive)."""
+    body = json.dumps(
+        {
+            "object": "models",
+            "data": [
+                {"id": "ma", "object": "model"},
+                {"id": "QB", "name": "Q mayuscula"},
+            ],
+        }
+    ).encode()
+    monkeypatch.setattr(
+        ed.urllib.request, "urlopen", lambda req, timeout=None: _FakePlainResp(body)
+    )
+    monkeypatch.setenv("FAKE_MODELS_KEY_086H", "sk-test")
+    ids = ed.fetch_provider_models(
+        "FAKE_MODELS_KEY_086H", "https://a.example/v1/chat/completions", timeout=5
+    )
+    assert ids == {"ma", "QB"}
+
+
+def test_086h_fetch_provider_models_sin_data_es_transporte(monkeypatch):
+    """D3: respuesta sin lista `data` -> TransportError (no adivina)."""
+    body = json.dumps({"object": "list"}).encode()
+    monkeypatch.setattr(
+        ed.urllib.request, "urlopen", lambda req, timeout=None: _FakePlainResp(body)
+    )
+    monkeypatch.setenv("FAKE_MODELS_KEY_086H", "sk-test")
+    with pytest.raises(ed.TransportError):
+        ed.fetch_provider_models(
+            "FAKE_MODELS_KEY_086H",
+            "https://a.example/v1/chat/completions",
+            timeout=5,
+        )
+
+
+def test_086h_modelo_ausente_en_models_no_gasta_completion(tmp_path, capsys):
+    """M2/D3: modelo ausente -> model_unavailable SIN llamar al transporte."""
+    config = _smoke_config()
+    completion_calls: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        completion_calls.append(profile["backend"])
+        return "PONG-019o"
+
+    def models_fetcher(names, *, config, timeout):
+        backend = config["ensemble_profiles"][names[0]]["backend"]
+        return {"ma"} if backend == "provA" else {"otro"}
+
+    rc = ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=models_fetcher,
+        transport=transport,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert completion_calls == ["provA"], "el proveedor sin el modelo no se llamo"
+    ausente = next(r for r in payload["smoke"] if r["profile"] == "b_one")
+    assert ausente["alive"] is False
+    assert ausente["class"] == ed._FAILURE_CLASS_MODEL_UNAVAILABLE
+    assert any(
+        s["profile"] == "b_one" and s["reason"] == "modelo_ausente_en_models"
+        for s in payload["saltados"]
+    )
+    assert rc == 0
+
+
+def test_086h_modelo_presente_en_models_si_proba(tmp_path, capsys):
+    """Control de D3: modelo PRESENTE -> se prueba (no se marca ausente)."""
+    config = _smoke_config()
+    completion_calls: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        completion_calls.append(profile["backend"])
+        return "PONG-019o"
+
+    rc = ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=lambda n, *, config, timeout: {"ma", "mb"},
+        transport=transport,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert set(completion_calls) == {"provA", "provB"}
+    assert all(r["class"] == ed._SMOKE_CLASS_OK for r in payload["smoke"])
+    assert rc == 0
+
+
+def _smoke_config_with_agent():
+    config = _smoke_config()
+    config["backends"]["agt"] = {
+        "executable": "",
+        "args": [],
+        "discovery": {"method": "path_only"},
+    }
+    config["ensemble_profiles"]["codex_like"] = {
+        "backend": "agt",
+        "channel": "agent",
+        "model": None,
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    return config
+
+
+def test_086h_canal_agent_excluido_por_defecto_y_saltado(tmp_path, capsys):
+    config = _smoke_config_with_agent()
+    invoked: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        invoked.append(profile["backend"])
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    out = capsys.readouterr()
+    assert "agt" not in invoked
+    assert "canal 'agent' excluido" in out.err
+    payload = json.loads(out.out)
+    assert any(
+        s["profile"] == "codex_like" and s["reason"] == "canal_agent"
+        for s in payload["saltados"]
+    )
+
+
+def test_086h_include_agents_los_incluye_con_warn(tmp_path, capsys):
+    config = _smoke_config_with_agent()
+    invoked: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        invoked.append(profile["backend"])
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path), include_agents=True),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert "agt" in invoked
+    assert "COSTE ALTO" in capsys.readouterr().err
+
+
+def test_086h_profile_agent_explicito_lo_incluye_con_warn(tmp_path, capsys):
+    config = _smoke_config_with_agent()
+    invoked: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        invoked.append(profile["backend"])
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path), profile="codex_like"),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert invoked == ["agt"]
+    assert "COSTE ALTO" in capsys.readouterr().err
+
+
+def test_086h_denominador_consistente(tmp_path, capsys):
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        _smoke_config_with_agent(),
+        models_fetcher=_no_models_fetcher,
+        transport=lambda p, b, m, t: "PONG-019o",
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["denominador"] == 3
+    assert (
+        payload["inspeccionados"] + len(payload["saltados"]) == payload["denominador"]
+    )
+    assert payload["vivos"] == 2
+    assert payload["vivos"] <= payload["inspeccionados"]
+
+
+def test_086h_inspeccionados_cero_exit_uno(tmp_path):
+    """D4: universo sin perfiles inspeccionables -> exit 1."""
+    config = _smoke_config_with_agent()
+    config["ensemble_profiles"] = {
+        "codex_like": config["ensemble_profiles"]["codex_like"]
+    }
+    rc = ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=lambda p, b, m, t: "PONG-019o",
+    )
+    assert rc == 1
+
+
+def test_086h_tope_concurrencia_por_proveedor(tmp_path):
+    """M3/D1: nunca mas de 4 pings simultaneos del MISMO proveedor.
+
+    Se usan 6 perfiles de provA + 1 de provB para que el pool
+    (`max_concurrent * n_proveedores` = 8) NO sea el que impone el tope: lo
+    impone el semaforo POR PROVEEDOR. Sin el (mutacion M3), provA llegaria a
+    6 y este assert cae.
+    """
+    backend = {"executable": "", "args": [], "discovery": {"method": "path_only"}}
+    profiles = {
+        f"a{i}": {
+            "backend": "provA",
+            "channel": "api",
+            "model": f"m{i}",
+            "api_base_url": "https://a.example/v1/chat/completions",
+            "api_key_env": "KEY_A",
+            "data_sensitivity": "public",
+            "write": False,
+        }
+        for i in range(6)
+    }
+    profiles["b_only"] = {
+        "backend": "provB",
+        "channel": "api",
+        "model": "mb",
+        "api_base_url": "https://b.example/v1/chat/completions",
+        "api_key_env": "KEY_B",
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    config = {
+        "backends": {"provA": dict(backend), "provB": dict(backend)},
+        "ensemble_profiles": profiles,
+        "ensemble_private_roots": [],
+    }
+    lock = threading.Lock()
+    active = {"provA": 0, "provB": 0}
+    max_active = {"provA": 0, "provB": 0}
+
+    def transport(profile, backend_cfg, messages, timeout):
+        backend_name = profile["backend"]
+        with lock:
+            active[backend_name] += 1
+            max_active[backend_name] = max(
+                max_active[backend_name], active[backend_name]
+            )
+        time.sleep(0.3)
+        with lock:
+            active[backend_name] -= 1
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert max_active["provA"] <= 4, f"tope rebasado: {max_active['provA']}"
+    assert max_active["provA"] >= 2, "no se observo concurrencia real en provA"
+    assert max_active["provB"] == 1
+
+
+def test_086h_respuesta_sin_token_clasifica(tmp_path, capsys):
+    """D2: 200 con texto pero SIN el nonce -> respuesta_sin_token."""
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        _smoke_config(),
+        models_fetcher=_no_models_fetcher,
+        transport=lambda p, b, m, t: "auth error",
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["smoke"]
+    assert all(r["class"] == "respuesta_sin_token" for r in payload["smoke"])
+    assert all(r["alive"] is False for r in payload["smoke"])
+
+
+# --------------------------------------------------------------------------- #
 # WOT-2026-041b: `append_scorecard` escribia sin lock del SO. La mutation usa
 # PROCESOS reales (multiprocessing.Process, no subprocess: subprocess no
 # comparte el file descriptor y no ejerce la carrera) con arranque
@@ -4925,7 +5406,9 @@ def test_smoke_cli_skips_quarantined_unless_forced(tmp_path, monkeypatch, capsys
     )
     probed: list[str] = []
 
-    def _alive(name, *, config, project_root=None):
+    # WOT-2026-086h: la ruta smoke pasa kwargs opt-in extra (backend_cfg_override/
+    # probe/transport/timeout); el stub solo necesita registrarlos.
+    def _alive(name, **_kw):
         probed.append(name)
         return {"alive": True, "detail": "ok"}
 
@@ -5164,7 +5647,8 @@ def test_legacy_que_falla_sigue_resolviendo_su_fallback(tmp_path, monkeypatch):
 def test_smoke_global_no_prueba_el_legacy(tmp_path, monkeypatch):
     probed: list[str] = []
 
-    def _alive(name, *, config, project_root=None):
+    # WOT-2026-086h: stub amplio -- la ruta smoke anade kwargs opt-in.
+    def _alive(name, **_kw):
         probed.append(name)
         return {"alive": True, "detail": "ok"}
 
