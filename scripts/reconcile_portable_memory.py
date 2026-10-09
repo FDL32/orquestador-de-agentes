@@ -323,10 +323,14 @@ def append_records_atomically(
     After: returns 0 if the post-write validation passes (the write stands).
            On failure (non-zero), restores dst_archive to its EXACT pre-write
            byte content (or removes it if it did not exist before) and
-           returns the validator's non-zero code. The caller's message must
-           distinguish "wrote nothing" from "wrote and rolled back" -- this
-           function guarantees the DISK state matches "wrote nothing" in the
-           failure case, so callers may keep their existing wording.
+           returns the validator's non-zero code. The restore itself uses the
+           same atomic temp+os.replace pattern as the write (Codex Review 2
+           finding on commit 2616e03: a direct write_bytes/unlink rollback
+           left a window where dying mid-restore could leave a truncated
+           file). The caller's message must distinguish "wrote nothing" from
+           "wrote and rolled back" -- this function guarantees the DISK state
+           matches "wrote nothing" in the failure case, so callers may keep
+           their existing wording.
     """
     pre_existed = dst_archive.exists()
     pre_content = dst_archive.read_bytes() if pre_existed else None
@@ -350,8 +354,27 @@ def append_records_atomically(
 
     rc = validate_strict(motor_root, dst_archive)
     if rc != 0:
+        # Rollback via the SAME atomic temp+replace pattern as the write above
+        # (adjudicado por Codex Review 2 sobre 2616e03): `write_bytes`/`unlink`
+        # directo dejaba una ventana donde morir a mitad de la restauracion
+        # podia dejar el archive truncado o a medio escribir. No es
+        # transaccionalidad multi-proceso (el ticket lo excluye como
+        # NON-GOAL): es la misma garantia atomica de un solo `os.replace`,
+        # aplicada tambien al camino de deshacer.
         if pre_existed:
-            dst_archive.write_bytes(pre_content)
+            rfd, rollback_tmp_name = tempfile.mkstemp(
+                dir=dst_archive.parent,
+                prefix=f".{dst_archive.name}.rollback.",
+                suffix=".tmp",
+            )
+            rollback_tmp_path = Path(rollback_tmp_name)
+            try:
+                with os.fdopen(rfd, "wb") as fh:
+                    fh.write(pre_content)
+                os.replace(rollback_tmp_path, dst_archive)
+            except BaseException:
+                rollback_tmp_path.unlink(missing_ok=True)
+                raise
         else:
             dst_archive.unlink(missing_ok=True)
         return rc
