@@ -23,12 +23,14 @@ from scripts.prepush_check import (
     _format_check_optout,
     _print_preflight_report,
     run_agent_controller_validate,
+    run_dec_receipt_check,
     run_delivery_hygiene_check,
     run_git_status_check,
     run_portable_memory_archive_check,
     run_preflight_check,
     run_ruff_check,
     run_ruff_format_check,
+    run_subprocess_check,
     run_validate_all,
 )
 
@@ -1090,3 +1092,51 @@ class TestPortableMemoryArchiveCheck:
         assert (motor_root_value / "scripts").is_dir(), (
             f"--motor-root must point at a real motor checkout; got {motor_root_value}"
         )
+
+
+class TestDecReceiptCheck:
+    """WOT-2026-067x: el universo vacio del recibo DEC no cuenta como PASS.
+
+    El guard (`scripts/check_dec_receipt.py`) sale con `EXIT_EMPTY_UNIVERSE`
+    cuando no hay fichas y `run_dec_receipt_check` lo mapea a `skipped=True`.
+    Se ejerce la RUTA DE PRODUCCION (subprocess real del guard, motor real como
+    `--motor-root`); no se mockea el `CheckResult`.
+    """
+
+    def test_dec_receipt_vacio_no_cuenta_como_pase(self, tmp_path: Path) -> None:
+        """MUTATION de D4: sin buzones el SKIP debe marcarse, no pasar mudo."""
+        result = run_dec_receipt_check(tmp_path)
+
+        assert result.passed is True
+        assert result.skipped is True, (
+            "un guard con 0 fichas no puede contar como PASS ejecutado: "
+            f"CheckResult={result!r}"
+        )
+
+    def test_dec_receipt_con_ficha_valida_es_pase_genuino(self, tmp_path: Path) -> None:
+        """Control positivo (D4): con 1 ficha valida es PASS genuino, no SKIP."""
+        inbox = tmp_path / ".agent" / "collaboration" / "backlog_inbox"
+        inbox.mkdir(parents=True)
+        (inbox / "FP-20261008-prueba.tickets.md").write_text(
+            "Titulo: prueba\n**recibo:** DEC-no-aplica: no toca el motor\n",
+            encoding="utf-8",
+        )
+
+        result = run_dec_receipt_check(tmp_path)
+
+        assert result.passed is True
+        assert result.skipped is False
+
+    def test_skip_exit_codes_default_no_cambia_el_resto(self, tmp_path: Path) -> None:
+        """D3: con el default `()` el helper sigue `passed = rc == 0`."""
+        cmd = [sys.executable, "-c", "import sys; sys.exit(3)"]
+
+        sin_skip = run_subprocess_check(cmd, "Prueba rc=3", tmp_path)
+        assert sin_skip.passed is False
+        assert sin_skip.skipped is False
+
+        con_skip = run_subprocess_check(
+            cmd, "Prueba rc=3 skip", tmp_path, skip_exit_codes=(3,)
+        )
+        assert con_skip.passed is True
+        assert con_skip.skipped is True

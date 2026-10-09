@@ -76,6 +76,13 @@ from pathlib import Path
 # Duena: WOT-2026-042x.
 GRANDFATHER_CUTOFF = "2026-07-29"
 
+# Codigo de salida del universo VACIO (WOT-2026-067x). Un `rc=0` en el vacio es
+# indistinguible del de "valide y no hubo errores", asi que el agregador
+# (`prepush_check.py::run_dec_receipt_check`) contaba el SKIP como PASS. El `3`
+# no colisiona: `0` = ejecutado sin errores, `1` = al menos un ERROR, `2` =
+# error de argparse (reservado). Es un rc DISTINGUIBLE, no parseo de texto.
+EXIT_EMPTY_UNIVERSE = 3
+
 # Las TRES formas exactas del recibo (contrato de 042w). El scope entre
 # parentesis es obligatorio: dice contra QUE registro se resuelve el id.
 _RE_SCOPED = re.compile(r"\bDEC-([A-Za-z0-9][A-Za-z0-9-]*?-\d+)\s*\((motor|destino)\)")
@@ -332,11 +339,15 @@ def main(argv: list[str] | None = None) -> int:
     files = sorted(f for d in inboxes for f in d.glob("*.tickets.md"))
 
     if not files:
+        # El vacio publica su DENOMINADOR completo (Quality Bar + DEC-047S-001:
+        # un verde con `inspeccionados == 0` solo es legitimo con la tupla y la
+        # lista de saltados) y sale con un rc DISTINGUIBLE, no `0`.
         print(
             "[dec-receipt] SKIP EXPLICITO: 0 fichas a validar "
-            f"(inboxes existentes: {len(inboxes)}). No es un PASS."
+            "(inspeccionados=0, hits=0, saltados=0, lista_saltados=[]; "
+            f"inboxes existentes: {len(inboxes)}). No es un PASS."
         )
-        return 0
+        return EXIT_EMPTY_UNIVERSE
 
     errors = warns = oks = 0
     for path in files:

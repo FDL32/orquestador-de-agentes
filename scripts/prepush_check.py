@@ -86,6 +86,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Collection
 from contextlib import suppress
 from pathlib import Path
 from typing import NamedTuple
@@ -152,6 +153,8 @@ def run_subprocess_check(
     name: str,
     project_root: Path,
     capture_output: bool = True,
+    *,
+    skip_exit_codes: Collection[int] = (),
 ) -> CheckResult:
     """Ejecuta un comando de verificacion y retorna su resultado.
 
@@ -160,6 +163,12 @@ def run_subprocess_check(
         name: Nombre descriptivo del check para el reporte.
         project_root: Raiz del proyecto donde ejecutar el comando.
         capture_output: Si True, captura stdout/stderr para diagnostico.
+        skip_exit_codes: Codigos de salida que significan "no habia materia
+            que validar" (WOT-2026-067x). Un rc de esta coleccion sale con
+            `passed=True` y `skipped=True` (el informe lo marca como SKIP, no
+            como un PASS ejecutado). El default vacio preserva el
+            comportamiento historico (`passed = returncode == 0`) de los otros
+            call-sites.
 
     Returns:
         CheckResult con nombre, estado, salida y si es bloqueante.
@@ -174,8 +183,16 @@ def run_subprocess_check(
             encoding="utf-8",
             errors="replace",
         )
-        passed = result.returncode == 0
         output = (result.stdout or "") + (result.stderr or "") if capture_output else ""
+        if result.returncode in skip_exit_codes:
+            return CheckResult(
+                name=name,
+                passed=True,
+                output=output,
+                is_blocking=True,
+                skipped=True,
+            )
+        passed = result.returncode == 0
     except FileNotFoundError as e:
         passed = False
         output = f"Comando no encontrado: {e}"
@@ -2417,6 +2434,12 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
     registro no existe, no se pasa el flag y todo recibo `(destino)` queda
     NO VERIFICABLE (ERROR), nunca "valido por defecto".
 
+    WOT-2026-067x: si NO hay materia (cero fichas), el guard sale con
+    `EXIT_EMPTY_UNIVERSE` y este consumidor lo mapea a `skipped=True` mediante
+    `skip_exit_codes`, de modo que el informe lo marca como SKIP y no como un
+    PASS ejecutado. Con materia valida el guard sigue `rc=0` (PASS genuino) y
+    con un ERROR sigue `rc=1` (`passed=False`).
+
     Args:
         project_root: Raiz del destino sobre la que corre el preflight; de ella
             se derivan los buzones de fichas y el registro de decisiones.
@@ -2459,10 +2482,13 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
         if inbox.is_dir():
             cmd += ["--inbox", str(inbox)]
 
+    from scripts.check_dec_receipt import EXIT_EMPTY_UNIVERSE
+
     return run_subprocess_check(
         cmd=cmd,
         name="DEC Receipt Barrier (WOT-2026-042x)",
         project_root=project_root,
+        skip_exit_codes=(EXIT_EMPTY_UNIVERSE,),
     )
 
 

@@ -304,9 +304,84 @@ def test_module_docstring_declares_no_topology_resolution() -> None:
 
 
 def test_empty_inbox_skips_explicitly(capsys: pytest.CaptureFixture[str]) -> None:
-    """0 fichas imprime SKIP EXPLICITO: un exit 0 mudo seria "no hice nada"."""
-    assert cdr.main(["--motor-root", str(Path(__file__).resolve().parents[2])]) == 0
-    assert "SKIP EXPLICITO" in capsys.readouterr().out
+    """0 fichas imprime SKIP EXPLICITO con un rc DISTINGUIBLE (no un exit 0 mudo).
+
+    WOT-2026-067x (TT-6): el vacio deja de salir `rc=0` (indistinguible de
+    "valide y paso") y publica su denominador. Cambio de contrato DELIBERADO.
+    """
+    rc = cdr.main(["--motor-root", str(Path(__file__).resolve().parents[2])])
+    out = capsys.readouterr().out
+    assert rc == cdr.EXIT_EMPTY_UNIVERSE
+    assert rc != 0
+    assert "SKIP EXPLICITO" in out
+    assert "inspeccionados=0" in out
+    assert "hits=0" in out
+    assert "saltados=0" in out
+    assert "lista_saltados=[]" in out
+
+
+def test_universo_vacio_publica_denominador_y_rc_distinguible(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D2: en el vacio el denominador completo y el rc viajan JUNTOS.
+
+    Control de mutacion de D2: quitar cualquiera de los campos del denominador
+    (o el rc distinguible) pone este test en ROJO.
+    """
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(Path(__file__).resolve().parents[2]),
+            "--inbox",
+            str(inbox),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == cdr.EXIT_EMPTY_UNIVERSE
+    assert "inspeccionados=0" in out
+    assert "hits=0" in out
+    assert "saltados=0" in out
+    assert "lista_saltados=[]" in out
+    assert "No es un PASS." in out
+
+
+def test_una_ficha_valida_sigue_rc_cero(tmp_path: Path) -> None:
+    """Control positivo (D5): con 1 ficha valida el vacio no aplica, rc=0."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "FP-20261001-prueba.tickets.md").write_text(
+        "Titulo: prueba\n**recibo:** DEC-no-aplica: no toca el motor\n",
+        encoding="utf-8",
+    )
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(Path(__file__).resolve().parents[2]),
+            "--inbox",
+            str(inbox),
+        ]
+    )
+    assert rc == 0
+
+
+def test_una_ficha_invalida_sigue_rc_uno(tmp_path: Path) -> None:
+    """No-regresion (D5): una ficha SIN recibo valido sigue rc=1."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "FP-20261001-mala.tickets.md").write_text(
+        "Titulo: sin recibo\nscope: motor\n", encoding="utf-8"
+    )
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(Path(__file__).resolve().parents[2]),
+            "--inbox",
+            str(inbox),
+        ]
+    )
+    assert rc == 1
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +667,7 @@ def test_061e_cli_warn_sale_en_el_camino_skip(tmp_path: Path) -> None:
         for line in proc.stdout.splitlines()
         if line.startswith("[dec-receipt] WARN")
     ]
-    assert proc.returncode == 0
+    assert proc.returncode == cdr.EXIT_EMPTY_UNIVERSE
     assert warn_lines == [
         "[dec-receipt] WARN decisions.md: 0 de 3 cabeceras 'DEC-' cargables; "
         "no cargable p.ej. '### DEC-001 - a'; formato esperado: "
@@ -782,7 +857,7 @@ def test_061e_cli_warn_precede_a_la_linea_skip(tmp_path: Path) -> None:
 
     proc = _run_cli_check_dec_receipt(registry, inbox)
 
-    assert proc.returncode == 0
+    assert proc.returncode == cdr.EXIT_EMPTY_UNIVERSE
     assert proc.stdout.index("[dec-receipt] WARN") < proc.stdout.index("SKIP EXPLICITO")
 
 
