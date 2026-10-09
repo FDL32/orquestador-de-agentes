@@ -1424,3 +1424,237 @@ def test_068k_main_falla_explicito_si_link_sin_ticket_prefix(tmp_path, monkeypat
         ]
     )
     assert rc == gl.EXIT_DEGRADED
+
+
+# =========================================================================== #
+# WOT-2026-078b -- census_live_landed: the LIVE queue against git log.
+#
+# The archive census (`census_archived`) only sees rows already terminal; a live
+# `pending` row whose closing commit landed stays invisible forever (WOT-2026-037a,
+# ~2 months). These tests EXECUTE the productive path against real ephemeral git
+# repos (mocks would not exercise the git-log grep faithfully), pin the 3-state +
+# code/mixed universe of Decision 2, and the D2 mutation (commit present -> row
+# reported; commit absent -> row gone).
+# =========================================================================== #
+def _live_row(ticket_id: str, state: str, dtype: str = "code") -> str:
+    """A live-queue row in the real `backlog.md` shape (state cell + prose dtype)."""
+    return (
+        f"| Alta | {ticket_id} | desc {ticket_id} deliverable_type: {dtype} | "
+        f"motor/x | {state} | - | origen | - |"
+    )
+
+
+def test_078b_d1_only_pending_code_row_with_landed_commit_is_reported(tmp_path):
+    """D1. Universe = {pending,blocked,deferred} x {code,mixed} AND a landed commit.
+
+    Three rows: a pending/code WITH a real commit -> appears; a pending/code with NO
+    commit -> absent; a ready-for-review/code WITH a real commit -> absent (out of the
+    Decision-2 universe even though the commit exists). The test builds real commits so
+    the "with/without commit" axis is exercised, never assumed.
+
+    Reachable mutation: widen the state filter to all of LIVE_STATES -> the
+    ready-for-review row enters the report and this goes RED.
+    """
+    _origin, work = _make_repo(tmp_path)
+    _commit(work, "a.txt", "a\n", "WOT-2026-0A1A: landed pending work")
+    _commit(work, "c.txt", "c\n", "WOT-2026-0C1C: landed review work")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+
+    content = (
+        "\n".join(
+            [
+                _live_row("WOT-2026-0A1A", "pending"),
+                _live_row("WOT-2026-0B1B", "pending"),  # no commit anywhere
+                _live_row("WOT-2026-0C1C", "ready-for-review"),
+            ]
+        )
+        + "\n"
+    )
+    found = gl.census_live_landed(content, "origin/main", work)
+    assert [c["ticket_id"] for c in found] == ["WOT-2026-0A1A"], (
+        f"only the pending/code row with a landed commit may be reported; got {found}"
+    )
+    assert found[0]["state"] == "pending"
+    assert "WOT-2026-0A1A" in found[0]["landed_subject"]
+
+
+def test_078b_d1_blocked_and_deferred_are_in_the_universe(tmp_path):
+    """D1 (state coverage). `blocked`/`deferred` are IN the universe, not just pending."""
+    _origin, work = _make_repo(tmp_path)
+    _commit(work, "b.txt", "b\n", "WOT-2026-0B2B: blocked work landed")
+    _commit(work, "d.txt", "d\n", "WOT-2026-0D2D: deferred work landed")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    content = (
+        "\n".join(
+            [
+                _live_row("WOT-2026-0B2B", "blocked"),
+                _live_row("WOT-2026-0D2D", "deferred"),
+            ]
+        )
+        + "\n"
+    )
+    ids = {c["ticket_id"] for c in gl.census_live_landed(content, "origin/main", work)}
+    assert ids == {"WOT-2026-0B2B", "WOT-2026-0D2D"}
+
+
+def test_078b_d1_non_code_dtype_and_typeless_row_are_out_of_universe(tmp_path):
+    """D1 (dtype coverage). A documentation row and a typeless row never enter, even
+    when a commit carries their ID (Decision 2: only code/mixed require landing)."""
+    _origin, work = _make_repo(tmp_path)
+    _commit(work, "d.txt", "d\n", "WOT-2026-0O3O: docs work")
+    _commit(work, "t.txt", "t\n", "WOT-2026-0T3T: typeless work")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    typeless = (
+        "| Alta | WOT-2026-0T3T | desc sin dtype | motor/x | pending | - | o | - |"
+    )
+    content = (
+        _live_row("WOT-2026-0O3O", "pending", dtype="documentation")
+        + "\n"
+        + typeless
+        + "\n"
+    )
+    assert gl.census_live_landed(content, "origin/main", work) == []
+
+
+def test_078b_d2_mutation_commit_present_reports_absent_drops_the_row(tmp_path):
+    """D2 (MUTATION). Same fixture + same content; the ONLY difference is whether a
+    commit reachable from origin/main carries the ticket ID in its subject.
+
+    Repo WITH the closing commit -> the row appears. Repo WITHOUT it (same base, same
+    extra payload, subject does not mention the ID) -> the SAME row disappears. The
+    two runs are compared directly, so the assertion isolates the commit, not the
+    surrounding shape.
+
+    Reachable mutation: make `census_live_landed` skip the `_landed_by_subject` gate
+    (always report) -> the second assert goes RED; make it always return [] -> the
+    first goes RED.
+    """
+    content = _live_row("WOT-2026-0A2A", "pending") + "\n"
+
+    with_base = tmp_path / "with"
+    with_base.mkdir(parents=True, exist_ok=True)
+    _o1, w1 = _make_repo(with_base)
+    _commit(w1, "a.txt", "a\n", "WOT-2026-0A2A: the landing commit")
+    _g(["push", "-q", "origin", "main"], w1)
+    _g(["fetch", "-q", "origin"], w1)
+    present = gl.census_live_landed(content, "origin/main", w1)
+
+    without_base = tmp_path / "without"
+    without_base.mkdir(parents=True, exist_ok=True)
+    _o2, w2 = _make_repo(without_base)
+    _commit(w2, "a.txt", "a\n", "chore: unrelated payload, no id in subject")
+    _g(["push", "-q", "origin", "main"], w2)
+    _g(["fetch", "-q", "origin"], w2)
+    absent = gl.census_live_landed(content, "origin/main", w2)
+
+    assert [c["ticket_id"] for c in present] == ["WOT-2026-0A2A"]
+    assert absent == [], (
+        f"without a commit carrying the ID the row must NOT appear; got {absent}"
+    )
+    assert present != absent
+
+
+def test_078b_d2_revert_only_mention_does_not_report_the_row(tmp_path):
+    """D2 (anti-false-positive). A Revert subject that mentions the ID is excluded by
+    the reused CAPA 3 predicate, so the row must NOT be reported as landed."""
+    _origin, work = _make_repo(tmp_path)
+    _commit(work, "r.txt", "r\n", 'Revert "WOT-2026-0R2R: undone work"')
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    content = _live_row("WOT-2026-0R2R", "pending") + "\n"
+    assert gl.census_live_landed(content, "origin/main", work) == []
+
+
+def test_078b_d3_run_backlog_live_landed_check_is_a_non_blocking_warn(tmp_path):
+    """D3 (integration). A candidate live row -> passed False but is_blocking False.
+
+    Is the WARN contract of the DoD (d): a "possible already-done" signal must never
+    block a push. Reachable mutation: set is_blocking=True -> RED; always pass -> RED.
+    """
+    from scripts.prepush_check import run_backlog_live_landed_check
+
+    _origin, work = _make_repo(tmp_path)
+    _commit(work, "a.txt", "a\n", "WOT-2026-0D3D: landed pending work")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+
+    dest = tmp_path / "destino"
+    live = dest / ".agent" / "collaboration"
+    live.mkdir(parents=True, exist_ok=True)
+    (live / "backlog.md").write_text(
+        _live_row("WOT-2026-0D3D", "pending") + "\n", encoding="utf-8"
+    )
+
+    result = run_backlog_live_landed_check(dest, motor_root=work)
+    assert result.passed is False
+    assert result.is_blocking is False, (
+        "a live-landed candidate is a WARN, never a push blocker"
+    )
+    assert "WOT-2026-0D3D" in result.output
+
+
+def test_078b_d3_no_candidate_passes_and_missing_backlog_is_named_skip(tmp_path):
+    """D3 twin. A row with no landed commit -> passed True; a destino without
+    backlog.md -> passed True with a named SKIP (never a fabricated failure)."""
+    from scripts.prepush_check import run_backlog_live_landed_check
+
+    _origin, work = _make_repo(tmp_path)
+    dest = tmp_path / "destino"
+    live = dest / ".agent" / "collaboration"
+    live.mkdir(parents=True, exist_ok=True)
+    (live / "backlog.md").write_text(
+        _live_row("WOT-2026-0N3N", "pending") + "\n", encoding="utf-8"
+    )
+    ok = run_backlog_live_landed_check(dest, motor_root=work)
+    assert ok.passed is True
+
+    empty_dest = tmp_path / "empty"
+    empty_dest.mkdir(parents=True, exist_ok=True)
+    skipped = run_backlog_live_landed_check(empty_dest, motor_root=work)
+    assert skipped.passed is True
+    assert "SKIP" in skipped.output
+
+
+def test_078b_d4_check_is_wired_immediately_after_landed_evidence_shape():
+    """D4. The detector is a BARRIER only if something INVOKES it (AGENTS.md,
+    "barrera cableada"): a citation in a prompt is a norm. Anchors on the real
+    ``results.append`` registration in ``run_preflight_check`` and its exact order
+    (immediately after ``run_landed_evidence_shape_check``, nothing between)."""
+    import inspect
+
+    from scripts.prepush_check import run_preflight_check
+
+    src = inspect.getsource(run_preflight_check)
+    shape_call = "results.append(run_landed_evidence_shape_check(project_root))"
+    live_call = "results.append(run_backlog_live_landed_check(project_root))"
+    shape_at = src.index(shape_call)
+    live_at = src.index(live_call)
+    assert live_at > shape_at, "the live-landed check must run AFTER the archive check"
+    between = src[shape_at + len(shape_call) : live_at]
+    assert "results.append(" not in between, (
+        "the live-landed check must be registered IMMEDIATELY after "
+        "run_landed_evidence_shape_check; another check slipped in between"
+    )
+
+
+def test_078b_d5_main_signature_unchanged_and_default_path_still_ok(tmp_path):
+    """D5 (no-regression). ``main`` exposes no new CLI flag and its default path is
+    unchanged: the archive-only path still returns EXIT_OK on a clean archive and the
+    signature keeps exactly ``argv``."""
+    import inspect
+
+    assert list(inspect.signature(gl.main).parameters) == ["argv"]
+
+    _origin, work = _make_repo(tmp_path)
+    landed = _commit(work, "a.txt", "a\n", "WOT-2026-0K5K: landed")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    row = (
+        f"| Media | WOT-2026-0K5K | work deliverable_type: code | motor/x | "
+        f"completed | - | s | commit:{landed} |\n"
+    )
+    dest = _archive_raw(tmp_path, work, row)
+    assert _run_main(tmp_path, work, dest) == gl.EXIT_OK

@@ -2320,6 +2320,91 @@ def run_landed_evidence_shape_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_backlog_live_landed_check(
+    project_root: Path, motor_root: Path | None = None
+) -> CheckResult:
+    """WARN when a LIVE backlog row already has a landed closing commit (WOT-2026-078b).
+
+    The complementary direction of ``run_landed_evidence_shape_check`` and of
+    ``check_backlog_commits_landed``: those audit rows ALREADY archived as terminal,
+    while a row still ``pending``/``blocked``/``deferred`` whose work landed stays
+    invisible forever. Measured 2026-09-26 (WOT-2026-037a: commit 94e1f62 of
+    2026-07-19/20, row ``pending`` for ~2 months) and again 2026-10-09 (6 live rows
+    already committed).
+
+    It is a RECOLLECTOR, never a reconciler: it names the candidate tickets and writes
+    NOTHING -- no row is moved, edited or archived. WARN by design (``is_blocking``
+    False), the DoD of the row: a "possible already-done" signal must never block a
+    push, it is only declared. It is NOT a substitute for the archive guard; it is the
+    third, orthogonal direction (live -> landed-but-unreconciled).
+
+    Before: ``project_root`` is the destino whose ``backlog.md`` (live queue) is read.
+        ``motor_root`` defaults to the resolved motor link (same pattern as
+        ``run_dec_receipt_check``), falling back to ``_MOTOR_ROOT``. A destino with no
+        ``backlog.md`` is a PASS (nothing to scan), never a fabricated failure.
+    During: reads that one file and runs ``census_live_landed`` against ``origin/main``
+        in ``motor_root`` (read-only git log; no network, no mutation).
+    After: ``passed`` False and ``is_blocking`` False naming every candidate ticket and
+        the subject that landed it, or ``passed`` True when the list is empty.
+    """
+    name = "Backlog Live Landed (WOT-2026-078b)"
+    try:
+        from scripts.check_backlog_commits_landed import census_live_landed
+    except ImportError:
+        from check_backlog_commits_landed import (  # type: ignore[no-redef]
+            census_live_landed,
+        )
+
+    backlog = project_root / ".agent" / "collaboration" / "backlog.md"
+    if not backlog.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no {backlog.name} in the destino (no live queue yet)",
+        )
+
+    if motor_root is None:
+        motor_root = _MOTOR_ROOT
+        try:
+            from runtime.motor_link import resolve_motor_root
+
+            resolved_motor_root = resolve_motor_root(project_root)
+            if resolved_motor_root is not None:
+                motor_root = resolved_motor_root
+        except ImportError:
+            pass
+
+    try:
+        content = backlog.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return CheckResult(
+            name=name, passed=False, output=f"cannot read {backlog}: {exc}"
+        )
+
+    candidates = census_live_landed(content, "origin/main", motor_root)
+    if candidates:
+        listed = "; ".join(
+            f"{c['ticket_id']} ({c['state']}): {c['landed_subject']}"
+            for c in candidates
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            is_blocking=False,
+            output=(
+                f"{len(candidates)} live row(s) are still pending/blocked/deferred but "
+                f"their closing commit already landed in origin/main -- candidates to "
+                f"RECONCILE by hand (this check never archives anything). "
+                f"Candidates: {listed}"
+            ),
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="no live pending/blocked/deferred code/mixed row has a landed commit",
+    )
+
+
 def run_motor_destination_integration_check(
     project_root: Path, motor_root: Path | None = None
 ) -> CheckResult:
@@ -2872,6 +2957,10 @@ def run_preflight_check(
         # 6e no arrastra deuda historica -- el archive real mide 0 filas malformadas,
         # asi que una solo puede entrar con el cierre que se esta empujando)
         results.append(run_landed_evidence_shape_check(project_root))
+        # 6e-ter. Backlog Live Landed (WOT-2026-078b; WARN -- direccion
+        # complementaria: una fila viva `pending` cuyo commit de cierre YA landeo es
+        # un candidato a reconciliar, nunca se archiva sola; JAMAS bloquea el push).
+        results.append(run_backlog_live_landed_check(project_root))
         # 6f. Motor<->Destino Integration (WOT-2026-024w; WARN default, FAIL opt-in)
         results.append(run_motor_destination_integration_check(project_root))
         # 6g. Contract Formation Check (WOT-2026-023m(c); bloqueante en cierre)
