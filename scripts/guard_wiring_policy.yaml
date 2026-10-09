@@ -99,6 +99,19 @@ known_unwired:
   # ejecuta en sus gates, pero ese generador aun no tiene invocador de frontera
   # propio -- cablear ambos es el mismo trabajo de 038b.
   check_prompt_bias: WOT-2026-038b
+  # check_worktree_divergence (WOT-2026-038d): detector de divergencia por hash
+  # entre DOS worktrees del motor (archives de memoria + prompts canonicos).
+  # Es un CLI de diagnostico manual que exige un PAR de rutas de worktree como
+  # argumento (--worktree-a/--worktree-b): no tiene un unico punto de ejecucion
+  # automatica natural porque "que dos worktrees comparar" es una decision del
+  # operador (hoy mismo, 2026-10-09, hay 3+ worktrees de vuelo activas en
+  # paralelo; cablearlo a un hook automatico exigiria decidir a priori el PAR
+  # canonico a comparar en cada commit, que no es un invariante fijo). Se invoca
+  # a mano cuando se sospecha divergencia (p.ej. antes de fusionar una rama de
+  # vuelo a main) o desde un prompt de cierre de sesion que lo cite
+  # explicitamente. Follow-up: si se fija una worktree "canonica" estable como
+  # ancla de comparacion, cablearlo en el cierre de sesion contra esa ancla.
+  check_worktree_divergence: WOT-2026-038d
 
   # WOT-2026-034c: el detector nace STANDALONE por diseno del propio ticket --
   # cablearlo en prepush es NON-GOAL declarado y se pedira como follow-up propio.
