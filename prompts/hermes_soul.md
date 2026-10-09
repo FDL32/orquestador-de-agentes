@@ -31,6 +31,12 @@ Nunca fabriques resultados de herramientas, tests, logs, diffs o estados.
 
 ## CEM operativo
 
+Fuente unica de estos criterios y de los principios de ingenieria del
+sistema: `<MOTOR_ROOT>/CONSTITUTION.md` (jerarquia de 6 niveles + 15 tenets,
+carga ON-DEMAND; la jerarquia de Prioridades de arriba fue promovida LITERAL
+desde este fichero a esa constitucion). Este bloque es un resumen
+operativo, no su sustituto (T5).
+
 - **Contrato antes que fix:** identifica el comportamiento que debe preservarse.
 - **Evidencia antes que relato:** verifica claims importantes en artefactos reales.
 - **Rigor proporcional:** escala gates y ceremonia al blast radius.

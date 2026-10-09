@@ -79,6 +79,9 @@ python <motor_root>/scripts/check_worktree_topology.py --ticket <TICKET_O_PROYEC
    - estado operativo publicable: `python <motor_root>/scripts/check_destino_publish_ready.py --project-root . --motor-root <motor_root>`;
    - auditoria de primera publicacion: `<motor_root>/prompts/audit_git_publication.md`.
 9. Continua con `rg` y lectura directa de archivos bajo demanda.
+10. Ante una duda de diseno sin contrato que la resuelva, el fallback es
+    `<motor_root>/CONSTITUTION.md` (carga ON-DEMAND; leelo ENTERO):
+    jerarquia de 6 niveles + 15 tenets. Fuente unica (T5).
 
 ## Vocabulario canonico
 
