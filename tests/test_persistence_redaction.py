@@ -145,6 +145,82 @@ def test_append_observation_clean_entries_pass_through(
     assert persisted["signal"] == "All systems nominal - no secrets here."
 
 
+def test_append_observation_assigns_stable_id(
+    memory_helpers_mod: Any,
+    agent_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """append_observation assigns a stable obs- prefixed id to new observations."""
+    monkeypatch.setattr(
+        memory_helpers_mod,
+        "get_agent_dir",
+        lambda: agent_dir,
+    )
+
+    obs: dict[str, Any] = {
+        "timestamp": "2026-06-02T00:00:00Z",
+        "topic": "test",
+        "signal": "Test observation without id.",
+        "source": "test",
+    }
+    assert memory_helpers_mod.append_observation(obs)
+
+    obs_file = agent_dir / "runtime" / "memory" / "observations.jsonl"
+    persisted = json.loads(obs_file.read_text(encoding="utf-8").strip())
+    assert isinstance(persisted["id"], str)
+    assert persisted["id"].startswith("obs-")
+    assert len(persisted["id"]) > 4
+
+
+def test_append_observation_preserves_existing_id(
+    memory_helpers_mod: Any,
+    agent_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """append_observation does not overwrite an existing id."""
+    monkeypatch.setattr(
+        memory_helpers_mod,
+        "get_agent_dir",
+        lambda: agent_dir,
+    )
+
+    obs: dict[str, Any] = {
+        "timestamp": "2026-06-02T00:00:00Z",
+        "topic": "test",
+        "signal": "Observation with existing id.",
+        "source": "test",
+        "id": "obs-ya-existente",
+    }
+    assert memory_helpers_mod.append_observation(obs)
+
+    obs_file = agent_dir / "runtime" / "memory" / "observations.jsonl"
+    persisted = json.loads(obs_file.read_text(encoding="utf-8").strip())
+    assert persisted["id"] == "obs-ya-existente"
+
+
+def test_append_observation_does_not_mutate_input(
+    memory_helpers_mod: Any,
+    agent_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """append_observation does not mutate the original observation dict."""
+    monkeypatch.setattr(
+        memory_helpers_mod,
+        "get_agent_dir",
+        lambda: agent_dir,
+    )
+
+    obs: dict[str, Any] = {
+        "timestamp": "2026-06-02T00:00:00Z",
+        "topic": "test",
+        "signal": "Test observation.",
+        "source": "test",
+    }
+    original_copy = dict(obs)
+    assert memory_helpers_mod.append_observation(obs)
+    assert obs == original_copy
+
+
 # ---------------------------------------------------------------------------
 # post_tool_hook.log_observation
 # ---------------------------------------------------------------------------

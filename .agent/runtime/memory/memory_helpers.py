@@ -10,6 +10,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from bus.portable_memory_archive import generate_stable_id
 from bus.redact import redact_payload
 from runtime.project_root import get_agent_dir
 
@@ -36,6 +37,7 @@ def append_observation(observation: dict) -> bool:
     observations_file = get_observations_file()
     # Redact secrets and PII before persisting
     redacted = redact_payload(observation)
+    redacted["id"] = generate_stable_id(redacted)
     with observations_file.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(redacted, ensure_ascii=False) + "\n")
     return True
