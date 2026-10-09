@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 # Importar el modulo bajo test
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
@@ -782,3 +784,64 @@ def test_067p_canonical_entry_without_duplicates_still_valid(
     path = _write_jsonl(tmp_path / "observations.jsonl", [_LESSON])
     success, errors = validate_file(path, strict=True)
     assert success, f"a canonical entry without duplicates must still pass: {errors}"
+
+
+def test_066r_error_output_names_the_audited_path(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-066r: when validation fails, stderr must name the ABSOLUTE
+    path that was actually audited -- without it, an agent running this
+    from a destino's root cannot tell whether the motor's buffer or the
+    destino's buffer was audited, producing a false drift diagnosis.
+    """
+    import sys as sys_module
+
+    from validate_observations import main
+
+    broken_path = tmp_path / "broken_observations.jsonl"
+    broken_path.write_text(
+        '{"timestamp": "2026-08-02T10:00:00+00:00", "topic": "lesson", '
+        '"signal": "x", "source": "manual", "domain": "not-canonical", '
+        '"confidence": 0.9, "applies_to": "code", '
+        '"source_ticket": "WOT-2026-066r"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys_module,
+        "argv",
+        ["validate_observations.py", "--strict", "--file", str(broken_path)],
+    )
+
+    exit_code = main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert str(broken_path.resolve()) in captured.err, (
+        f"stderr must name the absolute audited path, got: {captured.err}"
+    )
+
+
+def test_066r_success_path_unaffected(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-066r control negativo: the SUCCESS branch (no errors) is
+    out of scope for this ticket and must keep its existing message
+    format unchanged."""
+    import sys as sys_module
+
+    from validate_observations import main
+
+    good_path = _write_jsonl(tmp_path / "good_observations.jsonl", [_LESSON])
+
+    monkeypatch.setattr(
+        sys_module,
+        "argv",
+        ["validate_observations.py", "--strict", "--file", str(good_path)],
+    )
+
+    exit_code = main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Validacion EXITOSA" in captured.out

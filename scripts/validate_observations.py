@@ -502,6 +502,20 @@ def main() -> int:
 
     # Report
     if errors:
+        # WOT-2026-066r: name the ABSOLUTE path being audited before the
+        # error list. Without --file, the default resolves against the
+        # MOTOR root regardless of the invoker's cwd -- an agent running
+        # this from a destino's root could otherwise believe it audited
+        # the destino's buffer when it audited the motor's, producing a
+        # false drift diagnosis (line numbers that don't exist in the real
+        # destino file). Naming the path makes that misreading impossible
+        # without changing the default resolution itself (deliberate
+        # choice over resolving-by-invoker-root, which would silently
+        # change behavior for any existing script/prose depending on it).
+        print(
+            f"Auditando: {observations_path.resolve()}",
+            file=sys.stderr,
+        )
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
 
