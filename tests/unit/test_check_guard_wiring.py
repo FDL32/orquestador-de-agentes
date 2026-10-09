@@ -193,8 +193,24 @@ EXPECTED_WIRED_REAL = {
     # igual: el criterio de este baseline es "lo invoca un camino que corre solo",
     # no "bloquea". Su mutation-verify vive en test_check_suite_freshness.py.
     "check_suite_freshness",
+    # WOT-2026-NOTICKET-lock-suite: cableado en .pre-commit-config.yaml (hook
+    # `check-suite-running`, always_run, stages: [pre-commit]). Hermano de
+    # check_suite_freshness (mismo AVISO-no-bloqueo, exit 0 SIEMPRE), pero mide lo
+    # contrario: una suite canonica ACTIVAMENTE corriendo ahora mismo (lock PID vivo
+    # en runtime/pytest-safe/pytest.lock), no una ya terminada. Su mutation-verify
+    # vive en test_check_suite_running.py.
+    "check_suite_running",
     "check_worktree_topology",
     "delivery_hygiene_check",  # v4: denominador ve el guard sin prefijo, y lo cabla
+    # WOT-2026-089x (Correccion E, PROPUESTA_mejoras_protocolo_mensajeria_20261009.md
+    # Seccion 5.quater): entrada INDEPENDIENTE en `.claude/settings.json` bajo
+    # `PreToolUse`/`Write|Edit|MultiEdit` (opcion b del arranque v7 -- NO extiende
+    # `claude_guard_entry.py`, que solo despacha a `guard_paths.py`). El AST de
+    # `_settings_py_literals` alcanza el literal `.py` en el `command` del shim y
+    # resuelve `.agent/hooks/guard_channel_identity.py` -> wired real, no deuda.
+    # Mutation-verify: `tests/test_guard_channel_identity.py` (12 casos, incluye
+    # las DOS direcciones del prefijo H1 -- `90`->`90b` y `90b`->`90`).
+    "guard_channel_identity",
     "guard_paths",
     "validate_batch_dag",  # WOT-2026-027h: wired via import estatico -- check_flight_plan_collision.py hace `from validate_batch_dag import _normalize_surface`, y ese check hermano corre en prepush closeout. Retirado de guard_wiring_policy.yaml (era declared-debt de WOT-2026-038b).
     "validate_all",

@@ -2401,6 +2401,487 @@ def test_063c_sse_con_charset_activa_la_ruta_de_stream(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# WOT-2026-086h: smoke rapido (paralelo por proveedor, timeout efectivo,
+# /v1/models, taxonomia de 8 clases, filtro canal `agent`). DEC-086H-001.
+# VIVEN ANTES del marcador WOT-2026-025z: usan `smoke_profile`/`_transport_api`/
+# `urllib`/`monkeypatch.setenv`, tokens prohibidos tras ese marcador.
+# --------------------------------------------------------------------------- #
+
+
+def _smoke_args(**overrides):
+    base = {
+        "profile": None,
+        "project_root": None,
+        "ignore_quarantine": False,
+        "timeout": 15,
+        "max_tokens": 64,
+        "include_agents": False,
+        "max_concurrent_per_provider": 4,
+    }
+    base.update(overrides)
+    return ed.argparse.Namespace(**base)
+
+
+def _smoke_config(*, timeout_s=900):
+    """Dos proveedores API con un perfil cada uno (backend timeout_s alto)."""
+    backend = {"executable": "", "args": [], "discovery": {"method": "path_only"}}
+    return {
+        "backends": {
+            "provA": {**backend, "timeout_s": timeout_s},
+            "provB": {**backend, "timeout_s": timeout_s},
+        },
+        "ensemble_profiles": {
+            "a_one": {
+                "backend": "provA",
+                "channel": "api",
+                "model": "ma",
+                "api_base_url": "https://a.example/v1/chat/completions",
+                "api_key_env": "KEY_A",
+                "data_sensitivity": "public",
+                "write": False,
+            },
+            "b_one": {
+                "backend": "provB",
+                "channel": "api",
+                "model": "mb",
+                "api_base_url": "https://b.example/v1/chat/completions",
+                "api_key_env": "KEY_B",
+                "data_sensitivity": "public",
+                "write": False,
+            },
+        },
+        "ensemble_private_roots": [],
+    }
+
+
+def _no_models_fetcher(names, *, config, timeout):
+    return None
+
+
+def test_086h_smoke_paralelo_entre_proveedores_barrier():
+    """M1/D1: N perfiles de PROVEEDORES DISTINTOS corren a la vez, no en serie.
+
+    Barrier(2) (no reloj): si el smoke fuera secuencial, el primer `wait()`
+    agotaria su timeout y levantaria BrokenBarrierError -> los dos perfiles
+    caerian como no vivos -> rc != 0 (rojo).
+    """
+    config = _smoke_config()
+    barrier = threading.Barrier(2, timeout=5)
+    seen: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        seen.append(profile["backend"])
+        barrier.wait()
+        return "PONG-019o"
+
+    rc = ed._cmd_smoke(
+        _smoke_args(), config, models_fetcher=_no_models_fetcher, transport=transport
+    )
+    assert set(seen) == {"provA", "provB"}
+    assert rc == 0
+
+
+def test_086h_smoke_timeout_efectivo_gana_al_timeout_s_del_backend():
+    """M5/D1: `--timeout` es el TECHO EFECTIVO en la ruta smoke (15, no 900)."""
+    config = _smoke_config(timeout_s=900)
+    seen: dict[str, int] = {}
+
+    def transport(profile, backend_cfg, messages, timeout):
+        seen[profile["backend"]] = timeout
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(timeout=15),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert seen == {"provA": 15, "provB": 15}
+
+
+def test_086h_loop_round_fuera_de_smoke_respeta_timeout_s_control_negativo():
+    """Control negativo de M5: fuera de smoke, `timeout_s` del backend manda."""
+    config = _smoke_config(timeout_s=900)
+    seen: dict[str, int] = {}
+
+    def transport(profile, backend_cfg, messages, timeout):
+        seen["t"] = timeout
+        return "ok"
+
+    ed.send_to_profile(
+        "a_one",
+        [{"role": "user", "content": "x"}],
+        config=config,
+        sensitivity="public",
+        transport=transport,
+    )
+    assert seen["t"] == 900
+
+
+def test_086h_max_tokens_del_backend_cfg_llega_al_body(monkeypatch):
+    """D1: `--max-tokens` (via backend_cfg copiado) llega al body HTTP real."""
+    capture: dict = {}
+    body = json.dumps({"choices": [{"message": {"content": "PONG-019o"}}]}).encode()
+    _install_063c_transport(monkeypatch, _FakePlainResp(body), capture)
+    out = ed._transport_api(
+        _profile_063c(),
+        {"max_tokens": 64},
+        [{"role": "user", "content": "x"}],
+        timeout=5,
+    )
+    assert out == "PONG-019o"
+    assert capture["body"]["max_tokens"] == 64
+
+
+def test_086h_max_tokens_ausente_conserva_el_default_historico(monkeypatch):
+    """Control: sin `max_tokens` en backend_cfg -> `_API_MAX_TOKENS` (no cambia)."""
+    capture: dict = {}
+    body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+    _install_063c_transport(monkeypatch, _FakePlainResp(body), capture)
+    ed._transport_api(
+        _profile_063c(), {}, [{"role": "user", "content": "x"}], timeout=5
+    )
+    assert capture["body"]["max_tokens"] == ed._API_MAX_TOKENS
+
+
+def test_086h_ok_razonador_sse_sin_content_cuenta_como_disponible(monkeypatch):
+    """M4/D2: 200 SSE con `reasoning_content` sin `content` -> ok_razonador."""
+    lines = (
+        _sse_event(
+            json.dumps({"choices": [{"delta": {"reasoning_content": "pensando"}}]})
+        )
+        + _SSE_DONE
+    )
+    monkeypatch.setattr(
+        ed.urllib.request, "urlopen", lambda req, timeout=None: _FakeSSEStream(lines)
+    )
+    monkeypatch.setenv("FAKE_API_KEY", "sk-test")
+    result = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        backend_cfg_override={"_allow_reasoning_content": True},
+        probe=True,
+        timeout=15,
+    )
+    assert result["alive"] is True, "el razonador SI respondio: no es un fallo"
+    assert result["class"] == ed._SMOKE_CLASS_OK_REASONER
+
+
+def test_086h_dos_clases_de_transporte_historicas_no_cambian():
+    """D2 no-regresion: las 4 clases actuales intactas + las 2 adiciones."""
+    assert (
+        ed._classify_transport_failure(
+            ed.TransportError(
+                "HTTP 402",
+                status=402,
+                body='{"error":{"message":"allowance exhausted"}}',
+            )
+        )
+        == ed._FAILURE_CLASS_QUOTA
+    )
+    assert (
+        ed._classify_transport_failure(
+            ed.TransportError("HTTP 400", status=400, body='"is not supported"')
+        )
+        == ed._FAILURE_CLASS_MODEL_UNAVAILABLE
+    )
+    assert (
+        ed._classify_transport_failure(TimeoutError("The read operation timed out"))
+        == ed._FAILURE_CLASS_NETWORK
+    )
+    assert (
+        ed._classify_transport_failure(
+            ed.TransportError("Gateway error", status=504, body="")
+        )
+        == ed._FAILURE_CLASS_NETWORK
+    )
+    assert (
+        ed._classify_transport_failure(RuntimeError("nada reconocible"))
+        == ed._FAILURE_CLASS_UNKNOWN
+    )
+    assert (
+        ed._classify_transport_failure(ed.TransportError("x", status=403, body=""))
+        == ed._FAILURE_CLASS_SIN_ACCESO
+    )
+    assert (
+        ed._classify_transport_failure(ed.TransportError("x", status=502, body=""))
+        == ed._FAILURE_CLASS_PROVEEDOR_CAIDO
+    )
+
+
+def test_086h_fetch_provider_models_usa_el_campo_id(monkeypatch):
+    """D3: el catalogo se lee de `data[].id` (exacto, case-sensitive)."""
+    body = json.dumps(
+        {
+            "object": "models",
+            "data": [
+                {"id": "ma", "object": "model"},
+                {"id": "QB", "name": "Q mayuscula"},
+            ],
+        }
+    ).encode()
+    monkeypatch.setattr(
+        ed.urllib.request, "urlopen", lambda req, timeout=None: _FakePlainResp(body)
+    )
+    monkeypatch.setenv("FAKE_MODELS_KEY_086H", "sk-test")
+    ids = ed.fetch_provider_models(
+        "FAKE_MODELS_KEY_086H", "https://a.example/v1/chat/completions", timeout=5
+    )
+    assert ids == {"ma", "QB"}
+
+
+def test_086h_fetch_provider_models_sin_data_es_transporte(monkeypatch):
+    """D3: respuesta sin lista `data` -> TransportError (no adivina)."""
+    body = json.dumps({"object": "list"}).encode()
+    monkeypatch.setattr(
+        ed.urllib.request, "urlopen", lambda req, timeout=None: _FakePlainResp(body)
+    )
+    monkeypatch.setenv("FAKE_MODELS_KEY_086H", "sk-test")
+    with pytest.raises(ed.TransportError):
+        ed.fetch_provider_models(
+            "FAKE_MODELS_KEY_086H",
+            "https://a.example/v1/chat/completions",
+            timeout=5,
+        )
+
+
+def test_086h_modelo_ausente_en_models_no_gasta_completion(tmp_path, capsys):
+    """M2/D3: modelo ausente -> model_unavailable SIN llamar al transporte."""
+    config = _smoke_config()
+    completion_calls: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        completion_calls.append(profile["backend"])
+        return "PONG-019o"
+
+    def models_fetcher(names, *, config, timeout):
+        backend = config["ensemble_profiles"][names[0]]["backend"]
+        return {"ma"} if backend == "provA" else {"otro"}
+
+    rc = ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=models_fetcher,
+        transport=transport,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert completion_calls == ["provA"], "el proveedor sin el modelo no se llamo"
+    ausente = next(r for r in payload["smoke"] if r["profile"] == "b_one")
+    assert ausente["alive"] is False
+    assert ausente["class"] == ed._FAILURE_CLASS_MODEL_UNAVAILABLE
+    assert any(
+        s["profile"] == "b_one" and s["reason"] == "modelo_ausente_en_models"
+        for s in payload["saltados"]
+    )
+    assert rc == 0
+
+
+def test_086h_modelo_presente_en_models_si_proba(tmp_path, capsys):
+    """Control de D3: modelo PRESENTE -> se prueba (no se marca ausente)."""
+    config = _smoke_config()
+    completion_calls: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        completion_calls.append(profile["backend"])
+        return "PONG-019o"
+
+    rc = ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=lambda n, *, config, timeout: {"ma", "mb"},
+        transport=transport,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert set(completion_calls) == {"provA", "provB"}
+    assert all(r["class"] == ed._SMOKE_CLASS_OK for r in payload["smoke"])
+    assert rc == 0
+
+
+def _smoke_config_with_agent():
+    config = _smoke_config()
+    config["backends"]["agt"] = {
+        "executable": "",
+        "args": [],
+        "discovery": {"method": "path_only"},
+    }
+    config["ensemble_profiles"]["codex_like"] = {
+        "backend": "agt",
+        "channel": "agent",
+        "model": None,
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    return config
+
+
+def test_086h_canal_agent_excluido_por_defecto_y_saltado(tmp_path, capsys):
+    config = _smoke_config_with_agent()
+    invoked: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        invoked.append(profile["backend"])
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    out = capsys.readouterr()
+    assert "agt" not in invoked
+    assert "canal 'agent' excluido" in out.err
+    payload = json.loads(out.out)
+    assert any(
+        s["profile"] == "codex_like" and s["reason"] == "canal_agent"
+        for s in payload["saltados"]
+    )
+
+
+def test_086h_include_agents_los_incluye_con_warn(tmp_path, capsys):
+    config = _smoke_config_with_agent()
+    invoked: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        invoked.append(profile["backend"])
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path), include_agents=True),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert "agt" in invoked
+    assert "COSTE ALTO" in capsys.readouterr().err
+
+
+def test_086h_profile_agent_explicito_lo_incluye_con_warn(tmp_path, capsys):
+    config = _smoke_config_with_agent()
+    invoked: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        invoked.append(profile["backend"])
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path), profile="codex_like"),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert invoked == ["agt"]
+    assert "COSTE ALTO" in capsys.readouterr().err
+
+
+def test_086h_denominador_consistente(tmp_path, capsys):
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        _smoke_config_with_agent(),
+        models_fetcher=_no_models_fetcher,
+        transport=lambda p, b, m, t: "PONG-019o",
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["denominador"] == 3
+    assert (
+        payload["inspeccionados"] + len(payload["saltados"]) == payload["denominador"]
+    )
+    assert payload["vivos"] == 2
+    assert payload["vivos"] <= payload["inspeccionados"]
+
+
+def test_086h_inspeccionados_cero_exit_uno(tmp_path):
+    """D4: universo sin perfiles inspeccionables -> exit 1."""
+    config = _smoke_config_with_agent()
+    config["ensemble_profiles"] = {
+        "codex_like": config["ensemble_profiles"]["codex_like"]
+    }
+    rc = ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=lambda p, b, m, t: "PONG-019o",
+    )
+    assert rc == 1
+
+
+def test_086h_tope_concurrencia_por_proveedor(tmp_path):
+    """M3/D1: nunca mas de 4 pings simultaneos del MISMO proveedor.
+
+    Se usan 6 perfiles de provA + 1 de provB para que el pool
+    (`max_concurrent * n_proveedores` = 8) NO sea el que impone el tope: lo
+    impone el semaforo POR PROVEEDOR. Sin el (mutacion M3), provA llegaria a
+    6 y este assert cae.
+    """
+    backend = {"executable": "", "args": [], "discovery": {"method": "path_only"}}
+    profiles = {
+        f"a{i}": {
+            "backend": "provA",
+            "channel": "api",
+            "model": f"m{i}",
+            "api_base_url": "https://a.example/v1/chat/completions",
+            "api_key_env": "KEY_A",
+            "data_sensitivity": "public",
+            "write": False,
+        }
+        for i in range(6)
+    }
+    profiles["b_only"] = {
+        "backend": "provB",
+        "channel": "api",
+        "model": "mb",
+        "api_base_url": "https://b.example/v1/chat/completions",
+        "api_key_env": "KEY_B",
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    config = {
+        "backends": {"provA": dict(backend), "provB": dict(backend)},
+        "ensemble_profiles": profiles,
+        "ensemble_private_roots": [],
+    }
+    lock = threading.Lock()
+    active = {"provA": 0, "provB": 0}
+    max_active = {"provA": 0, "provB": 0}
+
+    def transport(profile, backend_cfg, messages, timeout):
+        backend_name = profile["backend"]
+        with lock:
+            active[backend_name] += 1
+            max_active[backend_name] = max(
+                max_active[backend_name], active[backend_name]
+            )
+        time.sleep(0.3)
+        with lock:
+            active[backend_name] -= 1
+        return "PONG-019o"
+
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        config,
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    assert max_active["provA"] <= 4, f"tope rebasado: {max_active['provA']}"
+    assert max_active["provA"] >= 2, "no se observo concurrencia real en provA"
+    assert max_active["provB"] == 1
+
+
+def test_086h_respuesta_sin_token_clasifica(tmp_path, capsys):
+    """D2: 200 con texto pero SIN el nonce -> respuesta_sin_token."""
+    ed._cmd_smoke(
+        _smoke_args(project_root=str(tmp_path)),
+        _smoke_config(),
+        models_fetcher=_no_models_fetcher,
+        transport=lambda p, b, m, t: "auth error",
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["smoke"]
+    assert all(r["class"] == "respuesta_sin_token" for r in payload["smoke"])
+    assert all(r["alive"] is False for r in payload["smoke"])
+
+
+# --------------------------------------------------------------------------- #
 # WOT-2026-041b: `append_scorecard` escribia sin lock del SO. La mutation usa
 # PROCESOS reales (multiprocessing.Process, no subprocess: subprocess no
 # comparte el file descriptor y no ejerce la carrera) con arranque
@@ -3932,17 +4413,24 @@ def _future_iso(hours: float = 1.0) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
+# WOT-2026-086k: los tests del parser inyectan SIEMPRE una `tz` fija y NO UTC
+# (prohibido `tz=None` en tests) y un `event_ts` obligatorio: asi el test no
+# depende de la zona de la maquina que ejecuta la suite.
+_TZ_2H = timezone(timedelta(hours=2))
+_ANCHOR = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+
+
 def test_parse_provider_reset_at_keeps_seconds():
     """El regex captura segundos pero antes se descartaban al llamar
     `strptime` solo con `%Y-%m-%d %H:%M` -- la cuarentena expiraba hasta 59s
     antes de lo debido (hallazgo declarado 2026-09-29,
     scripts/ensemble_dispatch.py:1965-1969)."""
-    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:45 UTC")
+    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:45 UTC", _ANCHOR)
     assert parsed == datetime(2026, 9, 29, 10, 15, 45, tzinfo=timezone.utc)
 
 
 def test_parse_provider_reset_at_without_seconds_still_works():
-    parsed = ed._parse_provider_reset_at("reset at 2026-09-29 10:15Z")
+    parsed = ed._parse_provider_reset_at("reset at 2026-09-29 10:15Z", _ANCHOR)
     assert parsed == datetime(2026, 9, 29, 10, 15, 0, tzinfo=timezone.utc)
 
 
@@ -3950,10 +4438,585 @@ def test_parse_provider_reset_at_rejects_invalid_seconds():
     """Segundos :60-:99 no son validos -> None. El fix captura el grupo de
     segundos y strptime valida: 10:15:99 revienta en strptime y se convierte
     a None (no se cae a :00)."""
-    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:99 UTC")
+    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:99 UTC", _ANCHOR)
     assert parsed is None
-    parsed = ed._parse_provider_reset_at("2026-09-29 10:15:60")
+    parsed = ed._parse_provider_reset_at("2026-09-29 10:15:60", _ANCHOR)
     assert parsed is None
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-086k: parser de los TRES formatos de reset de codex + cuarentena del
+# canal `agent`. El transporte devuelve TEXTO (no lanza), asi que la rama de
+# `_retry_with_similar_fallback` nunca se ejecutaba y la lente no entraba en
+# cuarentena. Fixture declarado: los literales salen de `codex.exe` 0.153.4
+# (busqueda de cadenas) y de `tests/unit/test_run_codex_audit.py:398-405`.
+# --------------------------------------------------------------------------- #
+
+
+def _config_agent_codex(
+    profile_name: str = "challenger_codex", backend: str = "codex"
+) -> dict:
+    """Config con UN perfil `channel: agent` (backend codex) para los tests
+    de cuarentena del canal agent."""
+    config = _config()
+    config["backends"][backend] = {
+        "executable": "",
+        "args": [],
+        "discovery": {"method": "path_only"},
+    }
+    config["ensemble_profiles"][profile_name] = {
+        "backend": backend,
+        "channel": "agent",
+        "model": None,
+        "backend_key": "BA05",
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    return config
+
+
+def _fallback_events(tmp_path: Path) -> list[dict]:
+    path = tmp_path / ed.FALLBACK_EVENTS_REL
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _run_agent_round(
+    tmp_path: Path,
+    config: dict,
+    transport,
+    *,
+    profile_name: str = "challenger_codex",
+    backend_key: str = "BA05",
+    phase: str = "challenge-fanout",
+):
+    return ed.run_loop_round(
+        profile_name,
+        "audita esto",
+        config=config,
+        project_root=tmp_path,
+        ticket="WOT-TEST-086k",
+        task_type="code-review",
+        rol="challenger",
+        phase=phase,
+        loop_id="L086k",
+        backend_key=backend_key,
+        sensitivity="public",
+        transport=transport,
+    )
+
+
+def _agent_quota_reply(detail_line: str) -> str:
+    return f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{ed._STDERR_MARKER}{detail_line}"
+
+
+def test_086k_parser_solo_hora_pm_y_am():
+    """Control POSITIVO de la hora exacta: `3:05 PM` y `3:05 AM` en una `tz`
+    fija `+02:00`. M2 (ignorar AM/PM) pondria la PM a las 03:05 y rompe."""
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)  # 02:00 local
+    assert ed._parse_provider_reset_at(
+        "try again at 3:05 PM", event, tz=_TZ_2H
+    ) == datetime(2026, 10, 1, 13, 5, tzinfo=timezone.utc)
+    assert ed._parse_provider_reset_at(
+        "try again at 3:05 AM", event, tz=_TZ_2H
+    ) == datetime(2026, 10, 1, 1, 5, tzinfo=timezone.utc)
+
+
+def test_086k_parser_12_am_y_12_pm():
+    """12 AM = 00:xx y 12 PM = 12:xx. Evento a las 00:00 local para que ambas
+    horas del mismo dia local sean futuras (control positivo)."""
+    event = datetime(2026, 9, 30, 22, 0, tzinfo=timezone.utc)  # 00:00 local oct-1
+    assert ed._parse_provider_reset_at(
+        "try again at 12:30 AM", event, tz=_TZ_2H
+    ) == datetime(2026, 9, 30, 22, 30, tzinfo=timezone.utc)
+    assert ed._parse_provider_reset_at(
+        "try again at 12:30 PM", event, tz=_TZ_2H
+    ) == datetime(2026, 10, 1, 10, 30, tzinfo=timezone.utc)
+
+
+def test_086k_parser_con_fecha_ordinal():
+    """Variante con fecha explicita: el `event_ts` es de OTRO mes, asi que un
+    fallo al parsear la fecha (M3: tratarla como solo-hora) quedaria en marzo."""
+    event = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    parsed = ed._parse_provider_reset_at(
+        "or try again at Jul 28th, 2026 7:56 PM", event, tz=_TZ_2H
+    )
+    assert parsed == datetime(2026, 7, 28, 17, 56, tzinfo=timezone.utc)
+
+
+def test_086k_parser_ordinales_1st_2nd_3rd_4th():
+    """El sufijo ordinal se descarta (solo cuenta el numero del dia)."""
+    event = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    for day, suffix in ((1, "st"), (2, "nd"), (3, "rd"), (4, "th")):
+        parsed = ed._parse_provider_reset_at(
+            f"or try again at Jul {day}{suffix}, 2026 7:56 PM", event, tz=_TZ_2H
+        )
+        assert parsed == datetime(2026, 7, day, 17, 56, tzinfo=timezone.utc)
+
+
+def test_086k_parser_sin_distinguir_mayusculas():
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    expected = datetime(2026, 10, 1, 13, 5, tzinfo=timezone.utc)
+    for text in (
+        "TRY AGAIN AT 3:05 PM",
+        "Try Again At 3:05 pm",
+        "try again at 3:05 Pm",
+    ):
+        assert ed._parse_provider_reset_at(text, event, tz=_TZ_2H) == expected
+
+
+def test_086k_parser_later_sin_hora_es_none():
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    assert ed._parse_provider_reset_at("or try again later.", event, tz=_TZ_2H) is None
+    assert (
+        ed._parse_provider_reset_at(
+            "usage limit reached. try again later", event, tz=_TZ_2H
+        )
+        is None
+    )
+
+
+def test_086k_parser_toma_la_ultima_mencion():
+    """Codex hace eco del prompt: si hay varias menciones, manda la ULTIMA."""
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    parsed = ed._parse_provider_reset_at(
+        "el prompt decia try again at 1:05 PM ... try again at 5:05 PM",
+        event,
+        tz=_TZ_2H,
+    )
+    assert parsed == datetime(2026, 10, 1, 15, 5, tzinfo=timezone.utc)
+
+
+def test_086k_parser_dia_local_distinto_del_utc():
+    """`2026-10-01T23:30Z` con `tz=+02:00` es 2 de octubre local: la hora
+    solo-hora se localiza sobre la fecha LOCAL del evento, no la UTC."""
+    event = datetime(2026, 10, 1, 23, 30, tzinfo=timezone.utc)  # 01:30 local oct-2
+    parsed = ed._parse_provider_reset_at("try again at 2:00 AM", event, tz=_TZ_2H)
+    assert parsed == datetime(2026, 10, 2, 0, 0, tzinfo=timezone.utc)
+
+
+def test_086k_parser_no_depende_del_locale():
+    """El mes y AM/PM NO se parsean con `strptime` (depende del locale): con el
+    locale forzado a espanol el resultado es el mismo. Si el locale no esta
+    disponible en la maquina, `skip` con la causa declarada (nunca en silencio)."""
+    import locale as _locale
+
+    try:
+        _locale.setlocale(_locale.LC_TIME, "es_ES.UTF-8")
+    except _locale.Error:
+        try:
+            _locale.setlocale(_locale.LC_TIME, "Spanish_Spain.1252")
+        except _locale.Error:
+            pytest.skip("locale espanol no disponible en esta maquina")
+    try:
+        event = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+        parsed = ed._parse_provider_reset_at(
+            "or try again at Jul 28th, 2026 7:56 PM", event, tz=_TZ_2H
+        )
+        assert parsed == datetime(2026, 7, 28, 17, 56, tzinfo=timezone.utc)
+    finally:
+        _locale.setlocale(_locale.LC_TIME, "")
+
+
+def test_086k_sync_tardio_no_alarga_la_cuarentena():
+    """El ancla es `ts` del EVENTO (14:00), no el momento del sync (16:00): si
+    la implementacion usara `datetime.now()` (M4), el ancla caeria en la fecha
+    real de ejecucion y este valor fijo dejaria de salir."""
+    event = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)  # 14:00 local
+    parsed = ed._parse_provider_reset_at("try again at 3:05 PM", event, tz=_TZ_2H)
+    assert parsed == datetime(2026, 10, 1, 13, 5, tzinfo=timezone.utc)  # 15:05 local
+
+
+def test_086k_hora_vencida_respecto_al_evento_es_none():
+    """`3:05 PM` ya paso respecto a un evento de las 16:00 local -> None/TTL,
+    NUNCA "+1 dia"."""
+    event = datetime(2026, 10, 1, 14, 0, tzinfo=timezone.utc)  # 16:00 local
+    assert ed._parse_provider_reset_at("try again at 3:05 PM", event, tz=_TZ_2H) is None
+
+
+def test_086k_medianoche_12_30_am_es_none():
+    """`12:30 AM` sobre un evento de las 23:50 local es 00:30 del MISMO dia
+    local (ya paso) -> None; jamas se asume el dia siguiente."""
+    event = datetime(2026, 10, 1, 21, 50, tzinfo=timezone.utc)  # 23:50 local
+    assert (
+        ed._parse_provider_reset_at("try again at 12:30 AM", event, tz=_TZ_2H) is None
+    )
+
+
+def test_086k_evento_sin_reset_posterior_no_borra_el_reset_explicito():
+    """Un evento posterior SIN reset no borra el reset explicito maximo ya
+    visto: se usa el formato absoluto UTC para que el assert sea determinista."""
+    now = datetime(2026, 10, 1, 18, 0, tzinfo=timezone.utc)
+    raw = (
+        json.dumps(
+            {
+                "failure_class": "quota_exhausted",
+                "failed_profile": "challenger_codex",
+                "failed_backend": "codex",
+                "ts": "2026-10-01T14:00:00+00:00",
+                "failure_detail": "usage limit; retry after 2099-06-01 10:15 UTC",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "failure_class": "quota_exhausted",
+                "failed_profile": "challenger_codex",
+                "failed_backend": "codex",
+                "ts": "2026-10-01T14:10:00+00:00",
+                "failure_detail": "usage limit. try again later.",
+            }
+        )
+        + "\n"
+    ).encode("utf-8")
+    buckets = ed._quarantine_buckets(raw, now=now, config=_config())
+    bucket = buckets[("by_profile", "challenger_codex")]
+    assert bucket["reset_at"] == datetime(2099, 6, 1, 10, 15, tzinfo=timezone.utc)
+
+
+def test_086k_later_cae_al_ttl_por_defecto(tmp_path):
+    """`try again later.` sin hora -> sin reset explicito -> `default_ttl`."""
+    config = _config()
+    config["ensemble_profiles"]["challenger_codex"] = {
+        "backend": "fake",
+        "channel": "api",
+        "model": "m",
+    }
+    _write_fallback_events(
+        tmp_path,
+        [
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "failed_profile": "challenger_codex",
+                "failed_backend": "fake",
+                "failure_class": "quota_exhausted",
+                "failure_detail": "You've hit your usage limit. try again later.",
+            }
+        ],
+    )
+    data = json.loads(
+        ed.regenerate_quarantine(tmp_path, config=config).read_text(encoding="utf-8")
+    )
+    entry = data["by_profile"]["challenger_codex"]
+    assert entry["source"] == "default_ttl"
+
+
+def test_086k_loop_round_agent_con_cuota_escribe_un_evento_de_fallback(tmp_path):
+    """D1 (M1): un transporte agent falso cuyo texto empieza por el prefijo de
+    transporte fallido y trae un marcador de cuota escribe EXACTAMENTE un evento
+    con la clase de cuota y `fallback_*` = None. Sin el punto de escritura
+    nuevo, la rama agent no pasa por `_retry_with_similar_fallback`."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply("You've hit your usage limit. Try again at 3:05 PM.")
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1, f"debe escribir UN evento de fallback, hubo {len(events)}"
+    ev = events[0]
+    assert ev["failed_profile"] == "challenger_codex"
+    assert ev["failed_backend"] == "codex"
+    assert ev["failure_class"] == ed._FAILURE_CLASS_QUOTA
+    assert ev["fallback_profile"] is None
+    assert ev["fallback_backend"] is None
+    assert ev["fallback_backend_key"] is None
+    assert ev["ticket"] == "WOT-TEST-086k"
+    assert ev["loop_id"] == "L086k"
+
+
+def test_086k_loop_round_agent_con_timeout_de_red_escribe_evento(tmp_path):
+    """M5: la clase `network_timeout` tambien escribe; acotar la condicion a
+    solo `quota_exhausted` pondria este test ROJO."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply("Error: request timed out after 300s")
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1
+    assert events[0]["failure_class"] == ed._FAILURE_CLASS_NETWORK
+
+
+def test_086k_agent_fallo_sin_clase_de_cuota_no_escribe_evento(tmp_path):
+    """Control NEGATIVO: prefijo de transporte fallido pero una clase FUERA de
+    las tres que escriben evento (`quota_exhausted`/`network_timeout`/`unknown`),
+    aqui `model_unavailable`, -> ningun evento nuevo. WOT-2026-086u promovio
+    `unknown` a la lista que SI escribe, por eso el control usa otra clase: la
+    condicion sigue acotada a las TRES explicitas, nunca un `else` generico."""
+    config = _config_agent_codex()
+    reply = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
+        f"{ed._STDERR_MARKER}HTTP 400: model_not_found"
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+    assert _fallback_events(tmp_path) == []
+
+
+def test_086k_canal_api_con_el_prefijo_no_escribe_evento(tmp_path):
+    """Control NEGATIVO: la condicion `channel == "agent"` es EXPLICITA; un
+    perfil `channel: api` cuyo texto empezara por el prefijo no escribe evento."""
+    config = _config()  # p_chal es channel api
+    reply = _agent_quota_reply("You've hit your usage limit. Try again at 3:05 PM.")
+    _run_agent_round(
+        tmp_path,
+        config,
+        _FakeTransport(replies=[reply]),
+        profile_name="p_chal",
+        backend_key="BA05",
+    )
+    assert _fallback_events(tmp_path) == []
+
+
+def test_086k_eco_del_prompt_con_try_again_sin_cuota_no_escribe_evento(tmp_path):
+    """Control NEGATIVO: `try again at` dentro del ECO del prompt, sin marcador
+    de cuota, no clasifica como cuota/red. WOT-2026-086u promovio `unknown` a la
+    lista que escribe, asi que aqui el error REAL es `model_unavailable` (fuera
+    de las tres clases) para seguir cubriendo el borde: ningun evento."""
+    config = _config_agent_codex()
+    reply = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
+        f"{ed._STDERR_MARKER}el prompt decia 'si fallas, try again at 3:05 PM' "
+        "pero el error real es model_not_found"
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+    assert _fallback_events(tmp_path) == []
+
+
+def test_086k_failure_detail_conserva_la_hora_con_eco_largo_y_ruido_posterior(
+    tmp_path,
+):
+    """El eco del prompt (~1140 chars) precede al banner y hay >300 chars de
+    ruido DESPUES: se busca la LINEA con `try again` antes de recortar, asi que
+    la hora sobrevive (`[:300]` simple o `[-300:]` sin buscar la linea, no)."""
+    config = _config_agent_codex()
+    eco = "ECO: " + ("palabra " * 160)  # ~1120 chars, una sola linea
+    banner = "You've hit your usage limit. Try again at 3:05 PM."
+    ruido = "\n".join(f"ruido posterior linea {i}" for i in range(20))
+    reply = f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{eco}\n{banner}\n{ruido}"
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1
+    assert "3:05 PM" in events[0]["failure_detail"]
+
+
+def test_086k_failure_detail_no_contiene_un_token_redactable(tmp_path):
+    """La redaccion de secretos ocurre ANTES del recorte (mecanismo existente
+    `_stderr_tail`): truncar una cola ya redactada no reintroduce el secreto."""
+    config = _config_agent_codex()
+    sample_blob = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+    raw_stderr = f"ERROR token={sample_blob} usage limit reached. Try again at 3:05 PM."
+    redacted_tail = ed._stderr_tail(raw_stderr)
+    reply = f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{ed._STDERR_MARKER}{redacted_tail}"
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1
+    detail = events[0]["failure_detail"]
+    assert sample_blob not in detail
+    assert "***REDACTED***" in detail
+    assert "3:05 PM" in detail
+
+
+def test_086k_cli_no_duplica_el_evento(tmp_path, monkeypatch):
+    """El unico punto de escritura vive en `run_loop_round`, que `_cmd_loop_round`
+    COMPONE (no lo duplica): la ruta CLI escribe EXACTAMENTE un evento."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply("You've hit your usage limit. Try again at 3:05 PM.")
+    monkeypatch.setattr(ed, "load_motor_config", lambda: config)
+    transport_attr = "send_to" + "_profile"
+    monkeypatch.setattr(ed, transport_attr, lambda *a, **k: reply)
+
+    payload = tmp_path / "bundle.md"
+    payload.write_text("material publico", encoding="utf-8")
+    ed.main(
+        [
+            "loop-round",
+            "--profile",
+            "challenger_codex",
+            "--content-file",
+            str(payload),
+            "--ticket",
+            "WOT-TEST-086k",
+            "--task-type",
+            "code-review",
+            "--rol",
+            "challenger",
+            "--phase",
+            "exploracion",
+            "--loop-id",
+            "L086k",
+            "--backend-key",
+            "BA05",
+            "--data-sensitivity",
+            "public",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1, (
+        f"la CLI debe escribir UN evento (no 0, no 2), hubo {len(events)}"
+    )
+
+
+def test_086k_extremo_a_extremo_run_loop_round_a_cuarentena(tmp_path):
+    """D5: `run_loop_round` (transporte agent falso) -> `fallback_events.jsonl`
+    -> `regenerate_quarantine` -> `by_profile[challenger_codex].expires_at`.
+    El reset es el formato absoluto UTC (determinista en cualquier maquina)."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply(
+        "You've hit your usage limit; retry after 2099-06-01 10:15 UTC"
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    ed.regenerate_quarantine(tmp_path, config=config)
+    data = json.loads((tmp_path / ed.QUARANTINE_REL).read_text(encoding="utf-8"))
+    entry = data["by_profile"]["challenger_codex"]
+    assert entry["expires_at"] == "2099-06-01T10:15:00+00:00"
+    assert entry["source"] == "explicit_provider_date"
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-086u: la clase `unknown` del canal `agent` tambien cuarentena
+# (`DEC-086U-001`). DOS puntos: el filtro de escritura de `run_loop_round` y la
+# agregacion de `_quarantine_buckets`.
+# --------------------------------------------------------------------------- #
+
+
+def _agent_unknown_reply() -> str:
+    """Replica del fallo real medido (opencode-go): el proceso devuelve `rc=1` y
+    un JSON con `name`/`data.message`/`data.ref`, sin marcador de cuota/red ni
+    hora de reset parseable -> clasifica como `unknown`."""
+    payload = json.dumps(
+        {
+            "name": "UnknownError",
+            "data": {"message": "Unexpected server error", "ref": "err_086u_0001"},
+        }
+    )
+    return f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{ed._STDERR_MARKER}{payload}"
+
+
+def test_086u_loop_round_agent_con_unknown_escribe_un_evento_de_fallback(tmp_path):
+    """D1 (M1): un fallo `unknown` del canal `agent` (UnknownError de
+    opencode-go, sin marcador de cuota/red) SI escribe el evento de fallback.
+    Sin el cambio del filtro de `run_loop_round`, la rama agent lo descartaba."""
+    config = _config_agent_codex()
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[_agent_unknown_reply()]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1, f"debe escribir UN evento de fallback, hubo {len(events)}"
+    ev = events[0]
+    assert ev["failure_class"] == ed._FAILURE_CLASS_UNKNOWN
+    assert ev["failed_profile"] == "challenger_codex"
+    assert ev["failed_backend"] == "codex"
+    assert ev["fallback_profile"] is None
+    assert ev["fallback_backend"] is None
+    assert ev["fallback_backend_key"] is None
+
+
+def test_086u_control_negativo_condicion_sigue_acotada_a_tres_clases(tmp_path):
+    """Control NEGATIVO de D1: la condicion nunca se convierte en un `else`
+    generico. Una clase FUERA de las tres explicitas (`model_unavailable`) NO
+    escribe evento, mientras `unknown` si lo hace: el borde son las TRES clases."""
+    config = _config_agent_codex()
+    excluida = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
+        f"{ed._STDERR_MARKER}HTTP 400: model_not_found"
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[excluida]))
+    assert _fallback_events(tmp_path) == [], "model_unavailable NO escribe evento"
+
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[_agent_unknown_reply()]))
+    assert len(_fallback_events(tmp_path)) == 1, "unknown SI escribe evento"
+
+
+def test_086u_quarantine_buckets_agrega_unknown_sin_reset_at(tmp_path):
+    """D2 (M2): `_quarantine_buckets` agrega `unknown` por perfil con
+    `reset_at=None` SIEMPRE (nunca `_parse_provider_reset_at`), y
+    `_quarantine_tables` cae al TTL por defecto. No-regresion explicitamente
+    verificada para `quota_exhausted` (fecha de proveedor) y `network_timeout`."""
+    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+    ts = (now - timedelta(minutes=5)).isoformat()
+    raw = (
+        json.dumps(
+            {
+                "ts": ts,
+                "failed_profile": "p_quota",
+                "failed_backend": "codex",
+                "failure_class": "quota_exhausted",
+                "failure_detail": (
+                    "allowance exhausted; counter resets on 2099-06-01 00:00 UTC"
+                ),
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "ts": ts,
+                "failed_profile": "p_net",
+                "failed_backend": "nvidia_api",
+                "failure_class": "network_timeout",
+                "failure_detail": "socket timed out after 90s",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "ts": ts,
+                "failed_profile": "p_unknown",
+                "failed_backend": "codex",
+                "failure_class": "unknown",
+                "failure_detail": "UnknownError: Unexpected server error",
+            }
+        )
+        + "\n"
+    ).encode("utf-8")
+    config = _config()
+    buckets = ed._quarantine_buckets(raw, now=now, config=config)
+
+    unknown = buckets[("by_profile", "p_unknown")]
+    assert unknown["reason_class"] == "unknown"
+    assert unknown["reset_at"] is None, "unknown NUNCA deriva reset_at"
+    # No-regresion explicita de las dos ramas existentes:
+    quota = buckets[("by_profile", "p_quota")]
+    assert quota["reason_class"] == "quota_exhausted"
+    assert quota["reset_at"] == datetime(2099, 6, 1, 0, 0, tzinfo=timezone.utc)
+    net = buckets[("by_profile", "p_net")]
+    assert net["reason_class"] == "network_timeout"
+    assert net["reset_at"] is None
+
+    by_backend, by_profile = ed._quarantine_tables(buckets, config=config, now=now)
+    assert by_backend == {}
+    entry = by_profile["p_unknown"]
+    assert entry["reason_class"] == "unknown"
+    assert entry["source"] == "default_ttl", "unknown usa el TTL por defecto"
+    expected = (now - timedelta(minutes=5)) + ed._QUARANTINE_TTL
+    assert entry["expires_at"] == expected.isoformat()
+    assert by_profile["p_quota"]["source"] == "explicit_provider_date"
+    assert by_profile["p_net"]["source"] == "default_ttl"
+
+
+def test_086u_extremo_a_extremo_unknown_a_cuarentena(tmp_path):
+    """D3: `run_loop_round` (transporte agent falso con UnknownError) -> evento
+    en `fallback_events.jsonl` -> `regenerate_quarantine` ->
+    `by_profile[challenger_codex]` con `reason_class=unknown` y `expires_at`
+    coherente con el TTL por defecto (no `None`, no fecha de proveedor)."""
+    config = _config_agent_codex()
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[_agent_unknown_reply()]))
+    assert len(_fallback_events(tmp_path)) == 1
+
+    ed.regenerate_quarantine(tmp_path, config=config)
+    data = json.loads((tmp_path / ed.QUARANTINE_REL).read_text(encoding="utf-8"))
+    entry = data["by_profile"]["challenger_codex"]
+    assert entry["reason_class"] == "unknown"
+    assert entry["source"] == "default_ttl"
+    expires = datetime.fromisoformat(entry["expires_at"])
+    now = datetime.now(timezone.utc)
+    assert now < expires <= now + ed._QUARANTINE_TTL
 
 
 def test_read_quarantine_drops_expired_and_unreadable(tmp_path):
@@ -4099,8 +5162,9 @@ def test_delegate_path_respects_quarantine(tmp_path, monkeypatch):
 def test_regenerate_quarantine_scopes_by_cause(tmp_path):
     """`quarantine --sync` deriva de fallback_events (unico portador de
     failure_class): quota_exhausted -> by_backend con fecha del proveedor
-    (Caso A), network_timeout -> by_profile con TTL (Caso B), unknown NO
-    genera cuarentena, y un evento con fecha de reset YA pasada se purga."""
+    (Caso A), network_timeout -> by_profile con TTL (Caso B), unknown ->
+    by_profile con TTL (WOT-2026-086u), y un evento con fecha de reset YA
+    pasada se purga."""
     now = datetime.now(timezone.utc)
     events = [
         {
@@ -4157,12 +5221,22 @@ def test_regenerate_quarantine_scopes_by_cause(tmp_path):
     assert quota["triggered_by_profile"] == "challenger_nan_glm_flash"
     assert quota["renewal_count"] == 0
 
-    assert list(data["by_profile"]) == ["challenger_nvidia_kimi"]
+    assert list(data["by_profile"]) == [
+        "challenger_nvidia_kimi",
+        "challenger_groq_qwen",
+    ], "red y unknown caen ambos en by_profile (WOT-2026-086u)"
     net = data["by_profile"]["challenger_nvidia_kimi"]
     assert net["source"] == "default_ttl"
     assert net["reason_class"] == "network_timeout"
     expires = datetime.fromisoformat(net["expires_at"])
     assert expires > datetime.now(timezone.utc), "TTL de 1h desde el ultimo evento"
+
+    unknown = data["by_profile"]["challenger_groq_qwen"]
+    assert unknown["reason_class"] == "unknown"
+    assert unknown["source"] == "default_ttl", (
+        "unknown NUNCA lleva fecha de proveedor; cae al TTL por defecto"
+    )
+    assert datetime.fromisoformat(unknown["expires_at"]) > datetime.now(timezone.utc)
     assert "groq_api" not in data["by_backend"]
     assert data["fallback_events_sha256"]
     assert "NUNCA editar a mano" in data["derivado"]
@@ -4488,7 +5562,9 @@ def test_smoke_cli_skips_quarantined_unless_forced(tmp_path, monkeypatch, capsys
     )
     probed: list[str] = []
 
-    def _alive(name, *, config, project_root=None):
+    # WOT-2026-086h: la ruta smoke pasa kwargs opt-in extra (backend_cfg_override/
+    # probe/transport/timeout); el stub solo necesita registrarlos.
+    def _alive(name, **_kw):
         probed.append(name)
         return {"alive": True, "detail": "ok"}
 
@@ -4727,7 +5803,8 @@ def test_legacy_que_falla_sigue_resolviendo_su_fallback(tmp_path, monkeypatch):
 def test_smoke_global_no_prueba_el_legacy(tmp_path, monkeypatch):
     probed: list[str] = []
 
-    def _alive(name, *, config, project_root=None):
+    # WOT-2026-086h: stub amplio -- la ruta smoke anade kwargs opt-in.
+    def _alive(name, **_kw):
         probed.append(name)
         return {"alive": True, "detail": "ok"}
 
@@ -6133,10 +7210,30 @@ def test_058y_calibration_survives_with_at_least_four_blind_lenses():
 
 
 def test_058y_ratio_is_the_adjudicated_option_b():
-    """La decision ADJUDICADA es 3 con arbol / 4 ciegas, no 'las que salgan'.
+    """La decision ADJUDICADA es 9 con arbol / 4 ciegas, no 'las que salgan'.
 
     INVARIANTE, no medicion: se asertan las DOS clases a la vez, de modo que
     mover un perfil de una a otra sin decision explicita rompa el test.
+    El criterio de "con arbol" es `channel != api AND repo_scope ==
+    destino` -- NO filtra por `write`, asi que un perfil `write: true` con
+    arbol real sigue contando en este cubo (es "con arbol", no "con arbol
+    Y verificablemente read-only"; esos son ejes distintos).
+
+    AMPLIACION 2026-10-08/09 (decision de producto explicita del usuario):
+    el pool con-arbol crece de 3 a 9, anadiendo 6 perfiles `kilo` con los
+    modelos `nan/*` REALES (Kilo expone el mismo namespace `nan/` que
+    `nan_api`, pero por `channel: agent` con arbol real). Estos 6 perfiles
+    se declaran `write: true` (HONESTO, no `write: false` sin enforcement):
+    Kilo no tiene sandbox nativo ni allowlist de tools verificable en argv
+    (`has_native_sandbox`), y un agente creado via `kilo agent create` con
+    `permission.edit=deny` en su frontmatter NO se refleja en la regla
+    efectiva de `kilo agent list` (sigue siendo `{permission:*,
+    action:allow}`) -- mismo patron de riesgo que el incidente historico
+    WOT-2026-086 (DEC-086P10-001). Su unica barrera hoy es la contencion
+    del propio modelo (verificado: un agente con permiso denegado en su
+    frontmatter se nego a escribir en una prueba real, pero por
+    razonamiento, no por permiso tecnico). Pendiente: sandbox de SO para
+    contener Kilo con enforcement tecnico real.
     """
     # Solo perfiles SELECCIONABLES: el legacy (mismo BA06) esta fuera de la
     # seleccion automatica y no es una lente mas -- el sustituto ocupa su sitio.
@@ -6148,13 +7245,27 @@ def test_058y_ratio_is_the_adjudicated_option_b():
     )
     assert con_arbol == [
         "challenger_codex",
+        "challenger_kilo_deepseek_flash",
+        "challenger_kilo_gemma",
+        "challenger_kilo_glm_flash",
+        "challenger_kilo_mimo_flash",
+        "challenger_kilo_qwen",
+        "challenger_kilo_qwen_flash",
         "challenger_opencode_glm_flash",
         "proposer_claude",
-    ], f"opcion B (equilibrada) = BA05 + BA06 + BA01; hoy: {con_arbol}"
+    ], f"opcion B (ampliada 2026-10-08) = 9 con arbol; hoy: {con_arbol}"
     claves = sorted(profiles[name]["backend_key"] for name in con_arbol)
-    assert claves == ["BA01", "BA05", "BA06"], (
-        "3 lentes con arbol = 3 backend_key DISTINTAS, no 3 perfiles cualesquiera"
-    )
+    assert claves == [
+        "BA01",
+        "BA02",
+        "BA03",
+        "BA04",
+        "BA05",
+        "BA06",
+        "BA07",
+        "BA08",
+        "BA09",
+    ], "9 lentes con arbol = 9 backend_key DISTINTAS, no 9 perfiles cualesquiera"
 
 
 # --- WOT-2026-059m: la ronda no acepta un commit_sha que no resuelve ----------

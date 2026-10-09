@@ -304,9 +304,84 @@ def test_module_docstring_declares_no_topology_resolution() -> None:
 
 
 def test_empty_inbox_skips_explicitly(capsys: pytest.CaptureFixture[str]) -> None:
-    """0 fichas imprime SKIP EXPLICITO: un exit 0 mudo seria "no hice nada"."""
-    assert cdr.main(["--motor-root", str(Path(__file__).resolve().parents[2])]) == 0
-    assert "SKIP EXPLICITO" in capsys.readouterr().out
+    """0 fichas imprime SKIP EXPLICITO con un rc DISTINGUIBLE (no un exit 0 mudo).
+
+    WOT-2026-067x (TT-6): el vacio deja de salir `rc=0` (indistinguible de
+    "valide y paso") y publica su denominador. Cambio de contrato DELIBERADO.
+    """
+    rc = cdr.main(["--motor-root", str(Path(__file__).resolve().parents[2])])
+    out = capsys.readouterr().out
+    assert rc == cdr.EXIT_EMPTY_UNIVERSE
+    assert rc != 0
+    assert "SKIP EXPLICITO" in out
+    assert "inspeccionados=0" in out
+    assert "hits=0" in out
+    assert "saltados=0" in out
+    assert "lista_saltados=[]" in out
+
+
+def test_universo_vacio_publica_denominador_y_rc_distinguible(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D2: en el vacio el denominador completo y el rc viajan JUNTOS.
+
+    Control de mutacion de D2: quitar cualquiera de los campos del denominador
+    (o el rc distinguible) pone este test en ROJO.
+    """
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(Path(__file__).resolve().parents[2]),
+            "--inbox",
+            str(inbox),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == cdr.EXIT_EMPTY_UNIVERSE
+    assert "inspeccionados=0" in out
+    assert "hits=0" in out
+    assert "saltados=0" in out
+    assert "lista_saltados=[]" in out
+    assert "No es un PASS." in out
+
+
+def test_una_ficha_valida_sigue_rc_cero(tmp_path: Path) -> None:
+    """Control positivo (D5): con 1 ficha valida el vacio no aplica, rc=0."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "FP-20261001-prueba.tickets.md").write_text(
+        "Titulo: prueba\n**recibo:** DEC-no-aplica: no toca el motor\n",
+        encoding="utf-8",
+    )
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(Path(__file__).resolve().parents[2]),
+            "--inbox",
+            str(inbox),
+        ]
+    )
+    assert rc == 0
+
+
+def test_una_ficha_invalida_sigue_rc_uno(tmp_path: Path) -> None:
+    """No-regresion (D5): una ficha SIN recibo valido sigue rc=1."""
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "FP-20261001-mala.tickets.md").write_text(
+        "Titulo: sin recibo\nscope: motor\n", encoding="utf-8"
+    )
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(Path(__file__).resolve().parents[2]),
+            "--inbox",
+            str(inbox),
+        ]
+    )
+    assert rc == 1
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +667,7 @@ def test_061e_cli_warn_sale_en_el_camino_skip(tmp_path: Path) -> None:
         for line in proc.stdout.splitlines()
         if line.startswith("[dec-receipt] WARN")
     ]
-    assert proc.returncode == 0
+    assert proc.returncode == cdr.EXIT_EMPTY_UNIVERSE
     assert warn_lines == [
         "[dec-receipt] WARN decisions.md: 0 de 3 cabeceras 'DEC-' cargables; "
         "no cargable p.ej. '### DEC-001 - a'; formato esperado: "
@@ -782,7 +857,7 @@ def test_061e_cli_warn_precede_a_la_linea_skip(tmp_path: Path) -> None:
 
     proc = _run_cli_check_dec_receipt(registry, inbox)
 
-    assert proc.returncode == 0
+    assert proc.returncode == cdr.EXIT_EMPTY_UNIVERSE
     assert proc.stdout.index("[dec-receipt] WARN") < proc.stdout.index("SKIP EXPLICITO")
 
 
@@ -899,3 +974,290 @@ def test_061e_ninguna_cabecera_antigua_en_todo_el_prompt() -> None:
         if ln.startswith("### DEC-<familia>-<NNN> -- <titulo corto>")
     ]
     assert len(nuevas) == 1
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-088g: modo `--ticket-contracts` (citas DEC de `ticket_contracts.md`)
+#
+# El contrato T-088G-001 (re-congelado tras `CG-WOT-2026-088g.md`) fija el
+# comportamiento con las decisiones de `DEC-088G-001`: una "cita" es el literal
+# `DEC-<id>` y la ruta `docs/decisions/DEC-<id2>-` DENTRO DEL MISMO PARENTESIS;
+# una prosa sin ese parentesis se IGNORA; y el guard SOLO inspecciona contratos
+# `status: frozen`. Los fixtures son reales (ficheros en tmp_path), no mocks.
+# ---------------------------------------------------------------------------
+
+_CITA_REAL_088G = "086U-001"
+
+
+def _fake_motor(root: Path, dec_ids: list[str]) -> Path:
+    """Crea un `docs/decisions/` minimo para que `load_motor_registry` resuelva."""
+    dec = root / "docs" / "decisions"
+    dec.mkdir(parents=True, exist_ok=True)
+    for dec_id in dec_ids:
+        (dec / f"DEC-{dec_id}-ficticio.md").write_text("x\n", encoding="utf-8")
+    return root
+
+
+def _write_contracts(path: Path, body: str) -> Path:
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+# Un contrato `frozen` con tres citas (una resuelta, una inexistente y una
+# CRUZADA) mas una mencion de prosa SIN parentesis con ruta (control NEGATIVO).
+_CONTRATO_FROZEN_3_CITAS = (
+    "## T-0001-001 -- ficticio\n\n"
+    "- **status:** frozen\n"
+    "- Valida: `DEC-086U-001` "
+    "(`<MOTOR>/docs/decisions/DEC-086U-001-real.md`, Estado: DECIDED)\n"
+    "- Inexistente: `DEC-999Z-001` "
+    "(`<MOTOR>/docs/decisions/DEC-999Z-001-falta.md`, Estado: DECIDED)\n"
+    "- Cruzada: `DEC-086U-001` "
+    "(`<MOTOR>/docs/decisions/DEC-086K-001-otra.md`, Estado: DECIDED)\n"
+    "- Prosa sin parentesis: `DEC-079A-001` materializada en esta sesion\n"
+)
+
+
+def test_088g_d1_una_entrada_por_cita_y_la_prosa_se_ignora(tmp_path: Path) -> None:
+    """D1: 1 OK + 1 ERROR (inexistente) + 1 ERROR (cruzada); la prosa NO cuenta.
+
+    Una entrada por CITA (no una por fichero). La cita cruzada (id citado != id
+    de la ruta, en el mismo parentesis) cuenta como "sin resolver": el patron
+    con backreference no la casa, pero `_RE_CONTRACT_CITATION_SHAPE` la detecta.
+    La mencion de prosa sin parentesis con ruta no es una cita y se ignora.
+    """
+    path = _write_contracts(tmp_path / "ticket_contracts.md", _CONTRATO_FROZEN_3_CITAS)
+
+    entries = cdr.check_ticket_contracts_file(path, {_CITA_REAL_088G}, None)
+
+    assert sorted(level for level, _ in entries) == ["ERROR", "ERROR", "OK"], entries
+    mensajes = " ".join(message for _, message in entries)
+    assert "DEC-999Z-001" in mensajes
+    assert "CRUZADA" in mensajes
+    assert "DEC-079A-001" not in mensajes, (
+        "una mencion de prosa sin parentesis con ruta NO es una cita: se ignora"
+    )
+
+
+def test_088g_d1b_solo_frozen_entra_en_el_universo(tmp_path: Path) -> None:
+    """D1b: la cita invalida en `frozen` es ERROR; la de `draft` se EXCLUYE.
+
+    DEC-088G-001, Decision 2: el guard inspecciona EXCLUSIVAMENTE contratos
+    `status: frozen`. Una cita en `draft` no cuenta como OK/ERROR/WARN y no
+    aparece en el denominador.
+    """
+    body = (
+        "## T-0001-001 -- congelado\n\n"
+        "- **status:** frozen\n"
+        "- `DEC-999Z-001` (`<MOTOR>/docs/decisions/DEC-999Z-001-x.md`, "
+        "Estado: DECIDED)\n\n"
+        "## T-0002-001 -- borrador\n\n"
+        "- **status:** draft\n"
+        "- `DEC-999Z-001` (`<MOTOR>/docs/decisions/DEC-999Z-001-x.md`, "
+        "Estado: DECIDED)\n"
+    )
+    path = _write_contracts(tmp_path / "ticket_contracts.md", body)
+
+    entries = cdr.check_ticket_contracts_file(path, set(), None)
+
+    assert [level for level, _ in entries] == ["ERROR"]
+    assert cdr.count_frozen_contracts(path) == 1
+
+
+def test_088g_d1b_control_draft_excluido_por_status_no_por_resolucion(
+    tmp_path: Path,
+) -> None:
+    """D1b (control positivo real): `T-086G-001` (draft) queda FUERA del universo.
+
+    `DEC-086G-001` citada dentro del contrato `draft` `T-086G-001`: aunque el id
+    NO resolviera (registro vacio), la exclusion por STATUS basta para que no
+    aparezca como ERROR.
+    """
+    body = (
+        "## T-086G-001 -- draft (real)\n\n"
+        "- **status:** draft (bloqueado por dependencia WOT-2026-086f)\n"
+        "- `DEC-086G-001` (`<MOTOR>/docs/decisions/DEC-086G-001-tabla.md`, "
+        "Estado: DECIDED)\n"
+    )
+    path = _write_contracts(tmp_path / "ticket_contracts.md", body)
+
+    assert cdr.check_ticket_contracts_file(path, set(), None) == []
+    assert cdr.count_frozen_contracts(path) == 0
+
+
+def test_088g_d2_cli_solo_ticket_contracts_invalida_rc_uno(tmp_path: Path) -> None:
+    """D2: `--ticket-contracts` SOLO (sin `--inbox`) con una cita invalida -> rc=1."""
+    path = _write_contracts(tmp_path / "ticket_contracts.md", _CONTRATO_FROZEN_3_CITAS)
+
+    rc = cdr.main(["--motor-root", str(_MOTOR_ROOT), "--ticket-contracts", str(path)])
+
+    assert rc == 1
+
+
+def test_088g_d2_cli_valido_rc_cero_y_publica_denominador(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D2 + D5: con una cita resuelta, rc=0 y el resumen publica los 4 contadores."""
+    motor = _fake_motor(tmp_path / "motor", ["086U-001"])
+    path = _write_contracts(
+        tmp_path / "ticket_contracts.md",
+        "## T-0001-001 -- ok\n\n"
+        "- **status:** frozen\n"
+        "- `DEC-086U-001` (`<MOTOR>/docs/decisions/DEC-086U-001-real.md`, "
+        "Estado: DECIDED)\n",
+    )
+
+    rc = cdr.main(["--motor-root", str(motor), "--ticket-contracts", str(path)])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "contratos_inspeccionados=1" in out
+    assert "citas_encontradas=1" in out
+    assert "citas_resueltas=1" in out
+    assert "citas_sin_resolver=0" in out
+
+
+def test_088g_d2_tc_sin_citas_no_es_universo_vacio(tmp_path: Path) -> None:
+    """D2/D5: un `ticket_contracts.md` presente con 0 citas se DECLARA, no SKIP.
+
+    El universo vacio (EXIT_EMPTY_UNIVERSE) es de AMBAS superficies; una
+    superficie `--ticket-contracts` presente con 0 citas en el universo publica
+    su denominador con rc=0 -- nunca "0 errores" sin contexto.
+    """
+    path = _write_contracts(
+        tmp_path / "ticket_contracts.md",
+        "## T-0001-001 -- draft\n\n- **status:** draft\n- texto sin citas DEC\n",
+    )
+
+    rc = cdr.main(["--motor-root", str(_MOTOR_ROOT), "--ticket-contracts", str(path)])
+
+    assert rc == 0
+
+
+def test_088g_d2_universo_vacio_de_ambas_superficies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D2: sin fichas Y sin `--ticket-contracts` -> SKIP con rc distinguible."""
+    empty_inbox = tmp_path / "inbox"
+    empty_inbox.mkdir()
+
+    rc = cdr.main(["--motor-root", str(_MOTOR_ROOT), "--inbox", str(empty_inbox)])
+    out = capsys.readouterr().out
+
+    assert rc == cdr.EXIT_EMPTY_UNIVERSE
+    assert "SKIP EXPLICITO" in out
+
+
+def test_088g_cli_ticket_contracts_inexistente_fail_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D2: un `--ticket-contracts` que no existe como fichero -> ERROR fail-closed."""
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(_MOTOR_ROOT),
+            "--ticket-contracts",
+            str(tmp_path / "no_existe.md"),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert "no existe" in out
+
+
+def test_088g_d3_grandfathering_por_contrato_no_por_fichero(tmp_path: Path) -> None:
+    """D3: la cita invalida de un contrato ANTERIOR al cutoff -> WARN; posterior -> ERROR.
+
+    El ancla de fecha es `is_grandfathered(<cabecera del contrato>)`. El nombre
+    del contrato es su cabecera `## T-...`, NUNCA el fichero entero.
+    """
+    body = (
+        "## T-0001-001 -- viejo FP-20260701\n\n"
+        "- **status:** frozen\n"
+        "- `DEC-999Z-001` (`<MOTOR>/docs/decisions/DEC-999Z-001-x.md`, "
+        "Estado: DECIDED)\n\n"
+        "## T-0002-001 -- nuevo FP-20260815\n\n"
+        "- **status:** frozen\n"
+        "- `DEC-999Z-001` (`<MOTOR>/docs/decisions/DEC-999Z-001-x.md`, "
+        "Estado: DECIDED)\n"
+    )
+    path = _write_contracts(tmp_path / "ticket_contracts.md", body)
+
+    entries = cdr.check_ticket_contracts_file(path, set(), None)
+
+    assert [level for level, _ in entries] == ["WARN", "ERROR"]
+    assert cdr.is_grandfathered("## T-0001-001 -- FP-20260701") is True
+    assert cdr.is_grandfathered("## T-0002-001 -- FP-20260815") is False
+
+
+def test_088g_d6a_off_by_one_da_error_no_falso_ok(tmp_path: Path) -> None:
+    """D6(a): cita con la ruta off-by-one respecto al id -> ERROR, no falso OK.
+
+    Si el guard resolviera por el id de la RUTA en vez de exigir coincidencia
+    EXACTA (backreference), una cita cruzada donde AMBOS ids existen daria OK.
+    """
+    body = (
+        "## T-0001-001 -- off-by-one\n\n"
+        "- **status:** frozen\n"
+        "- `DEC-086U-001` (`<MOTOR>/docs/decisions/DEC-086U-002-otro.md`, "
+        "Estado: DECIDED)\n"
+    )
+    path = _write_contracts(tmp_path / "ticket_contracts.md", body)
+
+    entries = cdr.check_ticket_contracts_file(path, {"086U-001", "086U-002"}, None)
+
+    assert [level for level, _ in entries] == ["ERROR"]
+
+
+def test_088g_d4_prepush_integracion_frozen_invalida_es_passed_false(
+    tmp_path: Path,
+) -> None:
+    """D4: `run_dec_receipt_ticket_contracts_check` mapea un ERROR a `passed=False`."""
+    from scripts.prepush_check import run_dec_receipt_ticket_contracts_check
+
+    plan = tmp_path / ".agent" / "planning"
+    plan.mkdir(parents=True)
+    (plan / "ticket_contracts.md").write_text(
+        _CONTRATO_FROZEN_3_CITAS, encoding="utf-8"
+    )
+
+    result = run_dec_receipt_ticket_contracts_check(tmp_path)
+
+    assert result.passed is False
+    assert result.skipped is False
+
+
+def test_088g_d4_prepush_sin_fichero_es_skip(tmp_path: Path) -> None:
+    """D4: sin `ticket_contracts.md` la funcion hace SKIP explicito (no invoca el guard)."""
+    from scripts.prepush_check import run_dec_receipt_ticket_contracts_check
+
+    result = run_dec_receipt_ticket_contracts_check(tmp_path)
+
+    assert result.passed is True
+    assert result.skipped is True
+
+
+def test_088g_d5_denominador_exacto_en_el_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D5: el resumen del modo nuevo declara el universo: 1 contrato, 2 citas (1 sin resolver)."""
+    motor = _fake_motor(tmp_path / "motor", ["086U-001"])
+    path = _write_contracts(
+        tmp_path / "ticket_contracts.md",
+        "## T-0001-001 -- mixto\n\n"
+        "- **status:** frozen\n"
+        "- `DEC-086U-001` (`<MOTOR>/docs/decisions/DEC-086U-001-real.md`, "
+        "Estado: DECIDED)\n"
+        "- `DEC-999Z-001` (`<MOTOR>/docs/decisions/DEC-999Z-001-x.md`, "
+        "Estado: DECIDED)\n",
+    )
+
+    rc = cdr.main(["--motor-root", str(motor), "--ticket-contracts", str(path)])
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert (
+        "[dec-receipt] ticket_contracts: contratos_inspeccionados=1, "
+        "citas_encontradas=2, citas_resueltas=1, citas_sin_resolver=1" in out
+    )

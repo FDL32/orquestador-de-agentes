@@ -310,9 +310,46 @@ def test_refuses_to_write_onto_an_invalid_destination(tmp_path: Path) -> None:
     assert "leccion-nueva" not in topics
 
 
-def test_existing_key_is_not_overwritten(tmp_path: Path) -> None:
-    """A key already present in the destination is reported, never overwritten
-    (no blind merge). The destination's version wins."""
+def test_existing_key_with_identical_content_is_not_overwritten(
+    tmp_path: Path,
+) -> None:
+    """A key already present with IDENTICAL content is reported, never
+    overwritten (no blind merge). The destination's version wins.
+
+    WOT-2026-045e: same record_key + same content (fingerprint-equal,
+    ignoring `id`) is the "identical" classification -> exit 0, no-op.
+    This is DISTINCT from the DISTINCT-content case (see
+    `test_existing_key_with_distinct_content_fails_closed` below), which
+    is the exact bug this ticket exists to close.
+    """
+    canon, linked = _make_worktree_pair(tmp_path)
+    keep = _obs("colision", "WOT-2026-555a")
+    keep["signal"] = "LA MISMA SENAL"
+    other = _obs("colision", "WOT-2026-555a")
+    other["signal"] = "LA MISMA SENAL"
+    _write(canon / _archive_rel(), [keep])
+    _write(linked / OBS_REL, [other])
+
+    r = _run(linked)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    recs = _load(canon / _archive_rel())
+    assert len(recs) == 1, "must not append a colliding key"
+    assert recs[0]["signal"] == "LA MISMA SENAL", "must not overwrite"
+
+
+def test_existing_key_with_distinct_content_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """DoD (c): record_key colisiona con contenido DISTINTO -> fail-closed,
+    NUNCA exit 0. Este es el bug exacto que WOT-2026-045e existe para
+    cerrar en la via AUTOMATICA (`_reconcile_all`): antes de este ticket,
+    dos lecciones DISTINTAS bajo la misma record_key se fusionaban
+    silenciosamente (la version del canonico ganaba sin aviso ni error).
+
+    Mutation: revertir a la version pre-fix (OR simple id/record_key sin
+    comparar contenido) hace que esto vuelva a dar returncode == 0 -> RED.
+    """
     canon, linked = _make_worktree_pair(tmp_path)
     keep = _obs("colision", "WOT-2026-555a")
     keep["signal"] = "LA VERSION DEL CANONICO"
@@ -322,11 +359,19 @@ def test_existing_key_is_not_overwritten(tmp_path: Path) -> None:
     _write(linked / OBS_REL, [other])
 
     r = _run(linked)
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode != 0, (
+        "contenido DISTINTO bajo la misma record_key debe fail-closed, "
+        "nunca exit 0 (returncode real: " + str(r.returncode) + ")"
+    )
 
     recs = _load(canon / _archive_rel())
-    assert len(recs) == 1, "must not append a colliding key"
-    assert recs[0]["signal"] == "LA VERSION DEL CANONICO", "must not overwrite"
+    assert len(recs) == 1, (
+        "el archive NO debe cambiar cuando la colision se rechaza: {recs}"
+    )
+    assert recs[0]["signal"] == "LA VERSION DEL CANONICO", (
+        "el archive debe quedar INTACTO (ni sobrescrito ni ampliado) "
+        "ante una colision de contenido distinto"
+    )
 
 
 def test_is_idempotent(tmp_path: Path) -> None:
@@ -643,9 +688,14 @@ def test_promote_selector_promotes_a_lesson_without_id(tmp_path: Path) -> None:
     """(d) Un record SIN `id` se promueve por `<topic>|<source_ticket>`.
 
     Se compara el CONTENIDO del record escrito en el archive contra el del
-    buffer: identidad de contenido, no solo que la linea exista. Un fix que
-    promoviera el record equivocado (o lo mutara al serializar) pasaria un
-    assert de "hay una linea" y este no.
+    buffer (salvo el campo `id`): identidad de contenido, no solo que la
+    linea exista. Un fix que promoviera el record equivocado (o lo mutara
+    al serializar) pasaria un assert de "hay una linea" y este no.
+
+    WOT-2026-045e DoD (b)/(j): un record SIN `id` que se promueve por el
+    selector `record_key` recibe un `id` estable ANTES de escribirse (no
+    se escribe sin id). El id es determinista (hash del contenido via
+    `generate_stable_id`), asi que se puede predecir y comparar.
 
     Mutation: retirar la rama del selector -> 0 matches -> rc=1 -> RED.
     """
@@ -659,11 +709,15 @@ def test_promote_selector_promotes_a_lesson_without_id(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     archived = _load(canon / _archive_rel())
     assert len(archived) == 1, f"debe promoverse exactamente una: {archived}"
-    assert archived[0] == lesson, (
-        "el contenido promovido debe ser IDENTICO al del buffer (identidad de "
-        f"contenido, no solo presencia). archive={archived[0]} buffer={lesson}"
+    archived_without_id = {k: v for k, v in archived[0].items() if k != "id"}
+    assert archived_without_id == lesson, (
+        "el contenido promovido (salvo `id`) debe ser IDENTICO al del "
+        f"buffer. archive={archived[0]} buffer={lesson}"
     )
-    assert "id" not in archived[0], "el selector no inventa un `id`"
+    assert archived[0].get("id"), (
+        "WOT-2026-045e DoD (b): un record promovido SIN id previo debe "
+        "recibir un id estable antes de escribirse"
+    )
 
 
 def test_promote_selector_no_match_fails_closed(tmp_path: Path) -> None:
@@ -824,3 +878,115 @@ def test_promote_id_rollback_when_archive_did_not_exist_before(
         "si el archive no existia antes, el rollback debe dejarlo AUSENTE, "
         "no crear un fichero vacio"
     )
+
+
+def test_promote_id_distinct_content_fails_closed(tmp_path: Path) -> None:
+    """DoD (b)/(f): la via CURADA (`--promote-id`) tambien rechaza una
+    colision de record_key con contenido DISTINTO. No es solo la via
+    automatica (`_reconcile_all`, ver `test_existing_key_with_distinct_content_fails_closed`
+    arriba): `_promote_one` debe aplicar la MISMA semantica de 3 casos.
+
+    Mutation: revertir `_promote_one` al OR simple (id-existe OR record_key
+    coincide) sin comparar contenido hace que esto vuelva a dar
+    returncode == 0 y sobrescriba/descarte en silencio -> RED.
+    """
+    canon, _ = _make_worktree_pair(tmp_path)
+    keep = _obs("colision-curada", "WOT-2026-045e")
+    keep["signal"] = "LA VERSION DEL CANONICO"
+    keep["id"] = "obs-ya-en-destino"
+    other = _obs("colision-curada", "WOT-2026-045e")
+    other["signal"] = "una leccion DISTINTA bajo la misma clave"
+    _write(canon / _archive_rel(), [keep])
+    _write(canon / OBS_REL, [other])
+
+    r = _run_promote(canon, "colision-curada|WOT-2026-045e")
+
+    assert r.returncode != 0, (
+        "contenido DISTINTO bajo la misma record_key debe fail-closed "
+        f"tambien en la via curada (returncode real: {r.returncode})"
+    )
+    recs = _load(canon / _archive_rel())
+    assert len(recs) == 1, f"el archive no debe ampliarse ante el rechazo: {recs}"
+    assert recs[0]["signal"] == "LA VERSION DEL CANONICO", (
+        "el archive debe quedar intacto"
+    )
+
+
+def test_reconcile_all_both_sides_without_id_distinct_content_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """DoD (j): el caso "ambos records SIN id, misma record_key, contenido
+    DISTINTO" NO puede resolverse en exit 0 silencioso. Es el vector exacto
+    que motivo el hallazgo BA06 del bucle adversarial de Contract Formation:
+    antes de generar un id, ninguna comparacion por id puede distinguirlos,
+    asi que SOLO la comparacion de fingerprint (contenido) puede cazarlo.
+
+    Mutation: si `_classify_and_report_lessons`/`_classify_against_destination`
+    comparara ANTES de que `_reconcile_all` asigne el id (o si la asignacion
+    de id se quitara), este caso volveria a fusionarse en silencio -> RED.
+    """
+    canon, linked = _make_worktree_pair(tmp_path)
+    legacy_without_id = _obs("sin-id-ambos", "WOT-2026-045e")
+    legacy_without_id["signal"] = "version legacy SIN id, SIN id"
+    new_without_id = _obs("sin-id-ambos", "WOT-2026-045e")
+    new_without_id["signal"] = "version NUEVA distinta, tambien SIN id"
+    _write(canon / _archive_rel(), [legacy_without_id])
+    _write(linked / OBS_REL, [new_without_id])
+
+    r = _run(linked)
+
+    assert r.returncode != 0, (
+        "dos records SIN id con la misma record_key y contenido DISTINTO "
+        f"deben fail-closed (returncode real: {r.returncode})"
+    )
+    recs = _load(canon / _archive_rel())
+    assert len(recs) == 1, f"el archive no debe ampliarse ante el rechazo: {recs}"
+    assert recs[0]["signal"] == "version legacy SIN id, SIN id", (
+        "el archive debe quedar intacto"
+    )
+
+
+def test_append_observations_assigns_stable_id_when_missing(tmp_path: Path) -> None:
+    """DoD (d): `append_observations` genera un `id` estable para una entrada
+    que no lo trae, ANTES de escribirla a `observations.jsonl`.
+
+    Mutation: si se quitara la asignacion de `id` en `append_observations`,
+    `"id" in written` seria False -> RED.
+    """
+    import importlib
+    import sys as _sys
+
+    motor_root = Path(__file__).resolve().parents[2]
+    agent_dir = tmp_path / ".agent"
+    memory_dir = agent_dir / "runtime" / "memory"
+    memory_dir.mkdir(parents=True)
+    obs_file = memory_dir / "observations.jsonl"
+
+    monkeypatch_path = str(motor_root)
+    if monkeypatch_path not in _sys.path:
+        _sys.path.insert(0, monkeypatch_path)
+    import scripts.session_close_observations as sco
+
+    importlib.reload(sco)
+    original_memory_dir = sco.MEMORY_DIR
+    original_obs_file = sco.OBS_FILE
+    try:
+        sco.MEMORY_DIR = memory_dir
+        sco.OBS_FILE = obs_file
+        entry = {
+            "timestamp": "2026-07-12T10:00:00Z",
+            "topic": "sin-id-append",
+            "signal": "una senal nueva sin id todavia",
+            "source": "WOT-2026-045e",
+            "source_ticket": "WOT-2026-045e",
+            "domain": "review-quality",
+            "confidence": 0.9,
+            "applies_to": "all",
+        }
+        sco.append_observations([dict(entry)])
+        written = _load(obs_file)
+        assert len(written) == 1
+        assert written[0].get("id"), "debe asignarse un id estable antes de escribir"
+    finally:
+        sco.MEMORY_DIR = original_memory_dir
+        sco.OBS_FILE = original_obs_file

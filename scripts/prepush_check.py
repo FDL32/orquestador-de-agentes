@@ -86,6 +86,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Collection
 from contextlib import suppress
 from pathlib import Path
 from typing import NamedTuple
@@ -152,6 +153,8 @@ def run_subprocess_check(
     name: str,
     project_root: Path,
     capture_output: bool = True,
+    *,
+    skip_exit_codes: Collection[int] = (),
 ) -> CheckResult:
     """Ejecuta un comando de verificacion y retorna su resultado.
 
@@ -160,6 +163,12 @@ def run_subprocess_check(
         name: Nombre descriptivo del check para el reporte.
         project_root: Raiz del proyecto donde ejecutar el comando.
         capture_output: Si True, captura stdout/stderr para diagnostico.
+        skip_exit_codes: Codigos de salida que significan "no habia materia
+            que validar" (WOT-2026-067x). Un rc de esta coleccion sale con
+            `passed=True` y `skipped=True` (el informe lo marca como SKIP, no
+            como un PASS ejecutado). El default vacio preserva el
+            comportamiento historico (`passed = returncode == 0`) de los otros
+            call-sites.
 
     Returns:
         CheckResult con nombre, estado, salida y si es bloqueante.
@@ -174,8 +183,16 @@ def run_subprocess_check(
             encoding="utf-8",
             errors="replace",
         )
-        passed = result.returncode == 0
         output = (result.stdout or "") + (result.stderr or "") if capture_output else ""
+        if result.returncode in skip_exit_codes:
+            return CheckResult(
+                name=name,
+                passed=True,
+                output=output,
+                is_blocking=True,
+                skipped=True,
+            )
+        passed = result.returncode == 0
     except FileNotFoundError as e:
         passed = False
         output = f"Comando no encontrado: {e}"
@@ -2303,6 +2320,91 @@ def run_landed_evidence_shape_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_backlog_live_landed_check(
+    project_root: Path, motor_root: Path | None = None
+) -> CheckResult:
+    """WARN when a LIVE backlog row already has a landed closing commit (WOT-2026-078b).
+
+    The complementary direction of ``run_landed_evidence_shape_check`` and of
+    ``check_backlog_commits_landed``: those audit rows ALREADY archived as terminal,
+    while a row still ``pending``/``blocked``/``deferred`` whose work landed stays
+    invisible forever. Measured 2026-09-26 (WOT-2026-037a: commit 94e1f62 of
+    2026-07-19/20, row ``pending`` for ~2 months) and again 2026-10-09 (6 live rows
+    already committed).
+
+    It is a RECOLLECTOR, never a reconciler: it names the candidate tickets and writes
+    NOTHING -- no row is moved, edited or archived. WARN by design (``is_blocking``
+    False), the DoD of the row: a "possible already-done" signal must never block a
+    push, it is only declared. It is NOT a substitute for the archive guard; it is the
+    third, orthogonal direction (live -> landed-but-unreconciled).
+
+    Before: ``project_root`` is the destino whose ``backlog.md`` (live queue) is read.
+        ``motor_root`` defaults to the resolved motor link (same pattern as
+        ``run_dec_receipt_check``), falling back to ``_MOTOR_ROOT``. A destino with no
+        ``backlog.md`` is a PASS (nothing to scan), never a fabricated failure.
+    During: reads that one file and runs ``census_live_landed`` against ``origin/main``
+        in ``motor_root`` (read-only git log; no network, no mutation).
+    After: ``passed`` False and ``is_blocking`` False naming every candidate ticket and
+        the subject that landed it, or ``passed`` True when the list is empty.
+    """
+    name = "Backlog Live Landed (WOT-2026-078b)"
+    try:
+        from scripts.check_backlog_commits_landed import census_live_landed
+    except ImportError:
+        from check_backlog_commits_landed import (  # type: ignore[no-redef]
+            census_live_landed,
+        )
+
+    backlog = project_root / ".agent" / "collaboration" / "backlog.md"
+    if not backlog.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no {backlog.name} in the destino (no live queue yet)",
+        )
+
+    if motor_root is None:
+        motor_root = _MOTOR_ROOT
+        try:
+            from runtime.motor_link import resolve_motor_root
+
+            resolved_motor_root = resolve_motor_root(project_root)
+            if resolved_motor_root is not None:
+                motor_root = resolved_motor_root
+        except ImportError:
+            pass
+
+    try:
+        content = backlog.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return CheckResult(
+            name=name, passed=False, output=f"cannot read {backlog}: {exc}"
+        )
+
+    candidates = census_live_landed(content, "origin/main", motor_root)
+    if candidates:
+        listed = "; ".join(
+            f"{c['ticket_id']} ({c['state']}): {c['landed_subject']}"
+            for c in candidates
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            is_blocking=False,
+            output=(
+                f"{len(candidates)} live row(s) are still pending/blocked/deferred but "
+                f"their closing commit already landed in origin/main -- candidates to "
+                f"RECONCILE by hand (this check never archives anything). "
+                f"Candidates: {listed}"
+            ),
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="no live pending/blocked/deferred code/mixed row has a landed commit",
+    )
+
+
 def run_motor_destination_integration_check(
     project_root: Path, motor_root: Path | None = None
 ) -> CheckResult:
@@ -2417,6 +2519,12 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
     registro no existe, no se pasa el flag y todo recibo `(destino)` queda
     NO VERIFICABLE (ERROR), nunca "valido por defecto".
 
+    WOT-2026-067x: si NO hay materia (cero fichas), el guard sale con
+    `EXIT_EMPTY_UNIVERSE` y este consumidor lo mapea a `skipped=True` mediante
+    `skip_exit_codes`, de modo que el informe lo marca como SKIP y no como un
+    PASS ejecutado. Con materia valida el guard sigue `rc=0` (PASS genuino) y
+    con un ERROR sigue `rc=1` (`passed=False`).
+
     Args:
         project_root: Raiz del destino sobre la que corre el preflight; de ella
             se derivan los buzones de fichas y el registro de decisiones.
@@ -2459,10 +2567,88 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
         if inbox.is_dir():
             cmd += ["--inbox", str(inbox)]
 
+    from scripts.check_dec_receipt import EXIT_EMPTY_UNIVERSE
+
     return run_subprocess_check(
         cmd=cmd,
         name="DEC Receipt Barrier (WOT-2026-042x)",
         project_root=project_root,
+        skip_exit_codes=(EXIT_EMPTY_UNIVERSE,),
+    )
+
+
+def run_dec_receipt_ticket_contracts_check(project_root: Path) -> CheckResult:
+    """Barrera del recibo DEC sobre `ticket_contracts.md` (WOT-2026-088g).
+
+    Hermana de `run_dec_receipt_check` (WOT-2026-042x), que solo cubre las
+    fichas de los buzones (`*.tickets.md`). Un contrato `frozen` de
+    `.agent/planning/ticket_contracts.md` puede citar una DEC inexistente y, sin
+    esta verificacion, nadie lo detecta hasta que un Builder la busca y no la
+    encuentra (`DEC-086H-001`/`DEC-086K-001`/`DEC-085A-001`, medidos el
+    2026-09-30 y materializados a mano en el commit `74b5d57`).
+
+    El cuerpo de `run_dec_receipt_check` NO se toca: esta es una funcion NUEVA,
+    cableada INMEDIATAMENTE DESPUES de su `results.append(...)` en el closeout.
+
+    El guard vive SOLO en el motor: su ruta y su `--motor-root` se resuelven
+    contra el MOTOR, nunca contra `project_root` (mismo patron que
+    `run_dec_receipt_check`, WOT-2026-038j). El registro del destino entra como
+    ARGUMENTO (`--destino-registry`); resolver la topologia dentro del guard es
+    una STOP condition heredada del contrato.
+
+    Si `.agent/planning/ticket_contracts.md` no existe, SKIP explicito sin
+    invocar el subprocess (patron de "fichero ausente" de otros `run_*_check`).
+
+    Args:
+        project_root: Raiz del destino; de ella se deriva `ticket_contracts.md`.
+
+    Returns:
+        CheckResult con el estado de la barrera sobre los contratos.
+    """
+    name = "DEC Receipt Barrier ticket_contracts (WOT-2026-088g)"
+    contract_file = project_root / ".agent" / "planning" / "ticket_contracts.md"
+    if not contract_file.is_file():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"No ticket_contracts.md at {contract_file} (skipped)",
+            is_blocking=True,
+            skipped=True,
+        )
+
+    motor_root = _MOTOR_ROOT
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        resolved_motor_root = resolve_motor_root(project_root)
+        if (
+            resolved_motor_root is not None
+            and (resolved_motor_root / "scripts" / "check_dec_receipt.py").exists()
+        ):
+            motor_root = resolved_motor_root
+    except ImportError:
+        pass
+
+    cmd = [
+        sys.executable,
+        str(motor_root / "scripts" / "check_dec_receipt.py"),
+        "--motor-root",
+        str(motor_root),
+        "--ticket-contracts",
+        str(contract_file),
+    ]
+
+    destino_registry = project_root / ".agent" / "planning" / "decisions.md"
+    if destino_registry.is_file():
+        cmd += ["--destino-registry", str(destino_registry)]
+
+    from scripts.check_dec_receipt import EXIT_EMPTY_UNIVERSE
+
+    return run_subprocess_check(
+        cmd=cmd,
+        name=name,
+        project_root=project_root,
+        skip_exit_codes=(EXIT_EMPTY_UNIVERSE,),
     )
 
 
@@ -2771,6 +2957,10 @@ def run_preflight_check(
         # 6e no arrastra deuda historica -- el archive real mide 0 filas malformadas,
         # asi que una solo puede entrar con el cierre que se esta empujando)
         results.append(run_landed_evidence_shape_check(project_root))
+        # 6e-ter. Backlog Live Landed (WOT-2026-078b; WARN -- direccion
+        # complementaria: una fila viva `pending` cuyo commit de cierre YA landeo es
+        # un candidato a reconciliar, nunca se archiva sola; JAMAS bloquea el push).
+        results.append(run_backlog_live_landed_check(project_root))
         # 6f. Motor<->Destino Integration (WOT-2026-024w; WARN default, FAIL opt-in)
         results.append(run_motor_destination_integration_check(project_root))
         # 6g. Contract Formation Check (WOT-2026-023m(c); bloqueante en cierre)
@@ -2837,6 +3027,13 @@ def run_preflight_check(
         # dentro del propio guard (censo medido: 14/14 sin recibo), asi que el
         # cableado no bloquea la deuda historica.
         results.append(run_dec_receipt_check(project_root))
+        # 6n-bis. DEC Receipt Barrier sobre `ticket_contracts.md` (WOT-2026-088g).
+        # Hermana NUEVA, insertada INMEDIATAMENTE DESPUES de 6n (nunca la
+        # sustituye): un contrato `frozen` del registro de contratos puede citar
+        # una DEC inexistente y hasta 088g nada lo detectaba. SKIP nombrado si no
+        # hay `ticket_contracts.md`. Import ESTATICO en el run_ -> check_guard_wiring
+        # lo cuenta WIRED (patron canonico del modulo).
+        results.append(run_dec_receipt_ticket_contracts_check(project_root))
         # 6o. Inbox Drainage Barrier (WOT-2026-042u). El DoD (b) de la ficha: el
         # drenaje procesa el canonico desde CODIGO y esta cableado a un camino que
         # corre solo. Import estatico en el run_ -> check_guard_wiring lo cuenta
@@ -2878,10 +3075,20 @@ def _print_preflight_report(results: list[CheckResult]) -> bool:
     """Print one line per check and return whether a blocking check failed.
 
     Before: `results` es la secuencia de checks ya ejecutados.
-    During: imprime `[OK]`/`[FAIL]` por check. Imprime el `output` cuando el
+    During: imprime una de TRES etiquetas por check, derivada de los CAMPOS
+        `passed` e `is_blocking` (nunca de una lista de nombres de checks):
+        `passed=True` -> `[OK]`; `passed=False and is_blocking=True` ->
+        `[FAIL]`; `passed=False and is_blocking=False` -> `[WARN]`. El
+        discriminante es el CAMPO `is_blocking` porque es DINAMICO en al menos
+        un gate (`run_handoff_state_sha_check` lo fija con
+        `is_blocking=strict`, controlado por `HANDOFF_STATE_SHA_STRICT`): una
+        lista fija de nombres "no bloqueantes" daria `[WARN]` a un check que ya
+        bloquea el dia que ese toggle se active. Imprime el `output` cuando el
         check FALLA (diagnostico) y tambien cuando PASO SIN EJECUTARSE
         (procedencia del SKIP).
-    After: devuelve True si algun check bloqueante fallo. No muta nada.
+    After: devuelve True si algun check bloqueante fallo. Un `[WARN]` NO
+        cambia el veredicto: solo `passed=False and is_blocking=True` marca
+        `blocking_failed`. No muta nada.
 
     Por que un SKIP tiene que imprimirse aunque `passed` sea True: un gate que
     no se ha ejecutado NO es un gate que corrio y paso, y el informe es lo
@@ -2895,7 +3102,12 @@ def _print_preflight_report(results: list[CheckResult]) -> bool:
     blocking_failed = False
 
     for result in results:
-        status = "[OK]" if result.passed else "[FAIL]"
+        if result.passed:
+            status = "[OK]"
+        elif result.is_blocking:
+            status = "[FAIL]"
+        else:
+            status = "[WARN]"
         blocking_marker = "" if result.is_blocking else " (informacional)"
         print(f"{status} {result.name}{blocking_marker}")
 

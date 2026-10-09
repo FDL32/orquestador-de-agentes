@@ -153,13 +153,35 @@ tests contra `ensemble_dispatch`):
    sustitucion automatica puede haber respondido en lugar de la lente pedida.
 2. Si falla el CLI de un agente, la fila lleva `failure_mode: transport_failed: rc=N; <clase>` (misma
    taxonomia que el canal `api`: `quota_exhausted`, `model_unavailable`, `network_timeout`, `unknown`) y
-   la `evidencia` incluye la cola de su stderr tras `[stderr]`. Un fallo del canal `agent` todavia NO pone
-   la lente en cuarentena ni lee la hora de reset: WOT-2026-086k.
+   la `evidencia` incluye la cola de su stderr tras `[stderr]`. Un fallo de cuota/red del canal `agent`
+   tambien deja evento de fallback y entra en cuarentena (ver 3.7).
 3. Si la sustitucion automatica cayo en `proposer_claude` (`BA01`) -- stderr muestra
    `[fallback] ... sustituido por 'proposer_claude'` --, esa respuesta NO es una lente independiente.
 4. Gobierno: `python scripts/check_loop_execution.py --commit-sha <sha> --project-root <destino>`.
 
-### 3.7 Compatibilidad de `loop_id` por lector
+### 3.7 Cuarentena por cuota/red/`unknown` del canal `agent` (WOT-2026-086k, ampliado por WOT-2026-086u)
+
+Un fallo del canal `agent` (codex/opencode) llega como TEXTO, no como excepcion, asi que no pasa por la
+sustitucion automatica. Desde WOT-2026-086k `loop-round` SI escribe el evento de fallback cuando ese texto
+trae el prefijo `[transport-failed]` y la clase derivada es `quota_exhausted` o `network_timeout`; desde
+WOT-2026-086u la clase `unknown` TAMBIEN lo hace (p.ej. el `UnknownError` de opencode-go): el evento va a
+`fallback_events.jsonl` y de ahi `quarantine --sync` lo proyecta en `backend_quarantine.json`. La condicion
+exige ademas `channel == "agent"`: un backend `api` cuyo texto empezara por el prefijo no escribe evento.
+No hay sustitucion automatica del canal `agent`: `fallback_profile`/`fallback_backend`/`fallback_backend_key` = `null`.
+
+El parser reconoce las TRES variantes con que codex da la hora de reset (en hora LOCAL), sin distinguir
+mayusculas: solo-hora ("try again at 3:05 PM"), con fecha explicita ("or try again at Jul 28th, 2026 7:56
+PM") y sin hora ("or try again later.", que cae al TTL por defecto). El ancla temporal es el `ts` del
+EVENTO de fallo, no el momento del `sync`: una hora solo-hora ya pasada respecto al evento cae al TTL,
+nunca se asume el dia siguiente. Si hay varias menciones de `try again` (codex hace eco del prompt), manda
+la ULTIMA. `failure_detail` guarda esa ultima linea recortada a 300 caracteres; si no hay ninguna, los
+ultimos 300 caracteres de la cola de stderr. La clase `unknown` JAMAS deriva `reset_at`: usa el TTL por defecto.
+
+Efecto: VISIBILIDAD, no bloqueo. La lente aparece en `quarantine --sync` y queda excluida como sustituto y
+de `smoke`/`preflight`; NO bloquea `loop-round`, que sigue llamando al perfil pedido aunque este en
+cuarentena (seccion 2).
+
+### 3.8 Compatibilidad de `loop_id` por lector
 
 | Lector | Antes (L###) | Despues (UNI/DBL/ROL/CHA-N + alias) |
 |---|---|---|
@@ -172,7 +194,7 @@ tests contra `ensemble_dispatch`):
 | `fallback_events.jsonl` | Fallback por `L###` | Igual: los fallbacks son por backend_key/perfil |
 | `adjudicate` | Adjudica por `loop_id` `L###` | Resuelve alias antes de adjudicar |
 
-### 3.8 Mudez por modelo, lector efectivo y bundle por canal
+### 3.9 Mudez por modelo, lector efectivo y bundle por canal
 
 Tres hechos medidos en la propuesta v3 del proceso portable (secciones 4.4 y 4.6), que este procedimiento
 hereda:
@@ -219,7 +241,4 @@ Los cupos se comparten con los agentes de implantacion: preferir modelos sin lim
 ## 8. Pendiente (todavia no existe; no lo invoques)
 
 - `gov_stage`/`step`: WOT-2026-086g.
-- `smoke` rapido y paralelo: WOT-2026-086h.
-- Cuarentena por cuota del canal `agent` con su hora de reset ("try again at HH:MM"): WOT-2026-086k.
-- Estado unificado de proveedores y descubrimiento `/v1/models` en el arranque: WOT-2026-085a.
 - Comando `loop` con valores por defecto para chat: WOT-2026-086i.

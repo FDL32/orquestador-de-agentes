@@ -677,6 +677,98 @@ def _landed_by_subject(ticket_id: str, ref: str, repo: Path) -> bool:
     return False
 
 
+def _first_landed_subject(ticket_id: str, ref: str, repo: Path) -> str:
+    """The first EXACT-ID, non-Revert subject reachable from ref that mentions ID.
+
+    WOT-2026-078b. Companion of ``_landed_by_subject``: that function answers only
+    yes/no, but the live-queue census must REPORT which commit landed a row. The
+    matching predicate is intentionally the SAME (substring ``--grep`` prefilter,
+    exact ``\\bID\\b`` word-boundary, ``Revert`` excluded, anchored to ref) so that a
+    row ``_landed_by_subject`` calls landed ALWAYS yields a non-empty subject here.
+    ``_landed_by_subject`` itself is reused verbatim as the gate and is NOT modified.
+
+    Before: ``ticket_id``/``ref``/``repo`` as in ``_landed_by_subject``.
+    During: one read-only ``git log``; the exact-ID regex and Revert exclusion are
+        re-applied locally (the same 3 lines) because the sibling returns a bool.
+    After: the first matching subject, or ``""`` when nothing matches. Never raises.
+    """
+    res = _run(
+        ["git", "log", ref, f"--grep={ticket_id}", "--fixed-strings", "--format=%s"],
+        repo,
+    )
+    if res["exit_code"] != 0 or not res["stdout"]:
+        return ""
+    exact = re.compile(rf"(?<![\w-]){re.escape(ticket_id)}(?![\w-])", re.IGNORECASE)
+    for subject in res["stdout"].splitlines():
+        if _REVERT_RE.match(subject):
+            continue
+        if exact.search(subject):
+            return subject
+    return ""
+
+
+def census_live_landed(content: str, ref: str, repo: Path) -> list[dict]:
+    """Candidates to reconcile: LIVE backlog rows whose closing commit landed (WOT-2026-078b).
+
+    The COMPLEMENTARY direction of ``census_archived``. That census only sees rows
+    already in ``_TERMINAL_STATES`` of ``_archive/backlog_done.md``; ``census_live_landed``
+    scans the LIVE queue (``backlog.md``) and flags rows still ``pending``/``blocked``/
+    ``deferred`` whose work ALREADY reached ``ref``. Real cases that motivated it:
+    WOT-2026-037a (commit 94e1f62 of 2026-07-19/20, row ``pending`` for ~2 months) and
+    6 more measured on 2026-10-09.
+
+    This is a RECOLLECTOR, never a reconciler: it reports candidates and writes nothing.
+    Reuses WITHOUT CHANGES ``_logical_rows`` (row parsing), ``_require_ticket_re``/
+    ``bind_ticket_prefix`` (per-destino ids), ``_DELIVERABLE_TYPE_RE`` (deliverable_type
+    substring) and ``_landed_by_subject`` (CAPA 3). The live-state universe is the
+    canonical ``check_backlog_contract.LIVE_STATES`` (never a parallel list),
+    intersected with the 3 states the contract scopes to: ``pending``/``blocked``/
+    ``deferred``. Rows with ``deliverable_type`` outside {code, mixed} -- including rows
+    with NO deliverable_type -- are OUT of the universe (they never require landing).
+
+    Before: ``content`` is the ``backlog.md`` text (may be empty); ``ref`` a reference
+        resolvable in ``repo``; the ticket-id pattern must be bound (as elsewhere).
+    During: pure string parsing + one ``git log`` grep per candidate row (read-only).
+    After: list of ``{"ticket_id", "state", "landed_subject"}`` for the rows that
+        landed; rows with no real commit are ABSENT (the list IS the report). Never
+        raises on a well-formed row. The live-state vocabulary is imported LAZILY:
+        ``check_backlog_contract`` imports ``_DELIVERABLE_TYPE_RE`` from THIS module at
+        its top, so a module-level import here would be a circular import (whichever
+        module loads first would see the other only half-initialized). By call time both
+        are fully loaded.
+    """
+    try:
+        from scripts.check_backlog_contract import LIVE_STATES
+    except ImportError:
+        from check_backlog_contract import LIVE_STATES  # type: ignore[no-redef]
+
+    # Decision 2: only the 3 actionable live states, anchored to the canonical tuple.
+    live_landed_states = frozenset({"pending", "blocked", "deferred"}) & frozenset(
+        LIVE_STATES
+    )
+    ticket_re = _require_ticket_re()
+    candidates: list[dict] = []
+    for cells in _logical_rows(content):
+        state = next((c for c in cells if c in live_landed_states), None)
+        if state is None:
+            continue
+        match = _DELIVERABLE_TYPE_RE.search(" | ".join(cells))
+        if match is None or match.group(1) not in _LANDING_REQUIRED_TYPES:
+            continue
+        ticket_id = next((c for c in cells if ticket_re.match(c)), None)
+        if not ticket_id:
+            continue
+        if _landed_by_subject(ticket_id, ref, repo):
+            candidates.append(
+                {
+                    "ticket_id": ticket_id,
+                    "state": state,
+                    "landed_subject": _first_landed_subject(ticket_id, ref, repo),
+                }
+            )
+    return candidates
+
+
 def classify(
     ticket_id: str,
     sha: str,

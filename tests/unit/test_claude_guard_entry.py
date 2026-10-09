@@ -137,33 +137,108 @@ class TestResolveGuardPaths:
         assert entry.resolve_guard_paths(destino) is None
 
 
+def _set_stdin(monkeypatch, payload: bytes = b"{}") -> None:
+    monkeypatch.setattr(
+        "sys.stdin",
+        type(
+            "S",
+            (),
+            {"buffer": type("B", (), {"read": staticmethod(lambda: payload)})()},
+        )(),
+    )
+
+
 class TestMain:
     def test_no_guard_fails_closed(self, tmp_path: Path, monkeypatch, capsys):
         repo = _make_repo(tmp_path, with_guard=False)
         monkeypatch.chdir(repo)
-        monkeypatch.setattr(
-            "sys.stdin",
-            type(
-                "S",
-                (),
-                {"buffer": type("B", (), {"read": staticmethod(lambda: b"{}")})()},
-            )(),
-        )
+        _set_stdin(monkeypatch)
         assert entry.main([str(repo)]) == 2
         assert "SECURITY HOOK INACTIVE" in capsys.readouterr().err
 
     def test_runs_resolved_guard(self, tmp_path: Path, monkeypatch):
         repo = _make_repo(tmp_path, with_guard=True, guard_exit=7)
-        monkeypatch.setattr(
-            "sys.stdin",
-            type(
-                "S",
-                (),
-                {"buffer": type("B", (), {"read": staticmethod(lambda: b"{}")})()},
-            )(),
-        )
+        _set_stdin(monkeypatch)
         # main delegates to the stub guard which exits 7.
         assert entry.main([str(repo)]) == 7
+
+
+def _write_stub_hook(path: Path, exit_code: int) -> None:
+    path.write_text(
+        f"import sys; sys.stdin.buffer.read(); sys.exit({exit_code})\n",
+        encoding="utf-8",
+    )
+
+
+class TestChannelIdentityChaining:
+    """WOT-2026-089x: claude_guard_entry.py chains guard_channel_identity.py
+    AFTER guard_paths.py, only when guard_paths.py exits 0. This is the
+    router design chosen instead of a second settings.json entry, because
+    check_claude_settings_portability.py rejects any non-canonical command
+    under PreToolUse/Write|Edit|MultiEdit -- the fixed bootstrap is the only
+    place a second guard can be chained without widening that gate."""
+
+    def test_channel_guard_absent_does_not_block(self, tmp_path: Path, monkeypatch):
+        # guard_paths.py passes (exit 0), no guard_channel_identity.py present
+        # at all -- additive guard's absence must never block an otherwise
+        # authorized write.
+        repo = _make_repo(tmp_path, with_guard=True, guard_exit=0)
+        _set_stdin(monkeypatch)
+        assert entry.main([str(repo)]) == 0
+
+    def test_channel_guard_runs_and_blocks_after_guard_paths_passes(
+        self, tmp_path: Path, monkeypatch
+    ):
+        repo = _make_repo(tmp_path, with_guard=True, guard_exit=0)
+        _write_stub_hook(
+            repo / ".agent" / "hooks" / "guard_channel_identity.py", exit_code=2
+        )
+        _set_stdin(monkeypatch)
+        assert entry.main([str(repo)]) == 2
+
+    def test_guard_paths_block_short_circuits_before_channel_guard_runs(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """If guard_paths.py blocks (non-zero), guard_channel_identity.py must
+        NEVER run -- proven here by making the channel stub exit a DIFFERENT
+        non-zero code; the returned code must be guard_paths' own (7), not
+        the channel guard's (3), confirming the short-circuit."""
+        repo = _make_repo(tmp_path, with_guard=True, guard_exit=7)
+        _write_stub_hook(
+            repo / ".agent" / "hooks" / "guard_channel_identity.py", exit_code=3
+        )
+        _set_stdin(monkeypatch)
+        assert entry.main([str(repo)]) == 7
+
+    def test_both_guards_pass_yields_zero(self, tmp_path: Path, monkeypatch):
+        repo = _make_repo(tmp_path, with_guard=True, guard_exit=0)
+        _write_stub_hook(
+            repo / ".agent" / "hooks" / "guard_channel_identity.py", exit_code=0
+        )
+        _set_stdin(monkeypatch)
+        assert entry.main([str(repo)]) == 0
+
+    def test_resolve_via_motor_link_when_no_repo_own_copy(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Same link-based resolution cascade as resolve_guard_paths: a
+        destino without its own guard_channel_identity.py must still find it
+        through motor_destination_link.json."""
+        destino = tmp_path / "destino"
+        motor = tmp_path / "motor"
+        (destino / ".claude").mkdir(parents=True)
+        (destino / ".agent" / "hooks").mkdir(parents=True)
+        _write_stub_hook(destino / ".agent" / "hooks" / "guard_paths.py", exit_code=0)
+        (destino / ".agent" / "config").mkdir(parents=True)
+        (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+            json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+        )
+        (motor / ".agent" / "hooks").mkdir(parents=True)
+        _write_stub_hook(
+            motor / ".agent" / "hooks" / "guard_channel_identity.py", exit_code=5
+        )
+        _set_stdin(monkeypatch)
+        assert entry.main([str(destino)]) == 5
 
 
 class TestCanonicalCommand:

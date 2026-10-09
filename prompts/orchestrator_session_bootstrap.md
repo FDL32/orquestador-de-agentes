@@ -264,6 +264,11 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 
 ## Reflejos CEM v0
 
+**Fallback ante duda de diseno sin contrato que la resuelva:**
+`<MOTOR_ROOT>/CONSTITUTION.md` (carga ON-DEMAND; leelo ENTERO): jerarquia de
+6 niveles + 15 tenets. Fuente unica (T5); los reflejos de abajo son un
+subconjunto operativo, no su sustituto.
+
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
 - **Refutacion previa ante anomalia (norma epistemologica, no memoria):** ante un

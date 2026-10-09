@@ -26,6 +26,7 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
 from bus import observation_domains  # noqa: E402  # origen: LEA-2026-002o
+from bus.portable_memory_archive import generate_stable_id  # noqa: E402
 from bus.redact import redact  # noqa: E402
 from scripts.validate_observations import (  # noqa: E402
     VALID_APPLIES_TO as _VALID_APPLIES_TO,
@@ -261,8 +262,16 @@ def append_observations(entries: list[dict[str, Any]]) -> None:
     """Append observations to file.
 
     Before: Requires list of validated entries.
-    During: Appends each entry as JSON line.
-    After: File updated with new entries.
+    During: Redacts secrets/PII, THEN generates a stable `id` for any
+        entry that does not already carry one (WOT-2026-045e DoD
+        (d)/(j)). The id is derived from the REDACTED content (via
+        `bus.portable_memory_archive.generate_stable_id`), never from
+        the raw pre-redaction content: hashing before redaction would
+        make the id unstable across re-processing of the same raw
+        entry whenever redaction masks a different substring. Entries
+        that already have a non-empty `id` keep it unchanged
+        (idempotent identity).
+    After: File updated with new entries, each carrying a stable `id`.
     """
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     with open(OBS_FILE, "a", encoding="utf-8") as f:
@@ -272,6 +281,10 @@ def append_observations(entries: list[dict[str, Any]]) -> None:
                 entry["signal"] = redact(entry["signal"])
             if "text" in entry:
                 entry["text"] = redact(entry["text"])
+            # WOT-2026-045e DoD (d)/(j): asigna id ANTES de que
+            # cualquier consumidor pueda compararlo por
+            # record_key/contenido.
+            entry["id"] = generate_stable_id(entry)
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
@@ -396,6 +409,40 @@ def process_candidates(
     return appended, rejected_reasons
 
 
+# WOT-2026-089f: deliverable_type (work_plan vocabulary: code, documentation,
+# research, analysis, mixed) and applies_to (observation schema vocabulary:
+# code, mixed, docs, all -- see scripts/validate_observations.VALID_APPLIES_TO)
+# are DISTINCT enums. research/analysis are not even members of applies_to,
+# so writing deliverable_type raw produced schema-invalid observations on
+# every documentation/research/analysis ticket close.
+_DELIVERABLE_TYPE_TO_APPLIES_TO = {
+    "code": "code",
+    "mixed": "mixed",
+    "documentation": "docs",
+}
+
+
+def _deliverable_type_to_applies_to(deliverable_type: str) -> str:
+    """Map a work_plan deliverable_type to a valid applies_to enum member.
+
+    Before: deliverable_type is a raw string parsed from work_plan.md (or
+    the literal fallback "unknown" when parsing fails).
+    During: code/mixed/documentation map 1:1 to their applies_to counterpart.
+    research and analysis map to "all": review_observations.py's
+    observation_matches_dtype() filters observations shown to a Manager by
+    the applies_to field, so mapping a research/analysis lesson to "docs"
+    would silently hide it from a Manager reviewing a code ticket -- the
+    asymmetric cost (a hidden-but-relevant lesson) outweighs "all" being
+    occasionally over-broad. Any other value (including "unknown" and any
+    future deliverable_type not yet in this map) also maps to "all"
+    deliberately, never passed through raw -- a raw value is never a
+    guaranteed member of VALID_APPLIES_TO.
+    After: returns a string that is always a member of
+    scripts.validate_observations.VALID_APPLIES_TO.
+    """
+    return _DELIVERABLE_TYPE_TO_APPLIES_TO.get(deliverable_type, "all")
+
+
 def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
     """Extract candidate observations from work plan ticket.
 
@@ -418,6 +465,7 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
             if not deliverable_match:
                 deliverable_match = re.search(r"deliverable_type:\s*(\w+)", content)
             deliverable = deliverable_match.group(1) if deliverable_match else "unknown"
+            applies_to = _deliverable_type_to_applies_to(deliverable)
 
             # Extract title
             title_match = re.search(r"Titulo:\s*(.+)", content)
@@ -430,7 +478,7 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
                     "signal": f"Ticket {ticket_id} completado: {title} (deliverable_type={deliverable})",
                     "domain": "delivery-hygiene",
                     "confidence": 0.9,
-                    "applies_to": deliverable,
+                    "applies_to": applies_to,
                     "impact": "medium",
                     "source_ticket": ticket_id,
                     "topic": "ticket-completion",

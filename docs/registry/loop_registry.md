@@ -40,8 +40,14 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | backend_key | backend | model | status |
 |-------------|---------|-------|--------|
 | BA01 | claude | — | active |
+| BA02 | kilo | nan/qwen3.8-flash | active |
+| BA03 | kilo | nan/glm5.3-flash | active |
+| BA04 | kilo | nan/mimo-v2.6-flash | active |
 | BA05 | codex | gpt-5.6-luna | active |
 | BA06 | opencode | opencode-go/glm-5.3-flash | active |
+| BA07 | kilo | nan/deepseek-v4-flash | active |
+| BA08 | kilo | nan/qwen3.6 | active |
+| BA09 | kilo | nan/gemma4 | active |
 | BA10 | nan_api | deepseek-v4-flash | active |
 | BA11 | nan_api | qwen3.6 | active |
 | BA110 | gemini_api | gemini-3.8-flash | active |

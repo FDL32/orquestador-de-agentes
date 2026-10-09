@@ -66,6 +66,35 @@ def resolve_guard_paths(repo_root: Path) -> Path | None:
     return None
 
 
+def resolve_guard_channel_identity(repo_root: Path) -> Path | None:
+    """Locate guard_channel_identity.py: repo-own first, then motor via link.
+
+    WOT-2026-089x: same resolution cascade as ``resolve_guard_paths``, but for
+    a SECOND, independent-domain guard (channel-identity form-check, not
+    path/command security). Unlike ``resolve_guard_paths``, an unresolved
+    result here is NOT a fail-closed condition for the caller -- this guard is
+    additive (detects a form collision in a specific channel-file convention)
+    and its absence must never block an otherwise-authorized write. Returns
+    None when neither the repo-own copy nor the motor-linked copy exists, or
+    the link is malformed.
+    """
+    own = repo_root / ".agent" / "hooks" / "guard_channel_identity.py"
+    if own.exists():
+        return own
+    link = repo_root / ".agent" / "config" / "motor_destination_link.json"
+    if link.exists():
+        try:
+            motor_root = Path(
+                json.loads(link.read_text(encoding="utf-8"))["motor_root"]
+            )
+        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+            return None
+        cand = motor_root / ".agent" / "hooks" / "guard_channel_identity.py"
+        if cand.exists():
+            return cand
+    return None
+
+
 def _payload_paths(data: bytes) -> list[str]:
     """Extract candidate file paths from a raw PreToolUse payload.
 
@@ -314,8 +343,26 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(_FAIL_CLOSED_MSG)
         return 2
     # Trusted: guard is the canonical guard_paths.py resolved above; no shell.
-    return subprocess.run(  # noqa: S603
+    guard_paths_rc = subprocess.run(  # noqa: S603
         [sys.executable, str(guard)], input=data, cwd=str(effective_root)
+    ).returncode
+    if guard_paths_rc != 0:
+        return guard_paths_rc
+
+    # WOT-2026-089x: a SECOND, independent-domain guard chained after
+    # guard_paths.py's security check passes. Additive by design -- its
+    # absence never blocks a write that guard_paths already authorized (see
+    # resolve_guard_channel_identity's docstring); its own exit code DOES
+    # propagate when it IS present and blocks (deteccion de forma, not
+    # security). Keeping this chain inside the fixed canonical bootstrap
+    # (rather than a second settings.json entry) is what lets
+    # check_claude_settings_portability.py keep its invariant: exactly one
+    # literal command is ever accepted for the write-gating PreToolUse hook.
+    channel_guard = resolve_guard_channel_identity(effective_root)
+    if channel_guard is None:
+        return 0
+    return subprocess.run(  # noqa: S603
+        [sys.executable, str(channel_guard)], input=data, cwd=str(effective_root)
     ).returncode
 
 

@@ -31,6 +31,7 @@ esta roto -- fail-closed explicito, nunca un verde silencioso.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -171,3 +172,73 @@ def dedup_key(record: dict[str, Any]) -> tuple[Any, ...]:
         return ("id", stable)
     topic, ticket = record_key(record)
     return ("fallback", topic, ticket, record.get("timestamp"))
+
+
+# WOT-2026-045e: IDENTIDAD CANONICA de un record de observacion.
+#
+# ``id`` es la CLAVE PRIMARIA de identidad de un record de observacion.
+# ``source_ticket`` es PROCEDENCIA (metadato): describe DONDE se origino la
+# leccion, no QUIEN es la leccion. Dos records con el mismo ``source_ticket``
+# pueden ser lecciones legitimamente DISTINTAS (ver ACCEPTED_COLLISIONS en
+# ``scripts/check_portable_memory_archive_schema.py``); el ``id`` es lo unico
+# que las distingue sin ambiguedad.
+#
+# Requisito UNICO de "id estable": una vez asignado a un record y escrito, ese
+# ``id`` NO CAMBIA en escrituras subsecuentes del mismo record (idempotencia
+# de identidad). Determinismo NO es requisito -- un ``uuid4`` tambien
+# cumpliria el contrato -- pero se elige aqui un hash determinista del
+# contenido porque permite volver a derivar el MISMO id si el record se
+# re-procesa sin haber sido persistido todavia (p.ej. dry-run seguido de
+# apply), sin necesidad de recordar estado entre llamadas.
+#
+# Relacion con los DOS generadores ya existentes en el repo (hallazgo del
+# bucle adversarial de Contract Formation, WOT-2026-045e):
+#   - ``scripts/claude_memory_mirror.py::_generate_obs_id``: hash de
+#     ``topic + ":" + signal`` (10 hex), formato ``"{topic}-{hash10}"``.
+#     Herramienta LOCAL OPT-IN, fuera de la ruta automatica de cada sesion.
+#   - ``scripts/migrate_observations.py::_generate_stable_id``: hash SHA-256
+#     del record COMPLETO ordenado (12 hex), formato ``"obs-{hash12}"``.
+#     Migracion de una sola vez, ya cerrada.
+# Este modulo CONVERGE con el segundo (mismo principio: hash del contenido
+# completo ordenado, mismo prefijo ``obs-``) en vez de con el primero, porque
+# hashear solo ``topic+signal`` colisionaria entre records legitimamente
+# distintos que comparten ``topic``/``source_ticket`` pero no ``signal``
+# literal tras redaccion -- el caso exacto que este ticket existe para
+# cerrar. Se usan 16 hex (vs 12) para reducir la probabilidad de colision de
+# hash en un archive que crece sin cota declarada.
+def fingerprint(record: dict[str, Any]) -> str:
+    """Huella de CONTENIDO de un record, para decidir "identico" vs "distinto".
+
+    UNICA fuente de verdad de esta pregunta en el repo: la reutilizan tanto
+    el guard POST-HOC (``check_portable_memory_archive_schema.find_identity_collisions``)
+    como el fail-closed en el PUNTO DE ESCRITURA
+    (``scripts/reconcile_portable_memory.py::_promote_one``/``_reconcile_all``).
+    Si cada sitio calculara su propia huella, un record podria pasar el guard
+    de escritura y fallar el guard de archive, o viceversa.
+
+    Before: ``record`` es un dict de observacion ya parseado (con o sin ``id``).
+    During: serializa el record SIN el campo ``id`` (para que la huella no
+        dependa de si el id ya fue asignado) con claves ordenadas.
+    After: cadena JSON determinista; NO lanza.
+    """
+    body = {k: v for k, v in record.items() if k != "id"}
+    return json.dumps(body, sort_keys=True, ensure_ascii=False)
+
+
+def generate_stable_id(record: dict[str, Any]) -> str:
+    """Genera un ``id`` estable para un record que todavia no tiene uno.
+
+    Before: ``record`` es un dict de observacion; puede tener o no ``id`` ya.
+    During: si ``record`` ya trae un ``id`` string no vacio, se devuelve TAL
+        CUAL (idempotencia: no se reemplaza un id ya asignado). Si no, se
+        deriva un hash SHA-256 de :func:`fingerprint` (el contenido SIN
+        ``id``), truncado a 16 hex, con el formato ``"obs-{hash16}"``.
+    After: string no vacio; NO lanza. El mismo contenido produce siempre el
+        mismo id derivado (determinismo de la implementacion elegida; no es
+        un requisito del contrato, ver nota de modulo arriba).
+    """
+    existing = record.get("id")
+    if isinstance(existing, str) and existing.strip():
+        return existing.strip()
+    digest = hashlib.sha256(fingerprint(record).encode("utf-8")).hexdigest()[:16]
+    return f"obs-{digest}"

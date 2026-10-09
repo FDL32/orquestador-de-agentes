@@ -55,6 +55,9 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
 - `recommended_followup` (string): accion futura recomendada cuando exista.
 - `surface` (array de strings): lista de archivos o modulos concretos afectados.
 - `anti_pattern_id` (string): **obligatorio cuando la observacion eleva un bug a AP**. Debe referenciar un ID existente en `anti-patterns.md` (ej. `AP-09`).
+- `status` (string, WOT-2026-045f): vigencia de la leccion (`active | refined | refuted | superseded`). AUSENTE equivale a `active` -- las entradas existentes sin este campo NO requieren migracion. Si el campo SI esta presente, debe ser uno de los 4 valores.
+- `refuted_by` / `superseded_by` (string, WOT-2026-045f): el `id` de la entrada MAS NUEVA que invalida esta. Se declara en la entrada vieja solo si se re-escribe (poco frecuente, dado que el archive es append-only); el patron normal es declarar `supersedes`/`refines`/`related` en la entrada NUEVA (ver siguiente punto).
+- `supersedes` / `refines` / `related` (array de strings, WOT-2026-045f): `id`s de entradas mas viejas con las que esta se relaciona. Se declaran SIEMPRE en la entrada NUEVA -- el archive no edita entradas ya escritas, asi que la entrada vieja nunca gana estos campos retroactivamente.
 
 ### Campos legacy (retrocompatibles)
 
@@ -67,6 +70,7 @@ Plantilla compartida para registrar anti-patrones de forma consistente entre Bui
 - `domain` debe ser uno de los de la tabla "Dominios canonicos" (abajo), elegido
   por su criterio de exclusion, no por parecido tematico.
 - `anti_pattern_id` solo puede usarse si el ID ya existe en `anti-patterns.md`.
+- `status`, si esta presente, debe ser uno de los 4 valores canonicos; su AUSENCIA nunca es error (equivale a `active`).
 - **Orden obligatorio**: primero se escribe en `anti-patterns.md`; luego se propaga a `code-rules.md`, `review-checklist.md` y `observations.jsonl`.
 - Cada AP nuevo debe tener las cuatro superficies alineadas.
 

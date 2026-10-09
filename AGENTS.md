@@ -72,6 +72,18 @@ directorio alfabeticamente, que es como se buscan en la practica. Ergonomia sobr
 
 **Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.
 
+**Regla de aislamiento por worktree: aplica al `repo_motor` igual que al `repo_destino`.**
+Con 2+ sesiones trabajando en paralelo, cada sesion que vaya a escribir CODIGO en el
+`repo_motor` necesita su propio `git worktree` del motor -- exactamente la misma disciplina
+que ya se exige para el `repo_destino` (ver `obs-worktree-aisla-codigo-no-estado-operativo-
+ni-orquestador`, memoria portable, 2026-07-25). Trabajar directamente en el checkout principal
+compartido del motor es colision de superficie aunque no haya colision de CONTENIDO (dos
+sesiones pueden tocar ficheros disjuntos y aun asi interferirse: una avanza `HEAD` con sus
+commits mientras la otra tiene cambios sin commitear sobre el mismo arbol). El worktree del
+motor NO sustituye la higiene de esa leccion (commitear siempre, nunca `stash` para dejar
+trabajo "en limbo" entre worktrees, porque `refs/stash` es GLOBAL al repo y visible desde
+cualquier worktree hermano).
+
 ### Glosario de nomenclatura de ticket (WOT-2026-010a)
 
 Nomenclatura canonica de identificadores y artefactos de ticket. "Plan" se
@@ -447,6 +459,8 @@ Para evitar la inflación artificial de cobertura sin validación lógica real, 
 
 CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en burocracia. Se aplica con rigor proporcional al riesgo del cambio.
 
+**Fallback ante duda de diseno sin contrato que la resuelva:** `CONSTITUTION.md` (raiz del motor, carga ON-DEMAND, leelo entero cuando lo consultes) tiene la jerarquia de 6 niveles y 15 tenets de ingenieria que amplian lo de abajo.
+
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de tocar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; usa diff, exit code, test, evento de bus, commit o artefacto verificable.
 - **Un `exit 0` puede significar "no hice nada":** en operaciones IDEMPOTENTES o con SKIP (cierres, syncs, instaladores), `exit 0` es indistinguible de "ya estaba hecho" o "me salte el trabajo". `exit code` es evidencia NECESARIA pero no SUFICIENTE para estas: verifica el ARTEFACTO (fichero/informe/diff/contador que la operacion debia producir), no solo el codigo de salida; y busca en la salida las palabras de skip (`already`, `skipped`, `nothing to do`, `none present`, `up to date`, `no files to check`). Y lee el CODIGO antes de temer un flag: un `--force` puede vencer SOLO la idempotencia sin tocar los gates (leer 12 lineas convierte un "no me atrevo" en un cierre real). Caso: `--session-close` dio `exit 0` sin cerrar nada (`[INFO] Session already completed`), disparado por un `.session_state.json` STALE que ademas se contradecia con `work_plan.md` (2026-07-15).
@@ -613,6 +627,20 @@ pre-compact hook:
 - **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
 - `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
 - `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
+- **Contrato de `MEMORY.md` (WOT-2026-074s): INDICE por topic, nunca volcado
+  completo de una senal.** `regen_memory_md` (`scripts/memory_consolidate.py`)
+  agrupa las entries por `topic`, lista cada topic bajo su propia seccion
+  `## <topic>` con hasta 10 entradas (las mas recientes), y cada `signal` se
+  trunca a `MAX_SIGNAL_MEMORY_MD` (200 caracteres) con marcador visible si se
+  corta -- el texto COMPLETO de la senal vive en `memory_rules.md` (L2) y en
+  `observations.jsonl` (L1), nunca en `MEMORY.md`. Un test que asertara "el
+  texto integro de la senal debe aparecer en MEMORY.md" estaria probando el
+  contrato EQUIVOCADO (volcado en vez de indice) -- origen de esta nota: un
+  test asi (`013e` del repo_destino `Crear_Texto_LLM`) fallo porque asumio esa
+  forma, y el fallo era del test, no del artefacto. Recibo re-ejecutable:
+  `python scripts/memory_consolidate.py --apply` deja un `MEMORY.md` de hasta
+  80 lineas con secciones `## <topic>` (indice), mientras la senal integra de
+  cada entrada nueva aparece en `memory_rules.md`.
 - `bus/memory_loader.py` es la unica puerta de entrada, y **cada puerta tiene su
   propio tope, nunca uno global** (WOT-2026-057a): `get_bootstrap_context()`
   (archive unido + tier local, CAPADO a un presupuesto de arranque),

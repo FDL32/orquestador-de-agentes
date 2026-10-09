@@ -273,15 +273,13 @@ Ante fallo:
 
 ## Principio de autonomia
 
-Si hay duda no bloqueante, elegir la opcion mas cercana a CEM v0:
+Si hay duda no bloqueante, resolverla por la jerarquia y los tenets de
+`<MOTOR_ROOT>/CONSTITUTION.md` (carga ON-DEMAND; leelo ENTERO). Fuente unica
+(T5); este bloque NO re-declara sus criterios (skill apunta, prompt gobierna
+-- X-09).
 
-- contrato antes que fix;
-- evidencia antes que relato;
-- rigor proporcional;
-- root y topologia antes de ejecucion;
-- barrera antes que memoria.
-
-Jerarquia de decision:
+Jerarquia de decision (propia de este pipeline, no redundante con la de
+arriba):
 
 1. Preservar integridad del `repo_destino`.
 2. Minimizar blast radius.

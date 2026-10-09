@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -112,6 +113,275 @@ def test_estado_va_etiquetado_como_snapshot_fechado(tmp_path):
     assert proc.returncode == 0
     assert "snapshot" in proc.stdout.lower()
     assert "no criterio" in proc.stdout.lower()
+
+
+def _mk_link(dest: Path, motor: Path = MOTOR_ROOT) -> None:
+    cfg = dest / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+    )
+
+
+def _mk_events(dest: Path, lines: list[dict]) -> Path:
+    ens = dest / ".agent" / "runtime" / "ensemble"
+    ens.mkdir(parents=True, exist_ok=True)
+    path = ens / "fallback_events.jsonl"
+    path.write_text("".join(json.dumps(e) + "\n" for e in lines), encoding="utf-8")
+    return path
+
+
+def _quota_event(
+    profile: str = "challenger_nan_qwen", backend: str = "nan_api"
+) -> dict:
+    return {
+        "failure_class": "quota_exhausted",
+        "failed_backend": backend,
+        "failed_profile": profile,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "failure_detail": "quota exceeded (account limit)",
+    }
+
+
+def test_085a_cuarentena_vigente_se_declara(tmp_path):
+    """D1: la cuarentena vigente se declara EN MEMORIA, jamas via `--sync`."""
+    dest = _mkdest(tmp_path / "q_vigente")
+    _mk_link(dest)
+    _mk_events(dest, [_quota_event()])
+
+    proc = _run(dest, "--json")
+    assert proc.returncode == 0, proc.stderr
+    q = json.loads(proc.stdout)["quarantine"]
+    assert "challenger_nan_qwen" in q["by_profile"], q
+    expires_at = q["by_profile"]["challenger_nan_qwen"]["expires_at"]
+    assert expires_at
+
+    md = _run(dest).stdout
+    assert "challenger_nan_qwen" in md
+    assert expires_at in md
+
+    # D1: NUNCA se escribe `backend_quarantine.json` (jamas se invoca --sync).
+    assert not (
+        dest / ".agent" / "runtime" / "ensemble" / "backend_quarantine.json"
+    ).exists()
+
+
+def test_085a_sin_evento_no_se_declara(tmp_path):
+    """D2: sin eventos, no hay cuarentena y se declara "fuente vacia"."""
+    dest = _mkdest(tmp_path / "q_sin_evento")
+    _mk_link(dest)
+    _mk_events(dest, [])
+
+    proc = _run(dest)
+    assert proc.returncode == 0, proc.stderr
+    assert "fuente vacia (0 eventos)" in proc.stdout
+    assert "challenger_nan_qwen" not in proc.stdout
+    assert "no medido" not in proc.stdout
+
+
+def test_085a_fuente_ausente_declara_cero_eventos(tmp_path):
+    """D3: sin fichero fuente = 0 eventos (medicion valida), NO "no medido"."""
+    dest = _mkdest(tmp_path / "q_ausente")
+    _mk_link(dest)
+
+    proc = _run(dest)
+    assert proc.returncode == 0, proc.stderr
+    assert "fuente vacia (0 eventos)" in proc.stdout
+    assert "no medido" not in proc.stdout
+
+
+def test_085a_subprocess_falla_declara_no_medido(tmp_path, monkeypatch):
+    """D3: rc!=0 se declara "no medido", texto DISTINTO de "fuente vacia"."""
+    import scripts.collect_session_state as css
+
+    monkeypatch.setattr(
+        css,
+        "_run",
+        lambda *a, **k: {
+            "command": "x",
+            "exit_code": 3,
+            "stdout": "",
+            "stderr": "boom",
+        },
+    )
+    q = css.collect_quarantine(MOTOR_ROOT, tmp_path)
+    assert q["cause"] == "no medido (rc=3)"
+    assert q["by_profile"] == {}
+    assert q["by_backend"] == {}
+
+    rep = css.build_report(MOTOR_ROOT, _mkdest(tmp_path / "d"), [])
+    md = css.render_markdown(rep)
+    assert "no medido (rc=3)" in md
+    assert "fuente vacia" not in md
+
+
+def test_085a_import_ensemble_dispatch_falla(tmp_path):
+    """D7 generico: import fallido -> causa declarada y rc GLOBAL = 0."""
+    fake_motor = tmp_path / "motor_sin_modulo"
+    fake_motor.mkdir()
+    dest = _mkdest(tmp_path / "d_modulo")
+    _mk_link(dest, motor=fake_motor)
+
+    proc = _run(dest)
+    assert proc.returncode == 0, proc.stderr
+    assert "cuarentena: modulo no disponible" in proc.stdout
+
+
+def test_085a_enlace_motor_destino_ausente(tmp_path):
+    """D7 especifico: sin enlace resoluble -> mensaje LITERAL y rc GLOBAL = 0."""
+    dest = _mkdest(tmp_path / "d_sin_enlace")
+
+    proc = _run(dest)
+    assert proc.returncode == 0, proc.stderr
+    assert "cuarentena: enlace motor-destino no disponible" in proc.stdout
+    assert "modulo no disponible" not in proc.stdout
+
+
+def test_085a_declara_antiguedad_del_artefacto_en_disco(tmp_path):
+    """D4: el artefacto en disco se declara por sha256, nunca se asume vigente."""
+    dest = _mkdest(tmp_path / "d_disco")
+    _mk_link(dest)
+    _mk_events(dest, [_quota_event()])
+    (dest / ".agent" / "runtime" / "ensemble" / "backend_quarantine.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2020-01-01T00:00:00+00:00",
+                "fallback_events_sha256": "deadbeef",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    q = json.loads(_run(dest, "--json").stdout)["quarantine"]
+    assert q["disk"]["coincide_fuente"] is False
+
+    md = _run(dest).stdout
+    assert "coincide_fuente: false" in md
+    assert "2020-01-01T00:00:00+00:00" in md
+
+
+def test_085a_timeout_del_subprocess_no_bloquea_el_arranque(
+    tmp_path, monkeypatch, capsys
+):
+    """D7: timeout/OSError nunca tumba el arranque; rc GLOBAL sigue 0."""
+    import scripts.collect_session_state as css
+
+    monkeypatch.setattr(
+        css,
+        "_run",
+        lambda *a, **k: {
+            "command": "x",
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "no ejecutable: TimeoutExpired",
+        },
+    )
+    dest = _mkdest(tmp_path / "d_timeout")
+    monkeypatch.setattr(
+        sys, "argv", ["collect_session_state.py", "--project-root", str(dest)]
+    )
+    rc = css.main()
+    assert rc == 0
+    assert "no medido" in capsys.readouterr().out
+
+
+def test_085a_no_invoca_quarantine_sync(tmp_path, monkeypatch):
+    """Forbidden Surface: el recolector JAMAS construye `quarantine --sync`."""
+    import scripts.collect_session_state as css
+
+    captured: dict = {}
+
+    def fake(cmd, cwd=None, timeout=120):
+        captured["cmd"] = list(cmd)
+        return {
+            "command": " ".join(cmd),
+            "exit_code": 0,
+            "stdout": json.dumps(
+                {
+                    "status": "empty",
+                    "cause": None,
+                    "by_backend": {},
+                    "by_profile": {},
+                    "events": 0,
+                }
+            ),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(css, "_run", fake)
+    css.collect_quarantine(MOTOR_ROOT, tmp_path)
+    cmd = captured["cmd"]
+    joined = " ".join(cmd)
+    assert "quarantine" not in cmd  # ningun token `quarantine` suelto
+    assert "--sync" not in joined
+    assert "quarantine --sync" not in joined
+
+
+def test_085a_timeout_explicito_declarado(tmp_path, monkeypatch):
+    """D7/M3: el subprocess lleva un timeout EXPLICITO y bajo, no el default."""
+    import scripts.collect_session_state as css
+
+    captured: dict = {}
+
+    def fake(cmd, cwd=None, timeout=120):
+        captured["timeout"] = timeout
+        return {
+            "command": " ".join(cmd),
+            "exit_code": 0,
+            "stdout": json.dumps(
+                {
+                    "status": "empty",
+                    "cause": None,
+                    "by_backend": {},
+                    "by_profile": {},
+                    "events": 0,
+                }
+            ),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(css, "_run", fake)
+    css.collect_quarantine(MOTOR_ROOT, tmp_path)
+    assert captured["timeout"] == css.QUARANTINE_TIMEOUT_S
+    assert css.QUARANTINE_TIMEOUT_S <= 5
+
+
+def test_085a_control_negativo_backend_sano_no_se_declara(tmp_path):
+    """Con evento presente pero clase no-cuarentenable, no se declara en cuarentena."""
+    dest = _mkdest(tmp_path / "d_sano")
+    _mk_link(dest)
+    _mk_events(
+        dest,
+        [
+            {
+                "failure_class": "auth_error",
+                "failed_backend": "nan_api",
+                "failed_profile": "challenger_nan_qwen",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
+    )
+
+    proc = _run(dest)
+    assert proc.returncode == 0, proc.stderr
+    assert "challenger_nan_qwen" not in proc.stdout
+    assert "fuente vacia" not in proc.stdout
+
+
+def test_085a_lista_de_veredictos_cerrada_sigue_pasando(tmp_path):
+    """La seccion nueva NO declara veredictos: la lista cerrada sigue pasando."""
+    from scripts.collect_session_state import FORBIDDEN_VERDICTS
+
+    dest = _mkdest(tmp_path / "d_veredictos")
+    _mk_link(dest)
+    _mk_events(dest, [_quota_event()])
+
+    for extra in ([], ["--json"]):
+        proc = _run(dest, *extra)
+        assert proc.returncode == 0, proc.stderr
+        blob = proc.stdout.upper()
+        for verdict in FORBIDDEN_VERDICTS:
+            assert verdict.upper() not in blob, f"veredicto filtrado: {verdict}"
 
 
 def test_slugs_de_memoria_se_verifican_antes_de_citarse(tmp_path):

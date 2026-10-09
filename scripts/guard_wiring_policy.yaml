@@ -32,7 +32,21 @@ known_unwired:
   # validate_observations: RETIRADO (WOT-2026-035b) -- ahora cableado via
   # check_portable_memory_archive_schema.py (pre-commit always_run + prepush),
   # que lo importa. Dejarlo aqui seria una declaracion STALE.
-  check_portable_memory_promotion: WOT-2026-024r
+  # WOT-2026-059u: esta entrada lleva el motivo BY-DESIGN en prosa, igual que sus
+  # dos precedentes en este mismo fichero (check_hook_interpreter,
+  # check_publication_gate) -- el guard es READ-ONLY y por diseno corre en el
+  # CIERRE, no en la escritura.
+  check_portable_memory_promotion: >-
+    BY-DESIGN: guard READ-ONLY invocado en el CIERRE de sesion, no fail-closed
+    en escritura -- `append_observation()` (memory_helpers) lo usan hooks de
+    CADA tool-call, y un fail-closed ahi romperia el trabajo normal. Por eso
+    solo puede detectar el fallo DESPUES de que ya ocurrio (incidente
+    2026-08-13, Crear_Texto_LLM: exit 0 con el fallo ya consumado) -- no es un
+    defecto del guard, es el limite estructural de su propio diseno. El bucle de
+    gobierno L2204 (4/4 lentes) ya evaluo y rechazo 3 alternativas de cableado
+    mas agresivo (recibo autocertificado; cablear-mas; vigilar la memoria
+    privada del agente, que pertenece a otro ticket, WT-2026-192 -- frontera que
+    WOT-2026-059u NO cruza). Dueno formal: WOT-2026-024r.
   # check_motor_pristine: RETIRADO de known_unwired (cierre 2026-07-22) -- SI esta
   # cableado, pero a 2 saltos que el AST de 1-hop no alcanza (string en lista de
   # subprocess dentro del recolector). Movido a wired_via con probe. Su dueno

@@ -105,6 +105,13 @@ A `rc=0` from a probe you invoked wrong looks exactly like a `rc=0` from a probe
 you invoked right -- and the corpus has that lesson written, along with the
 discriminator.
 
+Memory gives you FACTS (how this repo already failed). When a design doubt
+has no explicit contract to resolve it (an owner-stage you cannot identify,
+an ambiguous reclassification, a trade-off that ties), the fallback is
+`<MOTOR_ROOT>/CONSTITUTION.md` (ON-DEMAND load; read it WHOLE at that
+moment): a 6-level priority hierarchy + 15 engineering tenets, single
+source of truth (T5) -- never re-declare its criteria here.
+
 ## Paso 0: backend-accessibility gate (Nivel 0, HARD-STOP before any ticket)
 
 Before the state machine touches a single ticket, the executor MUST run the

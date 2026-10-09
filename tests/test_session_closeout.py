@@ -1192,6 +1192,70 @@ class TestRunCloseout:
 
 
 # ---------------------------------------------------------------------------
+# Test: step_prepush_check degradation under --skip-gates (WOT-2026-081c)
+# ---------------------------------------------------------------------------
+
+
+class TestStepPrepushCheckDegradation:
+    """WOT-2026-081c: a --skip-gates rc==0 must not be reported as a clean pass.
+
+    Mutation proof (verified externally):
+      - Mutation A: drop the stdout parse so rc==0 returns PASS literal -> this
+        test FAILS (expects WARN, gets PASS).
+      - Mutation B: keep the parse but return status=FAIL for the degraded case
+        -> this test FAILS (expects WARN, gets FAIL).
+    """
+
+    def test_skip_gates_degrades_to_warn_not_skip(self, tmp_path: Path) -> None:
+        """A degraded rc==0 becomes WARN (blocking=False) listing the failures."""
+        from scripts.closeout_steps.gates import step_prepush_check
+
+        # Real shape printed by prepush_check.py under --skip-gates: every check
+        # runs, each blocking failure is printed as a [FAIL] row with its
+        # diagnostic indented underneath, and the CLI still exits 0.
+        degraded_stdout = "\n".join(
+            [
+                "=" * 60,
+                "PREFLIGHT DE ENTREGA - Reporte",
+                "=" * 60,
+                "",
+                "[OK] Ruff Format Check",
+                "",
+                "[FAIL] Ruff Check",
+                "      scripts/foo.py:12:1: E501 Line too long (95 > 88 characters)",
+                "",
+                "=" * 60,
+                "PREFLIGHT CON FALLOS pero --skip-gates activo: cierre NO bloqueado",
+                "  (los fallos de arriba se ignoran por decision explicita del "
+                "operador)",
+                "=" * 60,
+            ]
+        )
+
+        def _fake_run_script(script_name, args, project_root, timeout=300):
+            assert script_name == "prepush_check.py"
+            assert "--skip-gates" in args
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=degraded_stdout, stderr=""
+            )
+
+        result = step_prepush_check(
+            tmp_path,
+            dry_run=False,
+            run_script_fn=_fake_run_script,
+            process_diagnostic_fn=lambda proc: proc.stderr,
+            step_result_cls=StepResult,
+            skip_gates=True,
+        )
+
+        assert result.status == "WARN", result.detail
+        assert result.blocking is False
+        assert "Ruff" in result.detail
+        assert "E501" in result.detail
+        assert "All blocking quality checks passed" not in result.detail
+
+
+# ---------------------------------------------------------------------------
 # Test: CLI argument parsing via main()
 # ---------------------------------------------------------------------------
 

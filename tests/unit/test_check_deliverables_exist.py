@@ -136,6 +136,38 @@ def test_read_inspect_only_and_manager_only_not_treated_as_deliverables(tmp_path
     assert code == 0, output
 
 
+def test_manager_only_flt_subheading_hyphenated_is_skipped(tmp_path):
+    """WOT-2026-097a follow-up: '### Manager-only' (hyphen) INSIDE Files Likely
+    Touched must be skipped exactly like '### Read/inspect only', per
+    _extract_flt_paths's own docstring ("Read/inspect only and Manager-only
+    sub-headings are skipped entirely"). _SKIP_SUBHEADER_MARKERS previously only
+    listed "manager only" (space), which never matches "Manager-only" (hyphen,
+    lower() does not insert spaces for hyphens) -- the contract the docstring
+    promises was never actually enforced for this exact heading spelling.
+
+    MUTATION: reverting _SKIP_SUBHEADER_MARKERS to omit "manager-only" makes
+    this test fail (exit 1, missing file reported), because the path under
+    the unmatched heading falls through to the default root as a real
+    deliverable instead of being skipped.
+    """
+    destino_root = tmp_path / "destino"
+    destino_root.mkdir()
+    (destino_root / ".agent" / "collaboration").mkdir(parents=True)
+
+    plan = (
+        "## Files Likely Touched\n\n"
+        "### repo_destino\n"
+        "- `execution_log.md`\n\n"
+        "### Manager-only\n"
+        "- `missing_manager_gate.py`\n"
+    )
+    (destino_root / "execution_log.md").write_text("log", encoding="utf-8")
+
+    code, output = _run_with_plan(plan, destino_root, motor_root=destino_root)
+    assert code == 0, output
+    assert "missing_manager_gate.py" not in output
+
+
 def test_wot_016w_flt_bullet_with_trailing_annotation_resolves_and_checked(tmp_path):
     """Regression: WOT-2026-016w. A FLT bullet with a trailing descriptive
     annotation after the path (e.g. "scripts/x.py (nuevo, el gate)") must be
