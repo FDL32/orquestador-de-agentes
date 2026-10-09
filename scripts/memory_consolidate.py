@@ -337,12 +337,17 @@ def _extract_rules_from_entries(
 
     Before: Requires a list of consolidated observation dicts and an integer
             cap `max_rules` (a cap <= 0 keeps no rule).
-    During: Filters observations that carry explicit 'domain' or have
-            'topic' values resembling patterns/rules. Groups by domain.
-            Assigns a 'wing' via _infer_wing() for hierarchical grouping.
-            Counts EVERY distinct signal that passes the filter as a
-            candidate and keeps the first `max_rules` of them in list order:
-            the cap cuts by position, not by relevance (WOT-2026-058b).
+    During: Sorts `entries` by timestamp descending (most recent first, via
+            `parse_timestamp`, same helper used elsewhere in this module)
+            BEFORE filtering -- CONSTITUTION.md / DEC-WOT-2026-047b
+            resolution (2026-10-09): the cap must expel the oldest
+            candidates, not whatever the caller happened to list last
+            (WOT-2026-058b). Then filters observations that carry explicit
+            'domain' or have 'topic' values resembling patterns/rules.
+            Groups by domain. Assigns a 'wing' via _infer_wing() for
+            hierarchical grouping. Counts EVERY distinct signal that passes
+            the filter as a candidate and keeps the first `max_rules` of
+            them in (now recency-sorted) order.
     After: Returns {"rules": [...], "candidates": int, "truncated": bool}.
            `rules` is the deduplicated, deterministically sorted list of rule
            dicts with 'domain', 'signal', 'rule_id', 'source_ticket', 'wing';
@@ -353,7 +358,13 @@ def _extract_rules_from_entries(
     rules: list[dict[str, Any]] = []
     candidates = 0
 
-    for entry in entries:
+    ordered_entries = sorted(
+        entries,
+        key=lambda e: parse_timestamp(e.get("timestamp", "")),
+        reverse=True,
+    )
+
+    for entry in ordered_entries:
         signal = (entry.get("signal") or "").strip()
         if not signal or signal in seen_signals:
             continue
