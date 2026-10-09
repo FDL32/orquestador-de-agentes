@@ -66,10 +66,39 @@ def check_bus_drift(event_bus, plan_id: str, log_status: str) -> list[str]:
 
 
 def check_pre_closure_invariants(event_bus, plan_id: str) -> list[str]:
-    """Check pre-closure invariants (IN_PROGRESS, APPROVED, PENDING)."""
+    """Check pre-closure invariants (IN_PROGRESS, APPROVED, PENDING).
+
+    WOT-2026-089b: the bus is append-only, so a BUILDER_EXIT from a round
+    already closed by a ``--request-changes`` requeue (a STATE_CHANGED moving
+    the ticket back to IN_PROGRESS/HUMAN_GATE) stays on the bus forever. The
+    previous existence-only check re-read it as fresh and produced a permanent
+    warning after every requeue, until the next ``--mark-ready``.
+
+    The exit now only warns when it has no later STATE_CHANGED closing its
+    round, i.e. when ``builder_exit.sequence_number`` is greater than the
+    latest STATE_CHANGED for the ticket. This mirrors the sequence_number
+    comparison already used by ``check_builder_exit_order``; no to_state filter
+    is applied (any later state change closes the round). Synthetic
+    BUILDER_EXIT events from ``reconcile_ticket`` are excluded the same way
+    ``_latest_real_builder_exit`` and ``check_builder_exit_order`` do it.
+    """
     result: list[str] = []
-    builder_exit = event_bus.latest_event(ticket_id=plan_id, event_type="BUILDER_EXIT")
-    if builder_exit:
+    builder_exit = next(
+        (
+            event
+            for event in reversed(
+                event_bus.read_events(ticket_id=plan_id, event_type="BUILDER_EXIT")
+            )
+            if not _is_reconciled_event(event)
+        ),
+        None,
+    )
+    if builder_exit is None:
+        return result
+    state_event = event_bus.latest_event(ticket_id=plan_id, event_type="STATE_CHANGED")
+    if state_event is None or (
+        builder_exit.sequence_number > state_event.sequence_number
+    ):
         result.append(
             "BUILDER_EXIT exists but ticket not in READY_FOR_REVIEW/COMPLETED"
         )
