@@ -724,6 +724,49 @@ def test_flight_line_family_wildcard_exits_zero(tmp_path: Path) -> None:
         assert exit_code == 0, f"{ticket}: {message}"
 
 
+def test_flight_line_wildcard_too_short_rejects_over_admission(tmp_path: Path) -> None:
+    """Adjudicado por la ronda MANAGER_REVIEW de Codex sobre 928b175/ec928eb,
+    hallazgo (b): un wildcard de solo 2 digitos (`WOT-2026-09*`) NO debe
+    over-admitir toda una decena de tickets (090, 099z, ...) que la linea
+    nunca declaro. Debe rechazarse por completo (no autoriza NADA, ni
+    siquiera su literal), no degradar a un match de substring laxo.
+
+    Branch-ancla es `flight/999z` (no `096a`) para que NINGUNO de los
+    tickets probados case con el camino `flight/<suffix>` existente --
+    el unico camino bajo prueba aqui es el `.flight_line` wildcard."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(motor, tmp_path, "999z", ["WOT-2026-09*"])
+
+    for ticket in ("WOT-2026-090a", "WOT-2026-099z", "WOT-2026-096a"):
+        exit_code, message = check_topology(ticket, flight, motor, workspace)
+        assert exit_code == 1, f"{ticket} should NOT be admitted: {message}"
+
+
+def test_flight_line_wildcard_without_letter_suffix_rejects(tmp_path: Path) -> None:
+    """Adjudicado por la misma ronda, hallazgo (b): un ticket SIN sufijo de
+    letra (`WOT-2026-096`, formato invalido per TICKET_ID_RE) no debe colarse
+    por la familia `WOT-2026-096*` -- la familia exige el sufijo de letra
+    unico que el propio TICKET_ID_RE exige para cualquier ticket real.
+
+    Exit 2 (no 1): un ticket malformado (sin sufijo de letra) falla ANTES de
+    llegar a la logica de topologia -- `_flight_suffix_of`/`TICKET_ID_RE`
+    lo rechazan en la capa de parseo, con el mismo "Malformed ticket ID"
+    que cualquier otro ticket mal formado recibiria sin este cambio; no es
+    un caso nuevo de exit 1 de la logica .flight_line."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(motor, tmp_path, "096a", ["WOT-2026-096*"])
+
+    exit_code, message = check_topology("WOT-2026-096", flight, motor, workspace)
+    assert exit_code == 2, message
+    assert "Malformed" in message or "malformado" in message.lower()
+
+
 def test_flight_line_ticket_not_listed_exits_one(tmp_path: Path) -> None:
     """Fail-closed: un ticket que NO es el ancla ni esta en .flight_line sigue
     bloqueado, aunque la rama sea flight/* y el marcador exista."""
