@@ -627,6 +627,45 @@ def test_validate_schema_canonical_invalid_impact() -> None:
     assert any("Impacto invalido" in e for e in errors)
 
 
+def test_validate_schema_canonical_invalid_applies_to(tmp_path: Path) -> None:
+    """WOT-2026-038d (c): validate_schema rechaza applies_to fuera de VALID_APPLIES_TO.
+
+    Antes de este fix, _validate_canonical_format exigia que `applies_to`
+    estuviera PRESENTE pero nunca validaba su VALOR -- domain e impact si lo
+    hacian (mismo fichero, lineas vecinas), applies_to no. Consecuencia
+    medida: scripts/validate_observations.py --strict (VALID_APPLIES_TO =
+    {code, mixed, docs, all}) rechazaba 'process' que este escritor aceptaba
+    sin queja -- divergencia writer<->validador. `process` es el valor real
+    citado en la ficha del ticket (visto en produccion antes de 026f).
+
+    Mutation: quitar el bloque `if "applies_to" in entry and ... not in
+    _VALID_APPLIES_TO` -> este test cae a RED (is_valid vuelve a ser True).
+    """
+    entry = {
+        "timestamp": "2026-05-30T12:00:00Z",
+        "signal": "This is a valid canonical observation with enough length",
+        "domain": "delivery-hygiene",
+        "confidence": 0.9,
+        "applies_to": "process",
+        "source_ticket": "WP-2026-177",
+        "topic": "test",
+        "source": "session-close",
+    }
+    is_valid, errors = validate_schema(entry)
+    assert is_valid is False
+    assert any("applies_to invalido" in e for e in errors), errors
+
+
+def test_validate_schema_applies_to_enum_matches_validate_observations() -> None:
+    """WOT-2026-038d (c): el escritor y el validador --strict comparten LA MISMA
+    fuente del enum (_VALID_APPLIES_TO importado de validate_observations.py),
+    no una copia redeclarada que pueda divergir en silencio otra vez."""
+    import scripts.session_close_observations as sco
+    import scripts.validate_observations as vo
+
+    assert sco._VALID_APPLIES_TO is vo.VALID_APPLIES_TO
+
+
 def test_extract_candidates_writes_canonical(monkeypatch, tmp_path: Path) -> None:
     """extract_candidates_from_ticket writes canonical format with domain, confidence, applies_to."""
     import scripts.session_close_observations as sco

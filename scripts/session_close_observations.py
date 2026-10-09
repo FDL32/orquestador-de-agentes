@@ -27,6 +27,9 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
 
 from bus import observation_domains  # noqa: E402  # origen: LEA-2026-002o
 from bus.redact import redact  # noqa: E402
+from scripts.validate_observations import (  # noqa: E402
+    VALID_APPLIES_TO as _VALID_APPLIES_TO,
+)
 
 
 # WP-2026-122: Deferred path resolution via runtime.project_root
@@ -111,6 +114,12 @@ def _validate_canonical_format(entry: dict[str, Any], errors: list[str]) -> None
     if "impact" in entry and entry["impact"] not in VALID_IMPACTS:
         errors.append(
             f"Impacto invalido: {entry['impact']} (validos: {sorted(VALID_IMPACTS)})"
+        )
+
+    if "applies_to" in entry and entry["applies_to"] not in _VALID_APPLIES_TO:
+        errors.append(
+            f"applies_to invalido: {entry['applies_to']} "
+            f"(validos: {sorted(_VALID_APPLIES_TO)})"
         )
 
 
