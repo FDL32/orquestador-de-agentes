@@ -72,6 +72,18 @@ directorio alfabeticamente, que es como se buscan en la practica. Ergonomia sobr
 
 **Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.
 
+**Regla de aislamiento por worktree: aplica al `repo_motor` igual que al `repo_destino`.**
+Con 2+ sesiones trabajando en paralelo, cada sesion que vaya a escribir CODIGO en el
+`repo_motor` necesita su propio `git worktree` del motor -- exactamente la misma disciplina
+que ya se exige para el `repo_destino` (ver `obs-worktree-aisla-codigo-no-estado-operativo-
+ni-orquestador`, memoria portable, 2026-07-25). Trabajar directamente en el checkout principal
+compartido del motor es colision de superficie aunque no haya colision de CONTENIDO (dos
+sesiones pueden tocar ficheros disjuntos y aun asi interferirse: una avanza `HEAD` con sus
+commits mientras la otra tiene cambios sin commitear sobre el mismo arbol). El worktree del
+motor NO sustituye la higiene de esa leccion (commitear siempre, nunca `stash` para dejar
+trabajo "en limbo" entre worktrees, porque `refs/stash` es GLOBAL al repo y visible desde
+cualquier worktree hermano).
+
 ### Glosario de nomenclatura de ticket (WOT-2026-010a)
 
 Nomenclatura canonica de identificadores y artefactos de ticket. "Plan" se
