@@ -188,6 +188,51 @@ def _flight_suffix_of(ticket: str) -> str | None:
     return ticket.rsplit("-", 1)[-1]
 
 
+FLIGHT_LINE_MARKER = ".flight_line"
+
+
+def _flight_line_entries(cwd: Path) -> list[str] | None:
+    """The declared allow-list of a shared multi-ticket flight worktree.
+
+    Before: cwd is the worktree toplevel to check.
+    During: reads FLIGHT_LINE_MARKER at the worktree root, if present. One
+            entry per non-empty, non-comment (`#`) line. An entry is either
+            a full canonical ticket id (`WOT-2026-038d`) or a family prefix
+            ending in `*` (`WOT-2026-096*`), so a line with many sub-tickets
+            (096a, 096b, 096c, ...) does not need to enumerate every one.
+    After: returns the list of entries (possibly empty), or None if the
+           marker file is absent. An EMPTY list (marker exists, no entries)
+           is deliberately distinct from None: it means "this is a line
+           worktree, but no additional ticket is allowed yet" -- it still
+           authorizes the worktree's own branch-suffix ticket (if any) via
+           the existing flight/<suffix> check, it just adds none on top.
+           Never validated against backlog.md's free-text `[LINEA: ...]`
+           field (WOT-2026-095b: that field has no mechanism today) -- this
+           marker is the guard's own, independent source of truth.
+    """
+    marker = cwd / FLIGHT_LINE_MARKER
+    try:
+        raw = marker.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    return [
+        line.strip()
+        for line in raw.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _ticket_allowed_by_flight_line(ticket: str, entries: list[str]) -> bool:
+    """True if `ticket` matches a literal entry or a `<prefix>*` family entry."""
+    for entry in entries:
+        if entry.endswith("*"):
+            if ticket.startswith(entry[:-1]):
+                return True
+        elif ticket == entry:
+            return True
+    return False
+
+
 def _check_wot_topology(
     cwd: Path, motor_root: Path, project_root: Path, ticket: str
 ) -> tuple[int, str]:
@@ -244,6 +289,26 @@ def _check_wot_topology(
     if flight_suffix is not None and branch == f"flight/{flight_suffix}":
         return _verify_wot_workspace(motor_root, project_root)
 
+    # Worktree-por-linea: una worktree compartida sirve VARIOS tickets de la
+    # misma linea de trabajo (no un unico ticket como arriba). Se reconoce
+    # por el marcador explicito FLIGHT_LINE_MARKER en la raiz de la worktree
+    # (nunca por adivinar el nombre de rama): la rama sigue siendo
+    # flight/<ticket-ancla>, y el marcador lista los DEMAS tickets permitidos
+    # en esa misma worktree -- por id literal o por familia `<prefijo>*`
+    # (p.ej. `WOT-2026-096*` cubre 096a/096b/096c/... sin enumerar). El
+    # ticket activo debe casar el ticket-ancla de la rama O una entrada del
+    # marcador; si no casa ninguno, cae al mensaje de cruce de abajo
+    # (fail-closed): el marcador es lo que distingue "vuelo de un ticket
+    # equivocado" de "vuelo de varios tickets, a proposito y declarado".
+    flight_line_entries = _flight_line_entries(cwd)
+    if (
+        branch
+        and branch.startswith("flight/")
+        and flight_line_entries is not None
+        and _ticket_allowed_by_flight_line(ticket, flight_line_entries)
+    ):
+        return _verify_wot_workspace(motor_root, project_root)
+
     # Camino canonico: la worktree _dev en rama main.
     dev_entry = _find_dev_worktree(motor_root)
     if dev_entry is None:
@@ -258,7 +323,9 @@ def _check_wot_topology(
             return (
                 1,
                 f"Ticket {ticket} no puede trabajarse desde la rama {branch}: "
-                f"el vuelo esperaria la rama flight/{flight_suffix}. Vuelo/ticket "
+                f"el vuelo esperaria la rama flight/{flight_suffix}, o la "
+                f"worktree debe declarar {FLIGHT_LINE_MARKER} si es un vuelo "
+                "de linea compartido entre varios tickets. Vuelo/ticket "
                 "CRUZADO (WOT-2026-040q).",
             )
         return (

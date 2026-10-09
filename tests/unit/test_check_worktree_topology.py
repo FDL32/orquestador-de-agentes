@@ -606,3 +606,122 @@ def test_wot_dev_main_still_valid_after_flight_support(tmp_path: Path) -> None:
     exit_code, message = check_topology("WOT-2026-027h", dev, motor, workspace)
     assert exit_code == 0, message
     assert "correcta" in message
+
+
+# ---------------------------------------------------------------------------
+# Worktree-por-linea: una worktree compartida sirve VARIOS tickets (no uno
+# solo como flight/<suffix>). Reconocida por el marcador explicito
+# FLIGHT_LINE_MARKER (.flight_line) en la raiz de la worktree, nunca por
+# adivinar el nombre de rama. Mutation-verify: sin el marcador, el mismo
+# escenario debe seguir cayendo en el mensaje de cruce (fail-closed).
+# ---------------------------------------------------------------------------
+
+
+def _add_flight_line_worktree(
+    motor: Path, tmp_path: Path, anchor_suffix: str, marker_lines: list[str] | None
+) -> Path:
+    """Add a shared flight worktree on branch flight/<anchor_suffix>.
+
+    If marker_lines is not None, writes FLIGHT_LINE_MARKER with those lines
+    (even an empty list writes an empty, existing file). If None, no marker
+    is written at all (the absent-marker control case)."""
+    wt = _add_flight_worktree(motor, tmp_path, anchor_suffix)
+    if marker_lines is not None:
+        marker = wt / ".flight_line"
+        marker.write_text(
+            "\n".join(marker_lines) + ("\n" if marker_lines else ""), encoding="utf-8"
+        )
+    return wt
+
+
+def test_flight_line_anchor_ticket_exits_zero(tmp_path: Path) -> None:
+    """El ticket-ancla de la rama (flight/026p) sigue valido con el marcador presente,
+    igual que sin el (ya cubierto por test_wot_flight_worktree_matching_suffix_exits_zero)."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(
+        motor, tmp_path, "026p", ["WOT-2026-038d", "WOT-2026-042s"]
+    )
+
+    exit_code, message = check_topology("WOT-2026-026p", flight, motor, workspace)
+    assert exit_code == 0, message
+
+
+def test_flight_line_additional_literal_ticket_exits_zero(tmp_path: Path) -> None:
+    """DoD: un ticket DISTINTO del ancla, pero listado literal en .flight_line,
+    pasa (es el caso real de G1: 5 tickets, un solo worktree compartido)."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(
+        motor, tmp_path, "026p", ["WOT-2026-038d", "WOT-2026-042s"]
+    )
+
+    exit_code, message = check_topology("WOT-2026-038d", flight, motor, workspace)
+    assert exit_code == 0, message
+
+
+def test_flight_line_family_wildcard_exits_zero(tmp_path: Path) -> None:
+    """DoD: una entrada `WOT-2026-096*` cubre 096a/096b/096c/... sin enumerar."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(motor, tmp_path, "096a", ["WOT-2026-096*"])
+
+    for ticket in ("WOT-2026-096a", "WOT-2026-096b", "WOT-2026-096z"):
+        exit_code, message = check_topology(ticket, flight, motor, workspace)
+        assert exit_code == 0, f"{ticket}: {message}"
+
+
+def test_flight_line_ticket_not_listed_exits_one(tmp_path: Path) -> None:
+    """Fail-closed: un ticket que NO es el ancla ni esta en .flight_line sigue
+    bloqueado, aunque la rama sea flight/* y el marcador exista."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(motor, tmp_path, "026p", ["WOT-2026-038d"])
+
+    exit_code, message = check_topology("WOT-2026-999z", flight, motor, workspace)
+    assert exit_code == 1, message
+
+
+def test_flight_line_marker_absent_falls_back_to_cross_ticket_exits_one(
+    tmp_path: Path,
+) -> None:
+    """MUTATION control: sin el marcador .flight_line, un ticket distinto del
+    ancla de la rama vuelve a caer en el mensaje de cruce (comportamiento
+    PRE-existente, sin regresion): esto prueba que el marcador es lo que
+    habilita el nuevo camino, no un relajamiento general del guard."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(motor, tmp_path, "026p", marker_lines=None)
+
+    exit_code, message = check_topology("WOT-2026-038d", flight, motor, workspace)
+    assert exit_code == 1, message
+    assert "038d" in message or "flight" in message.lower()
+
+
+def test_flight_line_empty_marker_only_allows_anchor_exits_one_for_others(
+    tmp_path: Path,
+) -> None:
+    """Un marcador presente pero VACIO no es un comodin universal: solo el
+    ticket-ancla de la rama pasa (via flight/<suffix> existente); cualquier
+    otro ticket sigue bloqueado hasta que se liste explicitamente."""
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_line_worktree(motor, tmp_path, "026p", marker_lines=[])
+
+    exit_code_anchor, _ = check_topology("WOT-2026-026p", flight, motor, workspace)
+    assert exit_code_anchor == 0
+
+    exit_code_other, message = check_topology("WOT-2026-038d", flight, motor, workspace)
+    assert exit_code_other == 1, message
