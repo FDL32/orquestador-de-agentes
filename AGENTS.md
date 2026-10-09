@@ -613,6 +613,20 @@ pre-compact hook:
 - **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
 - `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
 - `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
+- **Contrato de `MEMORY.md` (WOT-2026-074s): INDICE por topic, nunca volcado
+  completo de una senal.** `regen_memory_md` (`scripts/memory_consolidate.py`)
+  agrupa las entries por `topic`, lista cada topic bajo su propia seccion
+  `## <topic>` con hasta 10 entradas (las mas recientes), y cada `signal` se
+  trunca a `MAX_SIGNAL_MEMORY_MD` (200 caracteres) con marcador visible si se
+  corta -- el texto COMPLETO de la senal vive en `memory_rules.md` (L2) y en
+  `observations.jsonl` (L1), nunca en `MEMORY.md`. Un test que asertara "el
+  texto integro de la senal debe aparecer en MEMORY.md" estaria probando el
+  contrato EQUIVOCADO (volcado en vez de indice) -- origen de esta nota: un
+  test asi (`013e` del repo_destino `Crear_Texto_LLM`) fallo porque asumio esa
+  forma, y el fallo era del test, no del artefacto. Recibo re-ejecutable:
+  `python scripts/memory_consolidate.py --apply` deja un `MEMORY.md` de hasta
+  80 lineas con secciones `## <topic>` (indice), mientras la senal integra de
+  cada entrada nueva aparece en `memory_rules.md`.
 - `bus/memory_loader.py` es la unica puerta de entrada, y **cada puerta tiene su
   propio tope, nunca uno global** (WOT-2026-057a): `get_bootstrap_context()`
   (archive unido + tier local, CAPADO a un presupuesto de arranque),
