@@ -36,7 +36,7 @@
   },
   "backends": {
     "kilo": {
-      "executable": "kilo.exe",
+      "executable": "kilo.cmd",
       "args": [
         "run",
         "--auto",
