@@ -1073,6 +1073,47 @@ def test_057a_bootstrap_index_is_bounded_and_declares_what_it_omits(
     )
 
 
+def test_047a_500_entries_stay_bounded_with_one_combined_summary_line():
+    """WOT-2026-047a DoD (2)+(3), letra LITERAL del ticket: un archive
+    SINTETICO de exactamente 500 entradas produce un bloque que NO excede
+    el limite, Y una UNICA linea de resumen nombra servidas Y omitidas
+    juntas (no dos lineas separadas, que es lo que el fix de 057a ya
+    daba y que Codex Review confirmo NO satisfacia la letra del DoD,
+    loop UNI-2 nonce e7d6f8900769ff8d90e8f5fa141efe14).
+
+    Llama a `_format_archive_as_text` DIRECTAMENTE (no al bootstrap
+    completo): el DoD habla del FORMATEADOR, no de la puerta que lo
+    envuelve -- ver DoD-7/test_057a_index_cap_does_not_leak_into_review_or_compact,
+    que ya establecio esa frontera.
+
+    MUTACION ALCANZABLE (dos independientes, como exige el ticket):
+    (1) quitar el `cap=` en la llamada -> las 500 entradas pasan enteras
+    y el primer assert cae; (2) quitar la nueva linea `Resumen: ...` ->
+    el segundo assert (regex con AMBOS numeros en la MISMA linea) cae,
+    aunque los dos numeros sigan existiendo por separado en otras lineas.
+    """
+    entradas = [_observation(f"ENTRY-{i}", topic=f"tema{i}") for i in range(500)]
+
+    text = memory_loader._format_archive_as_text(
+        entradas, cap=memory_loader._BOOTSTRAP_INDEX_CAP
+    )
+
+    emitidas = len(re.findall(r"^- \[", text, re.M))
+    assert emitidas == memory_loader._BOOTSTRAP_INDEX_CAP, (
+        f"con 500 entradas sinteticas el bloque emitio {emitidas} lineas, "
+        f"se esperaban exactamente {memory_loader._BOOTSTRAP_INDEX_CAP} (el cap)"
+    )
+
+    resumen = re.search(r"Resumen: (\d+) servida\(s\), (\d+) omitida\(s\)\.", text)
+    assert resumen, (
+        "no se encontro una UNICA linea de resumen con el patron "
+        "'Resumen: N servida(s), M omitida(s).' -- DoD (3) exige servidas "
+        "Y omitidas en la misma linea, no repartidas entre cabecera y pie"
+    )
+    assert int(resumen.group(1)) == memory_loader._BOOTSTRAP_INDEX_CAP
+    assert int(resumen.group(2)) == 500 - memory_loader._BOOTSTRAP_INDEX_CAP
+
+
 def test_057a_index_reserves_room_for_both_origins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

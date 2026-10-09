@@ -615,6 +615,18 @@ def _format_archive_as_text(
         lines.append(f"- [{ts}] **{topic}**: {signal} ({tag})")
     if total > len(shown):
         lines.append("")
+        # WOT-2026-047a DoD (3), letra literal: "una linea de resumen con el
+        # numero de servidas Y omitidas" -- antes de este fix, "servidas"
+        # vivia en la cabecera y "omitidas" en esta linea, dos lineas
+        # distintas del mismo bloque. Codex Review (loop UNI-2, nonce
+        # e7d6f8900769ff8d90e8f5fa141efe14) confirmo que eso satisface el
+        # ESPIRITU pero no la LETRA: ninguna linea unica contenia ambos
+        # numeros a la vez. Esta linea los junta sin quitar la cabecera
+        # (ningun test existente la asertaba literal, solo con
+        # substring-OR "mas no mostrada" / "omitida").
+        lines.append(
+            f"Resumen: {len(shown)} servida(s), {total - len(shown)} omitida(s)."
+        )
         lines.append(
             f"[{total - len(shown)} leccion(es) mas no mostrada(s) en este indice. "
             "Alcanzalas con `--recall --query <termino>`.]"
