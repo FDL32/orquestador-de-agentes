@@ -1276,6 +1276,21 @@ def _strip_leading_shell_noise(text: str) -> str:
     return "\n".join(lines)
 
 
+def _agent_failure_detail(text: str) -> str:
+    """Cola de evidencia de un fallo del canal `agent`, anclada a la causa.
+
+    WOT-2026-086k (Decision 2 de `DEC-086K-001`). Se toma la ULTIMA linea que
+    contenga `try again` (el banner de cuota real, NO el eco del prompt que
+    codex antepone) recortada a 300 caracteres. Si no hay ninguna, los ULTIMOS
+    300 caracteres: el eco del prompt (~1140 caracteres) desplazaria la hora de
+    reset fuera de un corte de CABEZA (`text[:300]`).
+    """
+    for line in reversed(text.splitlines()):
+        if "try again" in line.lower():
+            return line[:300]
+    return text[-300:]
+
+
 # WOT-2026-048g: el modelo que el CLI dice estar usando, en su banner de STDERR.
 # Medido 2026-08-03 sobre los dos backends CLI reales:
 #   opencode -> "> builder - glm-5.2"   (separador U+00B7 en la salida real)
@@ -2916,23 +2931,133 @@ QUARANTINE_REL = Path(".agent/runtime/ensemble/backend_quarantine.json")
 _QUARANTINE_TTL = timedelta(hours=1)
 
 
-def _parse_provider_reset_at(detail: str | None) -> datetime | None:
-    """Caso A: fecha de reset del proveedor dentro de `failure_detail`.
+# WOT-2026-086k: los TRES formatos reales de hora de reset de `codex.exe`
+# 0.153.4, expresados en hora LOCAL del evento (no UTC). El mes y AM/PM se
+# resuelven con regex y esta tabla fija: `%b`/`%p` de `strptime` dependen del
+# locale del proceso (Windows en espanol) y darian `ValueError` o un valor
+# equivocado sin avisar.
+_CODEX_MONTHS = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+# "try again" sin distinguir mayusculas; el banner REAL es la ULTIMA mencion,
+# porque codex hace eco del prompt y este puede traer una mencion anterior.
+_TRY_AGAIN_RE = re.compile(r"try again\b", re.IGNORECASE)
+# "... try again at Jul 28th, 2026 7:56 PM": fecha explicita ABSOLUTA (el
+# sufijo ordinal se descarta; el ancla del evento no decide si ya paso).
+_CODEX_DATE_RE = re.compile(
+    r"at\s+([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,\s*(\d{4})\s+"
+    r"(\d{1,2}):(\d{2})\s*([AaPp])\.?[Mm]\.?",
+    re.IGNORECASE,
+)
+# "... try again at 3:05 PM": solo-hora, localizada en la fecha del EVENTO.
+_CODEX_HOUR_RE = re.compile(
+    r"at\s+(\d{1,2}):(\d{2})\s*([AaPp])\.?[Mm]\.?",
+    re.IGNORECASE,
+)
+
+
+def _codex_hour_24(hour: str, meridiem: str) -> int:
+    """12h -> 24h: 12 AM = 00, 12 PM = 12; PM suma 12 salvo a las 12."""
+    h = int(hour)
+    if h == 12:
+        h = 0
+    if meridiem.lower() == "p":
+        h += 12
+    return h
+
+
+def _codex_reset_at(
+    tail: str, local: datetime, zone, event_ts: datetime
+) -> datetime | None:
+    """Hora de reset de codex en `tail` (texto tras la ULTIMA mencion).
+
+    `local`/`zone` son la fecha y la zona LOCAL del evento; `event_ts` es el
+    ancla UTC. La fecha explicita es ABSOLUTA; la solo-hora se localiza sobre la
+    fecha local del evento y, si ya paso (`<= event_ts`), -> `None` (jamas "+1
+    dia"). Sin hora ("later") -> `None` (cae al TTL por defecto).
+    """
+    date_m = _CODEX_DATE_RE.search(tail)
+    if date_m:
+        month = _CODEX_MONTHS.get(date_m.group(1).lower()[:3])
+        if month is None:
+            return None
+        hour = _codex_hour_24(date_m.group(4), date_m.group(6))
+        try:
+            naive = datetime(
+                int(date_m.group(3)),
+                month,
+                int(date_m.group(2)),
+                hour,
+                int(date_m.group(5)),
+            )
+        except ValueError:
+            return None
+        return naive.replace(tzinfo=zone).astimezone(timezone.utc)
+    hour_m = _CODEX_HOUR_RE.search(tail)
+    if hour_m:
+        hour = _codex_hour_24(hour_m.group(1), hour_m.group(3))
+        try:
+            naive = datetime(
+                local.year, local.month, local.day, hour, int(hour_m.group(2))
+            )
+        except ValueError:
+            return None
+        candidate = naive.replace(tzinfo=zone)
+        if candidate <= event_ts:
+            return None
+        return candidate.astimezone(timezone.utc)
+    # "or try again later." (sin hora) u otra forma no reconocida -> TTL.
+    return None
+
+
+def _parse_provider_reset_at(
+    detail: str | None,
+    event_ts: datetime,
+    *,
+    tz=None,
+) -> datetime | None:
+    """Hora de reset del proveedor dentro de `failure_detail`.
+
+    WOT-2026-086k (`DEC-086K-001`, Decision 1).
 
     Before: `detail` es el `failure_detail` persistido en un evento de
-        fallback (texto libre, TRUNCADO a 300 chars -- ver
-        `append_fallback_event`).
-    During: parser laxo (decision del diseno Seccion 2): busca
-        `YYYY-MM-DD HH:MM` con zona `UTC`/`Z` opcional. Zona ausente -> se
-        asume UTC (declarado, nunca zona local). Solo lectura, sin I/O.
-    After: `datetime` aware-UTC, o `None` si no hay fecha o es ilegible.
-        `None` NO es error: la causa cae a Caso B (TTL) -- jamas se inventa
-        una fecha. Limitacion heredada de la ronda (hallazgo 2, ALTA): si la
-        fecha quedo fuera del corte de 300 chars, es indistinguible de
-        "sin fecha explicita" y el TTL corto es el comportamiento correcto.
+        fallback (texto libre). `event_ts` es OBLIGATORIO: el `ts` del EVENTO
+        de fallo (lo que devuelve `_iso_or_now`), un `datetime` tz-aware en
+        UTC. `tz` es la zona en que codex emitio la hora local (`None` = zona
+        local del sistema; NUNCA se consulta el reloj).
+    During: parser puro, sin I/O ni reloj. Si hay menciones de `try again`,
+        manda la ULTIMA (el eco del prompt puede traer una anterior) y se
+        reconocen las 3 variantes de codex: solo-hora, con fecha explicita y
+        "later" sin hora. Sin menciones, conserva el Caso A historico
+        (`YYYY-MM-DD HH:MM`, UTC). Mes y AM/PM por regex y tabla fija, nunca
+        `strptime` (depende del locale).
+    After: `datetime` aware-UTC, o `None` si no hay hora legible. `None` no es
+        error: la causa cae al TTL por defecto. Regla del solo-hora: si esa
+        hora local ya paso respecto al EVENTO (`<= event_ts`) -> `None`, jamas
+        "+1 dia"; la fecha explicita es ABSOLUTA y no depende de `event_ts`
+        para decidir si ya paso.
     """
     if not detail:
         return None
+    mentions = list(_TRY_AGAIN_RE.finditer(detail))
+    if mentions:
+        # El banner REAL es la ULTIMA mencion de `try again`; su fecha/zona
+        # local sale del ancla del EVENTO (nunca del reloj).
+        local = event_ts.astimezone(tz)
+        tail = detail[mentions[-1].end() :]
+        return _codex_reset_at(tail, local, local.tzinfo, event_ts)
+    # Caso A historico: `YYYY-MM-DD HH:MM` en UTC (conducta sin cambios).
     m = re.search(r"(\d{4}-\d{2}-\d{2})[T ,]+(\d{2}:\d{2})(?::(\d{2}))?", detail)
     if not m:
         return None
@@ -3133,7 +3258,10 @@ def _quarantine_buckets(
         if not key:
             continue
         ts = _iso_or_now(ev.get("ts"), now)
-        reset = _parse_provider_reset_at(ev.get("failure_detail"))
+        # WOT-2026-086k (Decision 1): el ancla del parser es el `ts` del EVENTO
+        # (no el momento del `sync`); una hora solo-hora vencida respecto al
+        # evento cae al TTL, nunca se asume "manana".
+        reset = _parse_provider_reset_at(ev.get("failure_detail"), ts)
         b = buckets.get((section, key))
         if b is None:
             buckets[(section, key)] = {
@@ -4725,6 +4853,47 @@ def run_loop_round(
             tried_profiles=_tried_profiles | {profile_name},
         )
     latency_ms = round((time.perf_counter() - _t0) * 1000)
+    # WOT-2026-086k (Decision 2 de `DEC-086K-001`): el canal `agent` NO lanza
+    # ante un fallo de transporte -- devuelve TEXTO con `_TRANSPORT_FAILED_PREFIX`
+    # (a diferencia de `_transport_api`, que si lanza y por eso SI pasa por
+    # `_retry_with_similar_fallback`). Sin esta rama un fallo de CUOTA del canal
+    # agent nunca escribia en `fallback_events.jsonl`, la unica fuente de
+    # `backend_quarantine.json`, y la lente no entraba en cuarentena.
+    #
+    # Se escribe AQUI (y NO en `_cmd_loop_round`, que solo COMPONE esta funcion:
+    # duplicar el registro alli producia una SEGUNDA fila para el mismo fallo,
+    # medido por WOT-2026-046h) y ANTES de `_record_round`, reutilizando la MISMA
+    # clasificacion que el registrador (`_classify_transport_failure`), no una
+    # reclasificacion por texto aparte. La condicion `channel == "agent"` es
+    # EXPLICITA: un backend `api` cuyo texto empezara por el prefijo no escribe
+    # evento. Esto NO sustituye la lente ni cambia el valor de retorno: es
+    # VISIBILIDAD (cuarentena), no bloqueo -- `loop-round` sigue llamando al
+    # perfil pedido aunque este en cuarentena.
+    _fail_text = _strip_leading_shell_noise((reply or "").strip())
+    if _fail_text.startswith(_TRANSPORT_FAILED_PREFIX) and (
+        profile.get("channel") == "agent"
+    ):
+        _fail_class = _classify_transport_failure(RuntimeError(_fail_text))
+        if _fail_class in (_FAILURE_CLASS_QUOTA, _FAILURE_CLASS_NETWORK):
+            append_fallback_event(
+                project_root,
+                {
+                    "ts": _now_iso(),
+                    "ticket": ticket,
+                    "loop_id": loop_id,
+                    "phase": phase,
+                    "failed_profile": profile_name,
+                    "failed_backend": profile.get("backend"),
+                    "failure_class": _fail_class,
+                    "failure_detail": _agent_failure_detail(_fail_text),
+                    # El canal `agent` no tiene sustituto automatico hoy: se
+                    # conserva la tupla de campos existente con estos en None.
+                    "fallback_profile": None,
+                    "fallback_backend": None,
+                    "fallback_backend_key": None,
+                    "challenge_nonce": challenge_nonce,
+                },
+            )
     _record_round(
         project_root,
         ticket=ticket,

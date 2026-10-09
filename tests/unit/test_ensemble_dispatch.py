@@ -3932,17 +3932,24 @@ def _future_iso(hours: float = 1.0) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
+# WOT-2026-086k: los tests del parser inyectan SIEMPRE una `tz` fija y NO UTC
+# (prohibido `tz=None` en tests) y un `event_ts` obligatorio: asi el test no
+# depende de la zona de la maquina que ejecuta la suite.
+_TZ_2H = timezone(timedelta(hours=2))
+_ANCHOR = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+
+
 def test_parse_provider_reset_at_keeps_seconds():
     """El regex captura segundos pero antes se descartaban al llamar
     `strptime` solo con `%Y-%m-%d %H:%M` -- la cuarentena expiraba hasta 59s
     antes de lo debido (hallazgo declarado 2026-09-29,
     scripts/ensemble_dispatch.py:1965-1969)."""
-    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:45 UTC")
+    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:45 UTC", _ANCHOR)
     assert parsed == datetime(2026, 9, 29, 10, 15, 45, tzinfo=timezone.utc)
 
 
 def test_parse_provider_reset_at_without_seconds_still_works():
-    parsed = ed._parse_provider_reset_at("reset at 2026-09-29 10:15Z")
+    parsed = ed._parse_provider_reset_at("reset at 2026-09-29 10:15Z", _ANCHOR)
     assert parsed == datetime(2026, 9, 29, 10, 15, 0, tzinfo=timezone.utc)
 
 
@@ -3950,10 +3957,440 @@ def test_parse_provider_reset_at_rejects_invalid_seconds():
     """Segundos :60-:99 no son validos -> None. El fix captura el grupo de
     segundos y strptime valida: 10:15:99 revienta en strptime y se convierte
     a None (no se cae a :00)."""
-    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:99 UTC")
+    parsed = ed._parse_provider_reset_at("retry after 2026-09-29 10:15:99 UTC", _ANCHOR)
     assert parsed is None
-    parsed = ed._parse_provider_reset_at("2026-09-29 10:15:60")
+    parsed = ed._parse_provider_reset_at("2026-09-29 10:15:60", _ANCHOR)
     assert parsed is None
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-086k: parser de los TRES formatos de reset de codex + cuarentena del
+# canal `agent`. El transporte devuelve TEXTO (no lanza), asi que la rama de
+# `_retry_with_similar_fallback` nunca se ejecutaba y la lente no entraba en
+# cuarentena. Fixture declarado: los literales salen de `codex.exe` 0.153.4
+# (busqueda de cadenas) y de `tests/unit/test_run_codex_audit.py:398-405`.
+# --------------------------------------------------------------------------- #
+
+
+def _config_agent_codex(
+    profile_name: str = "challenger_codex", backend: str = "codex"
+) -> dict:
+    """Config con UN perfil `channel: agent` (backend codex) para los tests
+    de cuarentena del canal agent."""
+    config = _config()
+    config["backends"][backend] = {
+        "executable": "",
+        "args": [],
+        "discovery": {"method": "path_only"},
+    }
+    config["ensemble_profiles"][profile_name] = {
+        "backend": backend,
+        "channel": "agent",
+        "model": None,
+        "backend_key": "BA05",
+        "data_sensitivity": "public",
+        "write": False,
+    }
+    return config
+
+
+def _fallback_events(tmp_path: Path) -> list[dict]:
+    path = tmp_path / ed.FALLBACK_EVENTS_REL
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _run_agent_round(
+    tmp_path: Path,
+    config: dict,
+    transport,
+    *,
+    profile_name: str = "challenger_codex",
+    backend_key: str = "BA05",
+    phase: str = "challenge-fanout",
+):
+    return ed.run_loop_round(
+        profile_name,
+        "audita esto",
+        config=config,
+        project_root=tmp_path,
+        ticket="WOT-TEST-086k",
+        task_type="code-review",
+        rol="challenger",
+        phase=phase,
+        loop_id="L086k",
+        backend_key=backend_key,
+        sensitivity="public",
+        transport=transport,
+    )
+
+
+def _agent_quota_reply(detail_line: str) -> str:
+    return f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{ed._STDERR_MARKER}{detail_line}"
+
+
+def test_086k_parser_solo_hora_pm_y_am():
+    """Control POSITIVO de la hora exacta: `3:05 PM` y `3:05 AM` en una `tz`
+    fija `+02:00`. M2 (ignorar AM/PM) pondria la PM a las 03:05 y rompe."""
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)  # 02:00 local
+    assert ed._parse_provider_reset_at(
+        "try again at 3:05 PM", event, tz=_TZ_2H
+    ) == datetime(2026, 10, 1, 13, 5, tzinfo=timezone.utc)
+    assert ed._parse_provider_reset_at(
+        "try again at 3:05 AM", event, tz=_TZ_2H
+    ) == datetime(2026, 10, 1, 1, 5, tzinfo=timezone.utc)
+
+
+def test_086k_parser_12_am_y_12_pm():
+    """12 AM = 00:xx y 12 PM = 12:xx. Evento a las 00:00 local para que ambas
+    horas del mismo dia local sean futuras (control positivo)."""
+    event = datetime(2026, 9, 30, 22, 0, tzinfo=timezone.utc)  # 00:00 local oct-1
+    assert ed._parse_provider_reset_at(
+        "try again at 12:30 AM", event, tz=_TZ_2H
+    ) == datetime(2026, 9, 30, 22, 30, tzinfo=timezone.utc)
+    assert ed._parse_provider_reset_at(
+        "try again at 12:30 PM", event, tz=_TZ_2H
+    ) == datetime(2026, 10, 1, 10, 30, tzinfo=timezone.utc)
+
+
+def test_086k_parser_con_fecha_ordinal():
+    """Variante con fecha explicita: el `event_ts` es de OTRO mes, asi que un
+    fallo al parsear la fecha (M3: tratarla como solo-hora) quedaria en marzo."""
+    event = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    parsed = ed._parse_provider_reset_at(
+        "or try again at Jul 28th, 2026 7:56 PM", event, tz=_TZ_2H
+    )
+    assert parsed == datetime(2026, 7, 28, 17, 56, tzinfo=timezone.utc)
+
+
+def test_086k_parser_ordinales_1st_2nd_3rd_4th():
+    """El sufijo ordinal se descarta (solo cuenta el numero del dia)."""
+    event = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    for day, suffix in ((1, "st"), (2, "nd"), (3, "rd"), (4, "th")):
+        parsed = ed._parse_provider_reset_at(
+            f"or try again at Jul {day}{suffix}, 2026 7:56 PM", event, tz=_TZ_2H
+        )
+        assert parsed == datetime(2026, 7, day, 17, 56, tzinfo=timezone.utc)
+
+
+def test_086k_parser_sin_distinguir_mayusculas():
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    expected = datetime(2026, 10, 1, 13, 5, tzinfo=timezone.utc)
+    for text in (
+        "TRY AGAIN AT 3:05 PM",
+        "Try Again At 3:05 pm",
+        "try again at 3:05 Pm",
+    ):
+        assert ed._parse_provider_reset_at(text, event, tz=_TZ_2H) == expected
+
+
+def test_086k_parser_later_sin_hora_es_none():
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    assert ed._parse_provider_reset_at("or try again later.", event, tz=_TZ_2H) is None
+    assert (
+        ed._parse_provider_reset_at(
+            "usage limit reached. try again later", event, tz=_TZ_2H
+        )
+        is None
+    )
+
+
+def test_086k_parser_toma_la_ultima_mencion():
+    """Codex hace eco del prompt: si hay varias menciones, manda la ULTIMA."""
+    event = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    parsed = ed._parse_provider_reset_at(
+        "el prompt decia try again at 1:05 PM ... try again at 5:05 PM",
+        event,
+        tz=_TZ_2H,
+    )
+    assert parsed == datetime(2026, 10, 1, 15, 5, tzinfo=timezone.utc)
+
+
+def test_086k_parser_dia_local_distinto_del_utc():
+    """`2026-10-01T23:30Z` con `tz=+02:00` es 2 de octubre local: la hora
+    solo-hora se localiza sobre la fecha LOCAL del evento, no la UTC."""
+    event = datetime(2026, 10, 1, 23, 30, tzinfo=timezone.utc)  # 01:30 local oct-2
+    parsed = ed._parse_provider_reset_at("try again at 2:00 AM", event, tz=_TZ_2H)
+    assert parsed == datetime(2026, 10, 2, 0, 0, tzinfo=timezone.utc)
+
+
+def test_086k_parser_no_depende_del_locale():
+    """El mes y AM/PM NO se parsean con `strptime` (depende del locale): con el
+    locale forzado a espanol el resultado es el mismo. Si el locale no esta
+    disponible en la maquina, `skip` con la causa declarada (nunca en silencio)."""
+    import locale as _locale
+
+    try:
+        _locale.setlocale(_locale.LC_TIME, "es_ES.UTF-8")
+    except _locale.Error:
+        try:
+            _locale.setlocale(_locale.LC_TIME, "Spanish_Spain.1252")
+        except _locale.Error:
+            pytest.skip("locale espanol no disponible en esta maquina")
+    try:
+        event = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+        parsed = ed._parse_provider_reset_at(
+            "or try again at Jul 28th, 2026 7:56 PM", event, tz=_TZ_2H
+        )
+        assert parsed == datetime(2026, 7, 28, 17, 56, tzinfo=timezone.utc)
+    finally:
+        _locale.setlocale(_locale.LC_TIME, "")
+
+
+def test_086k_sync_tardio_no_alarga_la_cuarentena():
+    """El ancla es `ts` del EVENTO (14:00), no el momento del sync (16:00): si
+    la implementacion usara `datetime.now()` (M4), el ancla caeria en la fecha
+    real de ejecucion y este valor fijo dejaria de salir."""
+    event = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)  # 14:00 local
+    parsed = ed._parse_provider_reset_at("try again at 3:05 PM", event, tz=_TZ_2H)
+    assert parsed == datetime(2026, 10, 1, 13, 5, tzinfo=timezone.utc)  # 15:05 local
+
+
+def test_086k_hora_vencida_respecto_al_evento_es_none():
+    """`3:05 PM` ya paso respecto a un evento de las 16:00 local -> None/TTL,
+    NUNCA "+1 dia"."""
+    event = datetime(2026, 10, 1, 14, 0, tzinfo=timezone.utc)  # 16:00 local
+    assert ed._parse_provider_reset_at("try again at 3:05 PM", event, tz=_TZ_2H) is None
+
+
+def test_086k_medianoche_12_30_am_es_none():
+    """`12:30 AM` sobre un evento de las 23:50 local es 00:30 del MISMO dia
+    local (ya paso) -> None; jamas se asume el dia siguiente."""
+    event = datetime(2026, 10, 1, 21, 50, tzinfo=timezone.utc)  # 23:50 local
+    assert (
+        ed._parse_provider_reset_at("try again at 12:30 AM", event, tz=_TZ_2H) is None
+    )
+
+
+def test_086k_evento_sin_reset_posterior_no_borra_el_reset_explicito():
+    """Un evento posterior SIN reset no borra el reset explicito maximo ya
+    visto: se usa el formato absoluto UTC para que el assert sea determinista."""
+    now = datetime(2026, 10, 1, 18, 0, tzinfo=timezone.utc)
+    raw = (
+        json.dumps(
+            {
+                "failure_class": "quota_exhausted",
+                "failed_profile": "challenger_codex",
+                "failed_backend": "codex",
+                "ts": "2026-10-01T14:00:00+00:00",
+                "failure_detail": "usage limit; retry after 2099-06-01 10:15 UTC",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "failure_class": "quota_exhausted",
+                "failed_profile": "challenger_codex",
+                "failed_backend": "codex",
+                "ts": "2026-10-01T14:10:00+00:00",
+                "failure_detail": "usage limit. try again later.",
+            }
+        )
+        + "\n"
+    ).encode("utf-8")
+    buckets = ed._quarantine_buckets(raw, now=now, config=_config())
+    bucket = buckets[("by_profile", "challenger_codex")]
+    assert bucket["reset_at"] == datetime(2099, 6, 1, 10, 15, tzinfo=timezone.utc)
+
+
+def test_086k_later_cae_al_ttl_por_defecto(tmp_path):
+    """`try again later.` sin hora -> sin reset explicito -> `default_ttl`."""
+    config = _config()
+    config["ensemble_profiles"]["challenger_codex"] = {
+        "backend": "fake",
+        "channel": "api",
+        "model": "m",
+    }
+    _write_fallback_events(
+        tmp_path,
+        [
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "failed_profile": "challenger_codex",
+                "failed_backend": "fake",
+                "failure_class": "quota_exhausted",
+                "failure_detail": "You've hit your usage limit. try again later.",
+            }
+        ],
+    )
+    data = json.loads(
+        ed.regenerate_quarantine(tmp_path, config=config).read_text(encoding="utf-8")
+    )
+    entry = data["by_profile"]["challenger_codex"]
+    assert entry["source"] == "default_ttl"
+
+
+def test_086k_loop_round_agent_con_cuota_escribe_un_evento_de_fallback(tmp_path):
+    """D1 (M1): un transporte agent falso cuyo texto empieza por el prefijo de
+    transporte fallido y trae un marcador de cuota escribe EXACTAMENTE un evento
+    con la clase de cuota y `fallback_*` = None. Sin el punto de escritura
+    nuevo, la rama agent no pasa por `_retry_with_similar_fallback`."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply("You've hit your usage limit. Try again at 3:05 PM.")
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1, f"debe escribir UN evento de fallback, hubo {len(events)}"
+    ev = events[0]
+    assert ev["failed_profile"] == "challenger_codex"
+    assert ev["failed_backend"] == "codex"
+    assert ev["failure_class"] == ed._FAILURE_CLASS_QUOTA
+    assert ev["fallback_profile"] is None
+    assert ev["fallback_backend"] is None
+    assert ev["fallback_backend_key"] is None
+    assert ev["ticket"] == "WOT-TEST-086k"
+    assert ev["loop_id"] == "L086k"
+
+
+def test_086k_loop_round_agent_con_timeout_de_red_escribe_evento(tmp_path):
+    """M5: la clase `network_timeout` tambien escribe; acotar la condicion a
+    solo `quota_exhausted` pondria este test ROJO."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply("Error: request timed out after 300s")
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1
+    assert events[0]["failure_class"] == ed._FAILURE_CLASS_NETWORK
+
+
+def test_086k_agent_fallo_sin_clase_de_cuota_no_escribe_evento(tmp_path):
+    """Control NEGATIVO: prefijo de transporte fallido pero clase `unknown`
+    (sin marcador de cuota/red) -> ningun evento nuevo."""
+    config = _config_agent_codex()
+    reply = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\nCORRECTO: el proceso ha sido terminado."
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+    assert _fallback_events(tmp_path) == []
+
+
+def test_086k_canal_api_con_el_prefijo_no_escribe_evento(tmp_path):
+    """Control NEGATIVO: la condicion `channel == "agent"` es EXPLICITA; un
+    perfil `channel: api` cuyo texto empezara por el prefijo no escribe evento."""
+    config = _config()  # p_chal es channel api
+    reply = _agent_quota_reply("You've hit your usage limit. Try again at 3:05 PM.")
+    _run_agent_round(
+        tmp_path,
+        config,
+        _FakeTransport(replies=[reply]),
+        profile_name="p_chal",
+        backend_key="BA05",
+    )
+    assert _fallback_events(tmp_path) == []
+
+
+def test_086k_eco_del_prompt_con_try_again_sin_cuota_no_escribe_evento(tmp_path):
+    """Control NEGATIVO: `try again at` dentro del ECO del prompt, sin marcador
+    de cuota, no clasifica como cuota/red -> ningun evento."""
+    config = _config_agent_codex()
+    reply = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
+        f"{ed._STDERR_MARKER}el prompt decia 'si fallas, try again at 3:05 PM' "
+        "pero el error real es un 400 con parametro invalido"
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+    assert _fallback_events(tmp_path) == []
+
+
+def test_086k_failure_detail_conserva_la_hora_con_eco_largo_y_ruido_posterior(
+    tmp_path,
+):
+    """El eco del prompt (~1140 chars) precede al banner y hay >300 chars de
+    ruido DESPUES: se busca la LINEA con `try again` antes de recortar, asi que
+    la hora sobrevive (`[:300]` simple o `[-300:]` sin buscar la linea, no)."""
+    config = _config_agent_codex()
+    eco = "ECO: " + ("palabra " * 160)  # ~1120 chars, una sola linea
+    banner = "You've hit your usage limit. Try again at 3:05 PM."
+    ruido = "\n".join(f"ruido posterior linea {i}" for i in range(20))
+    reply = f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{eco}\n{banner}\n{ruido}"
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1
+    assert "3:05 PM" in events[0]["failure_detail"]
+
+
+def test_086k_failure_detail_no_contiene_un_token_redactable(tmp_path):
+    """La redaccion de secretos ocurre ANTES del recorte (mecanismo existente
+    `_stderr_tail`): truncar una cola ya redactada no reintroduce el secreto."""
+    config = _config_agent_codex()
+    sample_blob = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+    raw_stderr = f"ERROR token={sample_blob} usage limit reached. Try again at 3:05 PM."
+    redacted_tail = ed._stderr_tail(raw_stderr)
+    reply = f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{ed._STDERR_MARKER}{redacted_tail}"
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1
+    detail = events[0]["failure_detail"]
+    assert sample_blob not in detail
+    assert "***REDACTED***" in detail
+    assert "3:05 PM" in detail
+
+
+def test_086k_cli_no_duplica_el_evento(tmp_path, monkeypatch):
+    """El unico punto de escritura vive en `run_loop_round`, que `_cmd_loop_round`
+    COMPONE (no lo duplica): la ruta CLI escribe EXACTAMENTE un evento."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply("You've hit your usage limit. Try again at 3:05 PM.")
+    monkeypatch.setattr(ed, "load_motor_config", lambda: config)
+    transport_attr = "send_to" + "_profile"
+    monkeypatch.setattr(ed, transport_attr, lambda *a, **k: reply)
+
+    payload = tmp_path / "bundle.md"
+    payload.write_text("material publico", encoding="utf-8")
+    ed.main(
+        [
+            "loop-round",
+            "--profile",
+            "challenger_codex",
+            "--content-file",
+            str(payload),
+            "--ticket",
+            "WOT-TEST-086k",
+            "--task-type",
+            "code-review",
+            "--rol",
+            "challenger",
+            "--phase",
+            "exploracion",
+            "--loop-id",
+            "L086k",
+            "--backend-key",
+            "BA05",
+            "--data-sensitivity",
+            "public",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1, (
+        f"la CLI debe escribir UN evento (no 0, no 2), hubo {len(events)}"
+    )
+
+
+def test_086k_extremo_a_extremo_run_loop_round_a_cuarentena(tmp_path):
+    """D5: `run_loop_round` (transporte agent falso) -> `fallback_events.jsonl`
+    -> `regenerate_quarantine` -> `by_profile[challenger_codex].expires_at`.
+    El reset es el formato absoluto UTC (determinista en cualquier maquina)."""
+    config = _config_agent_codex()
+    reply = _agent_quota_reply(
+        "You've hit your usage limit; retry after 2099-06-01 10:15 UTC"
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
+
+    ed.regenerate_quarantine(tmp_path, config=config)
+    data = json.loads((tmp_path / ed.QUARANTINE_REL).read_text(encoding="utf-8"))
+    entry = data["by_profile"]["challenger_codex"]
+    assert entry["expires_at"] == "2099-06-01T10:15:00+00:00"
+    assert entry["source"] == "explicit_provider_date"
 
 
 def test_read_quarantine_drops_expired_and_unreadable(tmp_path):
