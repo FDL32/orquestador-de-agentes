@@ -148,6 +148,20 @@ known_unwired:
     no un commit. Cablearlo en pre-commit correria sin proposito. Follow-up:
     cablearlo por codigo si se automatiza el Paso 2 completo.
 
+  # WOT-2026-071b: gate de FORMA sobre el artefacto de salida del triaje
+  # (`backlog_triage_*.json` + par `.md`). Invocacion manual en el cierre de
+  # sesion de DISENO (paso F3 de
+  # `prompts/orchestrator_session_close_full_audit_design.md`), un evento
+  # discreto gobernado por instrucciones de prompt -- no un proceso que corra
+  # solo (por eso NO `wired_via`) y sin owner-ticket (seria deuda huerfana en
+  # cuanto 071b se archive). Mismos precedentes BY-DESIGN vivos de esta misma
+  # politica: check_document_self_contradiction y check_prompt_parity.
+  check_triage_outputs: >-
+    BY-DESIGN: invocacion manual en `prompts/orchestrator_session_close_full_audit_design.md`
+    Bloque F paso F3, al cerrar una sesion de diseno que produjo un triaje -- evento
+    discreto gobernado por el prompt, no un hook automatico. Los prompts no son
+    superficie para el AST, asi que no hay camino que corra solo que lo cablee.
+
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
   pre_handoff_guard: scripts/pre_handoff_guard.py
