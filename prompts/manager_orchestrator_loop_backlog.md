@@ -200,6 +200,19 @@ frontmatter).
    aparezcan en el backlog mientras el bucle corre NO entran en esta iteracion --
    quedan para la siguiente pasada. (a) Sin esto, "hasta agotarla" no tiene un
    final verificable.
+   **Si hay OTRA sesion (otra cuenta, otro Manager) trabajando en paralelo sobre
+   el MISMO `backlog.md`/`_archive/backlog_done.md`** (recurso compartido entre
+   worktrees distintos del mismo `repo_destino`: cada worktree aisla el CODIGO,
+   no el backlog, que sigue viviendo en un unico checkout): antes de escribir
+   cualquier fila (archivar un ticket cerrado, mover a `BLOCKED`), verifica que
+   el ID que vas a tocar no colisiona con uno que la otra sesion este tocando
+   AHORA MISMO -- `git diff`/`git log -1` sobre esas rutas antes de tu propio
+   commit es suficiente; no hace falta mecanismo nuevo. Si existe un canal
+   manual de coordinacion entre sesiones de distinta cuenta, avisa ahi antes de
+   escribir, igual que para cualquier otro fichero compartido. (b, un caso
+   observado 2026-10-09: 2 sesiones archivando filas distintas del mismo
+   `backlog.md` sin colision real, pero solo porque se verifico el overlap
+   antes de cada commit, no por diseño del bucle)
 2. **Reconciliar antes de procesar.** Un ticket que ya no es `pending` al momento
    de reconciliar (completado, duplicado, premisa obsoleta) se EXCLUYE de la serie
    activa, nunca se procesa "por si acaso". (a)
