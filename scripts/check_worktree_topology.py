@@ -343,23 +343,41 @@ def _verify_wot_workspace(motor_root: Path, project_root: Path) -> tuple[int, st
 
     Shared by BOTH valid motor topologies (canonical _dev/main and the
     per-flight worktree, WOT-2026-040q): once Verification A accepts the
-    motor worktree, the workspace check is identical."""
-    expected_workspace = prefix_resolver.resolve_prefix(
-        prefix_resolver.WOT_PREFIX, motor_root
-    )
-    if expected_workspace is None:
+    motor worktree, the workspace check is identical.
+
+    WOT-2026-097 (fix de causa raiz): esta verificacion recibe `project_root`
+    -- el workspace YA CONOCIDO que quiere comprobar -- pero hasta esta
+    revision lo ignoraba al resolver: llamaba a `resolve_prefix(WOT_PREFIX,
+    motor_root)`, que ADIVINA "el" unico destino WOT entre N candidatos y
+    devuelve None en cuanto hay mas de uno, y solo DESPUES comparaba ese
+    resultado adivinado contra `project_root`. Eso hacia FALLAR (exit 2,
+    "ambiguo") un workspace perfectamente valido con N worktrees paralelos
+    del mismo destino -- el patron que esta misma linea de tickets viene
+    validando en vivo (WOT-2026-039c) -- aunque el `project_root` recibido
+    declarase WOT sin ninguna ambiguedad en SU PROPIO link.
+
+    El fix resuelve por el PATH YA CONOCIDO (`resolve_prefix_for_destination`,
+    lectura directa de `project_root/.agent/config/motor_destination_link.
+    json`, sin escanear ni desambiguar entre candidatos) y compara ESE
+    resultado contra el prefijo esperado. No hace falta que exista un UNICO
+    destino WOT en el sistema entero; solo hace falta que ESE path concreto
+    declare WOT. `resolve_prefix` (la funcion que adivina) no se toca: otros
+    consumidores pueden depender de su semantica actual."""
+    actual_prefix = prefix_resolver.resolve_prefix_for_destination(project_root)
+    if actual_prefix is None:
         return (
             2,
-            "no se pudo derivar el workspace esperado para WOT: ningun link "
-            f"declara ticket_prefix == {prefix_resolver.WOT_PREFIX}, o mas de "
-            "uno lo declara (ambiguo). Diagnostico: "
+            f"no se pudo derivar el ticket_prefix del workspace {project_root}: "
+            "su motor_destination_link.json no existe, no es JSON valido, o no "
+            "declara ticket_prefix. Diagnostico: "
             "python scripts/prefix_resolver.py --verify",
         )
-    if project_root.resolve() != expected_workspace.resolve():
+    if actual_prefix != prefix_resolver.WOT_PREFIX:
         return (
             1,
-            f"Ticket WOT necesita el workspace {expected_workspace}, "
-            f"no {project_root}.",
+            f"Ticket WOT necesita un workspace con ticket_prefix == "
+            f"{prefix_resolver.WOT_PREFIX}, pero {project_root} declara "
+            f"ticket_prefix == {actual_prefix}.",
         )
     return (
         0,
