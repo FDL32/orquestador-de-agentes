@@ -159,6 +159,7 @@ from bus.memory_loader import (  # noqa: E402
     get_memory_tier_status,
     recall_observations,
 )
+from bus.portable_memory_archive import iter_archive_months  # noqa: E402
 
 
 # WOT-2026-057a. Byte budget for `--recall`, the EXPANSION gate.
@@ -321,6 +322,121 @@ def _print_recall(observations: list[dict], budget: int) -> None:
         )
 
 
+#: Campos de procedencia que el schema YA declara (WOT-2026-049j). NO se
+#: inventan campos nuevos -- es el NON-GOAL (b) del ticket: si uno falta en
+#: una entrada real, `_print_why` lo DICE en vez de omitirlo en silencio.
+_PROVENANCE_FIELDS = (
+    "source",
+    "source_ticket",
+    "evidence",
+    "timestamp",
+    "confidence",
+    "impact",
+    "domain",
+)
+
+
+def _file_contains_record(path: Path, wanted: tuple) -> bool:
+    """True si alguna linea JSONL de ``path`` casa ``record_key(..) == wanted``.
+
+    Antes de buscar, una linea en blanco o corrupta se salta sin lanzar -- el
+    mismo fail-soft que ya usan ``_read_observations``/``read_archive_observations``
+    para una sola linea defectuosa (el fichero entero no deja de escanearse
+    por una linea rota).
+    """
+    import json
+
+    from bus.portable_memory_archive import record_key
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            if record_key(json.loads(line)) == wanted:
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
+
+def _locate_provenance_file(entry: dict) -> str:
+    """En que fichero vive ``entry``: L1 (``observations.jsonl``) o un mes
+    concreto del archive portable (``observations.YYYY-MM.jsonl``), y en que
+    root (motor o activo) si ambos existen.
+
+    WOT-2026-049j DoD (a): "si esta en L1/archive y en que fichero" -- ninguno
+    de los dos lectores de bajo nivel (`_read_observations`,
+    `_read_portable_archive`) etiqueta sus entradas con el origen; el pool
+    unido de `recall_observations` las pierde del todo. Esta funcion vuelve a
+    leer los ficheros CRUDOS por separado -- nunca escribe, nunca toca el
+    loader (NON-GOAL declarado) -- y busca la linea EXACTA por `record_key`
+    (topic, source_ticket), la misma identidad que ya usa el reconciliador,
+    para no inventar una clave de coincidencia nueva.
+
+    Before: ``entry`` es un dict de observacion ya resuelto (p.ej. por
+        ``recall_observations``).
+    During: compara por ``record_key`` contra L1 del root activo y contra
+        cada fichero mensual del archive portable (root activo + motor, si
+        difieren), en ese orden -- el mismo orden de precedencia que ya usa
+        ``_recallable_observations`` (vivo antes que archivado).
+    After: devuelve una cadena legible ("observations.jsonl (L1, activo)",
+        "observations.2026-07.jsonl (archive, motor)", ...), o
+        "desconocido (no se encontro en ningun fichero escaneado)" si no
+        aparece en ninguna de las rutas escaneadas -- nunca lanza.
+    """
+    from bus.memory_loader import _get_observations_file, _resolve_motor_root
+    from bus.portable_memory_archive import record_key
+    from runtime.project_root import resolve_project_root
+
+    wanted = record_key(entry)
+    active_root = resolve_project_root()
+
+    obs_file = _get_observations_file()
+    if obs_file.is_file() and _file_contains_record(obs_file, wanted):
+        return f"{obs_file.name} (L1, activo)"
+
+    roots = [("activo", active_root)]
+    motor_root = _resolve_motor_root()
+    if motor_root is not None and motor_root != active_root:
+        roots.append(("motor", motor_root))
+
+    for label, root in roots:
+        for path in iter_archive_months(root):
+            if _file_contains_record(path, wanted):
+                return f"{path.name} (archive, {label})"
+
+    return "desconocido (no se encontro en ningun fichero escaneado)"
+
+
+def _print_why(entries: list[dict]) -> None:
+    """Imprime la procedencia COMPLETA de una o mas entradas (`--why`).
+
+    WOT-2026-049j: distinta de `_print_recall` (una linea compacta por
+    leccion) -- esta es una vista DETALLADA pensada para UNA entrada (o unas
+    pocas bajo el mismo `topic`), con cada campo de procedencia del schema
+    nombrado explicitamente.
+
+    Before: ``entries`` no vacio.
+    During: por cada entry, imprime los campos de `_PROVENANCE_FIELDS` tal
+        cual existen en el dict -- NON-GOAL (b): un campo ausente se declara
+        "(ausente)", nunca se omite ni se inventa un valor.
+    After: imprime a stdout. No retorna nada, no lanza.
+    """
+    for i, entry in enumerate(entries):
+        if i:
+            print()
+        print(f"## {entry.get('topic', 'general')} / {entry.get('id', '(sin id)')}")
+        for field in _PROVENANCE_FIELDS:
+            value = entry.get(field)
+            print(f"- {field}: {value if value not in (None, '') else '(ausente)'}")
+        print(f"- fichero: {_locate_provenance_file(entry)}")
+        print(f"- signal: {entry.get('signal', '(ausente)')}")
+
+
 def _format_status() -> str:
     """Format memory tier status as human-readable string.
 
@@ -419,6 +535,19 @@ def main() -> int:
         help="Recall raw observations (use with --query and --limit)",
     )
     parser.add_argument(
+        "--why",
+        type=str,
+        default=None,
+        metavar="ID_OR_TOPIC",
+        help=(
+            "Provenance view for ONE lesson by stable id (obs-xxx) or ALL "
+            "lessons under one topic: source, source_ticket, evidence, "
+            "timestamp, confidence, impact, domain, and which file (L1 or "
+            "which archive month) it lives in. A missing field is named, "
+            "never invented (WOT-2026-049j)."
+        ),
+    )
+    parser.add_argument(
         "--query",
         type=str,
         default=None,
@@ -489,6 +618,12 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
             print("Error: Use only one mode flag at a time", file=sys.stderr)
             return 1
         mode = "recall"
+
+    if args.why:
+        if mode:
+            print("Error: Use only one mode flag at a time", file=sys.stderr)
+            return 1
+        mode = "why"
 
     # Default mode
     if not mode:
@@ -584,6 +719,26 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
                     "--query.]\n"
                 )
         _print_recall(observations, budget=args.budget)
+
+    elif mode == "why":
+        # Matchea por id EXACTO si parece uno (prefijo `obs-`), si no por
+        # TOPIC (puede devolver varias entradas bajo el mismo topic -- el DoD
+        # dice "para un id/topic dado", no "exactamente una entrada").
+        wanted = args.why.strip()
+        pool = recall_observations(query=None, limit=1_000_000)
+        if wanted.startswith("obs-"):
+            matches = [obs for obs in pool if str(obs.get("id") or "") == wanted]
+        else:
+            matches = [obs for obs in pool if str(obs.get("topic") or "") == wanted]
+        if not matches:
+            print(
+                f"No lesson with id/topic {wanted!r}. Los ids salen de "
+                "--bootstrap (`id: obs-xxx`); los topics de cualquier entrada "
+                "de --recall.",
+                file=sys.stderr,
+            )
+            return 1
+        _print_why(matches)
 
     return 0
 
