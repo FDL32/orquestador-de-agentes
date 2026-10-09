@@ -63,14 +63,21 @@ class TestMemoryLoaderIntegration:
                     f.write(json.dumps(entry) + "\n")
 
             # 2. Run consolidation pipeline directly
-            recent, stats, _dropped, _deduped = memory_consolidate._run_pipeline(
-                type(
-                    "Args",
-                    (),
-                    {"apply": True, "dry_run": False, "since": "30d", "verbose": False},
-                )()
+            recent, stats, _dropped, _deduped, archivable = (
+                memory_consolidate._run_pipeline(
+                    type(
+                        "Args",
+                        (),
+                        {
+                            "apply": True,
+                            "dry_run": False,
+                            "since": "30d",
+                            "verbose": False,
+                        },
+                    )()
+                )
             )
-            memory_consolidate._apply_consolidation(recent, [], stats, False)
+            memory_consolidate._apply_consolidation(recent, archivable, stats, False)
 
             # 3. Verify L2/L3 files were created
             assert rules_file.exists()
