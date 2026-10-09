@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -222,11 +223,40 @@ def _flight_line_entries(cwd: Path) -> list[str] | None:
     ]
 
 
+_FAMILY_WILDCARD_RE = re.compile(r"^[A-Z]{2,5}-\d{4}-\d{3}\*$")
+
+
 def _ticket_allowed_by_flight_line(ticket: str, entries: list[str]) -> bool:
-    """True if `ticket` matches a literal entry or a `<prefix>*` family entry."""
+    """True if `ticket` matches a literal entry or a strict `<PREFIX>-YYYY-NNN*`
+    family entry (adjudicated by the Codex MANAGER_REVIEW round on commit
+    928b175/ec928eb, finding (b)).
+
+    Before: `entries` is the raw list from `_flight_line_entries` (free text,
+            not yet validated).
+    During: a literal entry must equal `ticket` exactly. A wildcard entry
+            must match `_FAMILY_WILDCARD_RE` -- exactly PREFIX-YYYY-NNN* with
+            the full 3-digit numeric block before the `*`, mirroring
+            `prefix_resolver.TICKET_ID_RE`'s `\\d{3}[a-z]` tail. A malformed
+            or too-short wildcard (`WOT-2026-09*`, `WOT-96*`, `WOT-2026-*`)
+            is REJECTED outright -- it authorizes nothing, not even its
+            literal prefix -- instead of silently widening the match the
+            way `ticket.startswith(entry[:-1])` did before this fix: that
+            substring check let a 2-digit entry (`WOT-2026-09*`) over-admit
+            an entire decade of tickets (090, 099z, ...) the line never
+            intended to cover.
+    After: returns True on a literal match or a well-formed family match
+           (`ticket` starts with the wildcard's PREFIX-YYYY-NNN and has a
+           single trailing lowercase letter, matching TICKET_ID_RE's own
+           shape); False otherwise, including for any malformed wildcard.
+    """
     for entry in entries:
         if entry.endswith("*"):
-            if ticket.startswith(entry[:-1]):
+            if not _FAMILY_WILDCARD_RE.match(entry):
+                continue
+            family_root = entry[:-1]
+            if ticket.startswith(family_root) and re.match(
+                r"^[a-z]$", ticket[len(family_root) :]
+            ):
                 return True
         elif ticket == entry:
             return True
