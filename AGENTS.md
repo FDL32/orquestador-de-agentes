@@ -459,6 +459,8 @@ Para evitar la inflación artificial de cobertura sin validación lógica real, 
 
 CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en burocracia. Se aplica con rigor proporcional al riesgo del cambio.
 
+**Fallback ante duda de diseno sin contrato que la resuelva:** `CONSTITUTION.md` (raiz del motor, carga ON-DEMAND, leelo entero cuando lo consultes) tiene la jerarquia de 6 niveles y 15 tenets de ingenieria que amplian lo de abajo.
+
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de tocar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; usa diff, exit code, test, evento de bus, commit o artefacto verificable.
 - **Un `exit 0` puede significar "no hice nada":** en operaciones IDEMPOTENTES o con SKIP (cierres, syncs, instaladores), `exit 0` es indistinguible de "ya estaba hecho" o "me salte el trabajo". `exit code` es evidencia NECESARIA pero no SUFICIENTE para estas: verifica el ARTEFACTO (fichero/informe/diff/contador que la operacion debia producir), no solo el codigo de salida; y busca en la salida las palabras de skip (`already`, `skipped`, `nothing to do`, `none present`, `up to date`, `no files to check`). Y lee el CODIGO antes de temer un flag: un `--force` puede vencer SOLO la idempotencia sin tocar los gates (leer 12 lineas convierte un "no me atrevo" en un cierre real). Caso: `--session-close` dio `exit 0` sin cerrar nada (`[INFO] Session already completed`), disparado por un `.session_state.json` STALE que ademas se contradecia con `work_plan.md` (2026-07-15).

@@ -234,37 +234,23 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket <TICKET_ID>
 > defecto es supervisada por Manager. Solo sub-tareas estrechas que pasen el gate
 > pueden usar /goal autonomo.
 
-Cuando un subagente tenga dudas, debe elegir la decision que mas se acerque a la
-filosofia de `<MOTOR_ROOT>/prompts/audit_agent_output.md`, aplicando estos 5
-criterios CEM v0 en texto plano:
+Cuando un subagente tenga dudas de diseno o de que decision tomar sin un
+contrato que lo resuelva explicitamente, el fallback es
+`<MOTOR_ROOT>/CONSTITUTION.md` (carga ON-DEMAND, no siempre -- leelo ENTERO
+en ese momento si no lo tienes ya en contexto, igual que M4 exige con
+cualquier contrato citado). Contiene la jerarquia de prioridad de 6 niveles
+(Seguridad > Correccion > Evidencia > Simplicidad > Autonomia sin falsos
+verdes > Velocidad) y 15 tenets con su regla, su motivo y su trade-off
+declarado -- `CONSTITUTION.md` es la fuente unica (T5, "skill apunta, prompt
+gobierna" aplicado a si mismo); este prompt no transcribe sus criterios.
 
-1. Contrato antes que fix: identifica el contrato canonico antes de cambiar
-   codigo, tests o estado.
-2. Evidencia antes que relato: no aceptes claims sin diff, codigo, test, exit
-   code, git, bus o documentacion verificable.
-3. Rigor proporcional: ajusta la validacion al blast radius y no cierres con
-   evidencia parcial cambios de alto impacto.
-4. Root y topologia antes de ejecucion: confirma `repo_motor`,
-   `repo_destino`, `workspace_activo` y ticket activo antes de validar o
-   cerrar.
-5. Barrera antes que memoria: si aparece un aprendizaje recurrente, prefiere
-   test, hook, fixture realista o gate antes que documentacion sola.
-
-Reglas derivadas:
-
-- priorizar contrato canonico antes que comodidad;
-- pedir evidencia antes de aceptar relato;
-- preferir el cambio minimo verificable;
-- evitar falso verde, scope creep y cierres con estado ambiguo;
-- distinguir `loop rapido` (diagnostico local: reruns focales, `--level unit`,
-  background, tests aislados) de `cierre canonico` (suite canonica en HEAD,
-  `validate 0/0`, `mark-ready` con eventos reales y `manager-approve` cuando
-  aplique). El loop rapido nunca autoriza handoff ni publicacion; la orquestacion
-  solo trata como cerrable la evidencia canonica. Definicion canonica en
-  `<MOTOR_ROOT>/prompts/orchestrator_launch_builder.md`;
-- si hay ambiguedad no bloqueante, avanzar con el supuesto mas seguro y
-  documentarlo explicitamente;
-- si hay conflicto entre velocidad y robustez, priorizar robustez.
+Una regla que SI es propia de este pipeline, no del fallback general:
+distinguir `loop rapido` (diagnostico local: reruns focales, `--level unit`,
+background, tests aislados) de `cierre canonico` (suite canonica en HEAD,
+`validate 0/0`, `mark-ready` con eventos reales y `manager-approve` cuando
+aplique). El loop rapido nunca autoriza handoff ni publicacion; la orquestacion
+solo trata como cerrable la evidencia canonica. Definicion canonica en
+`<MOTOR_ROOT>/prompts/orchestrator_launch_builder.md`.
 
 Jerarquia de decision por defecto:
 

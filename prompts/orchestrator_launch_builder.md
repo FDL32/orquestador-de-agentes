@@ -220,6 +220,12 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --id obs-<slug>
 son lecciones del corpus TRANSCRITAS A MANO a este prompt. Son cuatro de ~340.
 Las otras 336 solo te llegan si preguntas.
 
+La memoria te da HECHOS (como ya fallo esta casa). Ante una duda de diseno
+que ni tu contrato citado (`work_plan.md`/`STRATEGY_`/`AUDIT_`) ni el
+`finding_triage_protocol.md` resuelvan explicitamente, el fallback es
+`<MOTOR_ROOT>/CONSTITUTION.md` (carga ON-DEMAND; leelo ENTERO): jerarquia de
+6 niveles + 15 tenets. Fuente unica (T5).
+
 ## Reglas de medicion (aplican DESDE Fase 0, no al redactar el informe)
 
 Estas cuatro reglas gobiernan como mides y como escribes MIENTRAS trabajas. No

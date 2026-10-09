@@ -129,6 +129,10 @@ Scripts sueltos SOLO para diagnostico puntual (el pipeline ya los incluye):
 
 ## Principios CEM v0 aplicados al cierre
 
+Fallback ante duda de diseno sin contrato: `<MOTOR_ROOT>/CONSTITUTION.md`
+(carga ON-DEMAND; leelo ENTERO); fuente unica (T5). Los principios listados
+abajo son el subconjunto aplicado al cierre, no su sustituto.
+
 Aplica estos principios durante todo el cierre:
 
 - **Contrato antes que fix**: verifica que el cierre respeta los contratos de

@@ -37,6 +37,11 @@ backlog_triage.md para el METODO y este prompt para el REGISTRO.
 
 REGLA CERO: este prompt no es evidencia. Verifica cada premisa contra la fuente viva HOY.
 
+Ante una duda de diseno que ningun contrato ni `backlog_triage.md` (metodo
+canonico) resuelva explicitamente, el fallback es
+`<MOTOR_ROOT>/CONSTITUTION.md` (carga ON-DEMAND; leelo ENTERO): jerarquia de
+6 niveles + 15 tenets. Fuente unica (T5).
+
 REGLA LEER-vs-ESCRIBIR (fundamental): READ-ONLY significa que puedes LEER cualquier cosa (backlog.md,
 STATE.md, work_plan.md, todo el codigo del motor) para triar. Lo que NO puedes es ESCRIBIR/MODIFICAR
 fuera de tu zona propia. "No tocas el backlog" = no ESCRIBES backlog.md; leerlo para censar es obligatorio.

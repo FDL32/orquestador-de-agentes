@@ -35,6 +35,10 @@ existe para evitar**:
 | **METODO** | leer contratos enteros, medir antes de afirmar, no aceptar autoreportes, correr el bucle, lo que NO hacer | **No** | se HEREDA: vive aqui, versionado |
 | **ESTADO** | SHAs, dirty, suite, buzon, commits sin publicar, que ticket bloquea a cual | **En horas** | se **RE-MIDE** al arrancar. **Jamas se copia** |
 
+El METODO tiene su fuente canonica en `<MOTOR_ROOT>/CONSTITUTION.md`
+(jerarquia de 6 niveles + 15 tenets, carga ON-DEMAND); este prompt lo
+TRANSPORTA, no lo re-declara (T5).
+
 **Un ESTADO copiado se convierte en premisa falsa heredada.** Casos medidos en este repo,
 todos en dos dias: un arranque declaraba un SHA de destino que ya no era el HEAD; decia
 "237 pending" cuando eran 240 (y al dia siguiente 239); mandaba expandir 4 slugs de
