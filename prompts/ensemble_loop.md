@@ -154,12 +154,12 @@ tests contra `ensemble_dispatch`):
 2. Si falla el CLI de un agente, la fila lleva `failure_mode: transport_failed: rc=N; <clase>` (misma
    taxonomia que el canal `api`: `quota_exhausted`, `model_unavailable`, `network_timeout`, `unknown`) y
    la `evidencia` incluye la cola de su stderr tras `[stderr]`. Un fallo de cuota/red del canal `agent`
-   tambien deja evento de fallback y entra en cuarentena (ver 3.6.2).
+   tambien deja evento de fallback y entra en cuarentena (ver 3.7).
 3. Si la sustitucion automatica cayo en `proposer_claude` (`BA01`) -- stderr muestra
    `[fallback] ... sustituido por 'proposer_claude'` --, esa respuesta NO es una lente independiente.
 4. Gobierno: `python scripts/check_loop_execution.py --commit-sha <sha> --project-root <destino>`.
 
-#### 3.6.2 Cuarentena por cuota/red del canal `agent` (WOT-2026-086k)
+### 3.7 Cuarentena por cuota/red del canal `agent` (WOT-2026-086k)
 
 Un fallo del canal `agent` (codex/opencode) llega como TEXTO, no como excepcion, asi que no pasa por la
 sustitucion automatica. Desde WOT-2026-086k `loop-round` SI escribe el evento de fallback cuando ese texto
@@ -181,7 +181,7 @@ Efecto: VISIBILIDAD, no bloqueo. La lente aparece en `quarantine --sync` y queda
 de `smoke`/`preflight`; NO bloquea `loop-round`, que sigue llamando al perfil pedido aunque este en
 cuarentena (seccion 2).
 
-### 3.7 Compatibilidad de `loop_id` por lector
+### 3.8 Compatibilidad de `loop_id` por lector
 
 | Lector | Antes (L###) | Despues (UNI/DBL/ROL/CHA-N + alias) |
 |---|---|---|
@@ -194,7 +194,7 @@ cuarentena (seccion 2).
 | `fallback_events.jsonl` | Fallback por `L###` | Igual: los fallbacks son por backend_key/perfil |
 | `adjudicate` | Adjudica por `loop_id` `L###` | Resuelve alias antes de adjudicar |
 
-### 3.8 Mudez por modelo, lector efectivo y bundle por canal
+### 3.9 Mudez por modelo, lector efectivo y bundle por canal
 
 Tres hechos medidos en la propuesta v3 del proceso portable (secciones 4.4 y 4.6), que este procedimiento
 hereda:
