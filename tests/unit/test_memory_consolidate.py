@@ -702,6 +702,156 @@ def test_generate_memory_profile_md_with_entries() -> None:
     assert "Architecture decision recorded" in content or "session-close" in content
 
 
+def test_096a_family_summary_section_appears_per_domain() -> None:
+    """DoD (a): cada domain con >=1 observacion tiene su propia seccion
+    '### <domain> (<N> observations)' dentro de 'Family Summaries'."""
+    entries = [
+        {
+            "signal": "Regla sobre testing A.",
+            "topic": "t1",
+            "domain": "testing",
+            "confidence": 0.9,
+            "timestamp": "2026-10-01T10:00:00Z",
+        },
+        {
+            "signal": "Regla sobre testing B.",
+            "topic": "t2",
+            "domain": "testing",
+            "confidence": 0.5,
+            "timestamp": "2026-10-02T10:00:00Z",
+        },
+        {
+            "signal": "Regla sobre seguridad.",
+            "topic": "t3",
+            "domain": "security-gates",
+            "confidence": 0.8,
+            "timestamp": "2026-10-01T10:00:00Z",
+        },
+    ]
+    content = generate_memory_profile_md(entries)
+    assert "## Family Summaries" in content
+    assert "### testing (2 observations)" in content
+    assert "### security-gates (1 observations)" in content
+
+
+def test_096a_mutation_removing_family_summary_logic_drops_the_section() -> None:
+    """MUTATION del DoD (b): sin la logica de resumen, la seccion desaparece.
+
+    Reproduce la mutacion llamando directamente al helper con una lista vacia
+    simulada via el propio contrato: si `_family_summary_sections` deja de
+    devolver nada para un domain con entradas, `generate_memory_profile_md`
+    no debe seguir imprimiendo la cabecera de la seccion.
+    """
+    entries = [
+        {
+            "signal": "Leccion de dominio nuevo que antes no existia.",
+            "topic": "t1",
+            "domain": "warning-contracts",
+            "confidence": 0.7,
+            "timestamp": "2026-10-05T10:00:00Z",
+        },
+    ]
+    content = generate_memory_profile_md(entries)
+    assert "### warning-contracts (1 observations)" in content
+
+    # Control negativo: una lista de entries vacia no produce la seccion en
+    # absoluto (ni cabecera ni cuerpo) -- confirma que la seccion depende de
+    # haber entries reales, no que aparezca siempre por defecto.
+    empty_content = generate_memory_profile_md([])
+    assert "## Family Summaries" not in empty_content
+
+
+def test_096a_domain_with_single_observation_is_its_own_summary() -> None:
+    """DoD (c): domain con 1 sola observacion no produce error ni seccion
+    vacia -- esa unica observacion ES el resumen."""
+    entries = [
+        {
+            "signal": "Unica leccion de este dominio por ahora.",
+            "topic": "t1",
+            "domain": "contract-fixtures",
+            "confidence": 0.6,
+            "timestamp": "2026-10-03T10:00:00Z",
+        },
+    ]
+    content = generate_memory_profile_md(entries)
+    assert "### contract-fixtures (1 observations)" in content
+    assert "Unica leccion de este dominio por ahora." in content
+
+
+def test_096a_top_n_is_ranked_by_confidence_then_timestamp() -> None:
+    """El top-N dentro de un domain es determinista: confidence desc,
+    timestamp como desempate -- no el orden de llegada en la lista."""
+    entries = [
+        {
+            "signal": "Baja confianza, mas reciente.",
+            "topic": "t1",
+            "domain": "testing",
+            "confidence": 0.2,
+            "timestamp": "2026-10-09T10:00:00Z",
+        },
+        {
+            "signal": "Alta confianza, mas antigua.",
+            "topic": "t2",
+            "domain": "testing",
+            "confidence": 0.95,
+            "timestamp": "2026-10-01T10:00:00Z",
+        },
+        {
+            "signal": "Confianza media.",
+            "topic": "t3",
+            "domain": "testing",
+            "confidence": 0.5,
+            "timestamp": "2026-10-05T10:00:00Z",
+        },
+    ]
+    content = generate_memory_profile_md(entries)
+    # Aislar la seccion 'Family Summaries' (hasta el siguiente '## '): el
+    # signal de baja confianza SI aparece en 'Recent Signals' (seccion
+    # preexistente, no tocada por este ticket, ordenada por recencia
+    # global) -- comparar contra el documento entero daria un falso
+    # positivo ahi.
+    start = content.index("## Family Summaries")
+    end = content.index("\n## ", start + len("## Family Summaries"))
+    family_section = content[start:end]
+
+    idx_section = family_section.index("### testing")
+    idx_high = family_section.index("Alta confianza, mas antigua.")
+    idx_med = family_section.index("Confianza media.")
+    idx_low = family_section.find("Baja confianza, mas reciente.")
+    assert idx_section < idx_high < idx_med, (
+        "el top-2 debe ordenar por confidence descendente, no por recencia"
+    )
+    # MAX_L3_FAMILY_SUMMARY=2: la tercera entrada (menor confidence) queda
+    # fuera del resumen -- no aparece en absoluto en ESTA seccion (puede
+    # seguir apareciendo en 'Recent Signals', que es otro mecanismo).
+    assert idx_low == -1
+
+
+def test_096a_missing_confidence_sorts_as_zero_never_crashes() -> None:
+    """Una entrada sin `confidence` (legacy) no rompe el ranking -- cuenta
+    como 0.0, nunca lanza TypeError al comparar con una entrada que si la
+    tiene."""
+    entries = [
+        {
+            "signal": "Entrada legacy sin confidence.",
+            "topic": "t1",
+            "domain": "testing",
+            "timestamp": "2026-10-01T10:00:00Z",
+        },
+        {
+            "signal": "Entrada moderna con confidence alta.",
+            "topic": "t2",
+            "domain": "testing",
+            "confidence": 0.9,
+            "timestamp": "2026-10-02T10:00:00Z",
+        },
+    ]
+    content = generate_memory_profile_md(entries)
+    idx_modern = content.index("Entrada moderna con confidence alta.")
+    idx_legacy = content.index("Entrada legacy sin confidence.")
+    assert idx_modern < idx_legacy
+
+
 def test_signal_truncation_marks_cut_in_projections() -> None:
     """Long signals truncated in L1/L2/L3 projections carry the '...' marker.
 

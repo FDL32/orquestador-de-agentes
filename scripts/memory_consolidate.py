@@ -52,6 +52,14 @@ MAX_L2_RULES = 30
 MAX_L3_DOMAINS = 8
 MAX_L3_OBSERVATIONS_PROFILE = 10
 
+# WOT-2026-096a: top-N observations per domain shown as its L3' summary.
+# 2, not 1, because a single top entry can be a narrow edge case while the
+# domain's dominant pattern needs a second data point to read as a pattern
+# rather than an anecdote -- matches the propuesta's "1-3 lines" range at its
+# low end while staying short (L2' via get_review_context(domain) is where a
+# reader goes for the full breakdown, not here).
+MAX_L3_FAMILY_SUMMARY = 2
+
 # Signal display caps for generated projections (the full signal always
 # lives untruncated in observations.jsonl / memory_rules.md body; these only
 # bound the human-facing projection lines). A trailing marker signals the cut.
@@ -471,6 +479,60 @@ def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _family_summary_sections(entries: list[dict[str, Any]]) -> list[str]:
+    """WOT-2026-096a: L3' -- one summary section per domain (the FAMILY axis).
+
+    Orthogonal to the existing "Active Domains" counters: this is the piece
+    the propuesta (PROPUESTA_20261008_rediseno_memoria_v4_familias.md) names
+    as missing -- a textual summary per domain, not just its count. The
+    detailed breakdown of a domain already exists (`get_review_context`,
+    L2') and is NOT duplicated here; this stays a short pointer.
+
+    Before: ``entries`` are raw observation dicts (NOT the `rules` dict
+        `_extract_rules_from_entries` produces -- that dict drops
+        `confidence`, which this function needs straight from the source).
+    During: groups ALL entries by domain (every domain with >=1 observation
+        gets a section here -- no MAX_L3_DOMAINS cap; that cap belongs to the
+        separate "Active Domains" counter list, a different concern). Within
+        each domain, picks the top `MAX_L3_FAMILY_SUMMARY` entries ranked by
+        `confidence` descending (missing/non-numeric confidence sorts as 0.0,
+        never crashes), timestamp descending as the deterministic tie-break.
+    After: a flat list of markdown lines (no trailing blank line of its own;
+        the caller controls spacing), one `### <domain> (<N> observations)`
+        heading per domain followed by its top entries as bullets. A domain
+        with exactly one observation renders that single bullet -- it IS the
+        summary, never an empty section or an error.
+    """
+
+    def _confidence(entry: dict[str, Any]) -> float:
+        value = entry.get("confidence")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        return 0.0
+
+    by_domain: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        domain = str(entry.get("domain") or entry.get("topic", "general"))
+        by_domain.setdefault(domain, []).append(entry)
+
+    lines: list[str] = []
+    for domain in sorted(by_domain):
+        domain_entries = by_domain[domain]
+        ranked = sorted(
+            domain_entries,
+            key=lambda e: (_confidence(e), parse_timestamp(e.get("timestamp", ""))),
+            reverse=True,
+        )
+        lines.append(f"### {domain} ({len(domain_entries)} observations)")
+        lines.append("")
+        for entry in ranked[:MAX_L3_FAMILY_SUMMARY]:
+            signal = _truncate_signal(entry.get("signal") or "", MAX_SIGNAL_PROFILE)
+            ts = str(entry.get("timestamp") or "")[:10]
+            lines.append(f"- {signal} ({ts})")
+        lines.append("")
+    return lines
+
+
 def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
     """Generate memory_profile.md (L3) from consolidated entries.
 
@@ -521,6 +583,17 @@ def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
     for domain, count in top_domains:
         lines.append(f"- {domain}: {count} observations")
     lines.append("")
+
+    if entries:
+        lines.append("## Family Summaries")
+        lines.append("")
+        lines.append(
+            "Vertical path: this summary -> full domain breakdown via "
+            "`get_review_context(domain)` -> raw observations via "
+            "`--recall --query <topic>`."
+        )
+        lines.append("")
+        lines.extend(_family_summary_sections(entries))
 
     if tickets_seen:
         lines.append("## Active Tickets Referenced")
