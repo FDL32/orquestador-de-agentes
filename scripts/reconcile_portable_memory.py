@@ -63,8 +63,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -295,6 +297,67 @@ def validate_dest_archive(motor_root: Path, dest: Path, dst_archive: Path) -> bo
     return True
 
 
+def append_records_atomically(
+    motor_root: Path, dst_archive: Path, lines: list[str]
+) -> int:
+    """Append `lines` to dst_archive, rolling back if post-write validation fails.
+
+    Before: dst_archive may or may not exist yet (first month of the archive).
+            `lines` are already-serialized JSON lines (no trailing newline),
+            one per record to append. Caller already ran validate_dest_archive
+            pre-write (the fail-closed PRE barrier); this covers the POST
+            barrier that WOT-2026-026p found missing: both `_promote_one` and
+            `_reconcile_all` did `fh.write(...)` then `validate_strict`, and on
+            failure printed an error but left the invalid record ON DISK --
+            the operator reads exit 1, assumes "nothing was written" (exactly
+            the asymmetry AGENTS.md documents: exit code is necessary but not
+            sufficient evidence), and the NEXT run starts from an already
+            invalid archive.
+    During: snapshots the pre-write byte content (or "file absent") for an
+            exact restore. Writes to a NamedTemporaryFile in the SAME
+            directory as dst_archive (os.replace requires same filesystem;
+            cross-device rename raises OSError), seeded with the pre-write
+            content plus the new lines, then atomically replaces dst_archive
+            via os.replace (POSIX/Windows atomic rename, no partial-write
+            window). Runs validate_strict on the result.
+    After: returns 0 if the post-write validation passes (the write stands).
+           On failure (non-zero), restores dst_archive to its EXACT pre-write
+           byte content (or removes it if it did not exist before) and
+           returns the validator's non-zero code. The caller's message must
+           distinguish "wrote nothing" from "wrote and rolled back" -- this
+           function guarantees the DISK state matches "wrote nothing" in the
+           failure case, so callers may keep their existing wording.
+    """
+    pre_existed = dst_archive.exists()
+    pre_content = dst_archive.read_bytes() if pre_existed else None
+
+    dst_archive.parent.mkdir(parents=True, exist_ok=True)
+    new_content = (pre_content or b"") + "".join(line + "\n" for line in lines).encode(
+        "utf-8"
+    )
+
+    fd, tmp_name = tempfile.mkstemp(
+        dir=dst_archive.parent, prefix=f".{dst_archive.name}.", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(new_content)
+        os.replace(tmp_path, dst_archive)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    rc = validate_strict(motor_root, dst_archive)
+    if rc != 0:
+        if pre_existed:
+            dst_archive.write_bytes(pre_content)
+        else:
+            dst_archive.unlink(missing_ok=True)
+        return rc
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entrypoint: traduce una memoria corrupta en un ERROR, no en un traceback.
 
@@ -396,14 +459,13 @@ def _promote_one(
         print("[reconcile] DRY-RUN: no se ha escrito nada (usa --apply)")
         return 0
 
-    dst_archive.parent.mkdir(parents=True, exist_ok=True)
-    with dst_archive.open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(record, ensure_ascii=True) + "\n")
-
-    rc = validate_strict(motor_root, dst_archive)
+    rc = append_records_atomically(
+        motor_root, dst_archive, [json.dumps(record, ensure_ascii=True)]
+    )
     print(f"[reconcile] destino valida --strict tras escribir (returncode={rc})")
     if rc != 0:
         print("[reconcile] ERROR: la escritura dejo la memoria invalida")
+        print("[reconcile] se escribio y se deshizo: el archive quedo como estaba")
         return 1
 
     print(f"[reconcile] OK: leccion {obs_id} promovida al ARCHIVE")
@@ -525,15 +587,15 @@ def _reconcile_all(*, motor_root: Path, source: Path, dest: Path, apply: bool) -
         print("[reconcile] nada que promover")
         return 0
 
-    dst_archive.parent.mkdir(parents=True, exist_ok=True)
-    with dst_archive.open("a", encoding="utf-8", newline="\n") as fh:
-        for r in promote:
-            fh.write(json.dumps(r, ensure_ascii=True) + "\n")
-
-    rc = validate_strict(motor_root, dst_archive)
+    rc = append_records_atomically(
+        motor_root,
+        dst_archive,
+        [json.dumps(r, ensure_ascii=True) for r in promote],
+    )
     print(f"[reconcile] destino valida --strict tras escribir (returncode={rc})")
     if rc != 0:
         print("[reconcile] ERROR: la escritura dejo la memoria invalida")
+        print("[reconcile] se escribio y se deshizo: el archive quedo como estaba")
         return 1
 
     print(
