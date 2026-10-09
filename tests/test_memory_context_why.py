@@ -133,6 +133,26 @@ def test_why_fails_closed_on_unknown_id_or_topic(monkeypatch, capsys):
     assert "No lesson with id/topic" in err
 
 
+def test_why_rejects_whitespace_only_value(monkeypatch, capsys):
+    """Codex Review 2 (WOT-2026-049j): `if args.why:` por si sola acepta
+    "   " (solo espacios) porque la cadena es truthy ANTES del `.strip()`.
+    Debe rechazarse explicitamente con rc=1, no caer a una busqueda de
+    topic vacio.
+
+    MUTACION ALCANZABLE: quitar el `if not wanted: ... return 1` nuevo hace
+    que este test falle (rc pasaria a depender de si algun mock de
+    recall_observations tiene una entrada con topic=="").
+    """
+    monkeypatch.setattr(memory_context, "recall_observations", lambda **k: [])
+    monkeypatch.setattr("sys.argv", ["memory_context.py", "--why", "   "])
+
+    rc = memory_context.main()
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "necesita un id" in err
+
+
 def test_why_matches_by_topic_when_not_an_obs_id(monkeypatch, capsys):
     """Un valor que NO empieza por 'obs-' se interpreta como TOPIC: el DoD dice
     "para un id/topic dado", y puede devolver varias entradas bajo el mismo
@@ -213,4 +233,87 @@ def test_locate_provenance_file_reports_unknown_when_absent_everywhere(
     assert result.startswith("desconocido"), (
         "un record ausente de todas las rutas escaneadas debe declararse "
         f"desconocido, no inventarse un origen: {result!r}"
+    )
+
+
+def test_file_contains_record_degrades_on_non_dict_json_line(tmp_path: Path):
+    """Codex Review 2 (WOT-2026-049j): una linea JSON VALIDA pero de tipo
+    NO-dict (p.ej. '[]') hacia que `record_key()`'s `.get()` lanzara
+    `AttributeError`, sin capturar en `_file_contains_record` -- rompia el
+    contrato "nunca lanza" de su llamante `_locate_provenance_file`.
+
+    Llama a `_file_contains_record` DIRECTAMENTE (no a traves de
+    `_locate_provenance_file`, que tiene su PROPIO catch-all exterior y
+    enmascararia esta mutacion especifica -- medido: con el catch-all
+    puesto, revertir SOLO el `except` interior deja el test de integracion
+    en verde igual, porque el catch-all exterior absorbe la excepcion antes
+    de que el test pueda verla).
+
+    MUTACION ALCANZABLE: quitar `AttributeError` del `except` interior de
+    `_file_contains_record` hace que esta llamada DIRECTA propague la
+    excepcion sin capturar, y el test cae con un traceback real.
+    """
+    path = tmp_path / "observations.2026-10.jsonl"
+    path.write_text("[]\n", encoding="utf-8")
+
+    result = memory_context._file_contains_record(path, ("cualquiera", None))
+
+    assert result is False, (
+        "una linea JSON no-dict debe tratarse como 'no coincide', nunca lanzar"
+    )
+
+
+def test_locate_provenance_file_degrades_on_non_dict_json_line(
+    tmp_path: Path, monkeypatch
+):
+    """Nivel de INTEGRACION: la ruta publica tambien degrada correctamente,
+    aunque sea el catch-all exterior (y no el interior) el que lo capture
+    en este nivel -- ver el test gemelo de `_file_contains_record` arriba
+    para la mutacion que SI aisla el call-site interior.
+    """
+    archive_dir = tmp_path / ".agent" / "runtime" / "memory" / "archive"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "observations.2026-10.jsonl").write_text("[]\n", encoding="utf-8")
+
+    monkeypatch.setattr("runtime.project_root.resolve_project_root", lambda: tmp_path)
+    monkeypatch.setattr("bus.memory_loader._resolve_motor_root", lambda: None)
+    monkeypatch.setattr(
+        "bus.memory_loader._get_observations_file",
+        lambda: tmp_path / "does-not-exist.jsonl",
+    )
+
+    result = memory_context._locate_provenance_file(
+        {"topic": "cualquiera", "source_ticket": None}
+    )
+
+    assert result.startswith("desconocido"), (
+        f"una linea JSON no-dict debe degradar a desconocido, nunca lanzar: {result!r}"
+    )
+
+
+def test_locate_provenance_file_degrades_on_unresolvable_root(monkeypatch):
+    """Codex Review 2 (WOT-2026-049j): si `resolve_project_root()` (u otra
+    funcion de resolucion de rutas) lanza, `_locate_provenance_file` debe
+    seguir devolviendo 'desconocido' en vez de propagar -- su contrato
+    publico es "nunca lanza", aunque el fallo venga de fuera de su propio
+    cuerpo.
+
+    MUTACION ALCANZABLE: quitar el `try/except Exception` exterior de
+    `_locate_provenance_file` y delegar directo a
+    `_locate_provenance_file_unsafe` hace que este test falle con la
+    excepcion simulada propagando sin capturar.
+    """
+
+    def _boom():
+        raise RuntimeError("fallo simulado de resolucion de ruta")
+
+    monkeypatch.setattr("runtime.project_root.resolve_project_root", _boom)
+
+    result = memory_context._locate_provenance_file(
+        {"topic": "cualquiera", "source_ticket": None}
+    )
+
+    assert result.startswith("desconocido"), (
+        f"un fallo en la resolucion de rutas debe degradar a desconocido, "
+        f"nunca lanzar: {result!r}"
     )
