@@ -425,23 +425,32 @@ def test_case_h_worktree_guard_bypass_env_always_exits_zero(
 def test_case_i_wot_dev_correct_wrong_workspace_exits_one(tmp_path: Path) -> None:
     """Isolates Verificacion B (workspace) from Verificacion A (worktree):
     _dev/main is correct, but --project-root points to a synthetic
-    directory that is NOT the orquestador_de_agentes_workspace link."""
+    directory that is a REGISTERED destination with a FOREIGN prefix (not
+    the orquestador_de_agentes_workspace link).
+
+    WOT-2026-097: `wrong_workspace` debe declarar un ticket_prefix real
+    distinto de WOT (no quedar sin link) para que el escenario siga siendo
+    "workspace equivocado" (exit 1) -- tras el fix de causa raiz, Verification
+    B lee el ticket_prefix directamente del link de `project_root`, asi que
+    un directorio SIN link cae por la rama de "no se pudo derivar" (exit 2),
+    un caso distinto ya cubierto en test_verification_b_resolves_by_ticket_
+    prefix_not_destination_id caso (2)."""
     motor, dev = _make_git_tree(tmp_path)
     real_workspace = tmp_path / "orquestador_de_agentes_workspace"
     real_workspace.mkdir()
     _make_link(real_workspace, motor, "WOT", "orquestador_de_agentes_workspace")
     wrong_workspace = tmp_path / "some_other_project"
     wrong_workspace.mkdir()
+    _make_link(wrong_workspace, motor, "CTL", "some_other_project")
 
     exit_code, message = check_topology("WOT-2026-021g", dev, motor, wrong_workspace)
     assert exit_code == 1
-    # Assert on the RESOLVED path, not on the bare name: since WOT-2026-023i the
-    # message interpolates the resolved destination, and the name is a SUBSTRING
-    # of that path -- so asserting the name alone would keep passing even if the
-    # message stopped naming the right workspace. (Pre-023i the name came from a
-    # hardcoded constant, which is exactly what this ticket removed.)
-    assert str(real_workspace) in message
+    # El mensaje ya no nombra el destino WOT resuelto (no hace falta
+    # adivinarlo), pero SI debe nombrar el workspace equivocado y su
+    # ticket_prefix real para que el operador sepa que vio y por que es
+    # incorrecto.
     assert str(wrong_workspace) in message
+    assert "CTL" in message
 
 
 # ---------------------------------------------------------------------------
@@ -453,21 +462,27 @@ def test_case_i_wot_dev_correct_wrong_workspace_exits_one(tmp_path: Path) -> Non
 def test_verification_b_resolves_by_ticket_prefix_not_destination_id(
     tmp_path: Path,
 ) -> None:
-    """Verification B must derive the expected workspace from the WOT
-    ticket_prefix (via prefix_resolver.resolve_prefix), never from a
-    hardcoded destination_id.
+    """Verification B must derive the ticket_prefix from the PROJECT_ROOT's
+    own link (via prefix_resolver.resolve_prefix_for_destination), never from
+    a hardcoded destination_id.
+
+    WOT-2026-097: Verification B stopped guessing "the" unique WOT
+    destination among N candidates (prefix_resolver.resolve_prefix) and now
+    reads the ticket_prefix directly off project_root's own link
+    (resolve_prefix_for_destination) -- see _verify_wot_workspace's
+    docstring for the causa-raiz fix. The exit codes below reflect that: a
+    MISSING/malformed link is exit 2 ("cannot determine"); a link that
+    EXISTS but declares the WRONG prefix is exit 1 ("wrong workspace"),
+    because the workspace IS a real, resolvable destination -- just not the
+    WOT one.
 
     Step 3 is the one with teeth: the link keeps the CORRECT destination_id
     but declares a FOREIGN ticket_prefix. Under the retired
     _find_workspace_by_destination_id it would still resolve -> exit 0. It
-    must now fail to resolve -> exit 2. Without this step, removing that
-    helper would be an uncovered change: migrating the fixtures alone leaves
-    cases (a)-(i) green either way, because none of them distinguishes the
-    two lookup mechanisms.
-
-    Note the exit code: a link that does not resolve is exit 2 ("cannot
-    determine"), NOT exit 1 ("wrong workspace"). Asserting `!= 0` here would
-    be a false green -- it would pass for either reason.
+    must now resolve to a DIFFERENT prefix -> exit 1, not exit 0. Without
+    this step, removing that helper would be an uncovered change: migrating
+    the fixtures alone leaves cases (a)-(i) green either way, because none
+    of them distinguishes the two lookup mechanisms.
     """
     motor, dev = _make_git_tree(tmp_path)
     workspace = tmp_path / "orquestador_de_agentes_workspace"
@@ -485,32 +500,54 @@ def test_verification_b_resolves_by_ticket_prefix_not_destination_id(
     assert "ticket_prefix" in message
 
     # (3) Correct destination_id, FOREIGN ticket_prefix: resolution is by
-    #     prefix, so this must NOT resolve. Reintroducing the destination_id
-    #     lookup flips this to 0 and the test dies.
+    #     prefix, so this must resolve to XXX, not WOT -> exit 1 ("wrong
+    #     workspace"), never exit 0 (reintroducing the destination_id lookup
+    #     would flip this to 0 and the test would die) nor exit 2 (the link
+    #     DOES resolve, just to the wrong prefix).
     _make_link(workspace, motor, "XXX", "orquestador_de_agentes_workspace")
     exit_code, message = check_topology("WOT-2026-023i", dev, motor, workspace)
-    assert exit_code == 2
+    assert exit_code == 1
     assert "ticket_prefix" in message
 
 
-def test_verification_b_ambiguous_wot_prefix_is_exit_two(tmp_path: Path) -> None:
-    """Two links declaring ticket_prefix WOT make resolve_prefix ambiguous
-    (None). Verification B must report that as exit 2 ("cannot determine"),
-    not as exit 1 ("wrong workspace") -- the operator needs to know the
-    topology is broken, not that they picked the wrong directory. This
-    failure mode only exists since WOT-2026-023i put WOT through the generic
-    scan; the retired early-return made it unreachable."""
+def test_verification_b_two_wot_destinations_does_not_block_either(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-097 (fix de causa raiz de B3): dos destinos distintos
+    declarando ticket_prefix WOT (el patron real de N worktrees paralelos
+    del mismo destino, WOT-2026-039c) ya NO bloquea la verificacion de
+    NINGUNO de los dos como exit 2 ("ambiguo").
+
+    Antes del fix, Verification B adivinaba "el" unico destino WOT via
+    prefix_resolver.resolve_prefix(WOT_PREFIX, motor_root) -- que devuelve
+    None en cuanto hay >1 candidato -- e IGNORABA el project_root que ya
+    recibia como parametro hasta comparar DESPUES. Dos destinos WOT
+    legitimos hacian caer exit 2 sobre un project_root perfectamente
+    valido. El fix resuelve por el PROPIO project_root
+    (resolve_prefix_for_destination), sin escanear ni desambiguar entre
+    candidatos: no hace falta que exista un UNICO destino WOT en el
+    sistema, solo que ESE path declare WOT.
+
+    (Antes de este fix este mismo escenario era exit 2 con "ambiguo" en el
+    mensaje -- ver WOT-2026-023i; ese comportamiento era el BUG, no una
+    propiedad a preservar.)"""
     motor, dev = _make_git_tree(tmp_path)
     workspace = tmp_path / "orquestador_de_agentes_workspace"
     workspace.mkdir()
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
-    impostor = tmp_path / "otro_workspace"
-    impostor.mkdir()
-    _make_link(impostor, motor, "WOT", "otro_workspace")
+    otro_destino_wot = tmp_path / "otro_workspace"
+    otro_destino_wot.mkdir()
+    _make_link(otro_destino_wot, motor, "WOT", "otro_workspace")
 
-    exit_code, message = check_topology("WOT-2026-023i", dev, motor, workspace)
-    assert exit_code == 2
-    assert "ambiguo" in message
+    # Verificar `workspace` como project_root -> exit 0, sin importar que
+    # `otro_destino_wot` tambien declare WOT.
+    exit_code, _message = check_topology("WOT-2026-023i", dev, motor, workspace)
+    assert exit_code == 0
+
+    # Verificar el OTRO destino como project_root -> tambien exit 0: ninguno
+    # de los dos queda bloqueado por la existencia del otro.
+    exit_code, _message = check_topology("WOT-2026-023i", dev, motor, otro_destino_wot)
+    assert exit_code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -583,13 +620,23 @@ def test_wot_flight_worktree_cross_ticket_exits_one(tmp_path: Path) -> None:
 
 
 def test_wot_flight_worktree_wrong_workspace_exits_one(tmp_path: Path) -> None:
-    """Verification B se mantiene: flight correcto pero workspace equivocado -> exit 1."""
+    """Verification B se mantiene: flight correcto pero workspace equivocado -> exit 1.
+
+    WOT-2026-097: `impostor` debe ser un destino REGISTRADO con un prefijo
+    DISTINTO de WOT (no un directorio sin link) para que el escenario siga
+    siendo genuinamente "workspace equivocado" (exit 1) en vez de "workspace
+    sin registrar" (exit 2, cubierto aparte por el caso (2) de
+    test_verification_b_resolves_by_ticket_prefix_not_destination_id) -- tras
+    el fix de causa raiz, Verification B lee el ticket_prefix directamente
+    del link de `impostor`, asi que un `impostor` sin link ya no produce
+    exit 1 por la via antigua (adivinar "el" WOT y comparar)."""
     motor, _dev = _make_git_tree(tmp_path)
     workspace = tmp_path / "orquestador_de_agentes_workspace"
     workspace.mkdir()
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
     impostor = tmp_path / "otro_workspace"
     impostor.mkdir()
+    _make_link(impostor, motor, "CTL", "otro_workspace")
     flight = _add_flight_worktree(motor, tmp_path, "027h")
 
     exit_code, message = check_topology("WOT-2026-027h", flight, motor, impostor)
