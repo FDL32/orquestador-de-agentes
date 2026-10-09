@@ -2492,6 +2492,81 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_dec_receipt_ticket_contracts_check(project_root: Path) -> CheckResult:
+    """Barrera del recibo DEC sobre `ticket_contracts.md` (WOT-2026-088g).
+
+    Hermana de `run_dec_receipt_check` (WOT-2026-042x), que solo cubre las
+    fichas de los buzones (`*.tickets.md`). Un contrato `frozen` de
+    `.agent/planning/ticket_contracts.md` puede citar una DEC inexistente y, sin
+    esta verificacion, nadie lo detecta hasta que un Builder la busca y no la
+    encuentra (`DEC-086H-001`/`DEC-086K-001`/`DEC-085A-001`, medidos el
+    2026-09-30 y materializados a mano en el commit `74b5d57`).
+
+    El cuerpo de `run_dec_receipt_check` NO se toca: esta es una funcion NUEVA,
+    cableada INMEDIATAMENTE DESPUES de su `results.append(...)` en el closeout.
+
+    El guard vive SOLO en el motor: su ruta y su `--motor-root` se resuelven
+    contra el MOTOR, nunca contra `project_root` (mismo patron que
+    `run_dec_receipt_check`, WOT-2026-038j). El registro del destino entra como
+    ARGUMENTO (`--destino-registry`); resolver la topologia dentro del guard es
+    una STOP condition heredada del contrato.
+
+    Si `.agent/planning/ticket_contracts.md` no existe, SKIP explicito sin
+    invocar el subprocess (patron de "fichero ausente" de otros `run_*_check`).
+
+    Args:
+        project_root: Raiz del destino; de ella se deriva `ticket_contracts.md`.
+
+    Returns:
+        CheckResult con el estado de la barrera sobre los contratos.
+    """
+    name = "DEC Receipt Barrier ticket_contracts (WOT-2026-088g)"
+    contract_file = project_root / ".agent" / "planning" / "ticket_contracts.md"
+    if not contract_file.is_file():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"No ticket_contracts.md at {contract_file} (skipped)",
+            is_blocking=True,
+            skipped=True,
+        )
+
+    motor_root = _MOTOR_ROOT
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        resolved_motor_root = resolve_motor_root(project_root)
+        if (
+            resolved_motor_root is not None
+            and (resolved_motor_root / "scripts" / "check_dec_receipt.py").exists()
+        ):
+            motor_root = resolved_motor_root
+    except ImportError:
+        pass
+
+    cmd = [
+        sys.executable,
+        str(motor_root / "scripts" / "check_dec_receipt.py"),
+        "--motor-root",
+        str(motor_root),
+        "--ticket-contracts",
+        str(contract_file),
+    ]
+
+    destino_registry = project_root / ".agent" / "planning" / "decisions.md"
+    if destino_registry.is_file():
+        cmd += ["--destino-registry", str(destino_registry)]
+
+    from scripts.check_dec_receipt import EXIT_EMPTY_UNIVERSE
+
+    return run_subprocess_check(
+        cmd=cmd,
+        name=name,
+        project_root=project_root,
+        skip_exit_codes=(EXIT_EMPTY_UNIVERSE,),
+    )
+
+
 def run_inbox_drainage_check(project_root: Path) -> CheckResult:
     """WOT-2026-042u: unico backlog_inbox canonico + drenaje descubierto desde codigo.
 
@@ -2863,6 +2938,13 @@ def run_preflight_check(
         # dentro del propio guard (censo medido: 14/14 sin recibo), asi que el
         # cableado no bloquea la deuda historica.
         results.append(run_dec_receipt_check(project_root))
+        # 6n-bis. DEC Receipt Barrier sobre `ticket_contracts.md` (WOT-2026-088g).
+        # Hermana NUEVA, insertada INMEDIATAMENTE DESPUES de 6n (nunca la
+        # sustituye): un contrato `frozen` del registro de contratos puede citar
+        # una DEC inexistente y hasta 088g nada lo detectaba. SKIP nombrado si no
+        # hay `ticket_contracts.md`. Import ESTATICO en el run_ -> check_guard_wiring
+        # lo cuenta WIRED (patron canonico del modulo).
+        results.append(run_dec_receipt_ticket_contracts_check(project_root))
         # 6o. Inbox Drainage Barrier (WOT-2026-042u). El DoD (b) de la ficha: el
         # drenaje procesa el canonico desde CODIGO y esta cableado a un camino que
         # corre solo. Import estatico en el run_ -> check_guard_wiring lo cuenta

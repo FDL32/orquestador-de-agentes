@@ -32,6 +32,18 @@ la refutacion final de Codex y es un hueco REAL, no un non-goal. Ademas los
 buzones estan cableados por ruta fija, asi que un tercer buzon se ignoraria en
 silencio. Follow-up con dueno: `WOT-2026-043a`.
 
+Modo `--ticket-contracts` (WOT-2026-088g)
+-----------------------------------------
+El registro `ticket_contracts.md` NO es un buzon de fichas: es donde viven los
+contratos `frozen` que el Builder ejecuta directamente, asi que una DEC
+inexistente ahi es MAS grave (el Builder confia en el contrato como fuente de
+verdad). El modo `--ticket-contracts <path>` (repetible) cierra ese hueco con
+`check_ticket_contracts_file`: inspecciona SOLO los contratos `status: frozen`,
+y por cada cita DEC (literal + ruta en el MISMO parentesis) decide OK / WARN /
+ERROR. Reutiliza `load_motor_registry`/`load_destino_registry`/`is_grandfathered`
+sin cambios; NO fusiona su patron con `_RE_SCOPED` (la forma de cita de los
+contratos es literalmente distinta).
+
 La funcion PURA
 ---------------
 `receipt_is_valid(receipt, registry) -> bool` no hace I/O, no resuelve roots y no
@@ -106,6 +118,37 @@ _RE_DESTINO_HEADING = re.compile(r"^#{1,6}\s+DEC-(.+?-\d+)\s*(?:--|$)")
 # como intento de cabecera -- 1 a 6 `#`, espacio, `DEC-`. Sirve para publicar el
 # DENOMINADOR (lineas candidatas), no solo las que efectivamente cargaron.
 _RE_CANDIDATE_HEADING = re.compile(r"^#{1,6}\s+DEC-")
+
+# --- Modo `ticket_contracts.md` (WOT-2026-088g, contrato T-088G-001) ----------
+#
+# El registro de contratos NUNCA usa la forma `DEC-<id> (motor)` de las fichas
+# del inbox, asi que este modo NO reutiliza `_RE_SCOPED`: tiene su PROPIO patron
+# (Forbidden Surface del contrato). Una "cita" (DEC-088G-001, Decision 1) es el
+# literal `DEC-<id>` y la ruta `docs/decisions/DEC-<id2>-` DENTRO DEL MISMO
+# PARENTESIS; una mencion de prosa sin ese parentesis con ruta se IGNORA.
+#
+# El patron estricto usa un BACKREFERENCE al grupo 1 para exigir que el id
+# citado y el de la ruta SEAN EL MISMO. Una cita CRUZADA (prosa `DEC-086U-001`
+# pero ruta `docs/decisions/DEC-086K-001-...`, en el mismo parentesis) NO casa
+# con el patron estricto: por eso existe `_RE_CONTRACT_CITATION_SHAPE`, que
+# captura ambos ids y permite contarla como "sin resolver" (nunca como silencio).
+_RE_CONTRACT_CITATION = re.compile(
+    r"\bDEC-([A-Za-z0-9][A-Za-z0-9-]*?-\d+)\b[^()\n]*\([^()\n]*?docs/decisions/DEC-\1-",
+)
+_RE_CONTRACT_CITATION_SHAPE = re.compile(
+    r"\bDEC-([A-Za-z0-9][A-Za-z0-9-]*?-\d+)\b[^()\n]*"
+    r"\([^()\n]*?docs/decisions/DEC-([A-Za-z0-9][A-Za-z0-9-]*?-\d+)-",
+)
+
+# Cabecera de un contrato en `ticket_contracts.md`: `## T-<ID>-001 -- ...` o
+# `## WOT-2026-<id>`. Es el NOMBRE del contrato para el grandfathering por
+# contrato individual (`is_grandfathered`), nunca el nombre del fichero entero.
+_RE_CONTRACT_HEADER = re.compile(r"^##\s+(?:T-|WOT-)")
+
+# Campo de status de un contrato. Anclado a columna 0 y solo con la PRIMERA
+# palabra del valor: hay contratos con `draft (bloqueado por ...)` y menciones
+# de prosa indentadas (`` `- **status:** <valor>` ``) que NO son el campo real.
+_RE_CONTRACT_STATUS = re.compile(r"^-\s+\*\*status:\*\*\s+([A-Za-z][A-Za-z0-9_-]*)")
 
 
 def receipt_is_valid(receipt: str, registry: Mapping[str, set[str]] | set[str]) -> bool:
@@ -286,6 +329,223 @@ def check_file(
     )
 
 
+class _ContractBlock:
+    """Un contrato de `ticket_contracts.md` y las citas DEC que le pertenecen.
+
+    Clase PLANA (no `@dataclass`): el test de este modulo lo carga con
+    `spec_from_file_location` sin registrarlo en `sys.modules`, y el decorador
+    `@dataclass` revienta al resolver `sys.modules[cls.__module__]` en esa ruta.
+    """
+
+    __slots__ = ("citations", "header", "status")
+
+    def __init__(self, header: str) -> None:
+        self.header = header
+        self.status: str | None = None
+        self.citations: list[tuple[int, str, str]] = []
+
+
+def _split_ticket_contract_blocks(lines: list[str]) -> list[_ContractBlock]:
+    """Divide `ticket_contracts.md` en contratos.
+
+    Cada contrato empieza en su cabecera `## T-...`/`## WOT-...` y se extiende
+    hasta la siguiente. El status se lee del PRIMER campo `- **status:**` del
+    bloque. Una cita se atribuye al contrato cuya cabecera la ANTECEDE (misma
+    tecnica que exige el contrato para `is_grandfathered`).
+
+    Cada cita se guarda como `(linea, id_citado, id_de_la_ruta)`: el segundo es
+    el literal `DEC-<id>` y el tercero el id de `docs/decisions/DEC-<id2>-`. Son
+    iguales en una cita limpia; distintos en una CRUZADA (que el patron estricto
+    con backreference no casa, por eso `_RE_CONTRACT_CITATION_SHAPE` la detecta).
+    """
+    blocks: list[_ContractBlock] = []
+    current: _ContractBlock | None = None
+    for line_no, line in enumerate(lines, start=1):
+        if _RE_CONTRACT_HEADER.match(line):
+            current = _ContractBlock(header=line)
+            blocks.append(current)
+        if current is None:
+            continue
+        if current.status is None:
+            match = _RE_CONTRACT_STATUS.match(line)
+            if match:
+                current.status = match.group(1).lower()
+        for match in _RE_CONTRACT_CITATION.finditer(line):
+            dec_id = match.group(1).upper()
+            current.citations.append((line_no, dec_id, dec_id))
+        for match in _RE_CONTRACT_CITATION_SHAPE.finditer(line):
+            dec_id, path_id = match.group(1).upper(), match.group(2).upper()
+            if dec_id != path_id:
+                current.citations.append((line_no, dec_id, path_id))
+    return blocks
+
+
+def count_frozen_contracts(path: Path) -> int:
+    """Numero de contratos con `status: frozen` en un `ticket_contracts.md`.
+
+    Es el DENOMINADOR `contratos_inspeccionados` del resumen (DoD D5): un
+    contrato `draft`/`invalidated`/otro status queda FUERA del universo que este
+    modo inspecciona (DEC-088G-001, Decision 2). Solo lectura.
+    """
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return sum(
+        1 for block in _split_ticket_contract_blocks(lines) if block.status == "frozen"
+    )
+
+
+def _classify_contract_citation(
+    file_label: str,
+    line_no: int,
+    header: str,
+    dec_id: str,
+    path_id: str,
+    motor_registry: set[str],
+    destino_registry: set[str] | None,
+) -> tuple[str, str]:
+    """Clasifica UNA cita de contrato. Returns: (nivel, mensaje) OK|WARN|ERROR."""
+    if dec_id != path_id:
+        return (
+            "ERROR",
+            f"{file_label}:{line_no}: cita CRUZADA `DEC-{dec_id}` con ruta "
+            f"`docs/decisions/DEC-{path_id}-...` (ids distintos) -> SIN RESOLVER; "
+            f"un contrato que cita un id y enlaza a otro nunca se da por bueno",
+        )
+    resolved = dec_id in motor_registry or (
+        destino_registry is not None and dec_id in destino_registry
+    )
+    if resolved:
+        return ("OK", f"{file_label}:{line_no}: cita `DEC-{dec_id}` resuelta")
+    if is_grandfathered(header):
+        return (
+            "WARN",
+            f"{file_label}:{line_no}: cita `DEC-{dec_id}` sin resolver, pero el "
+            f"contrato '{header.strip()[:60]}' es ANTERIOR a {GRANDFATHER_CUTOFF} "
+            f"-> grandfathered (WARN, no bloquea)",
+        )
+    return (
+        "ERROR",
+        f"{file_label}:{line_no}: cita `DEC-{dec_id}` NO resuelve a ningun "
+        f"fichero docs/decisions/DEC-{dec_id}-*.md en el registro declarado",
+    )
+
+
+def check_ticket_contracts_file(
+    path: Path,
+    motor_registry: set[str],
+    destino_registry: set[str] | None,
+) -> list[tuple[str, str]]:
+    """Clasifica las citas DEC de un `ticket_contracts.md`, UNA entrada por cita.
+
+    Modo nuevo de WOT-2026-088g (contrato T-088G-001). Un contrato `frozen`
+    puede citar una DEC inexistente y, hasta ahora, nada lo detectaba: la norma
+    de `WOT-2026-042w`/`042x` solo cubria las fichas de los buzones.
+
+    Before: `path` es un fichero existente; los dos registros ya resueltos.
+    During: solo lectura. Divide el fichero en contratos, descarta los que NO
+        declaran `status: frozen` (DEC-088G-001, Decision 2) y clasifica cada
+        cita del universo restante: resuelta -> OK; id inexistente -> ERROR (o
+        WARN si el contrato es anterior a `GRANDFATHER_CUTOFF`); cita cruzada
+        (id citado != id de la ruta, en el mismo parentesis) -> ERROR.
+    After: una lista de `(nivel, mensaje)` con nivel OK|WARN|ERROR, en orden de
+        aparicion. Una entrada por CITA (no una por fichero): el fichero tiene
+        90+ contratos y el mensaje debe senalar CUAL cita fallo.
+    """
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    entries: list[tuple[str, str]] = []
+    for block in _split_ticket_contract_blocks(lines):
+        if block.status != "frozen":
+            continue
+        for line_no, dec_id, path_id in block.citations:
+            entries.append(
+                _classify_contract_citation(
+                    path.name,
+                    line_no,
+                    block.header,
+                    dec_id,
+                    path_id,
+                    motor_registry,
+                    destino_registry,
+                )
+            )
+    return entries
+
+
+def _check_inbox_surface(
+    files: list[Path],
+    motor_registry: set[str],
+    destino_registry: set[str] | None,
+) -> int:
+    """Clasifica las fichas de los buzones e imprime el resumen del inbox.
+
+    Returns: numero de ERRORES de la superficie `--inbox`.
+    """
+    oks = warns = errors = 0
+    for path in files:
+        level, message = check_file(path, motor_registry, destino_registry)
+        if level == "ERROR":
+            errors += 1
+            print(f"[dec-receipt] ERROR {message}")
+        elif level == "WARN":
+            warns += 1
+            print(f"[dec-receipt] WARN  {message}")
+        else:
+            oks += 1
+    print(
+        f"[dec-receipt] {oks} ok / {warns} warn (grandfathered < "
+        f"{GRANDFATHER_CUTOFF}) / {errors} error; "
+        f"DEC motor={len(motor_registry)}, "
+        f"destino={'no pasado' if destino_registry is None else len(destino_registry)}"
+    )
+    return errors
+
+
+def _check_ticket_contracts_surface(
+    ticket_contracts: list[Path],
+    motor_registry: set[str],
+    destino_registry: set[str] | None,
+) -> int:
+    """Procesa la superficie `--ticket-contracts` e imprime su denominador.
+
+    Un `--ticket-contracts` que no existe como fichero es ERROR fail-closed
+    (nunca silencio). El resumen publica los 4 denominadores del modo nuevo
+    (DoD D5): `contratos_inspeccionados`, `citas_encontradas`,
+    `citas_resueltas`, `citas_sin_resolver`.
+
+    Returns: numero de ERRORES (citas sin resolver + ficheros ausentes).
+    """
+    insp = 0
+    oks = warns = errors = 0
+    missing = 0
+    for tc_path in ticket_contracts:
+        if not tc_path.is_file():
+            missing += 1
+            print(
+                f"[dec-receipt] ERROR {tc_path}: --ticket-contracts no existe "
+                "como fichero -> ERROR (fail-closed, nunca silencio)"
+            )
+            continue
+        insp += count_frozen_contracts(tc_path)
+        for level, message in check_ticket_contracts_file(
+            tc_path, motor_registry, destino_registry
+        ):
+            if level == "ERROR":
+                errors += 1
+                print(f"[dec-receipt] ERROR {message}")
+            elif level == "WARN":
+                warns += 1
+                print(f"[dec-receipt] WARN  {message}")
+            else:
+                oks += 1
+    print(
+        "[dec-receipt] ticket_contracts: "
+        f"contratos_inspeccionados={insp}, "
+        f"citas_encontradas={oks + warns + errors}, "
+        f"citas_resueltas={oks}, "
+        f"citas_sin_resolver={warns + errors}"
+    )
+    return errors + missing
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -315,6 +575,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Directorio de fichas a validar (repetible).",
     )
+    parser.add_argument(
+        "--ticket-contracts",
+        type=Path,
+        action="append",
+        default=None,
+        help=(
+            "Fichero `ticket_contracts.md` a validar (repetible). Inspecciona "
+            "solo los contratos `status: frozen` y valida cada cita DEC "
+            "(WOT-2026-088g)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     motor_registry = load_motor_registry(args.motor_root)
@@ -337,8 +608,13 @@ def main(argv: list[str] | None = None) -> int:
 
     inboxes = [d for d in (args.inbox or []) if d.is_dir()]
     files = sorted(f for d in inboxes for f in d.glob("*.tickets.md"))
+    ticket_contracts = list(args.ticket_contracts or [])
 
-    if not files:
+    # El universo vacio se evalua por SUPERFICIE (DoD D2): solo cuando NINGUNA de
+    # las dos superficies tiene materia se mantiene el SKIP con rc distinguible.
+    # Si hay `--ticket-contracts`, el veredicto es de ESA superficie (no se
+    # reimprime el SKIP de inbox vacio como si fuera el resultado final).
+    if not files and not ticket_contracts:
         # El vacio publica su DENOMINADOR completo (Quality Bar + DEC-047S-001:
         # un verde con `inspeccionados == 0` solo es legitimo con la tupla y la
         # lista de saltados) y sale con un rc DISTINGUIBLE, no `0`.
@@ -349,24 +625,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_EMPTY_UNIVERSE
 
-    errors = warns = oks = 0
-    for path in files:
-        level, message = check_file(path, motor_registry, destino_registry)
-        if level == "ERROR":
-            errors += 1
-            print(f"[dec-receipt] ERROR {message}")
-        elif level == "WARN":
-            warns += 1
-            print(f"[dec-receipt] WARN  {message}")
-        else:
-            oks += 1
-
-    print(
-        f"[dec-receipt] {oks} ok / {warns} warn (grandfathered < "
-        f"{GRANDFATHER_CUTOFF}) / {errors} error; "
-        f"DEC motor={len(motor_registry)}, "
-        f"destino={'no pasado' if destino_registry is None else len(destino_registry)}"
-    )
+    errors = 0
+    if files:
+        errors += _check_inbox_surface(files, motor_registry, destino_registry)
+    if ticket_contracts:
+        errors += _check_ticket_contracts_surface(
+            ticket_contracts, motor_registry, destino_registry
+        )
     return 1 if errors else 0
 
 
