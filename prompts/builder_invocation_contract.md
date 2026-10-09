@@ -37,10 +37,18 @@ Mecanismo verificado end-to-end (WOT-2026-089n, 2026-10-02/03): anadir `prompt_v
 cualquier modelo del proveedor `nan` (deepseek/glm/qwen/gemma/mimo) corra como agente con filesystem
 real sobre el repo destino, via el CLI de Kilo.
 
+**Instalacion del CLI (2026-10-09, reemplaza "localizar kilo.exe" como paso manual):** `npm install -g
+@kilocode/cli` instala los binarios `kilo`/`kilocode` en PATH (shims `kilo`/`kilo.cmd`/`kilo.ps1` en
+Windows -- NUNCA `kilo.exe`; ese nombre solo existe dentro de la extension de VSCode y ningun consumidor
+de este repo implementa su descubrimiento). Con el CLI instalado, el comando de abajo se invoca
+directamente como `kilo` (o `kilo.cmd` si el lanzador usa `subprocess.Popen(shell=False)`, que en
+Windows NO aplica `PATHEXT` -- ver leccion portable `obs-windows-subprocess-shell-false-ignores-pathext`),
+sin necesidad de resolver ninguna ruta a mano.
+
 Comando canonico (orden exacto, `--` como separador OBLIGATORIO antes del mensaje -- sin el, el parser
 de Kilo trata el mensaje como una ruta de fichero adicional y falla):
 
-    "<ruta-a-kilo.exe>" run \
+    kilo run \
       --auto \
       -m nan/<modelo> \
       --dir "<ruta-absoluta-al-repo-destino>" \

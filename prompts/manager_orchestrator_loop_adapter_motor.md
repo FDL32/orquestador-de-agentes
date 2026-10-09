@@ -53,7 +53,9 @@ medidos (2026-10-08, sesion fria + prompt pegado sin tarea; sesion con tarea que
      (`challenger_nan_deepseek_flash`, `challenger_nan_qwen`, `challenger_nan_qwen_flash`,
      `challenger_nan_glm_flash`, `challenger_nan_gemma`, `challenger_nan_mimo_flash`) estan
      en `.agent/config/agents.json` -> `ensemble_profiles`; no hace falta localizar el
-     ejecutable a mano, la config ya declara `backends.kilo.executable`.
+     ejecutable a mano -- el CLI `@kilocode/cli` (npm) lo deja en PATH como `kilo`, y la
+     config ya declara `backends.kilo.executable: "kilo.cmd"` (2026-10-09: corregido desde
+     `kilo.exe`, que nunca existio con ese nombre desde `subprocess.Popen(shell=False)`).
    - Para lanzar una **ronda de revision adversarial** (veredicto corto, no implementacion):
      el comando completo vive en `prompts/ensemble_loop.md` seccion 3.4.
    - La distincion entre ambos (cuando usar cada uno) es la tabla de
