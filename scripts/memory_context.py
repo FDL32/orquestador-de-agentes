@@ -343,6 +343,16 @@ def _file_contains_record(path: Path, wanted: tuple) -> bool:
     mismo fail-soft que ya usan ``_read_observations``/``read_archive_observations``
     para una sola linea defectuosa (el fichero entero no deja de escanearse
     por una linea rota).
+
+    Codex Review 2 (WOT-2026-049j, commit d5b60b7): la version original solo
+    capturaba ``(ValueError, TypeError)`` alrededor de ``json.loads`` +
+    ``record_key``, dejando sin capturar dos casos reales: una linea JSON
+    valida pero de tipo NO-dict (p.ej. ``[]``), que hace que
+    ``record_key``'s ``record.get(...)`` lance ``AttributeError``; y bytes no
+    UTF-8 validos, que hacen que ``read_text(encoding="utf-8")`` lance
+    ``UnicodeDecodeError`` (subclase de ``ValueError`` en realidad, pero
+    `OSError` no la cubre y quedaba fuera del catch de lectura). Ambos se
+    degradan ahora a "no coincide esta linea/fichero", nunca a un traceback.
     """
     import json
 
@@ -350,7 +360,7 @@ def _file_contains_record(path: Path, wanted: tuple) -> bool:
 
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return False
     for line in lines:
         if not line.strip():
@@ -358,7 +368,7 @@ def _file_contains_record(path: Path, wanted: tuple) -> bool:
         try:
             if record_key(json.loads(line)) == wanted:
                 return True
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, AttributeError):
             continue
     return False
 
@@ -386,7 +396,23 @@ def _locate_provenance_file(entry: dict) -> str:
     After: devuelve una cadena legible ("observations.jsonl (L1, activo)",
         "observations.2026-07.jsonl (archive, motor)", ...), o
         "desconocido (no se encontro en ningun fichero escaneado)" si no
-        aparece en ninguna de las rutas escaneadas -- nunca lanza.
+        aparece en ninguna de las rutas escaneadas, O si cualquier paso de
+        resolucion de rutas falla -- nunca lanza (Codex Review 2,
+        WOT-2026-049j: la version original no capturaba fallos de
+        ``resolve_project_root``/``_resolve_motor_root``/``iter_archive_months``,
+        contradiciendo su propio contrato "nunca lanza").
+    """
+    try:
+        return _locate_provenance_file_unsafe(entry)
+    except Exception:
+        return "desconocido (no se encontro en ningun fichero escaneado)"
+
+
+def _locate_provenance_file_unsafe(entry: dict) -> str:
+    """Cuerpo real de `_locate_provenance_file`, sin el catch-all exterior.
+
+    Separada para que el catch-all de la funcion publica no oculte, al
+    leerla, DONDE puede fallar -- esta funcion puede lanzar; la publica no.
     """
     from bus.memory_loader import _get_observations_file, _resolve_motor_root
     from bus.portable_memory_archive import record_key
@@ -725,6 +751,17 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
         # TOPIC (puede devolver varias entradas bajo el mismo topic -- el DoD
         # dice "para un id/topic dado", no "exactamente una entrada").
         wanted = args.why.strip()
+        if not wanted:
+            # Codex Review 2 (WOT-2026-049j): `if args.why:` acepta
+            # "   " (solo espacios) porque la cadena es truthy ANTES del
+            # .strip(); sin este rechazo explicito, un topic vacio buscaria
+            # entradas con `topic == ""`, un caso legitimo pero NO lo que el
+            # usuario quiso decir al pasar solo espacios.
+            print(
+                "--why necesita un id (obs-xxx) o topic no vacio.",
+                file=sys.stderr,
+            )
+            return 1
         pool = recall_observations(query=None, limit=1_000_000)
         if wanted.startswith("obs-"):
             matches = [obs for obs in pool if str(obs.get("id") or "") == wanted]
