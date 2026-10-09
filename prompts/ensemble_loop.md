@@ -159,15 +159,15 @@ tests contra `ensemble_dispatch`):
    `[fallback] ... sustituido por 'proposer_claude'` --, esa respuesta NO es una lente independiente.
 4. Gobierno: `python scripts/check_loop_execution.py --commit-sha <sha> --project-root <destino>`.
 
-### 3.7 Cuarentena por cuota/red del canal `agent` (WOT-2026-086k)
+### 3.7 Cuarentena por cuota/red/`unknown` del canal `agent` (WOT-2026-086k, ampliado por WOT-2026-086u)
 
 Un fallo del canal `agent` (codex/opencode) llega como TEXTO, no como excepcion, asi que no pasa por la
 sustitucion automatica. Desde WOT-2026-086k `loop-round` SI escribe el evento de fallback cuando ese texto
-trae el prefijo `[transport-failed]` y la clase derivada es `quota_exhausted` o `network_timeout`: el evento
-va a `fallback_events.jsonl` y de ahi `quarantine --sync` lo proyecta en `backend_quarantine.json`. La
-condicion exige ademas `channel == "agent"`: un backend `api` cuyo texto empezara por el prefijo no escribe
-evento. No hay sustitucion automatica del canal `agent` en este ticket: `fallback_profile`,
-`fallback_backend` y `fallback_backend_key` quedan `null`.
+trae el prefijo `[transport-failed]` y la clase derivada es `quota_exhausted` o `network_timeout`; desde
+WOT-2026-086u la clase `unknown` TAMBIEN lo hace (p.ej. el `UnknownError` de opencode-go): el evento va a
+`fallback_events.jsonl` y de ahi `quarantine --sync` lo proyecta en `backend_quarantine.json`. La condicion
+exige ademas `channel == "agent"`: un backend `api` cuyo texto empezara por el prefijo no escribe evento.
+No hay sustitucion automatica del canal `agent`: `fallback_profile`/`fallback_backend`/`fallback_backend_key` = `null`.
 
 El parser reconoce las TRES variantes con que codex da la hora de reset (en hora LOCAL), sin distinguir
 mayusculas: solo-hora ("try again at 3:05 PM"), con fecha explicita ("or try again at Jul 28th, 2026 7:56
@@ -175,7 +175,7 @@ PM") y sin hora ("or try again later.", que cae al TTL por defecto). El ancla te
 EVENTO de fallo, no el momento del `sync`: una hora solo-hora ya pasada respecto al evento cae al TTL,
 nunca se asume el dia siguiente. Si hay varias menciones de `try again` (codex hace eco del prompt), manda
 la ULTIMA. `failure_detail` guarda esa ultima linea recortada a 300 caracteres; si no hay ninguna, los
-ultimos 300 caracteres de la cola de stderr.
+ultimos 300 caracteres de la cola de stderr. La clase `unknown` JAMAS deriva `reset_at`: usa el TTL por defecto.
 
 Efecto: VISIBILIDAD, no bloqueo. La lente aparece en `quarantine --sync` y queda excluida como sustituto y
 de `smoke`/`preflight`; NO bloquea `loop-round`, que sigue llamando al perfil pedido aunque este en

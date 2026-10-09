@@ -3290,16 +3290,31 @@ def _quota_scope(backend: str | None, config: dict | None) -> str:
     return scope if scope in QUOTA_SCOPES else _DEFAULT_QUOTA_SCOPE
 
 
-def _quarantine_buckets(
+def _quarantine_reset_at(failure_class: str, failure_detail, ts: datetime):
+    """Hora de reset explicita del proveedor, o `None` si la clase no la trae.
+
+    WOT-2026-086u: la clase `unknown` JAMAS deriva `reset_at` (un `UnknownError`
+    no trae hora parseable; se declara `None` por diseno, no por casualidad del
+    parser) y su bucket cae al TTL por defecto. El resto de clases usan el parser
+    de hora existente (`WOT-2026-086k` para `quota_exhausted`).
+    """
+    if failure_class == _FAILURE_CLASS_UNKNOWN:
+        return None
+    return _parse_provider_reset_at(failure_detail, ts)
+
+
+def _quarantine_buckets(  # noqa: C901 - WOT-2026-086u anade una rama MANDADA (unknown) a una funcion ya en el umbral (10)
     raw: bytes, *, now: datetime, config: dict | None = None
 ) -> dict:
     """Agrega los eventos de fallback por clave de cuarentena.
 
     Un evento por rama: `network_timeout` -> (by_profile, perfil);
     `quota_exhausted` -> (by_profile, perfil) salvo que el proveedor declare
-    `quota_scope: cuenta`, entonces (by_backend, backend) (WOT-2026-086c).
-    El resto de clases no agrega nada (decision de la Seccion 3 + hallazgo 3
-    de la ronda).
+    `quota_scope: cuenta`, entonces (by_backend, backend) (WOT-2026-086c);
+    `unknown` -> (by_profile, perfil) SIN `reset_at` (un `UnknownError` no trae
+    ninguna hora de reset parseable, asi que el bucket cae al TTL por defecto)
+    (WOT-2026-086u, `DEC-086U-001` Decision 1). El resto de clases no agrega
+    nada (decision de la Seccion 3 + hallazgo 3 de la ronda).
     """
     buckets: dict[tuple[str, str], dict] = {}
     for line in raw.decode("utf-8").splitlines():
@@ -3317,6 +3332,12 @@ def _quarantine_buckets(
                 section, key = "by_profile", ev.get("failed_profile")
         elif cls == _FAILURE_CLASS_NETWORK:
             section, key = "by_profile", ev.get("failed_profile")
+        elif cls == _FAILURE_CLASS_UNKNOWN:
+            # WOT-2026-086u (DEC-086U-001, Decision 1): se agrega igual que
+            # `network_timeout` (por perfil) pero SIN derivar `reset_at` -- un
+            # `UnknownError` no trae hora de reset parseable. La rama NO se
+            # fusiona con las existentes (Forbidden Surface del contrato).
+            section, key = "by_profile", ev.get("failed_profile")
         else:
             continue
         if not key:
@@ -3325,7 +3346,8 @@ def _quarantine_buckets(
         # WOT-2026-086k (Decision 1): el ancla del parser es el `ts` del EVENTO
         # (no el momento del `sync`); una hora solo-hora vencida respecto al
         # evento cae al TTL, nunca se asume "manana".
-        reset = _parse_provider_reset_at(ev.get("failure_detail"), ts)
+        # WOT-2026-086u: `unknown` nunca deriva `reset_at` (ver `_quarantine_reset_at`).
+        reset = _quarantine_reset_at(cls, ev.get("failure_detail"), ts)
         b = buckets.get((section, key))
         if b is None:
             buckets[(section, key)] = {
@@ -5201,7 +5223,14 @@ def run_loop_round(
         profile.get("channel") == "agent"
     ):
         _fail_class = _classify_transport_failure(RuntimeError(_fail_text))
-        if _fail_class in (_FAILURE_CLASS_QUOTA, _FAILURE_CLASS_NETWORK):
+        # WOT-2026-086u: `unknown` se agrega a la lista EXPLICITA (nunca un
+        # `else` generico que capture cualquier clase). Una clase fuera de las
+        # TRES sigue sin escribir evento.
+        if _fail_class in (
+            _FAILURE_CLASS_QUOTA,
+            _FAILURE_CLASS_NETWORK,
+            _FAILURE_CLASS_UNKNOWN,
+        ):
             append_fallback_event(
                 project_root,
                 {

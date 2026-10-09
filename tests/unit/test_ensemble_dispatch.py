@@ -4741,11 +4741,15 @@ def test_086k_loop_round_agent_con_timeout_de_red_escribe_evento(tmp_path):
 
 
 def test_086k_agent_fallo_sin_clase_de_cuota_no_escribe_evento(tmp_path):
-    """Control NEGATIVO: prefijo de transporte fallido pero clase `unknown`
-    (sin marcador de cuota/red) -> ningun evento nuevo."""
+    """Control NEGATIVO: prefijo de transporte fallido pero una clase FUERA de
+    las tres que escriben evento (`quota_exhausted`/`network_timeout`/`unknown`),
+    aqui `model_unavailable`, -> ningun evento nuevo. WOT-2026-086u promovio
+    `unknown` a la lista que SI escribe, por eso el control usa otra clase: la
+    condicion sigue acotada a las TRES explicitas, nunca un `else` generico."""
     config = _config_agent_codex()
     reply = (
-        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\nCORRECTO: el proceso ha sido terminado."
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
+        f"{ed._STDERR_MARKER}HTTP 400: model_not_found"
     )
     _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
     assert _fallback_events(tmp_path) == []
@@ -4768,12 +4772,14 @@ def test_086k_canal_api_con_el_prefijo_no_escribe_evento(tmp_path):
 
 def test_086k_eco_del_prompt_con_try_again_sin_cuota_no_escribe_evento(tmp_path):
     """Control NEGATIVO: `try again at` dentro del ECO del prompt, sin marcador
-    de cuota, no clasifica como cuota/red -> ningun evento."""
+    de cuota, no clasifica como cuota/red. WOT-2026-086u promovio `unknown` a la
+    lista que escribe, asi que aqui el error REAL es `model_unavailable` (fuera
+    de las tres clases) para seguir cubriendo el borde: ningun evento."""
     config = _config_agent_codex()
     reply = (
         f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
         f"{ed._STDERR_MARKER}el prompt decia 'si fallas, try again at 3:05 PM' "
-        "pero el error real es un 400 con parametro invalido"
+        "pero el error real es model_not_found"
     )
     _run_agent_round(tmp_path, config, _FakeTransport(replies=[reply]))
     assert _fallback_events(tmp_path) == []
@@ -4872,6 +4878,145 @@ def test_086k_extremo_a_extremo_run_loop_round_a_cuarentena(tmp_path):
     entry = data["by_profile"]["challenger_codex"]
     assert entry["expires_at"] == "2099-06-01T10:15:00+00:00"
     assert entry["source"] == "explicit_provider_date"
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-086u: la clase `unknown` del canal `agent` tambien cuarentena
+# (`DEC-086U-001`). DOS puntos: el filtro de escritura de `run_loop_round` y la
+# agregacion de `_quarantine_buckets`.
+# --------------------------------------------------------------------------- #
+
+
+def _agent_unknown_reply() -> str:
+    """Replica del fallo real medido (opencode-go): el proceso devuelve `rc=1` y
+    un JSON con `name`/`data.message`/`data.ref`, sin marcador de cuota/red ni
+    hora de reset parseable -> clasifica como `unknown`."""
+    payload = json.dumps(
+        {
+            "name": "UnknownError",
+            "data": {"message": "Unexpected server error", "ref": "err_086u_0001"},
+        }
+    )
+    return f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n{ed._STDERR_MARKER}{payload}"
+
+
+def test_086u_loop_round_agent_con_unknown_escribe_un_evento_de_fallback(tmp_path):
+    """D1 (M1): un fallo `unknown` del canal `agent` (UnknownError de
+    opencode-go, sin marcador de cuota/red) SI escribe el evento de fallback.
+    Sin el cambio del filtro de `run_loop_round`, la rama agent lo descartaba."""
+    config = _config_agent_codex()
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[_agent_unknown_reply()]))
+
+    events = _fallback_events(tmp_path)
+    assert len(events) == 1, f"debe escribir UN evento de fallback, hubo {len(events)}"
+    ev = events[0]
+    assert ev["failure_class"] == ed._FAILURE_CLASS_UNKNOWN
+    assert ev["failed_profile"] == "challenger_codex"
+    assert ev["failed_backend"] == "codex"
+    assert ev["fallback_profile"] is None
+    assert ev["fallback_backend"] is None
+    assert ev["fallback_backend_key"] is None
+
+
+def test_086u_control_negativo_condicion_sigue_acotada_a_tres_clases(tmp_path):
+    """Control NEGATIVO de D1: la condicion nunca se convierte en un `else`
+    generico. Una clase FUERA de las tres explicitas (`model_unavailable`) NO
+    escribe evento, mientras `unknown` si lo hace: el borde son las TRES clases."""
+    config = _config_agent_codex()
+    excluida = (
+        f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\n"
+        f"{ed._STDERR_MARKER}HTTP 400: model_not_found"
+    )
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[excluida]))
+    assert _fallback_events(tmp_path) == [], "model_unavailable NO escribe evento"
+
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[_agent_unknown_reply()]))
+    assert len(_fallback_events(tmp_path)) == 1, "unknown SI escribe evento"
+
+
+def test_086u_quarantine_buckets_agrega_unknown_sin_reset_at(tmp_path):
+    """D2 (M2): `_quarantine_buckets` agrega `unknown` por perfil con
+    `reset_at=None` SIEMPRE (nunca `_parse_provider_reset_at`), y
+    `_quarantine_tables` cae al TTL por defecto. No-regresion explicitamente
+    verificada para `quota_exhausted` (fecha de proveedor) y `network_timeout`."""
+    now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+    ts = (now - timedelta(minutes=5)).isoformat()
+    raw = (
+        json.dumps(
+            {
+                "ts": ts,
+                "failed_profile": "p_quota",
+                "failed_backend": "codex",
+                "failure_class": "quota_exhausted",
+                "failure_detail": (
+                    "allowance exhausted; counter resets on 2099-06-01 00:00 UTC"
+                ),
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "ts": ts,
+                "failed_profile": "p_net",
+                "failed_backend": "nvidia_api",
+                "failure_class": "network_timeout",
+                "failure_detail": "socket timed out after 90s",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "ts": ts,
+                "failed_profile": "p_unknown",
+                "failed_backend": "codex",
+                "failure_class": "unknown",
+                "failure_detail": "UnknownError: Unexpected server error",
+            }
+        )
+        + "\n"
+    ).encode("utf-8")
+    config = _config()
+    buckets = ed._quarantine_buckets(raw, now=now, config=config)
+
+    unknown = buckets[("by_profile", "p_unknown")]
+    assert unknown["reason_class"] == "unknown"
+    assert unknown["reset_at"] is None, "unknown NUNCA deriva reset_at"
+    # No-regresion explicita de las dos ramas existentes:
+    quota = buckets[("by_profile", "p_quota")]
+    assert quota["reason_class"] == "quota_exhausted"
+    assert quota["reset_at"] == datetime(2099, 6, 1, 0, 0, tzinfo=timezone.utc)
+    net = buckets[("by_profile", "p_net")]
+    assert net["reason_class"] == "network_timeout"
+    assert net["reset_at"] is None
+
+    by_backend, by_profile = ed._quarantine_tables(buckets, config=config, now=now)
+    assert by_backend == {}
+    entry = by_profile["p_unknown"]
+    assert entry["reason_class"] == "unknown"
+    assert entry["source"] == "default_ttl", "unknown usa el TTL por defecto"
+    expected = (now - timedelta(minutes=5)) + ed._QUARANTINE_TTL
+    assert entry["expires_at"] == expected.isoformat()
+    assert by_profile["p_quota"]["source"] == "explicit_provider_date"
+    assert by_profile["p_net"]["source"] == "default_ttl"
+
+
+def test_086u_extremo_a_extremo_unknown_a_cuarentena(tmp_path):
+    """D3: `run_loop_round` (transporte agent falso con UnknownError) -> evento
+    en `fallback_events.jsonl` -> `regenerate_quarantine` ->
+    `by_profile[challenger_codex]` con `reason_class=unknown` y `expires_at`
+    coherente con el TTL por defecto (no `None`, no fecha de proveedor)."""
+    config = _config_agent_codex()
+    _run_agent_round(tmp_path, config, _FakeTransport(replies=[_agent_unknown_reply()]))
+    assert len(_fallback_events(tmp_path)) == 1
+
+    ed.regenerate_quarantine(tmp_path, config=config)
+    data = json.loads((tmp_path / ed.QUARANTINE_REL).read_text(encoding="utf-8"))
+    entry = data["by_profile"]["challenger_codex"]
+    assert entry["reason_class"] == "unknown"
+    assert entry["source"] == "default_ttl"
+    expires = datetime.fromisoformat(entry["expires_at"])
+    now = datetime.now(timezone.utc)
+    assert now < expires <= now + ed._QUARANTINE_TTL
 
 
 def test_read_quarantine_drops_expired_and_unreadable(tmp_path):
@@ -5017,8 +5162,9 @@ def test_delegate_path_respects_quarantine(tmp_path, monkeypatch):
 def test_regenerate_quarantine_scopes_by_cause(tmp_path):
     """`quarantine --sync` deriva de fallback_events (unico portador de
     failure_class): quota_exhausted -> by_backend con fecha del proveedor
-    (Caso A), network_timeout -> by_profile con TTL (Caso B), unknown NO
-    genera cuarentena, y un evento con fecha de reset YA pasada se purga."""
+    (Caso A), network_timeout -> by_profile con TTL (Caso B), unknown ->
+    by_profile con TTL (WOT-2026-086u), y un evento con fecha de reset YA
+    pasada se purga."""
     now = datetime.now(timezone.utc)
     events = [
         {
@@ -5075,12 +5221,22 @@ def test_regenerate_quarantine_scopes_by_cause(tmp_path):
     assert quota["triggered_by_profile"] == "challenger_nan_glm_flash"
     assert quota["renewal_count"] == 0
 
-    assert list(data["by_profile"]) == ["challenger_nvidia_kimi"]
+    assert list(data["by_profile"]) == [
+        "challenger_nvidia_kimi",
+        "challenger_groq_qwen",
+    ], "red y unknown caen ambos en by_profile (WOT-2026-086u)"
     net = data["by_profile"]["challenger_nvidia_kimi"]
     assert net["source"] == "default_ttl"
     assert net["reason_class"] == "network_timeout"
     expires = datetime.fromisoformat(net["expires_at"])
     assert expires > datetime.now(timezone.utc), "TTL de 1h desde el ultimo evento"
+
+    unknown = data["by_profile"]["challenger_groq_qwen"]
+    assert unknown["reason_class"] == "unknown"
+    assert unknown["source"] == "default_ttl", (
+        "unknown NUNCA lleva fecha de proveedor; cae al TTL por defecto"
+    )
+    assert datetime.fromisoformat(unknown["expires_at"]) > datetime.now(timezone.utc)
     assert "groq_api" not in data["by_backend"]
     assert data["fallback_events_sha256"]
     assert "NUNCA editar a mano" in data["derivado"]
