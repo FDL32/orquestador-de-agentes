@@ -1560,3 +1560,142 @@ def test_fingerprint_detects_distinct_content_under_the_same_key() -> None:
     a = {"topic": "x", "source_ticket": "t", "signal": "senal A"}
     b = {"topic": "x", "source_ticket": "t", "signal": "senal B"}
     assert fingerprint(a) != fingerprint(b)
+
+
+# --- WOT-2026-045f: vigencia (status/supersedes/refuted_by) en el renderer ---
+
+
+def test_045f_refuted_entry_never_occupies_a_cap_slot():
+    """MUTATION del DoD: una entrada `refuted` nunca compite por el `cap`.
+
+    Fixture: 3 entradas activas + 1 refutada, todas con timestamps tales que
+    la refutada seria la MAS RECIENTE si compitiera por recencia. cap=3 debe
+    mostrar las 3 ACTIVAS (nunca la refutada desplazando a una de ellas) y
+    `showing the 3 newest` debe referirse a esas 3, no a 4.
+
+    MUTACION ALCANZABLE: si el filtro de status se quita (volver al
+    comportamiento viejo), la entrada refutada -- la mas nueva por
+    timestamp -- desplazaria a la activa mas vieja del `shown`, y este test
+    cae (el topic de la refutada apareceria entre las 3 primeras).
+    """
+    activas = [
+        {
+            "id": f"obs-activa-{i}",
+            "timestamp": f"2026-07-0{i}T00:00:00+00:00",
+            "topic": f"activa-{i}",
+            "signal": f"leccion activa {i}",
+            "source": "test",
+            "source_ticket": "WOT-2026-045f",
+        }
+        for i in (1, 2, 3)
+    ]
+    refutada = {
+        "id": "obs-refutada",
+        "timestamp": "2026-07-09T00:00:00+00:00",  # la MAS reciente de todas
+        "topic": "topic-refutado",
+        "signal": "leccion que resulto falsa",
+        "source": "test",
+        "source_ticket": "WOT-2026-045f",
+        "status": "refuted",
+        "refuted_by": "obs-activa-3",
+    }
+    text = memory_loader._format_archive_as_text(
+        [*activas, refutada], cap=3, total_override=4
+    )
+    main_index, _, stale_section = text.partition("## Refutadas o supersedidas")
+    assert "topic-refutado" not in main_index, (
+        "la entrada refutada no puede aparecer en el indice principal con el "
+        "mismo rango que una activa"
+    )
+    for i in (1, 2, 3):
+        assert f"activa-{i}" in main_index, (
+            f"activa-{i} debio quedar dentro del cap; si no aparece, el "
+            "filtro de status esta excluyendo de mas"
+        )
+    assert "topic-refutado" in stale_section, (
+        "la entrada refutada debe seguir siendo alcanzable, en su propia seccion"
+    )
+    assert "[REFUTADA" in stale_section
+    assert "obs-activa-3" in stale_section, (
+        "la seccion de refutadas debe citar el id que la refuta"
+    )
+
+
+def test_045f_superseded_entry_is_annotated_and_demoted():
+    """Una entrada `superseded` tambien sale del cupo principal y se anota."""
+    activa = {
+        "id": "obs-activa",
+        "timestamp": "2026-07-01T00:00:00+00:00",
+        "topic": "sigue-vigente",
+        "signal": "leccion vigente",
+        "source": "test",
+        "source_ticket": "WOT-2026-045f",
+    }
+    supersedida = {
+        "id": "obs-vieja",
+        "timestamp": "2026-07-02T00:00:00+00:00",
+        "topic": "topic-supersedido",
+        "signal": "version vieja de la leccion",
+        "source": "test",
+        "source_ticket": "WOT-2026-045f",
+        "status": "superseded",
+        "superseded_by": "obs-nueva",
+    }
+    text = memory_loader._format_archive_as_text([activa, supersedida])
+    main_index, _, stale_section = text.partition("## Refutadas o supersedidas")
+    assert "topic-supersedido" not in main_index
+    assert "sigue-vigente" in main_index
+    assert "[SUPERSEDIDA, ver obs-nueva]" in stale_section
+    assert "topic-supersedido" in stale_section
+
+
+def test_045f_entry_without_status_behaves_exactly_as_active():
+    """Compatibilidad hacia atras: una entrada SIN `status` (como las ~185
+    existentes) debe aparecer en el indice principal exactamente igual que
+    antes de este ticket -- la ausencia nunca la saca del cupo.
+    """
+    sin_status = {
+        "id": "obs-legacy",
+        "timestamp": "2026-07-01T00:00:00+00:00",
+        "topic": "topic-legacy",
+        "signal": "leccion vieja sin campo status",
+        "source": "test",
+        "source_ticket": "WOT-2026-045f",
+    }
+    text = memory_loader._format_archive_as_text([sin_status])
+    assert "topic-legacy" in text
+    assert "## Refutadas o supersedidas" not in text
+
+
+def test_045f_refined_entry_is_not_demoted():
+    """`refined` NO es un estado de baja: una leccion refinada sigue vigente
+    (solo acotada por una posterior), a diferencia de refuted/superseded.
+    """
+    refinada = {
+        "id": "obs-refinada",
+        "timestamp": "2026-07-01T00:00:00+00:00",
+        "topic": "topic-refinado",
+        "signal": "leccion refinada por una posterior, pero sigue siendo cierta",
+        "source": "test",
+        "source_ticket": "WOT-2026-045f",
+        "status": "refined",
+    }
+    text = memory_loader._format_archive_as_text([refinada])
+    assert "## Refutadas o supersedidas" not in text
+    main_index, _, _ = text.partition("## Refutadas o supersedidas")
+    assert "topic-refinado" in main_index
+
+
+def test_045f_no_stale_entries_omits_the_section_entirely():
+    """Sin ninguna entrada refuted/superseded, la seccion nueva no aparece
+    -- ni siquiera vacia (no inflar el indice para el caso comun de hoy)."""
+    activa = {
+        "id": "obs-x",
+        "timestamp": "2026-07-01T00:00:00+00:00",
+        "topic": "x",
+        "signal": "y",
+        "source": "test",
+        "source_ticket": "WOT-2026-045f",
+    }
+    text = memory_loader._format_archive_as_text([activa])
+    assert "Refutadas o supersedidas" not in text

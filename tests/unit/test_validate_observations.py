@@ -23,11 +23,14 @@ from validate_observations import (
     validate_category,
     validate_confidence,
     validate_domain,
+    validate_id_ref,
+    validate_id_ref_array,
     validate_impact,
     validate_observation,
     validate_signal,
     validate_source,
     validate_source_ticket,
+    validate_status,
     validate_surface,
     validate_timestamp,
     validate_topic,
@@ -300,6 +303,63 @@ class TestValidateSurface:
         assert validate_surface(["file.py", 123]) is not None
 
 
+class TestValidateStatus:
+    """Tests para validacion de status (WOT-2026-045f: vigencia, opcional)."""
+
+    def test_valid_values(self):
+        """Los 4 valores del enum son validos."""
+        for value in ("active", "refined", "refuted", "superseded"):
+            assert validate_status(value) is None
+
+    def test_valid_none(self):
+        """status ausente (None) es valido -- equivale a 'active' por defecto."""
+        assert validate_status(None) is None
+
+    def test_invalid_not_string(self):
+        """status no es string."""
+        assert validate_status(123) is not None
+
+    def test_invalid_value(self):
+        """status fuera del enum."""
+        assert validate_status("vigente") is not None
+
+
+class TestValidateIdRef:
+    """Tests para refuted_by/superseded_by (WOT-2026-045f: id simple, opcional)."""
+
+    def test_valid_string(self):
+        assert validate_id_ref("obs-abc123", "refuted_by") is None
+
+    def test_valid_none(self):
+        assert validate_id_ref(None, "refuted_by") is None
+
+    def test_invalid_not_string(self):
+        assert validate_id_ref(123, "refuted_by") is not None
+
+    def test_invalid_empty(self):
+        assert validate_id_ref("", "superseded_by") is not None
+
+
+class TestValidateIdRefArray:
+    """Tests para supersedes/refines/related (WOT-2026-045f: array de ids, opcional)."""
+
+    def test_valid_array(self):
+        assert validate_id_ref_array(["obs-a", "obs-b"], "supersedes") is None
+        assert validate_id_ref_array([], "related") is None
+
+    def test_valid_none(self):
+        assert validate_id_ref_array(None, "refines") is None
+
+    def test_invalid_not_array(self):
+        assert validate_id_ref_array("obs-a", "supersedes") is not None
+
+    def test_invalid_element_not_string(self):
+        assert validate_id_ref_array(["obs-a", 123], "supersedes") is not None
+
+    def test_invalid_element_empty_string(self):
+        assert validate_id_ref_array(["obs-a", ""], "related") is not None
+
+
 class TestValidateObservation:
     """Tests para validacion de una observacion completa."""
 
@@ -432,6 +492,76 @@ class TestValidateObservation:
         errors = validate_observation(record, line_num=1)
         assert len(errors) == 1
         assert "impact" in errors[0]
+
+    def test_canonical_entry_without_status_valid(self):
+        """WOT-2026-045f: entrada SIN status (como las ~185 existentes) sigue
+        valida -- la ausencia nunca es error, es el default implicito 'active'.
+        """
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "mi-patron",
+            "signal": "Descripcion del problema",
+            "source": "human_audit_WP-2026-154",
+            "domain": "delivery-hygiene",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-177",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 0
+
+    def test_canonical_entry_with_status_and_relations_valid(self):
+        """WOT-2026-045f: entrada con status + relaciones nuevas pasa validacion."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "mi-patron-refinado",
+            "signal": "Correccion de un hallazgo anterior",
+            "source": "human_audit_WP-2026-200",
+            "domain": "delivery-hygiene",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-200",
+            "status": "active",
+            "supersedes": ["obs-vieja1"],
+            "refines": ["obs-vieja2"],
+            "related": [],
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 0
+
+    def test_canonical_entry_invalid_status(self):
+        """WOT-2026-045f: status fuera del enum es rechazado."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "mi-patron",
+            "signal": "Descripcion del problema",
+            "source": "test",
+            "domain": "testing",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-177",
+            "status": "vigente",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 1
+        assert "status" in errors[0]
+
+    def test_canonical_entry_refuted_with_refuted_by_valid(self):
+        """WOT-2026-045f: entrada refutada con referencia a la que la refuta."""
+        record = {
+            "timestamp": "2026-05-27T12:00:00Z",
+            "topic": "mi-patron-viejo",
+            "signal": "Resulto ser falso",
+            "source": "test",
+            "domain": "testing",
+            "confidence": 0.9,
+            "applies_to": "code",
+            "source_ticket": "WP-2026-177",
+            "status": "refuted",
+            "refuted_by": "obs-nueva1",
+        }
+        errors = validate_observation(record, line_num=1)
+        assert len(errors) == 0
 
     def test_legacy_entry_invalid_category(self):
         """Category invalida en entrada legacy."""

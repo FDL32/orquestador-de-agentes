@@ -71,6 +71,13 @@ VALID_APPLIES_TO = {"code", "mixed", "docs", "all"}
 VALID_IMPACTS = {"low", "medium", "high"}
 VALID_CATEGORIES = {"convention", "decision", "fact", "pattern"}
 
+# WOT-2026-045f: vigencia de una leccion. Opcional -- su AUSENCIA es la
+# migracion implicita: las ~185 entradas existentes sin este campo se tratan
+# como "active" (ver validate_status), nunca como error de schema. Decision
+# tomada por DESIGN_REVIEW (3 lentes, loop-id EXPLORATORY-vigencia-schema-045f,
+# convergencia 3/3 sin discrepancia).
+VALID_STATUSES = {"active", "refined", "refuted", "superseded"}
+
 # Patron para timestamp ISO-8601
 ISO8601_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
@@ -197,6 +204,54 @@ def validate_surface(value: Any) -> str | None:
     return None
 
 
+def validate_status(value: Any) -> str | None:
+    """Validate status field (optional enum: active|refined|refuted|superseded).
+
+    WOT-2026-045f: la AUSENCIA del campo es valida (equivale a "active" por
+    defecto implicito -- no rompe el archive existente). Si el campo SI esta
+    presente, se valida contra el enum, igual que ya hace `validate_impact`.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return "status debe ser string"
+    if value not in VALID_STATUSES:
+        return f"status '{value}' debe ser uno de: {', '.join(sorted(VALID_STATUSES))}"
+    return None
+
+
+def validate_id_ref(value: Any, field_name: str) -> str | None:
+    """Validate a field that references another entry's stable `id` (string).
+
+    Used for `refuted_by` / `superseded_by` (WOT-2026-045f): a single `id`
+    naming the newer entry that invalidates this one.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return f"{field_name} debe ser string"
+    if not value.strip():
+        return f"{field_name} no puede estar vacio"
+    return None
+
+
+def validate_id_ref_array(value: Any, field_name: str) -> str | None:
+    """Validate a field that is an array of `id` references (strings).
+
+    Used for `supersedes` / `refines` / `related` (WOT-2026-045f): declared on
+    the NEW entry pointing at older entries it relates to -- the archive stays
+    append-only, so the old entry is never edited to carry the reverse link.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return f"{field_name} debe ser array de strings"
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            return f"cada elemento de {field_name} debe ser un id (string no vacio)"
+    return None
+
+
 def validate_anti_pattern_id(value: Any, has_anti_pattern_ref: bool) -> str | None:
     """
     Validate anti_pattern_id field (optional, but required if elevating bug to AP).
@@ -255,6 +310,34 @@ def _requires_anti_pattern_id(record: dict[str, Any]) -> bool:
     return bool(AP_SIGNAL_PATTERN.match(topic) or AP_SIGNAL_PATTERN.match(signal))
 
 
+def _validate_vigency_fields(
+    record: dict[str, Any], line_num: int, errors: list[str]
+) -> None:
+    """Validate the WOT-2026-045f vigency fields (all optional).
+
+    Extracted out of `_validate_optional_schema_fields` to keep that
+    function's branch count under the ruff C901 threshold -- this group of
+    fields is one cohesive concern (vigency/relations), not six unrelated
+    checks bolted onto the same function.
+    """
+    if "status" in record:
+        error = validate_status(record["status"])
+        if error:
+            errors.append(f"linea {line_num}: {error}")
+
+    for field_name in ("refuted_by", "superseded_by"):
+        if field_name in record:
+            error = validate_id_ref(record[field_name], field_name)
+            if error:
+                errors.append(f"linea {line_num}: {error}")
+
+    for field_name in ("supersedes", "refines", "related"):
+        if field_name in record:
+            error = validate_id_ref_array(record[field_name], field_name)
+            if error:
+                errors.append(f"linea {line_num}: {error}")
+
+
 def _validate_fields(
     record: dict[str, Any],
     line_num: int,
@@ -284,6 +367,8 @@ def _validate_optional_schema_fields(
         error = validate_impact(record["impact"])
         if error:
             errors.append(f"linea {line_num}: {error}")
+
+    _validate_vigency_fields(record, line_num, errors)
 
     if "anti_pattern_id" in record or _requires_anti_pattern_id(record):
         error = validate_anti_pattern_id(

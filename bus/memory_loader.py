@@ -583,15 +583,41 @@ def _format_archive_as_text(
     ~52 entries/month, so any fixed number is an expiry date. Instead this stays
     an index and says so, carrying the ``id`` that ``--recall`` needs to expand.
 
+    WOT-2026-045f: entries with ``status`` ``refuted``/``superseded`` are
+    split out BEFORE capping, never compete for the ``cap`` slots a vigent
+    entry would otherwise take, and are rendered in their own section with a
+    visible prefix. An entry with no ``status`` field is "active" by the
+    absence default (the ~185 pre-existing entries have none and must keep
+    behaving exactly as before). DESIGN_REVIEW (3 lenses, loop-id
+    EXPLORATORY-vigencia-schema-045f, 3/3 convergence): annotating alone
+    leaves the entry competing for rank (not falsifiable against the DoD's
+    MUTATION); demoting alone loses visible traceability. Both together is
+    the only shape where "never reaches bootstrap with the same rank as an
+    active entry" is a testable position claim, not a label on an otherwise
+    identical line.
+
     Before: ``observations`` may be empty.
     During: pure formatting, no I/O.
     After: returns markdown, or ``""``. Truncated entries carry both the marker
-        and their ``id``; entries under the cap are emitted whole.
+        and their ``id``; entries under the cap are emitted whole. Refuted or
+        superseded entries never occupy a ``shown`` slot; they are listed
+        after the main index, each prefixed with its status marker.
     """
     if not observations:
         return ""
+    # NOTA (WOT-2026-045f): este filtro corre ANTES de agrupar por origen en
+    # `_cap_preserving_origins`, que documenta por que su propio filtro de
+    # plantillas se aplica DENTRO de cada grupo (un origen 100% plantillas no
+    # debe vaciarse antes de que la cuota lo proteja). Un origen cuyas
+    # entradas fueran TODAS refuted/superseded compartiria ese mismo riesgo
+    # (desaparecer en vez de degradarse). No observado en el corpus real
+    # (medido 2026-10-09: 0 entradas con status todavia) y la guarda `or
+    # entries` de esa funcion ya cubre el caso "grupo vacio tras filtrar" --
+    # declarado como riesgo residual aceptado, no silencioso.
+    vigent = [o for o in observations if o.get("status") not in _STALE_STATUSES]
+    stale = [o for o in observations if o.get("status") in _STALE_STATUSES]
     total = total_override if total_override is not None else len(observations)
-    shown = observations if cap is None else _cap_preserving_origins(observations, cap)
+    shown = vigent if cap is None else _cap_preserving_origins(vigent, cap)
     lines = [
         "# Portable Memory (tracked archive)",
         "",
@@ -600,26 +626,58 @@ def _format_archive_as_text(
         "expand with `python scripts/memory_context.py --recall --query <topic>`.",
         "",
     ]
-    for obs in shown:
-        ts = str(obs.get("timestamp") or "")[:19]
-        topic = obs.get("topic", "general")
-        raw = str(obs.get("signal") or "")
-        obs_id = obs.get("id")
-        ticket = obs.get("source_ticket") or obs_id or "unknown"
-        if len(raw) > _ARCHIVE_SIGNAL_CAP:
-            signal = raw[:_ARCHIVE_SIGNAL_CAP].rstrip() + _TRUNCATION_MARKER
-            tag = f"{ticket} | id: {obs_id}" if obs_id else str(ticket)
-        else:
-            signal = raw
-            tag = str(ticket)
-        lines.append(f"- [{ts}] **{topic}**: {signal} ({tag})")
-    if total > len(shown):
+    lines.extend(_format_archive_line(obs) for obs in shown)
+    if total - len(shown) - len(stale) > 0:
         lines.append("")
         lines.append(
-            f"[{total - len(shown)} leccion(es) mas no mostrada(s) en este indice. "
-            "Alcanzalas con `--recall --query <termino>`.]"
+            f"[{total - len(shown) - len(stale)} leccion(es) mas no mostrada(s) en "
+            "este indice. Alcanzalas con `--recall --query <termino>`.]"
         )
+    if stale:
+        lines.append("")
+        lines.append(
+            f"## Refutadas o supersedidas ({len(stale)}), fuera del indice principal"
+        )
+        lines.append("")
+        for obs in stale:
+            marker = (
+                "[SUPERSEDIDA" if obs.get("status") == "superseded" else "[REFUTADA"
+            )
+            newer_id = obs.get("superseded_by") or obs.get("refuted_by")
+            tag = f", ver {newer_id}]" if newer_id else "]"
+            lines.append(_format_archive_line(obs, prefix=f"{marker}{tag} "))
     return "\n".join(lines)
+
+
+# WOT-2026-045f: estados que sacan una entrada del indice principal. "refined"
+# NO esta aqui a proposito: una entrada refinada sigue siendo vigente (solo
+# acotada por una posterior), no reemplazada -- solo refuted/superseded dejan
+# de ser una regla activa.
+_STALE_STATUSES = {"refuted", "superseded"}
+
+
+def _format_archive_line(obs: dict[str, Any], prefix: str = "") -> str:
+    """Render one archive entry as its index bullet (shared by both sections).
+
+    Before: ``obs`` is a single observation dict.
+    During: pure formatting, no I/O; truncates long signals exactly like the
+        main index always has. ``prefix`` (e.g. a stale-status marker) is
+        inserted right after the bullet dash, never concatenated onto a
+        second dash.
+    After: a single markdown bullet line, no trailing newline.
+    """
+    ts = str(obs.get("timestamp") or "")[:19]
+    topic = obs.get("topic", "general")
+    raw = str(obs.get("signal") or "")
+    obs_id = obs.get("id")
+    ticket = obs.get("source_ticket") or obs_id or "unknown"
+    if len(raw) > _ARCHIVE_SIGNAL_CAP:
+        signal = raw[:_ARCHIVE_SIGNAL_CAP].rstrip() + _TRUNCATION_MARKER
+        tag = f"{ticket} | id: {obs_id}" if obs_id else str(ticket)
+    else:
+        signal = raw
+        tag = str(ticket)
+    return f"- {prefix}[{ts}] **{topic}**: {signal} ({tag})"
 
 
 # --- Public API ---
