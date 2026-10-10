@@ -1658,3 +1658,102 @@ def test_078b_d5_main_signature_unchanged_and_default_path_still_ok(tmp_path):
     )
     dest = _archive_raw(tmp_path, work, row)
     assert _run_main(tmp_path, work, dest) == gl.EXIT_OK
+
+
+# =========================================================================== #
+# WOT-2026-066h -- invariantes pineadas de main()/classify() que NO tenian
+# ningun test (premise re-check: `grep -rn _resolve_destino_root tests/` -> 0).
+# No hay bug que arreglar: son ramas correctas sin ejercer; un refactor puede
+# abrirlas sin que nada las cace. Cada test lleva su mutacion alcanzable.
+# =========================================================================== #
+def test_066h_unresolved_destino_root_never_reaches_pair_home_root(
+    tmp_path, monkeypatch
+):
+    """DoD-1. main() con ``_resolve_destino_root -> (None, err)`` degrada a
+    EXIT_DEGRADED y JAMAS alcanza ``_pair_home_root`` (:960-966).
+
+    Ruta productiva SIN mocks: ni ``--project-root`` ni ``--workspace-root`` ->
+    el resolver real devuelve ``(None, razon)`` (:322-323); el test pinnea ese
+    hecho primero y luego el early-return. Un archivo valido con un par real
+    esta plantado a proposito: si alguien moviera el early-return POR DEBAJO
+    del enrutado per-home, el espia de ``_pair_home_root`` lo registraria y el
+    test iria ROJO aunque el rc siguiera siendo 3.
+
+    MUTACION (aplicada y revertida contra produccion, ver BUILDER_REPORT):
+    eliminar el bloque ``if dest_root is None: return EXIT_DEGRADED`` -> main
+    cae en ``dest_root / ".agent"`` con dest_root=None -> TypeError -> ROJO.
+    Mover solo el return por debajo del loop by_home -> el espia pinta -> ROJO.
+    """
+    assert gl._resolve_destino_root(None, None)[0] is None, (
+        "premise: sin project-root ni workspace-root el resolver degrada solo"
+    )
+    _origin, work = _make_repo(tmp_path)
+    sha = _commit(work, "h.txt", "h\n", "WOT-2026-0H0H: landed")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    # Archivo con un par real: si el flujo avanzara, _pair_home_root seria invocado.
+    _archive_with(tmp_path, work, [("WOT-2026-0H0H", sha)])
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(gl, "_pair_home_root", lambda *a, **k: calls.append(a))
+
+    rc = gl.main(["--motor-root", str(work), "--ref", "origin/main"])
+    assert rc == gl.EXIT_DEGRADED, (
+        f"un destino no resoluble degrada la topologia (exit 3), no un crash "
+        f"contra None ni un OK silencioso; got exit {rc}"
+    )
+    assert calls == [], (
+        "el early-return degradado es la invariante: el enrutado per-root no "
+        f"puede recibir un dest_root inexistente; calls={calls}"
+    )
+
+
+def test_066h_phantom_sha_is_absent_never_ok(tmp_path):
+    """DoD-2. Un SHA fantasma -- no existe, o existe pero NO es ancestro de la
+    ref -- se clasifica como AUSENTE (WARN/PENDING/ERROR), nunca OK.
+
+    Las tres formas del fantasma, cada una con su hecho de setup comprobado
+    (anti floor-assertion: sin la comprobacion, el fixture podria estar
+    midiendo un SHA que SI aterrizo):
+      (a) sin objeto git y el ID en ningun subject        -> WARN
+      (b) objeto en la rama local, no ancestro de la ref  -> PENDING_GROUPED_PUSH
+      (c) objeto huerfano (reset/rebase), no alcanzable   -> ERROR
+    Ninguna puede ser OK: OK exige CAPA 1 (ancestro) o CAPA 2 (patch-id en la
+    ref), i.e. que el objeto REALMENTE aterrizo.
+
+    MUTACION: tratar "tiene objeto" como aterrizado (sustituir CAPA 1 por
+    _has_object) -> (b)/(c) se vuelven OK -> ROJO. Borrar la rama WARN de
+    sin-objeto -> (a) cae a otro veredicto y el assert exacto -> ROJO.
+    """
+    _origin, work = _make_repo(tmp_path)
+
+    # (a) SHA inexistente, ID jamas mencionado -> WARN, nunca OK.
+    phantom = "f" * 40
+    assert gl._has_object(phantom, work) is False
+    assert gl._landed_by_subject("WOT-2026-0H1H", "origin/main", work) is False
+    verdict_a, _ = _classify(work, "WOT-2026-0H1H", phantom)
+    assert verdict_a == gl.WARN
+    assert verdict_a != gl.OK
+
+    # (b) SHA real-commitado sin push: existe pero NO es ancestro de origin/main.
+    unpushed = _commit(work, "u.txt", "u\n", "WOT-2026-0H2H: committed not pushed")
+    assert gl._is_ancestor(unpushed, "origin/main", work) is False
+    assert gl._has_object(unpushed, work) is True
+    verdict_b, _ = _classify(work, "WOT-2026-0H2H", unpushed)
+    assert verdict_b == gl.PENDING_GROUPED_PUSH
+    assert verdict_b != gl.OK
+
+    # (c) SHA huerfano (el objeto existe, nada lo alcanza) -> ERROR, nunca OK.
+    _g(["checkout", "-q", "-b", "huerfano"], work)
+    orphan = _commit(work, "o.txt", "o\n", "WOT-2026-0H3H: will be orphaned")
+    _g(["checkout", "-q", "main"], work)
+    _g(["branch", "-qD", "huerfano"], work)
+    assert gl._is_ancestor(orphan, "origin/main", work) is False
+    assert gl._is_ancestor(orphan, "HEAD", work) is False
+    verdict_c, _ = _classify(work, "WOT-2026-0H3H", orphan)
+    assert verdict_c == gl.ERROR
+    assert verdict_c != gl.OK
+
+    assert {verdict_a, verdict_b, verdict_c}.isdisjoint({gl.OK}), (
+        "un SHA no-ancestro jamas puede bendecirse como aterrizado"
+    )
