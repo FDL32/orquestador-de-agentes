@@ -666,6 +666,37 @@ class TestExtraRootViaTargetLink:
         assert blocked is True
         assert "fuera del repo" in reason
 
+    def test_write_from_destino_session_into_motor_blocked(self, monkeypatch):
+        """WOT-2026-071d: cwd=destino (a session-destino, link present and
+        valid), target=motor's OWN tree (outside the destino) -> BLOCKED.
+
+        This is the opposite direction of test_write_to_destino_via_target_link_
+        allowed above: here the SESSION root is the destino, not the motor, and
+        the target is a file inside the motor repo itself (not the destino's
+        own linked path). A destino session legitimately resolving its own
+        linked motor_root must never grant write access to the motor's tree --
+        _resolve_extra_root only widens the write surface to the destino's OWN
+        path pair, never to an arbitrary ancestor of the resolved motor."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        self._write_link_in_destino(self.motor_root)
+        target = self.motor_root / "scripts" / "install_agent_system.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.destino_root
+        )
+        assert blocked is True
+        assert "fuera del repo" in reason
+
+    def test_write_from_motor_session_into_motor_allowed(self, monkeypatch):
+        """Control pair of the test above: cwd=motor (a session-motor), target
+        inside the motor's OWN tree -> PERMITE (no extra-root resolution even
+        needed; the target is already within repo_root)."""
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        target = self.motor_root / "scripts" / "install_agent_system.py"
+        blocked, reason = _is_protected_path(
+            str(target), DEFAULT_ALLOWLIST, {}, repo_root=self.motor_root
+        )
+        assert blocked is False, reason
+
 
 class TestGitSegmentMatch:
     r"""WOT-2026-004b: the .git protection must match the internal git dir as a

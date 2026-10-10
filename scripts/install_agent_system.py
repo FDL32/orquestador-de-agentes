@@ -1395,6 +1395,124 @@ def copy_gitleaks_config(
     return True
 
 
+def _canonical_write_guard_command() -> str:
+    """The exact PreToolUse command that gates Write|Edit|MultiEdit.
+
+    Imports the trusted entrypoint module (same pattern as
+    ``check_claude_settings_portability.py``) instead of duplicating its
+    literal bootstrap string here -- a second hand-copied literal would drift
+    from the canonical one the first time either is edited.
+    """
+    agent_hooks_dir = str(Path(__file__).resolve().parent.parent / ".agent" / "hooks")
+    if agent_hooks_dir not in sys.path:
+        sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    return claude_guard_entry.canonical_hook_command()
+
+
+def propagate_claude_guard_hook(
+    destination_root: Path,
+    dry_run: bool = False,
+) -> bool:
+    """Merge the canonical PreToolUse write-guard hook into the destino's
+    tracked ``.claude/settings.json`` (WOT-2026-071d).
+
+    Before: destination_root/.claude/settings.json may be absent, present
+        with unrelated hooks, or already carry the canonical guard (re-sync).
+    During: a STRUCTURAL merge, never a clobber -- every top-level key and
+        every hook list the destino already has is preserved; a
+        Write|Edit|MultiEdit PreToolUse entry whose command does not already
+        equal the canonical one is REPLACED (idempotent: re-running this on
+        an already-wired destino is a no-op), and if no such entry exists one
+        is appended. Written atomically (write-tmp + os.replace), the same
+        pattern as write_motor_destination_link, so a crash mid-write never
+        leaves a corrupt or half-written settings.json.
+    After: destination_root/.claude/settings.json exists and its
+        Write|Edit|MultiEdit PreToolUse hook is exactly
+        claude_guard_entry.canonical_hook_command(). Returns True on success
+        (or dry-run); False only if an existing settings.json could not be
+        parsed as JSON (fail-safe: never overwrites a file it cannot read).
+    """
+    import os
+    import tempfile
+
+    settings_path = destination_root / ".claude" / "settings.json"
+    canonical_command = _canonical_write_guard_command()
+
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"[ERROR] {settings_path} is not valid JSON: {exc}")
+            return False
+
+    hooks = existing.setdefault("hooks", {})
+    pretooluse = hooks.setdefault("PreToolUse", [])
+    canonical_hook = {"type": "command", "command": canonical_command}
+
+    gating_entries = [
+        entry
+        for entry in pretooluse
+        if all(
+            tok in entry.get("matcher", "") for tok in ("Write", "Edit", "MultiEdit")
+        )
+    ]
+    already_wired = any(
+        canonical_hook in entry.get("hooks", []) for entry in gating_entries
+    )
+
+    if already_wired:
+        action = "already-wired"
+    elif gating_entries:
+        # At least one gating entry exists but none carries the canonical
+        # command: fix every one of them in place (never silently leave a
+        # stale/duplicate write-guard entry alongside the canonical one).
+        for entry in gating_entries:
+            entry["hooks"] = [canonical_hook] + [
+                h for h in entry.get("hooks", []) if h != canonical_hook
+            ]
+        action = "updated"
+    else:
+        pretooluse.append(
+            {"matcher": "Write|Edit|MultiEdit", "hooks": [canonical_hook]}
+        )
+        action = "added"
+
+    if dry_run:
+        print(
+            f"[DRY-RUN] Would {action} guard_paths PreToolUse hook in {settings_path}"
+        )
+        return True
+
+    if action == "already-wired":
+        print(f"[SKIP] guard_paths PreToolUse hook already wired in {settings_path}")
+        return True
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        dir=str(settings_path.parent),
+        prefix="settings_",
+        suffix=".json.tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(existing, indent=2, ensure_ascii=False) + "\n")
+        os.replace(temp_path, str(settings_path))
+    except Exception:
+        import contextlib
+
+        with contextlib.suppress(OSError):
+            os.unlink(temp_path)
+        raise
+
+    print(
+        f"[INFO] {action.capitalize()} guard_paths PreToolUse hook in {settings_path}"
+    )
+    return True
+
+
 def copy_project_template(
     template_root: Path,
     destination_root: Path,
@@ -1643,6 +1761,10 @@ def install_agent_system(
     # Seed a portable .gitleaks.toml to the destination (no-clobber)
     copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
 
+    # WOT-2026-071d: propagate the guard_paths write guard into the destino's
+    # tracked .claude/settings.json (structural merge, never a clobber).
+    propagate_claude_guard_hook(destination_root, dry_run=dry_run)
+
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
     if dry_run:
@@ -1777,6 +1899,10 @@ def sync_agent_system(  # noqa: C901
 
     # Seed a portable .gitleaks.toml to the destination (no-clobber, idempotent)
     copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
+
+    # WOT-2026-071d: propagate/re-verify the guard_paths write guard in the
+    # destino's tracked .claude/settings.json (structural merge, idempotent).
+    propagate_claude_guard_hook(destination_root, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
