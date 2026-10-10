@@ -269,6 +269,17 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-041g: cada entrada del archive debe declarar promoted_via
+      # (procedencia canonica). always_run + pass_filenames:false: el
+      # guard barre el glob del arbol vivo, no solo los ficheros del commit.
+      - id: check-promotion-provenance
+        name: check promotion provenance (archive entries declare promoted_via)
+        entry: uv run python scripts/check_promotion_provenance.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
       # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
       # Garantia: audita la superficie real del proyecto, no el Python del sistema.

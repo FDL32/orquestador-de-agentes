@@ -67,6 +67,18 @@ MAX_L3_FAMILY_SUMMARY = 2
 MAX_SIGNAL_MEMORY_MD = 200
 MAX_SIGNAL_RULES_HEADER = 80
 MAX_SIGNAL_PROFILE = 150
+
+PROMOTED_VIA_ARCHIVE_AUTO = "memory_consolidate_auto"
+
+# WOT-2026-041g: conjunto aceptado de `promoted_via` (valores de ESCRITOR).
+PROMOTED_VIA_ACCEPTED = frozenset(
+    {
+        "reconcile_curated",
+        "reconcile_batch",
+        "memory_consolidate_auto",
+        "legacy_backfill",
+    }
+)
 SIGNAL_TRUNCATION_MARKER = "...[truncated]"
 
 
@@ -902,6 +914,9 @@ def _archive_new_entries(archivable: list[dict[str, Any]], verbose: bool) -> Non
         e for e in archivable_redacted if record_key(e) not in existing_keys
     ]
     skipped = len(archivable) - len(new_archivable)
+
+    for e in new_archivable:
+        e["promoted_via"] = PROMOTED_VIA_ARCHIVE_AUTO
 
     if archive_file.exists():
         existing = parse_entries(archive_file)

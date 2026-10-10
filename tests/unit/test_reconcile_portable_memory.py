@@ -143,6 +143,23 @@ def _run(source: Path, apply: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, check=False)
 
 
+def _run_promote(
+    source: Path, obs_id: str, apply: bool = True
+) -> subprocess.CompletedProcess:
+    """Run reconcile with --promote-id to trigger the CURATED path."""
+    args = [
+        sys.executable,
+        str(SCRIPT),
+        "--source",
+        str(source),
+        "--promote-id",
+        obs_id,
+    ]
+    if apply:
+        args.append("--apply")
+    return subprocess.run(args, capture_output=True, text=True, check=False)
+
+
 def _load(path: Path) -> list[dict]:
     if not path.is_file():
         return []
@@ -710,8 +727,13 @@ def test_promote_selector_promotes_a_lesson_without_id(tmp_path: Path) -> None:
     archived = _load(canon / _archive_rel())
     assert len(archived) == 1, f"debe promoverse exactamente una: {archived}"
     archived_without_id = {k: v for k, v in archived[0].items() if k != "id"}
-    assert archived_without_id == lesson, (
-        "el contenido promovido (salvo `id`) debe ser IDENTICO al del "
+    # WOT-2026-041g: promoted_via es un campo ANOTADO por el escritor, no
+    # parte del contenido original del buffer; se excluye de la comparacion.
+    archived_content = {
+        k: v for k, v in archived_without_id.items() if k != "promoted_via"
+    }
+    assert archived_content == lesson, (
+        "el contenido promovido (salvo `id` y `promoted_via`) debe ser IDENTICO al del "
         f"buffer. archive={archived[0]} buffer={lesson}"
     )
     assert archived[0].get("id"), (
@@ -990,3 +1012,77 @@ def test_append_observations_assigns_stable_id_when_missing(tmp_path: Path) -> N
     finally:
         sco.MEMORY_DIR = original_memory_dir
         sco.OBS_FILE = original_obs_file
+
+
+def test_promote_one_annotates_promoted_via_curated(tmp_path: Path) -> None:
+    """DoD (a): _promote_one anota promoted_via='reconcile_curated' ANTES de
+    que el record se escriba a append_records_atomically (despues de que id
+    sea FINAL).
+
+    Mutation: si se borrara la linea que anota promoted_via, el archivo del
+    canonico tendria el record SIN el campo -> RED.
+    """
+    from scripts.reconcile_portable_memory import (
+        PROMOTED_VIA_ACCEPTED,
+        PROMOTED_VIA_CURATED,
+    )
+
+    canon, linked = _make_worktree_pair(tmp_path)
+    lesson = _obs("promoted-via-test", "WOT-2026-041g")
+    lesson["id"] = "obs-promoted-via-test"  # needed for --promote-id lookup
+    _write(linked / OBS_REL, [lesson])
+
+    # Use --promote-id to trigger the CURATED path
+    r = _run_promote(linked, "obs-promoted-via-test", apply=True)
+    assert r.returncode == 0, f"_promote_one should succeed: {r.stderr}"
+
+    recs = _load(canon / _archive_rel())
+    assert len(recs) == 1
+    assert recs[0].get("promoted_via") == PROMOTED_VIA_CURATED, (
+        f"_promote_one debe anotar {PROMOTED_VIA_CURATED!r}, "
+        f"got {recs[0].get('promoted_via')!r}"
+    )
+    assert PROMOTED_VIA_CURATED in PROMOTED_VIA_ACCEPTED
+
+
+def test_reconcile_all_annotates_promoted_via_batch(tmp_path: Path) -> None:
+    """DoD (a): _reconcile_all anota promoted_via='reconcile_batch' para cada
+    record de la lista promote ANTES de escribirlos (despues de que id sea
+    FINAL).
+
+    Mutation: si se borrara el loop que anota promoted_via, los records del
+    canonico tendrian el campo faltante -> RED.
+    """
+    from scripts.reconcile_portable_memory import (
+        PROMOTED_VIA_ACCEPTED,
+        PROMOTED_VIA_BATCH,
+    )
+
+    canon, linked = _make_worktree_pair(tmp_path)
+    lesson1 = _obs("batch-via-test-1", "WOT-2026-041g-a")
+    lesson2 = _obs("batch-via-test-2", "WOT-2026-041g-b")
+    _write(linked / OBS_REL, [lesson1, lesson2])
+
+    _run(linked, apply=True)
+
+    recs = _load(canon / _archive_rel())
+    assert len(recs) == 2
+    for rec in recs:
+        assert rec.get("promoted_via") == PROMOTED_VIA_BATCH, (
+            f"_reconcile_all debe anotar {PROMOTED_VIA_BATCH!r}, "
+            f"got {rec.get('promoted_via')!r}"
+        )
+        assert PROMOTED_VIA_BATCH in PROMOTED_VIA_ACCEPTED
+
+
+def test_promoted_via_values_are_distinct_in_reconcile() -> None:
+    """The three writer promoted_via values in reconcile are distinct and accepted."""
+    from scripts.reconcile_portable_memory import (
+        PROMOTED_VIA_ACCEPTED,
+        PROMOTED_VIA_BATCH,
+        PROMOTED_VIA_CURATED,
+    )
+
+    assert PROMOTED_VIA_CURATED != PROMOTED_VIA_BATCH
+    assert PROMOTED_VIA_CURATED in PROMOTED_VIA_ACCEPTED
+    assert PROMOTED_VIA_BATCH in PROMOTED_VIA_ACCEPTED
