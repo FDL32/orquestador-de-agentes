@@ -5331,13 +5331,19 @@ def _handle_manager_approve(  # noqa: C901 - flag handler intentionally branches
 
     # Check idempotency per-ticket using the current bus-derived state. A historical
     # SUPERVISOR_CLOSED is not sufficient after an explicit terminal reopen.
+    # WOT-2026-079e: union live+archive -- a ticket archived in a PRIOR
+    # closeout has its SUPERVISOR_CLOSED only in archive/events.<ticket>.jsonl,
+    # which plain read_events() (live-only) never sees. Without the union, a
+    # second --manager-approve on an already-archived ticket re-runs the full
+    # closeout cascade instead of returning the idempotent no-op (measured on
+    # WOT-2026-068d: a second full cascade landed undetected).
     if BUS_AVAILABLE and event_bus:
         from bus.state_machine import StateMachine, TicketState
 
-        supervisor_closed_events = event_bus.read_events(
-            ticket_id=ticket_id, event_type="SUPERVISOR_CLOSED"
-        )
-        ticket_events = event_bus.read_events(ticket_id=ticket_id)
+        ticket_events = event_bus.read_events_live_and_archived(ticket_id)
+        supervisor_closed_events = [
+            event for event in ticket_events if event.event_type == "SUPERVISOR_CLOSED"
+        ]
         if supervisor_closed_events and ticket_events:
             bus_state = StateMachine.derive_state_from_events(
                 [event.to_dict() for event in ticket_events]

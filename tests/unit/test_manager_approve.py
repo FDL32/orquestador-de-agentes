@@ -386,6 +386,64 @@ class TestManagerApprove:
         assert output["status"] == "already_completed"
         assert output["ticket_id"] == "WP-TEST-001"
 
+    def test_idempotency_via_bus_supervisor_closed_in_archive_only(
+        self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
+    ) -> None:
+        """WOT-2026-079e: idempotency must see SUPERVISOR_CLOSED in the
+        ARCHIVE too, not only the live bus.
+
+        MUTATION target: before the fix, the idempotency check called
+        event_bus.read_events() (live-only). A ticket whose SUPERVISOR_CLOSED
+        was already archived by a prior closeout (archive_ticket_events moves
+        events via os.replace, so the live bus no longer has them) was
+        invisible to this check, so a second --manager-approve re-ran the
+        full closeout cascade instead of returning already_completed
+        (measured on WOT-2026-068d: an undetected second cascade).
+        """
+        from agent_controller import _handle_manager_approve
+
+        # Emit SUPERVISOR_CLOSED then archive it, so it lives ONLY in
+        # archive/events.WP-TEST-001.jsonl, not in the live events.jsonl.
+        temp_bus.emit(
+            event_type="SUPERVISOR_CLOSED",
+            ticket_id="WP-TEST-001",
+            actor="SUPERVISOR",
+            payload={"source": "manager-approve", "reason": "Already closed"},
+        )
+        archive_result = temp_bus.archive_ticket_events("WP-TEST-001")
+        assert archive_result["archived_count"] == 1
+        # Confirm the live bus is now genuinely empty for this ticket.
+        assert temp_bus.read_events(ticket_id="WP-TEST-001") == []
+
+        mock_files["exec_log"].write_text(
+            "# Execution Log\n\n## WP-TEST-001\n**Estado:** READY_FOR_REVIEW\n"
+        )
+
+        with (
+            patch("agent_controller.event_bus", temp_bus),
+            patch("agent_controller.BUS_AVAILABLE", True),
+            patch("agent_controller.WORK_PLAN", mock_files["work_plan"]),
+            patch("agent_controller.EXEC_LOG", mock_files["exec_log"]),
+            patch("agent_controller.TURN_FILE", mock_files["turn"]),
+            patch("agent_controller.STATE_FILE", mock_files["state"]),
+            patch("agent_controller.AGENT_DIR", tmp_path / ".agent"),
+            patch("agent_controller._check_last_commit", return_value=(True, "")),
+        ):
+            result = _handle_manager_approve(
+                "WP-TEST-001", json_output=True, force_mode=False
+            )
+
+        assert result == 0
+
+        # Idempotent no-op: must NOT re-emit a second closeout cascade into
+        # the live bus. Only the backfilled BUILDER_EXIT is new.
+        live_events = temp_bus.read_events(ticket_id="WP-TEST-001")
+        live_event_types = [event.event_type for event in live_events]
+        assert "SUPERVISOR_CLOSED" not in live_event_types
+        assert live_event_types.count("BUILDER_EXIT") == 1
+        assert "REVIEW_DECISION" not in live_event_types
+        assert "CLOSE_CONFIRMED" not in live_event_types
+
     def test_documentation_ticket_bypasses_commit_check(
         self, temp_bus: EventBus, mock_files: dict, tmp_path: Path
     ) -> None:

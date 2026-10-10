@@ -499,17 +499,55 @@ class EventBus:
         events = self.read_events(ticket_id=ticket_id, event_type=event_type)
         return events[-1] if events else None
 
+    def read_archived_events(self, ticket_id: str) -> list[EventRecord]:
+        """Read events previously archived for ticket_id, if any.
+
+        Before: ticket_id identifies a ticket that may or may not have an
+            archive file under runtime_dir/archive/.
+        During: reads events.<ticket_id>.jsonl (exact path, never a glob).
+        After: returns the parsed records in file order, or [] if the
+            archive file does not exist. Never mutates any file.
+        """
+        archive_path = self.runtime_dir / "archive" / f"events.{ticket_id}.jsonl"
+        if not archive_path.exists():
+            return []
+        records: list[EventRecord] = []
+        for line in archive_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                records.append(EventRecord.from_dict(json.loads(line)))
+            except json.JSONDecodeError:
+                continue
+        return records
+
+    def read_events_live_and_archived(self, ticket_id: str) -> list[EventRecord]:
+        """Union of ticket_id's archived (older) and live (recent) events.
+
+        Before: ticket_id may have history in the archive, in the live bus,
+            in both, or in neither.
+        During: archive_ticket_events moves events via os.replace, so the
+            two sources are mutually exclusive -- no risk of duplicates.
+            Archive order (older) is preserved first, then live (recent).
+        After: returns the chronological union. Read-only.
+        """
+        return self.read_archived_events(ticket_id) + self.read_events(
+            ticket_id=ticket_id
+        )
+
     def archive_ticket_events(self, ticket_id: str) -> dict:
         """
         Archive all events for a closed ticket to historical storage.
 
         Moves events belonging to ticket_id from the active bus to
-        .agent/runtime/events/archive/events.<ticket_id>.jsonl
+        .agent/runtime/events/archive/events.<ticket_id>.jsonl, merging with
+        any events already archived for that ticket (WOT-2026-079e: a prior
+        archive pass must never be overwritten/truncated by a later one).
 
         Uses atomic write (os.replace) to prevent corruption.
 
         Returns dict with:
-            - archived_count: number of events moved
+            - archived_count: number of events moved in THIS call
             - archive_path: path to archive file
             - kept_count: number of events remaining in active bus
         """
@@ -535,10 +573,13 @@ class EventBus:
                 "message": f"No events found for ticket {ticket_id}",
             }
 
-        # Write archive file
+        # Write archive file as the UNION of what was already archived plus
+        # the newly-moved events, never just the new batch (WOT-2026-079e).
         archive_path = archive_dir / f"events.{ticket_id}.jsonl"
+        existing_archived = self.read_archived_events(ticket_id)
+        union_events = existing_archived + ticket_events
         with archive_path.open("w", encoding="utf-8") as f:
-            for record in ticket_events:
+            for record in union_events:
                 f.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
 
         # Write remaining events atomically via temp file

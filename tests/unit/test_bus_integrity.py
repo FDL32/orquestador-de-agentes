@@ -355,6 +355,72 @@ class TestArchiveTicketEvents:
             archive_events[0]["sequence_number"] < archive_events[1]["sequence_number"]
         )
 
+    def test_archive_twice_unions_instead_of_truncating(self, tmp_path: Path) -> None:
+        """WOT-2026-079e: a second archive pass must not destroy the first.
+
+        MUTATION target: before the fix, the archive file was opened in
+        mode "w" with only the ticket_events of THIS call, so a second
+        closeout on the same ticket (e.g. backfill/reconciliation) silently
+        destroyed the history written by the first.
+        """
+        bus = EventBus(tmp_path)
+
+        bus.emit(event_type="EVENT_A", ticket_id="WP-001", actor="BUILDER", payload={})
+        bus.emit(event_type="EVENT_B", ticket_id="WP-001", actor="BUILDER", payload={})
+        first = bus.archive_ticket_events("WP-001")
+        assert first["archived_count"] == 2
+
+        # A later run emits more events for the SAME already-archived ticket
+        # (e.g. a reconciliation backfill) and archives again.
+        bus.emit(event_type="EVENT_C", ticket_id="WP-001", actor="MANAGER", payload={})
+        second = bus.archive_ticket_events("WP-001")
+        assert second["archived_count"] == 1
+
+        archive_path = Path(second["archive_path"])
+        archive_events = [
+            json.loads(line)
+            for line in archive_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        # N (first pass) + M (second pass) = 3, never just M = 1.
+        assert len(archive_events) == 3
+        assert [e["event_type"] for e in archive_events] == [
+            "EVENT_A",
+            "EVENT_B",
+            "EVENT_C",
+        ]
+
+    def test_read_archived_events_for_ticket(self, tmp_path: Path) -> None:
+        """read_archived_events returns [] pre-archive, events post-archive."""
+        bus = EventBus(tmp_path)
+        bus.emit(event_type="EVENT_A", ticket_id="WP-001", actor="BUILDER", payload={})
+
+        assert bus.read_archived_events("WP-001") == []
+
+        bus.archive_ticket_events("WP-001")
+
+        archived = bus.read_archived_events("WP-001")
+        assert len(archived) == 1
+        assert archived[0].event_type == "EVENT_A"
+
+    def test_read_events_live_and_archived_unions_both_sources(
+        self, tmp_path: Path
+    ) -> None:
+        """A ticket archived mid-run is still fully visible via the union read."""
+        bus = EventBus(tmp_path)
+        bus.emit(
+            event_type="EVENT_OLD", ticket_id="WP-001", actor="BUILDER", payload={}
+        )
+        bus.archive_ticket_events("WP-001")
+
+        # Same ticket gets a new live event after its archive pass.
+        bus.emit(
+            event_type="EVENT_NEW", ticket_id="WP-001", actor="MANAGER", payload={}
+        )
+
+        union = bus.read_events_live_and_archived("WP-001")
+        assert [e.event_type for e in union] == ["EVENT_OLD", "EVENT_NEW"]
+
 
 class TestBlockedEmitObservability:
     """Test observability features for blocked duplicate emits."""
