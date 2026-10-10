@@ -4545,6 +4545,47 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
 # _read_circuit_breaker, _read_builder_lock) that tests monkeypatch.
 
 
+def _check_bootstrap_mismatch(plan_content: str, state_content: str) -> list[str]:
+    """WOT-2026-079c: work_plan.md's ticket vs STATE.md's ACTIVE_TICKET.
+
+    `--bootstrap-ticket` is a PROSE norm (orchestrator_prepare_and_launch_
+    ticket.md step 6), never a wired barrier: nothing forces it to run after
+    work_plan.md is overwritten for a new ticket. When it's skipped, STATE.md/
+    TURN.md/the bus stay anchored to the PREVIOUS (already-closed) ticket, and
+    a Builder bootstrapping on that state only saw 9 generic bus_drift/
+    invariants warnings (measured 2026-09-27, WOT-2026-068c) -- none of them
+    named the real cause, so the Builder had to infer "forgot bootstrap" from
+    indirect symptoms.
+
+    Before: `plan_content` is work_plan.md's raw text; `state_content` is
+        STATE.md's raw text. Both may be seed-neutral or missing the expected
+        markers (caller already gates on `not seed_neutral`).
+    During: extracts the ticket id each file declares (`get_plan_id` for the
+        plan, the `ACTIVE_TICKET:` line for the state) and compares them.
+        Invalid/placeholder ids on EITHER side (seed-neutral STATE.md, a plan
+        with no `**ID:**` line) are NOT a mismatch -- they're the sane
+        "nothing active yet" case, not a bootstrap gap.
+    After: returns a single actionable error naming BOTH ids and the exact
+        remedy command when they differ; `[]` when they match (idempotent,
+        no noise on the healthy case) or when either id is invalid. Pure
+        function, no I/O, no mutation -- the caller decides where the result
+        lands (errors vs warnings).
+    """
+    plan_ticket = get_plan_id(plan_content)
+    state_match = re.search(r"ACTIVE_TICKET:\s*(\S+)", state_content)
+    state_ticket = state_match.group(1) if state_match else None
+    if is_invalid_plan_id(plan_ticket) or is_invalid_plan_id(state_ticket):
+        return []
+    if plan_ticket == state_ticket:
+        return []
+    return [
+        f"WORK_PLAN_NOT_BOOTSTRAPPED: work_plan.md declara '{plan_ticket}' pero "
+        f"STATE.md sigue en ACTIVE_TICKET='{state_ticket}' (ticket anterior, ya "
+        "cerrado o distinto) -- ejecuta `--bootstrap-ticket --project-root "
+        "<destino>` antes de continuar."
+    ]
+
+
 def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     """Check for drift between Markdown state and bus events."""
     if not BUS_AVAILABLE or not event_bus:
@@ -6650,6 +6691,18 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
                 )
             except Exception:  # noqa: S110 - sync is best-effort and must not block validate
                 pass
+        # WOT-2026-079c: read STATE.md AFTER the heal attempt above, so this
+        # check sees the real post-heal state, not a stale snapshot. If the
+        # heal above already reconciled STATE.md to the plan's ticket, this
+        # reports nothing (idempotent); if work_plan.md was overwritten for a
+        # new ticket WITHOUT running --bootstrap-ticket, the heal has no bus
+        # event to reconcile from and this fires the specific, actionable
+        # error instead of the 9 generic symptoms the sibling checks produce.
+        bootstrap_errors = _check_bootstrap_mismatch(
+            plan_content, read_file(STATE_FILE)
+        )
+        if bootstrap_errors:
+            errors.setdefault("bootstrap", []).extend(bootstrap_errors)
         drift_warnings = _check_bus_drift(plan_content, log_status)
         if drift_warnings:
             warnings.setdefault("bus_drift", []).extend(drift_warnings)
