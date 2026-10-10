@@ -47,6 +47,17 @@ checkout de codigo `_dev` ni el principal). Para un repo_destino generico, el
 backlog vive en `DESTINO_ROOT/.agent/collaboration/backlog.md` (el propio
 destino). No asumas la ubicacion sin resolver el link.
 
+La regla cubre TODA la topologia del triage, no solo el backlog: cada ruta que
+este prompt lee o escribe (`<destino>/orchestrator_pipeline/reports/`
+incluido) se resuelve desde el link (`motor_destination_link.json` ->
+`destination_root`), NUNCA desde literales citados en el prompt de sesion ni
+desde rutas absolutas heredadas del turno. Fallo medido (triaje
+`20260922_0930`): el triaje escribio sus artefactos dentro del motor `_dev`
+por copiar las rutas literales del prompt de sesion en vez de resolver el
+link. Si el prompt de sesion y el link divergen, prevalece el link; si no hay
+link resolvible, el triage se detiene y reporta: los artefactos no tienen
+destino seguro y no se inventa uno.
+
 ## Principio rector
 
 Read-only sobre el backlog: este triage NUNCA muta `backlog.md`, codigo ni
@@ -106,6 +117,17 @@ Leer `backlog.md` completo. Para cada ticket `pending`/`deferred`/
 
 No existe un check determinista generico: cada DoD requiere una verificacion
 distinta. Por eso esta fase es **recolector mas juicio**, nunca automatica.
+
+### Universo cerrado por serie (obligatorio, antes de clasificar)
+
+Los estados validos de la cola viva son EXACTAMENTE
+`IN {pending, deferred, completed-partial, blocked}`. Antes de clasificar
+nada, verifica que cada fila del backlog porte uno de esos cuatro estados.
+Una fila con cualquier otro valor (typo, estado legacy, vacio) es una
+ANOMALIA: se reporta en el informe con su fila e id, NO se clasifica y NO
+entra en ningun pipeline hasta resolverse. El universo queda cerrado por
+serie: ninguna fase de este triage puede tratar un estado fuera del conjunto
+como si fuera uno de los cuatro, ni silenciar la fila que lo incumple.
 
 ### Paso 0.1 -- EJECUTAR el recolector (obligatorio)
 
@@ -186,6 +208,15 @@ clasificar en una de tres categorias:
   bloqueado por un factor externo.
 - **DISENO_PRIMERO**: ficha grande con sub-decisiones de arquitectura
   todavia sin cerrar.
+
+**Superficie en vuelo por otra sesion (fallo medido WOT-2026-016r):** si la
+superficie de un ticket (su `Files Likely Touched`/scope) esta siendo
+modificada por OTRA sesion activa -- worktree hermano con ticket en vuelo,
+cambios sin commitear en el mismo arbol compartido, o ticket `in_flight` con
+scope solapado -- su clasificacion es `REQUIERE_HUMANO`, NUNCA
+`APTO_AUTONOMO`, con el motivo declarado en `requires_human`. Esta regla es
+previa a cualquier otra consideracion de la Fase 1: ningun razonamiento
+posterior puede devolver a `APTO_AUTONOMO` un ticket con superficie en vuelo.
 
 Cada clasificacion lleva etiqueta de evidencia `VERIFICADO` / `INFERIDO` /
 `REQUIERE_HUMANO`, heredada del contrato de `prompts/audit_agent_output.md`
@@ -366,8 +397,8 @@ Reglas operativas:
    ticket `LIKELY_DONE` nunca entra en un pipeline.
 4. **Autonomia falsa**: la Fase 1 separa `APTO_AUTONOMO` de `REQUIERE_HUMANO`
    y de `DISENO_PRIMERO`. Ningun ticket destructivo, de politica, con
-   `HUMAN_GATE` o con infraestructura fuera de git entra jamas en un
-   pipeline autonomo.
+   `HUMAN_GATE`, con infraestructura fuera de git o con superficie en vuelo
+   por otra sesion entra jamas en un pipeline autonomo (WOT-2026-016r).
 5. **La skill es puntero, no fuente**: `skills/backlog-triage/SKILL.md` no
    redeclara este metodo. Remite aqui con la clausula "el prompt es la
    fuente de verdad; si algo diverge, prevalece este prompt".
@@ -378,11 +409,33 @@ Reglas operativas:
 
 Dos artefactos, en el mismo turno, bajo
 `<destino>/orchestrator_pipeline/reports/` (mismo patron de rutas que
-`/audit-pipeline`):
+`/audit-pipeline`). `<destino>` aqui es SIEMPRE el `destination_root`
+resuelto del `motor_destination_link.json` (ver Nota de topologia): jamas una
+ruta literal del prompt de sesion, jamas una ruta del motor (`repo_motor`,
+worktree `_dev` o checkout principal).
 
 - Informe Markdown: `backlog_triage_<YYYYMMDD-HHMMSS>.md`, con las fases 0
   (reconciliacion), 1 (clasificacion), 2 (agrupacion) y 3 (sintesis)
-  desarrolladas.
+  desarrolladas. Ademas, el informe incluye:
+
+  - **Snapshot con hora:** al INICIO y al FINAL del triaje: hora (ISO-8601
+    UTC), HEAD del motor, HEAD del workspace y `dirty` de ambos,
+    correlacionados con los campos `generated_at` / `state_at_triage` del
+    JSON (el esquema JSON no cambia).
+  - **Checklist binario de cierre:** lista de items SI/NO (`[x]` / `[ ]`,
+    sin grises): gate de formato exit 0, recolector ejecutado y verificado
+    por artefacto, universo de estados verificado (sin anomalias sin
+    reportar), snapshot inicial y final identicos, `validate_batch_dag.py`
+    exit 0, encoding guard exit 0 sobre la lista explicita de ficheros
+    escritos. Un item fallido no se maquilla: se declara como tal y aplica
+    la regla de su fase (los gates detienen).
+  - **Protocolo `EXTERNAL_WRITE_DETECTED`:** si entre el snapshot inicial y
+    el final el estado cambio (HEAD movido, `dirty` flip, `backlog.md`
+    modificado) -- otra sesion escribio mientras el triaje corria -- el
+    informe lo declara LITERALMENTE `EXTERNAL_WRITE_DETECTED`, identifica
+    las fases afectadas y las re-analiza sobre un snapshot fresco. Nunca se
+    construyen conclusiones mezclando snapshots.
+
 - JSON portable: `backlog_triage_<YYYYMMDD-HHMMSS>.json`, con el esquema:
 
 **BARRERA (PENDIENTE — follow-up ticket, no implementada en codigo):**
@@ -473,6 +526,26 @@ python <MOTOR_ROOT>/scripts/validate_batch_dag.py <destino>/orchestrator_pipelin
 
 Exigir exit 0. Un DAG que no valida no es una salida completa de esta
 fase: corregir el DAG, no el validador.
+
+El binding es EXCLUSIVO: `validate_batch_dag.py` valida el DAG JSON que este
+prompt produce (`backlog_triage_<YYYYMMDD-HHMMSS>.json`), NUNCA el
+`findings.json` del recolector de la Fase 0 -- son artefactos distintos, con
+esquemas distintos, y validar el segundo es validar OTRA cosa (fallo medido
+en los triajes 20260922).
+
+Cierre de artefactos (obligatorio, antes de declarar el triage completo):
+pasa el encoding guard sobre la LISTA EXPLICITA de ficheros que este triaje
+escribio -- sus dos artefactos de salida, ni uno mas, ni un barrido
+generico:
+
+```powershell
+python <MOTOR_ROOT>/scripts/check_encoding_guard.py `
+  <destino>/orchestrator_pipeline/reports/backlog_triage_<YYYYMMDD-HHMMSS>.md `
+  <destino>/orchestrator_pipeline/reports/backlog_triage_<YYYYMMDD-HHMMSS>.json
+```
+
+Exigir exit 0 con el denominador publicado (2 auditados, 0 saltados). Un
+guard verde sobre un universo distinto al declarado no cuenta como cierre.
 
 El informe NO escribe `backlog.md`: propone. El humano o el Manager decide
 archivar los `LIKELY_DONE` o lanzar el pipeline recomendado.
