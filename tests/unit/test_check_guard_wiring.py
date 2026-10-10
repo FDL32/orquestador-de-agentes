@@ -177,6 +177,7 @@ EXPECTED_WIRED_REAL = {
     # propio modulo). NO es un gate de cumplimiento (ficha).
     "check_prompt_wired_invocations",
     "check_portable_memory_archive_schema",  # WOT-2026-035b: cableado en .pre-commit-config.yaml (always_run) + prepush_check.py
+    "check_promotion_provenance",  # WOT-2026-041g: cableado en .pre-commit-config.yaml (always_run, id check-promotion-provenance)
     "check_ruff_hook_scope",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     # WOT-2026-055c: cableado via import estatico en prepush_check.py::run_seal_staleness_check (closeout, WARN). NO es falso-WIRED: mutation-verify con par de exit-codes literal (rama de pertenencia del guard desactivada -> el test de flight cae; restaurada -> 18 passed). Regimen WARN por coherencia con run_batch_run_accounting_check: reconcilia recibos start_context_isolation ya en disco, nunca bloquea por si solo.
     "check_seal_staleness",
