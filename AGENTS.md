@@ -63,6 +63,23 @@ la ficha, el DAG), no una investigacion.
 
 El contrato de no-colision entre ambas vive en `<destino>/orchestrator_pipeline/flight_plans/INDEX.md`.
 
+### Modos de EJECUCION multiagente: Tradicional, 4 capas, Intermedio
+
+Ortogonal al par DISENO/DESARROLLO de arriba: dentro de una `sesion_desarrollo`, el agente puede
+delegar el trabajo pesado (implementacion, revision) a `nan` via Kilo CLI en distinto GRADO. Tres
+modos: **Tradicional** (Claude Code implementa y revisa el mismo), **4 capas** (Claude Code solo
+orquesta y lee resumenes cortos; Manager-nan/Builder-nan/Revisor-nan hacen el trabajo pesado,
+ver `prompts/agent_execution_modes.md` y el vuelo que lo origino,
+`PROMPT_ARRANQUE_vuelo_limpieza_backlog_4capas_20261010.md`), e **Intermedio** (delega SOLO el
+triaje/contrato de todo el lote; implementa Y revisa el mismo, sin delegar ninguna de las dos,
+los tickets de blast-radius-alto -- regla dura de seguridad, nunca se delega la revision de esos
+tickets aunque si se delegue su triaje). El agente PROPONE un modo por señales objetivas
+(peticion explicita, disponibilidad de Kilo, blast radius con fuente verificable, tamaño del
+vuelo) y el usuario confirma; se puede cambiar de modo en caliente a mitad de sesion
+(`/agent-mode <modo>`, skill `agent-execution-mode`). Nucleo normativo completo y UNICO:
+`prompts/agent_execution_modes.md` (skill apunta, prompt gobierna, X-09) -- **estado `frozen`**
+(congelado 2026-10-11 tras 2 pasadas de bucle adversarial, 7+4 lentes independientes).
+
 **Convencion de nombres (deliberada):** el sufijo `_design` va al FINAL del nombre de fichero, no al
 principio (`..._bootstrap_design.md`, no `design_..._bootstrap.md`), aunque en ingles seria mas
 normativo el adjetivo delante. Motivo: asi cada par diseno/desarrollo queda ADYACENTE al ordenar el

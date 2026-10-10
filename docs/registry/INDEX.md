@@ -10,17 +10,18 @@
 
 | kind | total |
 |------|-------|
-| prompt | 43 |
+| prompt | 44 |
 | reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 44 |
-| **total** | **133** |
+| skill | 45 |
+| **total** | **135** |
 
 ## Entradas
 
 | kind | path | status | owner | role | invocation | aliases |
 |------|------|--------|-------|------|------------|---------|
+| prompt | `prompts/agent_execution_modes.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_agent_output.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_autonomous_ticket_batch.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/audit_bus.md` | active | system | auditor | model-invoked | — |
@@ -111,6 +112,7 @@
 | shared | `skills/_shared/ap-schema.md` | active | system | shared | model-invoked | — |
 | shared | `skills/_shared/ticket-anti-patterns.md` | active | system | shared | model-invoked | — |
 | skill | `skills/adopt-existing-project/SKILL.md` | active | agent | user | model-invoked | /adecuar-proyecto, /adopt-existing, /adopt-project |
+| skill | `skills/agent-execution-mode/SKILL.md` | active | agent | orchestrator | model-invoked | /agent-mode, /execution-mode, /modo-agente |
 | skill | `skills/audit-autonomous-ticket-batch/SKILL.md` | active | agent | auditor | model-invoked | /audit-autonomous-ticket-batch, audit-autonomous-ticket-batch, auditar-batch-autonomo |
 | skill | `skills/audit-git-publication/SKILL.md` | active | agent | auditor | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
 | skill | `skills/audit-pipeline-codeonly/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline-codeonly, audit-pipeline-codeonly, auditar-pipeline-codeonly |
