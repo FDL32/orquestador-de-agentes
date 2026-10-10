@@ -117,12 +117,36 @@ def test_launch_fails_when_predicate_dag_missing(tmp_path: Path) -> None:
     assert FLIGHT in findings[0]
 
 
-def test_launch_names_missing_plan(tmp_path: Path, capsys) -> None:
+def test_launch_names_missing_plan(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """(b) The failure output NAMES the missing plan (mutation with teeth:
-    pre-fix the launch started without any warning, p2 = 0 hits)."""
+    pre-fix the launch started without any warning, p2 = 0 hits).
+
+    WOT-2026-066c: the pathology was NON-TERMINATION, not a wrong rc. Pre-fix
+    this test drove main() blindly, and with the launch guard neutralized
+    main() sailed past step 0, wrote collaboration state (BUILDER START in
+    execution_log.md) and entered its interactive wait loop
+    (builder_agent.py:306, ``while True: time.sleep(1)``) - mutation runs
+    HUNG (rc=124) instead of failing by assertion. The gate itself is now
+    asserted DIRECTLY (guard-level findings, never past main()'s gate), and
+    main() is still driven for the wiring/output check but with get_plan_id
+    patched to force the write-free early no-plan return - the same
+    convention test_main_launch_with_persisted_dag_reaches_past_the_gate
+    already uses. Under the neutralized guard the test therefore FAILS
+    fast naming the assertion and never writes outside tmp_path."""
     ctx = _write_launch_context(tmp_path, _claimed_payload())
     (tmp_path / "orchestrator_pipeline" / "flight_plans").mkdir(parents=True)
 
+    # Gate level, direct call: the finding itself must name the missing plan.
+    findings = ba.check_flight_launch_prerequisites(ctx)
+    assert findings, "the guard must block a launch whose cited DAG is missing"
+    assert any(FLIGHT in f for f in findings), findings
+
+    # CLI level: main() must print the block naming the plan before any work.
+    # Patched so a neutralized guard terminates (no-plan early return at
+    # step 1, still write-free) instead of reaching the interactive wait loop.
+    monkeypatch.setattr(ba, "get_plan_id", lambda _content: None)
     rc = ba.main(["--flight-launch-context", str(ctx)])
     out = capsys.readouterr().out
 
