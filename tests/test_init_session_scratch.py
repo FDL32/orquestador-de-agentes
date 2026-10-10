@@ -2277,3 +2277,182 @@ class TestPreexistingGateUnblockEvent:
         _init_session(repo, sid)
         result = _add_record(repo, sid, event=event, **fields)
         assert result.returncode == 0, f"{event} regresiono: {result.stdout}"
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-066o: `archive --legacy-tolerant`.
+#
+# El ledger 20260716-2139-4762d83-da37 tiene 3 `artifact_decision` escritos ANTES
+# de WOT-2026-022e, sin `artifact_path`. El manifest es append-only ESTRICTO, asi
+# que la entrada original no se puede editar, y `_audit_session` es per-record SIN
+# reconciliacion (WOT-2026-039j pinea que un registro nuevo valido NO cura uno
+# invalido viejo). Sin via, esa sesion no se puede archivar NUNCA. La via elegida
+# es un flag ACOTADO: `archive --legacy-tolerant` perdona EXACTAMENTE el defecto
+# legacy y DECLARA lo perdonado; cualquier otro defecto sigue fail-closed.
+# --------------------------------------------------------------------------- #
+class TestLegacyTolerantArchive066o:
+    def _write_manifest(self, repo: Path, sid: str, lines: list[dict]) -> Path:
+        sdir = repo / ".agent" / "runtime" / "session" / sid
+        manifest = sdir / "manifest.jsonl"
+        manifest.write_text(
+            "".join(json.dumps(rec) + "\n" for rec in lines), encoding="utf-8"
+        )
+        return manifest
+
+    def _legacy_decision(self, sid: str, **extra) -> dict:
+        """Pre-022e artifact_decision: no artifact_path (the legacy defect)."""
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": sid,
+            "event": "artifact_decision",
+            "repo_role": "no_motor",
+            "generator": "g",
+            "decision": "sin path",
+        }
+        rec.update(extra)
+        return rec
+
+    def test_flag_forgives_legacy_shape_declares_it_and_archives(self):
+        """RED sin la via, GREEN con la via; el manifest no se reescribe.
+
+        Mutacion alcanzable: quitar la rama `legacy_tolerant` de cmd_archive ->
+        el paso GREEN vuelve a ser stop/exit 1 y este test cae. Neutralizar
+        `_split_legacy_findings` (perdonar todo) -> cae el test hermano de
+        defectos NO legacy.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"j66o_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        written = self._write_manifest(
+            repo, sid, [self._legacy_decision(sid) for _ in range(3)]
+        )
+        before = written.read_bytes()
+
+        # RED: sin el flag la sesion sigue invalida y archive se detiene.
+        red = _run_scratch(
+            ["--project-root", str(repo), "archive", "--session-id", sid, "--dry-run"]
+        )
+        assert red.returncode == 1, red.stdout
+        assert json.loads(red.stdout)["status"] == "stop"
+
+        # GREEN (dry-run): el flag la acepta Y declara lo perdonado.
+        green = _run_scratch(
+            [
+                "--project-root",
+                str(repo),
+                "archive",
+                "--session-id",
+                sid,
+                "--dry-run",
+                "--legacy-tolerant",
+            ]
+        )
+        assert green.returncode == 0, green.stdout
+        out = json.loads(green.stdout)
+        assert out["status"] == "ok"
+        assert out["legacy_tolerant"] is True
+        assert len(out["tolerated_findings"]) == 3
+        assert all("artifact_path" in f["error"] for f in out["tolerated_findings"])
+
+        # GREEN real: mueve la sesion; el manifest se conserva byte-for-byte.
+        real = _run_scratch(
+            [
+                "--project-root",
+                str(repo),
+                "archive",
+                "--session-id",
+                sid,
+                "--legacy-tolerant",
+            ]
+        )
+        assert real.returncode == 0, real.stdout
+        assert json.loads(real.stdout)["status"] == "ok"
+        session_dir = repo / ".agent" / "runtime" / "session" / sid
+        archive_dest = repo / ".agent" / "runtime" / "session" / "_archive" / sid
+        assert not session_dir.exists()
+        assert archive_dest.is_dir()
+        assert (archive_dest / "manifest.jsonl").read_bytes() == before, (
+            "el archivado NO debe reescribir el ledger (append-only estricto)"
+        )
+
+        # `list` ya no la muestra como sesion activa.
+        listed = _run_scratch(["--project-root", str(repo), "list"])
+        sids = [s["session_id"] for s in json.loads(listed.stdout)["sessions"]]
+        assert sid not in sids
+
+    def test_flag_does_not_forgive_any_other_defect(self):
+        """Barrera de alcance: el flag perdona SOLO el defecto legacy.
+
+        Un defecto NO legacy (aqui: artifact_decision sin `decision`, con
+        artifact_path presente) debe seguir bloqueando aunque el flag este
+        puesto, y el finding reportado NO debe ser el de artifact_path.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"j66n_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        non_legacy = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": sid,
+            "event": "artifact_decision",
+            "repo_role": "no_motor",
+            "generator": "g",
+            "artifact_path": "manifest.jsonl",
+        }
+        self._write_manifest(repo, sid, [self._legacy_decision(sid), non_legacy])
+
+        result = _run_scratch(
+            [
+                "--project-root",
+                str(repo),
+                "archive",
+                "--session-id",
+                sid,
+                "--dry-run",
+                "--legacy-tolerant",
+            ]
+        )
+        assert result.returncode == 1, result.stdout
+        out = json.loads(result.stdout)
+        assert out["status"] == "stop"
+        errors = [f["error"] for f in out["findings"]]
+        assert "missing required field for event=artifact_decision: decision" in errors
+        assert all("artifact_path" not in e for e in errors), (
+            f"el defecto legacy SI debe perdonarse; el bloqueante NO: {errors}"
+        )
+
+    def test_control_canonical_session_unchanged_with_flag(self):
+        """CONTROL NEGATIVO: sin defectos, el flag es transparente.
+
+        Una sesion canonica archiva igual con y sin el flag, y su salida NO
+        declara tolerancia (nada se perdono). Mutacion: ensuciar la salida de un
+        caso canonico con `legacy_tolerant: true` -> ROJO.
+        """
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"j66c_{uuid.uuid4().hex[:8]}")
+        sid = _sentinel_id()
+        _init_session(repo, sid)
+        self._write_manifest(
+            repo,
+            sid,
+            [
+                self._legacy_decision(
+                    sid, decision="completo", artifact_path="manifest.jsonl"
+                )
+            ],
+        )
+
+        result = _run_scratch(
+            [
+                "--project-root",
+                str(repo),
+                "archive",
+                "--session-id",
+                sid,
+                "--dry-run",
+                "--legacy-tolerant",
+            ]
+        )
+        assert result.returncode == 0, result.stdout
+        out = json.loads(result.stdout)
+        assert out["status"] == "ok"
+        assert "legacy_tolerant" not in out
+        assert "tolerated_findings" not in out

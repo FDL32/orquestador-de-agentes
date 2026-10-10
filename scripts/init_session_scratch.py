@@ -186,6 +186,36 @@ LEDGER_FIELDS = frozenset(
 
 REPO_ROLES = frozenset({"motor", "no_motor", "unknown"})
 
+# WOT-2026-066o: the ONE legacy defect `archive --legacy-tolerant` is allowed to
+# accept. Historical `artifact_decision` records written before WOT-2026-022e
+# tightened REQUIRED_BY_EVENT lack `artifact_path`; the ledger is append-only
+# (strict), so the original entry cannot be edited, and `_audit_session` is
+# deliberately per-record with NO reconciliation (WOT-2026-039j pins that a later
+# valid record does NOT cure an earlier invalid one). The flag is the bounded
+# escape hatch: it tolerates EXACTLY these finding strings and NOTHING else, so a
+# session with any other defect (parse error, unknown event, missing decision,
+# bad ts/repo_role, broken completeness invariant) still fails closed. What was
+# tolerated is DECLARED in the archive output.
+LEGACY_TOLERABLE_FINDINGS = frozenset(
+    {"missing required field for event=artifact_decision: artifact_path"}
+)
+
+
+def _split_legacy_findings(
+    findings: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split audit findings into (legacy-tolerable, still-blocking).
+
+    Only the exact finding strings in ``LEGACY_TOLERABLE_FINDINGS`` are
+    tolerable; everything else -- including a defect not yet imagined -- stays
+    blocking. Returning both lists lets ``cmd_archive`` declare what it forgave
+    while still failing closed on anything the flag was not designed for.
+    """
+    tolerated = [f for f in findings if f.get("error") in LEGACY_TOLERABLE_FINDINGS]
+    remaining = [f for f in findings if f.get("error") not in LEGACY_TOLERABLE_FINDINGS]
+    return tolerated, remaining
+
+
 # ---------------------------------------------------------------------------
 # OS-level file locking (conditional import, portable)
 # ---------------------------------------------------------------------------
@@ -1162,18 +1192,36 @@ def cmd_archive(args: argparse.Namespace) -> int:  # noqa: C901
             return 2
 
     audit_result = _audit_session(sdir, sid)
+    tolerated_findings: list[dict[str, Any]] = []
     if not audit_result["valid"]:
-        print(
-            json.dumps(
-                {
-                    "status": "stop",
-                    "reason": "audit failed",
-                    "findings": audit_result["findings"],
-                    "session_intact": True,
-                }
+        if getattr(args, "legacy_tolerant", False):
+            # WOT-2026-066o: forgive ONLY the pre-022e artifact_decision shape and
+            # report exactly what was forgiven; every other finding still blocks.
+            tolerated_findings, remaining = _split_legacy_findings(
+                audit_result["findings"]
             )
-        )
-        return 1
+        else:
+            remaining = audit_result["findings"]
+        if remaining:
+            print(
+                json.dumps(
+                    {
+                        "status": "stop",
+                        "reason": "audit failed",
+                        "findings": remaining,
+                        "session_intact": True,
+                    }
+                )
+            )
+            return 1
+
+    # Declaration of what `--legacy-tolerant` forgave. Empty (and omitted from
+    # the output) for a canonical session, so the control flow is byte-identical
+    # to no flag at all.
+    tolerance_payload: dict[str, Any] = {}
+    if tolerated_findings:
+        tolerance_payload["legacy_tolerant"] = True
+        tolerance_payload["tolerated_findings"] = tolerated_findings
 
     adir = _archive_root(root)
     dest = adir / sid
@@ -1197,6 +1245,7 @@ def cmd_archive(args: argparse.Namespace) -> int:  # noqa: C901
                     "dry_run": True,
                     "session_id": sid,
                     "archive_dir": str(dest),
+                    **tolerance_payload,
                 }
             )
         )
@@ -1236,6 +1285,7 @@ def cmd_archive(args: argparse.Namespace) -> int:  # noqa: C901
                 "status": "ok",
                 "session_id": sid,
                 "archive_dir": str(dest),
+                **tolerance_payload,
             }
         )
     )
@@ -1418,6 +1468,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Report what would be archived without writing.",
+    )
+    # WOT-2026-066o: bounded escape hatch for the pre-022e artifact_decision shape.
+    archive_p.add_argument(
+        "--legacy-tolerant",
+        action="store_true",
+        default=False,
+        help=(
+            "Archive a session whose ONLY defect is historical artifact_decision "
+            "records missing artifact_path (pre-022e shape). The forgiven findings "
+            "are DECLARED in the output; any other defect still fails closed."
+        ),
     )
     archive_p.set_defaults(func=cmd_archive)
 
