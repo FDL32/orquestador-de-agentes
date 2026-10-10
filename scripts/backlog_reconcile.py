@@ -401,8 +401,49 @@ def _signal_commits(ticket_id: str, repo: Path) -> list[dict]:
     return out
 
 
+# WOT-2026-080a: raices declaradas para normalizar `present` antes de
+# resolverla. Un path cosechado puede ser la ruta literal de la fila o solo su
+# basename partido de esa ruta; ambas formas deben dar el MISMO flag.
+_PRESENT_ROOTS = ("scripts", ".agent", "tests")
+
+
+def _path_present(path: str, repo: Path) -> bool:
+    """Resuelve `present` con el path NORMALIZADO contra las raices declaradas.
+
+    Before: ``(repo / path).exists()`` -- un basename cosechado (p.ej.
+        ``backlog_reconcile.py`` partido de ``scripts/backlog_reconcile.py``)
+        se resolvia contra la RAIZ del repo, donde nunca vive: falsos
+        negativos de existencia y, en UN mismo findings.json, la misma ruta
+        canonica con dos flags opuestos (medido: 284 falsos negativos).
+    During: candidatos = (1) la ruta literal de la fila y (2) cada raiz
+        declarada (``scripts/``, ``.agent/``, ``tests/``) prefijada cuando el
+        path no esta ya anclado a una de ellas. Separadores normalizados
+        (``\\`` -> ``/``) y prefijo ``./`` eliminado. Solo lectura, nunca
+        lanza (un path vacio es False).
+    After: True ssi ALGUN candidato existe en disco. Determinista: la misma
+        ruta canonica produce siempre el mismo flag, sea cual sea su deletreo
+        en la fila (DoD-1, WOT-2026-080a).
+    """
+    rel = path.replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    rel = rel.lstrip("/")
+    if not rel:
+        return False
+    candidates = [rel]
+    if rel.split("/", 1)[0] not in _PRESENT_ROOTS:
+        candidates.extend(f"{root}/{rel}" for root in _PRESENT_ROOTS)
+    return any((repo / cand).exists() for cand in candidates)
+
+
 def _signal_paths(paths: list[str], repo: Path) -> list[dict]:
-    """git ls-files + git status --short per scope path (AS WRITTEN; 020s lesson)."""
+    """git ls-files + git status --short per scope path (AS WRITTEN; 020s lesson).
+
+    WOT-2026-080a: solo `present` se resuelve con el path normalizado
+    (``_path_present``); los comandos git siguen recibiendo el path tal cual
+    como pathspec (020s). No cambia el schema por entrada: {path, tracked,
+    present, status}.
+    """
     out: list[dict] = []
     for path in paths:
         ls = _run(["git", "ls-files", path], repo)
@@ -413,7 +454,7 @@ def _signal_paths(paths: list[str], repo: Path) -> list[dict]:
             {
                 "path": path,
                 "tracked": tracked,
-                "present": (repo / path).exists(),
+                "present": _path_present(path, repo),
                 "status": status or "",
             }
         )
@@ -588,6 +629,12 @@ def _collect_all(  # noqa: C901
             "commits_found": 0,
             "commits_searched_in": [],
             "scope_paths": [],
+            # WOT-2026-080a DoD-2: conteos explicitos por ticket; se emiten en
+            # TODOS los tickets (0 en los que no resuelven repo o no cosechan
+            # paths), igual que commits_found/commits_searched_in.
+            "paths_total": 0,
+            "paths_present": 0,
+            "paths_absent": 0,
             "dod_terms": [],
             "dec_accepted_hits": [],
         }
@@ -661,6 +708,13 @@ def _collect_all(  # noqa: C901
             terms = _harvest_terms(ticket_id, scope_slug, titulo, ficha_body)
             ticket_sink: list[str] = []
             record["scope_paths"] = _signal_paths(paths, repo)
+            # WOT-2026-080a DoD-2: conteos explicitos derivados de la senal
+            # ya normalizada (paths_present solo cuenta `present` True).
+            record["paths_total"] = len(record["scope_paths"])
+            record["paths_present"] = sum(
+                1 for entry in record["scope_paths"] if entry["present"]
+            )
+            record["paths_absent"] = record["paths_total"] - record["paths_present"]
             record["dod_terms"] = _signal_grep(terms, repo, ticket_sink)
             if ticket_sink:
                 raw_sink.append(

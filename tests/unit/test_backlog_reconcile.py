@@ -1171,3 +1171,125 @@ def test_061f_celda_prosa_larga_sin_sobre_captura():
     )
     out = br._signal_blocker_offqueue(cell, frozenset())
     assert [o["blocker"] for o in out] == ["WOT-2026-044t"]
+
+
+# ----------------------------------------------------------- WOT-2026-080a
+# `present=false` con paths sin normalizar en el recolector de triaje.
+# Cada test declara su ROJO previo: con el codigo ANTES del fix, la asercion
+# principal FALLA (evidencia de mutacion del DoD-3).
+
+
+def _repo_with_files(tmp_path, names):
+    """Repo real (sin .git) donde cada ruta indicada EXISTE en disco."""
+    repo = tmp_path / "repo_080a"
+    for name in names:
+        f = repo / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("# fixture\n", encoding="utf-8")
+    return repo
+
+
+def test_080a_mutation_basename_resuelto_contra_raiz_declarada(tmp_path):
+    """MUTACION DoD-3: partir el nombre de scripts/backlog_reconcile.py por la
+    mitad (solo el basename, sin su raiz declarada) deja de marcar FALSE.
+
+    ROJO previo con el codigo actual: (repo / path).exists() resuelve contra la
+    RAIZ del repo y da False aunque el fichero viva en scripts/. Con el fix
+    (normalizacion contra las raices declaradas) marca TRUE."""
+    repo = _repo_with_files(tmp_path, ["scripts/backlog_reconcile.py"])
+    half = "backlog_reconcile.py"  # la mitad del path: nombre sin su raiz
+    out = br._signal_paths([half], repo)
+    assert out[0]["present"] is True, (
+        f"basename de un fichero existente en scripts/ marcado False: {out}"
+    )
+
+
+def test_080a_misma_ruta_canonica_un_solo_flag(tmp_path):
+    """DoD-1: la MISMA ruta canonica -> UN UNICO flag, nunca dos opuestos.
+
+    ROJO previo: los dos deletreos del mismo fichero dan {True, False}."""
+    repo = _repo_with_files(tmp_path, ["scripts/backlog_reconcile.py"])
+    both_spellings = br._signal_paths(
+        ["scripts/backlog_reconcile.py", "backlog_reconcile.py"], repo
+    )
+    assert {e["present"] for e in both_spellings} == {True}, (
+        f"dos flags opuestos para la misma ruta canonica: {both_spellings}"
+    )
+    # Control negativo: un path ausente da False con CUALQUIER deletreo.
+    missing = br._signal_paths(["scripts/no_such_080a.py", "no_such_080a.py"], repo)
+    assert {e["present"] for e in missing} == {False}
+    # Forbidden surface: los campos por entrada NO cambian (solo se anaden
+    # paths_total/paths_present/paths_absent a nivel ticket).
+    for entry in both_spellings + missing:
+        assert set(entry) == {"path", "tracked", "present", "status"}
+
+
+def test_080a_conteos_por_ticket_llegan_a_findings(tmp_path, monkeypatch):
+    """DoD-2: paths_total/paths_present/paths_absent en CADA ticket de findings.
+
+    WOT-2026-900a cosecha dos basenames (agent_controller.py de la fila,
+    run_pytest_safe.py de la ficha) y ambos EXISTEN en motor/scripts/.
+    ROJO previo: los conteos no existen y present vale 0."""
+    motor = _fake_motor(tmp_path)
+    (motor / "scripts").mkdir()
+    (motor / "scripts" / "agent_controller.py").write_text("# x\n", encoding="utf-8")
+    (motor / "scripts" / "run_pytest_safe.py").write_text("# x\n", encoding="utf-8")
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    for t in findings["tickets"]:
+        assert t["paths_total"] == t["paths_present"] + t["paths_absent"], t
+    a = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900a")
+    assert sorted(p["path"] for p in a["scope_paths"]) == [
+        "agent_controller.py",
+        "run_pytest_safe.py",
+    ]
+    assert a["paths_total"] == 2
+    assert a["paths_present"] == 2, f"ROJO previo: 0 present; {a['scope_paths']}"
+    assert a["paths_absent"] == 0
+    # n/a scope: conteos emitidos igualmente (el campo existe en CADA ticket).
+    c = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900c")
+    assert c["paths_total"] == c["paths_present"] == c["paths_absent"] == 0
+
+
+def test_080a_un_unico_flag_para_la_misma_ruta_en_el_json(tmp_path, monkeypatch):
+    """DoD-1 end-to-end: la FILA cita la ruta literal y la FICHA el basename del
+    MISMO fichero; findings.json no puede llevarlos con flags opuestos.
+
+    ROJO previo: scripts/backlog_reconcile.py -> True y backlog_reconcile.py ->
+    False en el mismo ticket."""
+    motor = _fake_motor(tmp_path)
+    (motor / "scripts").mkdir()
+    (motor / "scripts" / "backlog_reconcile.py").write_text("# x\n", encoding="utf-8")
+    ws = _fake_workspace(tmp_path)
+    backlog_path = ws / ".agent" / "collaboration" / "backlog.md"
+    backlog = backlog_path.read_text(encoding="utf-8")
+    table_end = backlog.rfind("\n\n## Fichas")
+    row = (
+        "| Baja | WOT-2026-901a | normaliza scripts/backlog_reconcile.py | "
+        "motor/norm | pending | - | s | - |\n"
+    )
+    backlog = backlog[:table_end] + "\n" + row + backlog[table_end:]
+    backlog += (
+        "\n### WOT-2026-901a - normalizacion\n- ojo con backlog_reconcile.py:416\n"
+    )
+    backlog_path.write_text(backlog, encoding="utf-8")
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    t = next(x for x in findings["tickets"] if x["ticket_id"] == "WOT-2026-901a")
+    flags = {p["path"]: p["present"] for p in t["scope_paths"]}
+    assert flags["scripts/backlog_reconcile.py"] is True
+    assert flags["backlog_reconcile.py"] is True, f"flags opuestos: {flags}"
+    assert t["paths_total"] == 2
+    assert t["paths_present"] == 2
+    assert t["paths_absent"] == 0
