@@ -1495,6 +1495,91 @@ def test_057b_lesson_filter_never_erases_a_whole_origin(
     assert "motor" in origenes, "el origen con lecciones tambien debe estar"
 
 
+def test_047c_bootstrap_quota_is_proportional_by_domain():
+    """DoD (c) WOT-2026-047c: reparto PROPORCIONAL por domain, no igualitario.
+
+    Escenario exigido por el contrato T-047c-001: un domain SATURADO (40
+    entradas) y uno de POCA ACTIVIDAD (4), `cap=20`. Criterio
+    DEC-WOT-2026-047b (citado, no reabierto): recencia-por-dominio con cuota
+    proporcional a la actividad real de cada domain.
+
+    El test NIEGA PROPIEDADES, no tokens (leccion
+    `asertar-la-propiedad-nunca-el-token`), con timestamps disjuntos y
+    controlados para que las TRES sustituciones posibles caigan:
+      - cuota IGUALITARIA (`cap // len(domains)`): da 16/4 con la
+        redistribucion declarada en el docstring, o 10/10 sin ella ->
+        caduca el reparto exacto 19/1 (floor 18+1 y sobrante al domain con
+        mas entradas, regla 3).
+      - recencia PURA global (`observations[:cap]` ordenado): da 20/0 ->
+        cae que el domain de poca actividad este representado.
+      - corte SIN ordenar en orden de fichero (el archive llega del mas
+        ANTIGUO al mas nuevo): los supervivientes del saturado serian los
+        MAS VIEJOS -> cae el assert de recencia dentro del domain.
+
+    Y ejercita el CABLEADO via `_format_archive_as_text(..., cap=20)`: si el
+    eje domain quedara anulado por la composicion (el no-op de encadenar
+    ambos caps con el mismo valor, o volver al reparto solo por origen),
+    `canario POCA-03` desaparece del indice y el assert cae. Sin el reparto
+    por domain el origen unico se queda lo mas reciente global, o sea
+    `canario SAT-20` DENTRO y `canario POCA-03` FUERA: ambos asserts lo
+    niegan a la vez.
+    """
+    saturado = []
+    for i in range(40):  # del MAS ANTIGUO al MAS NUEVO: orden real de fichero
+        e = _observation(f"SAT-{i:02d}", topic=f"sat{i}")
+        e["domain"] = "delivery-hygiene"
+        e["timestamp"] = f"2026-01-{(i // 24) + 1:02d}T{i % 24:02d}:00:00+00:00"
+        saturado.append(e)
+    poca = []
+    for j in range(4):  # TODAS mas antiguas que cualquier entrada del saturado
+        e = _observation(f"POCA-{j:02d}", topic=f"poca{j}")
+        e["domain"] = "testing"
+        e["timestamp"] = f"2025-12-{25 + j:02d}T00:00:00+00:00"
+        poca.append(e)
+    entradas = saturado + poca
+
+    shown = memory_loader._cap_preserving_domains(entradas, 20)
+
+    sat_shown = [e["id"] for e in shown if e.get("domain") == "delivery-hygiene"]
+    poca_shown = [e["id"] for e in shown if e.get("domain") == "testing"]
+
+    # Propiedad 1 (proporcional != igualitario): 19/1 exacto, no 10/10 ni 16/4.
+    assert len(shown) == 20
+    assert len(sat_shown) == 19 and len(poca_shown) == 1, (
+        f"el reparto salio {len(sat_shown)}/{len(poca_shown)}, no 19/1: la "
+        "cuota no es proporcional a la actividad real del domain (18+1 floor, "
+        "sobrante al domain con mas entradas)"
+    )
+    assert len(sat_shown) > len(poca_shown), (
+        "el domain saturado debe recibir ESTRICTAMENTE mas entradas que el de "
+        "poca actividad"
+    )
+
+    # Propiedad 2 (recencia DENTRO del domain): sobreviven las MAS RECIENTES.
+    assert set(sat_shown) == {f"SAT-{i:02d}" for i in range(21, 40)}, (
+        "dentro del domain saturado no sobrevivieron las mas recientes: el "
+        "corte ignora `_sorted_newest_first`"
+    )
+    assert poca_shown == ["POCA-03"], (
+        "la unica plaza del domain de poca actividad debe ser su entrada MAS RECIENTE"
+    )
+
+    # Propiedad 3 (cableado real en el indice del bootstrap).
+    text = memory_loader._format_archive_as_text(entradas, cap=20)
+    assert "canario POCA-03" in text, (
+        "el domain de poca actividad desaparece del indice: el reparto por "
+        "domain no esta cableado en el camino real del bootstrap (no-op de "
+        "composicion o se volvio al reparto solo por origen)"
+    )
+    assert "canario SAT-00" not in text, (
+        "las entradas MAS ANTIGUAS del saturado siguen en el indice"
+    )
+    assert "canario SAT-20" not in text, (
+        "sobrevivio la recencia pura global: con reparto proporcional la "
+        "plaza 20 debe cedersela al domain de poca actividad"
+    )
+
+
 def test_057b_review_context_has_a_declared_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

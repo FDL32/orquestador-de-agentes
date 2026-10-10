@@ -542,6 +542,133 @@ def _cap_preserving_origins(
     return _cap_by_recency(picked, cap)
 
 
+def _cap_preserving_domains(
+    observations: list[dict[str, Any]], cap: int
+) -> list[dict[str, Any]]:
+    """Cap the index by DOMAIN with quota PROPORTIONAL to real activity.
+
+    WOT-2026-047c, criterion DEC-WOT-2026-047b (cited, not reopened):
+    recency-per-domain with the quota proportional to the real activity of
+    each domain -- NOT pure global recency (one busy domain would evict every
+    quiet one wholesale, the same blindness `_cap_preserving_origins` closed
+    for the orthogonal ORIGIN axis), and NOT fixed equal shares (a domain
+    with 4 entries would claim the same slots as one with 40 and the index
+    would pay budget for noise). Origin and domain are ORTHOGONAL axes:
+    neither replaces the other and neither may cancel the other.
+
+    Rounding is deterministic and part of the contract (DoD (a)):
+      1. ``share_i = cap * n_i // N`` -- integer floor per domain over the
+         full pool (``N = len(observations)``). The sum of floors is at most
+         ``cap``, never more.
+      2. A domain claiming more slots than entries keeps only its entries;
+         the unused part returns to the pool.
+      3. The remainder ``cap - sum(taken)`` goes to the domains with MORE
+         entries first, ties broken by ascending domain name, each domain
+         filled only up to the entries it still has left.
+    A domain with 0 entries never exists as a group and claims nothing.
+    Entries without ``domain`` share the ``""`` bucket so they are never
+    silently evicted as a zero-entry group.
+
+    Before: ``observations`` is any pool in any order; ``cap`` is
+        non-negative.
+    During: pure list ops. Groups by ``str(domain or "")``, orders each
+        domain newest-first reusing `_sorted_newest_first` (no new
+        comparator), applies the three rounding rules above. No I/O.
+    After: at most ``min(cap, len(observations))`` entries, newest-first.
+        Deterministic: same input, same output. Never raises.
+    """
+    if not observations:
+        return []
+    if len(observations) <= cap:
+        return observations
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for obs in observations:
+        groups.setdefault(str(obs.get("domain") or ""), []).append(obs)
+
+    total = len(observations)
+    taken = {
+        name: min(cap * len(entries) // total, len(entries))
+        for name, entries in groups.items()
+    }
+
+    remainder = cap - sum(taken.values())
+    if remainder > 0:
+        # Regla 3: mas entradas primero, desempate por nombre ascendente.
+        order = sorted(groups, key=lambda name: (-len(groups[name]), name))
+        for name in order:
+            spare = len(groups[name]) - taken[name]
+            if spare <= 0:
+                continue
+            give = min(spare, remainder)
+            taken[name] += give
+            remainder -= give
+            if remainder == 0:
+                break
+
+    picked: list[dict[str, Any]] = []
+    for name, entries in groups.items():
+        take = taken[name]
+        if take > 0:
+            picked.extend(_sorted_newest_first(entries)[:take])
+    return _sorted_newest_first(picked)
+
+
+def _cap_preserving_origins_and_domains(
+    observations: list[dict[str, Any]], cap: int
+) -> list[dict[str, Any]]:
+    """Cap the bootstrap index along BOTH fairness axes at once.
+
+    WOT-2026-047c. Composition decision (technical, documented per contract
+    T-047c-001 DoD (b)): the ORIGIN quota is computed FIRST over the full
+    pool by the untouched `_cap_preserving_origins`, then the DOMAIN quota
+    runs WITHIN each origin, over that origin's FULL entry pool and with the
+    slots the origin axis awarded it as its cap.
+
+    Two alternatives were rejected by measurement, not taste:
+      - chaining both caps with the same ``cap`` value: the internal call
+        returns <= ``cap`` entries and the external one short-circuits on
+        ``len(observations) <= cap``, silently dropping one axis (the no-op
+        warned about in the launch prompt);
+      - capping domains only over the origin-trimmed winners: an origin
+        whose entries are systematically OLDER loses them before the domain
+        axis ever sees them, so one axis cancels the other.
+
+    Before: entries may carry ``_origin`` and ``domain``; ``cap`` positive.
+    During: pure list ops. The origin math (quota + template filter) lives
+    ONCE in `_cap_preserving_origins` and is delegated to, not duplicated;
+    this function only re-keys its award per origin and hands each origin's
+    full filtered pool to `_cap_preserving_domains`. The ``is_lesson``
+    re-filter mirrors the same guard inside `_cap_preserving_origins` so the
+    domain axis splits the very pool the origin quota was computed over.
+    After: at most ``cap`` entries, newest-first; each origin keeps EXACTLY
+    the slots the origin axis awarded it (orthogonal axes), a single-origin
+    pool still receives the domain split, and the result is deterministic.
+    """
+    if len(observations) <= cap:
+        return observations
+
+    origin_picked = _cap_preserving_origins(observations, cap)
+
+    slots: dict[str, int] = {}
+    pools: dict[str, list[dict[str, Any]]] = {}
+    for obs in origin_picked:
+        key = str(obs.get("_origin") or "local")
+        slots[key] = slots.get(key, 0) + 1
+    for obs in observations:
+        pools.setdefault(str(obs.get("_origin") or "local"), []).append(obs)
+
+    picked: list[dict[str, Any]] = []
+    for name, entries in pools.items():
+        take = slots.get(name, 0)
+        if take <= 0:
+            continue
+        lessons = [obs for obs in entries if is_lesson(obs)]
+        picked.extend(_cap_preserving_domains(lessons or entries, take))
+
+    return _sorted_newest_first(picked)
+
+
 def _format_archive_as_text(
     observations: list[dict[str, Any]],
     cap: int | None = None,
@@ -617,7 +744,11 @@ def _format_archive_as_text(
     vigent = [o for o in observations if o.get("status") not in _STALE_STATUSES]
     stale = [o for o in observations if o.get("status") in _STALE_STATUSES]
     total = total_override if total_override is not None else len(observations)
-    shown = vigent if cap is None else _cap_preserving_origins(vigent, cap)
+    # WOT-2026-047c: BOTH fairness axes act on the bootstrap index; the
+    # compact path keeps calling `_cap_preserving_origins` directly because
+    # the DEC criterion (recencia-por-dominio proporcional) governs the
+    # arranque budget only.
+    shown = vigent if cap is None else _cap_preserving_origins_and_domains(vigent, cap)
     lines = [
         "# Portable Memory (tracked archive)",
         "",
