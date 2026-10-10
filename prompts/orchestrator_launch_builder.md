@@ -600,6 +600,17 @@ Para `documentation`, `research` o `analysis`, el gate minimo es:
 - linea de evidencia artefacto + validate/success/passed en `execution_log.md`.
 
 ## Registro y cierre
+
+**Nota sobre el comportamiento post-completitud (WOT-2026-066d):** tras imprimir
+`BUILDER COMPLETE` y ejecutar `--mark-ready`, `scripts/builder_agent.py::main()`
+entra en un bucle de espera intencional (`while True: time.sleep(1)`) para
+mantener la ventana abierta a un operador humano. Un probe u orquestador
+automatizado que invoque `main()` in-process (o lo espere por subprocess) NO
+debe tratar ese bloqueo como timeout/fallo: el trabajo ya quedo persistido
+(estado `READY_FOR_REVIEW` escrito en `execution_log.md`) ANTES de entrar en
+el bucle. Trata la espera como "trabajo completo, exit-code pendiente de
+`Ctrl+C`/`KeyboardInterrupt`", nunca como senal de que el Builder colgo.
+
 En `execution_log.md` del `repo_destino`, registra solo si tu `Builder Access Surface`
 lo permite. Si no lo permite, imprime esta evidencia en la salida del runner:
 - comandos exactos;

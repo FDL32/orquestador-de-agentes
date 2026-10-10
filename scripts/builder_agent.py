@@ -302,6 +302,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: parser + pa
     print("Si se rechaza el trabajo, Builder sera requeued automaticamente.")
     print("Presiona Ctrl+C para salir.\n")
 
+    # WOT-2026-066d: este bucle es ESPERA INTENCIONAL para persistencia interactiva
+    # (mantener la ventana abierta para un operador humano), no un colgado. Un
+    # probe o invocador automatizado que llame a main() in-process tras el paso
+    # --mark-ready debe tratar esto como "trabajo completo, exit-code pendiente",
+    # NUNCA como timeout/fallo -- el estado real ya quedo persistido antes de
+    # llegar aqui (BUILDER START/READY_FOR_REVIEW en execution_log.md).
     try:
         while True:
             time.sleep(1)
