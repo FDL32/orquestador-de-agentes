@@ -1757,3 +1757,103 @@ def test_066h_phantom_sha_is_absent_never_ok(tmp_path):
     assert {verdict_a, verdict_b, verdict_c}.isdisjoint({gl.OK}), (
         "un SHA no-ancestro jamas puede bendecirse como aterrizado"
     )
+
+
+def test_066h_main_single_repo_topology_yields_warn_not_crash(tmp_path, capsys):
+    """DoD-3 (integracion). Cuando ``--git-repo`` no se pasa (default
+    ``git_repo = motor_root``, :945) y ``--project-root`` resuelve al MISMO
+    path que ``motor_root`` -- topologia single-repo real (dogfooding, o un
+    setup donde el motor y el destino son el mismo checkout) --
+    ``siblings = [r for r in (git_repo, dest_root) if r != home]`` (:1000)
+    queda VACIO y ``other=None`` llega a ``audit()``. Confirma end-to-end que
+    ``main()`` termina en EXIT_OK con un WARN, no en un traceback sin
+    capturar. La MUTACION que distingue el guard de verdad vive en el test
+    hermano ``test_066h_classify_never_dereferences_other_repo_when_none``.
+    """
+    _origin, work = _make_repo(tmp_path)
+    phantom = "e" * 40
+    (work / "MANIFEST.distribute").write_text("x\n", encoding="utf-8")
+    _write_dest_link(work)
+
+    archive = work / ".agent" / "collaboration" / "_archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "backlog_done.md").write_text(
+        f"| Media | WOT-2026-0H4H | t | motor/x | completed | - | s | commit:{phantom} |\n",
+        encoding="utf-8",
+    )
+
+    # Misma ruta para motor-root y project-root, SIN --git-repo: fuerza
+    # git_repo == dest_root == home (unico candidato de siblings).
+    rc = gl.main(
+        [
+            "--motor-root",
+            str(work),
+            "--project-root",
+            str(work),
+            "--ref",
+            "origin/main",
+            "--json",
+        ]
+    )
+    assert rc == gl.EXIT_OK, (
+        "WARN no bloquea el exit code; un crash sin capturar si lo haria -- "
+        "este assert por si solo ya distingue ambos casos"
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["counts"][gl.WARN] == 1, payload
+    (detail,) = (r["detail"] for r in payload["results"])
+    assert "no git object and no ID in origin/main subjects" in detail, detail
+    assert "other repo of topology" not in detail, (
+        "con other_repo=None nunca debe citarse un 'other repo' que no existe"
+    )
+
+
+def test_066h_classify_never_dereferences_other_repo_when_none(tmp_path, monkeypatch):
+    """DoD-3 (unidad + mutacion real). ``classify()`` (:834,
+    ``if other_repo is not None and _has_object(sha, other_repo):``) NUNCA
+    debe pasar ``other_repo=None`` a ``_has_object`` -- ese guard es la unica
+    razon por la que la topologia single-repo (``siblings=[]`` -> ``other=
+    None``, DoD-3 de WOT-2026-066h) no revienta.
+
+    Espia ``_has_object`` registrando CADA argumento ``repo`` con el que se
+    invoca; si alguna llamada trae ``repo=None``, el test falla ahi mismo en
+    vez de esperar a que ese ``None`` se propague mas adentro (donde, medido
+    en vivo, ``_run`` lo pasa a ``subprocess.run(cwd=None)`` y DEGRADA en
+    silencio al cwd del proceso en vez de fallar -- razon por la que un
+    assert de resultado final, sin espia, NO alcanzaba esta rama: ver el
+    test de integracion hermano, que SOLO cubre el camino feliz end-to-end).
+
+    MUTACION (aplicada y revertida contra produccion, confirmada en esta
+    sesion): quitar ``other_repo is not None and `` del `if` de :834 deja la
+    llamada `classify(..., other_repo=None)` real invocando
+    `_has_object(sha, None)`; el espia lo cazaria con `calls_with_none != []`
+    y el assert de abajo iria ROJO. Con el guard intacto, el espia nunca ve
+    `None`.
+    """
+    _origin, work = _make_repo(tmp_path)
+    phantom = "e" * 40
+
+    calls_with_none: list[str] = []
+    real_has_object = gl._has_object
+
+    def spy_has_object(sha: str, repo) -> bool:
+        if repo is None:
+            calls_with_none.append(sha)
+            return False
+        return real_has_object(sha, repo)
+
+    monkeypatch.setattr(gl, "_has_object", spy_has_object)
+
+    verdict, detail = gl.classify(
+        "WOT-2026-0H4H", phantom, "origin/main", work, set(), other_repo=None
+    )
+
+    assert calls_with_none == [], (
+        "classify() invoco _has_object con repo=None -- el guard "
+        "`other_repo is not None` de :834 no esta protegiendo la llamada "
+        f"(calls_with_none={calls_with_none})"
+    )
+    assert verdict == gl.WARN
+    assert "other repo of topology" not in detail, (
+        "con other_repo=None nunca debe citarse un 'other repo' que no existe"
+    )

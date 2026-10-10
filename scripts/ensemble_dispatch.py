@@ -597,6 +597,16 @@ _OPAQUE_TOKEN = re.compile(rf"[A-Za-z0-9+=_-]{{{_ENTROPY_MIN_TOKEN_LEN},}}")
 # fichero con extension, no un valor de credencial (filtro de contexto de
 # la rama de token opaco; la rama HEX tiene el suyo con _CREDENTIAL_LABEL).
 _FILE_EXT_AFTER = re.compile(r"\.[A-Za-z0-9]")
+# WOT-2026-066p: un identificador de ticket/plan de la casa (prefijo FP, FV,
+# WOT, CTL o EXF + fecha/numero + palabras separadas por guion) citado en
+# PROSA, sin ruta ni extension, no entra en ninguna de las 2 exenciones de
+# arriba y bloqueaba el fan-out entero (medido 2 veces: bucles L731/L733, mas
+# un 3er ejemplo real en backlog_inbox/). Censo sobre el corpus real (516
+# tokens opacos en *.md del repo): 2 matches, ambos nombres de ficha `FP-`
+# reales -- superficie de exencion acotada, no una valvula de escape
+# generica. Ancla el TOKEN COMPLETO (^...$), no una subcadena: un secreto
+# real que por azar contuviera "WOT-" en medio no debe colarse por esto.
+_HOUSE_ID_PATTERN = re.compile(r"^(FP|FV|WOT|CTL|EXF)-[0-9]+(-[A-Za-z0-9]+)*$")
 # WOT-2026-041q CAPA 3b: el hex puro NO PASA por _OPAQUE_TOKEN + clases.
 #
 # EL DEFECTO QUE CIERRA (medido 2026-07-27 por un bucle adversarial externo, no
@@ -739,6 +749,12 @@ def _entropy_leak(payload_text: str) -> str | None:
             prev_ch = payload_text[hit.start() - 1] if hit.start() > 0 else ""
             after = payload_text[hit.end() : hit.end() + 2]
             if prev_ch in ("/", "\\") or _FILE_EXT_AFTER.match(after):
+                continue
+            # WOT-2026-066p: identificador de ticket/plan de la casa citado en
+            # prosa (sin ruta ni extension, por eso no cae en ninguna de las
+            # 2 exenciones de arriba). Misma logica que esas dos: es un
+            # NOMBRE, no un valor de credencial.
+            if _HOUSE_ID_PATTERN.match(token):
                 continue
             return (
                 f"token opaco de {len(token)} chars con entropia "

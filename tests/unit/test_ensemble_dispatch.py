@@ -7423,6 +7423,63 @@ def test_059e_token_pelado_sigue_bloqueando():
     assert ed._entropy_leak(valor) is not None
 
 
+# --- WOT-2026-066p: IDs de ticket/plan de la casa no bloquean el fan-out ------
+
+HOUSE_IDS_EXENTOS = [
+    "FP-20260828-guards-que-auditan-sin-morder",
+    "FP-20260902-054h-051d-portabilidad",
+    "FP-20261001-escalado-siniestros-transporte-topology-seed-neutro",
+]
+
+
+@pytest.mark.parametrize("house_id", HOUSE_IDS_EXENTOS)
+def test_066p_id_de_plan_de_la_casa_en_prosa_no_bloquea(house_id):
+    """DoD 066p: un identificador FP-<fecha>-<slug> citado en prosa (sin ruta
+    ni extension) NO es una fuga. Los 3 casos son los medidos en produccion
+    (bucles L731/L733 + la ficha real de backlog_inbox/). ROJO sin
+    _HOUSE_ID_PATTERN: ninguna de las 2 exenciones existentes (ruta, nombre
+    de fichero con extension) cubre este caso."""
+    assert ed._entropy_leak(house_id) is None
+    assert ed._content_leak(f"ver el plan {house_id} para contexto") is None
+
+
+def test_066p_sha256_etiquetado_sigue_bloqueando():
+    """CONTROL NEGATIVO: un sha256 real con etiqueta de credencial sigue
+    bloqueando -- la exencion nueva no debe tocar la rama HEX."""
+    sha256_hex = hashlib.sha256(b"material de prueba, no es secreto real").hexdigest()
+    assert ed._content_leak(f"api_key: {sha256_hex}") is not None
+
+
+def test_066p_clave_sk_like_sigue_bloqueando():
+    """CONTROL NEGATIVO: una clave de alta entropia real (no repetida, >=3
+    clases de caracter) sigue bloqueando -- la exencion nueva es ESTRECHA
+    (ancla el token completo contra el patron de prefijo de la casa) y no
+    debe dejar pasar secretos reales."""
+    import random
+    import string
+
+    rng = random.Random(42)  # noqa: S311 - fixture determinista, no es cripto
+    cola = "".join(
+        rng.choice(string.ascii_letters + string.digits + "-_") for _ in range(48)
+    )
+    valor = f"sk-{cola}"
+    assert ed._entropy_leak(valor) is not None
+
+
+def test_066p_mutation_sin_exencion_los_3_ids_vuelven_a_bloquear(monkeypatch):
+    """MUTACION (D4): si se revierte la exencion (patron que nunca casa),
+    los 3 IDs documentados vuelven a bloquear -- confirma que la exencion es
+    la que produce el comportamiento, no una coincidencia de otra rama."""
+    import re
+
+    monkeypatch.setattr(ed, "_HOUSE_ID_PATTERN", re.compile(r"(?!)"))
+    for house_id in HOUSE_IDS_EXENTOS:
+        assert ed._entropy_leak(house_id) is not None, (
+            f"sin _HOUSE_ID_PATTERN, {house_id!r} debe volver a bloquear "
+            "(si no, el id no depende de la exencion nueva)"
+        )
+
+
 # --- WOT-2026-067i: simetria emisor <-> lector en la resolucion del sha ---
 #
 # El defecto que cierran: el EMISOR (`emit-nonce`) resolvia SOLO contra el motor

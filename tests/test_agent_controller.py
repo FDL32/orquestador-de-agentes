@@ -6301,6 +6301,82 @@ class TestBootstrapTicketSyncsStateMd:
         )
 
 
+class TestCheckBootstrapMismatch:
+    """WOT-2026-079c: --bootstrap-ticket es norma, nunca barrera cableada. Esta
+    clase cubre _check_bootstrap_mismatch, el check nuevo que --validate corre
+    ANTES de los 9 warnings genericos de bus_drift/invariants, para que un
+    work_plan.md sobrescrito sin --bootstrap-ticket produzca UN error
+    especifico y actionable en vez de forzar al Builder a inferirlo (sintoma
+    medido 2026-09-27, WOT-2026-068c)."""
+
+    def _plan(self, ticket_id: str) -> str:
+        return f"# Work Plan: {ticket_id}\n\n## Metadata\n**ID:** {ticket_id}\n"
+
+    def _state(self, ticket_id: str) -> str:
+        return f"ACTIVE_TICKET: {ticket_id}\nSTATUS: IN_PROGRESS\n"
+
+    def test_mismatch_emits_actionable_error(self) -> None:
+        """(a)+(b) del DoD: plan y STATE.md declaran tickets DISTINTOS ->
+        error nuevo citando AMBOS ids y el remedio exacto. Reproduce el
+        sintoma real de WOT-2026-068c (work_plan.md sobrescrito para un
+        ticket nuevo sin correr --bootstrap-ticket)."""
+        result = agent_controller._check_bootstrap_mismatch(
+            self._plan("WOT-2026-068c"), self._state("WOT-2026-045e")
+        )
+        assert len(result) == 1
+        assert "WORK_PLAN_NOT_BOOTSTRAPPED" in result[0]
+        assert "WOT-2026-068c" in result[0]
+        assert "WOT-2026-045e" in result[0]
+        assert "--bootstrap-ticket" in result[0]
+
+    def test_matching_ticket_is_silent(self) -> None:
+        """(c) del DoD, CONTROL NEGATIVO: plan y STATE.md ya coinciden ->
+        sin ruido, idempotente -- el caso sano no debe penalizarse."""
+        result = agent_controller._check_bootstrap_mismatch(
+            self._plan("WOT-2026-079c"), self._state("WOT-2026-079c")
+        )
+        assert result == []
+
+    def test_seed_neutral_state_is_not_a_mismatch(self) -> None:
+        """STATE.md recien cerrado (ACTIVE_TICKET: -) no es un desalineo --
+        es el estado sano 'nada activo', no un bootstrap olvidado."""
+        result = agent_controller._check_bootstrap_mismatch(
+            self._plan("WOT-2026-079c"), "ACTIVE_TICKET: -\nSTATUS: IDLE\n"
+        )
+        assert result == []
+
+    def test_plan_without_id_line_is_not_a_mismatch(self) -> None:
+        """Un work_plan.md seed-neutral (sin **ID:**) tampoco dispara --
+        get_plan_id devuelve 'N/A', invalido por diseno."""
+        result = agent_controller._check_bootstrap_mismatch(
+            "# Work Plan\n\nSin metadata.\n", self._state("WOT-2026-079c")
+        )
+        assert result == []
+
+    def test_mutation_dropping_the_comparison_breaks_detection(self) -> None:
+        """MUTACION (b): si la comparacion colapsara a 'siempre coinciden'
+        (el bug que este ticket corrige -- nada compara work_plan.md contra
+        STATE.md), el caso de mismatch real dejaria de producir error.
+        Prueba de forma DIRECTA (sin reimplementar la mutacion aqui, solo
+        fija el contraste): el mismo par (plan, state) que SI produce error
+        en test_mismatch_emits_actionable_error debe producir [] si
+        ambos ids se leyeran como iguales -- lo que confirma que la deteccion
+        depende REALMENTE de comparar ambos valores, no de una constante."""
+        same_ticket = "WOT-2026-079c"
+        assert (
+            agent_controller._check_bootstrap_mismatch(
+                self._plan(same_ticket), self._state(same_ticket)
+            )
+            == []
+        )
+        assert (
+            agent_controller._check_bootstrap_mismatch(
+                self._plan(same_ticket), self._state("WOT-2026-999z")
+            )
+            != []
+        ), "cambiar SOLO el ticket de STATE.md debe volver a disparar el error"
+
+
 class TestAnalysisTicketInvariants:
     """WOT-2026-072c: analysis tickets should skip BUILDER_EXIT/STATE_CHANGED invariants."""
 
