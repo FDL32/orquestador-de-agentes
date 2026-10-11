@@ -885,7 +885,7 @@ def test_delivery_trailers_set_frozen(tmp_path: Path) -> None:
     Por un trailer NO documentado (`refs`), debe devolver False.
 
     MUTATION-VERIFY (WOT-2026-067s): si alguien cambia `_DELIVERY_TRAILERS`
-    sin同步izar el docstring, este test FALLE. Es un contract-test entre
+    sin sincronizar el docstring, este test FALLA. Es un contract-test entre
     la constante y la documentacion.
     """
     import inspect
