@@ -333,8 +333,10 @@ def detect_imprecise_files_touched(content: str) -> list[ProseWarning]:
     )
     if files_match:
         files_text = files_match.group(1)
-        # Detectar comodines ambiguos: **, *.py, o directorios completos sin archivos
-        if re.search(r"\*\*|\*\.py|src/\*|tests/\*", files_text):
+        # Detectar comodines ambiguos: *.py, src/*, tests/*; la forma **/ se
+        # ignora cuando es parte de un patrón markdown (precedida por ` o espacio),
+        # ya que entonces es negrita y no un wildcard.
+        if re.search(r"\*\.py|src/\*|tests/\*|(?<!`)(?<! )\*\/", files_text):
             warnings.append(
                 ProseWarning(
                     rule_id="TP-PROSE-08",

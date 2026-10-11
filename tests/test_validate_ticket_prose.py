@@ -352,6 +352,32 @@ class TestDetectImpreciseFilesTouched:
         warnings = detect_imprecise_files_touched(clean_plan)
         assert len(warnings) == 0
 
+    def test_no_trigger_bold_concrete_paths(self):
+        """WOT-2026-060q: las rutas concretas entre negritas markdown no disparan TP-PROSE-08."""
+        content = """## Files Likely Touched
+- **`scripts/validate_ticket_prose.py`**
+- **`tests/test_validate_ticket_prose.py`**
+"""
+        warnings = detect_imprecise_files_touched(content)
+        assert len(warnings) == 0
+
+    def test_no_trigger_bold_file_without_backticks(self):
+        """WOT-2026-060q: negritas sin backticks tampoco disparan (el `**` se ignora como negrita)."""
+        content = """## Files Likely Touched
+- **scripts/validate_ticket_prose.py**
+"""
+        warnings = detect_imprecise_files_touched(content)
+        assert len(warnings) == 0
+
+    def test_still_triggers_wildcard_star_star_py(self):
+        """Los comodines reales como *.py siguen disparando aunque esten en negritas."""
+        content = """## Files Likely Touched
+- **`scripts/**/*.py`**
+"""
+        warnings = detect_imprecise_files_touched(content)
+        assert len(warnings) == 1
+        assert warnings[0]["rule_id"] == "TP-PROSE-08"
+
 
 class TestDetectOversizedTicket:
     """Tests para detect_oversized_ticket."""
