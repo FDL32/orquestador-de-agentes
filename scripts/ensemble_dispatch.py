@@ -325,6 +325,111 @@ GOVERNMENT_PHASES = frozenset(
     }
 )
 
+# WOT-2026-055a: las 8 ETAPAS canonicas que gobiernan `--phase` (enum CERRADO,
+# mismo contrato que `TASK_TYPES`). El campo `phase` del scorecard dejo de ser
+# texto libre: medido 2026-08-11 sobre 1383 filas reales, habia 40 valores
+# distintos para estas etapas, y 28% de las filas no traian la ETAPA sino la RAMA
+# del fan-out (`fanout-comun`, `challenge-fanout`...). Decision SEMANTICA (no de
+# recencia): la RAMA se DECIDE al lanzar, nunca se CONSULTA despues; la UNICA
+# dimension que alguien lee es la ETAPA (`phase_value_report.py:158` agrega por
+# `(task_type, phase, backend_key, lens_scope)`). Por eso `phase`=ETAPA y la rama
+# se cae. Nombres tomados del vocabulario ya declarado en el motor: D5 de
+# `DEC-router-prompts-001` (TRIAGE_AUDIT, CONTRACT_AUDIT, MANAGER_REVIEW, CLOSE)
+# mas DESIGN_REVIEW (documentado en `prompts/ensemble_loop.md`) y las etapas
+# medidas en la tabla cerrada de `DEC-086G-001` (IMPLEMENTATION_REVIEW,
+# ADJUDICATION, y PROMPT_AUDIT por la fragmentacion
+# CONTRACT_AUDIT/PROMPT_AUDIT/ARRANQUE_PROMPT_AUDIT que mide el backlog).
+CANONICAL_PHASES: tuple[str, ...] = (
+    "TRIAGE_AUDIT",
+    "CONTRACT_AUDIT",
+    "PROMPT_AUDIT",
+    "DESIGN_REVIEW",
+    "IMPLEMENTATION_REVIEW",
+    "MANAGER_REVIEW",
+    "ADJUDICATION",
+    "CLOSE",
+)
+
+# WOT-2026-055a: MECANISMO DE LEGACY explicito. El historico NO se reescribe
+# (precedente del repo: "no se reconstruyen aqui para no falsear el historico"),
+# asi que las etiquetas que se escribieron ANTES del enum no se borran: se MARCA
+# cada una con su etapa canonica en `LEGACY_PHASE_MAP`, y las que no mapean a
+# ninguna etapa (la RAMA del fan-out, pasos de bucle como `verify`) se PUBLICAN
+# como `dropped_semantic_mismatch` en el consumidor -- nunca se inventa una
+# categoria ni se agrupan a la fuerza en una etapa que no les corresponde.
+# `None` NO es un valor de `--phase` (el flag es `required=True`): es el estado
+# de las rondas que no pasan por el CLI (`run_pipeline` escribe la ronda 0
+# `premise_check` con `phase=None`) y del historico anterior al campo; el
+# consumidor lo cuenta como `dropped_legacy`, igual que hoy.
+#
+# Las claves van en MAYUSCULAS: `canonical_phase` normaliza a mayusculas antes de
+# buscar, asi que las variantes de caja ya historicas (`contract_audit`,
+# `prompt_audit`, `review`, `adjudicacion`) resuelven por la propia normalizacion
+# sin una entrada por cada grafia.
+LEGACY_PHASE_MAP: dict[str, str] = {
+    # TRIAGE_AUDIT
+    "TRIAGE": "TRIAGE_AUDIT",
+    "BACKLOG_TRIAGE": "TRIAGE_AUDIT",
+    "TRIAGE_INVENTORY": "TRIAGE_AUDIT",
+    "FINDING_TRIAGE": "TRIAGE_AUDIT",
+    # CONTRACT_AUDIT
+    "CONTRACT_FORMATION": "CONTRACT_AUDIT",
+    "CONTRACT_AUDIT_DIF": "CONTRACT_AUDIT",
+    # PROMPT_AUDIT
+    "PROMPT_TEMPLATE_AUDIT": "PROMPT_AUDIT",
+    "ARRANQUE_PROMPT_AUDIT": "PROMPT_AUDIT",
+    # DESIGN_REVIEW (revisar una propuesta/plan sin commit)
+    "DESIGN_AUDIT": "DESIGN_REVIEW",
+    "PROPOSAL_AUDIT": "DESIGN_REVIEW",
+    # IMPLEMENTATION_REVIEW
+    "IMPLEMENTACION_REVIEW": "IMPLEMENTATION_REVIEW",
+    "IMPLEMENTATION_AUDIT": "IMPLEMENTATION_REVIEW",
+    "IMPL_AUDIT": "IMPLEMENTATION_REVIEW",
+    # MANAGER_REVIEW
+    "CODE_REVIEW": "MANAGER_REVIEW",
+    "REVIEW_AUDIT": "MANAGER_REVIEW",
+    "REVIEW": "MANAGER_REVIEW",
+    "REVIEW1": "MANAGER_REVIEW",
+    "REVIEW_1": "MANAGER_REVIEW",
+    "REVIEW_2": "MANAGER_REVIEW",
+    # ADJUDICATION
+    "ADJUDICACION": "ADJUDICATION",
+    "PREFLIGHT_ADJUDICATION": "ADJUDICATION",
+    # CLOSE (las CINCO grafias de la etapa de cierre que el backlog midio como
+    # fragmentacion, mas las de memoria, que ocurren en el cierre de sesion)
+    "SESSION_CLOSE": "CLOSE",
+    "CLOSE_AUDIT": "CLOSE",
+    "SESSION_CLOSE_AUDIT": "CLOSE",
+    "CLOSEOUT_GOVERNANCE": "CLOSE",
+    "CLOSE_ADJUDICATION": "CLOSE",
+    "CLOSEOUT_ADJUDICATION": "CLOSE",
+    "MEMORY_PROPOSAL": "CLOSE",
+    "MEMORY_UPLOAD": "CLOSE",
+    "MEMORY_AUDIT": "CLOSE",
+}
+
+
+def canonical_phase(phase: object) -> str | None:
+    """Etapa canonica de `phase`, o None si no resuelve a ninguna de las 8.
+
+    Before: `phase` es el valor crudo del campo homonimo del scorecard (puede
+        ser None, cadena vacia, una grafia historica o una etiqueta de RAMA).
+    During: `None`/vacio -> None; si no, normaliza a MAYUSCULAS y busca primero
+        en `CANONICAL_PHASES` (identidad) y despues en `LEGACY_PHASE_MAP`.
+    After: la etapa canonica (uno de los 8 valores de `CANONICAL_PHASES`) o
+        None. Pura, sin I/O y sin lanzar: el consumidor decide que hacer con el
+        None (contarlo como `dropped_semantic_mismatch`), nunca inventar valor.
+    """
+    if phase is None:
+        return None
+    text = str(phase).strip().upper()
+    if not text:
+        return None
+    if text in CANONICAL_PHASES:
+        return text
+    return LEGACY_PHASE_MAP.get(text)
+
+
 LEADER_MIN_N = 5
 EXPLORATION_POLICY = (
     "1-de-5 rondas, o al cambiar la version del modelo/backend, el challenger "
@@ -6504,6 +6609,11 @@ def _warn_phase_typo(phase: str | None) -> None:
     quando es una fase exploratoria deliberada tipo 'DESIGN_REVIEW', pero
     indistinguible de un typo real como 'manager_reviw' sin este aviso).
 
+    WOT-2026-055a: desde que `--phase` tiene `choices` sobre `CANONICAL_PHASES`,
+    el CLI RECHAZA cualquier valor fuera del enum ANTES de llegar aqui, asi que
+    un typo ya no puede colarse por esta via. Este aviso queda como defensa en
+    profundidad para los llamantes PYTHON directos de `_cmd_loop_round`.
+
     Before: `phase` es el string crudo de `--phase` (puede ser None).
     During: normaliza igual que `_check_government_nonce` (minuscula, guion
         -> guion bajo) y compara por similitud (`difflib.get_close_matches`)
@@ -7253,7 +7363,13 @@ def main(argv: list[str] | None = None) -> int:
     p_loop.add_argument("--task-type", required=True)
     p_loop.add_argument("--rol", required=True, choices=["proposer", "challenger"])
     p_loop.add_argument(
-        "--phase", required=True, help="etapa de gobierno (CONTRACT_AUDIT, ...)"
+        "--phase",
+        required=True,
+        choices=list(CANONICAL_PHASES),
+        help=(
+            "etapa canonica del ciclo (WOT-2026-055a); un valor fuera del enum "
+            "FALLA con exit != 0. Valores: " + ", ".join(CANONICAL_PHASES)
+        ),
     )
     p_loop.add_argument(
         "--loop-id", required=True, help="registro citable del bucle (Lxxxx)"

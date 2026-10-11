@@ -552,3 +552,52 @@ def test_phase_value_report_declares_unjoinable_legacy_denominator(
     denom = pvr.format_denominator(report)
     assert "no_unibles_legacy=1" in denom, denom
     assert "cohortes_completas=0" in denom, denom
+
+
+# ------------------------------------------------- WOT-2026-055a: mapeo legacy
+def test_legacy_phase_labels_group_into_one_canonical_cell(tmp_path: Path) -> None:
+    """Cinco grafias de la etapa de cierre -> UNA celda canonica CLOSE.
+
+    Antes del enum, `phase` era texto libre: ``CLOSE``, ``CLOSE_AUDIT``,
+    ``CLOSEOUT_GOVERNANCE``, ``CLOSE_ADJUDICATION`` y ``CLOSEOUT_ADJUDICATION``
+    daban CINCO filas para una sola etapa. ``canonical_phase`` las agrupa.
+
+    MUTATION: usar ``row["phase"]`` crudo en ``_cell_key`` -> 5 celdas -> RED.
+    """
+    rows = [
+        _row(phase="CLOSE", backend_key="BA10"),
+        _row(phase="CLOSE_AUDIT", backend_key="BA10"),
+        _row(phase="CLOSEOUT_GOVERNANCE", backend_key="BA10"),
+        _row(phase="CLOSE_ADJUDICATION", backend_key="BA10"),
+        _row(phase="CLOSEOUT_ADJUDICATION", backend_key="BA10"),
+    ]
+    _write(tmp_path, rows)
+    report = pvr.build_report(tmp_path)
+    assert report.eligible == 5
+    assert len(report.cells) == 1, [c.phase for c in report.cells]
+    assert report.cells[0].phase == "CLOSE"
+    assert report.cells[0].rounds == 5
+
+
+def test_unmappable_phase_is_dropped_as_semantic_mismatch(tmp_path: Path) -> None:
+    """La RAMA del fan-out no es una etapa: se descarta y se CUENTA.
+
+    ``fanout-comun``/``fanout-dif`` no resuelven a etapa canonica -> cuentan en
+    ``dropped_semantic_mismatch`` (no en ``dropped_legacy``, que es para el eje
+    AUSENTE), NO forman celda, y su conteo se publica en su propia linea de
+    denominador.
+    """
+    rows = [
+        _row(phase="CONTRACT_AUDIT", backend_key="BA10"),
+        _row(phase="fanout-comun", backend_key="BA10"),
+        _row(phase="fanout-dif", backend_key="BA10"),
+    ]
+    _write(tmp_path, rows)
+    report = pvr.build_report(tmp_path)
+    assert report.eligible == 1
+    assert report.dropped_semantic_mismatch == 2, report
+    assert report.dropped_legacy == 0, "una rama NO es un eje ausente"
+    assert len(report.cells) == 1
+    assert report.cells[0].phase == "CONTRACT_AUDIT"
+    denom = pvr.format_denominator(report)
+    assert "descartadas_semantic_mismatch=2" in denom, denom

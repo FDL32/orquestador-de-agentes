@@ -95,7 +95,7 @@ sys.exit(ed.main([
     "--ticket", "WOT-2026-054j",
     "--task-type", "code-review",
     "--rol", "challenger",
-    "--phase", "premise_check",
+    "--phase", "DESIGN_REVIEW",
     "--loop-id", "L054J",
     "--backend-key", "BKA",
     "--data-sensitivity", "public",

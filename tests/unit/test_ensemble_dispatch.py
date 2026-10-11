@@ -4972,7 +4972,7 @@ def test_086k_cli_no_duplica_el_evento(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "exploracion",
+            "DESIGN_REVIEW",
             "--loop-id",
             "L086k",
             "--backend-key",
@@ -7526,7 +7526,7 @@ def _run_loop_round_cli(tmp_path, monkeypatch, commit_sha):
         "--rol",
         "challenger",
         "--phase",
-        "FANOUT_DIF",
+        "DESIGN_REVIEW",
         "--loop-id",
         "L800",
         "--backend-key",
@@ -8503,6 +8503,110 @@ def test_warn_phase_typo_silent_on_deliberately_new_phase(capsys):
 def test_warn_phase_typo_handles_none():
     """None (--phase ausente, aunque el CLI lo exige) no revienta."""
     ed._warn_phase_typo(None)  # no debe lanzar
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-055a: `--phase` gobernado por el enum de 8 etapas canonicas
+# --------------------------------------------------------------------------- #
+
+
+def _phase_argv(tmp_path: Path, phase: str) -> list[str]:
+    """argv minimo de `loop-round` con la fase dada (resto constante)."""
+    payload = tmp_path / "payload.txt"
+    payload.write_text("material publico", encoding="utf-8")
+    return [
+        "loop-round",
+        "--profile",
+        "p_chal",
+        "--content-file",
+        str(payload),
+        "--ticket",
+        "WOT-TEST-055a",
+        "--task-type",
+        "code-review",
+        "--rol",
+        "challenger",
+        "--phase",
+        phase,
+        "--loop-id",
+        "L700",
+        "--backend-key",
+        "BKA",
+        "--data-sensitivity",
+        "public",
+        "--project-root",
+        str(tmp_path),
+    ]
+
+
+def test_phase_is_governed_by_canonical_enum():
+    """DoD: el enum es EXACTAMENTE las 8 etapas canonicas (contrato de TASK_TYPES)."""
+    assert len(ed.CANONICAL_PHASES) == 8
+    assert len(set(ed.CANONICAL_PHASES)) == 8, "sin duplicados"
+    assert set(ed.CANONICAL_PHASES) == {
+        "TRIAGE_AUDIT",
+        "CONTRACT_AUDIT",
+        "PROMPT_AUDIT",
+        "DESIGN_REVIEW",
+        "IMPLEMENTATION_REVIEW",
+        "MANAGER_REVIEW",
+        "ADJUDICATION",
+        "CLOSE",
+    }
+
+
+def test_phase_out_of_enum_fails_closed(tmp_path, monkeypatch, capsys):
+    """DoD (a): una RAMA (fuera del enum) FALLA con exit != 0 y NO despacha.
+
+    MUTATION (DoD b): quitar `choices` de `--phase` -> argparse acepta
+    `fanout-comun`, la ronda se despacha y `ed.main` NO lanza SystemExit ->
+    este test cae. El `assert transport.calls == []` es la segunda mitad del
+    contrato: un phase invalido no debe gastar la llamada al backend.
+    """
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    transport = _FakeTransport(replies=["no deberia llegar"])
+    monkeypatch.setattr(ed, "send_to" + "_profile", transport)
+    with pytest.raises(SystemExit) as exc:
+        ed.main(_phase_argv(tmp_path, "fanout-comun"))
+    assert exc.value.code != 0, "un phase fuera del enum debe salir con exit != 0"
+    err = capsys.readouterr().err
+    assert "invalid choice" in err, err
+    assert transport.calls == [], "no debe llamar al backend con phase invalido"
+
+
+@pytest.mark.parametrize("phase", list(ed.CANONICAL_PHASES))
+def test_all_canonical_phases_are_accepted(tmp_path, monkeypatch, phase):
+    """CONTROL NEGATIVO (DoD c): las 8 etapas canonicas pasan el gate de argparse.
+
+    Para las etapas de GOBIERNO (CONTRACT_AUDIT/MANAGER_REVIEW/CLOSE) la ronda
+    ademas exige nonce, asi que `ed.main` retorna 4 ([INVALID]); para las demas
+    retorna 0. En NINGUN caso argparse rechaza el valor (no hay SystemExit).
+    """
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to" + "_profile", lambda *a, **k: "ok")
+    rc = ed.main(_phase_argv(tmp_path, phase))  # no SystemExit = aceptado
+    assert rc in (0, ed.EXIT_INVALID_INPUT), rc
+
+
+def test_canonical_phase_maps_legacy_labels():
+    """MECANISMO DE LEGACY (DoD d): `canonical_phase` marca el historico.
+
+    Identidad para las 8 canonicas; mapeo EXPLICITO de grafias legacy; y
+    fail-closed (None) para lo que no es una etapa (RAMA de fan-out o paso),
+    que el consumidor publica como `dropped_semantic_mismatch`.
+    """
+    for canonical in ed.CANONICAL_PHASES:
+        assert ed.canonical_phase(canonical) == canonical
+    # Grafias legacy historicas -> su etapa canonica (agrupacion real).
+    assert ed.canonical_phase("contract_audit") == "CONTRACT_AUDIT"
+    assert ed.canonical_phase("CLOSE_AUDIT") == "CLOSE"
+    assert ed.canonical_phase("CLOSEOUT_GOVERNANCE") == "CLOSE"
+    assert ed.canonical_phase("CODE_REVIEW") == "MANAGER_REVIEW"
+    # Etiquetas que NO son etapas: None, nunca una etapa inventada.
+    assert ed.canonical_phase("fanout-comun") is None
+    assert ed.canonical_phase("challenge-fanout") is None
+    assert ed.canonical_phase(None) is None
+    assert ed.canonical_phase("") is None
 
 
 def test_ensemble_runtime_artifacts_registry_covers_all_rel_constants():
