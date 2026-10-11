@@ -1351,6 +1351,16 @@ _STDERR_MARKER = "[stderr] "
 # [ERROR] en `main`; 3 dice "la ronda corrio, se registro, y no vale".
 EXIT_NO_CONTRIBUTION = 3
 
+# WOT-2026-046d: codigo de salida de la rama de ENTRADA INVALIDA (un
+# `ValueError`, p.ej. `--task-type` desconocido o un `--commit-sha` que no
+# resuelve). Un ValueError NO es un veto de politica: `DispatchBlockedError`
+# (la barrera que bloquea A PROPOSITO) conserva `[BLOCKED]`/1, mientras que un
+# ValueError sale por una rama PROPIA con prefijo `[INVALID]` y este codigo,
+# para que "la barrera funciono" y "la invocacion estaba mal" no se reporten
+# igual. Un rc solo no basta como discriminante: el TIPO observable es el
+# prefijo, y el codigo lo refuerza.
+EXIT_INVALID_INPUT = 4
+
 
 def _stderr_tail(stderr_text: str | None) -> str:
     """Ultimos `_AGENT_STDERR_TAIL_CHARS` de stderr, redactados; '' si no hay.
@@ -7233,7 +7243,8 @@ def main(argv: list[str] | None = None) -> int:
             "UNA ronda de un bucle de gobierno, registrada en scorecard.jsonl. "
             "Salida: 0 la ronda aporto; 1 [BLOCKED] (rechazada antes de llamar); "
             "2 [ERROR]; 3 [NO-APORTA] la ronda corrio y se registro pero el "
-            "transporte fallo o la respuesta vino vacia (WOT-2026-086d)."
+            "transporte fallo o la respuesta vino vacia (WOT-2026-086d); "
+            "4 [INVALID] la invocacion estaba mal (ValueError; WOT-2026-046d)."
         ),
     )
     p_loop.add_argument("--profile", required=True)
@@ -7378,9 +7389,19 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return handlers[args.command](args, config)
-    except (DispatchBlockedError, ValueError) as exc:
+    except DispatchBlockedError as exc:
+        # Veto de politica: la barrera bloqueo A PROPOSITO. Conserva su
+        # prefijo `[BLOCKED]` y su codigo de salida.
         print(f"[BLOCKED] {exc}", file=sys.stderr)
         return 1
+    except ValueError as exc:
+        # WOT-2026-046d: entrada/argumento invalido (p.ej. --task-type
+        # desconocido, un sha que no resuelve). NO es un veto de politica:
+        # sale por una rama PROPIA, con prefijo `[INVALID]` y codigo propios,
+        # para que "la barrera funciono" y "la invocacion estaba mal" no se
+        # reporten igual.
+        print(f"[INVALID] {exc}", file=sys.stderr)
+        return EXIT_INVALID_INPUT
     except Exception as exc:
         print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

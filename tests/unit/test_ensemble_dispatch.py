@@ -764,14 +764,21 @@ def test_task_type_invalid_blocks_run_pipeline_api(tmp_path):
     assert (tmp_path / ed.SCORECARD_REL).exists() is False
 
 
-def test_task_type_invalid_blocks_cli_exit_nonzero(tmp_path, monkeypatch):
+def test_task_type_invalid_blocks_cli_exit_nonzero(tmp_path, monkeypatch, capsys):
     """(c) CLI path: `run --task-type basura` sale con exit != 0 (D2: un
     unico guard en run_pipeline gobierna ambos caminos, API y CLI).
     `send_to_profile` se stubea para que, SI la validacion se saltara, el
     comando completaria con EXITO (rc=0) en vez de fallar por otra razon
     (auth/red): asi el exit code queda atado SOLO al guard de task_type,
     no a un efecto colateral (mutation: quitar el guard de run_pipeline
-    hace que rc pase de 1 a 0, no solo 'algun no-cero')."""
+    hace que rc pase de 4 a 0, no solo 'algun no-cero').
+
+    ACTUALIZADO por WOT-2026-046d (antes fijaba `rc == 1`). El `run --task-type
+    basura` NO es un veto de politica: es una ENTRADA INVALIDA, y un ValueError
+    ya no comparte la rama `[BLOCKED]`/1 con `DispatchBlockedError`. Sale por su
+    propia rama `[INVALID]`/4. Se afirma el TIPO observable (el prefijo), no solo
+    el rc: un rc aislado no basta como discriminante.
+    """
     monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
     monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: "ok")
     payload_file = tmp_path / "payload.txt"
@@ -793,18 +800,76 @@ def test_task_type_invalid_blocks_cli_exit_nonzero(tmp_path, monkeypatch):
             str(tmp_path),
         ]
     )
-    assert rc == 1, "task_type invalido debe bloquear via ValueError -> exit 1"
+    err = capsys.readouterr().err
+    assert rc == ed.EXIT_INVALID_INPUT, (
+        "task_type invalido (ValueError) debe salir por la rama [INVALID]/4, "
+        f"no por [BLOCKED]/1; rc={rc}"
+    )
+    assert "[INVALID]" in err, f"el TIPO observable debe ser [INVALID]: {err!r}"
+    assert "[BLOCKED]" not in err, (
+        "un ValueError (invocacion mal) NO debe reportarse como veto de "
+        f"politica [BLOCKED]: {err!r}"
+    )
+
+
+def test_dispatch_blocked_keeps_blocked_prefix_and_exit_one(
+    tmp_path, monkeypatch, capsys
+):
+    """WOT-2026-046d: la rama CONTRARIA -- un veto de POLITICA real.
+
+    `privacy_preflight` es la barrera que bloquea A PROPOSITO (no es un bug):
+    al enviar `--data-sensitivity private` a un backend sin `trusted:true`,
+    `send_to_profile` lanza `DispatchBlockedError` ANTES de tocar red. Esa rama
+    DEBE conservar su prefijo `[BLOCKED]` y su codigo 1 -- el ticket 046d separa
+    la rama del ValueError, NO cambia el significado del veto de politica.
+
+    Mutation: reunir `DispatchBlockedError` y `ValueError` en un solo `except`
+    (o cambiar el prefijo/rc de esta rama) -> este test y su hermano de
+    ValueError no pueden estar ambos verdes.
+    """
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    payload_file = tmp_path / "payload.txt"
+    payload_file.write_text("material publico", encoding="utf-8")
+    rc = ed.main(
+        [
+            "run",
+            "--pipeline",
+            "pipe",
+            "--ticket",
+            "WOT-TEST-046d-blocked",
+            "--task-type",
+            "code-review",
+            "--payload-file",
+            str(payload_file),
+            "--data-sensitivity",
+            "private",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    err = capsys.readouterr().err
+    assert rc == 1, f"un veto de politica conserva su codigo (exit 1); rc={rc}"
+    assert "[BLOCKED]" in err, (
+        f"un veto de politica conserva su prefijo [BLOCKED]: {err!r}"
+    )
+    assert "[INVALID]" not in err, (
+        f"el veto de politica NO debe confundirse con una entrada invalida: {err!r}"
+    )
 
 
 def test_loop_round_usage_error_leaves_auditable_row(tmp_path, monkeypatch):
     """WOT-2026-048i: un error de USO de `loop-round` deja FILA con `failure_mode`.
 
-    El exit code YA era correcto (`return 1`), y NO se toca -- ese es el
-    NON-GOAL de la ficha. Lo que faltaba es RASTRO: el `[BLOCKED]` sale por
-    stderr y la ronda muere SIN dejar fila, asi que "nadie consulto a esta
-    lente" y "la invocacion estaba mal escrita" son indistinguibles en el
-    scorecard. Medido 2026-08-05 sobre el motor 0be12cb: `--task-type`
-    con guion BAJO -> rc=1, stdout vacio, delta de filas = 0.
+    El RASTRO es lo que este test protege (NON-GOAL de 048i: la fila, no el
+    rc). El `[BLOCKED]` sale por stderr y la ronda moria SIN dejar fila, asi que
+    "nadie consulto a esta lente" y "la invocacion estaba mal escrita" eran
+    indistinguibles en el scorecard. Medido 2026-08-05 sobre el motor 0be12cb:
+    `--task-type` con guion BAJO -> rc=1, stdout vacio, delta de filas = 0.
+
+    ACTUALIZADO por WOT-2026-046d: un error de USO lanza `ValueError` en
+    `_cmd_loop_round`, y ese ValueError sale ahora por la rama `[INVALID]`/4 (ya
+    no por `[BLOCKED]`/1, que queda reservada al veto de politica). El cambio
+    que 048i declaraba NON-GOAL (el rc) lo hace este ticket a proposito.
 
     Por que la fila se escribe en el HANDLER y no en `run_loop_round`: la
     validacion de `run_loop_round` (`:1749`) ocurre ANTES de resolver
@@ -813,8 +878,9 @@ def test_loop_round_usage_error_leaves_auditable_row(tmp_path, monkeypatch):
 
     Mutation que aisla la rama: quitar el pre-check del handler deja el
     `raise` interno como unica via -> la fila no se escribe y
-    `len(rows) == 0`, con el rc SIN cambiar (sigue siendo 1). Es decir: el
-    test NO puede pasar por el exit code, solo por la fila.
+    `len(rows) == 0`, con el rc SIN cambiar (sigue siendo el de la rama
+    ValueError). Es decir: el test NO puede pasar por el exit code, solo por
+    la fila.
     """
     monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
     monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: "ok")
@@ -845,7 +911,10 @@ def test_loop_round_usage_error_leaves_auditable_row(tmp_path, monkeypatch):
             str(tmp_path),
         ]
     )
-    assert rc == 1, "un error de USO sigue saliendo con exit 1 (NON-GOAL: no se toca)"
+    assert rc == ed.EXIT_INVALID_INPUT, (
+        "un error de USO (ValueError) sale por la rama [INVALID]/4 "
+        "(WOT-2026-046d; antes compartia [BLOCKED]/1 con el veto de politica)"
+    )
     rows = _rows(tmp_path)
     assert len(rows) == 1, (
         "el error de USO debe dejar EXACTAMENTE UNA fila auditable; sin ella, "
