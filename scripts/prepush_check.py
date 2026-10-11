@@ -1635,43 +1635,118 @@ def _unresolvable_target_shas(project_root: Path, commit_shas: list[str]) -> lis
     return unresolvable
 
 
+def _target_shas_already_in_origin_main(
+    project_root: Path, commit_shas: list[str]
+) -> list[str]:
+    """WOT-2026-058o: shas de targets YA publicados en origin/main de su raiz.
+
+    Before: commit_shas ya parseados del fichero de targets; las raices
+        (motor/destino) pueden existir o no.
+    During: por cada sha, resuelve su raiz con el MISMO mecanismo por origen
+        de `_unresolvable_target_shas` (`_pair_home_root`, motor primero) y
+        corre `git merge-base --is-ancestor <sha> origin/main` (read-only)
+        contra ESA raiz. rc=0 publica el sha; rc=1 lo deja fuera; cualquier
+        otro desenlace (raiz sin origin/main, objeto ausente en esa raiz,
+        OSError/timeout, motor_root irresoluble) es DESCONOCIDO, no
+        publicado -- misma doctrina 059b ("None es desconocido, no
+        invalido"): un fallo de infraestructura no fabrica un rechazo.
+    After: lista (posiblemente vacia) de shas CONFIRMADOS en origin/main.
+        Sin escrituras.
+    """
+    try:
+        from runtime.motor_link import resolve_motor_root as _resolve_motor_root
+    except ImportError:  # pragma: no cover - ruta de import alternativa
+        from runtime.motor_link import (
+            resolve_motor_root as _resolve_motor_root,  # type: ignore[no-redef]
+        )
+    motor_root = _resolve_motor_root(project_root)
+    if motor_root is None:
+        return []
+    published: list[str] = []
+    for sha in commit_shas:
+        home = _pair_home_root(sha, project_root, motor_root)
+        if home is None:
+            # Sin root candidato: no se pudo comprobar, no es publicado.
+            continue
+        try:
+            probe = subprocess.run(
+                [  # noqa: S607
+                    "git",
+                    "-C",
+                    str(home),
+                    "merge-base",
+                    "--is-ancestor",
+                    sha,
+                    "origin/main",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            # Fallo de INFRAESTRUCTURA != "ya publicado": se degrada a
+            # desconocido (mismo criterio que `_unresolvable_target_shas`).
+            continue
+        if probe.returncode == 0:
+            published.append(sha)
+    return published
+
+
+def _first_prefixed_value(tokens: list[str], prefix: str) -> str | None:
+    """Primer valor `prefix=<v>` de los tokens (gana el primero), o None."""
+    for token in tokens:
+        if token.startswith(prefix):
+            return token.split("=", 1)[1]
+    return None
+
+
+def _unprefixed_token(tokens: list[str]) -> str | None:
+    """Primer token SIN prefijo conocido (`loop=`/`source=`): el deliverable_type."""
+    for token in tokens:
+        if not token.startswith("loop=") and not token.startswith("source="):
+            return token
+    return None
+
+
 def _parse_loop_execution_targets(
     text: str,
-) -> tuple[list[str], dict[str, str], dict[str, str]]:
+) -> tuple[list[str], dict[str, str], dict[str, str], dict[str, str]]:
     """S1B item 2: parsea el fichero de targets (reparto de ciclomatica).
 
     Before: `text` es el contenido crudo de `loop_execution_targets.txt`.
-    During: una linea es `sha[ deliverable_type][ loop=<id>]`; `#` empieza
-        comentario; lineas vacias se saltan. El token `loop=<id>` OPCIONAL se
-        honra en cualquier posicion tras el sha; el PRIMER token sin prefijo
-        `loop=` sigue siendo el deliverable_type (formato viejo
-        `sha[ dtype]` intacto); un `loop=` repetido se ignora (gana el
-        primero). Sin I/O.
-    After: (commit_shas, deliverable_type por commit, loop_id por commit).
+    During: una linea es `sha[ deliverable_type][ loop=<id>][ source=<v>]`;
+        `#` empieza comentario; lineas vacias se saltan. Los tokens
+        OPCIONALES `loop=<id>` y `source=<v>` se honran en cualquier
+        posicion tras el sha; el PRIMER token sin prefijo conocido sigue
+        siendo el deliverable_type (formato viejo `sha[ dtype]` intacto);
+        un token repetido se ignora (gana el primero). WOT-2026-058o:
+        `source=session-close` marca la procedencia del escritor legitimo
+        (`_step_write_loop_execution_targets`); un token sin `source=`
+        NUNCA es procedencia. Sin I/O.
+    After: (commit_shas, deliverable_type por commit, loop_id por commit,
+        source por commit).
     """
     commit_shas: list[str] = []
     per_commit_dtype: dict[str, str] = {}
     per_commit_loop: dict[str, str] = {}
+    per_commit_source: dict[str, str] = {}
     for line in text.splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
         parts = line.split()
         sha = parts[0]
-        dtype: str | None = None
-        loop_id: str | None = None
-        for token in parts[1:]:
-            if token.startswith("loop="):
-                if loop_id is None:
-                    loop_id = token.split("=", 1)[1]
-            elif dtype is None:
-                dtype = token
+        dtype = _unprefixed_token(parts[1:])
+        loop_id = _first_prefixed_value(parts[1:], "loop=")
+        source = _first_prefixed_value(parts[1:], "source=")
         commit_shas.append(sha)
         if dtype:
             per_commit_dtype[sha] = dtype
         if loop_id:
             per_commit_loop[sha] = loop_id
-    return commit_shas, per_commit_dtype, per_commit_loop
+        if source:
+            per_commit_source[sha] = source
+    return commit_shas, per_commit_dtype, per_commit_loop, per_commit_source
 
 
 def _loop_accreditation_failures(
@@ -1722,9 +1797,18 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
     backend_key DISTINTO y un challenge_nonce emitido FUERA antes de la ronda. Los
     commits a verificar los declara el orquestador via
     `.agent/collaboration/loop_execution_targets.txt` (una linea
-    `sha[ deliverable_type][ loop=<id>]` por commit). SIN ese fichero, SKIPEA
-    EXPLICITAMENTE -- un SKIP mudo convertiria la barrera en norma; se IMPRIME
-    el motivo.
+    `sha[ deliverable_type][ loop=<id>][ source=<v>]` por commit). SIN ese
+    fichero, SKIPEA EXPLICITAMENTE -- un SKIP mudo convertiria la barrera en
+    norma; se IMPRIME el motivo.
+
+    WOT-2026-058o (procedencia): la UNICA escritora legitima del fichero es
+    `_step_write_loop_execution_targets` (--session-close), que estampa
+    `source=session-close` en cada linea. Un target SIN ese token cuyo commit
+    YA esta en origin/main de su raiz (misma resolucion por origen de 059b,
+    via `_target_shas_already_in_origin_main`) RECHAZA bloqueante: es
+    inauditable por construccion. Un target manual de un vuelo EN CURSO (sin
+    publicar) sigue al fan-out de gobierno de siempre; el formato viejo
+    `sha[ dtype]` no cambia de veredicto por si solo.
 
     S1B item 2: el token `loop=<id>` OPCIONAL se honra como `--loop-id` del
     guard. Defecto medido 2026-09-07: dos bucles sobre DOCUMENTOS distintos
@@ -1788,8 +1872,8 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             skipped=True,
         )
     try:
-        commit_shas, per_commit_dtype, per_commit_loop = _parse_loop_execution_targets(
-            targets_file.read_text(encoding="utf-8")
+        commit_shas, per_commit_dtype, per_commit_loop, per_commit_source = (
+            _parse_loop_execution_targets(targets_file.read_text(encoding="utf-8"))
         )
     except OSError as exc:
         return CheckResult(
@@ -1824,6 +1908,36 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
                 "solo-existente en el destino es un commit de vuelo que entrego "
                 "en el destino. Uno que no resuelve en ninguna raiz es herencia, "
                 "no gobierno. Esto ABORTA el cierre (fail-closed)."
+            ),
+            is_blocking=True,
+        )
+
+    # WOT-2026-058o (procedencia): la UNICA escritora legitima del fichero es
+    # `_step_write_loop_execution_targets` (--session-close), que estampa
+    # `source=session-close` en cada linea. Un target SIN ese token cuyo
+    # commit YA esta en origin/main de su raiz es INAUDITABLE por
+    # construccion -- nadie puede distinguir una declaracion retrospectiva
+    # de un ambito real una vez el commit es publico -- y RECHAZA bloqueante
+    # (no SKIP, no falso rojo permanente: la barrera muere con causa
+    # nombrada). Un target manual de un vuelo EN CURSO (sin publicar) NO se
+    # rechaza por esta rama: sigue al fan-out de gobierno de siempre.
+    unattributed = [
+        sha for sha in commit_shas if per_commit_source.get(sha) != "session-close"
+    ]
+    published = _target_shas_already_in_origin_main(project_root, unattributed)
+    if published:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                "target(s) sin procedencia session-close y ya publicado(s) en "
+                f"origin/main (inauditable por construccion, WOT-2026-058o): "
+                f"{', '.join(published)}\n"
+                "Solo `_step_write_loop_execution_targets` (--session-close) es "
+                "escritor legitimo del fichero; una linea a mano que cita un "
+                "commit ya en origin/main no puede distinguirse de una "
+                "reescritura retroactiva del ambito. Esto ABORTA el cierre "
+                "(fail-closed), no SKIP."
             ),
             is_blocking=True,
         )

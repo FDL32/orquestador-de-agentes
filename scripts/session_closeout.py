@@ -128,6 +128,12 @@ LOOP_EXECUTION_TARGETS_REL = (
     Path(".agent") / "collaboration" / "loop_execution_targets.txt"
 )
 
+# WOT-2026-058o: token de procedencia que el UNICO escritor legitimo del
+# fichero (`_step_write_loop_execution_targets`, via --session-close) estampa
+# en cada linea. El consumidor (`run_loop_execution_check`, prepush_check.py)
+# rechaza un target sin este token cuyo commit ya este en origin/main.
+LOOP_TARGETS_SOURCE_TOKEN = "source=session-close"  # noqa: S105
+
 BACKLOG_REL = Path(".agent") / "collaboration" / "backlog.md"
 BACKLOG_ARCHIVE_REL = Path(".agent") / "collaboration" / "_archive" / "backlog_done.md"
 
@@ -1987,7 +1993,10 @@ def _process_ticket_targets(
     autoritativa esta vacia. WOT-2026-073d: un ticket SIN fila/ficha propia en
     ninguna superficie de backlog y SIN contrato propio se EXCLUYE con WARN
     antes de resolver; el ticket CON superficie que omite el campo sigue
-    fail-closed (D2).
+    fail-closed (D2). WOT-2026-058o: cada linea producida porta el token de
+    procedencia `LOOP_TARGETS_SOURCE_TOKEN` (`source=session-close`) -- el
+    escritor legitimo se declara EN la linea para que el auditor distinga un
+    target del cierre de uno editado a mano.
     """
 
     def _default_read_authority(tid: str) -> str | None:
@@ -2063,7 +2072,9 @@ def _process_ticket_targets(
         return _TicketTargetResult([], "PASS")
 
     dtype = _resolve_deliverable_type_for_ticket(project_root, ticket_id)
-    return _TicketTargetResult([f"{sha} {dtype}" for sha in shas], "PASS")
+    return _TicketTargetResult(
+        [f"{sha} {dtype} {LOOP_TARGETS_SOURCE_TOKEN}" for sha in shas], "PASS"
+    )
 
 
 @dataclass
@@ -2309,7 +2320,9 @@ def _step_write_loop_execution_targets(
         mode" and the file is left untouched (created, deleted, or absent --
         whatever state it was already in). Otherwise: if at least one commit
         line was produced, writes the whole file (never appends) with one
-        `<sha> <deliverable_type>` line per commit and returns PASS. If zero
+        `<sha> <deliverable_type> source=session-close` line per commit
+        (WOT-2026-058o: procedencia del escritor legitimo estampada en la
+        propia linea) and returns PASS. If zero
         tickets or zero matching commits exist, deletes the file if present
         (so the consumer's `if not targets_file.exists()` branch fires) and
         returns PASS with a "nothing to declare" detail. Never raises: git

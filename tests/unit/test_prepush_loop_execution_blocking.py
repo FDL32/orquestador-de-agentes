@@ -489,3 +489,155 @@ def test_targets_without_loop_token_keeps_the_old_verdict(tmp_path):
         f"que hoy acredita debe seguir acreditando: {result.output}"
     )
     assert result.skipped is False, result.output
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058o: procedencia `source=session-close` y rechazo del target
+# inauditable (sin procedencia Y ya publicado en origin/main).
+# ---------------------------------------------------------------------------
+
+
+def _make_published_motor_repo(motor: Path, origin: Path) -> str:
+    """Repo motor con origin/main REAL: seed commit + push a un bare origin.
+
+    `git merge-base --is-ancestor <sha> origin/main` necesita el
+    remote-tracking ref `origin/main`; un push a un bare repo lo produce
+    exactamente igual que un fetch de produccion (fixture realista del DoD).
+    """
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", str(motor)], check=True)
+    subprocess.run(
+        ["git", "-C", str(motor), "config", "user.email", "test@localhost"], check=True
+    )
+    subprocess.run(["git", "-C", str(motor), "config", "user.name", "test"], check=True)
+    (motor / "seed.txt").write_text("seed", encoding="utf-8")
+    subprocess.run(["git", "-C", str(motor), "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", str(motor), "commit", "-qm", "seed"], check=True)
+    subprocess.run(["git", "-C", str(motor), "branch", "-M", "main"], check=True)
+    subprocess.run(
+        ["git", "-C", str(motor), "remote", "add", "origin", str(origin)], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(motor), "push", "-q", "origin", "main"], check=True
+    )
+    out = subprocess.run(
+        ["git", "-C", str(motor), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
+def _motor_head(motor: Path) -> str:
+    """SHA real de HEAD del repo dado."""
+    out = subprocess.run(
+        ["git", "-C", str(motor), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
+def test_parser_honors_source_token_and_keeps_old_format():
+    """WOT-2026-058o (parser defensivo): el token `source=<v>` se captura en
+    cualquier posicion sin romper el formato viejo `sha[ dtype]`; un token
+    sin prefijo conocido sigue siendo deliverable_type."""
+    import scripts.prepush_check as pc
+
+    shas, dtypes, loops, sources = pc._parse_loop_execution_targets(
+        "abc code loop=L1 source=session-close\n"
+        "def docs\n"
+        "ghi code source=otro\n"
+        "jkl source=session-close loop=L2 documentation\n"
+    )
+    assert shas == ["abc", "def", "ghi", "jkl"]
+    assert dtypes == {
+        "abc": "code",
+        "def": "docs",
+        "ghi": "code",
+        "jkl": "documentation",
+    }
+    assert loops == {"abc": "L1", "jkl": "L2"}
+    assert sources == {"abc": "session-close", "ghi": "otro", "jkl": "session-close"}
+
+
+def test_published_target_without_provenance_blocks_even_if_accredited(tmp_path):
+    """WOT-2026-058o (d) MUTATION: un target a MANO (sin `source=session-close`)
+    que cita un commit YA publicado en origin/main debe CAER por la rama de
+    procedencia, AUNQUE su fan-out de gobierno este acreditado.
+
+    ROJO sin la rama nueva (el corpus acreditado daria passed=True); VERDE con
+    ella. MUTACION QUE LA MATA: retirar el bloque de procedencia en
+    `run_loop_execution_check` -> este test cae (el target publicado pasa).
+    """
+    motor = tmp_path / "motor"
+    published_sha = _make_published_motor_repo(motor, tmp_path / "origin.git")
+    dest = _link_motor(tmp_path / "dest", motor)
+    root = _build_destination(
+        dest,
+        targets=f"{published_sha} code\n",
+        rounds=[_round_row(bk, commit=published_sha) for bk in ACCREDITED_BACKENDS],
+        emitted=[_emitted_row(commit=published_sha)],
+    )
+
+    result = run_loop_execution_check(root)
+
+    assert result.passed is False, result.output
+    assert result.is_blocking is True, (
+        "un target sin procedencia que cita un commit ya en origin/main es "
+        f"inauditable por construccion: debe ABORTAR el cierre: {result.output}"
+    )
+    assert result.skipped is False, "esto es un RECHAZO medido, no un salto"
+    assert published_sha in result.output, "debe NOMBRAR el sha publicado"
+    assert "origin/main" in result.output, result.output
+    assert "session-close" in result.output, result.output
+
+
+def test_published_target_with_session_close_provenance_still_passes(tmp_path):
+    """WOT-2026-058o (d) espejo VERDE: el MISMO target publicado, ahora con el
+    token `source=session-close` (la forma exacta que escribe el cierre), pasa
+    igual que hoy -- la acreditacion decide, la procedencia no añade friccion."""
+    motor = tmp_path / "motor"
+    published_sha = _make_published_motor_repo(motor, tmp_path / "origin.git")
+    dest = _link_motor(tmp_path / "dest", motor)
+    root = _build_destination(
+        dest,
+        targets=f"{published_sha} code source=session-close\n",
+        rounds=[_round_row(bk, commit=published_sha) for bk in ACCREDITED_BACKENDS],
+        emitted=[_emitted_row(commit=published_sha)],
+    )
+
+    result = run_loop_execution_check(root)
+
+    assert result.passed is True, result.output
+    assert result.skipped is False, "se ejecuto y acredito: no es un salto"
+    assert "1 commit(s)" in result.output
+
+
+def test_unpublished_manual_target_falls_through_to_accreditation(tmp_path):
+    """WOT-2026-058o CONTROL NEGATIVO del DoD (b): una linea a mano SIN token
+    cuyo commit SIGUE sin publicar (vuelo legitimo en curso) NO se rechaza por
+    la rama de procedencia -- cae (o pasa) por el fan-out de gobierno de
+    siempre, con su mensaje, no por el de origin/main."""
+    motor = tmp_path / "motor"
+    _make_published_motor_repo(motor, tmp_path / "origin.git")
+    (motor / "late.txt").write_text("late", encoding="utf-8")
+    subprocess.run(["git", "-C", str(motor), "add", "late.txt"], check=True)
+    subprocess.run(["git", "-C", str(motor), "commit", "-qm", "late"], check=True)
+    unpublished_sha = _motor_head(motor)
+    dest = _link_motor(tmp_path / "dest", motor)
+    root = _build_destination(
+        dest, targets=f"{unpublished_sha} code\n", rounds=[], emitted=[]
+    )
+
+    result = run_loop_execution_check(root)
+
+    assert result.passed is False, result.output
+    assert result.is_blocking is True, result.output
+    assert "fan-out" in result.output, (
+        "sin publicar, el rechazo debe venir de la ACREDITACION (fan-out), "
+        f"no de la rama de procedencia: {result.output}"
+    )
+    assert "origin/main" not in result.output, result.output

@@ -1919,3 +1919,106 @@ def test_dry_run_predicts_warn_for_ticket_without_backlog_row(
     assert "excluido" in result.detail
     assert "FAIL_TARGETS_MISSING" not in result.detail
     assert not (destino / TARGETS_REL).exists()
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-058o: procedencia `source=session-close` en las lineas del escritor
+# e invariante: el fichero del cierre pasa la barrera del consumidor.
+# ---------------------------------------------------------------------------
+
+_058O_TS_EMIT = "2026-10-11T10:00:00+00:00"
+_058O_TS_ROUND = "2026-10-11T10:05:00+00:00"
+_058O_BACKENDS = ("BA10", "BA11", "BA12", "BA13")
+
+
+def _058o_emitted_row(commit: str) -> dict:
+    """Fila de emitted_nonces.jsonl con la forma que escribe `emit_nonce`."""
+    return {
+        "ts": _058O_TS_EMIT,
+        "issuer_role": "orchestrator",
+        "issuer_backend_key": "BA01",
+        "issued_before_ts": _058O_TS_EMIT,
+        "commit_sha": commit,
+        "loop_id": "L980",
+        "challenge_nonce": "N-058o",
+    }
+
+
+def _058o_round_row(backend: str, commit: str) -> dict:
+    """Fila de scorecard.jsonl con la forma que escribe `_record_round`."""
+    return {
+        "event": "ronda",
+        "commit_sha": commit,
+        "backend_key": backend,
+        "challenge_nonce": "N-058o",
+        "ts": _058O_TS_ROUND,
+        "output_chars": 2134,
+        "evidencia": "veredicto de la lente",
+    }
+
+
+def test_writer_lines_carry_session_close_provenance(tmp_path: Path) -> None:
+    """WOT-2026-058o (a): cada linea que el escritor legitimo produce porta el
+    token `source=session-close`, para que un auditor distinga un target
+    declarado por el cierre de uno editado a mano.
+
+    MUTATION proof: revertir `_process_ticket_targets` a `f"{sha} {dtype}"`
+    hace caer este test (la linea pierde la procedencia).
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999f", "repo_motor")
+    sha = _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999f: implement feature")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999f"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    content = (repo / TARGETS_REL).read_text(encoding="utf-8")
+    assert f"{sha} code source=session-close" in content, content
+    for line in content.splitlines():
+        if line.strip():
+            assert line.split()[1] in {"code", "documentation"}, line
+            assert line.endswith("source=session-close"), line
+
+
+def test_close_written_targets_pass_the_loop_execution_check(tmp_path: Path) -> None:
+    """WOT-2026-058o (e) INVARIANTE: el fichero que escribe un cierre real
+    (con el token nuevo) pasa `run_loop_execution_check` exactamente igual que
+    hoy, una vez su fan-out de gobierno esta acreditado.
+
+    Sin mocks: escritor REAL sobre repo git REAL + corpus de acreditacion con
+    la forma exacta de scorecard/emitted_nonces.
+    """
+    from scripts.prepush_check import run_loop_execution_check
+
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999g", "repo_motor")
+    sha = _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999g: implement feature")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999g"], None, False
+    )
+    assert result.status == "PASS", result.detail
+
+    ensemble = repo / ".agent" / "runtime" / "ensemble"
+    ensemble.mkdir(parents=True, exist_ok=True)
+    (ensemble / "scorecard.jsonl").write_text(
+        "".join(json.dumps(_058o_round_row(bk, sha)) + "\n" for bk in _058O_BACKENDS),
+        encoding="utf-8",
+    )
+    (ensemble / "emitted_nonces.jsonl").write_text(
+        json.dumps(_058o_emitted_row(sha)) + "\n", encoding="utf-8"
+    )
+
+    verdict = run_loop_execution_check(repo)
+
+    assert verdict.passed is True, verdict.output
+    assert verdict.is_blocking is False, verdict.output
+    assert "1 commit(s)" in verdict.output
+    content = (repo / TARGETS_REL).read_text(encoding="utf-8")
+    assert "source=session-close" in content, content
