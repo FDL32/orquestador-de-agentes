@@ -2400,6 +2400,38 @@ def test_063c_sse_con_charset_activa_la_ruta_de_stream(monkeypatch):
     assert _api_063c() == "streamed"
 
 
+def test_063d_ruta_sse_queda_sellada_en_el_profile(monkeypatch):
+    """WOT-2026-063d: la ruta consumida (SSE/no-SSE) deja de ser muda.
+
+    Mismo patron que `_LENS_SCOPE_KEY` (WOT-2026-042v): `_transport_api` sella
+    la ruta EFECTIVA en `profile[_SSE_ROUTE_KEY]` para que `_record_round` la
+    registre. Mutation: comentar la asignacion deja `profile.get(_SSE_ROUTE_KEY)`
+    en `None` para la ronda SSE -> rojo.
+    """
+    lines = _sse_chunk("streamed", 0) + _SSE_DONE
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    profile = _profile_063c()
+    reply = ed._transport_api(
+        profile, {}, [{"role": "user", "content": "x"}], timeout=5
+    )
+    assert reply == "streamed"
+    assert profile.get(ed._SSE_ROUTE_KEY) == "sse"
+
+
+def test_063d_control_negativo_ruta_no_sse_sigue_registrandose_igual(monkeypatch):
+    """CONTROL NEGATIVO del DoD: una ronda no-SSE normal sella 'no-sse' y el
+    valor de retorno no cambia respecto al comportamiento ya cubierto por
+    `test_063c_200_no_sse_se_consume_como_hoy`."""
+    body = json.dumps({"choices": [{"message": {"content": "hoy"}}]}).encode()
+    _install_063c_transport(monkeypatch, _FakePlainResp(body))
+    profile = _profile_063c()
+    reply = ed._transport_api(
+        profile, {}, [{"role": "user", "content": "x"}], timeout=5
+    )
+    assert reply == "hoy"
+    assert profile.get(ed._SSE_ROUTE_KEY) == "no-sse"
+
+
 # --------------------------------------------------------------------------- #
 # WOT-2026-086h: smoke rapido (paralelo por proveedor, timeout efectivo,
 # /v1/models, taxonomia de 8 clases, filtro canal `agent`). DEC-086H-001.

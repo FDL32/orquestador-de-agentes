@@ -970,6 +970,11 @@ def _sanitized_transport_error(exc: Exception, api_key: str | None) -> Transport
 
 _SSE_CONTENT_TYPE = "text/event-stream"
 
+# WOT-2026-063d: misma forma que `_LENS_SCOPE_KEY` (WOT-2026-042v) -- clave
+# privada sellada sobre el `profile` MUTABLE para que `_record_round` la lea
+# sin cambiar la firma de `_transport_api` ni del transporte en si.
+_SSE_ROUTE_KEY = "_sse_route_effective"
+
 
 def _response_is_sse(resp) -> bool:
     """I6: discrimina la ruta de consumo por Content-Type, no por fe.
@@ -1243,10 +1248,12 @@ def _transport_api(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             if _response_is_sse(resp):
+                profile[_SSE_ROUTE_KEY] = "sse"
                 streamed = _collect_sse_content(
                     resp, deadline, api_key, allow_reasoning=allow_reasoning
                 )
             else:
+                profile[_SSE_ROUTE_KEY] = "no-sse"
                 raw_body = resp.read()
     except (TransportError, json.JSONDecodeError):
         raise
@@ -5038,6 +5045,12 @@ def _record_round(
             # Permite analizar rendimiento por S (sin filesystem) vs F (con
             # filesystem) sin un join manual contra agents.json.
             "channel": profile.get("channel"),
+            # WOT-2026-063d: ruta de consumo EFECTIVA (sse | no-sse | None).
+            # None para el canal `agent` (`_transport_api` no se invoca) o si
+            # el transporte fallo antes de llegar a `urlopen` -- ausencia de
+            # dato, igual que `lens_scope` cuando la ronda no pasa por el
+            # dispatcher.
+            "sse_route": profile.get(_SSE_ROUTE_KEY),
         },
     )
 
