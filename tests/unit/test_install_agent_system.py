@@ -1754,3 +1754,44 @@ def test_link_carries_motor_workspace_root_and_degrades_to_none(tmp_path):
     assert data["motor_workspace_root"] is None, (
         "un motor sin declaracion deja el campo a null, no a una ruta adivinada"
     )
+
+
+def test_link_populates_workspace_root_when_declaration_exists(tmp_path):
+    """WOT-2026-060b: un motor que declara motor_workspace.txt ve el campo
+    populated en el link; el generador no lo ignora.
+
+    El defecto medido: el link de v_audio tenia el campo a null porque el motor
+    NO tenia el fichero de declaracion. Cuando el fichero existe y apunta a un
+    directorio valido, el generador debe rellenar el campo con la ruta resuelta.
+
+    Mutation-to-prove: si `write_motor_destination_link` no llama a
+    `read_motor_workspace_root` (o lo ignora), el campo sigue None a pesar de
+    que el motor declara su workspace.
+    """
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    (motor / ".agent" / "config").mkdir(parents=True)
+    ws = tmp_path / "dogfood_workspace"
+    ws.mkdir()
+    decl = motor / ".agent" / "config" / "motor_workspace.txt"
+    decl.write_text("dogfood_workspace\n", encoding="utf-8")
+
+    project_agent = tmp_path / "dest" / ".agent"
+    project_agent.mkdir(parents=True)
+
+    link = project_agent / "config" / "motor_destination_link.json"
+    write_motor_destination_link(
+        project_agent=project_agent,
+        motor_root=motor,
+        destination_root=tmp_path / "dest",
+        motor_version="v9.17.1",
+        ticket_prefix="WOT",
+    )
+
+    data = json.loads(link.read_text(encoding="utf-8"))
+    assert "motor_workspace_root" in data
+    expected = str((motor.parent / "dogfood_workspace").resolve())
+    assert data["motor_workspace_root"] == expected, (
+        f"el generador no rellenó el campo: esperaba {expected}, "
+        f"got {data.get('motor_workspace_root')}"
+    )
