@@ -1132,13 +1132,32 @@ def _parse_sse_event(
     FUERA, en `_collect_sse_content`: el interprete reasigna `__context__` al
     ejecutar el `raise` DENTRO del `except`, y ahi volveria el crudo con la
     key (lo pina test_063c_sanea_la_key_ante_chunk_malformado).
+
+    WOT-2026-063e (I4): `json.loads` acepta cualquier JSON valido, no solo
+    objetos -- `"null"`, `"42"`, `'"texto"'`, `"[]"` decodifican sin error.
+    Un payload que no es un `dict` es una FORMA erronea, no un fallo de
+    PARSEO JSON; sin esta guarda, `_accumulate_sse_deltas` (que asume dict)
+    revienta con `AttributeError`, que `_transport_api` funde en
+    `TransportError` -- la fusion de tipos que I4 prohibe. Se reporta como
+    `JSONDecodeError` (mismo tipo que un parseo roto) porque ambos son
+    errores de FORMA del cuerpo, no de transporte; el mensaje declara la
+    forma real recibida para no perder la evidencia.
     """
     try:
-        return json.loads(event_data), None
+        payload = json.loads(event_data)
     except json.JSONDecodeError as exc:
         return None, json.JSONDecodeError(
             exc.msg, _redact_secret(exc.doc, api_key), exc.pos
         )
+    if not isinstance(payload, dict):
+        redacted = _redact_secret(event_data, api_key)
+        return None, json.JSONDecodeError(
+            f"payload SSE valido pero no es un objeto (tipo real: "
+            f"{type(payload).__name__})",
+            redacted,
+            0,
+        )
+    return payload, None
 
 
 def _accumulate_sse_deltas(

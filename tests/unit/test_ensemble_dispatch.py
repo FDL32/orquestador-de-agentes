@@ -2330,6 +2330,31 @@ def test_063c_garbage_tras_el_centinela_no_se_parsea(monkeypatch):
     assert _api_063c() == "ok "
 
 
+def test_063e_data_null_es_parseo_no_transporte(monkeypatch):
+    """WOT-2026-063e (I4): `data: null` es JSON VALIDO pero de forma erronea.
+
+    `json.loads("null")` da `None`; `_accumulate_sse_deltas` hacia
+    `payload.get("choices")` sobre ese `None` y reventaba con `AttributeError`,
+    que `_transport_api` fundia en `TransportError` -- la fusion de tipos que
+    I4 prohibe (un error de FORMA de payload no es un error de TRANSPORTE).
+    Mutation: quitar la guarda de tipo en `_parse_sse_event` -> este test
+    recibe `TransportError`/`AttributeError` en vez de `JSONDecodeError`.
+    """
+    lines = _sse_event("null") + _SSE_DONE
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    with pytest.raises(json.JSONDecodeError):
+        _api_063c()
+
+
+def test_063e_control_negativo_choices_vacio_sigue_funcionando(monkeypatch):
+    """CONTROL NEGATIVO: un payload objeto sin `choices` sigue tratandose
+    como hoy (lista vacia via `or []`), sin falsos positivos del fix de
+    063e."""
+    lines = _sse_event(json.dumps({"id": "x"})) + _sse_chunk("ok", 0) + _SSE_DONE
+    _install_063c_transport(monkeypatch, _FakeSSEStream(lines))
+    assert _api_063c() == "ok"
+
+
 def test_063c_comentarios_keepalives_y_data_sin_espacio(monkeypatch):
     """Framing defensivo: `: ping` ignorado, evento solo-comentario no corta,
     y `data:[DONE]` sin espacio tras el colon es centinela valido (SSE permite
