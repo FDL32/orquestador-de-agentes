@@ -78,6 +78,15 @@ EXPECTED_WIRED_REAL = {
     # prepush_check.py::run_launch_prompt_paths_check (closeout, WARN -- 2 de 3
     # prompts vivos ya violan la regla antes de la barrera: rojo heredado).
     "check_launch_prompt_paths",
+    # WOT-2026-067z: cableado via import estatico en
+    # prepush_check.py::run_builder_prompt_obligations_check (closeout, WARN --
+    # nace WARN porque la deuda del corpus ya existe, medida 2026-10-11: 23
+    # prompts declaran el cid y 73 hallazgos; 4 omiten --mark-ready por
+    # completo). Punto de enganche TEMPRANO (redaccion->lanzamiento) declarado
+    # MANUAL en el docstring del guard; este es el punto de CIERRE. Vara propia
+    # ejecutada: check_guard_wiring sobre el arbol real con el guard nuevo ->
+    # 0 UNDECLARED (54 wired).
+    "check_builder_prompt_obligations",
     # WOT-2026-067m: cableado via import ESTATICO en
     # prepush_check.py::run_arranques_index_check (closeout, BLOQUEANTE). Cuadra
     # `arranques/_archive/` con su `INDEX.md` en AMBAS direcciones (DEC-067L-002:
