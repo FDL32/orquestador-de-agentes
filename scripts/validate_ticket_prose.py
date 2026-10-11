@@ -345,6 +345,35 @@ def detect_imprecise_files_touched(content: str) -> list[ProseWarning]:
                     suggestion="Enumera archivos concretos: 'scripts/x.py', no 'scripts/**/*.py'.",
                 )
             )
+        # Detectar rutas de directorio peladas (ej: `- `src/``, `- src/`):
+        # terminan en `/` sin nombre de fichero tras el ultimo `/`, y sin `*`.
+        for line in files_text.split("\n"):
+            line = line.strip()
+            if not line.startswith("-"):
+                continue
+            # Extraer el path (entre backticks o sin ellos)
+            bt_match = re.search(r"`([^`]+)`", line)
+            if bt_match:
+                path_str = bt_match.group(1)
+            else:
+                # Intentar extraer ruta sin backticks (despues del `- `)
+                no_bt = re.search(r"-\s+(.+)", line)
+                if no_bt:
+                    path_str = no_bt.group(1).strip()
+                else:
+                    continue
+            # Es una ruta generica pelada si: contiene `/`, termina en `/`,
+            # no contiene `*`, y tras el ultimo `/` no hay caracter de fichero.
+            if "/" in path_str and path_str.endswith("/") and "*" not in path_str:
+                warnings.append(
+                    ProseWarning(
+                        rule_id="TP-PROSE-08",
+                        rule_name="files-likely-touched-imprecisos",
+                        evidence=f"Ruta generica sin fichero concreto: `{path_str}`",
+                        suggestion=f"Enumera los archivos concretos dentro de {path_str}.",
+                    )
+                )
+                break  # Un solo warning por este patron.
     return warnings
 
 

@@ -378,6 +378,52 @@ class TestDetectImpreciseFilesTouched:
         assert len(warnings) == 1
         assert warnings[0]["rule_id"] == "TP-PROSE-08"
 
+    def test_triggers_bare_directory_path(self):
+        """WOT-2026-060q: un FLT con ruta de directorio pelado (sin fichero) dispara TP-PROSE-08."""
+        content = """## Files Likely Touched
+- `src/`
+"""
+        warnings = detect_imprecise_files_touched(content)
+        assert len(warnings) == 1
+        assert warnings[0]["rule_id"] == "TP-PROSE-08"
+        assert "src/" in warnings[0]["evidence"]
+
+    def test_triggers_bare_directory_path_without_backticks(self):
+        """WOT-2026-060q: directorio pelado sin backticks tambien dispara."""
+        content = """## Files Likely Touched
+- src/
+"""
+        warnings = detect_imprecise_files_touched(content)
+        assert len(warnings) == 1
+        assert warnings[0]["rule_id"] == "TP-PROSE-08"
+
+    def test_no_trigger_concrete_file_in_directory(self):
+        """WOT-2026-060q: ruta con fichero concreto no dispara (no es directory pelado)."""
+        content = """## Files Likely Touched
+- `src/main.py`
+"""
+        warnings = detect_imprecise_files_touched(content)
+        assert len(warnings) == 0
+
+    def test_no_trigger_directory_with_wildcard(self):
+        """WOT-2026-060q: directorio con wildcard lo caza el patron de wildcards, no este."""
+        content = """## Files Likely Touched
+- `src/*.py`
+"""
+        warnings = detect_imprecise_files_touched(content)
+        # El patron de wildcards ya caza esto, no debe duplicar el warning de directorio pelado.
+        assert len(warnings) <= 1
+
+    def test_triggers_bold_bare_directory(self):
+        """WOT-2026-060q: directorio pelado entre negritas TAMPOCO es concreto -> dispara."""
+        content = """## Files Likely Touched
+- **`src/`**
+"""
+        warnings = detect_imprecise_files_touched(content)
+        assert len(warnings) == 1
+        assert warnings[0]["rule_id"] == "TP-PROSE-08"
+        assert "src/" in warnings[0]["evidence"]
+
 
 class TestDetectOversizedTicket:
     """Tests para detect_oversized_ticket."""
