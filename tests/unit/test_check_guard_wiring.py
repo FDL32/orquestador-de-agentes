@@ -317,22 +317,46 @@ def test_loop_execution_barrier_is_wired_from_prepush():
 
 
 def test_loop_execution_dewiring_is_caught(tmp_path):
-    """MUTATION del DoD de 040b, EJECUTADA: retirar la invocacion de
+    """MUTATION del DoD de 040b, EJECUTADA: retirar TODAS las invocaciones de
     check_loop_execution de prepush -> el guard sale UNWIRED en un motor sintetico.
 
-    Prueba que la barrera del bucle NO es solo prosa: es un call-site REAL que
-    check_guard_wiring cuenta. Copiamos prepush_check.py con la linea de import
-    ROTA y exigimos que _python_invocations ya no vea el guard."""
+    Prueba que la barrera del bucle NO es solo prosa: son call-sites REALES que
+    check_guard_wiring cuenta. Copiamos prepush_check.py con TODAS las lineas de
+    import ROTAS y exigimos que _python_invocations ya no vea el guard.
+
+    WOT-2026-055p anadio un SEGUNDO import estatico del mismo modulo
+    (`summarize_loop_groups`, ademas del `audit` original) -- mutar solo el
+    primer literal dejaba el segundo intacto y `wiring_edges` seguia viendo la
+    arista (deteccion CORRECTA del wiring real, pero MUTACION incompleta: no
+    simulaba un des-cableado total). Se rompen AMBOS literales conocidos; si se
+    anade un tercer call-site en el futuro, este test debe ampliarse igual."""
     guard = "check_loop_execution"
     src = (_ROOT / "scripts" / "prepush_check.py").read_text(encoding="utf-8")
-    literal = "check_loop_execution import audit"
+    # Los 2 call-sites REALES del modulo (un `from X import Y` en una linea, y
+    # un `from X import (` multilinea con el fallback try/except de cada uno).
+    # Mutar solo el NOMBRE DEL MODULO (no la frase import entera) mantiene la
+    # sintaxis Python VALIDA tras la mutacion -- reemplazar la frase completa
+    # ("from X import (") deja el nombre importado huerfano en la linea
+    # siguiente -> SyntaxError -> ast.parse() lanza -> wiring_edges() no ve
+    # NINGUN guard del fichero entero, no solo este: una mutacion que rompe la
+    # sintaxis no es un des-cableado, es un crash distinto (falso verde
+    # medido: confirmado que con la frase entera, check_arranque_material_paths
+    # tambien desaparecia del grafo).
+    literal = "check_loop_execution"
     assert literal in src, (
         f"el literal del cableado {literal!r} ya no esta en prepush_check.py "
         "(test caducado: el call-site cambio de forma)"
     )
-    # motor sintetico: prepush con el import ROTO + el guard en el denominador +
-    # la semilla que mete prepush en la frontera (es un _DECLARED_ROOT).
-    muted = src.replace(literal, "OTRO_MODULO_NO_GUARD import audit")
+    occurrences = src.count(f"from scripts.{literal} import") + src.count(
+        f"from {literal} import"
+    )
+    assert occurrences >= 2, (
+        f"se esperaban >=2 call-sites de '{literal}' (audit + "
+        "summarize_loop_groups, WOT-2026-040b + WOT-2026-055p); si cambio el "
+        "numero de imports reales, actualiza este test."
+    )
+    # motor sintetico: solo el NOMBRE del modulo se desfigura (sintaxis intacta).
+    muted = src.replace(literal, "otro_modulo_no_guard")
     (tmp_path / "scripts").mkdir(exist_ok=True)
     (tmp_path / "scripts" / "prepush_check.py").write_text(muted, encoding="utf-8")
     (tmp_path / "scripts" / "check_loop_execution.py").write_text(
