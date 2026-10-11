@@ -15,7 +15,7 @@ During (Proceso y Recursos):
       (5) git status --short
       (6) checks adicionales bloqueantes solo en closeout_mode (backlog contract,
           reconcile, handoff SHA, destination PII, closeout reconciliation,
-          motor<->destino integration)
+          motor<->destino integration, sibling-commit parity WOT-2026-056d)
       (7) check_portable_memory_archive_schema.py --motor-root <root>
           (WOT-2026-035b; siempre, no solo en closeout_mode)
     - Ejecuta skills/validate_all.py de forma informacional (no bloqueante).
@@ -36,24 +36,27 @@ BY-DESIGN (WOT-2026-049c): esto es un gate de CIERRE DE SESION, no de push.
     que lo esquiva existe A PROPOSITO. La decision se tomo con estas medidas
     (2026-08-06), no por olvido:
 
-    - **Coste:** 25 checks en `--closeout-mode`. Los SEGUNDOS son dato
+    - **Coste:** 36 checks en `--closeout-mode` (recuento re-derivado del
+      codigo 2026-10-11, tras WOT-2026-056d). Los SEGUNDOS son dato
       EMPIRICO, no propiedad deducible del codigo: medidos 2026-08-06 en esta
-      maquina dieron 25.0 s (closeout, 3 de los 25 en FAIL informacional) y
-      12.0 s (base). Trata la magnitud como orientativa y re-mide si la
+      maquina con 25 checks dieron 25.0 s (closeout, 3 en FAIL informacional)
+      y 12.0 s (base). Trata la magnitud como orientativa y re-mide si la
       necesitas; lo que NO depende de la maquina es el reparto de checks de
       abajo, que sale del propio codigo. Un `pre-push` cobraria ese coste en
       CADA push, no solo al cerrar.
-    - **Alcance equivocado:** la MAYORIA de esos 25 checks son
+    - **Alcance equivocado:** la MAYORIA de esos 36 checks son
       closeout-especificos (backlog contract, handoff committed, closeout
       reconciliation, flight plan collision, DEC receipt...). Son preguntas
       que NO tienen sentido ante un `git push` cualquiera: interrogan el
       cierre de un ticket, no la sanidad de unos commits. El reparto se lee
       EN ESTE FICHERO y se re-deriva SIN ejecutar nada: cuenta los
-      `results.append` de `run_checks`. Dentro del bloque `if closeout_mode:`
-      hay 18; fuera hay 7 (los 5 base mas portable-memory y validate_all).
-      18 + 7 = 25, y coincide con lo que la corrida reporta. Es decir, 18 de
-      25 -- la mayoria -- solo existen al cerrar. Cablear esto a `pre-push`
-      pagaria esas 18 preguntas de cierre en cada push.
+      `results.append` de `run_preflight_check`. Dentro del bloque
+      `if closeout_mode:` hay 29; fuera hay 7 (los 5 base mas
+      portable-memory y validate_all). 29 + 7 = 36 (re-derivado 2026-10-11;
+      el texto de 2026-08-06 decia 18 + 7 = 25 y quedo obsoleto con los
+      gates posteriores). Es decir, 29 de 36 -- la mayoria -- solo existen
+      al cerrar. Cablear esto a `pre-push` pagaria esas 29 preguntas de
+      cierre en cada push.
     - **Solapamiento:** `ruff-check` ya corre entre los 9 hooks de la etapa
       `pre-push`. Cablear este script lo duplicaria. Re-verificable parseando
       el YAML (no por grep): un hook entra en `pre-push` si `stages` lo
@@ -84,6 +87,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Collection
@@ -3203,6 +3207,412 @@ def run_backlog_admission_check(project_root: Path) -> CheckResult:
     )
 
 
+# --------------------------------------------------------------------------
+# WOT-2026-056d: paridad de commits hermanos (mitad motor + mitad destino)
+# --------------------------------------------------------------------------
+
+# CONVENCION DECLARADA (prohibicion del contrato: "NO inventar trailer sin
+# declarar su convencion"). La convencion vive AQUI, junto al unico
+# consumidor:
+#   * Un commit que es UNA MITAD de un par atomico motor+destino declara la
+#     otra mitad con un trailer de mensaje, una linea por hermano:
+#         Sibling-Commit: <sha> [motor|destino]
+#     - `<sha>`: 7-40 hex, completo o abreviado (se resuelve a full sha).
+#     - La etiqueta de repo es OPCIONAL e INFORMATIVA; la resolucion es por
+#       contenido (_sibling_home: la raiz candidata que tiene el objeto).
+#   * La arista es NO-DIRECTIVA: puede declararla cualquiera de las dos
+#       mitades. En la practica la declara la que se comitea SEGUNDA, porque
+#       solo entonces conoce el sha de la primera (prohibido `--amend`).
+#   * Simetria obligatoria: ambas mitades del mismo par quedan ligadas por
+#       UNA arista (no hace falta declarar en los dos sentidos).
+_SIBLING_TRAILER_KEY = "Sibling-Commit:"
+_SIBLING_REPO_LABELS = {"motor", "destino", "repo_motor", "repo_destino"}
+_SIBLING_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+# Ventana de escaneo por raiz (commits recientes desde HEAD). LIMITE
+# DECLARADO: una declaracion mas vieja que la ventana deja de auditarse;
+# para entonces se asume el par resuelto (publicado o abandonado). Re-derive
+# el numero leyendo esta constante, no desde un relato.
+_SIBLING_SCAN_WINDOW = 500
+
+
+def _sibling_candidate_roots(
+    project_root: Path, motor_root: Path | None = None
+) -> list[Path]:
+    """Raices git auditables del par motor+destino (dedup, orden: project_root primero).
+
+    Before: project_root cualquier Path; motor_root opcional (los tests lo pasan
+        explicito; en produccion se resuelve por link).
+    During: resuelve el motor via `runtime.motor_link.resolve_motor_root`
+        (mismo patron que `run_backlog_live_landed_check`) con fallback
+        `_MOTOR_ROOT`. Solo entran raices con `.git` (directorio O fichero de
+        worktree). Sin escrituras.
+    After: lista de 0..2 raices. 0 = nada que auditar; 1 = topologia
+        mono-repo visible -> las aristas colgantes NO son hallazgo, son
+        no-comprobables (doctrina "None es desconocido, no invalido").
+    """
+    candidates: list[Path] = [project_root]
+    if motor_root is not None:
+        candidates.append(motor_root)
+    else:
+        try:
+            from runtime.motor_link import resolve_motor_root
+
+            resolved = resolve_motor_root(project_root)
+            if resolved is not None:
+                candidates.append(resolved)
+        except ImportError:
+            pass
+        candidates.append(_MOTOR_ROOT)
+    roots: list[Path] = []
+    for cand in candidates:
+        try:
+            p = Path(cand).resolve()
+        except OSError:
+            continue
+        if (p / ".git").exists() and p not in roots:
+            roots.append(p)
+    return roots
+
+
+def _parse_sibling_trailers(message: str) -> tuple[list[str], list[str]]:
+    """Extrae los shas declarados en trailers `Sibling-Commit:` de un mensaje.
+
+    Before: `message` es el cuerpo crudo (`%B`) de un commit.
+    During: una trailer-line es una linea cuyo contenido tras strip() EMPIEZA
+        por `Sibling-Commit:`; tras la clave va exactamente 1 token sha
+        (7-40 hex) o 2 (sha + etiqueta en _SIBLING_REPO_LABELS, case-
+        insensitive). Cualquier otra forma es MALFORMADA. Sin I/O.
+    After: (shas_aceptados, lineas_malformadas). Un mensaje sin trailers
+        devuelve ([], []) -- es el control negativo del DoD (ticket de un
+        solo repo no dispara el check).
+    """
+    shas: list[str] = []
+    malformed: list[str] = []
+    for line in message.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(_SIBLING_TRAILER_KEY):
+            continue
+        tokens = stripped[len(_SIBLING_TRAILER_KEY) :].split()
+        if not tokens or not _SIBLING_SHA_RE.match(tokens[0]):
+            malformed.append(stripped)
+            continue
+        if len(tokens) == 2:
+            if tokens[1].lower() not in _SIBLING_REPO_LABELS:
+                malformed.append(stripped)
+                continue
+        elif len(tokens) > 2:
+            malformed.append(stripped)
+            continue
+        shas.append(tokens[0])
+    return shas, malformed
+
+
+def _sibling_git_probe(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+    """Sonda git read-only del bloque de paridad; None = fallo de infraestructura.
+
+    Before: `args` son los argumentos posteriores a `git` (siempre subcomandos
+        de lectura de este modulo).
+    During: un subprocess.run sin shell, timeout unico, texto utf-8.
+    After: el CompletedProcess, o None si git no arranco o peto (timeout). El
+        llamante decide entre "no existe" y "desconocido" -- nunca se colapsan
+        aqui (doctrina `_unresolvable_target_shas`).
+    """
+    try:
+        return subprocess.run(
+            ["git", *args],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=20,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _sibling_home(sha: str, roots: list[Path]) -> tuple[Path, str] | None:
+    """(raiz, full_sha) del commit `sha` en la primera raiz que lo contiene.
+
+    Before: sha token hexadecimal; roots las raices candidatas.
+    During: un `git rev-parse --verify --quiet` read-only por raiz.
+    After: None si NINGUNA raiz lo tiene (o git fallo: infraestructura,
+        doctrina `_unresolvable_target_shas` -- aqui se colapsa a
+        no-resoluble y el llamante decide hallazgo vs no-comprobable).
+    """
+    for root in roots:
+        probe = _sibling_git_probe(
+            ["-C", str(root), "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"]
+        )
+        if probe is not None and probe.returncode == 0:
+            full = probe.stdout.strip().lower()
+            if full:
+                return root, full
+    return None
+
+
+def _sibling_publication_state(root: Path, full_sha: str) -> str | None:
+    """'PUBLISHED' | 'UNPUBLISHED' | None(desconocido) para un commit ya resuelto.
+
+    Before: `full_sha` es un sha existente en `root` (resuelto por
+        _sibling_home).
+    During: un `git branch -r --contains` read-only: "publicado" = alcanzable
+        desde ALGUN remote-tracking ref de su propia raiz (misma semantica de
+        landing que `check_backlog_commits_landed`, que audita `origin/main`).
+        Una raiz sin remotes da stdout vacio rc=0 -> UNPUBLISHED, correcto.
+    After: None solo ante fallo de infraestructura (rc!=0 o sonda sin recibo):
+        desconocido, nunca un veredicto inventado.
+    """
+    probe = _sibling_git_probe(
+        ["-C", str(root), "branch", "-r", "--contains", full_sha]
+    )
+    if probe is None or probe.returncode != 0:
+        return None
+    return "PUBLISHED" if probe.stdout.strip() else "UNPUBLISHED"
+
+
+def _sibling_declarations(
+    roots: list[Path],
+) -> tuple[list[tuple[Path, str, str]], list[tuple[Path, str, str]], bool]:
+    """Escanea las raices y recoge (declaraciones, malformados, scan_incompleto).
+
+    Aisla el bucle de escaneo fuera de `run_sibling_commit_parity_check` para
+    que el gate no se escape del tope de ciclomatica (precedente:
+    `_loop_accreditation_failures`).
+
+    Before: roots las raices candidatas del par.
+    During: por raiz, un `git log -n {_SIBLING_SCAN_WINDOW} --fixed-strings
+        --grep` read-only y un `git log -1 --format=%B` por commit declarado.
+        Sin escrituras.
+    After: declaraciones (raiz, full-sha del declarante, token hermano) y
+        malformados (raiz, sha, linea), ambos en orden de escaneo;
+        scan_incomplete True si alguna sonda de historico fallo (desconocido,
+        no invalido).
+    """
+    declarations: list[tuple[Path, str, str]] = []
+    malformed: list[tuple[Path, str, str]] = []
+    scan_incomplete = False
+    for root in roots:
+        listing = _sibling_git_probe(
+            [
+                "-C",
+                str(root),
+                "log",
+                "-n",
+                str(_SIBLING_SCAN_WINDOW),
+                "--fixed-strings",
+                f"--grep={_SIBLING_TRAILER_KEY}",
+                "--format=%H",
+            ]
+        )
+        if listing is None or listing.returncode != 0:
+            scan_incomplete = True
+            continue
+        for sha in listing.stdout.split():
+            body = _sibling_git_probe(
+                ["-C", str(root), "log", "-1", "--format=%B", sha]
+            )
+            if body is None or body.returncode != 0:
+                scan_incomplete = True
+                continue
+            shas, bad_lines = _parse_sibling_trailers(body.stdout)
+            malformed.extend((root, sha, bad_line) for bad_line in bad_lines)
+            declarations.extend((root, sha, sib_token) for sib_token in shas)
+    return declarations, malformed, scan_incomplete
+
+
+def _audit_sibling_pairs(
+    roots: list[Path],
+    declarations: list[tuple[Path, str, str]],
+) -> tuple[list[str], list[str], set[tuple[str, str]]]:
+    """Veredictos por arista: (failures, no-comprobables, pares auditados).
+
+    Before: declarations tal como las devuelve `_sibling_declarations`.
+    During: resolucion por contenido (`_sibling_home`), dedup por par (una
+        arista declarada en ambas mitades se audita una vez) y comparacion de
+        estados de publicacion (`_sibling_publication_state`). Read-only.
+    After: `failures` contiene PAR MEDIO PUBLICADO con ambos shas citados, y
+        declaracion COLGANTE solo cuando hay 2+ raices visibles (con una sola
+        la arista es no-comprobable, no invalida). Sin escrituras.
+    """
+    failures: list[str] = []
+    unverifiable: list[str] = []
+    audited_pairs: set[tuple[str, str]] = set()
+    for decl_root, decl_sha, sib_token in declarations:
+        home = _sibling_home(sib_token, roots)
+        if home is None:
+            if len(roots) >= 2:
+                failures.append(
+                    f"declaracion COLGANTE: {decl_sha[:9]}@{decl_root.name} "
+                    f"declara hermano '{sib_token}' que no resuelve a commit "
+                    "de NINGUNA raiz del par (motor ni destino)"
+                )
+            else:
+                unverifiable.append(
+                    f"{decl_sha[:9]} declara hermano '{sib_token}' no visible: "
+                    "solo 1 raiz resoluble, no hay topologia de dos repos que "
+                    "auditar"
+                )
+            continue
+        sib_root, sib_full = home
+        if sib_full == decl_sha:
+            failures.append(
+                f"auto-declaracion: {decl_sha[:9]}@{decl_root.name} se declara "
+                "a si mismo como hermano (el par exige DOS commits distintos)"
+            )
+            continue
+        pair_key = tuple(sorted((decl_sha, sib_full)))
+        if pair_key in audited_pairs:
+            continue
+        audited_pairs.add(pair_key)
+        pub_decl = _sibling_publication_state(decl_root, decl_sha)
+        pub_sib = _sibling_publication_state(sib_root, sib_full)
+        if pub_decl is None or pub_sib is None:
+            unverifiable.append(
+                f"par {decl_sha[:9]} <-> {sib_full[:9]}: estado de publicacion "
+                "desconocido (sonda git fallo); no se verdicta"
+            )
+            continue
+        if pub_decl == pub_sib:
+            continue
+        if pub_decl == "PUBLISHED":
+            pub_half = (decl_sha, decl_root)
+            miss_half = (sib_full, sib_root)
+        else:
+            pub_half = (sib_full, sib_root)
+            miss_half = (decl_sha, decl_root)
+        failures.append(
+            f"PAR MEDIO PUBLICADO: {pub_half[0][:9]}@{pub_half[1]} esta "
+            f"PUBLISHED y su HERMANO {miss_half[0][:9]}@{miss_half[1]} esta "
+            "UNPUBLISHED. El ticket del par atomico no cierra hasta "
+            "publicar (o retirar) la otra mitad."
+        )
+    return failures, unverifiable, audited_pairs
+
+
+def run_sibling_commit_parity_check(
+    project_root: Path, motor_root: Path | None = None
+) -> CheckResult:
+    """WOT-2026-056d: si una mitad del par motor+destino esta publicada, la otra tambien.
+
+    El fallo que cierra (medido en WOT-2026-054p, par f953519 motor + 9a0db6a
+    destino): un ticket `mixed` produce DOS commits en DOS repos con remotos
+    distintos y NADA declara el par de forma legible por maquina -- ni el
+    mensaje, ni un gate. Publicar solo una mitad es trivial y dejaba
+    `check_backlog_commits_landed` en ROJO (35 errores de landing). Este check
+    no puede hacer un push atomico real entre remotos distintos (prohibicion
+    del contrato); lo que hace es DETECTAR y FRENAR el cierre con la mitad
+    ausente citada por su sha.
+
+    La convencion de declaracion (`Sibling-Commit: <sha> [motor|destino]`,
+    arista no-directiva, la declara la mitad comiteada segunda) esta fijada
+    arriba, junto a las constantes. Un ticket de UN solo repo no declara nada
+    y el check SKIPEA nombrado: control negativo del DoD.
+
+    Before: project_root resoluble; motor_root opcional (en tests explicito;
+        en produccion por link). Raices candidatas: las git visibles del par.
+    During: escaneo delegando en `_sibling_declarations` (leer trailers) y el
+        veredicto en `_audit_sibling_pairs` (estados de publicacion por par).
+        Todo read-only, sin red.
+    After:
+        - FAIL BLOQUEANTE (is_blocking=True) si una mitad esta PUBLISHED y su
+          hermano UNPUBLISHED, si una declaracion cuelga (el sha no resuelve
+          en NINGUNA raiz habiendo 2 raices visibles) o si un trailer esta
+          malformado. Cita siempre el sha del hermano.
+        - SKIP nombrado (skipped=True) si no hay declaraciones, si el git es
+          ilegible (desconocido != invalido) o si con UNA sola raiz visible
+          quedan aristas no-comprobables.
+        - PASS ejecutado si todos los pares declarados estan simetricos
+          (ambos publicados o ambos sin publicar).
+    """
+    name = "Sibling-Commit Parity (WOT-2026-056d)"
+    roots = _sibling_candidate_roots(project_root, motor_root)
+    if not roots:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                f"SKIP: ninguna raiz git resoluble desde {project_root} "
+                "(ni project_root con .git ni motor enlazado)."
+            ),
+            is_blocking=False,
+            skipped=True,
+        )
+
+    declarations, malformed, scan_incomplete = _sibling_declarations(roots)
+    if not declarations and not malformed:
+        if scan_incomplete:
+            return CheckResult(
+                name=name,
+                passed=True,
+                output=(
+                    "SKIP: git history no legible en alguna raiz candidata; "
+                    "desconocido != valido (no se inventa un verde de paridad)."
+                ),
+                is_blocking=False,
+                skipped=True,
+            )
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                f"SKIP: ningun commit de la ventana ({_SIBLING_SCAN_WINDOW} por "
+                f"raiz, {len(roots)} raiz(es)) declara "
+                f"`{_SIBLING_TRAILER_KEY} <sha> [motor|destino]` "
+                "(ticket de un solo repo, o par aun no declarado)."
+            ),
+            is_blocking=False,
+            skipped=True,
+        )
+
+    failures, unverifiable, audited_pairs = _audit_sibling_pairs(roots, declarations)
+    for m_root, m_sha, m_line in malformed:
+        failures.append(
+            f"trailer MALFORMADO en {m_sha[:9]}@{m_root.name}: "
+            f"'{m_line}' -- la convencion es "
+            f"`{_SIBLING_TRAILER_KEY} <sha 7-40 hex> [motor|destino]`"
+        )
+
+    if failures:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(failures)} hallazgo(s) de paridad de hermanos "
+                f"({len(audited_pairs)} par(es) auditado(s)):\n"
+                + "\n".join(f"  - {f}" for f in failures)
+                + "\nEsto ABORTA el cierre (fail-closed, WOT-2026-056d): "
+                "un push parcial motor/destino es exactamente el fallo que "
+                "el par atomico debe impedir."
+            ),
+            is_blocking=True,
+        )
+    if unverifiable or scan_incomplete:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                "SKIP parcial: "
+                + "; ".join(unverifiable)
+                + (
+                    "; scan de historico incompleto (git no legible)"
+                    if scan_incomplete
+                    else ""
+                )
+                + " -- no-comprobable != paridad verificada."
+            ),
+            is_blocking=False,
+            skipped=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=(
+            f"{len(audited_pairs)} par(es) hermano(s) con publicacion simetrica "
+            "(ambas mitades publicadas o ambas sin publicar)."
+        ),
+    )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -3393,6 +3803,14 @@ def run_preflight_check(
         # Import ESTATICO en el run_ -> check_guard_wiring lo cuenta WIRED
         # (patron canonico del modulo). SKIP nombrado si el rango no resuelve.
         results.append(run_backlog_admission_check(project_root))
+        # 6q. Sibling-Commit Parity (WOT-2026-056d; BLOQUEANTE). Un ticket cuyo
+        # delivery_authority abarca DOS repos produce un par atomico de commits;
+        # publicar solo una mitad dejaba el landing en ROJO sin que nada lo
+        # detectara. Va en closeout porque este script es gate de CIERRE, no de
+        # push (BY-DESIGN WOT-2026-049c, docstring del modulo): el push de la
+        # segunda mitad ocurre en el mismo cierre que ejecuta este gate.
+        # SKIP nombrado si ningun commit de la ventana declara el trailer.
+        results.append(run_sibling_commit_parity_check(project_root))
 
     # 7. Portable Memory Archive Schema (WOT-2026-035b; bloqueante siempre,
     # no solo en closeout_mode: el archive puede corromperse en cualquier push)
