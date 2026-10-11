@@ -228,7 +228,7 @@ que ni tu contrato citado (`work_plan.md`/`STRATEGY_`/`AUDIT_`) ni el
 
 ## Reglas de medicion (aplican DESDE Fase 0, no al redactar el informe)
 
-Estas cuatro reglas gobiernan como mides y como escribes MIENTRAS trabajas. No
+Estas cinco reglas gobiernan como mides y como escribes MIENTRAS trabajas. No
 son criterios de revision del informe final: si las lees por primera vez al
 redactar el informe, ya has trabajado sobre medidas invalidas.
 
@@ -330,6 +330,33 @@ Fallo real (2026-07-29): se redacto un prompt contra un contrato de 571 lineas
 por grep + diff. Quedaron fuera un `MANAGER_REVIEW` por ticket, la forma exacta
 del bucle y el cierre bloqueante -- y un bucle de 4 lentes tampoco lo cazo,
 porque al bucle se le paso el contrato por REFERENCIA, no por CONTENIDO.
+
+### M5. Exit code REAL: nunca `$?` tras una tuberia
+
+`$?` despues de `cmd | tail` (o de cualquier pipe) es el rc del ULTIMO tramo
+de la tuberia, es decir del consumidor: `tail` termina en 0 y el fallo del
+productor queda enmascarado. Ese "autoengano-por-pipe" fabrico ya un veredicto
+fail-open que llego a memoria (2026-07-11/12), y dos actores independientes lo
+reprodujeron.
+
+- Si necesitas el rc de un comando CUYA salida tambien quieres esquilar, no
+  uses pipe: invoca
+  `python <MOTOR_ROOT>/scripts/tools/run_and_exit.py --tail 20 -- <cmd> [args...]`.
+  Imprime las ultimas lineas de salida, despues
+  `[run-and-exit] exit_code: <n>`, y el proceso sale con ese codigo real
+  (127 si el comando no existe, 2 si no hay comando).
+- PROHIBIDO el encantamiento manual: `$?` colgado de un pipe,
+  `cmd | tail; echo $?`, o medir el rc despues de una tuberia. El exit code
+  que declares en "Gates (comando exacto + resultado literal)" debe ser el del
+  productor, no el del consumidor; si enmascaras el rc de un gate, tu informe
+  miente aunque el comando fallara.
+- Control positivo del wrapper YA cubierto por test (citado, no duplicado):
+  `tests/unit/test_tools_shell_safety.py::test_reports_real_exit_of_failing_command`.
+
+Fallo real (adopcion): el wrapper nacio con tests en WOT-2026-022p, pero el
+censo de referencias en `prompts/`+`skills/`+`AGENTS.md` era 0 -- la
+herramienta aterrizo y su adopcion no, y por eso el fallo se reproducio dos
+veces. Adopcion declarada en WOT-2026-058e.
 
 ## Objetivo
 `{{DESCRIPCION_DEL_OBJETIVO_Y_ROOT_CAUSE}}`

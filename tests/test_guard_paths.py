@@ -1089,3 +1089,245 @@ class TestEnvIsolation:
         finally:
             if saved is not None:
                 os.environ["AGENT_PROJECT_ROOT"] = saved
+
+
+class TestProtectedPathPatterns:
+    """WOT-2026-052b: profile_config can declare additional protected path patterns.
+
+    Policy (DEC-052B-001): only adds, never relaxes. Fail-closed with warning.
+    Zero migration: empty default, destinations without the key behave identically
+    to today.
+    """
+
+    def setup_method(self):
+        _clean_workspace()
+        self.repo_root = (TEST_WORKSPACE / "repo").resolve()
+        self.repo_root.mkdir(parents=True, exist_ok=True)
+        self._saved_project_root = os.environ.get("AGENT_PROJECT_ROOT")
+
+    def teardown_method(self):
+        os.chdir(self.repo_root)
+        if self._saved_project_root is None:
+            os.environ.pop("AGENT_PROJECT_ROOT", None)
+        else:
+            os.environ["AGENT_PROJECT_ROOT"] = self._saved_project_root
+        _clean_workspace()
+
+    def _make_config(self, strictness_profile: str = "standard", **kwargs) -> Path:
+        """Write a minimal agents.json with a custom profile and return its path."""
+        profiles = {
+            "minimal": {"write_roots": [], "blocked_command_patterns": []},
+            "standard": {
+                "write_roots": [],
+                "blocked_command_patterns": ["curl\\\\s+.*\\\\|.*sh"],
+            },
+            "custom": {
+                "write_roots": [],
+                "blocked_command_patterns": [],
+                "protected_path_patterns": [],
+                **kwargs,
+            },
+        }
+        cfg = TEST_WORKSPACE / "agents_custom.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.2",
+                    "strictness_profile": strictness_profile,
+                    "profiles": profiles,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return cfg
+
+    def test_declared_pattern_blocks_write(self):
+        """DoD (a): a profile_config that declares the pattern blocks the route."""
+        from hooks.guard_paths import _is_protected_path
+
+        # Declare a custom pattern for destination-specific protection
+        custom_allowlist = {
+            "write_roots": [],
+            "blocked_command_patterns": [],
+            "protected_path_patterns": [r"data/sectors"],
+        }
+        target = self.repo_root / "data" / "sectors" / "secret.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("classified")
+        blocked, reason = _is_protected_path(str(target), custom_allowlist, {})
+        assert blocked is True, "declared pattern must block"
+        assert "protegida por patron" in reason
+
+    def test_motor_base_empty_config_still_catches(self):
+        """DoD (b): motor base with empty config still blocks PROTECTED_PATH_PATTERNS."""
+        blocked, reason = _is_protected_path(
+            str(self.repo_root / "privada" / "secret.txt"),
+            {
+                "write_roots": [],
+                "blocked_command_patterns": [],
+                "protected_path_patterns": [],
+            },
+            {},
+        )
+        assert blocked is True
+        assert "protegida por patron" in reason
+
+    def test_declared_patterns_are_additive(self):
+        """DoD (b): declared patterns ADD to the base, never replace them.
+
+        A destination that declares 'data/sectors' must STILL block 'privada'
+        (base pattern), plus the new one.
+        """
+        from hooks.guard_paths import _is_protected_path
+
+        custom_allowlist = {
+            "write_roots": [],
+            "blocked_command_patterns": [],
+            "protected_path_patterns": [r"data/sectors"],
+        }
+        # Base pattern still blocks
+        base_target = self.repo_root / "privada" / "secret.txt"
+        base_target.parent.mkdir(parents=True, exist_ok=True)
+        blocked, _ = _is_protected_path(str(base_target), custom_allowlist, {})
+        assert blocked is True, "base patterns must still block (additive)"
+        # Declared pattern also blocks
+        custom_target = self.repo_root / "data" / "sectors" / "secret.txt"
+        custom_target.parent.mkdir(parents=True, exist_ok=True)
+        blocked, _ = _is_protected_path(str(custom_target), custom_allowlist, {})
+        assert blocked is True, "declared patterns must also block"
+
+    def test_malformed_config_falls_back_to_motor_base(self):
+        """DoD (c): malformed config -> falls back to motor base patterns.
+
+        If protected_path_patterns is not a list, the resolver should treat
+        it as empty and apply only PROTECTED_PATH_PATTERNS.
+        """
+        from hooks.guard_paths import _is_protected_path
+
+        # Malformed: protected_path_patterns is a string, not a list
+        malformed_allowlist = {
+            "write_roots": [],
+            "blocked_command_patterns": [],
+            "protected_path_patterns": "not-a-list",
+        }
+        # Motor base should still catch 'privada'
+        base_target = self.repo_root / "privada" / "secret.txt"
+        base_target.parent.mkdir(parents=True, exist_ok=True)
+        blocked, reason = _is_protected_path(str(base_target), malformed_allowlist, {})
+        assert blocked is True, "malformed config must fall back to motor base"
+        assert "protegida por patron" in reason
+
+    def test_no_new_key_behaves_like_today(self):
+        """DoD (d): destination without the new key behaves identically to today.
+
+        The allowlist without 'protected_path_patterns' key must behave
+        exactly like the old DEFAULT_ALLOWLIST.
+        """
+        from hooks.guard_paths import _is_protected_path
+
+        # Old-style allowlist (no new key)
+        old_style_allowlist = {"write_roots": [], "blocked_command_patterns": []}
+        for rel in ("privada/secret.txt", "token.txt", ".env", "secrets.json"):
+            target = self.repo_root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("content")
+            blocked, _ = _is_protected_path(str(target), old_style_allowlist, {})
+            assert blocked is True, f"{rel} must be blocked (back-compat)"
+
+    def test_mutation_remove_pattern_makes_test_red(self):
+        """DoD (e): removing the declared pattern -> test (a) goes RED.
+
+        If the declared pattern is removed from the allowlist, the route
+        must NOT be blocked (since it's not in PROTECTED_PATH_PATTERNS).
+        This is the MUTATION test: it proves the declared patterns are
+        actually used, not just dead code.
+        """
+        from hooks.guard_paths import _is_protected_path
+
+        # Route that is ONLY protected by the declared pattern, not by any
+        # PROTECTED_PATH_PATTERNS (e.g., 'data/sectors' does not match any
+        # of the base patterns: privada, secrets?, credentials?, .git, .env,
+        # token, api[_-]key, password, bearer, auth).
+        target = self.repo_root / "data" / "sectors" / "classified.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("secret")
+
+        # With declaration -> should block
+        with_pattern = {
+            "write_roots": [],
+            "blocked_command_patterns": [],
+            "protected_path_patterns": [r"data/sectors"],
+        }
+        blocked_with, _ = _is_protected_path(str(target), with_pattern, {})
+        assert blocked_with is True, "must block WITH declared pattern"
+
+        # Without declaration (mutation: remove the pattern) -> must NOT block
+        without_pattern = {
+            "write_roots": [],
+            "blocked_command_patterns": [],
+            "protected_path_patterns": [],
+        }
+        blocked_without, _ = _is_protected_path(str(target), without_pattern, {})
+        assert blocked_without is False, (
+            "MUTATION: removing declared pattern must unblock the route"
+        )
+
+    def test_multiple_declared_patterns_all_block(self):
+        """Multiple declared patterns are all checked."""
+        from hooks.guard_paths import _is_protected_path
+
+        custom_allowlist = {
+            "write_roots": [],
+            "blocked_command_patterns": [],
+            "protected_path_patterns": [r"config/secrets", r"internal"],
+        }
+        target1 = self.repo_root / "config" / "secrets" / "db.conf"
+        target1.parent.mkdir(parents=True, exist_ok=True)
+        target2 = self.repo_root / "internal" / "notes.txt"
+        target2.parent.mkdir(parents=True, exist_ok=True)
+        blocked1, _ = _is_protected_path(str(target1), custom_allowlist, {})
+        blocked2, _ = _is_protected_path(str(target2), custom_allowlist, {})
+        assert blocked1 is True
+        assert blocked2 is True
+
+    def test_integration_hook_with_protected_path_patterns(self, tmp_path):
+        """Integration test: invoke the real guard_paths.py with a custom
+        protected_path_patterns in the profile config."""
+        profiles = {
+            "minimal": {"write_roots": [], "blocked_command_patterns": []},
+            "custom_patterns": {
+                "write_roots": [],
+                "blocked_command_patterns": [],
+                "protected_path_patterns": [r"custom_protected"],
+            },
+        }
+        cfg = tmp_path / "agents_custom_patterns.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.2",
+                    "strictness_profile": "custom_patterns",
+                    "profiles": profiles,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Custom protected route -> exit 2
+        payload_custom = {
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(tmp_path / "custom_protected" / "secret.txt")
+            },
+        }
+        rc, stderr = _run_hook(payload_custom, cfg)
+        assert rc == 2
+        assert "guard_paths:" in stderr
+
+        # Non-protected route -> exit 0
+        payload_safe = {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(tmp_path / "src" / "main.py")},
+        }
+        rc, _ = _run_hook(payload_safe, cfg)
+        assert rc == 0

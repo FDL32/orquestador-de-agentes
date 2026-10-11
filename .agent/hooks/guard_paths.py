@@ -404,7 +404,9 @@ def _is_protected_path(
         return True, f"archivo protegido: {filename}"
 
     path_str = _normalize(str(path_obj))
-    pattern = _matches_any_pattern(path_str, PROTECTED_PATH_PATTERNS)
+    declared_patterns = allowlist.get("protected_path_patterns", [])
+    all_patterns = PROTECTED_PATH_PATTERNS + tuple(declared_patterns)
+    pattern = _matches_any_pattern(path_str, all_patterns)
     if pattern:
         return True, f"ruta protegida por patron: {pattern}"
 
@@ -464,6 +466,7 @@ def evaluate_tool_request(
     allowlist = {
         "write_roots": profile_config.get("write_roots", []),
         "blocked_command_patterns": profile_config.get("blocked_command_patterns", []),
+        "protected_path_patterns": profile_config.get("protected_path_patterns", []),
     }
 
     tool_input = data.get("tool_input", {})

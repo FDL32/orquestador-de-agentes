@@ -271,6 +271,14 @@ subconjunto operativo, no su sustituto.
 
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
+- **Exit code REAL, nunca el de la tuberia:** `$?` tras `cmd | tail` (o
+  cualquier pipe) lee el rc del consumidor, no del productor -- un comando que
+  falla se disfraza de exit 0 ("autoengano-por-pipe", 2026-07-11/12). Para
+  esquilar la salida Y reportar el rc real, usa
+  `python <MOTOR_ROOT>/scripts/tools/run_and_exit.py --tail 20 -- <cmd> [args...]`
+  (imprime las ultimas lineas, luego `[run-and-exit] exit_code: <n>`, y sale con
+  ese codigo). NO encantes `$?` a mano tras un pipe (WOT-2026-058e; wrapper de
+  WOT-2026-022p).
 - **Refutacion previa ante anomalia (norma epistemologica, no memoria):** ante un
   dato que no encaja, el agente NO empieza arreglando. Antes de tocar
   tooling/schema/validador/gate/hook/CI/migracion/parser/formato global, ejecuta
