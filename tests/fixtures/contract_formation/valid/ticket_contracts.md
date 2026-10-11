@@ -15,8 +15,8 @@
 
 | DoD-item | consulta | hits | conclusion |
 |---|---|---|---|
-| endpoint de salud | archive observations 2026-08 eca1e16 | 0 | sin vecinos: patron nuevo |
-| tests verdes | archive observations 2026-07 eca1e16 | 2 | reusar barrera de suite |
+| endpoint de salud | archive observations 2026-08 2844b3a | 0 | sin vecinos: patron nuevo |
+| tests verdes | archive observations 2026-07 e0ccf82 | 2 | reusar barrera de suite |
 - **Plan-Link:** PLAN-001
 - **Premise:** el repositorio tiene pyproject.toml o se crea;
   FastAPI y uvicorn son instalables sin conflicto;

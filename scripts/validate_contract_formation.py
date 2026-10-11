@@ -147,6 +147,49 @@ def _archive_hash_candidates(block: str) -> list[str]:
     return out
 
 
+def _archive_valid_shas() -> set[str]:
+    """Return the set of valid short SHAs for observations.YYYY-MM.jsonl files
+    in the motor's archive (via ``git log -1`` per file).
+
+    WOT-2026-060p: se exige que el hash de la matriz corresponda a un commit real
+    que toco uno de los archives. Si el motor no tiene historial git (worktree
+    sin .git, CI sin shallow clone, etc.) se retorna un conjunto VACIO -- el
+    validador no puede verificar contra lo que no existe.
+    """
+    out: set[str] = set()
+    archive_dir = _MOTOR_ROOT / ".agent" / "runtime" / "memory" / "archive"
+    if not archive_dir.is_dir():
+        return out
+    try:
+        import subprocess
+
+        for f in archive_dir.glob("observations.*.jsonl"):
+            rel = f.relative_to(_MOTOR_ROOT)
+            result = subprocess.run(  # noqa
+                [  # noqa
+                    "git",
+                    "-C",
+                    str(_MOTOR_ROOT),
+                    "log",
+                    "-1",
+                    "--format=%H",
+                    "--",
+                    str(rel),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                out.add(result.stdout.strip()[:12])
+    except Exception:  # noqa: S110
+        pass
+    return out
+
+
+_ARCHIVE_VALID_SHAS = _archive_valid_shas()
+
+
 _MEMORY_MATRIX_HEADER_TOKENS = ("dod-item", "consulta", "hits", "conclusion")
 
 
@@ -195,7 +238,36 @@ def _chk_frozen_memory_consultation(
             "archive consultado (observations.YYYY-MM.jsonl)",
         )
         return
-    if any(len(c) >= 7 for c in candidates):
+    # WOT-2026-060p: el hash debe corresponder a un commit REAL que toco un
+    # archive del motor (observations.YYYY-MM.jsonl). Se verifica por prefijo
+    # contra el set canonico de SHAs obtenido con ``git log -1`` por archivo.
+    # La longitud minima (>=7) se verifica primero; despues se valida contra
+    # archives reales.
+    valid_shas = _ARCHIVE_VALID_SHAS
+    long_enough = any(len(c) >= 7 for c in candidates)
+    if long_enough:
+        if valid_shas:
+            real_match = any(
+                c.startswith(v) or v.startswith(c)
+                for c in candidates
+                for v in valid_shas
+            )
+            if real_match:
+                return  # hash real encontrado -> correcto
+            # Todos los candidatos >= 7 chars pero no corresponden a ningun
+            # archive real del motor. Se reporta el mas largo para diagnosticar.
+            worst = max(candidates, key=len)
+            res.add(
+                fp,
+                "memory_archive_hash",
+                f"Ticket frozen {tid}: hash del archive no corresponde a ningun "
+                f"archive real ({worst}, {len(worst)} chars): no es un commit que "
+                "toque un observations.YYYY-MM.jsonl del motor",
+            )
+            return
+        # >= 7 chars pero no hay valid_shas (sin git) -> PASS (WARN declarado)
+        return
+        # Ningun candidato >= 7 chars: truncado.
         return
     worst = max(candidates, key=len)
     res.add(

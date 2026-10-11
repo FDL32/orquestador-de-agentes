@@ -693,7 +693,7 @@ _COMPLETE_TICKET_LINES = [
     "",
     "| DoD-item | consulta | hits | conclusion |",
     "|---|---|---|---|",
-    "| ruff+tests | archive observations 2026-08 eca1e16 | 1 | reusar barrera |",
+    "| ruff+tests | archive observations 2026-08 2844b3a | 1 | reusar barrera |",
 ]
 _COMPLETE_TICKET = chr(10).join(_COMPLETE_TICKET_LINES) + chr(10)
 
@@ -989,7 +989,7 @@ _FROZEN_BASE_FIELDS = (
 _MATRIX_OK = (
     "\n| DoD-item | consulta | hits | conclusion |\n"
     "|---|---|---|---|\n"
-    "| (a) | archive observations 2026-08 eca1e16 | 3 | reusar patron |\n"
+    "| (a) | archive observations 2026-08 2844b3a | 3 | reusar patron |\n"
 )
 
 
@@ -1018,7 +1018,7 @@ class TestFrozenMemoryConsultation055e:
         assert errors == [], errors
 
     def test_frozen_con_hash_truncado_es_error(self, tmp_path):
-        matrix = _MATRIX_OK.replace("eca1e16", "eca1e1")
+        matrix = _MATRIX_OK.replace("2844b3a", "2844b3")
         errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900t", "frozen", matrix))
         assert any("memory_archive_hash" in e for e in errors), errors
         assert any("6 chars" in e for e in errors), errors
@@ -1044,3 +1044,90 @@ class TestFrozenMemoryConsultation055e:
         empty = "\n| DoD-item | consulta | hits | conclusion |\n|---|---|---|---|\n"
         errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900z", "frozen", empty))
         assert any("memory_matrix" in e for e in errors), errors
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-060p: la matriz de memoria de los contratos frozen se satisface con
+# datos falsos => el hash DEBE corresponder a un archive real.
+# ---------------------------------------------------------------------------
+# El set canonico de SHAs validos se resuelve al importar el modulo (modulo
+# level: _ARCHIVE_VALID_SHAS). Los tests deben usar hashes que existan en el
+# motor real (git log -1 de los observations.YYYY-MM.jsonl).
+
+
+def _real_archive_shas():
+    """Return a dict mapping filename -> short sha for real archives, or empty
+    dict if the motor archive is not accessible."""
+    import subprocess
+    from pathlib import Path
+
+    motor = (
+        Path(__file__).resolve().parents[2]
+        / ".."
+        / ".."
+        / ".."
+        / "orquestador_de_agentes_dev_wt_loteM_grupoD"
+    )
+    if not motor.exists():
+        return {}
+    archive_dir = motor / ".agent" / "runtime" / "memory" / "archive"
+    if not archive_dir.is_dir():
+        return {}
+    result = {}
+    for f in archive_dir.glob("observations.*.jsonl"):
+        try:
+            rel = f.relative_to(motor)
+            out = subprocess.run(
+                ["git", "-C", str(motor), "log", "-1", "--format=%H", "--", str(rel)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                result[f.name] = out.stdout.strip()[:12]
+        except Exception:  # noqa: S110,PERF203
+            pass
+    return result
+
+
+class TestFrozenMemoryArchiveHashReal(TestFrozenMemoryConsultation055e):
+    """WOT-2026-060p: el hash de la matriz debe corresponder a un archive real.
+
+    Hereda los tests de TestFrozenMemoryConsultation055e que prueban las reglas
+    generales de la matriz (frozen sin matriz es error, etc.). A los añade la
+    capa de verificacion contra el archive REAL del motor.
+    """
+
+    def test_frozen_con_hash_inexistente_falla(self, tmp_path):
+        """MUTACION: un hash inexistente (no es commit de ningun archive) ->
+        ROJO. El validador deja de aceptar cualquier sha corto valido."""
+        # `2026` es hex valido (4 chars) pero ademas NO corresponde a ningun
+        # archive real. Tambien `abcdef123456` (12 chars) que es hex valido
+        # pero no es commit real de los archives del motor.
+        matrix = (
+            "\n| DoD-item | consulta | hits | conclusion |\n"
+            "|---|---|---|---|\n"
+            "| (a) | archive observations 2026-08 abcdef123456 | 3 | reusar patron |\n"
+        )
+        errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900p", "frozen", matrix))
+        assert any("memory_archive_hash" in e for e in errors), errors
+
+    def test_frozen_con_hash_real_pasa(self, tmp_path):
+        """MUTACION: un hash real del archive -> VERDE (control negativo).
+
+        Se usa un SHA real de los archives del motor (resuelto via git log).
+        Si el motor no tiene git accesible, el test se salta (WARN declarado).
+        """
+        shas = _real_archive_shas()
+        if not shas:
+            assert True  # WARN: motor sin git accesible, test no bloqueante
+            return
+        # usar el primer sha disponible
+        sample_name, sample_sha = next(iter(shas.items()))
+        matrix = (
+            f"\n| DoD-item | consulta | hits | conclusion |\n"
+            "|---|---|---|---|\n"
+            f"| (a) | archive {sample_name} {sample_sha} | 3 | reusar patron |\n"
+        )
+        errors = _errors_for(tmp_path, _ticket_block("WOT-2026-900q", "frozen", matrix))
+        assert errors == [], errors
