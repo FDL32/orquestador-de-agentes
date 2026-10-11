@@ -8,6 +8,24 @@ Before:
       file (`--prompt-file`), or piped via stdin (default when neither flag
       is given and stdin is not a TTY).
 During:
+    - WOT-2026-046c (barrera de privacidad): this file is the SECOND exit of
+      the motor toward an external backend (the first is
+      `ensemble_dispatch.send_to_profile`), and until that ticket it shipped
+      WITHOUT the barrier: the AST guard auditing `privacy_preflight` call
+      sites only read `ensemble_dispatch.py`, so it stayed green while this
+      exit was unprotected. `run_codex_audit` now calls the SAME
+      `privacy_preflight` (lazy-imported from `ensemble_dispatch`, keeping
+      this helper thin and M4 intact -- the Popen recipe is NOT delegated)
+      BEFORE touching the subprocess. If the barrier cannot be imported the
+      send is blocked too (fail-closed). Default sensitivity of this exit is
+      `public` -- the same classification the ensemble profiles give review
+      bundles -- and the barrier still bites on CONTENT (credential
+      assignment, opaque high-entropy tokens) and on ROUTES
+      (`ensemble_private_roots`); declaring `--data-sensitivity private|
+      secret` aborts unless the codex backend carries `trusted: true` in
+      agents.json. Absent sensitivity remains `private` inside
+      `privacy_preflight`: this default is the contract of ONE call site,
+      not a weakening of the barrier.
     - Builds the "M4" command around `codex exec`:
       `codex exec --sandbox read-only --skip-git-repo-check
       -c service_tier=fast -` (the trailing `-` sentinel tells `codex exec`
@@ -59,12 +77,15 @@ After:
       command's own returncode (the wrapped returncode is reported in the
       printed JSON, per "exit code is not the verdict"); exit 2 on the
       0-bytes/dead case; exit 1 on invocation errors (e.g. codex binary not
-      found, timeout).
+      found, timeout) and on the privacy block (`BLOCKED:` prefix on stderr,
+      WOT-2026-046c — distinguishable by prefix; rc choice serialized with
+      WOT-2026-046d, which owns the general BLOCKED-vs-crash rc split).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -268,6 +289,20 @@ class CodexAuditEmptyOutputError(RuntimeError):
     """
 
 
+class CodexAuditBlockedError(RuntimeError):
+    """Raised when the privacy barrier refuses the send (WOT-2026-046c).
+
+    Before: `run_codex_audit` is about to ship `prompt` toward the codex
+        backend.
+    During: `privacy_preflight` (the SAME barrier
+        `ensemble_dispatch.send_to_profile` runs, fail-closed) rejects the
+        payload, or it cannot be imported at all -- absence of the barrier is
+        itself a block, never an invitation to send unguarded.
+    After: raises with a diagnostic `reason` that NEVER echoes the payload;
+        no subprocess was created, no network was touched.
+    """
+
+
 def _kill_process_tree(pid: int) -> None:
     """Kill the FULL process tree of `pid` (Windows: taskkill /T /F).
 
@@ -305,6 +340,7 @@ def run_codex_audit(
     timeout: int = DEFAULT_TIMEOUT,
     extra_args: list[str] | None = None,
     repo_root: str | Path | None = None,
+    sensitivity: str | None = None,
 ) -> dict:
     """Run `codex exec` with the M4 recipe and validate output by content.
 
@@ -315,6 +351,12 @@ def run_codex_audit(
         on large prompts. `repo_root` (keyword-only, `str | Path | None`,
         default `None`) is the absolute tree codex should search from; if
         `None`, codex inherits the parent process's cwd (today's behavior).
+    WOT-2026-046c -- barrera de privacidad (segunda salida del motor):
+        `privacy_preflight` corre ANTES de construir el comando o abrir el
+        `Popen`; un fallo al importar la barrera BLOQUEA tambien
+        (fail-closed). `sensitivity` (keyword-only, default None) es la del
+        caller: None cae al default DECLARADO de esta salida, `public`, y el
+        CLI lo expone como `--data-sensitivity`.
     During: builds `[codex_executable, *M4_ARGS, *extra_args, "-"]` (the
         `-` sentinel tells `codex exec` to read the prompt from stdin) and
         runs it via `subprocess.Popen` with `stdin=PIPE`, passing
@@ -327,7 +369,10 @@ def run_codex_audit(
         see the inherited parent cwd. On timeout, kills the process tree
         and re-raises as `TimeoutError` with diagnostic context (no silent
         success is invented).
-    After: on 0-byte stdout, raises `CodexAuditEmptyOutputError` (backend is dead
+    After: on privacy-barrier refusal (or a barrier that cannot be loaded),
+        raises `CodexAuditBlockedError` BEFORE any subprocess or network
+        touch (WOT-2026-046c). On 0-byte stdout, raises
+        `CodexAuditEmptyOutputError` (backend is dead
         per CEM), regardless of returncode. Otherwise returns a dict with
         `returncode`, `stdout`, `stdout_bytes`, `ok` (`returncode == 0`),
         `reason`, and `failure_mode` (`"quota"` when stderr carries the
@@ -337,6 +382,39 @@ def run_codex_audit(
         so without classifying by PATTERN it is indistinguishable from any
         other non-zero exit.
     """
+    # WOT-2026-046c: la barrera de privacidad corre ANTES de tocar el
+    # subprocess. Es la MISMA funcion que usa `send_to_profile` (no una copia
+    # que pudiera desincronizarse); el lazy-import preserva el helper fino:
+    # el modulo pesa (agents_config + sys.path) y solo se paga cuando hay
+    # envio REAL. Sin barrera cargable no hay envio: fail-closed.
+    try:
+        from ensemble_dispatch import load_motor_config, privacy_preflight
+    except Exception as exc:  # ImportError y cualquier fallo de su cadena
+        raise CodexAuditBlockedError(
+            f"privacy_preflight no cargable: {exc}; envio BLOQUEADO "
+            "(fail-closed, WOT-2026-046c)"
+        ) from exc
+    backend_cfg: dict = {}
+    private_roots: list[str] = []
+    with contextlib.suppress(Exception):
+        # Config legible => semantica fiel de trusted/private_roots.
+        # Config NO legible => backend sin `trusted` (falla-cerrado por
+        # `privacy_preflight`) y sin raices, NUNCA trusted:true inventado.
+        motor_cfg = load_motor_config()
+        backend_cfg = dict(motor_cfg.get("backends", {}).get("codex", {}) or {})
+        private_roots = list(motor_cfg.get("ensemble_private_roots", []) or [])
+    # El default `public` es el contrato DECLARADO de esta salida (bundles de
+    # auditoria, la misma clase de material que los perfiles ensemble
+    # clasifican public). La barrera sigue mordiendo por CONTENIDO
+    # (credenciales, tokens opacos) y por RUTA (ensemble_private_roots).
+    allowed, block_reason = privacy_preflight(
+        prompt, sensitivity or "public", backend_cfg, private_roots
+    )
+    if not allowed:
+        raise CodexAuditBlockedError(
+            f"privacy_preflight BLOQUEA el envio via codex: {block_reason}"
+        )
+
     if repo_root is None:
         print(
             "WARNING: run_codex_audit: no repo_root given; codex will see "
@@ -451,6 +529,17 @@ def build_parser() -> argparse.ArgumentParser:
             "and a warning is printed to stderr (WOT-2026-038l)."
         ),
     )
+    parser.add_argument(
+        "--data-sensitivity",
+        choices=["public", "private", "secret"],
+        default="public",
+        help=(
+            "Sensibilidad declarada del prompt ante privacy_preflight "
+            "(WOT-2026-046c). Default public: mismo contrato declarado de "
+            "esta salida para bundles de auditoria. private/secret abortan "
+            "el envio salvo backend codex trusted:true (fail-closed)."
+        ),
+    )
     return parser
 
 
@@ -464,7 +553,8 @@ def main(argv: list[str] | None = None) -> int:
         codex process's own returncode, which is reported inside the JSON
         body per "exit code is not the verdict"); exit 2 when codex
         produced 0 bytes of stdout (backend dead, CodexAuditEmptyOutputError);
-        exit 1 on any other invocation error (binary not found, timeout).
+        exit 1 on any other invocation error (binary not found, timeout) and
+        on a privacy block (`BLOCKED:` on stderr, WOT-2026-046c).
     """
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -481,7 +571,14 @@ def main(argv: list[str] | None = None) -> int:
             codex_executable=args.codex_executable,
             timeout=args.timeout,
             repo_root=args.repo_root,
+            sensitivity=args.data_sensitivity,
         )
+    except CodexAuditBlockedError as exc:
+        # WOT-2026-046c: veto de privacidad, distinguible por PREFIJO. El rc
+        # compartido con otros errores de invocacion se discute en
+        # WOT-2026-046d, que es dueno del split BLOCKED-vs-crash.
+        print(f"BLOCKED: {exc}", file=sys.stderr)
+        return 1
     except CodexAuditEmptyOutputError as exc:
         print(json.dumps({"ok": False, "reason": str(exc)}, indent=2))
         return 2

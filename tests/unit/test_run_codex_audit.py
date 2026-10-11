@@ -806,3 +806,39 @@ def test_mutation_removes_zero_bytes_guard(tmp_path, monkeypatch):
         "what the real run_codex_audit() must NOT do (and doesn't, per the "
         "test above that asserts it raises instead)"
     )
+
+
+# === WOT-2026-046c: privacy barrier in run_codex_audit (DoD 1+2+3) =============
+
+
+def test_barrier_private_blocks_before_popen(monkeypatch):
+    """WOT-2026-046c DoD 1+2: codex is non-trusted, so sensitivity private
+    raises CodexAuditBlockedError without ever creating a Popen."""
+
+    def _boom(*a, **k):
+        raise AssertionError(
+            "privacy_preflight did not block: Popen was invoked "
+            "for a private payload (WOT-2026-046c)"
+        )
+
+    monkeypatch.setattr(rca.subprocess, "Popen", _boom)
+    with pytest.raises(rca.CodexAuditBlockedError, match=r"privacy_preflight BLOQUEA"):
+        rca.run_codex_audit(
+            "bundle privado", sensitivity="private", codex_executable="codex.cmd"
+        )
+
+
+def test_barrier_credential_blocks_before_popen(monkeypatch):
+    """WOT-2026-046c DoD 3: a credential pattern inside a public bundle
+    is blocked by the content gate before any subprocess touch."""
+
+    def _boom(*a, **k):
+        raise AssertionError(
+            "privacy_preflight did not block credential content: "
+            "Popen was invoked (WOT-2026-046c)"
+        )
+
+    monkeypatch.setattr(rca.subprocess, "Popen", _boom)
+    payload_with_key = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQ..."
+    with pytest.raises(rca.CodexAuditBlockedError, match=r"privacy_preflight BLOQUEA"):
+        rca.run_codex_audit(payload_with_key, codex_executable="codex.cmd")

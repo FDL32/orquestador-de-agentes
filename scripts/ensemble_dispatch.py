@@ -35,13 +35,22 @@ During: expone subcomandos CLI:
       `backend_key`, con `checked_at` propio y `generated_at` para que un
       agente frio compare la frescura en su bootstrap en vez de correr los
       smoke tests el.
-    Todo envio a backend pasa por `send_to_profile`, cuyo PRIMER paso es
-    `privacy_preflight` (fail-closed): backend sin `trusted:true` +
+    Todo envio a backend POR PERFIL pasa por `send_to_profile`, cuyo PRIMER
+    paso es `privacy_preflight` (fail-closed): backend sin `trusted:true` +
     (`data_sensitivity != public` O rutas bajo `ensemble_private_roots`)
     -> DispatchBlockedError ANTES de tocar red. Auth por-invocacion via la
     env var nombrada en `api_key_env` (`setx` no propaga a procesos vivos,
     medido). GENERACION B2: el dispatcher NUNCA aplica escrituras de un
     backend al arbol; solo captura propuestas (stdout + scorecard).
+    La UNICA otra salida de CODIGO del motor hacia un backend externo es
+    `scripts/run_codex_audit.py` (auditoria codex M4): desde WOT-2026-046c
+    llama al MISMO `privacy_preflight` antes de abrir su `Popen`. El censo
+    de ambas vias es AST y vive en `tests/unit/test_ensemble_dispatch.py`
+    (registro de rutas POR SALIDA: una salida nueva sin barrera o sin
+    exencion declarada lo pone en ROJO; la tercera salida que la ficha
+    declara -- CLI directo de builders por prescripcion de prompts, launcher
+    PowerShell -- es prescripcion operativa fuera del alcance de un AST de
+    codigo y se coordina al cerrar 046c, no se bloquea desde aqui).
 After: scorecard.jsonl (UTF-8 SIN BOM, append-only) y backend_leaders.json
     actualizados bajo `<destino>/.agent/runtime/ensemble/`; exit 0 en exito,
     1 en bloqueo/validacion, 2 en error de invocacion.
@@ -1771,7 +1780,14 @@ def send_to_profile(
     # la causa -> reviews decorativas.
     timeout: int = 300,
 ) -> str:
-    """UNICO camino de salida hacia un backend; el preflight corre AQUI.
+    """Camino de salida POR PERFIL hacia un backend; el preflight corre AQUI.
+
+    WOT-2026-046c corrigio la afirmacion historica de ser la ruta EXCLUSIVA
+    de salida hacia un backend: era falsa mientras `run_codex_audit.py` abria su propio
+    `Popen` sin barrera. Hoy es VERDADERA EN SU AMBITO (todo envio por perfil)
+    y la otra salida de codigo, `run_codex_audit`, corre el MISMO
+    `privacy_preflight`; el censo AST de `tests/unit/test_ensemble_dispatch.py`
+    fija que ninguna otra ruta pueda aparecer sin barrera o exencion declarada.
 
     Before: `profile_name` existe en `ensemble_profiles` (config validada);
         `messages` es la lista chat-completions; `sensitivity` es la del
@@ -1797,11 +1813,13 @@ def send_to_profile(
             file=sys.stderr,
         )
     backend_cfg = config["backends"][profile["backend"]]
-    # WOT-2026-042v: el ambito se resuelve AQUI porque este es el UNICO camino
-    # de salida hacia un backend (lo declara el docstring, y el canary de
+    # WOT-2026-042v: el ambito se resuelve AQUI porque esta es la salida
+    # POR PERFIL hacia un backend (lo declara el docstring, y el canary de
     # WOT-2026-042k midio que 9 de 9 `dispatch.py` de gobierno llaman a esta
     # funcion DIRECTAMENTE sin pasar por el CLI `run`): cualquier otro punto
-    # dejaria fuera la ruta por la que circulan los bundles reales.
+    # dejaria fuera la ruta por la que circulan los bundles reales. La unica
+    # otra salida de codigo del motor (run_codex_audit) NO resuelve ambito
+    # por perfil: lo recibe de forma explicita via `repo_root` (WOT-2026-038l).
     cwd_lente, lens_scope = resolve_lens_repo_root(profile, backend_cfg, project_root)
     profile[_LENS_SCOPE_KEY] = lens_scope
     if cwd_lente is not None and backend_cfg.get("repo_root") != cwd_lente:
@@ -1849,8 +1867,11 @@ def send_to_profile(
     # DIRECTAMENTE y CERO pasan por el CLI `run`, asi que un canary anclado solo
     # a `run_pipeline` vigilaba una ruta por la que no circula ningun bundle real
     # -- "barrera del alcance" de AGENTS.md: cableado, muerde, y no mira donde
-    # ocurre el fallo. `send_to_profile` es el UNICO camino de salida hacia un
-    # backend (lo declara su propio docstring), luego es el paso obligado.
+    # ocurre el fallo. `send_to_profile` es el paso obligado de TODO envio
+    # por perfil hacia un backend (lo declara su propio docstring), luego es
+    # el paso obligado de su ambito; la otra salida de codigo del motor
+    # (`run_codex_audit`) corre el MISMO `privacy_preflight` desde
+    # WOT-2026-046c y queda vigilada por su censo AST.
     # Va DESPUES del preflight a proposito: si el envio se bloquea por privacidad
     # no hay nada que auditar, y el canary nunca debe retrasar un fail-closed.
     receipt_canary(payload_text, root=MOTOR_ROOT, ticket=profile_name)

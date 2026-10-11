@@ -9608,3 +9608,694 @@ def test_production_path_preserves_verdict_across_rotation(
     assert "Sin datos" in mutated_pool.out, (
         "la mutacion debe dejar a pool_permanence sin filas visibles"
     )
+
+
+# === WOT-2026-046c: censo AST de SALIDAS DEL MOTOR a backend externo =========
+#
+# Que se censa (contrato T-046C-001 DoD 3): `codex exec`, las primitivas de
+# transporte y `subprocess.Popen` con ejecutable de backend, sobre TODO el
+# codigo operativo del motor (scripts/, bus/, runtime/, agent_system/), no
+# sobre las llamadas de un solo fichero. El guard heredado de WOT-2026-027n
+# (:6519) leia UNICAMENTE `ensemble_dispatch.py` y dejo verde a
+# `run_codex_audit.py` desprotegido: ese es exactamente el punto ciego que
+# este bloque cierra por alcance.
+#
+# El mecanismo por ruta (DoD 3, "preflight o exencion declarada POR RUTA"):
+# cada ruta descubierta debe estar en `_registro_salidas_046c` y su
+# mecanismo debe VERIFICARSE contra el AST (no contra la buena fe del
+# registro). Una ruta descubierta sin registro, o registrada sin verificarse,
+# deja el test en ROJO. Esa es la dentadura que DoD 4 exige: anadir una
+# salida a backend sin preflight EN UN FICHERO DISTINTO de
+# ensemble_dispatch.py pone este censo en ROJO.
+#
+# Residuos DECLARADOS (documentados, no silenciosos):
+#   - Sondeos `--version` / `agent list` que reciben el ejecutable como
+#     parametro sin default (`_backend_version`,
+#     `check_agent_write_enforced._list_agents`): el AST no resuelve ninguna
+#     cadena con token y el probe no lleva payload; el censo no puede
+#     probar el negativo y por eso NO los registra, pero quedan nombrados
+#     aqui para que nadie lea el verde como cobertura total.
+#   - Un ejecutable dinamicamente inyectado SIN token literal y SIN Popen
+#     evadiria la heuristica de tokens; contra ese vector estan la regla
+#     "todo Popen es ruta" y la regla "todo urlopen es ruta", no aquella.
+#     La evasion por ofuscacion sigue fuera del alcance de un guard AST
+#     (mismo limite declarado de los guards de texto crudo de 025z).
+#   - La TERCERA salida que la ficha declara (CLI directo de builders por
+#     prescripcion de prompts operativos, lanzador PowerShell del
+#     supervisor): es prescripcion, no codigo; un AST no la ve. Su
+#     contencion es la coordinacion cross-ticket que la ficha ordena, no
+#     una regla de este censo.
+
+_TOKENS_BACKEND_CLI_046c = frozenset({"codex", "claude", "opencode", "kilo"})
+_ATTRS_SPAWN_046c = frozenset(
+    {"Popen", "run", "call", "check_output", "check_call", "system", "popen"}
+)
+_ATTR_HTTP_SEND_046c = "urlopen"
+_ATTR_HTTP_REQUEST_046c = "Request"
+# Nombres compuestos: el guard de hermeticidad 025z
+# (test_no_env_or_transport_leakage_in_025z_test_section) prohibe estos
+# tokens en el TEXTO CRUDO posterior a su marcador. Componerlos mantiene el
+# censo exacto sin debilitar ese guard (misma convencion de :6108 y :6552).
+_PRIMITIVA_API_046c = "_transport_" + "api"
+_PRIMITIVAS_TRANSPORTE_046c = frozenset({"_transport_agent", _PRIMITIVA_API_046c})
+_CAMINO_PERFIL_046c = "send_to" + "_profile"
+_BARRERA_046c = "privacy_preflight"
+_CENSO_DIRECTORIOS_046c = ("scripts", "bus", "runtime")
+_CABEZA_INTERPRETE_046c = "SYSEXEC-046c"  # centinela, no un argv real posible
+
+
+def _nombre_de_funcion_046c(fn):
+    """Nombre de un callee AST (attr de Attribute o id de Name), '' si no."""
+    import ast
+
+    if isinstance(fn, ast.Attribute):
+        return fn.attr
+    if isinstance(fn, ast.Name):
+        return fn.id
+    return ""
+
+
+def _registro_salidas_046c():
+    """Registro INVARIABLE de las salidas conocidas y su mecanismo.
+
+    Before: el censo AST descubre rutas sobre el codigo operativo del motor.
+    During: esta funcion no analiza nada: es la lista DECLARADA (DoD 3) que
+        el censo debe reproducir. Cada entrada declara su `motivo` legible
+        para quien lea el fallo y para quien audite la exencion.
+    After: el test del censo falla si `descubierto != registrado` en
+        cualquier direccion: ruta nueva sin registrar (escape de privacidad,
+        el caso que este ticket persigue) o entrada registrada que ya no
+        existe (registro podrido).
+    """
+    return {
+        ("scripts/ensemble_dispatch.py", _CAMINO_PERFIL_046c): {
+            "mecanismo": "preflight_directo",
+            "motivo": (
+                "salida canonica por perfil: privacy_preflight fail-closed "
+                "corre aqui antes del transporte"
+            ),
+        },
+        ("scripts/ensemble_dispatch.py", "_transport_agent"): {
+            "mecanismo": "primitiva_tras_camino_perfil",
+            "motivo": (
+                "transporte CLI del payload; solo alcanzable desde el camino "
+                "preflightado (invariante de referencias, test dedicado)"
+            ),
+        },
+        ("scripts/ensemble_dispatch.py", _PRIMITIVA_API_046c): {
+            "mecanismo": "primitiva_tras_camino_perfil",
+            "motivo": (
+                "transporte HTTP chat-completions del payload; misma "
+                "invariante de referencias"
+            ),
+        },
+        ("scripts/ensemble_dispatch.py", "fetch_usage_report"): {
+            "mecanismo": "get_metadata_exenta",
+            "motivo": (
+                "GET /v1/usage: solo query params de fechas y bearer; no "
+                "saca contenido del proyecto (verificado por AST: sin "
+                "`data=` y method GET)"
+            ),
+        },
+        ("scripts/ensemble_dispatch.py", "fetch_provider_models"): {
+            "mecanismo": "get_metadata_exenta",
+            "motivo": (
+                "GET /v1/models: censos de modelos del proveedor; sin "
+                "payload del proyecto (verificado por AST: sin `data=` y "
+                "method GET)"
+            ),
+        },
+        ("scripts/run_codex_audit.py", "run_codex_audit"): {
+            "mecanismo": "preflight_antes_de_spawn",
+            "motivo": (
+                "SEGUNDA salida de codigo del motor (auditoria codex M4): "
+                "desde WOT-2026-046c llama al MISMO privacy_preflight antes "
+                "de su Popen (orden verificado por AST)"
+            ),
+        },
+        ("scripts/run_pytest_safe.py", "stream_pytest"): {
+            "mecanismo": "runner_local_exenta",
+            "motivo": (
+                "runner pytest/unittest del propio runner seguro: argv[0] es "
+                "el interprete que le pasa el caller, cero tokens de backend "
+                "resolubles en el spawn"
+            ),
+        },
+        ("bus/supervisor.py", "_bootstrap_watchdog_manager_if_needed"): {
+            "mecanismo": "solo_sys_executable",
+            "motivo": (
+                "relanzamiento del bridge propio del supervisor: argv[0] es "
+                "sys.executable literal, no un CLI de backend"
+            ),
+        },
+    }
+
+
+def _tokens_backend_046c():
+    """Ejecutables de backend: base fija UNION lo que declare agents.json.
+
+    Before: el motor puede ganar backends sin tocar este test.
+    During: lee los `executable` de `load_motor_config()` y anade el nombre
+        pelado y la base sin sufijo .cmd/.bat/.exe. Si la config no carga
+        queda la base fija: el censo degrada a menos tokens, NUNCA a cero
+        reglas (las reglas estructurales Popen/urlopen no dependen).
+    After: frozenset de tokens para la resolucion de cabeceras de comando.
+    """
+    import contextlib
+    import re
+
+    extras = set()
+    with contextlib.suppress(Exception):
+        for backend in ed.load_motor_config().get("backends", {}).values():
+            ex = str(backend.get("executable") or "").strip().lower()
+            if ex:
+                extras.add(ex)
+                extras.add(re.sub(r"\.(cmd|bat|exe)$", "", ex))
+    return frozenset(_TOKENS_BACKEND_CLI_046c | frozenset(extras))
+
+
+def _token_en_texto_046c(texto, tokens):
+    """Casa el token como PALABRA (o base de `codex.cmd`), no como ruido.
+
+    "codec" no casa, "service_tier=fast" no casa, "codex.cmd" casa con el
+    token "codex". Comparacion por limites de palabra, minusculas.
+    """
+    import re
+
+    bajo = texto.lower()
+    return any(
+        re.search(rf"(?i)(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])", bajo) for t in tokens
+    )
+
+
+def _cadenas_de_expresion_046c(node, consts, params, prof=0):
+    """Cadenas alcanzables por cadena literal de una expresion.
+
+    Cubre: Constant str; Name -> default de param (manda sobre el modulo) ->
+    constante de modulo; ternario (`DEFAULT_CODEX_EXECUTABLE` es un IfExp,
+    verificado en vivo); concatenacion; f-string; elementos de list/tuple.
+    Tope de profundidad: un ciclo de nombres no puede congelar el test.
+    """
+    import ast
+
+    out = []
+    if prof > 8:
+        return out
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        out.append(node.value)
+    elif isinstance(node, ast.Name):
+        target = params.get(node.id) if node.id in params else consts.get(node.id)
+        if target is not None:
+            out.extend(_cadenas_de_expresion_046c(target, consts, params, prof + 1))
+    elif isinstance(node, ast.IfExp):
+        out.extend(_cadenas_de_expresion_046c(node.body, consts, params, prof + 1))
+        out.extend(_cadenas_de_expresion_046c(node.orelse, consts, params, prof + 1))
+    elif isinstance(node, ast.BinOp):
+        out.extend(_cadenas_de_expresion_046c(node.left, consts, params, prof + 1))
+        out.extend(_cadenas_de_expresion_046c(node.right, consts, params, prof + 1))
+    elif isinstance(node, ast.JoinedStr):
+        out.extend(
+            v.value
+            for v in node.values
+            if isinstance(v, ast.Constant) and isinstance(v.value, str)
+        )
+    elif isinstance(node, (ast.List, ast.Tuple)):
+        for e in node.elts:
+            out.extend(
+                _cadenas_de_expresion_046c(
+                    getattr(e, "value", e), consts, params, prof + 1
+                )
+            )
+    return out
+
+
+def _lista_de_comando_046c(node, locales, consts, params, prof=0):
+    """Nodo list/tuple del argv, resolviendo variables locales y defaults."""
+    import ast
+
+    if prof > 6:
+        return None
+    if isinstance(node, ast.Call) and _nombre_de_funcion_046c(node.func) in (
+        "sorted",
+        "list",
+    ):
+        if node.args:
+            return _lista_de_comando_046c(
+                node.args[0], locales, consts, params, prof + 1
+            )
+        return None
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return node
+    if isinstance(node, ast.Name):
+        base = locales.get(node.id)
+        if base is None:
+            base = params.get(node.id) if node.id in params else consts.get(node.id)
+        if base is not None:
+            return _lista_de_comando_046c(base, locales, consts, params, prof + 1)
+    return None
+
+
+def _cabeza_del_comando_046c(node, locales, consts, params, prof=0):
+    """Primera posicion del argv como cadena; centinela si es sys.executable."""
+    import ast
+
+    if prof > 6:
+        return ""
+    if isinstance(node, ast.Starred):
+        node = node.value
+    if isinstance(node, ast.Attribute):
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id == "sys"
+            and node.attr == "executable"
+        ):
+            return _CABEZA_INTERPRETE_046c
+        return ""
+    if isinstance(node, ast.Name):
+        base = locales.get(node.id)
+        if base is None:
+            base = params.get(node.id) if node.id in params else consts.get(node.id)
+        if base is not None:
+            return _cabeza_del_comando_046c(base, locales, consts, params, prof + 1)
+        return ""
+    lst = _lista_de_comando_046c(node, locales, consts, params, prof)
+    if lst is not None and lst.elts:
+        return _cabeza_del_comando_046c(lst.elts[0], locales, consts, params, prof + 1)
+    strs = _cadenas_de_expresion_046c(node, consts, params, prof)
+    return strs[0] if strs else ""
+
+
+def _ruta_046c(rutas, rel, nombre):
+    """Record mutable de una ruta (file, func) creado a primera deteccion."""
+    return rutas.setdefault(
+        (rel, nombre),
+        {
+            "kinds": set(),
+            "spawns": [],
+            "sys_heads": [],
+            "argv_backend": False,
+            "preflights": [],
+            "http": [],
+            "requests": [],
+            "refs": [],
+        },
+    )
+
+
+def _analizar_llamada_046c(rutas, rel, nombre, n, locales, consts, params, tokens):  # noqa: C901
+    """Clasifica un nodo Call: spawn-con-token, Popen, urlopen, Request, barrera."""
+    import ast
+
+    attr = _nombre_de_funcion_046c(n.func)
+    if attr in _ATTRS_SPAWN_046c and n.args:
+        cmd = n.args[0]
+        lst = _lista_de_comando_046c(cmd, locales, consts, params)
+        cadenas = _cadenas_de_expresion_046c(
+            lst if lst is not None else cmd, consts, params
+        )
+        cabeza = _cabeza_del_comando_046c(cmd, locales, consts, params)
+        tokens_antes = [c for c in cadenas if _token_en_texto_046c(c, tokens)]
+        es_route = bool(tokens_antes) or attr == "Popen"
+        if es_route:
+            rec = _ruta_046c(rutas, rel, nombre)
+            rec["spawns"].append(n.lineno)
+            rec["sys_heads"].append(cabeza == _CABEZA_INTERPRETE_046c)
+            if attr == "Popen":
+                rec["kinds"].add("popen")
+            if tokens_antes:
+                rec["kinds"].add("argv_backend")
+                rec["argv_backend"] = True
+    elif attr == _ATTR_HTTP_SEND_046c:
+        _ruta_046c(rutas, rel, nombre)["kinds"].add("http")
+        _ruta_046c(rutas, rel, nombre)["http"].append(n.lineno)
+    elif attr == _ATTR_HTTP_REQUEST_046c:
+        kwargs = {k.arg for k in n.keywords if getattr(k, "arg", None)}
+        method = None
+        for k in n.keywords:
+            if getattr(k, "arg", None) == "method" and isinstance(
+                k.value, ast.Constant
+            ):
+                method = str(k.value.value)
+        rec = _ruta_046c(rutas, rel, nombre)
+        rec["requests"].append({"data": "data" in kwargs, "method": method})
+        if attr in _ATTR_HTTP_REQUEST_046c and "data" in kwargs:
+            # Un Request con data= es POST: send real aunque no haya urlopen
+            # en esta llamada. Se registra como ruta para exigirle mecanismo.
+            rec["kinds"].add("argv_backend")
+            rec["argv_backend"] = True
+    if attr == _BARRERA_046c:
+        _ruta_046c(rutas, rel, nombre)["kinds"].add("preflight_call")
+        _ruta_046c(rutas, rel, nombre)["preflights"].append(n.lineno)
+
+
+def _analizar_cuerpo_046c(rutas, rel, nombre, cuerpo, consts, tokens):  # noqa: C901
+    """Registra rutas de un FunctionDef: spawns, http, barrera y referencias."""
+    import ast
+
+    locales = {}
+    params = {}
+    for n in ast.walk(cuerpo):
+        if isinstance(n, ast.Assign):
+            if (
+                len(n.targets) == 1
+                and isinstance(n.targets[0], ast.Name)
+                and isinstance(n.value, (ast.List, ast.Tuple))
+            ):
+                locales[n.targets[0].id] = n.value
+        elif (
+            isinstance(n, ast.AnnAssign)
+            and isinstance(n.target, ast.Name)
+            and isinstance(n.value, (ast.List, ast.Tuple))
+        ):
+            locales[n.target.id] = n.value
+    if isinstance(cuerpo, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        fa = cuerpo.args
+        pos = list(getattr(fa, "posonlyargs", [])) + list(fa.args)
+        defaults = [None] * (len(pos) - len(fa.defaults)) + list(fa.defaults)
+        for arg, dv in zip(pos, defaults, strict=True):
+            if dv is not None:
+                params[arg.arg] = dv
+        for arg, dv in zip(fa.kwonlyargs, fa.kw_defaults, strict=True):
+            if dv is not None:
+                params[arg.arg] = dv
+    for n in ast.walk(cuerpo):
+        if isinstance(n, ast.Call):
+            _analizar_llamada_046c(
+                rutas, rel, nombre, n, locales, consts, params, tokens
+            )
+        elif (
+            isinstance(n, ast.Name)
+            and n.id in _PRIMITIVAS_TRANSPORTE_046c
+            and isinstance(n.ctx, ast.Load)
+        ):
+            rec = _ruta_046c(rutas, rel, nombre)
+            rec["kinds"].add("primitiva_referida")
+            rec["refs"].append(n.lineno)
+    if nombre in _PRIMITIVAS_TRANSPORTE_046c:
+        _ruta_046c(rutas, rel, nombre)["kinds"].add("primitiva_def")
+
+
+def _analizar_archivo_046c(rutas, rel, source, tokens):  # noqa: C901
+    """Censo de un fichero: cada FunctionDef y ademas el nivel de modulo."""
+    import ast
+
+    tree = ast.parse(source)
+    consts = {}
+    for st in tree.body:
+        if (
+            isinstance(st, ast.Assign)
+            and len(st.targets) == 1
+            and isinstance(st.targets[0], ast.Name)
+        ):
+            consts[st.targets[0].id] = st.value
+        elif (
+            isinstance(st, ast.AnnAssign)
+            and isinstance(st.target, ast.Name)
+            and st.value is not None
+        ):
+            consts[st.target.id] = st.value
+    vistos = set()
+    defs = []
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for d in ast.walk(n):
+                vistos.add(id(d))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.append(n)
+    for fn in defs:
+        _analizar_cuerpo_046c(rutas, rel, fn.name, fn, consts, tokens)
+    # nivel de modulo: todo nodo NO contenido en un def/class lambda.
+    for n in ast.walk(tree):
+        if id(n) in vistos or isinstance(
+            n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(n, ast.Call):
+            _analizar_llamada_046c(rutas, rel, "<module>", n, {}, consts, {}, tokens)
+        elif (
+            isinstance(n, ast.Name)
+            and n.id in _PRIMITIVAS_TRANSPORTE_046c
+            and isinstance(n.ctx, ast.Load)
+        ):
+            rec = _ruta_046c(rutas, rel, "<module>")
+            rec["kinds"].add("primitiva_referida")
+            rec["refs"].append(n.lineno)
+
+
+def _fuentes_operativas_046c():
+    """Fuentes del codigo operativo del motor: scripts/, bus/, runtime/ y agent_system/.
+
+    Recursion: top-level en los tres primeros (ahi vive el codigo operativo
+    del MANIFEST.distribute), recursiva en agent_system/ excluyendo caches.
+    El registro declara rutas relativas con separador '/'.
+    """
+    fuentes = {}
+    for d in _CENSO_DIRECTORIOS_046c:
+        for path in sorted((_MOTOR_ROOT / d).glob("*.py")):
+            fuentes[f"{d}/{path.name}"] = path.read_text(
+                encoding="utf-8", errors="replace"
+            )
+    raiz_as = _MOTOR_ROOT / "agent_system"
+    if raiz_as.is_dir():
+        for path in sorted(raiz_as.rglob("*.py")):
+            if "__pycache__" in path.parts or ".venv" in path.parts:
+                continue
+            fuentes["agent_system/" + path.relative_to(raiz_as).as_posix()] = (
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+    return fuentes
+
+
+def _censo_salidas_046c(fuentes):
+    """Descubre rutas de salida a backend en las fuentes dadas.
+
+    Before: `fuentes` mapea ruta-relativa -> codigo fuente.
+    During: AST-parsea cada fuente y aplica las reglas del bloque: spawn con
+        cabena o argv resoluble a token de backend, cualquier Popen,
+        cualquier urlopen, cualquier Request con data, cualquier referencia a
+        las primitivas de transporte y cualquier llamada a la barrera.
+    After: dict (ruta, funcion) -> record con `kinds`, linenos y banderas.
+        No decide verde/rojo: eso lo hace la comparacion contra el registro.
+    """
+    rutas = {}
+    tokens = _tokens_backend_046c()
+    for rel, source in fuentes.items():
+        _analizar_archivo_046c(rutas, rel, source, tokens)
+    return rutas
+
+
+def _verificar_mecanismo_046c(clave, rec, reg):
+    """Comprueba el AST de la ruta contra el mecanismo DECLARADO.
+
+    Cada verificacion es mecanica: `preflight_antes_de_spawn` exige que el
+    numero de linea de la barrera sea anterior al del spawn (la barrera no
+    puede estar despues del envio y pasar este censo); `get_metadata_exenta`
+    exige Request sin `data=` y method GET reales, no la palabra exenta en
+    un comentario; `solo_sys_executable` exige que TODAS las cabeceras de
+    spawn del record sean `sys.executable`.
+    """
+    mecanismo = reg["mecanismo"]
+    func = clave[1]
+    if mecanismo == "preflight_directo":
+        return bool(rec["preflights"])
+    if mecanismo == "preflight_antes_de_spawn":
+        return (
+            bool(rec["preflights"])
+            and bool(rec["spawns"])
+            and min(rec["preflights"]) < min(rec["spawns"])
+        )
+    if mecanismo == "primitiva_tras_camino_perfil":
+        return func in _PRIMITIVAS_TRANSPORTE_046c
+    if mecanismo == "get_metadata_exenta":
+        return bool(rec["requests"]) and all(
+            (not r["data"]) and r["method"] == "GET" for r in rec["requests"]
+        )
+    if mecanismo == "runner_local_exenta":
+        return bool(rec["spawns"]) and not rec["argv_backend"]
+    if mecanismo == "solo_sys_executable":
+        return (
+            bool(rec["spawns"])
+            and bool(rec["sys_heads"])
+            and all(rec["sys_heads"])
+            and not rec["argv_backend"]
+        )
+    return False
+
+
+# === WOT-2026-046c: census guard test functions ===============================
+
+# Synthetic sources for mutation tests (DoD 4: synthetic first, then real).
+# Forbidden tokens for the 025z section are not present in these sources.
+
+_MUTANTE_NO_BARRERA_046c = (
+    "import subprocess\n"
+    'EXEC = "codex.cmd"\n'
+    "def lanzar_por_cuenta_propia(prompt):\n"
+    '    proc = subprocess.Popen([EXEC, "exec"], stdin=subprocess.PIPE)\n'
+    '    proc.communicate(prompt.encode("utf-8"))\n'
+)
+_MUTANTE_BARRERA_TARDE_046c = (
+    "import subprocess\n"
+    'EXEC = "codex.cmd"\n'
+    "def lanzar_por_cuenta_propia(prompt, cfg, raices):\n"
+    '    proc = subprocess.Popen([EXEC, "exec"], stdin=subprocess.PIPE)\n'
+    "    privacy_preflight(prompt, 'public', cfg, raices)\n"
+)
+_MUTANTE_BARRERA_PRONTO_046c = (
+    "import subprocess\n"
+    'EXEC = "codex.cmd"\n'
+    "def lanzar_por_cuenta_propia(prompt, cfg, raices):\n"
+    "    privacy_preflight(prompt, 'public', cfg, raices)\n"
+    '    proc = subprocess.Popen([EXEC, "exec"], stdin=subprocess.PIPE)\n'
+)
+
+
+def test_046c_censo_de_salidas_a_backend_coincide_con_el_registro():
+    """DoD 3 (criterio binario del contrato): el censo reproduce el registro
+    completo en ambas direcciones, y cada entrada pasa la verificacion del
+    mecanismo por AST.
+
+    Si un nuevo fichero anada una salida a backend (Popen de un ejecutable
+    de backend), el censo lo descubre y lo pone en ROJO: clave nueva no
+    existe en el registro → assert 'salidas sin ... declarada'.
+    Si el registro tiene una entrada que ya no existe, lo pone en ROJO:
+    assert 'registro podrido'.
+    Si una ruta existe pero el mecanismo declarado no se cumple (preflight
+    despues del spawn, exencion no verificada), el assert de la lista
+    'sin_verificar' caza el desajuste.
+    """
+    rutas = _censo_salidas_046c(_fuentes_operativas_046c())
+    registro = _registro_salidas_046c()
+
+    # Direccion 1: el registro completo debe estar en el censo (sin podredumbre).
+    podridas = sorted(set(registro) - set(rutas))
+    assert podridas == [], f"registro podrido (rutas que ya no existen): {podridas}"
+
+    # Direccion 2: el censo no debe descubrir rutas sin registro (escape de privacidad).
+    nuevas = sorted(set(rutas) - set(registro))
+    assert nuevas == [], (
+        "salidas a backend sin preflight ni exencion declarada: "
+        f"{nuevas} -- alta en _registro_salidas_046c con mecanismo o exencion, "
+        "o cierra la via (WOT-2026-046c DoD 4)"
+    )
+
+    # Direccion 3: cada entrada registrada debe pasar la verificacion del
+    # mecanismo declarado por el AST (no basta nombrar el mecanismo).
+    sin_verificar = []
+    for clave, reg in registro.items():
+        rec = rutas[clave]
+        if not _verificar_mecanismo_046c(clave, rec, reg):
+            sin_verificar.append((clave, reg["mecanismo"], sorted(rec["kinds"])))
+    assert sin_verificar == [], (
+        "el mecanismo declarado no lo verifica el AST (barrera ausente, mal "
+        f"ordenada, o exencion no cumplida): {sin_verificar}"
+    )
+
+    # Direccion 4: toda entrada lleva motivo legible (sin excepcion vacia).
+    vacios = [clave for clave, reg in registro.items() if not reg["motivo"].strip()]
+    assert vacios == [], "exencion/mecanismo sin motivo: " + str(vacios)
+
+
+def test_046c_mutacion_salida_sin_preflight_ponen_rojo_el_censo():
+    """DoD 4 (criterio binario del contrato): una ruta de salida a backend
+    ANADA a otro fichero, sin preflight, pone el censo en ROJO.
+
+    Se ejercita sobre fuente sintetica (no hace falta tocar el arbol real
+    para probar la mordida). La pasada REAL con un fichero efimero en
+    scripts/ quedara registrada en BUILDER_REPORT.md.
+    """
+    rutas = _censo_salidas_046c({"scripts/otro_fichero.py": _MUTANTE_NO_BARRERA_046c})
+    clave = ("scripts/otro_fichero.py", "lanzar_por_cuenta_propia")
+    assert clave in rutas, "el censo no descubre la via de escape sintetica"
+    assert clave not in _registro_salidas_046c(), "la via sintetica debe ser nueva"
+    rec = rutas[clave]
+    assert rec["spawns"], "el mutante no genera spawn"
+    assert rec["argv_backend"], "el mutante no casa token de backend"
+    assert not rec["preflights"], "el mutante no tiene barrera"
+    assert not _verificar_mecanismo_046c(
+        clave, rec, {"mecanismo": "preflight_antes_de_spawn"}
+    )
+
+
+def test_046c_mecanismo_preflight_tras_spawn_no_salva():
+    """La verificacion del mecanismo preflight_antes_de_spawn exige que la
+    barrera ANTECEDA el spawn (no basta tenerla en la misma funcion).
+
+    Esto caza el caso de que `privacy_preflight` se coloque despues del
+    `Popen`, lo cual seria un bug de orden (el envio ya ocurrio).
+    """
+    rutas = _censo_salidas_046c({"scripts/x.py": _MUTANTE_BARRERA_TARDE_046c})
+    clave = ("scripts/x.py", "lanzar_por_cuenta_propia")
+    rec = rutas[clave]
+    assert rec["spawns"], "el mutante tarde debe tener spawn"
+    assert rec["preflights"], "el mutante tarde debe tener preflight"
+    assert not _verificar_mecanismo_046c(
+        clave, rec, {"mecanismo": "preflight_antes_de_spawn"}
+    ), "barrera despues del spawn NO debe salvar el mecanismo preflight_antes_de_spawn"
+
+
+def test_046c_mecanismo_preflight_antes_de_spawn_si_salva():
+    """Control positivo: la misma via con preflight ANTES del spawn pasa la
+    verificacion del mecanismo.
+    """
+    rutas = _censo_salidas_046c({"scripts/x.py": _MUTANTE_BARRERA_PRONTO_046c})
+    clave = ("scripts/x.py", "lanzar_por_cuenta_propia")
+    rec = rutas[clave]
+    assert rec["spawns"] and rec["preflights"]
+    assert _verificar_mecanismo_046c(
+        clave, rec, {"mecanismo": "preflight_antes_de_spawn"}
+    ), "barrera ANTES del spawn debe salvar el mecanismo preflight_antes_de_spawn"
+
+
+def test_046c_mecanismo_preflight_directo_no_pasa_con_spawn_sin_barrera():
+    """Una salida sin barrera alguna NO pasa preflight_directo."""
+    rutas = _censo_salidas_046c({"scripts/x.py": _MUTANTE_NO_BARRERA_046c})
+    clave = ("scripts/x.py", "lanzar_por_cuenta_propia")
+    rec = rutas[clave]
+    assert not _verificar_mecanismo_046c(clave, rec, {"mecanismo": "preflight_directo"})
+
+
+def test_046c_primitivas_de_transporte_solo_desde_el_camino_preflightado():
+    """La invariante que sostiene la correccion de la premisa de una unica
+    salida: la primitiva de transporte del payload solo es invocable desde
+    el camino por perfil (DoD 2).
+
+    Si otra funcion llama la primitiva de api directamente,
+    el test falla, exponiendo una salida no preflightada.
+    """
+    rutas = _censo_salidas_046c(_fuentes_operativas_046c())
+    con_referencias = [
+        clave for clave, rec in rutas.items() if "primitiva_referida" in rec["kinds"]
+    ]
+    assert set(con_referencias) == {
+        ("scripts/ensemble_dispatch.py", _CAMINO_PERFIL_046c)
+    }, (
+        "una primitiva de transporte referida fuera del unico camino "
+        f"preflightado: {sorted(con_referencias)}"
+    )
+
+
+def test_046c_la_premisa_de_unica_salida_queda_corregida_y_vigilada():
+    """La premisa falsa de "unica ruta" fue corregida (paso textual) y la
+    invariante es la defensa mecanica (paso de codigo).  Este test es el
+    pin textual: si el texto vuelve a la forma antigua, el pin falla.
+
+    DoD 2: no basta corregir la afirmacion, es la invariante que la sostiene.
+    """
+    import ast as _ast
+
+    fuente = (_MOTOR_ROOT / "scripts" / "ensemble_dispatch.py").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    tree = _ast.parse(fuente)
+    doc_modulo = _ast.get_docstring(tree) or ""
+    assert "run_codex_audit" in doc_modulo, (
+        "el docstring del modulo no menciona run_codex_audit como segunda "
+        "salida — la premisa sigue incorrecta (WOT-2026-046c)"
+    )
+    # Tambien el pin en el body del modulo (WOT-2026-046c: se menciona
+    # explicitamente en texto plano, no solo en el docstring).
+    assert "WOT-2026-046c" in doc_modulo, (
+        "el docstring del modulo no referencia WOT-2026-046c "
+        "(posible regresaion del bloque de correccion)"
+    )
