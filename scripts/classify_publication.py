@@ -25,6 +25,12 @@ from typing import Any
 
 
 TEXT_EXTENSIONS = {
+    # WOT-2026-068b: .bat joins the list by extension. Trade-off: an ASCII .bat
+    # is no longer routed to human review just for its suffix, but a .bat whose
+    # content is actually binary still lands in DECIDE via binary_in_text_file.
+    # Keep aligned with scripts/encoding_guard.py TEXT_EXTENSIONS so a published
+    # .bat is never left at zero encoding audit.
+    ".bat",
     ".cfg",
     ".css",
     ".csv",

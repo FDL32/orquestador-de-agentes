@@ -14,6 +14,11 @@ AGENT_DIR = ROOT / ".agent"
 
 TEXT_EXTENSIONS = frozenset(
     {
+        # WOT-2026-068b: .bat aligned with classify_publication.py so ASCII .bat
+        # files that now classify PUBLISH stay under the encoding audit (the
+        # post-write hook gates on this list). .sh deliberately stays: removing
+        # it would leave .sh at zero encoding audit (forbidden surface).
+        ".bat",
         ".md",
         ".py",
         ".json",

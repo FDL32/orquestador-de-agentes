@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from scripts import classify_publication
+from scripts import classify_publication, encoding_guard
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -875,6 +875,88 @@ def test_d4_unrelated_bat_sh_is_evaluated_normally(tmp_path: Path) -> None:
         item["path"] for item in manifest["publication_manifest"]["EXCLUDE_TRACKED"]
     }
     assert "install.sh" not in excluded
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-068b: an ASCII .bat must not condemn a destination to DECIDE_PENDING
+# ---------------------------------------------------------------------------
+
+
+def test_b68b_ascii_bat_classifies_publish(tmp_path: Path) -> None:
+    """B4: a clean ASCII .bat launcher classifies as PUBLISH. Before this ticket
+    the suffix-based branch routed it to DECIDE with the reason
+    binary_large_or_unknown_type, which was false in both terms (ASCII, 571 B),
+    and the whole repo verdict jammed at DECIDE_PENDING."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "run_checks.bat").write_text(
+        "@echo off\r\nrem ASCII build launcher\r\necho ok\r\n", encoding="utf-8"
+    )
+    _git(repo, "add", "run_checks.bat")
+    _git(repo, "commit", "-m", "add ascii bat launcher")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    publish_paths = {
+        item["path"] for item in manifest["publication_manifest"]["PUBLISH"]
+    }
+    decide_items = {
+        item["path"]: item for item in manifest["publication_manifest"]["DECIDE"]
+    }
+    assert "run_checks.bat" in publish_paths
+    assert "run_checks.bat" not in decide_items
+    assert "binary_large_or_unknown_type" not in (
+        decide_items.get("run_checks.bat", {}).get("reasons", [])
+    )
+
+
+def test_b68b_binary_bat_still_decides_by_content(tmp_path: Path) -> None:
+    """Content fail-closed survives the extension addition: a .bat whose bytes
+    are actually binary (NUL in the first 4096) must still route to DECIDE, now
+    via binary_in_text_file, not silently PUBLISH."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "corrupt.bat").write_bytes(b"@echo off\x00\x01\x02not ascii at all")
+    _git(repo, "add", "corrupt.bat")
+    _git(repo, "commit", "-m", "add binary bat")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    decide_items = {
+        item["path"]: item for item in manifest["publication_manifest"]["DECIDE"]
+    }
+    assert "corrupt.bat" in decide_items
+    assert "binary_in_text_file" in decide_items["corrupt.bat"]["reasons"]
+
+
+def test_b68b_unknown_binary_extension_still_decides(tmp_path: Path) -> None:
+    """Mutation control for the extension route: adding .bat must not soften the
+    unknown-extension branch. A real binary with a never-listed suffix still
+    classifies DECIDE with binary_large_or_unknown_type."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "payload.weirdext").write_bytes(b"\x7fELF\x00\x01\x02\x00binary blob")
+    _git(repo, "add", "payload.weirdext")
+    _git(repo, "commit", "-m", "add unknown binary")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+
+    decide_items = {
+        item["path"]: item for item in manifest["publication_manifest"]["DECIDE"]
+    }
+    assert "payload.weirdext" in decide_items
+    assert "binary_large_or_unknown_type" in decide_items["payload.weirdext"]["reasons"]
+
+
+def test_b68b_bat_is_text_in_both_guards_and_sh_keeps_audit() -> None:
+    """Cross-file alignment (contract Integracion): .bat must be a text
+    extension in classify_publication AND in encoding_guard, otherwise the
+    extension route publishes .bat files that no encoding audit ever reads.
+    Forbidden-surface guard: .sh keeps its place in encoding_guard's list, so
+    no file is left at zero encoding audit by this change."""
+    assert ".bat" in classify_publication.TEXT_EXTENSIONS
+    assert ".bat" in encoding_guard.TEXT_EXTENSIONS
+    assert ".sh" in encoding_guard.TEXT_EXTENSIONS
 
 
 def test_d5_runtime_keep_tracked_not_flagged_for_human_action(tmp_path: Path) -> None:
