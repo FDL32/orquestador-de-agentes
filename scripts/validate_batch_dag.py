@@ -981,7 +981,87 @@ def _errors_emission_order(
     return errors
 
 
-def validate_dag(data: dict[str, Any]) -> list[str]:
+def _extract_scripts_from_command(command: str) -> list[str]:
+    """Extract script paths from a common_gate command string.
+
+    Handles common patterns:
+    - `python path/to/script.py [args]`
+    - `python -m module.path [args]`
+    - Direct executable invocations like `ruff check ...`
+
+    Before: command is the common_gate string value.
+    During: pure string parsing; no I/O.
+    After: list of script module paths (e.g., "scripts/run_pytest_safe.py").
+    """
+    scripts: list[str] = []
+    parts = command.split()
+    i = 0
+    while i < len(parts):
+        # Pattern: python -m module (skip -m and the module name)
+        if parts[i] == "python" and i + 2 < len(parts) and parts[i + 1] == "-m":
+            i += 2  # skip -m and the module name (not a file path)
+            continue
+        # Pattern: python path/to/script.py (strip surrounding quotes)
+        if parts[i] == "python" and i + 1 < len(parts):
+            p = parts[i + 1]
+            if len(p) >= 2 and p[0] in ('"', "'") and p[-1] == p[0]:
+                p = p[1:-1]
+            scripts.append(p)
+            i += 2
+            continue
+        i += 1
+    return scripts
+
+
+def _errors_common_gate_root(data: dict[str, Any], motor_root: Path) -> list[str]:
+    """WOT-2026-062c: every common_gate script must resolve from motor_root.
+
+    A common_gate that references a script via a path belonging to a different
+    checkout (e.g. an absolute or detached-checkout path like
+    `C:/Users/.../principal/...`) is a portability bug: obeying it literally
+    produces `tested_sha != HEAD` and violates batch condition 5.
+
+    Before: `data` is the parsed DAG; `motor_root` is the resolved motor root.
+    During: reads files on disk under motor_root; never mutates.
+    After: one error per group/command with an unresolvable script path.
+    """
+    errors: list[str] = []
+    groups = data.get("groups")
+    if not isinstance(groups, list):
+        return errors
+
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        gid = group.get("id", "<sin id>")
+        gate = group.get("common_gate")
+        if not isinstance(gate, str):
+            continue
+
+        scripts = _extract_scripts_from_command(gate)
+        for script_path in scripts:
+            # Absolute path -> wrong root (references a specific checkout)
+            if Path(script_path).is_absolute():
+                errors.append(
+                    f"common_gate root (WOT-2026-062c): grupo '{gid}' invoca "
+                    f"'{script_path}' desde un path absoluto -- debe ser relativo "
+                    f"al motor resuelto, no a un checkout concreto "
+                    f"(comando: {gate!r})"
+                )
+                continue
+            # Relative path: verify it exists under motor_root
+            resolved = (motor_root / script_path).resolve()
+            if not resolved.exists():
+                errors.append(
+                    f"common_gate root (WOT-2026-062c): grupo '{gid}' referencia "
+                    f"'{script_path}' que no existe bajo {motor_root} "
+                    f"(comando: {gate!r})"
+                )
+
+    return errors
+
+
+def validate_dag(data: dict[str, Any], motor_root: Path | None = None) -> list[str]:
     """Run all validation rules and return the combined list of errors."""
     errors: list[str] = []
     errors.extend(_errors_schema_basics(data))
@@ -989,6 +1069,9 @@ def validate_dag(data: dict[str, Any]) -> list[str]:
     groups = data.get("groups")
     if not isinstance(groups, list):
         return errors
+
+    if motor_root is not None:
+        errors.extend(_errors_common_gate_root(data, motor_root))
 
     errors.extend(_errors_cycle(groups))
     errors.extend(_errors_emission_order(data, groups))
@@ -1220,6 +1303,43 @@ def _pair_completeness_errors(dag_path: Path) -> list[str]:
     return errors
 
 
+def _load_dag_or_error(dag_path: Path, json_output: bool) -> dict[str, Any] | int:
+    """Read and parse dag_path; return the dict or an error exit code."""
+    if not dag_path.exists():
+        message = f"archivo no existe: {dag_path}"
+        if json_output:
+            print(json.dumps({"valid": False, "errors": [message]}))
+        else:
+            print(f"ERROR: {message}", file=sys.stderr)
+        return 1
+
+    try:
+        # WOT-2026-051a: utf-8-sig, not utf-8. A BOM made `json.loads` abort
+        # with "Unexpected UTF-8 BOM" BEFORE validate_dag() and before the
+        # 049a pair check -- so a single stray BOM disabled every validation
+        # this CLI performs. utf-8-sig is a strict superset: it reads files
+        # with and without a BOM, so no bomless input changes behavior.
+        content = dag_path.read_text(encoding="utf-8-sig")
+        data = json.loads(content)
+    except (OSError, json.JSONDecodeError) as e:
+        message = f"no se pudo leer/parsear el archivo: {e}"
+        if json_output:
+            print(json.dumps({"valid": False, "errors": [message]}))
+        else:
+            print(f"ERROR: {message}", file=sys.stderr)
+        return 1
+
+    if not isinstance(data, dict):
+        message = "el contenido raiz debe ser un objeto JSON"
+        if json_output:
+            print(json.dumps({"valid": False, "errors": [message]}))
+        else:
+            print(f"ERROR: {message}", file=sys.stderr)
+        return 1
+
+    return data
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -1263,40 +1383,49 @@ def main(argv: list[str] | None = None) -> int:
             "cada cierre del propio batch (WOT-2026-023t)."
         ),
     )
+    parser.add_argument(
+        "--flight-plans-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directorio de flight plans (DAGs JSON) a censo. Activa el gate "
+            "WOT-2026-062c: cada common_gate debe invocar scripts desde la raiz "
+            "del motor resuelto, no desde un checkout concreto. Recorre "
+            "todos los .json del directorio y valida cada uno (opcional "
+            "--motor-root para definir el raiz correcto)."
+        ),
+    )
+    parser.add_argument(
+        "--motor-root",
+        type=Path,
+        default=None,
+        help=(
+            "Raiz del motor usada para verificar que los scripts de "
+            "common_gate existen bajo este directorio (WOT-2026-062c). "
+            "Si no se provee, se asume scripts/. (Se ignora si no se "
+            "usa --flight-plans-dir)."
+        ),
+    )
 
-    args = parser.parse_args(argv)
+    # WOT-2026-062c: when --flight-plans-dir is used, dag_path is not required.
+    # Provide a dummy value so argparse doesn't reject the call.
+    _argv = list(argv) if argv else sys.argv[1:]
+    if "--flight-plans-dir" in _argv:
+        _argv.append("._dummy_dag_")
+    args = parser.parse_args(_argv)
+    # Clean up the dummy value.
+    if args.flight_plans_dir and args.dag_path == Path("._dummy_dag_"):
+        args.dag_path = None
 
-    if not args.dag_path.exists():
-        message = f"archivo no existe: {args.dag_path}"
-        if args.json:
-            print(json.dumps({"valid": False, "errors": [message]}))
-        else:
-            print(f"ERROR: {message}", file=sys.stderr)
-        return 1
+    if args.flight_plans_dir:
+        return _run_flight_plans_census(args)
 
-    try:
-        # WOT-2026-051a: utf-8-sig, not utf-8. A BOM made `json.loads` abort
-        # with "Unexpected UTF-8 BOM" BEFORE validate_dag() and before the
-        # 049a pair check -- so a single stray BOM disabled every validation
-        # this CLI performs. utf-8-sig is a strict superset: it reads files
-        # with and without a BOM, so no bomless input changes behavior.
-        content = args.dag_path.read_text(encoding="utf-8-sig")
-        data = json.loads(content)
-    except (OSError, json.JSONDecodeError) as e:
-        message = f"no se pudo leer/parsear el archivo: {e}"
-        if args.json:
-            print(json.dumps({"valid": False, "errors": [message]}))
-        else:
-            print(f"ERROR: {message}", file=sys.stderr)
-        return 1
+    if not args.dag_path:
+        parser.error("the following arguments are required: dag_path")
 
-    if not isinstance(data, dict):
-        message = "el contenido raiz debe ser un objeto JSON"
-        if args.json:
-            print(json.dumps({"valid": False, "errors": [message]}))
-        else:
-            print(f"ERROR: {message}", file=sys.stderr)
-        return 1
+    data = _load_dag_or_error(args.dag_path, args.json)
+    if isinstance(data, int):
+        return data
 
     errors = validate_dag(data)
     errors.extend(_freshness_errors(args.live_backlog, data, args.as_of))
@@ -1312,6 +1441,71 @@ def main(argv: list[str] | None = None) -> int:
             "tickets cerrados daran un falso rojo (WOT-2026-055r)"
         )
     return _emit_result(args.json, args.dag_path, errors, warnings)
+
+
+def _run_flight_plans_census(args: argparse.Namespace) -> int:
+    """WOT-2026-062c: census of ALL DAGs in a flight plans directory.
+
+    Scans every .json in --flight-plans-dir, validates each one (including the
+    common_gate root check), and prints a per-DAG report. Returns 0 if all DAGs
+    pass, 1 if any DAG has errors.
+    """
+    if not args.flight_plans_dir.is_dir():
+        print(
+            f"ERROR: --flight-plans-dir no es un directorio: {args.flight_plans_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    motor_root = args.motor_root or Path(__file__).resolve().parent.parent
+    # Resolve the motor root from the current directory context (where scripts/
+    # lives as a sibling of the motor root). The caller should pass an explicit
+    # --motor-root if the directory tree differs.
+    motor_root = motor_root.resolve()
+
+    json_files = sorted(
+        p for p in args.flight_plans_dir.iterdir() if p.suffix == ".json"
+    )
+    if not json_files:
+        print(f"CENSO: {args.flight_plans_dir} no contiene archivos .json")
+        return 0
+
+    total_errors = 0
+    total_dags = len(json_files)
+
+    for dag_file in json_files:
+        try:
+            content = dag_file.read_text(encoding="utf-8-sig")
+            data = json.loads(content)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"ERROR: {dag_file.name}: no se pudo leer/parsear: {e}")
+            total_errors += 1
+            continue
+
+        if not isinstance(data, dict):
+            print(f"ERROR: {dag_file.name}: el contenido raiz no es un objeto JSON")
+            total_errors += 1
+            continue
+
+        errors = _errors_common_gate_root(data, motor_root)
+        if errors:
+            total_errors += len(errors)
+            for error in errors:
+                print(f"ERROR [{dag_file.name}]: {error}")
+        else:
+            print(f"OK: {dag_file.name} -- common_gate raices correctas")
+
+    if total_errors:
+        print(
+            f"\nCENSO: {total_errors} error(es) en {total_errors}/{total_dags} DAG(s)",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"\nCENSO: todos los {total_dags} DAG(s) validos -- common_gate raices correctas"
+    )
+    return 0
 
 
 def _emit_result(
