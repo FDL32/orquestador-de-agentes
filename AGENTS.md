@@ -213,7 +213,8 @@ append `--project-root <destino>` to commands that operate on project state.
 - Vista previa: `python scripts/install_agent_system.py --sync --dry-run`
 - Estado del sistema: `python .agent/agent_controller.py [--project-root <workspace>]`
 - Auditoria local: `python scripts/local_audit.py [--project-root <workspace>]`
-- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run] [--project-root <workspace>]`
+- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run]`.
+   El scope se determina por `AGENT_PROJECT_ROOT` o por `motor_destination_link.json` del destino.
 - Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --snapshot-file <snapshot.json> --report <result.json> --motor-root <repo_motor>`
 - Auditoria de publicacion Git: `python scripts/classify_publication.py --repo-root <repo_destino> --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json`
 - Bundle de contexto para Hermes: `python scripts/hermes_build_context_bundle.py --output-root <hermes_agent>/uploads --soul-output <hermes_agent>/soul.md`. Genera snapshots con version, commit y hashes; no edites copias derivadas como fuentes canonicas.
@@ -614,8 +615,10 @@ Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |
   muestra. Con mediana de 877 chars por leccion, la regla accionable de 82
   entradas vive DESPUES del corte.
 - **`--recall` es la puerta de EXPANSION**, y entrega la leccion ENTERA:
-  `--query "<termino>"` (ordenado por cobertura, con fallback por terminos) o
-  `--id obs-<slug>` (exacto, fail-closed). Ejecutalo ANTES de medir o disenar.
+   `python scripts/memory_context.py --recall --query "<termino>"` (ordenado por
+   cobertura, con fallback por terminos) o
+   `python scripts/memory_context.py --recall --id obs-<slug>` (exacto,
+   fail-closed). Ejecutalo ANTES de medir o disenar.
 - **El archive portable se lee como UNION de MOTOR + root activo.** Son conjuntos
   DISJUNTOS y ambos importan: el motor trae las lecciones de ingenieria, el
   destino las de topologia. Medido 2026-08-17: 207 + 135, interseccion CERO.
