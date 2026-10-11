@@ -149,3 +149,185 @@ def test_stable_reason_is_contract_for_closeout_011a(tmp_path: Path) -> None:
     assert result.passed is False
     assert result.message == "ARCHIVE_RENAME_UNCOMMITTED"
     assert any("archive_rename_uncommitted" in d for d in (result.details or []))
+
+
+# --- WOT-2026-055d: follow-up del motor vs el repo que aloja la fila -----------
+# El workspace de dogfooding del motor se declara con `.agent/config/motor_workspace.txt`
+# (un NOMBRE resuelto contra parent(motor_root), WOT-2026-053h) o con el campo
+# `motor_workspace_root` del link del destino; su `ticket_prefix` identifica los
+# follow-ups del motor. Una fila con `delivery_authority: repo_motor` de ESE prefijo
+# escrita en otro backlog debe FALLAR; una de prefijo ajeno legitimamente entregada
+# al motor (WOT-2026-066i) NO.
+
+_ROW = (
+    "| Alta | {tid} | deliverable_type: code, delivery_authority: {auth} "
+    "[LINEA: test] | pending | - | - |"
+)
+_FICHA = (
+    "## Fichas detalladas\n\n### {tid} - titulo\n- **delivery_authority:** {auth}\n"
+)
+
+
+def _write_backlog(root: Path, body: str) -> None:
+    path = root / ".agent" / "collaboration"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "backlog.md").write_text("# Backlog\n\n## Vista rapida\n\n" + body)
+
+
+def _write_link(root: Path, fields: dict) -> None:
+    cfg = root / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    import json
+
+    (cfg / "motor_destination_link.json").write_text(json.dumps(fields))
+
+
+def _setup_motor(tmp_path: Path, prefix: str = "WOT") -> tuple[Path, Path]:
+    """Motor declara su workspace `ws`; `ws` declara su `ticket_prefix`."""
+    motor = tmp_path / "motor"
+    cfg = motor / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "motor_workspace.txt").write_text("ws\n")
+    ws = tmp_path / "ws"
+    ws.mkdir(parents=True, exist_ok=True)
+    _write_link(
+        ws,
+        {
+            "motor_root": str(motor),
+            "destination_root": str(ws),
+            "ticket_prefix": prefix,
+        },
+    )
+    return motor, ws
+
+
+def test_backlog_motor_followup_row_in_foreign_backlog_fails(tmp_path: Path) -> None:
+    """Barrier (WOT-2026-055d): a motor follow-up (prefix of the motor workspace,
+    `delivery_authority: repo_motor`) in a backlog that is NOT the motor's workspace
+    FAILS, naming the ticket."""
+    motor, _ws = _setup_motor(tmp_path)
+    dest = tmp_path / "dest"
+    _write_backlog(dest, _ROW.format(tid="WOT-2026-999z", auth="repo_motor"))
+
+    result = dhc.check_backlog_delivery_authority_location(dest, motor)
+
+    assert result.passed is False
+    assert result.message == "BACKLOG_DELIVERY_AUTHORITY_MISPLACED"
+    blob = " ".join(result.details or [])
+    assert "WOT-2026-999z" in blob
+    assert "backlog_delivery_authority_misplaced" in blob
+
+
+def test_backlog_motor_followup_ficha_in_foreign_backlog_fails(tmp_path: Path) -> None:
+    """Same barrier via the DETAILED-FICHA form (`### <ID>` + field on its own
+    line), not just the `## Vista rapida` table row."""
+    motor, _ws = _setup_motor(tmp_path)
+    dest = tmp_path / "dest"
+    _write_backlog(dest, _FICHA.format(tid="WOT-2026-888y", auth="repo_motor"))
+
+    result = dhc.check_backlog_delivery_authority_location(dest, motor)
+
+    assert result.passed is False
+    assert "WOT-2026-888y" in " ".join(result.details or [])
+
+
+def test_backlog_motor_followup_in_motor_workspace_passes(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: the SAME row, in the motor's own dogfooding workspace,
+    is legitimate (3.7 registers motor follow-ups there) -> green."""
+    motor, ws = _setup_motor(tmp_path)
+    _write_backlog(ws, _ROW.format(tid="WOT-2026-999z", auth="repo_motor"))
+
+    result = dhc.check_backlog_delivery_authority_location(ws, motor)
+
+    assert result.passed is True
+
+
+def test_backlog_foreign_prefix_repo_motor_row_is_legitimate(tmp_path: Path) -> None:
+    """NO false positive (WOT-2026-066i): a ticket of a FOREIGN prefix that
+    declares `delivery_authority: repo_motor` (delivered in motor commits) lives
+    legitimately in its OWN destination's backlog. Real case: CTL-2026-012j."""
+    motor, _ws = _setup_motor(tmp_path)
+    dest = tmp_path / "dest"
+    _write_backlog(dest, _ROW.format(tid="CTL-2026-012j", auth="repo_motor"))
+
+    result = dhc.check_backlog_delivery_authority_location(dest, motor)
+
+    assert result.passed is True
+
+
+def test_backlog_repo_destino_row_in_foreign_backlog_passes(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: a `repo_destino` row in a foreign backlog is not the
+    misplacement this check hunts -> green (no false positive)."""
+    motor, _ws = _setup_motor(tmp_path)
+    dest = tmp_path / "dest"
+    _write_backlog(dest, _ROW.format(tid="WOT-2026-999z", auth="repo_destino"))
+
+    result = dhc.check_backlog_delivery_authority_location(dest, motor)
+
+    assert result.passed is True
+
+
+def test_backlog_authority_skips_when_motor_workspace_undetermined(
+    tmp_path: Path,
+) -> None:
+    """LIMITE DECLARADO: sin `motor_workspace.txt` ni `motor_workspace_root` el
+    workspace del motor no es determinable -> skip visible (verde), NUNCA un
+    falso rojo sobre el propio workspace del motor cuando aun no se declara."""
+    motor = tmp_path / "motor"
+    (motor / ".agent" / "config").mkdir(parents=True)
+    dest = tmp_path / "dest"
+    _write_backlog(dest, _ROW.format(tid="WOT-2026-999z", auth="repo_motor"))
+
+    result = dhc.check_backlog_delivery_authority_location(dest, motor)
+
+    assert result.passed is True
+    assert "no determinable" in result.message
+
+
+def test_backlog_authority_uses_link_motor_workspace_when_declared(
+    tmp_path: Path,
+) -> None:
+    """Señal 2: cuando el link del destino declara `motor_workspace_root`, el
+    check decide sin depender de `motor_workspace.txt`. Follow-up ajeno -> FAIL;
+    el propio workspace del motor -> PASS."""
+    motor = tmp_path / "motor"
+    (motor / ".agent" / "config").mkdir(parents=True)
+
+    ws = tmp_path / "ws"
+    _write_link(
+        ws,
+        {
+            "motor_root": str(motor),
+            "motor_workspace_root": str(ws),
+            "ticket_prefix": "WOT",
+        },
+    )
+    _write_backlog(ws, _ROW.format(tid="WOT-2026-999z", auth="repo_motor"))
+    assert dhc.check_backlog_delivery_authority_location(ws, motor).passed is True
+
+    dest = tmp_path / "dest"
+    _write_link(
+        dest,
+        {
+            "motor_root": str(motor),
+            "motor_workspace_root": str(ws),
+            "ticket_prefix": "CTL",
+        },
+    )
+    _write_backlog(dest, _ROW.format(tid="WOT-2026-999z", auth="repo_motor"))
+    assert dhc.check_backlog_delivery_authority_location(dest, motor).passed is False
+
+
+def test_backlog_authority_resolves_motor_root_from_own_link(tmp_path: Path) -> None:
+    """El check corre en la ruta de cierre aunque el llamante no pase
+    `motor_root`: lo resuelve del link del propio destino."""
+    motor, _ws = _setup_motor(tmp_path)
+    dest = tmp_path / "dest"
+    _write_link(dest, {"motor_root": str(motor)})
+    _write_backlog(dest, _ROW.format(tid="WOT-2026-999z", auth="repo_motor"))
+
+    # motor_root omitted on purpose.
+    result = dhc.check_backlog_delivery_authority_location(dest)
+
+    assert result.passed is False
+    assert "WOT-2026-999z" in " ".join(result.details or [])

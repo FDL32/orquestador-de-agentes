@@ -24,6 +24,7 @@ After (Post-condiciones y Errores):
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -524,6 +525,261 @@ def check_cross_root_isolation(
     )
 
 
+# --- WOT-2026-055d: delivery_authority de una fila de backlog vs el repo que la aloja ---
+# Una fila/ficha con `delivery_authority: repo_motor` declara trabajo del MOTOR. La
+# sesion que cierra SOLO puede registrarla en el backlog del workspace de dogfooding
+# del motor (prompts/orchestrator_session_close_full_audit.md, Bloque 1 -> 3.7);
+# escribirla en el backlog de OTRO repo_destino es la NORMA sin barrera que este
+# check cierra. No reescribe `delivery_authority` ni toca `check_cross_root_isolation`.
+_BACKLOG_REL = Path(".agent") / "collaboration" / "backlog.md"
+_MOTOR_WORKSPACE_DECL_REL = Path(".agent") / "config" / "motor_workspace.txt"
+_MOTOR_LINK_REL = Path(".agent") / "config" / "motor_destination_link.json"
+
+# Misma gramatica que session_closeout._DELIVERY_AUTHORITY_DECLARED_RE
+# (`delivery_authority:`, `delivery authority:`, `repo de autoridad:`), acotada a la
+# captura del valor canonico para poder discriminar `repo_motor`.
+_DELIVERY_AUTHORITY_DECLARED_RE = re.compile(
+    r"(?:delivery_authority|delivery\s+authority|repo\s+de\s+autoridad)\s*:?\**\s*"
+    r"`?(repo_motor|repo_destino)`?",
+    re.IGNORECASE,
+)
+# Ticket id canonico o legacy (WOT-2026-055d, WP-2026-111, WT-2026-239a).
+_TICKET_ID_RE = re.compile(r"^([A-Z]{2,5}-\d{4}-\w+)")
+
+
+def _read_link_field(project_root: Path, field: str) -> str | None:
+    """Campo string no vacio del link del propio destino, o None; nunca lanza."""
+    try:
+        data = json.loads((project_root / _MOTOR_LINK_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw = data.get(field)
+    return raw if isinstance(raw, str) and raw else None
+
+
+def _read_motor_workspace_decl(motor_root: Path) -> Path | None:
+    """Workspace de dogfooding declarado por el MOTOR, o None (WOT-2026-053h).
+
+    Replica el patron de `.agent/hooks/session_start_hook.py::_dogfooding_workspace`
+    (un NOMBRE resuelto contra `parent(motor_root)`, nunca una ruta absoluta que
+    pinearia la maquina) en vez de importar `install_agent_system`. Read-only; nunca
+    lanza. None es un resultado NORMAL (el motor puede no declararlo).
+    """
+    try:
+        decl = motor_root / _MOTOR_WORKSPACE_DECL_REL
+        if not decl.is_file():
+            return None
+        name = next(
+            (
+                line.strip()
+                for line in decl.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ),
+            "",
+        )
+        if not name or name in {".", ".."} or any(sep in name for sep in "/\\:"):
+            return None
+        candidate = (motor_root.parent / name).resolve()
+        return candidate if candidate.is_dir() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _resolve_motor_workspace(
+    project_root: Path, motor_root: Path | None
+) -> Path | None:
+    """Workspace de dogfooding del motor, resuelto o None (nunca lanza).
+
+    Senal 1 (canonica): `.agent/config/motor_workspace.txt` del MOTOR (WOT-2026-053h).
+    Senal 2: el campo `motor_workspace_root` del link del propio destino, que el
+        instalador escribe desde esa misma declaracion.
+    """
+    if motor_root is not None:
+        declared = _read_motor_workspace_decl(motor_root)
+        if declared is not None:
+            return declared
+    raw_link = _read_link_field(project_root, "motor_workspace_root")
+    if raw_link:
+        try:
+            return Path(raw_link).resolve()
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def _ticket_prefix(ticket_id: str) -> str:
+    """Prefijo corto de un id (``WOT-2026-055d`` -> ``WOT``)."""
+    return ticket_id.split("-", 1)[0]
+
+
+def _ficha_motor_authority_tickets(content: str) -> list[str]:
+    """IDs de los bloques de ficha detallada (`### <ID>`) que declaran `repo_motor`."""
+    ids: list[str] = []
+    for block in re.split(r"(?m)^#{2,3} ", content or ""):
+        lines = block.splitlines()
+        if not lines:
+            continue
+        header = _TICKET_ID_RE.match(lines[0].strip())
+        if header is None:
+            continue
+        match = _DELIVERY_AUTHORITY_DECLARED_RE.search(block)
+        if match is not None and match.group(1).lower() == "repo_motor":
+            ids.append(header.group(1))
+    return ids
+
+
+def _table_row_motor_authority_tickets(content: str) -> list[str]:
+    """IDs de las filas de tabla (`| <prioridad> | <ID> | ...`) con `repo_motor`."""
+    ids: list[str] = []
+    for line in (content or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        match = _DELIVERY_AUTHORITY_DECLARED_RE.search(stripped)
+        if match is None or match.group(1).lower() != "repo_motor":
+            continue
+        cells = [cell.strip() for cell in stripped.split("|")]
+        if len(cells) > 2 and _TICKET_ID_RE.match(cells[2]):
+            ids.append(cells[2])
+    return ids
+
+
+def _backlog_motor_authority_tickets(content: str) -> list[str]:
+    """IDs de filas/fichas de un backlog que declaran `delivery_authority: repo_motor`.
+
+    Cubre las DOS formas reales de la cola viva: la fila de tabla de `## Vista
+    rapida` y el bloque de ficha detallada (`### <ID>`). El campo se atribuye
+    SIEMPRE al ID propio de la fila/bloque, nunca a un id citado en la prosa de
+    otro ticket. Dedup por ID conservando el orden; nunca lanza.
+    """
+    seen: set[str] = set()
+    found: list[str] = []
+    for ticket_id in (
+        *_ficha_motor_authority_tickets(content),
+        *_table_row_motor_authority_tickets(content),
+    ):
+        if ticket_id not in seen:
+            seen.add(ticket_id)
+            found.append(ticket_id)
+    return found
+
+
+def check_backlog_delivery_authority_location(
+    project_root: Path,
+    motor_root: Path | None = None,
+) -> HygieneResult:
+    """Falla si un follow-up del MOTOR vive en el backlog de un destino ajeno.
+
+    WOT-2026-055d. El backend IA que cierra una sesion registra los follow-ups del
+    MOTOR en el backlog del workspace de dogfooding del motor
+    (prompts/orchestrator_session_close_full_audit.md, 3.7); escribirla en el backlog
+    de otro repo_destino era una NORMA sin barrera. Este check cruza el valor
+    DECLARADO por la fila con el repo que la aloja.
+
+    ALCANCE (medido, no supuesto): ``delivery_authority: repo_motor`` NO basta por si
+    solo para marcar una fila como mal ubicada -- la topologia admite (y documenta,
+    WOT-2026-066i) que un ticket de prefijo AJENO declare ``repo_motor`` y viva en el
+    backlog de SU propio destino (p.ej. ``CTL-2026-012j`` en el backlog de CTL; su
+    cierre se hizo en commits del motor). Lo que 3.7 prohibe es un **follow-up del
+    MOTOR**, y ese se identifica por su PREFIJO: el del workspace de dogfooding del
+    motor. Por eso el check solo marca las filas ``repo_motor`` cuyo prefijo ES el
+    prefijo del workspace del motor, escritas en OTRO backlog.
+
+    Before: ``project_root`` es el repo cuyo backlog se audita; ``motor_root`` (o el
+        campo `motor_root` del link del propio destino) permite resolver el
+        workspace de dogfooding del motor.
+    During: lee `.agent/collaboration/backlog.md`; extrae las filas/fichas que
+        declaran `repo_motor`; resuelve el workspace del motor y su `ticket_prefix`.
+    After: ``HygieneResult.passed=False`` con `BACKLOG_DELIVERY_AUTHORITY_MISPLACED`
+        y los ids culpables cuando hay filas ``repo_motor`` del prefijo del motor en
+        un backlog que NO es el del motor. Si el workspace del motor o su prefijo
+        NO son determinables (ni `motor_workspace.txt` ni `motor_workspace_root`), NO
+        falla: pasa con un detalle que declara la limitacion (skip visible, nunca un
+        falso rojo sobre tickets ajenos legitimamente entregados al motor).
+    """
+    try:
+        content = (project_root / _BACKLOG_REL).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return HygieneResult(
+            passed=True,
+            message="Backlog de autoridad: sin backlog.md legible (skip)",
+        )
+
+    authority_rows = _backlog_motor_authority_tickets(content)
+    if not authority_rows:
+        return HygieneResult(
+            passed=True,
+            message="Backlog de autoridad: sin filas delivery_authority: repo_motor",
+        )
+
+    resolved_motor = motor_root
+    if resolved_motor is None:
+        raw = _read_link_field(project_root, "motor_root")
+        resolved_motor = Path(raw) if raw else None
+
+    motor_workspace = _resolve_motor_workspace(project_root, resolved_motor)
+    if motor_workspace is None:
+        return HygieneResult(
+            passed=True,
+            message=(
+                "Backlog de autoridad: workspace del motor no determinable (skip): "
+                "ni .agent/config/motor_workspace.txt del motor ni el campo "
+                "motor_workspace_root del link permiten decidirlo"
+            ),
+            details=[
+                f"backlog_authority_undetermined (OK): {tid}" for tid in authority_rows
+            ],
+        )
+
+    if motor_workspace == project_root.resolve():
+        return HygieneResult(
+            passed=True,
+            message=(
+                f"Backlog de autoridad OK: {len(authority_rows)} fila(s) "
+                "delivery_authority: repo_motor en el workspace del motor"
+            ),
+        )
+
+    motor_prefix = _read_link_field(motor_workspace, "ticket_prefix")
+    if not motor_prefix:
+        return HygieneResult(
+            passed=True,
+            message=(
+                "Backlog de autoridad: prefijo del workspace del motor no "
+                f"determinable en {motor_workspace} (skip)"
+            ),
+        )
+
+    misplaced = [
+        tid for tid in authority_rows if _ticket_prefix(tid) == motor_prefix.upper()
+    ]
+    if not misplaced:
+        return HygieneResult(
+            passed=True,
+            message=(
+                "Backlog de autoridad OK: sin follow-ups del motor "
+                f"(prefijo {motor_prefix}) mal ubicados"
+            ),
+        )
+
+    return HygieneResult(
+        passed=False,
+        message="BACKLOG_DELIVERY_AUTHORITY_MISPLACED",
+        details=[
+            "backlog_delivery_authority_misplaced: follow-ups del motor "
+            f"(`delivery_authority: repo_motor`, prefijo {motor_prefix}) escritos en "
+            "un backlog que NO es el del motor:",
+            *[f"  {tid}" for tid in misplaced],
+            "Remediacion: mover la fila al backlog del workspace de dogfooding del "
+            "motor "
+            f"({motor_workspace}/.agent/collaboration/backlog.md). Ver "
+            "prompts/orchestrator_session_close_full_audit.md (3.7).",
+        ],
+    )
+
+
 def _read_delivery_authority(project_root: Path) -> str:
     """Read delivery_authority from work_plan.md in project_root.
 
@@ -614,6 +870,15 @@ def run_delivery_hygiene_check(  # noqa: C901
     # de check_tree: detecta el limbo delete+untracked que check_git_tree_clean
     # solo reporta como dirty generico, nombrando la remediacion exacta del rename.
     result = check_archive_rename_complete(project_root)
+    results.append(result)
+    if not result.passed:
+        all_passed = False
+
+    # Verificacion 6: autoridad de la fila de backlog vs el repo que la aloja
+    # (WOT-2026-055d). Independiente de motor_root: resuelve el link del propio
+    # destino, asi que corre tambien en la ruta de cierre (prepush_check no pasa
+    # motor_root). No relaja check_cross_root_isolation (verificacion 4).
+    result = check_backlog_delivery_authority_location(project_root, motor_root)
     results.append(result)
     if not result.passed:
         all_passed = False
