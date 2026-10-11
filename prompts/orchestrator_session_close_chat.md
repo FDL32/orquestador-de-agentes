@@ -60,6 +60,35 @@ reconcilia antes de continuar con el cierre.
 > un cambio de contrato que requiere decision humana explicita, no una edicion
 > documental.
 
+### Telemetria de sesion antes de cerrar (WOT-2026-059o)
+
+El Bloque 2.5 del cierre completo audita la telemetria registrada en la infra
+session-scratch (`scripts/init_session_scratch.py`, WOT-2026-022c; schema
+WOT-2026-039i). Los pipelines registran esa telemetria al arrancar, pero una
+sesion por chat no la deja sola: verifica y completa el registro ANTES de
+ejecutar el cierre operativo.
+
+```powershell
+python scripts/init_session_scratch.py --project-root <repo_destino> list
+```
+
+- Si la sesion produjo artefactos (informes, prompts, fixes, decisiones) y no
+  aparece en `list` con `record_count > 0`, registrala antes de cerrar: crea la
+  sesion con `init`, captura el `session_id` del JSON de salida y anade al
+  menos un evento verificable con `add` (por ejemplo `tool_used` con
+  `--generator` y `--reference` apuntando al artefacto; `reference` es un
+  puntero, nunca una copia del payload). Reejecuta `list` y comprueba que la
+  sesion aparece con `record_count > 0`.
+- INVARIANTE de manifest (criterio de naming, no gate bloqueante): una sesion
+  que produjo artefactos NO cierra con manifest vacio sin que el cierre lo
+  nombre. Si la sesion sigue sin registros tras el paso anterior, el reporte de
+  cierre debe declararlo explicitamente en el checklist final (seccion 5), con
+  su motivo; un manifest vacio que nadie nombra es un falso verde.
+- CONTROL NEGATIVO (no convertir en mandatorio): una sesion sin artefactos no
+  queda obligada a escribir ledger. No fuerces eventos decorativos ni crees
+  sesion solo para cumplimentar telemetria: `SKIP_NO_TELEMETRY` sigue siendo un
+  veredicto legitimo para una sesion vacia.
+
 ### Comando canonico del cierre operativo
 
 El pipeline completo de cierre vive en `scripts/session_closeout.py` y se
