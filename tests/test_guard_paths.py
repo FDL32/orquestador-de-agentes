@@ -1106,7 +1106,6 @@ class TestProtectedPathPatterns:
         self._saved_project_root = os.environ.get("AGENT_PROJECT_ROOT")
 
     def teardown_method(self):
-        os.chdir(self.repo_root)
         if self._saved_project_root is None:
             os.environ.pop("AGENT_PROJECT_ROOT", None)
         else:
