@@ -12,7 +12,7 @@ quality_gate: false
 tags: [core, process, orchestrator, portable]
 source_prompt: prompts/agent_execution_modes.md
 contract_id: cid-agent-execution-modes-v1
-nucleo_sha256: 8f63a85ab44ef701ed28fa37242b31f18b4d46ed07309f9c590af604154218fd
+nucleo_sha256: 451b923a57b8197c19912087cd77c484400c7adcc920efd88e29ffa555c02663
 status: frozen
 ---
 
@@ -29,7 +29,7 @@ Seccion 6.1/6.2 del nucleo). Los criterios son normativos.
 
 - **Nucleo:** `prompts/agent_execution_modes.md`
   - `contract_id: cid-agent-execution-modes-v1`
-  - `sha256: 8f63a85ab44ef701ed28fa37242b31f18b4d46ed07309f9c590af604154218fd`
+  - `sha256: 451b923a57b8197c19912087cd77c484400c7adcc920efd88e29ffa555c02663`
 
 ## Como se invoca
 
@@ -63,7 +63,7 @@ python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()
 ```
 
 El resultado debe ser
-`8f63a85ab44ef701ed28fa37242b31f18b4d46ed07309f9c590af604154218fd`.
+`451b923a57b8197c19912087cd77c484400c7adcc920efd88e29ffa555c02663`.
 Si no coincide, o si el nucleo no es accesible, DETENTE e informa al
 orquestador. No continuar con un nucleo de hash diferente.
 

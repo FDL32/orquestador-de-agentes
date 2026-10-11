@@ -5,6 +5,8 @@ status: frozen
 
 # Modos de ejecucion multiagente
 
+Skill canonica: skills/agent-execution-mode/SKILL.md
+
 Nucleo portatil que define los modos de ejecucion disponibles para una sesion
 de Claude Code que orquesta trabajo sobre tickets del backlog, el criterio de
 PROPUESTA automatica de modo, y el protocolo de CAMBIO EN CALIENTE durante una

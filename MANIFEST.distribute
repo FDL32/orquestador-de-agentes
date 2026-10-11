@@ -40,6 +40,7 @@ scripts/hermes_build_context_bundle.py
 # =============================================================================
 # PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP
 # =============================================================================
+prompts/agent_execution_modes.md
 prompts/audit_agent_output.md
 prompts/audit_git_publication.md
 prompts/audit_pipeline.md
