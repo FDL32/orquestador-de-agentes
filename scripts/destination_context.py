@@ -853,10 +853,16 @@ def _write_map(context_dir: Path, content: str) -> Path:
 
     Before: context_dir path may or may not exist.
     During: Creates parent directories; writes content with UTF-8.
+            Uses write-if-changed: skips write when content is identical,
+            preventing unnecessary tree dirtiness (WOT-2026-068f).
     After: Returns the path to the written file.
     """
     context_dir.mkdir(parents=True, exist_ok=True)
     map_path = context_dir / DESTINATION_MAP_NAME
+    if map_path.exists():
+        existing = map_path.read_text(encoding="utf-8")
+        if existing == content:
+            return map_path
     map_path.write_text(content, encoding="utf-8")
     return map_path
 

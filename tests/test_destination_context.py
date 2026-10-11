@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 from scripts.destination_context import (
+    _write_map,
     build_map,
     compute_contract_surface_drift,
     compute_motor_drift,
@@ -760,3 +761,86 @@ def test_contract_surface_drift_is_signal_never_gate(tmp_path):
     gate. Un guard que revienta por git es peor que uno que calla.
     """
     assert compute_contract_surface_drift(tmp_path / "no-existe", "deadbeef") is None
+
+
+def test_write_map_skips_write_when_content_unchanged(tmp_path):
+    """WOT-2026-068f DoD (a/c): write-if-changed no reescribe contenido identico."""
+    context_dir = tmp_path / ".agent" / "context"
+    path1 = _write_map(context_dir, "same content")
+    mtime1 = path1.stat().st_mtime_ns
+
+    path2 = _write_map(context_dir, "same content")
+    mtime2 = path2.stat().st_mtime_ns
+
+    assert path1 == path2
+    assert mtime2 == mtime1, "el fichero se reescribio pese a contenido identico"
+
+
+def test_write_map_writes_when_content_changes(tmp_path):
+    """WOT-2026-068f DoD (d, control negativo): un cambio REAL si se escribe."""
+    context_dir = tmp_path / ".agent" / "context"
+    path = _write_map(context_dir, "version 1")
+    assert path.read_text(encoding="utf-8") == "version 1"
+
+    path = _write_map(context_dir, "version 2")
+    assert path.read_text(encoding="utf-8") == "version 2"
+
+
+def test_bootstrap_rerun_over_untracked_map_stays_clean(tmp_path):
+    """WOT-2026-068f DoD (a), ruta productiva real: en un destino real el
+    mapa esta SIEMPRE gitignored (`PROJECTIONS_GITIGNORE_ENTRIES`,
+    `install_agent_system.py`), nunca tracked -- por eso el escenario que
+    importa al DoD es "gitignored + --bootstrap repetido", no "tracked".
+    Un fichero gitignored jamas aparece en `git status --porcelain`
+    independientemente del guard write-if-changed; esta prueba fija que
+    --bootstrap repetido sobre un destino real (mapa ignorado) nunca
+    ensucia el arbol, que es la ruta que el contrato protege de verdad.
+
+    NOTA (hallazgo declarado, fuera de alcance de este ticket): si alguien
+    comete el mapa a mano (fuera del flujo de instalacion canonico), el
+    contenido de `build_map()` incluye el propio estado dirty/clean del
+    arbol, lo que crea un bucle auto-referencial (escribir el mapa cambia
+    el estado que el mapa describe) que write-if-changed NO resuelve por
+    si solo -- verificado con un probe manual durante la verificacion de
+    este ticket. Es un defecto real pero de un escenario que la via
+    elegida (runtime gitignorado) hace inalcanzable en produccion; se
+    declara aqui en vez de ampliar el alcance de este ticket (STOP de
+    degeneracion, AGENTS.md) -- candidato a ficha propia si algun destino
+    real llega a trackear el mapa por error.
+    """
+    _write_link(tmp_path)
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=tmp_path,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True
+    )
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text(".agent/context/destination_map.md\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init with gitignored map"],
+        cwd=tmp_path,
+        capture_output=True,
+    )
+
+    map_path = tmp_path / ".agent" / "context" / "destination_map.md"
+    exit_code = main(["--bootstrap", "--project-root", str(tmp_path)])
+    assert exit_code == 0
+    assert map_path.exists()
+    exit_code = main(["--bootstrap", "--project-root", str(tmp_path)])
+    assert exit_code == 0
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout.strip() == "", (
+        "el arbol quedo sucio tras --bootstrap repetido sobre un destino "
+        "real con el mapa gitignored (regresion WOT-2026-068f)"
+    )
