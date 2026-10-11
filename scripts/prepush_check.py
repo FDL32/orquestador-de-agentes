@@ -2120,6 +2120,108 @@ def run_launch_prompt_paths_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_builder_prompt_obligations_check(project_root: Path) -> CheckResult:
+    """WOT-2026-067z: cada prompt que declara `cid-bui-implement-v1` transporta
+    los verbos de cierre que su canonico declara obligatorios.
+
+    La lista de verbos se DERIVA del canonico en cada corrida (frase de
+    existencia del handoff + tabla de codigos de parada, filtrada por seccion
+    "handoff"); si el canonico cambia, la lista sigue al texto y si un anclaje
+    desaparece el guard FALLA CERRADO (exit 3), nunca audita con una lista
+    vacia. El CONTROL CONTRARIO esta implementado: una mencion SOLO en contexto
+    negativo o como dato (celda no-primeras de fila pipe) no transporta.
+
+    WARN (is_blocking=False) a proposito, mismo precedente que el hermano de
+    arriba: la deuda historica del corpus ya existe (medida 2026-10-11: 25
+    prompts declaran el cid, ~20 omiten al menos un verbo; 4 omiten
+    `--mark-ready` por completo) y bloquear el cierre con ella seria un
+    falso-rojo heredado. El CHECK en si (exit!=0 del CLI) es fiel al contrato;
+    es el CABLEADO el que nace no bloqueante. Criterio de endurecimiento a
+    is_blocking=True: censo del universo vivo (prompts staged de vuelos
+    activos) en 0 hallazgos.
+
+    PUNTO DE ENGANCHE DECLARADO (WOT-2026-067z): no existe hook ejecutable
+    entre la redaccion del prompt y el lanzamiento del Builder, por lo que el
+    guard se degrada a detective en DOS puntos: (a) TEMPRANO, manual -- el
+    redactor corre el CLI justo tras escribir el prompt y antes de lanzar;
+    (b) CIERRE, este cableado. Ninguno de los dos corre solo en el tramo
+    redaccion->lanzamiento; la degradacion esta declarada en el docstring del
+    guard y en el BUILDER REPORT del ticket.
+
+    Before: project_root resoluble; el canonico vive en el MOTOR (se resuelve
+        relativo a este repo via el default del CLI).
+    During: deriva los verbos del canonico y clasifica las menciones de cada
+        prompt del universo (read-only).
+    After: passed=True sin hallazgos o si no hay universo (SKIP nombrado,
+        nunca un verde mudo); False (WARN) con el listado y el DENOMINADOR.
+        Un fallo de derivacion del canonico (exit 3) se propaga como check
+        fallido: no se audita con una lista parcial.
+    """
+    name = "Builder Prompt Obligations (WOT-2026-067z)"
+    try:
+        from scripts.check_builder_prompt_obligations import (
+            audit_prompt_universe,
+            derive_verbs_from_file,
+        )
+    except ImportError:
+        from check_builder_prompt_obligations import (  # type: ignore[no-redef]
+            audit_prompt_universe,
+            derive_verbs_from_file,
+        )
+
+    canonical = (
+        Path(__file__).resolve().parent.parent
+        / "prompts"
+        / "orchestrator_launch_builder.md"
+    )
+    try:
+        commands, stop_codes = derive_verbs_from_file(canonical)
+    except OSError as exc:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"canonico ilegible ({canonical}): {exc}",
+            is_blocking=False,
+        )
+    except Exception as exc:  # DerivationError: fail-closed, nunca lista parcial
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"derivacion de verbos imposible (CONTRACT_GAP): {exc}",
+            is_blocking=False,
+        )
+    verbs = commands + stop_codes
+    findings, prompts = audit_prompt_universe(project_root, verbs)
+    denom = f"{len(prompts)} prompt(s) auditado(s)"
+    if not prompts:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                f"SKIP: {denom} en {project_root / '.agent' / 'planning'} "
+                "(sin prompts que declaren el contract_id)."
+            ),
+            is_blocking=False,
+        )
+    if findings:
+        detail = "\n".join(f"  - {f.render()}" for f in findings)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{denom}, {len(findings)} hallazgo(s), verbos derivados: "
+                f"{', '.join(verbs)}\n{detail}"
+            ),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=f"{denom}, sin hallazgos, verbos derivados: {', '.join(verbs)}",
+        is_blocking=False,
+    )
+
+
 def run_arranques_index_check(project_root: Path) -> CheckResult:
     """WOT-2026-067m: cuadre `arranques/_archive/` <-> `_archive/INDEX.md` (AMBAS direcciones).
 
@@ -3234,6 +3336,14 @@ def run_preflight_check(
         # ya violan la regla antes de la barrera (deuda medida: 6 hallazgos).
         # Endurecer a bloqueante cuando el censo de R1 llegue a 0.)
         results.append(run_launch_prompt_paths_check(project_root))
+        # 6m-cuater. Builder Prompt Obligations (WOT-2026-067z; WARN -- la deuda
+        # historica del corpus ya existe (medida 2026-10-11: ~20 de 25 prompts
+        # que declaran el cid omiten al menos un verbo de cierre de su canonico)
+        # y bloquear el cierre con ella seria falso-rojo heredado. Endurecer a
+        # bloqueante cuando el censo del universo vivo llegue a 0. El punto de
+        # enganche TEMPRANO (redaccion->lanzamiento) es MANUAL y esta declarado
+        # en el docstring del guard: este cableado es el punto de CIERRE.)
+        results.append(run_builder_prompt_obligations_check(project_root))
         # 6m-ter. Arranques Index (WOT-2026-067m; BLOQUEANTE -- el `_archive/` nace
         # consistente porque `archive_arranques.py` invoca el mismo guard, asi que
         # no hay deuda heredada que degradar a WARN). El indice que hace
