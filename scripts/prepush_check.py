@@ -2060,6 +2060,42 @@ def run_arranques_index_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_operational_artifact_paths_check(project_root: Path) -> CheckResult:
+    """WOT-2026-054g: un artefacto OPERATIVO del destino no puede llevar un rol
+    <MOTOR_ROOT>/<DESTINO_ROOT> sin resolver.
+
+    Por que AQUI. `orchestrator_pipeline/{reports,arranques,flight_plans}` viven en
+    el destino, y el cierre es el unico camino que corre solo Y conoce ese destino.
+    El import es ESTATICO para que `check_guard_wiring` alcance este call-site
+    (precedente: `run_arranques_index_check`, `run_flight_plan_collision_check`).
+
+    BLOQUEANTE a proposito, a diferencia de sus primos WARN de la misma familia
+    (`run_launch_prompt_paths_check`): el guard mide CONTEO POR FICHERO contra un
+    baseline (`scripts/operational_artifact_paths_baseline.json`) que ya absorbe la
+    deuda historica medida (121 ficheros, 918 hits, re-medido 2026-10-11) -- no hay
+    deuda heredada que degradar a WARN, igual que `run_arranques_index_check` nace
+    consistente porque su archivador comparte guard. Solo FALLA lo NUEVO (un
+    fichero fuera del baseline con el rol sin resolver) o lo EMPEORADO (un fichero
+    ya baselineado que gana hits por encima de lo declarado).
+
+    Before: project_root resoluble; las 3 rutas pueden existir o no.
+    During: ejecuta `audit()` sobre las 3 rutas operativas del destino contra el
+        baseline del motor. Read-only.
+    After: passed=True si ningun fichero excede su baseline (WARN nombrado si las
+        3 rutas estan ausentes, nunca ERROR: destino sin informes todavia no es un
+        defecto); passed=False (BLOQUEANTE) con el listado si alguno lo excede.
+    """
+    name = "Operational Artifact Paths (WOT-2026-054g)"
+    try:
+        from scripts.check_operational_artifact_paths import audit
+    except ImportError:
+        from check_operational_artifact_paths import audit  # type: ignore[no-redef]
+
+    code, lines = audit(project_root)
+    output = "\n".join(lines)
+    return CheckResult(name=name, passed=(code == 0), output=output, is_blocking=True)
+
+
 def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
     (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
@@ -3020,6 +3056,10 @@ def run_preflight_check(
         # ESTATICO en el run_ -> check_guard_wiring lo cuenta WIRED (precedente
         # run_flight_plan_collision_check).
         results.append(run_arranques_index_check(project_root))
+        # 6m-quater. Operational Artifact Paths (WOT-2026-054g; BLOQUEANTE -- el
+        # baseline absorbe la deuda historica medida, asi que no hay falso-rojo
+        # heredado que amnistiar; solo falla un rol NUEVO sin resolver).
+        results.append(run_operational_artifact_paths_check(project_root))
         # 6n. DEC Receipt Barrier (WOT-2026-042x; la norma de 042w cableada).
         # Va en closeout y no en pre-commit porque su superficie son los buzones
         # de fichas del DESTINO, que este es el unico camino auto-ejecutable que

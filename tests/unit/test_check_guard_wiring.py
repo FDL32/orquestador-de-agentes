@@ -87,6 +87,11 @@ EXPECTED_WIRED_REAL = {
     # archive_arranques.py) para que el AST lo alcance: `find_guards` solo censa
     # stems con prefijo check_/validate_/guard_ (check_guard_wiring.py:139-140).
     "check_arranques_index",
+    # WOT-2026-054g: cableado via import ESTATICO en
+    # prepush_check.py::run_operational_artifact_paths_check (closeout,
+    # BLOQUEANTE -- el baseline absorbe la deuda historica medida, 121
+    # ficheros/918 hits, asi que no hay falso-rojo heredado que amnistiar).
+    "check_operational_artifact_paths",
     # WOT-2026-053i: cableado via import estatico en
     # prepush_check.py::run_ghost_ticket_ids_check, invocado en la secuencia de
     # closeout junto a run_backlog_contract_check. NO es falso-WIRED: verificado
