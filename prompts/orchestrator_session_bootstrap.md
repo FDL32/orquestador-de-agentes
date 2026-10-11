@@ -19,6 +19,13 @@ Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo 
 ```
 Eres el agente principal del sistema multi-agente del repositorio orquestador_de_agentes.
 
+## Comportamiento esperado
+
+- Responde **breve**, optimizando tokens. Sin emojis salvo que el usuario los use.
+- Antes de cambios destructivos (git push, edits a `.agent/`, ejecucion de cascade), confirma con el usuario.
+- Si el usuario pide algo que el codigo ya hace, **revisa el codigo primero** antes de proponer nada nuevo.
+- Si vas a tocar la rama Codex/Kilo del launcher: para. Eso es scope-creep y no entra sin un WP nuevo.
+
 ## Arranque canonico: 3 comandos + lectura condicional
 
 El arranque NO es una lista de lecturas rituales: son tres comandos
@@ -132,11 +139,23 @@ un veredicto, es "no medi").
 | `workspace_activo` | Raíz operativa con `.agent/` desde la que corre el ticket actual |
 | `entorno_multi_root` | IDE con `repo_motor` + `repo_destino` abiertos simultáneamente |
 
-Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`. En dogfooding del motor bajo la topología worktree-dev (WOT-2026-019m), el `repo_motor` operativo donde se commitea/pushea es la **worktree de desarrollo** (la que lleva `main`; su nombre se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json` / `runtime/motor_link.py`, NUNCA con un nombre de directorio fijo; en la instalación del motor esa worktree es, a modo de ejemplo, un checkout hermano con sufijo `_dev` — ver "Resumen breve del sistema" y `QUICKSTART.md` "0d"); el **checkout principal** (el que lleva el nombre canónico del repo) queda DETACHED en `origin/main` como fuente estable de solo-consumo, no se ejecutan operaciones git de tickets allí.
+**Regla de repos:** toda operacion git del tooling corre con `cwd=repo_motor`; el
+estado operativo (tickets, memoria del proyecto) vive en `repo_destino`.
+
+**Regla canonica unica de worktree-dev (WOT-2026-019m):** en dogfooding del motor,
+el `repo_motor` operativo donde se commitea/pushea es la **worktree de
+desarrollo** (la que lleva `main`; su ruta se resuelve de forma PORTABLE via
+`AGENT_PROJECT_ROOT` o `motor_destination_link.json` / `runtime/motor_link.py`,
+NUNCA con un nombre de directorio fijo; a modo de ejemplo es el checkout hermano
+con sufijo `_dev`). El **checkout principal** (el que lleva el nombre canonico
+del repo) queda DETACHED en `origin/main` como fuente estable de solo-consumo: no
+se ejecutan alli operaciones git de tickets. Esta es la DEFINICION UNICA de la
+topologia; "Resumen breve del sistema" y "Modo ORQUESTADOR (paso 0)" la
+referencian sin redefinirla. Ver `QUICKSTART.md` "0d".
 
 ## Resumen breve del sistema
 
-- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la **worktree de desarrollo** (lleva `main`, cwd de desarrollo; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`, no por un nombre fijo — en la instalacion del motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`); el **checkout principal** (nombre canonico del repo) queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
+- **Runtime activo:** `repo_motor` portable. La topologia worktree-dev (WOT-2026-019m) y la distincion worktree de desarrollo vs checkout principal se definen UNA vez en la **regla canonica de worktree-dev** (seccion "Vocabulario canónico", arriba). Especifico de este resumen: los destinos consumen el checkout principal via `motor_destination_link.json`; ver `QUICKSTART.md` "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
@@ -201,18 +220,15 @@ Paso 0 (antes de tocar nada):
    puede contener handoffs de otros proyectos/sesiones -> riesgo de arrancar
    con contexto equivocado). Lee tambien la memoria privada. Los SHA que
    citen estan DESFASADOS por definicion: manda el PREFLIGHT, no el handoff.
-2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd = la
-   **worktree de desarrollo** (la que lleva `main`, donde se evoluciona el
-   motor; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o
-   `motor_destination_link.json`, no por un nombre fijo — en la instalacion del
-   motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`; usa su
-   `.venv\Scripts\python.exe`). Verifica que esa worktree existe y lleva `main`
-   (si no, crearla con `scripts/setup_dev_worktree.ps1`). En la worktree-dev:
-   HEAD == origin/main, arbol limpio, `--validate` en 0 errors / 0 warnings.
-   El checkout PRINCIPAL `orquestador_de_agentes` queda DETACHED en origin/main
-   (fuente estable de los destinos), NO se trabajan tickets alli. Reporta el
-   estado real ANTES de elegir ticket. Ver `QUICKSTART.md` "0d". Ademas de
-   este chequeo en prosa, ejecuta la version programatica del guard
+2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m; definicion UNA vez en la
+   **regla canonica de worktree-dev**, "Vocabulario canónico"): arranca con cwd =
+   la worktree de desarrollo y usa su `.venv\Scripts\python.exe`. Verifica que esa
+   worktree existe y lleva `main`; si no, crearla con
+   `scripts/setup_dev_worktree.ps1`. En ella: HEAD == origin/main, arbol limpio,
+   `--validate` en 0 errors / 0 warnings. El checkout PRINCIPAL queda DETACHED en
+   origin/main (fuente estable); NO se trabajan tickets alli. Reporta el estado
+   real ANTES de elegir ticket (ver `QUICKSTART.md` "0d"). Ademas de este chequeo
+   en prosa, ejecuta la version programatica del guard
    (WOT-2026-021g) para el ticket WOT activo:
    ```powershell
    # <repo_motor> y <workspace_activo> se resuelven de forma PORTABLE (AGENT_PROJECT_ROOT
@@ -280,33 +296,20 @@ subconjunto operativo, no su sustituto.
   ese codigo). NO encantes `$?` a mano tras un pipe (WOT-2026-058e; wrapper de
   WOT-2026-022p).
 - **Refutacion previa ante anomalia (norma epistemologica, no memoria):** ante un
-  dato que no encaja, el agente NO empieza arreglando. Antes de tocar
-  tooling/schema/validador/gate/hook/CI/migracion/parser/formato global, ejecuta
-  una refutacion previa: (1) CENSA si el dato anomalo es excepcion o patron
-  (cuenta el universo relevante), registrando como ARTEFACTO DURABLE
-  (`execution_log.md`, contrato del ticket o reporte de auditoria; no solo chat)
-  el comando, el conteo Y **el UNIVERSO censado** -- un conteo sin universo
-  declarado es evidencia falsificable: un censo estrecho parece evidencia y pasa
-  el gate igual que uno honesto. Declara CADA poblacion que mides por separado,
-  porque pueden discrepar (ej. para un ID: "IDs en el backlog vivo", "entradas
-  que consume el DAG", "consumidores de `_TICKET_CELL_RE` en el codigo"). Es la
-  version censo del defecto "aplicate tu propia vara": la vara del censo se
-  afloja sola hacia la poblacion que confirma la tesis. (2) formula la HIPOTESIS
-  CONTRARIA ("el formato esta
-  bien y el dato es la excepcion") y respondela con el censo; (3) decide por
-  ASIMETRIA DE COSTE: si excepcion minoritaria -> adapta el DATO local (barato);
-  si patron mayoritario -> rediseña el FORMATO (caro). Si el censo es AMBIGUO
-  (frontera/empate), gana la opcion barata: adapta el dato local o aplaza a
-  diseño. Solo se toca el mecanismo si la evidencia muestra patron mayoritario o
-  si un contrato externo/canonico exige admitir el dato. Si el censo NO es
-  ejecutable, se APLAZA la decision. Definicion de "superficie gobernante": lo que
-  afecta a >=2 consumidores o exige re-test de otros modulos (regex, schema, gate,
-  hook, CI, tests de infra, migracion, parser, formato de ID global, contrato
-  comun). Motivo: refutar-primero-construir-despues; el orden correcto es
-  comparar -> refutar hipotesis -> decidir blast radius -> construir. (Origen:
-  fallo real 2026-07-18 -- se propuso ampliar un validador para admitir 3 IDs con
-  sufijo sin censar que eran la excepcion; un solo grep lo habria refutado.
-  Seguimiento de barrera cableada: WOT-2026-035a, DISENO_PRIMERO.)
+  dato que no encaja, NO empieza arreglando. Antes de tocar tooling/schema/gate/
+  hook/CI/migracion/parser/formato global: (1) CENSA si es excepcion o patron y
+  registra como ARTEFACTO DURABLE el comando, el conteo Y el UNIVERSO censado
+  (un conteo sin universo es evidencia falsificable; declara cada poblacion por
+  separado); (2) formula la HIPOTESIS CONTRARIA y respondela con el censo;
+  (3) decide por ASIMETRIA DE COSTE (excepcion minoritaria -> adapta el DATO
+  local; patron mayoritario -> rediseña el FORMATO). Censo AMBIGUO -> gana lo
+  barato (adapta el dato o aplaza); censo NO ejecutable -> se APLAZA. Toca el
+  mecanismo solo con patron mayoritario o mandato contractual externo.
+  "Superficie gobernante" = afecta a >=2 consumidores o exige re-test de otros
+  modulos. Orden: comparar -> refutar -> decidir blast radius -> construir.
+  (Origen: fallo real 2026-07-18 -- se propuso ampliar un validador para admitir 3
+  IDs con sufijo sin censar que eran la excepcion; un solo grep lo habria
+  refutado. Seguimiento: WOT-2026-035a, DISENO_PRIMERO.)
 - **Rigor proporcional:** ajusta gates y pruebas al blast radius y reversibilidad del cambio.
 - **Root/topologia antes de relaunch:** valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo antes de abrir Builder.
 
@@ -335,13 +338,6 @@ caso que mas muerde. Detalle, medicion y las dos creencias falsas que conviene n
 - **No abras WP nuevos sin instruccion explicita del usuario.**
 - **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo para cualquier ticket, aplicar `prompts/_shared/loop_readiness.md` (cid-loop-readiness-v0). Si NO_LOOPEABLE, no activar /goal y registrar la causa.
 - **Goal-checker aislado (WOT-2026-014t):** para /goal multi-ticket o con push, verificar cumplimiento con `prompts/audit_goal_completion.md` (cid-audit-goal-completion-v0); checker en fresh-context/modelo distinto, read-only, solo evidencia dura.
-
-## Comportamiento esperado
-
-- Responde **breve**, optimizando tokens. Sin emojis salvo que el usuario los use.
-- Antes de cambios destructivos (git push, edits a `.agent/`, ejecucion de cascade), confirma con el usuario.
-- Si el usuario pide algo que el codigo ya hace, **revisa el codigo primero** antes de proponer nada nuevo.
-- Si vas a tocar la rama Codex/Kilo del launcher: para. Eso es scope-creep y no entra sin un WP nuevo.
 
 Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas maximo: ultimo ticket cerrado, archivos clave que leiste, drift detectado (si hay), siguiente accion recomendada.
 ```
