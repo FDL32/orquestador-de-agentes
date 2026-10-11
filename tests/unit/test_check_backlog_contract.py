@@ -2148,3 +2148,197 @@ def test_068k_validate_backlog_falla_explicito_sin_link(
     assert errs, "sin link declarado el validador DEBE fallar explicito"
     assert "fail-closed" in errs[0]
     assert "ticket_prefix" in errs[0]
+
+
+# =========================================================================== #
+# WOT-2026-059p: detail-section stale states after closure transfer          #
+# =========================================================================== #
+
+
+def _write_backlog_with_ficha(
+    tmp_path: Path, table_rows: str, ficha_content: str
+) -> Path:
+    """Write a backlog with a ficha section containing arbitrary detail lines.
+
+    ``table_rows`` are the rows in the "Vista rapida" table.
+    ``ficha_content`` is the text after "### WOT-..." headers.
+    The ticket IDs in the table and fichas are INDEPENDENT -- the ficha
+    section may reference tickets that are NOT in the live table.
+    """
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        _HEADER + table_rows + "\n\n" + ficha_content,
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _write_archive_ficha_test(root: Path, ticket_id: str, archive_state: str) -> None:
+    """Write a Prioridad-led archive row for the given ticket.
+
+    Uses ``completed`` as the archive terminal state.
+    """
+    _write_archive_prioridad(
+        root,
+        f"| Alta | {ticket_id} | archivado deliverable_type: code | s | {archive_state} | - | x | commit:abc |\n",
+    )
+
+
+def test_059p_stale_ficha_state_is_detected(tmp_path: Path) -> None:
+    """DoD (a): ficha declares LIVE state 'pending' for a ticket archived
+    with a terminal state -> violation.
+
+    FAIL-without-fix (mutation): remove the ``validate_detail_section_states``
+    call from main -> this ticket passes silently (rc=0), exactly the defect
+    the ticket exists to close.
+    """
+    # The ticket 001a is NOT in the live table; only in the archive (terminal).
+    # Its ficha section still declares "Estado: pending" -> stale.
+    _write_backlog_with_ficha(
+        tmp_path,
+        # A different ticket in the live table so the backlog has a valid row.
+        "| Alta | WOT-2026-999x | otro deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-001a - ficha detail\nEstado: pending\n- **Problema:** algo\n"),
+    )
+    _write_archive_ficha_test(tmp_path, "WOT-2026-001a", "completed")
+    errors = cbc.validate_detail_section_states(tmp_path)
+    assert len(errors) == 1, f"expected 1 stale state violation, got: {errors}"
+    assert "WOT-2026-001a" in errors[0]
+    assert "pending" in errors[0]
+    assert "TERMINAL" in errors[0]
+
+
+def test_059p_main_wires_the_check(tmp_path: Path, capsys) -> None:
+    """DoD (b): INVOCADA desde main() y el gate IMPRIME los ids en violacion.
+
+    MUTACION QUE ESTE TEST MATA: si se retira la linea
+    ``detail_warnings = validate_detail_section_states(root)`` de ``main()``,
+    este test queda ROJO porque el WARN no se imprime. Verifica el cableado
+    real, no solo la funcion aislada.
+    """
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-999x | otro deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-001a - ficha detail\nEstado: blocked\n- **Problema:** algo\n"),
+    )
+    _write_archive_ficha_test(tmp_path, "WOT-2026-001a", "completed")
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    # WARN does NOT block -> exit 0
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WOT-2026-001a" in err, f"WARN should be printed to stderr; got: {err}"
+    assert "blocked" in err, f"should print the LIVE state; got: {err}"
+
+
+def test_059p_non_archived_id_no_violation(tmp_path: Path) -> None:
+    """DoD (c) CONTROL NEGATIVO 1: id NO archivado no viola, sea cual sea
+    su estado en la ficha.
+
+    Mutacion alcanzable: si la funcion cruzara sin verificar el archive,
+    cualquier ficha con Estado: pending daria falso positivo.
+    """
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-999x | otro deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-001a - ficha detail\nEstado: pending\n- **Problema:** algo\n"),
+    )
+    # Archive has a different ticket (not 001a)
+    _write_archive_ficha_test(tmp_path, "WOT-2026-999x", "completed")
+    errors = cbc.validate_detail_section_states(tmp_path)
+    assert errors == [], (
+        f"un ticket no archivado no debe generar violacion; got: {errors}"
+    )
+
+
+def test_059p_terminal_ficha_state_no_violation(tmp_path: Path) -> None:
+    """DoD (d) CONTROL NEGATIVO 2: id archivado con estado TERMINAL en la
+    ficha no viola (la ficha refleja correctamente el cierre).
+
+    Mutacion alcanzable: si el predicado solo mira el archive sin verificar
+    el estado de la ficha, una ficha con "Estado: completed" dispararia
+    falso positivo.
+    """
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-999x | otro deliverable_type: code | s | pending | - | x | - |\n",
+        (
+            "### WOT-2026-001a - ficha detail\n"
+            "Estado: completed\n"
+            "- **Problema:** cerrado\n"
+        ),
+    )
+    _write_archive_ficha_test(tmp_path, "WOT-2026-001a", "completed")
+    errors = cbc.validate_detail_section_states(tmp_path)
+    assert errors == [], (
+        f"una ficha con estado terminal no debe generar violacion; got: {errors}"
+    )
+
+
+def test_059p_mutation_revert_invoke_fails(tmp_path: Path, capsys) -> None:
+    """DoD (e) parte 1: revertir la invocacion de validate_detail_section_states
+    en main() hace caer el test de cableado (b).
+
+    Simula el mutante: main() sin la linea de invoke -> el WARN no se imprime
+    -> este test cae porque asume que main() SI imprime el WARN.
+    """
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-999x | otro deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-001a - ficha detail\nEstado: deferred\n- **Problema:** algo\n"),
+    )
+    _write_archive_ficha_test(tmp_path, "WOT-2026-001a", "completed")
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    assert rc == 0  # WARN no bloquea
+    err = capsys.readouterr().err
+    # El mutante "retirar validate_detail_section_states de main" hace que
+    # el WARN desaparezca -> este test cae.
+    assert "WOT-2026-001a" in err, (
+        "El mutante: retirar validate_detail_section_states de main() "
+        "deberia hacer que el WARN desaparezca -> ROJO. Si pasa, "
+        "la invocacion en main() es la causa del verde."
+    )
+
+
+def test_059p_mutation_revert_predicate_fails(tmp_path: Path) -> None:
+    """DoD (e) parte 2: revertir el predicado (no cruzar ficha x archive)
+    hace caer el test de deteccion (a).
+
+    Simula el mutante: la funcion devuelve [] siempre -> el test que exige
+    1 violacion cae -> el verde original era falso.
+    """
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-999x | otro deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-001a - ficha detail\nEstado: blocked\n- **Problema:** algo\n"),
+    )
+    _write_archive_ficha_test(tmp_path, "WOT-2026-001a", "completed")
+    errors = cbc.validate_detail_section_states(tmp_path)
+    # El mutante "retirar la logica de cruce" devuelve [] -> este test cae.
+    assert len(errors) >= 1, (
+        "El mutante: retirar el predicado de cruzar ficha x archive "
+        "deberia devolver [] -> ROJO. Si pasa, el cruce es la causa del verde."
+    )
+
+
+def test_059p_multiple_fichas_mixed_reported(tmp_path: Path) -> None:
+    """Multiple fichas: solo las que tienen LIVE state + archived terminal
+    generan WARN. Las fichas con terminal state o sin archive se saltan."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-999x | otro deliverable_type: code | s | pending | - | x | - |\n",
+        (
+            "### WOT-2026-001a - primera ficha\n"
+            "Estado: pending\n"
+            "### WOT-2026-001b - segunda ficha\n"
+            "Estado: completed\n"
+        ),
+    )
+    # Only 001a is archived terminal; 001b is NOT in the archive.
+    _write_archive_ficha_test(tmp_path, "WOT-2026-001a", "completed")
+    # 001a: pending in ficha + archived terminal -> violation
+    # 001b: completed in ficha (terminal) -> no violation
+    errors = cbc.validate_detail_section_states(tmp_path)
+    assert len(errors) == 1, f"expected 1 warning; got: {errors}"
+    assert "WOT-2026-001a" in errors[0]
+    assert "WOT-2026-001b" not in errors[0]

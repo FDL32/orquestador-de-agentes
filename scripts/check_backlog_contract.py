@@ -1920,6 +1920,157 @@ def validate_live_dependencies(root: Path) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-059p: detail-section stale states after closure transfer.
+#
+# When a ticket row is archived (traspaso de cierre), the backlog's Ficha
+# detallada section may still declare a LIVE state (e.g. "Estado: pending")
+# that contradicts the terminal archive row. No validate_* crosses the
+# live-section x archive boundary; the gate returns rc=0 silently.
+#
+# This function detects that mismatch: a ficha declares a LIVE state for a
+# ticket whose archive row is TERMINAL. Severity: WARN (prints, does not
+# block the tree).
+# ---------------------------------------------------------------------------
+
+# LIVE states as they appear in ficha "Estado:" declarations (lowercase,
+# matching the backlog's LIVE_STATES vocabulary).
+_DETAIL_LIVE_STATES = frozenset(LIVE_STATES)
+
+
+def _extract_ficha_sections(content: str) -> list[tuple[str, list[str]]]:
+    """Return list of (ticket_id, lines) for each ficha detail section.
+
+    Before: ``content`` is the whole backlog.md text.
+    During: pure string parsing -- walks lines, detects ficha headers,
+        collects body lines until next ficha header or EOF.
+    After: one ``(id, [lines])`` tuple per ficha section found.
+    """
+    fichas: list[tuple[str, list[str]]] = []
+    current_id: str | None = None
+    current_lines: list[str] = []
+
+    for line in content.splitlines():
+        # Detect ficha header: "### WOT-YYYY-NNNx ..." or "### WT-...", etc.
+        if line.startswith("### ") and any(
+            kw in line for kw in ("WOT-", "WT-", "WP-", "CTL-", "RDS-")
+        ):
+            # Save previous ficha
+            if current_id is not None:
+                fichas.append((current_id, current_lines))
+            # Extract the ticket ID from the header line
+            m = _require(_TICKET_ID_IN_TEXT_RE).search(line)
+            current_id = m.group(1) if m else line.strip()
+            current_lines = []
+        elif current_id is not None:
+            current_lines.append(line)
+
+    # Don't forget the last ficha
+    if current_id is not None:
+        fichas.append((current_id, current_lines))
+
+    return fichas
+
+
+def _read_archive_terminal_states(path: Path) -> dict[str, str]:
+    """Return {ticket_id: state} for every terminal row in the archive.
+
+    Only returns rows with TERMINAL states (complement of LIVE_STATES).
+    Uses the same cell-scan convention as ``_ticket_has_row``: the ID is the
+    FIRST or SECOND cell across all known archive layouts.
+    """
+    if not path.exists():
+        return {}
+    found: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        tid = _find_ticket_cell(cells)
+        if tid is None:
+            continue
+        state = _find_state_cell(cells)
+        if state is None:
+            continue
+        if state.lower() not in _DETAIL_LIVE_STATES:
+            found[tid] = state
+    return found
+
+
+def _find_ticket_cell(cells: list[str]) -> str | None:
+    """Return the ticket id at index 1 (Prioridad-led) or 0 (compact), or None."""
+    for idx in (1, 0):
+        if idx < len(cells) and _require(_TICKET_ROW_CELL_RE).match(cells[idx]):
+            return cells[idx]
+    return None
+
+
+def _find_state_cell(cells: list[str]) -> str | None:
+    """Return the state cell: index 4 for 8-col (Prioridad-led), index 1 for compact."""
+    if len(cells) >= 8:
+        return cells[4]
+    if len(cells) >= 3:
+        return cells[1]
+    return None
+
+
+def validate_detail_section_states(root: Path) -> list[str]:
+    """Return detail-section stale-state WARNs (empty == clean).
+
+    Checks that no ficha detail section declares a LIVE state for a ticket
+    that has a TERMINAL row in the archive.
+
+    Before: ``root`` is the project root (for backlog + archive paths).
+    During: parses backlog.md fichas, cross-references archive terminal states.
+    After: one WARN string per stale ficha state found.
+
+    Severity: WARN only -- these are visible stale markers, not tree-breaking
+    errors. The caller prints them but does not block the workflow.
+    """
+    bound, _prefix_err = ensure_bound(root)
+    if not bound:
+        return []  # already reported by other validate_* checks
+
+    collab = root / ".agent" / "collaboration"
+    backlog_path = collab / "backlog.md"
+    if not backlog_path.exists():
+        return []
+
+    content = backlog_path.read_text(encoding="utf-8-sig")
+    fichas = _extract_ficha_sections(content)
+
+    archive_terminal = _read_archive_terminal_states(
+        collab / "_archive" / "backlog_done.md"
+    )
+
+    errors: list[str] = []
+    for tid, lines in fichas:
+        for line in lines:
+            stripped = line.strip()
+            # Match "Estado: <state>" or "- **Estado:** <state>"
+            state_match = None
+            if stripped.startswith("Estado:"):
+                state_match = stripped[len("Estado:") :].strip()
+            elif stripped.startswith("- **Estado:**"):
+                # Extract state after "- **Estado:** "
+                remainder = stripped[len("- **Estado:**") :].strip()
+                state_match = remainder.split()[0] if remainder else None
+
+            if (
+                state_match
+                and state_match.lower() in _DETAIL_LIVE_STATES
+                and tid in archive_terminal
+            ):
+                errors.append(
+                    f"WARN: {tid}: ficha declares LIVE state "
+                    f"'{state_match}' but ticket has a TERMINAL row "
+                    f"in _archive/backlog_done.md (stale detail section)"
+                )
+
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fail-closed gate for the live backlog contract (WOT-2026-012b)."
@@ -1961,6 +2112,10 @@ def main(argv: list[str] | None = None) -> int:
     violations = violations + validate_archive_prose_preservation(root)
     # WOT-2026-049c: una fila VIVA no puede depender de un ticket ya cerrado.
     violations = violations + validate_live_dependencies(root)
+    # WOT-2026-059p: detail-section stale states after closure transfer (WARN).
+    detail_warnings = validate_detail_section_states(root)
+    for w in detail_warnings:
+        print(w, file=sys.stderr)
 
     # WOT-2026-052a: the gate must not be silent about rows its own universe
     # excludes. Every Prioridad-led row whose Ticket cell fails the id pattern
