@@ -381,3 +381,115 @@ def test_089e_the_health_line_is_fail_open(tmp_path: Path) -> None:
     ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
     assert "--recall" in ctx
     assert "Salud de la memoria" not in ctx
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-098b: la seccion de roles de capa, DESPUES de la memoria, sin romper
+# el contrato fail-open del hook. El agente en frio debe poder descubrir el
+# backend/modelo de orchestrator/manager/revisor/builder desde el arranque.
+# --------------------------------------------------------------------------- #
+
+
+def _valid_agents_config(with_role_mapping: bool = True) -> dict:
+    """agents.json minimo que PASA `load_agents_config` (schema 1.4)."""
+    backends = {
+        name: {
+            "executable": name,
+            "args": ["run"],
+            "discovery": {"method": "path_only"},
+        }
+        for name in ("opencode", "nan_api", "claude")
+    }
+    cfg: dict = {
+        "schema_version": "1.4",
+        "backends": backends,
+        "role_assignments": {"BUILDER": "opencode"},
+        "role_models": {
+            "BUILDER": "nan/deepseek-v4-flash",
+            "MANAGER": None,
+            "REVISOR": "nan/glm5.3-flash",
+        },
+    }
+    if with_role_mapping:
+        cfg["role_mapping"] = {
+            "orchestrator": {"backend": "claude"},
+            "manager": {"backend": "opencode", "model": "openai/gpt-5.5"},
+            "revisor": {"backend": "nan_api", "model": "nan/glm5.3-flash"},
+            "builder": {"backend": "opencode"},
+        }
+    return cfg
+
+
+def _destino_with_config(tmp_path: Path, config: dict | None, name: str = "destino"):
+    destino = tmp_path / name
+    (destino / ".claude").mkdir(parents=True)
+    if config is not None:
+        cfg_dir = destino / ".agent" / "config"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "agents.json").write_text(
+            config if isinstance(config, str) else json.dumps(config),
+            encoding="utf-8",
+        )
+    return destino
+
+
+def test_098b_injects_role_mapping_after_memory(tmp_path: Path) -> None:
+    """DoD (c): el hook inyecta el backend/modelo de cada rol de capa, tras la memoria.
+
+    El destino declara `role_mapping` (incluido `revisor`) y el hook debe exponerlo
+    resuelto. MUTACION: quitar `_role_section(root)` de `main()` -> no hay bloque
+    "Roles del sistema" y el assert cae.
+    """
+    destino = _destino_with_config(tmp_path, _valid_agents_config())
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "Roles del sistema" in ctx
+    assert "revisor: backend=nan_api, modelo=nan/glm5.3-flash" in ctx
+    assert "builder: backend=opencode" in ctx
+    # DESPUES de la memoria: la puerta de expansion (hint) precede a los roles.
+    assert ctx.index("--recall") < ctx.index("Roles del sistema")
+
+
+def test_098b_omits_section_when_agents_json_absent(tmp_path: Path) -> None:
+    """DoD (e): sin `agents.json` el hook sigue en exit 0 con la memoria intacta.
+
+    MUTACION: si la seccion nueva PROPAGARA la excepcion (en vez de capturarla),
+    `main()` degradaria al catch final (contexto vacio) y `--recall` desapareceria.
+    """
+    destino = _destino_with_config(tmp_path, None)
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "--recall" in ctx
+    assert "Roles del sistema" not in ctx
+
+
+def test_098b_omits_section_when_agents_json_corrupt(tmp_path: Path) -> None:
+    """DoD (e): JSON invalido -> seccion omitida, arranque y memoria intactos."""
+    destino = _destino_with_config(tmp_path, "{ esto no es json valido")
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "--recall" in ctx
+    assert "Roles del sistema" not in ctx
+
+
+def test_098b_omits_section_when_role_mapping_missing(tmp_path: Path) -> None:
+    """DoD (e): agents.json valido SIN `role_mapping` -> seccion omitida, exit 0."""
+    destino = _destino_with_config(
+        tmp_path, _valid_agents_config(with_role_mapping=False)
+    )
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "--recall" in ctx
+    assert "Roles del sistema" not in ctx

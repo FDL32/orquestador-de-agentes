@@ -6,6 +6,7 @@
     "1.2_to_1.3",
     "1.3_to_1.4"
   ],
+  "_note": "role_models.MANAGER es null a proposito (WOT-2026-098b): null significa 'usa el default de role_mapping.manager.backend, sin model_id propio que declarar aqui'. Nunca un nombre de backend disfrazado de modelo (ver PROPUESTA_vocabulario_roles_capas_20261011.md Seccion 8.3, correccion v6). La clave vive en la RAIZ, no dentro de role_models, porque _validate_role_models rechaza (fail-closed) cualquier clave que no este en KNOWN_ROLES.",
   "active_profile": "engine-dev",
   "strictness_profile": "standard",
   "profiles": {
@@ -1072,6 +1073,10 @@
       "backend": "opencode",
       "model": "openai/gpt-5.5"
     },
+    "revisor": {
+      "backend": "nan_api",
+      "model": "nan/glm5.3-flash"
+    },
     "builder": {
       "backend": "opencode"
     },
@@ -1098,7 +1103,8 @@
   },
   "role_models": {
     "BUILDER": "opencode-go/deepseek-v4-flash",
-    "MANAGER": "openai/gpt-5.5"
+    "MANAGER": null,
+    "REVISOR": "nan/glm5.3-flash"
   },
   "manager_review": {
     "timeout_seconds": 180,

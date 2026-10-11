@@ -57,12 +57,23 @@ CONFIG_PATH = _LazyPath(_config_path)
 # duplicacion de un dato):
 #  - KNOWN_ROLES: legacy MAYUSCULA. Valida los campos que 026j deja como basura
 #    no-referenciada (role_assignments, role_models) y los aun-vivos no migrados
-#    (skill_allowlists). No se amplia; muere cuando esos campos se retiren.
+#    (skill_allowlists). No se amplia salvo rol de capa nuevo (ver WOT-2026-098b);
+#    muere cuando esos campos se retiren.
 #  - CANONICAL_ROLES: la taxonomia canonica de AGENTS.md, en MINUSCULA. Es el
 #    UNICO enum valido para role_mapping. SUPERVISOR NO esta aqui: es un actor
 #    runtime del bus, no un rol IA (va en el campo actor_runtime aparte).
-KNOWN_ROLES = {"BUILDER", "MANAGER", "SUPERVISOR"}
-CANONICAL_ROLES = {"orchestrator", "manager", "builder", "auditor", "challenger"}
+# WOT-2026-098b: anadido "revisor"/"REVISOR" -- Capa 2 del sistema de 4 capas
+# (PROPUESTA_vocabulario_roles_capas_20261011.md v6, Seccion 7), rol de capa
+# distinto de "auditor" (gobierno transversal, no secuencial).
+KNOWN_ROLES = {"BUILDER", "MANAGER", "SUPERVISOR", "REVISOR"}
+CANONICAL_ROLES = {
+    "orchestrator",
+    "manager",
+    "builder",
+    "auditor",
+    "challenger",
+    "revisor",
+}
 # Actores runtime del bus: NO son roles IA, no tienen backend/modelo. Pedir su
 # modelo/backend via get_*_for_role es un error (raise), no un None silencioso.
 ACTOR_RUNTIME_ROLES = {"SUPERVISOR"}

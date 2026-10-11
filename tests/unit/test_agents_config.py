@@ -894,11 +894,12 @@ class TestRoleMappingSchemaFailClosed:
     """D1/D4: el schema RECHAZA claves de role_mapping fuera del enum canonico."""
 
     def test_canonical_roles_accepted(self, tmp_path):
-        """H4: los 5 roles canonicos validan Y resuelven al backend esperado.
+        """H4: los 6 roles canonicos validan Y resuelven al backend esperado.
 
         Antes era floor assertion (`assert path.exists()`, satisfecha aunque el
-        role_mapping se ignorara). Ahora aserta las 5 claves canonicas efectivas
-        y que 'manager' resuelve a su backend -- muerde si la cascada se rompe.
+        role_mapping se ignorara). Ahora aserta las 6 claves canonicas efectivas
+        (WOT-2026-098b anadio "revisor") y que 'manager' resuelve a su backend
+        -- muerde si la cascada se rompe.
         """
         cfg = _config_with_role_mapping(
             {
@@ -907,6 +908,7 @@ class TestRoleMappingSchemaFailClosed:
                 "builder": {"backend": "claude"},
                 "auditor": {"backend": "codex"},
                 "challenger": {"backend": "nan"},
+                "revisor": {"backend": "nan"},
             }
         )
         _create_test_config(tmp_path, cfg)
@@ -917,6 +919,7 @@ class TestRoleMappingSchemaFailClosed:
             "builder",
             "auditor",
             "challenger",
+            "revisor",
         }
         assert get_backend_for_role("manager", config) == "codex"
 

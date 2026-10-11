@@ -55,9 +55,14 @@ ilegible.
 Before: recibe el payload JSON de SessionStart por stdin (puede ir vacio).
 During: resuelve el project root, carga el indice via `get_bootstrap_context()`
     y lo envuelve; anade una linea de salud de la memoria (WOT-2026-089e, por
-    subproceso de `check_memory_health.py`). Solo lectura; ninguna escritura.
+    subproceso de `check_memory_health.py`) y, DESPUES de la memoria, un bloque
+    con el backend/modelo de cada rol de capa resuelto desde `agents.json`
+    (WOT-2026-098b). Solo lectura; ninguna escritura.
 After: imprime `{"additionalContext": ...}` por stdout y sale con 0 SIEMPRE.
     Ante cualquier error emite un contexto minimo que apunta al comando manual.
+    La seccion de roles hereda el mismo fail-open: si `agents.json` falta, esta
+    corrupto o no declara `role_mapping`, se OMITE (cadena vacia) sin degradar la
+    memoria ya inyectada ni bloquear el arranque.
 """
 
 from __future__ import annotations
@@ -234,6 +239,82 @@ def _health_line(root: Path) -> str:
         return ""
 
 
+# Roles de CAPA del sistema de 4 capas (WOT-2026-098b): los que participan en el
+# ciclo de UN ticket, en orden fijo. Los roles de gobierno transversal
+# (auditor/challenger) NO entran: no tienen hueco en la secuencia y el objetivo es
+# dar al agente en frio el backend/modelo de las capas por las que va a pasar su
+# ticket.
+_LAYER_ROLES = ("orchestrator", "manager", "revisor", "builder")
+
+
+def _role_section(root: Path) -> str:
+    """Backend/modelo por rol de capa, resuelto desde `agents.json`, o "".
+
+    WOT-2026-098b. Hoy NADIE expone `role_mapping`/`role_models` al propio agente
+    que arranca: el unico consumidor real resuelve `"manager"` HARDCODEADO y lo
+    invoca el proceso PADRE (bridge), nunca el agente. Esta seccion es el unico
+    canal automatico para una sesion PRINCIPAL en TODO arranque (incluida
+    post-compactacion), asi que expone el backend/modelo RESUELTO de cada rol.
+
+    Before: `root` es la raiz resuelta; `agents.json` puede faltar, estar corrupto
+        o no declarar `role_mapping`.
+    During: resuelve el motor (`_motor_root`), importa el loader canonico
+        (`.agent/agents_config.py`, la unica capa de schema) y lee el config del
+        WORKSPACE donde corre el hook -- el MISMO que usa el runtime
+        (`bus/review_bridge.py` resuelve `load_agents_config(project_root)`), para
+        no mentir al agente con una config que no es la efectiva.
+    After: un bloque compacto (una linea por rol de capa), o "" si algo falla.
+        NUNCA propaga: hereda el contrato fail-open del modulo (ver el docstring
+        de cabecera); cualquier excepcion degrada a "seccion omitida".
+    """
+    try:
+        motor = _motor_root(root)
+        if str(motor) not in sys.path:
+            sys.path.insert(0, str(motor))
+        # APPEND de `.agent/` (nunca insert(0)): con `.agent` al frente, `runtime`
+        # resolveria a `.agent/runtime/` en vez de `<motor>/runtime/` (hazard
+        # documentado en AGENTS.md y ya respetado por `_load_context`).
+        agent_dir = motor / ".agent"
+        if str(agent_dir) not in sys.path:
+            sys.path.append(str(agent_dir))
+
+        from agents_config import (
+            get_backend_for_role,
+            get_model_for_role,
+            load_agents_config,
+        )
+
+        config = load_agents_config(root)
+
+        def _resolve_role(role: str) -> tuple[str, str | None] | None:
+            """(backend, model) del rol, o ``None`` si no resuelve. Fail-open."""
+            try:
+                return get_backend_for_role(role, config), get_model_for_role(
+                    role, config
+                )
+            except Exception:
+                return None
+
+        lines: list[str] = []
+        for role in _LAYER_ROLES:
+            resolved = _resolve_role(role)
+            if resolved is None:
+                continue
+            backend, model = resolved
+            model_txt = model or "(default del backend)"
+            lines.append(f"- {role}: backend={backend}, modelo={model_txt}")
+        if not lines:
+            return ""
+        return (
+            "**Roles del sistema (backend/modelo por rol, agents.json)**:\n"
+            + "\n".join(lines)
+        )
+    except Exception:
+        # Fail-open por contrato (docstring del modulo): un fallo aqui NUNCA
+        # bloquea el arranque ni degrada la memoria ya resuelta.
+        return ""
+
+
 def _load_context(root: Path) -> str:
     """Indice de memoria, o cadena vacia si no se puede cargar.
 
@@ -297,6 +378,13 @@ def main() -> int:
     health = _health_line(root)
     if health:
         context += f"\n\n{health}\n"
+
+    # WOT-2026-098b: tras la memoria (y su linea de salud), expone el
+    # backend/modelo de cada rol de capa para un agente en frio. Si falla, se
+    # omite sin tocar nada de lo anterior.
+    roles = _role_section(root)
+    if roles:
+        context += f"\n\n{roles}\n"
 
     print(json.dumps({"additionalContext": context}, ensure_ascii=False))
     return 0
