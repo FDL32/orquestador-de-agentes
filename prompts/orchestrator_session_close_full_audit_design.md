@@ -24,7 +24,7 @@ Relacionado: WOT-2026-028a (research-sessions), WOT-2026-023t (freshness gate), 
 | Seccion canonica | Diseno | Motivo |
 |------------------|--------|--------|
 | B1.1-1.3 auditoria de salud (3 auditorias) | NO | auditan el motor tras cambios; diseno no cambio el motor |
-| B1.3.4-3.6 hooks/portabilidad/suite | NO | gates de codigo commiteado; diseno no commitea |
+| B1.3.4-3.6 hooks/portabilidad/suite | NO | gates de codigo commiteado; diseno no commitea. Desde WOT-2026-054f el disparador de suite del canon exige computar contra la RAIZ AUDITADA y declarar `RAIZ RESUELTA:`; este prompt solo APUNTA al canon y no re-declara el criterio (X-09) |
 | B1.3.7 (a) umbral de evidencia | REUTILIZA | mismo gate "solo con evidencia verificable" que el inbox |
 | B1.3.7 (b) registro de follow-ups del MOTOR | ADAPTA | va a ficha de inbox con delivery_authority: repo_motor (no a backlog.md; lo escribe desarrollo) |
 | B2 pasada adversarial | ADAPTA | sobre los ARTEFACTOS (planes/fichas/prompts), no sobre diffs de codigo |
