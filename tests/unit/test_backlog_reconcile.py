@@ -2,7 +2,7 @@
 
 WOT-2026-021i. Covers: parse of the ## Vista rapida table (reconcile set =
 pending/deferred/completed-partial), per-scope repo routing (motor/* -> motor,
-destinos/* -> destino, system|infra/* -> n/a), the 3 raw signal families + the
+destinos/* -> destino, system|infra/* -> n/a), the 4 raw signal families + the
 repo-level last-run block, the "no verdict field" boundary, relativization (PII),
 exit codes, read-only-ness, and topology resolution via motor_destination_link.json.
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1293,3 +1294,249 @@ def test_080a_un_unico_flag_para_la_misma_ruta_en_el_json(tmp_path, monkeypatch)
     assert t["paths_total"] == 2
     assert t["paths_present"] == 2
     assert t["paths_absent"] == 0
+
+
+# --------------------------------------------------------------- WOT-2026-066q
+# `is_ancestor` o se computa bien (enrutando por repo de origen) o no promete un
+# veredicto. Via elegida por el Builder: (a) computar con
+# `git merge-base --is-ancestor <sha> HEAD` en el repo que TIENE el objeto.
+# El probe del recibo (_probe_reconcile_ancestry.py, destino) mide SOLO tipos
+# (limite declarado en la fila): aqui se cubre lo que el probe NO puede -- que
+# los booleanos procedan de git y sean CORRECTOS (comparacion par a par).
+
+
+def _probe_no_verdict_count(findings: dict) -> tuple[int, int]:
+    """(total, sin_veredicto_booleano) con el MISMO contrato que el probe.
+
+    Espejo de `_probe_reconcile_ancestry.py::_count` (el probe vive en el
+    destino y los tests del motor no deben depender de su ruta): cuenta toda
+    entrada de `grep_commits` cuyo `is_ancestor` no es bool (ausente o None).
+    """
+    total = 0
+    bad = 0
+    for ticket in findings["tickets"]:
+        for entry in ticket["grep_commits"]:
+            total += 1
+            if not isinstance(entry.get("is_ancestor"), bool):
+                bad += 1
+    return total, bad
+
+
+def _g(args, cwd):
+    """git real en cwd; el setup del fixture DEBE tener exito (check=True)."""
+    subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    )
+
+
+def _sha(cwd, ref="HEAD"):
+    return subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", ref],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _commit(repo, fname, body, msg):
+    (repo / fname).write_text(body, encoding="utf-8")
+    _g(["add", fname], repo)
+    _g(["commit", "-qm", msg], repo)
+    return _sha(repo)
+
+
+def _git_init(repo: Path) -> None:
+    """Repo git real e HERMETICO (su propio .git; WOT-2026-020r: git no
+    camina hacia arriba hasta el repo real de la maquina)."""
+    repo.mkdir(parents=True, exist_ok=True)
+    _g(["init", "-b", "main", "-q"], repo)
+    _g(["config", "user.email", "t@t.com"], repo)
+    _g(["config", "user.name", "t"], repo)
+
+
+def _real_git_workspace(tmp_path):
+    """Par (motor, ws) con git REAL: motor con un commit ancestro (900a) y un
+    commit en rama lateral NO fusionada (900h); ws con un commit SOLO-en-destino
+    (900b) que el motor NO contiene."""
+    motor = _fake_motor(tmp_path)
+    _git_init(motor)
+    _commit(motor, "base.txt", "base\n", "base")
+    ancestor_sha = _commit(motor, "a.txt", "a\n", "WOT-2026-900a: skip gates fix")
+    _g(["checkout", "-qb", "lateral"], motor)
+    lateral_sha = _commit(
+        motor, "side.txt", "side\n", "WOT-2026-900h: lateral, nunca fusionado"
+    )
+    _g(["checkout", "-q", "main"], motor)
+
+    ws = _fake_workspace(tmp_path)
+    _git_init(ws)
+    _commit(ws, "base.txt", "base\n", "base")
+    dest_only_sha = _commit(ws, "b.txt", "b\n", "WOT-2026-900b: fix solo en el destino")
+    return motor, ws, ancestor_sha, lateral_sha, dest_only_sha
+
+
+def _run_main_real_git(tmp_path, motor, ws):
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0, f"collector exit {rc}"
+    return json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+
+
+def _pairwise_expected(origin: Path, sha: str) -> bool:
+    """Veredicto INDEPENDIENTE: git merge-base directo en el repo de origen."""
+    res = subprocess.run(
+        ["git", "-C", str(origin), "merge-base", "--is-ancestor", sha, "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode in (0, 1), res.stderr
+    return res.returncode == 0
+
+
+def test_066q_grep_commits_llevan_veredicto_booleano(tmp_path, monkeypatch):
+    """DoD-1 (via a): TODA entrada de `grep_commits` trae `is_ancestor` booleano.
+
+    ROJO previo con el codigo ANTES del fix: la clave no existe -> el contador
+    del probe la ve como None -> N/N sin veredicto (el recibo historico daba
+    exit 1 con 139/139). Aqui: 0 sin veredicto."""
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    total, bad = _probe_no_verdict_count(findings)
+    assert total >= 1, "el fixture debe producir al menos una entrada con commits"
+    assert bad == 0, f"{bad}/{total} entradas sin veredicto booleano (ROJO previo)"
+
+
+def test_066q_ancestria_par_a_par_contra_git_merge_base(tmp_path):
+    """DoD-4 (via a): comparacion PAR A PAR contra `git merge-base` (git real).
+
+    El probe del recibo solo verifica TIPOS (limite declarado en la fila): un
+    `True` constante lo pasaria. Este test cierra ese hueco: para CADA entrada
+    emitida, el veredicto debe coincidir con `git merge-base --is-ancestor
+    <sha> HEAD` ejecutado directamente en el repo de ORIGEN. Exige ademas que
+    aparezcan AMBOS casos (True y False) para que el test no sea vacio:
+    - 900a: commit en main -> ancestro -> True.
+    - 900h: commit en rama lateral NO fusionada -> NO ancestro -> False.
+    """
+    motor, ws, ancestor_sha, lateral_sha, _dest = _real_git_workspace(tmp_path)
+    findings = _run_main_real_git(tmp_path, motor, ws)
+
+    repo_map = {"motor": motor, "destino": ws}
+    seen: set[bool] = set()
+    pairwise = 0
+    for ticket in findings["tickets"]:
+        if not ticket["grep_commits"]:
+            continue  # scope n/a o sin commits: no hay pares que comparar
+        origin = repo_map[ticket["repo"]]
+        for entry in ticket["grep_commits"]:
+            expected = _pairwise_expected(origin, entry["sha"])
+            assert entry["is_ancestor"] is expected, (
+                f"{ticket['ticket_id']} sha={entry['sha']}: emitido "
+                f"{entry['is_ancestor']!r} != git merge-base {expected!r} "
+                f"en {origin.name}"
+            )
+            seen.add(entry["is_ancestor"])
+            pairwise += 1
+    assert pairwise >= 2, f"solo {pairwise} pares comparados"
+    assert seen == {True, False}, (
+        f"cobertura incompleta: casos vistos {seen} (falta True o False)"
+    )
+    # Sanity de los fixtures: el lateral NO es ancestro de HEAD en origen.
+    assert _pairwise_expected(motor, ancestor_sha) is True
+    assert _pairwise_expected(motor, lateral_sha) is False
+
+
+def test_066q_ancestria_enruta_por_repo_de_origen(tmp_path):
+    """Anti-regression WOT-2026-062d (commit a7fbd18): la ancestria se computa
+    en el repo que TIENE el objeto, nunca en un repo fijo.
+
+    WOT-2026-900b (destinos/*) tiene su commit SOLO en el destino; el motor NO
+    lo contiene (verificado abajo con cat-file). Si se computara contra el
+    motor, git fallaria (objeto inexistente) y el resultado seria None, no
+    True. ROJO previo: sin enrutar -> None/False en lugar del True real."""
+    motor, ws, _anc, _lat, dest_only_sha = _real_git_workspace(tmp_path)
+    # Control del fixture: el commit NO existe en el motor (solo-en-destino).
+    missing = subprocess.run(
+        ["git", "-C", str(motor), "cat-file", "-e", f"{dest_only_sha}^{{commit}}"],
+        capture_output=True,
+    )
+    assert missing.returncode != 0, "el fixture debe ser solo-en-destino"
+
+    findings = _run_main_real_git(tmp_path, motor, ws)
+    b = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900b")
+    assert b["repo"] == "destino"
+    assert len(b["grep_commits"]) == 1, b["grep_commits"]
+    entry = b["grep_commits"][0]
+    assert entry["sha"] == dest_only_sha[:12]
+    assert entry["is_ancestor"] is True, (
+        f"commit solo-en-destino medido en el repo equivocado: {entry}"
+    )
+    assert entry["is_ancestor"] is _pairwise_expected(ws, entry["sha"])
+
+
+def test_066q_error_de_git_da_none_y_warning_nunca_false(tmp_path, monkeypatch):
+    """Un fallo de git (exit >= 2) produce `None` + warning: SIN VERDICTO, no
+    un False fabricado (el defecto original era mentir por omision; mentir por
+    afirmacion seria peor)."""
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    inner = _fake_run_factory(motor, ws)
+
+    def _broken_merge_base(cmd, cwd, timeout=120):
+        if "merge-base" in " ".join(str(c) for c in cmd):
+            return {
+                "cmd": cmd,
+                "exit_code": 128,
+                "stdout": "",
+                "stderr": "fatal: bad object",
+                "ok": False,
+            }
+        return inner(cmd, cwd, timeout)
+
+    monkeypatch.setattr(br, "_run", _broken_merge_base)
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    a = next(t for t in findings["tickets"] if t["ticket_id"] == "WOT-2026-900a")
+    assert len(a["grep_commits"]) == 1
+    entry = a["grep_commits"][0]
+    assert entry["is_ancestor"] is None, (
+        f"exit 128 debe dar None (sin veredicto), no {entry['is_ancestor']!r}"
+    )
+    assert any(
+        "WOT-2026-900a" in w and "ancestry" in w for w in findings["automatic_warnings"]
+    ), findings["automatic_warnings"]
+
+
+def test_066q_mutation_revert_ancestr_da_n_sobre_n_sin_veredicto(tmp_path, monkeypatch):
+    """MUTATION (DoD-3): revertir el fix -> N/N sin veredicto booleano.
+
+    Simula el revert en tiempo de ejecucion (`_signal_ancestry` -> None, la
+    forma exacta del recibo historico "139/139 None") y exige que el contador
+    del probe reporte el 100% como sin veredicto. Contra-partes: el test
+    `..._llevan_veredicto_booleano` reporta 0 con el fix presente -- la
+    causalidad queda aislada en las dos direcciones."""
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    monkeypatch.setattr(br, "_signal_ancestry", lambda sha, repo: None)
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    total, bad = _probe_no_verdict_count(findings)
+    assert total >= 1
+    assert bad == total, f"mutation: {bad}/{total} sin veredicto, se esperaba N/N"

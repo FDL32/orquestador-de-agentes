@@ -14,16 +14,20 @@ Before:
 During:
     - Parses the "## Vista rapida" table of the backlog (reusing the same
       extraction contract as scripts/check_backlog_contract.py). For each row whose
-      Estado is pending/deferred/completed-partial, emits three raw signal families
+      Estado is pending/deferred/completed-partial, emits four raw signal families
       run against the repo chosen BY SCOPE (motor/* -> motor; destinos/* -> destino;
       system|infra/* -> n/a, no forced grep):
         1. git log --all --fixed-strings --grep <TICKET_ID>  (closing commits)
         2. git ls-files <path> + git status --short <path>   (scope-file presence)
         3. git grep -n -i <term>                              (DoD-term hits; -i!)
+        4. git merge-base --is-ancestor <sha> HEAD            (ancestry of each
+           cited commit, computed IN the repo that holds it -- WOT-2026-066q)
     - Emits ONE repo-level last-run block per repo (motor + destino), NOT per ticket:
       last-run.json is per-repo (no ticket field), so a per-ticket copy would be
       misleading. `stale` compares tested_commit_sha against THAT repo's HEAD only.
     - Never mutates anything. Never emits a verdict/classification/evidence_label.
+      `is_ancestor` is a RAW git fact (like tracked/present/stale), NOT a
+      classification: LIKELY_DONE stays with the agent (WOT-2026-066q via (a)).
 
 After:
     - Output dir is immutable (refuses to overwrite; appends _NN if needed).
@@ -401,6 +405,31 @@ def _signal_commits(ticket_id: str, repo: Path) -> list[dict]:
     return out
 
 
+def _signal_ancestry(sha: str, repo: Path) -> bool | None:
+    """git merge-base --is-ancestor <sha> HEAD, run in the repo that HOLDS <sha>.
+
+    WOT-2026-066q (via (a)): a RAW git fact per cited commit, not a verdict --
+    the LIKELY_DONE judgment stays with the agent (docstring: NEVER classifies).
+
+    Before: ``repo`` is the ORIGIN repo of ``sha`` -- the very repo whose
+        ``git log --all`` listed it (routing by origin repo; WOT-2026-062d,
+        commit a7fbd18: checking a commit against a repo that lacks the object
+        reports "missing", which for a destino-only commit would be a lie).
+    During: one read-only ``git merge-base --is-ancestor <sha> HEAD`` via
+        ``_run`` (120s timeout; never raises -- OS errors become exit_code None).
+    After: True (exit 0), False (exit 1), or None on ANY other exit code
+        (git error/timeout/absent object) -- None means SIN VERDICTO; this
+        helper NEVER fabricates a False, because a missing verdict reported as
+        "not landed" is the exact lie the ticket exists to remove.
+    """
+    res = _run(["git", "merge-base", "--is-ancestor", sha, "HEAD"], repo)
+    if res["exit_code"] == 0:
+        return True
+    if res["exit_code"] == 1:
+        return False
+    return None
+
+
 # WOT-2026-080a: raices declaradas para normalizar `present` antes de
 # resolverla. Un path cosechado puede ser la ruta literal de la fila o solo su
 # basename partido de esa ruta; ambas formas deben dar el MISMO flag.
@@ -690,6 +719,21 @@ def _collect_all(  # noqa: C901
                 alternate_commits = _signal_commits(ticket_id, alternate_repo)
             all_commits = scoped_commits + alternate_commits
             record["grep_commits"] = scoped_commits
+            # WOT-2026-066q via (a): ancestry of every cited commit, computed IN
+            # the repo where git log found it (routing by origin repo; the
+            # forbidden surface of the ticket is computing it against a repo
+            # that lacks the object -- WOT-2026-062d, commit a7fbd18). Raw
+            # signal, not a classification. A git ERROR (exit >= 2) yields
+            # None (sin veredicto) plus a warning -- never a fabricated False.
+            for entry in record["grep_commits"]:
+                verdict = _signal_ancestry(entry["sha"], repo)
+                entry["is_ancestor"] = verdict
+                if verdict is None:
+                    warnings.append(
+                        f"{ticket_id}: ancestry not computable for {entry['sha']} "
+                        f"in repo {repo_label} (git merge-base failed); "
+                        "entry carries None"
+                    )
             record["commits_found"] = len(all_commits)
             # Track which repos were actually queried (for DoD-1).
             searched = [repo_label]
@@ -829,7 +873,8 @@ def main(argv: list[str] | None = None) -> int:
         "divergence_kinds": sorted({d["kind"] for d in divergences}),
         "limitation": (
             "Short-form blocker IDs (e.g. '028a' instead of 'WOT-2026-028a') "
-            "are not detected (backlog_reconcile.py:126-128)."
+            "are not detected (bind_ticket_prefix/_TICKET_ID_IN_CELL_RE "
+            "requires the full prefixed id; anchored by name, WOT-2026-066q)."
         ),
     }
 
