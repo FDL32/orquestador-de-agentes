@@ -409,8 +409,16 @@ def detect_oversized_ticket(content: str) -> list[ProseWarning]:
                 )
             )
 
-    # Contar fases
-    phase_count = len(re.findall(r"###\s*Fase\s+\d+", content))
+    # Contar fases: un work_plan real declara FASES/TAREAS con H3 numerados
+    # (`### 1.`, `### 2.`) bajo `## Fases` o `## Tareas`, no con el literal
+    # "Fase N" que usaban los fixtures de test pero ningun plan real.
+    phases_match = re.search(
+        r"##\s*(?:Fases|Tareas)\s*\n(.*?)(?=\n##\s|\Z)", content, re.DOTALL
+    )
+    if phases_match:
+        phase_count = len(re.findall(r"(?m)^\s*###\s+\d+[:.\s]", phases_match.group(1)))
+    else:
+        phase_count = 0
     if phase_count > 5:
         warnings.append(
             ProseWarning(

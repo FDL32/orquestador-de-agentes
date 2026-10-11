@@ -71,10 +71,10 @@ Criterio: `python scripts/validate_ticket_prose.py` sale con exit code 0.
 Validador standalone en `scripts/validate_ticket_prose.py` con 11 reglas de prosa + 1 estructural.
 
 ## Fases
-### Fase 1: validador de prosa
+### 1. validador de prosa
 - Archivos: `scripts/validate_ticket_prose.py`
 
-### Fase 2: integracion
+### 2. integracion
 - Archivos: `.agent/agent_controller.py`
 
 ## Files Likely Touched
@@ -105,12 +105,12 @@ El proposito de este plan es reforzar el sistema.
 
 
 ## Fases
-### Fase 1: hacer algo
-### Fase 2: optimizar cosas
-### Fase 3: varias fases mas
-### Fase 4: otra fase
-### Fase 5: fase cinco
-### Fase 6: fase seis
+### 1. hacer algo
+### 2. optimizar cosas
+### 3. varias fases mas
+### 4. otra fase
+### 5. fase cinco
+### 6. fase seis
 
 ## Files Likely Touched
 - `scripts/**/*.py`
@@ -439,8 +439,8 @@ class TestDetectOversizedTicket:
         assert warnings[0]["rule_id"] == "TP-PROSE-09"
 
     def test_detects_many_phases(self):
-        """Detecta ticket con mas de 5 fases."""
-        phases = "\n".join([f"### Fase {i}: descripcion" for i in range(1, 8)])
+        """Detecta ticket con mas de 5 fases (formato real: numeradas)."""
+        phases = "\n".join([f"### {i}. descripcion" for i in range(1, 8)])
         content = f"""## Fases
 {phases}
 """
