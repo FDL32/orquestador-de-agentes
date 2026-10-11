@@ -7257,6 +7257,47 @@ def test_058y_lens_declares_destino_scope(profile_name, tmp_path):
 
 @pytest.mark.parametrize(
     "profile_name",
+    [
+        "challenger_kilo_deepseek_flash",
+        "challenger_kilo_qwen",
+        "challenger_kilo_gemma",
+        "challenger_kilo_qwen_flash",
+        "challenger_kilo_glm_flash",
+        "challenger_kilo_mimo_flash",
+    ],
+)
+def test_095a_kilo_profile_declares_agent_channel_and_resolves_cwd(
+    profile_name, tmp_path
+):
+    """WOT-2026-095a (DoD, ultimo item pendiente): cada perfil `nan`-con-
+    filesystem via Kilo (`backend: kilo`, dado de alta en WOT-2026-089n,
+    `cce498d`) declara `channel: agent` y `resolve_lens_repo_root` le resuelve
+    el `cwd` al destino -- mismo mecanismo ya probado para
+    `challenger_opencode_glm_5_2`/`proposer_claude` arriba, nunca ejercido
+    para estos 6 perfiles especificamente. Mutation: si `repo_scope` se
+    retirase de un perfil `kilo` concreto, SOLO su parametrizacion cae
+    (leccion 021u, misma forma que test_058y_lens_declares_destino_scope).
+    """
+    config = _real_agents_config()
+    profile = config["ensemble_profiles"][profile_name]
+    assert profile.get("channel") == "agent", (
+        f"{profile_name} debe declarar channel: agent; hoy declara "
+        f"{profile.get('channel')!r}"
+    )
+    assert profile.get("repo_scope") == "destino", (
+        f"{profile_name} debe declarar repo_scope: destino; hoy declara "
+        f"{profile.get('repo_scope')!r}"
+    )
+    destino = tmp_path / "repo_destino"
+    destino.mkdir()
+    backend_cfg = config.get("backends", {}).get(profile.get("backend", ""), {})
+    cwd, scope = ed.resolve_lens_repo_root(profile, backend_cfg, destino)
+    assert scope == "destino", (cwd, scope)
+    assert cwd == str(destino.resolve()), (cwd, scope)
+
+
+@pytest.mark.parametrize(
+    "profile_name",
     ["challenger_opencode_glm_5_2", "proposer_claude"],
 )
 def test_058y_scope_grants_reading_never_writing(profile_name):
