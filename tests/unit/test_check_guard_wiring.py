@@ -87,6 +87,13 @@ EXPECTED_WIRED_REAL = {
     # archive_arranques.py) para que el AST lo alcance: `find_guards` solo censa
     # stems con prefijo check_/validate_/guard_ (check_guard_wiring.py:139-140).
     "check_arranques_index",
+    # WOT-2026-055s: cableado via import ESTATICO en
+    # prepush_check.py::run_arranque_material_paths_check (closeout, BLOQUEANTE --
+    # censo de la raiz al nacer: 0 ficheros gobernados, sin deuda historica que
+    # amnistiar). Detecta material ARRANQUE_/ENCARGO_/PROPUESTA_/INCIDENT_ mal
+    # colocado en la RAIZ del destino (DoD (c); control negativo DoD (d) sobre
+    # reports/ fijado en tests/unit/test_check_arranque_material_paths.py).
+    "check_arranque_material_paths",
     # WOT-2026-054g: cableado via import ESTATICO en
     # prepush_check.py::run_operational_artifact_paths_check (closeout,
     # BLOQUEANTE -- el baseline absorbe la deuda historica medida, 121

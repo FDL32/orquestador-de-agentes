@@ -2127,6 +2127,47 @@ def run_operational_artifact_paths_check(project_root: Path) -> CheckResult:
     return CheckResult(name=name, passed=(code == 0), output=output, is_blocking=True)
 
 
+def run_arranque_material_paths_check(project_root: Path) -> CheckResult:
+    """WOT-2026-055s: material de arranque (ARRANQUE_/ENCARGO_/PROPUESTA_/INCIDENT_)
+    fuera de la ruta declarada `orchestrator_pipeline/arranques/` en la RAIZ del
+    destino.
+
+    Por que AQUI. Antes de este guard, un `ARRANQUE_*` en la raiz y otro en la
+    ruta declarada salian IGUAL por `git status` (`??` los dos): convencion, no
+    barrera. El cierre es el unico camino que corre solo Y conoce el
+    `project_root` del destino -- mismo argumento que `run_arranques_index_check`
+    y `run_operational_artifact_paths_check`. El import es ESTATICO para que
+    `check_guard_wiring` alcance este call-site y cuente
+    `check_arranque_material_paths` como WIRED (precedente literal:
+    `run_operational_artifact_paths_check`, WOT-2026-054g). Retirar la funcion
+    entera lo pone UNWIRED y `check_guard_wiring` lo caza.
+
+    BLOQUEANTE (is_blocking=True): el censo al nacer (re-medido 2026-10-11) es
+    0 ficheros gobernados en la raiz del destino, asi que no hay deuda
+    historica que amnistiar a WARN, igual que sus dos primos bloqueantes
+    vecinos.
+
+    Ambito: SOLO el nivel raiz del destino (no recursivo) -- la ruta declarada
+    y `orchestrator_pipeline/reports/*` (Forbidden Surface con su propia
+    allowlist) quedan FUERA por diseno; ver el docstring del modulo guard.
+
+    Before: project_root resoluble a la raiz del destino.
+    During: import ESTATICO de `audit` + lectura read-only del nivel raiz.
+    After: passed=True con el denominador publicado si la raiz esta limpia;
+        passed=False (BLOQUEANTE) listando los ficheros mal colocados. La raiz
+        inexistente tambien falla (fail-closed del guard, sin verde mudo).
+    """
+    name = "Arranque Material Paths (WOT-2026-055s)"
+    try:
+        from scripts.check_arranque_material_paths import audit
+    except ImportError:
+        from check_arranque_material_paths import audit  # type: ignore[no-redef]
+
+    code, lines = audit(project_root)
+    output = "\n".join(lines)
+    return CheckResult(name=name, passed=(code == 0), output=output, is_blocking=True)
+
+
 def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     """WOT-2026-024t (superficie 2): a handoff's STATE section must not embed a SHA
     (it rots the instant HEAD moves). WARN by default (is_blocking=False), FAIL when
@@ -3091,6 +3132,15 @@ def run_preflight_check(
         # baseline absorbe la deuda historica medida, asi que no hay falso-rojo
         # heredado que amnistiar; solo falla un rol NUEVO sin resolver).
         results.append(run_operational_artifact_paths_check(project_root))
+        # 6m-quinquies. Arranque Material Paths (WOT-2026-055s; BLOQUEANTE -- el
+        # censo de la raiz al nacer es 0 ficheros gobernados, sin deuda historica
+        # que amnistiar). Cierra el DoD (c): hasta aqui un ARRANQUE_* en la RAIZ
+        # y otro en orchestrator_pipeline/arranques/ salian IGUAL por git status
+        # (`??` los dos) -- convencion, no barrera. Ambito SOLO raiz (no
+        # recursivo); reports/ es Forbidden Surface con su propia allowlist.
+        # Import ESTATICO en el run_ -> check_guard_wiring lo cuenta WIRED
+        # (precedente run_arranques_index_check / run_operational_artifact_paths_check).
+        results.append(run_arranque_material_paths_check(project_root))
         # 6n. DEC Receipt Barrier (WOT-2026-042x; la norma de 042w cableada).
         # Va en closeout y no en pre-commit porque su superficie son los buzones
         # de fichas del DESTINO, que este es el unico camino auto-ejecutable que
