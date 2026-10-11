@@ -239,3 +239,76 @@ def test_resolve_motor_root_arg_branch_none_when_missing(tmp_path):
     """Arg branch returns None when the supplied path does not exist."""
     result = cdr._resolve_motor_root(tmp_path, str(tmp_path / "nonexistent_motor"))
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-062i — _count_warnings + output reports real error/warning counts
+# ---------------------------------------------------------------------------
+
+
+def test_count_warnings_empty(tmp_path):
+    assert cdr._count_warnings({"warnings": {}}) == 0
+
+
+def test_count_warnings_with_items(tmp_path):
+    data = {"warnings": {"style": ["line1", "line2"], "doc": ["line3"]}}
+    assert cdr._count_warnings(data) == 3
+
+
+def test_count_warnings_mixed_categories(tmp_path):
+    data = {"warnings": {"empty": [], "style": ["line1"]}}
+    assert cdr._count_warnings(data) == 1
+
+
+def test_zero_errors_zero_warnings_shows_real_counts(tmp_path, capsys):
+    project = _make_project(tmp_path, "COMPLETED")
+    validate_data = _validate_response(errors={})
+    with _stub_validate(0, validate_data):
+        rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "[OK] validate 0 errors / 0 warnings" in captured.out
+    assert "0/0" not in captured.out
+
+
+def test_zero_errors_n_warnings_shows_real_counts(tmp_path, capsys):
+    """With warnings present, output must NOT say 0/0."""
+    project = _make_project(tmp_path, "COMPLETED")
+    validate_data = _validate_response(
+        errors={}, warnings={"style": ["line1", "line2"]}
+    )
+    with _stub_validate(0, validate_data):
+        rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "[OK] validate 0 errors / 2 warnings" in captured.out
+    assert "0/0" not in captured.out
+
+
+def test_approved_with_warnings_shows_real_counts(tmp_path, capsys):
+    """APPROVED status with warnings must also show real counts."""
+    project = _make_project(tmp_path, "APPROVED")
+    validate_data = _validate_response(errors={}, warnings={"doc": ["line1"]})
+    with _stub_validate(0, validate_data):
+        rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "0 errors / 1 warnings" in captured.out
+    assert "0/0" not in captured.out
+
+
+def test_mutation_zero_warnings_to_nonzero_fails(tmp_path, capsys):
+    """MUTATION: restore old 0/0 text — test fails because output contains '0/0'.
+
+    This is the mutation-effective assertion: if production reverts to
+    embedding '0/0' when warnings > 0, the assertion below FAILS.
+    """
+    project = _make_project(tmp_path, "COMPLETED")
+    validate_data = _validate_response(
+        errors={}, warnings={"style": ["line1", "line2"]}
+    )
+    with _stub_validate(0, validate_data):
+        rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "0/0" not in captured.out
