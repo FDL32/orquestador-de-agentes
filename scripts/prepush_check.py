@@ -1747,6 +1747,23 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
     que pasa como `[OK]` a secas es indistinguible de un gate cumplido, que es
     justo lo que documenta el docstring de `CheckResult`.
 
+    WOT-2026-055p: declarar que VARIOS commits pertenecen al MISMO gobierno (un
+    vuelo con N commits) NO necesita mecanismo nuevo -- el `loop=<id>` repetido
+    YA agrupa, cada commit sigue exigiendo su PROPIA ronda real (nunca se
+    comparte UNA ronda entre varios commits; eso se propuso y se RECHAZO en
+    DESIGN_REVIEW, 2026-10-11, por permitir acreditar commits sin revision real).
+    Ejemplo de `loop_execution_targets.txt` para un vuelo de 3 commits del mismo
+    gobierno L800 (cada linea exige su propio fan-out, visto en el reporte como
+    "grupo L800: 3 commit(s)"):
+    ```
+    abc1234 code loop=L800
+    def5678 code loop=L800
+    9876543 documentation loop=L800
+    ```
+    El reporte VERDE agrupa por `loop_id` via `summarize_loop_groups` (puro
+    formateo, nunca decide ok/not-ok -- esa decision la toma
+    `_loop_accreditation_failures` sin conocer esta funcion).
+
     Before: project_root resoluble.
     During: lee el fichero de targets (si existe) y corre el guard sobre el
         scorecard + emitted_nonces del destino. Read-only.
@@ -1832,10 +1849,24 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             ),
             is_blocking=True,
         )
+    try:
+        from scripts.check_loop_execution import summarize_loop_groups
+    except ImportError:
+        from check_loop_execution import (  # type: ignore[no-redef]
+            summarize_loop_groups,
+        )
+    groups = summarize_loop_groups(commit_shas, per_commit_loop)
+    group_lines = [
+        f"  - grupo {loop_key or '(sin loop_id)'}: {len(shas)} commit(s) {shas}"
+        for loop_key, shas in groups.items()
+    ]
     return CheckResult(
         name=name,
         passed=True,
-        output=f"{len(commit_shas)} commit(s) con fan-out de gobierno ejecutado.",
+        output=(
+            f"{len(commit_shas)} commit(s) con fan-out de gobierno ejecutado.\n"
+            + "\n".join(group_lines)
+        ),
         is_blocking=False,
     )
 

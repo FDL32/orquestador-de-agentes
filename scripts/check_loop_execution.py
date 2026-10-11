@@ -603,6 +603,41 @@ def audit_commit(
     }
 
 
+def summarize_loop_groups(
+    commit_shas: list[str], per_commit_loop: dict[str, str]
+) -> dict[str, list[str]]:
+    """WOT-2026-055p: agrupa commits de `loop_execution_targets.txt` por su
+    `loop=<id>` compartido, PARA REPORTAR -- nunca para decidir acreditacion.
+
+    Historia (DESIGN_REVIEW, 2026-10-11): una v1 de este ticket proponia un
+    nonce compartido que acreditara VARIOS commits con UNA sola ronda real,
+    descartada tras bucle adversarial (Codex RECHAZA, qwen3.6 APRUEBA CON
+    CAMBIOS) por permitir acreditar commits SIN que ninguna lente revisara su
+    contenido -- el nonce compartido conectaba un commit revisado con otros
+    que no lo estaban. El `loop_id` compartido en `_parse_loop_execution_targets`
+    YA ACREDITA cada commit por separado (cada uno exige su propia ronda con
+    `commit_sha` exacto, intacto en `structurally_valid_rounds`); esta funcion
+    SOLO agrupa el TEXTO del reporte agregado para que un humano lea "grupo
+    L800: 3 commits" en vez de 3 lineas sueltas sin relacion visible.
+
+    Before: `commit_shas` es la lista en el orden del fichero de targets;
+        `per_commit_loop` es el mapeo sha->loop_id de
+        `_parse_loop_execution_targets` (puede faltar un sha si no declaro
+        `loop=`).
+    During: agrupa preservando el orden de PRIMERA aparicion, tanto de grupos
+        como de commits dentro de cada grupo. Los commits SIN `loop_id`
+        declarado van bajo la clave `None` (sin agrupar, cada uno solo).
+    After: `{loop_id_o_None: [shas en orden]}`. No lee disco, no decide
+        ok/not-ok de ningun commit -- es puro formateo de lo ya calculado por
+        `_loop_accreditation_failures`.
+    """
+    groups: dict[str, list[str]] = {}
+    for sha in commit_shas:
+        key = per_commit_loop.get(sha) or ""
+        groups.setdefault(key, []).append(sha)
+    return groups
+
+
 def audit(
     project_root: Path,
     *,

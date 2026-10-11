@@ -1411,3 +1411,65 @@ def test_088b_cli_de_produccion_bloquea_y_tras_remapear_pasa(tmp_path):
     passed = _cli(new)
     assert passed.returncode == 0, passed.stdout + passed.stderr
     assert "4/4" in passed.stdout
+
+
+# --------------------------------------------------------------------- WOT-2026-055p
+class TestSummarizeLoopGroups:
+    """`summarize_loop_groups` agrupa commits de targets por loop_id compartido,
+    PARA REPORTAR -- nunca decide acreditacion (ver docstring del modulo)."""
+
+    def test_groups_by_shared_loop_id_in_order(self):
+        shas = ["a", "b", "c"]
+        per_commit_loop = {"a": "L800", "b": "L800", "c": "L900"}
+        groups = cle.summarize_loop_groups(shas, per_commit_loop)
+        assert groups == {"L800": ["a", "b"], "L900": ["c"]}
+
+    def test_commits_without_loop_id_group_under_empty_key(self):
+        shas = ["a", "b"]
+        groups = cle.summarize_loop_groups(shas, {})
+        assert groups == {"": ["a", "b"]}
+
+    def test_mixed_grouped_and_ungrouped(self):
+        shas = ["a", "b", "c"]
+        per_commit_loop = {"a": "L800"}
+        groups = cle.summarize_loop_groups(shas, per_commit_loop)
+        assert groups == {"L800": ["a"], "": ["b", "c"]}
+
+    def test_preserves_first_appearance_order_of_groups(self):
+        shas = ["z", "a", "y"]
+        per_commit_loop = {"z": "L900", "a": "L800", "y": "L900"}
+        groups = cle.summarize_loop_groups(shas, per_commit_loop)
+        assert list(groups.keys()) == ["L900", "L800"]
+        assert groups["L900"] == ["z", "y"]
+
+    def test_mutation_breaking_grouping_never_changes_accreditation_verdict(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """DoD (3): mutar el agrupador (reportar TODO bajo una sola clave falsa)
+        no debe cambiar NINGUN veredicto ok/not-ok -- solo el TEXTO del reporte.
+        Lo que decide acreditacion es `_loop_accreditation_failures`
+        (prepush_check.py), que nunca llama a esta funcion."""
+        shas = ["a", "b", "c"]
+        per_commit_loop = {"a": "L800", "b": "L800", "c": "L900"}
+
+        real = cle.summarize_loop_groups(shas, per_commit_loop)
+        assert real != {"MUTATED": shas}  # el agrupador real no colapsa en 1
+
+        def _mutated(_shas, _loop):
+            return {"MUTATED": list(_shas)}
+
+        monkeypatch.setattr(cle, "summarize_loop_groups", _mutated)
+        mutated = cle.summarize_loop_groups(shas, per_commit_loop)
+        assert mutated == {"MUTATED": shas}
+        # la mutacion cambia el agrupamiento (rojo esperado para ESTA funcion)...
+        assert mutated != real
+        # ...pero `audit_commit`/`audit` (los que SI deciden) no importan ni
+        # llaman a `summarize_loop_groups` en absoluto -- verificado por grep,
+        # no por ejecucion (no hay fixture de scorecard aqui): la funcion de
+        # acreditacion real vive en otro modulo y no referencia este nombre.
+        import inspect
+
+        audit_src = inspect.getsource(cle.audit)
+        audit_commit_src = inspect.getsource(cle.audit_commit)
+        assert "summarize_loop_groups" not in audit_src
+        assert "summarize_loop_groups" not in audit_commit_src
