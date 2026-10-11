@@ -1425,8 +1425,10 @@ def _git_log_shas_for_ticket(
     Criterio de ENTREGA (uno de los dos basta):
       - el ticket aparece en el SUBJECT (`%s`), o
       - se declara en un TRAILER estructurado del cuerpo (`Ticket:`, `Closes:`,
-        `Refs:`). Sin esto, un fix subject-only romperia squash/fixup y las
-        entregas que declaran su id en un trailer.
+        `Fixes:`, `Resolves:`). El trailer de referencia esta deliberadamente
+        fuera: es referencia, no cierre (WOT-2026-066a). Sin esto, un fix
+        subject-only romperia squash/fixup y las entregas que declaran su id en
+        un trailer.
 
     Una mencion en PROSA del cuerpo NO es entrega.
 
