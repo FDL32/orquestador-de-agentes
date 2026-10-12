@@ -407,7 +407,7 @@ prompts paralelos si ya existe una superficie del motor para ese rol.
 | Implementacion | BUILDER | `<MOTOR_ROOT>/prompts/orchestrator_launch_builder.md` | `<MOTOR_ROOT>/skills/builder-implement-from-plan/SKILL.md`, `<MOTOR_ROOT>/skills/builder-run-quality-gates/SKILL.md`, `<MOTOR_ROOT>/skills/builder-self-audit/SKILL.md` | gates del plan, `python <MOTOR_ROOT>/scripts/run_pytest_safe.py` (con `AGENT_PROJECT_ROOT=.` y `cwd=<repo_destino>`), `ruff`, `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff`, `--mark-ready` |
 | Review 1 | MANAGER | `<MOTOR_ROOT>/prompts/manager_review.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/manager-review-implementation/SKILL.md` | `git show`, `git status`, tests focales, `python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root .` |
 | Review 2 | MANAGER adversarial | `<MOTOR_ROOT>/prompts/manager_review.md`, `<MOTOR_ROOT>/prompts/audit_agent_output.md` | `<MOTOR_ROOT>/skills/manager-review-implementation/SKILL.md`, `<MOTOR_ROOT>/skills/builder-self-audit/SKILL.md` como input critico | buscar counterexamples en diff real, bus, scope y gates |
-| Cierre | ORQUESTADOR | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/orchestrator_session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/manager-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .` |
+| Cierre | ORQUESTADOR | `<MOTOR_ROOT>/prompts/orchestrator_pipeline.md`, `<MOTOR_ROOT>/prompts/orchestrator_session_close_chat.md` | `<MOTOR_ROOT>/skills/session-close-observations/SKILL.md`, `<MOTOR_ROOT>/skills/manager-session-closeout/SKILL.md`, `<MOTOR_ROOT>/skills/memory-consolidate/SKILL.md` si hay aprendizaje reusable | `python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply` with `AGENT_PROJECT_ROOT=<repo_destino>`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --dry-run --project-root .`, `python <MOTOR_ROOT>/.agent/agent_controller.py --session-close --project-root .` |
 
 Herramientas de auditoria complementarias:
 
@@ -908,7 +908,7 @@ En cierre:
    memoria/proceso:
 
 ```powershell
-python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .
+AGENT_PROJECT_ROOT=. python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply
 ```
 
 6. Validar:
@@ -1166,9 +1166,9 @@ no sustituye el cierre normal del Builder ni del Manager.
 
 6. Consolidar memoria cuando haya aprendizajes reusable:
 
-```powershell
-python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply --project-root .
-```
+    ```powershell
+    AGENT_PROJECT_ROOT=. python <MOTOR_ROOT>/scripts/memory_consolidate.py --apply
+    ```
 
    Si el cierre genera artefactos adicionales reutiles, agruparlos tambien en
    `DESTINO_ROOT/orchestrator_pipeline/session_close/`, por ejemplo:
