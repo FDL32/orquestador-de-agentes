@@ -2866,6 +2866,23 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
             "enlace por archivos reales (o mueve lo que esconda al canonico)."
         )
 
+    # WOT-2026-068n: depositos con forma de ficha SIN sufijo `.tickets.md` en el
+    # canonico. Misma doctrina que dir_links (BA10): se nombra en AMBAS ramas
+    # no-bloqueantes o no se nombra en la que corre sola. WARN, jamas gate (D4:
+    # deuda preexistente en destinos reales no secuestra el push).
+    ficha_shaped = report.get("ficha_shaped_support", [])
+    fs_nota = ""
+    if ficha_shaped:
+        fs_detalle = "; ".join(
+            f"{fs['path']} -> renombrar a {fs['renombrar_a']}"
+            for fs in ficha_shaped[:4]
+        )
+        fs_nota = (
+            f" | WARN {len(ficha_shaped)} deposito(s) con forma de ficha SIN sufijo "
+            f"`.tickets.md` en el canonico (el glob del Bloque 8.bis no los ve): "
+            f"{fs_detalle}. Renombra, fusiona o declara nota con motivo (WOT-2026-068n)."
+        )
+
     pending = report.get("pending_count", 0)
     if pending:
         oldest = report["pending"][0]
@@ -2878,16 +2895,17 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
                 "Bloque 8.bis + `check_inbox_drainage.py --mark-drained` (mismo guard). "
                 "No bloquea: registrar no puede bloquear el cierre que lo permite."
                 + dl_nota
+                + fs_nota
             ),
             is_blocking=False,
         )
 
     return CheckResult(
         name=name,
-        passed=not dir_links,
+        passed=not dir_links and not ficha_shaped,
         output=(
             "inbox canonico sin fichas pendientes; sin estrays "
-            "(SKIP nombrado si estaba vacio)" + dl_nota
+            "(SKIP nombrado si estaba vacio)" + dl_nota + fs_nota
         ),
         is_blocking=False,
     )

@@ -45,6 +45,24 @@ secuestraria cualquier push por deuda ajena al ticket que empuja. El asiento pub
 `fused_to`; los asientos que registran drenaje SIN id de fusion se nombran porque no
 cierran la obligacion residual de vinculacion que los sobres declaran.
 
+Tercera forma del mismo defecto (WOT-2026-068n): un deposito en el canonico SIN el
+sufijo `.tickets.md` no lo ve NINGUN consumidor (el glob del Bloque 8.bis) y el
+reporte lo mezclaba con el material de apoyo INFO dicendo "no renombrar" -- peor que
+silencio: instruccion equivocada. Medido 2026-09-13: 9 ficheros sin sufijo, el mas
+antiguo 45 dias; `TICKET_CONTRACT_WOT-2026-061a` (FROZEN-READY) espero 9 dias y solo
+se fusiono por coincidencia. El aviso es POSITIVO por tokens de ficha DECLARADOS
+(`FP-<fecha>`, `TICKET_CONTRACT_*`, id canonico de ticket en el nombre), NO una
+allowlist de notas: README/FUSIONES-/INCIDENTE-/CONTEXTO- no llevan ninguno de esos
+tokens y quedan en INFO; los reclamos declarados (`.claim.md`, README del buzon:
+"nunca se confunde con una ficha") quedan fuera por formato. WARN y NUNCA bloquea
+(misma doctrina D4 que las huerfanas: deuda preexistente en destinos reales). LIMITE
+DECLARADO: un deposito mal nombrado sin NINGUN token de ficha (p.ej. el caso medido
+`ESCALADO-2026-08-06-crear-texto-llm`, que violo el formato FP- de
+escalate_to_motor.md) es indistinguible por NOMBRE de una nota (`FUSIONES-20260808`
+lleva la misma forma <PALABRA>-<fecha>); separarlo exigiria una allowlist de notas
+que nadie ha definido -- la condicion de CONTRACT_GAP del contrato -- o leer
+contenido, fuera de alcance. Queda declarado, no resuelto.
+
 Before:  `--project-root <destino>` (ARGUMENTO OBLIGATORIO: el guard NO resuelve la
          topologia por su cuenta -- stop heredado del contrato 042x). El canonico
          puede existir o no; las operaciones sobre fichas exigen que exista.
@@ -103,6 +121,62 @@ _PREFIX = "[inbox-drainage]"
 # bus `(?:WP|WT|[A-Z]{3})-\d{4}-...`): prefijo 2-3 mayusculas, ano, numero y sufijo
 # de subfase opcional. Solo se exige para --fused-to (trazabilidad del ledger).
 _FUSED_TO_RE = re.compile(r"[A-Z]{2,3}-\d{4}-\d{1,3}[A-Za-z]?")
+
+# WOT-2026-068n: tokens de FICHA DECLARADOS, base del aviso de deposito sin sufijo.
+# Positivo por forma declarada, NO allowlist de notas:
+#   - `FP-<8 digitos>`: formato de ficha del README del buzon y de
+#     prompts/escalate_to_motor.md (`FP-<YYYYMMDD>-...`).
+#   - prefijo `TICKET_CONTRACT_`: patron de deposito de contrato suelto
+#     (check_contract_backlog_reconcile.py `_CONTRACT_FILE_PATTERN`).
+#   - id canonico de ticket EN el nombre: la MISMA forma que `_FUSED_TO_RE`
+#     valida ya en este modulo, con contorno no-alfabetico para que
+#     `FUSIONES-20260808` ("NES-2026" precedido de O) o `INCIDENTE-20260828`
+#     ("TE-2026" precedido de N) NO casen: el lookbehind bloquea cualquier
+#     corrida de letras mayor de 3.
+_FICHA_FP_RE = re.compile(r"FP-\d{8}")
+_TICKET_ID_IN_NAME_RE = re.compile(
+    r"(?<![A-Za-z])[A-Z]{2,3}-\d{4}-\d{1,3}[A-Za-z]?(?![A-Za-z])"
+)
+_CLAIM_SUFFIX = ".claim.md"
+
+
+def _ficha_shaped_name(name: str) -> bool:
+    """True si un NO-ficha del canonico lleva tokens de ficha declarados (068n).
+
+    Before: nombre base de un archivo hijo directo del canonico que ya se clasifico
+    como no-ficha (no casefold-termina en `.tickets.md`).
+    During: tres comprobaciones puramente lexicas, sin I/O y sin allowlist: (1) los
+    reclamos declarados (`.claim.md`, formato README del buzon) quedan fuera SIEMPRE
+    por formato -- un reclamo puede citar un WOT-id en su nombre legitimamente; (2)
+    el stem con `FP-<8d>` inicial o prefijo `TICKET_CONTRACT_` es deposito declarado;
+    (3) un id canonico acotado dentro del stem (misma forma que `--fused-to`).
+    After: bool. Un True NO declara que ES una ficha: dispara el aviso WARN para que
+    el closer decida (fusionar, renombrar o declarar nota con motivo) -- el defecto
+    del ticket era que nota deliberada y ficha perdida se veian IGUAL.
+    """
+    lowered = name.lower()
+    if lowered.endswith(TICKET_SUFFIX):
+        return False  # ya es ficha: la gobierna la tricotomia, no este aviso
+    if lowered.endswith(_CLAIM_SUFFIX):
+        return False  # reclamo declarado (README del buzon): nunca es ficha
+    stem = name[: -len(".md")] if lowered.endswith(".md") else name
+    if _FICHA_FP_RE.match(stem):
+        return True
+    if stem.startswith("TICKET_CONTRACT_"):
+        return True
+    return bool(_TICKET_ID_IN_NAME_RE.search(stem))
+
+
+def _rename_hint(name: str) -> str:
+    """Nombre destino del aviso: mismo nombre con el sufijo `.tickets.md` puesto.
+
+    Un `<x>.md` pierde esa extension al ganar la de ficha (`FP-x.md` ->
+    `FP-x.tickets.md`); un nombre sin extension la recibe appendida. El contenido
+    no se toca: renombrar, nunca reescribir.
+    """
+    if name.lower().endswith(".md"):
+        return name[: -len(".md")] + TICKET_SUFFIX
+    return name + TICKET_SUFFIX
 
 
 def _dir_is_untraversed_link(dpath: Path) -> bool:
@@ -356,7 +430,9 @@ def classify_inbox(project_root: Path) -> dict:
     Before: project_root Path. During: sin escribeura. After: dict con claves
     pending (lista de{name,age_days}), pending_count, drained_count, strays
     (lista de dicts con path y diagnostic), support (nombres no-ficha del
-    canonico y del legacy), canonical_exists, y el censo terminal de EJE-1
+    canonico y del legacy), ficha_shaped_support (068n: subset de support con
+    tokens de ficha declarados, con name/path/age_days/renombrar_a),
+    canonical_exists, y el censo terminal de EJE-1
     (drained_terminal_count / drained_with_seat_count /
     drained_without_seat_count / drained_without_seat + ledger_seats /
     ledger_seats_without_fused_to).
@@ -391,14 +467,30 @@ def classify_inbox(project_root: Path) -> dict:
         strays.append({"path": str(rel), "basename": rel.name, "motivo_extra": motivo})
 
     support: list[str] = []
+    ficha_shaped: list[dict] = []
     if canon.is_dir():
-        support.extend(
-            sorted(
-                p.name
-                for p in canon.iterdir()
-                if p.is_file() and not _is_ticket_name(p.name)
+        for p in sorted(
+            (q for q in canon.iterdir() if q.is_file() and not _is_ticket_name(q.name)),
+            key=lambda q: q.name,
+        ):
+            support.append(p.name)
+            if not _ficha_shaped_name(p.name):
+                continue  # material de apoyo declarado: INFO, no renombrar
+            st = p.stat()
+            age_days = max(
+                0, (now - datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)).days
             )
-        )
+            ficha_shaped.append(
+                {
+                    "name": p.name,
+                    "path": str(canon_rel / p.name),
+                    "age_days": age_days,
+                    # nombre destino pelado (no ruta): el consumidor lo une a la
+                    # ruta del canonico donde la necesite (misma convencion que
+                    # `strays[].basename`)
+                    "renombrar_a": _rename_hint(p.name),
+                }
+            )
     legacy = project_root / LEGACY_INBOX_REL
     legacy_files = []
     if legacy.is_dir():
@@ -413,6 +505,7 @@ def classify_inbox(project_root: Path) -> dict:
         "dir_links": [{"path": str(p), "motivo": m} for p, m in dir_links],
         "legacy_inbox_files": legacy_files,
         "support_files_canonical": support,
+        "ficha_shaped_support": ficha_shaped,
         **_drained_seat_report(project_root),
     }
 
@@ -430,7 +523,45 @@ def _diagnostic(stray: dict, project_root: Path) -> str:
     return "\n".join(lines)
 
 
-def _census_lines(report: dict) -> list[str]:
+def _ficha_shaped_lines(report: dict, project_root: Path | None = None) -> list[str]:
+    """Lineas WARN FICHA-SIN-SUFIJO (WOT-2026-068n), extraidas de `_census_lines`.
+
+    Deposito con forma de ficha SIN el sufijo `.tickets.md` en el canonico: el glob
+    del consumidor (Bloque 8.bis) no lo ve, asi que sin aviso queda sin fusionar en
+    silencio (medido: 9 ficheros, hasta 45 dias). WARN y NUNCA bloquea (misma
+    doctrina D4 que las huerfanas DRENADA_SIN_ASIENTO: deuda preexistente en
+    destinos reales, un FAIL secuestraria el push de quien pasa por aqui). Cada
+    entrada lleva las TRES partes self-service: que fichero, ruta, como renombrarlo.
+    """
+    ficha_shaped = report.get("ficha_shaped_support", [])
+    if not ficha_shaped:
+        return []
+    lines = [
+        f"{_PREFIX} WARN FICHA-SIN-SUFIJO: {len(ficha_shaped)} archivo(s) del canonico "
+        "parecen fichas depositadas SIN el sufijo `.tickets.md`: el glob del consumidor "
+        "(Bloque 8.bis `*.tickets.md`) NO los ve y nadie los fusiona. Renombra, fusiona "
+        "o declara nota con motivo -- pero decide, no lo dejes invisible:"
+    ]
+    canon_abs = project_root / CANONICAL_INBOX_REL if project_root else None
+    for fs in ficha_shaped:
+        src = f"'{canon_abs / fs['name']}'" if canon_abs else f"'{fs['path']}'"
+        dst = (
+            f"'{canon_abs / fs['renombrar_a']}'"
+            if canon_abs
+            else f"'{fs['renombrar_a']}'"
+        )
+        lines.append(
+            f"  FICHA-SIN-SUFIJO: {fs['path']} ({fs['age_days']} dias)"
+            f"  [tokens de ficha declarados en el nombre]\n"
+            f"    como renombrarlo:  mv {src} {dst}"
+            "   (solo nombre, el contenido no se toca; si el destino existe, reconcilia a mano)\n"
+            f"    tras renombrar re-verificar: python scripts/check_inbox_drainage.py "
+            f"--project-root '{project_root}'   (el aviso desaparece y el glob la ve como pending)"
+        )
+    return lines
+
+
+def _census_lines(report: dict, project_root: Path | None = None) -> list[str]:
     lines = []
     if report["pending_count"]:
         oldest = report["pending"][0]
@@ -491,11 +622,20 @@ def _census_lines(report: dict) -> list[str]:
             f"{_PREFIX} INFO asiento -> `fused_to` publicado: "
             + "; ".join(f"{s['ficha']} -> {s['fused_to']}" for s in asientos_con_fused)
         )
-    if report["support_files_canonical"]:
+    # WOT-2026-068n: el INFO de material de apoyo queda para los no-fichas SIN
+    # tokens de ficha; los que los llevan bajan al WARN FICHA-SIN-SUFIJO de abajo
+    # (decirles "no renombrar" era la instruccion equivocada que el ticket cierra).
+    apoyo_sano = [
+        n
+        for n in report["support_files_canonical"]
+        if n not in {fs["name"] for fs in report.get("ficha_shaped_support", [])}
+    ]
+    if apoyo_sano:
         lines.append(
             f"{_PREFIX} INFO material de apoyo (no-fichas, 4 clases declaradas por la ficha AMPLIADA, no renombrar): "
-            + ", ".join(report["support_files_canonical"])
+            + ", ".join(apoyo_sano)
         )
+    lines.extend(_ficha_shaped_lines(report, project_root))
     if report["legacy_inbox_files"]:
         lines.append(
             f"{_PREFIX} INFO legacy buzon de fichas no-canonico 'orchestrator_pipeline/backlog_inbox/' con {len(report['legacy_inbox_files'])} archivo(s): "
@@ -516,7 +656,7 @@ def run_audit(project_root: Path, as_json: bool = False) -> int:
     human_stream = sys.stderr if as_json else sys.stdout
     if as_json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
-    for line in _census_lines(report):
+    for line in _census_lines(report, project_root):
         print(line, file=human_stream)
     if report["strays"]:
         print(
