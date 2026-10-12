@@ -22,6 +22,26 @@
   (PENDIENTE)"; el bloque cita ahora el comando real
   `scripts/backlog_triage_writer.py write --project-root <destino>`.
 
+# 2026-09-20 - WOT-2026-070v: session_closeout.py archiva el bus DESPUES de emitir SESSION_CLOSE_RECORDED
+
+> Entrada de CHANGELOG anadida retroactivamente el 2026-10-12 (consolidacion
+> pendiente del cierre original, WOT-2026-026t): el codigo y los tests
+> aterrizaron el 2026-09-20 (commits `fd6a06e` + `c162036`), pero la entrada
+> nunca se escribio en su momento.
+
+### Changed
+- `scripts/session_closeout.py::run_closeout` (WOT-2026-070v, commit `fd6a06e`):
+  `_step_archive_event_bus` se invoca ahora DESPUES de `_emit_session_close_recorded`,
+  nunca antes. Resuelve el eje (a) de WOT-2026-070u: antes del fix,
+  `archive_event_bus.py` archivaba el bus del ticket ANTES de que `run_closeout`
+  emitiera `SESSION_CLOSE_RECORDED` en el bus activo; `StateMachine.derive_state_from_events`
+  no reconoce ese tipo de evento y degradaba el ticket a `UNKNOWN` si algo
+  invocaba `sync_state_projection` despues. No se toco `bus/state_machine.py`
+  (eje b, descartado por riesgo real en `--reopen-terminal-ticket`).
+- `scripts/state_projection_probe.py::run_probe` (WOT-2026-070v, commit `c162036`):
+  lee tambien `archive/events.<ticket>.jsonl` para el ticket ya archivado,
+  cerrando el CONTRACT_GAP de "consumidor fuera de `run_closeout`".
+
 # 2026-07-21 - Vuelo FP-20260721 (3/4): barreras de batch/reconcile/review + 024h congelado
 
 ### Fixed
