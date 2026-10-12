@@ -196,6 +196,31 @@ extra_guards:
   builder_agent: scripts/builder_agent.py
 
 wired_via:
+  # WOT-2026-039k: guard de divergencia seed<->`.gitleaks.toml` (destino y raiz
+  # del motor). Su host es `install_agent_system.copy_gitleaks_config`: en cada
+  # `--install`/`--sync`, tras el no-clobber, importa el guard y WARNea nombrando
+  # las secciones estructurales ausentes (nunca clobber: la seccion local se
+  # conserva). El AST de 1-hop NO puede deducirlo porque `install_agent_system.py`
+  # NO esta en la frontera derivada de `self_running_paths` (no lo importa ningun
+  # host self-running; el instalador es un entrypoint manual, no un hook
+  # automatico). Por eso se declara aqui con probe, en vez de `known_unwired`:
+  # ese bloque es solo para deuda LEGACY y parir deuda NUEVA ahi es el abuso que
+  # la decision A7 (ficha de WOT-2026-026e) corrige.
+  check_gitleaks_seed_divergence: >-
+    scripts/install_agent_system.py:1368 (dentro de
+    _warn_gitleaks_seed_divergence: `from scripts.check_gitleaks_seed_divergence
+    import warn_on_seed_divergence`), llamado desde :1410 en
+    copy_gitleaks_config (rama no-clobber, la que corre en cada --install/--sync
+    sobre un destino que ya tiene su .gitleaks.toml). Probe: `python -c "from
+    pathlib import Path; import sys; sys.path.insert(0,'.'); from
+    scripts.check_gitleaks_seed_divergence import warn_on_seed_divergence;
+    r=warn_on_seed_divergence(Path('agent_system/templates/gitleaks.config.toml'),
+    Path('<destino>/.gitleaks.toml')); print(r['cause'], len(r['missing']))"` ->
+    `DIVERGENT 4` en un destino sin las secciones; `python
+    scripts/check_gitleaks_seed_divergence.py` sobre la raiz del motor -> `OK`
+    rc=0. MUTATION (DoD d): retirar un bloque del destino -> el guard lo NOMBRA
+    (rc=1) tras control de carga (el TOML mutado sigue parseando; un TOML roto
+    da rc=2, NO una deteccion).
   # WOT-2026-058v: guard preventivo de ARRANQUE. Su camino que corre solo es la
   # ejecucion del propio CLI: `python scripts/builder_agent.py
   # --flight-launch-context <ctx.json>` ejecuta main() y el guard corre como
