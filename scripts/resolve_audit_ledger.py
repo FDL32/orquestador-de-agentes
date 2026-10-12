@@ -114,6 +114,37 @@ def _compute_bytes_sha256(raw_bytes: bytes) -> str:
     return hashlib.sha256(raw_bytes).hexdigest()
 
 
+def _find_incoherent_condition_blocks(predicate: Any) -> list[dict[str, Any]]:
+    """Collect predicate blocks whose measurement contradicts their verdict.
+
+    WOT-2026-054l: a block that declares ``sha_match: false`` (the measurement)
+    next to ``cumple: true`` (the verdict) in the SAME object is a false green
+    -- the verdict refutes its own measurement. This walks the predicate
+    recursively (dicts and lists) and returns every such block.
+
+    Before: ``predicate`` may be any JSON value (dict, list, or scalar).
+    During: Recurses without mutating; no I/O.
+    After: Returns the list of offending dicts (empty when coherent). A block
+           only qualifies when ``sha_match`` is literally ``False`` AND
+           ``cumple`` is literally ``True`` -- absent or non-boolean fields do
+           not trigger.
+    """
+    hits: list[dict[str, Any]] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("sha_match") is False and node.get("cumple") is True:
+                hits.append(node)
+            for value in node.values():
+                _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(predicate)
+    return hits
+
+
 def _parse_report(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Parse a JSON report with utf-8-sig encoding. Returns (data, error)."""
     try:
@@ -292,6 +323,9 @@ def resolve_ledger(reports_dir: Path, subject_ts: str) -> LedgerResult:
     Returns:
         LedgerResult with status one of:
           - ORIGINAL: no events, original is current
+          - ORIGINAL_INCOHERENTE: no events AND the original's predicate
+            contains a block that declares sha_match=false with cumple=true
+            (a false green that no event has superseded)
           - SUPERSEDED: last valid event determines current state
           - INDETERMINADO: chain broken or invalid event encountered
           - NOT_FOUND: original report not found
@@ -327,6 +361,26 @@ def resolve_ledger(reports_dir: Path, subject_ts: str) -> LedgerResult:
             event_files.append((num, f))
 
     if not event_files:
+        # WOT-2026-054l: an original with NO superseding event that carries a
+        # self-contradictory predicate block (sha_match=false + cumple=true in
+        # the same object) must NOT be reported as a plain ORIGINAL. A silent
+        # ORIGINAL would launder the false green; the incoherence is surfaced
+        # as its own status. The check is scoped to chain_length == 0: when an
+        # event DOES supersede the original, that event already documented the
+        # condition and the chain path (SUPERSEDED) is authoritative.
+        incoherent = _find_incoherent_condition_blocks(original_data.get("predicate"))
+        if incoherent:
+            return LedgerResult(
+                status="ORIGINAL_INCOHERENTE",
+                original_path=original_path,
+                original_data=original_data,
+                chain_length=0,
+                errors=[
+                    "Original predicate is self-incoherent: "
+                    f"{len(incoherent)} block(s) declare sha_match=false "
+                    "with cumple=true in the same object"
+                ],
+            )
         return LedgerResult(
             status="ORIGINAL",
             original_path=original_path,
@@ -392,6 +446,14 @@ def main() -> None:
             for e in result.errors:
                 print(f"  - {e}")
 
+    # Exit code is the only machine-readable signal this CLI exposes. We keep
+    # the "resolved" set as ORIGINAL/SUPERSEDED, so ORIGINAL_INCOHERENTE exits
+    # 1 (fail-closed) DELIBERATELY: an incoherent original with no superseding
+    # event is a defect, not a normal state, and must not be laundered into a
+    # success. No consumer reads this exit code today (declared debt from the
+    # triage of WOT-2026-054l), so choosing fail-closed now is free and
+    # prevents a future gate from treating sha_match=false + cumple=true as
+    # green.
     sys.exit(0 if result.status in ("ORIGINAL", "SUPERSEDED") else 1)
 
 

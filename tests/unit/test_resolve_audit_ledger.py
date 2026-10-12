@@ -7,13 +7,17 @@ Tests the append-only ledger resolver for audit adjudications.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 
+import pytest
 from scripts.resolve_audit_ledger import (
     _compute_bytes_sha256,
     _compute_sha256,
     _extract_event_number,
     _extract_ts_from_filename,
+    _find_incoherent_condition_blocks,
     _parse_report,
     _validate_event,
     resolve_ledger,
@@ -602,3 +606,104 @@ class TestDoD:
         assert result2.status == "SUPERSEDED"
         assert result2.chain_length == 2
         assert result2.current_event_data["resulting_status"] == "APROBADO"
+
+
+# --- Tests: ORIGINAL_INCOHERENTE (WOT-2026-054l) ---
+
+
+_SUBJECT_TS = "20260810-2313"
+_SUBJECT_NAME = f"audit_autonomous_batch_{_SUBJECT_TS}.json"
+
+
+def _resolve_workspace_reports_dir() -> Path | None:
+    """Locate the WOT-2026-054l workspace reports dir holding the live fixture.
+
+    Before: The motor is portable; the destination reports dir is external to
+            it, so the real fixture is not guaranteed to exist.
+    During: Prefers AGENT_PROJECT_ROOT when set, then the sibling directory
+            literally named per the ticket. Read-only; no mutation.
+    After: Returns the reports dir when it holds the fixture, else None so the
+           caller can skip rather than assert against a missing artifact.
+    """
+    candidates: list[Path] = []
+    env_root = os.environ.get("AGENT_PROJECT_ROOT")
+    if env_root:
+        candidates.append(Path(env_root))
+    candidates.append(
+        Path(__file__).resolve().parents[2].parent / "orquestador_de_agentes_workspace"
+    )
+    for root in candidates:
+        reports = root / "orchestrator_pipeline" / "reports"
+        if (reports / _SUBJECT_NAME).exists():
+            return reports
+    return None
+
+
+class TestIncoherenceHelper:
+    def test_detects_false_green_in_nested_block(self) -> None:
+        predicate = {"suite_final_verde": {"sha_match": False, "cumple": True}}
+        hits = _find_incoherent_condition_blocks(predicate)
+        assert len(hits) == 1
+        assert hits[0]["sha_match"] is False
+
+    def test_concordant_block_not_flagged(self) -> None:
+        predicate = {"suite_final_verde": {"sha_match": True, "cumple": True}}
+        assert _find_incoherent_condition_blocks(predicate) == []
+
+    def test_absent_fields_not_flagged(self) -> None:
+        predicate = {"schema_valido": {"cumple": True, "command": "x"}}
+        assert _find_incoherent_condition_blocks(predicate) == []
+
+
+class TestOriginalIncoherente:
+    def test_original_without_events_is_incoherente_not_original(
+        self, tmp_path: Path
+    ) -> None:
+        """MUTATION (DoD c): the LIVE fixture, no events -> ORIGINAL_INCOHERENTE."""
+        reports = _resolve_workspace_reports_dir()
+        if reports is None:
+            pytest.skip("workspace fixture not present in this checkout")
+
+        shutil.copy(reports / _SUBJECT_NAME, tmp_path / _SUBJECT_NAME)
+
+        result = resolve_ledger(tmp_path, _SUBJECT_TS)
+        assert result.status == "ORIGINAL_INCOHERENTE"
+        assert result.status != "ORIGINAL"
+        assert result.chain_length == 0
+        assert result.errors
+
+    def test_original_with_event_is_superseded_control(self, tmp_path: Path) -> None:
+        """CONTROL: LIVE fixture + live event_1 -> SUPERSEDED; check does not fire."""
+        reports = _resolve_workspace_reports_dir()
+        if reports is None:
+            pytest.skip("workspace fixture not present in this checkout")
+
+        shutil.copy(reports / _SUBJECT_NAME, tmp_path / _SUBJECT_NAME)
+        event_name = f"audit_autonomous_batch_{_SUBJECT_TS}.event_1.json"
+        shutil.copy(reports / event_name, tmp_path / event_name)
+
+        result = resolve_ledger(tmp_path, _SUBJECT_TS)
+        assert result.status == "SUPERSEDED"
+        assert result.chain_length == 1
+        assert result.current_event_data["resulting_status"] == "CAMBIOS_NECESARIOS"
+
+    def test_synthetic_concordant_sha_match_true_stays_original(
+        self, tmp_path: Path
+    ) -> None:
+        """CONTROL NEGATIVO: sha_match=true + cumple=true -> ORIGINAL (no false positive)."""
+        report = _make_report(_SUBJECT_TS)
+        report["predicate"]["suite_final_verde"] = {"sha_match": True, "cumple": True}
+        _write_json(tmp_path / _SUBJECT_NAME, report)
+
+        result = resolve_ledger(tmp_path, _SUBJECT_TS)
+        assert result.status == "ORIGINAL"
+
+    def test_synthetic_without_sha_match_field_stays_original(
+        self, tmp_path: Path
+    ) -> None:
+        """CONTROL NEGATIVO 2: no sha_match/cumple block at all -> ORIGINAL."""
+        report = _make_report(_SUBJECT_TS)
+        _write_json(tmp_path / _SUBJECT_NAME, report)
+
+        result = resolve_ledger(tmp_path, _SUBJECT_TS)
+        assert result.status == "ORIGINAL"
