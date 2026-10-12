@@ -57,11 +57,14 @@ uno se explica en detalle en su seccion propia (busca el codigo literal):
 ## Paso -1: Verificacion de identidad del contrato (WOT-2026-076a)
 
 **Antes de seguir NINGUNA instruccion de este prompt**, verifica que el texto
-que estas leyendo es el mismo que existe en tu propio worktree de ejecucion
-(`<MOTOR_ROOT>`). Este paso existe porque el prompt que tienes delante pudo
-haber sido redactado por alguien (humano o agente) que leyo este contrato
-desde una copia DISTINTA del repo_motor -- un checkout canonico de solo
-lectura que puede estar parado en un commit anterior al de tu worktree real.
+que estas leyendo es el mismo que existe en tu propio worktree de ejecucion.
+En todo este paso esa raiz se denota `BUILDING_WORKTREE_ROOT`: la copia del
+repo_motor donde vas a implementar (tu worktree), NO el checkout canonico del
+motor, que va por detras hasta el sync. Este paso existe porque el prompt que
+tienes delante pudo haber sido redactado por alguien (humano o agente) que leyo
+este contrato desde una copia DISTINTA del repo_motor -- un checkout canonico
+de solo lectura que puede estar parado en un commit anterior al de tu worktree
+real.
 
 Medido (WOT-2026-076a, 2026-09-25): un prompt de arranque cito la secuencia
 de suite canonica PRE-039m porque quien lo redacto leyo
@@ -79,8 +82,8 @@ contrato normativo que cita (`orchestrator_launch_builder.md`,
 identidad:
 
 ```
-contract_path: <ruta absoluta del fichero en MOTOR_ROOT>
-contract_sha256: <hash SHA-256 del contenido en el momento de redactar el prompt>
+contract_path: <ruta absoluta del fichero en $BUILDING_WORKTREE_ROOT>
+contract_sha256: <hash SHA-256 del contenido de ESA copia en el momento de redactar el prompt>
 ```
 
 Si el prompt que recibiste NO incluye este bloque de identidad para
@@ -90,7 +93,7 @@ ausencia sola -- el prompt puede ser anterior a esta norma). Si el prompt SI
 declara `contract_sha256` para un contrato, verifica:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 <MOTOR_ROOT>/prompts/orchestrator_launch_builder.md
+Get-FileHash -Algorithm SHA256 $BUILDING_WORKTREE_ROOT/prompts/orchestrator_launch_builder.md
 ```
 
 o el equivalente en tu entorno (`sha256sum` en Git Bash/WSL). Si el hash
