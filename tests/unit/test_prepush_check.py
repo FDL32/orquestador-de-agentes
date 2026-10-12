@@ -24,6 +24,7 @@ sin_fix exit_code=1, con_fix exit_code=0.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -838,6 +839,262 @@ def test_sibling_parity_is_wired_into_closeout(tmp_path, monkeypatch):
     monkeypatch.setattr(
         pc_module,
         "run_sibling_commit_parity_check",
+        lambda *a, **k: (
+            called.__setitem__("base", called["base"] + 1)
+            or CheckResult(name="spy", passed=True, output="", is_blocking=False)
+        ),
+    )
+    pc_module.run_preflight_check(tmp_path, closeout_mode=False)
+    assert called["base"] == 0, "el preflight base no paga el gate de closeout"
+
+
+# ============================================================================
+# WOT-2026-040o: recibo de auditoria-hermana ANTES del push (barrera, no norma).
+#
+# DoD binario cubierto:
+#   (a) MUTATION 040b: vuelo TERMINADO sin recibo hermana -> FAIL bloqueante
+#       (el escape de SECUENCIA: se pusheo/archivo antes de auditarse).
+#   (b) MUTATION 040c: recibo verde/fresh-context pero medido contra FIXTURE
+#       (topologia que no resuelve) -> FAIL (la autocertificacion).
+#   (c) CONTROL NEGATIVO: recibo verde + fresh-context + datos REALES -> PASS.
+#   (d) SKIP nombrado cuando no hay vuelo TERMINADO del cierre.
+# ============================================================================
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _real_repo_with_head(root: Path) -> tuple[str, str]:
+    """Repo git propio y HERMETICO con su HEAD: `(path, full_sha)`.
+
+    Vector git (CEM): tiene su propio `.git`, asi que `git -C root` jamas hace
+    walk-up al repo real de la maquina.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-b", "main")
+    (root / "f.txt").write_text("x\n", encoding="utf-8")
+    _git(root, "-c", "user.email=f@t", "-c", "user.name=f", "add", "-A")
+    _git(root, "-c", "user.email=f@t", "-c", "user.name=f", "commit", "-m", "base")
+    return str(root), _git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def _write_done_batch_run(reports: Path, name: str, report_json: str | None) -> Path:
+    payload: dict = {
+        "schema": "batch_run/v1",
+        "generated_at": "2026-07-24T00:00:00Z",
+        "verdict": "DONE",
+    }
+    if report_json is not None:
+        payload["sibling_audit"] = {"report_json": report_json, "verdict": "APROBADO"}
+    path = reports / name
+    _write_json(path, payload)
+    return path
+
+
+def _write_audit_receipt(
+    reports: Path, name: str, *, verdict: str, topology: dict
+) -> Path:
+    path = reports / name
+    _write_json(
+        path,
+        {
+            "verdict": verdict,
+            "isolation": {"b1": "b:fresh-context", "b3_read_only": True},
+            "topology": topology,
+        },
+    )
+    return path
+
+
+def test_sibling_audit_missing_receipt_blocks(tmp_path):
+    """(a) 040b: vuelo DONE sin `sibling_audit` -> FAIL bloqueante.
+
+    MUTATION que lo mata: retirar la rama que exige `sibling_audit` -> el
+    vuelo atraviesa el cierre sin auditoria (el escape de secuencia medido).
+    """
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    _write_done_batch_run(reports, "batch_run_20260724-0000.json", report_json=None)
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is False, f"debe FALLAR sin recibo: {result.output}"
+    assert result.is_blocking is True, "el gate de auditoria-hermana es BLOQUEANTE"
+    assert "sibling_audit" in result.output
+
+
+def test_sibling_audit_fixture_topology_blocks(tmp_path):
+    """(b) 040c: recibo verde/fresh-context pero medido contra FIXTURE -> FAIL.
+
+    El recibo declara fresh-context y APROBADO, pero su `topology` cita un sha
+    que NO resuelve en el repo real (un fixture): midio otra cosa. MUTATION que
+    lo mata: retirar la verificacion de `topology.repos` -> el fixture pasa.
+    """
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    receipt_rel = (
+        "orchestrator_pipeline/reports/audit_autonomous_batch_20260724-0100.json"
+    )
+    _write_done_batch_run(
+        reports, "batch_run_20260724-0000.json", report_json=receipt_rel
+    )
+    # Sha con forma valida (40 hex) pero INEXISTENTE en cualquier repo real.
+    _write_audit_receipt(
+        reports,
+        "audit_autonomous_batch_20260724-0100.json",
+        verdict="APROBADO",
+        topology={
+            "repos": [
+                {
+                    "role": "motor",
+                    "path": str(tmp_path / "repo_inexistente"),
+                    "sha": "deadbeef" * 5,
+                }
+            ]
+        },
+    )
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is False, f"fixture debe FALLAR: {result.output}"
+    assert result.is_blocking is True
+    assert "REALES" in result.output or "resuelve" in result.output
+
+
+def test_sibling_audit_valid_receipt_passes(tmp_path):
+    """(c) CONTROL NEGATIVO: recibo verde + fresh-context + datos REALES -> PASS.
+
+    `skipped` debe ser False: la barrera corrio y verdicto, no se salto.
+    """
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    repo_path, sha = _real_repo_with_head(tmp_path / "realrepo")
+    receipt_rel = (
+        "orchestrator_pipeline/reports/audit_autonomous_batch_20260724-0100.json"
+    )
+    _write_done_batch_run(
+        reports, "batch_run_20260724-0000.json", report_json=receipt_rel
+    )
+    _write_audit_receipt(
+        reports,
+        "audit_autonomous_batch_20260724-0100.json",
+        verdict="APROBADO_CON_NITS",
+        topology={"repos": [{"role": "motor", "path": repo_path, "sha": sha}]},
+    )
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is True, f"recibo valido debe PASAR: {result.output}"
+    assert result.skipped is False, "debe ser un PASS ejecutado, no un SKIP"
+
+
+def test_sibling_audit_non_authorizing_verdict_blocks(tmp_path):
+    """Un veredicto rojo (`CAMBIOS NECESARIOS`) NO autoriza el push."""
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    repo_path, sha = _real_repo_with_head(tmp_path / "realrepo")
+    receipt_rel = (
+        "orchestrator_pipeline/reports/audit_autonomous_batch_20260724-0100.json"
+    )
+    _write_done_batch_run(
+        reports, "batch_run_20260724-0000.json", report_json=receipt_rel
+    )
+    _write_audit_receipt(
+        reports,
+        "audit_autonomous_batch_20260724-0100.json",
+        verdict="CAMBIOS_NECESARIOS",
+        topology={"repos": [{"role": "motor", "path": repo_path, "sha": sha}]},
+    )
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is False
+    assert "NO autorizador" in result.output
+
+
+def test_sibling_audit_no_done_flight_skips(tmp_path):
+    """(d) Sin reports dir y sin vuelo TERMINADO -> SKIP nombrado, no dispara."""
+    result = pc_module.run_sibling_audit_check(tmp_path)
+    assert result.passed is True
+    assert result.skipped is True
+    assert "SKIP" in result.output
+
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    _write_json(reports / "batch_run_20260724-0000.json", {"verdict": "RUNNING"})
+    result = pc_module.run_sibling_audit_check(tmp_path)
+    assert result.passed is True
+    assert result.skipped is True
+
+
+def test_sibling_audit_is_wired_into_closeout(tmp_path, monkeypatch):
+    """CABLEADO: `run_preflight_check` invoca el gate SOLO en closeout_mode.
+
+    Mutation: retirar el `results.append(run_sibling_audit_check(...))` deja el
+    spy sin llamar (norma, no barrera). Fija ademas que el preflight BASE no lo
+    paga.
+    """
+    from prepush_check import CheckResult
+
+    called = {"closeout": 0, "base": 0}
+
+    def _spy(root, *args, **kwargs):
+        called["closeout"] += 1
+        return CheckResult(name="spy", passed=True, output="", is_blocking=False)
+
+    ok = CheckResult(name="stub", passed=True, output="", is_blocking=True)
+    for fn in (
+        "run_delivery_hygiene_check",
+        "run_portable_memory_archive_check",
+        "run_ruff_check",
+        "run_ruff_format_check",
+        "run_agent_controller_validate",
+        "run_git_status_check",
+        "run_validate_all",
+        "run_backlog_contract_check",
+        "run_ghost_ticket_ids_check",
+        "run_contract_reconcile_check",
+        "run_handoff_state_sha_check",
+        "run_handoff_committed_check",
+        "run_destination_pii_check",
+        "run_closeout_reconciliation_check",
+        "run_landed_evidence_shape_check",
+        "run_backlog_live_landed_check",
+        "run_motor_destination_integration_check",
+        "run_contract_formation_check",
+        "run_workspace_contract_formation_check",
+        "run_batch_run_accounting_check",
+        "run_seal_staleness_check",
+        "run_distributable_planning_check",
+        "run_guard_wiring_orphan_check",
+        "run_prompt_wired_invocations_check",
+        "run_loop_execution_check",
+        "run_principal_freshness_check",
+        "run_agent_write_enforced_check",
+        "run_flight_plan_collision_check",
+        "run_launch_prompt_paths_check",
+        "run_builder_prompt_obligations_check",
+        "run_arranques_index_check",
+        "run_dec_receipt_check",
+        "run_dec_receipt_ticket_contracts_check",
+        "run_inbox_drainage_check",
+        "run_backlog_admission_check",
+        "run_sibling_commit_parity_check",
+    ):
+        monkeypatch.setattr(pc_module, fn, lambda *a, **k: ok)
+    monkeypatch.setattr(pc_module, "run_sibling_audit_check", _spy)
+
+    pc_module.run_preflight_check(tmp_path, closeout_mode=True)
+    assert called["closeout"] == 1, (
+        "el check existe pero el closeout no lo invoca -> es una NORMA, no "
+        "una barrera (WOT-2026-040o)"
+    )
+
+    monkeypatch.setattr(
+        pc_module,
+        "run_sibling_audit_check",
         lambda *a, **k: (
             called.__setitem__("base", called["base"] + 1)
             or CheckResult(name="spy", passed=True, output="", is_blocking=False)

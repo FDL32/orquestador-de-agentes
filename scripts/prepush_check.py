@@ -36,26 +36,28 @@ BY-DESIGN (WOT-2026-049c): esto es un gate de CIERRE DE SESION, no de push.
     que lo esquiva existe A PROPOSITO. La decision se tomo con estas medidas
     (2026-08-06), no por olvido:
 
-    - **Coste:** 36 checks en `--closeout-mode` (recuento re-derivado del
-      codigo 2026-10-11, tras WOT-2026-056d). Los SEGUNDOS son dato
+    - **Coste:** 37 checks en `--closeout-mode` (recuento re-derivado del
+      codigo 2026-10-11, tras WOT-2026-056d; +1 por WOT-2026-040o). Los
+      SEGUNDOS son dato
       EMPIRICO, no propiedad deducible del codigo: medidos 2026-08-06 en esta
       maquina con 25 checks dieron 25.0 s (closeout, 3 en FAIL informacional)
       y 12.0 s (base). Trata la magnitud como orientativa y re-mide si la
       necesitas; lo que NO depende de la maquina es el reparto de checks de
       abajo, que sale del propio codigo. Un `pre-push` cobraria ese coste en
       CADA push, no solo al cerrar.
-    - **Alcance equivocado:** la MAYORIA de esos 36 checks son
+    - **Alcance equivocado:** la MAYORIA de esos 37 checks son
       closeout-especificos (backlog contract, handoff committed, closeout
       reconciliation, flight plan collision, DEC receipt...). Son preguntas
       que NO tienen sentido ante un `git push` cualquiera: interrogan el
       cierre de un ticket, no la sanidad de unos commits. El reparto se lee
       EN ESTE FICHERO y se re-deriva SIN ejecutar nada: cuenta los
       `results.append` de `run_preflight_check`. Dentro del bloque
-      `if closeout_mode:` hay 29; fuera hay 7 (los 5 base mas
-      portable-memory y validate_all). 29 + 7 = 36 (re-derivado 2026-10-11;
+      `if closeout_mode:` hay 30; fuera hay 7 (los 5 base mas
+      portable-memory y validate_all). 30 + 7 = 37 (re-derivado 2026-10-11;
       el texto de 2026-08-06 decia 18 + 7 = 25 y quedo obsoleto con los
-      gates posteriores). Es decir, 29 de 36 -- la mayoria -- solo existen
-      al cerrar. Cablear esto a `pre-push` pagaria esas 29 preguntas de
+      gates posteriores; WOT-2026-040o sumo el de auditoria-hermana). Es
+      decir, 30 de 37 -- la mayoria -- solo existen
+      al cerrar. Cablear esto a `pre-push` pagaria esas 30 preguntas de
       cierre en cada push.
     - **Solapamiento:** `ruff-check` ya corre entre los 9 hooks de la etapa
       `pre-push`. Cablear este script lo duplicaria. Re-verificable parseando
@@ -1081,6 +1083,357 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
         name=name,
         passed=True,
         output="every start_context_isolation*.json is fresh and intact",
+        is_blocking=False,
+    )
+
+
+# --- WOT-2026-040o: recibo de auditoria-hermana antes del push ---------------
+
+#: Veredictos del auditor hermana que AUTORIZAN el push (canonicos de
+#: `prompts/audit_autonomous_ticket_batch.md` S.7). Los dos rojos y un
+#: veredicto ausente/ilegible NO autorizan.
+_SIBLING_AUDIT_GREEN = frozenset({"APROBADO", "APROBADO_CON_NITS"})
+
+#: Claves donde el `batch_run` declara el desenlace del vuelo. Cualquiera que
+#: contenga "DONE" marca el vuelo como TERMINADO y por tanto deudor de recibo.
+_BATCH_DONE_KEYS = ("verdict", "batch_final_status", "state_at_end")
+
+#: Claves donde el recibo registra el sha de cada repo auditado: el prompt fija
+#: `topology.repos[].sha`, y los recibos reales usan tambien las variantes
+#: `sha_live_at_audit_time`/`sha_at_batch_end` cuando HEAD se movio durante la
+#: auditoria. Se prueban TODAS: basta que UNA resuelva en el repo real.
+_TOPOLOGY_SHA_KEYS = ("sha", "sha_live_at_audit_time", "sha_at_batch_end")
+
+
+def _batch_run_is_done(payload: dict) -> bool:
+    """True si el `batch_run` declara el vuelo TERMINADO.
+
+    Antes: `payload` es el `batch_run` parseado.
+    Durante: inspecciona `_BATCH_DONE_KEYS` buscando "DONE" (case-insensitive)
+        en cualquiera de los campos de desenlace.
+    Despues: True si alguno lo declara; False si ninguno (o su forma es
+        desconocida -- no se inventa un veredicto).
+    """
+    for key in _BATCH_DONE_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and "DONE" in value.upper():
+            return True
+    return False
+
+
+def _is_tracked(project_root: Path, path: Path) -> bool:
+    """True si `path` esta versionado en el repo de `project_root`.
+
+    Antes: `project_root` con `.git`; `path` bajo su arbol.
+    Durante: un `git ls-files --error-unmatch` read-only (via
+        `_sibling_git_probe`).
+    Despues: True si rc==0 (versionado); False en cualquier otro caso (incluido
+        git ausente). Solo se invoca cuando `.git` existe.
+    """
+    try:
+        rel = path.relative_to(project_root).as_posix()
+    except ValueError:
+        return False
+    probe = _sibling_git_probe(
+        ["-C", str(project_root), "ls-files", "--error-unmatch", "--", rel]
+    )
+    return probe is not None and probe.returncode == 0
+
+
+def _sibling_audit_batch_runs(reports_dir: Path, project_root: Path) -> list[Path]:
+    """Los `batch_run_*.json` del CIERRE QUE SE EMPUJA (nunca la historia).
+
+    Un vuelo historico ya esta versionado: su `batch_run` vive en `origin/main`
+    y NO lo introduce esta publicacion, asi que no se le exige recibo AHORA --
+    seria un falso-rojo sobre deuda ajena. Un `batch_run` NUEVO (no versionado)
+    solo puede venir del vuelo que este cierre empuja: es el mismo principio
+    "no hay deuda heredada propia" de `run_landed_evidence_shape_check`.
+
+    Antes: `reports_dir` existe; `project_root` puede o no ser repo git.
+    Durante: glob + (si hay `.git`) un `ls-files` read-only por candidato.
+    Despues: los candidatos de este cierre. Sin `.git` (fixture hermetica)
+        devuelve TODOS: en un arbol no versionado no hay historia que excluir.
+    """
+    candidates = sorted(reports_dir.glob("batch_run_*.json"))
+    if not (project_root / ".git").exists():
+        return candidates
+    return [c for c in candidates if not _is_tracked(project_root, c)]
+
+
+def _resolve_audit_receipt_path(
+    raw: str, project_root: Path, reports_dir: Path
+) -> Path:
+    """Resuelve la ruta del recibo declarada por `sibling_audit.report_json`.
+
+    Admite ruta absoluta, relativa a `project_root` (la forma real:
+    `orchestrator_pipeline/reports/audit_...json`) o relativa a `reports_dir`.
+    Devuelve la primera que EXISTE; si ninguna, la resolucion relativa a
+    `project_root` (para que el hallazgo nombre una ruta concreta y accionable).
+    """
+    p = Path(raw)
+    if p.is_absolute():
+        return p
+    for base in (project_root, reports_dir):
+        cand = base / raw
+        if cand.exists():
+            return cand
+    return project_root / raw
+
+
+def _ledger_verdict(
+    receipt_path: Path, receipt: dict, reports_dir: Path
+) -> tuple[object, list[str]]:
+    """(veredicto VIGENTE, hallazgos) del recibo, via el ledger append-only.
+
+    `WOT-2026-054c` dejo `resolve_audit_ledger` como resolvedor PURO sin
+    consumidor; este es su call-site. Un evento posterior de adjudicacion puede
+    ANULAR un veredicto verde (`resulting_status`), asi que el veredicto se lee
+    de la cadena, no solo del JSON original.
+
+    Antes: `receipt` parseado; `receipt_path` con nombre canonico.
+    Durante: extrae el `subject_ts` del nombre y resuelve la cadena (read-only).
+    Despues: el veredicto vigente y los hallazgos de cadena ([] si es ORIGINAL).
+    """
+    findings: list[str] = []
+    verdict: object = receipt.get("verdict")
+    try:
+        from scripts.resolve_audit_ledger import (
+            _extract_ts_from_filename,
+            resolve_ledger,
+        )
+    except ImportError:  # pragma: no cover - motor en sys.path
+        from resolve_audit_ledger import (  # type: ignore[no-redef]
+            _extract_ts_from_filename,
+            resolve_ledger,
+        )
+    subject_ts = _extract_ts_from_filename(receipt_path.name)
+    if not subject_ts:
+        return verdict, findings
+    ledger = resolve_ledger(reports_dir, subject_ts)
+    if ledger.status in {"NOT_FOUND", "PARSE_ERROR", "INDETERMINADO"}:
+        findings.append(
+            f"cadena del ledger irresoluble ({ledger.status}) para "
+            f"{receipt_path.name}: {ledger.errors}"
+        )
+    elif ledger.status == "SUPERSEDED" and ledger.current_event_data:
+        verdict = ledger.current_event_data.get("resulting_status", verdict)
+    return verdict, findings
+
+
+def _isolation_findings(receipt: dict) -> list[str]:
+    """Hallazgos del bloque `isolation` (contexto FRESCO + read-only)."""
+    isolation = receipt.get("isolation")
+    if not isinstance(isolation, dict):
+        return ["recibo sin bloque `isolation` (no prueba contexto fresco)"]
+    findings: list[str] = []
+    b1 = isolation.get("b1")
+    if not isinstance(b1, str) or "fresh-context" not in b1.lower():
+        findings.append(f"`isolation.b1` no declara fresh-context: {b1!r}")
+    if isolation.get("b3_read_only") is not True:
+        findings.append(
+            "`isolation.b3_read_only` no es True (el auditor no fue read-only: "
+            "pudo ser maker de lo que verifica)"
+        )
+    return findings
+
+
+def _topology_repo_finding(entry: object) -> str | None:
+    """Hallazgo de UN repo de `topology.repos`, o None si cita un sha REAL.
+
+    Un sha de fixture (fabricado, de otro arbol) no resuelve en el repo real;
+    ese es el discriminante de "datos REALES" frente a la autocertificacion.
+    """
+    if not isinstance(entry, dict):
+        return f"topology.repos con entrada no-objeto: {entry!r}"
+    repo_path = entry.get("path")
+    shas = [
+        entry[k]
+        for k in _TOPOLOGY_SHA_KEYS
+        if isinstance(entry.get(k), str) and entry.get(k)
+    ]
+    label = entry.get("role") or repo_path or "<repo>"
+    if not shas:
+        return f"topology repos {label!r} sin sha registrado"
+    if isinstance(repo_path, str) and Path(repo_path).exists():
+        for sha in shas:
+            probe = _sibling_git_probe(
+                [
+                    "-C",
+                    repo_path,
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    f"{sha}^{{commit}}",
+                ]
+            )
+            if probe is not None and probe.returncode == 0:
+                return None
+    return (
+        f"topology repos {label!r}: ningun sha {shas} resuelve como commit en "
+        "el repo real (recibo medido contra otra cosa: fixture, no datos REALES)"
+    )
+
+
+def _topology_findings(receipt: dict) -> list[str]:
+    """Hallazgos de `topology.repos` (evidencia de haber medido datos REALES)."""
+    topology = receipt.get("topology")
+    repos = topology.get("repos") if isinstance(topology, dict) else None
+    if not isinstance(repos, list) or not repos:
+        return [
+            "recibo sin `topology.repos`: no hay evidencia de haber medido "
+            "contra repos REALES (no el fixture del vuelo)"
+        ]
+    findings: list[str] = []
+    for entry in repos:
+        finding = _topology_repo_finding(entry)
+        if finding:
+            findings.append(finding)
+    return findings
+
+
+def _audit_receipt_findings(
+    payload: dict, project_root: Path, reports_dir: Path
+) -> list[str]:
+    """Hallazgos del recibo de auditoria-hermana de UN `batch_run` TERMINADO.
+
+    Exige las TRES propiedades del DoD:
+      1. VERDE -- veredicto canonico autorizador, resuelto via
+         `resolve_audit_ledger` (que honra una anulacion posterior);
+      2. CONTEXTO FRESCO -- `isolation.b1` fresh-context y `b3_read_only` True;
+      3. DATOS REALES -- cada repo de `topology` cita un sha que RESUELVE en el
+         repo real (un sha de fixture no resuelve: 040c).
+
+    Antes: `payload` es el `batch_run` parseado; `project_root`/`reports_dir`
+        resueltos.
+    Durante: sin escrituras; lee el recibo (`utf-8-sig`) y delega la cadena, el
+        aislamiento y la topologia en sus helpers.
+    Despues: `[]` si el recibo satisface las tres; si no, la lista de motivos.
+    """
+    sibling = payload.get("sibling_audit")
+    if not isinstance(sibling, dict):
+        return [
+            "sin bloque `sibling_audit`: la condicion 6 (`auditor_emitido`) no "
+            "fue resuelta por una auditoria hermana (el ejecutor no puede "
+            "auto-certificarla, WOT-2026-023v)"
+        ]
+    report_raw = sibling.get("report_json")
+    if not isinstance(report_raw, str) or not report_raw.strip():
+        return ["`sibling_audit` sin `report_json` (ruta del recibo)"]
+    receipt_path = _resolve_audit_receipt_path(report_raw, project_root, reports_dir)
+    if not receipt_path.exists():
+        return [f"el recibo citado no existe en disco: {report_raw}"]
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        return [f"recibo ilegible ({receipt_path.name}): {exc}"]
+    if not isinstance(receipt, dict):
+        return [f"recibo sin objeto JSON ({receipt_path.name})"]
+
+    verdict, findings = _ledger_verdict(receipt_path, receipt, reports_dir)
+    if verdict not in _SIBLING_AUDIT_GREEN:
+        findings.append(
+            f"veredicto NO autorizador: {verdict!r} (se exige uno de "
+            f"{sorted(_SIBLING_AUDIT_GREEN)})"
+        )
+    findings.extend(_isolation_findings(receipt))
+    findings.extend(_topology_findings(receipt))
+    return findings
+
+
+def run_sibling_audit_check(project_root: Path) -> CheckResult:
+    """WOT-2026-040o: sin recibo de auditoria-hermana VERDE, fresh-context y
+    contra datos REALES no hay push ni archive-done.
+
+    La norma "auditoria hermana ANTES del push"
+    (`prompts/audit_autonomous_ticket_batch.md` S.0/S.7) era una NORMA: `040b`
+    se pusheo y archivo `done` ANTES de que su propia auditoria cazara un
+    false-green, y `040c` se autocertifico VERDE contra su propio fixture. Este
+    check la convierte en BARRERA: un `batch_run` TERMINADO del cierre que se
+    empuja debe llevar su recibo hermana valido.
+
+    CABLEADO: import ESTATICO de `scripts.resolve_audit_ledger` en el cuerpo (no
+    solo el nombre) para que `check_guard_wiring` alcance el call-site. Es
+    BLOQUEANTE: un veredicto no autorizador, un contexto no-fresco o una
+    topologia que no resuelve ABORTAN el cierre.
+
+    ALCANCE (frontera declarada): el gate juzga los `batch_run` NO versionados
+    (los del cierre que se empuja); la historia versionada no se re-juzga. El
+    ejecutor aun podria FORJAR un recibo que declare fresh-context: cerrar ese
+    residuo exige un ancla EXTERNA al ejecutor (deuda de `WOT-2026-044r`/`055c`);
+    aqui se exige la PROPIEDAD declarada + veredicto + topologia real, no la
+    anti-falsificacion criptografica.
+
+    Antes: `project_root` resoluble.
+    Durante: lee los `batch_run_*.json` del reports dir del destino, filtra los
+        del cierre (no versionados) y, por cada uno TERMINADO, resuelve su
+        recibo hermana y verifica verde/fresh-context/datos-reales. Read-only.
+    Despues: SKIP nombrado si no hay reports dir o ningun vuelo del cierre con
+        `batch_run` terminado; PASS si todos tienen recibo valido; FAIL
+        bloqueante listando los motivos por vuelo.
+    """
+    name = "Sibling Audit Receipt (WOT-2026-040o)"
+    reports_dir = project_root / "orchestrator_pipeline" / "reports"
+    if not reports_dir.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: no {reports_dir} (sin vuelos auditables)",
+            is_blocking=False,
+            skipped=True,
+        )
+
+    done_runs: list[tuple[Path, dict]] = []
+    for run in _sibling_audit_batch_runs(reports_dir, project_root):
+        try:
+            payload = json.loads(run.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict) and _batch_run_is_done(payload):
+            done_runs.append((run, payload))
+    if not done_runs:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=(
+                "SKIP: ningun `batch_run` TERMINADO del cierre que se empuja "
+                "(sin vuelo que exija recibo de auditoria-hermana)"
+            ),
+            is_blocking=False,
+            skipped=True,
+        )
+
+    failures: dict[str, list[str]] = {}
+    for run, payload in done_runs:
+        reasons = _audit_receipt_findings(payload, project_root, reports_dir)
+        if reasons:
+            failures[run.name] = reasons
+
+    if failures:
+        lines = [
+            "sin recibo de auditoria-hermana valido para el vuelo que se "
+            "empuja (WOT-2026-040o):"
+        ]
+        for run_name, reasons in failures.items():
+            lines.append(f"  {run_name}:")
+            lines.extend(f"      - {r}" for r in reasons)
+        lines.append(
+            "El recibo debe ser VERDE (APROBADO/APROBADO_CON_NITS), de contexto "
+            "FRESCO (isolation.b1 fresh-context, b3_read_only) y medido contra "
+            "datos REALES (topologia que resuelve). Esto ABORTA el cierre."
+        )
+        return CheckResult(
+            name=name,
+            passed=False,
+            output="\n".join(lines),
+            is_blocking=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=(
+            f"{len(done_runs)} vuelo(s) terminado(s) con recibo de "
+            "auditoria-hermana verde, fresh-context y contra datos reales."
+        ),
         is_blocking=False,
     )
 
@@ -3709,6 +4062,13 @@ def run_preflight_check(
         # solo; cableado aqui porque este es el unico punto que corre solo Y
         # conoce el reports dir del destino).
         results.append(run_seal_staleness_check(project_root))
+        # 6i-ter. Sibling Audit Receipt (WOT-2026-040o; BLOQUEANTE -- convierte
+        # en barrera la norma "auditoria hermana ANTES del push": un vuelo
+        # TERMINADO del cierre que se empuja sin recibo hermana VERDE, de
+        # contexto fresco y contra datos REALES ABORTA el cierre. Import
+        # ESTATICO de `resolve_audit_ledger` en el run_ -> check_guard_wiring
+        # lo cuenta WIRED (patron canonico del modulo).
+        results.append(run_sibling_audit_check(project_root))
         # 6j. Distributable Planning Clean (WOT-2026-024h C4'; bloqueante)
         results.append(run_distributable_planning_check(project_root))
         # 6k. Guard Wiring Orphan Debt (WOT-2026-026v; WARN -- la deuda huerfana
