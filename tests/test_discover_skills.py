@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from scripts.discover_skills import (
     _check_contract,
+    _check_naming,
     _deployed_stub_names,
     _derive_cycle_phase,
     _derive_disable_model_invocation,
@@ -804,3 +805,40 @@ class TestDisableModelInvocation:
         # Re-running discovery is deterministic (parity with itself).
         again = discover_skills()
         assert again["trigger_map"] == tm
+
+
+class TestPreCommitWiredChecksBite:
+    """WOT-2026-094a: .pre-commit-config.yaml wires `discover_skills.py
+    --check-contract` and `--check-naming` as always_run pre-commit hooks.
+    These tests run the exact CLI entries main() dispatches to (the commands
+    the hooks execute) against a temp bundle, so a live-tree violation makes
+    the wired hook fail -- the mutation that 093d/093e suffered unguarded.
+    """
+
+    def test_skill_dir_with_dot_fails_check_naming(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bundle = tmp_path / "motor"
+        skill_dir = bundle / "skills" / "bad.skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: bad.skill\ndescription: d\n---\n", encoding="utf-8"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_naming() == 1
+
+    def test_builder_skill_without_contract_id_fails_check_contract(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Declaring source_prompt: opts the role skill into the strict contract;
+        # partial metadata (no contract_id) is then rejected (discover_skills.py
+        # _validate_skill_contract: "falta contract_id" fires before binding).
+        bundle = tmp_path / "motor"
+        skill_dir = bundle / "skills" / "no-contract"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: no-contract\nrole: builder\nsource_prompt: prompts/test.md\n---\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 1
