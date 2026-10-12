@@ -174,6 +174,16 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
    - Encuadre: los "diffs" son los commits productivos de ESTA sesion. Enumeralos con `git log` / `git diff --stat` (cwd=repo_motor). Cita SHAs y rutas reales.
    - Mira especialmente: false-green, root equivocado, fixture drift, scope creep, mock drift, floor assertion (todos definidos en el prompt fuente).
    - Barrera mutation-verified: para cada guard/test nuevo que afirme bloquear un fallo, demuestra que FALLA sin el fix. Un guard que no se demuestra que bloquea no cuenta como barrera.
+   - **COPY-RESTORE, nunca `git checkout --` (WOT-2026-039f).** Toda mutacion de mutation-verify se aplica y se revierte por COPIA, jamas con
+     git: `cp <f> <f>.premut` -> mutar -> correr el node-id que debe ir RED
+     -> `mv <f>.premut <f>`; despues verifica con `git diff --stat` que el
+     diff del deliverable SIGUE presente. `git checkout -- <f>` / `git
+     restore` BORRAN todo el deliverable NO commiteado -- no solo tu mutacion
+     de una linea -- porque el cierre code-only es commit-directo AL FINAL y
+     la entrega del Builder vive en el working tree sin commit (leccion
+     `obs-mutation-verify-copy-restore-not-git-checkout`). Al terminar la
+     pasada, `git status` debe quedar LIMPIO de restos de mutacion; una
+     mutacion dejada sin restaurar es hallazgo y BLOQUEA el cierre.
 5. Herramientas de EVIDENCIA de esta pasada (no son las 3 auditorias estructurales). El auditor PROPONE hallazgos; estas skills son consumidoras que IMPLEMENTAN solo si procede y con tu OK:
    - `skills/builder-self-audit/SKILL.md`: las 3 barreras secuenciales del Builder (sintaxis por tipo via py_compile/yaml.safe_load/json.load, completitud multi-archivo, frescura documental PROJECT.md/QUICKSTART.md/TURN.md/STATE.md) deben tener evidencia de salida real, no exit code de un pipe.
    - `skills/builder-run-quality-gates/SKILL.md`: confirma que los gates corrieron via `scripts/run_gates_dispatch.py` (dispatch por deliverable_type), NO invocando ruff/pytest directo (eso evade el audit trail).
@@ -196,6 +206,27 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
      blast-radius.
    Reporta la clasificacion elegida y la evidencia. No promociones memoria ni
    registres backlog sobre hallazgos sin triage.
+
+5.ter SUITE DE CIERRE CORRE SOLA, CON LOS BRAZOS AUDITORES TERMINADOS (WOT-2026-039f).
+   La corrida canonica de cierre (`run_pytest_safe.py --level all`) es un proceso
+   EXCLUSIVO sobre el arbol: NINGUNA otra superficie puede estar mutando ficheros
+   mientras corre -- ni un subagente/brazo auditor haciendo mutation-verify, ni un
+   `Write`/`Edit`/herramienta con filesystem, ni una segunda suite. Antes de
+   lanzarla, TODO brazo auditor debe estar TERMINADO (no "casi", no en background):
+   su mutation-verify ya revertido por COPY-RESTORE y su `git status` limpio. Medido
+   (cierre FP-20260722d): dos corridas de `--level all` quedaron CORRUPTAS
+   (`status=started`) por un subagente que mutaba ficheros a la vez, y una mutacion
+   quedo sin restaurar. La suite de cierre es el ULTIMO proceso que toca el arbol,
+   nunca concurrente con la auditoria que lo mide.
+   - **CRITERIO -- hallazgo automatico del SIGUIENTE cierre.** Si al iniciar este
+     paso `<repo_motor>/.agent/runtime/pytest-safe/last-run.json` todavia muestra
+     `status=started` (corrida huerfana: `started_at` presente, sin `status`
+     terminal, el PID del `lock` ya no vive) -- o una entrada de `run_history.jsonl`
+     reconciliada a `aborted` con `reconciled_reason: dead_pid` -- eso ES un
+     hallazgo: una suite de cierre previa murio a mitad, con altisima probabilidad
+     por concurrencia con una mutacion. Reporta el `started_at`, el `lock.pid` y el
+     `status` leido, y NO lo trates como ruido. La suite de cierre de ESTA sesion no
+     se declara verde mientras ese estatus huerfano no quede explicado.
 
 PUNTO DE CONTROL antes del Bloque 3: la sesion debe estar VERDE y RECONCILIADA. Si el Bloque 2 destapa un false-green o una contradiccion, vuelve al Builder; NO continues.
 

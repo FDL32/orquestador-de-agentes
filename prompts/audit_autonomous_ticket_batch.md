@@ -360,6 +360,19 @@ pese a la fila falseada, el propio validador del predicado (o esta
 auditoria) tiene un hueco: reportalo como hallazgo `CRITICO`, clase CEM A
 (regresion de contrato), no lo silencies.
 
+**COPY-RESTORE, nunca `git checkout --` (WOT-2026-039f).** Cuando el
+mutation-demo exija MUTAR un fichero, hazlo SIEMPRE por COPIA y revierte por
+COPIA, jamas con git: `cp <f> <f>.premut` -> mutar -> correr el comando/node-id
+que debe dar el veredicto FALSE -> `mv <f>.premut <f>`. `git checkout -- <f>` /
+`git restore` BORRAN todo el contenido NO commiteado de ese fichero -- no solo tu
+mutacion de una linea -- y pueden destruir el deliverable que auditas (leccion
+`obs-mutation-verify-copy-restore-not-git-checkout`). Preferible aun: si el
+mutation-demo puede hacerse sobre una COPIA fuera del arbol versionado (un temp
+file), hazlo ahi y no toques el arbol. Al TERMINAR la auditoria, verifica con
+`git status --porcelain` que el arbol queda LIMPIO de restos de mutacion y REGISTRA
+esa comprobacion en la seccion de integridad del informe (S.10); una mutacion
+dejada sin restaurar es un hallazgo que bloquea el veredicto.
+
 ---
 
 ### 4.bis. Start Context Isolation receipt (WOT-2026-044r)
@@ -561,6 +574,9 @@ verifica, ademas del PREDICATE, las DOS caras de la barrera de publicacion:
 - NO fabrica eventos de bus, checkpoints ni filas de backlog manualmente
   para "completar" la evidencia que falta: la ausencia de evidencia es un
   hallazgo, no algo que rellenar.
+- NO usa `git checkout --` / `git restore` para deshacer una mutacion del
+  mutation-demo: usa COPY-RESTORE (S.4, WOT-2026-039f) y deja `git status`
+  limpio al terminar; una mutacion sin restaurar se reporta como hallazgo.
 - Solo escribe sus propios dos artefactos (S.10) y, si aplica, follow-ups
   propuestos (nunca aplicados) para el humano/Manager.
 

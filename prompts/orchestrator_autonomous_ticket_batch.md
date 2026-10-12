@@ -745,6 +745,41 @@ real false-green in the evidence that informed this design:
      -> exit 0 REQUIRED. It audits both surfaces: terminal-in-live-queue,
      live-in-archive, and an unknown label sneaking through as a closure.
 
+### The canonical suite of close runs ALONE, with the audit arms FINISHED (WOT-2026-039f)
+
+The closing suite of the batch (`run_pytest_safe.py --level all`) is an EXCLUSIVE
+process over the tree: while it runs, NO other surface may be mutating files -- not
+a subagent/audit arm doing mutation-verify, not a `Write`/`Edit`/filesystem tool,
+not a second suite. Before launching it, EVERY audit arm must be FINISHED (not
+"almost", not in background): its mutation-verify already reverted by COPY-RESTORE
+and its `git status` clean.
+
+Why: the closing suite reads the tree while writing `last-run.json`; a concurrent
+mutation corrupts the run. Measured (close FP-20260722d): two `--level all` runs
+were left CORRUPTED (`status=started`) by a subagent mutating files at the same
+time, and one mutation was left unrestored. The closing suite is the LAST process
+to touch the tree, never concurrent with the audit that measures it.
+
+**Criterion -- automatic finding of the NEXT close.** If at the start of this step
+`<MOTOR_ROOT>/.agent/runtime/pytest-safe/last-run.json` still carries
+`status=started` (an orphan run: `started_at` present, no terminal `status`, the
+`lock` PID already dead), OR `run_history.jsonl` has an entry reconciled to
+`aborted` with `reconciled_reason: dead_pid`, that IS a finding: a previous closing
+suite died mid-run, with high probability from concurrency with a mutation. Report
+the `started_at`, the `lock.pid` and the `status` read; never treat it as noise.
+This batch's closing suite is not declared green until that orphan status is
+explained.
+
+**COPY-RESTORE, never `git checkout --` (WOT-2026-039f).** Any mutation this prompt
+orders (barrier 4) is applied and reverted by COPY, never with git: `cp <f>
+<f>.premut` -> mutate -> run the node-id that must go RED -> `mv <f>.premut <f>`;
+then verify with `git diff --stat` that the deliverable diff is STILL present.
+`git checkout -- <f>` / `git restore` DESTROY the whole uncommitted deliverable,
+not just your one-line mutation (lesson
+`obs-mutation-verify-copy-restore-not-git-checkout`). At the end of any audit arm,
+`git status` must be CLEAN of mutation leftovers; a mutation left unrestored is a
+finding and BLOCKS the close.
+
 ---
 
 ## Outputs (design section 12)
