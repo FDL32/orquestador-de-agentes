@@ -355,6 +355,85 @@ def test_active_workplan_still_blocks_incoherent_prefix(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-092m: a NEUTRAL SEED motor (no active ticket) must NOT block a
+# non-WOT ticket. The motor's most common resting state ships work_plan.md with
+# `**ID:** none` + `**Estado:** READY_TO_START` and NO delivery_authority key;
+# read_delivery_authority defaults that to "repo_motor", so a CTL/EXF launch
+# against the untouched seed used to false-block (exit 2). The exemption reuses
+# state_validation.is_seed_neutral_state, which requires BOTH files.
+# ---------------------------------------------------------------------------
+
+_SEED_WORK_PLAN = "# Work Plan\n\n**ID:** none\n**Estado:** READY_TO_START\n"
+_SEED_EXEC_LOG = "# Execution Log\n\n**ID:** none\n**Estado:** READY_TO_START\n"
+
+
+def _make_seed_motor(tmp_path: Path, *, with_log: bool) -> Path:
+    """Motor whose collaboration is the portable neutral seed. with_log toggles
+    the sibling execution_log.md (is_seed_neutral_state needs both)."""
+    motor = _make_motor_with_workplan(tmp_path, _SEED_WORK_PLAN)
+    if with_log:
+        (motor / ".agent" / "collaboration" / "execution_log.md").write_text(
+            _SEED_EXEC_LOG, encoding="utf-8"
+        )
+    return motor
+
+
+def _add_ctl_destination(motor: Path, tmp_path: Path) -> Path:
+    """Register a CTL destination under <tmp>/projects so the CTL topology leg
+    can resolve and the full CLI path is exercisable."""
+    ctl = tmp_path / "projects" / "Crear_Texto_LLM"
+    ctl.mkdir()
+    _make_link(ctl, motor, "CTL", "Crear_Texto_LLM")
+    return ctl
+
+
+def test_seed_neutral_motor_does_not_block_destination_ticket(tmp_path: Path) -> None:
+    # (a) Regression (WOT-2026-092m): prefix CTL + a genuine neutral seed
+    # (work_plan.md AND execution_log.md both neutral) -> the contract guard
+    # returns None and the whole CLI path exits 0. Mutation-to-prove: removing
+    # the seed guard flips this back to exit 2.
+    motor = _make_seed_motor(tmp_path, with_log=True)
+    ctl = _add_ctl_destination(motor, tmp_path)
+    assert _check_contract_coherence(motor, "CTL") is None
+    exit_code, message = check_topology("CTL-2026-999a", motor, motor, ctl)
+    assert exit_code == 0, message
+    assert "correcta" in message
+
+
+def test_seed_neutral_without_execution_log_still_blocks(tmp_path: Path) -> None:
+    # (d) Fail-closed: a seed-neutral-LOOKING work_plan WITHOUT its sibling
+    # execution_log.md does NOT open the exemption. is_seed_neutral_state needs
+    # BOTH contents; with the log absent, read_delivery_authority still defaults
+    # to repo_motor -> mismatch with CTL's expected repo_destino -> exit 2.
+    motor = _make_seed_motor(tmp_path, with_log=False)
+    result = _check_contract_coherence(motor, "CTL")
+    assert result is not None
+    exit_code, message = result
+    assert exit_code == 2
+    assert "incoherencia de contrato" in message
+
+
+def test_active_motor_workplan_still_blocks_destination_ticket(tmp_path: Path) -> None:
+    # (c) Negative control: an ACTIVE ticket (a real **ID:**) carrying an
+    # incoherent delivery_authority must STILL block -> exit 2. Guards that the
+    # seed exemption does not degenerate into "any non-terminal plan is exempt".
+    motor = _make_motor_with_workplan(
+        tmp_path,
+        "# Plan\n\n**ID:** WOT-2026-999z\n**Estado:** IN_PROGRESS\n"
+        "- **delivery_authority:** repo_motor\n",
+    )
+    (motor / ".agent" / "collaboration" / "execution_log.md").write_text(
+        "# Log\n\n**ID:** WOT-2026-999z\n**Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    result = _check_contract_coherence(motor, "CTL")
+    assert result is not None
+    exit_code, message = result
+    assert exit_code == 2
+    assert "incoherencia de contrato" in message
+
+
+# ---------------------------------------------------------------------------
 # (h) --allow-diagnostic on case (b) -> exit 0, [DIAGNOSTIC MODE] verdict
 # ---------------------------------------------------------------------------
 

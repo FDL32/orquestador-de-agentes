@@ -367,10 +367,12 @@ def _check_contract_coherence(
     against the resolved prefix. WOT must carry repo_motor; any other
     prefix must carry repo_destino. Returns None if there's no work_plan.md
     to check (not blocking: this guard runs in preflight, possibly before a
-    plan exists) OR if the work_plan is in a TERMINAL state (a closed ticket's
-    contract must not block the launch of a new ticket of another prefix --
-    WOT-2026-021s; the residual COMPLETED work_plan of a prior WOT would
-    otherwise false-block any CTL start with "incoherencia de contrato").
+    plan exists) OR if the motor's collaboration is in its NEUTRAL SEED state
+    (no active ticket; WOT-2026-092m) OR if the work_plan is in a TERMINAL
+    state (a closed ticket's contract must not block the launch of a new
+    ticket of another prefix -- WOT-2026-021s; the residual COMPLETED
+    work_plan of a prior WOT would otherwise false-block any CTL start with
+    "incoherencia de contrato").
     Returns (exit_code, message) on a genuine live mismatch.
     """
     work_plan_path = motor_root / ".agent" / "collaboration" / "work_plan.md"
@@ -403,6 +405,28 @@ def _check_contract_coherence(
         raw_status.strip().upper().split()[0] if raw_status.strip() else ""
     )
     if normalized_status in terminal_states:
+        return None
+
+    # WOT-2026-092m: the motor's most common resting state is its NEUTRAL SEED
+    # (work_plan.md with `**ID:** none` + `**Estado:** READY_TO_START` and no
+    # `delivery_authority` key). read_delivery_authority defaults a missing key
+    # to "repo_motor", so ANY non-WOT ticket (CTL/EXF) launched against the
+    # untouched seed used to false-block with "incoherencia de contrato". The
+    # canonical discriminator already exists (state_validation.
+    # is_seed_neutral_state) and requires BOTH work_plan.md AND execution_log.md
+    # to carry the neutral projection -- the verdict is not derived from a new,
+    # bespoke list of sentinels. Fail-closed on the log side: if
+    # execution_log.md is absent or unreadable we do NOT open the exemption
+    # (only the confirmed presence of both neutral files opens it), so an
+    # orphan work_plan still gets its contract crossed.
+    log_path = motor_root / ".agent" / "collaboration" / "execution_log.md"
+    try:
+        log_content = log_path.read_text(encoding="utf-8")
+    except OSError:
+        log_content = None
+    if log_content is not None and state_validation.is_seed_neutral_state(
+        content, log_content
+    ):
         return None
 
     delivery_authority = scope_gate.read_delivery_authority(content)
