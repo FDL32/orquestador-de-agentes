@@ -69,13 +69,33 @@ aplica el fallback de arriba en vez de suponer:
 ## 2. Antes de redactar: el anti-duplicado es OBLIGATORIO
 
 Un escalado duplicado cuesta mas que uno que no llega, porque consume juicio humano
-para acabar en "ya estaba". **Busca primero**, en las tres superficies:
+para acabar en "ya estaba". **Busca primero**, en las superficies canonicas (las tres originales mas las
+dos ampliadas por este ticket):
 
 ```bash
 grep -in "<palabra-clave>" <workspace>/.agent/collaboration/backlog.md
 grep -in "<palabra-clave>" <workspace>/.agent/collaboration/_archive/backlog_done.md
 ls <workspace>/.agent/collaboration/backlog_inbox/
 ```
+
+Estas tres superficies no son exhaustivas por si solas. El contrato las declaro
+en v1 y se quedo cortas: la propuesta duplicada que este ticket corrige vivia en
+una **cuarta superficie**, `orchestrator_pipeline/arranques/` (donde reside
+`PROPUESTA_TICKET_SURFACE_SCAN.md`, contrato `T-055X-001`), y en
+`.agent/planning/ticket_contracts.md` (que asigna `ticket_id` ANTES de que exista
+fila en `backlog`). Ambas deben barrerse ademas de las tres originales:
+
+```bash
+grep -in "<palabra-clave>" <workspace>/orchestrator_pipeline/arranques/
+grep -in "<palabra-clave>" <workspace>/.agent/planning/ticket_contracts.md
+```
+
+Si no encuentras un termino en ninguna de las cinco superficies, eso NO prueba que
+no exista: el barrido debe ser por el **DATO** (contenidos relevantes al hallazgo)
+ademas del **MECANISMO** (superficies declaradas). La familia `census-regex-omits-what-you-didnt-suspect`
+(lo que no buscaste por no sospecharlo) se descubre solo al barrender por contenido
+y no por lista cerrada de rutas -- ver el caso real de `PROPUESTA_TICKET_SURFACE_SCAN.md`
+en `T-062P-001` y `T-055X-001`.
 
 **LEE ENTERO cada hit.** No descartes por el titulo: las fichas se redactan como
 reglas abstractas y los hallazgos como casos concretos, asi que los titulos no se
