@@ -78,7 +78,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 | `prompts/ensemble_loop.md` | transversal (6) | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 244 |
 | `prompts/manager_orchestrator_loop_adapter_motor.md` | AGENTS.md, builder_invocation_contract.md, manager_orchestrator_loop_backlog.md | Adaptador del MOTOR al nucleo portable manager_orchestrator_loop.md: traduce cada capacidad del nucleo a los comandos y ficheros REALES de este repositorio, fija los minimos por tipo de entrega y declara la diferencia de identidad (D2). | 135 |
 | `prompts/orchestrator_launch_builder.md` | transversal (10) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 901 |
-| `prompts/persona_system.md` | agent_execution_modes.md | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 115 |
+| `prompts/persona_system.md` | AGENTS.md, agent_execution_modes.md | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 115 |
 
 ## Por rol
 

@@ -59,12 +59,28 @@ CONFIG_PATH = _LazyPath(_config_path)
 #    no-referenciada (role_assignments, role_models) y los aun-vivos no migrados
 #    (skill_allowlists). No se amplia salvo rol de capa nuevo (ver WOT-2026-098b);
 #    muere cuando esos campos se retiren.
-#  - CANONICAL_ROLES: la taxonomia canonica de AGENTS.md, en MINUSCULA. Es el
-#    UNICO enum valido para role_mapping. SUPERVISOR NO esta aqui: es un actor
-#    runtime del bus, no un rol IA (va en el campo actor_runtime aparte).
-# WOT-2026-098b: anadido "revisor"/"REVISOR" -- Capa 2 del sistema de 4 capas
+#  - CANONICAL_ROLES: el UNICO enum valido para role_mapping/backend
+#    resolution (get_backend_for_role/get_model_for_role), en MINUSCULA.
+#    **NO es "la taxonomia canonica de AGENTS.md"** (correccion 2026-10-12,
+#    bucle adversarial de 3 lentes -- codex/nan-fs/glm -- sobre armonizacion
+#    de vocabulario: el comentario anterior se autoatribuia esa fuente sin
+#    coincidir con AGENTS.md, y ademas hay un TERCER enum,
+#    scripts/discover_skills.py:921, que hacia la MISMA autoatribucion falsa
+#    sobre un dominio distinto -- el campo `role` escalar del frontmatter de
+#    prompts, no `role_mapping`). Los 3 enums son dominios DISTINTOS por
+#    diseno (DEC-router-skills-001 Seccion 7, "CANONICAL_ROLES (prompts) vs
+#    VALID_ROLES (skills) son conjuntos distintos por diseno"); no se
+#    fusionan. AGENTS.md documenta el vocabulario humano con sus categorias
+#    (pipeline/capa/ensemble/actor), nunca un enum de codigo 1:1. SUPERVISOR
+#    NO esta aqui: es un actor runtime del bus, no un rol IA (va en el campo
+#    actor_runtime aparte). `user` tampoco esta aqui, por el mismo motivo que
+#    SUPERVISOR: no tiene backend/model_id que resolver (role_mapping es
+#    fail-closed, exige backend real para cada clave).
+# WOT-2026-098b: anadido "revisor"/"REVISOR" -- Capa 2 (Persona-2, ver
+# prompts/persona_system.md) del sistema de 4 capas
 # (PROPUESTA_vocabulario_roles_capas_20261011.md v6, Seccion 7), rol de capa
-# distinto de "auditor" (gobierno transversal, no secuencial).
+# de revision independiente, distinto de "auditor" (gobierno transversal, no
+# secuencial de capa).
 KNOWN_ROLES = {"BUILDER", "MANAGER", "SUPERVISOR", "REVISOR"}
 CANONICAL_ROLES = {
     "orchestrator",

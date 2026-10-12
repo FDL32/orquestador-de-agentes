@@ -917,7 +917,14 @@ CYCLE_PHASES: tuple[str, ...] = (
 )
 # D2: closed enum. Named route_kind because the catalog already has a `kind`.
 ROUTE_KINDS: tuple[str, ...] = ("entry", "modo", "modulo", "mantenimiento", "externo")
-# D3: canonical roles of AGENTS.md (never a backend); `role` is a scalar.
+# D3: closed enum for the prompt frontmatter `role` scalar (never a backend
+# resolution). Corrected 2026-10-12 (3-lens adversarial loop on vocabulary
+# harmonization): this is NOT "canonical roles of AGENTS.md" -- AGENTS.md
+# documents human-facing categories (pipeline/layer/ensemble/actor), and a
+# SECOND code enum (.agent/agents_config.py::CANONICAL_ROLES, for
+# role_mapping/backend resolution) made the same false self-attribution over
+# a different domain. The two are DISTINCT by design (DEC-router-skills-001
+# Section 7); they do not merge.
 CANONICAL_ROLES: tuple[str, ...] = ("orchestrator", "manager", "builder", "auditor")
 # D2: external artifacts consumed whole by another system; exempt from metadata.
 EXTERNAL_ALLOWLIST: frozenset[str] = frozenset({"hermes_soul.md"})

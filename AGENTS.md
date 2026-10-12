@@ -5,8 +5,35 @@
 - **Backend IA:** producto o LLM que ejecuta trabajo. Ejemplos: Claude Code,
   Codex y GitHub Copilot. Un backend IA puede encarnar varios roles segun el
   turno del pipeline.
-- **Roles canonicos:** `orchestrator`, `manager`, `builder`, `auditor`, `user`.
-  Usa "rol builder" o "rol manager", no "agente builder".
+- **Roles canonicos, por categoria** (armonizado 2026-10-12 tras bucle
+  adversarial de 3 lentes -- codex, nan-fs, opencode/glm -- sobre
+  vocabulario de roles; ver Nota de enums de codigo abajo). Usa "rol
+  builder" o "rol manager", no "agente builder":
+  - **Pipeline secuencial de un ticket:** `orchestrator`, `manager`,
+    `builder`, `auditor`.
+  - **Capa de revision independiente (sistema de 4 capas/"personas"):**
+    `revisor` (anadido WOT-2026-098b). Persona-2, Capa 1.5 del nucleo
+    `prompts/agent_execution_modes.md` -- NUNCA el mismo backend/modelo que
+    implemento (condicion dura, ver `prompts/persona_system.md` Seccion 2).
+    Para entender la numeracion de personas 0/1/2/3 y su correlacion con
+    las Capas del nucleo, lee la cadena completa: `prompts/
+    agent_execution_modes.md` -> `prompts/persona_system.md`.
+  - **Rol de gobierno/ensemble (no secuencial, no de pipeline de ticket):**
+    `proposer` / `challenger` (lentes adversariales de bucles de gobierno:
+    CONTRACT_AUDIT, MANAGER_REVIEW, CLOSE, DESIGN_REVIEW). Ver
+    `prompts/ensemble_loop.md`.
+  - **Actor humano:** `user`. No es backend IA, no tiene model_id que
+    resolver -- analogo a `ACTOR_RUNTIME_ROLES` (`SUPERVISOR`, ver abajo):
+    actor fuera de los enums de codigo que validan backend, no un olvido.
+- **Nota de enums de codigo (por que NO hay un enum 1:1 con esta lista):**
+  existen 3 enums de codigo con nombres parecidos y dominios DISTINTOS por
+  diseno (DEC-router-skills-001 Seccion 7; no se fusionan):
+  `.agent/agents_config.py::CANONICAL_ROLES` (valida `role_mapping`/backend
+  resolution), `scripts/discover_skills.py::CANONICAL_ROLES` (valida el
+  campo `role` escalar del frontmatter de prompts) y `agents.json::
+  ensemble_profiles` (perfiles `proposer`/`challenger`). Ninguno de los 3
+  es, ni pretende ser, una copia literal de esta lista -- cada uno valida
+  su propio dominio.
 - **Supervisor:** actor runtime del bus ya existente (`bus/supervisor.py`,
   eventos `actor="SUPERVISOR"`). No es sinonimo de orchestrator ni de backend IA.
 - **Artefactos:** prompts, skills, scripts, gates y DEC. No llamarlos agentes.
