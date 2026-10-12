@@ -17,7 +17,9 @@ Before: project_root MUST be given via --project-root or AGENT_PROJECT_ROOT.
 During: parse the markdown table under the "## Vista rapida" header (never HTML
     comments or free prose). For each live row validate: 8 columns, Status in the
     closed vocabulary, and a Reactivation value consistent with the Status.
-    Validate that every "### WOT-..." / "### WT-..." ficha header is well formed.
+    Validate that every "### <PREF>-..." ficha header is well formed, for PREF in
+    the destination's declared ticket_prefix plus the legacy triad (WOT-2026-068l:
+    the header census reads the bound patterns, never a closed list).
 After: exit 0 when the contract holds; exit non-zero with a diagnostic per
     violation otherwise. No mutation, ever.
 """
@@ -98,6 +100,21 @@ _FICHA_RE: re.Pattern[str] | None = None
 # reappear. Cell-based (idx 2), never substring: a prose cell can cite a ticket
 # id (e.g. 'Depende de'), which must NOT match.
 _TICKET_ROW_CELL_RE: re.Pattern[str] | None = None
+
+# WOT-2026-068l: detection hint for "this '### ' header claims to be a ticket
+# ficha". The 5 bound regexes above all require a FULL canonical id
+# (PREFIX-\d{4}-\w+), so they CANNOT detect a malformed header like
+# '### WOT-bad ficha sin id valido' -- the legacy census used to detect those
+# with a hardcoded substring list (WOT|WT|WP|CTL), which stayed closed even
+# when the destination declared a different prefix (RDS/EXF/...): a malformed
+# '### RDS-bad...' header passed invisible, the same false green 068k killed
+# for rows. This 6th pattern keeps the substring semantics of the old census
+# ('PREFIX-' anywhere, so '-bad' headers stay visible) but compiles from the
+# SAME bound alternation: the declared prefix of the destination + legacy triad.
+# Consequence: a '### CTL-...' header in a WOT-prefixed destino is no longer
+# claimed by this gate at all -- the destino that DECLARES CTL audits it (the
+# policy of the link, applied to fichas; WOT-2026-068k for rows).
+_FICHA_HEADER_HINT_RE: re.Pattern[str] | None = None
 
 # WOT-2026-052a: Prioridad words that identify a live-queue / archived-snapshot
 # table row. The Prioridad cell sits at RAW split index 1 (empty token,
@@ -181,12 +198,12 @@ _BOUND_ALTERNATION: str | None = None
 
 
 def bind_ticket_prefix(alternation: str) -> None:
-    """Compila y enlaza las 5 regex de ids del modulo desde ``alternation``.
+    """Compila y enlaza los 6 patrones de ids/header del modulo desde ``alternation``.
 
     Before: ``alternation`` sale de ``prefix_resolver.resolve_ticket_alternation``
         (re.escape ya aplicado, p.ej. ``"RDS|WOT|WP|WT"``).
-    During: muta los 5 globals del modulo en UN solo acto; sin I/O.
-    After: los 5 globals quedan listos para los puntos de uso y
+    During: muta los 6 globals del modulo en UN solo acto; sin I/O.
+    After: los 6 globals quedan listos para los puntos de uso y
         ``_BOUND_ALTERNATION`` refleja la alternancia enlazada; cualquier acceso
         posterior via ``_require(...)`` pasa a funcionar. Si el alternation no
         compila, re.Error propaga (el resolvedor ya escapa, seria bug del
@@ -194,6 +211,7 @@ def bind_ticket_prefix(alternation: str) -> None:
     """
     global _TICKET_TRIGGER_RE, _FICHA_RE, _TICKET_ROW_CELL_RE
     global _DEPENDS_ON_ID_RE, _TICKET_ID_IN_TEXT_RE, _BOUND_ALTERNATION
+    global _FICHA_HEADER_HINT_RE
     _TICKET_TRIGGER_RE = re.compile(rf"^(?:{alternation})-\d{{4}}-\w+$")
     _FICHA_RE = re.compile(rf"^### ({alternation})-\d{{4}}-\w+(?:\s+-\s+.+)?$")
     _TICKET_ROW_CELL_RE = re.compile(rf"^(?:{alternation})-\d{{4}}-\w+$")
@@ -201,18 +219,24 @@ def bind_ticket_prefix(alternation: str) -> None:
         rf"(?<![\w-])(?:{alternation})-\d{{4}}-[a-z0-9]+(?![\w-])"
     )
     _TICKET_ID_IN_TEXT_RE = re.compile(rf"\b((?:{alternation})-\d{{4}}-\w+)\b")
+    # WOT-2026-068l: deteccion de cabecera de ficha (substring 'PREFIX-', no id
+    # completo): una ficha MALFORMADA ('### RDS-bad...') debe seguir siendo
+    # visible, y solo lo es si la lista de prefijos la incluye.
+    _FICHA_HEADER_HINT_RE = re.compile(rf"(?:{alternation})-")
     _BOUND_ALTERNATION = alternation
 
 
 def unbind_ticket_patterns() -> None:
-    """Restablece las 5 regex a None (para tests y re-enlace limpio)."""
+    """Restablece los 6 patrones a None (para tests y re-enlace limpio)."""
     global _TICKET_TRIGGER_RE, _FICHA_RE, _TICKET_ROW_CELL_RE
     global _DEPENDS_ON_ID_RE, _TICKET_ID_IN_TEXT_RE, _BOUND_ALTERNATION
+    global _FICHA_HEADER_HINT_RE
     _TICKET_TRIGGER_RE = None
     _FICHA_RE = None
     _TICKET_ROW_CELL_RE = None
     _DEPENDS_ON_ID_RE = None
     _TICKET_ID_IN_TEXT_RE = None
+    _FICHA_HEADER_HINT_RE = None
     _BOUND_ALTERNATION = None
 
 
@@ -453,6 +477,76 @@ def _ticket_rows_outside_table(content: str) -> list[str]:
     return errors
 
 
+def _vista_rapida_header_index(lines: list[str]) -> int | None:
+    """WOT-2026-068m: indice de la cabecera '| Prioridad' dentro de 'Vista rapida'.
+
+    Before: ``lines`` son las lineas del backlog.
+    During: recorrido puro; corta en el proximo '## ' (mismo criterio que
+        ``_extract_active_table``/``_vista_rapida_body_span``).
+    After: indice de cabecera, o None si falta la seccion o la cabecera (el
+        caller lo traduce a "denominador no aplicable").
+    """
+    try:
+        start = next(
+            i for i, line in enumerate(lines) if line.strip() == _VISTA_RAPIDA_HEADER
+        )
+    except StopIteration:
+        return None
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if stripped.startswith("## "):
+            return None
+        if stripped.startswith("| Prioridad"):
+            return i
+    return None
+
+
+def _outside_table_denominator(content: str) -> tuple[int, int] | None:
+    """WOT-2026-068m: denominador de la red anti-fragmentacion 027t, (N, M).
+
+    La red (`_ticket_rows_outside_table`) solo DENUNCIA una fila fuera de la
+    tabla cuando su celda Ticket encaja en `_TICKET_ROW_CELL_RE`; una fila
+    Prioridad-led cuyo id NO encaja queda fuera de su alcance sin que nada diga
+    EN QUE LUGAR esta rota (el WARN de saltadas de WOT-2026-052a es file-wide:
+    nombra la fila, no su fragmentation). Pre-068k esa ceguera alcanzaba al
+    prefijo entero del destino (matriz 2x2 del sobre FP-20260912: RDS+linea en
+    blanco -> rc=0); con el patron enlazado desde el link (WOT-2026-068k) la
+    clase del prefijo quedo cerrada, pero la clase residual id-no-canonico sigue
+    sin localizarse. Este denominador la hace VISIBLE sin tocar rc: N cuenta las
+    filas Prioridad-led FUERA del span de la tabla Vista rapida; M cuenta las
+    que la red puede auditar (celda Ticket contra el patron enlazado); N - M es
+    la clase ciega. Es la "alternativa barata" del sobre, ofrecida alli como
+    1 linea que no arregla la ceguera pero impide que sea silenciosa.
+
+    Before: ``content`` es el backlog ya leido (utf-8-sig aplicado por el caller).
+    During: parseo de lineas puro, sin I/O; exige patron de ids enlazado
+        (``_require`` lanza RuntimeError si nadie enlazo el prefijo).
+    After: ``(N, M)`` cuando existen la seccion '## Vista rapida' y su cabecera
+        '| Prioridad'; None cuando faltan -- esa ausencia ya la reporta
+        ``_extract_active_table`` como ``table_error``, y un denominador sobre un
+        fichero sin tabla solo inventaria ruido (un vacio no es fragmentacion).
+    """
+    lines = content.splitlines()
+    if _vista_rapida_header_index(lines) is None:
+        return None
+    in_table = _vista_rapida_body_span(lines)
+    total = 0
+    auditable = 0
+    for i, line in enumerate(lines):
+        if i in in_table:
+            continue
+        stripped = line.strip()
+        if not stripped.startswith("| "):
+            continue
+        raw = stripped.split("|")
+        if len(raw) <= 3 or raw[1].strip() not in _PRIORIDAD_WORDS:
+            continue
+        total += 1
+        if _require(_TICKET_ROW_CELL_RE).match(raw[2].strip()):
+            auditable += 1
+    return total, auditable
+
+
 def _validate_reactivation(status: str, reactivation: str) -> str | None:
     """Return an error string for an invalid (status, reactivation) pair."""
     react = reactivation.strip()
@@ -637,12 +731,19 @@ def _check_ficha_bodies(content: str) -> list[str]:
     WOT-2026-013j adds: a detailed ficha must not re-declare Files Likely Touched
     (owned by the frozen contract, never the backlog body). Tracks the current
     ficha so a violation names its owner ticket.
+
+    WOT-2026-068l: which headers count as ticket fichas is decided by the BOUND
+    ``_FICHA_HEADER_HINT_RE`` (declared ticket_prefix + legacy triad), not by the
+    old hardcoded substring census (WOT|WT|WP|CTL). Under that census a destino
+    declaring RDS was blind to its own malformed ``### RDS-...`` headers: the
+    gate printed OK without ever looking at them -- the ficha-level form of the
+    same false green WOT-2026-068k closed for table rows.
     """
     errors: list[str] = []
     current_ficha = "<before any ficha>"
     for line in content.splitlines():
-        is_ticket_ficha = line.startswith("### ") and (
-            "WOT-" in line or "WT-" in line or "WP-" in line or "CTL-" in line
+        is_ticket_ficha = line.startswith("### ") and bool(
+            _require(_FICHA_HEADER_HINT_RE).search(line)
         )
         if is_ticket_ficha:
             current_ficha = line.rstrip().lstrip("# ").strip()
@@ -2001,6 +2102,24 @@ def main(argv: list[str] | None = None) -> int:
         f"WOT-2026-027i para no doble-contar un ticket que aparece a la vez en "
         f"un closure-log y en un snapshot archivado."
     )
+    # WOT-2026-068m: la red anti-fragmentacion (027t) publica SU denominador,
+    # siempre (un recibo que solo aparece cuando hay daño vuelve a ser silencio:
+    # "N=0, M=0" certifica que la red MIRÓ). La violacion OUTSIDE solo nombra las
+    # filas que el patron enlazado RECONOCE; una fila Prioridad-led fuera de la
+    # tabla con id no canonico no es violacion y no aparece localizada en ninguna
+    # otra parte. (N, M) deja la clase ciega N-M visible sin tocar rc.
+    try:
+        backlog_content = backlog.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        backlog_content = None
+    if backlog_content is not None:
+        denominator = _outside_table_denominator(backlog_content)
+        if denominator is not None:
+            outside_n, outside_m = denominator
+            print(
+                f"[backlog-contract] red 027t: filas fuera de la tabla: "
+                f"{outside_n}, auditables: {outside_m}"
+            )
     if saltadas:
         for cell in sorted(set(saltadas_live + saltadas_arch)):
             print(
