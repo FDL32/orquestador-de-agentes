@@ -1,11 +1,38 @@
 # Project: orquestador_de_agentes
 **Version:** v9.17.1
-**State:** READY (2026-06-13) - System health audit protocol (collector + skill + prompt) added; audit-chain fixes; suite green
+**State:** READY (2026-10-12) - 4-layer execution pattern ("personas" vocabulary,
+`prompts/persona_system.md`) formalized; role vocabulary harmonized across
+AGENTS.md and its 3 independent code enums; WOT-2026-098b (revisor role/layer)
+closed; suite focal green
 
 ## Current Cycle
 
-- E0-E6 audit batch VERIFIED (2026-06-12). Tickets `WT-2026-248b` through
-  `WT-2026-255a` are implemented across `repo_motor` and `repo_destino`.
+- **Vocabulary harmonization (2026-10-12, commit `a2fa2c5`):** `AGENTS.md`'s
+  "Roles canonicos" list was 4 months stale against the real code (it listed
+  5 roles while `.agent/agents_config.py::CANONICAL_ROLES` already had 6, and
+  a THIRD independent enum in `scripts/discover_skills.py` falsely
+  self-attributed as "canonical roles of AGENTS.md" too). Fixed after a
+  3-lens adversarial loop (codex, nan-fs via Kilo, opencode/glm): AGENTS.md
+  now documents 4 explicit categories (pipeline, independent-review layer,
+  governance/ensemble, human actor) with pointers to
+  `prompts/agent_execution_modes.md` and `prompts/persona_system.md`; the 3
+  code enums stay distinct by design (DEC-router-skills-001 Section 7), only
+  their misleading comments were corrected.
+- **`prompts/persona_system.md` formalized (2026-10-12, commit `e83a82e`):**
+  defines the "Persona-0-Orquestador/1-Manager/2-Revisor/3-Builder"
+  vocabulary (integer numbering, never decimals) over the existing 4-layer
+  execution pattern, with an explicit correlation table to
+  `agent_execution_modes.md`'s original Layer numbering ("Layer 1.5"/"Layer
+  2", kept unrenamed).
+- **WOT-2026-098b closed (2026-10-12, commits `84f4da6` + `e83a82e`):**
+  4-layer system role `revisor` added to `agents.json`
+  (`role_mapping.revisor`/`role_models.REVISOR`), mechanical gate
+  `scripts/check_role_models_distinct.py` (Builder != Revisor model_id), and
+  `session_start_hook.py` now exposes the resolved role/backend/model per
+  layer to a cold-starting session. Focal suite 97/97 passed at commit time.
+- Historical cycle (superseded, kept for traceability): E0-E6 audit batch
+  VERIFIED (2026-06-12). Tickets `WT-2026-248b` through `WT-2026-255a` are
+  implemented across `repo_motor` and `repo_destino`.
 - v9.16.0 release consolidation (2026-06-13): chat-driven backlog
   orchestration now has a canonical pipeline prompt/skill, motor writes are
   detected with `check_motor_pristine.py`, `/audit-pipeline` provides a
