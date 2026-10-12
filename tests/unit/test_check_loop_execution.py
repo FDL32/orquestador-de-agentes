@@ -456,6 +456,20 @@ def test_transport_failure_writes_a_row_then_reraises(tmp_path, monkeypatch):
         raise TimeoutError("The read operation timed out")
 
     monkeypatch.setattr(ed, "send_to_profile", _boom)
+    # WOT-2026-066t: `code-review` es task_type de gobierno y la barrera de
+    # `run_loop_round` exige el par VALIDO antes de gastar la ronda. Se siembra
+    # el dominio real (motor git + link + emision), no un helper mockeado:
+    # la resolucion del sha corre por la via productiva.
+    motor, sha40 = _make_git_repo_with_commit(tmp_path / "motor")
+    _link_motor(tmp_path, motor)
+    ed.emit_nonce(
+        tmp_path,
+        commit_sha=sha40,
+        loop_id="L700",
+        issuer_role="orchestrator",
+        issuer_backend_key="BA01",
+        nonce="N1",
+    )
     with pytest.raises(TimeoutError):
         ed.run_loop_round(
             "p0",
@@ -469,7 +483,7 @@ def test_transport_failure_writes_a_row_then_reraises(tmp_path, monkeypatch):
             loop_id="L700",
             backend_key="BA10",
             sensitivity="public",
-            commit_sha="abc123",
+            commit_sha=sha40,
             challenge_nonce="N1",
         )
     rows, _sha = ed._read_scorecard(tmp_path)
@@ -488,9 +502,13 @@ def test_end_to_end_silent_fanout_fails_through_run_loop_round(tmp_path, monkeyp
     """END-TO-END en la ruta PRODUCTIVA: `run_loop_round` es quien escribe los
     receipts del bucle de gobierno. Con un transporte que devuelve cadena vacia,
     4 backends distintos dejan 4 filas y el gate las rechaza por MUDAS."""
+    # WOT-2026-066t: dominio de gobierno REAL (motor git + link + emision),
+    # el par debe casar por la via productiva antes de gastar cada ronda.
+    motor, sha40 = _make_git_repo_with_commit(tmp_path / "motor")
+    _link_motor(tmp_path, motor)
     ed.emit_nonce(
         tmp_path,
-        commit_sha="abc123",
+        commit_sha=sha40,
         loop_id="L700",
         issuer_role="orchestrator",
         issuer_backend_key="BA01",
@@ -502,7 +520,7 @@ def test_end_to_end_silent_fanout_fails_through_run_loop_round(tmp_path, monkeyp
         },
         "backends": {"nan": {}},
     }
-    monkeypatch.setattr(ed, "_backend_version", lambda _b: "v0")
+    monkeypatch.setattr(ed, "_backend_version", lambda *a, **k: "v0")
     monkeypatch.setattr(
         ed, "send_to_profile", lambda *a, **k: ""
     )  # el backend calla: cero bytes
@@ -519,14 +537,14 @@ def test_end_to_end_silent_fanout_fails_through_run_loop_round(tmp_path, monkeyp
             loop_id="L700",
             backend_key=bk,
             sensitivity="internal",
-            commit_sha="abc123",
+            commit_sha=sha40,
             challenge_nonce="FIXED_NONCE",
         )
     rows, _sha = ed._read_scorecard(tmp_path)
     assert len(rows) == 4
     assert all(r["output_chars"] == 0 for r in rows)
 
-    verdicts = cle.audit(tmp_path, commit_shas=["abc123"], deliverable_type="code")
+    verdicts = cle.audit(tmp_path, commit_shas=[sha40], deliverable_type="code")
     assert verdicts[0]["ok"] is False
     assert len(verdicts[0]["silent_rounds"]) == 4
 
@@ -537,9 +555,12 @@ def test_end_to_end_substantive_fanout_passes_through_run_loop_round(
     """CONTROL POSITIVO de la ruta productiva: identico al anterior salvo que el
     transporte responde. Si este tambien fallara, el test de arriba no probaria
     nada sobre el silencio."""
+    # WOT-2026-066t: igual que el par de arriba, dominio REAL de emision.
+    motor, sha40 = _make_git_repo_with_commit(tmp_path / "motor")
+    _link_motor(tmp_path, motor)
     ed.emit_nonce(
         tmp_path,
-        commit_sha="abc123",
+        commit_sha=sha40,
         loop_id="L700",
         issuer_role="orchestrator",
         issuer_backend_key="BA01",
@@ -551,7 +572,7 @@ def test_end_to_end_substantive_fanout_passes_through_run_loop_round(
         },
         "backends": {"nan": {}},
     }
-    monkeypatch.setattr(ed, "_backend_version", lambda _b: "v0")
+    monkeypatch.setattr(ed, "_backend_version", lambda *a, **k: "v0")
     monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: "REFUTA: " + "x" * 900)
     for i, bk in enumerate(("BA10", "BA11", "BA12", "BA13")):
         ed.run_loop_round(
@@ -566,7 +587,7 @@ def test_end_to_end_substantive_fanout_passes_through_run_loop_round(
             loop_id="L700",
             backend_key=bk,
             sensitivity="internal",
-            commit_sha="abc123",
+            commit_sha=sha40,
             challenge_nonce="FIXED_NONCE",
         )
     rows, _sha = ed._read_scorecard(tmp_path)
@@ -574,7 +595,7 @@ def test_end_to_end_substantive_fanout_passes_through_run_loop_round(
     assert all(r["output_chars"] == 908 for r in rows)
     assert all(len(r["evidencia"]) == 500 for r in rows)
 
-    verdicts = cle.audit(tmp_path, commit_shas=["abc123"], deliverable_type="code")
+    verdicts = cle.audit(tmp_path, commit_shas=[sha40], deliverable_type="code")
     assert verdicts[0]["ok"] is True
     assert verdicts[0]["silent_rounds"] == []
 

@@ -316,6 +316,27 @@ GOVERNMENT_PHASES = frozenset(
     }
 )
 
+# WOT-2026-066t: task_types de GOBIERNO. Una ronda cuyo task_type es de
+# gobierno es evidencia de auditoria (OBJ-002: la flota es auditable) y por
+# eso NO puede escribirse sin el par nonce+sha VALIDO. El censo del scorecard
+# midio 118 de 157 rondas sin par de gobierno (contract-audit 63, code-review
+# 46, prompt-audit 7, adjudication 2) -- exactamente estos cuatro. Definido
+# UNA vez aqui; la barrera vive en `_validated_governance_pair`, invocada por
+# `run_loop_round` (la ruta comun: CLI `loop-round` y Python directo por igual).
+# Ortogonal a `GOVERNMENT_PHASES` (WOT-2026-040i): `GOVERNMENT_PHASES` guarda la
+# `phase` del bucle 1->9->2 en el wrapper CLI; este conjunto guarda el
+# `task_type` de la ronda en la funcion que registra, y cierra el hueco de la
+# fase NO de gobierno con task_type de gobierno (las rondas sin par via
+# `loop-round` que 040i dejaba pasar).
+GOVERNANCE_TASK_TYPES = frozenset(
+    {
+        "contract-audit",
+        "code-review",
+        "prompt-audit",
+        "adjudication",
+    }
+)
+
 LEADER_MIN_N = 5
 EXPLORATION_POLICY = (
     "1-de-5 rondas, o al cambiar la version del modelo/backend, el challenger "
@@ -5085,6 +5106,10 @@ def run_loop_round(
         (WOT-2026-040b), cuando el caller los pasa, atan el receipt al commit
         bajo review y al nonce EMITIDO FUERA (`emit-nonce` ->
         `emitted_nonces.jsonl`), NO uno que esta funcion invente.
+        WOT-2026-066t: si `task_type` pertenece a `GOVERNANCE_TASK_TYPES`, el
+        par NO es opcional -- `_validated_governance_pair` lo exige VALIDO
+        (sha que resuelve + nonce en el ledger para ESE sha, emitido ANTES) y
+        normaliza `commit_sha` a sha40 antes de registrarlo.
     During: despacha por `send_to_profile` (el preflight de privacidad corre
         alli, fail-closed) cronometrando con `time.perf_counter()`; luego
         APPENDEA exactamente UNA fila via `_record_round`, copiando
@@ -5094,10 +5119,22 @@ def run_loop_round(
     After: retorna el texto del backend tal cual (el consolidador es el chat,
         nivel 0: esta funcion no interpreta ni adjudica). Propaga
         `DispatchBlockedError` si el preflight bloquea -- en ese caso NO hay
-        fila, porque no hubo ronda.
+        fila, porque no hubo ronda. Propaga tambien el `ValueError` de
+        WOT-2026-066t cuando el task_type es de gobierno y falta el par o no
+        es valido: FALLA ANTES de gastar la llamada y SIN escribir fila.
     """
     if task_type not in TASK_TYPES:
         raise ValueError(_invalid_task_type_message(task_type))
+    # WOT-2026-066t: un task_type de gobierno exige el par nonce+sha VALIDO
+    # ANTES de gastar la llamada y SIN escribir fila. Tambien normaliza el
+    # sha40 que se registrara (una abreviatura acreditada no puede dejar una
+    # fila cuyo join con el ledger falle por formato).
+    commit_sha = _validated_governance_pair(
+        project_root,
+        task_type=task_type,
+        commit_sha=commit_sha,
+        challenge_nonce=challenge_nonce,
+    )
     profile = config["ensemble_profiles"][profile_name]
     # WOT-2026-026t: `backend_key` es el RECIBO de quien ejecuto la ronda, y
     # `check_loop_execution` cuenta claves DISTINTAS para acreditar la
@@ -6306,6 +6343,89 @@ def reject_nonce_reuse(
     return None
 
 
+def _validated_governance_pair(
+    project_root: Path,
+    *,
+    task_type: str,
+    commit_sha: str | None,
+    challenge_nonce: str | None,
+) -> str | None:
+    """WOT-2026-066t: un `task_type` de gobierno exige el par nonce+sha VALIDO.
+
+    La barrera vive en `run_loop_round` -- la ruta COMUN que escribe
+    `event: ronda`, tanto la CLI `loop-round` como el Python directo (import +
+    llamada, la leccion de WOT-2026-046h: arreglar solo el wrapper CLI deja el
+    hueco abierto por la otra via) -- y es BLOQUEANTE, no WARN: una ronda de
+    gobierno sin par es inauditable y no puede salir rc=0 (OBJ-002). La validez
+    exige PAR, no presencia: (a) `commit_sha` resuelve (misma via que el
+    extremo emisor, `_validated_motor_sha`/WOT-2026-059m); (b)
+    `challenge_nonce` esta en `emitted_nonces.jsonl` PARA ESE sha y fue
+    emitido ANTES (la lectura del ledger ANTES de escribir la fila ES la
+    prueba de anterioridad; el ledger es append-only, `read_emitted_nonces` es
+    la misma puerta que lee el lector `check_loop_execution`). Los nonces
+    fabricados se NOMBRAN en el error, nunca un `continue` mudo.
+
+    Before: `project_root` es el destino-rol con
+        `.agent/runtime/ensemble/emitted_nonces.jsonl`; `task_type` ya valido
+        contra `TASK_TYPES`; `commit_sha`/`challenge_nonce` los crudos del
+        caller (la abreviatura se normaliza aqui).
+    During: lectura del link motor + `git rev-parse` (via
+        `_validated_motor_sha`) y lectura del ledger de nonces. SIN filas, SIN
+        envio al backend: quien llama aun no ha gastado la ronda.
+    After: sha40 normalizado si el task_type es de gobierno y el par es
+        VALIDO; `commit_sha` intacto si NO es de gobierno. `ValueError`
+        fail-closed nombrando la causa (par ausente, sha no resuelve, nonce
+        fabricado, nonce emitido contra otro sha, emision posterior) -- la
+        fila NO se escribe.
+    """
+    if task_type not in GOVERNANCE_TASK_TYPES:
+        return commit_sha
+    if not commit_sha or not challenge_nonce:
+        raise ValueError(
+            f"loop-round bloqueado (WOT-2026-066t): el task_type de gobierno "
+            f"'{task_type}' exige el par VALIDO --commit-sha + "
+            f"--challenge-nonce; sin el par la ronda es inauditable y NO se "
+            "escribe la fila. Emite el nonce ANTES del fan-out con "
+            "`emit-nonce` y pasa ambas banderas en esta ronda."
+        )
+    sha40 = _validated_motor_sha(project_root, commit_sha)
+    with_nonce = [
+        row
+        for row in read_emitted_nonces(project_root)
+        if row.get("challenge_nonce") == challenge_nonce
+    ]
+    if not with_nonce:
+        raise ValueError(
+            f"loop-round bloqueado (WOT-2026-066t): el challenge_nonce "
+            f"'{challenge_nonce}' NO esta en emitted_nonces.jsonl: es un nonce "
+            "FABRICADO (se nombra, no se pasa por alto). Un nonce nace solo "
+            "con `emit-nonce` ANTES del fan-out; NO se escribio la fila."
+        )
+    for_this_sha = [row for row in with_nonce if row.get("commit_sha") == sha40]
+    if not for_this_sha:
+        issued_against = ", ".join(
+            sorted({str(row.get("commit_sha")) for row in with_nonce})
+        )
+        raise ValueError(
+            f"loop-round bloqueado (WOT-2026-066t): el challenge_nonce "
+            f"'{challenge_nonce}' fue emitido contra commit_sha={issued_against}"
+            f", no contra {sha40}: el par (sha, nonce) debe casar con UNA "
+            "emision DE ESTE commit; NO se escribio la fila."
+        )
+    now = _now_iso()
+    issued_befores = [
+        str(row.get("issued_before_ts") or row.get("ts") or "") for row in for_this_sha
+    ]
+    if all(issued > now for issued in issued_befores):
+        raise ValueError(
+            f"loop-round bloqueado (WOT-2026-066t): el challenge_nonce "
+            f"'{challenge_nonce}' declara issued_before_ts="
+            f"{issued_befores[0]!r}, POSTERIOR a esta ronda ({now}): la "
+            "emision debe ser ANTERIOR al fan-out; NO se escribio la fila."
+        )
+    return sha40
+
+
 def _warn_bundle_protocol(content_path: Path) -> None:
     """PROTOCOLO DE BUNDLE (2026-08-05): avisa ANTES de gastar la ronda si el
     encargo no declara sus invariantes de suficiencia.
@@ -7184,12 +7304,18 @@ def main(argv: list[str] | None = None) -> int:
     p_loop.add_argument("--ronda", type=int, default=1)
     p_loop.add_argument("--context-kind", default="diff")
     p_loop.add_argument(
-        "--commit-sha", default=None, help="commit bajo review (WOT-2026-040b)"
+        "--commit-sha",
+        default=None,
+        help="commit bajo review (WOT-2026-040b); OBLIGATORIO junto con "
+        f"--challenge-nonce si el --task-type es de gobierno "
+        f"{sorted(GOVERNANCE_TASK_TYPES)} (WOT-2026-066t)",
     )
     p_loop.add_argument(
         "--challenge-nonce",
         default=None,
-        help="nonce emitido FUERA por `emit-nonce`, ANTES de esta ronda",
+        help="nonce emitido FUERA por `emit-nonce`, ANTES de esta ronda; "
+        "OBLIGATORIO con --commit-sha para task_types de gobierno "
+        "(WOT-2026-066t)",
     )
     p_loop.add_argument("--session-id", default=None)
     p_loop.add_argument("--project-root", required=True)

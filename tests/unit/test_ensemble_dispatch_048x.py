@@ -84,8 +84,12 @@ def _argv(tmp_path: Path, payload: Path) -> list[str]:
         str(payload),
         "--ticket",
         "WOT-2026-048x",
+        # `prose`: task_type NO de gobierno. Desde WOT-2026-066t un
+        # task-type de gobierno sin par nonce+sha se bloquea en
+        # `run_loop_round`, y el sujeto de este fichero es la clasificacion
+        # del fallo de transporte, no la barrera del par.
         "--task-type",
-        "code-review",
+        "prose",
         "--rol",
         "challenger",
         "--phase",
