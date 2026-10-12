@@ -397,6 +397,44 @@ def has_utf8_bom(path: Path) -> bool:
     return path.read_bytes().startswith(b"\xef\xbb\xbf")
 
 
+def find_mixed_line_endings(raw: bytes) -> list[str]:
+    """Return snippets for files with mixed line endings (CRLF + bare LF).
+
+    Operates on raw bytes (before newline normalization). Invariant: only
+    reports when BOTH crlf >= 1 AND bare_lf >= 1 (the MIXTURE is the hit).
+    An LF-only or CRLF-only file is never flagged.
+    """
+    if not raw:
+        return []
+    crlf = raw.count(b"\r\n")
+    lf_total = raw.count(b"\n")
+    bare_lf = lf_total - crlf
+    if crlf == 0 or bare_lf == 0:
+        return []
+    snippets: list[str] = []
+    line_num = 1
+    i = 0
+    while i < len(raw):
+        ch = raw[i]
+        if ch == ord(b"\n"):
+            if i == 0 or raw[i - 1] != ord(b"\r"):
+                snippet = f"bare LF at line {line_num}"
+                if snippet not in snippets:
+                    snippets.append(snippet)
+            line_num += 1
+            i += 1
+        elif ch == ord(b"\r"):
+            if i + 1 < len(raw) and raw[i + 1] == ord(b"\n"):
+                line_num += 1  # CRLF is one line break
+                i += 2
+            else:
+                line_num += 1  # bare CR is a line break
+                i += 1
+        else:
+            i += 1
+    return snippets
+
+
 def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
     """Return (mojibake, question_mark, text_corruption) issue snippets for path.
 

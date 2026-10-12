@@ -126,7 +126,8 @@ def test_check_encoding_guard_explicit_path_blocks_control_chars(
 def test_check_encoding_guard_explicit_path_allows_tab_lf_cr(tmp_path):
     """Tab, LF, CR and CRLF are legitimate and must not trip the guard."""
     file_path = tmp_path / "clean.md"
-    file_path.write_bytes(b"line1\twith tab\nline2\r\nline3\rline4\n")
+    # Tab + bare CR + CRLF (no bare LF): all legitimate, homogeneous.
+    file_path.write_bytes(b"line1\twith tab\r\nline2\rline3\r\n")
 
     result = subprocess.run(
         [

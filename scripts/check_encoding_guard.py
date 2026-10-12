@@ -199,14 +199,21 @@ def _destino_allowlist(file_path: Path) -> tuple[set[str], str | None]:
     return set(), None
 
 
-def _collect_file_errors(file_path) -> list[str]:
+def _collect_file_errors(file_path) -> list[str]:  # noqa: C901
     """Return all encoding errors for one file (BOM/mojibake/q-mark/text corruption)."""
-    from scripts.encoding_guard import file_issues, has_utf8_bom, is_allowlisted
+    from scripts.encoding_guard import (
+        file_issues,
+        find_mixed_line_endings,
+        has_utf8_bom,
+        is_allowlisted,
+    )
 
     rel = _display_path(file_path)
     mojibake, q_in_word, text_corruption = file_issues(file_path)
     # WOT-2026-058r: la allowlist del DESTINO se consulta antes que la del motor.
     declared, owner = _destino_allowlist(Path(file_path))
+    # WOT-2026-069i (latente): mixed line endings runs AFTER this early return.
+    # An allowlisted file with CRLF+bare-LF mixture never reports "Mixed".
     if declared and Path(file_path).resolve().as_posix() in declared:
         if not mojibake and not q_in_word and not text_corruption:
             return [
@@ -218,6 +225,14 @@ def _collect_file_errors(file_path) -> list[str]:
 
     rel_for_allowlist = _allowlist_relative(file_path)
     if rel_for_allowlist is not None and is_allowlisted(rel_for_allowlist):
+        # WOT-2026-069i (latente): allowlist is opt-out explicit by operator.
+        # The Mixed check runs AFTER this early return, so an allowlisted
+        # file NEVER reports "Mixed" here. A mixed-ONLY allowlisted file
+        # hits the "now clean" branch below (rc=1 — the message blames
+        # cleanliness instead of the mixture, misleading but fail-closed);
+        # a mixed file that ALSO carries mojibake/q-mark/text_corruption
+        # returns [] and is fully silent. Documented, not fixed (opt-out
+        # is intent). Probed by Revisor pasada 2 (patch in-memory).
         if not mojibake and not q_in_word and not text_corruption:
             return [f"Allowlist entry is now clean and should be removed: {rel}"]
         return []
@@ -230,6 +245,25 @@ def _collect_file_errors(file_path) -> list[str]:
         errors.append(f"Question-mark corruption detected in {rel}: {q_in_word[:12]}")
     if text_corruption:
         errors.append(f"Text corruption detected in {rel}: {text_corruption[:12]}")
+    # WOT-2026-069i: mixed line endings (CRLF + bare LF) on raw bytes.
+    raw = file_path.read_bytes()
+    mixed = find_mixed_line_endings(raw)
+    if mixed:
+        bare_count = len(mixed)
+        crlf = raw.count(b"\r\n")
+        sorted_lines = sorted(int(n.split("line ")[1]) for n in mixed)
+        truncate_n = 10
+        if len(sorted_lines) > truncate_n:
+            shown = sorted_lines[:truncate_n]
+            extra = len(sorted_lines) - truncate_n
+            line_nums = ", ".join(str(n) for n in shown)
+            line_nums = f"{line_nums} (+{extra} more)"
+        else:
+            line_nums = ", ".join(str(n) for n in sorted_lines)
+        errors.append(
+            f"Mixed line endings in {rel}: {bare_count} bare LF at lines "
+            f"{line_nums}; {crlf} CRLF total"
+        )
     return errors
 
 
