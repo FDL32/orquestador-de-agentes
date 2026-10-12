@@ -176,6 +176,25 @@ _TERMINAL_STATES = frozenset(
         # `absorbed`. Dos guards que leen la MISMA superficie no pueden discrepar
         # sobre que es un estado terminal.
         "absorbed",
+        # WOT-2026-059v: `closed`, `superseded`, `blocked-final`, `not-pursued`
+        # completan el set con `ARCHIVE_TERMINAL_STATES` (check_backlog_contract.py:1286).
+        # DIVERGENCIA DECLARADA EN AMBAS DIRECCIONES: `completed-partial` y
+        # `completed-via-010n` estan en landed pero NO en la lista blanca
+        # de check_backlog_contract.py (origen propio de landed, no un estado
+        # de la autoridad deliberada). Ninguno de los dos se retira de landed
+        # porque ya son parte del vocabulario operativo del guard y su presencia
+        # no rompe ningun cierre ni genera falso verde -- son el termino
+        # intermedio donde el guard opera sobre una enumeracion fija cerrada,
+        # no sobre un parser de estado. La lista blanca (contract) es el
+        # vocabulario canonico del cierre; landed lo adopta completo (DoD-a)
+        # y documenta aqui la asimetria: un estado de la lista blanca que no
+        # pertenece a landed seria un fallo de precision (falso positivo), pero
+        # un estado propio de landed que falta de la lista blanca no es
+        # incorrecto: landed tiene un vocabulario mas amplio.
+        "closed",
+        "superseded",
+        "blocked-final",
+        "not-pursued",
     }
 )
 # Evidence cell: singular `commit:` OR plural `commits:`. WOT-2026-024c P3: a

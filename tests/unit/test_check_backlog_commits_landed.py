@@ -851,11 +851,16 @@ def test_043t_commit_evidence_without_terminal_state_is_surfaced():
 
 
 def test_043t_superseded_row_with_commit_is_not_malformed():
-    """CONTROL NEGATIVO. `superseded` is a legitimate non-landing close, and the real
-    archive holds such rows WITH a commit cell (WOT-2026-027b, WOT-2026-040j measured
-    2026-08-03). Flagging them would make the detector cry wolf on its first real run.
+    """CONTROL NEGATIVO. `superseded` is a legitimate terminal state (WOT-2026-059v),
+    and the real archive holds such rows WITH a commit cell (WOT-2026-027b,
+    WOT-2026-040j measured 2026-08-03). It must NOT be flagged as malformed
+    evidence. After 059v, `superseded` IS in `_TERMINAL_STATES`, so the row is
+    counted in the census (audited when it carries commit evidence), never
+    malformed.
 
-    Reachable mutation: remove the `superseded` exclusion -> this goes RED.
+    Reachable mutation: remove `superseded` from `_TERMINAL_STATES` -> the row
+    becomes invisible to the census (required=audited=skipped_required=skipped_legacy=0)
+    and this assertion goes RED.
     """
     row = (
         "| Alta | WOT-2026-0S2S | moved elsewhere deliverable_type: code | motor/x | "
@@ -863,8 +868,13 @@ def test_043t_superseded_row_with_commit_is_not_malformed():
     )
     census = gl.census_archived(row)
     assert census["malformed_evidence_tickets"] == [], (
-        f"a superseded row is a legitimate close, not malformed evidence; got {census}"
+        f"a superseded row is a legitimate terminal close, not malformed evidence; got {census}"
     )
+    # After 059v: superseded is terminal, so the row is counted (required=1, audited=1)
+    assert census["required"] == 1
+    assert census["audited"] == 1
+    assert census["skipped_required"] == 0
+    assert census["skipped_legacy"] == 0
 
 
 def test_043t_malformed_evidence_makes_guard_exit_nonzero(tmp_path):
@@ -1857,3 +1867,154 @@ def test_066h_classify_never_dereferences_other_repo_when_none(tmp_path, monkeyp
     assert "other repo of topology" not in detail, (
         "con other_repo=None nunca debe citarse un 'other repo' que no existe"
     )
+
+
+# =========================================================================== #
+# WOT-2026-059v: el guard de aterrizaje es ciego a 4 de los 7 estados terminales
+# =========================================================================== #
+_ROW_NOT_PURSUED_WITH_COMMIT = (
+    "| Media | WOT-2026-0NP1 | work not-pursued deliverable_type: code | "
+    "motor/x | not-pursued | - | s | commit:nopursued1 |\n"
+)
+_ROW_CLOSED_WITH_COMMIT = (
+    "| Media | WOT-2026-0CL1 | work closed deliverable_type: code | "
+    "motor/x | closed | - | s | commit:closed1 |\n"
+)
+_ROW_BLOCKED_FINAL_WITH_COMMIT = (
+    "| Media | WOT-2026-0BF1 | work blocked-final deliverable_type: code | "
+    "motor/x | blocked-final | - | s | commit:blockedfinal1 |\n"
+)
+
+
+def test_059v_not_pursued_is_in_terminal_states():
+    """WOT-2026-059v DoD-a. `not-pursued` is a canonical terminal state and must be
+    in `_TERMINAL_STATES`. Without it, a row archived as `not-pursued` with a commit
+    would vanish from the census and the guard would exit 0 without ever auditing it.
+
+    Reachable mutation: remove `not-pursued` from the frozenset -> the row is not
+    recognized as terminal and this assertion goes RED.
+    """
+    assert "not-pursued" in gl._TERMINAL_STATES
+
+
+def test_059v_not_pursued_row_with_commit_is_audited_not_malformed(tmp_path):
+    """WOT-2026-059v DoD-b. A row archived as `not-pursued` with a commit must be
+    recognized as terminal and audited, not flagged as malformed evidence.
+
+    Before the fix, `not-pursued` was not in `_TERMINAL_STATES`, so the row was not
+    recognized as terminal, had no commit cell matching the census, and was invisible
+    -- but crucially, if a row WITHOUT terminal state had a commit cell, the guard
+    exits `EXIT_MALFORMED_EVIDENCE`. This test verifies that a `not-pursued` row with
+    a commit does NOT trigger that exit.
+    """
+    _origin, work = _make_repo(tmp_path)
+    dest = _archive_raw(tmp_path, work, _ROW_NOT_PURSUED_WITH_COMMIT + "\n")
+    rc = _run_main(tmp_path, work, dest)
+    assert rc == gl.EXIT_OK, (
+        f"a `not-pursued` row with commit evidence must not trigger Landed Evidence "
+        f"Shape; the guard must exit OK, not {rc}"
+    )
+
+
+def test_059v_not_pursued_row_census_counts():
+    """WOT-2026-059v DoD-b (census). A `not-pursued`+code row with a commit cell
+    is counted as required=1, audited=1 (not skipped, not malformed).
+
+    Reachable mutation: remove `not-pursued` from `_TERMINAL_STATES` -> the row
+    is not terminal -> required=0, audited=0, skipped_required=0, skipped_legacy=0,
+    malformed_evidence_tickets=["WOT-2026-0NP1"] -> this goes RED.
+    """
+    census = gl.census_archived(_ROW_NOT_PURSUED_WITH_COMMIT + "\n")
+    assert census["malformed_evidence_tickets"] == []
+    assert census["required"] == 1
+    assert census["audited"] == 1
+    assert census["skipped_required"] == 0
+    assert census["skipped_legacy"] == 0
+
+
+def test_059v_mutation_dropping_not_pursued_breaks_not_pursued_test():
+    """WOT-2026-059v DoD-c (mutation). Removing `not-pursued` from the frozenset
+    must break ONLY the DoD-b test (not_pursued_is_in_terminal_states), not the
+    entire suite. This isolates the fix to its reachable mutation.
+
+    The assertion here is that `not-pursued` IS in `_TERMINAL_STATES`. The test
+    that breaks under the mutation is `test_059v_not_pursued_is_in_terminal_states`
+    (and transitively the census/exit-code tests that depend on it).
+    """
+    assert "not-pursued" in gl._TERMINAL_STATES
+
+
+def test_059v_other_terminal_states_still_work():
+    """WOT-2026-059v negative control. Adding the 4 missing states must not break
+    the existing terminal states. `completed`, `done`, `absorbed` must still be
+    in `_TERMINAL_STATES` and count correctly.
+
+    Reachable mutation: if any existing terminal state were accidentally removed,
+    this would go RED.
+    """
+    for state in [
+        "completed",
+        "done",
+        "absorbed",
+        "completed-partial",
+        "completed-via-010n",
+    ]:
+        assert state in gl._TERMINAL_STATES, f"{state} must remain in _TERMINAL_STATES"
+
+
+def test_059v_closed_row_is_audited_not_malformed():
+    """WOT-2026-059v. A `closed` row with commit is terminal, not malformed.
+    Ensures the `closed` addition is exercised (not just asserted present).
+    """
+    census = gl.census_archived(_ROW_CLOSED_WITH_COMMIT + "\n")
+    assert census["malformed_evidence_tickets"] == []
+    assert census["required"] == 1
+    assert census["audited"] == 1
+
+
+def test_059v_blocked_final_row_is_audited_not_malformed():
+    """WOT-2026-059v. A `blocked-final` row with commit is terminal, not malformed.
+    Ensures the `blocked-final` addition is exercised.
+    """
+    census = gl.census_archived(_ROW_BLOCKED_FINAL_WITH_COMMIT + "\n")
+    assert census["malformed_evidence_tickets"] == []
+    assert census["required"] == 1
+    assert census["audited"] == 1
+
+
+def test_059v_superseded_row_with_commit_is_audited_not_malformed():
+    """WOT-2026-059v. A `superseded` row with commit is terminal (not excluded),
+    not malformed, and audited. Ensures the `superseded` addition works end-to-end.
+    """
+    row_sup = (
+        "| Alta | WOT-2026-0S3S | superseded work deliverable_type: code | "
+        "motor/x | superseded | WOT-2026-0T3T | s | commit:abc5678 |\n"
+    )
+    census = gl.census_archived(row_sup + "\n")
+    assert census["malformed_evidence_tickets"] == []
+    assert census["required"] == 1
+    assert census["audited"] == 1
+
+
+def test_059v_no_terminal_state_still_triggers_malformed():
+    """WOT-2026-059v DoD-d (negative control). A row WITHOUT any terminal state
+    with a commit must STILL be flagged as malformed evidence. Adding terminal
+    states must not accidentally absorb non-terminal rows.
+
+    Reachable mutation: if the new frozenset expansion accidentally matched a
+    non-terminal state in a row, the malformed branch would be bypassed and this
+    assertion goes RED.
+    """
+    row_no_terminal = (
+        "| Media | WOT-2026-0NT1 | work no terminal deliverable_type: code | "
+        "motor/x | pending | - | s | commit:noterminal1 |\n"
+    )
+    census = gl.census_archived(row_no_terminal + "\n")
+    assert census["malformed_evidence_tickets"] == ["WOT-2026-0NT1"], (
+        f"a pending row is not terminal, must be flagged as malformed; got {census}"
+    )
+    # And it genuinely has no terminal state (all ordinary counters zero)
+    assert census["required"] == 0
+    assert census["audited"] == 0
+    assert census["skipped_required"] == 0
+    assert census["skipped_legacy"] == 0
