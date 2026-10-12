@@ -150,16 +150,19 @@ def test_transport_error_leaves_auditable_row(tmp_path, monkeypatch):
     assert rc == 2, "el contrato de salida NO cambia: la fila es aditiva"
 
 
-def test_privacy_block_leaves_no_row_at_all(tmp_path, monkeypatch):
-    """CONTROL NEGATIVO: un bloqueo del preflight NO debe dejar fila.
+def test_privacy_block_leaves_a_row_with_failure_mode(tmp_path, monkeypatch):
+    """WOT-2026-060i superseded 048x's original contract on this path.
 
-    `run_loop_round` declara en su docstring que ante `DispatchBlockedError`
-    "NO hay fila, porque no hubo ronda" -- el payload nunca salio. Registrarla
-    inventaria una ronda inexistente e inflaria la cobertura del bucle con una
-    lente que jamas se consulto.
+    Hasta WOT-2026-060i, `run_loop_round` dejaba el veto de `DispatchBlockedError`
+    sin fila (el payload nunca salio). 060i invirtio esa decision a proposito:
+    el scorecard debe distinguir "nadie consulto a esta lente" de "se vetó por
+    privacy_preflight" -- un silencio sin fila es indistinguible de "no se
+    intento". Ver `test_060i_privacy_veto_leaves_a_row` (test_ensemble_dispatch.py)
+    para la cobertura directa de `run_loop_round`; este test cubre la MISMA
+    rama a traves del wrapper CLI `_cmd_loop_round`/`ed.main`.
 
-    Mutation: capturar `DispatchBlockedError` en el mismo `except` generico que
-    las de transporte -> aparece una fila y este test cae.
+    Mutation: quitar el `_record_round` del `except DispatchBlockedError` en
+    `run_loop_round` -> 0 filas, y este test cae.
     """
     cfg = _config()
     cfg["ensemble_profiles"]["p_chal"]["data_sensitivity"] = "private"
@@ -172,8 +175,15 @@ def test_privacy_block_leaves_no_row_at_all(tmp_path, monkeypatch):
     rc = ed.main(argv)
 
     assert rc == 1, "un bloqueo del preflight sale por la rama [BLOCKED] (exit 1)"
-    assert _rows(tmp_path) == [], (
-        "un payload que NUNCA salio no puede dejar fila: seria inventar una ronda"
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, (
+        "tras WOT-2026-060i, un veto de preflight DEJA una fila auditable "
+        "(antes: 0 filas)"
+    )
+    row = rows[0]
+    assert row["outcome"] == "no-aportacion"
+    assert row["failure_mode"] and row["failure_mode"].startswith(
+        "privacy_preflight_blocked"
     )
 
 
