@@ -254,6 +254,29 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-094a: --check-contract y --check-naming existian pero solo los
+      # corria run_gates_dispatch.py si alguien invocaba el dispatcher (medido
+      # 2026-10-07: los 3 rojos de 093d/093e los vio primero la suite canonica
+      # ~3 h despues del merge c06f4ee). Ambos checks escanean el ARBOL VIVO
+      # (skills/ + prompts/), no el argv, y son fail-closed, asi que siguen el
+      # patron de check-index-stale: always_run + pass_filenames:false -- un
+      # commit que solo BORRA una skill tambien debe re-verificar.
+      - id: check-skill-contract
+        name: check skill contract (prompt<->skill binding, role manager/builder)
+        entry: uv run python scripts/discover_skills.py --check-contract
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: check-skill-naming
+        name: check skill naming (DEC-008D-001 snake/kebab + actor-first)
+        entry: uv run python scripts/discover_skills.py --check-naming
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # WOT-2026-035b: el 2026-07-18 el archive TRACKEADO de memoria portable
       # (.agent/runtime/memory/archive/observations.YYYY-MM.jsonl) llevo 2
       # entradas con schema NO canonico y ninguna barrera cableada lo caza:
