@@ -5093,7 +5093,7 @@ def run_loop_round(
         como `no-aportacion`, nunca como fila ausente.
     After: retorna el texto del backend tal cual (el consolidador es el chat,
         nivel 0: esta funcion no interpreta ni adjudica). Propaga
-        `DispatchBlockedError` si el preflight bloquea -- en ese caso SSI
+        `DispatchBlockedError` si el preflight bloquea -- en ese caso SI
         deja fila con `failure_mode="privacy_preflight_blocked: ..."`,
         registrando la identidad de la lente vetada (backend_key, loop_id).
     """
@@ -5149,7 +5149,7 @@ def run_loop_round(
     # es PRECISA (`transport_failed` solo para `TransportError`/`OSError`;
     # todo lo demas es `unexpected`, para no mandar a buscar una caida de red
     # donde hay un bug de programacion). `DispatchBlockedError` se EXCLUYE a
-    # proposito del except Exception genico (no se clasifica como `unexpected`);
+    # proposito del except Exception generico (no se clasifica como `unexpected`);
     # el bloque posterior a ese except la registra con
     # `failure_mode="privacy_preflight_blocked: ..."` ANTES de re-lanzar:
     # asi la lente vetada queda acreditada en el scorecard con su backend_key.
