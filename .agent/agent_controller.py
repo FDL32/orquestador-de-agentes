@@ -4464,17 +4464,66 @@ def _handle_pre_handoff(json_output: bool) -> int:  # noqa: C901
 
     # --- Idempotent no-op case: no changes + tag already aligned ---
     if not needs_commit and tag_aligned:
+        # WOT-2026-059z: check FLT scope against committed files before
+        # returning idempotent. The committed files in HEAD must be within the
+        # declared Files Likely Touched; otherwise report a scope discrepancy
+        # (non-blocking, but visible). Reuses `files_likely_touched` already
+        # parsed above and the live-surface sets.
+        _idempotent_scope_discrepancy: list[str] = []
+        try:
+            _diff_proc = subprocess.run(
+                ["git", "diff-tree", "--root", "--no-commit-id", "-r", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=git_root,
+                timeout=30,
+            )
+            if _diff_proc.returncode == 0:
+                for _line in _diff_proc.stdout.splitlines():
+                    _path_rel = _line.strip()
+                    if not _path_rel:
+                        continue
+                    _path_abs = str((git_root / _path_rel).resolve())
+                    # Skip live surfaces
+                    if _is_live_surface(_path_abs, project_root, live_files, live_dirs):
+                        continue
+                    if _path_abs in live_dirs or any(
+                        _path_abs.startswith(d) for d in live_dirs
+                    ):
+                        continue
+                    # Skip if within FLT
+                    if _path_abs in files_likely_touched:
+                        continue
+                    _idempotent_scope_discrepancy.append(_path_rel)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        _has_scope_discrepancy = bool(_idempotent_scope_discrepancy)
+
         # A successful pre-handoff is the recovery point for a previously open
         # breaker: once the tree is clean and the checkpoint is aligned, the
         # Builder can proceed to --mark-ready on the next step.
         _reset_circuit_breaker(plan_id)
         if not json_output:
-            print(
-                f"[OK] No delivery changes. Checkpoint {tag_name}"
-                " already aligned with HEAD."
-            )
+            if _has_scope_discrepancy:
+                print(
+                    f"[OK] No delivery changes. Checkpoint {tag_name}"
+                    " already aligned with HEAD."
+                )
+                print(
+                    f"[WARN] Scope discrepancy (non-blocking): "
+                    f"{', '.join(_idempotent_scope_discrepancy)}"
+                )
+            else:
+                print(
+                    f"[OK] No delivery changes. Checkpoint {tag_name}"
+                    " already aligned with HEAD."
+                )
         else:
-            print(json.dumps({"status": "idempotent", "plan_id": plan_id}, indent=2))
+            _result = {"status": "idempotent", "plan_id": plan_id}
+            if _has_scope_discrepancy:
+                _result["scope_discrepancy"] = _idempotent_scope_discrepancy
+            print(json.dumps(_result, indent=2))
         return 0
 
     # --- Step 3: Final verification - tree must be clean ---

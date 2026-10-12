@@ -1635,6 +1635,85 @@ class TestPreHandoff:
         assert code == 0, f"Expected 0, got {code}. Output: {output}"
         assert "already aligned" in output
 
+    def test_idempotent_reports_scope_discrepancy(self, monkeypatch):
+        """WOT-2026-059z: idempotent path checks FLT scope against HEAD commit.
+
+        Mutation: removing the scope check branch from the idempotent path
+        means a file committed outside FLT slips through undetected.
+        """
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        whitelisted = str(project_root / "src" / "file1.py")
+        unlisted_file = "src/file_outside_flt.py"
+
+        # FLT only contains file1.py (whitelisted)
+        self._setup_basic_mocks(monkeypatch, set(), {whitelisted})
+
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            if "rev-parse HEAD" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            # diff-tree: the committed HEAD contains file1.py (in FLT) and
+            # file_outside_flt.py (NOT in FLT, should be reported).
+            if "diff-tree" in cmd_str:
+                return MagicMock(
+                    returncode=0,
+                    stdout=f"src/file1.py\n{unlisted_file}\n",
+                    stderr="",
+                )
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code, output = self._capture_output(
+            lambda: agent_controller._handle_pre_handoff(json_output=False)
+        )
+
+        assert code == 0, f"Expected 0, got {code}. Output: {output}"
+        assert "already aligned" in output
+        assert "Scope discrepancy" in output
+        assert unlisted_file in output
+
+    def test_idempotent_json_reports_scope_discrepancy(self, monkeypatch, capsys):
+        """WOT-2026-059z: json_output mode includes scope_discrepancy in payload.
+
+        Mutation: without the JSON scope_discrepancy field, consumers that
+        parse the JSON output won't see the discrepancy.
+        """
+        project_root = agent_controller.PROJECT_ROOT.resolve()
+        whitelisted = str(project_root / "src" / "file1.py")
+        unlisted_file = "src/file_outside_flt.py"
+
+        self._setup_basic_mocks(monkeypatch, set(), {whitelisted})
+
+        def git_mock(cmd, *args, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "git show HEAD:.opencode/opencode.json" in cmd_str:
+                return MagicMock(returncode=1, stdout=b"", stderr=b"")
+            if "rev-parse" in cmd_str and "checkpoint" in cmd_str and "^{}" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            if "rev-parse HEAD" in cmd_str:
+                return MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            if "diff-tree" in cmd_str:
+                return MagicMock(
+                    returncode=0,
+                    stdout=f"src/file1.py\n{unlisted_file}\n",
+                    stderr="",
+                )
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(agent_controller.subprocess, "run", git_mock)
+
+        code = agent_controller._handle_pre_handoff(json_output=True)
+        captured = capsys.readouterr()
+
+        assert code == 0
+        assert "scope_discrepancy" in captured.out
+        assert unlisted_file in captured.out
+
     def test_no_changes_tag_missing_create_only(self, monkeypatch):
         """No changes + tag missing → create tag without commit."""
         self._setup_basic_mocks(monkeypatch, set(), set())
