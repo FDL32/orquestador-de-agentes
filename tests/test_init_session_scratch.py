@@ -1063,6 +1063,62 @@ class TestEnumAndGc:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-040g: `current` / resolve_current_session_id (expose live session)
+# ---------------------------------------------------------------------------
+
+
+class TestCurrentSession:
+    """El ARRANQUE expone el session_id de la sesion viva (WOT-2026-040g).
+
+    Cierra la mitad "expone" del DoD (a): `init` CREA el scratch y `current` +
+    `resolve_current_session_id` lo vuelven legibles de forma determinista,
+    para que el despacho de gobierno lo herede POR DEFECTO.
+    """
+
+    def test_resolve_none_when_no_session(self):
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"cur0_{uuid.uuid4().hex[:8]}")
+        assert _iss.resolve_current_session_id(repo) is None
+
+        result = _run_scratch(["--project-root", str(repo), "current"])
+        assert result.returncode == 0
+        out = json.loads(result.stdout)
+        assert out["status"] == "none"
+        assert out["session_id"] is None
+
+    def test_resolve_returns_most_recent_session(self):
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"cur1_{uuid.uuid4().hex[:8]}")
+        older = "20260101-0001-nogit-" + "a" * 32
+        newer = "20260202-0002-nogit-" + "b" * 32
+        _init_session(repo, older)
+        _init_session(repo, newer)
+
+        assert _iss.resolve_current_session_id(repo) == newer
+
+        result = _run_scratch(["--project-root", str(repo), "current"])
+        assert result.returncode == 0
+        assert json.loads(result.stdout)["session_id"] == newer
+
+    def test_resolve_ignores_archived_and_garbage(self):
+        repo = _make_repo(REAL_SYSTEM_TEMP, f"cur2_{uuid.uuid4().hex[:8]}")
+        live = "20260202-0002-nogit-" + "b" * 32
+        _init_session(repo, live)
+        session_root = repo / ".agent" / "runtime" / "session"
+        # Una archivada con nombre MAS "reciente" NO debe ganar: solo cuenta lo vivo.
+        archived = "20990101-0001-nogit-" + "c" * 32
+        (session_root / "_archive" / archived).mkdir(parents=True)
+        (session_root / "garbage_dir").mkdir()
+
+        assert _iss.resolve_current_session_id(repo) == live
+
+    def test_current_invalid_project_root_exit2(self, tmp_path):
+        no_agent = tmp_path / "noagent"
+        no_agent.mkdir()
+        result = _run_scratch(["--project-root", str(no_agent), "current"])
+        assert result.returncode == 2
+        assert json.loads(result.stdout)["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
 # Audit modes: exit 1 default, --report-only exit 0
 # ---------------------------------------------------------------------------
 

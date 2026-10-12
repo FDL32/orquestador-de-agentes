@@ -610,6 +610,33 @@ def _resolve_project_root(raw: str) -> Path:
     return root
 
 
+def resolve_default_session_id(project_root: Path) -> str | None:
+    """session_id POR DEFECTO de un despacho de gobierno (WOT-2026-040g).
+
+    Cierra el hueco de CABLEADO del ticket: `run_loop_round` YA aceptaba y
+    propagaba `session_id`, pero el unico modo de poblarlo era que el ejecutor
+    recordara pasar `--session-id` en cada ronda; cuatro cierres consecutivos
+    dejaron filas con `session_id=None` y el cruce 2.5.i salio SKIP. Este
+    resolutor toma el `session_id` de la sesion VIVA del scratch, de modo que
+    el despacho lo hereda POR DEFECTO.
+
+    Before: `project_root` es el destino-rol resuelto (nunca el motor).
+    During: delega en el DUENO del scratch (`init_session_scratch.
+        resolve_current_session_id`, que solo LEE); el import es LAZY para no
+        acoplar el dispatcher a la infra de scratch en el arranque del modulo
+        ni crear un import cycle.
+    After: el `session_id` de la sesion viva mas reciente, o `None` si el
+        scratch no existe o esta vacio. FAIL-OPEN declarado: un default ausente
+        NO bloquea la ronda -- deja la fila honestamente NO-ATRIBUIBLE
+        (`session_id=None`), que el cierre reporta (DoD (d)), nunca la esconde.
+    """
+    try:
+        from scripts.init_session_scratch import resolve_current_session_id
+    except ImportError:  # pragma: no cover - scratch no importable
+        return None
+    return resolve_current_session_id(project_root)
+
+
 # WOT-2026-027n: gate de CONTENIDO, acotado a ASIGNACION CON VALOR DE ALTA
 # ENTROPIA y a prefijos de credencial inequivocos. NUNCA substring suelto.
 #
@@ -5265,6 +5292,14 @@ def run_loop_round(
         deja fila con `failure_mode="privacy_preflight_blocked: ..."`,
         registrando la identidad de la lente vetada (backend_key, loop_id).
     """
+    # WOT-2026-040g: una ronda de GOBIERNO hereda POR DEFECTO el session_id de
+    # la sesion viva del scratch, para que el cruce 2.5.i (manifest x
+    # scorecard) sea posible sin que el ejecutor tenga que acordarse de pasar
+    # `--session-id` en cada fan-out. Si no hay scratch, queda `None` -- la
+    # ronda NO se bloquea, la fila se vuelve NO-ATRIBUIBLE y el cierre la
+    # reporta (DoD (d)).
+    if session_id is None:
+        session_id = resolve_default_session_id(project_root)
     if task_type not in TASK_TYPES:
         raise ValueError(_invalid_task_type_message(task_type))
     profile = config["ensemble_profiles"][profile_name]
@@ -6668,6 +6703,13 @@ def _cmd_loop_round(args, config) -> int:
         `ValueError` a `main`, que los mapea a exit != 0.
     """
     project_root = _resolve_project_root(args.project_root)
+    # WOT-2026-040g: el default del session_id se fija en el BORDE del handler
+    # para que TODA fila de este camino de gobierno -- no solo la ronda, tambien
+    # las de fallo de USO (`usage-error`) y de nonce ausente (`missing-nonce`)
+    # que se escriben antes de `run_loop_round` -- herede la sesion viva. Sin
+    # esto, esas filas quedarian NO-ATRIBUIBLES aunque la ronda si lo fuera.
+    if args.session_id is None:
+        args.session_id = resolve_default_session_id(project_root)
     # WOT-2026-059m: la ronda escribe en el MISMO ledger que emit-nonce y su
     # emparejamiento con el nonce depende de commit_sha; aceptar cualquier
     # cadena deja la acreditacion en N=0 sin que nadie avise (medido en

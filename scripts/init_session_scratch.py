@@ -2,8 +2,8 @@
 # ruff: noqa: S603, S607
 """Session scratch infrastructure (WOT-2026-022c).
 
-Manages ``<root>/.agent/runtime/session/<session_id>/`` with 6 subcommands:
-init, add, list, audit, archive, gc.
+Manages ``<root>/.agent/runtime/session/<session_id>/`` with 7 subcommands:
+init, add, list, audit, current, archive, gc.
 
 Design decisions (plan v2, plan-audit adversarial with probes executed):
 - ``--project-root`` OBLIGATORIO. NEVER calls ``resolve_project_root()`` (lru_cache
@@ -371,6 +371,30 @@ def _enum_archived_sessions(root: Path) -> list[str]:
             continue
         result.append(child.name)
     return result
+
+
+def resolve_current_session_id(root: Path) -> str | None:
+    """session_id de la sesion VIVA mas reciente (WOT-2026-040g).
+
+    Before: ``root`` es la raiz del repo-rol (destino o ``_dev``) con
+        ``.agent/``; el scratch puede estar vacio, tener N sesiones o no
+        existir. Solo LEE: no crea, no escribe, no es un segundo dueno del
+        ledger.
+    During: enumera las sesiones NO archivadas (``_enum_sessions``) y toma la
+        ULTIMA. El nombre de una sesion empieza por su timestamp
+        (``YYYYMMDD-HHMM-...``), asi que el orden lexicografico -- que
+        ``_enum_sessions`` ya produce con ``sorted`` -- ES el orden
+        cronologico: la ultima es la sesion viva mas reciente. Es el punto que
+        el ARRANQUE debe exponer para que el despacho de gobierno lo propague
+        POR DEFECTO y no por acordarse (WOT-2026-040g).
+    After: el ``session_id`` (str), o ``None`` si no hay ninguna sesion. Nunca
+        lanza por scratch ausente o ilegible.
+    """
+    try:
+        sessions = _enum_sessions(root)
+    except OSError:
+        return None
+    return sessions[-1] if sessions else None
 
 
 _DRIVE_LETTER_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -1004,6 +1028,25 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
     return 0
 
 
+def cmd_current(args: argparse.Namespace) -> int:
+    """Expone el session_id de la sesion viva mas reciente (WOT-2026-040g).
+
+    Es la mitad "expone" del arranque: `init` CREA el scratch, `current` lo
+    vuelve a hacer legible de forma determinista para que el ejecutor (o un
+    despacho) lo consuma sin tener que recordar el sid impreso por `init`.
+    """
+    root = _validate_project_root(args.project_root)
+    if root is None:
+        print(json.dumps({"status": "error", "reason": "invalid project root"}))
+        return 2
+    sid = resolve_current_session_id(root)
+    if sid is None:
+        print(json.dumps({"status": "none", "session_id": None}))
+        return 0
+    print(json.dumps({"status": "ok", "session_id": sid}))
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     root = _validate_project_root(args.project_root)
     if root is None:
@@ -1441,6 +1484,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     add_p.set_defaults(func=cmd_add)
+
+    current_p = subparsers.add_parser(
+        "current",
+        help="Session id of the current (most recent non-archived) session.",
+    )
+    current_p.set_defaults(func=cmd_current)
 
     list_p = subparsers.add_parser("list", help="List sessions.")
     list_p.add_argument(

@@ -2357,6 +2357,122 @@ def _dry_run_targets_prediction(
     )
 
 
+def _is_government_round(row: dict) -> bool:
+    """True si `row` es una ronda de GOBIERNO del scorecard (WOT-2026-040g).
+
+    Una ronda de gobierno porta `phase` y/o `loop_id` (los escribe
+    `run_loop_round`/`_cmd_loop_round`); el trafico exploratorio del smoke y la
+    ronda 0 `premise_check` de `run_pipeline` los dejan en None. Se acepta
+    cualquiera de los dos para no depender de un unico campo.
+    """
+    return row.get("event") == "ronda" and bool(row.get("loop_id") or row.get("phase"))
+
+
+def _at_or_after(ts: datetime, window_start: datetime) -> bool:
+    """Compara ``ts >= window_start`` tolerando mezcla naive/aware.
+
+    Un scorecard puede traer `ts` con offset y un `window_start` naive (o al
+    reves); comparar directamente lanzaria `TypeError`. Se normaliza quitando
+    la zona a AMBOS antes de comparar -- es un filtro de VENTANA, no una
+    medida de instante absoluto.
+    """
+
+    def _naive(dt: datetime) -> datetime:
+        return dt.replace(tzinfo=None)
+
+    return _naive(ts) >= _naive(window_start)
+
+
+def find_non_attributable_government_rounds(
+    scorecard_rows: list[dict],
+    window_start: datetime | None = None,
+) -> list[dict]:
+    """Rondas de gobierno SIN ``session_id``: no atribuibles al cruce 2.5.i.
+
+    WOT-2026-040g, DoD (d). Una ronda de gobierno con `session_id=None` no
+    cruza con el manifest del scratch por sesion, asi que 2.5.i no puede
+    resolverla; el cierre debe REPORTARLA, nunca esconderla tras un SKIP
+    agregado silencioso.
+
+    Before: `scorecard_rows` son filas del scorecard unificado; `window_start`
+        (opcional) acota a la sesion que se cierra.
+    During: filtra por (evento de gobierno) Y (`session_id` ausente) Y (dentro
+        de la ventana si esta se conoce). Una `ts` ilegible NO excluye: no poder
+        probar que la fila es ajena no es prueba de que lo sea.
+    After: la lista de filas no atribuibles (posiblemente vacia). Pura: sin
+        I/O, sin efectos.
+    """
+    out: list[dict] = []
+    for row in scorecard_rows:
+        if not _is_government_round(row):
+            continue
+        if row.get("session_id"):
+            continue
+        if window_start is not None:
+            ts = _parse_timestamp(str(row.get("ts", "")))
+            if ts is not None and not _at_or_after(ts, window_start):
+                continue
+        out.append(row)
+    return out
+
+
+def _step_report_non_attributable_rounds(
+    project_root: Path,
+    window_start: datetime | None,
+) -> StepResult:
+    """Reporta rondas de gobierno SIN ``session_id`` (WOT-2026-040g, DoD (d)).
+
+    INFORMATIVO, no bloqueante (misma regla que el Bloque 2.5.i del cierre):
+    una ronda no atribuible NO invalida el cierre, pero debe quedar VISIBLE. El
+    PUBLISHER de la fila es el despacho (`ensemble_dispatch.py`), que desde este
+    ticket hereda el `session_id` por defecto; este paso es el CONSUMIDOR que
+    rompe el silencio cuando el default no hubo (scratch ausente/vacio).
+
+    Before: `project_root` es el repo_destino; `window_start` la ventana de la
+        sesion (puede ser None).
+    During: lee el scorecard unificado via `_read_scorecard` (import lazy de
+        `scripts.ensemble_dispatch`) y aisla las rondas de gobierno no
+        atribuibles (`find_non_attributable_government_rounds`). Un scorecard
+        ilegible o un import fallido degrada a SKIP, nunca a FAIL. READ-ONLY:
+        corre igual en `--dry-run`, no muta el arbol.
+    After: PASS con "0" si no hay ninguna; WARN (no bloqueante) con el recuento
+        y las fases/loops afectados si las hay. Nunca lanza.
+    """
+    name = "non_attributable_rounds"
+    try:
+        from scripts.ensemble_dispatch import _read_scorecard
+    except ImportError:
+        return StepResult(
+            name=name,
+            status="SKIP",
+            detail="ensemble_dispatch no importable; cruce 2.5.i no verificable",
+        )
+    try:
+        rows, _sha = _read_scorecard(project_root)
+    except OSError as exc:
+        return StepResult(name=name, status="SKIP", detail=f"scorecard ilegible: {exc}")
+    orphans = find_non_attributable_government_rounds(rows, window_start)
+    if not orphans:
+        return StepResult(
+            name=name,
+            status="PASS",
+            detail="0 rondas de gobierno sin session_id",
+        )
+    labels = sorted({str(o.get("loop_id") or o.get("phase") or "?") for o in orphans})
+    shown = ", ".join(labels[:8])
+    if len(labels) > 8:
+        shown += f" (+{len(labels) - 8} mas)"
+    return StepResult(
+        name=name,
+        status="WARN",
+        detail=(
+            f"{len(orphans)} ronda(s) de gobierno SIN session_id: no "
+            "atribuibles al cruce 2.5.i (manifest x scorecard); "
+            f"loops/fases: {shown}"
+        ),
+    )
+
+
 def _step_write_loop_execution_targets(
     project_root: Path,
     ticket_ids: list[str],
@@ -2551,6 +2667,12 @@ def run_closeout(
         _step_write_loop_execution_targets(
             project_root, ticket_ids, _window_start, dry_run
         )
+    )
+    # WOT-2026-040g: rompe el silencio del cruce 2.5.i. Si algun despacho de
+    # gobierno quedo sin session_id (scratch ausente), se REPORTA aqui en vez de
+    # degradarse a SKIP agregado. No bloquea el cierre.
+    report.steps.append(
+        _step_report_non_attributable_rounds(project_root, _window_start)
     )
     # WOT-2026-040w: wire write_decision_record for flights that stopped without
     # commits. Without this, the handoff committed check (prepush) rejects the

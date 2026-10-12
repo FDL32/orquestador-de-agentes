@@ -1016,6 +1016,68 @@ def test_session_id_absent_defaults_to_none_in_run_pipeline(tmp_path):
     assert all(r["session_id"] is None for r in rows)
 
 
+def test_run_loop_round_defaults_session_id_from_scratch(tmp_path):
+    """WOT-2026-040g (b): un despacho de gobierno SIN `--session-id` hereda el
+    `session_id` de la sesion VIVA del scratch (propagacion POR DEFECTO, no por
+    acordarse).
+
+    MUTATION: si se retira el default de `run_loop_round`, la fila cae a
+    `session_id=None` y este assert falla.
+    """
+    sid = "20260101-0001-nogit-" + "a" * 32
+    scratch = tmp_path / ".agent" / "runtime" / "session" / sid
+    scratch.mkdir(parents=True)
+    (scratch / ".session_state.json").write_text("{}", encoding="utf-8")
+
+    transport = _FakeTransport(replies=["hallazgo"])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-040g",
+        task_type="code-review",
+        rol="challenger",
+        phase="MANAGER_REVIEW",
+        loop_id="L040g",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+        ronda=1,
+    )
+    rows = _rows(tmp_path)
+    assert rows[-1]["event"] == "ronda"
+    assert rows[-1]["session_id"] == sid, (
+        "sin --session-id, la ronda de gobierno debe heredar la sesion viva "
+        f"del scratch; got {rows[-1]['session_id']!r}"
+    )
+
+
+def test_run_loop_round_without_scratch_leaves_session_id_none(tmp_path):
+    """CONTROL NEGATIVO de WOT-2026-040g: sin scratch, el default es `None` y
+    la fila queda honestamente NO-ATRIBUIBLE. El default NUNCA inventa un id ni
+    bloquea la ronda (fail-open); el cierre lo reporta (DoD (d)).
+    """
+    transport = _FakeTransport(replies=["hallazgo"])
+    ed.run_loop_round(
+        "p_chal",
+        "revisa esto",
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-040g",
+        task_type="code-review",
+        rol="challenger",
+        phase="MANAGER_REVIEW",
+        loop_id="L040g",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+        ronda=1,
+    )
+    rows = _rows(tmp_path)
+    assert rows[-1]["session_id"] is None
+
+
 def test_adjudicate_session_id_comes_from_flag_not_source(tmp_path):
     """(b) [ENMIENDA] MUTATION PIN: la fuente (ronda original) lleva un
     session_id DISTINTO al de la sesion que adjudica. Si adjudicate() usara
