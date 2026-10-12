@@ -6518,3 +6518,225 @@ class TestDocumentationResearchTicketInvariants:
         assert not any(
             "documentation" in w or "research" in w or "analysis" in w for w in warnings
         ), f"Code ticket should not get any bus-exempt skip warning: {warnings}"
+
+
+# ======================================================================
+# WOT-2026-060s: TURN.md / supervisor_state.json sync gate
+# ======================================================================
+
+
+class TestTurnSupervisorSync:
+    """WOT-2026-060s: gate que declara la desincronizacion TURN.md / supervisor_state.json."""
+
+    def _write_turn(self, path: Path, plan_id: str) -> Path:
+        """Escribe un TURN.md canonico con el Plan ID dado."""
+        turn_path = path / "TURN.md"
+        turn_path.write_text(
+            f"# TURNO ACTUAL\n\n"
+            f"**Ultima actualizacion:** 2026-10-01 00:00:00\n\n"
+            f"---\n\n"
+            f"## Agente Activo\n\n"
+            f"| Campo | Valor |\n"
+            f"|-------|-------|\n"
+            f"| **ROL** | **BUILDER** |\n"
+            f"| **Plan ID** | {plan_id} |\n"
+            f"| **Tipo** | IMPLEMENT |\n"
+            f"| **Accion** | IMPLEMENT |\n"
+            f"\n---\n\n"
+            f"## Instruccion\n\n"
+            f"> Ticket {plan_id} en implementacion.\n",
+            encoding="utf-8",
+        )
+        return turn_path
+
+    def _write_supervisor_state(self, path: Path, ticket: str | None) -> Path:
+        """Escribe supervisor_state.json con active_ticket dado (o None)."""
+        sup_path = path / "supervisor_state.json"
+        sup_path.write_text(
+            json.dumps(
+                {"active_ticket": ticket, "last_processed_sequence": 1},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return sup_path
+
+    def test_discrepancy_fails_gate_with_diagnostic(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fixture con TURN/supervisor_state discrepanates -> gate falla nombrando superficie."""
+        # Crear estructura de directorios
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        # TURN.md dice ticket_A, supervisor_state dice ticket_B
+        self._write_turn(collab, "WOT-2026-060a")
+        self._write_supervisor_state(runtime, "WOT-2026-060b")
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            runtime / "supervisor_state.json",
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert len(errors) == 1
+        assert "WOT-2026-060a" in errors[0]
+        assert "WOT-2026-060b" in errors[0]
+        assert "Desincronizacion" in errors[0]
+
+    def test_mutation_sync_passes_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MUTATION: sincronizar las dos superficies -> gate pasa."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        same_ticket = "WOT-2026-060a"
+        self._write_turn(collab, same_ticket)
+        self._write_supervisor_state(runtime, same_ticket)
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            runtime / "supervisor_state.json",
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert errors == []
+
+    def test_negative_control_no_turn_no_supervisor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CONTROL NEGATIVO: sin TURN ni supervisor_state -> gate verde."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller, "_SUPERVISOR_STATE_PATH", tmp_path / "missing.json"
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert errors == []
+
+    def test_only_turn_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Solo TURN.md presente (sin supervisor_state) -> gate verde."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+
+        self._write_turn(collab, "WOT-2026-060a")
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller, "_SUPERVISOR_STATE_PATH", tmp_path / "missing.json"
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert errors == []
+
+    def test_only_supervisor_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Solo supervisor_state presente (sin TURN.md) -> gate verde."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        self._write_supervisor_state(runtime, "WOT-2026-060a")
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            runtime / "supervisor_state.json",
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert errors == []
+
+    def test_turn_null_plan_id_skips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TURN.md con Plan ID=null/N/A -> skip, no false positivo."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        # TURN.md sin **Plan ID** legtimo
+        (collab / "TURN.md").write_text(
+            "# TURNO ACTUAL\n\n**Ultima actualizacion:** 2026-10-01\n",
+            encoding="utf-8",
+        )
+        self._write_supervisor_state(runtime, "WOT-2026-060a")
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            runtime / "supervisor_state.json",
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert errors == []
+
+    def test_supervisor_null_ticket_skips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """supervisor_state con active_ticket=null -> skip."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        self._write_turn(collab, "WOT-2026-060a")
+        sup_path = runtime / "supervisor_state.json"
+        sup_path.write_text(
+            json.dumps({"active_ticket": None, "last_processed_sequence": 1}),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            runtime / "supervisor_state.json",
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert errors == []
+
+    def test_discrepancy_naming_surface_and_field(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Diagnostico nombra la superficie (TURN.md) y el campo (Plan ID vs active_ticket)."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        self._write_turn(collab, "TICKET_X")
+        self._write_supervisor_state(runtime, "TICKET_Y")
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(
+            agent_controller,
+            "_SUPERVISOR_STATE_PATH",
+            runtime / "supervisor_state.json",
+        )
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert len(errors) == 1
+        # El diagnostic nomina las dos superficies y los valores de los tickets
+        assert "TURN.md" in errors[0]
+        assert "supervisor_state.json" in errors[0]
+        assert "TICKET_X" in errors[0]
+        assert "TICKET_Y" in errors[0]
