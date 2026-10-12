@@ -1,3 +1,27 @@
+# 2026-10-12 - WOT-2026-049c: escritor unico del DAG de triaje (barrera de copia-puntero cableada)
+
+### Added
+- `scripts/backlog_triage_writer.py` (WOT-2026-049c): UNICO dueno de la escritura
+  del DAG de triaje. Subcomando `write` que materializa
+  `backlog_triage_<YYYYMMDD-HHMMSS>.json` (timestamp de SEGUNDOS, mismo patron que
+  valida `validate_batch_dag.py`) preservando el DAG previo: antes de escribir el
+  nuevo copia el previo con `shutil.copy2` a `backlog_triage_<ts>_previo.json`, y
+  escribe con write-tmp-then-rename (atomico: `NamedTemporaryFile` en el mismo
+  directorio + `os.replace`). Cierra la BARRERA que WOT-2026-049a dejo como NORMA
+  en `prompts/backlog_triage.md` (B5). Default de `--out-dir`:
+  `<project-root>/orchestrator_pipeline/reports/` (CONTRACT_GAP resuelto por
+  evidencia 2026-10-12: 40+ DAGs reales viven ahi, no en `.agent/collaboration/`);
+  fail-closed (exit 2) si no hay destino resoluble, en vez de improvisar ruta.
+- `tests/unit/test_backlog_triage_writer.py` (WOT-2026-049c): 10 tests con
+  mutation-verify de las dos propiedades duras -- copia del previo (2 tests pasan a
+  ROJO al comentar `_preserve_previous`) y atomicidad (2 tests pasan a ROJO al
+  sustituir por `open(path, "w")` directo).
+
+### Changed
+- `prompts/backlog_triage.md` (WOT-2026-049c): retirada la nota "BARRERA
+  (PENDIENTE)"; el bloque cita ahora el comando real
+  `scripts/backlog_triage_writer.py write --project-root <destino>`.
+
 # 2026-07-21 - Vuelo FP-20260721 (3/4): barreras de batch/reconcile/review + 024h congelado
 
 ### Fixed
