@@ -55,6 +55,32 @@ def exclude_files(
         str((agent_dir / "runtime" / "memory" / "observations.jsonl").resolve())
     )
     excluded.add(str((agent_dir / "config").resolve()))
+    excluded |= _exclude_session_scratch(agent_dir.parent)
+
+    return excluded
+
+
+def _exclude_session_scratch(root_dir: Path) -> set[str]:
+    """Absolute paths under ``<root_dir>/.session/`` that are operational scratch.
+
+    `.session/` is session-scratch infra (WOT-2026-022c), already classified
+    as DOCS_ONLY in bus/evidence.py and bus/review_packet.py alongside
+    .agent/collaboration/ and .agent/runtime/. check_cross_root_contamination()
+    never inherited that exclusion, so ANY untracked content under the motor's
+    .session/ -- regardless of age or relation to the ticket being handed off
+    -- blocked --mark-ready for every repo_destino ticket with a non-empty
+    .session/ in the motor. Measured 2026-10-12: a pre-existing
+    `.session/external_review/` from August alone produced HANDOFF_IMPOSSIBLE
+    for RDS-2026-011a, a ticket that never touched the motor at all. Escalated
+    via Redes_Sociales repo_destino's own backlog_inbox
+    (FP-20261012-escalado-redes-sociales-cross-root-session), the correct
+    mailbox for that destino's findings.
+    """
+    session_dir = root_dir / ".session"
+    if not session_dir.exists():
+        return set()
+    excluded = {str(session_dir.resolve())}
+    excluded.update(str(path.resolve()) for path in session_dir.rglob("*"))
     return excluded
 
 

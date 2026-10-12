@@ -179,3 +179,76 @@ class TestCheckCrossRootContamination:
         )
         assert result["productive"] == set()
         assert op_abs in result["operational"]
+
+
+class TestExcludeFilesSessionScratch:
+    """`.session/` must be excluded like .agent/collaboration/.
+
+    Measured 2026-10-12: a pre-existing, untracked `.session/external_review/`
+    in the motor (unrelated to the ticket being handed off) made
+    `exclude_files()` omit it from the exclude set, so
+    `check_cross_root_contamination` classified it as "productive" and
+    `--mark-ready` failed with HANDOFF_IMPOSSIBLE for every repo_destino
+    ticket, regardless of what that ticket actually touched. Escalated via
+    Redes_Sociales repo_destino's own backlog_inbox
+    (FP-20261012-escalado-redes-sociales-cross-root-session), the correct
+    mailbox for that destino's findings.
+    """
+
+    def test_session_scratch_untracked_file_is_excluded(self, tmp_path):
+        """A file under <root>/.session/ must land in `excluded`, not productive."""
+        collab = tmp_path / ".agent" / "collaboration"
+        agent_dir = tmp_path / ".agent"
+        context_dir = agent_dir / "context"
+        session_file = tmp_path / ".session" / "external_review" / "notes.md"
+        session_file.parent.mkdir(parents=True)
+        session_file.write_text("scratch", encoding="utf-8")
+
+        excluded = scope_gate.exclude_files(
+            collab_dir=collab, agent_dir=agent_dir, context_dir=context_dir
+        )
+
+        assert str(session_file.resolve()) in excluded
+        assert str((tmp_path / ".session").resolve()) in excluded
+
+    def test_session_scratch_feeds_check_cross_root_contamination_as_operational(
+        self, tmp_path
+    ):
+        """End-to-end: exclude_files() output makes check_cross_root_contamination
+        classify .session/ content as operational, not productive (mutation check:
+        BEFORE the fix, `other_exclude` from exclude_files() did not contain the
+        .session/ path, so this same assertion failed with the file in
+        `productive` instead of `operational`)."""
+        collab = tmp_path / ".agent" / "collaboration"
+        agent_dir = tmp_path / ".agent"
+        context_dir = agent_dir / "context"
+        session_rel = ".session/external_review/notes.md"
+        session_file = tmp_path / ".session" / "external_review" / "notes.md"
+        session_file.parent.mkdir(parents=True)
+        session_file.write_text("scratch", encoding="utf-8")
+
+        other_exclude = scope_gate.exclude_files(
+            collab_dir=collab, agent_dir=agent_dir, context_dir=context_dir
+        )
+        porcelain = f" M {session_rel}\0"
+        result = scope_gate.check_cross_root_contamination(
+            other_root=tmp_path,
+            other_exclude=other_exclude,
+            run_fn=_make_run_fn(porcelain),
+        )
+
+        session_abs = str((tmp_path / session_rel).resolve())
+        assert session_abs not in result["productive"]
+        assert session_abs in result["operational"]
+
+    def test_no_session_dir_does_not_crash(self, tmp_path):
+        """exclude_files() must not require .session/ to exist."""
+        collab = tmp_path / ".agent" / "collaboration"
+        agent_dir = tmp_path / ".agent"
+        context_dir = agent_dir / "context"
+
+        excluded = scope_gate.exclude_files(
+            collab_dir=collab, agent_dir=agent_dir, context_dir=context_dir
+        )
+
+        assert str((tmp_path / ".session").resolve()) not in excluded
