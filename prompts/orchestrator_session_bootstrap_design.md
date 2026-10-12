@@ -141,8 +141,8 @@ es que el vuelo pide mas evidencia que la agrupacion.
    - 8 nan (4 comun + 4 lente-dif), concurrencia <=4, veredicto por CONTENIDO. Los nan NO ven FS:
      mete en el bundle el CODIGO COMPLETO relevante (no un diff parcial) + los PROBES YA EJECUTADOS.
      RUTA DE DESPACHO CANONICA -- contrato de consumo MOTOR-HOSTED (WOT-2026-044k):
-     `python <MOTOR_ROOT>/scripts/ensemble_dispatch.py loop-round --project-root <DESTINO_ROOT>`
-     (una invocacion por lente, cada una con su `--backend-key`, `--phase`, `--loop-id`,
+`python <MOTOR_ROOT>/scripts/ensemble_dispatch.py loop-round --project-root <DESTINO_ROOT>`
+      (una invocacion por lente, cada una con su `--backend-key`, `--phase`, `--loop-id`,
      `--commit-sha` y `--challenge-nonce`). El despachador se EJECUTA SIEMPRE DESDE EL ARBOL DEL
      MOTOR y escribe su runtime en el destino; es la UNICA via por la que la ronda queda REGISTRADA
      en el scorecard, de modo que `check_loop_execution` pueda acreditar el bucle. Esta pineado por
