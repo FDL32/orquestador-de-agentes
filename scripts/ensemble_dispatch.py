@@ -5093,8 +5093,9 @@ def run_loop_round(
         como `no-aportacion`, nunca como fila ausente.
     After: retorna el texto del backend tal cual (el consolidador es el chat,
         nivel 0: esta funcion no interpreta ni adjudica). Propaga
-        `DispatchBlockedError` si el preflight bloquea -- en ese caso NO hay
-        fila, porque no hubo ronda.
+        `DispatchBlockedError` si el preflight bloquea -- en ese caso SSI
+        deja fila con `failure_mode="privacy_preflight_blocked: ..."`,
+        registrando la identidad de la lente vetada (backend_key, loop_id).
     """
     if task_type not in TASK_TYPES:
         raise ValueError(_invalid_task_type_message(task_type))
@@ -5148,9 +5149,10 @@ def run_loop_round(
     # es PRECISA (`transport_failed` solo para `TransportError`/`OSError`;
     # todo lo demas es `unexpected`, para no mandar a buscar una caida de red
     # donde hay un bug de programacion). `DispatchBlockedError` se EXCLUYE a
-    # proposito, mismo motivo que en `_cmd_loop_round`: el preflight bloqueo
-    # ANTES de tocar red ("en ese caso NO hay fila, porque no hubo ronda") y
-    # sigue propagandose intacto, sin fila.
+    # proposito del except Exception genico (no se clasifica como `unexpected`);
+    # el bloque posterior a ese except la registra con
+    # `failure_mode="privacy_preflight_blocked: ..."` ANTES de re-lanzar:
+    # asi la lente vetada queda acreditada en el scorecard con su backend_key.
     #
     # Se registra y se RE-LANZA (igual que `_cmd_loop_round`): el caller (los
     # scripts de bucle) sigue viendo la excepcion y no puede confundir un
@@ -5165,7 +5167,28 @@ def run_loop_round(
             transport=transport,
             project_root=project_root,
         )
-    except DispatchBlockedError:
+    except DispatchBlockedError as _block_exc:
+        _latency_ms = round((time.perf_counter() - _t0) * 1000)
+        _record_round(
+            project_root,
+            ticket=ticket,
+            task_type=task_type,
+            rol=rol,
+            profile=profile,
+            backend_version=_backend_version(config["backends"][profile["backend"]]),
+            ronda=ronda,
+            reply="",
+            input_bytes=len(content.encode("utf-8")),
+            context_kind=context_kind,
+            failure_mode=f"privacy_preflight_blocked: {_block_exc}"[:300],
+            session_id=session_id,
+            latency_ms=_latency_ms,
+            phase=phase,
+            loop_id=loop_id,
+            backend_key=backend_key,
+            commit_sha=commit_sha,
+            challenge_nonce=challenge_nonce,
+        )
         raise
     except Exception as exc:
         latency_ms = round((time.perf_counter() - _t0) * 1000)

@@ -6830,20 +6830,27 @@ def test_046h_unexpected_exception_is_classified_precisely_not_as_transport(
     )
 
 
-def test_046h_dispatch_blocked_still_leaves_no_row(tmp_path):
-    """Control negativo: `DispatchBlockedError` (preflight de privacidad, que
-    bloquea ANTES de tocar red) sigue sin dejar fila -- el fix de 046h NO debe
-    ensanchar su alcance a un caso que por diseno no es una ronda ejecutada
-    (docstring de `run_loop_round`: "en ese caso NO hay fila, porque no hubo
-    ronda"). Si este test se pone rojo, el except de 046h esta capturando de
-    mas."""
+def test_060i_privacy_veto_leaves_a_row(tmp_path):
+    """WOT-2026-060i: el veto de privacy_preflight en loop-round ahora deja
+    UNA fila con failure_mode explicito, registrando la identidad de la lente
+    vetada (backend_key, loop_id, challenge_nonce).
+
+    Mutation: quitar el _record_round del except DispatchBlockedError ->
+    CERO fila (la excepcion se propaga, scorecard intacto = 0).
+
+    DoD (a): una ronda vetada deja una fila con failure_mode explicito
+    distinguible de "transport_failed" o "no-aportacion", con backend_key propio.
+    DoD (b): el rc=1 del veto NO se toca (pytest.raises mantiene la propagacion).
+    DoD (c): control negativo de 046h sigue verde (TransportError -> fila con
+    transport_failed, ver test_046h_transport_exception_is_recorded_then_reraised).
+    """
     with pytest.raises(ed.DispatchBlockedError):
         ed.run_loop_round(
             "p_chal",
             "material",
             config=_config(),
             project_root=tmp_path,
-            ticket="WOT-TEST-046h-blocked",
+            ticket="WOT-TEST-060i",
             task_type="code-review",
             rol="challenger",
             phase="fanout-comun",
@@ -6852,8 +6859,28 @@ def test_046h_dispatch_blocked_still_leaves_no_row(tmp_path):
             sensitivity="private",
             transport=_FakeTransport(replies=["no deberia llegar"]),
         )
-    assert not (tmp_path / ed.SCORECARD_REL).exists(), (
-        "un rechazo de preflight no ejecuto ninguna ronda: no debe dejar fila"
+
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, "un rechazo de preflight DEJA fila tras 060i; antes: 0 filas"
+    row = rows[0]
+    assert row["outcome"] == "no-aportacion", (
+        f"veto de privacidad debe registrar como no-aportacion; got {row.get('outcome')!r}"
+    )
+    assert row["failure_mode"] and row["failure_mode"].startswith(
+        "privacy_preflight_blocked"
+    ), (
+        f"failure_mode debe indicar privacy_preflight_blocked; "
+        f"got {row.get('failure_mode')!r}"
+    )
+    assert row["backend_key"] == "BA11", (
+        f"la fila vetada debe llevar el backend_key del perfil; "
+        f"got {row.get('backend_key')!r}"
+    )
+    assert row["loop_id"] == "L720", (
+        f"la fila vetada debe llevar el loop_id; got {row.get('loop_id')!r}"
+    )
+    assert row["output_chars"] == 0, (
+        "sin respuesta real del backend, output_chars debe ser 0"
     )
 
 
