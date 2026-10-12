@@ -13,6 +13,7 @@ The counts are always derived from the classification, never hardcoded.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -521,6 +522,8 @@ def test_collect_wires_mode_check(monkeypatch, tmp_path):
             "expect_dev_sha": None,
             "expect_principal_sha": None,
             "expect_workspace_sha": None,
+            "drift_base_ref": "main",
+            "drift_warn_threshold": 20,
         },
     )()
     findings = pcp.collect(args)
@@ -557,6 +560,8 @@ class TestAgentsAccessibleWiredInPreflight:
                 "expect_dev_sha": None,
                 "expect_principal_sha": None,
                 "expect_workspace_sha": None,
+                "drift_base_ref": "main",
+                "drift_warn_threshold": 20,
             },
         )()
 
@@ -580,3 +585,216 @@ class TestAgentsAccessibleWiredInPreflight:
             "not an injected/mocked set"
         )
         assert set(signal["profiles"]) <= real_profile_names
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-039b: consume-checkout DRIFT WARN + dirty portable-memory residue.
+#
+# The premise: `principal` sat 90 commits behind `main` with uncommitted lessons
+# and NOBODY detected it. These fixtures exercise the REAL git queries on a
+# synthetic repo (no mocked git): a worktree 30 commits behind -> WARNea naming
+# the checkout + gap; brought up to date -> silence. The WARN is a SIGNAL, never
+# a blocking gate (criterion (a)/(b) forbid auto-sync / a hard gate).
+# --------------------------------------------------------------------------- #
+_GIT_ID = ("-c", "user.email=t@example.com", "-c", "user.name=tester")
+
+
+def _git_run(args, cwd):
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60
+    )
+
+
+def _init_repo_with_commits(root: Path, n: int) -> None:
+    """Synthetic git repo on branch `main` with `n` commits (identity pinned)."""
+    root.mkdir(parents=True, exist_ok=True)
+    _git_run(["init"], root)
+    _git_run(["symbolic-ref", "HEAD", "refs/heads/main"], root)
+    for i in range(n):
+        (root / "f.txt").write_text(str(i), encoding="utf-8")
+        _git_run([*_GIT_ID, "add", "f.txt"], root)
+        _git_run([*_GIT_ID, "commit", "-m", f"c{i}"], root)
+
+
+def _drift_args(base_ref: str = "main", threshold: int = 20):
+    return type(
+        "Args",
+        (),
+        {"drift_base_ref": base_ref, "drift_warn_threshold": threshold},
+    )()
+
+
+def test_commits_behind_thirty_then_zero(tmp_path):
+    """MUTATION (c): a synthetic worktree 30 commits behind `main` reports 30;
+    brought up to date it reports 0. Removing the `HEAD..<base_ref>` count (or
+    inverting the range) flips the first assertion RED (0 or a huge number)."""
+    root = tmp_path / "motor"
+    _init_repo_with_commits(root, 31)
+    stale = tmp_path / "stale_wt"  # a real `git worktree`, not a bare dir
+    assert (
+        _git_run(
+            ["worktree", "add", "--detach", str(stale), "main~30"], root
+        ).returncode
+        == 0
+    )
+
+    assert pcp._commits_behind(stale, "main") == 30
+
+    assert _git_run(["checkout", "--detach", "main"], stale).returncode == 0
+    assert pcp._commits_behind(stale, "main") == 0
+
+
+def test_commits_behind_none_when_base_ref_unresolved(tmp_path):
+    """A repo without the base ref yields None (no invented gap) -- fail-safe."""
+    root = tmp_path / "motor"
+    _init_repo_with_commits(root, 3)
+    assert pcp._commits_behind(root, "does-not-exist") is None
+
+
+def test_check_drift_warns_stale_and_silent_when_current(tmp_path):
+    root = tmp_path / "motor"
+    _init_repo_with_commits(root, 31)
+    stale = tmp_path / "stale_wt"
+    assert (
+        _git_run(
+            ["worktree", "add", "--detach", str(stale), "main~30"], root
+        ).returncode
+        == 0
+    )
+
+    findings = {"checks": {}, "warnings": [], "automatic_criticals": []}
+    pcp._check_drift(findings, _drift_args(), principal=stale, workspace=None)
+
+    warns = findings["warnings"]
+    assert len(warns) == 1
+    assert "principal" in warns[0]
+    assert "30 commits behind main" in warns[0]
+    # WARN-only: it is NEVER a blocking gate.
+    assert findings["automatic_criticals"] == []
+    entry = findings["checks"]["drift"]["checkouts"]["principal"]
+    assert entry["commits_behind"] == 30
+    assert entry["detached"] is True
+
+    # Up to date -> silence.
+    assert _git_run(["checkout", "--detach", "main"], stale).returncode == 0
+    findings2 = {"checks": {}, "warnings": [], "automatic_criticals": []}
+    pcp._check_drift(findings2, _drift_args(), principal=stale, workspace=None)
+    assert findings2["warnings"] == []
+    assert findings2["automatic_criticals"] == []
+
+
+def test_check_drift_respects_threshold(tmp_path):
+    """A 30-behind checkout is silent when the threshold is raised above 30."""
+    root = tmp_path / "motor"
+    _init_repo_with_commits(root, 31)
+    stale = tmp_path / "stale_wt"
+    assert (
+        _git_run(
+            ["worktree", "add", "--detach", str(stale), "main~30"], root
+        ).returncode
+        == 0
+    )
+    findings = {"checks": {}, "warnings": [], "automatic_criticals": []}
+    pcp._check_drift(
+        findings, _drift_args(threshold=30), principal=stale, workspace=None
+    )
+    assert findings["warnings"] == []
+
+
+def _commit_archive(root: Path) -> Path:
+    archive = root / ".agent" / "runtime" / "memory" / "archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    f = archive / "observations.2026-01.jsonl"
+    f.write_text('{"topic": "t"}\n', encoding="utf-8")
+    rel = ".agent/runtime/memory/archive/observations.2026-01.jsonl"
+    assert _git_run([*_GIT_ID, "add", rel], root).returncode == 0
+    assert _git_run([*_GIT_ID, "commit", "-m", "memory"], root).returncode == 0
+    return f
+
+
+def test_portable_archive_dirty_true_then_false(tmp_path):
+    root = tmp_path / "motor"
+    _init_repo_with_commits(root, 1)
+    f = _commit_archive(root)
+    assert pcp._portable_archive_dirty(root) is False
+
+    with f.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write('{"topic": "t2"}\n')
+    assert pcp._portable_archive_dirty(root) is True
+
+
+def test_check_drift_archive_warn_only_for_detached_consume_checkout(tmp_path):
+    """(b) A DIRTY archive WARNs only for a consume-only (DETACHED) checkout: a
+    checkout on a named branch is NOT consume-only and must stay silent."""
+    root = tmp_path / "motor"
+    _init_repo_with_commits(root, 1)
+    f = _commit_archive(root)
+    with f.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write('{"topic": "t2"}\n')
+
+    # On branch `main` -> not consume-only -> no archive WARN (and gap 0).
+    findings = {"checks": {}, "warnings": [], "automatic_criticals": []}
+    pcp._check_drift(findings, _drift_args(), principal=root, workspace=None)
+    assert findings["warnings"] == []
+
+    # Detached HEAD -> consume-only -> archive WARN names the checkout.
+    assert _git_run(["checkout", "--detach"], root).returncode == 0
+    findings2 = {"checks": {}, "warnings": [], "automatic_criticals": []}
+    pcp._check_drift(findings2, _drift_args(), principal=root, workspace=None)
+    assert len(findings2["warnings"]) == 1
+    assert "consume_checkout_dirty_memory_archive:principal" in findings2["warnings"][0]
+    assert findings2["automatic_criticals"] == []
+
+
+def test_is_detached_head_branch_vs_detached(tmp_path):
+    root = tmp_path / "motor"
+    _init_repo_with_commits(root, 1)
+    assert pcp._is_detached_head(root) is False
+    assert _git_run(["checkout", "--detach"], root).returncode == 0
+    assert pcp._is_detached_head(root) is True
+
+
+def test_collect_wires_drift_check(monkeypatch, tmp_path):
+    """WIRING: collect() must invoke _check_drift (a signal nobody calls is a norm,
+    not a collector). Mutation: drop the call from collect() -> RED."""
+    recorded: dict = {}
+
+    def fake_drift(findings, args, principal, workspace):
+        recorded["called"] = True
+        findings["checks"]["drift"] = {"wired": True}
+
+    monkeypatch.setattr(pcp, "_check_drift", fake_drift)
+    for heavy in (
+        "_check_mode",
+        "_check_shas",
+        "_check_validate",
+        "_check_session_state",
+        "_check_topology",
+        "_check_consumers",
+        "_check_agents_accessible",
+    ):
+        monkeypatch.setattr(pcp, heavy, lambda *a, **k: None)
+    (tmp_path / ".git").mkdir()
+
+    args = type(
+        "Args",
+        (),
+        {
+            "dev_root": str(tmp_path),
+            "principal_root": None,
+            "workspace_root": None,
+            "ticket": "WOT-2026-039b",
+            "retire_token": None,
+            "retire_owner": None,
+            "expect_dev_sha": None,
+            "expect_principal_sha": None,
+            "expect_workspace_sha": None,
+            "drift_base_ref": "main",
+            "drift_warn_threshold": 20,
+        },
+    )()
+    findings = pcp.collect(args)
+
+    assert recorded.get("called") is True, "collect() must wire _check_drift"
+    assert findings["checks"]["drift"] == {"wired": True}
+    assert findings["warnings"] == []
