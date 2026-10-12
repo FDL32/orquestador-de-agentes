@@ -83,7 +83,7 @@ Ese prompt prevalece si esta skill diverge.
    destapa false-green o contradiccion, vuelve al Builder; NO continues.
 4. **Bloque 3 - cierre canonico:** comando unico
    `agent_controller.py --session-close` (dry-run, luego real; `--force` si STATE
-   ya COMPLETED). Validar `0 errors / 0 warnings` post-archive; `reconcile_ticket`
+   ya COMPLETED). Validar `0 errors` post-archive; `reconcile_ticket`
    si hay `bus_drift`.
 5. **Bloque 4 - memoria:** `memory_upload` como gate propose-before-write; tier
    declarado; sin evidencia no hay entrada portable; schema-drift bloquea nuevas

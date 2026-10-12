@@ -251,9 +251,9 @@ Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--
    - `python .agent/agent_controller.py --session-close --project-root <repo_destino>` (ejecuta). Si `STATE.md` ya esta COMPLETED, anade `--force`.
    - El pipeline orquesta en orden: prepush_check (bloqueante), local_audit, validacion de prosa, observaciones por ticket (`session-close-observations`), consolidacion de memoria (`memory-consolidate`), limpieza de sesion, archivado de collaboration/bus/execution_log, manifest check, git clean. NO repitas estos pasos a mano; los scripts sueltos (`local_audit.py`, `session_close_observations.py`, `memory_consolidate.py --dry-run`) son solo para diagnostico puntual.
    - Learnings y changelog (decisiones humanas, fuera del pipeline automatico): `manager-session-closeout` (`skills/manager-session-closeout/SKILL.md`) clasifica learnings local/generalizable/dudoso y escribe `closeout_lessons.md`; `version-changelog` (`skills/version-changelog/SKILL.md`) propone bump SemVer (tags solo con tu OK explicito).
-   - VALIDACION post-cierre obligatoria: `python .agent/agent_controller.py --validate --json --project-root <repo_destino>` debe dar `0 errors / 0 warnings`. Si aparece `bus_drift` post-archive, reconcilia con `scripts/reconcile_ticket.py --ticket <ID> --reason "post-session-close bus drift"` y revalida. NO fabriques eventos de bus a mano.
-   - NO asumas un warning "esperado" de `work_plan.md` ausente tras el cierre. Re-valida siempre contra la fuente viva: si `validate --json` da `0/0`, documenta `0/0`; si aparece una warning nueva, tratala como senal real del estado presente, no como folklore del cierre anterior.
-   - `TURN.md` puede quedar en `ROL=MANAGER`, `ACCION=CREATE_PLAN`, `Plan ID: N/A` inmediatamente despues del cierre. Eso NO bloquea el cierre si `validate --json` sigue en `0/0`. El siguiente bootstrap/arranque de ticket debe regenerarlo; no lo eleves a hallazgo si no rompe validacion.
+   - VALIDACION post-cierre obligatoria: `python .agent/agent_controller.py --validate --json --project-root <repo_destino>` debe dar `0 errors`. Si aparece `bus_drift` post-archive, reconcilia con `scripts/reconcile_ticket.py --ticket <ID> --reason "post-session-close bus drift"` y revalida. NO fabriques eventos de bus a mano.
+   - NO asumas un warning "esperado" de `work_plan.md` ausente tras el cierre. Re-valida siempre contra la fuente viva: si `validate --json` da `0 errors`, documenta `0 errors`; si aparece una warning nueva, tratala como senal real del estado presente, no como folklore del cierre anterior.
+   - `TURN.md` puede quedar en `ROL=MANAGER`, `ACCION=CREATE_PLAN`, `Plan ID: N/A` inmediatamente despues del cierre. Eso NO bloquea el cierre si `validate --json` sigue en `0 errors`. El siguiente bootstrap/arranque de ticket debe regenerarlo; no lo eleves a hallazgo si no rompe validacion.
 
 == BLOQUE 4: PROMOCION DE MEMORIA (decision, no escritura ciega) ==
 
@@ -415,7 +415,7 @@ PROPIEDAD DE ARTEFACTOS (quien escribe que, para evitar triple-write ciego):
    - **Verifica por comando, nunca de memoria:** `python <MOTOR_ROOT>/scripts/check_backlog_contract.py --project-root <repo_destino>` -> exit 0 obligatorio. El gate audita AMBAS superficies: rechaza terminal-en-cola-viva, estado-vivo-en-archivo y una etiqueta desconocida colandose como cierre (una errata como `competed` NO pasa por no ser un estado vivo).
    - NO commitees (misma regla que 8 y 8.bis): lo commitea el humano/Manager.
 
-VALIDACION FINAL: `python .agent/agent_controller.py --validate --json --project-root <repo_destino>` -> exige `0 errors / 0 warnings`. Reporta exit code real.
+VALIDACION FINAL: `python .agent/agent_controller.py --validate --json --project-root <repo_destino>` -> exige `0 errors`. Reporta exit code real.
 
 Recordatorio: responde con conclusiones etiquetadas (VERIFICADO/INFERIDO/NO VERIFICADO) y evidencia citada (SHA, ruta, exit code), no con volcados de archivos. Si algo sale en rojo, DETENTE en el punto de control correspondiente y surfacea la contradiccion antes de tocar memoria.
 ```

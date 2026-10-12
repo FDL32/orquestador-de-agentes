@@ -117,7 +117,7 @@ python .agent/agent_controller.py --validate --json --project-root <repo_destino
 ```
 
 El cierre solo cuenta como "verde real" si esta validacion final queda en
-`0 errors / 0 warnings`.
+`0 errors`.
 
 Si despues del archivado del bus aparece `bus_drift` para el ticket ya
 cerrado, no lo clasifiques como "warning aceptable" ni lo tapes con relato:
@@ -233,7 +233,7 @@ Etiqueta cada claim importante con una de estas marcas:
    - verificar que el estado final es coherente antes de dar la sesion por
      cerrada
    - no aceptar como cierre final un reporte PASS si la validacion viva
-     posterior al archivado no esta en `0/0`
+     posterior al archivado no esta en `0 errors`
 
 ## Reglas no negociables
 
@@ -283,7 +283,7 @@ Responde en este orden:
 - `closeout_lessons.md` preparado si aplica
 - `local_audit.py` revisado si el cierre toca estado operativo
 - `agent_controller.py --validate --json --project-root <repo_destino>` en
-  `0 errors / 0 warnings` despues del cierre real
+  `0 errors` despues del cierre real
 - si aparecio `bus_drift` post-archive, `reconcile_ticket.py` ejecutado y
   validacion repetida con resultado limpio
 - sin duplicados claros entre prompt y skill para el mismo proceso

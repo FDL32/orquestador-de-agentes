@@ -98,7 +98,7 @@ un veredicto, es "no medi").
 | `python scripts/find_similar_signals.py --text "<txt>" --archive <a> --backlog <b>` | Dedupe antes de escribir leccion o ficha. EXIGE superficies: sin ellas da rc=2 y no escanea |
 | `python scripts/check_guard_wiring.py` | Un guard sin cablear es una norma, no una barrera |
 | `python scripts/check_encoding_guard.py` | Mojibake/BOM antes de entregar |
-| `python .agent/agent_controller.py --validate --json --project-root <destino>` | Estado canonico: 0 errors / 0 warnings |
+| `python .agent/agent_controller.py --validate --json --project-root <destino>` | Estado canonico: 0 errors |
 
 **DESTINO — operar el destino:**
 
@@ -225,7 +225,7 @@ Paso 0 (antes de tocar nada):
    la worktree de desarrollo y usa su `.venv\Scripts\python.exe`. Verifica que esa
    worktree existe y lleva `main`; si no, crearla con
    `scripts/setup_dev_worktree.ps1`. En ella: HEAD == origin/main, arbol limpio,
-   `--validate` en 0 errors / 0 warnings. El checkout PRINCIPAL queda DETACHED en
+   `--validate` en 0 errors. El checkout PRINCIPAL queda DETACHED en
    origin/main (fuente estable); NO se trabajan tickets alli. Reporta el estado
    real ANTES de elegir ticket (ver `QUICKSTART.md` "0d"). Ademas de este chequeo
    en prosa, ejecuta la version programatica del guard
@@ -262,7 +262,7 @@ Reglas duras del orquestador (verificadas en sesiones reales):
   desalinea el stamp ~2 veces por ticket: re-suite sobre el HEAD final antes
   del mini-audit.
 - Mini-audit de 7 checks por ticket antes de saltar al siguiente: STATE
-  COMPLETED, arbol limpio, autores noreply, validate 0/0, stamp fresco
+  COMPLETED, arbol limpio, autores noreply, validate 0 errors, stamp fresco
   sha==HEAD, diff dentro de scope, 0 PII nueva en diff/mensajes.
 - Barrera CI-only (flaky de runner, workflow): cerrar local con el mecanismo
   mutation-verified + estado CLOSED_PENDING_CI; el criterio de cierre real es

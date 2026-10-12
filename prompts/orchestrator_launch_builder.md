@@ -45,7 +45,7 @@ uno se explica en detalle en su seccion propia (busca el codigo literal):
 |---|---|---|
 | `CONTRACT_MISMATCH` | Paso -1 | El hash del contrato citado en este prompt no coincide con el fichero real de tu worktree |
 | `PROJECT_ROOT_UNDETERMINED` | Paso 0 | No puedes determinar tu `<DESTINO>` con certeza antes de leer proyecciones |
-| `PREFLIGHT_FAILED` | Preflight | `validate --json` inicial no da 0 errors/0 warnings |
+| `PREFLIGHT_FAILED` | Preflight | `validate --json` inicial no da 0 errors |
 | `RUNTIME_NOT_BOOTSTRAPPED` | Preflight | `work_plan.md`/proyecciones siguen ancladas a un ticket anterior |
 | `WORKTREE_TOPOLOGY_VIOLATION` | Preflight | `check_worktree_topology.py` no da exit 0 |
 | `CONTRACT_IMPOSSIBLE` | Rol y limites | `Builder Access Surface` prohibe escribir en `repo_destino` Y `delivery_authority` es `repo_destino` |
@@ -138,7 +138,7 @@ El Orquestador debe haber ejecutado el validate preflight antes de llegar aqui:
 python <MOTOR_ROOT>/.agent/agent_controller.py --validate --json --project-root <DESTINO>
 ```
 
-Si ese gate no paso 0 errors / 0 warnings, no implementes: reporta
+Si ese gate no paso 0 errors, no implementes: reporta
 `PREFLIGHT_FAILED` con el output exacto al Orquestador y detente.
 
 Ademas del `validate`, el Builder DEBE verificar antes de tocar codigo que el
@@ -153,7 +153,7 @@ runtime operativo ya esta bootstrappeado para `{{TICKET_ID}}` en el
 Si esa alineacion no existe, no improvises ni "continues igual": reporta
 `RUNTIME_NOT_BOOTSTRAPPED` con evidencia concreta y detente. Evidencia minima:
 contenido literal de `STATE.md` y `TURN.md` en el momento del check, mas la
-ruta del `work_plan.md` activo inspeccionado. Un `validate 0/0` de un ticket
+ruta del `work_plan.md` activo inspeccionado. Un `validate 0 errors` de un ticket
 anterior NO autoriza a implementar `{{TICKET_ID}}`.
 
 Ademas, ejecuta el guard de topologia de worktree (WOT-2026-021g) antes de
