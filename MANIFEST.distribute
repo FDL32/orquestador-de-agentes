@@ -38,7 +38,8 @@ scripts/classify_publication.py
 scripts/hermes_build_context_bundle.py
 
 # =============================================================================
-# PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP
+# PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP (o por otros prompts
+# de planning ad-hoc de un vuelo, caso de persona_system.md)
 # =============================================================================
 prompts/agent_execution_modes.md
 prompts/audit_agent_output.md
@@ -53,6 +54,7 @@ prompts/orchestrator_pipeline.md
 prompts/orchestrator_refactor_bootstrap.md
 prompts/orchestrator_session_bootstrap.md
 prompts/orchestrator_session_close_chat.md
+prompts/persona_system.md
 
 # =============================================================================
 # SKILLS (micro-habilidades reutilizables)

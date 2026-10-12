@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 44 |
+| prompt | 45 |
 | reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 45 |
-| **total** | **135** |
+| **total** | **136** |
 
 ## Entradas
 
@@ -63,6 +63,7 @@
 | prompt | `prompts/orchestrator_session_close_chat.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit_design.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/persona_system.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/session_hop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | orchestrator | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |

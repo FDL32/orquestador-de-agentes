@@ -30,6 +30,13 @@ propuesta.
 | **4 capas** (Capa 0 Claude Code orquesta, Capas 1/1.5/2 delegadas a `nan` via Kilo CLI) | Claude Code SOLO lanza procesos y lee resumenes/veredictos cortos (<500 palabras); Manager-nan triaje+contrato, Builder-nan implementa, Revisor-nan independiente revisa. Ver `PROMPT_ARRANQUE_vuelo_limpieza_backlog_4capas_20261010.md` (referencia canonica, Seccion 3) para el diseño completo ya implementado de este patron. | Vuelo largo (lote de 15+ tickets); Kilo CLI + perfiles `nan` (`channel: agent`, `backend: kilo`) confirmados disponibles; **NINGUN** ticket del lote toca la allowlist de blast-radius-alto -- si AL MENOS UNO la toca, el modo correcto para la sesion es **Intermedio** (nunca 4 capas puras con ese ticket incluido sin mas), ver Seccion 4. |
 | **Intermedio** | Claude Code delega el TRIAJE/CONTRATO (Capa 1, Manager-nan) a Kilo para TODO el lote, pero IMPLEMENTA y REVISA el mismo (sin Capa 2 ni Capa 1.5 delegadas) los tickets que tocan la allowlist de blast-radius-alto. El resto del lote (tickets S/M fuera de la allowlist) sigue en 4 capas completas (Capa 2 y Capa 1.5 delegadas) dentro de la MISMA sesion. | Lote mixto: mayoria de tickets aptos para 4 capas, pero 1-2 tickets de alto impacto (ver allowlist, Seccion 3) donde Claude Code prefiere control directo de implementacion Y revision. |
 
+**Nota de vocabulario (no normativa, no re-declara nada de este nucleo):** una sesion que
+encarna ella misma una o mas de las Capas 1/1.5/2 de 4 capas (p.ej. en el modo Intermedio de
+arriba) puede nombrar sus turnos sucesivos con el vocabulario de "persona" definido en
+`prompts/persona_system.md` (numeracion ENTERA 0/1/2/3, correlacionada con la numeracion de
+Capas de este documento SIN renumerarlo). Ese documento es puntero, nunca fuente de los
+modos/señales/allowlist de aqui.
+
 **Regla dura (corregida tras bucle adversarial, Seccion 6 -- 3/4 lentes con
 contenido señalaron riesgo de seguridad en la version anterior):** para un
 ticket de la allowlist, el modo Intermedio NUNCA delega ni la
