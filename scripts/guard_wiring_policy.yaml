@@ -164,6 +164,20 @@ known_unwired:
   # reportara (WARN, no bloqueante) para que no se olvide, y el follow-up lo
   # re-declarara con su dueno real.
   check_role_models_distinct: WOT-2026-098b
+  # WOT-2026-040a: validador de CONTENIDO del delta operativo esperado del batch
+  # (PREDICATE v2, condicion 8 `estado_operativo_destino_atribuible`). Su
+  # invocacion natural es la evaluacion del PREDICATE por el ejecutor o el
+  # auditor durante un vuelo de batch -- un evento DISCRETO gobernado por
+  # prompt, no un hook que corra solo; mismo patron BY-DESIGN que
+  # check_publication_gate y check_prompt_parity. Cablearlo a pre-commit no
+  # tiene sentido: solo es aplicable cuando existe un delta operativo que
+  # validar (durante el vuelo), no en cada commit.
+  check_expected_operational_delta: >-
+    BY-DESIGN: valida el delta operativo esperado del batch (PREDICATE v2
+    condicion 8) cuando el ejecutor o el auditor evalua el PREDICATE -- evento
+    discreto gobernado por prompt, no un hook automatico. Follow-up: cablearlo
+    a un cierre programatico del batch si el PREDICATE pasa a ejecutarse por
+    codigo.
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.

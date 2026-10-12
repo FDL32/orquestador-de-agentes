@@ -812,7 +812,7 @@ The batch may NOT be declared `DONE` until ALL of:
 The batch declares a machine-checkable predicate BEFORE it runs, and the
 isolated auditor (`prompts/audit_autonomous_ticket_batch.md`) evaluates it
 **command by command, on real exit codes, not on narrative**. A run may be
-declared `DONE` only if ALL 8 conditions hold:
+declared `DONE` only if ALL 9 conditions hold:
 
 | # | Condition | How it is checked |
 |---|---|---|
@@ -822,15 +822,28 @@ declared `DONE` only if ALL 8 conditions hold:
 | 4 | `cierres_auditables` | per closed ticket, an archived row with a `commit:` cell AND the `audited` counter of `check_backlog_commits_landed` WENT UP; final `ERROR=0` |
 | 5 | `suite_final_verde` | `python scripts/run_pytest_safe.py --level all` post-last-commit with `tested_sha == HEAD`, read from the REAL output ("N passed / N failed"), NEVER the wrapper's exit code (WOT-2026-025p: without `--level all` the run is unit-only and its green is a formal false-green) |
 | 6 | `auditor_emitido` | the isolated auditor's report exists, verdict != `NO ACEPTAR TODAVIA`. DUAL CONTRACT (P5, WOT-2026-023v): the executor emits this row as `PENDING` -- it cannot self-certify it; only the sibling audit resolves it to pass |
-| 7 | `arboles_limpios` | dirty=0 across the repos ENUMERATED from the resolved topology (never a hardcoded count) |
-| 8 | `estado_operativo_valido` | `python .agent/agent_controller.py --validate --json --no-heal --project-root <DESTINO_ROOT>` over the DESTINO ONLY, `total_errors == 0` read from the REAL JSON. `--no-heal` is MANDATORY: without it `--validate` heals bus drift and WRITES the git-TRACKED `STATE.md` (WOT-2026-024a), dirtying the destino and breaking condition 7 in the same run. `--project-root <DESTINO_ROOT>` is MANDATORY and literal: pointed at the WRONG repo this check returns GREEN, not RED (measured: the code-only motor also reports `total_errors: 0`, and `is_motor_code_only()` gates only WRITE flags), so the executor RECORDS the resolved path it used and the auditor CROSS-CHECKS it equals the destino of the resolved topology. Warnings do NOT block (exit is `0 if total_errors == 0`), but are CLASSIFIED and RECORDED in the batch_run |
+| 7 | `repos_codigo_limpios` | `dirty=0` across every repo that RECEIVES code/publication commits, ENUMERATED from the resolved topology (never a hardcoded count). In code-only dogfooding that is the `repo_motor` plus any other code repo; the `repo_destino` is NOT audited here (condition 8 audits it). Verify with `git status --porcelain` in each resolved CODE repo and read the real output. |
+| 8 | `estado_operativo_destino_atribuible` | the `repo_destino`'s dirty IS EXACTLY the expected operational delta of the batch's mode, decided BY CONTENT -- ticket IDs, commit cells, hunk count -- NEVER by `git status` alone. In code-only the close's backlog transition (the closed ticket(s) LEAVE the live queue in `backlog.md` and ENTER `_archive/backlog_done.md` with a TERMINAL state and a LANDED `commit:<sha>`); in destino mode the live projections (`STATE.md`, `TURN.md`, `work_plan.md`, `execution_log.md`) plus the auditor's mandatory artifacts. Verify with `python <MOTOR_ROOT>/scripts/check_expected_operational_delta.py --mode <code-only|destino> --delta <delta.json>` (exit 0 REQUIRED: a 3rd foreign file, an extra hunk, a ticket removed != archived, a missing/unlanded `commit:<sha>`, or a code-only delta applied outside code-only -> non-zero). A `repo_destino` dirty with EXACTLY this delta is LEGITIMATE and does NOT block. |
+| 9 | `estado_operativo_valido` | `python .agent/agent_controller.py --validate --json --no-heal --project-root <DESTINO_ROOT>` over the DESTINO ONLY, `total_errors == 0` read from the REAL JSON. `--no-heal` is MANDATORY: without it `--validate` heals bus drift and WRITES the git-TRACKED `STATE.md` (WOT-2026-024a), dirtying the destino and breaking condition 8 (the destino delta) in the same run. `--project-root <DESTINO_ROOT>` is MANDATORY and literal: pointed at the WRONG repo this check returns GREEN, not RED (measured: the code-only motor also reports `total_errors: 0`, and `is_motor_code_only()` gates only WRITE flags), so the executor RECORDS the resolved path it used and the auditor CROSS-CHECKS it equals the destino of the resolved topology. Warnings do NOT block (exit is `0 if total_errors == 0`), but are CLASSIFIED and RECORDED in the batch_run |
 
 Conditions 4 and 5 encode real false-greens: `ERROR=0` is **not** the same as
 audited (the landing guard used to SKIP rows lacking a `commit:` cell), and a
 suite run PRE-commit reports the PARENT's `tested_sha`.
 
-**The freshness attestation of Paso 0-bis is NOT a ninth PREDICATE condition.**
-The predicate stays at EIGHT, deliberately: its cardinality is a load-bearing
+**v2 (`WOT-2026-040a`): condition 7 was SPLIT IN TWO.** The single observable
+`arboles_limpios` audited two DIFFERENT truths -- (1) the CODE/publication repos
+are clean, and (2) the destino's OPERATIONAL state advanced correctly -- and that
+made a `repo_destino` dirty with EXACTLY its expected transition a blocking
+finding, by construction, in BOTH deployment modes (measured 2026-07-23 in
+code-only: the close's backlog transition; 2026-09-13 in destino mode: the live
+projections `STATE.md`/`TURN.md`/`work_plan.md`/`execution_log.md` plus the
+auditor's OWN mandatory artifacts). Conditions 7 (`repos_codigo_limpios`) and 8
+(`estado_operativo_destino_atribuible`) now audit them separately; condition 8 is
+decided BY CONTENT by `scripts/check_expected_operational_delta.py`
+(`WOT-2026-040a`), never by `git status` alone.
+
+**The freshness attestation of Paso 0-bis is NOT a PREDICATE condition.**
+The predicate stays at NINE, deliberately: its cardinality is a load-bearing
 invariant shared with the sibling auditor
 (`test_predicate_declares_its_cardinality`, WOT-2026-039a), and adding a row to
 ONE of the two prompts is exactly the half-landed split that test exists to

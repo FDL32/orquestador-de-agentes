@@ -11,7 +11,7 @@ self-report, which prompts/audit_agent_output.md (CEM v0) forbids.
     Mutation named explicitly: allow the executor to self-audit -> RED.
 (b) Form: contract_id, source_of_truth clause, READ-ONLY restriction, double
     output (.md + .json), verdict enum limited to the 4 canonical values.
-(c) PREDICATE: all 8 named conditions appear. Parametrized. Plus CARDINALITY
+(c) PREDICATE: all 9 named conditions appear. Parametrized. Plus CARDINALITY
     and SKILL.md PARITY (WOT-2026-039a): presence-only asserts let a
     half-landed condition stay green, so the count and the skill's condition
     list are pinned too.
@@ -140,8 +140,10 @@ def test_audited_artifacts_are_declared_emissions_of_the_executor(
     )
 
 
-# The 8 conditions of the machine-checkable predicate (design 12.bis.2.b;
-# condition 8 added by WOT-2026-039a).
+# The 9 conditions of the machine-checkable predicate (design 12.bis.2.b;
+# condition 8 added by WOT-2026-039a; WOT-2026-040a split the old condition 7
+# `arboles_limpios` into `repos_codigo_limpios` + `estado_operativo_destino_atribuible`,
+# pushing `estado_operativo_valido` from 8 to 9).
 PREDICATE_CONDITIONS = (
     "schema_valido",
     "dag_aciclico",
@@ -149,7 +151,8 @@ PREDICATE_CONDITIONS = (
     "cierres_auditables",
     "suite_final_verde",
     "auditor_emitido",
-    "arboles_limpios",
+    "repos_codigo_limpios",
+    "estado_operativo_destino_atribuible",
     "estado_operativo_valido",
 )
 
@@ -388,7 +391,7 @@ def test_prompt_blocks_verdict_on_false_green_or_closure_not_landed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (c) PREDICATE: all 8 named conditions
+# (c) PREDICATE: all 9 named conditions
 # ---------------------------------------------------------------------------
 
 PREDICATE_CONDITIONS = [
@@ -398,7 +401,8 @@ PREDICATE_CONDITIONS = [
     "cierres_auditables",
     "suite_final_verde",
     "auditor_emitido",
-    "arboles_limpios",
+    "repos_codigo_limpios",
+    "estado_operativo_destino_atribuible",
     "estado_operativo_valido",
 ]
 
@@ -412,7 +416,7 @@ def test_prompt_names_predicate_condition(condition: str) -> None:
     )
 
 
-def test_predicate_declares_its_cardinality(condition_count: int = 8) -> None:
+def test_predicate_declares_its_cardinality(condition_count: int = 9) -> None:
     """Both prompts must state the SAME condition COUNT as the list declares.
 
     LOAD-BEARING (WOT-2026-039a). Every other predicate test is presence-only
@@ -485,8 +489,9 @@ def test_skill_states_the_predicate_cardinality() -> None:
     )
 
 
-def test_cond8_is_wired_into_the_auditors_machine_readable_surfaces() -> None:
-    """cond-8 must reach the auditor's OUTPUT contract, not just its prose.
+def test_cond9_is_wired_into_the_auditors_machine_readable_surfaces() -> None:
+    """cond-9 (`estado_operativo_valido`) must reach the auditor's OUTPUT
+    contract, not just its prose.
 
     LOAD-BEARING (WOT-2026-039a, found by the FS-reader lens of the
     MANAGER_REVIEW loop). Every other auditor-side assertion is a file-wide
@@ -504,10 +509,10 @@ def test_cond8_is_wired_into_the_auditors_machine_readable_surfaces() -> None:
     table_rows = [
         line
         for line in text.splitlines()
-        if line.lstrip().startswith("| 8 |") and condition in line
+        if line.lstrip().startswith("| 9 |") and condition in line
     ]
     assert len(table_rows) == 1, (
-        f"the auditor's PREDICATE report table must carry EXACTLY ONE row 8 "
+        f"the auditor's PREDICATE report table must carry EXACTLY ONE row 9 "
         f"naming {condition!r} (found {len(table_rows)}): without it the "
         f"auditor reproduces the condition in prose but never reports it"
     )
@@ -519,17 +524,19 @@ def test_cond8_is_wired_into_the_auditors_machine_readable_surfaces() -> None:
     )
 
 
-def test_cond8_is_named_in_the_blocking_conditions_rule() -> None:
-    """The hard rule that enumerates blocking conditions BY INDEX must list 8.
+def test_cond9_is_named_in_the_blocking_conditions_rule() -> None:
+    """The hard rule that enumerates blocking conditions BY INDEX must list 9.
 
-    HIGHEST-SEVERITY BARRIER (WOT-2026-039a). The auditor's blocking rule
-    enumerates which PREDICATE conditions block the verdict as an index list
-    (`las 1-5, 7 y 8; la 6 sin informe emitido`). Leaving it at `las 1-5 y 7`
-    makes cond-8 NON-BLOCKING BY OMISSION: the auditor can emit APROBADO with
-    `estado_operativo_valido: cumple=false`. Measured: that exact revert left
-    the suite GREEN -- the condition existed everywhere except where it counts.
+    HIGHEST-SEVERITY BARRIER (WOT-2026-039a; index moved by WOT-2026-040a). The
+    auditor's blocking rule enumerates which PREDICATE conditions block the
+    verdict as an index list (`las 1-5, 7, 8 y 9; la 6 sin informe emitido`).
+    Leaving it at `las 1-5, 7 y 8` makes `estado_operativo_valido` (now cond 9)
+    non-blocking by omission: the auditor could emit APROBADO with
+    `estado_operativo_valido: cumple=false`. Measured (WOT-2026-039a): that exact
+    revert left the suite GREEN -- the condition existed everywhere except where
+    it counts.
 
-    Mutation: revert the rule to `(las 1-5 y 7;` -> RED.
+    Mutation: revert the rule to `(las 1-5, 7 y 8;` -> RED.
     """
     text = _read()
     match = re.search(r"\(las 1-5[^)]*\)", text)
@@ -538,8 +545,8 @@ def test_cond8_is_named_in_the_blocking_conditions_rule() -> None:
         "blocking PREDICATE conditions by index"
     )
     rule = match.group(0)
-    assert "8" in rule, (
-        f"the blocking-conditions rule {rule!r} must include condition 8: "
+    assert "9" in rule, (
+        f"the blocking-conditions rule {rule!r} must include condition 9: "
         f"omitting it makes estado_operativo_valido non-blocking by omission, "
         f"so a run can be APROBADO with the condition failing"
     )

@@ -773,18 +773,19 @@ def _predicate_row_command(n: int) -> str:
     return controller[0]
 
 
-def test_predicate_row8_mandates_no_heal_and_project_root() -> None:
-    """PREDICATE row 8 (estado_operativo_valido) must pin BOTH guards.
+def test_predicate_row9_mandates_no_heal_and_project_root() -> None:
+    """PREDICATE row 9 (estado_operativo_valido) must pin BOTH guards.
 
     LOAD-BEARING (WOT-2026-039a). The condition exists because a close left the
-    destino with a CLEAN tree and an INVALID operational state: cond-7 only
-    reads `dirty==0`, so it passed straight through and only remote CI caught
-    it. Two measured facts make the bare command unsafe:
+    destino with a CLEAN tree and an INVALID operational state: the dirty
+    observables (conditions 7/8) only read `dirty`, so it passed straight
+    through and only remote CI caught it. Two measured facts make the bare
+    command unsafe:
 
     - WITHOUT `--no-heal`, `--validate` heals bus drift and WRITES the
       git-TRACKED `STATE.md` (agent_controller `_handle_validate` ->
       `sync_state_projection`, WOT-2026-024a). The check would DIRTY the
-      destino and break cond-7 in the same run.
+      destino and break condition 8 (the destino delta) in the same run.
     - WITHOUT an explicit `--project-root`, pointing at the wrong repo returns
       GREEN, not RED (measured: the code-only motor also reports
       `total_errors: 0`; `is_motor_code_only()` gates only WRITE flags).
@@ -793,29 +794,29 @@ def test_predicate_row8_mandates_no_heal_and_project_root() -> None:
       the condition degrades into prose. Measured: dropping `--json` from the
       command left the whole suite GREEN before this assertion existed.
 
-    Mutation: drop any of the three flags from row 8 -> RED.
+    Mutation: drop any of the three flags from row 9 -> RED.
     """
-    row8 = _predicate_row(8)
-    assert "estado_operativo_valido" in row8, (
-        "PREDICATE row 8 must be the estado_operativo_valido condition"
+    row9 = _predicate_row(9)
+    assert "estado_operativo_valido" in row9, (
+        "PREDICATE row 9 must be the estado_operativo_valido condition"
     )
     # Scoped to the COMMAND span, never the whole row: the prose that justifies
     # each flag also names it, so a row-wide substring check is a floor
     # assertion (it survives dropping the flag from the real command).
-    command8 = _predicate_row_command(8)
-    assert "--no-heal" in command8, (
-        "PREDICATE row 8's COMMAND must carry `--no-heal`: without it "
+    command9 = _predicate_row_command(9)
+    assert "--no-heal" in command9, (
+        "PREDICATE row 9's COMMAND must carry `--no-heal`: without it "
         "`--validate` writes the tracked STATE.md, dirtying the destino and "
-        "breaking cond-7 in the same run. Naming it only in the prose does not "
-        "count -- the executor copies the command, not the justification"
+        "breaking condition 8 in the same run. Naming it only in the prose does "
+        "not count -- the executor copies the command, not the justification"
     )
-    assert "--project-root" in command8, (
-        "PREDICATE row 8's COMMAND must carry `--project-root <DESTINO_ROOT>`: "
+    assert "--project-root" in command9, (
+        "PREDICATE row 9's COMMAND must carry `--project-root <DESTINO_ROOT>`: "
         "pointed at the wrong repo this check returns GREEN, so the root is "
         "load-bearing and must live in the command itself"
     )
-    assert "--json" in command8, (
-        "PREDICATE row 8's COMMAND must carry `--json`: the criterion is read "
+    assert "--json" in command9, (
+        "PREDICATE row 9's COMMAND must carry `--json`: the criterion is read "
         "from the REAL JSON, and without the flag `--validate` prints prose, "
         "leaving `total_errors == 0` unparseable and the condition toothless"
     )
@@ -823,8 +824,8 @@ def test_predicate_row8_mandates_no_heal_and_project_root() -> None:
     # in the row's two justifying parentheticals (the wrong-repo measurement and
     # the exit-code clause), so a row-wide check is a floor assertion -- measured
     # GREEN with the criterion itself gutted, while a decoy occurrence survived.
-    assert re.search(r"total_errors\s*==\s*0`?\s*read from the REAL JSON", row8), (
-        "PREDICATE row 8 must state the CRITERION as `total_errors == 0` READ "
+    assert re.search(r"total_errors\s*==\s*0`?\s*read from the REAL JSON", row9), (
+        "PREDICATE row 9 must state the CRITERION as `total_errors == 0` READ "
         "FROM THE REAL JSON. The bare token is a decoy: the row names "
         "total_errors three times (the criterion, the wrong-repo measurement, "
         "and the exit-code clause `0 if total_errors == 0`), so anything looser "
@@ -832,8 +833,8 @@ def test_predicate_row8_mandates_no_heal_and_project_root() -> None:
     )
 
 
-def test_executor_auditor_parity_on_cond8_guards() -> None:
-    """PARITY (WOT-2026-039a): both prompts must pin cond-8's two guards.
+def test_executor_auditor_parity_on_cond9_guards() -> None:
+    """PARITY (WOT-2026-039a): both prompts must pin cond-9's two guards.
 
     Reads BOTH files so the parity cannot silently diverge in either
     direction, mirroring the cond-5 parity test above. Mutation: drop
@@ -843,7 +844,7 @@ def test_executor_auditor_parity_on_cond8_guards() -> None:
         encoding="utf-8"
     )
     assert "estado_operativo_valido" in audit_text, (
-        "the auditor must reproduce cond-8; otherwise the executor declares a "
+        "the auditor must reproduce cond-9; otherwise the executor declares a "
         "condition nobody re-derives"
     )
     # Both sides are scoped to their COMMAND, not to the file/row: `--no-heal`
@@ -860,7 +861,7 @@ def test_executor_auditor_parity_on_cond8_guards() -> None:
         if re.search(r"python [^ ]*agent_controller\.py --validate", line)
     ]
     assert len(starts) == 1, (
-        "the auditor must spell out the cond-8 command EXACTLY ONCE (found "
+        "the auditor must spell out the cond-9 command EXACTLY ONCE (found "
         f"{len(starts)}); a decoy occurrence would make the flag assertions "
         "ambiguous, the same falsifiability Codex refuted on the executor side"
     )
@@ -869,15 +870,15 @@ def test_executor_auditor_parity_on_cond8_guards() -> None:
     while span[-1].rstrip().endswith("\\") and start + len(span) < len(audit_lines):
         span.append(audit_lines[start + len(span)])
     audit_command = " ".join(part.rstrip("\\ ").strip() for part in span)
-    executor_command = _predicate_row_command(8)
+    executor_command = _predicate_row_command(9)
     for flag in ("--no-heal", "--project-root", "--json"):
         assert flag in audit_command, (
-            f"the auditor's cond-8 COMMAND must carry {flag}: the executor "
+            f"the auditor's cond-9 COMMAND must carry {flag}: the executor "
             f"already does, and a split contract between the two is the "
             f"false-green class this pair of prompts exists to prevent"
         )
         assert flag in executor_command, (
-            f"the executor's PREDICATE row 8 COMMAND must carry {flag}"
+            f"the executor's PREDICATE row 9 COMMAND must carry {flag}"
         )
 
 
