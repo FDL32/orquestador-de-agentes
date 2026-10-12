@@ -993,6 +993,27 @@ def _batch_run_for_receipt(reports_dir: Path, receipt: Path) -> Path | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _glob_isolation_receipts(reports_dir: Path):
+    """Yield every isolation receipt: flat layout and per-flight directory layout.
+
+    WOT-2026-068j: the orchestrator prompt mandates a per-flight directory so
+    that consecutive flights sharing the same `reports/` dir never collide.
+    Consumers MUST read BOTH layouts; a reader that only scans the old pattern
+    is blind to every per-flight receipt written after this change.
+
+    Before: `reports_dir` is the reports directory (may not exist).
+    After: a generator yielding receipt paths (both flat and per-flight).
+    """
+    if not reports_dir.is_dir():
+        return
+    for receipt in sorted(reports_dir.glob("start_context_isolation*.json")):
+        yield receipt
+    per_flight_root = reports_dir / "start_context_isolation"
+    if per_flight_root.is_dir():
+        for receipt in sorted(per_flight_root.rglob("receipt.json")):
+            yield receipt
+
+
 def run_seal_staleness_check(project_root: Path) -> CheckResult:
     """WOT-2026-055c: seal-staleness over start_context_isolation receipts.
 
@@ -1000,8 +1021,10 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
     that until today only a human audit verified. This check runs the
     seal-staleness guard (`check_seal_staleness.py`: integrity triple-via,
     temporal order, semantic-freshness heuristic) over every
-    ``start_context_isolation*.json`` present in the destino's reports dir, so
-    a stale/counterfeit receipt surfaces at closeout instead of riding along.
+    ``start_context_isolation*.json`` and
+    ``start_context_isolation/<flight>/receipt.json`` (WOT-2026-068j) present
+    in the destino's reports dir, so a stale/counterfeit receipt surfaces at
+    closeout instead of riding along.
 
     WARN, not blocking, for the same reason as its sibling
     ``run_batch_run_accounting_check``: it reconciles receipts already on disk
@@ -1029,7 +1052,7 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
         )
 
     findings: dict[str, list[str]] = {}
-    for receipt in sorted(reports_dir.glob("start_context_isolation*.json")):
+    for receipt in _glob_isolation_receipts(reports_dir):
         # WOT-2026-058s: pasar el ANCLA de pertenencia, o la capa queda INERTE.
         # Medido 2026-08-23 por dos auditorias independientes: sin
         # `batch_run_path` un recibo de OTRO vuelo pasaba SIN HALLAZGOS, asi que
@@ -1076,7 +1099,7 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
     return CheckResult(
         name=name,
         passed=True,
-        output="every start_context_isolation*.json is fresh and intact",
+        output="every start_context_isolation* receipt is fresh and intact (WOT-2026-068j per-flight dir)",
         is_blocking=False,
     )
 
