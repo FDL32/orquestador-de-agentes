@@ -216,3 +216,150 @@ class TestD3RealScenario:
             ]
         )
         assert mod.check_pre_closure_invariants(bus, TICKET) == []
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-067f: bus_has_ticket_events distingue bus ausente de lectura
+# fallida (tri-estado) y NO colapsa la tercera en la segunda.
+# ---------------------------------------------------------------------------
+
+
+class RaisingEventBus:
+    """Fixture cuyo read_events SIEMPRE lanza OSError (DoD 2, MUTATION)."""
+
+    def read_events(self, ticket_id=None, event_type=None):
+        raise OSError(5, "simulated events-store read failure")
+
+    def latest_event(self, ticket_id=None, event_type=None):
+        raise OSError(5, "simulated events-store read failure")
+
+
+class SelectiveFailEventBus:
+    """Lecturas FILTRADAS ok (vacias); la lectura SIN filtro del helper falla.
+
+    Reproduce el harm medido: `_latest_real_builder_exit` / `latest_event`
+    devuelven None (no hay evento de ese tipo) y entonces el helper choca con
+    la lectura rota. Pre-fix: except -> False -> WARNING "bus absent"
+    (afirmacion falsa); post-fix: READ_FAILED -> ERROR (OBJ-002: un ERROR no
+    puede degradarse a WARNING por una lectura ROTA).
+    """
+
+    def read_events(self, ticket_id=None, event_type=None):
+        if event_type is None:
+            raise OSError(5, "simulated events-store read failure")
+        return []
+
+    def latest_event(self, ticket_id=None, event_type=None):
+        events = self.read_events(ticket_id=ticket_id, event_type=event_type)
+        return events[-1] if events else None
+
+
+class TestTriStateHelper:
+    """DoD 1/2: el helper distingue TRES estados; falla != lista vacia."""
+
+    def test_with_events_state_is_truthy(self):
+        mod = _load_closure_invariants()
+        bus = MockEventBus([_builder_exit(1)])
+        state = mod.bus_has_ticket_events(bus, TICKET)
+        assert state is mod.BusTicketEventState.WITH_EVENTS
+        assert bool(state) is True
+
+    def test_without_events_state_is_falsy(self):
+        mod = _load_closure_invariants()
+        state = mod.bus_has_ticket_events(MockEventBus([]), TICKET)
+        assert state is mod.BusTicketEventState.WITHOUT_EVENTS
+        assert bool(state) is False
+        assert not state
+
+    def test_other_tickets_events_only_is_without_events(self):
+        mod = _load_closure_invariants()
+        other = _make_event(
+            "STATE_CHANGED",
+            "WOT-2026-000z",
+            {"to_state": "IN_PROGRESS"},
+            sequence_number=1,
+        )
+        state = mod.bus_has_ticket_events(MockEventBus([other]), TICKET)
+        assert state is mod.BusTicketEventState.WITHOUT_EVENTS
+
+    def test_read_failed_differs_from_empty_list(self):
+        """MUTATION DoD 2: OSError -> resultado DISTINTO del de lista vacia.
+
+        Revertir el fix (volver al colapso try/except -> False) hace los dos
+        resultados IGUALES y este test cae en rojo.
+        """
+        mod = _load_closure_invariants()
+        failed = mod.bus_has_ticket_events(RaisingEventBus(), TICKET)
+        empty = mod.bus_has_ticket_events(MockEventBus([]), TICKET)
+        assert failed is mod.BusTicketEventState.READ_FAILED
+        assert empty is mod.BusTicketEventState.WITHOUT_EVENTS
+        assert failed != empty
+        assert bool(failed) != bool(empty)
+
+    def test_read_failed_is_truthy_fail_closed(self):
+        """OBJ-002 mecanismo: la falla es truthy, el consumidor no degrada."""
+        mod = _load_closure_invariants()
+        state = mod.bus_has_ticket_events(RaisingEventBus(), TICKET)
+        assert bool(state) is True
+
+
+class TestControlNegativeAbsentBus:
+    """DoD 3: bus legitimamente ausente -> WARNING, nunca ERROR.
+
+    Cubre los consumidores 1 y 2 de closure_invariants; el consumidor 3
+    (agent_controller, coherence CONTRACT_GAP) tiene su control negativo ya
+    vivo en tests/unit/test_contract_gap_integration.py (067e).
+    """
+
+    def test_built_exit_absent_bus_degrades_to_warning(self):
+        mod = _load_closure_invariants()
+        errors, warnings = mod.check_post_closure_built_exit(
+            MockEventBus([]), TICKET, "COMPLETED"
+        )
+        assert errors == []
+        assert len(warnings) == 1
+        assert "bus absent in this context" in warnings[0]
+
+    def test_state_changed_absent_bus_degrades_to_warning(self):
+        mod = _load_closure_invariants()
+        errors, warnings = mod.check_post_closure_state_changed(
+            MockEventBus([]), TICKET, "COMPLETED"
+        )
+        assert errors == []
+        assert len(warnings) == 1
+        assert "bus absent in this context" in warnings[0]
+
+    def test_built_exit_present_bus_missing_event_stays_error(self):
+        """Control positivo: con bus visible, la ausencia sigue siendo ERROR."""
+        mod = _load_closure_invariants()
+        bus = MockEventBus([_state_changed("COMPLETED", 3)])
+        errors, warnings = mod.check_post_closure_built_exit(bus, TICKET, "COMPLETED")
+        assert len(errors) == 1
+        assert "Missing BUILDER_EXIT" in errors[0]
+        assert warnings == []
+
+
+class TestReadFailedDoesNotDegrade:
+    """OBJ-002 / DoD 1: lectura FALLIDA -> ERROR honesto, no WARNING falso.
+
+    Pre-fix los dos tests caen en rojo: el helper tragaba la excepcion y el
+    consumidor emitia el WARNING de "bus absent in this context".
+    """
+
+    def test_built_exit_read_failed_is_error_not_warning(self):
+        mod = _load_closure_invariants()
+        errors, warnings = mod.check_post_closure_built_exit(
+            SelectiveFailEventBus(), TICKET, "COMPLETED"
+        )
+        assert warnings == []
+        assert len(errors) == 1
+        assert "read FAILED" in errors[0]
+
+    def test_state_changed_read_failed_is_error_not_warning(self):
+        mod = _load_closure_invariants()
+        errors, warnings = mod.check_post_closure_state_changed(
+            SelectiveFailEventBus(), TICKET, "COMPLETED"
+        )
+        assert warnings == []
+        assert len(errors) == 1
+        assert "read FAILED" in errors[0]
