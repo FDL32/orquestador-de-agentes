@@ -276,7 +276,41 @@ Reproduce las 8 condiciones exactas:
    suficiente: el guard puede reportar `ERROR=0` saltando en silencio filas
    sin celda `commit:` (clase H1, incidente real de esta familia de tickets).
    No declares `cierres_auditables` cumplido sin haber visto el contador
-   `audited` moverse.
+   `audited` moverse (salvo la clausula espejo de esta misma condicion:
+   `absorbed`/`not-pursued` con evidencia `external:`).
+
+   **Clausula espejo para cierres por transferencia (`absorbed` / `not-pursued`).**
+   Los estados `absorbed` y `not-pursued` NO admiten `commit:<sha>` citable
+   (WOT-2026-067a, premise): se archivan como transferencia de responsabilidad,
+   no como landing de commit. Para esos dos estados, la condicion 4 se cumple
+   con evidencia `external:<ticket-que-absorbe>` en la celda `Reactivation` de
+   la fila archivada (p.ej. `Reactivation: external:WOT-2026-059v`). El contador
+   `audited` del guard NO sube con estos cierres -- su denominador (total de filas
+   archivadas con ticket-ID terminal en el archivador) se publica en el
+   bloque `cierres_auditables` del JSON de auditoria y se excluye explicitamente
+   de la subida requerida: un cierre por transferencia no se cuenta como
+   `audited` en el sentido de "commit aterrizado", y esa exclusion va NOMBRADA
+   y publicada, no implicita. Control negativo: un ticket marcado `completed`,
+   `done`, `closed`, `superseded`, `blocked-final` o cualquier otro terminal
+   DISTINTO de `absorbed`/`not-pursued` sigue exigiendo `commit:<sha>` + contador
+   que sube tal como exige la primera mitad de esta condicion; la clausula espejo
+   NO abre la puerta a saltarse el contador en el camino normal.
+
+   **Exit code / `skipped_required` (WOT-2026-067a fix-2).** La clausula espejo
+   exime el contador `audited` de subir, pero NO exime al auditor de interpretar
+   el exit code real de `check_backlog_commits_landed.py`. Si el unico motivo del
+   FAIL non-zero es que no hay cierres con `commit:<sha>` que auditar porque todos
+   los terminales son `absorbed`/`not-pursued` con evidencia `external:` valida, el
+   auditor NO bloquea: declara `cierres_auditables: cumple (transferencia total,
+   EXIT_SKIPPED_REQUIRED esperado)` y registra el exit code. Si el exit code es
+   non-zero por CUALQUIER otro motivo (`EXIT_ARG`, `EXIT_DEGRADED`,
+    `EXIT_MALFORMED_EVIDENCE`, o `EXIT_SKIPPED_REQUIRED` motivado por filas que NO
+    son `absorbed`/`not-pursued`; tambien filas `completed`/`closed` con commit que
+    no aterrizo) el auditor BLOQUEA independientemente de que
+   `ERROR=0` en la linea de conteo -- esa linea cuenta celdas de `commit:`, no el
+   exit code real; un `ERROR=0` con FAIL non-zero no es verde. Un auditor honesto
+   NUNCA acepta `ERROR=0` como verde si hay un FAIL non-zero no explicado por esta
+   clausula espejo.
 
 5. **`suite_final_verde`** -- `run_pytest_safe --level all` corrido
    DESPUES del ULTIMO commit del batch, con `tested_commit_sha == HEAD` leido del
@@ -613,7 +647,7 @@ Ruta paralela:
     "schema_valido": {"command": "...", "exit_code": 0, "cumple": true},
     "dag_aciclico": {"command": "...", "exit_code": 0, "cumple": true},
     "contabilidad_completa": {"tickets_total": 0, "cerrado": 0, "congelado": 0, "no_alcanzado": 0, "perdidos": 0, "cumple": true},
-    "cierres_auditables": {"audited_before": 0, "audited_after": 0, "error_count": 0, "cumple": true},
+    "cierres_auditables": {"audited_before": 0, "audited_after": 0, "error_count": 0, "denominator_total": 0, "denominator_excluded_transfer": 0, "external_evidence_tickets": [], "transfer_closures_count": 0, "cumple": true},
     "suite_final_verde": {"tested_commit_sha": "...", "head": "...", "passed": 0, "failed": 0, "cumple": true},
     "auditor_emitido": {"report_path": "...", "cumple": true},
     "arboles_limpios": {"dirty_by_repo": {}, "cumple": true},
