@@ -404,3 +404,144 @@ def test_second_run_resyncs_existing_venv(tmp_path: Path) -> None:
         )
     finally:
         _cleanup_worktree(repo_path, worktree_path)
+
+
+# ===========================================================================
+# WOT-2026-040p: provision de worktree-por-vuelo (`-Flight NNN`).
+# ===========================================================================
+
+
+def _flight_worktree_path(repo_path: Path, suffix: str) -> Path:
+    # Mirror of the script's sibling naming for the per-flight mode.
+    return repo_path.parent / f"orquestador_de_agentes_dev_wt_{suffix}"
+
+
+def _branch_exists(repo_path: Path, branch: str) -> bool:
+    result = _git(
+        ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=repo_path,
+    )
+    return result.returncode == 0
+
+
+def test_flight_mode_rejects_malformed_suffix(tmp_path: Path) -> None:
+    """`-Flight nope` falla cerrado (exit 2) ANTES de tocar git: el sufijo debe
+    ser el canonico de un WOT (3 digitos + letra minuscula opcional)."""
+    if _POWERSHELL is None:
+        pytest.skip("PowerShell not available on this host")
+
+    repo_path = tmp_path / "fixture_repo"
+    _init_fixture_repo(repo_path)
+    fake_uv_dir = _fake_uv_dir(tmp_path)
+
+    result = _run_script(repo_path, ["-Flight", "nope"], fake_uv_dir)
+
+    assert result.returncode == 2, (
+        f"malformed -Flight must fail closed with exit 2; got "
+        f"{result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert not _flight_worktree_path(repo_path, "nope").exists()
+    # Nothing was mutated: principal still on main, no flight branch.
+    assert _current_branch(repo_path) == "main"
+
+
+def test_flight_creation_provisions_isolated_worktree(tmp_path: Path) -> None:
+    """(a) DoD: `-Flight 040p` crea+valida un worktree aislado en rama
+    `flight/040p`, con venv, y deja el checkout principal detached."""
+    if _POWERSHELL is None:
+        pytest.skip("PowerShell not available on this host")
+
+    repo_path = tmp_path / "fixture_repo"
+    _init_fixture_repo(repo_path)
+    fake_uv_dir = _fake_uv_dir(tmp_path)
+    flight = _flight_worktree_path(repo_path, "040p")
+
+    try:
+        result = _run_script(repo_path, ["-Flight", "040p"], fake_uv_dir)
+        assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+        assert flight.is_dir(), "flight worktree directory was not created"
+        # Isolated: the basename must NOT end in `_dev` (the guard's discriminator
+        # between the canonical _dev worktree and a per-flight one).
+        assert not flight.name.endswith("_dev")
+
+        branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=flight).stdout.strip()
+        assert branch == "flight/040p", f"branche esperada flight/040p, got {branch!r}"
+
+        worktree_list = _git(["worktree", "list"], cwd=repo_path).stdout
+        flight_slash = str(flight).replace("\\", "/")
+        assert flight_slash in worktree_list
+        assert "[flight/040p]" in worktree_list
+
+        venv_python = flight / ".venv" / "Scripts" / "python.exe"
+        assert venv_python.is_file(), "fake uv venv step did not materialize python.exe"
+
+        # Principal remains consume-only (detached), as in the _dev flow.
+        assert _current_branch(repo_path) == ""
+    finally:
+        _cleanup_worktree(repo_path, flight)
+        if _branch_exists(repo_path, "flight/040p"):
+            _git(["branch", "-D", "flight/040p"], cwd=repo_path)
+
+
+def test_flight_remove_leaves_no_branch_or_worktree_residue(tmp_path: Path) -> None:
+    """(b) DoD: `-Flight 040p -Remove` retira la worktree y elimina su rama
+    `flight/040p`, sin residuo de rama ni de worktree."""
+    if _POWERSHELL is None:
+        pytest.skip("PowerShell not available on this host")
+
+    repo_path = tmp_path / "fixture_repo"
+    _init_fixture_repo(repo_path)
+    fake_uv_dir = _fake_uv_dir(tmp_path)
+    flight = _flight_worktree_path(repo_path, "040p")
+
+    try:
+        created = _run_script(repo_path, ["-Flight", "040p"], fake_uv_dir)
+        assert created.returncode == 0, created.stderr
+        assert flight.is_dir()
+
+        removed = _run_script(repo_path, ["-Flight", "040p", "-Remove"], fake_uv_dir)
+        assert removed.returncode == 0, (
+            f"stdout={removed.stdout}\nstderr={removed.stderr}"
+        )
+
+        assert not flight.exists(), "flight worktree directory should be gone"
+        assert not _branch_exists(repo_path, "flight/040p"), (
+            "the flight/<NNN> branch must be deleted (no branch residue)"
+        )
+        worktree_list = _git(["worktree", "list"], cwd=repo_path).stdout
+        assert str(flight).replace("\\", "/") not in worktree_list
+    finally:
+        _cleanup_worktree(repo_path, flight)
+        if _branch_exists(repo_path, "flight/040p"):
+            _git(["branch", "-D", "flight/040p"], cwd=repo_path)
+
+
+def test_flight_remove_fails_closed_when_worktree_is_dirty(tmp_path: Path) -> None:
+    """Guarda de seguridad: NO se auto-borra una worktree de vuelo con trabajo
+    sin commitear (fail-closed, exit 2), igual que en modo _dev."""
+    if _POWERSHELL is None:
+        pytest.skip("PowerShell not available on this host")
+
+    repo_path = tmp_path / "fixture_repo"
+    _init_fixture_repo(repo_path)
+    fake_uv_dir = _fake_uv_dir(tmp_path)
+    flight = _flight_worktree_path(repo_path, "040p")
+
+    try:
+        created = _run_script(repo_path, ["-Flight", "040p"], fake_uv_dir)
+        assert created.returncode == 0, created.stderr
+
+        (flight / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+
+        removed = _run_script(repo_path, ["-Flight", "040p", "-Remove"], fake_uv_dir)
+        assert removed.returncode == 2, (
+            f"expected exit 2 for a dirty flight worktree; got "
+            f"{removed.returncode}\nstdout={removed.stdout}\nstderr={removed.stderr}"
+        )
+        assert flight.is_dir(), "flight worktree must remain intact on failed remove"
+        assert _branch_exists(repo_path, "flight/040p")
+    finally:
+        _cleanup_worktree(repo_path, flight)
+        if _branch_exists(repo_path, "flight/040p"):
+            _git(["branch", "-D", "flight/040p"], cwd=repo_path)

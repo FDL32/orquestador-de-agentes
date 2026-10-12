@@ -653,3 +653,101 @@ def test_wot_dev_main_still_valid_after_flight_support(tmp_path: Path) -> None:
     exit_code, message = check_topology("WOT-2026-027h", dev, motor, workspace)
     assert exit_code == 0, message
     assert "correcta" in message
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-040p (absorbe 040m): el INDICE del worktree de vuelo debe estar
+# limpio. Un `git checkout` que no limpia el indice deja un fichero STAGED que
+# re-introduce un cambio revertido, con el WORKING TREE aparentemente limpio.
+# ---------------------------------------------------------------------------
+
+
+def _stage_tracked_file_change(worktree: Path) -> None:
+    """Edit a tracked file and `git add` it, leaving the change STAGED.
+
+    After this the working tree matches the index (`git status` shows a staged
+    `M ` entry, not an unstaged ` M`), so a working-tree-only check would see
+    "clean" and wave it through -- exactly the 040m shape.
+    """
+    (worktree / "README.md").write_text("# staged residue\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "README.md"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_wot_flight_worktree_staged_index_is_blocked(tmp_path: Path) -> None:
+    """(a) MUTATION con los dos rc publicados.
+
+    Con `_check_index_clean` cableado en la rama flight -> exit 1 (el indice
+    sucio bloquea). Sin el (codigo pre-040p) -> exit 0: el guard acepta la
+    worktree de vuelo con residuo staged. El cambio se crea editando un
+    fichero trackeado y `git add`-eandolo, asi que el working tree queda
+    SINCRONIZADO con el indice (`M ` staged) -- un check del working tree no
+    lo veria.
+    """
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_worktree(motor, tmp_path, "027h")
+
+    _stage_tracked_file_change(flight)
+
+    # Control de forma: el cambio esta STAGED, el working tree no difiere de
+    # el indice. Si esto cambiara, el test dejaria de probar lo que dice.
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=flight,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert status.startswith("M "), f"se esperaba un cambio STAGED, status={status!r}"
+
+    exit_code, message = check_topology("WOT-2026-027h", flight, motor, workspace)
+    assert exit_code == 1, message
+    assert "INDICE" in message
+    assert "STAGED" in message
+
+
+def test_wot_flight_worktree_unstaged_only_index_change_is_not_blocked(
+    tmp_path: Path,
+) -> None:
+    """(b) El check es INDEX-especifico: un cambio SOLO del working tree (sin
+    `git add`) deja el indice limpio y NO bloquea -- trabajo en curso normal.
+
+    MUTATION: si el check se cambiara por uno del working tree (p.ej. `git
+    diff` sin `--cached`), este caso pasaria a exit 1 y el test moriria.
+    """
+    motor, _dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    flight = _add_flight_worktree(motor, tmp_path, "027h")
+
+    # Edit without `git add`: working tree dirty, INDEX clean.
+    (flight / "README.md").write_text("# unstaged only\n", encoding="utf-8")
+
+    exit_code, message = check_topology("WOT-2026-027h", flight, motor, workspace)
+    assert exit_code == 0, message
+    assert "correcta" in message
+
+
+def test_wot_dev_main_with_staged_index_still_passes(tmp_path: Path) -> None:
+    """Aditividad: el check de indice se aplica SOLO al modo vuelo, asi que el
+    flujo canonico `_dev`/main NO cambia de comportamiento (STOP condition de
+    WOT-2026-040p: no romper el modo _dev). Un _dev con indice staged sigue
+    dando exit 0.
+    """
+    motor, dev = _make_git_tree(tmp_path)
+    workspace = tmp_path / "orquestador_de_agentes_workspace"
+    workspace.mkdir()
+    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+
+    _stage_tracked_file_change(dev)
+
+    exit_code, message = check_topology("WOT-2026-027h", dev, motor, workspace)
+    assert exit_code == 0, message

@@ -17,7 +17,10 @@ For WOT there are TWO independent verifications, BOTH mandatory:
   Verification A (worktree of the motor): cwd must be a linked worktree of
     the same repo as motor_root, on branch 'main', and that worktree's
     toplevel must match an entry of `git worktree list` whose directory
-    name ends in "_dev".
+    name ends in "_dev". Since WOT-2026-040q a per-flight worktree on branch
+    'flight/<suffix>' whose suffix matches the ticket is ALSO valid; since
+    WOT-2026-040p, that flight path additionally requires a CLEAN INDEX (no
+    staged residue -- absorbs WOT-2026-040m).
   Verification B (active workspace), evaluated ONLY if A passed: the active
     workspace (--project-root) must be the destination that the WOT prefix
     resolves to, via prefix_resolver.resolve_prefix -- the same mechanism
@@ -188,6 +191,82 @@ def _flight_suffix_of(ticket: str) -> str | None:
     return ticket.rsplit("-", 1)[-1]
 
 
+def _index_has_staged_changes(path: Path) -> bool | None:
+    """True if the INDEX differs from HEAD (staged residue); False if clean.
+
+    Before: path is a git worktree.
+    During: runs `git -C <path> diff-index --cached --quiet HEAD --`, which
+            compares the INDEX against HEAD and prints nothing. Exit 0 = no
+            staged differences; exit 1 = there ARE staged differences; any
+            other code (or git missing / not a repo / unborn HEAD) = cannot
+            determine.
+    After: returns True/False, or None when the index could not be read.
+          This is the WOT-2026-040m surface: after a `git checkout`, the
+          WORKING TREE can look clean while the INDEX still carries a staged
+          change (a reverted guard re-introduced via the index). `git status
+          --porcelain` of the working tree alone would not have caught it.
+    """
+    git = prefix_resolver._git_executable()
+    if git is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                git,
+                "-C",
+                str(path),
+                "diff-index",
+                "--cached",
+                "--quiet",
+                "HEAD",
+                "--",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode == 0:
+        return False
+    if result.returncode == 1:
+        return True
+    return None
+
+
+def _check_index_clean(cwd: Path, ticket: str) -> tuple[int, str] | None:
+    """Fail closed when the worktree's INDEX carries staged residue.
+
+    WOT-2026-040p (absorbs WOT-2026-040m). Enforced for the per-flight
+    topology: a flight worktree that re-introduces a change through the INDEX
+    (working tree clean, staged not) is not a valid place to start a ticket.
+
+    Before: cwd is the worktree already accepted by Verification A.
+    During: reads the index via _index_has_staged_changes. None (unreadable)
+        -> exit 2 (cannot determine); True (staged residue) -> exit 1.
+    After: returns None when the index is clean, or (code, message).
+    """
+    staged = _index_has_staged_changes(cwd)
+    if staged is None:
+        return (
+            2,
+            f"no se pudo verificar el INDICE del worktree {cwd}: git no pudo "
+            "comparar el indice contra HEAD (git ausente, no es repo, o HEAD "
+            "sin commit). No se puede confirmar el estado del ticket "
+            f"{ticket}.",
+        )
+    if staged:
+        return (
+            1,
+            f"Ticket {ticket}: el INDICE del worktree {cwd} tiene cambios "
+            "STAGED que difieren de HEAD (WOT-2026-040m). El working tree "
+            "puede verse limpio, pero el indice no lo esta: un checkout/"
+            "restore dejo residuo staged. Limpia el indice "
+            "(`git restore --staged .`) antes de arrancar el ticket.",
+        )
+    return None
+
+
 def _check_wot_topology(
     cwd: Path, motor_root: Path, project_root: Path, ticket: str
 ) -> tuple[int, str]:
@@ -242,6 +321,11 @@ def _check_wot_topology(
     # (WOT-2026-025i desde flight/027h) FALLA fail-closed.
     flight_suffix = _flight_suffix_of(ticket)
     if flight_suffix is not None and branch == f"flight/{flight_suffix}":
+        # WOT-2026-040p: ademas de la rama correcta, el INDICE debe estar
+        # limpio (absorbe 040m: un checkout que dejo un fichero STAGED).
+        index_issue = _check_index_clean(cwd, ticket)
+        if index_issue is not None:
+            return index_issue
         return _verify_wot_workspace(motor_root, project_root)
 
     # Camino canonico: la worktree _dev en rama main.
