@@ -212,7 +212,7 @@ append `--project-root <destino>` to commands that operate on project state.
 - Sincronizacion interactiva: `python scripts/install_agent_system.py --sync --prune`
 - Vista previa: `python scripts/install_agent_system.py --sync --dry-run`
 - Estado del sistema: `python .agent/agent_controller.py [--project-root <workspace>]`
-- Auditoria local: `python scripts/local_audit.py [--project-root <workspace>]`
+- Auditoria local: `python scripts/local_audit.py` (NO acepta `--project-root`)
 - Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run]`.
    El scope se determina por `AGENT_PROJECT_ROOT` o por `motor_destination_link.json` del destino.
 - Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --snapshot-file <snapshot.json> --report <result.json> --motor-root <repo_motor>`
@@ -228,7 +228,7 @@ append `--project-root <destino>` to commands that operate on project state.
 - Auditar publicacion Git: skill `/audit-git-publication`
 - Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista: `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. El script RECOLECTA (read-only: por defecto no toca ningun fichero TRACKED); el agente AUDITA. Salida en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`. El registro en `INDEX.md` (fichero tracked en el workspace) es opt-in via `--publish-index`, OFF por defecto (WOT-2026-023x). Ver `prompts/audit_post_change_system_health.md`.
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
-- Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
+- Tests: `python scripts/run_pytest_safe.py` (NO acepta `--project-root`; runs against `repo_motor` tests by design)
   - NO usar `python -m pytest` directo sobre tests que importan el controller:
     al insertar `.agent/` en sys.path, `runtime` puede resolver a
     `.agent/runtime/` (que tiene `__init__.py`) en vez de `<motor>/runtime/`,

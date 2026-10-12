@@ -106,7 +106,7 @@ un veredicto, es "no medi").
 |---|---|
 | `python <MOTOR>/scripts/check_backlog_contract.py --project-root .` | Contrato del backlog en sus DOS superficies (cola viva y `_archive/`) |
 | `python <MOTOR>/.agent/agent_controller.py --validate --json --project-root .` | Drift entre `work_plan.md` y `execution_log.md` |
-| `python <MOTOR>/scripts/local_audit.py --project-root .` | Snapshot de estado (lo que lee el paso 1) |
+| `python <MOTOR>/scripts/local_audit.py` | Snapshot de estado (lo que lee el paso 1) |
 | `python <MOTOR>/scripts/archive_collaboration_artifacts.py --project-root .` | Archivar `PLAN_/AUDIT_` cerrados. Idempotente |
 | `.agent/collaboration/` | Estado operativo VIVO: `work_plan.md`, `backlog.md`, `execution_log.md`, `STATE.md` |
 | `.agent/runtime/events/events.jsonl` | Bus append-only: la autoridad canonica del estado |
