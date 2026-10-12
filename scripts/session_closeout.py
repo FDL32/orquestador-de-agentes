@@ -2128,6 +2128,81 @@ def _resolve_writer_setup(
     )
 
 
+_GIT_NOOP_MARKERS = ("nothing to commit", "nothing added")
+_GIT_ADD_NOOP_MARKERS = ("ignored by one of your", "nothing to add")
+
+
+def _run_git_step(
+    argv: list[str], project_root: Path, noop_markers: tuple[str, ...]
+) -> str | None:
+    """Run one git subprocess step. Returns None on success or tolerated
+    no-op, or an error string (first 200 chars of stderr) otherwise.
+    """
+    result = subprocess.run(  # noqa: S603
+        argv,
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == 0:
+        return None
+    combined = (result.stdout + result.stderr).lower()
+    if any(marker in combined for marker in noop_markers):
+        return None
+    return result.stderr[:200]
+
+
+def _commit_targets_file(
+    project_root: Path, targets_path: Path, lines: list[str]
+) -> str:
+    """Commit ``targets_path`` (create or delete) so that ``git status``
+    stays clean for the next ``prepush_check`` step.
+
+    WOT-2026-060k.  When ``lines`` is non-empty the file was just created or
+    updated -- ``git add`` it and commit.  When ``lines`` is empty the file was
+    deleted -- ``git add`` it (to stage the deletion) and commit.
+
+    Returns an error string on failure, empty string on success.  Git failures
+    (no repo, no identity, ...) degrade silently: the caller will return SKIP.
+
+    Special cases that are treated as SUCCESS:
+      - ``git add`` fails because the file is ignored by ``.gitignore``:
+        the file does not appear in ``git status`` anyway.
+      - ``git add`` fails because the file is already committed (no changes):
+        nothing more to commit.
+      - ``git commit`` fails with "nothing to commit": nothing more to commit.
+    """
+    deleting = not targets_path.exists()
+    message = (
+        "WOT-2026-060k: remove loop_execution_targets.txt"
+        if deleting
+        else "WOT-2026-060k: write loop_execution_targets.txt"
+    )
+    add_markers = () if deleting else _GIT_ADD_NOOP_MARKERS
+    try:
+        add_err = _run_git_step(
+            ["git", "add", "--", str(targets_path)], project_root, add_markers
+        )
+        if add_err is not None:
+            # Deleting: an `add` failure means the file was already
+            # untracked -- nothing to stage, and git status won't list it.
+            return "" if deleting else f"git add: {add_err}"
+        commit_err = _run_git_step(
+            ["git", "commit", "--message", message],
+            project_root,
+            _GIT_NOOP_MARKERS,
+        )
+        if commit_err is not None:
+            label = "git commit (delete)" if deleting else "git commit"
+            return f"{label}: {commit_err}"
+        return ""
+    except subprocess.TimeoutExpired:
+        return "git operation timed out"
+    except OSError as exc:
+        return f"git OSError: {exc}"
+
+
 def _finalize_targets_result(
     name: str,
     lines: list[str],
@@ -2295,6 +2370,13 @@ def _step_write_loop_execution_targets(
     file from the SAME ticket resolution the closeout already trusts
     (`_resolve_tickets`), so the scope is never self-declared by a human.
 
+    WOT-2026-060k: after writing (or deleting) the file, commit it to git so
+    that `_step_prepush_check` (the next step in `run_closeout`) does not see
+    a dirty tree caused by the writer itself.  The prepush gate would block
+    on uncommitted ``loop_execution_targets.txt`` because it is NOT in
+    ``EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS``; committing is the order fix, not
+    an allowlist relaxation.
+
     Before: ``project_root`` is the repo_destino; ``ticket_ids`` is the
         resolved list from `_resolve_tickets` (called immediately before this
         step in `run_closeout`); ``window_start`` is the flight window from
@@ -2322,11 +2404,12 @@ def _step_write_loop_execution_targets(
         line was produced, writes the whole file (never appends) with one
         `<sha> <deliverable_type> source=session-close` line per commit
         (WOT-2026-058o: procedencia del escritor legitimo estampada en la
-        propia linea) and returns PASS. If zero
+        propia linea), commits it, and returns PASS. If zero
         tickets or zero matching commits exist, deletes the file if present
-        (so the consumer's `if not targets_file.exists()` branch fires) and
-        returns PASS with a "nothing to declare" detail. Never raises: git
-        failures degrade to SKIP with the stderr detail recorded.
+        (so the consumer's `if not targets_file.exists()` branch fires),
+        commits the deletion, and returns PASS with a "nothing to declare"
+        detail. Never raises: git failures degrade to SKIP with the stderr
+        detail recorded.
     """
     name = "write_loop_execution_targets"
     if dry_run:
@@ -2363,7 +2446,7 @@ def _step_write_loop_execution_targets(
             continue
         lines.extend(res.lines)
 
-    return _finalize_targets_result(
+    result = _finalize_targets_result(
         name,
         lines,
         ticket_ids,
@@ -2372,6 +2455,36 @@ def _step_write_loop_execution_targets(
         targets_path,
         setup.window_detail,
     )
+    return _commit_targets_result_or_skip(
+        name, result, project_root, targets_path, lines
+    )
+
+
+def _commit_targets_result_or_skip(
+    name: str,
+    result: StepResult,
+    project_root: Path,
+    targets_path: Path,
+    lines: list[str],
+) -> StepResult:
+    """WOT-2026-060k: commit the targets file so the next prepush_check does
+    not see a dirty tree caused by the writer itself. Commits on write and on
+    delete; if git fails (no repo, no config, ...) degrade to SKIP.
+    """
+    if result.status not in ("PASS", "WARN"):
+        return result
+    git_err = _commit_targets_file(project_root, targets_path, lines)
+    if not git_err:
+        return result
+    if result.status == "PASS":
+        return StepResult(
+            name=name,
+            status="SKIP",
+            detail=f"file written but git commit failed: {git_err}",
+        )
+    # If there was already a WARN/FAIL, preserve it but add git_err.
+    result.detail = f"{result.detail}; git commit error: {git_err}"
+    return result
 
 
 def run_closeout(

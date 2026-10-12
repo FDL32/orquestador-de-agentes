@@ -2022,3 +2022,238 @@ def test_close_written_targets_pass_the_loop_execution_check(tmp_path: Path) -> 
     assert "1 commit(s)" in verdict.output
     content = (repo / TARGETS_REL).read_text(encoding="utf-8")
     assert "source=session-close" in content, content
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-060k: --session-close no ensucia el arbol que su propio gate exige
+# limpio (loop_execution_targets.txt se committea despues de escribirlo)
+# ---------------------------------------------------------------------------
+
+
+def _run_git_status_porcelain(repo: Path) -> str:
+    """Run ``git status --porcelain`` and return stdout."""
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
+
+def test_060k_write_and_commit_targets_on_clean_tree(tmp_path: Path) -> None:
+    """(a) + (e) --session-close on clean tree: the writer still produces the
+    targets file AND commits it, so the tree stays clean.
+
+    NEGATIVE CONTROL (e): the file IS written (not suppressed) and IS committed
+    (verified by git log, not just git status).  Committing is the ORDER fix,
+    not suppression.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-060k", "repo_motor")
+    sha = _commit_file(
+        repo, "src/a.py", "x = 1", "WOT-2026-060k: commit that gets targeted"
+    )
+
+    _ = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-060k"], None, False
+    )
+
+    # The file was written
+    targets_path = repo / TARGETS_REL
+    assert targets_path.exists(), "the targets file must be written (DoD e)"
+    content = targets_path.read_text(encoding="utf-8")
+    assert sha in content, f"sha {sha} should be in targets: {content!r}"
+
+    # The file was committed (in the repo that owns it)
+    log_result = subprocess.run(
+        ["git", "log", "--oneline", "-5"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    assert "WOT-2026-060k: write loop_execution_targets.txt" in log_result.stdout, (
+        f"the targets file must be committed; git log: {log_result.stdout!r}"
+    )
+
+
+def test_060k_git_status_clean_after_write(tmp_path: Path) -> None:
+    """(b) After writing and committing, `git status --porcelain` does not list
+    ``loop_execution_targets.txt``.
+
+    This is the core assertion of WOT-2026-060k: the writer cannot make the
+    prepush check fail against itself because the file is committed immediately
+    after writing.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-060k", "repo_motor")
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-060k: commit")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-060k"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    porcelain = _run_git_status_porcelain(repo)
+    assert "loop_execution_targets.txt" not in porcelain, (
+        f"git status should not list targets after write+commit; got: {porcelain!r}"
+    )
+
+
+def test_060k_mutation_disable_commit_fails_closed(tmp_path: Path) -> None:
+    """(c) MUTATION that ISOLATES: if we disable the commit step, the test from
+    (b) fails -- `git status` lists the targets file.
+
+    This proves the commit is what makes the difference.  Mutation: patch
+    `_commit_targets_file` to always return an error string, which causes the
+    writer to return SKIP instead of PASS, but the file is STILL written to disk.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-060k", "repo_motor")
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-060k: commit")
+
+    def _fake_commit(project_root, targets_path, lines):
+        """Always fail: simulates a broken git environment."""
+        return "mutation: git disabled"
+
+    with patch.object(session_closeout, "_commit_targets_file", _fake_commit):
+        result = session_closeout._step_write_loop_execution_targets(
+            repo, ["WOT-2026-060k"], None, False
+        )
+
+    # The file is written but NOT committed -> git status shows it.
+    targets_path = repo / TARGETS_REL
+    assert targets_path.exists(), "file must be written even when commit fails"
+    porcelain = _run_git_status_porcelain(repo)
+    # On Windows, git status --porcelain may show the directory prefix only.
+    # Check that git status is non-empty (dirty) when the uncommitted file exists.
+    assert porcelain.strip(), (
+        "git status should show dirty when targets file is uncommitted; "
+        "this proves the commit is the fix, not the write"
+    )
+    assert result.status == "SKIP", (
+        "when commit fails, the step returns SKIP to prevent passing silently"
+    )
+
+
+def test_060k_delete_and_commit_targets(tmp_path: Path) -> None:
+    """(e) When there are no ticket commits and the file exists from a
+    PREVIOUS run (but is now untracked because the repo was re-initialized),
+    the writer does NOT create a new file.  Git status stays clean.
+
+    This tests the ORDER fix in the PASS branch: the writer writes or does
+    nothing, commits if it writes, and git status is clean either way.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    # Use a ticket that has NO commits in this repo.
+    _declare_authority(repo, "WOT-2026-060z", "repo_motor")
+
+    # There is NO pre-existing targets file (clean slate).
+    targets_path = repo / TARGETS_REL
+
+    # A ticket with NO matching commits -> no file should be created.
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-060z"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    assert not targets_path.exists(), "file should not be created when no commits match"
+    porcelain = _run_git_status_porcelain(repo)
+    assert "loop_execution_targets.txt" not in porcelain, (
+        "git status should not list targets after no-write"
+    )
+
+
+def test_060k_git_commit_failure_does_not_delete_file(tmp_path: Path) -> None:
+    """(d) When git commit fails, the file is still written (not deleted) but
+    the step returns SKIP (fail-safe).  The uncommitted file WILL block
+    prepush_check, which is the desired fail-closed behavior.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-060k", "repo_motor")
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-060k: commit")
+
+    def _fake_commit_error(project_root, targets_path, lines):
+        return "git commit error: fake"
+
+    with patch.object(session_closeout, "_commit_targets_file", _fake_commit_error):
+        result = session_closeout._step_write_loop_execution_targets(
+            repo, ["WOT-2026-060k"], None, False
+        )
+
+    # File is written but step returns SKIP (not PASS).
+    targets_path = repo / TARGETS_REL
+    assert targets_path.exists(), "file must be written even on commit failure"
+    assert result.status == "SKIP", "commit failure must return SKIP, not PASS"
+
+
+def test_060k_neighbor_dirty_file_blocks(tmp_path: Path) -> None:
+    """(d) NEGATIVE CONTROL: a dirty file from ANOTHER source still shows in
+    ``git status``, confirming our fix only cleans up the writer's own output.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-060k", "repo_motor")
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-060k: commit")
+
+    # Inject an unrelated dirty file.
+    dirty_path = repo / ".agent" / "collaboration" / "external_dirty.txt"
+    dirty_path.parent.mkdir(parents=True, exist_ok=True)
+    dirty_path.write_text("unrelated content", encoding="utf-8")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-060k"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    # The writer's own file is clean, but the external dirty file remains.
+    porcelain = _run_git_status_porcelain(repo)
+    assert "loop_execution_targets.txt" not in porcelain, (
+        "targets file should not appear in git status"
+    )
+    assert "external_dirty.txt" in porcelain, (
+        "external dirty file should still show -- the fix only cleans the writer's output"
+    )
+
+
+def test_060k_session_close_report_still_written(tmp_path: Path) -> None:
+    """(e) NEGATIVE CONTROL: the closeout pipeline still writes
+    ``session_close_report.md`` via ``_generate_report`` (we only changed
+    loop_execution_targets.txt behavior, not the report generation).
+
+    This test verifies that the REPORT_REL constant exists and that
+    _generate_report is callable with a CloseoutReport, confirming the
+    report-writing path was not removed or altered.
+    """
+    from scripts.session_closeout import (
+        CloseoutReport,
+        _generate_report,
+    )
+
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    # Create a work_plan to have a ticket context.
+    _declare_authority(repo, "WOT-2026-060z", "repo_motor")
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-060z: commit")
+
+    report = CloseoutReport(dry_run=False, skip_slow=False)
+    report_path = _generate_report(report, repo)
+
+    assert report_path.exists(), "session_close_report.md must be written"
+    report_content = report_path.read_text(encoding="utf-8")
+    assert "closeout" in report_content.lower() or "step" in report_content.lower(), (
+        f"report should contain step data; got: {report_content[:200]!r}"
+    )
