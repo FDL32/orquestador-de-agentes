@@ -4672,8 +4672,10 @@ def _check_turn_supervisor_sync() -> list[str]:
     sup_data = _load_json_safe(_SUPERVISOR_STATE_PATH)
     if sup_data is None:
         return []  # supervisor_state.json ausente -> no hay superficie que comparar
+    if not isinstance(sup_data, dict):
+        return []  # JSON valido pero forma no-dict (p.ej. lista) -> sin superficie legible
 
-    sup_ticket = (sup_data.get("active_ticket") or "").strip()
+    sup_ticket = str(sup_data.get("active_ticket") or "").strip()
 
     if sup_ticket.lower() in {v.lower() for v in invalid_values}:
         return []  # active_ticket nulo -> skip

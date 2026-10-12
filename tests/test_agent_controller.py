@@ -6740,3 +6740,48 @@ class TestTurnSupervisorSync:
         assert "supervisor_state.json" in errors[0]
         assert "TICKET_X" in errors[0]
         assert "TICKET_Y" in errors[0]
+
+    def test_supervisor_state_top_level_list_does_not_crash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hallazgo del Revisor (b46c860, retroactiva): JSON valido con forma
+        no-dict (lista) hacia que sup_data.get() lanzara AttributeError sin
+        capturar. MUTATION: quitar el isinstance guard reintroduce el crash."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        self._write_turn(collab, "WOT-2026-060a")
+        sup_path = runtime / "supervisor_state.json"
+        sup_path.write_text("[]", encoding="utf-8")
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(agent_controller, "_SUPERVISOR_STATE_PATH", sup_path)
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert errors == []
+
+    def test_supervisor_state_non_string_active_ticket_does_not_crash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hallazgo del Revisor (b46c860, retroactiva): active_ticket entero
+        hacia que .strip() lanzara AttributeError sin capturar."""
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        runtime = tmp_path / ".agent" / "runtime"
+        runtime.mkdir(parents=True)
+
+        self._write_turn(collab, "WOT-2026-060a")
+        sup_path = runtime / "supervisor_state.json"
+        sup_path.write_text(
+            json.dumps({"active_ticket": 42}, ensure_ascii=False), encoding="utf-8"
+        )
+
+        monkeypatch.setattr(agent_controller, "TURN_FILE", collab / "TURN.md")
+        monkeypatch.setattr(agent_controller, "_SUPERVISOR_STATE_PATH", sup_path)
+
+        errors = agent_controller._check_turn_supervisor_sync()
+        assert len(errors) == 1
+        assert "WOT-2026-060a" in errors[0]
+        assert "42" in errors[0]
