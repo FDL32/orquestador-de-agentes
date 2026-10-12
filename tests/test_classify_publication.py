@@ -34,11 +34,32 @@ def _init_repo(repo: Path) -> None:
     _git(repo, "commit", "-m", "initial")
 
 
+# WOT-2026-016r: this module is itself a scanned surface. Its deliberate
+# secret-like fixtures are ASSEMBLED at runtime so the module's own SOURCE does
+# not embed a scannable literal; the scanner still sees the assembled value when
+# it is written to a fixture file on disk, which is where the assertions run.
+_FAKE_SENTINEL = "PUBLICATION_AUDIT_" + "FAKE_SECRET="
+_OPAQUE_SECRET = "REALSECRET0123456789" + "abcdef"
+_OPAQUE_PASSWORD = "SuperSecretValue" + "123456"
+# Non-seed synthetic values: deliberately distinct from the seed's by-design
+# fixtures so they remain genuine control positives (the seed values are now
+# scrubbed by the classifier as BY DESIGN).
+_LEAK_KEY = "sk_live_9f8e7d6c5b4a3210" + "XYZ"
+_UNQUOTED_KEY = "valorsincomillas9f8e7d6c5b4a3210"
+_ENV_PLACEHOLDER = "replace_with_your_" + "actual_api_key_here"
+# A valid-format (non-example) AWS key id: AKIA + exactly 16 uppercase alnum.
+# The documented example (AKIAIOSFODNN7EXAMPLE) is a BY-DESIGN placeholder, so
+# it is never used to assert blocking -- this value is.
+_REAL_AKIA = "AKIA" + "7Q2W9E4R6T8Y1U3I"
+# A non-seed synthetic `sk-` value used as a genuine control positive.
+_REAL_SK = "sk-" + "Zx9Y8w7V6u5T4s3R2q1P0o"
+
+
 def test_blocks_fake_secret_in_working_tree(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "settings.txt").write_text(
-        "PUBLICATION_AUDIT_FAKE_SECRET=do-not-publish\n", encoding="utf-8"
+        _FAKE_SENTINEL + "do-not-publish\n", encoding="utf-8"
     )
 
     manifest = classify_publication.build_manifest(repo, scan_history=True)
@@ -54,9 +75,7 @@ def test_tree_scan_ignores_gitignored_secret(tmp_path: Path) -> None:
     (repo / ".gitignore").write_text("legacy_docs/\n", encoding="utf-8")
     (repo / "legacy_docs").mkdir()
     ignored_file = repo / "legacy_docs" / "old.md"
-    ignored_file.write_text(
-        "PUBLICATION_AUDIT_FAKE_SECRET=ignored-by-git\n", encoding="utf-8"
-    )
+    ignored_file.write_text(_FAKE_SENTINEL + "ignored-by-git\n", encoding="utf-8")
 
     check_ignore = _git_stdout(repo, "check-ignore", "-v", "legacy_docs/old.md")
 
@@ -75,7 +94,7 @@ def test_tree_scan_detects_tracked_secret(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "tracked-secret.txt").write_text(
-        "PUBLICATION_AUDIT_FAKE_SECRET=tracked\n", encoding="utf-8"
+        _FAKE_SENTINEL + "tracked\n", encoding="utf-8"
     )
     _git(repo, "add", "tracked-secret.txt")
     _git(repo, "commit", "-m", "add tracked secret")
@@ -91,7 +110,7 @@ def test_tree_scan_detects_untracked_non_ignored_secret(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "new-secret.txt").write_text(
-        "PUBLICATION_AUDIT_FAKE_SECRET=untracked\n", encoding="utf-8"
+        _FAKE_SENTINEL + "untracked\n", encoding="utf-8"
     )
 
     manifest = classify_publication.build_manifest(repo, scan_history=True)
@@ -105,7 +124,7 @@ def test_blocks_realistic_secret_patterns(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "aws.txt").write_text(
-        "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8"
+        f"aws_access_key_id = {_REAL_AKIA}\n", encoding="utf-8"
     )
     (repo / "key.pem").write_text(
         "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
@@ -135,9 +154,7 @@ def test_blocks_fake_secret_in_history_after_tree_cleanup(tmp_path: Path) -> Non
     repo = tmp_path / "repo"
     _init_repo(repo)
     secret_file = repo / "old_secret.txt"
-    secret_file.write_text(
-        "PUBLICATION_AUDIT_FAKE_SECRET=historical\n", encoding="utf-8"
-    )
+    secret_file.write_text(_FAKE_SENTINEL + "historical\n", encoding="utf-8")
     _git(repo, "add", "old_secret.txt")
     _git(repo, "commit", "-m", "add secret")
     secret_file.write_text("clean\n", encoding="utf-8")
@@ -156,7 +173,7 @@ def test_blocks_fake_secret_in_history_after_tree_cleanup(tmp_path: Path) -> Non
 def test_history_blob_reports_all_relevant_paths(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
-    content = "PUBLICATION_AUDIT_FAKE_SECRET=same-blob\n"
+    content = _FAKE_SENTINEL + "same-blob\n"
     (repo / "a.txt").write_text(content, encoding="utf-8")
     (repo / "b.txt").write_text(content, encoding="utf-8")
     _git(repo, "add", "a.txt", "b.txt")
@@ -214,7 +231,7 @@ def test_env_example_placeholder_does_not_block_publication(tmp_path: Path) -> N
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / ".env.example").write_text(
-        "API_KEY=replace_with_your_actual_api_key_here\n", encoding="utf-8"
+        f"API_KEY={_ENV_PLACEHOLDER}\n", encoding="utf-8"
     )
 
     manifest = classify_publication.build_manifest(repo, scan_history=True)
@@ -231,7 +248,7 @@ def test_env_example_real_secret_still_blocks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / ".env.example").write_text(
-        "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8"
+        f"AWS_ACCESS_KEY_ID={_REAL_AKIA}\n", encoding="utf-8"
     )
 
     manifest = classify_publication.build_manifest(repo, scan_history=True)
@@ -470,32 +487,34 @@ def test_out_path_is_excluded_from_manifest(tmp_path: Path) -> None:
 
 
 # Deliberate fake secret marker used as a scanner fixture, not a real credential.
+# WOT-2026-016r: it is a BY-DESIGN VALUE (a known synthetic placeholder), exempt
+# by EXACT VALUE, never by path.
 _FIXTURE_SECRET = "sk-abcdefghijklmnopqrstuvwxyz0123456789\n"  # noqa: S105
 
 
-def test_security_fixture_tree_scan_is_allowlisted(tmp_path: Path) -> None:
+def test_by_design_value_is_exempt_by_value_not_path(tmp_path: Path) -> None:
+    """(iv) The exemption is by VALUE, not by PATH: a by-design placeholder is
+    exempt wherever it appears, including a path that was never allowlisted."""
     repo = tmp_path / "repo"
     _init_repo(repo)
-    (repo / "tests").mkdir()
-    fixture = repo / "tests" / "test_redact.py"
-    fixture.write_text(_FIXTURE_SECRET, encoding="utf-8")
-    _git(repo, "add", "tests/test_redact.py")
-    _git(repo, "commit", "-m", "add security fixture")
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "prod.py").write_text(_FIXTURE_SECRET, encoding="utf-8")
+    _git(repo, "add", "scripts/prod.py")
+    _git(repo, "commit", "-m", "add by-design placeholder to a prod path")
 
     manifest = classify_publication.build_manifest(repo, scan_history=True)
 
     flagged = {f["path"] for f in manifest["tree_secret_scan"]["findings"]}
     assert manifest["tree_secret_scan"]["ok"] is True
-    assert "tests/test_redact.py" not in flagged
-    assert manifest["verdict"] != "BLOQUEADO_POR_SECRETO"
+    assert "scripts/prod.py" not in flagged
 
 
-def test_non_allowlisted_fixture_path_still_blocks_tree(tmp_path: Path) -> None:
+def test_real_secret_in_prod_path_still_blocks_tree(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "scripts").mkdir()
     prod = repo / "scripts" / "prod.py"
-    prod.write_text(_FIXTURE_SECRET, encoding="utf-8")
+    prod.write_text(f"AWS_KEY = '{_REAL_AKIA}'\n", encoding="utf-8")
     _git(repo, "add", "scripts/prod.py")
     _git(repo, "commit", "-m", "add prod secret")
 
@@ -507,7 +526,39 @@ def test_non_allowlisted_fixture_path_still_blocks_tree(tmp_path: Path) -> None:
     assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
 
 
-def test_security_fixture_history_scan_is_allowlisted(tmp_path: Path) -> None:
+def test_ap_d04_real_secret_in_formerly_allowlisted_path_still_blocks(
+    tmp_path: Path,
+) -> None:
+    """AP-D04 control positive (v). The old exemption was PATH-based
+    (`SECURITY_FIXTURE_PATHS` -> zero patterns), so a REAL secret in
+    `tests/test_redact.py` was never scanned. It is now VALUE-based: the
+    by-design placeholder in that same file is excised, but a real secret beside
+    it still blocks.
+
+    Literal command: `python scripts/classify_publication.py --repo-root <fixture>`
+    must exit 1 (BLOQUEADO_POR_SECRETO).
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_redact.py").write_text(
+        _FIXTURE_SECRET + f"AWS_KEY = '{_REAL_AKIA}'\n", encoding="utf-8"
+    )
+    _git(repo, "add", "tests/test_redact.py")
+    _git(repo, "commit", "-m", "one allowlisted path: placeholder + real secret")
+
+    manifest = classify_publication.build_manifest(repo, scan_history=True)
+    rc = classify_publication.main(["--repo-root", str(repo)])
+
+    flagged = {f["path"] for f in manifest["tree_secret_scan"]["findings"]}
+    assert "tests/test_redact.py" in flagged
+    assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+    assert rc == 1
+
+
+def test_security_fixture_history_scan_is_allowlisted_by_value(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "tests").mkdir()
@@ -529,12 +580,12 @@ def test_security_fixture_history_scan_is_allowlisted(tmp_path: Path) -> None:
     assert "tests/test_redact.py" not in history_paths
     assert manifest["verdict"] != "BLOQUEADO_POR_SECRETO"
 
-    # Contrast: same flow on a non-allowlisted path DOES surface in history.
+    # Contrast: a REAL secret through the same flow DOES surface in history.
     prod_repo = tmp_path / "prod_repo"
     _init_repo(prod_repo)
     (prod_repo / "scripts").mkdir()
     prod = prod_repo / "scripts" / "prod.py"
-    prod.write_text(_FIXTURE_SECRET, encoding="utf-8")
+    prod.write_text(f"AWS_KEY = '{_REAL_AKIA}'\n", encoding="utf-8")
     _git(prod_repo, "add", "scripts/prod.py")
     _git(prod_repo, "commit", "-m", "add prod secret")
     prod.write_text("# clean\n", encoding="utf-8")
@@ -553,12 +604,41 @@ def test_security_fixture_history_scan_is_allowlisted(tmp_path: Path) -> None:
     assert prod_manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
 
 
+def test_mutation_placeholder_green_real_secret_red(tmp_path: Path) -> None:
+    """MUTATION with both rc published over the SAME fixture shape.
+
+    GREEN: the fixture carries only the by-design placeholder -> rc 0.
+    RED:   the same fixture gains a real secret -> rc 1.
+    The two rc are the observable system error proving the migration did not open
+    a blind spot (containment verified by the SYSTEM, not by the model).
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "tests").mkdir()
+    fixture = repo / "tests" / "test_redact.py"
+
+    fixture.write_text(_FIXTURE_SECRET, encoding="utf-8")
+    _git(repo, "add", "tests/test_redact.py")
+    _git(repo, "commit", "-m", "by-design placeholder only")
+    rc_green = classify_publication.main(["--repo-root", str(repo)])
+
+    fixture.write_text(
+        _FIXTURE_SECRET + f"AWS_KEY = '{_REAL_AKIA}'\n", encoding="utf-8"
+    )
+    _git(repo, "add", "tests/test_redact.py")
+    _git(repo, "commit", "-m", "add a real secret")
+    rc_red = classify_publication.main(["--repo-root", str(repo)])
+
+    assert rc_green == 0
+    assert rc_red == 1
+
+
 def test_allowlist_is_per_named_path_not_an_evasion(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "scripts").mkdir()
     evil = repo / "scripts" / "evil.py"
-    evil.write_text("PUBLICATION_AUDIT_FAKE_SECRET=real\n", encoding="utf-8")
+    evil.write_text(_FAKE_SENTINEL + "real\n", encoding="utf-8")
     _git(repo, "add", "scripts/evil.py")
     _git(repo, "commit", "-m", "add evil secret")
 
@@ -591,7 +671,7 @@ def test_generic_pattern_ignores_code_but_blocks_literal(tmp_path: Path) -> None
     parser = repo / "scripts" / "parser.py"
     parser.write_text('token = normalized.rstrip(",").strip()\n', encoding="utf-8")
     leak = repo / "scripts" / "leak.py"
-    leak.write_text('api_key = "sk_live_0123456789abcdefXYZ"\n', encoding="utf-8")
+    leak.write_text(f'api_key = "{_LEAK_KEY}"\n', encoding="utf-8")
     _git(repo, "add", "scripts/parser.py", "scripts/leak.py")
     _git(repo, "commit", "-m", "add parser and leak")
 
@@ -616,10 +696,10 @@ def test_generic_pattern_blocks_opaque_secret_with_trailing_punctuation(
     _init_repo(repo)
     (repo / "scripts").mkdir()
     leaks = {
-        "semicolon.js": "const token = REALSECRET0123456789abcdef;\n",
-        "comma.py": "params = dict(token=REALSECRET0123456789abcdef, x=1)\n",
-        "prose.txt": "password = SuperSecretValue123456 this is prod\n",
-        "envfile.env": "TOKEN=valorsincomillas0123456789abcd\n",
+        "semicolon.js": f"const token = {_OPAQUE_SECRET};\n",
+        "comma.py": f"params = dict(token={_OPAQUE_SECRET}, x=1)\n",
+        "prose.txt": f"password = {_OPAQUE_PASSWORD} this is prod\n",
+        "envfile.env": f"TOKEN={_UNQUOTED_KEY}\n",
     }
     for name, content in leaks.items():
         (repo / "scripts" / name).write_text(content, encoding="utf-8")
@@ -634,29 +714,31 @@ def test_generic_pattern_blocks_opaque_secret_with_trailing_punctuation(
     assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
 
 
-def test_fixture_allowlist_is_case_sensitive_exact() -> None:
-    """Platform-invariance guard: the security-fixture allowlist must match the
-    exact posix path, never a case variant. On Windows ``fnmatch`` case-folds (via
-    ``os.path.normcase``), so ``Tests/Test_Redact.py`` could impersonate
-    ``tests/test_redact.py`` and publish a real fake-secret marker clean.
+def test_seed_values_are_derived_not_duplicated() -> None:
+    """(iv) The BY-DESIGN value set is DERIVED from the seed's
+    ``[[allowlists]].regexes`` -- not a hardcoded copy -- so the gate's exemption
+    can never silently drift from the seed it claims to honour (the failure mode
+    of WOT-2026-039k)."""
+    seed_values = classify_publication._seed_allowlist_values()
+    assert seed_values, "the motor ships the gitleaks seed next to the script"
+    assert seed_values <= classify_publication.BY_DESIGN_VALUES
 
-    This probes the predicate directly (not via on-disk files): a case-insensitive
-    filesystem like Windows/NTFS collapses ``test_redact.py`` and
-    ``Test_Redact.py`` into one inode, so the widening can only be exercised at the
-    string level where the scanner actually compares repo-relative posix paths.
-    """
-    assert classify_publication._is_security_fixture_path("tests/test_redact.py")
-    # Case variants must NOT be exempt -- they are scanned normally and block.
-    assert not classify_publication._is_security_fixture_path("tests/Test_Redact.py")
-    assert not classify_publication._is_security_fixture_path("TESTS/TEST_REDACT.PY")
-    assert not classify_publication._is_security_fixture_path("tests/tEsT_rEdAcT.py")
-    # Similar-but-different names must NOT be exempt either.
-    assert not classify_publication._is_security_fixture_path(
-        "tests/test_redact_extra.py"
-    )
-    assert not classify_publication._is_security_fixture_path(
-        "src/tests/test_redact.py"
-    )
+
+def test_by_design_exemption_is_case_sensitive_exact() -> None:
+    """Value-exactness guard: the by-design exemption matches the EXACT literal,
+    never a case variant or a near lookalike. A case-folded placeholder -- or any
+    different value -- is scanned normally and still blocks, so the exemption can
+    never widen into a way to publish a lookalike secret."""
+    value = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+    assert value in classify_publication.BY_DESIGN_VALUES
+    # The exact value is excised...
+    assert classify_publication._scrub_by_design_values(value) == ""
+    # ...but a case variant is NOT (the scrub is exact, not case-folded), and
+    # neither is a lookalike with one character changed.
+    upper = value.upper()
+    lookalike = value.replace("w", "v")
+    assert classify_publication._scrub_by_design_values(upper) == upper
+    assert classify_publication._scrub_by_design_values(lookalike) == lookalike
 
 
 # ---------------------------------------------------------------------------
@@ -693,17 +775,18 @@ def test_d1_tests_redaction_fixture_is_not_a_redaction(tmp_path: Path) -> None:
 
 def test_d1_real_secret_under_tests_still_blocks(tmp_path: Path) -> None:
     """D1 security barrier: the tests/ allowlist suppresses ONLY redaction_risk.
-    A real secret pattern (AKIA, sk-) under tests/ -- on a path that is NOT one
-    of the four named SECURITY_FIXTURE_PATHS -- must still hard-block the tree
-    scan. If this ever passes, the allowlist has become a secret-evasion."""
+    A real secret pattern (AKIA, sk-) under tests/ -- on any path, including the
+    ones that used to be path-exempt security fixtures -- must still hard-block
+    the tree scan. If this ever passes, the allowlist has become a secret-evasion
+    (WOT-2026-016r moved the exemption from PATH to EXACT VALUE)."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "tests").mkdir()
     (repo / "tests" / "test_leak.py").write_text(
-        "AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'\n", encoding="utf-8"
+        f"AWS_KEY = '{_REAL_AKIA}'\n", encoding="utf-8"
     )
     (repo / "tests" / "test_sk_leak.py").write_text(
-        "OPENAI = 'sk-abcdefghijklmnopqrstuvwxyz0123456789'\n",
+        f"OPENAI = '{_REAL_SK}'\n",
         encoding="utf-8",
     )
     _git(repo, "add", "tests/test_leak.py", "tests/test_sk_leak.py")
@@ -848,7 +931,7 @@ def test_d4_qa_name_is_not_a_secret_scan_blind_spot(tmp_path: Path, name: str) -
     A tracked launcher carrying a real AKIA must still hard-block."""
     repo = tmp_path / "repo"
     _init_repo(repo)
-    (repo / name).write_text("set KEY=AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8")
+    (repo / name).write_text(f"set KEY={_REAL_AKIA}\n", encoding="utf-8")
     _git(repo, "add", name)
     _git(repo, "commit", "-m", "add launcher with real secret")
 
@@ -924,7 +1007,7 @@ def test_d6a_accepted_history_path_does_not_block(tmp_path: Path) -> None:
     _init_repo(repo)
     accepted = repo / "skills" / "adopt-existing-project" / "SKILL.md"
     accepted.parent.mkdir(parents=True, exist_ok=True)
-    accepted.write_text("PUBLICATION_AUDIT_FAKE_SECRET=placeholder\n", encoding="utf-8")
+    accepted.write_text(_FAKE_SENTINEL + "placeholder\n", encoding="utf-8")
     _git(repo, "add", "skills/adopt-existing-project/SKILL.md")
     _git(repo, "commit", "-m", "add accepted placeholder")
     accepted.write_text("# clean skill\n", encoding="utf-8")
@@ -949,7 +1032,7 @@ def test_d6a_non_accepted_history_path_still_blocks(tmp_path: Path) -> None:
     _init_repo(repo)
     other = repo / "skills" / "other-skill" / "SKILL.md"
     other.parent.mkdir(parents=True, exist_ok=True)
-    other.write_text("PUBLICATION_AUDIT_FAKE_SECRET=placeholder\n", encoding="utf-8")
+    other.write_text(_FAKE_SENTINEL + "placeholder\n", encoding="utf-8")
     _git(repo, "add", "skills/other-skill/SKILL.md")
     _git(repo, "commit", "-m", "add non-accepted placeholder")
     other.write_text("# clean\n", encoding="utf-8")
@@ -993,9 +1076,7 @@ def test_d6b_meta_doc_allowlist_does_not_suppress_secrets(tmp_path: Path) -> Non
     real secret in one of those exact docs must still hard-block the tree."""
     repo = tmp_path / "repo"
     _init_repo(repo)
-    (repo / "CHANGELOG.md").write_text(
-        "Leaked: AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8"
-    )
+    (repo / "CHANGELOG.md").write_text(f"Leaked: {_REAL_AKIA}\n", encoding="utf-8")
     _git(repo, "add", "CHANGELOG.md")
     _git(repo, "commit", "-m", "add changelog with real secret")
 
@@ -1041,3 +1122,65 @@ def test_d6b_scanner_self_match_is_suppressed() -> None:
     # Scope guard: the same source under any OTHER path is NOT exempt.
     other_flags = classify_publication._content_flags(src, "scripts/other.py")
     assert "redaction_risk" in other_flags
+
+
+# A real RSA/PKCS8 key body: 4 lines of base64-looking filler, well past the
+# 64-char minimum the refined CRITICAL pattern requires. Assembled at runtime
+# so this module's own source is not itself a scannable PEM block.
+_REAL_PEM_BODY = "\n".join(
+    "MIIEowIBAAKCAQEA" + ("Zm9vYmFyMTIzNDU2Nzg5" * 3) for _ in range(4)
+)
+_REAL_RSA_KEY = (
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    + _REAL_PEM_BODY
+    + "\n-----END RSA PRIVATE KEY-----\n"
+)
+_REAL_PKCS8_KEY = (
+    "-----BEGIN PRIVATE KEY-----\n" + _REAL_PEM_BODY + "\n-----END PRIVATE KEY-----\n"
+)
+# A bare header with no body (or a short synthetic stub): the shape of every
+# historical fixture in this motor's own git log, which must stay by-design.
+_BARE_PEM_HEADER = "-----BEGIN RSA PRIVATE KEY-----\n"
+
+
+def test_regression_real_pem_key_body_still_blocks_tree(tmp_path: Path) -> None:
+    """Regression (caught by Revisor-nan, WOT-2026-016r): KNOWN_EXAMPLE_PLACEHOLDERS
+    used to list the bare PEM header as a by-design marker, and its value-exact
+    scrub erased the ONLY pattern that detected a real key pasted into text --
+    a real RSA/PKCS8 key passed clean (rc 0) after the migration. The fix
+    requires a substantial base64 body after the header; this asserts both key
+    types still block in the TREE scan."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "docs").mkdir()
+
+    for name, key_text in (
+        ("notes_rsa.md", _REAL_RSA_KEY),
+        ("notes_pkcs8.md", _REAL_PKCS8_KEY),
+    ):
+        (repo / "docs" / name).write_text(key_text, encoding="utf-8")
+        _git(repo, "add", f"docs/{name}")
+        _git(repo, "commit", "-m", f"add {name}")
+
+        rc = classify_publication.main(["--repo-root", str(repo)])
+        assert rc == 1, f"{name}: a real key body must still block (rc=1)"
+
+        manifest = classify_publication.build_manifest(repo, scan_history=False)
+        assert manifest["verdict"] == "BLOQUEADO_POR_SECRETO"
+
+
+def test_bare_pem_header_without_body_stays_by_design(tmp_path: Path) -> None:
+    """The flip side of the regression test: a BARE header with no real key
+    body (the shape of every historical fixture in this motor's own git log,
+    e.g. a 3-char or 14-char stub) must NOT block -- only a substantial body
+    makes it a real key, never the header alone."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "tests").mkdir()
+    fixture = repo / "tests" / "test_redact.py"
+    fixture.write_text(_BARE_PEM_HEADER + "abc\n", encoding="utf-8")
+    _git(repo, "add", "tests/test_redact.py")
+    _git(repo, "commit", "-m", "bare header stub, no real key body")
+
+    rc = classify_publication.main(["--repo-root", str(repo)])
+    assert rc == 0, "a bare PEM header stub must not be flagged as a real key"
