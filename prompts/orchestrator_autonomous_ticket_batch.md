@@ -235,11 +235,35 @@ root R), never FRESHNESS.
    `batch_run_<ts>.json`. Writing `batch_run` is itself a mutation of the destino
    and the contract lists it as an OUTPUT of the run, so "declare it PENDING in
    `batch_run` before mutating anything" would contradict itself. The executor
-   writes `start_context_isolation.json` in the destino-rol reports dir BEFORE
+writes `start_context_isolation.json` in the destino-rol reports dir BEFORE
    touching any ticket, with `status: PENDING` plus the observable answer; the
    later `batch_run_<ts>.json` only COPIES the resolved receipt. The executor
    never resolves it.
-2. **A third party resolves it BEFORE the executor mutates anything.** External
+
+   **RECEIPT NAMING (WOT-2026-068j): per-flight directory, no filename collision.**
+
+   The receipt file MUST live under a per-flight subdirectory so that two
+   consecutive flights sharing the same `reports/` dir never overwrite or
+   collide with each other's artifacts:
+
+       start_context_isolation/
+           <flight>/
+               receipt.json      -- PENDING / RESOLVED / DENIED
+
+   where `<flight>` is the EXACT value of the `flight` field (URL-safe as-is;
+   if the flight value contains characters invalid for directory names, they
+   are replaced by `-`). The `receipt.json` file carries the full payload
+   (`status`, `prompt_sha256`, `approved_by`, `approved_at`,
+   `project_root_resolved`, `scope`, `flight`). The `batch_run_<ts>.json`
+   copies the RESOLVED receipt into its top-level `start_context_isolation`
+   field; it does NOT copy the directory structure.
+
+   **Backward-compat glob:** consumers that scan `start_context_isolation*.json`
+   (legacy flat layout) MUST ALSO scan `start_context_isolation/**/*.json`
+   (new per-flight layout). A consumer that only reads the old pattern is blind
+   to every per-flight receipt written after WOT-2026-068j lands.
+
+  2. **A third party resolves it BEFORE the executor mutates anything.** External
    resolution is a PREVENTIVE gate, not a post-hoc one: a contaminated flight
    creates commits, moves `backlog.md`, appends to the bus/ledger, writes memory
    and may push. A sibling audit can DETECT and demand repair, but it cannot make

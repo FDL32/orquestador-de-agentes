@@ -209,6 +209,32 @@ def _index_emitted_reports(
     return emitted_flights, emitted_shas, report_names
 
 
+def _glob_isolation_receipts(reports_root: Path):
+    """Yield every isolation receipt: flat layout (`start_context_isolation*.json`)
+    and per-flight directory layout (`start_context_isolation/**/receipt.json`).
+
+    WOT-2026-068j: the orchestrator prompt now mandates a per-flight directory so
+    that consecutive flights sharing the same `reports/` dir never collide.
+    Consumers MUST read BOTH layouts; a reader that only scans the old pattern
+    is blind to every per-flight receipt written after this change.
+
+    Before: `reports_root` is the reports directory (may not exist).
+    During: globs flat pattern `start_context_isolation*.json` and recursive
+        pattern `start_context_isolation/**/receipt.json`.
+    After: a generator yielding `(receipt_path, layout_type)` tuples where
+        `layout_type` is `"flat"` or `"per_flight"`. Never raises.
+    """
+    root = Path(reports_root)
+    if not root.is_dir():
+        return
+    for receipt in sorted(root.glob("start_context_isolation*.json")):
+        yield (receipt, "flat")
+    per_flight_root = root / "start_context_isolation"
+    if per_flight_root.is_dir():
+        for receipt in sorted(per_flight_root.rglob("receipt.json")):
+            yield (receipt, "per_flight")
+
+
 def check_batch_run_emitted(reports_root: Path) -> list[str]:
     """WOT-2026-066n: caza la AUSENCIA del batch_run, no solo su calidad.
 
@@ -222,10 +248,11 @@ def check_batch_run_emitted(reports_root: Path) -> list[str]:
     reconstruirlo.
 
     La senal de que HUBO un vuelo es su receipt de aislamiento
-    (`start_context_isolation*.json`), que un vuelo autonomo debe traer resuelto
-    ANTES de mutar nada: es el registro mas fiable de que una corrida existio.
-    Un receipt `RESOLVED` sin su `batch_run` es un vuelo que corrio y no dejo su
-    salida obligatoria.
+    (`start_context_isolation*.json` o `start_context_isolation/<flight>/receipt.json`
+    per WOT-2026-068j), que un vuelo autonomo debe traer resuelto ANTES de mutar
+    nada: es el registro mas fiable de que una corrida existio. Un receipt
+    `RESOLVED` sin su `batch_run` es un vuelo que corrio y no dejo su salida
+    obligatoria.
 
     **Un informe se correlaciona por IDENTIDAD, no por nombre de fichero**
     (corregido 2026-09-07, mismo dia): la primera version globeaba
@@ -249,11 +276,13 @@ def check_batch_run_emitted(reports_root: Path) -> list[str]:
     vuelo se paro en el gate, que es el comportamiento correcto): no genera
     hallazgo.
 
+    WOT-2026-068j: also scans `start_context_isolation/**/*.json` (per-flight
+    directory layout) in addition to the legacy flat pattern.
+
     Before: `reports_root` es el directorio de reports del rol destino; puede no
         existir.
-    During: lee cada `start_context_isolation*.json` (tolerando BOM via
-        `utf-8-sig`), toma su `flight` y busca un `batch_run_*<flight>*.json`
-        hermano. Solo lectura.
+    During: lee cada recibo (tolerando BOM via `utf-8-sig`), toma su `flight` y
+        busca un `batch_run_*<flight>*.json` hermano. Solo lectura.
     After: devuelve un finding por vuelo acreditado sin `batch_run` (lista vacia
         = ningun vuelo sin su salida). Nunca lanza: un receipt ilegible o
         malformado se ignora -- este guard mide AUSENCIA de batch_run, no
@@ -267,7 +296,7 @@ def check_batch_run_emitted(reports_root: Path) -> list[str]:
     emitted_flights, emitted_shas, report_names = _index_emitted_reports(reports_root)
 
     findings: list[str] = []
-    for receipt in sorted(reports_root.glob("start_context_isolation*.json")):
+    for receipt, _layout in _glob_isolation_receipts(reports_root):
         try:
             payload = json.loads(receipt.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError, ValueError):
