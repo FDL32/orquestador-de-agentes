@@ -2371,6 +2371,11 @@ class TestStampSurvivesMutatingHooks:
         verify, re-stamp capture) receive the SAME ignore set, with the seal and
         its log relative to the delivery root and '/'-separated.
 
+        WOT-2026-079c: tambien incluye las superficies vivas de colaboracion
+        (work_plan.md, TURN.md, STATE.md, execution_log.md, notifications.md,
+        review_queue.md) para que el sello sobreviva a escrituras de sesion
+        close en arboles compartidos.
+
         Mutation: drop `ignore_paths=` from any of the three calls, or the
         `.replace("\\\\", "/")`, and this goes RED.
         """
@@ -2387,6 +2392,12 @@ class TestStampSurvivesMutatingHooks:
             [
                 ".agent/runtime/pytest-safe/last-run.json",
                 ".agent/runtime/pytest-safe/last-run.log",
+                ".agent/collaboration/work_plan.md",
+                ".agent/collaboration/TURN.md",
+                ".agent/collaboration/STATE.md",
+                ".agent/collaboration/execution_log.md",
+                ".agent/collaboration/notifications.md",
+                ".agent/collaboration/review_queue.md",
             ]
         )
         assert [kind for kind, _ in recorded] == ["capture", "verify", "capture"], (
@@ -2399,6 +2410,10 @@ class TestStampSurvivesMutatingHooks:
     ) -> None:
         """WOT-2026-073e (Pieza b): a seal outside the delivery repo cannot
         alter its porcelain, so it is not added to the ignore set.
+
+        WOT-2026-079c: las superficies vivas de colaboracion SIempre entran
+        en ignore_paths (no dependen de la ubicacion del sello), asi que el
+        set nunca es vacio: solo los paths del sello cambian.
         """
         mod = load_runner_module()
         recorded: list = []
@@ -2413,7 +2428,50 @@ class TestStampSurvivesMutatingHooks:
             seal_dir=tmp_path / "outside" / "pytest-safe",
         )
         assert recorded, "the audit window must still be captured"
-        assert all(paths == frozenset() for _, paths in recorded), recorded
+        # seal files absent (outside repo), but viva surfaces always present
+        viva = frozenset(
+            [
+                ".agent/collaboration/work_plan.md",
+                ".agent/collaboration/TURN.md",
+                ".agent/collaboration/STATE.md",
+                ".agent/collaboration/execution_log.md",
+                ".agent/collaboration/notifications.md",
+                ".agent/collaboration/review_queue.md",
+            ]
+        )
+        assert all(paths == viva for _, paths in recorded), recorded
+
+    def test_viva_surfaces_in_ignore_paths(self, tmp_path: Path, monkeypatch):
+        """WOT-2026-079c: the audit window ignore set must include all six
+        canonical live surfaces so a session-close that writes them during the
+        measurement window does NOT invalidate the seal.
+
+        MUTATION (DoD): quitar una superficie de _VIVA_REL -> la superficie
+        aparece en porcelain post -> verify_unchanged la ve -> raise. Test ROJO.
+        """
+        mod = load_runner_module()
+        recorded: list = []
+        self._run_main(
+            mod,
+            tmp_path,
+            monkeypatch,
+            head_seq=["h0", "h0"],
+            recorded=recorded,
+        )
+        # Every call to capture_state and verify_unchanged must carry the same
+        # ignore set that includes all viva surfaces.
+        all_same_and_contains_viva = True
+        for _kind, paths in recorded:
+            for v in [
+                ".agent/collaboration/work_plan.md",
+                ".agent/collaboration/execution_log.md",
+            ]:
+                if v not in paths:
+                    all_same_and_contains_viva = False
+        assert all_same_and_contains_viva, (
+            f"ignore_paths debe incluir las superficies vivas; "
+            f"got {[paths for _, paths in recorded]}"
+        )
 
     def test_stamp_is_not_refreshed_when_tree_moved_during_the_run(
         self, tmp_path: Path, monkeypatch
