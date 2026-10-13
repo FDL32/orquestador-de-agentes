@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -2342,3 +2343,110 @@ def test_059p_multiple_fichas_mixed_reported(tmp_path: Path) -> None:
     assert len(errors) == 1, f"expected 1 warning; got: {errors}"
     assert "WOT-2026-001a" in errors[0]
     assert "WOT-2026-001b" not in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-073a: archive volume collapse detection (WARN, non-blocking)
+# ---------------------------------------------------------------------------
+
+
+def _make_git_repo(path: Path) -> None:
+    """Create a minimal git repo at ``path`` with one commit."""
+    subprocess.run(["git", "init"], cwd=str(path), capture_output=True, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        cwd=str(path),
+        capture_output=True,
+        check=True,
+    )
+
+
+def _write_archive_and_commit(tmp_path: Path, lines: int) -> None:
+    """Write an archive with N lines and commit it in a hermetic git repo."""
+    arch = tmp_path / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    content = "\n".join(f"line {i}" for i in range(lines)) + "\n"
+    (arch / "backlog_done.md").write_text(content, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "archive",
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+
+
+def test_archive_volume_collapse_emits_nominal_warning(tmp_path: Path) -> None:
+    """MUTATION: archive truncated from 200 lines to 4 lines -> exactly one
+    WARNING that cites the counts (HEAD=200, actual=4).
+
+    The test creates a hermetic .git at tmp_path, commits a large archive,
+    then truncates the working tree. validate_archive_volume must return one
+    warning string containing "volumen", "200" and "4".
+    """
+    _make_git_repo(tmp_path)
+    _write_archive_and_commit(tmp_path, 200)
+    # Truncate the archive to 4 lines (the 072c pattern).
+    arch = tmp_path / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    arch.write_text("line 1\nline 2\nline 3\nline 4\n", encoding="utf-8")
+
+    warnings = cbc.validate_archive_volume(tmp_path)
+    assert len(warnings) == 1, f"expected exactly 1 warning, got: {warnings}"
+    w = warnings[0]
+    assert "volumen" in w, f"warning must mention volumen: {w}"
+    assert "200" in w, f"warning must cite baseline=200: {w}"
+    assert "4" in w, f"warning must cite actual=4: {w}"
+
+
+def test_archive_volume_intact_is_silent(tmp_path: Path) -> None:
+    """CONTROL POSITIVO: archive at HEAD (same content) -> no warning."""
+    _make_git_repo(tmp_path)
+    _write_archive_and_commit(tmp_path, 200)
+    # Do NOT modify the working tree: it matches HEAD.
+
+    warnings = cbc.validate_archive_volume(tmp_path)
+    assert warnings == [], f"intact archive should produce no warnings: {warnings}"
+
+
+def test_archive_volume_skips_without_git_baseline(tmp_path: Path) -> None:
+    """SKIP: tmp_path has no .git / git fails -> returns [] (never fabricates).
+
+    No .git is the simplest case. A repo with .git but missing the file in
+    HEAD is another path; both must return [] without raising.
+    """
+    # tmp_path from fixture has no .git -> SKIP.
+    arch = tmp_path / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(
+        "\n".join(f"line {i}" for i in range(200)) + "\n",
+        encoding="utf-8",
+    )
+
+    warnings = cbc.validate_archive_volume(tmp_path)
+    assert warnings == [], (
+        f"without .git, validate_archive_volume must skip silently: {warnings}"
+    )

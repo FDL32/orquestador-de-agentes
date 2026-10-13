@@ -564,6 +564,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             validate_archive_prose_preservation,
             validate_archive_row_arity,
             validate_archive_states,
+            validate_archive_volume,
             validate_backlog,
             validate_live_archive_integrity,
         )
@@ -574,6 +575,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             validate_archive_prose_preservation,
             validate_archive_row_arity,
             validate_archive_states,
+            validate_archive_volume,
             validate_backlog,
             validate_live_archive_integrity,
         )
@@ -634,10 +636,20 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             "\n  WARN: fila(s) Prioridad-led no auditable(s) (id no canonico), "
             "invisibles a TODO validate_*: " + ", ".join(saltadas_all)
         )
+    # WOT-2026-073a: archive volume collapse detection (WARN, non-blocking).
+    # Append to output so the collapse is visible in the closeout path that
+    # stayed silent during 072c; never add to violations (rc stays 0).
+    archive_volume_warnings = validate_archive_volume(project_root)
+    vol_lines = "\n".join(f"  {w}" for w in archive_volume_warnings)
+    if vol_lines:
+        output_parts = ["live queue contract holds", f"  {censo}", vol_lines]
+    else:
+        output_parts = ["live queue contract holds", f"  {censo}"]
+    output = "\n".join(output_parts)
     return CheckResult(
         name=name,
         passed=True,
-        output=f"live queue contract holds\n  {censo}",
+        output=output,
         is_blocking=True,
     )
 

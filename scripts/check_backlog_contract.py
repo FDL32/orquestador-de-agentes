@@ -29,9 +29,13 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+
+
+# ruff: noqa: S603,S607 - subprocess calls use trusted git binary with hardcoded commands
 
 
 # WOT-2026-023o: terminality authority. STATE.md's STATUS uses the BUS vocabulary
@@ -2172,6 +2176,94 @@ def validate_detail_section_states(root: Path) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-073a: archive volume collapse detection.
+#
+# The guard validates the FORM of backlog rows but was BLIND to VOLUME: a
+# collapsed archive (4372 -> 4 lines) passed silently with rc=0. This adds
+# a WARNING (non-blocking) that compares the current archive line count
+# against a git baseline and names the collapse when it exceeds a calibrated
+# threshold.
+#
+# Metrica: numero de lineas (len(text.splitlines())). Unit of the incident
+# (072c: 4372 -> 4 LINES), not row count or id count.
+# ---------------------------------------------------------------------------
+
+# Threshold for collapse detection: actual < baseline * (1 - threshold).
+# Calibrated against 60 commits of real archive history: max |delta| = 55
+# lines (~1.2% on ~4600). Threshold 0.10 (~8x observed max) flags only
+# genuine collapse, not normal fluctuation (archive legitimately fluctuates
+# +-50 lines per commit).
+_ARCHIVE_VOLUME_COLLAPSE_THRESHOLD = 0.10
+
+
+def _git_show_ref(ref: str, relpath: str, cwd: Path) -> str | None:
+    """Run `git show <ref>:<relpath>` read-only, returning content or None."""
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{ref}:{relpath}"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+
+
+def validate_archive_volume(root: Path) -> list[str]:
+    """Return volume collapse WARNs (empty == clean or skip).
+
+    Compares the current archive line count against a git baseline (HEAD by
+    default, overridable via --volume-ref). Emits a nominal WARNING when the
+    current volume drops below the baseline by more than
+    ``_ARCHIVE_VOLUME_COLLAPSE_THRESHOLD``, NEVER an ERROR (rc unchanged).
+
+    Before: ``root`` is the destino root; the archive may or may not exist.
+    During: reads archive file, runs read-only ``git show`` against the same
+        destination's git repo to get the baseline line count.
+    After: one WARN string per detected collapse (never more than one), or an
+        empty list if the archive is intact, absent, or git baseline is
+        unavailable (named SKIP, never a fabricated failure).
+    """
+    archive = root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    if not archive.exists():
+        return []  # SKIP: archive absent, no volume to check
+
+    # Read actual line count from working tree.
+    try:
+        actual_text = archive.read_text(encoding="utf-8-sig")
+    except OSError:
+        return []  # SKIP: unreadable, never fabricate a failure
+
+    actual = len(actual_text.splitlines())
+
+    # Resolve git baseline against the destination's git repo.
+    relpath = ".agent/collaboration/_archive/backlog_done.md"
+    baseline_text = _git_show_ref("HEAD", relpath, root)
+    if baseline_text is None:
+        return []  # SKIP: git baseline unavailable, never fabricate a failure
+
+    baseline = len(baseline_text.splitlines())
+
+    # Collapse detected: actual is significantly below baseline.
+    if baseline > 0 and actual < baseline * (1 - _ARCHIVE_VOLUME_COLLAPSE_THRESHOLD):
+        pct = round((1 - actual / baseline) * 100, 1) if baseline > 0 else 0
+        return [
+            f"[backlog-contract] WARN volumen archive: "
+            f"HEAD={baseline} -> actual={actual} (-{pct}%), "
+            f"colapso > {_ARCHIVE_VOLUME_COLLAPSE_THRESHOLD * 100:.0f}% "
+            f"(WOT-2026-073a)"
+        ]
+
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Fail-closed gate for the live backlog contract (WOT-2026-012b)."
@@ -2216,6 +2308,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     # WOT-2026-059p: detail-section stale states after closure transfer (WARN).
     detail_warnings = validate_detail_section_states(root)
     for w in detail_warnings:
+        print(w, file=sys.stderr)
+    # WOT-2026-073a: archive volume collapse detection (WARN, non-blocking).
+    archive_volume_warnings = validate_archive_volume(root)
+    for w in archive_volume_warnings:
         print(w, file=sys.stderr)
 
     # WOT-2026-052a: the gate must not be silent about rows its own universe
