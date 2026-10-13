@@ -93,7 +93,9 @@ sys.exit(ed.main([
     "--profile", "p_chal",
     "--content-file", {payload_path!r},
     "--ticket", "WOT-2026-054j",
-    "--task-type", "code-review",
+    # `prose` = task_type NO de gobierno: el sujeto es la codificacion del
+    # stdout, no la barrera de par nonce+sha de WOT-2026-066t.
+    "--task-type", "prose",
     "--rol", "challenger",
     "--phase", "DESIGN_REVIEW",
     "--loop-id", "L054J",

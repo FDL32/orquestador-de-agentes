@@ -999,6 +999,27 @@ def _batch_run_for_receipt(reports_dir: Path, receipt: Path) -> Path | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _glob_isolation_receipts(reports_dir: Path):
+    """Yield every isolation receipt: flat layout and per-flight directory layout.
+
+    WOT-2026-068j: the orchestrator prompt mandates a per-flight directory so
+    that consecutive flights sharing the same `reports/` dir never collide.
+    Consumers MUST read BOTH layouts; a reader that only scans the old pattern
+    is blind to every per-flight receipt written after this change.
+
+    Before: `reports_dir` is the reports directory (may not exist).
+    After: a generator yielding receipt paths (both flat and per-flight).
+    """
+    if not reports_dir.is_dir():
+        return
+    for receipt in sorted(reports_dir.glob("start_context_isolation*.json")):
+        yield receipt
+    per_flight_root = reports_dir / "start_context_isolation"
+    if per_flight_root.is_dir():
+        for receipt in sorted(per_flight_root.rglob("receipt.json")):
+            yield receipt
+
+
 def run_seal_staleness_check(project_root: Path) -> CheckResult:
     """WOT-2026-055c: seal-staleness over start_context_isolation receipts.
 
@@ -1006,8 +1027,10 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
     that until today only a human audit verified. This check runs the
     seal-staleness guard (`check_seal_staleness.py`: integrity triple-via,
     temporal order, semantic-freshness heuristic) over every
-    ``start_context_isolation*.json`` present in the destino's reports dir, so
-    a stale/counterfeit receipt surfaces at closeout instead of riding along.
+    ``start_context_isolation*.json`` and
+    ``start_context_isolation/<flight>/receipt.json`` (WOT-2026-068j) present
+    in the destino's reports dir, so a stale/counterfeit receipt surfaces at
+    closeout instead of riding along.
 
     WARN, not blocking, for the same reason as its sibling
     ``run_batch_run_accounting_check``: it reconciles receipts already on disk
@@ -1035,7 +1058,7 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
         )
 
     findings: dict[str, list[str]] = {}
-    for receipt in sorted(reports_dir.glob("start_context_isolation*.json")):
+    for receipt in _glob_isolation_receipts(reports_dir):
         # WOT-2026-058s: pasar el ANCLA de pertenencia, o la capa queda INERTE.
         # Medido 2026-08-23 por dos auditorias independientes: sin
         # `batch_run_path` un recibo de OTRO vuelo pasaba SIN HALLAZGOS, asi que
@@ -1082,7 +1105,7 @@ def run_seal_staleness_check(project_root: Path) -> CheckResult:
     return CheckResult(
         name=name,
         passed=True,
-        output="every start_context_isolation*.json is fresh and intact",
+        output="every start_context_isolation* receipt is fresh and intact (WOT-2026-068j per-flight dir)",
         is_blocking=False,
     )
 
@@ -3416,6 +3439,23 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
             "enlace por archivos reales (o mueve lo que esconda al canonico)."
         )
 
+    # WOT-2026-068n: depositos con forma de ficha SIN sufijo `.tickets.md` en el
+    # canonico. Misma doctrina que dir_links (BA10): se nombra en AMBAS ramas
+    # no-bloqueantes o no se nombra en la que corre sola. WARN, jamas gate (D4:
+    # deuda preexistente en destinos reales no secuestra el push).
+    ficha_shaped = report.get("ficha_shaped_support", [])
+    fs_nota = ""
+    if ficha_shaped:
+        fs_detalle = "; ".join(
+            f"{fs['path']} -> renombrar a {fs['renombrar_a']}"
+            for fs in ficha_shaped[:4]
+        )
+        fs_nota = (
+            f" | WARN {len(ficha_shaped)} deposito(s) con forma de ficha SIN sufijo "
+            f"`.tickets.md` en el canonico (el glob del Bloque 8.bis no los ve): "
+            f"{fs_detalle}. Renombra, fusiona o declara nota con motivo (WOT-2026-068n)."
+        )
+
     pending = report.get("pending_count", 0)
     if pending:
         oldest = report["pending"][0]
@@ -3428,16 +3468,17 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
                 "Bloque 8.bis + `check_inbox_drainage.py --mark-drained` (mismo guard). "
                 "No bloquea: registrar no puede bloquear el cierre que lo permite."
                 + dl_nota
+                + fs_nota
             ),
             is_blocking=False,
         )
 
     return CheckResult(
         name=name,
-        passed=not dir_links,
+        passed=not dir_links and not ficha_shaped,
         output=(
             "inbox canonico sin fichas pendientes; sin estrays "
-            "(SKIP nombrado si estaba vacio)" + dl_nota
+            "(SKIP nombrado si estaba vacio)" + dl_nota + fs_nota
         ),
         is_blocking=False,
     )

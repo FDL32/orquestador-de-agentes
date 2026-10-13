@@ -120,6 +120,14 @@ def _count_errors(validate_data: dict) -> int:
 
 
 def _count_warnings(validate_data: dict) -> int:
+    """Count warnings from the --validate --json payload.
+
+    Before: validate_data is the parsed JSON of agent_controller --validate --json.
+    During: sums the warnings dict (category -> list), mirroring _count_errors.
+    After: returns the total number of warnings actually reported; 0 when the
+           field is absent, so the message never cites a warning count it did
+           not read.
+    """
     warnings = validate_data.get("warnings", {})
     return sum(len(v) for v in warnings.values())
 
@@ -174,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     error_count = _count_errors(validate_data)
+    warning_count = _count_warnings(validate_data)
 
     if error_count > 0:
         print(
@@ -194,8 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     status = _read_status(project_root)
     if status in _NOT_PUBLISHABLE_STATUSES:
         print(
-            f"[AVISO] validate {error_count} errors / {warning_count} warnings "
-            f"pero STATUS={status} (ticket activo pre-Builder). "
+            f"[AVISO] validate {error_count}/{warning_count} pero STATUS={status} (ticket activo pre-Builder). "
             "Un APPROVED aislado no es publicable a main.\n"
             "\nEspera a que el Builder implemente y el ticket alcance "
             "READY_FOR_REVIEW o COMPLETED antes de publicar.\n"
@@ -205,8 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(
-        f"[OK] validate {error_count} errors / {warning_count} warnings "
-        f"y STATUS={status}. El repo_destino esta en estado publicable."
+        f"[OK] validate {error_count}/{warning_count} y STATUS={status}. El repo_destino esta en estado publicable."
     )
     return 0
 

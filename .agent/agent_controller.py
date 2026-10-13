@@ -4662,6 +4662,92 @@ def _check_bus_drift(plan_content: str, log_status: str) -> list[str]:
     return closure_invariants.check_bus_drift(event_bus, plan_id, log_status)
 
 
+def _extract_turn_plan_id(turn_content: str) -> str:
+    """Extrae el Plan ID de TURN.md (formato tabla markdown) o work_plan (formato clave).
+
+    TURN.md usa filas de tabla: `| **Plan ID** | <valor> |`.
+    work_plan.md usa `**Plan ID:** <valor>` o `**ID:** <valor>`.
+
+    Before: turn_content es el string con el contenido de TURN.md.
+    During: intenta parsing de tabla primero; si no hay match, delega a get_plan_id.
+    After: el valor extraido como string; "N/A" si no se puede leer.
+    """
+    # Primer intento: formato tabla markdown de TURN.md
+    # `| **Plan ID** | WOT-2026-XXX |`
+    for line in turn_content.split("\n"):
+        stripped = line.strip()
+        if "| **Plan ID** |" in stripped:
+            parts = stripped.split("|")
+            for i, part in enumerate(parts):
+                part = part.strip()
+                if "**Plan ID**" in part:
+                    if i + 1 < len(parts):
+                        value = parts[i + 1].strip()
+                        if value and value != "N/A":
+                            return value
+                    break
+
+    # Fallback: formato work_plan.md (**Plan ID:** o **ID:**)
+    return get_plan_id(turn_content)
+
+
+def _check_turn_supervisor_sync() -> list[str]:
+    """WOT-2026-060s: gate bloqueante que declara la desincronizacion TURN.md / supervisor_state.json.
+
+    Lee **Plan ID** de TURN.md y active_ticket de supervisor_state.json; si ambos
+    existen, son no-vacios y difieren, retorna un ERROR nombrando la superficie y
+    el campo. Si falta alguno o coinciden, retorna [].
+
+    Before: TURN_FILE y _SUPERVISOR_STATE_PATH existen (o no).
+    During: parsea Plan ID de TURN.md via _extract_turn_plan_id; lee active_ticket
+        del JSON.
+    After: lista de errores vacia si sync / sin discrepancia; con un error si
+        ambas superficies existen y difieren (self-service: nombra la superficie).
+    """
+    invalid_values = {"", "N/A", "unknown", "null", "none"}
+
+    # Leer TURN.md y extraer Plan ID
+    try:
+        turn_content = read_file(TURN_FILE)
+    except Exception:
+        return []  # TURN.md ausente -> no hay superficie que comparar
+
+    turn_plan_id = _extract_turn_plan_id(turn_content).strip()
+
+    if turn_plan_id.lower() in {v.lower() for v in invalid_values}:
+        return []  # TURN.md no tiene Plan ID -> skip
+
+    # Leer supervisor_state.json y extraer active_ticket
+    sup_data = _load_json_safe(_SUPERVISOR_STATE_PATH)
+    if sup_data is None:
+        return []  # supervisor_state.json ausente -> no hay superficie que comparar
+    if not isinstance(sup_data, dict):
+        return []  # JSON valido pero forma no-dict (p.ej. lista) -> sin superficie legible
+
+    sup_ticket = str(sup_data.get("active_ticket") or "").strip()
+
+    if sup_ticket.lower() in {v.lower() for v in invalid_values}:
+        return []  # active_ticket nulo -> skip
+
+    if turn_plan_id != sup_ticket:
+        return [
+            f"[WOT-2026-060s] Desincronizacion TURN.md / supervisor_state.json: "
+            f"TURN.md Plan ID='{turn_plan_id}', supervisor_state.json active_ticket='{sup_ticket}'"
+        ]
+
+    return []
+
+
+def _load_json_safe(path: Path) -> dict | None:
+    """Read a JSON file from the filesystem, returning None on any error."""
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
 def _check_pre_closure_invariants(plan_id: str) -> list[str]:
     """Check pre-closure invariants (IN_PROGRESS, APPROVED, PENDING)."""
     if not BUS_AVAILABLE or not event_bus:
@@ -6758,6 +6844,12 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
         )
         if bootstrap_errors:
             errors.setdefault("bootstrap", []).extend(bootstrap_errors)
+
+        # WOT-2026-060s: TURN.md / supervisor_state.json sync gate
+        sync_errors = _check_turn_supervisor_sync()
+        if sync_errors:
+            errors.setdefault("turn_supervisor_sync", []).extend(sync_errors)
+
         drift_warnings = _check_bus_drift(plan_content, log_status)
         if drift_warnings:
             warnings.setdefault("bus_drift", []).extend(drift_warnings)
