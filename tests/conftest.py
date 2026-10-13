@@ -685,6 +685,43 @@ def _isolate_controller_event_bus(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _sandbox_controller_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-091a: sandbox agent_controller writer paths to tmp_path.
+
+    The agent_controller module resolves its writer paths (CIRCUIT_BREAKER_PATH,
+    _BUILDER_SESSION_PATH, BUILDER_LOCK_PATH) from ``runtime.project_root``
+    which resolves to the REAL motor .agent/ even when tests patch
+    ``agent_controller.PROJECT_ROOT``. This fixture intercepts ``get_agent_dir()``
+    on the agent_controller module so ALL writer paths resolve to the test
+    sandbox instead of the real motor.
+
+    The redirect is installed via ``monkeypatch.setattr`` on the ``agent_controller``
+    module object (loaded from sys.modules at fixture time), which covers all
+    path constants that use ``get_agent_dir()``:
+
+      - CIRCUIT_BREAKER_PATH (:306 in agent_controller.py)
+      - _BUILDER_SESSION_PATH (:796)
+      - BUILDER_LOCK_PATH (:309)
+
+    Tests that already patch the path constants individually (e.g.
+    ``tests/test_agent_controller.py:1602``, ``:5411``) keep their patches
+    because they patch a DIFFERENT attribute on ``agent_controller`` from the
+    test body; ``monkeypatch.setattr`` installs later than the autouse fixture
+    and therefore overrides the default, regardless of fixture definition order.
+
+    Reference pattern: ``_isolate_controller_event_bus`` (:648-684).
+    """
+    ac = sys.modules.get("agent_controller") or importlib.import_module(
+        "agent_controller"
+    )
+    sandbox_agent_dir = tmp_path / ".agent"
+    monkeypatch.setattr(ac, "get_agent_dir", lambda: sandbox_agent_dir)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _bind_default_ticket_prefix() -> None:
     """WOT-2026-068k: enlace inicial de los gates de backlog por-destino.
 

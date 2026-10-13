@@ -1559,16 +1559,26 @@ def normalize_pytest_args(raw_args: list[str], level: str) -> list[str]:
     return args
 
 
+_RUNTIME_SNAPSHOT_EXCLUDED_DIRS: frozenset[str] = frozenset({"pytest-safe"})
+
+
 def snapshot_canonical_state() -> dict[str, str]:
-    """Snapshot canonical collaboration files before the suite runs.
+    """Snapshot canonical collaboration files and runtime top-level before the suite runs.
 
     Barrier (CEM class B - state leak): some historical tests wrote to the
-    REAL .agent/collaboration/ of the motor instead of tmp_path. Capturing
-    content before and comparing after turns that silent leak into a
-    visible failure with the offending delta.
+    REAL .agent/collaboration/ and .agent/runtime/ of the motor instead of
+    tmp_path. Capturing content before and comparing after turns that silent
+    leak into a visible failure with the offending delta.
 
     WOT-2026-020f: also snapshots ``*_WOT-*.md`` files (recursive) so a staged
     deletion of an AUDIT_WOT-*/PLAN_WOT-* artifact during the suite is detected.
+
+    WOT-2026-091a: extends the barrier to regular files at the top-level of
+    ``_AGENT_DIR / "runtime"`` (non-recursive) so that fixtures written by
+    tests into the motor's real .agent/runtime/ (e.g. builder_session.json,
+    circuit_breaker.json) are also detected. Excludes directories listed in
+    ``_RUNTIME_SNAPSHOT_EXCLUDED_DIRS`` (currently only "pytest-safe", which
+    holds the runner's own artefacts).
 
     CTL-2026-012j: WOT files are keyed by their path RELATIVE to the collab dir
     (e.g. ``_archive/plan_audit/AUDIT_WOT-2026-015l.md``), not by basename. The
@@ -1577,42 +1587,106 @@ def snapshot_canonical_state() -> dict[str, str]:
     were never found at compare time and were reported as a false leak even
     when unchanged -- turning a green suite (0 failed) into exit 1. The 4
     canonical files stay keyed by basename (they live at the collab root).
+
+    Key schema:
+      - collaboration: ``collaboration/<relative-path>`` (e.g.
+        ``collaboration/STATE.md``, ``collaboration/_archive/plan_audit/AUDIT_WOT-2026-015l.md``)
+      - runtime top-level: ``runtime/<filename>`` (e.g. ``runtime/builder_session.json``)
     """
     snapshot: dict[str, str] = {}
     collab = _AGENT_DIR / "collaboration"
     for name in ("STATE.md", "TURN.md", "work_plan.md", "execution_log.md"):
         path = collab / name
-        try:
-            snapshot[name] = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            snapshot[name] = ""
+        with contextlib.suppress(OSError):
+            snapshot[f"collaboration/{name}"] = path.read_text(
+                encoding="utf-8", errors="replace"
+            )
     for wot_file in collab.rglob("*_WOT-*.md"):
         try:
             rel = wot_file.relative_to(collab).as_posix()
         except ValueError:
             rel = wot_file.name
-        try:
-            snapshot[rel] = wot_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            snapshot[rel] = ""
+        with contextlib.suppress(OSError):
+            snapshot[f"collaboration/{rel}"] = wot_file.read_text(
+                encoding="utf-8", errors="replace"
+            )
+    # WOT-2026-091a: snapshot regular files at the top-level of runtime/.
+    snapshot.update(_snapshot_runtime_top_level())
     return snapshot
 
 
-def check_canonical_state_leak(snapshot: dict[str, str]) -> list[str]:
-    """Compare canonical files against the pre-suite snapshot.
+def _snapshot_runtime_top_level() -> dict[str, str]:
+    """Snapshot regular files at the top-level of ``_AGENT_DIR / "runtime"``.
 
-    Returns a list of leaked file names (content changed during the run).
+    WOT-2026-091a: non-recursive by design -- directories are always skipped
+    and entries whose name is in ``_RUNTIME_SNAPSHOT_EXCLUDED_DIRS`` are
+    skipped too (currently only "pytest-safe", which holds the runner's own
+    artefacts).  Entries are excluded by name, not by full path: a future
+    runner artefact landing at the top-level must be added there explicitly
+    so the barrier keeps ignoring it.
+    """
+    snapshot: dict[str, str] = {}
+    runtime_dir = _AGENT_DIR / "runtime"
+    if not runtime_dir.is_dir():
+        return snapshot
+    for entry in sorted(runtime_dir.iterdir()):
+        if entry.is_dir() or entry.name in _RUNTIME_SNAPSHOT_EXCLUDED_DIRS:
+            continue  # non-recursive by design; excluded dirs/files by _RUNTIME_SNAPSHOT_EXCLUDED_DIRS
+        try:
+            snapshot[f"runtime/{entry.name}"] = entry.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            snapshot[f"runtime/{entry.name}"] = ""
+    return snapshot
+
+
+def check_canonical_state_leak(snapshot: dict[str, str]) -> list[str]:  # noqa: C901
+    """Compare canonical files and runtime top-level against the pre-suite snapshot.
+
+    WOT-2026-091a: keys are resolved relative to ``_AGENT_DIR`` (not
+    ``collab``), so both ``collaboration/...`` and ``runtime/...`` keys
+    resolve correctly.  Detects file deletion (None sentinel) and new files
+    (key not in snapshot).  Runtime entries are always excluded if their name
+    is in ``_RUNTIME_SNAPSHOT_EXCLUDED_DIRS`` (currently only "pytest-safe").
+
+    Returns a list of leaked file keys (content changed, newly created, or
+    deleted during the run).
     """
     leaked: list[str] = []
-    collab = _AGENT_DIR / "collaboration"
-    for name, before in snapshot.items():
-        path = collab / name
+    for key, before in snapshot.items():
+        path = _AGENT_DIR / key
         try:
             after = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            after = ""
+            after = None  # file deleted during the run
         if after != before:
-            leaked.append(name)
+            leaked.append(key)
+    # WOT-2026-091a: detect NEW files at runtime top-level that were not in
+    # the snapshot. The snapshot only covers files that existed before the run;
+    # a test that creates a new file in runtime/ must also be caught.
+    runtime_dir = _AGENT_DIR / "runtime"
+    if runtime_dir.is_dir():
+        for entry in runtime_dir.iterdir():
+            if entry.is_dir() or entry.name in _RUNTIME_SNAPSHOT_EXCLUDED_DIRS:
+                continue  # dirs excluded; _RUNTIME_SNAPSHOT_EXCLUDED_DIRS entries also excluded
+            rkey = f"runtime/{entry.name}"
+            if rkey not in snapshot:
+                # New file in runtime/ is always a leak (even 0-byte: key not
+                # in snapshot -> newly created).
+                leaked.append(rkey)
+    # WOT-2026-091a H4: detect NEW WOT files at the top-level of collaboration/
+    # (the rglob in snapshot covers recursive, but top-level files that appeared
+    # during the run must be caught).  Also catch any other top-level file that
+    # exists now but was not in the snapshot.
+    collab_dir = _AGENT_DIR / "collaboration"
+    if collab_dir.is_dir():
+        for entry in collab_dir.iterdir():
+            if entry.is_dir():
+                continue
+            ckey = f"collaboration/{entry.name}"
+            if ckey not in snapshot and entry.is_file():
+                leaked.append(ckey)
     return leaked
 
 

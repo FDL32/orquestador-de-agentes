@@ -1150,8 +1150,127 @@ class TestErrorTestIdsInSummary:
 
 
 # =============================================================================
-# WOT-2026-020f: state_leak covers *_WOT-*.md + basetemp outside repo
+# WOT-2026-091a: state_leak extends to runtime/ top-level files
 # =============================================================================
+
+
+class TestStateLeakRuntimeFiles:
+    """WOT-2026-091a: check_canonical_state_leak must detect write/create/delete
+    of regular files at the top-level of _AGENT_DIR/runtime/.
+
+    The defekt (WOT-2026-091a) was that ``snapshot_canonical_state`` only
+    checked ``.agent/collaboration/`` while the suite writes fixtures into
+    ``.agent/runtime/`` (builder_session.json, circuit_breaker.json).
+
+    The runner's own artefacts under ``pytest-safe/`` are excluded via
+    ``_RUNTIME_SNAPSHOT_EXCLUDED_DIRS`` so they never trigger false leaks.
+    """
+
+    def test_runtime_file_content_change_detected(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Write a runtime fixture, snapshot, mutate, detect."""
+        mod = load_runner_module()
+        agent_dir = tmp_path / ".agent"
+        runtime_dir = agent_dir / "runtime"
+        runtime_dir.mkdir(parents=True)
+        fixture = runtime_dir / "builder_session.json"
+        fixture.write_text('{"ticket_id": "WT-2026-240a"}', encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", agent_dir)
+        snapshot = mod.snapshot_canonical_state()
+        assert "runtime/builder_session.json" in snapshot
+
+        fixture.write_text('{"ticket_id": "WT-2026-999z"}', encoding="utf-8")
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "runtime/builder_session.json" in leaked
+
+    def test_runtime_new_file_created_detected(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A test that creates a new file in runtime/ during the suite is detected."""
+        mod = load_runner_module()
+        agent_dir = tmp_path / ".agent"
+        runtime_dir = agent_dir / "runtime"
+        runtime_dir.mkdir(parents=True)
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", agent_dir)
+        snapshot = mod.snapshot_canonical_state()
+        # 4 canonical collaboration keys present only if files exist on disk;
+        # missing files are NOT tracked (H5 sentinel: missing=missing is no
+        # change, so absent files are omitted from the snapshot).
+        assert len(snapshot) == 0
+
+        # Simulate a test writer creating a new fixture
+        new_file = runtime_dir / "circuit_breaker.json"
+        new_file.write_text('{"last_ticket": "WOT-2026-999z"}', encoding="utf-8")
+
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "runtime/circuit_breaker.json" in leaked
+
+    def test_runtime_file_deletion_detected(self, tmp_path: Path, monkeypatch) -> None:
+        """A runtime fixture that exists before the suite and is deleted during it."""
+        mod = load_runner_module()
+        agent_dir = tmp_path / ".agent"
+        runtime_dir = agent_dir / "runtime"
+        runtime_dir.mkdir(parents=True)
+        fixture = runtime_dir / "circuit_breaker.json"
+        fixture.write_text('{"last_ticket": "WOT-2026-001a"}', encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", agent_dir)
+        snapshot = mod.snapshot_canonical_state()
+        assert "runtime/circuit_breaker.json" in snapshot
+
+        fixture.unlink()
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "runtime/circuit_breaker.json" in leaked
+
+    def test_runner_own_artifact_not_flagged(self, tmp_path: Path, monkeypatch) -> None:
+        """Artefacts under pytest-safe/ are excluded by _RUNTIME_SNAPSHOT_EXCLUDED_DIRS.
+
+        Mutate the runner's own last-run.json and last-run.log (written to
+        runtime/pytest-safe/) during the "suite" and verify they are NOT
+        reported as leaks (they are not in the snapshot, and the dir is
+        excluded from the new-file detection too).
+        """
+        mod = load_runner_module()
+        agent_dir = tmp_path / ".agent"
+        runtime_dir = agent_dir / "runtime"
+        pytest_safe = runtime_dir / "pytest-safe"
+        pytest_safe.mkdir(parents=True)
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", agent_dir)
+        # The pytest-safe dir is excluded from both snapshot and new-file check.
+        snapshot = mod.snapshot_canonical_state()
+        # 4 canonical collaboration keys present only if files exist on disk;
+        # missing files are NOT tracked (H5 sentinel).
+        assert len(snapshot) == 0
+
+        # Mutate runner artefacts (these would be written by the runner itself)
+        last_run = pytest_safe / "last-run.json"
+        last_run.write_text('{"status": "finished"}', encoding="utf-8")
+        run_hist = pytest_safe / "run_history.jsonl"
+        run_hist.write_text('{"passed": 100}\n', encoding="utf-8")
+
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert leaked == [], f"pytest-safe artefacts must not leak, got: {leaked}"
+
+    def test_no_runtime_files_no_leak(self, tmp_path: Path, monkeypatch) -> None:
+        """No runtime files -> no leak (the green-path baseline)."""
+        mod = load_runner_module()
+        agent_dir = tmp_path / ".agent"
+        runtime_dir = agent_dir / "runtime"
+        runtime_dir.mkdir(parents=True)
+        # No files, only the dir.
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", agent_dir)
+        snapshot = mod.snapshot_canonical_state()
+        # 4 canonical collaboration keys present only if files exist on disk;
+        # missing files are NOT tracked (H5 sentinel).
+        assert len(snapshot) == 0
+
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert leaked == []
 
 
 class TestStateLeakWotFiles:
@@ -1167,11 +1286,11 @@ class TestStateLeakWotFiles:
 
         monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
         snapshot = mod.snapshot_canonical_state()
-        assert "AUDIT_WOT-2026-020f.md" in snapshot
+        assert "collaboration/AUDIT_WOT-2026-020f.md" in snapshot
 
         wot_file.unlink()
         leaked = mod.check_canonical_state_leak(snapshot)
-        assert "AUDIT_WOT-2026-020f.md" in leaked
+        assert "collaboration/AUDIT_WOT-2026-020f.md" in leaked
 
     def test_wot_file_content_change_detected(
         self, tmp_path: Path, monkeypatch
@@ -1187,7 +1306,7 @@ class TestStateLeakWotFiles:
 
         wot_file.write_text("modified", encoding="utf-8")
         leaked = mod.check_canonical_state_leak(snapshot)
-        assert "PLAN_WOT-2026-999z.md" in leaked
+        assert "collaboration/PLAN_WOT-2026-999z.md" in leaked
 
     def test_no_wot_files_no_leak(self, tmp_path: Path, monkeypatch) -> None:
         mod = load_runner_module()
@@ -1220,8 +1339,10 @@ class TestStateLeakWotFiles:
 
         monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
         snapshot = mod.snapshot_canonical_state()
-        # The archived file is keyed by its path relative to collab, not basename.
-        assert "_archive/plan_audit/AUDIT_WOT-2026-015l.md" in snapshot
+        # The archived file is keyed by "collaboration/" + its path relative to collab,
+        # not just the relative path or basename.
+        assert "collaboration/_archive/plan_audit/AUDIT_WOT-2026-015l.md" in snapshot
+        assert "_archive/plan_audit/AUDIT_WOT-2026-015l.md" not in snapshot
         assert "AUDIT_WOT-2026-015l.md" not in snapshot
 
         # No change during the "run" -> no leak (the pre-fix bug reported this).
@@ -1250,7 +1371,7 @@ class TestStateLeakWotFiles:
 
         archived.write_text("mutated archived", encoding="utf-8")
         leaked = mod.check_canonical_state_leak(snapshot)
-        assert "_archive/plan_audit/PLAN_WOT-2026-016b.md" in leaked, (
+        assert "collaboration/_archive/plan_audit/PLAN_WOT-2026-016b.md" in leaked, (
             f"Expected archived WOT mutation to be detected, got: {leaked}"
         )
 
@@ -1276,6 +1397,78 @@ class TestStateLeakWotFiles:
         assert len(leaked) > 0, "Expected leak to be detected"
         # Verificar que el path de _AGENT_DIR se usa para desambiguar
         assert tmp_path / ".agent" == mod._AGENT_DIR
+        # Con el nuevo esquema de claves, la clave tiene prefijo "collaboration/"
+        assert any(k.startswith("collaboration/") for k in leaked), (
+            f"Expected collaboration-prefixed keys, got: {leaked}"
+        )
+
+    def test_collaboration_top_level_new_wot_file_detected(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-091a H4: a new *_WOT-*.md file created at the top-level
+        of collaboration/ during the run is detected as a leak."""
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        # Create a new WOT file at the top-level (not under _archive/)
+        new_wot = collab / "AUDIT_WOT-2026-999z.md"
+        new_wot.write_text("new audit", encoding="utf-8")
+
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "collaboration/AUDIT_WOT-2026-999z.md" in leaked
+
+
+class TestStateLeakEmptyFile:
+    """WOT-2026-091a H5: file deletion and new 0-byte file detection.
+
+    Uses a None sentinel (not empty-string truthiness) so that:
+    - a file deleted during the run (None != "") is always leaked
+    - a new 0-byte file (key not in snapshot) is always leaked
+    - "" content that stays "" is NOT leaked (no false positive).
+    """
+
+    def test_zero_byte_runtime_file_detected(self, tmp_path: Path, monkeypatch) -> None:
+        """A newly created 0-byte file in runtime/ is a leak."""
+        mod = load_runner_module()
+        agent_dir = tmp_path / ".agent"
+        runtime_dir = agent_dir / "runtime"
+        runtime_dir.mkdir(parents=True)
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", agent_dir)
+        snapshot = mod.snapshot_canonical_state()
+
+        # Create a 0-byte file
+        empty_file = runtime_dir / "empty_fixture.json"
+        empty_file.write_text("", encoding="utf-8")
+
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "runtime/empty_fixture.json" in leaked
+
+    def test_deleted_empty_file_detected(self, tmp_path: Path, monkeypatch) -> None:
+        """A file that existed with empty content before the run and is
+        deleted during the run is detected as a leak (None != "").
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        # Create a file with empty content (snapshot will record "")
+        empty_plan = collab / "PLAN_WOT-2026-001z.md"
+        empty_plan.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+        assert "collaboration/PLAN_WOT-2026-001z.md" in snapshot
+        assert snapshot["collaboration/PLAN_WOT-2026-001z.md"] == ""
+
+        # Delete the file
+        empty_plan.unlink()
+
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "collaboration/PLAN_WOT-2026-001z.md" in leaked
 
 
 class TestBasetempOutsideRepo:
