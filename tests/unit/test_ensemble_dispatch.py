@@ -8654,6 +8654,104 @@ def test_loop_round_cli_warns_when_commit_sha_omitted(capsys, tmp_path, monkeypa
     )
 
 
+def test_loop_round_cli_no_warn_when_commit_sha_provided(capsys, tmp_path, monkeypatch):
+    """WOT-2026-067i (Menor-1): with --commit-sha -> NO WARN on stderr.
+
+    MUTATION (DoD): agregar el print del WARN siempre (sin check de args.commit_sha)
+    -> capsys.err tendra WARN aunque se pase sha; test ROJO.
+    """
+
+    def fake_send(*a, **k):
+        return "ok"
+
+    sha40 = "deadbeef" * 5 + "cafe"
+    payload = tmp_path / "payload.txt"
+    payload.write_text("material publico", encoding="utf-8")
+    argv = [
+        "loop-round",
+        "--profile",
+        "p_chal",
+        "--content-file",
+        str(payload),
+        "--ticket",
+        "WOT-TEST-067i",
+        "--task-type",
+        "prose",
+        "--rol",
+        "challenger",
+        "--phase",
+        "DESIGN_REVIEW",
+        "--loop-id",
+        "L701",
+        "--backend-key",
+        "BKA",
+        "--data-sensitivity",
+        "public",
+        "--project-root",
+        str(tmp_path),
+        "--commit-sha",
+        sha40,
+    ]
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to" + "_profile", fake_send)
+    # prose task_type -> passes non-government phase check; returns 0.
+    rc = ed.main(argv)
+    captured = capsys.readouterr()
+    assert rc == 0, f"expected rc=0 for prose task_type, got {rc}"
+    assert "WARN" not in captured.err, (
+        f"con --commit-sha no debe haber WARN; stderr={captured.err!r}"
+    )
+
+
+def test_loop_round_cli_warn_with_rc_zero_non_government(capsys, tmp_path, monkeypatch):
+    """WOT-2026-067i (Menor-1): non-government task_type returns rc=0 but
+    STILL emits WARN about missing --commit-sha.
+
+    MUTATION (DoD): quitar el print del WARN -> capsys.err vacio, test ROJO.
+    """
+
+    def fake_send(*a, **k):
+        return "ok"
+
+    payload = tmp_path / "payload.txt"
+    payload.write_text("material publico", encoding="utf-8")
+    argv = [
+        "loop-round",
+        "--profile",
+        "p_chal",
+        "--content-file",
+        str(payload),
+        "--ticket",
+        "WOT-TEST-067i",
+        "--task-type",
+        "code-review",
+        "--rol",
+        "challenger",
+        "--phase",
+        "MANAGER_REVIEW",
+        "--loop-id",
+        "L702",
+        "--backend-key",
+        "BKA",
+        "--data-sensitivity",
+        "public",
+        "--project-root",
+        str(tmp_path),
+    ]
+    # Sin --commit-sha -> WARN; sin nonce -> rc=4 (INVALID) si es gobierno,
+    # pero con task_type=code-review puede pasar rc=0 segun la via.
+    # El foco: el WARN aparece INDEPENDIENTEMENTE del rc.
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to" + "_profile", fake_send)
+    rc = ed.main(argv)
+    captured = capsys.readouterr()
+    assert "WARN" in captured.err, (
+        f"WARN debe aparecer incluso con rc={rc}; stderr={captured.err!r}"
+    )
+    assert "--commit-sha no proporcionado" in captured.err
+    assert "owner=WOT-2026-067i" in captured.err
+
+
 # --------------------------------------------------------------------------- #
 # WOT-2026-055a: `--phase` gobernado por el enum de 8 etapas canonicas
 # --------------------------------------------------------------------------- #
