@@ -335,7 +335,7 @@ bridge):
 - Contenido JSON:
 
 ```json
-{"ticket_id": "<ticket_id>", "decision": "APROBADO|CHANGES", "blockers": []}
+{"ticket_id": "<ticket_id>", "decision": "APPROVE|CHANGES", "blockers": []}
 ```
 
 - `decision` solo admite `APPROVE` o `CHANGES`; en `CHANGES`, lista cada

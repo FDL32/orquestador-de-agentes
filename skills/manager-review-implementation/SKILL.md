@@ -117,7 +117,7 @@ Antes de emitir el veredicto en texto, escribe el decision artifact
 estructurado (canal primario del bridge; el transcript es fallback):
 
 - Ruta: `.agent/runtime/reviews/decision_<ticket_id>.json` (en `repo_destino`).
-- Contenido: `{"ticket_id": "<ticket_id>", "decision": "APROBADO|CHANGES", "blockers": []}`
+- Contenido: `{"ticket_id": "<ticket_id>", "decision": "APPROVE|CHANGES", "blockers": []}`
 - En `CHANGES`, lista cada blocker como string breve en `blockers`.
 - Si no puedes escribir el archivo, emite igualmente el veredicto en texto.
 
@@ -131,14 +131,14 @@ mutation-verify:
   con_fix:  command: <cmd>   exit_code: 0       # DEBE ser verde
 ```
 
-Sin ese par de exit-codes reales no se emite `APROBADO` para code/mixed que corrigen bug. NO redeclares aqui los criterios normativos: viven en `prompts/manager_review.md` y esta skill solo remite (regla skill-apunta-prompt-gobierna).
-
-#### Opcion A: APROBADO
+Sin ese par de exit-codes reales no se emite `APPROVE` para code/mixed que corrigen bug. NO redeclares aqui los criterios normativos: viven en `prompts/manager_review.md` y esta skill solo remite (regla skill-apunta-prompt-gobierna).
+#### Opcion A: APPROVE
 
 Si pasa todos los gates y verificaciones:
 
 1. En `work_plan.md`: cambiar estado a `COMPLETED`
-2. Registrar decision `APROBADO` en la superficie de review vigente
+
+2. Registrar decision `APPROVE` en la superficie de review vigente
 3. Notificar handoff al usuario
 4. Limpiar `execution_log.md` para proxima sesion
 
@@ -198,7 +198,7 @@ Si hay problemas menores:
 ## [FECHA] Revision Completa: Manager -> Builder
 
 **Plan:** WOT-XXX
-**Veredicto:** [APPROVED | CHANGES]
+**Veredicto:** [APPROVE | CHANGES]
 **Accion requerida:** [Ver feedback de review | Continuar con siguiente tarea]
 **Estado:** PENDING
 ```
