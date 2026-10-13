@@ -54,6 +54,32 @@ regexes = [
   '''valorsincomillas0123456789abcd''',
 ]
 
+# WOT-2026-016r/039k (sync seed 2026-10-13): cobertura de HISTORIA (blobs
+# antiguos con los literales contiguos). Los control-positivos del clasificador
+# usan valores FRESCOS (7a8b...) NO presentes aqui ni en historia. Debe espejar
+# el seed agent_system/templates/gitleaks.config.toml (gate de divergencia).
+[[allowlists]]
+description = "fixtures sinteticos en HISTORIA (016r/039k): NO credenciales reales"
+regexes = [
+  '''sk_live_9f8e7d6c5b4a3210''',
+  '''valorsincomillas9f8e7d6c5b4a3210''',
+  '''sk_live_1234567890''',
+  '''\+ _REAL_PEM_BODY''',
+]
+
+# WOT-2026-016r/039k (sync seed 2026-10-13): fixtures sinteticos NUEVOS del
+# clasificador de publicacion y del test de divergencia. Por VALOR EXACTO,
+# misma politica del bloque de arriba. Debe espejar el seed
+# agent_system/templates/gitleaks.config.toml (gate de divergencia).
+[[allowlists]]
+description = "fixtures sinteticos 016r/039k: clasificador de publicacion y seed-divergence (NO credenciales reales)"
+regexes = [
+  '''sk_live_9f8e7d6c5b4a3210''',
+  '''valorsincomillas9f8e7d6c5b4a3210''',
+  '''sk_live_1234567890''',
+  '''\+ _REAL_PEM_BODY''',
+]
+
 # WOT-2026-027n: los tests del gate de CONTENIDO de privacy_preflight tienen que
 # CONTENER los literales que prueban que el gate los bloquea. Un test que
 # demuestra que `password = "sk-live-..."` no sale hacia la API externa no puede

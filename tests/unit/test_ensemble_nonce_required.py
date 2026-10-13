@@ -225,20 +225,14 @@ def test_government_phase_without_nonce_no_backend_call(tmp_path, monkeypatch):
 def test_non_government_phase_passes_without_nonce(tmp_path, monkeypatch):
     """WOT-2026-040i DoD-4: una fase fuera de gobierno sigue pasando sin nonce.
 
-    <<<<<<< HEAD
-        `DESIGN_REVIEW` es una etapa canonica NO de gobierno (WOT-2026-055a): no
-        exige nonce. Se usa `code-review` como task_type valido para una fase que no
-        es de gobierno.
-    =======
-        `premise_check` es la fase no-gobierno canonica (ronda 0): no exige nonce.
-        Se usa `prose` como task_type NO de gobierno: desde WOT-2026-066t los
-        task_types de gobierno (contract-audit, code-review, prompt-audit,
-        adjudication) exigen el par nonce+sha por SU propia via, y este test debe
-        seguir midiendo SOLO la dimension fase.
-    >>>>>>> vuelo/lote-M-grupoD-sesionB-20261011
+    `DESIGN_REVIEW` es una etapa canonica NO de gobierno (WOT-2026-055a): no
+    exige nonce. Se usa `prose` como task_type NO de gobierno: desde
+    WOT-2026-066t los task_types de gobierno (contract-audit, code-review,
+    prompt-audit, adjudication) exigen el par nonce+sha por SU propia via, y
+    este test debe seguir midiendo SOLO la dimension fase.
 
-        Mutation: bloquear TODAS las fases sin nonce -> la ronda de prose
-        falla -> RED.
+    Mutation: bloquear TODAS las fases sin nonce -> la ronda de prose
+    falla -> RED.
     """
     transport = _FakeTransport(replies=["respuesta"])
     monkeypatch.setattr(ed, "load_motor_config", lambda: _config())

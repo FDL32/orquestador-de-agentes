@@ -54,12 +54,14 @@ regexes = [
   '''valorsincomillas0123456789abcd''',
 ]
 
-# WOT-2026-016r/039k (sync seed 2026-10-13): los fixtures del clasificador de
-# publicacion y del test de divergencia usan valores sinteticos NUEVOS
-# (construidos por concatenacion para ser plausibles pero falsos). Por VALOR
-# EXACTO, misma politica del bloque de arriba.
+# WOT-2026-016r/039k (sync seed 2026-10-13): cobertura de HISTORIA. Los blobs
+# antiguos (fbdcdb2 y anteriores) contienen los literales contiguos 9f8e7d6c y
+# sk_live_1234567890 y el PEM de construccion fuente: el scan --all los ve
+# SIEMPRE y necesitan allowlist. Los control-positivos del clasificador usan
+# valores FRESCOS (7a8b...) que NO estan aqui (ni en historia), asi que el
+# scrub por substring no los excisa y siguen detectandose.
 [[allowlists]]
-description = "fixtures sinteticos 016r/039k: clasificador de publicacion y seed-divergence (NO credenciales reales)"
+description = "fixtures sinteticos en HISTORIA (016r/039k): NO credenciales reales"
 regexes = [
   '''sk_live_9f8e7d6c5b4a3210''',
   '''valorsincomillas9f8e7d6c5b4a3210''',

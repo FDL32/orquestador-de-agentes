@@ -43,9 +43,13 @@ _OPAQUE_SECRET = "REALSECRET0123456789" + "abcdef"
 _OPAQUE_PASSWORD = "SuperSecretValue" + "123456"
 # Non-seed synthetic values: deliberately distinct from the seed's by-design
 # fixtures so they remain genuine control positives (the seed values are now
-# scrubbed by the classifier as BY DESIGN).
-_LEAK_KEY = "sk_live_9f8e7d6c5b4a3210" + "XYZ"
-_UNQUOTED_KEY = "valorsincomillas9f8e7d6c5b4a3210"
+# scrubbed by the classifier as BY DESIGN). FRESCOS (7a8b...) y PARTIDOS en la
+# fuente: ni la historia de git ni el seed los contienen, asi que ni el scan
+# --all los marca ni el scrub por substring los excisa (E11/2026-10-13: los
+# valores 9f8e de 016r compartian substring con su propia version historica y
+# el scrub mataba estos control positivos).
+_LEAK_KEY = "sk_live_" + "7a8b9c0d1e2f3a4b5c6d" + "XYZ"
+_UNQUOTED_KEY = "valorsincomillas" + "7a8b9c0d1e2f3a4b5c6d"
 _ENV_PLACEHOLDER = "replace_with_your_" + "actual_api_key_here"
 # A valid-format (non-example) AWS key id: AKIA + exactly 16 uppercase alnum.
 # The documented example (AKIAIOSFODNN7EXAMPLE) is a BY-DESIGN placeholder, so
