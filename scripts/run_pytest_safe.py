@@ -38,6 +38,12 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 from runtime.project_root import get_agent_dir, resolve_project_root  # noqa: E402
 
+# WOT-2026-079c: reutiliza la fuente canonica de superficies vivas del guard
+# para que el sello del runner comparta EL MISMO set que pre_handoff_guard.
+from scripts.pre_handoff_guard import (  # noqa: E402
+    LIVE_SURFACES_REL as _LIVE_SURFACES_REL,
+)
+
 # WOT-2026-040t (Pieza 4): pre/post invariant over the audit window. Static
 # import so check_guard_wiring's AST walker reaches this call-site.
 from scripts.worktree_audit_invariant import (  # noqa: E402
@@ -1820,18 +1826,13 @@ def main() -> int:  # noqa: C901
             _ignore_paths = _ignore_paths | frozenset(
                 [str(_lp.resolve().relative_to(_delivery_root)).replace("\\", "/")]
             )
-    # Superficies vivas canonicas (AGENTS.md): NUNCA entran en git, pero
-    # el auditor las mira como parte del arbol vivo; si una sesion las
-    # modifica durante la ventana, el sello no debe invalidar.
-    _viva_rel = (
-        ".agent/collaboration/work_plan.md",
-        ".agent/collaboration/TURN.md",
-        ".agent/collaboration/STATE.md",
-        ".agent/collaboration/execution_log.md",
-        ".agent/collaboration/notifications.md",
-        ".agent/collaboration/review_queue.md",
-    )
-    for _v in _viva_rel:
+    # Superficies vivas canonicas (pre_handoff_guard.py::LIVE_SURFACES_REL):
+    # muchas DE ESTAS rutas son trackeadas en el destino (work_plan.md,
+    # execution_log.md, TURN.md, STATE.md, notifications.md, review_queue.md,
+    # backlog.md, archive/, _archive/); las excluye el auditor porque el sello
+    # no debe invalidar si una sesion las modifica durante la ventana de
+    # medicion (un cierre commitea backlog.md o archive/ en el mismo minuto).
+    for _v in _LIVE_SURFACES_REL:
         _ignore_paths = _ignore_paths | frozenset([_v])
     try:
         _audit_state_pre = _invariant_capture_state(
