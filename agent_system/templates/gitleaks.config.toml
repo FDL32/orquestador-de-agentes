@@ -54,6 +54,19 @@ regexes = [
   '''valorsincomillas0123456789abcd''',
 ]
 
+# WOT-2026-016r/039k (sync seed 2026-10-13): los fixtures del clasificador de
+# publicacion y del test de divergencia usan valores sinteticos NUEVOS
+# (construidos por concatenacion para ser plausibles pero falsos). Por VALOR
+# EXACTO, misma politica del bloque de arriba.
+[[allowlists]]
+description = "fixtures sinteticos 016r/039k: clasificador de publicacion y seed-divergence (NO credenciales reales)"
+regexes = [
+  '''sk_live_9f8e7d6c5b4a3210''',
+  '''valorsincomillas9f8e7d6c5b4a3210''',
+  '''sk_live_1234567890''',
+  '''\+ _REAL_PEM_BODY''',
+]
+
 # WOT-2026-027n: los tests del gate de CONTENIDO de privacy_preflight tienen que
 # CONTENER los literales que prueban que el gate los bloquea. Un test que
 # demuestra que `password = "sk-live-..."` no sale hacia la API externa no puede
