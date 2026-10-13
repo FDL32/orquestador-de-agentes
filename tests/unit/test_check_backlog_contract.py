@@ -2589,29 +2589,42 @@ def test_lost_id_absent_from_both_surfaces_fails(tmp_path: Path) -> None:
 
 
 def test_archived_row_is_not_a_lost_id(tmp_path: Path) -> None:
-    """CONTROL NEGATIVO: a legitimately archived row (moved from backlog to
-    archive with terminal state) -> green. The ID is still present in the
-    UNION of surfaces.
+    """CONTROL NEGATIVO: row moved from backlog to archive (PLAN 3.2/CA-c)
+    -> green. The ID is absent from backlog at HEAD but present in archive
+    at HEAD, so the UNION still covers it.
 
-    The fixture:
-    - origin/main: backlog with row + archive with terminal entry
-    - HEAD: same state (merge-base resolves, no diff)
+    The fixture implements the REAL MOVE:
+    - Base (merge-base): row present in backlog (archive has the archived copy
+      from the start, since the move is idempotent).
+    - HEAD: row REMOVED from backlog, kept in archive.
+    The census must NOT flag WOT-2026-086g as lost because it survives in the
+    archive surface at HEAD.
+
+    MUTATION: if archive census is broken (e.g. _get_head_ids_from_git skips
+    archive), this test goes green (false negative).
     """
     _make_git_repo_with_origin(tmp_path)
 
-    # Write initial state with row + archive.
+    # Step 1: base revision has the row in backlog (archive already has the
+    # archived copy — the move is idempotent, so archive was always there).
     initial_rows = (
         "| Alta | WOT-2026-086g | ticket archivado | s | pending | - | x | - |\n"
     )
     _write_backlog_and_commit(tmp_path, initial_rows, "base state")
 
-    # Archive has the row with terminal state.
+    # Archive has the row with terminal state (pre-existing, idempotent move).
     arch = tmp_path / ".agent" / "collaboration" / "_archive"
     arch.mkdir(parents=True, exist_ok=True)
     (arch / "backlog_done.md").write_text(
         "| Alta | WOT-2026-086g | archivado deliverable_type: code | s | completed | - | x | commit:abc |\n",
         encoding="utf-8",
     )
+
+    # Step 2: HEAD performs the MOVE — remove the row from backlog, leave it
+    # in archive. This is the real pattern: a row that was in backlog at base
+    # is now absent from backlog but survives in archive.
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "backlog.md").write_text(_HEADER + "\n", encoding="utf-8")
 
     errors = cbc.validate_lost_ids(tmp_path)
     assert errors == [], f"archived row must NOT be lost; got: {errors}"
