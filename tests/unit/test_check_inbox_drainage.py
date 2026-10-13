@@ -866,3 +866,161 @@ def test_d3_asiento_publica_fused_to_y_nombra_el_que_falta(tmp_path, capsys):
     assert "WOT-2026-999a" in out  # el id de fusion se publica
     assert "fused_to" in out
     assert "FP-20260914-sin.tickets.md" in out  # el asiento sin id se nombra
+
+
+# ---------------- WOT-2026-068n: FICHA-SIN-SUFIJO ----------------
+# Deposito con forma de ficha SIN el sufijo `.tickets.md`: el glob del consumidor
+# (Bloque 8.bis) no lo ve y el reporte lo mezclaba con el material de apoyo INFO
+# ("no renombrar") -- peor que silencio. Medido 2026-09-13: 9 ficheros, hasta 45 dias.
+
+
+def test_068n_predicado_mecanico_sin_allowlist():
+    """El criterio es POSITIVO por tokens de ficha DECLARADOS, no allowlist de
+    notas. Positivos: las tres formas declaradas (FP-<fecha> del README/escalate,
+    TICKET_CONTRACT_ del patron de contratos sueltos, id canonico en el nombre --
+    los tres casos de los 9 medidos). Negativos: notas declaradas y reclamos.
+    FUSIONES-/INCIDENTE- no casan GRACIAS al contorno no-alfabetico ("NES-2026"/
+    "TE-2026" van precedidos de letra)."""
+    import scripts.check_inbox_drainage as cid
+
+    # POSITIVOS (formas de los casos medidos 2026-09-13):
+    assert cid._ficha_shaped_name("FP-20260906-sobre-perdido.md")
+    assert cid._ficha_shaped_name("FP-20260907-otro.md")
+    assert cid._ficha_shaped_name(
+        "TICKET_CONTRACT_WOT-2026-061b-guard-wiring-no-ve-guards-sin-prefijo"
+    )  # sin extension, el caso real 061a/061b
+    assert cid._ficha_shaped_name("WOT-2026-049g-diseno-denominador.md")
+    assert cid._ficha_shaped_name("TICKET_CONTRACT_T-068N-001.md")  # T-id sin WOT-id
+
+    # NEGATIVOS (control negativo del DoD c + formatos declarados):
+    assert not cid._ficha_shaped_name("README.md")
+    assert not cid._ficha_shaped_name(
+        "FUSIONES-20260808.md"
+    )  # "NES-2026" precedido de O
+    assert not cid._ficha_shaped_name(
+        "INCIDENTE-20260828-ficha-borrada-sin-leer-en-fusion-8bis.md"
+    )
+    assert not cid._ficha_shaped_name("CONTEXTO-20260730-L1500-candidatos.md")
+    assert not cid._ficha_shaped_name("backlog_parche_reconciliacion_20260914.md")
+    # reclamo con WOT-id DENTRO: el formato `.claim.md` lo excluye (README del buzon)
+    assert not cid._ficha_shaped_name("RECLAMO-2026-09-14-WOT-2026-049g.claim.md")
+    assert not cid._ficha_shaped_name("RECLAMO-EJEMPLO.claim.md")
+    # y una ficha real no entra en este aviso (la gobierna la tricotomia):
+    assert not cid._ficha_shaped_name("FP-x.tickets.md")
+    assert not cid._ficha_shaped_name("FP-MAYUS.TICKETS.MD")
+
+
+def test_068n_ficha_sin_sufijo_produce_aviso_explicito(tmp_path, capsys):
+    """(a) depositar un fichero con forma de ficha sin sufijo produce un aviso
+    EXPLICITO con las tres partes self-service: nombre, ruta y como renombrarlo.
+    WARN (rc==0): misma doctrina que pending -- nunca secuestra el cierre."""
+
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "FP-20260906-sobre-perdido.md", "# sobre\n")
+    rep = classify_inbox(dest)
+    assert [fs["name"] for fs in rep["ficha_shaped_support"]] == [
+        "FP-20260906-sobre-perdido.md"
+    ]
+    fs = rep["ficha_shaped_support"][0]
+    assert fs["renombrar_a"].endswith("FP-20260906-sobre-perdido.tickets.md")
+    assert fs["path"] == str(CANON_REL / "FP-20260906-sobre-perdido.md")
+
+    rc = main(["--project-root", str(dest)])
+    assert rc == 0  # WARN, jamas bloquea
+    out = capsys.readouterr().out
+    assert "WARN FICHA-SIN-SUFIJO: 1" in out  # (i) que pasa + cuantos
+    assert "FP-20260906-sobre-perdido.md" in out  # (ii) nombre/ruta
+    assert "como renombrarlo" in out  # (iii) como arreglarlo
+    assert "FP-20260906-sobre-perdido.tickets.md" in out  # el destino del rename
+    assert "mv" in out
+    assert "Bloque 8.bis" in out  # por que importa: el glob no lo ve
+    # el INFO de apoyo ya NO lo lista con "no renombrar" (la instruccion equivocada)
+    assert "FP-20260906-sobre-perdido.md, " not in out.split("material de apoyo")[-1]
+
+
+def test_068n_mutation_renombrado_apaga_aviso_y_glob_ve_la_ficha(tmp_path, capsys):
+    """(b) MUTATION: renombrado a `.tickets.md` el aviso DESAPARECE y el glob lo
+    ve como pending -- la ficha recuperada entra al universo que se fusiona."""
+
+    dest = _mkdest(tmp_path)
+    perdida = _touch(dest / CANON_REL / "FP-20260906-sobre-perdido.md", "# sobre\n")
+    perdida.rename(dest / CANON_REL / "FP-20260906-sobre-perdido.tickets.md")
+
+    rep = classify_inbox(dest)
+    assert rep["ficha_shaped_support"] == []
+    assert rep["pending_count"] == 1  # el glob de pathlib la ve
+    assert _pending_names(dest) == {"FP-20260906-sobre-perdido.tickets.md"}
+
+    rc = main(["--project-root", str(dest)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "FICHA-SIN-SUFIJO" not in out
+    assert "WARN census: 1" in out  # ahora es una ficha pendiente normal
+
+
+def test_068n_control_negativo_notas_declaradas_no_disparan(tmp_path, capsys):
+    """(c) CONTROL NEGATIVO: notas declaradas (README, FUSIONES-, INCIDENTE-,
+    CONTEXTO- que se autodeclara, parche que se autodeclara) y reclamos NO
+    disparan el aviso -- o el buzon se vuelve inusable. Siguen en INFO de apoyo."""
+
+    dest = _mkdest(tmp_path)
+    for nombre in (
+        "README.md",
+        "FUSIONES-20260808.md",
+        "INCIDENTE-20260828-ficha-borrada-sin-leer-en-fusion-8bis.md",
+        "CONTEXTO-20260730-L1500-candidatos.md",
+        "backlog_parche_reconciliacion_20260914.md",
+        "RECLAMO-2026-09-14-WOT-2026-049g.claim.md",  # reclamo con id dentro
+    ):
+        _touch(dest / CANON_REL / nombre, f"# {nombre}\n")
+
+    rep = classify_inbox(dest)
+    assert rep["ficha_shaped_support"] == []
+    assert main(["--project-root", str(dest)]) == 0
+    out = capsys.readouterr().out
+    assert "FICHA-SIN-SUFIJO" not in out
+    assert "material de apoyo" in out  # siguen censadas, como apoyo
+    for nombre in ("README.md", "FUSIONES-20260808.md", "INCIDENTE-20260828"):
+        assert nombre in out
+
+
+def test_068n_json_expone_el_campo(tmp_path, capsys):
+    """El artefacto `--json` lleva `ficha_shaped_support` (evidencia legible por
+    agregadores, no solo prosa en stdout)."""
+
+    dest = _mkdest(tmp_path)
+    _touch(dest / CANON_REL / "TICKET_CONTRACT_WOT-2026-999b-ejemplo")
+    rc = main(["--json", "--project-root", str(dest)])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [fs["name"] for fs in data["ficha_shaped_support"]] == [
+        "TICKET_CONTRACT_WOT-2026-999b-ejemplo"
+    ]
+    assert data["ficha_shaped_support"][0]["renombrar_a"].endswith(
+        "TICKET_CONTRACT_WOT-2026-999b-ejemplo.tickets.md"
+    )
+
+
+def test_068n_conector_prepush_nombra_en_ambas_ramas(tmp_path):
+    """Cableado (BA10: se nombra en AMBAS ramas no-bloqueantes o no se nombra en
+    la que corre sola): el conector de prepush cita la ficha sin sufijo tanto con
+    pendientes como sin ellas. WARN jamas gate (is_blocking False en ambas)."""
+    from scripts import prepush_check as pc
+
+    # Rama SIN pendientes:
+    dest = _mkdest(tmp_path / "sin_pending")
+    _touch(dest / CANON_REL / "FP-20260906-sobre-perdido.md")
+    r = pc.run_inbox_drainage_check(dest)
+    assert "FP-20260906-sobre-perdido.md" in r.output, r.output
+    assert "FICHA-SIN-SUFIJO" in r.output or "SIN sufijo" in r.output, r.output
+    assert r.is_blocking is False  # WARN, jamas gate
+    assert r.passed is False  # ya no es un verde mudo
+
+    # Rama CON pendientes: el census no tapa el aviso.
+    dest2 = _mkdest(tmp_path / "con_pending")
+    _touch(dest2 / CANON_REL / "FP-p.tickets.md")
+    _touch(dest2 / CANON_REL / "TICKET_CONTRACT_WOT-2026-999c-ej.md")
+    r2 = pc.run_inbox_drainage_check(dest2)
+    assert "WARN census inbox" in r2.output, r2.output
+    assert "TICKET_CONTRACT_WOT-2026-999c-ej" in r2.output, r2.output
+    assert r2.is_blocking is False

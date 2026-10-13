@@ -250,6 +250,28 @@ def test_non_text_extension_skipped(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-068b: .bat is text and must be audited, not skipped
+# ---------------------------------------------------------------------------
+
+
+def test_bat_text_extension_audited_not_skipped(tmp_path: Path) -> None:
+    """A BOM inside a .bat must surface as ERROR, proving the hook's suffix gate
+    (encoding_guard.TEXT_EXTENSIONS) now covers .bat. Before WOT-2026-068b the
+    file fell into encoding_guard_skipped_non_text: zero encoding audit."""
+    bat_file = tmp_path / "run_check.bat"
+    _write_bom(bat_file, content="@echo off\r\nrem ascii\r\n")
+    payload = _make_payload(tool_input={"file_path": str(bat_file)})
+    result = _run_hook(payload)
+    assert result.returncode != 0, (
+        f"Expected non-zero exit for BOM in .bat, got 0.\n"
+        f"stderr: {result._decoded_stderr}"
+    )
+    assert "ERROR" in result._decoded_stderr
+    assert "bom" in result._decoded_stderr.lower()
+    assert "skipped_non_text" not in result._decoded_stderr
+
+
+# ---------------------------------------------------------------------------
 # No path in payload -> INFO skip
 # ---------------------------------------------------------------------------
 

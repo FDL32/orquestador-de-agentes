@@ -546,3 +546,156 @@ def test_unreadable_report_does_not_mask_a_real_absence(tmp_path: Path) -> None:
     (reports / "batch_run_roto.json").write_text("{no es json", encoding="utf-8")
 
     assert len(check_batch_run_emitted(reports)) == 1
+
+
+# --- WOT-2026-068j: per-flight directory layout for receipts -----------------
+
+
+def _write_per_flight_receipt(
+    reports: Path, flight: str, status: str = "RESOLVED", payload: dict | None = None
+) -> Path:
+    """Write a per-flight receipt: start_context_isolation/<flight>/receipt.json."""
+    dir_path = reports / "start_context_isolation" / flight
+    dir_path.mkdir(parents=True, exist_ok=True)
+    data = payload or {"status": status, "flight": flight}
+    receipt_path = dir_path / "receipt.json"
+    receipt_path.write_text(json.dumps(data), encoding="utf-8")
+    return receipt_path
+
+
+def test_per_flight_receipt_is_detected_and_correlated(tmp_path: Path) -> None:
+    """A per-flight RESOLVED receipt is correlated with its batch_run."""
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_per_flight_receipt(reports, "FP-20261011-FIGHT-ONE")
+    (reports / "batch_run_FP-20261011-FIGHT-ONE.json").write_text(
+        json.dumps({"flight": "FP-20261011-FIGHT-ONE"}), encoding="utf-8"
+    )
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_per_flight_receipt_without_batch_run_is_a_finding(tmp_path: Path) -> None:
+    """A per-flight RESOLVED receipt without its batch_run is flagged."""
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_per_flight_receipt(reports, "FP-20261011-FIGHT-ONE")
+
+    findings = check_batch_run_emitted(reports)
+
+    assert len(findings) == 1
+    assert "FP-20261011-FIGHT-ONE" in findings[0]
+
+
+def test_two_per_flight_receipts_no_collision(tmp_path: Path) -> None:
+    """Two consecutive flights in different per-flight dirs don't collide.
+
+    The second flight's receipt must NOT modify the first flight's file.
+    Each flight's batch_run must be independently correlated.
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_per_flight_receipt(reports, "FP-FLIGHT-A")
+    _write_per_flight_receipt(reports, "FP-FLIGHT-B")
+    (reports / "batch_run_FP-FLIGHT-A.json").write_text(
+        json.dumps({"flight": "FP-FLIGHT-A"}), encoding="utf-8"
+    )
+    (reports / "batch_run_FP-FLIGHT-B.json").write_text(
+        json.dumps({"flight": "FP-FLIGHT-B"}), encoding="utf-8"
+    )
+
+    # Both flights have their batch_run -> no findings
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_per_flight_alien_receipt_detected_by_sha(tmp_path: Path) -> None:
+    """A per-flight receipt whose prompt_sha256 does not match any batch_run
+    is detected as absent (control negative).
+    """
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_per_flight_receipt(
+        reports,
+        "FP-ALONE",
+        payload={"status": "RESOLVED", "flight": "FP-ALONE", "prompt_sha256": "dead"},
+    )
+    # Another flight's batch_run with a different sha -> no correlation
+    (reports / "batch_run_FP-OTHER.json").write_text(
+        json.dumps({"start_context_isolation": {"prompt_sha256": "beef"}}),
+        encoding="utf-8",
+    )
+
+    findings = check_batch_run_emitted(reports)
+
+    assert len(findings) == 1
+    assert "FP-ALONE" in findings[0]
+
+
+def test_per_flight_pending_is_not_a_finding(tmp_path: Path) -> None:
+    """A per-flight PENDING receipt is not a finding (vuelo parado en gate)."""
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_per_flight_receipt(
+        reports,
+        "FP-PENDING",
+        status="PENDING",
+        payload={"status": "PENDING", "flight": "FP-PENDING"},
+    )
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_mixed_flat_and_per_flight_receipts_handled(tmp_path: Path) -> None:
+    """Both legacy flat and new per-flight receipts are scanned together."""
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    # Legacy flat receipt
+    _write_receipt(reports, "legacy-a", "LEGACY-FLIGHT-A")
+    (reports / "batch_run_LEGACY-FLIGHT-A.json").write_text(
+        json.dumps({"flight": "LEGACY-FLIGHT-A"}), encoding="utf-8"
+    )
+    # Per-flight receipt
+    _write_per_flight_receipt(reports, "FP-NEW-B")
+    (reports / "batch_run_FP-NEW-B.json").write_text(
+        json.dumps({"flight": "FP-NEW-B"}), encoding="utf-8"
+    )
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_per_flight_unreadable_is_skipped(tmp_path: Path) -> None:
+    """A corrupt per-flight receipt.json is skipped, not reported."""
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    dir_path = reports / "start_context_isolation" / "FP-BAD"
+    dir_path.mkdir(parents=True, exist_ok=True)
+    (dir_path / "receipt.json").write_text("{no es json", encoding="utf-8")
+
+    assert check_batch_run_emitted(reports) == []
+
+
+def test_per_flight_non_dict_payload_is_skipped(tmp_path: Path) -> None:
+    """A per-flight receipt whose content is not a dict is skipped."""
+    from scripts.check_batch_run_accounting import check_batch_run_emitted
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    dir_path = reports / "start_context_isolation" / "FP-BAD"
+    dir_path.mkdir(parents=True, exist_ok=True)
+    (dir_path / "receipt.json").write_text("[1, 2, 3]", encoding="utf-8")
+
+    assert check_batch_run_emitted(reports) == []

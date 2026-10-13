@@ -69,6 +69,16 @@ def create_checkpoint_tag(repo_path: Path, tag_name: str) -> None:
     )
 
 
+def create_checkpoint_tag_at(repo_path: Path, tag_name: str, commit_sha: str) -> None:
+    """Create an annotated checkpoint tag pointing at a specific commit."""
+    subprocess.run(
+        ["git", "tag", "-a", tag_name, commit_sha, "-m", "Test checkpoint"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+
 def write_green_last_run(repo_path: Path, ticket_id: str | None = None) -> None:
     """Write a fresh-green last-run.json so the WOT-2026-010c gate passes.
 
@@ -2531,3 +2541,222 @@ class TestSealPredatesCommit:
             f"a seal 0.5s AFTER its commit must pass; string comparison would "
             f"have blocked it: {diag}"
         )
+
+
+# =============================================================================
+# WOT-2026-067c: the review checkpoint accepts an ancestor tag of HEAD whose
+# commit subject names the ticket.
+# =============================================================================
+
+
+class TestCheckpointAncestorTagWOT2026067c:
+    """The guard must not demand tag == HEAD when motor_checkpoint does not.
+
+    Two guards of the same checkpoint demanded incompatible things:
+    ``check_checkpoint_alignment`` required the tag to equal HEAD exactly,
+    while ``motor_checkpoint.resolve_motor_checkpoint_files`` (WOT-2026-019q)
+    requires the tag's commit subject to contain the ticket_id. Once any
+    foreign commit lands on top of the delivery, the set satisfying BOTH was
+    empty: HEAD does not name the ticket, and the commit that names it is no
+    longer HEAD. The guard now accepts the same predicate 019q declared:
+    tag == HEAD (legacy, zero-regression) OR (tag is an ancestor of HEAD AND
+    its commit subject contains the ticket_id). "Ancestor of HEAD" keeps the
+    door shut against any tag: dangling tags (amend, reset) stay rejected.
+    """
+
+    TICKET = "WOT-2026-067c"
+
+    def _import_guard(self):
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    @staticmethod
+    def _run_git(repo: Path, *args: str) -> str:
+        r = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return r.stdout.strip()
+
+    def _buried_delivery_repo(self, tmp_path: Path) -> tuple[Path, str, str]:
+        """Build a repo whose ticket delivery is buried under foreign commits.
+
+        Returns (repo, delivery_sha, foreign_ancestor_sha) where:
+        - delivery_sha: commit whose subject names the ticket;
+        - foreign_ancestor_sha: a direct ancestor of HEAD whose subject does
+          NOT name the ticket (the mutation target);
+        - HEAD: one commit further, with a fresh-green canonical-suite seal.
+        """
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+
+        commit_ticket_marker(repo, self.TICKET)
+        delivery_sha = self._run_git(repo, "rev-parse", "HEAD")
+
+        collab_dir = repo / ".agent" / "collaboration"
+        collab_dir.mkdir(parents=True, exist_ok=True)
+        (collab_dir / "work_plan.md").write_text(
+            "# Work Plan\n\n## Files Likely Touched\n- `src/module.py`\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "add", ".agent"], cwd=repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "another flight: add .agent scaffolding"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        (repo / "notes.md").write_text("foreign work\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "notes.md"], cwd=repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "memory: promote unrelated lesson"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        foreign_ancestor_sha = self._run_git(repo, "rev-parse", "HEAD")
+
+        # Fresh seal pinned to the FINAL HEAD, so every failure below is
+        # attributable to the tag target alone (paired control).
+        write_green_last_run(repo)
+        return repo, delivery_sha, foreign_ancestor_sha
+
+    def _run_cli(self, repo: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--project-root",
+                str(repo),
+                "--ticket-id",
+                self.TICKET,
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=repo,
+        )
+
+    def test_cli_buried_delivery_tag_on_ticket_commit_passes(
+        self, tmp_path: Path
+    ) -> None:
+        """DoD(1): delivery buried + tag on the ticket commit -> valid: true."""
+        repo, delivery_sha, _ = self._buried_delivery_repo(tmp_path)
+        create_checkpoint_tag_at(repo, f"checkpoint/review-{self.TICKET}", delivery_sha)
+
+        result = self._run_cli(repo)
+
+        assert result.returncode == 0, result.stdout
+        output = json.loads(result.stdout)
+        assert output["valid"] is True
+        assert output["missing_checkpoint"] is False
+        assert output["checkpoint_misaligned"] is False
+        assert output["checkpoint_tag"] == f"checkpoint/review-{self.TICKET}"
+
+    def test_cli_mutation_tag_on_ancestor_without_ticket_subject_blocks(
+        self, tmp_path: Path
+    ) -> None:
+        """DoD(2) MUTATION-VERIFY: ancestor tag with wrong subject still fails.
+
+        Paired control against the test above: identical repo, identical seal,
+        identical tree — only the tag target changes (a foreign ancestor whose
+        subject does not name the ticket). Everything else must stay green so
+        the block is attributable to the subject gate, not to another barrier.
+        """
+        repo, _, foreign_ancestor_sha = self._buried_delivery_repo(tmp_path)
+        create_checkpoint_tag_at(
+            repo, f"checkpoint/review-{self.TICKET}", foreign_ancestor_sha
+        )
+
+        result = self._run_cli(repo)
+
+        assert result.returncode == 1, result.stdout
+        output = json.loads(result.stdout)
+        assert output["valid"] is False
+        assert output["missing_checkpoint"] is False
+        assert output["checkpoint_misaligned"] is True
+        # the pair: every other barrier is green, the subject gate is what bit
+        assert output["dirty_tree"] is False
+        assert (output["canonical_suite"] or {}).get("reason") == "fresh_green"
+
+    def test_unit_tag_equal_head_stays_aligned_legacy(self, tmp_path: Path) -> None:
+        """tag == HEAD keeps passing without a subject check (zero-regression).
+
+        WOT-2026-067c relaxed only the tag != HEAD branch, mirroring the
+        emitter's criterion ("acepte un tag QUE NO SEA HEAD cuando...").
+        Requiring the subject even at HEAD would reject flows that pass today;
+        subject enforcement at HEAD lives in motor_checkpoint (topology mode).
+        """
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        (repo / "other.txt").write_text("x", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "other.txt"], cwd=repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "subject without any ticket id"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        create_checkpoint_tag(repo, f"checkpoint/review-{self.TICKET}")
+
+        guard = self._import_guard()
+        missing, misaligned = guard.check_checkpoint_alignment(repo, self.TICKET)
+
+        assert (missing, misaligned) == (False, False)
+
+    def test_unit_tag_on_ancestor_with_ticket_subject_aligned(
+        self, tmp_path: Path
+    ) -> None:
+        """Unit-level: ancestor of HEAD + subject names ticket -> aligned."""
+        repo, delivery_sha, _ = self._buried_delivery_repo(tmp_path)
+        create_checkpoint_tag_at(repo, f"checkpoint/review-{self.TICKET}", delivery_sha)
+
+        guard = self._import_guard()
+        missing, misaligned = guard.check_checkpoint_alignment(repo, self.TICKET)
+
+        assert (missing, misaligned) == (False, False)
+
+    def test_unit_tag_on_ancestor_without_subject_misaligned(
+        self, tmp_path: Path
+    ) -> None:
+        """Unit-level: ancestor of HEAD + subject lacks ticket -> misaligned."""
+        repo, _, foreign_ancestor_sha = self._buried_delivery_repo(tmp_path)
+        create_checkpoint_tag_at(
+            repo, f"checkpoint/review-{self.TICKET}", foreign_ancestor_sha
+        )
+
+        guard = self._import_guard()
+        missing, misaligned = guard.check_checkpoint_alignment(repo, self.TICKET)
+
+        assert (missing, misaligned) == (False, True)
+
+    def test_unit_tag_on_non_ancestor_is_misaligned(self, tmp_path: Path) -> None:
+        """The door stays shut: a tag on a commit outside HEAD's history fails.
+
+        Reproduced with ``reset --hard`` (the same shape the amend incident
+        ``obs-amend-over-approved-commit-invalidates-checkpoint`` left behind:
+        the tag keeps pointing at an orphan commit that is no longer an
+        ancestor of HEAD).
+        """
+        repo = tmp_path / "repo"
+        init_git_repo(repo)
+        commit_ticket_marker(repo, self.TICKET)
+        create_checkpoint_tag(repo, f"checkpoint/review-{self.TICKET}")
+        self._run_git(repo, "reset", "--hard", "HEAD~1")
+
+        guard = self._import_guard()
+        missing, misaligned = guard.check_checkpoint_alignment(repo, self.TICKET)
+
+        assert (missing, misaligned) == (False, True)

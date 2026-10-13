@@ -109,6 +109,63 @@ def test_completed_returns_exit_0(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Case 4b: warnings are counted in the message (WOT-2026-068e)
+# ---------------------------------------------------------------------------
+
+
+def test_message_cites_real_zero_warnings(tmp_path, capsys):
+    """0 warnings -> the message says 0/0, derived from the validate payload."""
+    project = _make_project(tmp_path, "COMPLETED")
+    validate_data = _validate_response(errors={}, warnings={})
+    with _stub_validate(0, validate_data):
+        rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[OK] validate 0/0 y STATUS=COMPLETED" in out
+
+
+def test_message_cites_real_warning_count_without_changing_rc(tmp_path, capsys):
+    """2 warnings -> the message publishes 0/2 (not the literal 0/0); rc unchanged.
+
+    Barrier for the old literal f-string: the previous code printed
+    `validate 0/0` even though --validate reported 2 warnings. The rc must
+    stay 0 because warnings do not block publication.
+    """
+    project = _make_project(tmp_path, "COMPLETED")
+    validate_data = _validate_response(
+        errors={},
+        warnings={"prose": ["warning A", "warning B"]},
+    )
+    with _stub_validate(0, validate_data):
+        rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[OK] validate 0/2 y STATUS=COMPLETED" in out
+    assert "validate 0/0" not in out
+
+
+def test_aviso_branch_cites_real_warning_count(tmp_path, capsys):
+    """The AVISO branch also derives the count (warnings do not change rc=2)."""
+    project = _make_project(tmp_path, "APPROVED")
+    validate_data = _validate_response(
+        errors={},
+        warnings={"prose": ["warning A", "warning B"]},
+    )
+    with _stub_validate(0, validate_data):
+        rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "[AVISO] validate 0/2 pero STATUS=APPROVED" in out
+
+
+def test_count_warnings_reads_payload(tmp_path):
+    """Unit barrier: _count_warnings sums the warnings dict, not a literal."""
+    assert cdr._count_warnings({"warnings": {}}) == 0
+    assert cdr._count_warnings({}) == 0
+    assert cdr._count_warnings({"warnings": {"prose": ["a"], "bus": ["b", "c"]}}) == 3
+
+
+# ---------------------------------------------------------------------------
 # Case 5: configuration error (motor not found) -> exit 3
 # ---------------------------------------------------------------------------
 

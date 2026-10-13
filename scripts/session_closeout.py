@@ -348,12 +348,26 @@ def _has_productive_commits(
     return found, list(seen.keys())
 
 
-def _check_bus_vacio(project_root: Path, window_start: datetime | None) -> str:
+def _check_bus_vacio(
+    project_root: Path,
+    window_start: datetime | None,
+    *,
+    events_empty: bool = False,
+) -> str:
     """Check for BUS VACIO: productive commits but 0 events.
 
     WOT-2026-040e. Returns 'FAIL' if commits exist but the bus has no events
     (productive work not certified), 'WARN' if no commits exist (maintenance
     session, legitimate).
+
+    WOT-2026-067y. ``events_empty`` only matters when there ARE productive
+    commits to certify: a session with commits and zero bus events used to
+    FAIL unconditionally. Now that case PASSes instead -- ``tickets: none``
+    is a legitimate outcome (planning-only session), not a certification
+    failure. A session with NO commits and events_empty stays WARN exactly
+    as before (maintenance session, nothing to certify either way) --
+    events_empty never overrides the no-commits WARN, only the
+    has-commits FAIL.
     """
     try:
         from runtime.motor_link import resolve_motor_root as _rmr
@@ -364,7 +378,7 @@ def _check_bus_vacio(project_root: Path, window_start: datetime | None) -> str:
                 project_root, mr, window_start
             )
             if has_commits:
-                return "FAIL"
+                return "PASS" if events_empty else "FAIL"
     except ImportError:
         pass
     return "WARN"
@@ -2639,7 +2653,14 @@ def run_closeout(
     elif _resolved_stale:
         _resolve_status = "FAIL"
     else:
-        _resolve_status = _check_bus_vacio(project_root, _window_start)
+        # WOT-2026-067y: read events early so _check_bus_vacio knows
+        # whether the bus is truly empty (planning-only session → PASS).
+        _events = _read_events(project_root)
+        _resolve_status = _check_bus_vacio(
+            project_root,
+            _window_start,
+            events_empty=len(_events) == 0,
+        )
     # WOT-2026-040e (ampliacion): cuando el cierre cae en BUS VACIO (commits
     # productivos + 0 eventos), medir TAMBIEN la segunda superficie de
     # proyeccion (execution_log.md) y anexarla al diagnostico. No cambia el

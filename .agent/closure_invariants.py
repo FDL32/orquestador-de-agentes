@@ -16,9 +16,38 @@ module globals (monkeypatched by tests) remain the single seam.
 
 from __future__ import annotations
 
+from enum import Enum
 
-def bus_has_ticket_events(event_bus, plan_id: str) -> bool:
-    """True if the runtime bus holds any event for this ticket.
+
+class BusTicketEventState(Enum):
+    """Tri-state verdict of ``bus_has_ticket_events`` (WOT-2026-067f).
+
+    - ``WITH_EVENTS``: the read succeeded and the bus holds at least one
+      event for the ticket.
+    - ``WITHOUT_EVENTS``: the read succeeded and holds NO event for the
+      ticket. Legitimate absence -- e.g. CI / fresh clone / other machine,
+      where the gitignored ``events.jsonl`` never travels (WOT-2026-003a,
+      WOT-2026-067e).
+    - ``READ_FAILED``: the read itself raised (OSError, denied permission,
+      corrupt store). Ticket visibility is UNKNOWN here, NOT proven absent.
+
+    Truthiness is the consumer contract: only ``WITHOUT_EVENTS`` is falsy,
+    so the legitimately-absent bus keeps degrading to a WARNING (the 003a/
+    067e control negative), while ``READ_FAILED`` stays truthy so a broken
+    read can never downgrade an observable violation to that WARNING
+    (OBJ-002: an ERROR cannot degrade to a WARNING because of a broken read).
+    """
+
+    WITH_EVENTS = "with_events"
+    WITHOUT_EVENTS = "without_events"
+    READ_FAILED = "read_failed"
+
+    def __bool__(self) -> bool:
+        return self is not BusTicketEventState.WITHOUT_EVENTS
+
+
+def bus_has_ticket_events(event_bus, plan_id: str) -> BusTicketEventState:
+    """Tri-state verdict on whether the runtime bus holds this ticket's events.
 
     WOT-2026-003a: Distinguishes two levels the validator must not conflate:
     versioned destination state (work_plan/STATE/execution_log) vs runtime
@@ -30,15 +59,26 @@ def bus_has_ticket_events(event_bus, plan_id: str) -> bool:
     hold events for the ticket but the required one is missing, that is a real
     violation (error).
 
+    WOT-2026-067f: the old ``try: bool(read_events) except: False`` collapsed
+    a FAILED read into the same verdict as a legitimately absent bus, so a
+    broken read silently downgraded the ERROR branch to the 067e WARNING.
+    The three states are now never collapsed.
+
     Before: ``event_bus`` is a live bus; ``plan_id`` is non-empty.
-    During: Reads the ticket's events; never mutates.
-    After: Returns True if at least one event exists for the ticket, else
-    False (including when the bus read fails for any reason).
+    During: reads the ticket's events exactly once; never mutates; any
+        exception raised by the read is contained here.
+    After: returns ``WITH_EVENTS`` (>=1 event), ``WITHOUT_EVENTS`` (read ok,
+        zero events for the ticket) or ``READ_FAILED`` (read raised). See
+        ``BusTicketEventState`` for the truthiness contract consumed by
+        ``check_post_closure_*`` and ``agent_controller``.
     """
     try:
-        return bool(event_bus.read_events(ticket_id=plan_id))
+        events = event_bus.read_events(ticket_id=plan_id)
     except Exception:
-        return False
+        return BusTicketEventState.READ_FAILED
+    if events:
+        return BusTicketEventState.WITH_EVENTS
+    return BusTicketEventState.WITHOUT_EVENTS
 
 
 def check_bus_drift(event_bus, plan_id: str, log_status: str) -> list[str]:
@@ -123,12 +163,25 @@ def _latest_real_builder_exit(event_bus, plan_id: str):
 def check_post_closure_built_exit(
     event_bus, plan_id: str, log_status: str
 ) -> tuple[list[str], list[str]]:
-    """Check BUILDER_EXIT invariant. Returns (errors, warnings)."""
+    """Check BUILDER_EXIT invariant. Returns (errors, warnings).
+
+    WOT-2026-067f: the absent-vs-failed split is explicit. A legitimately
+    absent bus (``WITHOUT_EVENTS``) keeps degrading to a warning (WOT-2026-
+    003a/067e control negative); a FAILED read (``READ_FAILED``) is reported
+    as an error, never as the "bus absent in this context" warning.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     builder_exit = _latest_real_builder_exit(event_bus, plan_id)
     if not builder_exit:
-        if bus_has_ticket_events(event_bus, plan_id):
+        state = bus_has_ticket_events(event_bus, plan_id)
+        if state is BusTicketEventState.READ_FAILED:
+            errors.append(
+                f"INVARIANT: bus read FAILED while checking BUILDER_EXIT for "
+                f"ticket {plan_id} in state {log_status}: events store "
+                "unreadable, absence cannot be verified"
+            )
+        elif state is BusTicketEventState.WITH_EVENTS:
             errors.append(
                 f"INVARIANT: Missing BUILDER_EXIT event for ticket {plan_id} in state {log_status}"
             )
@@ -172,12 +225,24 @@ def check_post_closure_lock(
 def check_post_closure_state_changed(
     event_bus, plan_id: str, log_status: str
 ) -> tuple[list[str], list[str]]:
-    """Check STATE_CHANGED invariant. Returns (errors, warnings)."""
+    """Check STATE_CHANGED invariant. Returns (errors, warnings).
+
+    WOT-2026-067f: mirrors ``check_post_closure_built_exit`` -- absent bus
+    degrades to a warning, failed read errors, and the two are never
+    conflated.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     state_event = event_bus.latest_event(ticket_id=plan_id, event_type="STATE_CHANGED")
     if not state_event:
-        if bus_has_ticket_events(event_bus, plan_id):
+        state = bus_has_ticket_events(event_bus, plan_id)
+        if state is BusTicketEventState.READ_FAILED:
+            errors.append(
+                f"INVARIANT: bus read FAILED while checking STATE_CHANGED for "
+                f"ticket {plan_id}: events store unreadable, absence cannot "
+                "be verified"
+            )
+        elif state is BusTicketEventState.WITH_EVENTS:
             errors.append(
                 f"INVARIANT: Missing STATE_CHANGED event for ticket {plan_id}"
             )

@@ -1675,3 +1675,190 @@ def test_055x_schema_v3_sigue_rechazado(tmp_path: Path) -> None:
     result = _run(_write_dag(tmp_path, dag))
     assert result.returncode == 1
     assert "schema" in result.stderr and "v3" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-062c: ningun `common_gate` invoca un script desde una raiz
+# distinta del motor resuelto.
+# ---------------------------------------------------------------------------
+
+
+def test_062c_relative_script_resolves_under_motor_root() -> None:
+    """CONTROL POSITIVO: un common_gate con script relativo que existe bajo
+    motor_root pasa con exit 0."""
+    from scripts.validate_batch_dag import _errors_common_gate_root
+
+    motor_root = PROJECT_ROOT  # the motor root where scripts/ lives
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = "python scripts/run_pytest_safe.py --level all"
+    errors = _errors_common_gate_root(dag, motor_root)
+    assert errors == [], f"relative script that exists should pass: {errors}"
+
+
+def test_062c_absolute_script_path_fails() -> None:
+    """MUTACION: un common_gate que referencia un path absoluto (otro checkout)
+    debe fallar nombrando plan y grupo."""
+    from scripts.validate_batch_dag import _errors_common_gate_root
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = (
+        "python C:/Users/principal/scripts/run_pytest_safe.py"
+    )
+    errors = _errors_common_gate_root(dag, PROJECT_ROOT)
+    assert len(errors) == 1
+    assert "WOT-2026-062c" in errors[0]
+    assert "G-LOCKS" in errors[0]
+    assert "path absoluto" in errors[0]
+
+
+def test_062c_relative_script_not_under_motor_root_fails() -> None:
+    """MUTACION: un common_gate con script relativo que NO existe bajo
+    motor_root debe fallar nombrando plan, grupo y script."""
+    from scripts.validate_batch_dag import _errors_common_gate_root
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = "python scripts/nope/nonexistent.py"
+    errors = _errors_common_gate_root(dag, PROJECT_ROOT)
+    assert len(errors) == 1
+    assert "WOT-2026-062c" in errors[0]
+    assert "G-LOCKS" in errors[0]
+    assert "nope/nonexistent.py" in errors[0]
+
+
+def test_062c_python_m_module_passes() -> None:
+    """`python -m module` no es un path file: el extractor lo ignora y no
+    genera errores de resolucion."""
+    from scripts.validate_batch_dag import _errors_common_gate_root
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = "python -m pytest tests/unit/"
+    errors = _errors_common_gate_root(dag, PROJECT_ROOT)
+    # python -m does not reference a file path; should have no script errors.
+    assert errors == []
+
+
+def test_062c_multiple_scripts_in_one_command_all_checked() -> None:
+    """Un common_gate con multiples scripts: si alguno falla, se reporta."""
+    from scripts.validate_batch_dag import _errors_common_gate_root
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = (
+        "python scripts/run_pytest_safe.py --level all "
+        "&& python scripts/nope/missing.py"
+    )
+    errors = _errors_common_gate_root(dag, PROJECT_ROOT)
+    assert len(errors) == 1
+    assert "nope/missing.py" in errors[0]
+
+
+def test_062c_cli_flag_flight_plans_dir_census():
+    """Integration test: --flight-plans-dir scans a directory and reports
+    per-DAG results."""
+    import subprocess
+
+    dags_dir = PROJECT_ROOT / "tests" / "fixtures" / "batch_dag"
+    if not dags_dir.is_dir():
+        pytest.skip("test fixtures directory no disponible")
+    result = subprocess.run(
+        [
+            str(PYTHON),
+            str(SCRIPT_PATH),
+            "--flight-plans-dir",
+            str(dags_dir),
+            "--motor-root",
+            str(PROJECT_ROOT),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    # At minimum it should scan and report; exit code depends on DAG content.
+    assert result.returncode in (0, 1), f"unexpected rc: {result.returncode}"
+    assert "CENSO" in result.stderr or "CENSO" in result.stdout
+
+
+def test_062c_cli_flag_flight_plans_dir_nonexistent_dir_fails():
+    """--flight-plans-dir pointing to a non-directory is an error, not crash."""
+    import subprocess
+
+    result = subprocess.run(
+        [
+            str(PYTHON),
+            str(SCRIPT_PATH),
+            "--flight-plans-dir",
+            "this_path_does_not_exist_xyz",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "no es un directorio" in result.stderr
+
+
+def test_062c_cli_flag_flight_plans_dir_empty_dir_passes():
+    """--flight-plans-dir pointing to an empty directory: no DAGs to scan, exit 0."""
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [
+                str(PYTHON),
+                str(SCRIPT_PATH),
+                "--flight-plans-dir",
+                tmpdir,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "CENSO" in result.stdout
+
+
+def test_062c_validate_dag_with_motor_root_passes():
+    """validate_dag(data, motor_root) with valid relative paths -> 0 errors."""
+    from scripts.validate_batch_dag import validate_dag
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = "python scripts/run_pytest_safe.py --level all"
+    errors = validate_dag(dag, PROJECT_ROOT)
+    # Filter only WOT-2026-062c errors to check the specific gate
+    gate_errors = [e for e in errors if "WOT-2026-062c" in e]
+    assert gate_errors == []
+
+
+def test_062c_validate_dag_with_motor_root_fails_on_bad_path():
+    """validate_dag(data, motor_root) with invalid script path -> gate error."""
+    from scripts.validate_batch_dag import validate_dag
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = "python scripts/nonexistent/script.py"
+    errors = validate_dag(dag, PROJECT_ROOT)
+    gate_errors = [e for e in errors if "WOT-2026-062c" in e]
+    assert len(gate_errors) == 1
+    assert "G-LOCKS" in gate_errors[0]
+
+
+def test_062c_validate_dag_without_motor_root_is_noop():
+    """validate_dag(data) without motor_root -> 062c gate is skipped."""
+    from scripts.validate_batch_dag import validate_dag
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = "python scripts/nonexistent/script.py"
+    errors = validate_dag(dag)  # no motor_root
+    gate_errors = [e for e in errors if "WOT-2026-062c" in e]
+    assert gate_errors == []
+
+
+def test_062c_common_gate_root_errors_added_to_validate_dag():
+    """validate_dag(data, motor_root) must include 062c errors in the total
+    list, not just in isolation."""
+    from scripts.validate_batch_dag import validate_dag
+
+    dag = _valid_dag()
+    dag["groups"][0]["common_gate"] = "python scripts/nonexistent/script.py"
+    dag["groups"][0]["class"] = "INVALID"  # also trigger a schema error
+    errors = validate_dag(dag, PROJECT_ROOT)
+    gate_errors = [e for e in errors if "WOT-2026-062c" in e]
+    schema_errors = [e for e in errors if "class" in e and "INVALID" in e]
+    assert len(gate_errors) >= 1
+    assert len(schema_errors) >= 1

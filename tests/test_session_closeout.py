@@ -812,9 +812,11 @@ class TestRunCloseout:
     def test_bus_vacio_commits_without_events_is_fail(self, tmp_path: Path) -> None:
         """WOT-2026-040e (BUS VACIO): productive commits but 0 events -> FAIL.
 
-        A session that delivered commits but emitted zero events to the bus
-        must NOT silently certify. The discriminant is: commits exist in the
-        repos after window_start, but the bus has no matching events.
+        WOT-2026-067y: a session with zero bus events closes PASS with
+        ``tickets: none``.  To keep testing BUS VACIO, the fixture adds events
+        from BEFORE the session window so ``_resolve_tickets`` returns empty
+        (they are stale) while the commit AFTER window_start is NOT certified
+        by those events.
         """
         import subprocess as _sp
         from unittest.mock import patch
@@ -842,7 +844,21 @@ class TestRunCloseout:
             check=True,
             capture_output=True,
         )
-        # Productive commit AFTER window would start
+        # Report establishes window_start 1 hour ago (so it is in the past
+        # relative to the commit made immediately after, which uses now).
+        _write_report(repo, "2026-05-28 00:00:00 UTC")
+        # Old events that fall BEFORE the window → _resolve_tickets returns
+        # empty (stale), but the commit is AFTER window_start.
+        events = [
+            _make_event(
+                "STATE_CHANGED",
+                "OLD-1",
+                "2026-05-01T09:00:00+00:00",
+                1,
+            ),
+        ]
+        _write_events_file(repo, events)
+        # Productive commit AFTER window
         (repo / "src.py").write_text("x = 1")
         _sp.run(["git", "add", "src.py"], cwd=repo, check=True, capture_output=True)
         _sp.run(
@@ -851,7 +867,6 @@ class TestRunCloseout:
             check=True,
             capture_output=True,
         )
-        # No events.jsonl -> 0 events
 
         tickets, _src = _resolve_tickets(tmp_path, None)
         assert tickets == []
@@ -874,10 +889,8 @@ class TestRunCloseout:
         """WOT-2026-040e AMPLIADO: cuando hay BUS VACIO (commits + 0 eventos),
         el diagnostico mide TAMBIEN execution_log.md y lo anexa al detail.
 
-        El bus no es la unica superficie de proyeccion que se congela: el
-        execution_log.md del destino puede quedar anclado a un vuelo anterior
-        (medido 2026-08-07: congelado en WOT-2026-041c con 18 tickets
-        posteriores). No cambia el veredicto (sigue FAIL), pero lo documenta.
+        WOT-2026-067y: added old events so _resolve_tickets returns empty
+        while the commit after window_start remains unverified.
         """
         import subprocess as _sp
         from unittest.mock import patch
@@ -923,6 +936,17 @@ class TestRunCloseout:
         report.write_text(
             "**Generated:** 2026-08-22T12:00:00+02:00\n", encoding="utf-8"
         )
+        # Old events that fall BEFORE the window → stale, so _resolve_tickets
+        # returns empty, but the commit AFTER window_start is unverified.
+        events = [
+            _make_event(
+                "STATE_CHANGED",
+                "OLD-1",
+                "2026-05-01T09:00:00+00:00",
+                1,
+            ),
+        ]
+        _write_events_file(destino, events)
         elog = destino / ".agent" / "collaboration" / "execution_log.md"
         elog.parent.mkdir(parents=True, exist_ok=True)
         elog.write_text("# Execution Log -- VUELO 20260730_X\n", encoding="utf-8")
@@ -947,6 +971,9 @@ class TestRunCloseout:
         El log congelado solo se reporta cuando de verdad esta congelado; un
         log al dia no debe inflar el diagnostico de un BUS VACIO (y el
         veredicto FAIL por commits+0 eventos se mantiene).
+
+        WOT-2026-067y: added old events + report so _resolve_tickets returns
+        empty while the commit after window_start is still unverified.
         """
         import subprocess as _sp
         from unittest.mock import patch
@@ -984,6 +1011,21 @@ class TestRunCloseout:
         )
         destino = tmp_path / "destino"
         destino.mkdir(parents=True, exist_ok=True)
+        report = destino / ".agent" / "runtime" / "memory" / "session_close_report.md"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            "**Generated:** 2026-08-22T12:00:00+02:00\n", encoding="utf-8"
+        )
+        # Old events that fall BEFORE the window → stale.
+        events = [
+            _make_event(
+                "STATE_CHANGED",
+                "OLD-1",
+                "2026-05-01T09:00:00+00:00",
+                1,
+            ),
+        ]
+        _write_events_file(destino, events)
         elog = destino / ".agent" / "collaboration" / "execution_log.md"
         elog.parent.mkdir(parents=True, exist_ok=True)
         elog.write_text("# Execution Log -- VUELO 20260823_ACTUAL\n", encoding="utf-8")
@@ -1000,6 +1042,59 @@ class TestRunCloseout:
         assert "| resolve_tickets | FAIL |" in content
         assert "execution_log.md congelado" not in content
         assert result == 1
+
+    def test_zero_events_closes_pass_with_tickets_none(self, tmp_path: Path) -> None:
+        """WOT-2026-067y: a session without its own bus events closes PASS.
+
+        A planning-only session that produced zero events (and therefore zero
+        ``tickets`` in the closeout) must NOT be rejected with Overall FAIL.
+        The close declares ``tickets: none`` as a legitimate outcome.
+        """
+        import subprocess as _sp
+        from unittest.mock import patch
+
+        repo = tmp_path
+        repo.mkdir(parents=True, exist_ok=True)
+        _sp.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "config", "user.email", "t@e.com"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        _sp.run(
+            ["git", "config", "user.name", "T"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        (repo / "README.md").write_text("# repo")
+        _sp.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        # No events.jsonl → zero events → PASS.
+        # Even with a report establishing a window, zero events means
+        # _check_bus_vacio(events_empty=True) returns PASS.
+        _write_report(repo, "2026-05-28 00:00:00 UTC")
+
+        tickets, src = _resolve_tickets(tmp_path, None)
+        assert tickets == []
+        assert "no tickets" in src
+
+        with patch(
+            "runtime.motor_link.resolve_motor_root",
+            return_value=tmp_path,
+        ):
+            result = run_closeout(tmp_path, dry_run=True)
+        report_path = _generated_report_path(tmp_path, dry_run=True)
+        content = report_path.read_text(encoding="utf-8")
+
+        assert "| resolve_tickets | PASS |" in content
+        assert result == 0
 
     def test_unverified_blocking_gate_never_aggregates_to_pass(self) -> None:
         """WOT-2026-040y: an unverified blocking gate can never read as PASS.
@@ -1903,7 +1998,9 @@ class TestSessionCloseRecorded058j:
         monkeypatch.setattr(
             "scripts.session_closeout.subprocess.run", lambda *a, **k: with_commit
         )
-        assert _check_bus_vacio(tmp_path, None) == "FAIL"
+        # events_empty=False preserves BUS VACIO behaviour when tested
+        # directly (the new default would short-circuit with PASS).
+        assert _check_bus_vacio(tmp_path, None, events_empty=False) == "FAIL"
         found, ids = _has_productive_commits(tmp_path, tmp_path, None)
         assert found is True
         assert ids == ["WOT-2026-058j"]
@@ -1912,7 +2009,7 @@ class TestSessionCloseRecorded058j:
         monkeypatch.setattr(
             "scripts.session_closeout.subprocess.run", lambda *a, **k: empty
         )
-        assert _check_bus_vacio(tmp_path, None) == "WARN"
+        assert _check_bus_vacio(tmp_path, None, events_empty=False) == "WARN"
         found, ids = _has_productive_commits(tmp_path, tmp_path, None)
         assert found is False
         assert ids == []
@@ -2172,7 +2269,11 @@ class TestResolveTicketsCertification061c:
             assert tickets == []
             assert "no tickets" in src
             assert (
-                _check_bus_vacio(fx["dest"], _resolve_session_window(fx["dest"])[0])
+                _check_bus_vacio(
+                    fx["dest"],
+                    _resolve_session_window(fx["dest"])[0],
+                    events_empty=False,
+                )
                 == "FAIL"
             )
 

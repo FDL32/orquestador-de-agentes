@@ -356,16 +356,27 @@ def get_changed_files(project_root: Path) -> set[str]:
 
 
 def check_checkpoint_alignment(project_root: Path, ticket_id: str) -> tuple[bool, bool]:
-    """Check checkpoint M3 alignment.
+    """Check checkpoint M3 alignment (WOT-2026-067c).
 
-    Verifica si el tag checkpoint/review-<ticket> existe y si apunta
-    al mismo commit que HEAD.
+    Verifica si el tag checkpoint/review-<ticket> existe y si apunta a un
+    commit alineado con la entrega. Alineado significa (predicado único, el
+    mismo que ``motor_checkpoint.resolve_motor_checkpoint_files`` declara
+    desde WOT-2026-019q): el tag es HEAD, o es un ANCESTRO de HEAD cuyo
+    subject del commit CONTIENE el ticket_id.
 
-    Returns:
-        tuple[bool, bool]: (missing_checkpoint, checkpoint_misaligned)
-            - (True, False): tag no existe
-            - (False, True): tag existe pero apunta a otro commit
-            - (False, False): tag existe y esta alineado con HEAD
+    Before: *project_root* is a git worktree; *ticket_id* is the active
+        ticket used to derive the tag name.
+    During: read-only git calls: ``rev-parse tag^{}``, ``rev-parse HEAD``;
+        only when tag != HEAD, ``merge-base --is-ancestor`` and
+        ``log -1 --format=%s``. Never mutates refs, tags or the tree.
+    After: tuple[bool, bool] (missing_checkpoint, checkpoint_misaligned):
+        - (True, False): tag no existe (o git no está disponible)
+        - (False, True): tag existe pero no es HEAD, no es ancestro de HEAD,
+          o su subject no nombra el ticket (fail-closed ante cualquier fallo
+          de git en la resolución de HEAD/ancestría/subject)
+        - (False, False): tag == HEAD (legacy, sin comprobación de subject —
+          cero regresión del flujo que ya pasaba) o ancestro de HEAD cuyo
+          subject contiene el ticket_id
     """
     tag_name = f"checkpoint/review-{ticket_id}"
     try:
@@ -393,10 +404,36 @@ def check_checkpoint_alignment(project_root: Path, ticket_id: str) -> tuple[bool
 
         head_commit = head_result.stdout.strip()
 
-        if tag_commit != head_commit:
-            return (False, True)  # checkpoint misaligned
+        if tag_commit == head_commit:
+            return (False, False)  # aligned (legacy tag == HEAD fast path)
 
-        return (False, False)  # aligned
+        # WOT-2026-067c: una entrega enterrada bajo commits ajenos (batch
+        # close, no-contiguo) era IRREALIZABLE: este guard exigía tag == HEAD
+        # exacto mientras motor_checkpoint exigía que el subject del commit
+        # del tag contuviera el ticket_id. El conjunto que satisface ambos
+        # era vacío. Se acepta ahora el predicado que 019q ya declaró en
+        # motor_checkpoint: ancestro de HEAD + subject con el ticket_id.
+        # La puerta NO se abre a cualquier tag: un commit fuera de la
+        # historia de HEAD (amend, reset) sigue quedando fuera.
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", tag_commit, head_commit],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if ancestor.returncode != 0:
+            return (False, True)  # tag points outside HEAD's history
+
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s", tag_commit],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if subject.returncode != 0 or ticket_id not in subject.stdout:
+            return (False, True)  # ancestor, but it does not name the ticket
+
+        return (False, False)  # aligned: buried delivery with own commit
     except FileNotFoundError:
         return (True, False)
 
@@ -1221,7 +1258,8 @@ def run_guard(
             - valid: bool (True si handoff permitido)
             - dirty_tree: bool (True si arbol sucio)
             - missing_checkpoint: bool (True si falta M3)
-            - checkpoint_misaligned: bool (True si M3 existe pero no apunta a HEAD)
+            - checkpoint_misaligned: bool (True si M3 existe pero no es HEAD ni
+              un ancestro de HEAD cuyo subject nombre el ticket [WOT-2026-067c])
             - dirty_files: list[str] (archivos que ensucian el arbol)
             - scope_discrepancy: list[str] (archivos fuera de scope, no bloqueante)
             - checkpoint_tag: str | None (tag del checkpoint M3 si existe)
@@ -1622,11 +1660,13 @@ def main() -> int:
             if result.get("checkpoint_misaligned"):
                 print(
                     f"  - Checkpoint M3 misaligned: checkpoint/review-{ticket_id}"
-                    f" does not point to HEAD"
+                    " points neither at HEAD nor at an ancestor of HEAD whose"
+                    f" commit subject names {ticket_id} (WOT-2026-067c)"
                 )
                 print(
-                    f"    Fix: git tag -d checkpoint/review-{ticket_id}"
-                    f" && git tag -a checkpoint/review-{ticket_id}"
+                    f"    Fix: tag the delivery commit (an ancestor of HEAD"
+                    f" naming {ticket_id}) or HEAD itself: git tag -f"
+                    f" checkpoint/review-{ticket_id} <delivery-sha>"
                     f' -m "Checkpoint M3 for {ticket_id}"'
                 )
             if result.get("uncommitted_work_plan"):
