@@ -136,6 +136,17 @@ def _pid_alive(pid: int) -> bool:
         return False
     except OSError:
         return True
+    # POSIX: signal 0 also succeeds for a zombie, which is already dead (it
+    # awaits reaping, it does not run). Linux exposes the state in
+    # /proc/<pid>/stat; on other POSIX systems fall through conservatively.
+    try:
+        stat_text = Path(f"/proc/{pid}/stat").read_text(
+            encoding="ascii", errors="replace"
+        )
+        if stat_text.rsplit(")", 1)[1].split()[0] == "Z":
+            return False
+    except (OSError, IndexError):
+        pass
     return True
 
 
@@ -406,10 +417,15 @@ class TestProcessIsolationMutationVerify:
         assert _count_lines(REAL_RUN_HISTORY) == before_real_history, (
             "the real run_history.jsonl gained a line: runtime redirection failed"
         )
-        # (b) the launched grandchild must be dead after teardown.
+        # (b) the launched grandchild must be dead after teardown. Allow a
+        # bounded grace for SIGKILL delivery: a real survivor is still alive
+        # at the deadline and fails; a poll that races the kill no longer does.
         if grandchild_pid_file.exists():
             recorded = int(grandchild_pid_file.read_text(encoding="ascii").strip())
-            assert not _wait_for(lambda: _pid_alive(recorded), timeout=5), (
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and _pid_alive(recorded):
+                time.sleep(0.25)
+            assert not _pid_alive(recorded), (
                 f"orphan sleep process {recorded} survived teardown"
             )
 
