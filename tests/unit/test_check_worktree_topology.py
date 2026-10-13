@@ -480,6 +480,20 @@ def test_valid_utf8_pair_unchanged(tmp_path: Path) -> None:
     assert result is None
 
 
+def test_workplan_is_directory_returns_none(tmp_path: Path) -> None:
+    # NON-GOAL guard: work_plan.md as a directory → IsADirectoryError (subclass
+    # of OSError) → return None (semántica BASE, no bloqueo). With the r1
+    # merged handler (OSError + UnicodeDecodeError → "ilegible") this test
+    # failed with (2, …). The B1 fix separates the handlers so OSError → None.
+    motor = _make_motor_with_workplan(tmp_path, _SEED_WORK_PLAN)
+    collab = motor / ".agent" / "collaboration"
+    # Remove the file, create a directory with the same name.
+    (collab / "work_plan.md").unlink()
+    (collab / "work_plan.md").mkdir()
+    result = _check_contract_coherence(motor, "CTL")
+    assert result is None
+
+
 def test_case_h_allow_diagnostic_always_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:

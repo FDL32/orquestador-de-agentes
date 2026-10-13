@@ -46,8 +46,9 @@ Exit codes:
         missing, or the active workspace does not match what is expected
         for the resolved prefix).
     2 = contract incoherence (delivery_authority in the active work_plan.md
-        does not match the prefix) or the prefix/project could not be
-        resolved at all.
+        does not match the prefix), the prefix/project could not be
+        resolved at all, or work_plan.md is present but UnicodeDecodeError
+        makes it unreadable ("ilegible", fail-closed).
     With --allow-diagnostic / WORKTREE_GUARD_BYPASS=1: ALWAYS exits 0,
     prints the real verdict (including what would have blocked) prefixed
     with "[DIAGNOSTIC MODE]". This does NOT skip the topology rule, it only
@@ -451,13 +452,15 @@ def _check_contract_coherence(
     against the resolved prefix. WOT must carry repo_motor; any other
     prefix must carry repo_destino. Returns None if there's no work_plan.md
     to check (not blocking: this guard runs in preflight, possibly before a
-    plan exists) OR if the motor's collaboration is in its NEUTRAL SEED state
-    (no active ticket; WOT-2026-092m) OR if the work_plan is in a TERMINAL
-    state (a closed ticket's contract must not block the launch of a new
-    ticket of another prefix -- WOT-2026-021s; the residual COMPLETED
-    work_plan of a prior WOT would otherwise false-block any CTL start with
-    "incoherencia de contrato") OR if work_plan.md is present but
-    UnicodeDecodeError makes it unreadable (fail-closed with exit 2).
+    plan exists), if work_plan.md is present but OSError makes it unreadable
+    (semántica BASE: no hay veredicto, no bloqueo), if the motor's
+    collaboration is in its NEUTRAL SEED state (no active ticket;
+    WOT-2026-092m), or if the work_plan is in a TERMINAL state (a closed
+    ticket's contract must not block the launch of a new ticket of another
+    prefix -- WOT-2026-021s; the residual COMPLETED work_plan of a prior WOT
+    would otherwise false-block any CTL start with "incoherencia de contrato").
+    Returns (2, msg) if work_plan.md is present but UnicodeDecodeError makes
+    it unreadable (fail-closed: "ilegible").
     Returns (exit_code, message) on a genuine live mismatch.
     """
     work_plan_path = motor_root / ".agent" / "collaboration" / "work_plan.md"
@@ -465,12 +468,12 @@ def _check_contract_coherence(
         return None
     try:
         content = work_plan_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        if work_plan_path.exists():
-            return (
-                2,
-                "contrato ilegible: work_plan.md no es UTF-8 válido (fail-closed)",
-            )
+    except UnicodeDecodeError:
+        return (
+            2,
+            "contrato ilegible: work_plan.md no es UTF-8 válido (fail-closed)",
+        )
+    except OSError:
         return None
 
     agent_dir = motor_root / ".agent"
