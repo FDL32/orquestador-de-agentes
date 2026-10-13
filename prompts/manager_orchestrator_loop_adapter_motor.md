@@ -106,13 +106,15 @@ que una clave apunte a un unico modelo: la clave `BA22` aparece asociada a model
 distintos entre el `agents.json` del motor y el del destino. Hasta que ese registro
 cierre la diferencia, el Manager coteja clave -> modelo A MANO al adjudicar.
 
-## 4. Minimos por tipo de entrega (parametros del adaptador)
+## 4. Minimos por tipo de entrega (adaptador del contador)
 
-Los fija el codigo, no el nucleo: `min_distinct_for` de `scripts/check_loop_execution.py`
-devuelve `code` 4, `mixed` 4, `analysis` 3, `research` 2, `documentation` 2, y un tipo
-desconocido cae al fallback estricto 4 (fail-closed). El numero de verificadores
-independientes de gobierno es 1. Un bucle de gobierno que no alcance su minimo es
-INSUFICIENTE; nunca se simula.
+Los minimos NO se fijan aqui: el UNICO sitio que los fija es el contador del codigo,
+`python scripts/check_loop_execution.py` (su funcion `min_distinct_for`), junto con el
+numero de verificadores independientes de gobierno. El perfil del motor
+`prompts/manager_orchestrator_loop_profile_motor.json` los REFLEJA y su test de contrato
+los coteja contra el contador; este adaptador y `prompts/ensemble_loop.md` solo REMITEN a
+el (no vuelven a copiar las cifras, que caducan). Un bucle de gobierno que no alcance su
+minimo es INSUFICIENTE; nunca se simula.
 
 ## 5. Perfil del motor
 
@@ -133,3 +135,40 @@ Las rondas se lanzan contra ese sha y la barrera `scripts/check_loop_execution.p
 acredita el commit por sus lentes. No se abre un commit por hallazgo, y un bucle cuyos
 cambios quedaron repartidos en varios commits sin su ancla no se da por cerrado: la
 barrera reporta 0/4. La suite canonica va al final, tras el ultimo commit.
+
+## 7. Tabla de equivalencia de fases
+
+Tres numeraciones nombran el MISMO ciclo y hasta ahora no habia tabla que las anclara una
+a otra (deuda de usabilidad 093i). Las columnas: "Nucleo" es la numeracion del nucleo
+portable (seccion 5, las once fases del patron); "Motor" es el `cycle_phase` del
+frontmatter de los prompts de este repositorio; "Ronda" es el valor de `--phase` que
+consume la ronda adversarial (seccion 3.4 de `prompts/ensemble_loop.md`). Un guion (`-`)
+significa que esa numeracion no tiene fase propia para ese tramo; se traduce al vecino.
+
+| Nucleo (once fases) | Motor (`cycle_phase`) | Ronda (`--phase`) |
+|---|---|---|
+| objetivo | - | - |
+| analisis | - | - |
+| estrategia | - | - |
+| bucle sobre la estrategia | F1-backlog | TRIAGE_AUDIT |
+| division en planes | F2-contrato | CONTRACT_AUDIT |
+| bucle sobre cada plan | F3-auditoria-contrato | CONTRACT_AUDIT |
+| implantacion por riesgo ascendente | F4-lanzamiento | - |
+| bucle sobre el prompt del ejecutor | F5-implementacion | - |
+| ejecucion y revision | F6-revision | MANAGER_REVIEW |
+| mejora continua medible | - | - |
+| limites de autoridad / cierre | F7-cierre-sesion | CLOSE |
+
+## 8. Cold-start (arranque en frio, <= 20 lineas)
+
+Si recibes este adaptador sin tarea, los saltos son SEIS, en este orden. Cada salto cita
+el documento canonico: no re-explores el repo para localizarlo.
+
+1. Declara OBJETIVO / ALCANCE / ENTREGABLE (seccion 0). Sin las tres, no explores.
+2. El nucleo gobierna: `prompts/manager_orchestrator_loop.md` (roles, capacidades, validez, esquemas).
+3. Builder real vs ronda adversarial: tabla de `prompts/builder_invocation_contract.md` seccion 0.
+4. Comando de un Builder real con filesystem: `prompts/builder_invocation_contract.md` seccion 1.
+5. Comando de una ronda adversarial: `prompts/ensemble_loop.md` seccion 3.4.
+6. Minimos y barreras: `scripts/check_loop_execution.py` (el contador) y `scripts/prepush_check.py`.
+
+Si un salto no basta, abre SOLO el fichero que cita ese salto.

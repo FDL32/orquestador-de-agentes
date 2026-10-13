@@ -157,7 +157,7 @@ repos:
 # `pyproject.toml` declara `fix = true`, asi que `ruff check` reescribe ficheros
 # POR CONFIGURACION aunque nadie pase `--fix`. Medido en el repo real: correr
 # `ruff check <fichero> --select RUF100` -- una consulta, no una correccion --
-# retiro 2 `# noqa: S603` del arbol. Ese es el mecanismo que reaparecio DOS
+# retiro dos "noqa: S603" del arbol. Ese es el mecanismo que reaparecio DOS
 # veces en dos checkouts sin commit ni autor: no fue un acto humano, fue un
 # probe de conteo con efecto de escritura.
 #

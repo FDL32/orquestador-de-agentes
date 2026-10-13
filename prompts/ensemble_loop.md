@@ -242,3 +242,17 @@ Los cupos se comparten con los agentes de implantacion: preferir modelos sin lim
 
 - `gov_stage`/`step`: WOT-2026-086g.
 - Comando `loop` con valores por defecto para chat: WOT-2026-086i.
+
+## 9. Referencias: N1 y D1 de la propuesta v3 (ficha 093)
+
+Trazabilidad a la propuesta v3 del proceso portable (revision C4). NO son criterio nuevo:
+documentan por que este contrato dice lo que dice, y el criterio vive en las secciones de
+arriba.
+
+<!-- N1 (nota de diseno 1): corregir este contrato -- decidir si el refuter cuenta (cuenta
+     si su ronda es sustantiva), listar --task-type por fase (tabla 3.4), fijar el umbral
+     de mudez por MODELO y no un tamano global (3.9), y ordenar la numeracion 3.x.
+     Aplicado arriba; lo vigila tests/unit/test_ensemble_loop_contract_sync.py. -->
+<!-- D1 (detalle 1): el refuter (codex) cuenta como lente independiente si su ronda es
+     sustantiva; el checker excluye al emisor del nonce, las rondas mudas y las
+     sustituciones por BA01 (definicion unica, seccion 4 de este contrato). -->

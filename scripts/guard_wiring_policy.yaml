@@ -179,6 +179,17 @@ known_unwired:
     a un cierre programatico del batch si el PREDICATE pasa a ejecutarse por
     codigo.
 
+  # WOT-2026-094c: auditoria de higiene del archive de memoria portable
+  # (scripts/check_archive_hygiene.py, solo lectura). Su veredicto depende de
+  # una LINEA BASE FECHADA elegida por el operador (--profile/--baseline) y su
+  # limpieza esta PROPUESTA, no aplicada: cablearlo fail-closed en pre-commit
+  # bloquearia TODOS los commits en cuanto apareciera duplicacion nueva,
+  # incluidos commits ajenos, hasta decision humana -- el mismo limite
+  # estructural que check_portable_memory_promotion (deteccion post-hoc, no
+  # barrera de escritura). Invocacion manual/per-auditoria, como los demas
+  # BY-DESIGN de este bloque. Dueno: WOT-2026-094c.
+  check_archive_hygiene: WOT-2026-094c
+
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
   pre_handoff_guard: scripts/pre_handoff_guard.py
