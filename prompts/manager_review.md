@@ -6,7 +6,7 @@ route_kind: entry
 ---
 # Manager Review Prompt
 <!-- PROMPT-SUMMARY
-what: Plantilla del rol manager para revisar la entrega del Builder de un ticket: verificacion mecanica propia, barrera de regresion (mutation-verify), checklist CEM y veredicto APROBADO/CHANGES con decision artifact.
+what: Plantilla del rol manager para revisar la entrega del Builder de un ticket: verificacion mecanica propia, barrera de regresion (mutation-verify), checklist CEM y veredicto APPROVE/CHANGES con decision artifact.
 when: Tras la entrega del Builder (fase MANAGER_REVIEW) de un ticket de implementacion.
 not: NO cierra tickets de Contract Formation en status frozen (eso es validate_contract_formation.py) ni audita el contrato antes del Builder (audit_ticket_contract.md).
 -->
@@ -30,7 +30,7 @@ canonico antes de aprobar.
   despues en su Builder phase (implementacion real del entregable), el
   resto de este prompt aplica integramente, incluida la barrera "loop
   rapido vs cierre canonico" del Paso 2 (suite canonica obligatoria para
-  el Paso 5-bis tras `APROBADO`, ya no como precondicion del Paso 5 --
+  el Paso 5-bis tras `APPROVE`, ya no como precondicion del Paso 5 --
   WOT-2026-039m).
 - Referencia cruzada: `prompts/contract_formation_pipeline.md` usa el mismo
   vocabulario `status: frozen`; confirma alli el estado del contrato antes
@@ -170,7 +170,7 @@ Comprueba:
   paso de **Cierre final**, DESPUES de esta revision y del permiso del usuario
   (ver Paso 5-bis). En este Paso 2, verifica los gates focales (tests
   enfocados, ruff, encoding guard, validate) con evidencia real; NO exijas ni
-  esperes la suite `--level all` para emitir `APROBADO`. Definicion canonica en
+  esperes la suite `--level all` para emitir `APPROVE`. Definicion canonica en
   `prompts/orchestrator_launch_builder.md` (seccion "Loop rapido vs cierre
   canonico" y "Cierre final tras aprobacion").
 - `validate --json` devuelve 0 errores y, para cierre normal, 0 warnings;
@@ -294,13 +294,13 @@ scope dudoso.
 Emite uno de estos veredictos (sin cambios respecto al contrato original;
 el re-secuenciado de WOT-2026-039m NO introduce un tercer veredicto):
 
-`APROBADO`
+`APPROVE`
 
 Usalo cuando todos los pasos aplicables de ESTA revision (diff, gates
 focales, tests enfocados, mutation-verify, CEM) esten superados con
 evidencia verificada independientemente, **sin haber corrido todavia la
 suite canonica `--level all`** (esa suite ya no es precondicion de este
-Paso, ver Paso 2). `APROBADO` en `code`/`mixed` significa "el diff esta
+Paso, ver Paso 2). `APPROVE` en `code`/`mixed` significa "el diff esta
 listo salvo la suite completa, que se corre a continuacion con permiso del
 usuario" -- ver Paso 5-bis. No ejecutes `--manager-approve` todavia: el
 Paso 5-bis es quien lo hace, tras la suite verde.
@@ -320,7 +320,7 @@ produce `CHANGES` con el fallo de suite (o el commit no revisado) como
 primer blocker. Este `CHANGES` exige **repetir integramente los Pasos 1-5
 de esta Manager Review** sobre el commit actual -- Clasificacion, gates
 focales, tests, mutation-verify/CEM, y una nueva decision -- no solo
-re-emitir el Paso 5 sin re-ejecutar los pasos intermedios. El `APROBADO`
+re-emitir el Paso 5 sin re-ejecutar los pasos intermedios. El `APPROVE`
 anterior queda invalidado: reescribe `decision_<ticket_id>.json` a
 `"decision": "CHANGES"` en el mismo turno en que detectas el fallo,
 para que no quede una aprobacion persistida mientras se corrige.
@@ -338,7 +338,7 @@ bridge):
 {"ticket_id": "<ticket_id>", "decision": "APROBADO|CHANGES", "blockers": []}
 ```
 
-- `decision` solo admite `APROBADO` o `CHANGES`; en `CHANGES`, lista cada
+- `decision` solo admite `APPROVE` o `CHANGES`; en `CHANGES`, lista cada
   blocker como string breve en `blockers`.
 - Escribe el archivo en el mismo turno en que emites el veredicto. Si no
   puedes escribirlo, emite igualmente el veredicto en texto: el bridge
@@ -359,19 +359,19 @@ Para cualquier decision incluye una tabla:
 | Barrera de regresion | si/no/no aplica | prueba sin fix/con fix |
 | Suite canonica `--level all` | no aplica en este Paso (WOT-2026-039m) | se verifica en Paso 5-bis, tras permiso del usuario |
 
-No emitas `APROBADO` con blockers abiertos, claims no verificados que sean
+No emitas `APPROVE` con blockers abiertos, claims no verificados que sean
 centrales para el ticket, o review packet incoherente con el commit real.
 
 ## Paso 5-bis: Permiso del usuario + suite final (WOT-2026-039m)
 
-Aplica solo tras `APROBADO` (Paso 5) en un ticket `code`/`mixed` --
+Aplica solo tras `APPROVE` (Paso 5) en un ticket `code`/`mixed` --
 exactamente el mismo alcance `code`/`mixed` que rige todo el re-secuenciado
 de la suite canonica (ver Paso 2 y "Cierre final tras aprobacion" en
 `orchestrator_launch_builder.md`; para `documentation`/`research`/`analysis`
-el `APROBADO` del Paso 5 sigue siendo el cierre normal, sin este paso). No
+el `APPROVE` del Paso 5 sigue siendo el cierre normal, sin este paso). No
 lo saltes ni lo asumas implicito.
 
-1. **Con `APROBADO` ya emitido y su decision artifact escrito, el rol
+1. **Con `APPROVE` ya emitido y su decision artifact escrito, el rol
    MANAGER pide permiso explicito al usuario** para correr la suite
    canonica y cerrar. No lo asumas por silencio, y no lo delegues al
    Builder: el usuario autoriza el tiempo de la suite (~20 min) y el cierre
@@ -402,7 +402,7 @@ lo saltes ni lo asumas implicito.
    `--manager-approve` para el cierre canonico real, confirmado por el bus.
 
 Este paso es la UNICA via que autoriza `--manager-approve` para `code`/`mixed`.
-Para `documentation`/`research`/`analysis`, `APROBADO` en el Paso 5 sigue
+Para `documentation`/`research`/`analysis`, `APPROVE` en el Paso 5 sigue
 siendo el cierre normal (este paso no aplica, no exige suite ni permiso
 adicional).
 
@@ -412,7 +412,7 @@ UNICAMENTE el proceso descrito en este prompt y en
 que veredictos existen ni que valores acepta el bridge. No crea ningun
 estado o evento nuevo en `bus/state_machine.py`, `agent_controller.py` ni
 `bus/decision_parser.py`; el decision artifact sigue admitiendo unicamente
-`APROBADO`/`CHANGES`, exactamente como antes.
+`APPROVE`/`CHANGES`, exactamente como antes.
 
 ## Informe de salida (obligatorio en flujo por chat)
 
@@ -422,8 +422,8 @@ Cierra cada review con este bloque, ademas del decision artifact:
 ## MANAGER REVIEW REPORT — <ticket_id>
 
 ### Veredicto
-<APROBADO | CHANGES> — <frase con la razon principal>
-<Si APROBADO en ticket code/mixed: "pendiente de permiso del usuario + suite canonica --level all (Paso 5-bis) antes del cierre real">
+<APPROVE | CHANGES> — <frase con la razon principal>
+<Si APPROVE en ticket code/mixed: "pendiente de permiso del usuario + suite canonica --level all (Paso 5-bis) antes del cierre real">
 
 ### Claims del Builder vs evidencia
 | Claim del Builder | Verificacion independiente | Resultado |

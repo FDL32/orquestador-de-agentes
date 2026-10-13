@@ -25,7 +25,7 @@ Cuando el Builder marca una tarea como `READY_FOR_REVIEW`, el Manager usa esta s
 2. Verificar Quality Gates (ruff + runner seguro de pytest)
 3. Revisar codigo contra criterios de aceptacion
 4. Verificar seguridad (no secrets, arquitectura respetada)
-5. Generar veredicto: APROBADO / CHANGES
+5. Generar veredicto: APPROVE / CHANGES
 
 ## Workflow
 
@@ -174,7 +174,7 @@ Si hay problemas menores:
 
 - **Fecha:** [YYYY-MM-DD HH:MM]
 - **Revisor:** Manager
-- **Veredicto:** [APPROVED | CHANGES]
+- **Veredicto:** [APPROVE | CHANGES]
 - **Estado:** RESOLVED / PENDING
 
 **Resumen:**
