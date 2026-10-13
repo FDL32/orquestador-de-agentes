@@ -2219,8 +2219,8 @@ def _git_show_ref(ref: str, relpath: str, cwd: Path) -> str | None:
 def validate_archive_volume(root: Path) -> list[str]:
     """Return volume collapse WARNs (empty == clean or skip).
 
-    Compares the current archive line count against a git baseline (HEAD by
-    default, overridable via --volume-ref). Emits a nominal WARNING when the
+    Compares the current archive line count against a git baseline at HEAD.
+    Emits a nominal WARNING when the
     current volume drops below the baseline by more than
     ``_ARCHIVE_VOLUME_COLLAPSE_THRESHOLD``, NEVER an ERROR (rc unchanged).
 

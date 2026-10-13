@@ -2450,3 +2450,30 @@ def test_archive_volume_skips_without_git_baseline(tmp_path: Path) -> None:
     assert warnings == [], (
         f"without .git, validate_archive_volume must skip silently: {warnings}"
     )
+
+
+def test_archive_volume_collapse_main_rc_zero_warn_stderr(
+    tmp_path: Path, capsys
+) -> None:
+    """E2E: main() with a collapsed archive -> exit 0 + WARN on stderr.
+
+    MUTATION: if the validate_archive_volume call is removed from main(),
+    the WARN is not printed -> this test fails. Proves wiring, not just
+    the isolated function.
+    """
+    _make_git_repo(tmp_path)
+    _write_archive_and_commit(tmp_path, 200)
+    # Truncate the archive to simulate collapse.
+    arch = tmp_path / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    arch.write_text("line 1\nline 2\nline 3\nline 4\n", encoding="utf-8")
+    # Also write a valid backlog so main() can reach the volume check.
+    _write_backlog(tmp_path, _VALID_ROWS, "### WOT-2026-001a - ficha\n")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+
+    # Volume collapse is a WARN, never an ERROR: rc must be 0.
+    assert rc == 0, f"expected rc=0 (WARN, non-blocking), got: {rc}"
+    err = capsys.readouterr().err
+    assert "volumen" in err, f"WARN must appear in stderr; got: {err}"
+    assert "200" in err, f"baseline=200 must appear in stderr; got: {err}"
+    assert "4" in err, f"actual=4 must appear in stderr; got: {err}"
