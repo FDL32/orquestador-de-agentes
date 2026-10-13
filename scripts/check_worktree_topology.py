@@ -456,7 +456,8 @@ def _check_contract_coherence(
     state (a closed ticket's contract must not block the launch of a new
     ticket of another prefix -- WOT-2026-021s; the residual COMPLETED
     work_plan of a prior WOT would otherwise false-block any CTL start with
-    "incoherencia de contrato").
+    "incoherencia de contrato") OR if work_plan.md is present but
+    UnicodeDecodeError makes it unreadable (fail-closed with exit 2).
     Returns (exit_code, message) on a genuine live mismatch.
     """
     work_plan_path = motor_root / ".agent" / "collaboration" / "work_plan.md"
@@ -464,7 +465,12 @@ def _check_contract_coherence(
         return None
     try:
         content = work_plan_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        if work_plan_path.exists():
+            return (
+                2,
+                "contrato ilegible: work_plan.md no es UTF-8 válido (fail-closed)",
+            )
         return None
 
     agent_dir = motor_root / ".agent"
@@ -506,7 +512,7 @@ def _check_contract_coherence(
     log_path = motor_root / ".agent" / "collaboration" / "execution_log.md"
     try:
         log_content = log_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         log_content = None
     if log_content is not None and state_validation.is_seed_neutral_state(
         content, log_content

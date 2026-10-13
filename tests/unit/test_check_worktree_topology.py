@@ -434,8 +434,50 @@ def test_active_motor_workplan_still_blocks_destination_ticket(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
-# (h) --allow-diagnostic on case (b) -> exit 0, [DIAGNOSTIC MODE] verdict
+# WOT-2026-092n: fail-closed of UnicodeDecodeError in both readings.
+# Work_plan corruption → exit 2 "ilegible"; execution_log corruption →
+# log_content None → seed exemption NOT opened → "incoherencia de contrato".
 # ---------------------------------------------------------------------------
+
+
+def test_corrupted_workplan_fails_closed(tmp_path: Path) -> None:
+    # work_plan.md present but contains non-UTF-8 bytes → _check_contract_coherence
+    # returns (2, msg) with "ilegible" in message. Mutation-to-prove: reverting
+    # the UnicodeDecodeError capture to only OSError makes this raise.
+    motor = _make_motor_with_workplan(tmp_path, _SEED_WORK_PLAN)
+    # Overwrite work_plan.md with corrupted bytes (write_bytes to bypass any
+    # text-mode encoding; read_text(encoding="utf-8") will raise UnicodeDecodeError).
+    collab = motor / ".agent" / "collaboration"
+    (collab / "work_plan.md").write_bytes(b"\xff\xfe invalid utf-8 content\n")
+    result = _check_contract_coherence(motor, "CTL")
+    assert result is not None
+    exit_code, message = result
+    assert exit_code == 2
+    assert "ilegible" in message
+
+
+def test_corrupted_execution_log_forfeits_seed_exemption(tmp_path: Path) -> None:
+    # execution_log.md present but corrupted → log_content = None (aligned with
+    # OSError handler). Since is_seed_neutral_state needs BOTH files valid, the
+    # seed exemption is NOT opened → delivery_authority mismatch → exit 2 with
+    # "incoherencia de contrato". Mutation-to-prove: reverting the
+    # UnicodeDecodeError capture to only OSError makes this raise.
+    motor = _make_seed_motor(tmp_path, with_log=True)
+    collab = motor / ".agent" / "collaboration"
+    (collab / "execution_log.md").write_bytes(b"\xff\xfe invalid utf-8 content\n")
+    result = _check_contract_coherence(motor, "CTL")
+    assert result is not None
+    exit_code, message = result
+    assert exit_code == 2
+    assert "incoherencia de contrato" in message
+
+
+def test_valid_utf8_pair_unchanged(tmp_path: Path) -> None:
+    # Control positive: both files valid UTF-8 seed state → still None (no change
+    # from pre-fix behavior). The seed exemption remains open.
+    motor = _make_seed_motor(tmp_path, with_log=True)
+    result = _check_contract_coherence(motor, "CTL")
+    assert result is None
 
 
 def test_case_h_allow_diagnostic_always_exits_zero(
