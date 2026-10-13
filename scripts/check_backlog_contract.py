@@ -2216,6 +2216,155 @@ def _git_show_ref(ref: str, relpath: str, cwd: Path) -> str | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-090r: detect lost backlog rows between a base revision and HEAD.
+#
+# A row that disappears from BOTH surfaces (backlog.md + _archive/backlog_done.md)
+# is irreversible state loss -- the queue no longer lists it and the archive
+# no longer holds it. This guard compares the CENSUS OF ROW IDs (Prioridad-led
+# rows, using _ticket_row_ids) between a base revision and the working tree.
+#
+# Base revision defaults to merge-base(origin/main, HEAD) so that history
+# already in origin/main is NOT re-audited (only the non-pushed delta is
+# checked). If the merge-base cannot be resolved -> SKIP (return [], never
+# fabricate a failure).
+#
+# FAIL, not WARN: state loss is irreversible. rc=1 (blocking).
+# ---------------------------------------------------------------------------
+
+
+def _resolve_merge_base(base_ref: str, head_ref: str, cwd: Path) -> str | None:
+    """Resolve `merge-base <base_ref> <head_ref>` read-only, returning SHA or None."""
+    try:
+        proc = subprocess.run(
+            ["git", "merge-base", base_ref, head_ref],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+
+
+def _get_head_ids_from_git(root: Path, base_ref: str) -> tuple[set[str], int, int]:
+    """Get row IDs from backlog + archive at a git revision via _git_show_ref.
+
+    Returns (ids_set, backlog_lines, archive_lines) for the receipt denominator.
+    """
+    backlog_lines = 0
+    archive_lines = 0
+    ids: set[str] = set()
+
+    # Read backlog at base revision.
+    backlog_text = _git_show_ref(base_ref, ".agent/collaboration/backlog.md", root)
+    if backlog_text is not None:
+        backlog_lines = len(backlog_text.splitlines())
+        for line in backlog_text.splitlines():
+            tid = _row_ticket_id(line.strip())
+            if tid:
+                ids.add(tid)
+
+    # Read archive at base revision.
+    archive_text = _git_show_ref(
+        base_ref, ".agent/collaboration/_archive/backlog_done.md", root
+    )
+    if archive_text is not None:
+        archive_lines = len(archive_text.splitlines())
+        for line in archive_text.splitlines():
+            tid = _row_ticket_id(line.strip())
+            if tid:
+                ids.add(tid)
+
+    return ids, backlog_lines, archive_lines
+
+
+def _get_head_ids_from_disk(root: Path) -> tuple[set[str], int, int]:
+    """Get row IDs from backlog + archive on disk (current working tree).
+
+    Returns (ids_set, backlog_lines, archive_lines) for the receipt denominator.
+    """
+    collab = root / ".agent" / "collaboration"
+    backlog = collab / "backlog.md"
+    archive = collab / "_archive" / "backlog_done.md"
+
+    backlog_lines = 0
+    archive_lines = 0
+    ids: set[str] = set()
+
+    if backlog.exists():
+        text = backlog.read_text(encoding="utf-8-sig")
+        backlog_lines = len(text.splitlines())
+        for line in text.splitlines():
+            tid = _row_ticket_id(line.strip())
+            if tid:
+                ids.add(tid)
+
+    if archive.exists():
+        text = archive.read_text(encoding="utf-8-sig")
+        archive_lines = len(text.splitlines())
+        for line in text.splitlines():
+            tid = _row_ticket_id(line.strip())
+            if tid:
+                ids.add(tid)
+
+    return ids, backlog_lines, archive_lines
+
+
+def validate_lost_ids(root: Path, base_ref: str | None = None) -> list[str]:
+    """Return violations for ticket IDs lost between base revision and HEAD.
+
+    Compares the census of row IDs (Prioridad-led, using _ticket_row_ids) of the
+    UNION of backlog.md + _archive/backlog_done.md between a base revision and
+    the working tree HEAD. Any ID present at base but absent from BOTH surfaces
+    at HEAD is a violation.
+
+    If base_ref is None, resolve it as merge-base(origin/main, HEAD).
+    If the merge-base cannot be resolved -> SKIP (return [], never fabricate).
+    If git is unavailable -> SKIP (return [], never fabricate).
+
+    FAIL, not WARN: state loss is irreversible (WOT-2026-090r).
+    """
+    # Resolve base_ref.
+    if base_ref is None:
+        base_ref = _resolve_merge_base("origin/main", "HEAD", root)
+        if base_ref is None:
+            # SKIP: cannot resolve base, never fabricate a failure.
+            return []
+
+    # Get IDs from base revision via git.
+    base_ids, base_bl, base_ar = _get_head_ids_from_git(root, base_ref)
+
+    # Get IDs from current working tree.
+    head_ids, head_bl, head_ar = _get_head_ids_from_disk(root)
+
+    # Compute lost IDs (present at base, absent from HEAD).
+    lost = sorted(base_ids - head_ids)
+
+    # Publish denominator for transparency (prevents the "comodo census" trap).
+    print(
+        f"[backlog-contract] lost-id census (WOT-2026-090r): "
+        f"base=backlog={base_bl} archive={base_ar} ids={len(base_ids)} | "
+        f"head=backlog={head_bl} archive={head_ar} ids={len(head_ids)}"
+    )
+
+    if not lost:
+        return []
+
+    # Each lost ID is a violation.
+    return [
+        f"[backlog-contract] id PERDIDO: {tid} presente en "
+        f"base={base_ref[:12]} y ausente de AMBAS superficies en HEAD "
+        f"(WOT-2026-090r)"
+        for tid in lost
+    ]
+
+
 def validate_archive_volume(root: Path) -> list[str]:
     """Return volume collapse WARNs (empty == clean or skip).
 
@@ -2313,6 +2462,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     archive_volume_warnings = validate_archive_volume(root)
     for w in archive_volume_warnings:
         print(w, file=sys.stderr)
+    # WOT-2026-090r: detect lost backlog rows between base revision and HEAD.
+    lost_id_violations = validate_lost_ids(root)
+    violations = violations + lost_id_violations
 
     # WOT-2026-052a: the gate must not be silent about rows its own universe
     # excludes. Every Prioridad-led row whose Ticket cell fails the id pattern

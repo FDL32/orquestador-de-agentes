@@ -567,6 +567,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             validate_archive_volume,
             validate_backlog,
             validate_live_archive_integrity,
+            validate_lost_ids,
         )
     except ImportError:
         from check_backlog_contract import (  # type: ignore[no-redef]
@@ -578,6 +579,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             validate_archive_volume,
             validate_backlog,
             validate_live_archive_integrity,
+            validate_lost_ids,
         )
     # WOT-2026-027i / WOT-2026-026z: the live<->archive duplicate check and the
     # archive arity check both need the destino root (they read the archive), so
@@ -606,6 +608,7 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         + validate_archive_states(project_root)
         + validate_archive_landing_evidence(project_root)
         + validate_archive_prose_preservation(project_root)
+        + validate_lost_ids(project_root)
     )
     if violations:
         detail = "\n".join(f"  - {v}" for v in violations)

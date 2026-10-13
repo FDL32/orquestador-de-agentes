@@ -2477,3 +2477,206 @@ def test_archive_volume_collapse_main_rc_zero_warn_stderr(
     assert "volumen" in err, f"WARN must appear in stderr; got: {err}"
     assert "200" in err, f"baseline=200 must appear in stderr; got: {err}"
     assert "4" in err, f"actual=4 must appear in stderr; got: {err}"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-090r: detect lost backlog rows between base revision and HEAD
+# ---------------------------------------------------------------------------
+
+
+def _make_git_repo_with_origin(tmp_path: Path) -> None:
+    """Create a git repo with origin/main pointing to HEAD (simulates origin/main).
+
+    This enables merge-base(origin/main, HEAD) to resolve.
+    The order matters: init + commit FIRST, then create origin/main branch
+    so both HEAD and origin/main point to the same commit.
+    """
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+    # Create origin/main branch tracking the same commit AFTER the commit.
+    subprocess.run(
+        ["git", "branch", "origin/main"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+
+
+def _write_backlog_and_commit(tmp_path: Path, rows: str, msg: str = "backlog") -> None:
+    """Write backlog.md and commit it in a git repo."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(_HEADER + rows + "\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            msg,
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+
+
+def test_lost_id_absent_from_both_surfaces_fails(tmp_path: Path) -> None:
+    """MUTATION: a commit that deletes a row from backlog without archiving ->
+    red. validate_lost_ids must name the lost ID.
+
+    The fixture creates:
+    - git repo with origin/main at initial commit
+    - backlog with WOT-2026-086g row, committed
+    - origin/main is advanced to same commit as HEAD (both have the row)
+    Then HEAD's working tree is MODIFIED: the row is deleted from backlog.md
+    without being moved to archive.
+    """
+    _make_git_repo_with_origin(tmp_path)
+
+    # Write initial state with the row present and commit.
+    initial_rows = (
+        "| Alta | WOT-2026-086g | ticket a borrar | s | pending | - | x | - |\n"
+    )
+    _write_backlog_and_commit(tmp_path, initial_rows, "base state")
+
+    # Advance origin/main to match HEAD (both now have the row).
+    subprocess.run(
+        ["git", "branch", "-f", "origin/main"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+
+    # Now modify: delete the row from backlog without archiving.
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "backlog.md").write_text(_HEADER + "\n", encoding="utf-8")
+
+    # Also write archive so main() can reach the check.
+    arch = collab / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text("# historico\n", encoding="utf-8")
+
+    errors = cbc.validate_lost_ids(tmp_path)
+    assert len(errors) >= 1, f"expected at least 1 lost ID violation, got: {errors}"
+    assert "WOT-2026-086g" in errors[0], f"must name WOT-2026-086g: {errors}"
+    assert "PERDIDO" in errors[0], f"must say PERDIDO: {errors}"
+    assert "WOT-2026-090r" in errors[0], f"must reference WOT-2026-090r: {errors}"
+
+
+def test_archived_row_is_not_a_lost_id(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: a legitimately archived row (moved from backlog to
+    archive with terminal state) -> green. The ID is still present in the
+    UNION of surfaces.
+
+    The fixture:
+    - origin/main: backlog with row + archive with terminal entry
+    - HEAD: same state (merge-base resolves, no diff)
+    """
+    _make_git_repo_with_origin(tmp_path)
+
+    # Write initial state with row + archive.
+    initial_rows = (
+        "| Alta | WOT-2026-086g | ticket archivado | s | pending | - | x | - |\n"
+    )
+    _write_backlog_and_commit(tmp_path, initial_rows, "base state")
+
+    # Archive has the row with terminal state.
+    arch = tmp_path / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(
+        "| Alta | WOT-2026-086g | archivado deliverable_type: code | s | completed | - | x | commit:abc |\n",
+        encoding="utf-8",
+    )
+
+    errors = cbc.validate_lost_ids(tmp_path)
+    assert errors == [], f"archived row must NOT be lost; got: {errors}"
+
+
+def test_lost_id_skips_without_git_baseline(tmp_path: Path) -> None:
+    """SKIP: tmp_path has no .git / git fails -> returns [] (never fabricates).
+
+    No .git is the simplest case. validate_lost_ids must return [] without
+    raising, matching the pattern of validate_archive_volume.
+    """
+    # tmp_path from fixture has no .git -> SKIP.
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        _HEADER + "| Alta | WOT-2026-086g | t | s | pending | - | x | - |\n",
+        encoding="utf-8",
+    )
+
+    errors = cbc.validate_lost_ids(tmp_path)
+    assert errors == [], f"without git, validate_lost_ids must skip silently: {errors}"
+
+
+def test_lost_id_wired_blocks_closeout(tmp_path: Path) -> None:
+    """E2E: run_backlog_contract_check with a lost ID -> passed=False, blocking.
+
+    Proves the wiring in prepush_check, not just the isolated function.
+    MUTATION: if validate_lost_ids is removed from run_backlog_contract_check,
+    this test goes green (the lost ID goes undetected in the closeout path).
+    """
+    from scripts.prepush_check import run_backlog_contract_check
+
+    _make_git_repo_with_origin(tmp_path)
+
+    # Write initial state with the row present and commit.
+    initial_rows = (
+        "| Alta | WOT-2026-086g | ticket a borrar | s | pending | - | x | - |\n"
+    )
+    _write_backlog_and_commit(tmp_path, initial_rows, "base state")
+
+    # Advance origin/main to match HEAD (both now have the row).
+    subprocess.run(
+        ["git", "branch", "-f", "origin/main"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+
+    # Modify: delete the row from backlog without archiving.
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "backlog.md").write_text(_HEADER + "\n", encoding="utf-8")
+
+    # Also write archive so main() can reach the check.
+    arch = collab / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text("# historico\n", encoding="utf-8")
+
+    result = run_backlog_contract_check(tmp_path)
+
+    assert result.passed is False, (
+        f"run_backlog_contract_check must fail with lost ID; got passed={result.passed}"
+    )
+    assert result.is_blocking is True, (
+        f"lost-id check must be blocking; got is_blocking={result.is_blocking}"
+    )
+    assert "WOT-2026-086g" in result.output, (
+        f"must name the lost ID in output: {result.output}"
+    )
