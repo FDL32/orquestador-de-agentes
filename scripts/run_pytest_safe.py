@@ -1807,6 +1807,12 @@ def main() -> int:  # noqa: C901
     _audit_state_pre_repr = None
     # WOT-2026-073e (Pieza b): exclude the runner's own seal/log from the
     # audit window so the runner's writes do not invalidate its own measurement.
+    # WOT-2026-079c: tambien excluye las superficies vivas de colaboracion
+    # (work_plan.md, TURN.md, STATE.md, execution_log.md, notifications.md,
+    # review_queue.md) para que el sello sobreviva a escrituras de sesion
+    # close en arboles compartidos: la ventana de medicion dura minutos y
+    # otra sesion puede modificar esas rutas durante la corrida. Sin la
+    # exclusion, el sello invalida resultados legitimos (falso negativo).
     _delivery_root = _delivery_repo_root()
     _ignore_paths: frozenset[str] = frozenset()
     for _lp in (LAST_RUN_JSON, LAST_RUN_LOG):
@@ -1814,6 +1820,19 @@ def main() -> int:  # noqa: C901
             _ignore_paths = _ignore_paths | frozenset(
                 [str(_lp.resolve().relative_to(_delivery_root)).replace("\\", "/")]
             )
+    # Superficies vivas canonicas (AGENTS.md): NUNCA entran en git, pero
+    # el auditor las mira como parte del arbol vivo; si una sesion las
+    # modifica durante la ventana, el sello no debe invalidar.
+    _viva_rel = (
+        ".agent/collaboration/work_plan.md",
+        ".agent/collaboration/TURN.md",
+        ".agent/collaboration/STATE.md",
+        ".agent/collaboration/execution_log.md",
+        ".agent/collaboration/notifications.md",
+        ".agent/collaboration/review_queue.md",
+    )
+    for _v in _viva_rel:
+        _ignore_paths = _ignore_paths | frozenset([_v])
     try:
         _audit_state_pre = _invariant_capture_state(
             _delivery_root, ignore_paths=_ignore_paths
