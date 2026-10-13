@@ -254,7 +254,7 @@ def test_cli_loop_round_gov_task_without_pair_blocks_no_row(tmp_path, monkeypatc
             "--rol",
             "challenger",
             "--phase",
-            "premise_check",
+            "DESIGN_REVIEW",
             "--loop-id",
             "L066T",
             "--backend-key",

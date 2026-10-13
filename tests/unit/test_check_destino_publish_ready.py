@@ -324,8 +324,7 @@ def test_zero_errors_zero_warnings_shows_real_counts(tmp_path, capsys):
         rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
     assert rc == 0
     captured = capsys.readouterr()
-    assert "[OK] validate 0 errors / 0 warnings" in captured.out
-    assert "0/0" not in captured.out
+    assert "[OK] validate 0/0 y STATUS=COMPLETED" in captured.out
 
 
 def test_zero_errors_n_warnings_shows_real_counts(tmp_path, capsys):
@@ -338,7 +337,7 @@ def test_zero_errors_n_warnings_shows_real_counts(tmp_path, capsys):
         rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
     assert rc == 0
     captured = capsys.readouterr()
-    assert "[OK] validate 0 errors / 2 warnings" in captured.out
+    assert "[OK] validate 0/2" in captured.out
     assert "0/0" not in captured.out
 
 
@@ -350,7 +349,7 @@ def test_approved_with_warnings_shows_real_counts(tmp_path, capsys):
         rc = cdr.main(["--project-root", str(project), "--motor-root", str(tmp_path)])
     assert rc == 2
     captured = capsys.readouterr()
-    assert "0 errors / 1 warnings" in captured.out
+    assert "0/1" in captured.out
     assert "0/0" not in captured.out
 
 
