@@ -8595,6 +8595,66 @@ def test_warn_phase_typo_handles_none():
 
 
 # --------------------------------------------------------------------------- #
+# WOT-2026-067i: WARN cuando --commit-sha se omite en loop-round
+# --------------------------------------------------------------------------- #
+
+
+def test_loop_round_cli_warns_when_commit_sha_omitted(capsys, tmp_path, monkeypatch):
+    """WOT-2026-067i: loop-round sin --commit-sha genera WARN en stderr.
+
+    MUTATION (DoD b): quitar el print del WARN -> capsys.err vacio, test ROJO.
+    El WARN no bloquea: la ronda sigue corriendo (rc puede ser 0 o 4 segun
+    el task_type, pero el foco del test es el WARN, no el rc).
+    """
+
+    def fake_send(*a, **k):
+        return "ok"
+
+    payload = tmp_path / "payload.txt"
+    payload.write_text("material publico", encoding="utf-8")
+    argv = [
+        "loop-round",
+        "--profile",
+        "p_chal",
+        "--content-file",
+        str(payload),
+        "--ticket",
+        "WOT-TEST-067i",
+        "--task-type",
+        "code-review",
+        "--rol",
+        "challenger",
+        "--phase",
+        "MANAGER_REVIEW",
+        "--loop-id",
+        "L700",
+        "--backend-key",
+        "BKA",
+        "--data-sensitivity",
+        "public",
+        "--project-root",
+        str(tmp_path),
+    ]
+    # --commit-sha y --challenge-nonce ausentes: el WARN debe aparecer.
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to" + "_profile", fake_send)
+    # La ronda de gobierno sin nonce retorna 4 ([INVALID]), pero el WARN
+    # debe haberse escrito ANTES del bloqueo.
+    rc = ed.main(argv)
+    assert rc == ed.EXIT_INVALID_INPUT, (
+        f"ronda de gobierno sin nonce -> {rc}; el foco del test es el WARN, no rc"
+    )
+    captured = capsys.readouterr()
+    assert "WARN" in captured.err, f"esperado WARN en stderr, stderr={captured.err!r}"
+    assert "--commit-sha no proporcionado" in captured.err, (
+        f"el WARN debe nombrar el flag ausente; stderr={captured.err!r}"
+    )
+    assert "owner=WOT-2026-067i" in captured.err, (
+        f"el WARN debe portar el ticket dueno; stderr={captured.err!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # WOT-2026-055a: `--phase` gobernado por el enum de 8 etapas canonicas
 # --------------------------------------------------------------------------- #
 
