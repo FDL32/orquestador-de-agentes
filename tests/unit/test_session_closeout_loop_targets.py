@@ -877,6 +877,63 @@ def test_trailer_estructurado_si_es_entrega(tmp_path: Path) -> None:
     assert sha in targets_path.read_text(encoding="utf-8")
 
 
+def test_delivery_trailers_set_frozen(tmp_path: Path) -> None:
+    """Fija el conjunto exacto de trailers de entrega.
+
+    Por cada trailer documentado en el docstring de
+    `_git_log_shas_for_ticket`, `_delivers_ticket` debe devolver True.
+    Por un trailer NO documentado (`refs`), debe devolver False.
+
+    MUTATION-VERIFY (WOT-2026-067s): si alguien cambia `_DELIVERY_TRAILERS`
+    sin sincronizar el docstring, este test FALLA. Es un contract-test entre
+    la constante y la documentacion.
+    """
+    import inspect
+
+    # Docstring: extrae la lista de trailers citada.
+    docstring = inspect.getdoc(session_closeout._git_log_shas_for_ticket) or ""
+
+    # Los trailers que el docstring ENUNICIA (backticks + ":", strip to bare).
+    doc_trailers: set[str] = set()
+    for token in docstring.split():
+        # Strip backticks, colons, and surrounding punctuation:
+        # `` `Ticket:`, `` -> "ticket"
+        cleaned = token.lower().strip("`").rstrip(":").strip(".,;:()[]{}'\"`")
+        if cleaned in (
+            "ticket",
+            "closes",
+            "fixes",
+            "resolves",
+            "refs",
+        ):
+            doc_trailers.add(cleaned)
+
+    # `Refs:` NO debe aparecer en el docstring (WOT-2026-066a).
+    assert "refs" not in doc_trailers, (
+        f"Refs: no debe estar documentado como entrega; docstring lo cita: {doc_trailers}"
+    )
+
+    # El docstring debe mencionar EXACTAMENTE lo que tiene la constante.
+    expected = set(session_closeout._DELIVERY_TRAILERS)
+    assert doc_trailers == expected, (
+        f"docstring {doc_trailers} != _DELIVERY_TRAILERS {expected}"
+    )
+
+    # Verificacion funcional: cada trailer documentado SI entrega.
+    ticket_id = "WOT-2026-TEST00"
+    for trailer in expected:
+        body = f"{trailer}: {ticket_id}"
+        assert session_closeout._delivers_ticket("", body, ticket_id), (
+            f"trailer {trailer!r} documentado pero _delivers_ticket -> False"
+        )
+
+    # Y un trailer no-documentado NO entrega.
+    body_refs = f"refs: {ticket_id}"
+    assert not session_closeout._delivers_ticket("", body_refs, ticket_id), (
+        "refs: no debe ser entrega"
+    )
+
+
 def test_subject_sigue_siendo_entrega(tmp_path: Path) -> None:
     """No-regresion: el caso canonico (ticket en el subject) sigue entrando."""
     repo = tmp_path / "repo"

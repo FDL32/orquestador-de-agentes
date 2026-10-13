@@ -74,10 +74,33 @@ EXPECTED_WIRED_REAL = {
     # prepush_check.py::run_backlog_admission_check (closeout, BLOQUEANTE --
     # el gate nace bloqueante: sin deuda que amnistiar, rango real 0 commits).
     "check_backlog_admission",
+    # WOT-2026-040g: cableado via import de nivel de funcion en
+    # session_closeout.py::_step_report_non_attributable_rounds
+    # (`from scripts.ensemble_dispatch import _read_scorecard`), que mete
+    # ensemble_dispatch.py en la frontera derivada de self_running_paths. Dentro
+    # de ese fichero ya alcanzable, `spec_from_file_location("check_bundle_receipts",
+    # ...)` (:4962) es posicion de ejecucion real. Retirado de known_unwired tras
+    # bucle adversarial (biseccion + sandbox + control negativo, 2026-10-12).
+    "check_bundle_receipts",
+    # WOT-2026-040g: mismo mecanismo que check_bundle_receipts -- el import LAZY
+    # `from scripts.check_loop_bundle_protocol import check_bundle` (dentro de
+    # cmd_loop_round, ensemble_dispatch.py:6538) vive en un fichero que ya es
+    # FRONTERA desde que session_closeout.py:2357 importa ensemble_dispatch.
+    # Retirado de wired_via tras el mismo bucle adversarial.
+    "check_loop_bundle_protocol",
     # WOT-2026-067n: cableado via import estatico en
     # prepush_check.py::run_launch_prompt_paths_check (closeout, WARN -- 2 de 3
     # prompts vivos ya violan la regla antes de la barrera: rojo heredado).
     "check_launch_prompt_paths",
+    # WOT-2026-067z: cableado via import estatico en
+    # prepush_check.py::run_builder_prompt_obligations_check (closeout, WARN --
+    # nace WARN porque la deuda del corpus ya existe, medida 2026-10-11: 23
+    # prompts declaran el cid y 73 hallazgos; 4 omiten --mark-ready por
+    # completo). Punto de enganche TEMPRANO (redaccion->lanzamiento) declarado
+    # MANUAL en el docstring del guard; este es el punto de CIERRE. Vara propia
+    # ejecutada: check_guard_wiring sobre el arbol real con el guard nuevo ->
+    # 0 UNDECLARED (54 wired).
+    "check_builder_prompt_obligations",
     # WOT-2026-067m: cableado via import ESTATICO en
     # prepush_check.py::run_arranques_index_check (closeout, BLOQUEANTE). Cuadra
     # `arranques/_archive/` con su `INDEX.md` en AMBAS direcciones (DEC-067L-002:

@@ -1,7 +1,7 @@
 ---
 name: audit-autonomous-ticket-batch
 version: 1.0.0
-description: Auditoria aislada (contexto fresco, solo lectura) de un batch autonomo de tickets ya cerrado o parado, que re-deriva el PREDICATE de 8 condiciones comando a comando, audita las paradas y la recuperacion del ejecutor y propone, sin ejecutarlo, el cierre de sesion. Usar cuando un batch de orchestrate-autonomous-ticket-batch ha terminado o se ha detenido, ya no le quedan grupos ejecutables y existe su batch_run. No usar para auditar una cadena ticket a ticket (ver audit-pipeline, audit-pipeline-codeonly) ni desde el mismo agente que ejecuto el batch.
+description: Auditoria aislada (contexto fresco, solo lectura) de un batch autonomo de tickets ya cerrado o parado, que re-deriva el PREDICATE de 9 condiciones comando a comando, audita las paradas y la recuperacion del ejecutor y propone, sin ejecutarlo, el cierre de sesion. Usar cuando un batch de orchestrate-autonomous-ticket-batch ha terminado o se ha detenido, ya no le quedan grupos ejecutables y existe su batch_run. No usar para auditar una cadena ticket a ticket (ver audit-pipeline, audit-pipeline-codeonly) ni desde el mismo agente que ejecuto el batch.
 triggers: [/audit-autonomous-ticket-batch, audit-autonomous-ticket-batch, auditar-batch-autonomo]
 author: agent
 role: auditor
@@ -23,7 +23,7 @@ Es la pieza simetrica obligatoria de ese ejecutor: sin esta auditoria, la
 autonomia del batch es auto-reporte, y `prompts/audit_agent_output.md` (CEM
 v0) lo prohibe explicitamente. NO reimplementa el metodo: el flujo completo
 (regla de aislamiento, herencia de las cuatro auditorias base, capa propia de
-8 puntos, PREDICATE de 8 condiciones, propuesta de cierre) vive en
+8 puntos, PREDICATE de 9 condiciones, propuesta de cierre) vive en
 `prompts/audit_autonomous_ticket_batch.md`, que a su vez hereda de
 `prompts/audit_agent_output.md`, `prompts/manager_review.md`,
 `prompts/audit_pipeline.md` / `prompts/audit_pipeline_codeonly.md` (segun
@@ -104,11 +104,11 @@ la resolucion real.
 8. `objetivo_huerfano` (herencia de `audit_goal_completion.md`): ticket verde
    con objetivo real incumplido.
 
-## PREDICATE (8 condiciones, comando a comando)
+## PREDICATE (9 condiciones, comando a comando)
 
 `schema_valido`, `dag_aciclico`, `contabilidad_completa`, `cierres_auditables`,
-`suite_final_verde`, `auditor_emitido`, `arboles_limpios`,
-`estado_operativo_valido`. Detalle completo,
+`suite_final_verde`, `auditor_emitido`, `repos_codigo_limpios`,
+`estado_operativo_destino_atribuible`, `estado_operativo_valido`. Detalle completo,
 comandos exactos y formato de salida en
 `prompts/audit_autonomous_ticket_batch.md` seccion 4.
 

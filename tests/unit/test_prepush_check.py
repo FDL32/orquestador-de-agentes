@@ -24,6 +24,7 @@ sin_fix exit_code=1, con_fix exit_code=0.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -497,3 +498,607 @@ def test_delivery_hygiene_holds_for_final_tree_after_ruff_checks(tmp_path):
         "los gates 2-3 (uv run) no deben mutar el arbol que la higiene (gate 1) "
         f"midio. Diff: {sorted(set(snapshot_b) ^ set(snapshot_a))}"
     )
+
+
+# ============================================================================
+# WOT-2026-056d: paridad de commits hermanos (par atomico motor+destino).
+#
+# DoD binario cubierto:
+#   (a) declaracion legible por maquina -> `Sibling-Commit: <sha> [motor|destino]`
+#   (b) closeout verifica paridad y FALLA si falta el hermano -> FAIL bloqueante
+#   (c) MUTATION: publicar solo la mitad del motor -> ROJO citando el hermano
+#   (d) CONTROL NEGATIVO: ticket de un repo NO dispara el check -> SKIP nombrado
+# ============================================================================
+
+
+def _make_repo_with_origin(root: Path) -> str:
+    """Repo git propio con su origin BARE local y el commit base YA publicado.
+
+    Hermetico: el remote es un bare dentro de tmp_path (nada de red). Devuelve
+    el full sha de HEAD publicado. La barrera de vector git (CEM): el fixture
+    tiene SU PROPIO `.git`, asi que `git -C root` jamas hace walk-up al repo
+    real de la maquina.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-b", "main")
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(root, "-c", "user.email=fixture@test", "-c", "user.name=fixture", "add", "-A")
+    _git(
+        root,
+        "-c",
+        "user.email=fixture@test",
+        "-c",
+        "user.name=fixture",
+        "commit",
+        "-m",
+        "base",
+    )
+    remote = root.parent / f"{root.name}-origin.git"
+    _git(root, "clone", "--bare", str(root), str(remote))
+    _git(root, "remote", "add", "origin", str(remote))
+    _git(
+        root,
+        "-c",
+        "user.email=fixture@test",
+        "-c",
+        "user.name=fixture",
+        "push",
+        "-u",
+        "origin",
+        "main",
+    )
+    return _git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def _commit_sibling(
+    root: Path, subject: str, trailer: str | None = None, push: bool = False
+) -> str:
+    """Commit nuevo en `root`; con `trailer` literal como parrafo del mensaje."""
+    n = len(list(root.glob("work*.txt")))
+    (root / f"work{n}.txt").write_text(f"{subject}\n", encoding="utf-8")
+    _git(root, "-c", "user.email=fixture@test", "-c", "user.name=fixture", "add", "-A")
+    msgs = ["-m", subject]
+    if trailer:
+        msgs += ["-m", trailer]
+    _git(
+        root,
+        "-c",
+        "user.email=fixture@test",
+        "-c",
+        "user.name=fixture",
+        "commit",
+        *msgs,
+    )
+    sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+    if push:
+        _git(root, "push", "origin", "main")
+    return sha
+
+
+# ------------------------------------------------- (c) MUTATION: mitad publicada
+def test_sibling_parity_half_published_fails(tmp_path):
+    """(c) Publicar solo la mitad del motor -> el gate FALLA citando el hermano.
+
+    El par: commit M en motor (PUBLISHED, base empujado) y commit D en destino
+    que declara `Sibling-Commit: <M> motor` sin empujar (UNPUBLISHED). Es la
+    simulacion exacta del fallo medido en WOT-2026-054p (f953519/9a0db6a),
+    declarado ahora por contenido.
+
+    MUTACION que lo mata: retirar la rama `pub_decl != pub_sib` del check ->
+    el veredicto pasa a verde y este test cae.
+    """
+    motor_sha = _make_repo_with_origin(tmp_path / "motor")
+    _make_repo_with_origin(tmp_path / "destino")
+    dest_sha = _commit_sibling(
+        tmp_path / "destino",
+        "WOT-2026-001x: parte DESTINO",
+        trailer=f"Sibling-Commit: {motor_sha[:9]} motor",
+    )
+
+    result = pc_module.run_sibling_commit_parity_check(
+        tmp_path / "destino", motor_root=tmp_path / "motor"
+    )
+
+    assert result.passed is False, f"par medio publicado debe FALLAR: {result.output}"
+    assert result.is_blocking is True, "la paridad de hermanos es BLOQUEANTE"
+    assert motor_sha[:9] in result.output, "debe citar la mitad publicada"
+    assert dest_sha[:9] in result.output, "debe citar el hermano AUSENTE (DoD c)"
+    assert "PUBLISHED" in result.output and "UNPUBLISHED" in result.output
+
+
+# ------------------------------------------------------ (b) par simetrico verde
+def test_sibling_parity_both_published_passes(tmp_path):
+    """(b) Ambas mitades publicadas -> PASS EJECUTADO (no SKIP).
+
+    `skipped` debe ser False: la barrera corrio y verdicto paridad. Un verde
+    por saltarse el check seria el `exit 0 = no hice nada` que CEM prohibe.
+    """
+    motor_sha = _make_repo_with_origin(tmp_path / "motor")
+    _make_repo_with_origin(tmp_path / "destino")
+    _commit_sibling(
+        tmp_path / "destino",
+        "WOT-2026-001x: parte DESTINO",
+        trailer=f"Sibling-Commit: {motor_sha} motor",
+        push=True,
+    )
+
+    result = pc_module.run_sibling_commit_parity_check(
+        tmp_path / "destino", motor_root=tmp_path / "motor"
+    )
+
+    assert result.passed is True, f"par completo publicado debe pasar: {result.output}"
+    assert result.skipped is False, "debe ser un PASS ejecutado, no un SKIP"
+    assert "1 par" in result.output
+
+
+def test_sibling_parity_neither_published_passes(tmp_path):
+    """Ni mitad publicada (el cierre corre ANTES de empujar) -> paridad OK.
+
+    Ambos sin publicar es simetrico: el gate castiga la PUBLICACION PARCIAL,
+    no el trabajo aun sin publicar. Sin este caso el cierre de cualquier
+    ticket de dos repos seria perpetuamente rojo antes de su propio push.
+    """
+    _make_repo_with_origin(tmp_path / "motor")
+    _make_repo_with_origin(tmp_path / "destino")
+    motor_sha = _commit_sibling(tmp_path / "motor", "WOT-2026-001x: parte MOTOR")
+    _commit_sibling(
+        tmp_path / "destino",
+        "WOT-2026-001x: parte DESTINO",
+        trailer=f"Sibling-Commit: {motor_sha[:9]}",
+    )
+
+    result = pc_module.run_sibling_commit_parity_check(
+        tmp_path / "destino", motor_root=tmp_path / "motor"
+    )
+
+    assert result.passed is True, (
+        f"ninguna mitad publicada es simetrico: {result.output}"
+    )
+    assert result.skipped is False
+
+
+# ------------------------------------------------ (d) CONTROL NEGATIVO (SKIP)
+def test_sibling_parity_single_repo_ticket_skips(tmp_path):
+    """(d) Ticket de UN solo repo (ningun trailer) -> SKIP nombrado, no dispara.
+
+    El DoD exige que el control negativo NO fabrique un verde silencioso:
+    `skipped=True` y el motivo impreso (contrato de `CheckResult`).
+    """
+    _make_repo_with_origin(tmp_path / "motor")
+    _make_repo_with_origin(tmp_path / "destino")
+    _commit_sibling(tmp_path / "motor", "ticket de un solo repo", push=True)
+
+    result = pc_module.run_sibling_commit_parity_check(
+        tmp_path / "destino", motor_root=tmp_path / "motor"
+    )
+
+    assert result.passed is True
+    assert result.skipped is True, "sin declaraciones el gate no corrio: SKIP"
+    assert "SKIP" in result.output
+    assert result.is_blocking is False
+
+
+# ----------------------------------------------------- fail-closed: colgante
+def test_sibling_parity_dangling_declaration_fails_with_two_roots(tmp_path):
+    """Declaracion cuyo sha no resuelve en NINGUNA raiz (2 visibles) -> ROJO.
+
+    Fail-closed, mismo precedente de `run_loop_execution_check`: una
+    declaracion rota no puede verificar paridad. Y con UNA sola raiz visible
+    la misma declaracion es no-comprobable -> SKIP nombrado (doctrina "None
+    es desconocido, no invalido"; jamas falso-rojo por falta de topologia).
+    """
+    _make_repo_with_origin(tmp_path / "motor")
+    _make_repo_with_origin(tmp_path / "destino")
+    _commit_sibling(
+        tmp_path / "motor",
+        "parte MOTOR con hermano roto",
+        trailer="Sibling-Commit: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef motor",
+    )
+
+    two_roots = pc_module.run_sibling_commit_parity_check(
+        tmp_path / "destino", motor_root=tmp_path / "motor"
+    )
+    assert two_roots.passed is False, (
+        f"colgante con 2 raices debe FALLAR: {two_roots.output}"
+    )
+    assert two_roots.is_blocking is True
+    assert "COLGANTE" in two_roots.output
+
+    one_root = pc_module.run_sibling_commit_parity_check(
+        tmp_path / "motor", motor_root=tmp_path / "motor"
+    )
+    assert one_root.passed is True, (
+        f"con 1 sola raiz es no-comprobable, no invalido: {one_root.output}"
+    )
+    assert one_root.skipped is True
+
+
+def test_sibling_parity_malformed_trailer_fails(tmp_path):
+    """Trailer malformado -> ROJO citando la linea: la convencion se audita.
+
+    `Sibling-Commit: nope motor` viola `_SIBLING_SHA_RE`. Un trailer que no
+    se puede parsear NO es "sin declaracion": es una declaracion rota, y
+    dejarla pasar reabriria justo el hoyo de legibilidad por maquina que el
+    ticket cierra.
+    """
+    _make_repo_with_origin(tmp_path / "motor")
+    _make_repo_with_origin(tmp_path / "destino")
+    _commit_sibling(
+        tmp_path / "motor",
+        "parte MOTOR",
+        trailer="Sibling-Commit: nope motor",
+    )
+
+    result = pc_module.run_sibling_commit_parity_check(
+        tmp_path / "destino", motor_root=tmp_path / "motor"
+    )
+
+    assert result.passed is False, f"trailer malformado debe FALLAR: {result.output}"
+    assert result.is_blocking is True
+    assert "MALFORMADO" in result.output
+
+
+# ----------------------------------------------------------- parser puro (a)
+def test_parse_sibling_trailers_forma_de_la_convencion():
+    """(a) La convencion `Sibling-Commit: <sha> [motor|destino]` parseada exacto.
+
+    Acepta: sha solo; sha + etiqueta (case-insensitive); indentacion. Rechaza:
+    linea sin token, token no-hex, etiqueta desconocida, 3+ tokens. Y una
+    mencion en mitad de frase NO es trailer (no empieza la linea).
+    """
+    ok, bad = pc_module._parse_sibling_trailers(
+        "subject\n\nSibling-Commit: abc1234 motor\nSibling-Commit: DEF5678\n"
+        "  Sibling-Commit: 1234567 destino\n"
+    )
+    assert ok == ["abc1234", "DEF5678", "1234567"]
+    assert bad == []
+
+    ok, bad = pc_module._parse_sibling_trailers("Sibling-Commit: nope motor\n")
+    assert ok == [] and bad == ["Sibling-Commit: nope motor"]
+
+    ok, bad = pc_module._parse_sibling_trailers("Sibling-Commit:\n")
+    assert ok == [] and len(bad) == 1
+
+    ok, bad = pc_module._parse_sibling_trailers("Sibling-Commit: abc1234 luna\n")
+    assert ok == [] and len(bad) == 1
+
+    ok, bad = pc_module._parse_sibling_trailers("Sibling-Commit: abc1234 motor x\n")
+    assert ok == [] and len(bad) == 1
+
+    ok, bad = pc_module._parse_sibling_trailers(
+        "ver Sibling-Commit: abc1234 dentro de una frase\n"
+    )
+    assert ok == [] and bad == []
+
+
+# ------------------------------------------------------------ barrera cableada
+def test_sibling_parity_is_wired_into_closeout(tmp_path, monkeypatch):
+    """CABLEADO: `run_preflight_check` invoca el check SOLO en closeout_mode.
+
+    Es la asercion que separa barrera de norma (mismo patron que
+    `test_check_is_wired_into_closeout` de WOT-2026-048l). Mutation: retirar
+    el `results.append(run_sibling_commit_parity_check(...))` deja el spy sin
+    llamar. Tambien fija que el preflight BASE (sin closeout) NO lo paga.
+    """
+    from prepush_check import CheckResult
+
+    called = {"closeout": 0, "base": 0}
+
+    def _spy(root, *args, **kwargs):
+        called["closeout"] += 1
+        return CheckResult(name="spy", passed=True, output="", is_blocking=False)
+
+    ok = CheckResult(name="stub", passed=True, output="", is_blocking=True)
+    for fn in (
+        "run_delivery_hygiene_check",
+        "run_portable_memory_archive_check",
+        "run_ruff_check",
+        "run_ruff_format_check",
+        "run_agent_controller_validate",
+        "run_git_status_check",
+        "run_validate_all",
+        "run_backlog_contract_check",
+        "run_ghost_ticket_ids_check",
+        "run_contract_reconcile_check",
+        "run_handoff_state_sha_check",
+        "run_handoff_committed_check",
+        "run_destination_pii_check",
+        "run_closeout_reconciliation_check",
+        "run_landed_evidence_shape_check",
+        "run_backlog_live_landed_check",
+        "run_motor_destination_integration_check",
+        "run_contract_formation_check",
+        "run_workspace_contract_formation_check",
+        "run_batch_run_accounting_check",
+        "run_seal_staleness_check",
+        "run_distributable_planning_check",
+        "run_guard_wiring_orphan_check",
+        "run_prompt_wired_invocations_check",
+        "run_loop_execution_check",
+        "run_principal_freshness_check",
+        "run_agent_write_enforced_check",
+        "run_flight_plan_collision_check",
+        "run_launch_prompt_paths_check",
+        "run_builder_prompt_obligations_check",
+        "run_arranques_index_check",
+        "run_dec_receipt_check",
+        "run_dec_receipt_ticket_contracts_check",
+        "run_inbox_drainage_check",
+        "run_backlog_admission_check",
+        "run_sibling_commit_parity_check",
+    ):
+        monkeypatch.setattr(pc_module, fn, lambda *a, **k: ok)
+    monkeypatch.setattr(pc_module, "run_sibling_commit_parity_check", _spy)
+
+    pc_module.run_preflight_check(tmp_path, closeout_mode=True)
+    assert called["closeout"] == 1, (
+        "el check existe pero el closeout no lo invoca -> es una NORMA, no "
+        "una barrera (WOT-2026-056d)"
+    )
+
+    monkeypatch.setattr(
+        pc_module,
+        "run_sibling_commit_parity_check",
+        lambda *a, **k: (
+            called.__setitem__("base", called["base"] + 1)
+            or CheckResult(name="spy", passed=True, output="", is_blocking=False)
+        ),
+    )
+    pc_module.run_preflight_check(tmp_path, closeout_mode=False)
+    assert called["base"] == 0, "el preflight base no paga el gate de closeout"
+
+
+# ============================================================================
+# WOT-2026-040o: recibo de auditoria-hermana ANTES del push (barrera, no norma).
+#
+# DoD binario cubierto:
+#   (a) MUTATION 040b: vuelo TERMINADO sin recibo hermana -> FAIL bloqueante
+#       (el escape de SECUENCIA: se pusheo/archivo antes de auditarse).
+#   (b) MUTATION 040c: recibo verde/fresh-context pero medido contra FIXTURE
+#       (topologia que no resuelve) -> FAIL (la autocertificacion).
+#   (c) CONTROL NEGATIVO: recibo verde + fresh-context + datos REALES -> PASS.
+#   (d) SKIP nombrado cuando no hay vuelo TERMINADO del cierre.
+# ============================================================================
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _real_repo_with_head(root: Path) -> tuple[str, str]:
+    """Repo git propio y HERMETICO con su HEAD: `(path, full_sha)`.
+
+    Vector git (CEM): tiene su propio `.git`, asi que `git -C root` jamas hace
+    walk-up al repo real de la maquina.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-b", "main")
+    (root / "f.txt").write_text("x\n", encoding="utf-8")
+    _git(root, "-c", "user.email=f@t", "-c", "user.name=f", "add", "-A")
+    _git(root, "-c", "user.email=f@t", "-c", "user.name=f", "commit", "-m", "base")
+    return str(root), _git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def _write_done_batch_run(reports: Path, name: str, report_json: str | None) -> Path:
+    payload: dict = {
+        "schema": "batch_run/v1",
+        "generated_at": "2026-07-24T00:00:00Z",
+        "verdict": "DONE",
+    }
+    if report_json is not None:
+        payload["sibling_audit"] = {"report_json": report_json, "verdict": "APROBADO"}
+    path = reports / name
+    _write_json(path, payload)
+    return path
+
+
+def _write_audit_receipt(
+    reports: Path, name: str, *, verdict: str, topology: dict
+) -> Path:
+    path = reports / name
+    _write_json(
+        path,
+        {
+            "verdict": verdict,
+            "isolation": {"b1": "b:fresh-context", "b3_read_only": True},
+            "topology": topology,
+        },
+    )
+    return path
+
+
+def test_sibling_audit_missing_receipt_blocks(tmp_path):
+    """(a) 040b: vuelo DONE sin `sibling_audit` -> FAIL bloqueante.
+
+    MUTATION que lo mata: retirar la rama que exige `sibling_audit` -> el
+    vuelo atraviesa el cierre sin auditoria (el escape de secuencia medido).
+    """
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    _write_done_batch_run(reports, "batch_run_20260724-0000.json", report_json=None)
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is False, f"debe FALLAR sin recibo: {result.output}"
+    assert result.is_blocking is True, "el gate de auditoria-hermana es BLOQUEANTE"
+    assert "sibling_audit" in result.output
+
+
+def test_sibling_audit_fixture_topology_blocks(tmp_path):
+    """(b) 040c: recibo verde/fresh-context pero medido contra FIXTURE -> FAIL.
+
+    El recibo declara fresh-context y APROBADO, pero su `topology` cita un sha
+    que NO resuelve en el repo real (un fixture): midio otra cosa. MUTATION que
+    lo mata: retirar la verificacion de `topology.repos` -> el fixture pasa.
+    """
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    receipt_rel = (
+        "orchestrator_pipeline/reports/audit_autonomous_batch_20260724-0100.json"
+    )
+    _write_done_batch_run(
+        reports, "batch_run_20260724-0000.json", report_json=receipt_rel
+    )
+    # Sha con forma valida (40 hex) pero INEXISTENTE en cualquier repo real.
+    _write_audit_receipt(
+        reports,
+        "audit_autonomous_batch_20260724-0100.json",
+        verdict="APROBADO",
+        topology={
+            "repos": [
+                {
+                    "role": "motor",
+                    "path": str(tmp_path / "repo_inexistente"),
+                    "sha": "deadbeef" * 5,
+                }
+            ]
+        },
+    )
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is False, f"fixture debe FALLAR: {result.output}"
+    assert result.is_blocking is True
+    assert "REALES" in result.output or "resuelve" in result.output
+
+
+def test_sibling_audit_valid_receipt_passes(tmp_path):
+    """(c) CONTROL NEGATIVO: recibo verde + fresh-context + datos REALES -> PASS.
+
+    `skipped` debe ser False: la barrera corrio y verdicto, no se salto.
+    """
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    repo_path, sha = _real_repo_with_head(tmp_path / "realrepo")
+    receipt_rel = (
+        "orchestrator_pipeline/reports/audit_autonomous_batch_20260724-0100.json"
+    )
+    _write_done_batch_run(
+        reports, "batch_run_20260724-0000.json", report_json=receipt_rel
+    )
+    _write_audit_receipt(
+        reports,
+        "audit_autonomous_batch_20260724-0100.json",
+        verdict="APROBADO_CON_NITS",
+        topology={"repos": [{"role": "motor", "path": repo_path, "sha": sha}]},
+    )
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is True, f"recibo valido debe PASAR: {result.output}"
+    assert result.skipped is False, "debe ser un PASS ejecutado, no un SKIP"
+
+
+def test_sibling_audit_non_authorizing_verdict_blocks(tmp_path):
+    """Un veredicto rojo (`CAMBIOS NECESARIOS`) NO autoriza el push."""
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    repo_path, sha = _real_repo_with_head(tmp_path / "realrepo")
+    receipt_rel = (
+        "orchestrator_pipeline/reports/audit_autonomous_batch_20260724-0100.json"
+    )
+    _write_done_batch_run(
+        reports, "batch_run_20260724-0000.json", report_json=receipt_rel
+    )
+    _write_audit_receipt(
+        reports,
+        "audit_autonomous_batch_20260724-0100.json",
+        verdict="CAMBIOS_NECESARIOS",
+        topology={"repos": [{"role": "motor", "path": repo_path, "sha": sha}]},
+    )
+
+    result = pc_module.run_sibling_audit_check(tmp_path)
+
+    assert result.passed is False
+    assert "NO autorizador" in result.output
+
+
+def test_sibling_audit_no_done_flight_skips(tmp_path):
+    """(d) Sin reports dir y sin vuelo TERMINADO -> SKIP nombrado, no dispara."""
+    result = pc_module.run_sibling_audit_check(tmp_path)
+    assert result.passed is True
+    assert result.skipped is True
+    assert "SKIP" in result.output
+
+    reports = tmp_path / "orchestrator_pipeline" / "reports"
+    reports.mkdir(parents=True)
+    _write_json(reports / "batch_run_20260724-0000.json", {"verdict": "RUNNING"})
+    result = pc_module.run_sibling_audit_check(tmp_path)
+    assert result.passed is True
+    assert result.skipped is True
+
+
+def test_sibling_audit_is_wired_into_closeout(tmp_path, monkeypatch):
+    """CABLEADO: `run_preflight_check` invoca el gate SOLO en closeout_mode.
+
+    Mutation: retirar el `results.append(run_sibling_audit_check(...))` deja el
+    spy sin llamar (norma, no barrera). Fija ademas que el preflight BASE no lo
+    paga.
+    """
+    from prepush_check import CheckResult
+
+    called = {"closeout": 0, "base": 0}
+
+    def _spy(root, *args, **kwargs):
+        called["closeout"] += 1
+        return CheckResult(name="spy", passed=True, output="", is_blocking=False)
+
+    ok = CheckResult(name="stub", passed=True, output="", is_blocking=True)
+    for fn in (
+        "run_delivery_hygiene_check",
+        "run_portable_memory_archive_check",
+        "run_ruff_check",
+        "run_ruff_format_check",
+        "run_agent_controller_validate",
+        "run_git_status_check",
+        "run_validate_all",
+        "run_backlog_contract_check",
+        "run_ghost_ticket_ids_check",
+        "run_contract_reconcile_check",
+        "run_handoff_state_sha_check",
+        "run_handoff_committed_check",
+        "run_destination_pii_check",
+        "run_closeout_reconciliation_check",
+        "run_landed_evidence_shape_check",
+        "run_backlog_live_landed_check",
+        "run_motor_destination_integration_check",
+        "run_contract_formation_check",
+        "run_workspace_contract_formation_check",
+        "run_batch_run_accounting_check",
+        "run_seal_staleness_check",
+        "run_distributable_planning_check",
+        "run_guard_wiring_orphan_check",
+        "run_prompt_wired_invocations_check",
+        "run_loop_execution_check",
+        "run_principal_freshness_check",
+        "run_agent_write_enforced_check",
+        "run_flight_plan_collision_check",
+        "run_launch_prompt_paths_check",
+        "run_builder_prompt_obligations_check",
+        "run_arranques_index_check",
+        "run_dec_receipt_check",
+        "run_dec_receipt_ticket_contracts_check",
+        "run_inbox_drainage_check",
+        "run_backlog_admission_check",
+        "run_sibling_commit_parity_check",
+    ):
+        monkeypatch.setattr(pc_module, fn, lambda *a, **k: ok)
+    monkeypatch.setattr(pc_module, "run_sibling_audit_check", _spy)
+
+    pc_module.run_preflight_check(tmp_path, closeout_mode=True)
+    assert called["closeout"] == 1, (
+        "el check existe pero el closeout no lo invoca -> es una NORMA, no "
+        "una barrera (WOT-2026-040o)"
+    )
+
+    monkeypatch.setattr(
+        pc_module,
+        "run_sibling_audit_check",
+        lambda *a, **k: (
+            called.__setitem__("base", called["base"] + 1)
+            or CheckResult(name="spy", passed=True, output="", is_blocking=False)
+        ),
+    )
+    pc_module.run_preflight_check(tmp_path, closeout_mode=False)
+    assert called["base"] == 0, "el preflight base no paga el gate de closeout"

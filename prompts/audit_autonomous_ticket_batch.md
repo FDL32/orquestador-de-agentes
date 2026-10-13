@@ -5,7 +5,7 @@ route_kind: entry
 ---
 # Prompt: Auditoria del Batch Autonomo de Tickets (Auditor Aislado)
 <!-- PROMPT-SUMMARY
-what: Auditoria aislada (fresh-context, solo lectura) de un batch autonomo de tickets: re-deriva el PREDICATE de 8 condiciones comando a comando, audita las decisiones de parada y recuperacion del ejecutor y propone, sin ejecutarlo, el cierre de sesion.
+what: Auditoria aislada (fresh-context, solo lectura) de un batch autonomo de tickets: re-deriva el PREDICATE de 9 condiciones comando a comando, audita las decisiones de parada y recuperacion del ejecutor y propone, sin ejecutarlo, el cierre de sesion.
 when: Despues del cierre o parada de un batch ejecutado por prompts/orchestrator_autonomous_ticket_batch.md, cuando ya no quedan grupos ejecutables; exige el batch_run de la corrida.
 not: NO la corre el agente que ejecuto el batch (aislamiento B1/B3), NO audita una cadena ticket a ticket (prompts/audit_pipeline.md o prompts/audit_pipeline_codeonly.md) y NO cierra la sesion ni ejecuta --session-close.
 -->
@@ -218,7 +218,7 @@ viaje inaugural y convierte al auditor en maker del artefacto que audita
 `PENDING` por contrato dual (P5): que este PENDING en el `batch_run` NO es un
 hallazgo -- es el diseno; el hallazgo seria un ejecutor que la auto-certifico.
 
-Reproduce las 8 condiciones exactas:
+Reproduce las 9 condiciones exactas:
 
 1. **`schema_valido`** -- el DAG-JSON de la corrida valida contra el schema
    v1 mediante:
@@ -325,14 +325,41 @@ Reproduce las 8 condiciones exactas:
    TODAVIA`. Es autoreferencial por diseno: el predicado no se cumple hasta
    que esta auditoria termine y emita un veredicto aceptable.
 
-7. **`arboles_limpios`** -- `dirty == 0` en TODOS los repos enumerados desde
-   la topologia RESUELTA (S.2), no en un numero fijo asumido de antemano.
-   Verifica con `git status --porcelain` en cada repo resuelto.
+7. **`repos_codigo_limpios`** -- `dirty == 0` en TODOS los repos que RECIBEN
+   commits de codigo/publicacion, enumerados desde la topologia RESUELTA (S.2),
+   no en un numero fijo asumido de antemano. El `repo_destino` NO se audita
+   aqui: lo audita la condicion 8. Verifica con `git status --porcelain` en
+   cada repo de CODIGO resuelto y lee la salida real.
 
-8. **`estado_operativo_valido`** -- el estado OPERATIVO del destino es valido,
-   no solo su arbol git. Observable DISTINTO de la condicion 7: el incidente de
-   origen (cierre FP-20260721) dejo el workspace con arbol LIMPIO y estado
-   INVALIDO, y solo lo cazo el CI remoto. Verifica con:
+8. **`estado_operativo_destino_atribuible`** -- el dirty del `repo_destino` es
+   EXACTAMENTE el delta operativo esperado de su modo, decidido POR CONTENIDO
+   (ticket IDs, celdas de commit, conteo de hunks), NUNCA por `git status` a
+   secas. **`dirty != 0` en el `repo_destino` NO bloquea SI Y SOLO SI el diff es
+   exactamente la transicion operativa esperada de su modo**; cualquier fichero
+   ajeno, mutacion extra, ticket removido != archivado, o `commit:<sha>`
+   ausente/no aterrizado SI bloquea. Cubre DOS familias de dirty legitimo:
+   - **code-only:** el/los tickets cerrados SALEN de la cola viva
+     (`backlog.md`) y ENTRAN a `_archive/backlog_done.md` con estado TERMINAL y
+     celda `commit:<sha>` ATERRIZADO (verificado con
+     `check_backlog_commits_landed.py`); cero hunks ajenos.
+   - **destino:** las proyecciones vivas del ciclo de ticket (`STATE.md`,
+     `TURN.md`, `work_plan.md`, `execution_log.md`) mas los artefactos
+     OBLIGATORIOS que el propio auditor debe escribir (por eso esta condicion
+     no se auto-invalida al ejecutarse).
+   Verifica con:
+   ```
+   python <MOTOR_ROOT>/scripts/check_expected_operational_delta.py \
+     --mode <code-only|destino> --delta <delta.json>
+   ```
+   Exit 0 requerido. El `delta.json` lo produce el ejecutor desde
+   `git status --porcelain` (rutas), el diff de los dos ficheros de backlog
+   (filas) y `check_backlog_commits_landed.py` (hecho `landed`). Un delta
+   code-only aplicado FUERA de code-only -> `cumple: false`.
+
+9. **`estado_operativo_valido`** -- el estado OPERATIVO del destino es valido,
+   no solo su arbol git. Observable DISTINTO de las condiciones 7 y 8: el
+   incidente de origen (cierre FP-20260721) dejo el workspace con arbol LIMPIO y
+   estado INVALIDO, y solo lo cazo el CI remoto. Verifica con:
    ```
    python .agent/agent_controller.py --validate --json --no-heal \
      --project-root <DESTINO_ROOT>
@@ -356,7 +383,7 @@ Reproduce las 8 condiciones exactas:
      deben aparecer CLASIFICADOS y REGISTRADOS en el batch_run.
 
 **Formato de salida:** bloque `PREDICATE` en el `.json` de esta auditoria
-(S.8), con cada una de las 8 condiciones -> comando ejecutado -> exit
+(S.8), con cada una de las 9 condiciones -> comando ejecutado -> exit
 code/valor observado -> `cumple: true|false`.
 
 **Mutation-demo del predicado (DoD de este ticket):** si falseas UNA
@@ -367,12 +394,25 @@ pese a la fila falseada, el propio validador del predicado (o esta
 auditoria) tiene un hueco: reportalo como hallazgo `CRITICO`, clase CEM A
 (regresion de contrato), no lo silencies.
 
+**COPY-RESTORE, nunca `git checkout --` (WOT-2026-039f).** Cuando el
+mutation-demo exija MUTAR un fichero, hazlo SIEMPRE por COPIA y revierte por
+COPIA, jamas con git: `cp <f> <f>.premut` -> mutar -> correr el comando/node-id
+que debe dar el veredicto FALSE -> `mv <f>.premut <f>`. `git checkout -- <f>` /
+`git restore` BORRAN todo el contenido NO commiteado de ese fichero -- no solo tu
+mutacion de una linea -- y pueden destruir el deliverable que auditas (leccion
+`obs-mutation-verify-copy-restore-not-git-checkout`). Preferible aun: si el
+mutation-demo puede hacerse sobre una COPIA fuera del arbol versionado (un temp
+file), hazlo ahi y no toques el arbol. Al TERMINAR la auditoria, verifica con
+`git status --porcelain` que el arbol queda LIMPIO de restos de mutacion y REGISTRA
+esa comprobacion en la seccion de integridad del informe (S.10); una mutacion
+dejada sin restaurar es un hallazgo que bloquea el veredicto.
+
 ---
 
 ### 4.bis. Start Context Isolation receipt (WOT-2026-044r)
 
 **El recibo de aislamiento de contexto NO es una novena condicion del PREDICATE**
-(contrato del ejecutor, Section  PREDICATE: cardinalidad fija en 8, test
+(contrato del ejecutor, Section  PREDICATE: cardinalidad fija en 9, test
 `test_predicate_declares_its_cardinality`). Vive en su propio campo
 `start_context_isolation` del `batch_run_<ts>.json`, FUERA del bloque `PREDICATE`.
 
@@ -502,7 +542,7 @@ Uno de (canonico, de `prompts/audit_agent_output.md`):
 **Regla dura:** BLOQUEAN el veredicto (no puede emitirse `APROBADO` ni `APROBADO
 CON NITS` mientras alguno este abierto):
 - cualquier condicion del PREDICATE del S.4 con `cumple:false` en TU re-derivacion
-  (las 1-5, 7 y 8; la 6 sin informe emitido) -- da igual que el ejecutor la reportara
+  (las 1-5, 7, 8 y 9; la 6 sin informe emitido) -- da igual que el ejecutor la reportara
   verde, la omitiera, o nunca la evaluara. El caso mas comun en un batch autonomo NO
   es un `falso_verde` REPORTADO, sino una condicion que el ejecutor OMITIO y que tu
   re-derivas false: eso bloquea igual. No exijas que el ejecutor la haya declarado
@@ -568,6 +608,9 @@ verifica, ademas del PREDICATE, las DOS caras de la barrera de publicacion:
 - NO fabrica eventos de bus, checkpoints ni filas de backlog manualmente
   para "completar" la evidencia que falta: la ausencia de evidencia es un
   hallazgo, no algo que rellenar.
+- NO usa `git checkout --` / `git restore` para deshacer una mutacion del
+  mutation-demo: usa COPY-RESTORE (S.4, WOT-2026-039f) y deja `git status`
+  limpio al terminar; una mutacion sin restaurar se reporta como hallazgo.
 - Solo escribe sus propios dos artefactos (S.10) y, si aplica, follow-ups
   propuestos (nunca aplicados) para el humano/Manager.
 
@@ -601,7 +644,7 @@ B1 aplicado: <a:model=ID | b:fresh-context>. B3 (read-only): confirmado.
 | Grupos incluidos | ... |
 | Grupos excluidos/congelados | ... |
 
-## 3. PREDICATE (8 condiciones, comando a comando)
+## 3. PREDICATE (9 condiciones, comando a comando)
 | # | Condicion | Comando | Exit/valor | Cumple |
 |---|---|---|---|---|
 | 1 | schema_valido | ... | ... | si/no |
@@ -610,8 +653,9 @@ B1 aplicado: <a:model=ID | b:fresh-context>. B3 (read-only): confirmado.
 | 4 | cierres_auditables | ... | ... | si/no |
 | 5 | suite_final_verde | ... | ... | si/no |
 | 6 | auditor_emitido | ... | ... | si/no |
-| 7 | arboles_limpios | ... | ... | si/no |
-| 8 | estado_operativo_valido | ... | ... | si/no |
+| 7 | repos_codigo_limpios | ... | ... | si/no |
+| 8 | estado_operativo_destino_atribuible | ... | ... | si/no |
+| 9 | estado_operativo_valido | ... | ... | si/no |
 
 ## 4. Capa propia del batch (8 puntos)
 Uno por punto (paradas, exclusiones, recovery, checkpoints, contencion,
@@ -650,7 +694,8 @@ Ruta paralela:
     "cierres_auditables": {"audited_before": 0, "audited_after": 0, "error_count": 0, "denominator_total": 0, "denominator_excluded_transfer": 0, "external_evidence_tickets": [], "transfer_closures_count": 0, "cumple": true},
     "suite_final_verde": {"tested_commit_sha": "...", "head": "...", "passed": 0, "failed": 0, "cumple": true},
     "auditor_emitido": {"report_path": "...", "cumple": true},
-    "arboles_limpios": {"dirty_by_repo": {}, "cumple": true},
+    "repos_codigo_limpios": {"dirty_by_repo": {}, "cumple": true},
+    "estado_operativo_destino_atribuible": {"mode": "code-only|destino", "delta_path": "...", "exit_code": 0, "findings": [], "cumple": true},
     "estado_operativo_valido": {"command": "...", "project_root_used": "...", "matches_resolved_destino": true, "total_errors": 0, "total_warnings": 0, "warnings_by_category": {}, "no_heal": true, "cumple": true}
   },
   "own_layer_findings": [

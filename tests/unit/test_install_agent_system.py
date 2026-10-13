@@ -804,6 +804,87 @@ def test_copy_gitleaks_config_dry_run_does_not_write(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# copy_gitleaks_config divergence WARN (WOT-2026-039k): the no-clobber opened a
+# cascade gap -- seed additions never reached an already-provisioned destino.
+# The installer now DETECTS and NAMES the absent seed sections without merging.
+# ---------------------------------------------------------------------------
+
+_SEED_TWO_BLOCKS = """\
+title = "seed"
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "structural log paths"
+paths = [
+  '''(^|/)execution_log\\.md$''',
+]
+
+[[allowlists]]
+description = "027n privacy_preflight fixtures"
+regexes = [
+  '''sk-live-abc12345''',
+  '''A1b2C3d4E5f6G7h8''',
+]
+"""
+
+_DEST_MISSING_027N = """\
+title = "destino custom"
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "structural log paths"
+paths = [
+  '''(^|/)execution_log\\.md$''',
+]
+"""
+
+
+def test_copy_gitleaks_config_warns_and_names_missing_section(tmp_path, capsys):
+    """A pre-existing destino config missing a seed section gets a NAMED WARN,
+    and the no-clobber keeps the destino file verbatim (no merge)."""
+    template_root = tmp_path / "motor"
+    _make_gitleaks_template(template_root, _SEED_TWO_BLOCKS)
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    config = dest_root / ".gitleaks.toml"
+    config.write_text(_DEST_MISSING_027N, encoding="utf-8")
+    before = config.read_text(encoding="utf-8")
+
+    result = copy_gitleaks_config(template_root, dest_root, dry_run=False)
+
+    out = capsys.readouterr().out
+    assert result is True
+    assert "[WARN]" in out
+    assert "027n privacy_preflight fixtures" in out
+    # The local section is preserved: the destino file is untouched.
+    assert config.read_text(encoding="utf-8") == before
+
+
+def test_copy_gitleaks_config_silent_when_destino_carries_all_sections(
+    tmp_path, capsys
+):
+    """A destino that already carries every seed section (plus its own local
+    block) produces NO warning: the local section never triggers a false hit."""
+    template_root = tmp_path / "motor"
+    _make_gitleaks_template(template_root, _SEED_TWO_BLOCKS)
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    (dest_root / ".gitleaks.toml").write_text(
+        _SEED_TWO_BLOCKS + "\n[[allowlists]]\n"
+        'description = "LOCAL destino block"\n'
+        "regexes = [\n  '''sk_live_1234567890''',\n]\n",
+        encoding="utf-8",
+    )
+
+    copy_gitleaks_config(template_root, dest_root, dry_run=False)
+
+    out = capsys.readouterr().out
+    assert "[WARN]" not in out
+
+
+# ---------------------------------------------------------------------------
 # propagate_claude_guard_hook (WOT-2026-071d): propagate the guard_paths
 # write guard into a destino's tracked .claude/settings.json via a
 # STRUCTURAL merge (never a clobber), atomic write, idempotent on re-sync.

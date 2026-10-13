@@ -81,25 +81,16 @@ known_unwired:
   check_hook_interpreter: >-
     BY-DESIGN: stage manual deliberado; un hook automatico seria circular
     (el hook roto no puede invocar al check que detecta que esta roto)
-  # bundle-guard determinista v0 (mejora-continua, arreglo rapido 2026-07-19). Valida
-  # los bundles de gobierno (receipts). Su cableado natural es el flujo del colector
-  # ANTES del fan-out, que toca los prompts de gobierno -> anti-recursion 026b prohibe
-  # tocarlos en vuelo. Cableado + pasada Codex diferidos al ticket PDCA WOT-2026-038b
-  # (componente 1). Deuda NOMBRADA con dueno real.
-  # ESTADO REAL ACTUALIZADO 2026-07-27 (WOT-2026-042k, hijo de 038b): YA HAY
-  # INVOCADOR, en modo CANARY -- `ensemble_dispatch.run_pipeline` llama a
-  # `receipt_canary()` sobre el payload REAL justo antes del ROUND 0, que es el
-  # punto donde el bundle alcanza a las lentes (HUECO-1). NO se tocaron los
-  # prompts de gobierno: el canary audita el payload EN VUELO, asi que la
-  # anti-recursion 026b no era el bloqueo que esta nota daba por supuesto.
-  # SIGUE LISTADO AQUI Y ES CORRECTO: `ensemble_dispatch` no es FRONTERA para
-  # este guard (no corre solo; lo lanza un agente al abrir un fan-out) y el
-  # canary OBSERVA sin bloquear -- deliberado: 35 pass / 19 fail sobre los 54
-  # bundles con `## PROBE` medidos 2026-07-27 (`--root <motor>`), o sea que
-  # fail-closed nace en rojo y reproduce el deadlock de WOT-2026-042h.
-  # PARA DEJAR DE SER DEUDA: promover el canary a bloqueante cuando sus propias
-  # mediciones muestren saneado el rojo historico. Dueno: WOT-2026-038b.
-  check_bundle_receipts: WOT-2026-038b
+  # check_bundle_receipts: RETIRADO de known_unwired (bucle adversarial sobre
+  # WOT-2026-040g, 2026-10-12) -- el AST de 1-hop SI lo alcanza ahora: 040g
+  # anadio `from scripts.ensemble_dispatch import _read_scorecard` dentro de
+  # _step_report_non_attributable_rounds (session_closeout.py:2357), y ese
+  # import mete scripts/ensemble_dispatch.py en la frontera derivada (cierre
+  # BFS de self_running_paths), donde spec_from_file_location(
+  # "check_bundle_receipts", ...) (ensemble_dispatch.py:4962) ya es posicion
+  # de ejecucion alcanzable. Mantenerlo aqui seria una declaracion STALE que
+  # el propio gate caza. Dueno del cableado real: WOT-2026-040g; el canary
+  # receipt_canary() sigue observando sin bloquear.
   # check_prompt_bias (WOT-2026-026k): gate MECANICO de sesgo del PROMPT de review.
   # Su cableado natural es el arranque del bucle de review (ensemble dispatch /
   # review bridge), que vive en `bus/` -- FORBIDDEN SURFACE del contrato frozen
@@ -173,6 +164,20 @@ known_unwired:
   # reportara (WARN, no bloqueante) para que no se olvide, y el follow-up lo
   # re-declarara con su dueno real.
   check_role_models_distinct: WOT-2026-098b
+  # WOT-2026-040a: validador de CONTENIDO del delta operativo esperado del batch
+  # (PREDICATE v2, condicion 8 `estado_operativo_destino_atribuible`). Su
+  # invocacion natural es la evaluacion del PREDICATE por el ejecutor o el
+  # auditor durante un vuelo de batch -- un evento DISCRETO gobernado por
+  # prompt, no un hook que corra solo; mismo patron BY-DESIGN que
+  # check_publication_gate y check_prompt_parity. Cablearlo a pre-commit no
+  # tiene sentido: solo es aplicable cuando existe un delta operativo que
+  # validar (durante el vuelo), no en cada commit.
+  check_expected_operational_delta: >-
+    BY-DESIGN: valida el delta operativo esperado del batch (PREDICATE v2
+    condicion 8) cuando el ejecutor o el auditor evalua el PREDICATE -- evento
+    discreto gobernado por prompt, no un hook automatico. Follow-up: cablearlo
+    a un cierre programatico del batch si el PREDICATE pasa a ejecutarse por
+    codigo.
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
@@ -191,6 +196,31 @@ extra_guards:
   builder_agent: scripts/builder_agent.py
 
 wired_via:
+  # WOT-2026-039k: guard de divergencia seed<->`.gitleaks.toml` (destino y raiz
+  # del motor). Su host es `install_agent_system.copy_gitleaks_config`: en cada
+  # `--install`/`--sync`, tras el no-clobber, importa el guard y WARNea nombrando
+  # las secciones estructurales ausentes (nunca clobber: la seccion local se
+  # conserva). El AST de 1-hop NO puede deducirlo porque `install_agent_system.py`
+  # NO esta en la frontera derivada de `self_running_paths` (no lo importa ningun
+  # host self-running; el instalador es un entrypoint manual, no un hook
+  # automatico). Por eso se declara aqui con probe, en vez de `known_unwired`:
+  # ese bloque es solo para deuda LEGACY y parir deuda NUEVA ahi es el abuso que
+  # la decision A7 (ficha de WOT-2026-026e) corrige.
+  check_gitleaks_seed_divergence: >-
+    scripts/install_agent_system.py:1368 (dentro de
+    _warn_gitleaks_seed_divergence: `from scripts.check_gitleaks_seed_divergence
+    import warn_on_seed_divergence`), llamado desde :1410 en
+    copy_gitleaks_config (rama no-clobber, la que corre en cada --install/--sync
+    sobre un destino que ya tiene su .gitleaks.toml). Probe: `python -c "from
+    pathlib import Path; import sys; sys.path.insert(0,'.'); from
+    scripts.check_gitleaks_seed_divergence import warn_on_seed_divergence;
+    r=warn_on_seed_divergence(Path('agent_system/templates/gitleaks.config.toml'),
+    Path('<destino>/.gitleaks.toml')); print(r['cause'], len(r['missing']))"` ->
+    `DIVERGENT 4` en un destino sin las secciones; `python
+    scripts/check_gitleaks_seed_divergence.py` sobre la raiz del motor -> `OK`
+    rc=0. MUTATION (DoD d): retirar un bloque del destino -> el guard lo NOMBRA
+    (rc=1) tras control de carga (el TOML mutado sigue parseando; un TOML roto
+    da rc=2, NO una deteccion).
   # WOT-2026-058v: guard preventivo de ARRANQUE. Su camino que corre solo es la
   # ejecucion del propio CLI: `python scripts/builder_agent.py
   # --flight-launch-context <ctx.json>` ejecuta main() y el guard corre como
@@ -207,17 +237,14 @@ wired_via:
     python scripts/builder_agent.py --flight-launch-context <ctx-sin-dag.json>
     -> exit 1 con "[LAUNCH-GUARD] ERROR" y el nombre del plan; con el DAG
     persistido bajo flight_plans/ -> "[OK] Launch guard" y el arranque sigue.
-  # check_loop_bundle_protocol (2026-08-05): import LAZY dentro del handler de
-  # `loop-round`, no en el modulo -- por eso el AST de 1-hop no lo alcanza. Es un
-  # camino que corre solo: TODA ronda de bucle pasa por ahi antes de despachar.
-  # Avisa (WARN, no bloquea) si el bundle no declara sus 3 invariantes de
-  # suficiencia. Medido con la misma lente: 106 bytes sin protocolo vs 4708 con el.
-  check_loop_bundle_protocol: >-
-    scripts/ensemble_dispatch.py:2164 (from scripts.check_loop_bundle_protocol
-    import check_bundle, dentro de cmd_loop_round) -> check_bundle(...) :2166.
-    Probe: python scripts/ensemble_dispatch.py loop-round --content-file
-    <bundle-sin-protocolo> ... -> imprime "[loop-bundle] WARN: el bundle no
-    declara 3 invariante(s)"; con un bundle conforme, 0 avisos.
+  # check_loop_bundle_protocol: RETIRADO de wired_via (bucle adversarial sobre
+  # WOT-2026-040g, 2026-10-12) -- el AST de 1-hop SI lo alcanza ahora: el
+  # import LAZY `from scripts.check_loop_bundle_protocol import check_bundle`
+  # (dentro de cmd_loop_round, ensemble_dispatch.py:6538 hoy) vive en un
+  # fichero que ya es FRONTERA desde que session_closeout.py:2357 importa
+  # scripts.ensemble_dispatch (WOT-2026-040g). Mantenerlo aqui seria una
+  # declaracion STALE que el propio gate caza. El probe historico (loop-round
+  # sobre bundle sin protocolo -> WARN) sigue valido para verificacion manual.
   # Cableado REAL de 2 saltos que el AST de 1 salto no alcanza (residual R5 de la spec):
   # guard_script = SCRIPT_DIR.parent/"scripts"/"pre_handoff_guard.py"  (salto 1: path->var)
   # cmd = [sys.executable, str(guard_script), ...]                     (salto 2: var->lista)

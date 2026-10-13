@@ -5,6 +5,13 @@ git real como motor falso (patron `init_git_repo` de test_pre_handoff_guard) y
 un destino-falso con `motor_destination_link.json`. NO se mockea el git-run de
 la validacion: la mutacion (retirar la validacion / neutralizar el helper) debe
 hacer caer el test de verdad.
+
+WOT-2026-046d: el guard de `emit-nonce` lanza `ValueError` (sha que no resuelve,
+sin link de motor, git roto). Desde 046d un `ValueError` sale por la rama
+`[INVALID]`/`EXIT_INVALID_INPUT`, ya NO por `[BLOCKED]`/1 (esa queda para el veto
+de politica `DispatchBlockedError`). Los asserts de rc de este fichero se
+actualizaron de `1` al codigo propio del ValueError; la propiedad que de verdad
+importa -- que el emisor FALLA CERRADO (rc != 0) y no escribe ledger -- no cambia.
 """
 
 from __future__ import annotations
@@ -122,7 +129,9 @@ def test_rejects_unresolvable_sha(motor: Path, destino: Path) -> None:
     assert len(full) == 40
     before = len(_read_ledger(destino))
     rc = _emit(destino, "deadbee")
-    assert rc == 1, "un sha que no resuelve debe FALLA CERRADO (exit != 0)"
+    assert rc == ed.EXIT_INVALID_INPUT, (
+        "un sha que no resuelve debe FALLA CERRADO (exit != 0)"
+    )
     after = _read_ledger(destino)
     assert len(after) == before, (
         "ningun nonce puede entrar al ledger apuntando a un commit inexistente"
@@ -133,7 +142,7 @@ def test_rejects_full_nonexistent_sha(motor: Path, destino: Path) -> None:
     bogus = "f" * 40
     assert _git(motor, "cat-file", "-e", bogus).returncode != 0
     rc = _emit(destino, bogus)
-    assert rc == 1
+    assert rc == ed.EXIT_INVALID_INPUT
 
 
 def test_normalizes_abbreviated_sha(motor: Path, destino: Path) -> None:
@@ -163,7 +172,9 @@ def test_rejects_object_that_is_not_a_commit(motor: Path, destino: Path) -> None
     blob = _git(motor, "rev-parse", "HEAD:README.md").stdout.strip()
     assert blob, "premise: hay un blob"
     rc = _emit(destino, blob)
-    assert rc == 1, "un objeto que NO es commit no puede registrarse como commit_sha"
+    assert rc == ed.EXIT_INVALID_INPUT, (
+        "un objeto que NO es commit no puede registrarse como commit_sha"
+    )
     rows = _read_ledger(destino)
     assert not any(r.get("commit_sha") == blob for r in rows)
 
@@ -173,7 +184,7 @@ def test_rejects_without_motor_link(tmp_path, capsys) -> None:
     d.mkdir(parents=True, exist_ok=True)
     (d / ".agent").mkdir()
     rc = _emit(d, "deadbee")
-    assert rc == 1
+    assert rc == ed.EXIT_INVALID_INPUT
     err = capsys.readouterr().err
     assert "UNKNOWN" in err, "sin link el rechazo debe etiquetarse UNKNOWN, no INVALIDO"
 
@@ -190,7 +201,7 @@ def test_git_broken_reports_unknown_never_invalid(
 
     monkeypatch.setattr(ed.subprocess, "run", _broken)
     rc = _emit(destino, "deadbee")
-    assert rc == 1
+    assert rc == ed.EXIT_INVALID_INPUT
     err = capsys.readouterr().err
     assert "UNKNOWN" in err, "un git que no arranca es DESCONOCIDO (WOT-2026-059b)"
     assert "no resuelve a un commit del motor" not in err, (

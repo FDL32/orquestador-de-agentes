@@ -1,3 +1,47 @@
+# 2026-10-12 - WOT-2026-049c: escritor unico del DAG de triaje (barrera de copia-puntero cableada)
+
+### Added
+- `scripts/backlog_triage_writer.py` (WOT-2026-049c): UNICO dueno de la escritura
+  del DAG de triaje. Subcomando `write` que materializa
+  `backlog_triage_<YYYYMMDD-HHMMSS>.json` (timestamp de SEGUNDOS, mismo patron que
+  valida `validate_batch_dag.py`) preservando el DAG previo: antes de escribir el
+  nuevo copia el previo con `shutil.copy2` a `backlog_triage_<ts>_previo.json`, y
+  escribe con write-tmp-then-rename (atomico: `NamedTemporaryFile` en el mismo
+  directorio + `os.replace`). Cierra la BARRERA que WOT-2026-049a dejo como NORMA
+  en `prompts/backlog_triage.md` (B5). Default de `--out-dir`:
+  `<project-root>/orchestrator_pipeline/reports/` (CONTRACT_GAP resuelto por
+  evidencia 2026-10-12: 40+ DAGs reales viven ahi, no en `.agent/collaboration/`);
+  fail-closed (exit 2) si no hay destino resoluble, en vez de improvisar ruta.
+- `tests/unit/test_backlog_triage_writer.py` (WOT-2026-049c): 10 tests con
+  mutation-verify de las dos propiedades duras -- copia del previo (2 tests pasan a
+  ROJO al comentar `_preserve_previous`) y atomicidad (2 tests pasan a ROJO al
+  sustituir por `open(path, "w")` directo).
+
+### Changed
+- `prompts/backlog_triage.md` (WOT-2026-049c): retirada la nota "BARRERA
+  (PENDIENTE)"; el bloque cita ahora el comando real
+  `scripts/backlog_triage_writer.py write --project-root <destino>`.
+
+# 2026-09-20 - WOT-2026-070v: session_closeout.py archiva el bus DESPUES de emitir SESSION_CLOSE_RECORDED
+
+> Entrada de CHANGELOG anadida retroactivamente el 2026-10-12 (consolidacion
+> pendiente del cierre original, WOT-2026-026t): el codigo y los tests
+> aterrizaron el 2026-09-20 (commits `fd6a06e` + `c162036`), pero la entrada
+> nunca se escribio en su momento.
+
+### Changed
+- `scripts/session_closeout.py::run_closeout` (WOT-2026-070v, commit `fd6a06e`):
+  `_step_archive_event_bus` se invoca ahora DESPUES de `_emit_session_close_recorded`,
+  nunca antes. Resuelve el eje (a) de WOT-2026-070u: antes del fix,
+  `archive_event_bus.py` archivaba el bus del ticket ANTES de que `run_closeout`
+  emitiera `SESSION_CLOSE_RECORDED` en el bus activo; `StateMachine.derive_state_from_events`
+  no reconoce ese tipo de evento y degradaba el ticket a `UNKNOWN` si algo
+  invocaba `sync_state_projection` despues. No se toco `bus/state_machine.py`
+  (eje b, descartado por riesgo real en `--reopen-terminal-ticket`).
+- `scripts/state_projection_probe.py::run_probe` (WOT-2026-070v, commit `c162036`):
+  lee tambien `archive/events.<ticket>.jsonl` para el ticket ya archivado,
+  cerrando el CONTRACT_GAP de "consumidor fuera de `run_closeout`".
+
 # 2026-07-21 - Vuelo FP-20260721 (3/4): barreras de batch/reconcile/review + 024h congelado
 
 ### Fixed

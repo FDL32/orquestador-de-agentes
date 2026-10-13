@@ -1351,6 +1351,26 @@ def copy_repomix_config(
     return True
 
 
+def _warn_gitleaks_seed_divergence(seed: Path, target: Path) -> None:
+    """WARN -- never clobber -- when a destino is missing seed allowlist sections.
+
+    Before: seed and target exist; the destino OWNS its .gitleaks.toml (the
+        no-clobber rule deliberately preserves its local customizations).
+    During: imports the detection guard (WOT-2026-039k) lazily and compares the
+        ``[[allowlists]]`` sections by EXACT value; it never edits the target.
+    After: prints one WARN naming the absent seed sections, or stays silent when
+        the destino already carries them all. A guard that cannot be imported
+        must NEVER break an install, so the import is best-effort.
+    """
+    try:
+        if str(TEMPLATE_ROOT) not in sys.path:
+            sys.path.insert(0, str(TEMPLATE_ROOT))
+        from scripts.check_gitleaks_seed_divergence import warn_on_seed_divergence
+    except Exception:  # pragma: no cover - portability: never break an install
+        return
+    warn_on_seed_divergence(seed, target)
+
+
 def copy_gitleaks_config(
     template_root: Path,
     destination_root: Path,
@@ -1384,6 +1404,10 @@ def copy_gitleaks_config(
 
     if dest.exists():
         print(f"[SKIP] .gitleaks.toml ya existe (no-clobber): {dest}")
+        # WOT-2026-039k: the no-clobber opened a cascade gap -- seed additions
+        # never reached an already-provisioned destino. Detect and NAME the
+        # divergence (never auto-merge: the local section is preserved).
+        _warn_gitleaks_seed_divergence(source, dest)
         return True
 
     if dry_run:

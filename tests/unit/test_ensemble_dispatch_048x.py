@@ -89,7 +89,7 @@ def _argv(tmp_path: Path, payload: Path) -> list[str]:
         "--rol",
         "challenger",
         "--phase",
-        "premise_check",
+        "DESIGN_REVIEW",
         "--loop-id",
         "L048X",
         "--backend-key",

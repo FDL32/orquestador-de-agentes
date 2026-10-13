@@ -35,13 +35,22 @@ During: expone subcomandos CLI:
       `backend_key`, con `checked_at` propio y `generated_at` para que un
       agente frio compare la frescura en su bootstrap en vez de correr los
       smoke tests el.
-    Todo envio a backend pasa por `send_to_profile`, cuyo PRIMER paso es
-    `privacy_preflight` (fail-closed): backend sin `trusted:true` +
+    Todo envio a backend POR PERFIL pasa por `send_to_profile`, cuyo PRIMER
+    paso es `privacy_preflight` (fail-closed): backend sin `trusted:true` +
     (`data_sensitivity != public` O rutas bajo `ensemble_private_roots`)
     -> DispatchBlockedError ANTES de tocar red. Auth por-invocacion via la
     env var nombrada en `api_key_env` (`setx` no propaga a procesos vivos,
     medido). GENERACION B2: el dispatcher NUNCA aplica escrituras de un
     backend al arbol; solo captura propuestas (stdout + scorecard).
+    La UNICA otra salida de CODIGO del motor hacia un backend externo es
+    `scripts/run_codex_audit.py` (auditoria codex M4): desde WOT-2026-046c
+    llama al MISMO `privacy_preflight` antes de abrir su `Popen`. El censo
+    de ambas vias es AST y vive en `tests/unit/test_ensemble_dispatch.py`
+    (registro de rutas POR SALIDA: una salida nueva sin barrera o sin
+    exencion declarada lo pone en ROJO; la tercera salida que la ficha
+    declara -- CLI directo de builders por prescripcion de prompts, launcher
+    PowerShell -- es prescripcion operativa fuera del alcance de un AST de
+    codigo y se coordina al cerrar 046c, no se bloquea desde aqui).
 After: scorecard.jsonl (UTF-8 SIN BOM, append-only) y backend_leaders.json
     actualizados bajo `<destino>/.agent/runtime/ensemble/`; exit 0 en exito,
     1 en bloqueo/validacion, 2 en error de invocacion.
@@ -316,6 +325,111 @@ GOVERNMENT_PHASES = frozenset(
     }
 )
 
+# WOT-2026-055a: las 8 ETAPAS canonicas que gobiernan `--phase` (enum CERRADO,
+# mismo contrato que `TASK_TYPES`). El campo `phase` del scorecard dejo de ser
+# texto libre: medido 2026-08-11 sobre 1383 filas reales, habia 40 valores
+# distintos para estas etapas, y 28% de las filas no traian la ETAPA sino la RAMA
+# del fan-out (`fanout-comun`, `challenge-fanout`...). Decision SEMANTICA (no de
+# recencia): la RAMA se DECIDE al lanzar, nunca se CONSULTA despues; la UNICA
+# dimension que alguien lee es la ETAPA (`phase_value_report.py:158` agrega por
+# `(task_type, phase, backend_key, lens_scope)`). Por eso `phase`=ETAPA y la rama
+# se cae. Nombres tomados del vocabulario ya declarado en el motor: D5 de
+# `DEC-router-prompts-001` (TRIAGE_AUDIT, CONTRACT_AUDIT, MANAGER_REVIEW, CLOSE)
+# mas DESIGN_REVIEW (documentado en `prompts/ensemble_loop.md`) y las etapas
+# medidas en la tabla cerrada de `DEC-086G-001` (IMPLEMENTATION_REVIEW,
+# ADJUDICATION, y PROMPT_AUDIT por la fragmentacion
+# CONTRACT_AUDIT/PROMPT_AUDIT/ARRANQUE_PROMPT_AUDIT que mide el backlog).
+CANONICAL_PHASES: tuple[str, ...] = (
+    "TRIAGE_AUDIT",
+    "CONTRACT_AUDIT",
+    "PROMPT_AUDIT",
+    "DESIGN_REVIEW",
+    "IMPLEMENTATION_REVIEW",
+    "MANAGER_REVIEW",
+    "ADJUDICATION",
+    "CLOSE",
+)
+
+# WOT-2026-055a: MECANISMO DE LEGACY explicito. El historico NO se reescribe
+# (precedente del repo: "no se reconstruyen aqui para no falsear el historico"),
+# asi que las etiquetas que se escribieron ANTES del enum no se borran: se MARCA
+# cada una con su etapa canonica en `LEGACY_PHASE_MAP`, y las que no mapean a
+# ninguna etapa (la RAMA del fan-out, pasos de bucle como `verify`) se PUBLICAN
+# como `dropped_semantic_mismatch` en el consumidor -- nunca se inventa una
+# categoria ni se agrupan a la fuerza en una etapa que no les corresponde.
+# `None` NO es un valor de `--phase` (el flag es `required=True`): es el estado
+# de las rondas que no pasan por el CLI (`run_pipeline` escribe la ronda 0
+# `premise_check` con `phase=None`) y del historico anterior al campo; el
+# consumidor lo cuenta como `dropped_legacy`, igual que hoy.
+#
+# Las claves van en MAYUSCULAS: `canonical_phase` normaliza a mayusculas antes de
+# buscar, asi que las variantes de caja ya historicas (`contract_audit`,
+# `prompt_audit`, `review`, `adjudicacion`) resuelven por la propia normalizacion
+# sin una entrada por cada grafia.
+LEGACY_PHASE_MAP: dict[str, str] = {
+    # TRIAGE_AUDIT
+    "TRIAGE": "TRIAGE_AUDIT",
+    "BACKLOG_TRIAGE": "TRIAGE_AUDIT",
+    "TRIAGE_INVENTORY": "TRIAGE_AUDIT",
+    "FINDING_TRIAGE": "TRIAGE_AUDIT",
+    # CONTRACT_AUDIT
+    "CONTRACT_FORMATION": "CONTRACT_AUDIT",
+    "CONTRACT_AUDIT_DIF": "CONTRACT_AUDIT",
+    # PROMPT_AUDIT
+    "PROMPT_TEMPLATE_AUDIT": "PROMPT_AUDIT",
+    "ARRANQUE_PROMPT_AUDIT": "PROMPT_AUDIT",
+    # DESIGN_REVIEW (revisar una propuesta/plan sin commit)
+    "DESIGN_AUDIT": "DESIGN_REVIEW",
+    "PROPOSAL_AUDIT": "DESIGN_REVIEW",
+    # IMPLEMENTATION_REVIEW
+    "IMPLEMENTACION_REVIEW": "IMPLEMENTATION_REVIEW",
+    "IMPLEMENTATION_AUDIT": "IMPLEMENTATION_REVIEW",
+    "IMPL_AUDIT": "IMPLEMENTATION_REVIEW",
+    # MANAGER_REVIEW
+    "CODE_REVIEW": "MANAGER_REVIEW",
+    "REVIEW_AUDIT": "MANAGER_REVIEW",
+    "REVIEW": "MANAGER_REVIEW",
+    "REVIEW1": "MANAGER_REVIEW",
+    "REVIEW_1": "MANAGER_REVIEW",
+    "REVIEW_2": "MANAGER_REVIEW",
+    # ADJUDICATION
+    "ADJUDICACION": "ADJUDICATION",
+    "PREFLIGHT_ADJUDICATION": "ADJUDICATION",
+    # CLOSE (las CINCO grafias de la etapa de cierre que el backlog midio como
+    # fragmentacion, mas las de memoria, que ocurren en el cierre de sesion)
+    "SESSION_CLOSE": "CLOSE",
+    "CLOSE_AUDIT": "CLOSE",
+    "SESSION_CLOSE_AUDIT": "CLOSE",
+    "CLOSEOUT_GOVERNANCE": "CLOSE",
+    "CLOSE_ADJUDICATION": "CLOSE",
+    "CLOSEOUT_ADJUDICATION": "CLOSE",
+    "MEMORY_PROPOSAL": "CLOSE",
+    "MEMORY_UPLOAD": "CLOSE",
+    "MEMORY_AUDIT": "CLOSE",
+}
+
+
+def canonical_phase(phase: object) -> str | None:
+    """Etapa canonica de `phase`, o None si no resuelve a ninguna de las 8.
+
+    Before: `phase` es el valor crudo del campo homonimo del scorecard (puede
+        ser None, cadena vacia, una grafia historica o una etiqueta de RAMA).
+    During: `None`/vacio -> None; si no, normaliza a MAYUSCULAS y busca primero
+        en `CANONICAL_PHASES` (identidad) y despues en `LEGACY_PHASE_MAP`.
+    After: la etapa canonica (uno de los 8 valores de `CANONICAL_PHASES`) o
+        None. Pura, sin I/O y sin lanzar: el consumidor decide que hacer con el
+        None (contarlo como `dropped_semantic_mismatch`), nunca inventar valor.
+    """
+    if phase is None:
+        return None
+    text = str(phase).strip().upper()
+    if not text:
+        return None
+    if text in CANONICAL_PHASES:
+        return text
+    return LEGACY_PHASE_MAP.get(text)
+
+
 LEADER_MIN_N = 5
 EXPLORATION_POLICY = (
     "1-de-5 rondas, o al cambiar la version del modelo/backend, el challenger "
@@ -494,6 +608,33 @@ def _resolve_project_root(raw: str) -> Path:
             "debe apuntar al destino-rol (workspace / repo_destino)"
         )
     return root
+
+
+def resolve_default_session_id(project_root: Path) -> str | None:
+    """session_id POR DEFECTO de un despacho de gobierno (WOT-2026-040g).
+
+    Cierra el hueco de CABLEADO del ticket: `run_loop_round` YA aceptaba y
+    propagaba `session_id`, pero el unico modo de poblarlo era que el ejecutor
+    recordara pasar `--session-id` en cada ronda; cuatro cierres consecutivos
+    dejaron filas con `session_id=None` y el cruce 2.5.i salio SKIP. Este
+    resolutor toma el `session_id` de la sesion VIVA del scratch, de modo que
+    el despacho lo hereda POR DEFECTO.
+
+    Before: `project_root` es el destino-rol resuelto (nunca el motor).
+    During: delega en el DUENO del scratch (`init_session_scratch.
+        resolve_current_session_id`, que solo LEE); el import es LAZY para no
+        acoplar el dispatcher a la infra de scratch en el arranque del modulo
+        ni crear un import cycle.
+    After: el `session_id` de la sesion viva mas reciente, o `None` si el
+        scratch no existe o esta vacio. FAIL-OPEN declarado: un default ausente
+        NO bloquea la ronda -- deja la fila honestamente NO-ATRIBUIBLE
+        (`session_id=None`), que el cierre reporta (DoD (d)), nunca la esconde.
+    """
+    try:
+        from scripts.init_session_scratch import resolve_current_session_id
+    except ImportError:  # pragma: no cover - scratch no importable
+        return None
+    return resolve_current_session_id(project_root)
 
 
 # WOT-2026-027n: gate de CONTENIDO, acotado a ASIGNACION CON VALOR DE ALTA
@@ -970,6 +1111,11 @@ def _sanitized_transport_error(exc: Exception, api_key: str | None) -> Transport
 
 _SSE_CONTENT_TYPE = "text/event-stream"
 
+# WOT-2026-063d: misma forma que `_LENS_SCOPE_KEY` (WOT-2026-042v) -- clave
+# privada sellada sobre el `profile` MUTABLE para que `_record_round` la lea
+# sin cambiar la firma de `_transport_api` ni del transporte en si.
+_SSE_ROUTE_KEY = "_sse_route_effective"
+
 
 def _response_is_sse(resp) -> bool:
     """I6: discrimina la ruta de consumo por Content-Type, no por fe.
@@ -1127,13 +1273,32 @@ def _parse_sse_event(
     FUERA, en `_collect_sse_content`: el interprete reasigna `__context__` al
     ejecutar el `raise` DENTRO del `except`, y ahi volveria el crudo con la
     key (lo pina test_063c_sanea_la_key_ante_chunk_malformado).
+
+    WOT-2026-063e (I4): `json.loads` acepta cualquier JSON valido, no solo
+    objetos -- `"null"`, `"42"`, `'"texto"'`, `"[]"` decodifican sin error.
+    Un payload que no es un `dict` es una FORMA erronea, no un fallo de
+    PARSEO JSON; sin esta guarda, `_accumulate_sse_deltas` (que asume dict)
+    revienta con `AttributeError`, que `_transport_api` funde en
+    `TransportError` -- la fusion de tipos que I4 prohibe. Se reporta como
+    `JSONDecodeError` (mismo tipo que un parseo roto) porque ambos son
+    errores de FORMA del cuerpo, no de transporte; el mensaje declara la
+    forma real recibida para no perder la evidencia.
     """
     try:
-        return json.loads(event_data), None
+        payload = json.loads(event_data)
     except json.JSONDecodeError as exc:
         return None, json.JSONDecodeError(
             exc.msg, _redact_secret(exc.doc, api_key), exc.pos
         )
+    if not isinstance(payload, dict):
+        redacted = _redact_secret(event_data, api_key)
+        return None, json.JSONDecodeError(
+            f"payload SSE valido pero no es un objeto (tipo real: "
+            f"{type(payload).__name__})",
+            redacted,
+            0,
+        )
+    return payload, None
 
 
 def _accumulate_sse_deltas(
@@ -1243,10 +1408,12 @@ def _transport_api(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             if _response_is_sse(resp):
+                profile[_SSE_ROUTE_KEY] = "sse"
                 streamed = _collect_sse_content(
                     resp, deadline, api_key, allow_reasoning=allow_reasoning
                 )
             else:
+                profile[_SSE_ROUTE_KEY] = "no-sse"
                 raw_body = resp.read()
     except (TransportError, json.JSONDecodeError):
         raise
@@ -1315,6 +1482,16 @@ _STDERR_MARKER = "[stderr] "
 # (transporte fallido o respuesta vacia). 1 y 2 ya significan [BLOCKED] y
 # [ERROR] en `main`; 3 dice "la ronda corrio, se registro, y no vale".
 EXIT_NO_CONTRIBUTION = 3
+
+# WOT-2026-046d: codigo de salida de la rama de ENTRADA INVALIDA (un
+# `ValueError`, p.ej. `--task-type` desconocido o un `--commit-sha` que no
+# resuelve). Un ValueError NO es un veto de politica: `DispatchBlockedError`
+# (la barrera que bloquea A PROPOSITO) conserva `[BLOCKED]`/1, mientras que un
+# ValueError sale por una rama PROPIA con prefijo `[INVALID]` y este codigo,
+# para que "la barrera funciono" y "la invocacion estaba mal" no se reporten
+# igual. Un rc solo no basta como discriminante: el TIPO observable es el
+# prefijo, y el codigo lo refuerza.
+EXIT_INVALID_INPUT = 4
 
 
 def _stderr_tail(stderr_text: str | None) -> str:
@@ -1745,7 +1922,14 @@ def send_to_profile(
     # la causa -> reviews decorativas.
     timeout: int = 300,
 ) -> str:
-    """UNICO camino de salida hacia un backend; el preflight corre AQUI.
+    """Camino de salida POR PERFIL hacia un backend; el preflight corre AQUI.
+
+    WOT-2026-046c corrigio la afirmacion historica de ser la ruta EXCLUSIVA
+    de salida hacia un backend: era falsa mientras `run_codex_audit.py` abria su propio
+    `Popen` sin barrera. Hoy es VERDADERA EN SU AMBITO (todo envio por perfil)
+    y la otra salida de codigo, `run_codex_audit`, corre el MISMO
+    `privacy_preflight`; el censo AST de `tests/unit/test_ensemble_dispatch.py`
+    fija que ninguna otra ruta pueda aparecer sin barrera o exencion declarada.
 
     Before: `profile_name` existe en `ensemble_profiles` (config validada);
         `messages` es la lista chat-completions; `sensitivity` es la del
@@ -1771,11 +1955,13 @@ def send_to_profile(
             file=sys.stderr,
         )
     backend_cfg = config["backends"][profile["backend"]]
-    # WOT-2026-042v: el ambito se resuelve AQUI porque este es el UNICO camino
-    # de salida hacia un backend (lo declara el docstring, y el canary de
+    # WOT-2026-042v: el ambito se resuelve AQUI porque esta es la salida
+    # POR PERFIL hacia un backend (lo declara el docstring, y el canary de
     # WOT-2026-042k midio que 9 de 9 `dispatch.py` de gobierno llaman a esta
     # funcion DIRECTAMENTE sin pasar por el CLI `run`): cualquier otro punto
-    # dejaria fuera la ruta por la que circulan los bundles reales.
+    # dejaria fuera la ruta por la que circulan los bundles reales. La unica
+    # otra salida de codigo del motor (run_codex_audit) NO resuelve ambito
+    # por perfil: lo recibe de forma explicita via `repo_root` (WOT-2026-038l).
     cwd_lente, lens_scope = resolve_lens_repo_root(profile, backend_cfg, project_root)
     profile[_LENS_SCOPE_KEY] = lens_scope
     if cwd_lente is not None and backend_cfg.get("repo_root") != cwd_lente:
@@ -1823,8 +2009,11 @@ def send_to_profile(
     # DIRECTAMENTE y CERO pasan por el CLI `run`, asi que un canary anclado solo
     # a `run_pipeline` vigilaba una ruta por la que no circula ningun bundle real
     # -- "barrera del alcance" de AGENTS.md: cableado, muerde, y no mira donde
-    # ocurre el fallo. `send_to_profile` es el UNICO camino de salida hacia un
-    # backend (lo declara su propio docstring), luego es el paso obligado.
+    # ocurre el fallo. `send_to_profile` es el paso obligado de TODO envio
+    # por perfil hacia un backend (lo declara su propio docstring), luego es
+    # el paso obligado de su ambito; la otra salida de codigo del motor
+    # (`run_codex_audit`) corre el MISMO `privacy_preflight` desde
+    # WOT-2026-046c y queda vigilada por su censo AST.
     # Va DESPUES del preflight a proposito: si el envio se bloquea por privacidad
     # no hay nada que auditar, y el canary nunca debe retrasar un fail-closed.
     receipt_canary(payload_text, root=MOTOR_ROOT, ticket=profile_name)
@@ -5038,6 +5227,12 @@ def _record_round(
             # Permite analizar rendimiento por S (sin filesystem) vs F (con
             # filesystem) sin un join manual contra agents.json.
             "channel": profile.get("channel"),
+            # WOT-2026-063d: ruta de consumo EFECTIVA (sse | no-sse | None).
+            # None para el canal `agent` (`_transport_api` no se invoca) o si
+            # el transporte fallo antes de llegar a `urlopen` -- ausencia de
+            # dato, igual que `lens_scope` cuando la ronda no pasa por el
+            # dispatcher.
+            "sse_route": profile.get(_SSE_ROUTE_KEY),
         },
     )
 
@@ -5097,6 +5292,14 @@ def run_loop_round(
         deja fila con `failure_mode="privacy_preflight_blocked: ..."`,
         registrando la identidad de la lente vetada (backend_key, loop_id).
     """
+    # WOT-2026-040g: una ronda de GOBIERNO hereda POR DEFECTO el session_id de
+    # la sesion viva del scratch, para que el cruce 2.5.i (manifest x
+    # scorecard) sea posible sin que el ejecutor tenga que acordarse de pasar
+    # `--session-id` en cada fan-out. Si no hay scratch, queda `None` -- la
+    # ronda NO se bloquea, la fila se vuelve NO-ATRIBUIBLE y el cierre la
+    # reporta (DoD (d)).
+    if session_id is None:
+        session_id = resolve_default_session_id(project_root)
     if task_type not in TASK_TYPES:
         raise ValueError(_invalid_task_type_message(task_type))
     profile = config["ensemble_profiles"][profile_name]
@@ -6441,6 +6644,11 @@ def _warn_phase_typo(phase: str | None) -> None:
     quando es una fase exploratoria deliberada tipo 'DESIGN_REVIEW', pero
     indistinguible de un typo real como 'manager_reviw' sin este aviso).
 
+    WOT-2026-055a: desde que `--phase` tiene `choices` sobre `CANONICAL_PHASES`,
+    el CLI RECHAZA cualquier valor fuera del enum ANTES de llegar aqui, asi que
+    un typo ya no puede colarse por esta via. Este aviso queda como defensa en
+    profundidad para los llamantes PYTHON directos de `_cmd_loop_round`.
+
     Before: `phase` es el string crudo de `--phase` (puede ser None).
     During: normaliza igual que `_check_government_nonce` (minuscula, guion
         -> guion bajo) y compara por similitud (`difflib.get_close_matches`)
@@ -6495,6 +6703,13 @@ def _cmd_loop_round(args, config) -> int:
         `ValueError` a `main`, que los mapea a exit != 0.
     """
     project_root = _resolve_project_root(args.project_root)
+    # WOT-2026-040g: el default del session_id se fija en el BORDE del handler
+    # para que TODA fila de este camino de gobierno -- no solo la ronda, tambien
+    # las de fallo de USO (`usage-error`) y de nonce ausente (`missing-nonce`)
+    # que se escriben antes de `run_loop_round` -- herede la sesion viva. Sin
+    # esto, esas filas quedarian NO-ATRIBUIBLES aunque la ronda si lo fuera.
+    if args.session_id is None:
+        args.session_id = resolve_default_session_id(project_root)
     # WOT-2026-059m: la ronda escribe en el MISMO ledger que emit-nonce y su
     # emparejamiento con el nonce depende de commit_sha; aceptar cualquier
     # cadena deja la acreditacion en N=0 sin que nadie avise (medido en
@@ -7180,7 +7395,8 @@ def main(argv: list[str] | None = None) -> int:
             "UNA ronda de un bucle de gobierno, registrada en scorecard.jsonl. "
             "Salida: 0 la ronda aporto; 1 [BLOCKED] (rechazada antes de llamar); "
             "2 [ERROR]; 3 [NO-APORTA] la ronda corrio y se registro pero el "
-            "transporte fallo o la respuesta vino vacia (WOT-2026-086d)."
+            "transporte fallo o la respuesta vino vacia (WOT-2026-086d); "
+            "4 [INVALID] la invocacion estaba mal (ValueError; WOT-2026-046d)."
         ),
     )
     p_loop.add_argument("--profile", required=True)
@@ -7189,7 +7405,13 @@ def main(argv: list[str] | None = None) -> int:
     p_loop.add_argument("--task-type", required=True)
     p_loop.add_argument("--rol", required=True, choices=["proposer", "challenger"])
     p_loop.add_argument(
-        "--phase", required=True, help="etapa de gobierno (CONTRACT_AUDIT, ...)"
+        "--phase",
+        required=True,
+        choices=list(CANONICAL_PHASES),
+        help=(
+            "etapa canonica del ciclo (WOT-2026-055a); un valor fuera del enum "
+            "FALLA con exit != 0. Valores: " + ", ".join(CANONICAL_PHASES)
+        ),
     )
     p_loop.add_argument(
         "--loop-id", required=True, help="registro citable del bucle (Lxxxx)"
@@ -7325,9 +7547,19 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return handlers[args.command](args, config)
-    except (DispatchBlockedError, ValueError) as exc:
+    except DispatchBlockedError as exc:
+        # Veto de politica: la barrera bloqueo A PROPOSITO. Conserva su
+        # prefijo `[BLOCKED]` y su codigo de salida.
         print(f"[BLOCKED] {exc}", file=sys.stderr)
         return 1
+    except ValueError as exc:
+        # WOT-2026-046d: entrada/argumento invalido (p.ej. --task-type
+        # desconocido, un sha que no resuelve). NO es un veto de politica:
+        # sale por una rama PROPIA, con prefijo `[INVALID]` y codigo propios,
+        # para que "la barrera funciono" y "la invocacion estaba mal" no se
+        # reporten igual.
+        print(f"[INVALID] {exc}", file=sys.stderr)
+        return EXIT_INVALID_INPUT
     except Exception as exc:
         print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

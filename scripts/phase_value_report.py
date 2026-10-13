@@ -53,6 +53,16 @@ propia. Las adjudicaciones ANTERIORES a WOT-2026-055o no llevan la clave
 hacia adelante y se declaran NO-UNIBLES; emparejarlas por heuristica de etiqueta
 libre esta PROHIBIDO por decision del operador 2026-09-23 (el join aproximado
 daba 144/257 sin match unico).
+
+WOT-2026-055a: el eje `phase` se NORMALIZA a una de las 8 etapas canonicas
+(`ensemble_dispatch.canonical_phase`) antes de agregar. Las grafias legacy de una
+MISMA etapa (`CLOSE`, `CLOSE_AUDIT`, `CLOSEOUT_GOVERNANCE`; `contract_audit` vs
+`CONTRACT_AUDIT`; `CODE_REVIEW` vs `MANAGER_REVIEW`) se agrupan en una sola fila
+-- antes daban CINCO filas para la etapa de cierre. Una etiqueta que NO resuelve
+a etapa (la RAMA del fan-out: `fanout-comun`, `challenge-fanout`; pasos como
+`verify`) NO se mete a la fuerza en ninguna etapa: se DESCARTAN y su conteo se
+publica en su propia linea como `descartadas_semantic_mismatch`, igual que
+`dropped_legacy` publica los ejes ausentes.
 """
 
 from __future__ import annotations
@@ -85,6 +95,7 @@ from check_loop_execution import is_substantive  # noqa: E402
 from ensemble_dispatch import (  # noqa: E402
     ADJUDICATED_OUTCOMES,
     SCORECARD_REL,  # noqa: F401
+    canonical_phase,
     read_scorecard_unified,
 )
 
@@ -142,6 +153,13 @@ class Report:
     total_rows: int = 0
     eligible: int = 0
     dropped_legacy: int = 0
+    # WOT-2026-055a: filas cuyo `phase` existe pero NO resuelve a ninguna de las
+    # 8 etapas canonicas (la RAMA del fan-out, pasos de bucle, etiquetas de otra
+    # dimension). Se DESCARTAN de la tabla y se publican aqui: meterlas en una
+    # etapa "que les queda cerca" falsearia la agregacion, y esconderlas haria
+    # que el informe pareciera completo describiendo menos (misma regla que
+    # `dropped_legacy`).
+    dropped_semantic_mismatch: int = 0
     dropped_unparsable: int = 0
     substantive_measured: int = 0
     substantive_fail_open: int = 0
@@ -157,20 +175,25 @@ class Report:
 
 
 def _cell_key(row: dict) -> tuple[str, str, str, str] | None:
-    """The 4-eje key of a row, or None if ANY eje falta.
+    """The 4-eje key of a row, or None if ANY eje falta or `phase` no mapea.
 
     Mismo criterio de fail-closed que el resto del modulo: sin el eje completo
     no hay celda, porque inventar un valor ausente fabricaria una poblacion que
-    nadie midio.
+    nadie midio. WOT-2026-055a: `phase` se resuelve a su etapa canonica
+    (`canonical_phase`), con lo que las grafias legacy (`CLOSE_AUDIT`,
+    `contract_audit`, `CODE_REVIEW`...) se AGRUPAN en su etapa en vez de dar una
+    fila por grafia; una etiqueta que NO resuelve (la RAMA del fan-out, un paso
+    de bucle) devuelve None aqui y el llamante la cuenta como
+    `dropped_semantic_mismatch`, nunca metida a la fuerza en una etapa.
     """
-    phase = row.get("phase")
+    phase = canonical_phase(row.get("phase"))
     backend = row.get("backend_key")
     lens_scope = row.get("lens_scope")
     if not phase or not backend or not lens_scope:
         return None
     return (
         str(row.get("task_type") or "?"),
-        str(phase),
+        phase,
         str(backend),
         str(lens_scope),
     )
@@ -278,7 +301,14 @@ def _aggregate_rounds(rows: list[dict], report: Report) -> dict[tuple, Cell]:
         # for the three axes: phase/backend_key (WOT-2026-044q) and
         # lens_scope (WOT-2026-055o).
         if key4 is None:
-            report.dropped_legacy += 1
+            # WOT-2026-055a: distingue el eje AUSENTE (legacy) de un `phase`
+            # PRESENTE que no resuelve a etapa canonica (la RAMA del fan-out):
+            # el primero es `dropped_legacy`, el segundo `dropped_semantic_mismatch`.
+            phase_raw = row.get("phase")
+            if phase_raw and canonical_phase(phase_raw) is None:
+                report.dropped_semantic_mismatch += 1
+            else:
+                report.dropped_legacy += 1
             continue
         report.eligible += 1
 
@@ -398,6 +428,12 @@ def format_denominator(report: Report) -> str:
         f"sustantivas_fail_open={report.substantive_fail_open} "
         f"mudas={report.mute}"
     )
+    if report.dropped_semantic_mismatch:
+        line += (
+            f"\n[denominador] descartadas_semantic_mismatch="
+            f"{report.dropped_semantic_mismatch} "
+            "(phase presente pero sin etapa canonica: rama de fan-out o paso)"
+        )
     if report.dropped_unparsable:
         line += (
             f"\n[denominador] descartadas_ilegibles={report.dropped_unparsable} "

@@ -77,11 +77,16 @@ def _rows(project_root: Path) -> list[dict]:
 def test_government_phase_without_nonce_fails(tmp_path, monkeypatch):
     """WOT-2026-040i DoD-1: una ronda de gobierno sin nonce FALLA.
 
-    `loop-round --phase challenge-fanout` sin `--challenge-nonce` -> exit != 0,
+    `loop-round --phase CONTRACT_AUDIT` sin `--challenge-nonce` -> exit != 0,
     mensaje con `emit-nonce`.
 
     Mutation: quitar el check en `_cmd_loop_round` -> la ronda se despacha y
     el test cae (rc=0, no contiene `emit-nonce`).
+
+    WOT-2026-055a: la fase pasa de `challenge-fanout` (RAMA del fan-out, fuera
+    del enum) a `CONTRACT_AUDIT` (etapa canonica de gobierno): el CLI ahora
+    rechaza la rama. La conducta que este test mide (nonce obligatorio) es la
+    misma.
     """
     monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
     transport = _FakeTransport(replies=["respuesta"])
@@ -102,7 +107,7 @@ def test_government_phase_without_nonce_fails(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "challenge-fanout",
+            "CONTRACT_AUDIT",
             "--loop-id",
             "L700",
             "--backend-key",
@@ -150,7 +155,7 @@ def test_government_phase_without_nonce_no_scorecard_row(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "challenge-fanout",
+            "CONTRACT_AUDIT",
             "--loop-id",
             "L700",
             "--backend-key",
@@ -196,7 +201,7 @@ def test_government_phase_without_nonce_no_backend_call(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "challenge-fanout",
+            "CONTRACT_AUDIT",
             "--loop-id",
             "L700",
             "--backend-key",
@@ -220,8 +225,9 @@ def test_government_phase_without_nonce_no_backend_call(tmp_path, monkeypatch):
 def test_non_government_phase_passes_without_nonce(tmp_path, monkeypatch):
     """WOT-2026-040i DoD-4: una fase fuera de gobierno sigue pasando sin nonce.
 
-    `premise_check` es la fase no-gobierno canonica (ronda 0): no exige nonce.
-    Se usa `code-review` como task_type valido para una fase que no es de gobierno.
+    `DESIGN_REVIEW` es una etapa canonica NO de gobierno (WOT-2026-055a): no
+    exige nonce. Se usa `code-review` como task_type valido para una fase que no
+    es de gobierno.
 
     Mutation: bloquear TODAS las fases sin nonce -> la ronda de code-review
     falla -> RED.
@@ -245,7 +251,7 @@ def test_non_government_phase_passes_without_nonce(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "premise_check",
+            "DESIGN_REVIEW",
             "--loop-id",
             "L000",
             "--backend-key",
@@ -321,11 +327,9 @@ def test_historical_ledger_without_nonce_parses_cleanly(tmp_path):
 @pytest.mark.parametrize(
     "phase",
     [
-        "challenge-fanout",
         "CONTRACT_AUDIT",
         "MANAGER_REVIEW",
         "CLOSE",
-        "close",
     ],
 )
 def test_other_government_phases_without_nonce_fail(tmp_path, monkeypatch, phase):
@@ -397,7 +401,7 @@ def test_cross_case_nonce_missing_and_invalid_task_type(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "challenge-fanout",
+            "CONTRACT_AUDIT",
             "--loop-id",
             "L700",
             "--backend-key",
@@ -455,7 +459,7 @@ def test_usage_error_in_government_phase_with_nonce(tmp_path, monkeypatch):
             "--rol",
             "challenger",
             "--phase",
-            "challenge-fanout",
+            "CONTRACT_AUDIT",
             "--loop-id",
             "L700",
             "--backend-key",

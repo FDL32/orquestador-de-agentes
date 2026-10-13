@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Any
 
 
+try:  # tomllib is stdlib on 3.11+; the motor supports 3.10 via the tomli dep.
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10 only
+    import tomli as tomllib  # type: ignore[no-redef]
+
+
 TEXT_EXTENSIONS = {
     ".cfg",
     ".css",
@@ -73,14 +79,94 @@ ALLOW_PUBLISH_PATTERNS = [
     ".env.example",
     "*.env.example",
 ]
-SECURITY_FIXTURE_PATHS = frozenset(
+# WOT-2026-016r (iv): the security-fixture exemption used to live in the PATH
+# plane (`SECURITY_FIXTURE_PATHS` + `_secret_patterns_for_path -> []`), which
+# created a blind spot: a REAL secret committed into one of those files was
+# never scanned. The exemption now lives in the VALUE plane. The exact
+# placeholder literals the scanner must ignore are:
+#   - derived from the portable gitleaks SEED (`[[allowlists]].regexes`), which
+#     is the single source of truth -- never duplicated in the motor; plus
+#   - a small set of public example markers that are not (yet) in the seed,
+#     each kept explicit and justified so adding one is a deliberate act.
+GITLEAKS_SEED_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "agent_system"
+    / "templates"
+    / "gitleaks.config.toml"
+)
+KNOWN_EXAMPLE_PLACEHOLDERS = frozenset(
     {
-        "tests/test_redact.py",
-        "tests/test_persistence_redaction.py",
-        "tests/test_classify_publication.py",
-        "tests/test_event_bus.py",
+        # AWS's official documentation example access-key id: every AWS guide
+        # prints this exact string. It is a published placeholder, not a
+        # credential (a real key is a different AKIA + 16 random chars).
+        "AKIAIOSFODNN7EXAMPLE",
+        # The canonical jwt.io example token: every JWT tutorial prints it.
+        (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        ),
+        # Synthetic scanner fixtures deliberately embedded by the motor's own
+        # redaction tests to exercise the scanner.
+        "sk-abcdefghijklmnopqrstuvwxyz12345",
+        "sk-abcdefghijklmnopqrstuvwxyz0123456789",
     }
 )
+
+
+def _seed_allowlist_values(seed_path: Path = GITLEAKS_SEED_PATH) -> frozenset[str]:
+    """Exact values the portable gitleaks seed suppresses BY VALUE.
+
+    Before: seed_path may be missing or unparseable.
+    During: parses the seed's ``[[allowlists]].regexes`` blocks with tomllib.
+    After: frozenset of exact value strings; empty when the seed is absent or
+           unparseable (the gate then degrades to KNOWN_EXAMPLE_PLACEHOLDERS
+           only and never silently broadens the allowance).
+    """
+    try:
+        text = seed_path.read_text(encoding="utf-8")
+        data = tomllib.loads(text)
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return frozenset()
+    values: set[str] = set()
+    blocks = data.get("allowlists", [])
+    if not isinstance(blocks, list):
+        return frozenset()
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        raw = block.get("regexes")
+        if isinstance(raw, str):
+            values.add(raw)
+        elif isinstance(raw, list):
+            values.update(str(v) for v in raw)
+    return frozenset(values)
+
+
+# BY DESIGN values: the seed's exact values (derived) plus the explicit public
+# example markers. A real credential is never a member of this set.
+BY_DESIGN_VALUES = _seed_allowlist_values() | KNOWN_EXAMPLE_PLACEHOLDERS
+
+
+def _scrub_by_design_values(text: str) -> str:
+    """Excise BY-DESIGN placeholder literals before scanning.
+
+    Before: text is the decoded content of a scanned file/blob.
+    During: replaces every exact member of ``BY_DESIGN_VALUES`` with nothing.
+    After: the text minus those placeholders; a REAL secret elsewhere in the
+           same text is untouched and still matches.
+
+    Value-EXACT (never a regex, never a path): a placeholder disappears only
+    when it appears verbatim, so a lookalike secret (e.g. a different AKIA) is
+    still detected -- the anti-pattern the seed forbids is allowlisting the
+    FILE, not the VALUE.
+    """
+    for value in BY_DESIGN_VALUES:
+        if value in text:
+            text = text.replace(value, "")
+    return text
+
+
 # D5: Files in .agent/runtime/ that are tracked by design (WOT-2026-015c KEEP).
 # They remain in EXCLUDE_TRACKED but are removed from tracked_exclusions_need_human_action.
 RUNTIME_KEEP_TRACKED = frozenset(
@@ -91,8 +177,16 @@ RUNTIME_KEEP_TRACKED = frozenset(
     }
 )
 # D6a: History blobs whose only paths are accepted by design (WOT-2026-015e).
-# The SKILL.md had a placeholder in an old commit; tree is already clean.
-HISTORY_ACCEPTED_PATHS = frozenset({"skills/adopt-existing-project/SKILL.md"})
+# Two entries: the SKILL.md placeholder (old commit; tree already clean) and
+# WOT-2026-016r: the scanner's own test file. Its CURRENT tree content is clean
+# by VALUE, but old committed blobs necessarily embed the arbitrary leak
+# fixtures it asserts on; those blobs cannot be rewritten and are by design.
+HISTORY_ACCEPTED_PATHS = frozenset(
+    {
+        "skills/adopt-existing-project/SKILL.md",
+        "tests/test_classify_publication.py",
+    }
+)
 # D6b: Meta-documentation paths that document examples and real paths by design.
 # These are the motor's own operational docs; redaction_risk is suppressed for them.
 META_DOC_PATHS = frozenset(
@@ -108,7 +202,13 @@ META_DOC_PATHS = frozenset(
 CRITICAL_SECRET_PATTERNS = [
     re.compile(r"PUBLICATION_AUDIT_FAKE_SECRET\s*=", re.IGNORECASE),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    # WOT-2026-016r: requires a substantial base64 body after the header, not
+    # just the header itself. A bare header (no body, or a short synthetic
+    # stub) does not match; a real key (dozens of base64 chars) does. This
+    # closes the regression the Revisor found: KNOWN_EXAMPLE_PLACEHOLDERS used
+    # to list the bare header as a by-design marker, and its value-exact scrub
+    # erased the only pattern that detected a real key pasted into text.
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----\s*\r?\n[A-Za-z0-9+/=\s]{64,}"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
 ]
@@ -161,6 +261,13 @@ HISTORY_PII_PLACEHOLDER_PATTERNS = [
     re.compile(r"@users\.noreply\.github\.com$", re.IGNORECASE),
     re.compile(r"(?i)^(tu[-_][\w.]*|usuario|user|alias|tu_cuenta)@"),
     re.compile(r"(?i)^env\.local$"),
+    # WOT-2026-016r: the 2026-07 operational docs cite dev paths as REDACTION
+    # MARKERS or angle-bracket/ellipsis placeholders, not as real PII. A real
+    # path never starts with ``*``/``<``/``.``/backtick, so exempting these
+    # forms cannot hide an actual username.
+    re.compile(r"(?i)^[a-z]:\\users\\[*<.`]"),
+    re.compile(r"^/home/(user|runner|\.\.\.|`)"),
+    re.compile(r"(?i)@test\.com$"),
 ]
 MAX_HISTORY_PII_SAMPLES = 5
 
@@ -272,21 +379,6 @@ def _is_tests_path(path: str) -> bool:
     return path.startswith("tests/")
 
 
-def _is_security_fixture_path(path: str) -> bool:
-    """Before: path is a posix repo-relative path. During: exact case-sensitive
-    membership against the named fixtures. After: True only for the exact
-    redaction/publication test files that deliberately embed fake secret markers
-    to exercise the scanner. These are intentional fixtures, not leaked
-    credentials.
-
-    Uses exact set membership (NOT fnmatch): fnmatch applies os.path.normcase on
-    Windows/macOS, which case-folds and would exempt path variants like
-    ``Tests/Test_Redact.py``. A security allowlist must be platform-invariant, so
-    only the exact posix names are exempt -- case variants are scanned normally.
-    """
-    return path in SECURITY_FIXTURE_PATHS
-
-
 def _is_excluded(path: str) -> bool:
     """Before: path is posix. During: apply allowlist then denylist. After: bool."""
     return _matches_any(path, EXCLUDE_PATTERNS) and not _matches_any(
@@ -324,19 +416,31 @@ def _read_text_cached(repo_root: Path, rel_path: str, cache: TextCache) -> str |
 
 
 def _secret_patterns_for_path(path: str) -> list[re.Pattern[str]]:
-    """Before: path is posix. During: choose strictness. After: regex list."""
-    if _is_security_fixture_path(path):
-        return []  # fixtures deliberately contain fake secret markers
+    """Before: path is posix. During: choose strictness. After: regex list.
+
+    WOT-2026-016r (iv): this function used to return ZERO patterns for a handful
+    of security-fixture test paths, i.e. a secret-evasion blind spot (a real
+    secret in such a file was never scanned). The exemption moved to the VALUE
+    plane (``_scrub_by_design_values``), so every path is now scanned with the
+    full pattern set -- publish allowlist paths (``.env.example``) keep the
+    CRITICAL set.
+    """
     return (
         CRITICAL_SECRET_PATTERNS if _is_publish_allowlisted(path) else SECRET_PATTERNS
     )
 
 
 def _has_secret(text: str | None, path: str) -> bool:
-    """Before: text may be None. During: scan selected patterns. After: bool."""
-    return text is not None and any(
-        pattern.search(text) for pattern in _secret_patterns_for_path(path)
-    )
+    """Before: text may be None. During: scan selected patterns over the text
+    with BY-DESIGN placeholder values excised. After: bool.
+
+    The scrub is value-exact, so a REAL secret sharing a file with a by-design
+    placeholder still blocks (control positive AP-D04).
+    """
+    if text is None:
+        return False
+    scanned = _scrub_by_design_values(text)
+    return any(pattern.search(scanned) for pattern in _secret_patterns_for_path(path))
 
 
 def _content_flags(text: str | None, rel_path: str) -> list[str]:
@@ -512,8 +616,6 @@ def _scan_history_secrets(
     findings: list[dict[str, Any]] = []
     pii_findings: list[dict[str, Any]] = []
     for blob_sha, paths in _collect_history_blob_paths(repo_root).items():
-        if all(_is_security_fixture_path(path) for path in paths):
-            continue  # fixtures deliberately contain fake secret markers
         if all(path in HISTORY_ACCEPTED_PATHS for path in paths):
             continue  # D6a: history blob accepted by design (WOT-2026-015e)
         text = _git_show_text(repo_root, blob_sha)
@@ -524,7 +626,11 @@ def _scan_history_secrets(
         )
         if text is None:
             continue
-        if any(pattern.search(text) for pattern in patterns):
+        # WOT-2026-016r (iv): historically a blob was skipped entirely when all
+        # its paths were security fixtures. Now the exemption is value-exact, so
+        # the blob is scanned and only its by-design placeholder VALUES are
+        # excised -- a real secret in any path still blocks.
+        if any(pattern.search(_scrub_by_design_values(text)) for pattern in patterns):
             unique_paths = sorted(set(paths))
             findings.append(
                 {

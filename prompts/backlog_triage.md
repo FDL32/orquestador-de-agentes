@@ -438,12 +438,22 @@ worktree `_dev` o checkout principal).
 
 - JSON portable: `backlog_triage_<YYYYMMDD-HHMMSS>.json`, con el esquema:
 
-**BARRERA (PENDIENTE — follow-up ticket, no implementada en codigo):**
-el diseno original (`shutil.copy2` + write-tmp-then-rename, sin
-intervencion humana) requiere un script que sea dueno de la escritura
-del DAG. Hoy el DAG lo escribe el agente siguiendo este prompt; la
-barrera es una NORMA, no un mecanismo. Ver ticket de follow-up para
-cablear la copia automatica del previo antes de sobrescribir.
+**BARRERA (cableada en codigo, WOT-2026-049c):** el DAG NO se escribe con la
+herramienta de escritura nativa del agente. Se materializa con
+`scripts/backlog_triage_writer.py`, UNICO dueno de la escritura, que aplica
+la copia-puntero: antes de escribir el fichero nuevo copia el DAG previo con
+`shutil.copy2` a `backlog_triage_<ts>_previo.json` (nunca lo sobrescribe sin
+copia), y escribe el nuevo con write-tmp-then-rename (atomico). Comando
+exacto (el DAG construido se pasa por stdin, o con `--from-file`):
+
+```powershell
+python <MOTOR_ROOT>/scripts/backlog_triage_writer.py write `
+  --project-root <destino>
+```
+
+`--out-dir <dir>` sobreescribe el destino derivado
+(`<project-root>/orchestrator_pipeline/reports/`). El escritor NO valida el
+esquema: sigue siendo `validate_batch_dag.py` quien lo valida despues.
 
 ```json
 {

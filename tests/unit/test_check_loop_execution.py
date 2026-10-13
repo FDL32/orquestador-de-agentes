@@ -957,6 +957,30 @@ def test_loop_round_call_site_blocks_nonce_reuse_before_any_row(tmp_path):
     assert rows_after == stored_before, "sin perfil resoluble no debe quedar fila"
 
 
+def test_loop_round_handler_defaults_session_id_for_usage_error_row(tmp_path):
+    """WOT-2026-040g: el default del `session_id` en el BORDE del handler cubre
+    tambien las filas que NO pasan por `run_loop_round` (aqui, un fallo de USO
+    que se registra en `_cmd_loop_round`). Sin el, esa fila quedaria
+    NO-ATRIBUIBLE aunque la ronda si lo estuviera."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "bundle.md").write_text("bundle", encoding="utf-8")
+    sid = "20260101-0001-nogit-" + "a" * 32
+    (dest / ".agent" / "runtime" / "session" / sid).mkdir(parents=True)
+
+    cfg = {
+        "ensemble_profiles": {"p0": {"backend": "nan", "model": "m0"}},
+        "backends": {"nan": {}},
+    }
+    args = _loop_round_args(dest, task_type="weird", phase="fanout")
+    with pytest.raises(ValueError, match="task_type"):
+        ed._cmd_loop_round(args, cfg)
+    rows, _sha = ed._read_scorecard(dest)
+    assert rows, "el fallo de uso debe dejar fila (WOT-2026-048i)"
+    assert rows[-1]["failure_mode"] == "usage-error"
+    assert rows[-1]["session_id"] == sid, rows[-1]
+
+
 # ---------------------------------------------------------------------------
 # WOT-2026-059n: el LECTOR resuelve shas del DESTINO via resolve_governed_commit_sha
 # ---------------------------------------------------------------------------

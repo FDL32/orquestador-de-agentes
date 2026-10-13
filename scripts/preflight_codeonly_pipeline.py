@@ -22,6 +22,16 @@ Checks:
       `automatic_criticals`, matching this collector's "reports SIGNALS; the AGENT
       judges" contract -- it never gates the pipeline's verdict on a specific
       agent's reachability.
+    - consume-checkout drift + memory residue (WOT-2026-039b): for each resolved
+      CONSUME checkout (`--principal-root`, `--workspace-root`; NEVER the _dev
+      worktree, which is expected to diverge), a WARN when it is more than
+      `--drift-warn-threshold` (default 20) commits behind `--drift-base-ref`
+      (default `main`), naming the checkout and the gap; and a WARN when a
+      consume-only checkout (DETACHED HEAD) has a DIRTY tracked portable memory
+      archive (`ARCHIVE_DIR_REL`), the measured residue nobody commits. WARN-only:
+      emitted via `findings["warnings"]`, NEVER `automatic_criticals` (no blocking
+      gate) and NEVER auto-syncing `principal` (moving a checkout another session
+      may be using is worse than the WARN).
 
 Warnings taxonomy (WOT-2026-021u): `validate --json` emits `warnings` as a dict
 keyed by CATEGORY (`ticket_prose`, `bus_drift`, `invariants`, ...); `ticket_prose`
@@ -76,6 +86,7 @@ _MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
+from bus.portable_memory_archive import ARCHIVE_DIR_REL  # noqa: E402
 from runtime.project_root import clear_cache, is_motor_code_only  # noqa: E402
 from scripts.check_agents_accessible import (  # noqa: E402
     AgentsConfigError,
@@ -87,6 +98,16 @@ from scripts.validate_ticket_prose import is_completed_plan  # noqa: E402
 
 
 SCHEMA_VERSION = "codeonly-preflight-collector/v1"
+
+#: Default threshold (N) for the consume-checkout drift WARN (WOT-2026-039b): a
+#: resolved consume checkout this many commits behind `main` is reported. Overridable
+#: with `--drift-warn-threshold`. WARN-only: NEVER a blocking gate.
+DEFAULT_DRIFT_THRESHOLD = 20
+
+#: Default ref a consume checkout must not lag. In the canonical topology `main` is
+#: the branch the motor publishes; `sync_principal.py` fast-forwards the primary to
+#: `origin/main`, so pass `--drift-base-ref origin/main` to measure the published head.
+DEFAULT_DRIFT_BASE_REF = "main"
 
 # Matches the `[TP-XXX-NN]` prefix that validate_ticket_prose.py bakes into every
 # ticket_prose warning string (see agent_controller._handle_validate: f"[{rule_id}]
@@ -135,6 +156,68 @@ def _tree_clean(cwd: Path) -> bool | None:
     if r["returncode"] != 0:
         return None
     return r["stdout"].strip() == ""
+
+
+def _commits_behind(checkout: Path, base_ref: str) -> int | None:
+    """How many commits `checkout` HEAD lags `base_ref` behind (WOT-2026-039b).
+
+    Before: `checkout` is a path that should be a git checkout; `base_ref` is a
+        ref name (`main`, `origin/main`, a sha) that must not be left behind.
+    During: runs `git rev-list --count HEAD..<base_ref>`, which counts the commits
+        reachable from `base_ref` but NOT from HEAD -- exactly the gap the checkout
+        is behind. Read-only, never mutates, never fetches.
+    After: the integer gap (0 = up to date; >0 = behind), or None when git cannot
+        answer (not a repo, unresolved ref, git missing). The caller records None
+        and does NOT warn: a WARN-only signal never INVENTS a gap. A checkout that
+        also carries divergent commits still reports the `behind` count, which is
+        the meaningful "how stale is its tree" number (sync safety is
+        sync_principal.py's job, not this collector's).
+    """
+    r = _run(["git", "rev-list", "--count", f"HEAD..{base_ref}"], checkout)
+    if r["returncode"] != 0:
+        return None
+    out = r["stdout"].strip()
+    return int(out) if out.isdigit() else None
+
+
+def _is_detached_head(checkout: Path) -> bool | None:
+    """True iff `checkout` is on a DETACHED HEAD (the consume-only shape).
+
+    Before: `checkout` is a path that should be a git checkout.
+    During: runs `git symbolic-ref --quiet HEAD`, which exits 0 on a branch and 1
+        on a detached HEAD. Read-only.
+    After: True (detached = consume-only, per the canonical topology where the
+        primary checkout is kept DETACHED as a consume-only view), False (on a
+        named branch), or None when git cannot answer. None is treated by callers
+        as NOT consume-only: no archive WARN is emitted from a guess.
+    """
+    r = _run(["git", "symbolic-ref", "--quiet", "HEAD"], checkout)
+    if r["returncode"] == 0:
+        return False
+    if r["returncode"] == 1:
+        return True
+    return None
+
+
+def _portable_archive_dirty(checkout: Path) -> bool | None:
+    """True iff the tracked portable memory archive has UNCOMMITTED changes.
+
+    Before: `checkout` is a path that should be a git checkout.
+    During: runs `git status --porcelain -- .agent/runtime/memory/archive`
+        (read-only; `ARCHIVE_DIR_REL` is the canonical path, imported -- never
+        re-declared). Only the TRACKED portable vehicle is inspected: the runtime
+        `observations.jsonl` is gitignored and never travels.
+    After: True if any archive path is modified/staged/untracked, False if clean,
+        or None when git cannot answer. A dirty archive in a consume-only checkout
+        is exactly the measured residue that never gets committed (WOT-2026-039b).
+    """
+    r = _run(
+        ["git", "status", "--porcelain", "--", ARCHIVE_DIR_REL.as_posix()],
+        checkout,
+    )
+    if r["returncode"] != 0:
+        return None
+    return bool(r["stdout"].strip())
 
 
 def _check_mode(findings: dict) -> None:
@@ -189,6 +272,66 @@ def _check_shas(findings: dict, args, dev, principal, workspace) -> None:
             "head": _head(workspace),
             "expected_sha": args.expect_workspace_sha,
         }
+
+
+def _check_drift(findings: dict, args, principal, workspace) -> None:
+    """WARN-ONLY: consume checkouts drifting behind `main` + dirty memory archive.
+
+    Before: `findings` carries initialized `checks`, `automatic_criticals` and
+        `warnings`; `principal` and `workspace` are the resolved CONSUME checkouts
+        (None when the flag was not passed). The motor _dev/worktree is
+        deliberately NOT taken as an argument: it is the SOURCE of truth and a
+        feature worktree is EXPECTED to diverge from `main`, so checking it would
+        emit a permanent false WARN. `args.drift_base_ref` (default `main`) is the
+        ref a checkout must not lag; `args.drift_warn_threshold` (default 20) is N.
+    During: for each resolved consume checkout runs READ-ONLY git queries:
+        `rev-list --count HEAD..<base_ref>` (how far behind) and
+        `status --porcelain -- .agent/runtime/memory/archive` (dirty archive).
+        The archive WARN fires ONLY for a consume-only checkout (DETACHED HEAD =
+        the documented consume-only shape); the drift WARN fires for any resolved
+        consume checkout past the threshold. Nothing is mutated (the contract
+        forbids auto-syncing `principal`: moving a checkout another session may be
+        using is worse than the WARN).
+    After: `findings["checks"]["drift"]` records base_ref/threshold and a
+        per-checkout {path, head, commits_behind, detached, memory_archive_dirty};
+        one human-readable string per trigger is appended to `findings["warnings"]`,
+        NAMING the checkout and the gap. It NEVER appends to
+        `findings["automatic_criticals"]`, so the exit code (which counts only
+        automatic criticals) is UNAFFECTED: this stays a SIGNAL the agent judges,
+        never the blocking gate criterion (a)/(b) explicitly forbid.
+    """
+    base_ref = args.drift_base_ref
+    threshold = args.drift_warn_threshold
+    checkouts = {"principal": principal, "workspace": workspace}
+    report: dict[str, dict] = {}
+    for name, path in checkouts.items():
+        if path is None:
+            continue
+        gap = _commits_behind(path, base_ref)
+        detached = _is_detached_head(path)
+        dirty = _portable_archive_dirty(path)
+        report[name] = {
+            "path": str(path),
+            "head": _head(path),
+            "commits_behind": gap,
+            "detached": detached,
+            "memory_archive_dirty": dirty,
+        }
+        if gap is not None and gap > threshold:
+            findings["warnings"].append(
+                f"checkout_drift:{name}: {gap} commits behind {base_ref} "
+                f"(threshold {threshold}) at {path}"
+            )
+        if detached and dirty:
+            findings["warnings"].append(
+                f"consume_checkout_dirty_memory_archive:{name}: uncommitted "
+                f"changes under {ARCHIVE_DIR_REL.as_posix()} at {path}"
+            )
+    findings["checks"]["drift"] = {
+        "base_ref": base_ref,
+        "threshold": threshold,
+        "checkouts": report,
+    }
 
 
 def classify_warnings(
@@ -493,6 +636,7 @@ def collect(args: argparse.Namespace) -> dict:
         "ticket": args.ticket,
         "retire_token": args.retire_token,
         "checks": {},
+        "warnings": [],
         "automatic_criticals": [],
         "note": "Collector output is [RELATO]; the agent produces the verdict.",
     }
@@ -504,6 +648,7 @@ def collect(args: argparse.Namespace) -> dict:
 
     _check_mode(findings)
     _check_shas(findings, args, dev, principal, workspace)
+    _check_drift(findings, args, principal, workspace)
     _check_validate(findings, dev)
     _check_session_state(findings, args, dev, workspace)
     _check_topology(findings, args, dev, principal, workspace)
@@ -524,6 +669,16 @@ def _report_agents_accessible(aa: dict | None) -> None:
         f"({aa.get('n_excluded')} excluidos); "
         f"ok={aa.get('n_ok')} warn={aa.get('n_warn')} fail={aa.get('n_fail')}"
     )
+
+
+def _report_warnings(findings: dict) -> None:
+    """WARN-only signals (WOT-2026-039b): printed as advisories, never criticals."""
+    warns = findings.get("warnings", [])
+    if not warns:
+        return
+    print(f"warnings     : {len(warns)} (WARN-only, never a blocking gate)")
+    for w in warns:
+        print(f"    [warn] {w}")
 
 
 def _report(findings: dict) -> None:
@@ -572,6 +727,7 @@ def _report(findings: dict) -> None:
         for h in cons.get("hits", []):
             print(f"    {h}")
     _report_agents_accessible(findings["checks"].get("agents_accessible"))
+    _report_warnings(findings)
     crits = findings["automatic_criticals"]
     print("-" * 64)
     if crits:
@@ -613,6 +769,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--expect-principal-sha", help="Expected principal HEAD SHA.")
     parser.add_argument("--expect-workspace-sha", help="Expected workspace HEAD SHA.")
+    parser.add_argument(
+        "--drift-base-ref",
+        default=DEFAULT_DRIFT_BASE_REF,
+        help="Ref a consume checkout must not lag, for the drift WARN "
+        "(default: %(default)s).",
+    )
+    parser.add_argument(
+        "--drift-warn-threshold",
+        type=int,
+        default=DEFAULT_DRIFT_THRESHOLD,
+        help="Commits behind --drift-base-ref before the drift WARN fires "
+        "(default: %(default)s).",
+    )
     parser.add_argument(
         "--json", action="store_true", help="Emit findings.json to stdout."
     )
