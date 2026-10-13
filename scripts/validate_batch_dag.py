@@ -51,7 +51,7 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 
@@ -1040,8 +1040,13 @@ def _errors_common_gate_root(data: dict[str, Any], motor_root: Path) -> list[str
 
         scripts = _extract_scripts_from_command(gate)
         for script_path in scripts:
-            # Absolute path -> wrong root (references a specific checkout)
-            if Path(script_path).is_absolute():
+            # Absolute path -> wrong root (references a specific checkout).
+            # PureWindowsPath also flags "C:/..." on POSIX runners, where
+            # Path("C:/...").is_absolute() is False (CI parity).
+            if (
+                Path(script_path).is_absolute()
+                or PureWindowsPath(script_path).is_absolute()
+            ):
                 errors.append(
                     f"common_gate root (WOT-2026-062c): grupo '{gid}' invoca "
                     f"'{script_path}' desde un path absoluto -- debe ser relativo "
