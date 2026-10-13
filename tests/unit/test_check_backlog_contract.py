@@ -2593,41 +2593,90 @@ def test_archived_row_is_not_a_lost_id(tmp_path: Path) -> None:
     -> green. The ID is absent from backlog at HEAD but present in archive
     at HEAD, so the UNION still covers it.
 
-    The fixture implements the REAL MOVE:
-    - Base (merge-base): row present in backlog (archive has the archived copy
-      from the start, since the move is idempotent).
-    - HEAD: row REMOVED from backlog, kept in archive.
-    The census must NOT flag WOT-2026-086g as lost because it survives in the
-    archive surface at HEAD.
+    The fixture implements the REAL MOVE with a teeth-test:
+    - Both backlog AND archive are committed together (base revision).
+    - origin/main is advanced to that commit (so merge-base finds it).
+    - HEAD removes the row from backlog but keeps it in archive.
+    The merge-base census must include the row (from both surfaces at base),
+    and HEAD census must include it (from archive), so no lost-ID error.
 
-    MUTATION: if archive census is broken (e.g. _get_head_ids_from_git skips
-    archive), this test goes green (false negative).
+    MUTATION CONTROL: break archive census at HEAD -> test FAILS (red).
+    This proves the test actually verifies the archive union, not just
+    a coincidental merge-base coincidence.
     """
     _make_git_repo_with_origin(tmp_path)
 
-    # Step 1: base revision has the row in backlog (archive already has the
-    # archived copy — the move is idempotent, so archive was always there).
-    initial_rows = (
-        "| Alta | WOT-2026-086g | ticket archivado | s | pending | - | x | - |\n"
-    )
-    _write_backlog_and_commit(tmp_path, initial_rows, "base state")
-
-    # Archive has the row with terminal state (pre-existing, idempotent move).
-    arch = tmp_path / ".agent" / "collaboration" / "_archive"
-    arch.mkdir(parents=True, exist_ok=True)
-    (arch / "backlog_done.md").write_text(
-        "| Alta | WOT-2026-086g | archivado deliverable_type: code | s | completed | - | x | commit:abc |\n",
-        encoding="utf-8",
-    )
-
-    # Step 2: HEAD performs the MOVE — remove the row from backlog, leave it
-    # in archive. This is the real pattern: a row that was in backlog at base
-    # is now absent from backlog but survives in archive.
     collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    arch_dir = collab / "_archive"
+    arch_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: COMMIT both backlog and archive with the row.
+    initial_backlog = (
+        _HEADER
+        + "| Alta | WOT-2026-086g | ticket archivado | s | pending | - | x | - |\n"
+    )
+    initial_archive = "| Alta | WOT-2026-086g | archivado deliverable_type: code | s | completed | - | x | commit:abc |\n"
+    (collab / "backlog.md").write_text(initial_backlog, encoding="utf-8")
+    (arch_dir / "backlog_done.md").write_text(initial_archive, encoding="utf-8")
+
+    # Commit both surfaces so merge-base can see the archive too.
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "base state with row in backlog + archive",
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    # Step 2: Advance origin/main to match HEAD (both now have the row).
+    subprocess.run(
+        ["git", "branch", "-f", "origin/main", base_sha],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    )
+
+    # Step 3: HEAD performs the MOVE — remove row from backlog, keep archive.
     (collab / "backlog.md").write_text(_HEADER + "\n", encoding="utf-8")
 
     errors = cbc.validate_lost_ids(tmp_path)
     assert errors == [], f"archived row must NOT be lost; got: {errors}"
+
+    # ---- MUTATION CONTROL: break archive census at HEAD -> expect red ----
+    # Replace archive with empty header so the union at HEAD misses the ID.
+    (arch_dir / "backlog_done.md").write_text("# historico\n", encoding="utf-8")
+
+    errors = cbc.validate_lost_ids(tmp_path)
+    assert len(errors) >= 1, (
+        "MUTATION: breaking archive census must cause test to FAIL (red), "
+        "not pass silently"
+    )
+    assert "WOT-2026-086g" in errors[0], f"must name WOT-2026-086g: {errors}"
+
+    # ---- RESTORE: bring back the original archive so downstream tests pass ----
+    (arch_dir / "backlog_done.md").write_text(initial_archive, encoding="utf-8")
 
 
 def test_lost_id_skips_without_git_baseline(tmp_path: Path) -> None:
