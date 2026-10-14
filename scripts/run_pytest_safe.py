@@ -1036,6 +1036,12 @@ def stream_pytest(  # noqa: C901
         env["PYTHONPATH"] = f"{agent_path}{os.pathsep}{env['PYTHONPATH']}"
     else:
         env["PYTHONPATH"] = agent_path
+    # WOT-2026-T-A1 (VUELO6): activate pytest faulthandler watchdog so the
+    # pytest child process dumps a full thread traceback when it hangs
+    # internally.  Value kept well below MAX_RUNTIME_SECONDS to avoid
+    # false-positives during long test suites but short enough to surface
+    # hangs promptly.
+    env.setdefault("FAULTHANDLER_WATCHDOG_SECONDS", "60")
 
     # WOT-2026-040v (Pieza 1): isolate the process tree so a termination of the
     # invoking process does not cascade-kill the runner and pytest together.
@@ -1083,7 +1089,7 @@ def stream_pytest(  # noqa: C901
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait()
+                process.wait(timeout=10)
             returncode = process.returncode
             # Mark the run as "timeout" (not "aborted"): this distinguishes
             # an internal exceedance of the configured time limit from an
@@ -1121,7 +1127,7 @@ def stream_pytest(  # noqa: C901
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait()
+            process.wait(timeout=5)
         raise
     finally:
         LAST_RUN_LOG.write_text("\n".join(lines), encoding="utf-8")
