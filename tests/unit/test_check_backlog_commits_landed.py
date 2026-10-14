@@ -1363,7 +1363,7 @@ def test_062d_pair_is_audited_against_root_that_holds_its_object(tmp_path, capsy
 # `absorbed` en su propia celda y `commit:29a66cf` en la suya. Dos guards que
 # leen la MISMA superficie discrepaban sobre el vocabulario terminal.
 # --------------------------------------------------------------------------- #
-def test_070g_absorbed_is_a_terminal_state_for_the_census():
+def test_070g_absorbed_with_commit_is_not_malformed_evidence():
     """Una fila `absorbed` con evidencia de commit NO es malformada.
 
     `superseded` ya estaba eximido (`:468`) por este mismo motivo; `absorbed`

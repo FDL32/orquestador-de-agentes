@@ -280,21 +280,30 @@ Reproduce las 9 condiciones exactas:
    `absorbed`/`not-pursued` con evidencia `external:`).
 
    **Clausula espejo para cierres por transferencia (`absorbed` / `not-pursued`).**
-   Los estados `absorbed` y `not-pursued` NO admiten `commit:<sha>` citable
-   (WOT-2026-067a, premise): se archivan como transferencia de responsabilidad,
-   no como landing de commit. Para esos dos estados, la condicion 4 se cumple
-   con evidencia `external:<ticket-que-absorbe>` en la celda `Reactivation` de
-   la fila archivada (p.ej. `Reactivation: external:WOT-2026-059v`). El contador
-   `audited` del guard NO sube con estos cierres -- su denominador (total de filas
-   archivadas con ticket-ID terminal en el archivador) se publica en el
-   bloque `cierres_auditables` del JSON de auditoria y se excluye explicitamente
-   de la subida requerida: un cierre por transferencia no se cuenta como
-   `audited` en el sentido de "commit aterrizado", y esa exclusion va NOMBRADA
-   y publicada, no implicita. Control negativo: un ticket marcado `completed`,
-   `done`, `closed`, `superseded`, `blocked-final` o cualquier otro terminal
-   DISTINTO de `absorbed`/`not-pursued` sigue exigiendo `commit:<sha>` + contador
-   que sube tal como exige la primera mitad de esta condicion; la clausula espejo
-   NO abre la puerta a saltarse el contador en el camino normal.
+   Los estados `absorbed` y `not-pursued` NO EXIGEN `commit:<sha>` citable
+   (WOT-2026-067a, premise): se archivan primariamente como transferencia de
+   responsabilidad, no como landing de commit, y la condicion 4 se cumple con
+   evidencia `external:<ticket-que-absorbe>` en la celda `Reactivation` de la
+   fila archivada (p.ej. `Reactivation: external:WOT-2026-059v`). Esto NO
+   prohibe que la fila ADEMAS porte un `commit:<sha>`: el guard
+   (`check_backlog_commits_landed.py::census_archived`, pin WOT-2026-070g)
+   trata una fila `absorbed`/`not-pursued` con celda `commit:` como terminal
+   valida, nunca como `malformed_evidence_tickets` -- si ese commit aparece,
+   debe referenciar un objeto real (verificable con `git cat-file -e <sha>`)
+   y nunca servir para reabrir el ticket ni sustituir la evidencia
+   `external:` donde esta sea la exigida. El contador `audited` NO sube por
+   el camino `external:` en si mismo (esa evidencia por si sola nunca cuenta
+   como `audited`); si la fila ADEMAS porta `commit:<sha>` con
+   `deliverable_type` en `code`/`mixed`, el guard la audita igual que
+   cualquier otra fila terminal con commit -- `census_archived` no distingue
+   por estado al contar `audited`, solo por `deliverable_type` + celda
+   `commit:`. El denominador (total de filas archivadas con ticket-ID
+   terminal) se publica en `cierres_auditables` del JSON de auditoria.
+   Control negativo: un ticket marcado `completed`, `done`, `closed`,
+   `superseded`, `blocked-final` o cualquier otro terminal DISTINTO de
+   `absorbed`/`not-pursued` sigue exigiendo `commit:<sha>` + contador que
+   sube tal como exige la primera mitad de esta condicion; la clausula
+   espejo NO abre la puerta a saltarse el contador en el camino normal.
 
    **Exit code / `skipped_required` (WOT-2026-067a fix-2).** La clausula espejo
    exime el contador `audited` de subir, pero NO exime al auditor de interpretar
