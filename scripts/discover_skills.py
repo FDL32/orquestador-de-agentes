@@ -925,7 +925,13 @@ ROUTE_KINDS: tuple[str, ...] = ("entry", "modo", "modulo", "mantenimiento", "ext
 # role_mapping/backend resolution) made the same false self-attribution over
 # a different domain. The two are DISTINCT by design (DEC-router-skills-001
 # Section 7); they do not merge.
-CANONICAL_ROLES: tuple[str, ...] = ("orchestrator", "manager", "builder", "auditor")
+CANONICAL_ROLES: tuple[str, ...] = (
+    "orchestrator",
+    "manager",
+    "builder",
+    "auditor",
+    "revisor",
+)
 # D2: external artifacts consumed whole by another system; exempt from metadata.
 EXTERNAL_ALLOWLIST: frozenset[str] = frozenset({"hermes_soul.md"})
 # D4: (role rule, cycle_phase rule) per route_kind.

@@ -405,6 +405,26 @@ class TestCheckContract:
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
         assert _check_contract() == 0
 
+    def test_revisor_skill_skipped_not_failed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """role: revisor (no contract) is not in the opt-in -> skipped, not failed.
+        Guards the future Revisor instrument without adding it to CONTRACT_OPT_IN_ROLES.
+
+        Anti-regresion simetrica (CL-13): si alguien anade `revisor` a
+        CONTRACT_OPT_IN_ROLES, este fixture con metadata de contrato PARCIAL
+        (source_prompt sin contract_id) entra en validacion estricta y falla,
+        demostrando que el opt-in se activó. En HEAD da skip (rc=0) porque
+        revisor no está en el opt-in y se salta la validacion sin error.
+        """
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "revisor-x").mkdir(parents=True)
+        (bundle / "skills" / "revisor-x" / "SKILL.md").write_text(
+            "---\nname: revisor-x\nrole: revisor\nsource_prompt: prompts/x.md\n---\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 0
+
     def test_orchestrator_contract_valid(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

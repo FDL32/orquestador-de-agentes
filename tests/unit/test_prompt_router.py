@@ -160,6 +160,18 @@ class TestValidateRouteMetadata:
         fm = dict(self.GOOD_ENTRY, role="codex")
         assert any("role" in e for e in validate_route_metadata("x.md", fm))
 
+    def test_revisor_role_is_accepted(self):
+        fm = dict(self.GOOD_ENTRY, role="revisor")
+        assert validate_route_metadata("x.md", fm) == []
+
+    def test_invented_role_is_rejected_with_canonical_message(self):
+        fm = dict(self.GOOD_ENTRY, role="minero")
+        (errors) = validate_route_metadata("x.md", fm)
+        assert errors == [
+            "x.md: role 'minero' debe ser UN valor de "
+            "['orchestrator', 'manager', 'builder', 'auditor', 'revisor']"
+        ]
+
     def test_unknown_cycle_phase_is_rejected(self):
         fm = dict(self.GOOD_ENTRY, cycle_phase=["F9-x"])
         assert any("cycle_phase" in e for e in validate_route_metadata("x.md", fm))
@@ -311,6 +323,22 @@ class TestRouterMetadataGate:
         assert any("a.md" in e and "role" in e for e in errors)
         assert any("a.md" in e and "cycle_phase" in e for e in errors)
         assert not any("b.md" in e for e in errors)
+
+    def test_revisor_prompt_passes_router(self, tmp_path):
+        root = _seed(
+            tmp_path,
+            {
+                "r.md": _prompt(
+                    {
+                        "role": "revisor",
+                        "route_kind": "entry",
+                        "cycle_phase": "[F6-revision]",
+                    },
+                    "R",
+                ),
+            },
+        )
+        assert router_metadata_errors(root) == []
 
     def test_valid_tree_has_no_metadata_errors(self, tmp_path):
         root = _seed(
