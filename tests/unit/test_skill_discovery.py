@@ -290,3 +290,29 @@ class TestEmptySkillCatalogError:
         # _discover_skills should raise when no skills found
         with pytest.raises(EmptySkillCatalogError):
             resolver._discover_skills()
+
+
+class TestRevisorAllowlist:
+    """Tests for WOT-2026-100g: REVISOR allowlist key in agents.json."""
+
+    def test_revisor_allowlist_key_legible(self):
+        """T6: The real agents.json bundle has REVISOR in skill_allowlists
+        and the agents_config loader accepts it."""
+        import json
+        from pathlib import Path
+
+        bundle_root = Path(__file__).resolve().parent.parent.parent
+        agents_path = bundle_root / ".agent" / "config" / "agents.json"
+        assert agents_path.exists(), (
+            f"agents.json should exist in bundle at {agents_path}"
+        )
+
+        with open(agents_path, encoding="utf-8") as f:
+            config = json.load(f)
+
+        skill_allowlists = config.get("skill_allowlists", {})
+        assert "REVISOR" in skill_allowlists, "REVISOR must be in skill_allowlists"
+        assert isinstance(skill_allowlists["REVISOR"], list), (
+            "REVISOR value must be a list"
+        )
+        assert len(skill_allowlists["REVISOR"]) > 0, "REVISOR list must not be empty"

@@ -405,17 +405,16 @@ class TestCheckContract:
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
         assert _check_contract() == 0
 
-    def test_revisor_skill_skipped_not_failed(
+    def test_revisor_optin_enforces_partial_contract(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """role: revisor (no contract) is not in the opt-in -> skipped, not failed.
-        Guards the future Revisor instrument without adding it to CONTRACT_OPT_IN_ROLES.
+        """Post-landing CL-13: revisor IS in the opt-in, so a skill with
+        partial contract metadata (source_prompt without contract_id) must
+        FAIL (_check_contract() == 1), proving the opt-in is genuinely active.
 
-        Anti-regresion simetrica (CL-13): si alguien anade `revisor` a
-        CONTRACT_OPT_IN_ROLES, este fixture con metadata de contrato PARCIAL
-        (source_prompt sin contract_id) entra en validacion estricta y falla,
-        demostrando que el opt-in se activó. En HEAD da skip (rc=0) porque
-        revisor no está en el opt-in y se salta la validacion sin error.
+        Anti-regresion: si alguien quita `revisor` de CONTRACT_OPT_IN_ROLES,
+        este fixture vuelve a saltarse (rc=0), perdiendo la garantia de que
+        el binding se exige. Este test afirma rc=1 para capturar ese caso.
         """
         bundle = tmp_path / "motor"
         (bundle / "skills" / "revisor-x").mkdir(parents=True)
@@ -423,7 +422,7 @@ class TestCheckContract:
             "---\nname: revisor-x\nrole: revisor\nsource_prompt: prompts/x.md\n---\n"
         )
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
-        assert _check_contract() == 0
+        assert _check_contract() == 1
 
     def test_orchestrator_contract_valid(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -463,6 +462,88 @@ class TestCheckContract:
         )
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
         assert _check_contract() == 1
+
+    def test_revisor_contract_valid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DEC-router-skills-001 D-S2 mirror for revisor: a complete
+        skill+prompt pair with role: revisor passes contract check."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "rev-x").mkdir(parents=True)
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "skills" / "rev-x" / "SKILL.md").write_text(
+            "---\nname: rev-x\nrole: revisor\nsource_prompt: prompts/rev.md\n"
+            "contract_id: cid-rev-v1\n---\n"
+        )
+        (bundle / "prompts" / "rev.md").write_text(
+            "# Rev\nSkill canonica: skills/rev-x/SKILL.md\ncontract_id: cid-rev-v1\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 0
+
+    def test_revisor_contract_enforced_not_silently_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Anti-false-green guarantee for revisor: a revisor skill with a
+        broken contract_id must FAIL, proving revisor is genuinely in the
+        opt-in and not silently skipped like role: shared."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "rev-x").mkdir(parents=True)
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "skills" / "rev-x" / "SKILL.md").write_text(
+            "---\nname: rev-x\nrole: revisor\nsource_prompt: prompts/rev.md\n"
+            "contract_id: cid-rev-v1\n---\n"
+        )
+        (bundle / "prompts" / "rev.md").write_text(
+            "# Rev\nSkill canonica: skills/rev-x/SKILL.md\ncontract_id: cid-WRONG\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 1
+
+    def test_revisor_role_in_prompt_enum_positive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Control positivo del enum post-landing: un prompt fixture con
+        role: revisor + route_kind: entry + cycle_phase: [F6-revision] en
+        prompts/ raiz parsea OK (via router_metadata_errors sobre bundle tmp)."""
+        bundle = tmp_path / "motor"
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "prompts" / "revisor-test.md").write_text(
+            "---\nrole: revisor\nroute_kind: entry\ncycle_phase: [F6-revision]\n"
+            "contract_id: cid-revisor-test\n---\n# test\n"
+        )
+
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        monkeypatch.setattr(
+            "scripts.discover_skills._prompt_files",
+            lambda root: [root / "prompts" / "revisor-test.md"],
+        )
+        from scripts.discover_skills import router_metadata_errors
+
+        errors = router_metadata_errors(bundle)
+        assert errors == []
+
+    def test_minero_role_rejected_negative(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Control negativo: role: minero (no canonico) sigue fallando.
+        El enum de prompts NO se abre a roles arbitrarios."""
+        bundle = tmp_path / "motor"
+        (bundle / "prompts").mkdir(parents=True)
+        (bundle / "prompts" / "minero-test.md").write_text(
+            "---\nrole: minero\nroute_kind: entry\ncycle_phase: [F6-revision]\n"
+            "contract_id: cid-minero-test\n---\n# test\n"
+        )
+
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        monkeypatch.setattr(
+            "scripts.discover_skills._prompt_files",
+            lambda root: [root / "prompts" / "minero-test.md"],
+        )
+        from scripts.discover_skills import router_metadata_errors
+
+        errors = router_metadata_errors(bundle)
+        assert len(errors) > 0
 
 
 class TestCheckContractIntegration:

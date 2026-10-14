@@ -1129,6 +1129,10 @@
       "/inspect",
       "/compare"
     ],
+    "REVISOR": [
+      "/revisor-review",
+      "/verify"
+    ],
     "SUPERVISOR": [
       "/orchestrate",
       "/schedule",
