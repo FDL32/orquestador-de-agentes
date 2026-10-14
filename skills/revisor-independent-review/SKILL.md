@@ -5,6 +5,7 @@ description: "Revision adversarial independiente del trabajo del Builder. Usar p
 triggers: [/revisor-review, /verify]
 source_prompt: prompts/revisor_independent_review.md
 contract_id: cid-revisor-review-v1
+tags: [core, system]
 author: agent
 role: revisor
 stage: review

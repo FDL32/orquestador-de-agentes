@@ -35,7 +35,15 @@ REQUIRED_FIELDS = {
 
 # DEC-router-skills-001 D-S2 added "orchestrator" so the 3 orchestrate-* skills
 # can declare their real pipeline role instead of role: shared.
-VALID_ROLES = {"builder", "manager", "shared", "user", "auditor", "orchestrator"}
+VALID_ROLES = {
+    "builder",
+    "manager",
+    "shared",
+    "user",
+    "auditor",
+    "orchestrator",
+    "revisor",
+}
 VALID_STAGES = {
     "setup",
     "plan",
