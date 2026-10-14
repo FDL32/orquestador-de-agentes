@@ -9,6 +9,11 @@ the ticket was reported as silent success.
 The fakes follow the real fixture pattern of tests/unit/test_closeout_steps_archival.py
 (run_script_fn returning an object with returncode/stdout/stderr, matching
 support.run_script which uses capture_output=True, text=True).
+
+Contract test with REAL producer output (WOT-2026-042r r2): the producer prints TWO
+lines ("[DRY-RUN] Report written to ..." + "OBSERVATIONS appended=...") which the
+old whole-string regex match could never parse; the fix uses line-by-line scan
+(following WOT-2026-068d) so the protocol line is found on the second line.
 """
 
 from __future__ import annotations
@@ -112,3 +117,49 @@ def test_step_observations_warn_on_nonzero_rc() -> None:
     )
     assert len(results) == 1
     assert results[0].status == "WARN"
+
+
+def test_step_consumer_parses_real_producer_stdout() -> None:
+    """Contract test: consumer parses REAL producer stdout (2 lines).
+
+    The producer always prints "[DRY-RUN] Report written to ..." BEFORE the
+    protocol line (WOT-2026-042r r1 review probe: rev042r_prodpath.py).
+    The fix uses line-by-line scan so the protocol line on the 2nd line is
+    found; the old whole-string match on the full stdout would return None.
+
+    Regression guard: if someone reverts the fix to protocol_re.match(...),
+    this test goes RED (status=WARN instead of SKIP).
+    """
+    import subprocess as _subprocess
+    from pathlib import Path as _Path
+
+    motor_root = _Path(__file__).resolve().parent.parent.parent
+    proc = _subprocess.run(
+        [
+            str(motor_root / ".venv" / "Scripts" / "python.exe"),
+            str(motor_root / "scripts" / "session_close_observations.py"),
+            "--ticket",
+            "WOT-2026-999a",
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(motor_root),
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"Producer failed: {proc.stderr}"
+    real_stdout = proc.stdout
+
+    # Verify the 2-line structure the review found
+    lines = real_stdout.strip().splitlines()
+    assert len(lines) >= 2
+    assert "Report written to" in lines[0]
+    assert lines[1].startswith("OBSERVATIONS appended=")
+
+    # Feed the REAL producer stdout to the step function
+    results = _run(fake_run_script_fn(proc.returncode, real_stdout))
+    assert len(results) == 1
+    assert results[0].status == "SKIP", (
+        f"Real producer stdout should give SKIP (appended=0), got {results[0].status}"
+    )
+    assert "WOT-2026-999a" in results[0].detail

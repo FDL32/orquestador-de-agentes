@@ -407,7 +407,7 @@ def process_candidates(
         key = (source_ticket, signal)
         if key in seen:
             rejected_reasons.append(
-                f"[{source_ticket}] Duplicado dentro de la misma corrida [{source_ticket}]"
+                f"[{source_ticket}] Duplicado dentro de la misma corrida"
             )
             continue
         seen.add(key)

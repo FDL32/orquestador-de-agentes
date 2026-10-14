@@ -65,13 +65,19 @@ def step_session_observations(
                     )
                 )
                 continue
-            # WOT-2026-042r eje (i): parse protocol line from successful run.
+            # WOT-2026-042r eje (i): parse protocol line from successful run
+            # via line-by-line scan (precedent WOT-2026-068d). The producer
+            # always prints "[APPLIED]/[DRY-RUN] Report written to …" BEFORE
+            # the protocol line, so a whole-string match never hits.
             protocol_re = re.compile(
                 r"^OBSERVATIONS appended=(\d+) candidates=(\d+) ticket="
             )
-            proto_match = (
-                protocol_re.match(result.stdout.strip()) if result.stdout else None
-            )
+            proto_match = None
+            if result.stdout:
+                for line in result.stdout.splitlines():
+                    if protocol_re.match(line):
+                        proto_match = protocol_re.match(line)
+                        break
             if proto_match:
                 appended_count = int(proto_match.group(1))
                 candidates_count = int(proto_match.group(2))
