@@ -306,6 +306,54 @@ una leccion que ya estaba en memoria: `obs-api-only-reader-reads-current-state-n
 (*"un review multi-backend necesita un lector-con-filesystem o un bundle que incluya la semantica
 explicita"*).
 
+### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
+
+**Norma, no barrera cableada** (depende de que el agente se acuerde). Es la regla hermana
+ANTERIOR de la regla de arriba, no su generalizacion: aquella exige leer entero un contrato YA
+CITADO; esta exige BUSCAR si existe uno ANTES de suponer que no hay ninguno. Son dos eslabones
+secuenciales de la misma cadena (buscar -> si se encuentra, leer entero), no una conteniendo a
+la otra.
+
+**Antes de tratar de resolver una decision de proceso por razonamiento propio, el agente
+comprueba primero si existe un protocolo YA ESCRITO para ese caso.** Comprobacion minima:
+(a) `grep`/busqueda por palabra clave en `AGENTS.md` y en los prompts de `prompts/` cuyo nombre
+sugiere el dominio (p.ej. `*_loop.md`, `*_invocation_contract.md`, `*_closeout*.md`);
+(b) `python scripts/memory_context.py --recall --query <termino>` sobre la memoria portable,
+que indexa precisamente casos medidos de este tipo; (c) si el dominio tiene un `contract_id`
+conocido o sospechado, leerlo ENTERO (aplica la regla de arriba).
+
+**Declaracion explicita cuando no se encuentra nada:** si la busqueda no encuentra protocolo
+aplicable, el agente lo declara ("busque en X, Y, Z; no encontre protocolo para este caso")
+antes de proponer su propia solucion ad-hoc.
+
+**No aplica a:** decisiones triviales sin ambiguedad de proceso (un typo, una pregunta de hecho
+verificable con una sola lectura), ni a tareas ya en curso bajo un contrato ya verificado en la
+misma sesion. **Declaracion simetrica:** quien invoque esta excepcion de trivialidad debe
+declararlo en una linea antes de proceder ("EXCEPCION: trivial -- X no es decision de proceso
+porque Y"), igual que la declaracion exigida cuando no se encuentra protocolo. Sin esa
+declaracion, la excepcion no aplica.
+
+**¿Que cuenta como decision de proceso?** SI cuenta: decisiones sobre dispatch de
+Builder/Revisor, merge/push a rama compartida, gates de cierre/closeout, formato de memoria o
+bitacora, criterios de fusion de roles, cualquier decision que otro agente en otra sesion pueda
+necesitar replicar. NO cuenta: correccion ortografica, pregunta de hecho verificable con una
+sola lectura de fichero, eleccion de nombre de variable o formato de commit sin convencion
+previa declarada.
+
+**Evidencia (n=3, tres sesiones independientes, mismo patron):** (1) 2026-09-26, dispatch plano
+sin `loop_id`/`nonce` para una decision de cierre de sesion, corregido solo cuando el usuario
+pidio explicitamente revisar `ensemble_loop.md` (`obs-ensemble-adhoc-abbreviation-must-be-declared-before-dispatch`);
+(2) 2026-10-07, un revisor nan se dejo de ejecutar en 3 de 14 vuelos sin que nadie declarara la
+desviacion (`obs-removing-a-control-stage-must-be-declared-and-attributed`); (3) 2026-10-14,
+propuesta de politica de suite/merge redactada sin comprobar antes si `builder_invocation_contract.md`
+o `ensemble_loop.md` ya cubrian el caso. Las tres correcciones ocurrieron solo por intervencion
+explicita del usuario, nunca por iniciativa del propio agente -- confianza media, no ley
+universal, pero suficiente para justificar esta norma con deuda de barrera declarada (candidato:
+auditar automaticamente una propuesta de proceso nueva contra los `contract_id`s declarados en
+`prompts/`, fuera del alcance de esta nota). Riesgo de performatividad declarado: un agente puede
+ejecutar un grep ritual sin intencion real de consultar el resultado, cumpliendo la forma de la
+norma sin su sustancia; mientras no exista auditoria automatica, este riesgo permanece abierto.
+
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
 - Para tickets que tocan sincronizacion de estado, bus, proyecciones o codigo topologia-aware (`repo_motor + repo_destino`), comprueba primero si el sintoma encaja con un patron documentado en `docs/KNOWN_FAILURE_PATTERNS.md` antes de proponer un fix nuevo.
@@ -350,6 +398,54 @@ nunca de un `-k` por nombre. Rationale completo (por que la comprobacion previa 
 medido WOT-2026-079d con 3 regresiones reales que `-k` dejo pasar): memoria de
 `repo_motor`, `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`
 (2026-09-27).
+
+#### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
+
+**Gate 1 (nunca se relaja):** antes de que un commit propio EXISTA en cualquier rama
+compartida, la suite canonica completa corre sobre ESE commit (regla de arriba, sin excepcion).
+
+**Gate 2 (push con la rama remota avanzada por otras sesiones):** si, al intentar publicar un
+commit YA VERIFICADO por el Gate 1, la rama remota avanzo con commits de otras sesiones, el
+merge de esos commits se verifica asi:
+- Si el merge es disjunto en ficheros (ninguno tocado por ambos lados) **y** el auto-merge de
+  Git no reporta conflicto de texto: ademas de `ast.parse`/sintaxis de los ficheros que SI
+  cambiaron y confirmar que no quedan marcadores de conflicto (`<<<<<<<`), se exige ADEMAS
+  (i) ausencia de dependencia de import cruzada entre los ficheros tocados por cada lado, y
+  (ii) que ninguno de los ficheros tocados sea una superficie transversal de alto blast radius
+  (`conftest.py`, `pyproject.toml`, `uv.lock`, `.pre-commit-config.yaml`, `AGENTS.md`,
+  `CLAUDE.md`, `bus/`, `runtime/`, `.agent/agents_config.py`). Si cualquiera de las tres
+  condiciones falla, tratar como "mismo fichero compartido" (exige suite completa).
+- Si el merge toca el mismo fichero en ambos lados: la suite completa SI debe correr antes de
+  publicar -- nunca "suite focalizada" por `-k` (ver regla de arriba, WOT-2026-079d).
+- El camino relajado del primer bullet NUNCA es alcanzable para el commit resultante de un
+  MERGE: el `tested_commit_sha` del Gate 1 es el del commit padre, nunca el del merge commit.
+  La "relajacion" ahorra la RE-suite solo cuando se demuestra ANTES de mergear que el merge es
+  disjunto y seguro, nunca despues de que el merge commit ya existe.
+- Si tras publicar el remoto volvio a avanzar (`non-fast-forward`), repetir el criterio arriba
+  en la nueva ronda, sin acumular re-verificaciones completas solo porque ya se hizo una vez.
+
+**Condiciones de rechazo del Gate 2 (default fail-closed):** el Gate 2 relajado NO aplica si
+(1) no existe evidencia VERIFICABLE de que el lado entrante corrio su Gate 1 (`tested_commit_sha`
+registrado, evento de bus, log de cierre citable -- no basta "presumiblemente"); (2) el lado
+entrante toca una superficie transversal (lista arriba); (3) hay dependencia de import cruzada
+entre los ficheros tocados por ambos lados; (4) el commit publicado es un merge commit cuyo
+`tested_commit_sha` no coincide con el HEAD resultante; (5) han ocurrido 2+ intentos de push
+rechazados consecutivos sin que ninguna ronda haya corrido la suite completa sobre el estado
+integrado. El default es FAIL-CLOSED: el Gate 2 relajado es la excepcion estrecha, no el
+comportamiento esperado por defecto.
+
+**Alcance:** esta politica SOLO aplica a ramas o flujos donde exista, en algun punto del ciclo
+de vida del commit, una verificacion equivalente a `assert_canonical_suite_green` (via
+`--mark-ready` de un ticket formal, o via un registro explicito de `tested_commit_sha` en la
+bitacora de un vuelo sin ticket). Sin esa evidencia, tratar como si el Gate 1 nunca se hubiera
+verificado y exigir suite completa, sin excepcion.
+
+**Riesgo residual declarado:** esta politica asume que cada sesion concurrente aplica su propio
+Gate 1 antes de publicar. A diferencia de un equipo con CI real (que tiene un verificador
+automatico TERCERO sobre el HEAD integrado), aqui no existe ningun verificador automatico
+equivalente -- el riesgo es MAYOR que en un equipo con CI, no igual. `check_suite_freshness.py`
+no es comparable: es local y depende de que `pre_handoff_guard` corra aguas abajo, lo cual no
+ocurre en un push de vuelo sin ticket formal.
 
 ### Convencion de encoding y gap v1 (WOT-2026-010e)
 
@@ -610,15 +706,10 @@ Motivo medido (bucle de gobierno DESIGN_REVIEW, 5 lentes independientes, 2026-10
 del nucleo sin declarar sus diferencias reales. Corregido: la seccion 6 remite de verdad, con las
 diferencias de campos y de enum declaradas explicitamente.
 
-**Advertencia del propio caso (correccion posterior, MANAGER_REVIEW con lente nan/deepseek-v4-flash,
-2026-10-08):** el bucle de gobierno que motivo esta norma tambien ADJUDICO, por error, que las
-reglas de validez 1/2/4/6 de ese mismo prompt-hijo redeclaraban el nucleo -- y ESO era FALSO: esas
-4 reglas no tienen correspondencia de CONTENIDO en el nucleo, solo coincidian en NUMERO DE
-POSICION dentro de una lista. Las 5 lentes razonaron la premisa por semejanza estructural sin
-comparar el texto real (mismo patron que `obs-premise-cited-from-code-not-reasoned`, memoria,
-2026-07-15). La leccion para aplicar ESTA norma: antes de declarar que una seccion del hijo
-"coincide en objeto" con una seccion del nucleo, COMPARA EL CONTENIDO LITERAL de ambas, no la
-posicion en la lista -- un match de numero/titulo no certifica un match de objeto.
+**Advertencia del propio caso (correccion posterior, MANAGER_REVIEW con lente
+nan/deepseek-v4-flash, 2026-10-08):** 5 lentes adjudicaron mal por semejanza estructural (numero
+de posicion) en vez de comparar contenido literal; detalle completo e incidente en
+`docs/protocol/x09_adjudication_position_vs_content_case.md`.
 
 ## Atribuciones externas (CREDITS.md)
 

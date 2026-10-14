@@ -65,14 +65,45 @@ If you fork, override the URL base before regenerating: `LLMS_REPO_BASE=https://
 - **Backend IA:** producto o LLM que ejecuta trabajo. Ejemplos: Claude Code,
   Codex y GitHub Copilot. Un backend IA puede encarnar varios roles segun el
   turno del pipeline.
-- **Roles canonicos:** `orchestrator`, `manager`, `builder`, `auditor`, `user`.
-  Usa "rol builder" o "rol manager", no "agente builder".
+- **Roles canonicos, por categoria** (armonizado 2026-10-12 tras bucle
+  adversarial de 3 lentes -- codex, nan-fs, opencode/glm -- sobre
+  vocabulario de roles; ver Nota de enums de codigo abajo). Usa "rol
+  builder" o "rol manager", no "agente builder":
+  - **Pipeline secuencial de un ticket:** `orchestrator`, `manager`,
+    `builder`, `auditor`.
+  - **Capa de revision independiente (sistema de 4 capas/"personas"):**
+    `revisor` (anadido WOT-2026-098b). Persona-2, Capa 1.5 del nucleo
+    `prompts/agent_execution_modes.md` -- NUNCA el mismo backend/modelo que
+    implemento (condicion dura, ver `prompts/persona_system.md` Seccion 2).
+    Para entender la numeracion de personas 0/1/2/3 y su correlacion con
+    las Capas del nucleo, lee la cadena completa: `prompts/
+    agent_execution_modes.md` -> `prompts/persona_system.md`.
+  - **Rol de gobierno/ensemble (no secuencial, no de pipeline de ticket):**
+    `proposer` / `challenger` (lentes adversariales de bucles de gobierno:
+    CONTRACT_AUDIT, MANAGER_REVIEW, CLOSE, DESIGN_REVIEW). Ver
+    `prompts/ensemble_loop.md`.
+  - **Actor humano:** `user`. No es backend IA, no tiene model_id que
+    resolver -- analogo a `ACTOR_RUNTIME_ROLES` (`SUPERVISOR`, ver abajo):
+    actor fuera de los enums de codigo que validan backend, no un olvido.
+- **Nota de enums de codigo (por que NO hay un enum 1:1 con esta lista):**
+  existen 3 enums de codigo con nombres parecidos y dominios DISTINTOS por
+  diseno (DEC-router-skills-001 Seccion 7; no se fusionan):
+  `.agent/agents_config.py::CANONICAL_ROLES` (valida `role_mapping`/backend
+  resolution), `scripts/discover_skills.py::CANONICAL_ROLES` (valida el
+  campo `role` escalar del frontmatter de prompts) y `agents.json::
+  ensemble_profiles` (perfiles `proposer`/`challenger`). Ninguno de los 3
+  es, ni pretende ser, una copia literal de esta lista -- cada uno valida
+  su propio dominio.
 - **Supervisor:** actor runtime del bus ya existente (`bus/supervisor.py`,
   eventos `actor="SUPERVISOR"`). No es sinonimo de orchestrator ni de backend IA.
 - **Artefactos:** prompts, skills, scripts, gates y DEC. No llamarlos agentes.
 - Claude Code: backend IA principal en esta instalacion.
 - Codex / GitHub Copilot: backends IA soportados si leen este archivo dentro del arbol.
 - Goose / Claw: **[DEPRECATED - WT-2026-254a]** motores orquestados por `scripts/orquestador.py`. No usar en proyectos nuevos; reemplazados por Claude Code como backend IA principal.
+- **No confundir Builder real con lente de ensemble:** una tarea de implementacion, lectura o
+  escritura con filesystem usa el CLI directo del agente y `prompts/builder_invocation_contract.md`;
+  una revision adversarial corta usa `ensemble_dispatch.py loop-round` y `prompts/ensemble_loop.md`.
+  `ensemble_dispatch.py` no es un mecanismo generico para encargar tareas.
 
 ## Resumen del entorno
 
@@ -106,9 +137,56 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 | `workspace_activo` | Raiz operativa con `.agent/` desde la que corre el ticket actual. En la topologia actual coincide con `repo_destino`. Se configura via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. |
 | `entorno_multi_root` | IDE abierto con `repo_motor` + `repo_destino` a la vez (VS Code multi-folder workspace). No es un concepto de codigo: solo describe el entorno de desarrollo. |
 
+### Tipos de SESION: DISENO vs DESARROLLO (WOT-2026-039c)
+
+Solo hay DOS tipos de sesion y este es su vocabulario canonico. **No usar "research"** para
+designarlas: lo que produce una sesion de planificacion es un DISENO (un artefacto: el flight plan,
+la ficha, el DAG), no una investigacion.
+
+| Termino | Que hace | Escribe en | Prompts (bootstrap / cierre) |
+|---------|----------|------------|------------------------------|
+| `sesion_diseno` | Tria el backlog, disena planes de vuelo y redacta fichas. READ-ONLY sobre el codigo: NO implementa, NO commitea codigo, NO escribe `backlog.md`. | `queued/`, `reports/`, `backlog_inbox/` | `orchestrator_session_bootstrap_design.md` / `orchestrator_session_close_full_audit_design.md` |
+| `sesion_desarrollo` | Ejecuta un vuelo: implementa, commitea, mueve `queued/ -> in_flight/ -> done/` y escribe `backlog.md`. | codigo, `backlog.md`, `in_flight/`, `done/` | `orchestrator_session_bootstrap.md` / `orchestrator_session_close_full_audit.md` |
+
+El contrato de no-colision entre ambas vive en `<destino>/orchestrator_pipeline/flight_plans/INDEX.md`.
+
+### Modos de EJECUCION multiagente: Tradicional, 4 capas, Intermedio
+
+Ortogonal al par DISENO/DESARROLLO de arriba: dentro de una `sesion_desarrollo`, el agente puede
+delegar el trabajo pesado (implementacion, revision) a `nan` via Kilo CLI en distinto GRADO. Tres
+modos: **Tradicional** (Claude Code implementa y revisa el mismo), **4 capas** (Claude Code solo
+orquesta y lee resumenes cortos; Manager-nan/Builder-nan/Revisor-nan hacen el trabajo pesado,
+ver `prompts/agent_execution_modes.md` y el vuelo que lo origino,
+`PROMPT_ARRANQUE_vuelo_limpieza_backlog_4capas_20261010.md`), e **Intermedio** (delega SOLO el
+triaje/contrato de todo el lote; implementa Y revisa el mismo, sin delegar ninguna de las dos,
+los tickets de blast-radius-alto -- regla dura de seguridad, nunca se delega la revision de esos
+tickets aunque si se delegue su triaje). El agente PROPONE un modo por señales objetivas
+(peticion explicita, disponibilidad de Kilo, blast radius con fuente verificable, tamaño del
+vuelo) y el usuario confirma; se puede cambiar de modo en caliente a mitad de sesion
+(`/agent-mode <modo>`, skill `agent-execution-mode`). Nucleo normativo completo y UNICO:
+`prompts/agent_execution_modes.md` (skill apunta, prompt gobierna, X-09) -- **estado `frozen`**
+(congelado 2026-10-11 tras 2 pasadas de bucle adversarial, 7+4 lentes independientes).
+
+**Convencion de nombres (deliberada):** el sufijo `_design` va al FINAL del nombre de fichero, no al
+principio (`..._bootstrap_design.md`, no `design_..._bootstrap.md`), aunque en ingles seria mas
+normativo el adjetivo delante. Motivo: asi cada par diseno/desarrollo queda ADYACENTE al ordenar el
+directorio alfabeticamente, que es como se buscan en la practica. Ergonomia sobre gramatica.
+
 **Regla de repos:** toda operacion git del tooling (diff, log, commit) corre con `cwd=repo_motor`. El estado operativo (tickets, memoria, events) vive en `repo_destino`.
 
 **Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.
+
+**Regla de aislamiento por worktree: aplica al `repo_motor` igual que al `repo_destino`.**
+Con 2+ sesiones trabajando en paralelo, cada sesion que vaya a escribir CODIGO en el
+`repo_motor` necesita su propio `git worktree` del motor -- exactamente la misma disciplina
+que ya se exige para el `repo_destino` (ver `obs-worktree-aisla-codigo-no-estado-operativo-
+ni-orquestador`, memoria portable, 2026-07-25). Trabajar directamente en el checkout principal
+compartido del motor es colision de superficie aunque no haya colision de CONTENIDO (dos
+sesiones pueden tocar ficheros disjuntos y aun asi interferirse: una avanza `HEAD` con sus
+commits mientras la otra tiene cambios sin commitear sobre el mismo arbol). El worktree del
+motor NO sustituye la higiene de esa leccion (commitear siempre, nunca `stash` para dejar
+trabajo "en limbo" entre worktrees, porque `refs/stash` es GLOBAL al repo y visible desde
+cualquier worktree hermano).
 
 ### Glosario de nomenclatura de ticket (WOT-2026-010a)
 
@@ -192,6 +270,7 @@ falla solo ante un generador/ejemplo vivo con prefijo legacy sin etiqueta.
 - Los comandos canonical y legacy se documentan por separado.
 - Estado actual: `v9.17.1` motor central + workspace destino, cierre canonico con suite verde, pipeline autonomo por chat, meta-auditoria, auditoria de publicacion Git, guard de integridad del motor, encoding guard endurecido y CEM v0 adoptado.
 - El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
+- La senal VIVA de staleness NO es esta cadena de version hardcodeada (queda fija hasta el proximo bump manual): es `motor_sha` en el link motor<->destino, comparado en vivo contra el HEAD real del motor en cada `destination_context.py --bootstrap` (WOT-2026-024j, WARN de drift, nunca gate).
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
 
@@ -220,19 +299,23 @@ append `--project-root <destino>` to commands that operate on project state.
 - Sincronizacion interactiva: `python scripts/install_agent_system.py --sync --prune`
 - Vista previa: `python scripts/install_agent_system.py --sync --dry-run`
 - Estado del sistema: `python .agent/agent_controller.py [--project-root <workspace>]`
-- Auditoria local: `python scripts/local_audit.py [--project-root <workspace>]`
-- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run] [--project-root <workspace>]`
+- Auditoria local: `python scripts/local_audit.py` (NO acepta `--project-root`)
+- Memoria consolidada: `python scripts/memory_consolidate.py [--apply|--dry-run]`.
+   El scope se determina por `AGENT_PROJECT_ROOT` o por `motor_destination_link.json` del destino.
 - Integridad del motor: `python scripts/check_motor_pristine.py --snapshot --motor-root <repo_motor> --out <snapshot.json>` y despues `python scripts/check_motor_pristine.py --check --snapshot-file <snapshot.json> --report <result.json> --motor-root <repo_motor>`
 - Auditoria de publicacion Git: `python scripts/classify_publication.py --repo-root <repo_destino> --out <repo_destino>/orchestrator_pipeline/reports/publication_manifest.json`
 - Bundle de contexto para Hermes: `python scripts/hermes_build_context_bundle.py --output-root <hermes_agent>/uploads --soul-output <hermes_agent>/soul.md`. Genera snapshots con version, commit y hashes; no edites copias derivadas como fuentes canonicas.
 - Migrar config: `python .agent/agents_config.py --migrate [--dry-run] [--project-root <workspace>]`
 - Comparar con repo GitHub: skill `/repo-compare`
 - Orquestar backlog por chat: skill `/pipeline` (`prompts/orchestrator_pipeline.md`)
+- Orquestar un OBJETIVO como Manager (estrategia -> planes -> Builders -> bucles F/S): nucleo portable
+  `prompts/manager_orchestrator_loop.md` + su adaptador a este motor `prompts/manager_orchestrator_loop_adapter_motor.md`
+  (skill `manager-orchestrator-loop`). No confundir con `/pipeline`, que ejecuta tickets ya formados.
 - Meta-auditar pipeline cerrado: skill `/audit-pipeline`
 - Auditar publicacion Git: skill `/audit-git-publication`
 - Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista: `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. El script RECOLECTA (read-only: por defecto no toca ningun fichero TRACKED); el agente AUDITA. Salida en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`. El registro en `INDEX.md` (fichero tracked en el workspace) es opt-in via `--publish-index`, OFF por defecto (WOT-2026-023x). Ver `prompts/audit_post_change_system_health.md`.
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
-- Tests: `python scripts/run_pytest_safe.py [--project-root <workspace>]`
+- Tests: `python scripts/run_pytest_safe.py` (NO acepta `--project-root`; runs against `repo_motor` tests by design)
   - NO usar `python -m pytest` directo sobre tests que importan el controller:
     al insertar `.agent/` en sys.path, `runtime` puede resolver a
     `.agent/runtime/` (que tiene `__init__.py`) en vez de `<motor>/runtime/`,
@@ -245,6 +328,92 @@ append `--project-root <destino>` to commands that operate on project state.
 
 ## Convenciones
 
+### Prompt/contrato citado => LEELO ENTERO antes de redactar contra el (2026-07-29)
+
+**Norma dura, no consejo.** Si un prompt te lo pegan en el chat, lo enlaza otro prompt que te
+pegaron, o un proceso lo declara como su contrato, **lo abres y lo lees ENTERO antes de producir
+nada que se mida contra el**. `grep` dirigido, `diff` contra otra copia y lectura de la seccion que
+creias relevante **NO cuentan como leerlo**: son muestreo, y el muestreo no puede ver lo que OMITES.
+
+- **El grep responde tu pregunta, no la del contrato.** Solo encuentra lo que ya sospechabas que
+  estaba; las clausulas que no imaginaste son justo las que no vas a grepear.
+- **Es aplicacion directa de M4** (`prompts/orchestrator_launch_builder.md:140-155`, *"validador
+  citado => ejecutalo antes de redactar"*) a la superficie NORMATIVA: si un validador ejecutable
+  define el formato de un artefacto, un contrato define el formato de un PROCESO. M4 cubria solo lo
+  primero; esta norma cierra lo segundo.
+- **Coste medido y asumible:** los 7 prompts canonicos del pipeline suman ~2400 lineas. Es
+  drasticamente mas barato que el fallo que evita.
+- **Enrutar NO exime de leer.** Este repo prohibe re-declarar criterios normativos (*"skill apunta,
+  prompt gobierna"*): sigues sin copiarlos, pero **no puedes enrutar hacia un contrato que no has
+  leido** -- no sabrias que clausulas existen para nombrarlas.
+- **Si decides NO leer entero, DECLARALO ANTES** con su motivo y su riesgo. Un muestreo declarado es
+  una decision; un muestreo silencioso que se presenta como cobertura es `falso_verde`.
+
+**Fallo real que la origina (2026-07-29, cazado por el USUARIO, no por el bucle):** se redacto el
+prompt de arranque de un vuelo trabajando `prompts/orchestrator_autonomous_ticket_batch.md` (571
+lineas) por grep + diff, sin abrirlo entero. Quedaron fuera `:193-220` (un `MANAGER_REVIEW` **por
+ticket** y la forma exacta `1->9->2` con lector-FS obligatorio), `:355-380` (`GROUP_STOP_REPORT`) y
+`:439-462` (cierre bloqueante: `batch_run_<ts>.json` + auditoria hermana + condicion 6
+dual-contract). El prompt resultante decia *"antes de CADA fan-out emite el nonce"* sin decir cuantos
+ni cuando, y `MANAGER_REVIEW` aparecia **0 veces**: un ejecutor podia implementar dos tickets, correr
+UN bucle al final y creerse conforme.
+
+**Agravante que hace la norma insuficiente por si sola:** ese prompt SE PASO por un bucle de 4 lentes
+y **ninguna lo cazo**, porque a las lentes se les paso el contrato **por REFERENCIA (rutas), no por
+CONTENIDO**: solo podian auditar coherencia interna. La barrera complementaria -- que el recolector
+meta el contenido del contrato EN el bundle -- esta fichada como `WOT-2026-042y`. Lo predijo, literal,
+una leccion que ya estaba en memoria: `obs-api-only-reader-reads-current-state-not-ought-to-be`
+(*"un review multi-backend necesita un lector-con-filesystem o un bundle que incluya la semantica
+explicita"*).
+
+### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
+
+**Norma, no barrera cableada** (depende de que el agente se acuerde). Es la regla hermana
+ANTERIOR de la regla de arriba, no su generalizacion: aquella exige leer entero un contrato YA
+CITADO; esta exige BUSCAR si existe uno ANTES de suponer que no hay ninguno. Son dos eslabones
+secuenciales de la misma cadena (buscar -> si se encuentra, leer entero), no una conteniendo a
+la otra.
+
+**Antes de tratar de resolver una decision de proceso por razonamiento propio, el agente
+comprueba primero si existe un protocolo YA ESCRITO para ese caso.** Comprobacion minima:
+(a) `grep`/busqueda por palabra clave en `AGENTS.md` y en los prompts de `prompts/` cuyo nombre
+sugiere el dominio (p.ej. `*_loop.md`, `*_invocation_contract.md`, `*_closeout*.md`);
+(b) `python scripts/memory_context.py --recall --query <termino>` sobre la memoria portable,
+que indexa precisamente casos medidos de este tipo; (c) si el dominio tiene un `contract_id`
+conocido o sospechado, leerlo ENTERO (aplica la regla de arriba).
+
+**Declaracion explicita cuando no se encuentra nada:** si la busqueda no encuentra protocolo
+aplicable, el agente lo declara ("busque en X, Y, Z; no encontre protocolo para este caso")
+antes de proponer su propia solucion ad-hoc.
+
+**No aplica a:** decisiones triviales sin ambiguedad de proceso (un typo, una pregunta de hecho
+verificable con una sola lectura), ni a tareas ya en curso bajo un contrato ya verificado en la
+misma sesion. **Declaracion simetrica:** quien invoque esta excepcion de trivialidad debe
+declararlo en una linea antes de proceder ("EXCEPCION: trivial -- X no es decision de proceso
+porque Y"), igual que la declaracion exigida cuando no se encuentra protocolo. Sin esa
+declaracion, la excepcion no aplica.
+
+**¿Que cuenta como decision de proceso?** SI cuenta: decisiones sobre dispatch de
+Builder/Revisor, merge/push a rama compartida, gates de cierre/closeout, formato de memoria o
+bitacora, criterios de fusion de roles, cualquier decision que otro agente en otra sesion pueda
+necesitar replicar. NO cuenta: correccion ortografica, pregunta de hecho verificable con una
+sola lectura de fichero, eleccion de nombre de variable o formato de commit sin convencion
+previa declarada.
+
+**Evidencia (n=3, tres sesiones independientes, mismo patron):** (1) 2026-09-26, dispatch plano
+sin `loop_id`/`nonce` para una decision de cierre de sesion, corregido solo cuando el usuario
+pidio explicitamente revisar `ensemble_loop.md` (`obs-ensemble-adhoc-abbreviation-must-be-declared-before-dispatch`);
+(2) 2026-10-07, un revisor nan se dejo de ejecutar en 3 de 14 vuelos sin que nadie declarara la
+desviacion (`obs-removing-a-control-stage-must-be-declared-and-attributed`); (3) 2026-10-14,
+propuesta de politica de suite/merge redactada sin comprobar antes si `builder_invocation_contract.md`
+o `ensemble_loop.md` ya cubrian el caso. Las tres correcciones ocurrieron solo por intervencion
+explicita del usuario, nunca por iniciativa del propio agente -- confianza media, no ley
+universal, pero suficiente para justificar esta norma con deuda de barrera declarada (candidato:
+auditar automaticamente una propuesta de proceso nueva contra los `contract_id`s declarados en
+`prompts/`, fuera del alcance de esta nota). Riesgo de performatividad declarado: un agente puede
+ejecutar un grep ritual sin intencion real de consultar el resultado, cumpliendo la forma de la
+norma sin su sustancia; mientras no exista auditoria automatica, este riesgo permanece abierto.
+
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
 - Para tickets que tocan sincronizacion de estado, bus, proyecciones o codigo topologia-aware (`repo_motor + repo_destino`), comprueba primero si el sintoma encaja con un patron documentado en `docs/KNOWN_FAILURE_PATTERNS.md` antes de proponer un fix nuevo.
@@ -255,6 +424,88 @@ append `--project-root <destino>` to commands that operate on project state.
 - En `Files Likely Touched`, escribe una unica ruta parseable por bullet. Las
   aclaraciones van en una linea separada; texto como `o modulo equivalente` en
   el mismo bullet puede impedir que el parser de FLT reconozca la ruta.
+
+### Orden de trabajo: AGRUPA los commits, la suite va la ULTIMA (WOT-2026-026t)
+
+**La suite canonica es el ULTIMO paso antes del push, nunca uno intermedio.** El contrato exige
+`tested_commit_sha == HEAD` (`pre_handoff_guard.py:561`), asi que **cualquier commit posterior a la
+suite la invalida** y obliga a re-correrla entera (~7 min).
+
+```
+ORDEN CORRECTO                          ORDEN QUE DESPERDICIA
+1. TODOS los commits                    suite -> commit -> suite -> commit -> suite
+2. suite canonica (UNA vez)             (medido 2026-08-04: 3 corridas, ~15 min tirados)
+3. verificar tested_commit_sha == HEAD
+4. push
+```
+
+**Es la misma familia que la regla del bucle** (`obs-canonical-suite-runs-after-the-loop-not-before`:
+el bucle adversarial pide cambios, asi que una suite previa queda invalidada). Ahora generalizada:
+**cualquier** escritura posterior invalida la corrida, venga de un bucle o de un commit propio.
+
+**Barrera cableada, no norma** (`scripts/check_suite_freshness.py`, hook `check-suite-freshness` en
+`pre-commit`): avisa ANTES de commitear si existe una suite verde COMPLETA en el HEAD actual que
+ese commit invalidaria, citando cuantos tests se pierden. **No bloquea** -- un commit a mitad de
+sesion es legitimo, y bloquearlo forzaria a correr la suite entre cada par de commits, que es el
+desperdicio que se quiere evitar. La barrera BLOQUEANTE (no publicar con suite stale) ya existe y
+vive en `pre_handoff_guard`.
+
+**No uses `-k` como evidencia de cobertura de una funcion compartida.** El filtro selecciona por
+nombre de clase/fichero, no por grafo de call-sites: una funcion ejercitada desde clases con
+nombres distintos al filtro puede quedar sin cubrir aunque `-k` de verde. La evidencia final de
+cobertura de una funcion compartida debe venir de la suite canonica completa (`--level all`),
+nunca de un `-k` por nombre. Rationale completo (por que la comprobacion previa no bastaba, caso
+medido WOT-2026-079d con 3 regresiones reales que `-k` dejo pasar): memoria de
+`repo_motor`, `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`
+(2026-09-27).
+
+#### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
+
+**Gate 1 (nunca se relaja):** antes de que un commit propio EXISTA en cualquier rama
+compartida, la suite canonica completa corre sobre ESE commit (regla de arriba, sin excepcion).
+
+**Gate 2 (push con la rama remota avanzada por otras sesiones):** si, al intentar publicar un
+commit YA VERIFICADO por el Gate 1, la rama remota avanzo con commits de otras sesiones, el
+merge de esos commits se verifica asi:
+- Si el merge es disjunto en ficheros (ninguno tocado por ambos lados) **y** el auto-merge de
+  Git no reporta conflicto de texto: ademas de `ast.parse`/sintaxis de los ficheros que SI
+  cambiaron y confirmar que no quedan marcadores de conflicto (`<<<<<<<`), se exige ADEMAS
+  (i) ausencia de dependencia de import cruzada entre los ficheros tocados por cada lado, y
+  (ii) que ninguno de los ficheros tocados sea una superficie transversal de alto blast radius
+  (`conftest.py`, `pyproject.toml`, `uv.lock`, `.pre-commit-config.yaml`, `AGENTS.md`,
+  `CLAUDE.md`, `bus/`, `runtime/`, `.agent/agents_config.py`). Si cualquiera de las tres
+  condiciones falla, tratar como "mismo fichero compartido" (exige suite completa).
+- Si el merge toca el mismo fichero en ambos lados: la suite completa SI debe correr antes de
+  publicar -- nunca "suite focalizada" por `-k` (ver regla de arriba, WOT-2026-079d).
+- El camino relajado del primer bullet NUNCA es alcanzable para el commit resultante de un
+  MERGE: el `tested_commit_sha` del Gate 1 es el del commit padre, nunca el del merge commit.
+  La "relajacion" ahorra la RE-suite solo cuando se demuestra ANTES de mergear que el merge es
+  disjunto y seguro, nunca despues de que el merge commit ya existe.
+- Si tras publicar el remoto volvio a avanzar (`non-fast-forward`), repetir el criterio arriba
+  en la nueva ronda, sin acumular re-verificaciones completas solo porque ya se hizo una vez.
+
+**Condiciones de rechazo del Gate 2 (default fail-closed):** el Gate 2 relajado NO aplica si
+(1) no existe evidencia VERIFICABLE de que el lado entrante corrio su Gate 1 (`tested_commit_sha`
+registrado, evento de bus, log de cierre citable -- no basta "presumiblemente"); (2) el lado
+entrante toca una superficie transversal (lista arriba); (3) hay dependencia de import cruzada
+entre los ficheros tocados por ambos lados; (4) el commit publicado es un merge commit cuyo
+`tested_commit_sha` no coincide con el HEAD resultante; (5) han ocurrido 2+ intentos de push
+rechazados consecutivos sin que ninguna ronda haya corrido la suite completa sobre el estado
+integrado. El default es FAIL-CLOSED: el Gate 2 relajado es la excepcion estrecha, no el
+comportamiento esperado por defecto.
+
+**Alcance:** esta politica SOLO aplica a ramas o flujos donde exista, en algun punto del ciclo
+de vida del commit, una verificacion equivalente a `assert_canonical_suite_green` (via
+`--mark-ready` de un ticket formal, o via un registro explicito de `tested_commit_sha` en la
+bitacora de un vuelo sin ticket). Sin esa evidencia, tratar como si el Gate 1 nunca se hubiera
+verificado y exigir suite completa, sin excepcion.
+
+**Riesgo residual declarado:** esta politica asume que cada sesion concurrente aplica su propio
+Gate 1 antes de publicar. A diferencia de un equipo con CI real (que tiene un verificador
+automatico TERCERO sobre el HEAD integrado), aqui no existe ningun verificador automatico
+equivalente -- el riesgo es MAYOR que en un equipo con CI, no igual. `check_suite_freshness.py`
+no es comparable: es local y depende de que `pre_handoff_guard` corra aguas abajo, lo cual no
+ocurre en un push de vuelo sin ticket formal.
 
 ### Convencion de encoding y gap v1 (WOT-2026-010e)
 
@@ -269,6 +520,78 @@ append `--project-root <destino>` to commands that operate on project state.
   sufijos texto. No derivarla de `GLOB_PATTERNS`.
 - `scripts/check_encoding_guard.py` sigue siendo la autoridad de cierre; el
   hook es defensa en profundidad, no su sustituto.
+
+#### No MEZCLES vias de escritura en el mismo fichero (line endings, medido 2026-08-04)
+
+**El sintoma:** `git commit` ABORTA con `mixed line ending ... Failed` y el hook deja el fichero
+"arreglado" pero SIN commitear. El commit **no existe**; hay que re-`git add` y repetir. Paso TRES
+veces en una sola sesion, y las tres por lo mismo.
+
+**La causa, medida (no la que parece):** en Windows, las dos vias de escritura del agente dejan
+finales de linea DISTINTOS en el mismo repo.
+
+| Via | Deja |
+|---|---|
+| `Write`/`Edit` (y `Path.write_text()` en modo texto) | **CRLF** -- Windows traduce `\n` al escribir |
+| `cat >> f <<'EOF'`, `printf`, `Path.write_bytes()`, `write_text(..., newline="")` | **LF** |
+
+Escribir un fichero con una via y AMPLIARLO con la otra lo deja MIXTO, que es lo que el hook caza.
+Reproducido: `write_text()` (CRLF) + `cat >>` heredoc -> `CRLF=2 LF_total=3 bare_LF=1` -> MIXTO.
+
+**Dos creencias FALSAS que conviene no heredar** (ambas se sostuvieron una sesion entera antes de
+medirse):
+1. *"La mezcla la introduce `git add` al aplicar `.gitattributes`"*. **NO.** Probado: `git add` no
+   toca el working tree (`CRLF=0 LF=2` antes y despues; la normalizacion ocurre solo en el INDICE).
+2. *"Verificar los line endings antes de stagear no sirve"*. **SI sirve** -- y es la barrera. Lo que
+   no servia era mi comprobacion, porque medi el fichero ENTERO (`crlf == lf` -> "homogeneo") en vez
+   de buscar LF SOLITARIOS. Un fichero con 2248 CRLF y 1 bare LF pasa el primer test y falla el hook.
+
+**Regla operativa:**
+- Elige UNA via por fichero. Para `.py`/`.md` del motor, `Write`/`Edit` (la que el hook de encoding
+  ya cubre); si amplias por `Bash`, hazlo con la MISMA via con que se creo.
+- Anadir tests a un fichero existente con `cat >>` es el caso que mas muerde: usa `Edit`, o
+  normaliza despues.
+- Comprobacion correcta (cuenta bare LF, no compara totales):
+  `raw.count(b"\r\n")` vs `raw.count(b"\n")`; si la diferencia es > 0 **y** hay CRLF, esta MIXTO.
+- Si el hook ya aborto: **no es un fallo, es el flujo**. El fichero queda arreglado en disco; haz
+  `git add` de nuevo y repite el commit. Verifica antes que tus cambios sobrevivieron
+  (`grep` de un token propio), porque el arreglo reescribe el fichero.
+
+### Nomenclatura de perfiles ensemble (`ensemble_profiles` en `agents.json`)
+
+Norma establecida 2026-09-28 tras censar los 20 perfiles vivos de
+`.agent/config/agents.json`: NO existia una norma escrita, solo un patron
+implicito que 19/20 perfiles ya seguian. Se fija por escrito porque el
+dashboard de ensembles necesita poder derivar backend+familia del NOMBRE del
+perfil sin tener que resolver `agents.json` en cada lectura.
+
+**Forma:** `<rol>_<backend>_<familia>[_<caracteristica>]`
+
+- `rol`: `proposer` o `challenger`.
+- `backend`: nombre corto SIN el sufijo `_api` (`nan`, `nvidia`, `groq`,
+  `openrouter`, `aihubmix`, `tokenharbor` para `channel=api`; el nombre del
+  agente para `channel=agent`: `claude`, `codex`, `opencode`).
+- `familia`: UNA palabra que identifica el modelo, SIN version ni tamano
+  (`qwen`, `mimo`, `glm`, `gemma`, `kimi`, `nemotron`, `deepseek`, `gptoss`,
+  `northcode`, `codingglm`). El campo `model` del perfil ya lleva la version
+  exacta -- el nombre del perfil no la duplica.
+- `caracteristica` (opcional): SOLO cuando distingue dos variantes del MISMO
+  backend+familia dentro del pool (ej. `challenger_nan_qwen` vs
+  `challenger_nan_qwen_flash`, ambos en `nan_api`). No se anade si no hay
+  ambiguedad que resolver.
+
+**Ejemplos correctos:** `challenger_groq_qwen`, `challenger_groq_gptoss`,
+`challenger_nvidia_glm_flash`, `challenger_tokenharbor_qwen_flash`.
+
+**Ejemplos INCORRECTOS (version/tamano colados en el nombre):**
+`challenger_groq_qwen38`, `challenger_groq_gptoss120b`,
+`challenger_aihubmix_codingglm51`, `challenger_tokenharbor_qwen38flash` --
+corregidos en la misma sesion que fijo esta norma.
+
+**No renombrar `challenger_opencode_glm_5_2` sin revisar primero** `grep -rn
+"challenger_opencode_glm_5_2" tests/`. Caso completo de esta excepcion
+legacy (por que, estado exacto, consecuencia para rutas de seleccion
+nuevas) en `docs/protocol/ensemble_profile_naming_legacy_case.md`.
 
 ## Archivado de colaboracion (WP-2026-100)
 
@@ -327,9 +650,13 @@ Para evitar la inflación artificial de cobertura sin validación lógica real, 
 
 CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en burocracia. Se aplica con rigor proporcional al riesgo del cambio.
 
+**Fallback ante duda de diseno sin contrato que la resuelva:** `CONSTITUTION.md` (raiz del motor, carga ON-DEMAND, leelo entero cuando lo consultes) tiene la jerarquia de 6 niveles y 15 tenets de ingenieria que amplian lo de abajo.
+
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de tocar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; usa diff, exit code, test, evento de bus, commit o artefacto verificable.
 - **Un `exit 0` puede significar "no hice nada":** en operaciones IDEMPOTENTES o con SKIP (cierres, syncs, instaladores), `exit 0` es indistinguible de "ya estaba hecho" o "me salte el trabajo". `exit code` es evidencia NECESARIA pero no SUFICIENTE para estas: verifica el ARTEFACTO (fichero/informe/diff/contador que la operacion debia producir), no solo el codigo de salida; y busca en la salida las palabras de skip (`already`, `skipped`, `nothing to do`, `none present`, `up to date`, `no files to check`). Y lee el CODIGO antes de temer un flag: un `--force` puede vencer SOLO la idempotencia sin tocar los gates (leer 12 lineas convierte un "no me atrevo" en un cierre real). Caso: `--session-close` dio `exit 0` sin cerrar nada (`[INFO] Session already completed`), disparado por un `.session_state.json` STALE que ademas se contradecia con `work_plan.md` (2026-07-15).
+  - **Si el artefacto es UNTRACKED, el discriminante es su `mtime` contra su propio timestamp interno** (git no te ayuda: no hay diff que mirar). Dos escrituras en el MISMO acto -- `mtime` y el campo de hora del fichero separados por milisegundos -- prueban que la operacion CORRIO y escribio; un `mtime` INTACTO tras la corrida prueba que no aterrizo NINGUNA escritura. Son veredictos OPUESTOS y el `exit 0` es identico en ambos. Medido 2026-07-29 sobre `.session_state.json` (untracked, `git ls-files --error-unmatch` -> rc=1): un `--session-close` normal dejo el `mtime` en `11:38:23.237` (no aterrizo nada, y ese `exit 0` era el recibo CORRECTO de idempotencia), mientras que el mismo cierre con `--force` lo movio a `23:36:02.901`, a 14 ms de su `last_activity` interno -- misma escritura, luego la rama `save_session()` corrio y copio un `active_plan` ajeno. **Limite: el par prueba QUE corrio y QUE rama se tomo, NO la causa completa.** Instrumentar la ruta productiva es otra cosa y exige su propio probe con control positivo; leer de mas en un par de timestamps es falso verde por relato.
+- **El exit code tras una tuberia MIENTE (autoengano-por-pipe):** `$?` tras `cmd | tail` lee el rc del ULTIMO tramo de la tuberia (el consumidor), no del productor: un comando que FALLA se disfraza de exit 0. Cuando necesites a la vez esquilar la salida Y reportar el rc REAL, usa el wrapper aprobado `scripts/tools/run_and_exit.py` (WOT-2026-022p): `python scripts/tools/run_and_exit.py --tail 20 -- <cmd> [args...]` imprime las ultimas lineas y despues `[run-and-exit] exit_code: <n>`, y el proceso sale con ese mismo codigo (127 si el comando no existe, 2 si no hay comando). Desaconsejado explicitamente el encantamiento manual -- `$?` colgado de un pipe, `cmd | tail; echo $?` --: dos actores independientes reprodujeron ya el fallo y dejo un veredicto fail-open fabricado que llego a memoria (2026-07-11/12). Control positivo del wrapper (no lo dupliques): `tests/unit/test_tools_shell_safety.py::test_reports_real_exit_of_failing_command`. Adopcion citada aqui desde WOT-2026-058e.
 - **Equivalencia de ruta productiva (evidencia exploratoria vs evidencia de cierre):** un `exit_code:` solo es evidencia de CIERRE si el probe **reproduce la ruta que corre en produccion**. Aplica **rigor proporcional**: obligatorio para todo lo que toca runtime (hooks, guards, CI, tests, scripts ejecutables, instalador); se salta para docs, typos y prosa sin logica de ejecucion.
   - **Asimetria dura:** un probe que NO reproduce la ruta productiva puede **REFUTAR** una hipotesis, pero **NUNCA CONFIRMAR un cierre**. La confirmacion es la que mata: hoy el probe de PowerShell *confirmo* una hipotesis falsa, y fue el probe en la ruta REAL (Git Bash) el que la refuto.
   - **Recibo obligatorio (no basta afirmarlo):** el probe **imprime** su propio contexto -- `sys.executable`, `cwd`, la parte relevante de `PATH`/env, y la cadena de launcher-- y ese recibo se pega junto al `exit_code:`. Sin recibo, es evidencia exploratoria por defecto.
@@ -343,8 +670,9 @@ CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en
 - **Barrera verificada:** un guard, hook o test nuevo no cuenta hasta demostrar que bloquea el fallo que promete bloquear.
 - **Barrera cableada:** ademas de morder, algo tiene que INVOCARLA. Un guard solo es barrera si lo llama un camino que corre solo (pre-commit, CI, `prepush_check`, closeout, preflight, controlador, hooks de tool-call). Citarlo en un prompt, una skill o este AGENTS.md **no es cableado: es una norma**, y una norma depende de que alguien se acuerde. Barrera de la barrera: `scripts/check_guard_wiring.py` (WOT-2026-024u) - un guard nuevo sin cablear FALLA; la deuda legacy solo puede quedar en WARN si esta DECLARADA con su ticket dueno.
 - **Aplicate tu propia vara (y que lo diga otro):** un guard que mide una propiedad P tiende a medirla con una vara MAS FLOJA que la que predica, y sale verde igual. `check_guard_wiring` nacio declarando que "una cita en un prompt es una norma, no un mecanismo"... y clasificaba casando nombres contra el TEXTO CRUDO de los ficheros: la misma vara que su docstring llamaba insuficiente. Daba por cableados guards citados solo en un COMENTARIO, o en hooks `stages: [manual]`. Sus 16 tests, los 4 gates y la suite entera (4094 passed) pasaron verdes: todos hermeticos, y el defecto vivia en la frontera con el repo REAL. Lo cazo una auditoria adversarial HERMANA en contexto fresco. Regla: aplica P a tu propio guard **ejecutandolo**, no leyendolo, y no lo des por bueno sin una pasada adversarial externa - el mismo sesgo que escribio el codigo escribio los tests.
-- **Barrera del alcance, no solo del mecanismo:** un guard puede estar cableado, morder, y no mirar donde ocurre el fallo. `check_encoding_guard` es fail-closed y corre en pre-commit... y solo mira `.py`. Por eso DOS fugas de markup de modelo vivieron meses dentro de `AGENTS.md` y `MANUAL_PUBLICATION_CHECKLIST.md` - esta ultima desde el commit inicial del repo (WOT-2026-024x).
+- **Barrera del alcance, no solo del mecanismo:** un guard puede estar cableado, morder, y no mirar donde ocurre el fallo. Caso historico: `check_encoding_guard` es fail-closed y corre en pre-commit, pero durante meses se limitaba a `.py`; por eso DOS fugas de markup de modelo vivieron sin detectar dentro de `AGENTS.md` y `MANUAL_PUBLICATION_CHECKLIST.md` - esta ultima desde el commit inicial del repo (WOT-2026-024x). Ya CORREGIDO (WOT-2026-025n): desde df674bb el guard cubre `.md` (TEXT_EXTENSIONS + GLOB_PATTERNS `*.md`, `prompts/**/*.md`, ...), asi que hoy SI mira donde ocurrio aquel fallo. El PRINCIPIO sigue vigente: un guard nuevo se audita por DONDE mira, no solo por si muerde.
 - **Criterio invariante, evidencia fechada:** un DoD debe ser un INVARIANTE, no una MEDICION. Un criterio que fija un numero ("quedan 11 hits", "243 auditorias") caduca solo, sin que nadie toque la ficha, y el Builder ya no puede distinguir "el numero cambio porque el mundo avanzo" de "cambio porque he roto algo". El numero es EVIDENCIA: va etiquetado como snapshot fechado, nunca como criterio de aceptacion (WOT-2026-024t).
+- **Un umbral en una MESETA no es un umbral medido** (corolario de la regla anterior, medido 2026-07-22): un numero puede pasar todos los gates y no haberse medido nunca. `_NEGATION_WINDOW=12` se eligio a ojo y su comentario lo justificaba con una precision que no tenia; el barrido posterior mostro `W=4 -> 4 failed | W=10 -> 1 | W>=12 -> 26 passed`: 12 es el BORDE INFERIOR de una meseta ABIERTA, sin cota superior pinneada -- subirlo a 30 no rompe ningun test pero amplia el efecto. **Y el primer barrido dio una cifra FALSA** ("meseta >=6") porque se corrio contra fixtures ad-hoc escritos para el barrido: un barrido contra tus propios fixtures mide tus fixtures, no el sistema. REGLA: barre contra la SUITE REAL, publica AMBOS bordes, y si la cota superior queda abierta, dilo -- "esta en una meseta >=N, sin cota superior" es honesto; una justificacion sin barrido es relato.
 - **Fixtures realistas:** un test verde contra un fixture irreal es sospechoso; cuando el contrato sea operativo, contrasta contra artefactos reales.
 - **Gates self-service:** un gate preserva autonomia solo si explica que fallo, como reproducirlo y como volver a validar sin escalar al humano.
 - **Relaunch con root verificado:** antes de relanzar Builder, valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo.
@@ -422,6 +750,27 @@ builder-run-quality-gates, manager-create-work-plan, manager-review-implementati
 refactor-manager, session-close-full-audit, setup-agent-system -- candidatas a re-declaracion (una parte solo
 menciona el marcador). La matriz de ownership de artefactos asociada vive en `prompts/_shared/artifact_ownership.md`.
 
+### Gobierno prompt-hijo<->prompt-nucleo: extension de X-09 un nivel arriba (2026-10-08)
+
+El mismo principio de X-09 ("skill apunta, prompt gobierna") se aplica un nivel arriba: cuando un
+prompt declara `nucleo_referenciado` (un prompt-hijo especializa un nucleo portable, como
+`manager_orchestrator_loop_backlog.md` especializa a `manager_orchestrator_loop.md`), el prompt-hijo
+REMITE a las secciones del nucleo que coinciden en OBJETO, no las REDECLARA en prosa paralela. Si
+el objeto diverge de verdad (el hijo cubre un caso que el nucleo no contempla), el hijo puede
+reescribir esa seccion COMPLETA, pero debe etiquetarla explicitamente como EXCEPCION/ESPECIALIZACION
+-- nunca una copia silenciosa que se desincroniza en la siguiente correccion del nucleo.
+
+Motivo medido (bucle de gobierno DESIGN_REVIEW, 5 lentes independientes, 2026-10-08):
+`manager_orchestrator_loop_backlog.md` declaraba `source_of_truth: este prompt` pese a listar
+`nucleo_referenciado`, y SU SCHEMA DE METRICAS (seccion 6) redeclaraba el `SCHEMA: adjudicacion`
+del nucleo sin declarar sus diferencias reales. Corregido: la seccion 6 remite de verdad, con las
+diferencias de campos y de enum declaradas explicitamente.
+
+**Advertencia del propio caso (correccion posterior, MANAGER_REVIEW con lente
+nan/deepseek-v4-flash, 2026-10-08):** 5 lentes adjudicaron mal por semejanza estructural (numero
+de posicion) en vez de comparar contenido literal; detalle completo e incidente en
+`docs/protocol/x09_adjudication_position_vs_content_case.md`.
+
 ## Atribuciones externas (CREDITS.md)
 
 Cuando un WP incorpora una idea/patrón de un repositorio externo:
@@ -437,17 +786,60 @@ Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |
 
 ## Memoria por proyecto
 
-La memoria del proyecto sigue una jerarquia de tres niveles (L3 -> L2 -> L1),
-centralizada en `bus/memory_loader.py` para bootstrap, review bridge y pre-compact hook:
+**Lo primero, porque es lo que mas se malinterpreta (WOT-2026-057a/b):**
+
+- **`--bootstrap` entrega un INDICE, no el corpus.** Las lineas marcadas
+  `...[truncated]` son titulares con su `id`; el pie declara cuantas lecciones NO
+  muestra. Con mediana de 877 chars por leccion, la regla accionable de 82
+  entradas vive DESPUES del corte.
+- **`--recall` es la puerta de EXPANSION**, y entrega la leccion ENTERA:
+   `python scripts/memory_context.py --recall --query "<termino>"` (ordenado por
+   cobertura, con fallback por terminos) o
+   `python scripts/memory_context.py --recall --id obs-<slug>` (exacto,
+   fail-closed). Ejecutalo ANTES de medir o disenar.
+- **El archive portable se lee como UNION de MOTOR + root activo.** Son conjuntos
+  DISJUNTOS y ambos importan: el motor trae las lecciones de ingenieria, el
+  destino las de topologia. Medido 2026-08-17: 207 + 135, interseccion CERO.
+  Cada origen tiene CUOTA en el indice -- la recencia no es relevancia, y sin
+  cuota el repo tocado mas recientemente expulsa al otro entero.
+- **El hook `SessionStart` inyecta el indice al abrir sesion**, asi que la carga
+  del indice dejo de ser una norma que alguien debia recordar. La EXPANSION sigue
+  siendo manual.
+
+La jerarquia de tres niveles (L3 -> L2 -> L1) sigue existiendo, pero es el PASO 2
+de dos: primero el archive portable unido, despues el mejor tier local.
+Centralizado en `bus/memory_loader.py` para bootstrap, review bridge y
+pre-compact hook:
 
 - **L3 — `memory_profile.md`** (generado por `memory_consolidate.py --apply`): Perfil breve del proyecto con dominios activos, tickets referenciados y senales recientes. Cargado primero por `memory_loader.get_bootstrap_context()`.
 - **L2 — `memory_rules.md`** (generado por `memory_consolidate.py --apply`): Reglas deterministas organizadas por dominio, con IDs estables (R-XXX). Cargado por `memory_loader.get_review_context(domain)` para el review bridge.
 - **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
 - `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
 - `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
-- `bus/memory_loader.py` es la unica puerta de entrada: `get_bootstrap_context()` (L3 -> L2 -> L1), `get_review_context(domain)` (L2 por dominio), `get_compact_context()` (L3+L2).
+- **Contrato de `MEMORY.md` (WOT-2026-074s): INDICE por topic, nunca volcado
+  completo de una senal.** `regen_memory_md` (`scripts/memory_consolidate.py`)
+  agrupa las entries por `topic`, lista cada topic bajo su propia seccion
+  `## <topic>` con hasta 10 entradas (las mas recientes), y cada `signal` se
+  trunca a `MAX_SIGNAL_MEMORY_MD` (200 caracteres) con marcador visible si se
+  corta -- el texto COMPLETO de la senal vive en `memory_rules.md` (L2) y en
+  `observations.jsonl` (L1), nunca en `MEMORY.md`. Un test que asertara "el
+  texto integro de la senal debe aparecer en MEMORY.md" estaria probando el
+  contrato EQUIVOCADO (volcado en vez de indice) -- origen de esta nota: un
+  test asi (`013e` del repo_destino `Crear_Texto_LLM`) fallo porque asumio esa
+  forma, y el fallo era del test, no del artefacto. Recibo re-ejecutable:
+  `python scripts/memory_consolidate.py --apply` deja un `MEMORY.md` de hasta
+  80 lineas con secciones `## <topic>` (indice), mientras la senal integra de
+  cada entrada nueva aparece en `memory_rules.md`.
+- `bus/memory_loader.py` es la unica puerta de entrada, y **cada puerta tiene su
+  propio tope, nunca uno global** (WOT-2026-057a): `get_bootstrap_context()`
+  (archive unido + tier local, CAPADO a un presupuesto de arranque),
+  `get_review_context(domain)` (por dominio y **SIN capar** -- un review decide
+  APPROVE/CHANGES y no puede perder lecciones; un cap filtrado ahi le costo al
+  Manager 14 de 74), `get_compact_context()` (capado por recencia con cuota por
+  origen, para el hook de pre-compact).
 - **La memoria PRIVADA de un agente no es autoritativa.** Cada backend (Claude Code, Kilo, Codex...) tiene su propio almacen personal, invisible para los demas y para el repo. Lo canonico es lo VERSIONADO: `archive/observations.YYYY-MM.jsonl`, este AGENTS.md, los prompts, las skills y los tests. Si una leccion solo vive en la memoria privada de un backend, para el sistema NO EXISTE.
-- **Deuda conocida (WOT-2026-024r):** `memory_loader` lee `observations.jsonl` (gitignored, por worktree), NO el `archive/` trackeado. O sea: hoy la memoria portable se escribe, se versiona y se pushea, y **nadie la lee de vuelta**. Promover una leccion al archive la hace PORTABLE, no VIVA.
+- **WOT-2026-024r (A1): el archive es la fuente portable de memoria, y el loader LA LEE.** `bus/memory_loader.py` incluye SIEMPRE las entradas de `archive/observations.YYYY-MM.jsonl` en el contexto de bootstrap, recorriendo TODOS los meses, no solo el actual. La precedencia es POR ENTRADA: ante colision de `id` estable gana la copia VIVA de L1, porque pudo editarse despues de archivarse. Antes de A1 el loader solo miraba L3/L2/L1 -- las tres gitignoradas --, asi que la memoria promovida se versionaba, viajaba por git y **no la leia nadie**; coste medido (2026-07-27): una leccion guardada dos veces se reincidio igual y destruyo 7 tests. No fue laguna de memoria: fue memoria escrita, versionada y no leida.
+- **Limites declarados de A1 (no son huecos, son alcance):** A1 NO cierra `WOT-2026-024r`. (a) La REGENERACION en bootstrap (quien invoca, cuando, idempotencia, y la reconciliacion con `memory_consolidate`, que hoy regenera L2 desde L1 viva y pierde reglas cuya fuente ya se archivo) es **A2**. (b) A1 **no filtra entradas refutadas**: el schema no tiene campo de vigencia y hay 12 entradas con refutacion en prosa; tocar el schema es NON-GOAL. (c) A1 **no promete portabilidad entre repos**: `scripts/install_agent_system.py` no propaga el `archive/` (0 menciones), asi que un destino nuevo arranca sin el -- eso es `WOT-2026-025o`.
 
 ## deliverable_type (work_plan schema, V2)
 
@@ -548,6 +940,11 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
   portable y sin rutas absolutas del `repo_destino` actual. Los permisos
   `external_directory` especificos del proyecto se inyectan en runtime desde el
   launcher y se restauran al terminar; no deben quedar commiteados en el motor.
+- Proteger `main` del motor en origin (WOT-2026-024i): `main` es la fuente
+  canonica de los destinos; debe llevar un ruleset de GitHub que bloquee
+  force-push y deletion (sin exigir PRs, para no romper el push directo del
+  cierre). La activacion es accion humana; la verificacion re-ejecutable y la
+  prueba de rechazo no destructiva viven en `RELEASE_CHECKLIST.md` (paso 6).
 
 ## Robust Builder Relaunch (WP-2026-084)
 
@@ -612,7 +1009,17 @@ If a rule conflicts with the codebase, follow the code and record the discrepanc
 ## prompts/orchestrator_session_bootstrap.md
 
 ```markdown
+---
+role: orchestrator
+cycle_phase: [F0-arranque-sesion]
+route_kind: entry
+---
 # Session Bootstrap Prompt
+<!-- PROMPT-SUMMARY
+what: Bloque de arranque canonico de una sesion de desarrollo/orquestacion sobre el motor: 3 comandos deterministas, herramientas por repo, vocabulario y reglas duras, apuntando a archivos canonicos sin embeberlos.
+when: Al iniciar una conversacion nueva con un agente que operara el motor (backend nuevo, post-compactacion, sesion de pipeline multi-ticket con Manager y Builder como subagentes); se pega el bloque de codigo como PRIMER mensaje.
+not: NO es el arranque de una sesion de diseno (prompts/orchestrator_session_bootstrap_design.md), NO sirve en un repo_destino (prompts/orchestrator_destination_bootstrap.md), NO transporta continuidad medida entre sesiones (prompts/session_hop.md) y NO es el pipeline de ejecucion (prompts/orchestrator_pipeline.md); a mitad de un ticket con work_plan activo, lee el work_plan.
+-->
 
 Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo (Claude Code, Codex, OpenCode o cualquier backend) que vaya a operar sobre `orquestador_de_agentes`. Esta optimizado para orientar al agente sin gastar la ventana de contexto inicial cargando documentacion completa: apunta a archivos canonicos en lugar de embeber contenido.
 
@@ -623,9 +1030,16 @@ Pega este bloque tal cual al iniciar una nueva conversacion con un agente nuevo 
 ```
 Eres el agente principal del sistema multi-agente del repositorio orquestador_de_agentes.
 
-## Arranque canonico: 2 comandos + lectura condicional
+## Comportamiento esperado
 
-El arranque NO es una lista de lecturas rituales: son dos comandos
+- Responde **breve**, optimizando tokens. Sin emojis salvo que el usuario los use.
+- Antes de cambios destructivos (git push, edits a `.agent/`, ejecucion de cascade), confirma con el usuario.
+- Si el usuario pide algo que el codigo ya hace, **revisa el codigo primero** antes de proponer nada nuevo.
+- Si vas a tocar la rama Codex/Kilo del launcher: para. Eso es scope-creep y no entra sin un WP nuevo.
+
+## Arranque canonico: 3 comandos + lectura condicional
+
+El arranque NO es una lista de lecturas rituales: son tres comandos
 deterministas y despues se lee SOLO lo que el snapshot marque como
 relevante o con drift.
 
@@ -635,13 +1049,83 @@ relevante o con drift.
 python scripts/local_audit.py
 # luego lee .agent/runtime/audit/AUDIT.md
 
-# 2. Contexto de memoria determinista (L3 perfil -> L2 reglas -> L1 fallback):
+# 2. INDICE de memoria. El hook `SessionStart` YA te lo inyecto al abrir la
+#    sesion: busca en tu contexto un bloque con lineas marcadas [truncated] y
+#    un pie que declara cuantas lecciones retiene. Si lo ves, NO ejecutes
+#    --bootstrap (duplicarias ~29 KB): salta al paso 3.
+#    Ejecutalo SOLO si tu backend no dispara hooks (Codex/OpenCode one-shot):
 python scripts/memory_context.py --bootstrap
-# Verifica rapidamente el estado de memoria cargada:
+#    --status NO carga memoria: solo verifica que el root resuelve. Opcional.
 python scripts/memory_context.py --status
-# Si hay ticket activo, prioriza memoria relevante con:
-# python scripts/memory_context.py --recall --ticket <TICKET_ID>
+
+# 3. EXPANSION dirigida -- NO es opcional. El indice del paso 2 da titulares;
+#    esto devuelve la leccion ENTERA. Ejecutalo ANTES de medir o disenar nada,
+#    con el ticket activo o con el dominio de tu tarea:
+python scripts/memory_context.py --recall --ticket <TICKET_ID>
+python scripts/memory_context.py --recall --query "<dominio de la tarea>"
+# Las comillas NO son opcionales: `--query suite canonica` sin ellas da
+# `rc=2 unrecognized arguments: canonica`, que por M1 es MEDICION_FALLIDA.
 ```
+
+**Mecanismo de carga de memoria:** el mecanismo completo (comandos, regla del
+indice, cuando ejecutar) vive en `prompts/_shared/memory_bootstrap.md`.
+Motivo: una sesion que arranca fria no hereda el hook SessionStart; sin carga
+de memoria, trabaja con 0 lecciones y repite errores ya documentados.
+
+**Por que el paso 3 es obligatorio** (WOT-2026-057a, medido 2026-08-17): el
+paso 2 entrega un INDICE. Con mediana de 877 chars por leccion, la regla
+accionable de 82 entradas vive DESPUES del corte del indice. Un titular no te
+impide cometer el error que la regla previene: consulta el corpus ANTES de
+medir, no despues de fallar. `--recall` devuelve las señales COMPLETAS, con
+presupuesto en bytes que declara lo que omite (`--budget N` lo ajusta).
+
+**La memoria PORTABLE vive en `.agent/runtime/memory/archive/`** — es la unica
+superficie de memoria que viaja por git (L1/L2/L3 estan gitignored). El loader
+une el archive del MOTOR con el del destino: son conjuntos DISJUNTOS y ambos
+importan.
+
+**El pie del indice declara MENOS lecciones que el corpus, y eso NO es un
+error: es el corte.** Si el pie dice ~282 y el archive tiene ~342 (snapshot
+2026-08-17: 207 motor + 135 destino, interseccion cero), la diferencia son las
+entradas que el indice resume o deja fuera. Ese hueco es justo lo que `--recall`
+existe para cubrir. Si el pie NO declara ambas superficies, tienes MEDIA
+memoria: comprueba `AGENT_PROJECT_ROOT` y repite.
+
+## Herramientas fundamentales — NO las descubras, ya estan
+
+No explores `scripts/` para averiguar que existe: son ~180 ficheros y la mayoria
+no los necesitas. Esto es lo que se usa a diario, por repo. Cada una tiene
+`--help`; **leelo antes de inventarte un flag** (M1: un `rc=2` con `usage:` no es
+un veredicto, es "no medi").
+
+**MOTOR — programar el motor:**
+
+| Comando | Para que |
+|---|---|
+| `python scripts/run_pytest_safe.py --level all` | **La** suite canonica. Nunca `python -m pytest` directo: rompe la resolucion de `runtime/` |
+| `ruff check . && ruff format --check .` | Los DOS son gates independientes; uno solo es falso verde |
+| `python scripts/prepush_check.py --closeout-mode` | Gate de publicacion: encadena higiene, guards y validate |
+| `python scripts/memory_context.py --recall --query "<termino>"` | Expandir memoria ANTES de medir o disenar |
+| `python scripts/find_similar_signals.py --text "<txt>" --archive <a> --backlog <b>` | Dedupe antes de escribir leccion o ficha. EXIGE superficies: sin ellas da rc=2 y no escanea |
+| `python scripts/check_guard_wiring.py` | Un guard sin cablear es una norma, no una barrera |
+| `python scripts/check_encoding_guard.py` | Mojibake/BOM antes de entregar |
+| `python .agent/agent_controller.py --validate --json --project-root <destino>` | Estado canonico: 0 errors |
+
+**DESTINO — operar el destino:**
+
+| Comando | Para que |
+|---|---|
+| `python <MOTOR>/scripts/check_backlog_contract.py --project-root .` | Contrato del backlog en sus DOS superficies (cola viva y `_archive/`) |
+| `python <MOTOR>/.agent/agent_controller.py --validate --json --project-root .` | Drift entre `work_plan.md` y `execution_log.md` |
+| `python <MOTOR>/scripts/local_audit.py` | Snapshot de estado (lo que lee el paso 1) |
+| `python <MOTOR>/scripts/archive_collaboration_artifacts.py --project-root .` | Archivar `PLAN_/AUDIT_` cerrados. Idempotente |
+| `.agent/collaboration/` | Estado operativo VIVO: `work_plan.md`, `backlog.md`, `execution_log.md`, `STATE.md` |
+| `.agent/runtime/events/events.jsonl` | Bus append-only: la autoridad canonica del estado |
+
+**Regla de oro de la topologia:** toda operacion git del tooling corre con
+`cwd=repo_motor`; el estado operativo (tickets, memoria, eventos) vive en
+`repo_destino`. El motor se invoca SIEMPRE con `AGENT_PROJECT_ROOT` apuntando al
+`workspace_activo`.
 
 **Lectura condicional (solo si el snapshot lo pide):**
 - `CLAUDE.md`/`AGENTS.md`: ya los autocarga el entorno en la mayoria de
@@ -652,6 +1136,10 @@ python scripts/memory_context.py --status
   AUDIT.md reporta drift de version.
 - `QUICKSTART.md`: solo para operar el flujo terminal-driven.
 - `REPOSITORY_STRUCTURE.md`: solo para ubicar un subsistema desconocido.
+- `.agent/runtime/ensemble/backend_status.json`: que backends/APIs estan
+  configurados y su ultimo estado conocido (alive/latency_ms/checked_at).
+  Si `checked_at` tiene mas de 24h, declara la caducidad en vez de asumir
+  que el backend sigue vivo.
 
 ## Vocabulario canónico (no usar "workspace" a secas)
 
@@ -662,11 +1150,23 @@ python scripts/memory_context.py --status
 | `workspace_activo` | Raíz operativa con `.agent/` desde la que corre el ticket actual |
 | `entorno_multi_root` | IDE con `repo_motor` + `repo_destino` abiertos simultáneamente |
 
-Regla de repos: toda operación git de tooling corre en `repo_motor`. El estado operativo (tickets, memoria de proyecto) vive en `repo_destino`. En dogfooding del motor bajo la topología worktree-dev (WOT-2026-019m), el `repo_motor` operativo donde se commitea/pushea es la **worktree de desarrollo** (la que lleva `main`; su nombre se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json` / `runtime/motor_link.py`, NUNCA con un nombre de directorio fijo; en la instalación del motor esa worktree es, a modo de ejemplo, un checkout hermano con sufijo `_dev` — ver "Resumen breve del sistema" y `QUICKSTART.md` "0d"); el **checkout principal** (el que lleva el nombre canónico del repo) queda DETACHED en `origin/main` como fuente estable de solo-consumo, no se ejecutan operaciones git de tickets allí.
+**Regla de repos:** toda operacion git del tooling corre con `cwd=repo_motor`; el
+estado operativo (tickets, memoria del proyecto) vive en `repo_destino`.
+
+**Regla canonica unica de worktree-dev (WOT-2026-019m):** en dogfooding del motor,
+el `repo_motor` operativo donde se commitea/pushea es la **worktree de
+desarrollo** (la que lleva `main`; su ruta se resuelve de forma PORTABLE via
+`AGENT_PROJECT_ROOT` o `motor_destination_link.json` / `runtime/motor_link.py`,
+NUNCA con un nombre de directorio fijo; a modo de ejemplo es el checkout hermano
+con sufijo `_dev`). El **checkout principal** (el que lleva el nombre canonico
+del repo) queda DETACHED en `origin/main` como fuente estable de solo-consumo: no
+se ejecutan alli operaciones git de tickets. Esta es la DEFINICION UNICA de la
+topologia; "Resumen breve del sistema" y "Modo ORQUESTADOR (paso 0)" la
+referencian sin redefinirla. Ver `QUICKSTART.md` "0d".
 
 ## Resumen breve del sistema
 
-- **Runtime activo:** `repo_motor` portable. Topologia worktree-dev (WOT-2026-019m): el motor se EVOLUCIONA en la **worktree de desarrollo** (lleva `main`, cwd de desarrollo; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`, no por un nombre fijo — en la instalacion del motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`); el **checkout principal** (nombre canonico del repo) queda DETACHED en `origin/main` como fuente estable que consumen los destinos via `motor_destination_link.json`. Ver `QUICKSTART.md` seccion "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
+- **Runtime activo:** `repo_motor` portable. La topologia worktree-dev (WOT-2026-019m) y la distincion worktree de desarrollo vs checkout principal se definen UNA vez en la **regla canonica de worktree-dev** (seccion "Vocabulario canónico", arriba). Especifico de este resumen: los destinos consumen el checkout principal via `motor_destination_link.json`; ver `QUICKSTART.md` "0d. Motor dev worktree" y `scripts/setup_dev_worktree.ps1`.
 - **Roles:** Manager (OpenCode via `scripts/manager_review_bridge.py`, modelo configurable en `.agent/config/agents.json`) y Builder (OpenCode, modelo `opencode-go/deepseek-v4-flash`).
 - **Bus canonico:** `.agent/runtime/events/events.jsonl` (append-only, autoridad absoluta).
 - **Proyecciones:** `TURN.md`, `STATE.md`, `work_plan.md`, `execution_log.md` se derivan del bus.
@@ -694,6 +1194,24 @@ antes de `orchestrator_pipeline.md`. El pipeline de implantacion es autonomo
 cuando el contrato esta congelado; la fase de definicion requiere decisiones del
 usuario.
 
+## Enrutado rapido: veredicto o tarea (adoptado tras bucle de gobierno, 2026-10-08)
+
+Antes de abrir un contrato completo solo para decidir CUAL superficie usar (no
+para ejecutar contra ella), esta tabla resuelve la pregunta de 1 bit:
+
+| Si la sesion necesita... | Usa | Contrato completo (leer SOLO si hay duda real) |
+|---|---|---|
+| Un VEREDICTO corto sobre algo que ya existe (codigo, prompt, propuesta) | Bucle de ensemble, `scripts/ensemble_dispatch.py loop-round` | `prompts/ensemble_loop.md` |
+| Que un agente HAGA algo con filesystem (leer, escribir, implementar) | Invocacion directa de CLI (Kilo/Codex/OpenCode como AGENTE) | `prompts/builder_invocation_contract.md` |
+| Revision adversarial de una ESTRATEGIA/PLAN/PROMPT antes de que existan como tickets | Nucleo de gobierno | `prompts/manager_orchestrator_loop.md` |
+| Limpiar una SERIE de tickets YA EXISTENTE en el backlog | Bucle ligero sobre backlog | `prompts/manager_orchestrator_loop_backlog.md` |
+
+**Esta tabla es SOLO senal de enrutado, no exencion de lectura.** M4
+(`AGENTS.md`, "Prompt/contrato citado => LEELO ENTERO") sigue aplicando intacto
+cuando vayas a REDACTAR contra el contrato elegido o a EJECUTAR una accion
+basada en el. Si tras elegir la superficie queda cualquier duda sobre su
+contenido exacto, abre el contrato completo antes de proceder.
+
 ## Modo ORQUESTADOR de pipeline multi-ticket (paso 0)
 
 Si la sesion va a encadenar tickets del backlog con Manager y Builder como
@@ -713,18 +1231,15 @@ Paso 0 (antes de tocar nada):
    puede contener handoffs de otros proyectos/sesiones -> riesgo de arrancar
    con contexto equivocado). Lee tambien la memoria privada. Los SHA que
    citen estan DESFASADOS por definicion: manda el PREFLIGHT, no el handoff.
-2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m): arranca con cwd = la
-   **worktree de desarrollo** (la que lleva `main`, donde se evoluciona el
-   motor; su ruta se resuelve de forma PORTABLE via `AGENT_PROJECT_ROOT` o
-   `motor_destination_link.json`, no por un nombre fijo — en la instalacion del
-   motor es, a modo de ejemplo, el checkout hermano con sufijo `_dev`; usa su
-   `.venv\Scripts\python.exe`). Verifica que esa worktree existe y lleva `main`
-   (si no, crearla con `scripts/setup_dev_worktree.ps1`). En la worktree-dev:
-   HEAD == origin/main, arbol limpio, `--validate` en 0 errors / 0 warnings.
-   El checkout PRINCIPAL `orquestador_de_agentes` queda DETACHED en origin/main
-   (fuente estable de los destinos), NO se trabajan tickets alli. Reporta el
-   estado real ANTES de elegir ticket. Ver `QUICKSTART.md` "0d". Ademas de
-   este chequeo en prosa, ejecuta la version programatica del guard
+2. PREFLIGHT (topologia worktree-dev, WOT-2026-019m; definicion UNA vez en la
+   **regla canonica de worktree-dev**, "Vocabulario canónico"): arranca con cwd =
+   la worktree de desarrollo y usa su `.venv\Scripts\python.exe`. Verifica que esa
+   worktree existe y lleva `main`; si no, crearla con
+   `scripts/setup_dev_worktree.ps1`. En ella: HEAD == origin/main, arbol limpio,
+   `--validate` en 0 errors. El checkout PRINCIPAL queda DETACHED en
+   origin/main (fuente estable); NO se trabajan tickets alli. Reporta el estado
+   real ANTES de elegir ticket (ver `QUICKSTART.md` "0d"). Ademas de este chequeo
+   en prosa, ejecuta la version programatica del guard
    (WOT-2026-021g) para el ticket WOT activo:
    ```powershell
    # <repo_motor> y <workspace_activo> se resuelven de forma PORTABLE (AGENT_PROJECT_ROOT
@@ -752,12 +1267,13 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 - Antes de cualquier push: re-lee `last-run.json` FRESCO (status=finished,
   tested_commit_sha == HEAD) y confirma 0 procesos python vivos (existen
   suites fantasma en vuelo con el interprete del PATH). El conteo
-  "NNNN passed" vive en `last-run.log`, no en el `.json`.
+  "NNNN passed" vive en AMBOS: `last-run.json` trae la clave `passed` (mas
+  parseable) y `last-run.log` la linea final de pytest.
 - El churn de cierre (archivado de PLAN/AUDIT + proyecciones a COMPLETED)
   desalinea el stamp ~2 veces por ticket: re-suite sobre el HEAD final antes
   del mini-audit.
 - Mini-audit de 7 checks por ticket antes de saltar al siguiente: STATE
-  COMPLETED, arbol limpio, autores noreply, validate 0/0, stamp fresco
+  COMPLETED, arbol limpio, autores noreply, validate 0 errors, stamp fresco
   sha==HEAD, diff dentro de scope, 0 PII nueva en diff/mensajes.
 - Barrera CI-only (flaky de runner, workflow): cerrar local con el mecanismo
   mutation-verified + estado CLOSED_PENDING_CI; el criterio de cierre real es
@@ -775,15 +1291,56 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 
 ## Reflejos CEM v0
 
+**Fallback ante duda de diseno sin contrato que la resuelva:**
+`<MOTOR_ROOT>/CONSTITUTION.md` (carga ON-DEMAND; leelo ENTERO): jerarquia de
+6 niveles + 15 tenets. Fuente unica (T5); los reflejos de abajo son un
+subconjunto operativo, no su sustituto.
+
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
 - **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
+- **Exit code REAL, nunca el de la tuberia:** `$?` tras `cmd | tail` (o
+  cualquier pipe) lee el rc del consumidor, no del productor -- un comando que
+  falla se disfraza de exit 0 ("autoengano-por-pipe", 2026-07-11/12). Para
+  esquilar la salida Y reportar el rc real, usa
+  `python <MOTOR_ROOT>/scripts/tools/run_and_exit.py --tail 20 -- <cmd> [args...]`
+  (imprime las ultimas lineas, luego `[run-and-exit] exit_code: <n>`, y sale con
+  ese codigo). NO encantes `$?` a mano tras un pipe (WOT-2026-058e; wrapper de
+  WOT-2026-022p).
+- **Refutacion previa ante anomalia (norma epistemologica, no memoria):** ante un
+  dato que no encaja, NO empieza arreglando. Antes de tocar tooling/schema/gate/
+  hook/CI/migracion/parser/formato global: (1) CENSA si es excepcion o patron y
+  registra como ARTEFACTO DURABLE el comando, el conteo Y el UNIVERSO censado
+  (un conteo sin universo es evidencia falsificable; declara cada poblacion por
+  separado); (2) formula la HIPOTESIS CONTRARIA y respondela con el censo;
+  (3) decide por ASIMETRIA DE COSTE (excepcion minoritaria -> adapta el DATO
+  local; patron mayoritario -> rediseña el FORMATO). Censo AMBIGUO -> gana lo
+  barato (adapta el dato o aplaza); censo NO ejecutable -> se APLAZA. Toca el
+  mecanismo solo con patron mayoritario o mandato contractual externo.
+  "Superficie gobernante" = afecta a >=2 consumidores o exige re-test de otros
+  modulos. Orden: comparar -> refutar -> decidir blast radius -> construir.
+  (Origen: fallo real 2026-07-18 -- se propuso ampliar un validador para admitir 3
+  IDs con sufijo sin censar que eran la excepcion; un solo grep lo habria
+  refutado. Seguimiento: WOT-2026-035a, DISENO_PRIMERO.)
 - **Rigor proporcional:** ajusta gates y pruebas al blast radius y reversibilidad del cambio.
 - **Root/topologia antes de relaunch:** valida `AGENT_PROJECT_ROOT`, `repo_motor`, `repo_destino`, bus legible y ticket activo antes de abrir Builder.
+
+**`git commit` aborta con `mixed line ending ... Failed`:** no es un fallo tuyo ni del repo, es el
+flujo -- el hook ARREGLA el fichero y deja el commit SIN hacer. Re-`git add` y repite (verificando
+antes que tus cambios sobrevivieron: el arreglo reescribe el fichero). La causa es MEZCLAR vias de
+escritura en un mismo fichero: `Write`/`Edit` dejan **CRLF** en Windows y `cat >> <<'EOF'`/`printf`
+dejan **LF**. Elige UNA via por fichero -- ampliar con heredoc un fichero creado con `Write` es el
+caso que mas muerde. Detalle, medicion y las dos creencias falsas que conviene no heredar:
+[AGENTS.md](AGENTS.md), "No MEZCLES vias de escritura en el mismo fichero".
 
 **Manager devuelve `inspect` / CHANGES fantasma:** la causa raiz se corrigio en WP-2026-120 (el parser JSON del bridge leia un schema inexistente). Ya NO es comportamiento esperado: si reaparece un `changes` con `attempt-N.md` de BLOCKERS vacios, es una regresion del parser en `bus/review_bridge.py` — investigarla, no normalizarla. Cierre manual canonico si hace falta: `python .agent/agent_controller.py --manager-approve --ticket WOT-XXXX --force`.
 
 ## Reglas no negociables
 
+- **Seguridad (no negociable, ni por scope ni por CEM):** nunca leas ni escribas
+  `privada/` ni ficheros `.env`; nunca hardcodees tokens, passwords ni rutas
+  sensibles (variables de entorno, y `***REDACTED***` en logs); nunca desactives
+  `guard_paths` ni relajes un hook para avanzar -- si bloquea, DETENTE y
+  reporta; nunca anadas dependencias sin aprobacion explicita.
 - **Verifica antes de actuar.** No confies en reportes de Builder o agentes externos: `git status`, `tail events.jsonl`, `--validate`. El patron de fabricacion esta documentado en [AGENTS.md](AGENTS.md).
 - **No mezcles chat y terminal** sin sincronizar TURN/STATE/execution_log.
 - **`.codex/` y `*.log` estan gitignorados** (rollouts con prompts sensibles). No los toques.
@@ -792,13 +1349,6 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 - **No abras WP nuevos sin instruccion explicita del usuario.**
 - **Gate de loop-readiness (WOT-2026-014s):** antes de activar /goal autonomo para cualquier ticket, aplicar `prompts/_shared/loop_readiness.md` (cid-loop-readiness-v0). Si NO_LOOPEABLE, no activar /goal y registrar la causa.
 - **Goal-checker aislado (WOT-2026-014t):** para /goal multi-ticket o con push, verificar cumplimiento con `prompts/audit_goal_completion.md` (cid-audit-goal-completion-v0); checker en fresh-context/modelo distinto, read-only, solo evidencia dura.
-
-## Comportamiento esperado
-
-- Responde **breve**, optimizando tokens. Sin emojis salvo que el usuario los use.
-- Antes de cambios destructivos (git push, edits a `.agent/`, ejecucion de cascade), confirma con el usuario.
-- Si el usuario pide algo que el codigo ya hace, **revisa el codigo primero** antes de proponer nada nuevo.
-- Si vas a tocar la rama Codex/Kilo del launcher: para. Eso es scope-creep y no entra sin un WP nuevo.
 
 Cuando termines la lectura, di "Sistema internalizado" y enumera en 5 lineas maximo: ultimo ticket cerrado, archivos clave que leiste, drift detectado (si hay), siguiente accion recomendada.
 ```
@@ -846,11 +1396,12 @@ No lo conviertas en sustituto de `PROJECT.md` o `CHANGELOG.md`: este bootstrap a
 ---
 name: local-audit
 version: 2.0.0
-description: Genera un snapshot rapido y estructurado del estado actual del repositorio, util para arranque de sesion y antes de comparaciones con otros repositorios.
+description: Genera un snapshot rapido y estructurado del estado del repositorio (version, estado del agente, salud, skills) con scripts/local_audit.py. Usar cuando arranca una sesion o antes de comparar con otro repositorio. No usar para auditar la salud del sistema tras un cambio (ver system-health-audit) ni para auditar codigo (ver code-audit).
 triggers: [/local-audit, /repo-audit, /snapshot]
 author: agent
 role: auditor
 stage: support
+cycle_phase: [F0-arranque-sesion]
 writes_memory: false
 quality_gate: false
 tags: [core, system]
@@ -900,11 +1451,12 @@ Si el reporte indica que hay `Errors` o `Warnings` en la sección "Health Check"
 ---
 name: repo-compare
 version: 2.1.0
-description: Comparar proyecto local con repositorio GitHub para detectar funcionalidades de alto valor
+description: Compara el proyecto local con un repositorio de GitHub para detectar funcionalidades portables de alto valor, partiendo de AUDIT.md como contexto local. Usar cuando recibes una URL de GitHub y quieres saber que merece adoptarse. No usar para evaluar el propio repo (ver local-audit) ni sin un repo concreto que comparar.
 triggers: [/repo-compare, /compare, /gh-compare]
 author: agent
 role: shared
 stage: support
+cycle_phase: [F1-backlog]
 writes_memory: false
 quality_gate: false
 tags: [core, system]
