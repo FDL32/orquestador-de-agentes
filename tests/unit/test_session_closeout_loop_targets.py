@@ -2455,6 +2455,20 @@ def test_merge_commit_without_paths_still_delivers(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
+    # Explicit main branch creation for portability: bare clone on CI (Linux)
+    # leaves an unborn HEAD or defaults to `master`; without this, `git push
+    # -u origin main` and `git checkout main` fail (WOT-2026-090w-r3).
+    # Create main ref in the bare repo so the clone picks it up.
+    subprocess.run(
+        ["git", "symbolic-ref", "HEAD", "refs/heads/main"],
+        cwd=bare,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-b", "main"],
+        cwd=repo,
+        capture_output=True,
+    )
     subprocess.run(
         ["git", "config", "user.email", "t@e.com"],
         cwd=repo,
