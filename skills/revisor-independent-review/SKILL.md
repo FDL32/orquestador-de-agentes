@@ -3,6 +3,8 @@ name: revisor-independent-review
 version: 1.0.0
 description: "Revision adversarial independiente del trabajo del Builder. Usar para la Capa 1.5 (Persona-2): el Revisor revisa con su propio modelo, nunca el mismo que el Builder. Triggers: /revisor-review, /verify."
 triggers: [/revisor-review, /verify]
+source_prompt: prompts/revisor_independent_review.md
+contract_id: cid-revisor-review-v1
 author: agent
 role: revisor
 stage: review

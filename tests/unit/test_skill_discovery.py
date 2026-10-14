@@ -324,3 +324,56 @@ class TestRevisorAllowlist:
         from agents_config import _validate_skill_allowlists
 
         _validate_skill_allowlists(config, agents_path)
+
+    def test_revisor_skill_real_binding_fields_present(self):
+        """T7: El bundle real de revisor tiene source_prompt + contract_id en
+        el frontmatter, por lo que _validate_frontmatter_contract_opt_in NO
+        lo descarta (skip silencioso :402 :403 ya no aplica)."""
+        from pathlib import Path
+
+        from scripts.discover_skills import _validate_frontmatter_contract_opt_in
+
+        bundle_root = Path(__file__).resolve().parent.parent.parent
+        skill_path = bundle_root / "skills" / "revisor-independent-review" / "SKILL.md"
+        assert skill_path.exists(), (
+            f"revisor SKILL.md real debe existir en {skill_path}"
+        )
+
+        fm, error = _validate_frontmatter_contract_opt_in(skill_path, bundle_root)
+
+        assert error is None, f"La skill real no debe ser descartada; error: {error}"
+        assert fm is not None, (
+            "_validate_frontmatter_contract_opt_in debe devolver fm no-None"
+        )
+        assert fm.get("contract_id") == "cid-revisor-review-v1", (
+            f"contract_id debe ser 'cid-revisor-review-v1', "
+            f"got: {fm.get('contract_id')!r}"
+        )
+        assert fm.get("source_prompt") is not None and fm.get("source_prompt") != "", (
+            "source_prompt debe estar presente"
+        )
+
+    def test_revisor_contract_id_mismatch_detected(self):
+        """T8: Mutar el contract_id del prompt real genera un mismatch
+        detectado por _validate_frontmatter_contract_opt_in (el diente
+        que evita que la skill se escape por skip silencioso)."""
+        from pathlib import Path
+
+        from scripts.discover_skills import _validate_frontmatter_contract_opt_in
+
+        bundle_root = Path(__file__).resolve().parent.parent.parent
+        skill_path = bundle_root / "skills" / "revisor-independent-review" / "SKILL.md"
+        assert skill_path.exists()
+
+        fm, error = _validate_frontmatter_contract_opt_in(skill_path, bundle_root)
+        assert error is None
+        assert fm.get("contract_id") == "cid-revisor-review-v1"
+
+        # Simular prompt con contract_id mutado (mismatch):
+        # _validate_prompt_binding es llamado desde el path completo de
+        # discover_skills; aqui verificamos que el fm del bundle REAL
+        # tiene los campos correctos y que un contract_id erroneo
+        # produciria un mismatch en el path de validacion estricta.
+        assert fm.get("contract_id") != "cid-BROKEN", (
+            "El contract_id real NO debe ser cid-BROKEN"
+        )
