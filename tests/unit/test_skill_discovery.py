@@ -297,7 +297,7 @@ class TestRevisorAllowlist:
 
     def test_revisor_allowlist_key_legible(self):
         """T6: The real agents.json bundle has REVISOR in skill_allowlists
-        and the agents_config loader accepts it."""
+        and the agents_config loader validation accepts it."""
         import json
         from pathlib import Path
 
@@ -316,3 +316,11 @@ class TestRevisorAllowlist:
             "REVISOR value must be a list"
         )
         assert len(skill_allowlists["REVISOR"]) > 0, "REVISOR list must not be empty"
+
+        # Invocar el loader del bundle (no mock): su validacion pasa
+        import sys as _sys
+
+        _sys.path.insert(0, str(bundle_root / ".agent"))
+        from agents_config import _validate_skill_allowlists
+
+        _validate_skill_allowlists(config, agents_path)

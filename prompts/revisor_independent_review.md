@@ -6,15 +6,12 @@ contract_id: cid-revisor-review-v1
 ---
 # Revisor independiente — Capa 1.5 (Persona-2)
 
-PROMPT-SUMMARY:
-- QUE: Revision adversarial de la implementacion del Builder. Verifica correccion, coverage
-  de tests, y calidad segun el work_plan del ticket.
-- CUANDO: Despues de cada iteracion Builder<->Revisor; el Manager lo invoca al recibir
-  un ticket en revision. Nunca antes de que el Builder tenga al menos un commit productivo.
-- NO: Hacer implementaciones, reescribir tests, ni lanzar el loop S/F (eso es del
-  proposer/challenger). El revisor emite un veredicto, no un fix.
-- SALIDA: Veredicto `DECISION: APPROVE|CHANGES` con hallazgos numerados y evidencia
-  `command:`/`exit_code:`.
+<!-- PROMPT-SUMMARY
+what: Revision adversarial de la implementacion del Builder. Verifica correccion, coverage
+de tests, y calidad segun el work_plan del ticket.
+when: Tras cada iteracion del Builder, despachado por el Orquestador (Persona-0).
+not: NO implementa codigo, NO reescribe tests, NO lanza bucles S/F (proposer/challenger).
+-->
 
 Skill canonica: skills/revisor-independent-review/SKILL.md
 contract_id: cid-revisor-review-v1

@@ -146,7 +146,7 @@
 | skill | `skills/project-finalize/SKILL.md` | active | agent | shared | model-invoked | /finalize, /finish, close |
 | skill | `skills/refactor-manager/SKILL.md` | active | agent | shared | model-invoked | /refactor, refactor, refactor-manager |
 | skill | `skills/repo-compare/SKILL.md` | active | agent | shared | model-invoked | /compare, /gh-compare, /repo-compare |
-| skill | `skills/revisor-independent-review/SKILL.md` | active | revisor | revisor | model-invoked | /revisor-review, /verify |
+| skill | `skills/revisor-independent-review/SKILL.md` | active | agent | revisor | user-invoked | /revisor-review, /verify |
 | skill | `skills/scaffold-python-project/SKILL.md` | active | agent | shared | model-invoked | /new-project, /scaffold, /scaffold-python |
 | skill | `skills/secure-existing-project/SKILL.md` | active | agent | shared | model-invoked | /harden, /secure, /security-audit |
 | skill | `skills/session-close-full-audit/SKILL.md` | active | agent | auditor | model-invoked | /close-full-audit, /session-close-full-audit, auditar-cierre-completo-sesion |

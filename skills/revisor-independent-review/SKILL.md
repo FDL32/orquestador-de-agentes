@@ -1,10 +1,14 @@
 ---
 name: revisor-independent-review
-role: revisor
-source_prompt: prompts/revisor_independent_review.md
-contract_id: cid-revisor-review-v1
-disable_model_invocation: true
+version: 1.0.0
+description: "Revision adversarial independiente del trabajo del Builder. Usar para la Capa 1.5 (Persona-2): el Revisor revisa con su propio modelo, nunca el mismo que el Builder. Triggers: /revisor-review, /verify."
 triggers: [/revisor-review, /verify]
+author: agent
+role: revisor
+stage: review
+writes_memory: false
+quality_gate: false
+disable-model-invocation: true
 ---
 
 # revisor-independent-review
@@ -20,12 +24,6 @@ del Builder con su propio backend/modelo, nunca el mismo que el Builder.
 - Para implementacion de codigo (ese es el Builder).
 - Para revision de gobierno/ensemble con propuesta de cambios estructurales (proposer/challenger).
 - Para validacion automatica de tests (eso corre la suite canonica, no el Revisor).
-
-## Contrato
-
-Este prompt se midia contra `prompts/revisor_independent_review.md`: role revisor,
-route_kind entry, cycle_phase F6-revision, contract_id cid-revisor-review-v1, con
-PROMPT-SUMMARY y ancla inversa. El binding es ENFORCED (opt-in revisor activo).
 
 ## Fuente normativa
 
