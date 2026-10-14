@@ -15,6 +15,9 @@ During:
 After:
     - Closed tickets are moved to .agent/runtime/events/archive/events.<id>.jsonl.
     - The active bus keeps only non-terminal tickets.
+    - WOT-2026-074x: a legitimate rotation DECLARES its own shrinkage through
+      the state-integrity guard (scripts/check_state_integrity.py), so the
+      monotonicity guard never reads it as an undeclared loss.
     - The script exits non-zero only on operational failure.
 
 WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
@@ -74,6 +77,42 @@ def _archive_ticket(event_bus: EventBus, ticket_id: str, dry_run: bool) -> dict:
     return event_bus.archive_ticket_events(ticket_id)
 
 
+def _declare_rotation(ticket_ids: list[str]) -> list[str]:
+    """Declare the legitimate shrinkage of the live bus after archiving.
+
+    WOT-2026-074x: the monotonicity guard fails on an undeclared live drop;
+    rotations MUST declare their own shrinkage (the ticket's declared
+    trade-off). The declaration records before/after in the anchor
+    (.agent/runtime/state_integrity.json) for audit.
+
+    Before: the archiving already happened (not a dry-run) and ticket_ids is
+        non-empty.
+    During: imports the guard (static import -> wiring counts it) and runs it
+        in update mode against the project root.
+    After: returns [] on success/skip; returns the failure findings when the
+        declaration could not be recorded (the caller exits non-zero).
+    """
+    try:
+        from scripts.check_state_integrity import run_check as _integrity_check
+    except ImportError:
+        try:
+            from check_state_integrity import (  # type: ignore[no-redef]
+                run_check as _integrity_check,
+            )
+        except ImportError:
+            return ["no se pudo importar scripts/check_state_integrity.py"]
+
+    report = _integrity_check(
+        _PROJECT_ROOT,
+        update=True,
+        reason="archive_event_bus: archived tickets " + ", ".join(ticket_ids),
+        source="archive_event_bus",
+    )
+    if report["verdict"] == "fail":
+        return list(report["findings"]) or ["declaration failed"]
+    return []
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Archive terminal tickets from the canonical event bus."
@@ -109,6 +148,19 @@ def main(argv: list[str] | None = None) -> int:
     results = [
         _archive_ticket(event_bus, ticket_id, args.dry_run) for ticket_id in ticket_ids
     ]
+    if not args.dry_run and any(result.get("archived_count") for result in results):
+        declaration_findings = _declare_rotation(ticket_ids)
+        if declaration_findings:
+            print(
+                json.dumps(
+                    {
+                        "status": "declaration_failed",
+                        "detail": declaration_findings,
+                    },
+                    indent=2,
+                )
+            )
+            return 1
     print(json.dumps({"status": "ok", "results": results}, indent=2))
     return 0
 

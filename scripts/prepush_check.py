@@ -2972,6 +2972,159 @@ def run_closeout_reconciliation_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_state_integrity_check(project_root: Path) -> CheckResult:
+    """WOT-2026-074x: the bus (live+archive union) and the .agent/collaboration/
+    census must not shrink or disappear without a DECLARATION.
+
+    The ticket's hermetic receipt: with the bus full (169 events) and with the
+    bus emptied, ``--validate --json`` returns the SAME output -- losing the
+    whole bus is indistinguishable from a healthy state. This check persists an
+    anchor (``.agent/runtime/state_integrity.json``) and fails on an undeclared
+    drop (union decrease, live below its high-water mark, collaboration census
+    decrease, missing live surfaces, backlog_done losing lines).
+
+    BLOCKING by design, with a declared escape: legitimate rotations
+    (``scripts/archive_event_bus.py``, notifications/execution_log/review_queue
+    rotations land in excluded paths and never trip the census) must declare
+    their own shrinkage with ``python scripts/check_state_integrity.py
+    --update --reason "<why>"``; the guard's own docstring lists the declared
+    exclusions. No historical debt: the first run only creates a baseline, so
+    a block can only come from a shrink the close being pushed observed.
+
+    Before: ``project_root`` is the destino/motor whose collaboration and bus
+        this close is about to publish.
+    During: imports the guard (static import -> check_guard_wiring counts it
+        WIRED) and runs it in check mode (read-only on the guarded surfaces;
+        the anchor is updated upward on non-shrink).
+    After: ``passed`` False (blocking) listing every undeclared shrink; a named
+        SKIP when the root has no operational state at all (fresh context).
+    """
+    name = "State Integrity (WOT-2026-074x)"
+    try:
+        from scripts.check_state_integrity import run_check as _integrity_run_check
+    except ImportError:
+        from check_state_integrity import (  # type: ignore[no-redef]
+            run_check as _integrity_run_check,
+        )
+
+    try:
+        report = _integrity_run_check(project_root)
+    except Exception as exc:  # fail-closed: a crashed guard is a finding
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"state-integrity guard crashed: {exc!r}",
+            is_blocking=True,
+        )
+
+    verdict = report["verdict"]
+    if verdict == "skip":
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: {report.get('skip_reason', 'sin estado operativo')}",
+            skipped=True,
+        )
+    if verdict == "fail":
+        findings = "; ".join(report["findings"])
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"mengua/desaparicion NO declarada: {findings}. Si es una "
+                "rotacion legitima, declarala con: python "
+                'scripts/check_state_integrity.py --update --reason "<motivo>"'
+            ),
+            is_blocking=True,
+        )
+    bus = report["current"]["bus"]
+    collab = report["current"]["collab"]
+    baseline_note = " (baseline creado)" if verdict == "baseline" else ""
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=(
+            f"bus union={bus['union_lines']} live={bus['live_lines']} | "
+            f"collab files={collab['file_count']} | "
+            f"backlog_done={collab['backlog_done_lines']}{baseline_note}"
+        ),
+    )
+
+
+def run_audit_skips_check(project_root: Path) -> CheckResult:
+    """WOT-2026-074x (DoD b): every canonical-suite SKIP must carry its motive
+    in the seal set and be DECLARED for the close.
+
+    G2 origin: with its audited surface missing, an audit test SKIPPED silently
+    ("4 passed, 2 skipped") -- indistinguishable from an audit that inspected
+    nothing. The seal now records the motive (``-rs`` in ``pytest.ini`` addopts
+    feeds the skipped-summary into ``last-run.log``) and this check enforces
+    the closeout obligation: skip count > 0 requires a
+    ``skip-declarations.json`` for THAT sealed run classifying every skip
+    (platform|surface-missing|other), with ``notes`` when a surface-missing
+    skip exists.
+
+    BLOCKING by design: unlike ``run_closeout_reconciliation_check`` there is
+    no historical debt to amnesty -- a motive-less skip can only come from the
+    run being closed. A missing seal is a named SKIP (fresh clone / no suite
+    yet). NON-GOAL kept: ``pytest.skip`` itself is legitimate; only the
+    unreported motive is the defect.
+
+    Before: ``project_root`` holds ``.agent/runtime/pytest-safe/`` (maybe).
+    During: imports the guard (static import -> WIRED) and runs it in check
+        mode; the guard also rewrites the derived ``skip-report.json`` annex.
+    After: ``passed`` False (blocking) naming the missing/undocumented skips;
+        True otherwise.
+    """
+    name = "Audit Skip Motives (WOT-2026-074x)"
+    try:
+        from scripts.check_audit_skips import run_check as _audit_skips_run_check
+    except ImportError:
+        from check_audit_skips import (  # type: ignore[no-redef]
+            run_check as _audit_skips_run_check,
+        )
+
+    try:
+        report = _audit_skips_run_check(project_root)
+    except Exception as exc:  # fail-closed: a crashed guard is a finding
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"audit-skips guard crashed: {exc!r}",
+            is_blocking=True,
+        )
+
+    verdict = report["verdict"]
+    if verdict == "skip":
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"SKIP: {report.get('skip_reason', 'sin sello')}",
+            skipped=True,
+        )
+    if verdict == "fail":
+        findings = "; ".join(report["findings"])
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{findings}. Declara los skips del run sellado en "
+                ".agent/runtime/pytest-safe/skip-declarations.json (clases: "
+                "platform|surface-missing|other)"
+            ),
+            is_blocking=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=(
+            f"skips del sello={report['seal_skipped']} "
+            f"(lotes del log={len(report['entries'])}); "
+            f"declaracion={'presente' if report['declaration_present'] else 'no requerida'}"
+        ),
+    )
+
+
 def run_landed_evidence_shape_check(project_root: Path) -> CheckResult:
     """Fail a close whose archived row carries commit evidence the guard cannot read.
 
@@ -4111,6 +4264,23 @@ def run_preflight_check(
         # complementaria: una fila viva `pending` cuyo commit de cierre YA landeo es
         # un candidato a reconciliar, nunca se archiva sola; JAMAS bloquea el push).
         results.append(run_backlog_live_landed_check(project_root))
+        # 6e-quater. State Integrity (WOT-2026-074x; BLOQUEANTE con escape
+        # declarado). El recibo hermetico del ticket: con el bus lleno y con el
+        # bus VACIADO, `--validate` devuelve lo mismo. Este check persiste un
+        # ancla y falla ante mengua/desaparicion NO declarada; las rotaciones
+        # legitimas declaran su mengua via `check_state_integrity.py --update
+        # --reason`. Import ESTATICO en el run_ -> check_guard_wiring lo cuenta
+        # WIRED (patron canonico del modulo). Posicion: DESPUES del par
+        # shape->live-landed porque D4 de 078b exige adyacencia estricta entre
+        # ambos (test_078b_d4_check_is_wired_immediately_after_landed_evidence_shape).
+        results.append(run_state_integrity_check(project_root))
+        # 6e-quinquies. Audit Skip Motives (WOT-2026-074x DoD b; BLOQUEANTE).
+        # Un skip sin motivo registrado es el falso verde G2 (auditoria que no
+        # inspecciono nada, indistinguible de una verde). El sello registra el
+        # motivo con `-rs` en pytest.ini; el cierre OBLIGA a declararlos
+        # (skip-declarations.json del run sellado). Import ESTATICO en el run_
+        # -> check_guard_wiring lo cuenta WIRED.
+        results.append(run_audit_skips_check(project_root))
         # 6f. Motor<->Destino Integration (WOT-2026-024w; WARN default, FAIL opt-in)
         results.append(run_motor_destination_integration_check(project_root))
         # 6g. Contract Formation Check (WOT-2026-023m(c); bloqueante en cierre)

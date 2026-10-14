@@ -68,6 +68,19 @@ _EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 EXPECTED_WIRED_REAL = {
     "check_agent_write_enforced",  # WOT-2026-048h: cableado via import estatico en prepush_check.py::run_agent_write_enforced_check (closeout, WARN -- nace WARN porque la deuda claude/codex sin readonly_agent es PREEXISTENTE)
     "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
+    # WOT-2026-074x (DoD a): cableado via import ESTATICO en
+    # prepush_check.py::run_state_integrity_check (closeout, BLOQUEANTE con
+    # escape declarado -- ancla persistida .agent/runtime/state_integrity.json;
+    # las rotaciones legitimas declaran su mengua via --update --reason).
+    # Revision anti-falso-WIRED: el guard corre sobre fixture real y su
+    # truncacion sin declarar muerde (mutation-verify A/B del ticket).
+    "check_state_integrity",
+    # WOT-2026-074x (DoD b): cableado via import ESTATICO en
+    # prepush_check.py::run_audit_skips_check (closeout, BLOQUEANTE -- el
+    # motivo de cada skip del sello (-rs -> last-run.log) y su declaracion
+    # skip-declarations.json del run sellado; sin declaracion = FAIL).
+    # Revision anti-falso-WIRED: fixture real muerde (mutation-verify C).
+    "check_audit_skips",
     "check_backlog_commits_landed",  # WOT-2026-024q: cableado via import estatico en agent_controller.py::_ticket_landed_by_archived_commit (retirado de known_unwired)
     "check_backlog_contract",
     # WOT-2026-054m: cableado via import estatico en
