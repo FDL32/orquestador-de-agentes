@@ -388,7 +388,11 @@ def run_ruff_format_check(project_root: Path) -> CheckResult:
 
 
 def run_agent_controller_validate(project_root: Path) -> CheckResult:
-    """Ejecuta agent_controller --validate --json --force.
+    """Ejecuta agent_controller --validate --json --force --no-heal.
+
+    WOT-2026-024a: --no-heal stops --validate from healing bus drift into
+    the tracked STATE.md (same read-only guard used in
+    collect_system_health.py motor and destino --validate calls).
 
     Resuelve el controller via motor_link (topologia repo_motor + repo_destino).
     Si no hay motor link,
@@ -420,6 +424,9 @@ def run_agent_controller_validate(project_root: Path) -> CheckResult:
             "--validate",
             "--json",
             "--force",
+            # WOT-2026-024a: prepush_check is READ-ONLY; --no-heal prevents
+            # --validate from healing bus drift into the tracked STATE.md.
+            "--no-heal",
             "--project-root",
             str(project_root),
         ],
