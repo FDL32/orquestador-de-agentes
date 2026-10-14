@@ -131,12 +131,13 @@ def test_step_consumer_parses_real_producer_stdout() -> None:
     this test goes RED (status=WARN instead of SKIP).
     """
     import subprocess as _subprocess
+    import sys
     from pathlib import Path as _Path
 
     motor_root = _Path(__file__).resolve().parent.parent.parent
     proc = _subprocess.run(
         [
-            str(motor_root / ".venv" / "Scripts" / "python.exe"),
+            sys.executable,
             str(motor_root / "scripts" / "session_close_observations.py"),
             "--ticket",
             "WOT-2026-999a",
