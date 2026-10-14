@@ -465,6 +465,22 @@ Este comando:
 - Es idempotente: si `STATE.md` ya muestra `COMPLETED` sin `--force`, termina sin relanzar el cierre.
 - Sincroniza `STATE.md` a `COMPLETED` tras un cierre real, dejando el bus y las proyecciones listos para el siguiente ciclo.
 
+### Sellos largos: usa un checkout de prefijo corto
+
+Sintoma: fallos homogeneos `remote: error: unable to write file ... origin.git`
+en sandboxes `tests/sandbox/test_runtime/session_N/...` que queman 40-48 min sin
+senal previa.
+
+Causa: el MAX_PATH de Windows (260) se excede con prefijos de cwd largos. Medido:
+<= 53 chars verde (139/139), >= 94 chars rojo (13/13 y 132 failed). Los worktrees
+bajo `.kilo\worktrees\` (~90-95 chars) son zona de riesgo por defecto.
+
+Remedio: corre la suite/sello desde un checkout de prefijo corto tipo
+`C:\Users\fdl\AppData\Local\Temp\kilo\<id>` (36 chars).
+
+El runner AVISA: el preflight emite un WARN no bloqueante por stderr si el cwd
+excede 53 chars (no cambia exit codes, no bloquea).
+
 ## 7. Multi-Ticket Integration Smoke
 
 Para validar la seguridad multi-ticket y que tickets consecutivos no arrastran estado:

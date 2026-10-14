@@ -2786,6 +2786,45 @@ class TestEmitEnvPreflight:
         assert "WARN" not in captured.out
 
 
+class TestEmitCwdMaxpathWarn:
+    """WOT-2026-100h: cwd prefix MAX_PATH warning (non-blocking)."""
+
+    def test_warn_when_cwd_prefix_too_long(self, monkeypatch, capsys) -> None:
+        """When cwd_chars=95, WARN appears on stderr and stamp is NOT written."""
+        rps = load_runner_module()
+        monkeypatch.setattr(rps, "write_json", lambda *a, **k: None)
+        env = {"cwd_chars": 95}
+        rps._emit_env_preflight(env)
+        captured = capsys.readouterr()
+        assert "WARN" in captured.err
+        assert "95" in captured.err
+
+    def test_no_warn_when_cwd_prefix_at_threshold(self, monkeypatch, capsys) -> None:
+        """When cwd_chars=53 (exact green frontier), no WARN."""
+        rps = load_runner_module()
+        env = {"cwd_chars": 53}
+        rps._emit_env_preflight(env)
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.err
+
+    def test_warn_message_names_cause_and_remedy(self, monkeypatch, capsys) -> None:
+        """WARN message mentions MAX_PATH, cause, and remedy."""
+        rps = load_runner_module()
+        env = {"cwd_chars": 95}
+        rps._emit_env_preflight(env)
+        captured = capsys.readouterr()
+        assert "MAX_PATH" in captured.err
+        assert "prefijo corto" in captured.err
+
+    def test_no_crash_when_cwd_chars_missing(self, monkeypatch, capsys) -> None:
+        """When cwd_chars is missing, no crash and no WARN."""
+        rps = load_runner_module()
+        env: dict = {}
+        rps._emit_env_preflight(env)
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.err
+
+
 def _fake_run_cmd(
     cmd: list[str], timeout: float = 10.0
 ) -> subprocess.CompletedProcess[str] | None:
