@@ -2792,12 +2792,14 @@ class TestEmitCwdMaxpathWarn:
     def test_warn_when_cwd_prefix_too_long(self, monkeypatch, capsys) -> None:
         """When cwd_chars=95, WARN appears on stderr and stamp is NOT written."""
         rps = load_runner_module()
-        monkeypatch.setattr(rps, "write_json", lambda *a, **k: None)
+        calls: list = []
+        monkeypatch.setattr(rps, "write_json", lambda *a, **k: calls.append(a))
         env = {"cwd_chars": 95}
         rps._emit_env_preflight(env)
         captured = capsys.readouterr()
         assert "WARN" in captured.err
         assert "95" in captured.err
+        assert calls == []
 
     def test_no_warn_when_cwd_prefix_at_threshold(self, monkeypatch, capsys) -> None:
         """When cwd_chars=53 (exact green frontier), no WARN."""
