@@ -405,6 +405,19 @@ class TestCheckContract:
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
         assert _check_contract() == 0
 
+    def test_revisor_skill_skipped_not_failed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """role: revisor (no contract) is not in the opt-in -> skipped, not failed.
+        Guards the future Revisor instrument without adding it to CONTRACT_OPT_IN_ROLES."""
+        bundle = tmp_path / "motor"
+        (bundle / "skills" / "revisor-x").mkdir(parents=True)
+        (bundle / "skills" / "revisor-x" / "SKILL.md").write_text(
+            "---\nname: revisor-x\nrole: revisor\n---\n"
+        )
+        monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
+        assert _check_contract() == 0
+
     def test_orchestrator_contract_valid(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
