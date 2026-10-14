@@ -11,7 +11,7 @@ During (Proceso y Recursos):
       (1) delivery_hygiene_check.run_delivery_hygiene_check()
       (2) uv run ruff check .
       (3) uv run ruff format --check .
-      (4) agent_controller --validate --json --force
+      (4) agent_controller --validate --json --force --no-heal
       (5) git status --short
       (6) checks adicionales bloqueantes solo en closeout_mode (backlog contract,
           reconcile, handoff SHA, destination PII, closeout reconciliation,

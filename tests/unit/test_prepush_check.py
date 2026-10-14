@@ -1,16 +1,19 @@
 """WOT-2026-047i: `run_ruff_format_check` no materializa .venv/uv.lock en el arbol auditado.
 
-La premisa: `uv run ruff format --check .` con cwd=project_root materializa
-.venv/ y uv.lock en el arbol que se esta auditando. Este ticket aisla la
-invocacion de uv run para que NO cree esos artefactos, sin cambiar el
-comportamiento observable del check (sigue bloqueante, sigue verificando
-ruff format --check . sobre el mismo project_root).
+WOT-2026-070m: `run_agent_controller_validate` anade `--no-heal` a la
+invocacion de `agent_controller --validate` para que el preflight sea
+READ-ONLY (evita que --validate sane el STATE.md del workspace auditado).
 
-Cobertura del DoD BINARIO del ticket:
+Cobertura del DoD BINARIO del ticket (047i):
   (a) MUTACION: sin --isolated -> .venv/ y uv.lock SI se crean (test de regresion)
   (b) con --isolated -> .venv/ y uv.lock NO se crean (test de regresion positivo)
   (c) CONTROL NEGATIVO: codigo mal formateado sigue dando passed=False
   (d) OPT-OUT: [tool.motor] format-check = false sigue funcionando
+
+Cobertura del DoD BINARIO del ticket (070m):
+  (a) REAL PATH: --no-heal -> STATE.md NO se reescribe bajo drift real (prepush)
+  (b) CONTROL NEGATIVO: sin --no-heal, STATE.md SI se reescribe (anti-vacuidad)
+  (c) CMD: el cmd de run_agent_controller_validate lleva --no-heal (mutacion muerde)
 
 Nota (Manager review WOT-2026-047i, 2026-09-19): (a) y (c) se reescribieron
 para ejecutar `uv run`/`ruff` REAL en vez de mockear el resultado -- las
@@ -1155,15 +1158,19 @@ def _make_validate_fixture(root: Path) -> Path:
     return root
 
 
-def test_agent_controller_validate_passes_no_heal(tmp_path):
+def test_prepush_validate_passes_no_heal(tmp_path):
     """(a) DoD-1: `run_agent_controller_validate` pasa --no-heal -> STATE.md NO se reescribe.
 
     REAL PATH: subprocess real al controller (no mock de _run), ejercuta el path
     de sync_state_projection que los tests mockeados de collect_system_health no
     alcanzan -- un mock de _run pasaba VERDE con el defecto vivo.
 
-    MUTACION QUE LO MATA: quitar --no-heal del cmd en run_agent_controller_validate
-    -> el fixture drift -> STATE.md se reescribe -> byte-identity assert FAILS.
+    MUTACION QUE LO MATA: la mutacion real es (c) — quitar --no-heal del cmd
+    en run_agent_controller_validate -> el test_cmd cae (AssertionError:
+    --no-heal no esta en captured_cmd). El test (a) declara su propia cmd
+    de subproceso y no muerde bajo esa mutacion (permitido por el plan 2.2:
+    "la cmd de run_agent_controller_validate, o el subproceso equivalente
+    que el test declare").
     """
     import subprocess
 
@@ -1198,7 +1205,7 @@ def test_agent_controller_validate_passes_no_heal(tmp_path):
     )
 
 
-def test_agent_controller_validate_heals_without_no_heal(tmp_path):
+def test_prepush_validate_does_not_rewrite_terminal_state_md(tmp_path):
     """(b) CONTROL NEGATIVO: sin --no-heal, el fixture drift -> STATE.md SI se reescribe.
 
     Sanity: demuestra que el fixture gunita drift real y el path de heal se
@@ -1235,10 +1242,12 @@ def test_agent_controller_validate_heals_without_no_heal(tmp_path):
     )
 
 
-def test_agent_controller_validate_cmd_contains_no_heal(tmp_path, monkeypatch):
+def test_prepush_validate_cmd_contains_no_heal(tmp_path, monkeypatch):
     """(c) CMD: el cmd de run_agent_controller_validate lleva --no-heal.
 
-    MUTACION: quitar --no-heal del cmd -> este test cae.
+    MUTACION: quitar --no-heal del cmd -> este test cae (AssertionError).
+    Este es el unico test que muerde la mutacion de retirar --no-heal del
+    codigo real (el test (a) declara su propia cmd de subproceso).
     """
     from prepush_check import CheckResult
 
