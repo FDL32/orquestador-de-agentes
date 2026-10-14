@@ -560,7 +560,7 @@ def _collect_environment() -> dict:
     During: queries CIM/WMI for RAM and CPU, counts processes via tasklist,
         and measures spawn latency via 20 subprocess calls.
     After: returns a dict with keys: ram_free_mb, ram_used_pct, process_count,
-        cpu_load_pct, spawn_ms_mean, probe_cost_s, probe_errors.
+        cpu_load_pct, spawn_ms_mean, probe_cost_s, probe_errors, cwd_chars.
 
     Cost measured in L1010: ~1.9 s total.
     """
@@ -589,6 +589,7 @@ def _collect_environment() -> dict:
         "spawn_ms_mean": spawn_ms_mean,
         "probe_cost_s": round(elapsed, 3),
         "probe_errors": all_errors if all_errors else [],
+        "cwd_chars": len(str(Path.cwd())),
     }
 
 
@@ -678,14 +679,51 @@ def _reconcile_dead_run() -> None:
 # WOT-2026-062e (Pieza C): preflight environment warning (non-blocking)
 # ---------------------------------------------------------------------------
 
+# WOT-2026-100h: threshold for cwd prefix length warning.
+# 53 is the longest green cwd measured (139/139); anything > 53 enters
+# un-certified territory.  >= 94 chars hits the Windows MAX_PATH bug.
+_CWD_MAXPATH_WARN_THRESHOLD = 53
+
+
+def _warn_cwd_maxpath(env: dict) -> None:
+    """Emit a non-blocking warning when the cwd prefix risks Windows MAX_PATH.
+
+    WOT-2026-100h: when the cwd prefix exceeds 53 characters, the Windows
+    MAX_PATH limit (260) can silently break git sandboxes used by tests.
+    This warning prints to stderr without changing exit codes or writing
+    the last-run stamp.
+
+    Before: *env* dict with an optional ``cwd_chars`` key (int or None).
+    During: reads ``env["cwd_chars"]``; if > 53, prints one WARN line
+        naming the cause (MAX_PATH), evidence, and remedy.
+    After: at most one line on stderr; ``write_json`` is NOT called.
+    """
+    cwd_chars = env.get("cwd_chars")
+    if cwd_chars is None:
+        return
+    if cwd_chars > _CWD_MAXPATH_WARN_THRESHOLD:
+        sys.stderr.write(
+            f"[pytest-safe] WARN: prefijo de cwd largo "
+            f"({cwd_chars} chars > umbral 53): riesgo de MAX_PATH en los "
+            "sandboxes git de los tests. Evidencia medida: <= 53 chars "
+            "pasa (139/139), >= 94 chars falla (firma 'remote: error: "
+            "unable to write file ... origin.git'). Remedio: corre la "
+            "suite/sello desde un checkout de prefijo corto (patron "
+            "Temp\\kilo\\<id>). WARN no bloqueante: no cambia exit codes.\n"
+        )
+
 
 def _emit_env_preflight(env: dict) -> None:
-    """Print a non-blocking warning if free RAM is below a heuristic threshold.
+    """Print non-blocking warnings for RAM and cwd prefix length.
 
-    WOT-2026-062e (Pieza C): the threshold is NOT barrido (that's a separate
-    ticket). This is a WARNING only, never blocking. The heuristic threshold
-    of 2 GB (2048 MB) is documented as such and may be adjusted by the
-    operator without changing code.
+    WOT-2026-062e (Pieza C): RAM threshold is NOT barrido (separate ticket).
+    WOT-2026-100h: cwd prefix warning when its length exceeds the MAX_PATH
+    heuristic threshold.
+
+    Before: *env* dict with at least *ram_free_mb* and optionally *cwd_chars*.
+    During: checks RAM below 2 GB and cwd prefix above 53 chars; prints WARNs
+        to stderr (cwd) or stdout (RAM).
+    After: at most two lines emitted; neither changes exit codes or state files.
     """
     ram_free = env.get("ram_free_mb")
     if ram_free is not None and ram_free < 2048:
@@ -693,6 +731,7 @@ def _emit_env_preflight(env: dict) -> None:
             f"[pytest-safe] WARN: RAM libre baja ({ram_free:.0f} MB). "
             "La suite puede ser mas lenta de lo normal."
         )
+    _warn_cwd_maxpath(env)
 
 
 def write_json(path: Path, payload: dict, fsync: bool = False) -> None:
