@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 39 de 52 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 40 de 53 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -27,6 +27,7 @@
 | F4-lanzamiento | orchestrator | `prompts/orchestrator_prepare_and_launch_ticket.md` | - | Cuando el usuario pide "preparar ticket X" por chat sin nombrar un prompt concreto, sobre un ticket ya triado. | NO redefine criterios/gates/maquina de estados (remite a orchestrator_pipeline.md seccion "1.b Herramientas por fase", su source_of_truth); NO es un pipeline alternativo, es un atajo de chat sobre esa tabla. | 246 | - |
 | F5-implementacion | builder | (ninguno) | - | Tu contrato es el prompt que recibiste + `work_plan.md` | No abras `prompts/` para buscar | - | - |
 | F6-revision | manager | `prompts/manager_review.md` | `manager-review-implementation` | Tras la entrega del Builder (fase MANAGER_REVIEW) de un ticket de implementacion. | NO cierra tickets de Contract Formation en status frozen (eso es validate_contract_formation.py) ni audita el contrato antes del Builder (audit_ticket_contract.md). | 447 | MANAGER_REVIEW / code-review (*) |
+| F6-revision | revisor | `prompts/revisor_independent_review.md` | `revisor-independent-review` | Tras cada iteracion del Builder, despachado por el Orquestador (Persona-0). | NO implementa codigo, NO reescribe tests, NO lanza bucles S/F (proposer/challenger). | 70 | MANAGER_REVIEW / code-review (*) |
 | F7-cierre-sesion | orchestrator | `prompts/memory_upload.md` | - | En el cierre de sesion, tras manager-session-closeout/session-close-observations, antes de promocionar cualquier entrada a memoria portable. | NO es un volcado automatico al final de la sesion; NO mezcla OBSERVACION (hecho objetivo) con LEARNING (regla generalizable) en el mismo tier. | 275 | CLOSE / contract-audit |
 | F7-cierre-sesion | orchestrator | `prompts/orchestrator_session_close_full_audit.md` | `session-close-full-audit` | Al cerrar una sesion que toco codigo del motor o del destino: esta auditoria PRECEDE y, con la sesion verde en modo FINAL, el propio prompt invoca el cierre en su Bloque 3 (agent_controller.py --session-close); a mitad de vuelo solo los Bloques 1, 2 y 2.5 (sin 2.5.f ni 2.5.g), nunca los Bloques 3 a 5. | NO es el cierre operativo (prompts/orchestrator_session_close_chat.md), NO arranca una sesion (prompts/orchestrator_session_bootstrap.md) y NO corre el Bloque 3 con un ticket IN_PROGRESS. | 474 | CLOSE / contract-audit |
 | F7-cierre-sesion | orchestrator | `prompts/session_hop.md` | `session-hop` | Al cerrar una sesion para dejar continuidad medida, o al preparar el arranque de la sesion siguiente a partir del estado recolectado. | NO define el rol ni el metodo de la sesion siguiente (prompts/orchestrator_session_bootstrap.md), NO lee el estado operativo de UN ticket (.claude/commands/pause-work.md, .claude/commands/resume-work.md, .claude/commands/session-report.md) y NO ejecuta el trabajo de la sesion: solo lo prepara. | 377 | CLOSE / contract-audit |
@@ -75,10 +76,10 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 |---|---|---|---|
 | `prompts/_shared/loop_readiness.md` | audit_goal_completion.md, orchestrator_destination_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Gate que decide si una tarea es apta para /goal autonomo: 4 condiciones conjuntas (recurrente, verificacion automatizable, presupuesto declarado, artefacto nombrado) mas una denylist. | 294 |
 | `prompts/audit_goal_completion.md` | audit_autonomous_ticket_batch.md, orchestrator_autonomous_ticket_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Checker AISLADO del orquestador-ejecutor que verifica el cumplimiento de un /goal autonomo (maker/checker, Isolating Maker from Checker). route_kind: modulo porque lo invoca OTRO prompt como referencia (igual que loop_budget.md/loop_hard_stop.md), nunca un agente directamente en una fase fija del ciclo. | 180 |
-| `prompts/ensemble_loop.md` | transversal (6) | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 258 |
+| `prompts/ensemble_loop.md` | transversal (7) | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 258 |
 | `prompts/manager_orchestrator_loop_adapter_motor.md` | AGENTS.md, builder_invocation_contract.md, manager_orchestrator_loop_backlog.md | Adaptador del MOTOR al nucleo portable manager_orchestrator_loop.md: traduce cada capacidad del nucleo a los comandos y ficheros REALES de este repositorio, fija los minimos por tipo de entrega y declara la diferencia de identidad (D2). | 174 |
 | `prompts/orchestrator_launch_builder.md` | transversal (10) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 904 |
-| `prompts/persona_system.md` | AGENTS.md, agent_execution_modes.md | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 115 |
+| `prompts/persona_system.md` | AGENTS.md, agent_execution_modes.md, revisor_independent_review.md | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 115 |
 
 ## Por rol
 
@@ -131,3 +132,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 - `prompts/audit_portability_legacy_surface.md` (mantenimiento)
 - `prompts/audit_post_change_system_health.md` (mantenimiento)
 - `prompts/audit_ticket_contract.md` (F3-auditoria-contrato)
+
+### Rol: revisor
+
+- `prompts/revisor_independent_review.md` (F6-revision)
