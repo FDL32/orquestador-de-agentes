@@ -31,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.session_closeout import BACKLOG_REL
+
 
 _MOTOR_ROOT = Path(__file__).resolve().parents[2]
 if str(_MOTOR_ROOT) not in sys.path:
@@ -2313,4 +2315,239 @@ def test_060k_session_close_report_still_written(tmp_path: Path) -> None:
     report_content = report_path.read_text(encoding="utf-8")
     assert "closeout" in report_content.lower() or "step" in report_content.lower(), (
         f"report should contain step data; got: {report_content[:200]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-090w: backlog-only commits are NOT delivery
+# ---------------------------------------------------------------------------
+
+
+def _commit_backlog_only(repo: Path, ticket_id: str) -> str:
+    """Commit ONLY backlog surfaces with a ticket reference. Returns sha."""
+    # Write backlog.md with a ticket row
+    backlog = repo / BACKLOG_REL
+    backlog.parent.mkdir(parents=True, exist_ok=True)
+    existing = backlog.read_text(encoding="utf-8") if backlog.exists() else ""
+    row = f"{'|' * 5}\n| WOT-2026-999a | Archiva ticket | documentation |"
+    backlog.write_text(existing + row, encoding="utf-8")
+    return _commit_file(
+        repo, str(BACKLOG_REL), row, f"backlog: archiva {ticket_id} (completed)"
+    )
+
+
+def test_backlog_only_commit_is_not_delivery(tmp_path: Path) -> None:
+    """WOT-2026-090w (2.1/2.2): a commit touching ONLY backlog surfaces does NOT
+    enter loop_execution_targets.txt.
+
+    Fixture: .git propio, work_plan sin commitear, commit solo-backlog con subject
+    `backlog: archiva WOT-2026-999a (completed)`. Asertar targets AUSENTE (0 entregas).
+
+    MUTATION: revert `_delivers_only_backlog_surfaces` to `return False` -> targets
+    REAPARECE con ese sha. El `.git` propio es OBLIGATORIO (WOT-2026-020r).
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
+    sha = _commit_backlog_only(repo, "WOT-2026-999a")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    targets_path = repo / TARGETS_REL
+    assert result.status == "PASS", result.detail
+    # El commit solo-backlog NO debe entrar en targets
+    assert not targets_path.exists(), (
+        f"backlog-only commit {sha} should not create targets.txt; content: {targets_path.read_text(encoding='utf-8')!r}"
+    )
+
+    # MUTATION: sin el filtro, el sha SÍ aparece
+    with patch.object(
+        session_closeout,
+        "_delivers_only_backlog_surfaces",
+        return_value=False,
+    ):
+        targets_path.unlink(missing_ok=True)
+        result = session_closeout._step_write_loop_execution_targets(
+            repo, ["WOT-2026-999a"], None, False
+        )
+        assert result.status == "PASS"
+        assert targets_path.exists(), (
+            "mutation: targets.txt should exist after disabling filter"
+        )
+        content = targets_path.read_text(encoding="utf-8")
+        assert sha in content, (
+            f"mutation: sha {sha} should be in targets after disabling filter; got: {content!r}"
+        )
+
+
+def test_commit_touching_backlog_and_code_still_delivers(tmp_path: Path) -> None:
+    """WOT-2026-090w (2.2): a commit touching backlog AND code DOES enter targets.
+
+    Prueba que la regla es "no TODAS las rutas son backlog" (universal), no "cualquier
+    ruta de backlog excluye" (existencial). DoD (b).
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
+
+    # Escribir backlog.md Y un archivo de codigo en el MISMO commit
+    backlog = repo / BACKLOG_REL
+    backlog.parent.mkdir(parents=True, exist_ok=True)
+    code = repo / "src" / "a.py"
+    code.parent.mkdir(parents=True, exist_ok=True)
+    backlog.write_text("| ticket | desc | type |", encoding="utf-8")
+    code.write_text("x = 1", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "--", str(BACKLOG_REL), "src/a.py"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "WOT-2026-999a: implement feature"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    sha_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    sha = sha_result.stdout.strip()
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    targets_path = repo / TARGETS_REL
+    assert result.status == "PASS", result.detail
+    assert targets_path.exists()
+    content = targets_path.read_text(encoding="utf-8")
+    assert sha in content, (
+        f"commit touching backlog + code should enter targets; got: {content!r}"
+    )
+
+
+def test_merge_commit_without_paths_still_delivers(tmp_path: Path) -> None:
+    """WOT-2026-090w (2.3): a merge commit with NO paths from `git show --name-only`
+    is INCLUDED (empty-set conservativo, decision 4).
+
+    Fixture: bare remote -> clone -> push inicial + feature -> merge origin/feature
+    con --no-ff y committer date distinto -> merge commit de 2 padres sin rutas.
+    El probe directo aserta helper==False; luego la asercion de que el sha entra
+    en loop_execution_targets.txt (contrato: 2.3 "SÍ entra").
+    """
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare"], cwd=bare, check=True, capture_output=True)
+
+    repo = tmp_path / "repo"
+    subprocess.run(
+        ["git", "clone", str(bare), str(repo)],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "t@e.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"], cwd=repo, check=True, capture_output=True
+    )
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
+
+    # Commitear inicial y push a origin/main
+    (repo / "README.md").write_text("# repo")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Crear feature branch con commit en fecha pasada
+    subprocess.run(
+        ["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True
+    )
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "b.py").write_text("y = 2", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "src/b.py"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "feature commit"],
+        cwd=repo,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_DATE": "2020-01-01T00:00:00",
+            "GIT_COMMITTER_DATE": "2020-01-01T00:00:00",
+        },
+        check=True,
+        capture_output=True,
+    )
+    # Push feature a origin
+    subprocess.run(
+        ["git", "push", "origin", "feature"], cwd=repo, check=True, capture_output=True
+    )
+
+    # Volver a main y merge --no-ff con committer date distinta -> merge commit real
+    subprocess.run(
+        ["git", "checkout", "main"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "merge",
+            "--no-ff",
+            "origin/feature",
+            "-m",
+            "WOT-2026-999a: merge feature",
+        ],
+        cwd=repo,
+        env={**os.environ, "GIT_COMMITTER_DATE": "2020-01-02T00:00:00"},
+        check=True,
+        capture_output=True,
+    )
+    merge_sha_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    merge_sha = merge_sha_result.stdout.strip()
+
+    # Probe directo del helper: merge commit sin rutas => False (INCLUIR conservador)
+    from scripts.session_closeout import _delivers_only_backlog_surfaces
+
+    result = _delivers_only_backlog_surfaces(repo, merge_sha)
+    assert result is False, (
+        f"merge commit empty-set => INCLUIR; helper returned {result}"
+    )
+
+    # Asercion completa del plan 2.3: el sha SÍ entra en targets.txt
+    result2 = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+    targets_path = repo / TARGETS_REL
+    assert result2.status == "PASS", result2.detail
+    assert targets_path.exists()
+    content = targets_path.read_text(encoding="utf-8")
+    assert merge_sha in content, (
+        f"merge commit {merge_sha} should enter targets (empty-set => INCLUIR); got: {content!r}"
     )

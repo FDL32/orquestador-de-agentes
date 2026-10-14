@@ -121,6 +121,20 @@ def _head_reflog_len(worktree: Path) -> int:
     return len([line for line in raw.splitlines() if line.strip()])
 
 
+def _ignore_path_matches(path: str, ignore_paths: frozenset[str]) -> bool:
+    """True when *path* is covered by *ignore_paths*.
+
+    An entry matches *path* EXACTLY (unchanged behaviour), OR -- when the
+    entry ends with "/", the directory-prefix convention already used by
+    ``pre_handoff_guard.LIVE_SURFACES_REL`` -- when *path* starts with that
+    entry: a directory declared once in *ignore_paths* covers every file
+    nested under it, not only a literal path equal to the directory name.
+    """
+    if path in ignore_paths:
+        return True
+    return any(entry.endswith("/") and path.startswith(entry) for entry in ignore_paths)
+
+
 def _parse_porcelain_z(porcelain_z: str, ignore_paths: frozenset[str]) -> str:
     """Parse ``git status --porcelain -z`` output and reconstruct .status text.
 
@@ -129,7 +143,8 @@ def _parse_porcelain_z(porcelain_z: str, ignore_paths: frozenset[str]) -> str:
     and git emits the NEW path first: ``status new_path\\0orig_path\\0``.
 
     When *ignore_paths* is non-empty, entries whose path (or, for a rename or
-    copy, BOTH paths) match exactly are dropped. The rest are reconstructed as
+    copy, BOTH paths) match exactly or, when an entry ends with "/", starts
+    with that directory prefix, are dropped. The rest are reconstructed as
     ``"{status} {path}"`` -- ``"{status} {orig} -> {new}"`` for a pair, the
     plain ``--porcelain`` form -- joined by ``\\n``.
 
@@ -160,8 +175,8 @@ def _parse_porcelain_z(porcelain_z: str, ignore_paths: frozenset[str]) -> str:
                 if orig_path:
                     if (
                         ignore_paths
-                        and path in ignore_paths
-                        and orig_path in ignore_paths
+                        and _ignore_path_matches(path, ignore_paths)
+                        and _ignore_path_matches(orig_path, ignore_paths)
                     ):
                         i += 2
                         continue
@@ -172,7 +187,7 @@ def _parse_porcelain_z(porcelain_z: str, ignore_paths: frozenset[str]) -> str:
                     i += 1
                     continue
             else:
-                if ignore_paths and path in ignore_paths:
+                if ignore_paths and _ignore_path_matches(path, ignore_paths):
                     i += 1
                     continue
                 entries.append((status, path))
@@ -192,10 +207,11 @@ def capture_state(
 
     Args:
         worktree: The git working tree to snapshot.
-        ignore_paths: Exact relative paths to exclude from the status snapshot.
-            Uses NUL-separated porcelain parsing (``--porcelain -z``) so paths
-            with spaces/unicode are handled correctly. A rename is filtered
-            only when BOTH the old and new paths are in *ignore_paths*.
+        ignore_paths: Exact relative paths or, with a trailing "/", directory
+            prefixes to exclude from the status snapshot. Uses NUL-separated
+            porcelain parsing (``--porcelain -z``) so paths with spaces/unicode
+            are handled correctly. A rename is filtered only when BOTH the old
+            and new paths match (exactly or via directory prefix) *ignore_paths*.
     """
     return WorktreeState(
         head=_git(worktree, "rev-parse", "HEAD").strip(),

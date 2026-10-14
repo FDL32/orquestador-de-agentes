@@ -2760,3 +2760,90 @@ class TestCheckpointAncestorTagWOT2026067c:
         missing, misaligned = guard.check_checkpoint_alignment(repo, self.TICKET)
 
         assert (missing, misaligned) == (False, True)
+
+
+# =============================================================================
+# Tests WOT-2026-042r: archive surface excused from dirty-tree
+# =============================================================================
+
+
+def test_archive_surface_excused_from_dirty_tree() -> None:
+    """archive/ observations file modified -> NOT reported as dirty.
+
+    WOT-2026-042r eje (iii): `.agent/runtime/memory/archive/` is excused from
+    the dirty-tree check (it is a versioned portable vehicle, git-tracked).
+    The guard must NOT list it in `dirty_files` and `dirty_tree` must remain
+    False when the only dirty file is inside archive/.
+
+    MUTATION: removing the LIVE_SURFACES_REL entry makes the archive REappear
+    in dirty_files (red).
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "archive_guard"
+        init_git_repo(repo)
+
+        # Create an archive file and make it git-tracked
+        archive_dir = repo / ".agent" / "runtime" / "memory" / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        obs_file = archive_dir / "observations.2026-10.txt"
+        obs_file.write_text("# initial\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add archive file"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # Modify the archive file (now dirty)
+        obs_file.write_text("# modified\n", encoding="utf-8")
+
+        # Run the guard
+        guard = __import__("scripts.pre_handoff_guard", fromlist=["run_guard"])
+        result = guard.run_guard(repo, "WOT-2026-999a")
+
+        # Assert: archive file NOT in dirty_files, dirty_tree False
+        dirty_files = set(result.get("dirty_files", []))
+        assert not any("observations.2026-10.txt" in f for f in dirty_files)
+        assert result["dirty_tree"] is False
+
+
+def test_archive_surface_reappears_when_excuse_removed() -> None:
+    """Mutation: remove the LIVE_SURFACES_REL entry -> archive reappears as dirty.
+
+    WOT-2026-042r: this proves the test measures the right thing.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "archive_mutation"
+        init_git_repo(repo)
+
+        archive_dir = repo / ".agent" / "runtime" / "memory" / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        obs_file = archive_dir / "observations.2026-10.txt"
+        obs_file.write_text("# initial\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Add archive file"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        obs_file.write_text("# modified\n", encoding="utf-8")
+
+        # Import guard, temporarily remove archive from LIVE_SURFACES_REL
+        guard = __import__("scripts.pre_handoff_guard", fromlist=["run_guard"])
+        original = list(guard.LIVE_SURFACES_REL)
+        guard.LIVE_SURFACES_REL.discard(".agent/runtime/memory/archive/")
+        try:
+            result = guard.run_guard(repo, "WOT-2026-999a")
+            dirty_files = set(result.get("dirty_files", []))
+            assert result["dirty_tree"] is True
+            # Check the archive file appears as dirty (not just the directory name)
+            assert any("observations.2026-10.txt" in f for f in dirty_files)
+        finally:
+            guard.LIVE_SURFACES_REL.clear()
+            guard.LIVE_SURFACES_REL.update(original)

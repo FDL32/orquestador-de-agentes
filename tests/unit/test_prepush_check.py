@@ -1,16 +1,19 @@
 """WOT-2026-047i: `run_ruff_format_check` no materializa .venv/uv.lock en el arbol auditado.
 
-La premisa: `uv run ruff format --check .` con cwd=project_root materializa
-.venv/ y uv.lock en el arbol que se esta auditando. Este ticket aisla la
-invocacion de uv run para que NO cree esos artefactos, sin cambiar el
-comportamiento observable del check (sigue bloqueante, sigue verificando
-ruff format --check . sobre el mismo project_root).
+WOT-2026-070m: `run_agent_controller_validate` anade `--no-heal` a la
+invocacion de `agent_controller --validate` para que el preflight sea
+READ-ONLY (evita que --validate sane el STATE.md del workspace auditado).
 
-Cobertura del DoD BINARIO del ticket:
+Cobertura del DoD BINARIO del ticket (047i):
   (a) MUTACION: sin --isolated -> .venv/ y uv.lock SI se crean (test de regresion)
   (b) con --isolated -> .venv/ y uv.lock NO se crean (test de regresion positivo)
   (c) CONTROL NEGATIVO: codigo mal formateado sigue dando passed=False
   (d) OPT-OUT: [tool.motor] format-check = false sigue funcionando
+
+Cobertura del DoD BINARIO del ticket (070m):
+  (a) REAL PATH: --no-heal -> STATE.md NO se reescribe bajo drift real (prepush)
+  (b) CONTROL NEGATIVO: sin --no-heal, STATE.md SI se reescribe (anti-vacuidad)
+  (c) CMD: el cmd de run_agent_controller_validate lleva --no-heal (mutacion muerde)
 
 Nota (Manager review WOT-2026-047i, 2026-09-19): (a) y (c) se reescribieron
 para ejecutar `uv run`/`ruff` REAL en vez de mockear el resultado -- las
@@ -38,7 +41,11 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import prepush_check as pc_module  # noqa: E402
-from prepush_check import run_ruff_check, run_ruff_format_check  # noqa: E402
+from prepush_check import (  # noqa: E402
+    run_agent_controller_validate,
+    run_ruff_check,
+    run_ruff_format_check,
+)
 
 
 # ------------------------------------------------------------------ helpers
@@ -1102,3 +1109,159 @@ def test_sibling_audit_is_wired_into_closeout(tmp_path, monkeypatch):
     )
     pc_module.run_preflight_check(tmp_path, closeout_mode=False)
     assert called["base"] == 0, "el preflight base no paga el gate de closeout"
+
+
+# ============================================================================
+# WOT-2026-070m: --validate --no-heal keeps the preflight read-only --------
+#
+# The Manager review mutated the premise: the root cause is the OMISION of
+# --no-heal in run_agent_controller_validate (prepush_check.py:420-422),
+# NOT --force. --force is inert (--no-heal alone controls the heal branch).
+#
+# DoD binario cubierto:
+#   (a) REAL PATH: --no-heal -> STATE.md NOT healed under real bus drift.
+#   (b) CONTROL NEGATIVO: sin --no-heal -> STATE.md SI se reescribe (el
+#       fixture gunita drift real).
+#   (c) CMD: el cmd de run_agent_controller_validate lleva --no-heal.
+# ============================================================================
+
+
+def _make_validate_fixture(root: Path) -> Path:
+    """Crea un fixture de proyecto con bus drift para testear --validate.
+
+    States: STATE.md says IN_PROGRESS, events say READY_FOR_REVIEW -> DRIFT.
+    """
+    collab = root / ".agent" / "collaboration"
+    events = root / ".agent" / "runtime" / "events"
+    collab.mkdir(parents=True)
+    events.mkdir(parents=True)
+    (collab / "work_plan.md").write_text(
+        "# Plan\n\n- **ID:** WOT-TEST-001\n- **Estado:** IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    (collab / "execution_log.md").write_text(
+        "# Log\n\n- **Estado:** IN_PROGRESS\n", encoding="utf-8"
+    )
+    state = collab / "STATE.md"
+    state.write_text(
+        "ACTIVE_TICKET: WOT-TEST-001\nSTATUS: IN_PROGRESS\n",
+        encoding="utf-8",
+    )
+    (events / "events.jsonl").write_text(
+        '{"event_type": "STATE_CHANGED", "ticket_id": "WOT-TEST-001", '
+        '"payload": {"to_state": "READY_FOR_REVIEW"}}\n',
+        encoding="utf-8",
+    )
+    _git(root, "init", "-q")
+    _git(root, "-c", "user.email=f@t", "-c", "user.name=f", "add", "-A")
+    _git(root, "-c", "user.email=f@t", "-c", "user.name=f", "commit", "-m", "fixture")
+    return root
+
+
+def test_prepush_validate_passes_no_heal(tmp_path):
+    """(a) DoD-1: `run_agent_controller_validate` pasa --no-heal -> STATE.md NO se reescribe.
+
+    REAL PATH: subprocess real al controller (no mock de _run), ejercuta el path
+    de sync_state_projection que los tests mockeados de collect_system_health no
+    alcanzan -- un mock de _run pasaba VERDE con el defecto vivo.
+
+    MUTACION QUE LO MATA: la mutacion real es (c) — quitar --no-heal del cmd
+    en run_agent_controller_validate -> el test_cmd cae (AssertionError:
+    --no-heal no esta en captured_cmd). El test (a) declara su propia cmd
+    de subproceso y no muerde bajo esa mutacion (permitido por el plan 2.2:
+    "la cmd de run_agent_controller_validate, o el subproceso equivalente
+    que el test declare").
+    """
+    import subprocess
+
+    controller = Path(__file__).resolve().parents[2] / ".agent" / "agent_controller.py"
+    fx = tmp_path / "fx"
+    _make_validate_fixture(fx)
+
+    original_state = (fx / ".agent" / "collaboration" / "STATE.md").read_text(
+        encoding="utf-8"
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(controller),
+            "--validate",
+            "--json",
+            "--force",
+            "--no-heal",
+            "--project-root",
+            str(fx),
+        ],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert (fx / ".agent" / "collaboration" / "STATE.md").read_text(
+        encoding="utf-8"
+    ) == original_state, (
+        "STATE.md fue reescrito bajo --no-heal (contrato read-only violado)"
+    )
+
+
+def test_prepush_validate_does_not_rewrite_terminal_state_md(tmp_path):
+    """(b) CONTROL NEGATIVO: sin --no-heal, el fixture drift -> STATE.md SI se reescribe.
+
+    Sanity: demuestra que el fixture gunita drift real y el path de heal se
+    dispara sin el flag — la asercion de arriba es significativa, no vacua.
+    """
+    import subprocess
+
+    controller = Path(__file__).resolve().parents[2] / ".agent" / "agent_controller.py"
+    fx = tmp_path / "fx"
+    _make_validate_fixture(fx)
+
+    original_state = (fx / ".agent" / "collaboration" / "STATE.md").read_text(
+        encoding="utf-8"
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(controller),
+            "--validate",
+            "--json",
+            "--force",
+            "--project-root",
+            str(fx),
+        ],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    healed = (fx / ".agent" / "collaboration" / "STATE.md").read_text(encoding="utf-8")
+    assert healed != original_state and "READY_FOR_REVIEW" in healed, (
+        "fixture no drift/heal sin --no-heal; la prueba de --no-heal seria vacua"
+    )
+
+
+def test_prepush_validate_cmd_contains_no_heal(tmp_path, monkeypatch):
+    """(c) CMD: el cmd de run_agent_controller_validate lleva --no-heal.
+
+    MUTACION: quitar --no-heal del cmd -> este test cae (AssertionError).
+    Este es el unico test que muerde la mutacion de retirar --no-heal del
+    codigo real (el test (a) declara su propia cmd de subproceso).
+    """
+    from prepush_check import CheckResult
+
+    captured_cmd: list[str] = []
+
+    def _spy(cmd, name, project_root, capture_output=True):  # type: ignore[no-untyped-def]
+        captured_cmd.extend(cmd)
+        return CheckResult(name=name, passed=True, output="", is_blocking=True)
+
+    monkeypatch.setattr(pc_module, "run_subprocess_check", _spy)
+    run_agent_controller_validate(tmp_path)
+
+    assert "--no-heal" in captured_cmd, (
+        f"--no-heal debe estar en el cmd, salio: {captured_cmd}"
+    )
+    assert "--validate" in captured_cmd
+    assert "--force" in captured_cmd

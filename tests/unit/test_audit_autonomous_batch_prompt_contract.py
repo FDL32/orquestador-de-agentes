@@ -869,6 +869,36 @@ def test_prompt_is_ascii_only() -> None:
     )
 
 
+def test_absorbed_not_pursued_clause_coherence_with_070g_guard() -> None:
+    """Coherence pin (WOT-2026-100d): the absorbed/not-pursued mirror clause
+    must never claim these states FORBID a commit cell.
+
+    WOT-2026-070g (tests/unit/test_check_backlog_commits_landed.py) proves
+    the guard accepts an `absorbed` row carrying `commit:<sha>` as a valid
+    terminal, never as malformed_evidence_tickets. If the clause's prose
+    reverts to saying these states "NO admiten commit" (forbid it outright),
+    the prose contradicts the guard again.
+
+    Mutation named in the DoD (WOT-2026-100d): reintroduce "NO admiten
+    commit" in the clause -> RED.
+    """
+    text = _read()
+    start = text.index("Clausula espejo para cierres por transferencia")
+    end = text.index("5. **`suite_final_verde`**", start)
+    clause = text[start:end]
+    assert "WOT-2026-070g" in clause, (
+        "the mirror clause must cite WOT-2026-070g: the prose and the guard "
+        "test must stay yoked, not drift independently"
+    )
+    forbidden = ("NO admiten", "no admiten", "NO permiten commit", "PROHIBIDO citar")
+    for phrase in forbidden:
+        assert phrase not in clause, (
+            f"the mirror clause must not forbid commit evidence for "
+            f"absorbed/not-pursued ({phrase!r} found): WOT-2026-070g proves "
+            f"the guard accepts it as non-malformed, not forbidden"
+        )
+
+
 def test_skill_is_ascii_only() -> None:
     text = _read_skill()
     non_ascii = [c for c in text if ord(c) > 127]

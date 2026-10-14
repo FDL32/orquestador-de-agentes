@@ -1480,6 +1480,46 @@ def _delivers_ticket(subject: str, body: str, ticket_id: str) -> bool:
     return False
 
 
+def _delivers_only_backlog_surfaces(root: Path, sha: str) -> bool:
+    """True si el diff de `sha` toca SOLO superficies de gestion de backlog.
+
+    WOT-2026-090w. Un commit candidato se EXCLUYE de la entrega si y solo si:
+    el conjunto de rutas es NO VACIO y TODAS pertenecen a {BACKLOG_REL, BACKLOG_ARCHIVE_REL}.
+
+    Conjunto VACIO (merge commit sin rutas, fallo de git) -> False (INCLUIR,
+    conservador). Se usa `git show --name-only --format=<sha>` para obtener las
+    rutas sin alterar el formato del git log principal.
+    """
+    backlog_set = {BACKLOG_REL.as_posix(), BACKLOG_ARCHIVE_REL.as_posix()}
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "show", "--name-only", "--format=", sha],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+        )
+        if result.returncode != 0:
+            return False  # git error -> no excluir (INCLUIR)
+    except OSError:
+        return False  # git no disponible -> no excluir (INCLUIR)
+    # Parsear rutas (lineas no vacias), normalizar a POSIX
+    # git imprime rutas con separador '/' incluso en Windows
+    paths = {
+        line.strip().rstrip("/").rstrip("\\")
+        for line in result.stdout.splitlines()
+        if line.strip()
+    }
+    if not paths:
+        return False  # conjunto vacio -> INCLUIR (merge commit sin rutas)
+    # Excluir SOLO si TODAS las rutas estan en el conjunto de backlog
+    # Comparar en POSIX: las rutas de git ya vienen con '/',
+    # pero normalizar por seguridad
+    normalized = {p.split("\\")[-1] if "\\" in p else p for p in paths}
+    return all(p in backlog_set for p in normalized)
+
+
 def _shas_that_deliver(stdout: str, ticket_id: str) -> list[str]:
     """Filtra la salida de `git log --format=%H%x1f%s%x1f%b%x1e` por ENTREGA."""
     shas: list[str] = []
@@ -1563,7 +1603,10 @@ def _git_log_shas_for_ticket(
         return None, (
             f"git log rc={result.returncode} for {ticket_id}: {result.stderr.strip()}"
         )
-    return _shas_that_deliver(result.stdout, ticket_id), ""
+    shas = _shas_that_deliver(result.stdout, ticket_id)
+    # WOT-2026-090w: excluir commits que tocan SOLO superficies de backlog
+    shas = [s for s in shas if not _delivers_only_backlog_surfaces(motor_root, s)]
+    return shas, ""
 
 
 # WOT-2026-066i (D1): el `delivery_authority` DECLARADO se lee con la MISMA

@@ -551,3 +551,57 @@ def test_b9_rename_with_both_paths_ignored_is_filtered(tmp_path: Path) -> None:
     _git(repo, "mv", "last-run.json", "last-run.log")
 
     verify_unchanged(repo, pre, ignore_paths=ignore_paths)  # must not raise
+
+
+# =============================================================================
+# WOT-2026-100j: directory-prefix ignore_paths (hardening)
+# =============================================================================
+
+
+def test_c1_new_file_nested_in_declared_live_dir_is_filtered(tmp_path: Path) -> None:
+    """(c1) New file nested inside a directory declared in ignore_paths (with
+    trailing "/") must be filtered. The directory prefix convention means
+    "archive/" covers "archive/new.md", "archive/sub/x.md", etc.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    # Commit an existing file inside the directory
+    archive_dir = repo / "archive"
+    archive_dir.mkdir()
+    (archive_dir / "existing.md").write_text("original", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "Add existing file")
+
+    ignore_paths = frozenset(["archive/"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+
+    # Create a NEW untracked file nested inside the declared directory
+    (archive_dir / "new.md").write_text("new content", encoding="utf-8")
+
+    verify_unchanged(repo, pre, ignore_paths=ignore_paths)  # must not raise
+
+
+def test_c2_rename_between_two_declared_live_dirs_is_filtered(tmp_path: Path) -> None:
+    """(c2) Rename between two directories both declared in ignore_paths must be
+    filtered. Both the source and destination paths match directory prefixes.
+    """
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+
+    archive_dir = repo / "archive"
+    archive_dir.mkdir()
+    (archive_dir / "a.md").write_text("content", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "Add a.md in archive")
+
+    backup_dir = repo / "backup"
+    backup_dir.mkdir()
+
+    ignore_paths = frozenset(["archive/", "backup/"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+
+    # git mv automatically stages the rename
+    _git(repo, "mv", str(archive_dir / "a.md"), str(backup_dir / "a.md"))
+
+    verify_unchanged(repo, pre, ignore_paths=ignore_paths)  # must not raise
