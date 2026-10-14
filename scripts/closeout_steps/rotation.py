@@ -15,6 +15,10 @@ from typing import TYPE_CHECKING
 from scripts.delivery_hygiene_check import EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS
 
 
+# Regex for ISO8601 UTC timestamps (used by parse_bitacora_vuelo)
+_ISO_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+
 if TYPE_CHECKING:
     from scripts.session_closeout import StepResult
 
@@ -337,6 +341,218 @@ def step_cleanup_builder_session(
         name="cleanup_builder_session",
         status="SKIP",
         detail="builder_session.json already absent",
+    )
+
+
+def parse_bitacora_vuelo(content: str) -> tuple[str, list[str]]:
+    r"""Parse bitacora de vuelo into header and entries.
+
+    Each entry is a line starting with ISO8601 UTC timestamp
+    (^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z). Continuation lines
+    (not starting with timestamp) are appended to the previous entry.
+    Header is any content before the first timestamp line.
+
+    Before: `content` is the raw text of a BITACORA*.md file.
+    During: splits lines by timestamp pattern; groups non-timestamp
+        lines as continuations of preceding entry.
+    After: returns (header, entries) where entries are non-empty
+        strings grouped by timestamp-delimited lines.
+    """
+    lines = content.split("\n")
+    entries: list[str] = []
+    current_entry_lines: list[str] = []
+    first_timestamp_idx: int | None = None
+
+    # Find first timestamp line
+    for i, line in enumerate(lines):
+        if _ISO_TIMESTAMP.match(line):
+            first_timestamp_idx = i
+            break
+
+    if first_timestamp_idx is None:
+        # No timestamp lines found — entire content is header
+        return content.strip(), []
+
+    # Header is content before first timestamp
+    header = "\n".join(lines[:first_timestamp_idx]).strip()
+
+    # Parse entries from first timestamp onwards
+    current_entry_lines = [lines[first_timestamp_idx]]
+    for i in range(first_timestamp_idx + 1, len(lines)):
+        line = lines[i]
+        if _ISO_TIMESTAMP.match(line):
+            # Save previous entry and start new one
+            entry_text = "\n".join(current_entry_lines).strip()
+            if entry_text:
+                entries.append(entry_text)
+            current_entry_lines = [line]
+        else:
+            # Continuation line
+            current_entry_lines.append(line)
+
+    # Don't forget the last entry
+    entry_text = "\n".join(current_entry_lines).strip()
+    if entry_text:
+        entries.append(entry_text)
+
+    return header, entries
+
+
+def step_rotate_bitacora_vuelo(  # noqa: C901 - multiple condition checks
+    project_root: Path,
+    dry_run: bool,
+    *,
+    bitacora_archive_dir_rel: Path,
+    bitacora_glob_pattern: str,
+    builder_lock_rel: Path,
+    keep_entries: int,
+    lock_ttl_minutes: int,
+    size_warn_threshold: int,
+    step_result_cls: type[StepResult],
+    supervisor_lock_rel: Path,
+) -> StepResult:
+    """Rotate BITACORA*.md files: archive old entries, keep recent.
+
+    Before: `project_root` contains `.agent/collaboration/session_bus/`
+        with BITACORA*.md files and locks in `.agent/runtime/`.
+    During: for each BITACORA*.md, parses entries by timestamp pattern,
+        keeps last `keep_entries`, archives the rest by date.
+        Skips if locks are alive.
+    After: returns StepResult with archive count and status.
+    """
+    if dry_run:
+        return step_result_cls(
+            name="rotate_bitacora_vuelo",
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+
+    # Find all BITACORA*.md files under session_bus
+    session_bus_dir = project_root / ".agent" / "collaboration" / "session_bus"
+
+    if not session_bus_dir.is_dir():
+        return step_result_cls(
+            name="rotate_bitacora_vuelo",
+            status="SKIP",
+            detail="session_bus directory does not exist; nothing to rotate",
+        )
+
+    builder_lock = project_root / builder_lock_rel
+    supervisor_lock = project_root / supervisor_lock_rel
+    lock_alive = False
+    lock_detail_parts: list[str] = []
+
+    if is_lock_alive(builder_lock, lock_ttl_minutes=lock_ttl_minutes):
+        lock_alive = True
+        lock_detail_parts.append("builder_lock.txt alive")
+    if is_lock_alive(supervisor_lock, lock_ttl_minutes=lock_ttl_minutes):
+        lock_alive = True
+        lock_detail_parts.append("supervisor_lock.txt alive")
+
+    if lock_alive:
+        return step_result_cls(
+            name="rotate_bitacora_vuelo",
+            status="SKIP",
+            detail=f"Skipped: lock(s) alive: {', '.join(lock_detail_parts)}",
+        )
+
+    # Find BITACORA*.md files
+    bitacora_files = sorted(session_bus_dir.glob(bitacora_glob_pattern))
+
+    if not bitacora_files:
+        # Also check collaboration root
+        bitacora_files = sorted(project_root.glob(bitacora_glob_pattern))
+
+    if not bitacora_files:
+        return step_result_cls(
+            name="rotate_bitacora_vuelo",
+            status="SKIP",
+            detail="No BITACORA*.md files found; nothing to rotate",
+        )
+
+    total_archived = 0
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    archive_dir = project_root / bitacora_archive_dir_rel
+
+    for bitacora_path in bitacora_files:
+        try:
+            content = bitacora_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        header, entries = parse_bitacora_vuelo(content)
+
+        if not entries:
+            continue
+
+        # Check size
+        content_size = len(content.encode("utf-8"))
+        if content_size > size_warn_threshold:
+            # Warn but continue — this is advisory only
+            pass
+
+        # Keep last keep_entries, archive the rest
+        keep_start = max(0, len(entries) - keep_entries)
+        kept_entries = entries[keep_start:]
+        archived_entries = entries[:keep_start]
+
+        if not archived_entries:
+            continue
+
+        # Write archive
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_lines = [
+                f"# Archived Bitacora Vuelo - {date_str}",
+                "",
+                f"Archived from {bitacora_path.name} on {date_str}.",
+                f"Total archived entries: {len(archived_entries)}",
+                "",
+            ]
+            for entry in archived_entries:
+                archive_lines.append("")
+                archive_lines.append(entry)
+                archive_lines.append("")
+
+            archive_content = "\n".join(archive_lines)
+
+            # Append to existing archive or create new
+            existing_archive = archive_dir / f"BITACORA_vuelo_{date_str}.md"
+            if existing_archive.exists():
+                existing = existing_archive.read_text(encoding="utf-8")
+                existing_archive.write_text(
+                    existing.rstrip("\n") + "\n\n" + archive_content,
+                    encoding="utf-8",
+                )
+            else:
+                existing_archive.write_text(archive_content, encoding="utf-8")
+
+            total_archived += len(archived_entries)
+
+            # Truncate original file — keep header + kept entries
+            truncated_lines = [header, ""]
+            for entry in kept_entries:
+                truncated_lines.append("")
+                truncated_lines.append(entry)
+                truncated_lines.append("")
+
+            truncated_content = "\n".join(truncated_lines)
+            bitacora_path.write_text(truncated_content, encoding="utf-8")
+
+        except OSError:
+            continue
+
+    if total_archived == 0:
+        return step_result_cls(
+            name="rotate_bitacora_vuelo",
+            status="SKIP",
+            detail="No entries to archive across all BITACORA*.md files",
+        )
+
+    return step_result_cls(
+        name="rotate_bitacora_vuelo",
+        status="PASS",
+        detail=f"Archived {total_archived} entr(es) across {len(bitacora_files)} file(s)",
     )
 
 

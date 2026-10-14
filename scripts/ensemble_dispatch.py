@@ -6858,6 +6858,20 @@ def _cmd_loop_round(args, config) -> int:
     # bloqueante antes de la barrera real.
     _warn_phase_typo(args.phase)
 
+    # WOT-2026-067i: rondas sin commit_sha registran sin traza de cierre.
+    # WARN antes de la validacion de nonce: el operador necesita ver el aviso
+    # en cada invocacion, no solo en las fases de gobierno (el error de
+    # _validated_governance_pair llega tarde para la traza).
+    if not args.commit_sha:
+        print(
+            "[ensemble-dispatch] WARN: --commit-sha no proporcionado. "
+            "Esta ronda se registrara sin traza de cierre: check_loop_execution "
+            "no podra acreditar que respondio a un challenge concreto. "
+            "Pasa --commit-sha <sha40> para que la ronda sea trazable. "
+            "owner=WOT-2026-067i",
+            file=sys.stderr,
+        )
+
     # WOT-2026-040i: las fases de gobierno del bucle 1->9->2 EXIGEN
     # challenge_nonce. Sin el, FALLA ANTES de gastar la llamada al backend.
     # Las fases NO de gobierno siguen aceptando la ausencia.
