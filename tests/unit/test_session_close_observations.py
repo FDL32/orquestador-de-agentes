@@ -671,6 +671,99 @@ def test_main_empty_candidates_exits_zero(
 
 
 # =============================================================================
+# Tests WOT-2026-042r: Intra-run dedup + protocol line
+# =============================================================================
+
+
+def test_process_candidates_dedupes_intra_run() -> None:
+    """Two identical candidates (same source_ticket+signal) -> 1 appended.
+
+    WOT-2026-042r eje (ii): the same candidate produced twice in the same
+    session_close_observations run must be deduped (intra-run only).
+    """
+    base_candidate = {
+        "timestamp": "2026-10-14T00:00:00Z",
+        "signal": "WOT-2026-042r completed successfully",
+        "domain": "delivery-hygiene",
+        "confidence": 0.9,
+        "applies_to": "code",
+        "impact": "medium",
+        "source_ticket": "WOT-2026-042r",
+        "topic": "ticket-completion",
+        "source": "session-close",
+    }
+    candidates = [base_candidate, dict(base_candidate)]  # exact copy
+    appended, rejected_reasons = process_candidates(candidates, [])
+    assert len(appended) == 1
+    assert len(rejected_reasons) == 1
+    assert "Duplicado dentro de la misma corrida" in rejected_reasons[0]
+
+
+def test_main_prints_observations_protocol_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main() prints the OBSERVATIONS protocol line with appended=0.
+
+    WOT-2026-042r eje (i): the protocol line is printed unconditionally
+    (even when nothing was appended), so the consumer can distinguish
+    PASS (appended>=1) from SKIP (appended==0).
+    """
+    import io
+
+    import scripts.session_close_observations as sco
+
+    candidates_file = tmp_path / "candidates.json"
+    candidates_file.write_text("[]", encoding="utf-8")
+
+    stdout_capture = io.StringIO()
+
+    def _fake_print(*args, **kwargs):
+        stdout_capture.write(" ".join(str(a) for a in args) + "\n")
+
+    monkeypatch.setattr(sco, "OBS_FILE", tmp_path / "observations.jsonl")
+    monkeypatch.setattr(sco, "REPORT_FILE", tmp_path / "report.md")
+    monkeypatch.setattr(__import__("builtins"), "print", _fake_print)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "session_close_observations.py",
+            "--candidates",
+            str(candidates_file),
+            "--dry-run",
+        ],
+    )
+
+    exit_code = sco.main()
+
+    assert exit_code == 0
+    captured = stdout_capture.getvalue()
+    assert "OBSERVATIONS appended=0" in captured
+    assert "candidates=0" in captured
+    assert "ticket=-" in captured
+
+
+def capsysread() -> str:
+    """Read stdout captured by the protocol-line print (WOT-2026-042r)."""
+    import io
+    import sys
+
+    buf = io.StringIO()
+    old_stdout = sys.stdout
+    try:
+        sys.stdout = buf
+        # Re-run main to capture its print
+        import scripts.session_close_observations as _sco
+
+        _sco.main()
+    except SystemExit:
+        pass
+    finally:
+        sys.stdout = old_stdout
+    return buf.getvalue()
+
+
+# =============================================================================
 # Tests WP-2026-177: Canonical schema support
 # =============================================================================
 

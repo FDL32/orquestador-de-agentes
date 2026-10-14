@@ -373,10 +373,16 @@ def process_candidates(
 
     Before: Requires list of candidate observations and existing observations.
     During: Validates schema, applies curation filters, checks duplicates.
+            Maintains a ``seen`` set of ``(source_ticket, signal)`` keys for
+            candidates appended in THIS SAME call; a candidate whose key is
+            already in ``seen`` is rejected with reason
+            ``Duplicado dentro de la misma corrida`` (WOT-2026-042r eje (ii)).
     After: Returns (appended_entries, rejection_reasons).
     """
     appended = []
     rejected_reasons = []
+    # WOT-2026-042r eje (ii): intra-run dedup by (source_ticket, signal)
+    seen: set[tuple[str, str]] = set()
 
     for candidate in candidates:
         # Validate schema
@@ -388,12 +394,23 @@ def process_candidates(
             )
             continue
 
-        # Check duplicate
+        # Check duplicate against existing observations (24h window)
         if is_duplicate(candidate, existing):
             rejected_reasons.append(
                 f"[{candidate.get('source_ticket', 'unknown')}] Duplicado de observacion existente"
             )
             continue
+
+        # WOT-2026-042r eje (ii): reject exact duplicates within the same run
+        source_ticket = candidate.get("source_ticket", "unknown")
+        signal = candidate.get("signal", "")
+        key = (source_ticket, signal)
+        if key in seen:
+            rejected_reasons.append(
+                f"[{source_ticket}] Duplicado dentro de la misma corrida [{source_ticket}]"
+            )
+            continue
+        seen.add(key)
 
         appended.append(candidate)
 
@@ -608,6 +625,14 @@ def main() -> int:
 
         if args.verbose:
             print("\n" + report)
+
+        # WOT-2026-042r eje (i): protocol line for consumer parsing (PASS/SKIP/WARN).
+        # Identical pattern to `COUNTS ...` in archival.py (WOT-2026-068d).
+        ticket_label = args.ticket if args.ticket else "-"
+        print(
+            f"OBSERVATIONS appended={len(appended)} "
+            f"candidates={len(candidates)} ticket={ticket_label}"
+        )
 
         return 0
 

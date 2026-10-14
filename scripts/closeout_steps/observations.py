@@ -6,6 +6,7 @@ step that used to live in the session_closeout monolith.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -50,15 +51,8 @@ def step_session_observations(
                 project_root,
                 timeout=120,
             )
-            if result.returncode == 0:
-                results.append(
-                    step_result_cls(
-                        name=f"observations:{tid}",
-                        status="PASS",
-                        detail=f"Observations processed for {tid}",
-                    )
-                )
-            else:
+            # WOT-2026-042r eje (i): rc!=0 ALWAYS blocks (WARN first).
+            if result.returncode != 0:
                 detail = process_diagnostic_fn(result, limit=300)
                 results.append(
                     step_result_cls(
@@ -70,7 +64,53 @@ def step_session_observations(
                         ),
                     )
                 )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:  # noqa: PERF203
+                continue
+            # WOT-2026-042r eje (i): parse protocol line from successful run.
+            protocol_re = re.compile(
+                r"^OBSERVATIONS appended=(\d+) candidates=(\d+) ticket="
+            )
+            proto_match = (
+                protocol_re.match(result.stdout.strip()) if result.stdout else None
+            )
+            if proto_match:
+                appended_count = int(proto_match.group(1))
+                candidates_count = int(proto_match.group(2))
+                if appended_count >= 1:
+                    results.append(
+                        step_result_cls(
+                            name=f"observations:{tid}",
+                            status="PASS",
+                            detail=(
+                                f"Observations processed for {tid}: "
+                                f"{appended_count} written"
+                            ),
+                        )
+                    )
+                else:
+                    results.append(
+                        step_result_cls(
+                            name=f"observations:{tid}",
+                            status="SKIP",
+                            detail=(
+                                f"No observation of {tid} written "
+                                f"(candidates={candidates_count}, "
+                                "all rejected/duplicated)"
+                            ),
+                        )
+                    )
+            else:
+                detail = process_diagnostic_fn(result, limit=300)
+                results.append(
+                    step_result_cls(
+                        name=f"observations:{tid}",
+                        status="WARN",
+                        detail=(
+                            f"No protocol line in output for {tid} "
+                            f"(rc={result.returncode}): {detail}"
+                        ),
+                    )
+                )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
             results.append(
                 step_result_cls(
                     name=f"observations:{tid}",

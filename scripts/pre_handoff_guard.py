@@ -42,6 +42,9 @@ LIVE_SURFACES_REL = {
     ".agent/collaboration/archive/",
     ".agent/collaboration/_archive/",
     ".agent/runtime/memory/session_close_report.md",
+    ".agent/runtime/memory/archive/",  # WOT-2026-042r eje (iii): versioned portable vehicle; git-tracked,
+    # NOT gitignored. Writing to it makes the tree dirty for handoff,
+    # but stopping writes would destroy portable memory. See WOT-2026-042r.
     ".agent/runtime/events/events.jsonl",
     ".agent/runtime/store.json",
     ".agent/runtime/builder_lock.txt",
