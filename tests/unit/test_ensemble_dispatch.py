@@ -8664,9 +8664,19 @@ def test_loop_round_cli_no_warn_when_commit_sha_provided(capsys, tmp_path, monke
     def fake_send(*a, **k):
         return "ok"
 
-    sha40 = "deadbeef" * 5 + "cafe"
+    motor_root, sha40 = _git_repo_with_commit(tmp_path)
+    _write_link_059m(tmp_path, motor_root)
     payload = tmp_path / "payload.txt"
-    payload.write_text("material publico", encoding="utf-8")
+    payload.write_text(
+        "bundle para review.\n\n"
+        "INVENTARIO DE EVIDENCIA:\n"
+        "- encargo: este test\n"
+        "\n"
+        "SALIDA: reportar NO VERIFICABLE si algo falla.\n"
+        "\n"
+        "PRESUPUESTO: no explores mas de 100 ficheros, y para cuando termines.",
+        encoding="utf-8",
+    )
     argv = [
         "loop-round",
         "--profile",
