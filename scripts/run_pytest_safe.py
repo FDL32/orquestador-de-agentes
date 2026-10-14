@@ -38,6 +38,12 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 from runtime.project_root import get_agent_dir, resolve_project_root  # noqa: E402
 
+# WOT-2026-079c: reutiliza la fuente canonica de superficies vivas del guard
+# para que el sello del runner comparta EL MISMO set que pre_handoff_guard.
+from scripts.pre_handoff_guard import (  # noqa: E402
+    LIVE_SURFACES_REL as _LIVE_SURFACES_REL,
+)
+
 # WOT-2026-040t (Pieza 4): pre/post invariant over the audit window. Static
 # import so check_guard_wiring's AST walker reaches this call-site.
 from scripts.worktree_audit_invariant import (  # noqa: E402
@@ -1807,6 +1813,12 @@ def main() -> int:  # noqa: C901
     _audit_state_pre_repr = None
     # WOT-2026-073e (Pieza b): exclude the runner's own seal/log from the
     # audit window so the runner's writes do not invalidate its own measurement.
+    # WOT-2026-079c: tambien excluye las superficies vivas de colaboracion
+    # (work_plan.md, TURN.md, STATE.md, execution_log.md, notifications.md,
+    # review_queue.md) para que el sello sobreviva a escrituras de sesion
+    # close en arboles compartidos: la ventana de medicion dura minutos y
+    # otra sesion puede modificar esas rutas durante la corrida. Sin la
+    # exclusion, el sello invalida resultados legitimos (falso negativo).
     _delivery_root = _delivery_repo_root()
     _ignore_paths: frozenset[str] = frozenset()
     for _lp in (LAST_RUN_JSON, LAST_RUN_LOG):
@@ -1814,6 +1826,14 @@ def main() -> int:  # noqa: C901
             _ignore_paths = _ignore_paths | frozenset(
                 [str(_lp.resolve().relative_to(_delivery_root)).replace("\\", "/")]
             )
+    # Superficies vivas canonicas (pre_handoff_guard.py::LIVE_SURFACES_REL):
+    # muchas DE ESTAS rutas son trackeadas en el destino (work_plan.md,
+    # execution_log.md, TURN.md, STATE.md, notifications.md, review_queue.md,
+    # backlog.md, archive/, _archive/); las excluye el auditor porque el sello
+    # no debe invalidar si una sesion las modifica durante la ventana de
+    # medicion (un cierre commitea backlog.md o archive/ en el mismo minuto).
+    for _v in _LIVE_SURFACES_REL:
+        _ignore_paths = _ignore_paths | frozenset([_v])
     try:
         _audit_state_pre = _invariant_capture_state(
             _delivery_root, ignore_paths=_ignore_paths
