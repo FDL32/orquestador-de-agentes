@@ -85,6 +85,7 @@ ADOPTED = (
     "memory_upload.md",
     "orchestrator_prepare_and_launch_ticket.md",
     "persona_system.md",
+    "revisor_independent_review.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)

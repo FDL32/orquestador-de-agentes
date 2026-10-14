@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 45 |
+| prompt | 46 |
 | reference | 38 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 45 |
-| **total** | **136** |
+| skill | 46 |
+| **total** | **138** |
 
 ## Entradas
 
@@ -64,6 +64,7 @@
 | prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit_design.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/persona_system.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/revisor_independent_review.md` | active | system | revisor | model-invoked | — |
 | prompt | `prompts/session_hop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | orchestrator | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
@@ -145,6 +146,7 @@
 | skill | `skills/project-finalize/SKILL.md` | active | agent | shared | model-invoked | /finalize, /finish, close |
 | skill | `skills/refactor-manager/SKILL.md` | active | agent | shared | model-invoked | /refactor, refactor, refactor-manager |
 | skill | `skills/repo-compare/SKILL.md` | active | agent | shared | model-invoked | /compare, /gh-compare, /repo-compare |
+| skill | `skills/revisor-independent-review/SKILL.md` | active | agent | revisor | user-invoked | /revisor-review, /verify |
 | skill | `skills/scaffold-python-project/SKILL.md` | active | agent | shared | model-invoked | /new-project, /scaffold, /scaffold-python |
 | skill | `skills/secure-existing-project/SKILL.md` | active | agent | shared | model-invoked | /harden, /secure, /security-audit |
 | skill | `skills/session-close-full-audit/SKILL.md` | active | agent | auditor | model-invoked | /close-full-audit, /session-close-full-audit, auditar-cierre-completo-sesion |

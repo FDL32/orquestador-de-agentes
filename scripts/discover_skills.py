@@ -379,7 +379,7 @@ def _error(message: str) -> list[str]:
 # (orchestrate-autonomous-ticket-batch, orchestrate-destination-batch,
 # orchestrate-pipeline) stop escaping this gate under role: shared despite
 # declaring source_prompt/contract_id.
-CONTRACT_OPT_IN_ROLES = ("manager", "builder", "auditor", "orchestrator")
+CONTRACT_OPT_IN_ROLES = ("manager", "builder", "auditor", "orchestrator", "revisor")
 
 
 def _validate_frontmatter_contract_opt_in(

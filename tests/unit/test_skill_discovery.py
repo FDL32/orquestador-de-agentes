@@ -290,3 +290,65 @@ class TestEmptySkillCatalogError:
         # _discover_skills should raise when no skills found
         with pytest.raises(EmptySkillCatalogError):
             resolver._discover_skills()
+
+
+class TestRevisorAllowlist:
+    """Tests for WOT-2026-100g: REVISOR allowlist key in agents.json."""
+
+    def test_revisor_allowlist_key_legible(self):
+        """T6: The real agents.json bundle has REVISOR in skill_allowlists
+        and the agents_config loader validation accepts it."""
+        import json
+        from pathlib import Path
+
+        bundle_root = Path(__file__).resolve().parent.parent.parent
+        agents_path = bundle_root / ".agent" / "config" / "agents.json"
+        assert agents_path.exists(), (
+            f"agents.json should exist in bundle at {agents_path}"
+        )
+
+        with open(agents_path, encoding="utf-8") as f:
+            config = json.load(f)
+
+        skill_allowlists = config.get("skill_allowlists", {})
+        assert "REVISOR" in skill_allowlists, "REVISOR must be in skill_allowlists"
+        assert isinstance(skill_allowlists["REVISOR"], list), (
+            "REVISOR value must be a list"
+        )
+        assert len(skill_allowlists["REVISOR"]) > 0, "REVISOR list must not be empty"
+
+        # Invocar el loader del bundle (no mock): su validacion pasa
+        import sys as _sys
+
+        _sys.path.insert(0, str(bundle_root / ".agent"))
+        from agents_config import _validate_skill_allowlists
+
+        _validate_skill_allowlists(config, agents_path)
+
+    def test_revisor_skill_real_binding_fields_present(self):
+        """T7: El bundle real de revisor tiene source_prompt + contract_id en
+        el frontmatter, por lo que _validate_frontmatter_contract_opt_in NO
+        lo descarta (skip silencioso :402 :403 ya no aplica)."""
+        from pathlib import Path
+
+        from scripts.discover_skills import _validate_frontmatter_contract_opt_in
+
+        bundle_root = Path(__file__).resolve().parent.parent.parent
+        skill_path = bundle_root / "skills" / "revisor-independent-review" / "SKILL.md"
+        assert skill_path.exists(), (
+            f"revisor SKILL.md real debe existir en {skill_path}"
+        )
+
+        fm, error = _validate_frontmatter_contract_opt_in(skill_path, bundle_root)
+
+        assert error is None, f"La skill real no debe ser descartada; error: {error}"
+        assert fm is not None, (
+            "_validate_frontmatter_contract_opt_in debe devolver fm no-None"
+        )
+        assert fm.get("contract_id") == "cid-revisor-review-v1", (
+            f"contract_id debe ser 'cid-revisor-review-v1', "
+            f"got: {fm.get('contract_id')!r}"
+        )
+        assert fm.get("source_prompt") is not None and fm.get("source_prompt") != "", (
+            "source_prompt debe estar presente"
+        )
