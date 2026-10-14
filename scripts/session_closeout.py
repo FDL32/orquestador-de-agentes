@@ -1494,9 +1494,7 @@ def _git_log_shas_for_ticket(
     During: `git log --format=%H%x1f%s%x1f%b%x1e` (campos separados por 0x1f,
         registros por 0x1e: ningun mensaje de commit los contiene) y filtra en
         Python. Sigue pasando `--grep` como PRE-filtro barato: reduce el volumen
-        pero ya no decide la membresia. WOT-2026-090w: tras `_shas_that_deliver`,
-        se aplica `_delivers_only_backlog_surfaces` para excluir commits que tocan
-        SOLO `.agent/collaboration/backlog.md` y/o `_archive/backlog_done.md`.
+        pero ya no decide la membresia.
     After: `(shas, "")` en exito (lista posiblemente vacia). `(None, detail)` en
         cualquier fallo de git (OSError o rc != 0).
     """

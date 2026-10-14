@@ -2439,16 +2439,48 @@ def test_merge_commit_without_paths_still_delivers(tmp_path: Path) -> None:
     """WOT-2026-090w (2.3): a merge commit with NO paths from `git show --name-only`
     is INCLUDED (empty-set conservativo, decision 4).
 
-    Probe directo de `_delivers_only_backlog_surfaces` sobre un sha sin rutas
-    (como un merge commit) -> devuelve False (INCLUIR).
+    Fixture: bare remote -> clone -> push inicial + feature -> merge origin/feature
+    con --no-ff y committer date distinto -> merge commit de 2 padres sin rutas.
+    El probe directo aserta helper==False; luego la asercion de que el sha entra
+    en loop_execution_targets.txt (contrato: 2.3 "SÍ entra").
     """
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare"], cwd=bare, check=True, capture_output=True)
+
     repo = tmp_path / "repo"
-    _init_git_repo(repo)
+    subprocess.run(
+        ["git", "clone", str(bare), str(repo)],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "t@e.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"], cwd=repo, check=True, capture_output=True
+    )
     _link_motor(repo, repo)
     _declare_authority(repo, "WOT-2026-999a", "repo_motor")
 
-    # Construir un merge commit: rama feature, commit, merge --no-ff
-    # "main" ya existe como rama del init; solo necesitamos crear "feature"
+    # Commitear inicial y push a origin/main
+    (repo / "README.md").write_text("# repo")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Crear feature branch con commit en fecha pasada
     subprocess.run(
         ["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True
     )
@@ -2460,28 +2492,37 @@ def test_merge_commit_without_paths_still_delivers(tmp_path: Path) -> None:
     subprocess.run(
         ["git", "commit", "-m", "feature commit"],
         cwd=repo,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_DATE": "2020-01-01T00:00:00",
+            "GIT_COMMITTER_DATE": "2020-01-01T00:00:00",
+        },
         check=True,
         capture_output=True,
     )
-    # Volver a main y hacer merge
+    # Push feature a origin
+    subprocess.run(
+        ["git", "push", "origin", "feature"], cwd=repo, check=True, capture_output=True
+    )
+
+    # Volver a main y merge --no-ff con committer date distinta -> merge commit real
     subprocess.run(
         ["git", "checkout", "main"], cwd=repo, check=True, capture_output=True
     )
-    merge_result = subprocess.run(
-        ["git", "merge", "feature", "-m", "WOT-2026-999a: merge feature"],
+    subprocess.run(
+        [
+            "git",
+            "merge",
+            "--no-ff",
+            "origin/feature",
+            "-m",
+            "WOT-2026-999a: merge feature",
+        ],
         cwd=repo,
+        env={**os.environ, "GIT_COMMITTER_DATE": "2020-01-02T00:00:00"},
+        check=True,
         capture_output=True,
-        text=True,
     )
-    if merge_result.returncode != 0:
-        # El merge puede fallar si git no permite merge fast-forward con --no-ff
-        # en este version; usar --ff
-        subprocess.run(
-            ["git", "merge", "--ff", "feature", "-m", "WOT-2026-999a: merge feature"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
     merge_sha_result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=repo,
@@ -2491,12 +2532,22 @@ def test_merge_commit_without_paths_still_delivers(tmp_path: Path) -> None:
     )
     merge_sha = merge_sha_result.stdout.strip()
 
-    # Probe directo del helper: un sha sin rutas (o con rutas no-backlog) no se excluye
+    # Probe directo del helper: merge commit sin rutas => False (INCLUIR conservador)
     from scripts.session_closeout import _delivers_only_backlog_surfaces
 
     result = _delivers_only_backlog_surfaces(repo, merge_sha)
-    # El merge commit tiene rutas (el diff contra los padres), pero NO son solo backlog,
-    # asi que _delivers_only_backlog_surfaces debe devolver False (no excluir)
     assert result is False, (
-        f"merge commit should NOT be excluded; _delivers_only_backlog_surfaces returned {result}"
+        f"merge commit empty-set => INCLUIR; helper returned {result}"
+    )
+
+    # Asercion completa del plan 2.3: el sha SÍ entra en targets.txt
+    result2 = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+    targets_path = repo / TARGETS_REL
+    assert result2.status == "PASS", result2.detail
+    assert targets_path.exists()
+    content = targets_path.read_text(encoding="utf-8")
+    assert merge_sha in content, (
+        f"merge commit {merge_sha} should enter targets (empty-set => INCLUIR); got: {content!r}"
     )
