@@ -278,6 +278,56 @@ def step_purge_arranques_archive(
     )
 
 
+def step_rotate_kilo_logs(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    run_script_fn,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Run rotate_kilo_logs.py (R13a: rotacion/purga de logs Kilo).
+
+    Before: `project_root` has `.agent/planning/**/*.log` and locks.
+    During: executes rotate_kilo_logs.py as subprocess with --project-root.
+    After: returns StepResult with PASS/WARN/SKIP.
+    """
+    if dry_run:
+        return step_result_cls(
+            name="rotate_kilo_logs",
+            status="SKIP",
+            detail="Skipped in dry-run mode",
+        )
+    try:
+        result = run_script_fn(
+            "rotate_kilo_logs.py",
+            ["--project-root", str(project_root)],
+            project_root,
+            timeout=120,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return step_result_cls(
+            name="rotate_kilo_logs",
+            status="WARN",
+            detail=f"Rotate kilo logs could not run: {exc}",
+        )
+    stdout = getattr(result, "stdout", None) or ""
+    stderr = getattr(result, "stderr", None) or ""
+    if result.returncode != 0:
+        return step_result_cls(
+            name="rotate_kilo_logs",
+            status="WARN",
+            detail=(
+                f"rotate_kilo_logs.py exit {result.returncode}: "
+                f"{stderr.strip()[:300] or stdout[:300]}"
+            ),
+        )
+    return step_result_cls(
+        name="rotate_kilo_logs",
+        status="PASS",
+        detail="Log rotation completed",
+    )
+
+
 def step_archive_execution_log(
     project_root: Path,
     dry_run: bool,

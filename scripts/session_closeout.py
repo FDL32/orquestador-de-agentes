@@ -54,6 +54,7 @@ from scripts.closeout_steps.archival import (  # noqa: E402
     step_archive_execution_log as _step_archive_execution_log_impl,
     step_archive_manager_feedback as _step_archive_manager_feedback_impl,
     step_purge_arranques_archive as _step_purge_arranques_archive_impl,
+    step_rotate_kilo_logs as _step_rotate_kilo_logs_fn,
 )
 from scripts.closeout_steps.gates import (  # noqa: E402
     step_local_audit as _step_local_audit_impl,
@@ -74,6 +75,7 @@ from scripts.closeout_steps.rotation import (  # noqa: E402
     parse_review_queue as _rotation_parse_review_queue,
     step_cleanup_builder_session as _step_cleanup_builder_session_impl,
     step_git_clean as _step_git_clean_impl,
+    step_rotate_bitacora_vuelo as _step_rotate_bitacora_vuelo_fn,
     step_rotate_review_queue as _step_rotate_review_queue_impl,
 )
 from scripts.closeout_steps.support import (  # noqa: E402
@@ -110,6 +112,16 @@ KEEP_ENTRIES = 10
 SIZE_WARN_THRESHOLD = 50 * 1024  # 50 KB advisory threshold
 
 LOCK_TTL_MINUTES = 15
+
+# R13a: Kilo log rotation constants
+KILO_LOG_COMPRESS_DAYS = 7
+KILO_LOG_DELETE_DAYS = 30
+KILO_LOG_INACTIVE_MINUTES = 10
+
+# R13b: Bitacora vuelo rotation constants
+BITACORA_KEEP_ENTRIES = 50
+BITACORA_ARCHIVE_DIR_REL = Path(".agent") / "collaboration" / "archive"
+BITACORA_GLOB_PATTERN = "**/BITACORA*.md"
 
 PORTABILITY_SCAN_DIRS = ("docs", "markdowns", "skills", ".agent/rules")
 
@@ -1257,6 +1269,74 @@ def _step_rotate_review_queue(project_root: Path, dry_run: bool) -> StepResult:
         size_warn_threshold=SIZE_WARN_THRESHOLD,
         step_result_cls=StepResult,
         supervisor_lock_rel=SUPERVISOR_LOCK_REL,
+    )
+
+
+def _step_rotate_kilo_logs(project_root: Path, dry_run: bool) -> StepResult:
+    """Run rotate_kilo_logs.py (R13a: rotacion/purga de logs Kilo)."""
+    return _step_rotate_kilo_logs_impl(
+        project_root,
+        dry_run,
+        step_result_cls=StepResult,
+    )
+
+
+def _step_rotate_bitacora_vuelo(project_root: Path, dry_run: bool) -> StepResult:
+    """Rotate BITACORA*.md files: archive old entries, keep recent (R13b)."""
+    return _step_rotate_bitacora_vuelo_impl(
+        project_root,
+        dry_run,
+        bitacora_archive_dir_rel=BITACORA_ARCHIVE_DIR_REL,
+        bitacora_glob_pattern=BITACORA_GLOB_PATTERN,
+        builder_lock_rel=BUILDER_LOCK_REL,
+        keep_entries=BITACORA_KEEP_ENTRIES,
+        lock_ttl_minutes=LOCK_TTL_MINUTES,
+        size_warn_threshold=SIZE_WARN_THRESHOLD,
+        step_result_cls=StepResult,
+        supervisor_lock_rel=SUPERVISOR_LOCK_REL,
+    )
+
+
+def _step_rotate_kilo_logs_impl(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Execute kilo log rotation (R13a)."""
+    return _step_rotate_kilo_logs_fn(
+        project_root,
+        dry_run,
+        run_script_fn=_run_script,
+        step_result_cls=step_result_cls,
+    )
+
+
+def _step_rotate_bitacora_vuelo_impl(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    bitacora_archive_dir_rel: Path,
+    bitacora_glob_pattern: str,
+    builder_lock_rel: Path,
+    keep_entries: int,
+    lock_ttl_minutes: int,
+    size_warn_threshold: int,
+    step_result_cls: type[StepResult],
+    supervisor_lock_rel: Path,
+) -> StepResult:
+    """Execute bitacora vuelo rotation (R13b)."""
+    return _step_rotate_bitacora_vuelo_fn(
+        project_root,
+        dry_run,
+        bitacora_archive_dir_rel=bitacora_archive_dir_rel,
+        bitacora_glob_pattern=bitacora_glob_pattern,
+        builder_lock_rel=builder_lock_rel,
+        keep_entries=keep_entries,
+        lock_ttl_minutes=lock_ttl_minutes,
+        size_warn_threshold=size_warn_threshold,
+        step_result_cls=step_result_cls,
+        supervisor_lock_rel=supervisor_lock_rel,
     )
 
 
@@ -2751,6 +2831,8 @@ def run_closeout(
     report.steps.append(_step_archive_arranques(project_root, dry_run))
     report.steps.append(_step_purge_arranques_archive(project_root, dry_run))
     report.steps.append(_step_rotate_review_queue(project_root, dry_run))
+    report.steps.append(_step_rotate_kilo_logs(project_root, dry_run))
+    report.steps.append(_step_rotate_bitacora_vuelo(project_root, dry_run))
     report.steps.append(_step_archive_manager_feedback(project_root, dry_run, events))
 
     report.steps.append(_step_archive_execution_log(project_root, dry_run))
