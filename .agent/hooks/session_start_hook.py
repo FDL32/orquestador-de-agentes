@@ -55,14 +55,19 @@ ilegible.
 Before: recibe el payload JSON de SessionStart por stdin (puede ir vacio).
 During: resuelve el project root, carga el indice via `get_bootstrap_context()`
     y lo envuelve; anade una linea de salud de la memoria (WOT-2026-089e, por
-    subproceso de `check_memory_health.py`) y, DESPUES de la memoria, un bloque
+    subproceso de `check_memory_health.py`), DESPUES de la memoria un bloque
     con el backend/modelo de cada rol de capa resuelto desde `agents.json`
-    (WOT-2026-098b). Solo lectura; ninguna escritura.
+    (WOT-2026-098b), y SIEMPRE AL FINAL la seccion M4/M5 (2026-10-15):
+    contratos de invocacion leidos EN VIVO desde
+    `prompts/orchestrator_launch_builder.md`. Solo lectura; ninguna escritura.
 After: imprime `{"additionalContext": ...}` por stdout y sale con 0 SIEMPRE.
     Ante cualquier error emite un contexto minimo que apunta al comando manual.
     La seccion de roles hereda el mismo fail-open: si `agents.json` falta, esta
     corrupto o no declara `role_mapping`, se OMITE (cadena vacia) sin degradar la
-    memoria ya inyectada ni bloquear el arranque.
+    memoria ya inyectada ni bloquear el arranque. La seccion M4/M5 es distinta:
+    NUNCA se omite -- si la lectura en vivo falla, cae a un texto fallback
+    fijo (ver `_M4_M5_FALLBACK`), porque la norma de invocacion aplica aunque
+    el prompt fuente no resuelva.
 """
 
 from __future__ import annotations
@@ -315,6 +320,82 @@ def _role_section(root: Path) -> str:
         return ""
 
 
+# Fase 0 + Via A (M4/M5 integration, 2026-10-15). WOT-2026-057a/b pattern
+# applied to a SECOND norma that lived only inside a prompt nobody re-reads
+# mid-session: M4 ("validador o contrato citado => leelo ENTERO antes de
+# actuar") y M5 ("exit code real, nunca $? tras un pipe"), hoy solo dentro
+# de orchestrator_launch_builder.md:327-383 -- un prompt de Builder que un
+# agente operando una herramienta con contrato propio desde chat normal
+# (p.ej. ensemble_dispatch.py, gobernado por prompts/ensemble_loop.md)
+# nunca carga. Medido en vivo (sesion 2026-10-15): tres rondas de
+# ensemble_dispatch.py loop-round lanzadas con --profile/--timeout/`| tail`
+# inferidos por tanteo, sin haber leido ensemble_loop.md entero, produjeron
+# contaminacion real de backend_quarantine.json (timeouts cortos matando
+# procesos vivos, registrados como fallos de transporte genuinos).
+_M4_M5_SOURCE_REL = Path("prompts") / "orchestrator_launch_builder.md"
+_M4_M5_START_MARKER = "### M4."
+_M4_M5_END_MARKER = "## Objetivo"
+
+# Fallback usado SOLO si la lectura en vivo falla (fichero ausente, cambio
+# de marcador, etc.) -- nunca se usa si la lectura en vivo tiene exito, asi
+# que no puede quedar obsoleto en silencio mientras el fichero fuente siga
+# resolviendo.
+_M4_M5_FALLBACK = (
+    "**Contratos de invocacion (M4/M5)**: si el contrato de un ticket, un "
+    "prompt o el propio artefacto nombran un validador, gate o CONTRATO "
+    "citable para lo que vas a hacer, leelo/ejecutalo ENTERO antes de "
+    "actuar -- no lo infieras por grep, analogia o memoria. Nunca captures "
+    "$? despues de un pipe (usa PIPESTATUS o evita el pipe): el `rc` tras "
+    "`cmd | tail` es del consumidor, no del productor. "
+    "(Fuente completa: orchestrator_launch_builder.md, no resoluble en "
+    "este arranque.)"
+)
+
+
+def _m4_m5_section(root: Path) -> str:
+    """Seccion M4/M5, leida EN VIVO desde el prompt fuente, o el fallback.
+
+    WOT-2026-057a/b pattern: una norma dentro de un prompt que nadie relee
+    a mitad de sesion no es cableado. Esta seccion la inyecta el hook SIN
+    que el agente tenga que ejecutar nada, igual que ya hace con memoria/
+    salud/roles.
+
+    Por que LECTURA EN VIVO y no texto duplicado a mano (correccion
+    adoptada tras bucle de gobierno, 2026-10-15): un texto hardcodeado se
+    desincroniza del prompt fuente la primera vez que alguien edite M4/M5
+    sin acordarse de este hook. Leer en vivo hace que CUALQUIER edicion del
+    prompt fuente se refleje aqui sin cambio adicional -- al coste de una
+    lectura de fichero mas por arranque (barata: un prompt de ~400 lineas).
+
+    Before: `root` es la raiz resuelta por `_resolve_root`.
+    During: resuelve el motor (`_motor_root`, mismo ancla que memoria/roles)
+        y lee `prompts/orchestrator_launch_builder.md` ENTERO; extrae el
+        tramo entre `_M4_M5_START_MARKER` y `_M4_M5_END_MARKER` (ambos
+        literales, sin regex fragil de numero de linea -- los numeros de
+        linea citados en el fallback y en memoria del repo son solo
+        referencia humana, nunca el ancla real de extraccion).
+    After: el tramo extraido (con cabecera explicita de que es LECTURA EN
+        VIVO y su ruta de origen), o `_M4_M5_FALLBACK` si el fichero falta,
+        los marcadores no se encuentran, o cualquier excepcion ocurre.
+        NUNCA lanza: mismo contrato fail-open que el resto del modulo.
+    """
+    try:
+        motor = _motor_root(root)
+        source = motor / _M4_M5_SOURCE_REL
+        text = source.read_text(encoding="utf-8")
+        start = text.index(_M4_M5_START_MARKER)
+        end = text.index(_M4_M5_END_MARKER, start)
+        excerpt = text[start:end].strip()
+        if not excerpt:
+            return _M4_M5_FALLBACK
+        return (
+            f"**Contratos de invocacion (M4/M5, lectura en vivo de "
+            f"{_M4_M5_SOURCE_REL.as_posix()})**:\n\n{excerpt}"
+        )
+    except Exception:
+        return _M4_M5_FALLBACK
+
+
 def _load_context(root: Path) -> str:
     """Indice de memoria, o cadena vacia si no se puede cargar.
 
@@ -385,6 +466,12 @@ def main() -> int:
     roles = _role_section(root)
     if roles:
         context += f"\n\n{roles}\n"
+
+    # Fase 0 + Via A (M4/M5 integration, 2026-10-15): siempre presente --
+    # a diferencia de las secciones anteriores (que se OMITEN si fallan),
+    # esta usa su propio fallback en vez de desaparecer, porque M4/M5 son
+    # normas de invocacion que aplican AUNQUE la lectura en vivo falle.
+    context += f"\n\n{_m4_m5_section(root)}\n"
 
     print(json.dumps({"additionalContext": context}, ensure_ascii=False))
     return 0

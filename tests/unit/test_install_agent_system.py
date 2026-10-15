@@ -1054,6 +1054,174 @@ def test_propagate_claude_guard_hook_fixes_all_duplicate_gating_entries(tmp_path
 
 
 # ---------------------------------------------------------------------------
+# propagate_session_start_hook (Fase 0, M4/M5 integration 2026-10-15):
+# sibling of propagate_claude_guard_hook -- same structural-merge, atomic,
+# idempotent contract, for the SessionStart hook instead of PreToolUse.
+# ---------------------------------------------------------------------------
+
+
+def _canonical_session_start_command() -> str:
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    agent_hooks_dir = str(
+        _Path(ias.__file__).resolve().parent.parent / ".agent" / "hooks"
+    )
+    if agent_hooks_dir not in _sys.path:
+        _sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    return claude_guard_entry.canonical_command_for("session_start_hook.py")
+
+
+def test_propagate_session_start_hook_creates_when_absent(tmp_path):
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    result = ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    settings_path = dest_root / ".claude" / "settings.json"
+    assert result is True
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    session_start = settings["hooks"]["SessionStart"]
+    assert len(session_start) == 1
+    assert session_start[0]["matcher"] == ""
+    assert session_start[0]["hooks"][0]["command"] == _canonical_session_start_command()
+
+
+def test_propagate_session_start_hook_preserves_unrelated_hooks(tmp_path):
+    """MERGE, not clobber: unrelated hooks/keys in an existing settings.json
+    survive the propagation untouched -- including the PreToolUse write
+    guard, so re-running install doesn't silently drop it."""
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    existing = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Write|Edit|MultiEdit",
+                    "hooks": [{"type": "command", "command": "echo guard"}],
+                }
+            ],
+            "Stop": [
+                {"matcher": "", "hooks": [{"type": "command", "command": "echo bye"}]}
+            ],
+        },
+        "permissions": {"allow": ["Bash(ls)"]},
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(existing, indent=2))
+
+    ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    assert settings["hooks"]["Stop"] == existing["hooks"]["Stop"]
+    assert settings["hooks"]["PreToolUse"] == existing["hooks"]["PreToolUse"]
+    assert settings["permissions"] == existing["permissions"]
+    session_start = settings["hooks"]["SessionStart"]
+    assert len(session_start) == 1
+    assert session_start[0]["hooks"][0]["command"] == _canonical_session_start_command()
+
+
+def test_propagate_session_start_hook_replaces_stale_command(tmp_path):
+    """MUTATION target: a destino whose SessionStart command drifted from
+    canonical must be corrected, not left stale."""
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    stale = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": "echo STALE_COMMAND"}],
+                }
+            ]
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(stale, indent=2))
+
+    ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    session_start = settings["hooks"]["SessionStart"]
+    assert len(session_start) == 1
+    assert session_start[0]["hooks"][0]["command"] == _canonical_session_start_command()
+    assert session_start[0]["hooks"][0]["command"] != "echo STALE_COMMAND"
+
+
+def test_propagate_session_start_hook_idempotent_on_resync(tmp_path):
+    """Re-running on an already-wired destino is a byte-identical no-op."""
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    ias.propagate_session_start_hook(dest_root, dry_run=False)
+    settings_path = dest_root / ".claude" / "settings.json"
+    before = settings_path.read_text(encoding="utf-8")
+
+    result = ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    after = settings_path.read_text(encoding="utf-8")
+    assert result is True
+    assert after == before
+
+
+def test_propagate_session_start_hook_dry_run_does_not_write(tmp_path):
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    result = ias.propagate_session_start_hook(dest_root, dry_run=True)
+
+    assert result is True
+    assert not (dest_root / ".claude" / "settings.json").exists()
+
+
+def test_propagate_session_start_hook_rejects_invalid_json(tmp_path):
+    """Fail-safe: never overwrite a settings.json it cannot parse."""
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text("{not valid json", encoding="utf-8")
+
+    result = ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    assert result is False
+    assert settings_path.read_text(encoding="utf-8") == "{not valid json"
+
+
+def test_propagate_session_start_hook_fixes_all_duplicate_gating_entries(tmp_path):
+    """A malformed settings.json with TWO SessionStart entries, neither
+    canonical, gets BOTH fixed -- never leaves a stale duplicate beside the
+    correct one."""
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    malformed = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": "echo FIRST_STALE"}],
+                },
+                {
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": "echo SECOND_STALE"}],
+                },
+            ]
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(malformed, indent=2))
+
+    ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    session_start = settings["hooks"]["SessionStart"]
+    assert len(session_start) == 2
+    for entry in session_start:
+        assert entry["hooks"][0]["command"] == _canonical_session_start_command()
+
+
+# ---------------------------------------------------------------------------
 # ensure_destination_projections_ignored (WOT-2026-020t)
 # ---------------------------------------------------------------------------
 

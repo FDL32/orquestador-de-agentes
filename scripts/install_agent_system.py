@@ -1537,6 +1537,113 @@ def propagate_claude_guard_hook(
     return True
 
 
+def _canonical_session_start_command() -> str:
+    """The exact SessionStart command that invokes session_start_hook.py.
+
+    Reuses the generic generator (``canonical_command_for``), the same one
+    the motor's own tracked ``.claude/settings.json`` already uses for its
+    ``SessionStart`` entry -- not a new bootstrap literal.
+    """
+    agent_hooks_dir = str(Path(__file__).resolve().parent.parent / ".agent" / "hooks")
+    if agent_hooks_dir not in sys.path:
+        sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    return claude_guard_entry.canonical_command_for("session_start_hook.py")
+
+
+def propagate_session_start_hook(
+    destination_root: Path,
+    dry_run: bool = False,
+) -> bool:
+    """Merge the canonical SessionStart hook into the destino's tracked
+    ``.claude/settings.json`` (sibling of ``propagate_claude_guard_hook``,
+    same structural-merge/atomic-write/idempotent contract -- only the hook
+    kind differs: ``SessionStart`` with an empty matcher, not ``PreToolUse``
+    gating Write|Edit|MultiEdit).
+
+    Before: destination_root/.claude/settings.json may be absent, present
+        with unrelated hooks, or already carry the canonical SessionStart
+        entry (re-sync).
+    During: a STRUCTURAL merge, never a clobber -- every top-level key and
+        every hook list the destino already has is preserved; a
+        ``SessionStart`` entry whose command does not already equal the
+        canonical one is REPLACED (idempotent), and if no such entry exists
+        one is appended. Written atomically (write-tmp + os.replace), same
+        pattern as ``propagate_claude_guard_hook``.
+    After: destination_root/.claude/settings.json exists and its
+        ``SessionStart`` hook is exactly
+        ``claude_guard_entry.canonical_command_for("session_start_hook.py")``.
+        Returns True on success (or dry-run); False only if an existing
+        settings.json could not be parsed as JSON (fail-safe: never
+        overwrites a file it cannot read).
+    """
+    import os
+    import tempfile
+
+    settings_path = destination_root / ".claude" / "settings.json"
+    canonical_command = _canonical_session_start_command()
+
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"[ERROR] {settings_path} is not valid JSON: {exc}")
+            return False
+
+    hooks = existing.setdefault("hooks", {})
+    session_start = hooks.setdefault("SessionStart", [])
+    canonical_hook = {"type": "command", "command": canonical_command}
+
+    # SessionStart has no matcher to disambiguate entries by (unlike the
+    # PreToolUse write guard, which keys on Write|Edit|MultiEdit): any entry
+    # already present is treated as THE gating entry for this hook kind.
+    already_wired = any(
+        canonical_hook in entry.get("hooks", []) for entry in session_start
+    )
+
+    if already_wired:
+        action = "already-wired"
+    elif session_start:
+        for entry in session_start:
+            entry["hooks"] = [canonical_hook] + [
+                h for h in entry.get("hooks", []) if h != canonical_hook
+            ]
+        action = "updated"
+    else:
+        session_start.append({"matcher": "", "hooks": [canonical_hook]})
+        action = "added"
+
+    if dry_run:
+        print(f"[DRY-RUN] Would {action} SessionStart hook in {settings_path}")
+        return True
+
+    if action == "already-wired":
+        print(f"[SKIP] SessionStart hook already wired in {settings_path}")
+        return True
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        dir=str(settings_path.parent),
+        prefix="settings_",
+        suffix=".json.tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(existing, indent=2, ensure_ascii=False) + "\n")
+        os.replace(temp_path, str(settings_path))
+    except Exception:
+        import contextlib
+
+        with contextlib.suppress(OSError):
+            os.unlink(temp_path)
+        raise
+
+    print(f"[INFO] {action.capitalize()} SessionStart hook in {settings_path}")
+    return True
+
+
 def copy_project_template(
     template_root: Path,
     destination_root: Path,
@@ -1789,6 +1896,12 @@ def install_agent_system(
     # tracked .claude/settings.json (structural merge, never a clobber).
     propagate_claude_guard_hook(destination_root, dry_run=dry_run)
 
+    # Fase 0 (M4/M5 integration, 2026-10-15): propagate the SessionStart hook
+    # alongside the write guard -- a destino installed before this lacked
+    # SessionStart entirely (measured on Crear_Texto_LLM), so the memory
+    # index/health/role sections of session_start_hook.py never ran there.
+    propagate_session_start_hook(destination_root, dry_run=dry_run)
+
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
     if dry_run:
@@ -1927,6 +2040,10 @@ def sync_agent_system(  # noqa: C901
     # WOT-2026-071d: propagate/re-verify the guard_paths write guard in the
     # destino's tracked .claude/settings.json (structural merge, idempotent).
     propagate_claude_guard_hook(destination_root, dry_run=dry_run)
+
+    # Fase 0 (M4/M5 integration, 2026-10-15): re-verify SessionStart on sync,
+    # same contract as the write guard above.
+    propagate_session_start_hook(destination_root, dry_run=dry_run)
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
