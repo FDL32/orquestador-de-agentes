@@ -52,6 +52,14 @@ from typing import Any
 
 
 # ------------------------------------------------------------------ constants
+# B5: bootstrap bus.redact for redacted path matching (telemetry carries
+# `C:\Users\***REDACTED***\...` after post_tool_hook -> bus.redact pipeline).
+_MOTOR_ROOT_B5 = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_B5) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_B5))
+from bus.redact import redact  # noqa: E402
+
+
 # Citas canonicas de ficheros: rutas relativas al motor que terminan en .md
 # o .py (los tipos normativos mas comunes). Se aceptan barras, backslash o
 # backticks.
@@ -324,6 +332,18 @@ def check_read_coverage(  # noqa: C901
             # Full normalized path match (B3 fix)
             try:
                 if Path(fp).resolve() == resolved.resolve():
+                    matched_line_count = max_lc
+                    break
+            except (OSError, ValueError):
+                continue
+            # B5: redacted path match — telemetry carries the path through
+            # bus.redact which masks the username (C:\Users\***REDACTED***\...),
+            # so the raw resolved path never matches.  Compare the redacted
+            # form of the resolved path against the redacted telemetry path.
+            try:
+                redacted_resolved = redact(str(resolved.resolve()))
+                redacted_fp = redact(fp)
+                if redacted_resolved == redacted_fp:
                     matched_line_count = max_lc
                     break
             except (OSError, ValueError):
