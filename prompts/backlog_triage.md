@@ -565,6 +565,53 @@ respuesta del otro) es el segundo punto de verificacion independiente que
 sustituye al "humano decide" cuando el volumen hace inviable una revision
 manual total.
 
+**Concurrencia maxima del canal `agent` compartido (medido 2026-10-15;
+corregido tras bucle DESIGN_REVIEW de 3 lentes -- Codex + 2 nan/agent -- que
+detecto una inversion factual en la version original de este parrafo):** al
+lanzar varios Builders o Revisores reales (Kilo/Codex/OpenCode con
+filesystem) sobre el MISMO backend compartido (p.ej. varios perfiles `nan`),
+lanza de A LO SUMO DOS a la vez, nunca en bloque mayor. Medido: 4
+lanzamientos simultaneos de `nan/qwen3.6` dejaron a los DOS PRIMEROS
+lanzados encolados varios minutos sin avanzar un solo paso (`step_start`
+ausente en su log), mientras los DOS ULTIMOS lanzados progresaban con
+normalidad desde el primer minuto -- la contencion del pool compartido no
+es hipotetica, es observable en el propio log. **Declaracion de alcance:**
+el umbral "DOS" es la cautela adoptada de una sugerencia en vivo del
+usuario, NO un maximo medido -- el dato solo mide que 4 simultaneos saturan;
+no hay evidencia propia de que 3 sea seguro o de que 2 sea el techo optimo.
+Tratar "DOS" como punto de partida conservador, ajustable con mas
+mediciones, no como constante demostrada.
+
+**Criterio de "pareja atascada":** antes de lanzar la siguiente pareja,
+verifica que la pareja anterior ya escribio su artefacto de entrega, O que
+su log muestra al menos un `step_start`/`tool_use` reciente (progreso real,
+no solo "el proceso sigue vivo"). Si una pareja lleva mas de ~3 minutos sin
+ningun `step_start` nuevo, trata eso como señal de atasco: no lances la
+siguiente pareja encima (agravaria la contencion); espera a que la atascada
+progrese o termine, o escala al usuario si el atasco persiste. Sin este
+criterio, la regla de "dos en dos" puede bloquear el lote entero si una
+pareja se cuelga, exactamente el fallo que pretende evitar.
+
+**Espera por marca inequivoca, no por temporizador (medido 2026-10-15):**
+tras lanzar un Builder/Revisor real en background, la condicion de
+finalizacion VERIFICABLE es la APARICION de su artefacto de entrega
+declarado (el fichero que la tarea le exige escribir) -- el `exit code` del
+wrapper de lanzamiento es evidencia NECESARIA pero no SUFICIENTE (CEM v0:
+"un `exit 0` puede significar no hice nada"), nunca la unica señal. **La
+aparicion del fichero tampoco basta por si sola:** verifica ademas que su
+contenido no esta vacio o truncado (un artefacto de 0 bytes o cortado a
+mitad de frase es la misma trampa que un exit 0 sin trabajo real). Cuando
+el harness de la sesion ofrezca un mecanismo de vigilancia por evento
+(polling de una condicion de fichero/log hasta que se cumple, con
+notificacion automatica), prefierelo sobre una espera de tiempo fijo: una
+espera fija o sobra tiempo o se queda corta. Para N artefactos pendientes,
+una sola vigilancia que notifique por cada uno segun aparece es mas
+eficiente que N rondas de "espera X minutos y comprueba". **Cota maxima
+obligatoria:** toda vigilancia por evento declara un timeout maximo (no
+queda esperando indefinidamente si el artefacto nunca aparece); al expirar
+sin señal, trata el lanzamiento como sospechoso de atasco (ver criterio de
+arriba) en vez de seguir esperando en silencio.
+
 **Contrato duro de lectura entera (medido 2026-10-15, WOT-2026-042g y
 WOT-2026-044j):** antes de que el Builder o el Revisor declaren que un
 guard/check/funcion NO existe o NO cubre una propiedad, deben leer el
@@ -589,6 +636,27 @@ leido antes, no al declarar ausencia de una funcion. Excepcion de seguridad here
 `prompts/audit_agent_output.md`: "salida literal" nunca exige volcar secretos, tokens o
 credenciales -- si la seccion citada los contiene, se redacta (`***REDACTED***`) y se declara
 el redactado, nunca se omite la cita entera por eso.
+
+**Contrato duro de no fabricar salida de comandos silenciosos (medido 2026-10-15, experimento
+de calibracion de modelos economicos; validado OK por bucle DESIGN_REVIEW de 3 lentes):** antes
+de citar la "salida literal" de un comando de verificacion (ancestria, diff, `--quiet`), el
+Builder o el Revisor confirma PRIMERO si ese comando concreto imprime algo en caso de exito.
+Varios comandos habituales de este contrato (`git merge-base --is-ancestor`, la mayoria de
+`git <subcomando> --quiet`) NO IMPRIMEN NADA en exito -- solo devuelven un exit code. Medido dos
+veces en la misma sesion: un Builder (qwen3.6) y un Revisor (gemma4, antes de esta correccion)
+citaron `Salida: YES_ANCESTOR` para `git merge-base --is-ancestor`, un texto que ese comando
+nunca produce -- el HECHO subyacente resulto ser cierto en ambos casos, pero la "salida literal"
+pegada era una invencion, exactamente el anti-patron que el contrato de cita literal de arriba
+existe para prevenir, aplicado aqui a un comando silencioso en vez de a una coleccion de codigo.
+**Regla operativa: si el comando no imprime nada, reporta el EXIT CODE real (`echo "exit=$?"`
+inmediatamente despues, nunca `$?` tras un pipe -- ver regla de AGENTS.md sobre
+autoengano-por-pipe), nunca un texto de salida inventado.** Para saber de antemano si un comando
+imprime algo en exito, revisa su `--help`/manual o haz una corrida de prueba en un repo/commit de
+control conocido antes de citarlo como evidencia. Tras anadir esta clausula EXPLICITA al prompt
+de tarea del Revisor, el mismo modelo que antes fabrico "YES_ANCESTOR" dejo de hacerlo y ademas
+detecto un defecto de rigor fino del Builder en la misma corrida -- la correccion tuvo efecto
+medible EN ESTA SESION (2/2 casos tras aplicarla, 0/2 antes), declarado como observacion de
+sesion, no como tasa general garantizada para cualquier modelo o dominio.
 
 **Checklist estructurado por regla dura (medido 2026-10-15, campana Grupo A), reemplaza el
 grep de frases de auto-admision:** el informe final del Builder enumera PRIMERO, en una lista
@@ -615,6 +683,29 @@ Manager anadiera manualmente ese refuerzo citando el fallo anterior. El coste de
 el primer uso es una linea de prompt; el coste de no hacerlo fue un veredicto intermedio
 apoyado en una verificacion nunca ejecutada, atrapado solo porque el Revisor y el Manager lo
 notaron por lectura atenta, sin ningun mecanismo que lo garantizara.
+
+**Las tareas de Builder/Revisor del triaje NO se redactan libremente: se instancian desde
+plantilla, y la plantilla declara de que contrato canonico existente toma cada pieza (medido
+2026-10-15, validado por bucle DESIGN_REVIEW de 3 lentes):** antes de escribir a mano el fichero
+de tarea de un Builder o Revisor, busca si ya existe un contrato de revision/invocacion
+aplicable en `prompts/` (candidatos conocidos: `prompts/manager_review.md` para el formato de
+revision -- sanity-check previo (Paso 1c), tabla de claims-vs-evidencia con veredicto
+`confirmado/impreciso/falso`, formato fijo de informe de salida -- y
+`prompts/builder_invocation_contract.md` para el MECANISMO exacto de invocacion via CLI, que ya
+define el comando canonico `kilo run --auto -m nan/<modelo> --dir <repo> --format json
+--print-logs -f <tarea> -- <mensaje>`). Si existe, la tarea nueva lo cita explicitamente y
+declara que partes toma prestadas y cuales omite a proposito (p.ej. el mutation-verify de codigo
+de `manager_review.md` no aplica a revision documental de triaje). Si la busqueda NO encuentra
+ningun contrato aplicable, declara explicitamente "busque en X, Y, Z; no encontre protocolo
+aplicable" antes de redactar libremente (misma norma ya existente en `AGENTS.md`, "Decision de
+proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno"), y la tarea
+ad-hoc resultante queda marcada como candidata a convertirse en plantilla reutilizable si el
+mismo patron se repite en una sesion futura. Esto evita reinventar, sesion tras sesion, un
+formato de revision que ya existe y ya esta calibrado por otros tickets. Dos plantillas de
+ejemplo, derivadas de estos dos contratos para el caso de revision documental de backlog:
+`REVISOR_TASK_TEMPLATE_experimento_calibracion.md` y `BUILDER_TASK_TEMPLATE_experimento_calibracion.md`
+(ambas en `.agent/planning/` del repo_destino de origen; no son parte de este repo_motor, son el
+ejemplo vivo de la tecnica).
 
 **Rol del Revisor mas alla de confirmar o refutar (medido 2026-10-15,
 WOT-2026-059r):** si una premisa resulta irresoluble por falta de un dato
