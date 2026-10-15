@@ -2402,6 +2402,13 @@ def test_068m_denominador_no_inventa_ruido_sin_tabla(tmp_path: Path, capsys) -> 
         "# Backlog sin vista rapida\n\n| Alta | WOT-2026-901a | fila suelta | s | pending | - | x | - |\n",
         encoding="utf-8",
     )
+    _write_prefix_link(tmp_path, "WOT")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert rc == 1, captured.out
+    assert "missing" in captured.err, captured.err
+    assert "filas fuera de la tabla" not in captured.out, captured.out
 
 
 # =========================================================================== #
