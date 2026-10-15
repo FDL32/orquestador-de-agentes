@@ -1663,6 +1663,18 @@ def snapshot_canonical_state() -> dict[str, str]:
             )
     # WOT-2026-091a: snapshot regular files at the top-level of runtime/.
     snapshot.update(_snapshot_runtime_top_level())
+    # WOT-2026-100k-fix (H4): snapshot ALL regular files at the top-level of
+    # collaboration/ (non-recursive), not just the 4 canonical. This prevents
+    # false-positive leaks in destinos with extra top-level files (e.g.
+    # notifications.md, review_queue.md, backlog.md).
+    if collab.is_dir():
+        for entry in collab.iterdir():
+            if entry.is_dir():
+                continue
+            ckey = f"collaboration/{entry.name}"
+            if ckey not in snapshot:
+                with contextlib.suppress(OSError):
+                    snapshot[ckey] = entry.read_text(encoding="utf-8", errors="replace")
     return snapshot
 
 

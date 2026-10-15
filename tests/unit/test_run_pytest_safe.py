@@ -1422,6 +1422,71 @@ class TestStateLeakWotFiles:
         leaked = mod.check_canonical_state_leak(snapshot)
         assert "collaboration/AUDIT_WOT-2026-999z.md" in leaked
 
+    def test_collaboration_top_level_non_wot_files_not_false_leak(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-100k: pre-existing top-level files (backlog.md,
+        notifications.md) must NOT be reported as false leaks.
+
+        The snapshot must include ALL regular files at the top-level of
+        collaboration/, not just the 4 canonical and *_WOT-*.md files.
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        # Create pre-existing files BEFORE the snapshot
+        backlog = collab / "backlog.md"
+        backlog.write_text("backlog content", encoding="utf-8")
+        notifications = collab / "notifications.md"
+        notifications.write_text("notifications content", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        # Pre-existing files must be in the snapshot
+        assert "collaboration/backlog.md" in snapshot
+        assert "collaboration/notifications.md" in snapshot
+
+        # No change during the "run" -> no leak
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert leaked == [], (
+            f"FALSE POSITIVE: pre-existing top-level files reported as leak: {leaked}"
+        )
+
+    def test_collaboration_top_level_non_wot_false_leak_with_fix(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-100k: verify that the fix resolves the H4 false positive.
+
+        This test demonstrates the bug BEFORE the fix (fails) and passes
+        AFTER the fix is applied -- paired with the true-positive test
+        above to confirm the barrier is not relaxed.
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        # Create pre-existing files BEFORE the snapshot
+        backlog = collab / "backlog.md"
+        backlog.write_text("backlog content", encoding="utf-8")
+        notifications = collab / "notifications.md"
+        notifications.write_text("notifications content", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        # Pre-existing files MUST be in the snapshot (the fix adds them)
+        assert "collaboration/backlog.md" in snapshot
+        assert "collaboration/notifications.md" in snapshot
+
+        # Without the fix, these would appear as leaked
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "collaboration/backlog.md" not in leaked, (
+            f"backlog.md should NOT be a leak after fix, got: {leaked}"
+        )
+        assert "collaboration/notifications.md" not in leaked, (
+            f"notifications.md should NOT be a leak after fix, got: {leaked}"
+        )
+
 
 class TestStateLeakEmptyFile:
     """WOT-2026-091a H5: file deletion and new 0-byte file detection.
