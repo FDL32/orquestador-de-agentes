@@ -571,3 +571,129 @@ def test_m4_m5_section_always_present_even_when_roles_omitted(
     ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
     assert "Roles del sistema" not in ctx
     assert "M4. Validador o CONTRATO citado" in ctx
+
+
+# --------------------------------------------------------------------------- #
+# _print_context_safely (encoding hardening, 2026-10-15): un SOLO caracter no
+# codificable en la codepage del terminal (medido: Windows cp1252 + una "o"
+# cirilica corrupta en observations.2026-07.jsonl) no debe vaciar TODO el
+# contexto (memoria + salud + roles + M4/M5) via el fail-open absoluto de
+# __main__. Debe degradar el CARACTER, no la sesion entera.
+# --------------------------------------------------------------------------- #
+
+
+def test_print_context_safely_falls_back_on_unencodable_char(
+    monkeypatch, capsys
+) -> None:
+    """MUTACION ALCANZABLE: sin el try/except de encoding, este caracter
+    propagaria UnicodeEncodeError hasta el caller.
+    """
+    import importlib
+    import sys as _sys
+
+    sys_path_hooks = str(_HOOK.parent)
+    if sys_path_hooks not in _sys.path:
+        _sys.path.insert(0, sys_path_hooks)
+    hook_module = importlib.import_module("session_start_hook")
+
+    class _FakeStdoutBuffer:
+        def __init__(self):
+            self._written = b""
+
+        def write(self, data):
+            self._written += data
+
+    class _FakeStdout:
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.buffer = _FakeStdoutBuffer()
+
+        def write(self, data):
+            # Replica el fallo REAL: un TextIOWrapper con encoding=cp1252
+            # lanza UnicodeEncodeError DENTRO de write() al intentar
+            # codificar, antes de llegar al buffer subyacente.
+            data.encode(self.encoding)
+
+        def flush(self):
+            pass
+
+    fake_stdout = _FakeStdout()
+    monkeypatch.setattr(hook_module.sys, "stdout", fake_stdout)
+
+    # "o" cirilica (U+043E): no representable en cp1252.
+    context_with_cyrillic = "texto normal canonic" + "\u043e" + "o mas texto"
+
+    hook_module._print_context_safely(context_with_cyrillic)
+
+    written = fake_stdout.buffer._written
+    assert isinstance(written, bytes)
+    assert rb"\u043e" in written
+    assert b"texto normal canonic" in written
+
+
+def test_print_context_safely_passes_through_ascii_unchanged(capsys) -> None:
+    """Control negativo: un contexto puramente ASCII no activa el fallback,
+    y `print()` normal funciona (misma ruta que hoy, sin regresion)."""
+    import importlib
+    import sys as _sys
+
+    sys_path_hooks = str(_HOOK.parent)
+    if sys_path_hooks not in _sys.path:
+        _sys.path.insert(0, sys_path_hooks)
+    hook_module = importlib.import_module("session_start_hook")
+
+    hook_module._print_context_safely("solo texto ascii, nada raro aqui")
+
+    out = capsys.readouterr().out
+    assert "solo texto ascii, nada raro aqui" in out
+
+
+def test_hook_survives_unencodable_memory_entry_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """Integracion real: el hook completo, invocado como subproceso con
+    PYTHONIOENCODING=cp1252 (reproduce Windows sin terminal UTF-8), debe
+    emitir el contexto completo (memoria + M4/M5) aunque el archive portable
+    contenga un caracter no codificable -- NO debe degradar a
+    `additionalContext: ""`, que es el bug original medido en produccion.
+    """
+    import os
+
+    destino = tmp_path / "destino"
+    (destino / ".claude").mkdir(parents=True)
+    archive_dir = destino / ".agent" / "runtime" / "memory" / "archive"
+    archive_dir.mkdir(parents=True)
+    corrupt_entry = {
+        "timestamp": "2026-05-07T18:45:00Z",
+        "topic": "test-entry",
+        "signal": "texto con caracter corrupto: canonic" + "\u043e" + "o",
+        "source": "test",
+        "category": "convention",
+        "confidence": 0.6,
+        "applies_to": "all",
+    }
+    (archive_dir / "observations.2026-07.jsonl").write_text(
+        json.dumps(corrupt_entry, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "cp1252"
+    result = subprocess.run(
+        [sys.executable, str(_HOOK)],
+        input=json.dumps({"session_id": "t", "hook_event_name": "SessionStart"}).encode(
+            "utf-8"
+        ),
+        capture_output=True,
+        cwd=str(destino),
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert ctx != "", (
+        "BUG ORIGINAL: el contexto se vacio por completo por un solo "
+        "caracter no codificable -- perdida total de memoria/M4/M5"
+    )
+    assert "--recall" in ctx
+    assert "M4. Validador o CONTRATO citado" in ctx

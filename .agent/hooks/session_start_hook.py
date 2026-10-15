@@ -437,6 +437,45 @@ def _load_context(root: Path) -> str:
         return ""
 
 
+def _print_context_safely(context: str) -> None:
+    """Print the `additionalContext` JSON, tolerant of the terminal's encoding.
+
+    WOT (M4/M5 encoding hardening, 2026-10-15). Medido en vivo: en Windows,
+    cuando stdout no es un terminal UTF-8, `print()` codifica con la pagina
+    de codigos del sistema (p.ej. `cp1252`). Un SOLO caracter no-ASCII en
+    TODO el corpus de memoria (encontrado: una "o" cirilica corrupta en una
+    entrada de hace 5 meses, `observations.2026-07.jsonl`) hacia que
+    `UnicodeEncodeError` propagara sin capturar hasta el `except Exception`
+    de `__main__`, que lo trata igual que "archive corrupto" y degrada a
+    `{"additionalContext": ""}` -- PERDIDA TOTAL de memoria, salud, roles y
+    M4/M5, no solo del caracter problematico.
+
+    Este es un fallo de SALIDA (no se puede imprimir), distinto de los dos
+    que el docstring del modulo ya distingue ("fichero ausente" / "memoria
+    no se puede leer"). La correccion: si falla por encoding, reintenta con
+    `errors="backslashreplace"` -- el caracter problematico se sustituye por
+    su escape literal (`\\uXXXX`), legible y sin perder el resto del
+    contexto, en vez de vaciarlo entero.
+
+    Before: `context` es el texto final (memoria + salud + roles + M4/M5).
+    During: intenta `print(..., ensure_ascii=False)` tal cual; si
+        `UnicodeEncodeError`, re-codifica el JSON a los bytes de
+        `sys.stdout.encoding` (o UTF-8 si no se puede determinar) con
+        `errors="backslashreplace"` y escribe los bytes directamente.
+    After: SIEMPRE imprime algo -- nunca degrada a contexto vacio por este
+        motivo. Solo un fallo de un tipo DISTINTO (no de codificacion)
+        seguiria propagando al `except Exception` de `__main__`.
+    """
+    payload = json.dumps({"additionalContext": context}, ensure_ascii=False)
+    try:
+        print(payload)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        safe_bytes = payload.encode(encoding, errors="backslashreplace")
+        sys.stdout.buffer.write(safe_bytes + b"\n")
+        sys.stdout.flush()
+
+
 def main() -> int:
     # Se drena stdin (el payload del hook) sin usarlo: este hook no necesita el
     # evento, pero dejarlo sin leer puede romper la tuberia del llamante.
@@ -473,7 +512,7 @@ def main() -> int:
     # normas de invocacion que aplican AUNQUE la lectura en vivo falle.
     context += f"\n\n{_m4_m5_section(root)}\n"
 
-    print(json.dumps({"additionalContext": context}, ensure_ascii=False))
+    _print_context_safely(context)
     return 0
 
 
