@@ -93,6 +93,18 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-042z: un prompt/contrato citado por ruta => se leyo entero.
+      # Un grep/diff sobre el fichero NO cuenta como lectura. Muestreo
+      # declarado (:X-Y con "riesgo") pasa con WARN; muestreo silencioso ->
+      # FAIL nombrando fichero + lineas ausentes.
+      - id: check-contract-full-read
+        name: check contract full read (cited prompts/contracts were fully read)
+        entry: uv run python scripts/check_contract_full_read.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # WOT-2026-024w: tres guards que el parser honesto de check_guard_wiring
       # (024u) destapo como HUERFANOS -- barreras reales que nadie invocaba. Se
       # cablean aqui como hooks always_run: escanean el arbol vivo (no ficheros
