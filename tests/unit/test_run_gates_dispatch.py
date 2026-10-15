@@ -615,8 +615,9 @@ def test_dispatch_wires_skill_citations_barrier():
 def test_dispatch_propagates_skill_citations_failure(monkeypatch, tmp_path):
     """Behavioral: a failing --skill-citations makes main() return non-zero.
 
-    Mocks get_changed_files() to return a skill path so the barrier fires,
-    then stubs subprocess.run to return 1 for the citations check only.
+    Mocks get_changed_files() to return an ABSOLUTE skill path (what production
+    emits via scope_gate.get_changed_files) so the barrier fires, then stubs
+    subprocess.run to return 1 for the citations check only.
     Verifies main() returns 1 and the call was made with the right args.
     """
     motor = tmp_path / "motor"
@@ -637,11 +638,14 @@ def test_dispatch_propagates_skill_citations_failure(monkeypatch, tmp_path):
             return _FakeCompleted(1)
         return _FakeCompleted(0)
 
+    # PRODUCTION EMITS ABSOLUTE paths (scope_gate.py:508: str((git_root/path).resolve())).
     fake_sg = type(
         "FakeSG",
         (),
         {
-            "get_changed_files": lambda *a, **kw: {"skills/test-skill/SKILL.md"},
+            "get_changed_files": lambda *a, **kw: {
+                str((destino / "skills/test-skill/SKILL.md").resolve())
+            },
         },
     )()
 
@@ -678,13 +682,14 @@ def test_dispatch_no_skill_citations_when_no_relevant_paths(monkeypatch, tmp_pat
         calls.append(cmd)
         return _FakeCompleted(0)
 
+    # PRODUCTION EMITS ABSOLUTE paths (scope_gate.py:508).
     fake_sg = type(
         "FakeSG",
         (),
         {
             "get_changed_files": lambda *a, **kw: {
-                "scripts/other_script.py",
-                "agent_system/core.py",
+                str((destino / "scripts/other_script.py").resolve()),
+                str((motor / "agent_system/core.py").resolve()),
             },
         },
     )()

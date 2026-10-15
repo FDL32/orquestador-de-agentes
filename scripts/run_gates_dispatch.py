@@ -39,6 +39,38 @@ def _import_scope_gate():
     return _sg
 
 
+def _normalize_paths_relative(changed_abs, roots):
+    """Map absolute changed paths to repo-relative posix paths under a root.
+
+    Mirrors the pattern from ``scripts/test_selection.py``: each absolute path
+    is resolved against the list of known roots (project and motor).  The
+    result is a list of relative POSIX paths suitable for prefix matching.
+
+    Handles the directory-new case where ``git status --porcelain -z`` emits a
+    trailing-slash entry like ``prompts/`` (a new directory with files inside);
+    the resolved absolute path is stripped back to ``prompts`` and kept for
+    matching (the trailing slash is informational to git but lost after
+    resolve).
+
+    Returns ``[]`` when ``changed_abs`` is ``None`` or empty.
+    """
+    if not changed_abs:
+        return []
+    rel_changed = []
+    for abs_path in sorted(changed_abs):
+        p = Path(abs_path)
+        matched = False
+        for root in roots:
+            if root == p or root in p.parents or str(root) == str(p.parent):
+                rel_changed.append(p.relative_to(root).as_posix())
+                matched = True
+                break
+        if not matched:
+            # Could not relativize - keep as-is (won't match patterns).
+            rel_changed.append(p.as_posix())
+    return rel_changed
+
+
 def resolve_project_root_path() -> Path:
     env_root = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
     if env_root:
@@ -353,12 +385,17 @@ def main(argv: list[str] | None = None) -> int:
     # (audit_skill_citations) ONLY when the diff touches a prompt<->skill pair
     # or MANIFEST.distribute. Reuses the scope_gate seam already imported above.
     _sg = _import_scope_gate()
-    changed = _sg.get_changed_files(project_root=PROJECT_ROOT, motor_root=MOTOR_ROOT)
-    if changed and any(
+    changed_abs = _sg.get_changed_files(
+        project_root=PROJECT_ROOT, motor_root=MOTOR_ROOT
+    )
+    # WOT-2026-043b / M1-A r2: ``get_changed_files`` emits ABSOLUTE paths;
+    # matching must use RELATIVE posix paths to work in production.
+    changed_rel = _normalize_paths_relative(changed_abs, [PROJECT_ROOT, MOTOR_ROOT])
+    if changed_rel and any(
         path == "MANIFEST.distribute"
         or (path.startswith("prompts/") and path.endswith(".md"))
         or (path.startswith("skills/") and path.endswith("SKILL.md"))
-        for path in changed
+        for path in changed_rel
     ):
         print("[dispatch] Running check_distribution_boundary.py --skill-citations")
         rc_citations = run_motor_script(
