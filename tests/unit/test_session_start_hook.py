@@ -493,3 +493,81 @@ def test_098b_omits_section_when_role_mapping_missing(tmp_path: Path) -> None:
     ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
     assert "--recall" in ctx
     assert "Roles del sistema" not in ctx
+
+
+# --------------------------------------------------------------------------- #
+# Fase 0 + Via A (M4/M5 integration, 2026-10-15): la norma de invocacion
+# "contrato citado => leelo ENTERO antes de actuar" (M4) y "exit code real,
+# nunca $? tras un pipe" (M5) vivia SOLO dentro de
+# orchestrator_launch_builder.md:327-383, un prompt de Builder que un agente
+# operando una herramienta con contrato propio desde chat normal (fuera del
+# flujo Builder) nunca carga. Esta seccion la inyecta el hook SIEMPRE, leida
+# EN VIVO desde el prompt fuente -- nunca se OMITE como roles/salud, porque
+# la norma aplica aunque la lectura falle (cae a su propio fallback).
+# --------------------------------------------------------------------------- #
+
+
+def test_m4_m5_section_present_after_memory_with_live_content(
+    tmp_path: Path,
+) -> None:
+    """DoD (a): el hook inyecta M4/M5, leidos EN VIVO del prompt fuente.
+
+    Sin `motor_destination_link.json`, `_motor_root` cae al motor que aloja
+    el propio hook (este repo) -- su `orchestrator_launch_builder.md` real
+    SI contiene M4/M5, asi que el contenido debe ser el LITERAL del fichero,
+    no el fallback.
+    """
+    destino = _destino_with_config(tmp_path, None)
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "lectura en vivo de prompts/orchestrator_launch_builder.md" in ctx
+    assert "M4. Validador o CONTRATO citado" in ctx
+    assert "M5. Exit code REAL" in ctx
+    assert "nunca `$?` tras una tuberia" in ctx
+    # DESPUES de memoria y de cualquier seccion de roles (aqui ausente).
+    assert ctx.index("--recall") < ctx.index("M4. Validador o CONTRATO citado")
+
+
+def test_m4_m5_section_falls_back_when_source_prompt_absent(
+    tmp_path: Path,
+) -> None:
+    """MUTACION ALCANZABLE: si la lectura en vivo no encuentra el prompt
+    fuente (motor_root resuelto apunta a un directorio sin `prompts/`), la
+    seccion cae al fallback -- NUNCA se omite, a diferencia de roles/salud.
+    """
+    destino = tmp_path / "destino"
+    (destino / ".claude").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    falso_motor = tmp_path / "motor_sin_prompts"
+    falso_motor.mkdir()
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(falso_motor)}), encoding="utf-8"
+    )
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "--recall" in ctx
+    assert "Contratos de invocacion (M4/M5)" in ctx
+    assert "lectura en vivo" not in ctx
+    assert "no resoluble en este arranque" in ctx
+
+
+def test_m4_m5_section_always_present_even_when_roles_omitted(
+    tmp_path: Path,
+) -> None:
+    """La seccion M4/M5 NUNCA se omite, a diferencia de WOT-2026-098b (roles),
+    que si se omite sin `agents.json`. Mismo destino, dos contratos distintos.
+    """
+    destino = _destino_with_config(tmp_path, None)
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+
+    assert result.returncode == 0
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    assert "Roles del sistema" not in ctx
+    assert "M4. Validador o CONTRATO citado" in ctx
