@@ -220,6 +220,20 @@ entra en ningun pipeline hasta resolverse. El universo queda cerrado por
 serie: ninguna fase de este triage puede tratar un estado fuera del conjunto
 como si fuera uno de los cuatro, ni silenciar la fila que lo incumple.
 
+### Paso 0.0 -- excluir del lote lo que no es verificable por commit (medido 2026-10-15)
+
+Antes de construir cualquier lote para el patron Builder-real+Revisor-real (ver "Nota de
+escala" mas abajo), excluye los tickets que contengan, EN SU SECCION DE DECISION/DoD ACTUAL
+(no en una nota historica ya resuelta dentro del mismo texto), cualquiera de estos
+marcadores de no-autonomia: `DISENO_PRIMERO`, `DECISION PENDIENTE`, `REQUIERE_HUMANO`,
+`HUMAN_GATE`, `APLAZADO POR DEC`. El campo `commits_found` del recolector mide MENCIONES del
+ID en subjects de commit, no cierres -- un ticket con `commits_found` alto puede tener como
+unico hit una fila de gobernanza del propio backlog (alta, fusion, ampliacion), nunca una
+implementacion. Medido: un lote preseleccionado solo por `commits_found>0 AND
+paths_absent==0` tuvo que descartarse ENTERO (4/4 candidatos) tras leer sus DoD completos.
+No excluyas por `deliverable_type` (un `analysis`/`research` puede tener DoD binario
+verificable igual que un `code`); excluye por los marcadores explicitos de arriba.
+
 ### Paso 0.1 -- EJECUTAR el recolector (obligatorio)
 
 `scripts/backlog_reconcile.py` YA EXISTE (WOT-2026-021i) y recolecta las senales
@@ -300,6 +314,21 @@ Emitir por ticket una de estas tres clasificaciones de reconciliacion:
 - **LIKELY_PENDING**: sin evidencia de que se haya hecho.
 - **NEEDS_HUMAN_VERIFY**: senales contradictorias o insuficientes para
   decidir con confianza.
+- **PREMISA_NO_REPRODUCIBLE** (medido 2026-10-15, WOT-2026-043e): el objeto concreto que
+  motivo la ficha (un dato, una celda, un conteo) ya no se reproduce en el arbol vivo HOY.
+  Accion: declarar el PRIMER PASO exigido por el propio ticket si lo tiene (p.ej. "emitir
+  `CG-<id>.md` y cerrar sin implementar"); si no lo tiene, anotar el hallazgo sin archivar --
+  el objeto puede haberse resuelto por OTRO commit, verificarlo antes.
+- **PREMISA_NO_VERIFICABLE** (medido 2026-10-15, WOT-2026-059r): la FUENTE que la ficha cita
+  como evidencia de su propia premisa (un documento, un paquete, un buzon) ya no existe ni
+  se puede recuperar. Accion: declarar el limite explicitamente; si es razonable, proponer
+  candidatos por convergencia de senales independientes (nunca como identidad probada).
+
+**Precedencia entre clasificaciones:** `PREMISA_NO_REPRODUCIBLE` y `PREMISA_NO_VERIFICABLE`
+aplican cuando falta el OBJETO o la FUENTE de la premisa (nada que verificar).
+`NEEDS_HUMAN_VERIFY` aplica cuando el objeto y la fuente SI existen pero la evidencia
+encontrada es CONTRADICTORIA o insuficiente para decidir con confianza. Usa el subtipo mas
+especifico que aplique.
 
 Los tickets `LIKELY_DONE` se proponen para archivar y SALEN del analisis de
 pipelines: nunca entran en la Fase 2 (agrupacion).
@@ -535,6 +564,39 @@ Builder+Revisor (dos modelos distintos, sin visibilidad cruzada de la
 respuesta del otro) es el segundo punto de verificacion independiente que
 sustituye al "humano decide" cuando el volumen hace inviable una revision
 manual total.
+
+**Contrato duro de lectura entera (medido 2026-10-15, WOT-2026-042g y
+WOT-2026-044j):** antes de que el Builder o el Revisor declaren que un
+guard/check/funcion NO existe o NO cubre una propiedad, deben leer el
+fichero candidato ENTERO -- un `grep` de una palabra NO basta. Dos lotes
+reales midieron que el Builder declaro ausente un check que SI existia,
+bajo otro nombre de funcion dentro del MISMO fichero, y solo la lectura
+entera del Revisor lo detecto; en ambos casos el veredicto FINAL no
+cambio, pero la justificacion del Builder era falsa y tuvo que corregirse.
+Un `grep` que no encuentra un termino es evidencia de que ESE TERMINO no
+aparece, nunca de que la FUNCION esta ausente.
+
+**Rol del Revisor mas alla de confirmar o refutar (medido 2026-10-15,
+WOT-2026-059r):** si una premisa resulta irresoluble por falta de un dato
+(p.ej. el nombre de un guard citado por una fuente ya drenada), el Revisor
+puede proponer un candidato por CONVERGENCIA de senales independientes
+(fecha, superficie, estado del guard, contexto de la sesion que lo
+origino), declarando SIEMPRE y explicitamente que es una hipotesis
+razonada y no una identidad probada. Esto reduce el coste de que una
+sesion futura repita la misma busqueda infructuosa, sin fingir una
+certeza que no existe.
+
+**Extraccion de filas por texto (medido 2026-10-15, propio del Manager):**
+cualquier extraccion automatizada de una fila de `backlog.md` por texto
+(Python, grep, etc.) debe anclar la celda EXACTA del ID
+(`r'\|\s*\w+\s*\|\s*' + re.escape(id) + r'\s*\|'` sobre la PRIMERA linea
+del bloque -- el `\w+` cubre la celda de Prioridad que precede al ID,
+nunca el ID en si, asi que los guiones de un ID como `WOT-2026-040o` no
+son un problema para este patron), nunca un substring-anywhere: un ID
+corto puede aparecer como substring de otro ID mas largo o en cualquier
+posicion de un bloque de texto largo, devolviendo la fila equivocada. La
+extraccion debe ademas exigir EXACTAMENTE una coincidencia y fallar
+explicito ante cero o varias.
 
 ### Presupuesto de fan-out multiagente
 
