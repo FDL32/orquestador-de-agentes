@@ -73,12 +73,31 @@ def _extract_read_payload(input_data: dict) -> tuple[str, str]:  # noqa: C901
         if isinstance(resp_content, str):
             content = resp_content
         else:
-            stdout_val = tool_response.get("stdout")
-            if isinstance(stdout_val, str):
-                content = stdout_val
-            stderr_val = tool_response.get("stderr")
-            if isinstance(stderr_val, str):
-                content = content + stderr_val
+            # WOT-2026-pendiente (medido 2026-10-15): la forma REAL que este
+            # Claude Code envia para Read es {"type": "text", "file":
+            # {"filePath": ..., "content": ...}} -- ninguna de las 3 formas
+            # anteriores la cubria, por lo que el conteo de lineas salia
+            # SIEMPRE "0 lines" (confirmado: 100% de las entradas historicas
+            # de tool_usage.jsonl con file_path correcto tenian "0 lines").
+            file_block = tool_response.get("file")
+            if isinstance(file_block, dict):
+                file_content = file_block.get("content")
+                if isinstance(file_content, str):
+                    content = file_content
+                file_path_from_block = file_block.get("filePath")
+                if (
+                    file_path == "unknown"
+                    and isinstance(file_path_from_block, str)
+                    and file_path_from_block
+                ):
+                    file_path = file_path_from_block
+            if not content:
+                stdout_val = tool_response.get("stdout")
+                if isinstance(stdout_val, str):
+                    content = stdout_val
+                stderr_val = tool_response.get("stderr")
+                if isinstance(stderr_val, str):
+                    content = content + stderr_val
 
     return file_path, content
 

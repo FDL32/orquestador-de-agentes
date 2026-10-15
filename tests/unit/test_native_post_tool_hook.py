@@ -180,6 +180,74 @@ def test_tool_response_structured_stdout(tmp_path: Path) -> None:
     assert "3 lines" in record["context"]
 
 
+def test_tool_response_real_claude_code_file_block(tmp_path: Path) -> None:
+    """B1 (medido 2026-10-15): la forma REAL de tool_response para Read en
+    produccion es {"type": "text", "file": {"filePath": ..., "content": ...}}.
+
+    Confirmado capturando un payload real: ANTES de este fix, el 100% de las
+    entradas historicas de tool_usage.jsonl con file_path correcto tenian
+    SIEMPRE "0 lines", porque esta forma no coincidia con ninguna de las 3
+    ramas anteriores (string / content-block-array / {content|stdout}).
+    MUTATION: sin la rama `file_block = tool_response.get("file")`, este test
+    cae a "0 lines" (ROJO); con ella, pasa (VERDE).
+    """
+    payload = json.dumps(
+        {
+            "tool_name": "Read",
+            "session_id": "test-session-001",
+            "tool_input": {"file_path": "prompts/canon.md"},
+            "tool_response": {
+                "type": "text",
+                "file": {
+                    "filePath": "prompts/canon.md",
+                    "content": "line1\nline2\nline3\nline4\n",
+                },
+            },
+        }
+    ).encode("utf-8")
+    result = _run_hook(payload, tmp_path=tmp_path)
+    assert result.returncode == 0, f"Expected exit 0.\nstderr: {result._decoded_stderr}"
+    telemetry_file = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    last_line = telemetry_file.read_text(encoding="utf-8").strip().split("\n")[-1]
+    record = json.loads(last_line)
+    assert record["tool"] == "view_file"
+    assert "unknown" not in record["context"], (
+        f"Expected real file_path, got: {record['context']}"
+    )
+    assert "4 lines" in record["context"], (
+        f"Expected 4 lines (ROJO previo: siempre '0 lines'), got: {record['context']}"
+    )
+
+
+def test_tool_response_file_block_fills_unknown_path(tmp_path: Path) -> None:
+    """B1: si tool_input no trae file_path, el bloque 'file.filePath' lo rellena.
+
+    Cubre el caso donde tool_input esta vacio pero tool_response.file.filePath
+    SI tiene la ruta real -- no debe quedar 'unknown' cuando el dato existe en
+    otro sitio del payload.
+    """
+    payload = json.dumps(
+        {
+            "tool_name": "Read",
+            "session_id": "test-session-001",
+            "tool_response": {
+                "type": "text",
+                "file": {
+                    "filePath": "prompts/other.md",
+                    "content": "a\nb\n",
+                },
+            },
+        }
+    ).encode("utf-8")
+    result = _run_hook(payload, tmp_path=tmp_path)
+    assert result.returncode == 0
+    telemetry_file = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    last_line = telemetry_file.read_text(encoding="utf-8").strip().split("\n")[-1]
+    record = json.loads(last_line)
+    assert "prompts/other.md" in record["context"]
+    assert "2 lines" in record["context"]
+
+
 def test_old_result_key_no_longer_needed(tmp_path: Path) -> None:
     """B1: the old 'result' key still produces 'unknown' (proves it was wrong).
 
