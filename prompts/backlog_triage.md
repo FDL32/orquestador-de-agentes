@@ -90,6 +90,52 @@ python <MOTOR_ROOT>/scripts/find_similar_signals.py --text "<texto de la ficha>"
 Un `[DEDUPE: SIN VECINOS]` estampado sobre un barrido que no corrio es peor que
 no deduplicar: da por nueva una ficha que ya existe.
 
+### Dedupe/fusion sobre tickets YA EXISTENTES, no solo altas nuevas (medido 2026-10-15)
+
+El dedupe de arriba cubre el ALTA de una ficha nueva. Pero el backlog
+vivo puede acumular, DENTRO de tickets ya existentes, candidatos a fusion
+que nadie detecto porque nunca pasaron por este flujo de alta (p.ej. dos
+fichas antiguas que describen el mismo defecto con palabras distintas).
+Cada fila declara `[LINEA: <nombre>]` -- agrupa mentalmente las filas por
+esa etiqueta ANTES de clasificar cada una por separado en la Fase 0/1: si
+dentro de una misma linea ves 2+ filas que describen el mismo sintoma, o
+una fila que depende implicitamente de otra sin usar la celda "Depende
+de", **este prompt NO fusiona ni edita `backlog.md` por si mismo** --
+reporta la senal en el informe de salida (Fase 3) como un hallazgo de
+dedupe, con los dos IDs y el motivo de sospecha, y la deja fuera del DAG
+hasta que se resuelva. `backlog_admit.md` cubre UNICAMENTE el alta de
+fichas NUEVAS (su propio alcance declarado); la fusion de DOS fichas YA
+EXISTENTES no tiene hoy un flujo mecanico propio -- es el humano o el
+Manager, al leer el informe, quien decide fusionar (edicion manual de
+`backlog.md` con su propio recibo/evidencia) o declarar la dependencia en
+la celda "Depende de" de la fila correspondiente. Este prompt se limita a
+SENALAR, nunca a ejecutar ninguna de las dos acciones.
+
+**Pasada barata inter-lineas, obligatoria ademas de la intra-linea**
+(medido 2026-10-15, lentes Codex/nan: restringir el censo a una sola
+`LINEA` pierde precedentes reales de fusion que cruzaron linea --
+`WOT-2026-062g`/`062h` y `WOT-2026-049c`/`049g` no compartian `LINEA`).
+Antes de cerrar la Fase 0, agrupa TAMBIEN por el token de `scope`
+declarado en cada fila (`motor/<slug>` o `<repo>/<slug>`, el campo que
+sigue al `deliverable_type` en el formato de fila) -- esta pasada es
+deliberadamente BARATA (agrupar por el token literal de `scope`, sin
+comparar texto): cruza la barrera de `LINEA` porque el scope describe la
+superficie tecnica, no la categoria narrativa, y evita el barrido GLOBAL
+por similitud semantica (costoso, y fuera del alcance de esta pasada). Si
+dos o mas filas comparten el MISMO `scope` exacto y estan ambas vivas
+(`pending`/`deferred`/`completed-partial`/`blocked`), trata eso como
+senal de fusion/dependencia a resolver, igual que el caso intra-linea de
+arriba.
+
+**Fallback opcional, solo si la pasada barata no basta**: no existe hoy
+una herramienta que filtre `find_similar_signals.py` por `LINEA` o por
+`scope`. Si necesitas comparar dos fichas concretas ya sospechadas de
+duplicado (no como censo general), puedes usar esa herramienta con
+`--text` sobre el contenido de la ficha mas antigua, sabiendo que su
+barrido es GLOBAL y es trabajo de similitud semantica mas costoso que la
+pasada por `scope` de arriba -- usala como verificacion puntual de un par
+ya senalado, no como mecanismo primario de censo.
+
 ## Fase 0.pre: Gate de formato (obligatorio, antes de analizar)
 
 Ejecutar:
@@ -118,6 +164,51 @@ Leer `backlog.md` completo. Para cada ticket `pending`/`deferred`/
 No existe un check determinista generico: cada DoD requiere una verificacion
 distinta. Por eso esta fase es **recolector mas juicio**, nunca automatica.
 
+### Verificar el DoD VIGENTE, no solo el DoD en la fecha del commit (medido 2026-10-15)
+
+Un commit puede cerrar PARTE de un DoD y la fila seguir viva porque (a) el
+commit solo implementa un subconjunto declarado desde el principio, (b) o
+una sesion posterior AMPLIO el DoD con nuevos sub-puntos sobre la MISMA
+fila. Estas dos causas se confunden facilmente y exigen el mismo remedio:
+**lee el DoD COMPLETO de la fila tal como esta HOY, enumera CADA sub-punto,
+y verifica cada uno por separado con su propio comando** -- nunca aceptes
+"encontre un commit cuyo subject empieza con el ID" como evidencia de
+cierre total.
+
+Senales de que el DoD pudo crecer DESPUES del commit candidato (disparan
+escrutinio EXTRA, no son la condicion de entrada de esta regla): marcadores
+en el cuerpo de la fila como `== AMPLIACION`, `== AMPLIADA`, `== HALLAZGO
+NUEVO`, `== SEGUNDA MEDICION`, `== REINCIDENCIA`, o cualquier fecha
+POSTERIOR a la del commit candidato dentro del texto. Si existe un
+marcador asi, NO asumas que el commit mas antiguo cierra los sub-puntos
+anadidos despues -- verificalos uno a uno igual que los originales. La
+ausencia de marcador NO exime de leer el DoD completo: una fila puede
+tener sub-puntos (a)(b)(c) sin cerrar desde el principio, sin ninguna
+ampliacion posterior, y un commit que solo cierra (a) no cierra la fila.
+
+**Excepcion declarada, no contradiccion**: si la fila separa
+explicitamente "DoD de mecanismo" de "DoD de medicion" (ver
+`backlog_admit.md`, seccion de alta), "DoD VIGENTE" para efectos de
+clasificar `LIKELY_DONE` en ESTA fase significa el DoD de MECANISMO
+unicamente. El DoD de medicion (ventana temporal, tasa sobre N sesiones)
+NUNCA bloquea que el mecanismo se proponga como cerrado -- se reporta
+por separado como deuda `deferred` con su `Reactivation:` explicita, sin
+impedir que la parte de mecanismo salga de la Fase 0 como `LIKELY_DONE`.
+Si la fila NO declara esa separacion, el DoD vigente es el texto completo
+tal cual esta escrito, sin esta excepcion.
+
+### El código de producción puede existir y la cobertura de tests no (medido 2026-10-15, WOT-2026-068l/068m)
+
+Un commit de cierre puede ser ancestro real de `HEAD` y cumplir el DoD en
+el momento de commitear, pero sus TESTS de regresion especificos pueden
+haber sido BORRADOS por commits POSTERIORES del mismo eje tecnico sin que
+nadie lo note -- no es ampliacion de fila, no es rama lateral, no es
+error topologico, no es ventana de medicion: el codigo persiste, la
+cobertura desaparece. Antes de marcar `LIKELY_DONE`, verifica que los
+tests citados por el commit de cierre SIGUEN EXISTIENDO en HEAD
+(`git log --oneline HEAD -- <ruta-del-test>` o `grep -n "def test_<patron>"
+<fichero-de-test>`), no solo que el commit de produccion es ancestro.
+
 ### Universo cerrado por serie (obligatorio, antes de clasificar)
 
 Los estados validos de la cola viva son EXACTAMENTE
@@ -143,6 +234,25 @@ python scripts/backlog_reconcile.py \
 Emite un directorio con las senales crudas por ticket (commits que citan el ID,
 existencia de los ficheros del scope, HEAD contra el que se midio). Usa `--out`
 para fijar el directorio de salida; si lo omites, lo deriva del destino.
+
+**Trata cada senal emitida como HIPOTESIS A VERIFICAR, nunca como hecho
+confirmado** -- el propio recolector lo declara (`This script NEVER
+classifies`, ver Paso 0.2): un commit listado es candidato a evidencia,
+no evidencia aceptada, hasta pasar las dos verificaciones de abajo
+(ancestro real + commit-puente).
+
+**Verificacion adicional obligatoria sobre cada commit candidato (medido
+2026-10-15):** que `grep --all` encuentre un commit NO significa que sea
+ancestro de `main`/`origin/main` -- puede vivir solo en una rama lateral
+(`flight/*`, `vuelo/*`) que nunca se fusiono. Confirma con
+`git merge-base --is-ancestor <sha> main` (o `origin/main` si existe)
+ANTES de aceptar el commit como evidencia; si el commit vive solo en una
+rama lateral, la fila NO es `LIKELY_DONE`, es como mucho
+`NEEDS_HUMAN_VERIFY` con esa evidencia declarada. Ademas, si el CUERPO del
+commit candidato cita otro SHA como "la implementacion real" o "el
+cableado lo entrega" (patron de commit-puente que solo documenta, no
+implementa), verifica TAMBIEN ese SHA citado -- no basta con que el
+commit madre exista y sea ancestro.
 
 ### Paso 0.2 -- CONTRATO DE AUTORIDAD (no negociable)
 
@@ -193,6 +303,31 @@ Emitir por ticket una de estas tres clasificaciones de reconciliacion:
 
 Los tickets `LIKELY_DONE` se proponen para archivar y SALEN del analisis de
 pipelines: nunca entran en la Fase 2 (agrupacion).
+
+### Paso 0.4 -- PASO MECANICO de localizacion antes de declarar "no existe" (medido 2026-10-15)
+
+Un verificador (humano o agente) puede concluir erroneamente "este script/
+funcion no existe" porque busco solo en el `repo_destino` cuando la fuente
+CANONICA de un ticket con `delivery_authority: repo_motor` o `scope
+motor/...` vive en `repo_motor`. **Una advertencia textual sola NO basta**
+-- medido 3 veces consecutivas con el mismo modelo pese a una advertencia
+explicita en el prompt de arranque. Antes de escribir "no existe" o
+`NO_CIERRA` por ausencia de fichero/funcion:
+
+```bash
+test -f <repo_motor>/scripts/<nombre_fichero> && echo "EXISTE EN MOTOR"
+test -f <repo_destino>/scripts/<nombre_fichero> && echo "EXISTE EN DESTINO"
+```
+
+Si el PRIMER comando (motor) da "EXISTE EN MOTOR", el fichero SI EXISTE;
+declarar "no existe" sin haber corrido este par de comandos ambos y pegado
+su salida literal es evidencia insuficiente. **Precision de alcance**: la
+regla no es que `scripts/*.py` vivan EXCLUSIVAMENTE en el motor -- un
+`repo_destino` puede tener copias instaladas de utilidades del motor para
+ese destino concreto (ver `AGENTS.md` del workspace). La regla real es:
+**la fuente CANONICA de cualquier script/test es siempre el motor**;
+busca ahi primero, y si encuentras una copia en el destino que diverge,
+la version del motor es la que manda para decidir si el DoD esta cerrado.
 
 ---
 
@@ -301,6 +436,23 @@ exclusiva de `/orchestrate-pipeline`. El triage no gana logica de
 ejecucion por tener ahora un DAG en vez de una lista plana: sigue siendo
 un planificador, nunca un ejecutor.
 
+**Decision de diseno confirmada (bucle adversarial 2026-10-15, 7 lentes
+independientes, 6/7 CAMBIOS_NECESARIOS sobre la propuesta original):**
+se evaluo y se DESCARTO dar a este prompt autoridad de escritura directa
+sobre `backlog.md`. Ya existe una decision de diseno previa que lo
+prohibe explicitamente
+(`.agent/planning/design_autonomous_ticket_batch.md:373`: "NO meter la
+ejecucion dentro de `backlog_triage.md` (debe seguir read-only)"), y el
+bucle encontro un riesgo real que la justifica: un falso `pending` es
+benigno (se re-tria), pero un falso `completed` archivado directamente
+es destructivo y de baja visibilidad -- la misma sesion que motivo esta
+nota demostro que el juicio de un agente sin segundo verificador falla
+(Revisor refutando al Builder 3 veces en el primer lote de una sesion de
+higiene real). El read-only de este prompt sigue siendo la barrera
+correcta: la ejecucion del archivado (patron Builder-real + Revisor-real,
+ver "Nota de escala" mas abajo) es responsabilidad de quien EJECUTA el
+informe de este triage, nunca de este prompt.
+
 ---
 
 ## Fase 3: Sintesis y recomendacion
@@ -353,6 +505,36 @@ backlog desde angulos distintos) es RECOMENDADO para backlogs grandes (mas de
 6 tickets `pending` aproximadamente, o mezcla de scopes/autoridades
 distintas dentro del mismo backlog). Es OPCIONAL para backlogs pequenos: un
 solo agente en una pasada basta.
+
+### Patron Builder-real + Revisor-real para la Fase 0 a escala (medido 2026-10-15, 151 candidatos en 15 lotes)
+
+Cuando la Fase 0 tiene que verificar muchos candidatos `LIKELY_DONE` (el
+caso de un censo grande del recolector), el analisis multi-lente de arriba
+puede sustituirse por un patron mas fuerte: un **Builder real** (CLI
+directo, canal `agent`, filesystem propio -- ver
+`prompts/builder_invocation_contract.md`, NUNCA `ensemble_dispatch.py`
+para esto) investiga un lote pequeno (3-5 tickets) y clasifica
+`LIKELY_DONE_COMPLETO | PARCIAL | NO_CIERRA` con evidencia en disco; un
+**Revisor real** (modelo distinto, mismo mecanismo) re-verifica de forma
+independiente CUALQUIER veredicto `LIKELY_DONE_COMPLETO` antes de que se
+proponga para archivar -- nunca se fia de las citas del Builder, repite
+sus propios comandos. Quien EJECUTA el informe de este triage (no este
+prompt) aplica el resultado final.
+
+**Condicion dura de esta tecnica**: quien aplica el veredicto final (el
+Manager o quien ejecuta el informe) **debe** haber ejecutado su propia
+verificacion en disco -- nunca acepta como evidencia un auto-reporte solo
+citado por el Builder o solo citado por el Revisor, haya o no discrepancia
+entre ambos. La pareja Builder+Revisor reduce cuanto hay que re-verificar
+(cuando coinciden, la re-verificacion puede ser mas ligera), pero no la
+sustituye: el riesgo de que dos modelos distintos compartan el mismo sesgo
+sistemico (ver el error topologico motor-vs-destino repetido 3 veces en
+esta misma sesion, PASO 0 mecanico de arriba) no desaparece por acuerdo
+entre ambos. Esta condicion no crea un rol nuevo: formaliza que la pareja
+Builder+Revisor (dos modelos distintos, sin visibilidad cruzada de la
+respuesta del otro) es el segundo punto de verificacion independiente que
+sustituye al "humano decide" cuando el volumen hace inviable una revision
+manual total.
 
 ### Presupuesto de fan-out multiagente
 
