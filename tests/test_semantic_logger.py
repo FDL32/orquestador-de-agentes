@@ -63,10 +63,9 @@ class TestSemanticLogger:
         test_input = json.dumps(
             {
                 "tool_name": "Read",
-                "result": {
-                    "filePath": "test.py",
-                    "content": "print('hello')\nprint('world')",
-                },
+                "session_id": "test-session-001",
+                "tool_input": {"file_path": "test.py"},
+                "tool_response": "print('hello')\nprint('world')",
             }
         )
 

@@ -168,6 +168,12 @@ EXPECTED_WIRED_REAL = {
     # (:418, :519) -> exit 0.
     "check_collector_ruff_nofix",
     "check_contract_backlog_reconcile",  # WOT-2026-024e: cableado en prepush_check.py (closeout, WARN/FAIL)
+    # WOT-2026-042z (r4): cableado en .pre-commit-config.yaml (pre-commit, always_run,
+    # stages: [pre-commit]). Hook `check-contract-full-read` que invoca
+    # `uv run python scripts/check_contract_full_read.py` -- corre en cada commit.
+    # WIRED verificado: check_guard_wiring lo clasifica como wired; hook real en
+    # .pre-commit-config.yaml (entry: uv run python scripts/check_contract_full_read.py).
+    "check_contract_full_read",  # WOT-2026-042z: cited prompt => fully read (barra muesteo silencioso)
     "check_dec_receipt",  # WOT-2026-042x: cableado en prepush_check.py::run_dec_receipt_check (closeout). Barrera de la NORMA de 042w (recibo DEC en las fichas de diseno). No es falso-WIRED: mutation-verify con par de exit-codes literal sobre la invocacion REAL (1 sin recibo / 1 con DEC-<id> inexistente -> 0 con `DEC-no-aplica: <motivo>`), y 14/14 fichas reales del destino degradan a WARN por el grandfathering.
     "check_deliverables_exist",
     # WOT-2026-042u: cableado via import ESTATICO en
