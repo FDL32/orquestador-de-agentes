@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -1420,6 +1421,71 @@ class TestStateLeakWotFiles:
 
         leaked = mod.check_canonical_state_leak(snapshot)
         assert "collaboration/AUDIT_WOT-2026-999z.md" in leaked
+
+    def test_collaboration_top_level_non_wot_files_not_false_leak(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-100k: pre-existing top-level files (backlog.md,
+        notifications.md) must NOT be reported as false leaks.
+
+        The snapshot must include ALL regular files at the top-level of
+        collaboration/, not just the 4 canonical and *_WOT-*.md files.
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        # Create pre-existing files BEFORE the snapshot
+        backlog = collab / "backlog.md"
+        backlog.write_text("backlog content", encoding="utf-8")
+        notifications = collab / "notifications.md"
+        notifications.write_text("notifications content", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        # Pre-existing files must be in the snapshot
+        assert "collaboration/backlog.md" in snapshot
+        assert "collaboration/notifications.md" in snapshot
+
+        # No change during the "run" -> no leak
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert leaked == [], (
+            f"FALSE POSITIVE: pre-existing top-level files reported as leak: {leaked}"
+        )
+
+    def test_collaboration_top_level_non_wot_false_leak_with_fix(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-100k: verify that the fix resolves the H4 false positive.
+
+        This test demonstrates the bug BEFORE the fix (fails) and passes
+        AFTER the fix is applied -- paired with the true-positive test
+        above to confirm the barrier is not relaxed.
+        """
+        mod = load_runner_module()
+        collab = tmp_path / ".agent" / "collaboration"
+        collab.mkdir(parents=True)
+        # Create pre-existing files BEFORE the snapshot
+        backlog = collab / "backlog.md"
+        backlog.write_text("backlog content", encoding="utf-8")
+        notifications = collab / "notifications.md"
+        notifications.write_text("notifications content", encoding="utf-8")
+
+        monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+        snapshot = mod.snapshot_canonical_state()
+
+        # Pre-existing files MUST be in the snapshot (the fix adds them)
+        assert "collaboration/backlog.md" in snapshot
+        assert "collaboration/notifications.md" in snapshot
+
+        # Without the fix, these would appear as leaked
+        leaked = mod.check_canonical_state_leak(snapshot)
+        assert "collaboration/backlog.md" not in leaked, (
+            f"backlog.md should NOT be a leak after fix, got: {leaked}"
+        )
+        assert "collaboration/notifications.md" not in leaked, (
+            f"notifications.md should NOT be a leak after fix, got: {leaked}"
+        )
 
 
 class TestStateLeakEmptyFile:
@@ -3226,3 +3292,214 @@ def test_popen_has_isolation_kwargs_injected(monkeypatch) -> None:
     source = RUNNER_PATH.read_text(encoding="utf-8")
     assert "**popen_kwargs" in source
     assert "popen_kwargs: dict = {}" in source or "popen_kwargs={}" in source
+
+
+class _MockProcessWithWaitCapture:
+    """Mock process that captures wait() call kwargs for behavioral verification."""
+
+    returncode = 1
+    wait_calls: ClassVar[list[dict]] = []
+
+    def __init__(self, *a, **kw):
+        self._idx = 0
+        self._stdout_lines = [
+            "============================= test session starts =============================\n",
+            "platform win32 -- Python 3.10.19, pytest-9.0.3\n",
+            "collected 3 items\n\n",
+            "tests/unit/test_a.py::test_pass PASSED                             [ 33%]\n",
+            "tests/unit/test_b.py::test_fail FAILED                             [ 66%]\n",
+            "\n=========================== short test summary ===========================\n",
+            "FAILED tests/unit/test_b.py::test_fail - AssertionError: assert False\n",
+            "1 failed, 1 passed in 0.12s\n",
+        ]
+        _MockProcessWithWaitCapture.wait_calls = []
+
+    @property
+    def stdout(self):
+        return self
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._idx >= len(self._stdout_lines):
+            raise StopIteration
+        line = self._stdout_lines[self._idx]
+        self._idx += 1
+        return line
+
+    def wait(self, timeout=None):
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        _MockProcessWithWaitCapture.wait_calls.append(kwargs)
+        return self.returncode
+
+    def communicate(self, timeout=None):
+        raise subprocess.TimeoutExpired(
+            cmd=["pytest", "tests/"],
+            output="".join(self._stdout_lines[self._idx :]),
+            timeout=timeout,
+        )
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+class _MockProcessWithWaitCaptureNormal:
+    """Mock process for normal completion (no TimeoutExpired) - also captures wait() kwargs."""
+
+    returncode = 0
+    wait_calls: ClassVar[list[dict]] = []
+
+    def __init__(self, *a, **kw):
+        self._idx = 0
+        self._stdout_lines = [
+            "============================= test session starts =============================\n",
+            "platform win32 -- Python 3.10.19, pytest-9.0.3\n",
+            "collected 1 item\n\n",
+            "tests/unit/test_a.py::test_pass PASSED                             [100%]\n",
+            "\n============================== 1 passed in 0.01s ==============================\n",
+        ]
+        _MockProcessWithWaitCaptureNormal.wait_calls = []
+
+    @property
+    def stdout(self):
+        return self
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._idx >= len(self._stdout_lines):
+            raise StopIteration
+        line = self._stdout_lines[self._idx]
+        self._idx += 1
+        return line
+
+    def wait(self, timeout=None):
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        _MockProcessWithWaitCaptureNormal.wait_calls.append(kwargs)
+        return self.returncode
+
+    def communicate(self, timeout=None):
+        lines = self._stdout_lines[self._idx :]
+        self._idx = len(self._stdout_lines)
+        return "".join(lines), None
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+    def poll(self):
+        return 0
+
+
+class _HungProcessMock:
+    """Simulates a process that ignores terminate/kill: communicate and wait(timeout=N)
+    both raise TimeoutExpired, forcing the code to reach kill() -> wait()."""
+
+    returncode = 1
+    wait_calls: ClassVar[list[dict]] = []
+    call_count: int = 0
+
+    def __init__(self, *a, **kw):
+        self._idx = 0
+        self._stdout_lines = [
+            "============================= test session starts =============================\n",
+            "collected 1 item\n\n",
+            "tests/unit/test_a.py::test_pass PASSED                             [100%]\n",
+        ]
+        _HungProcessMock.wait_calls = []
+        _HungProcessMock.call_count = 0
+
+    @property
+    def stdout(self):
+        return self
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._idx >= len(self._stdout_lines):
+            raise StopIteration
+        line = self._stdout_lines[self._idx]
+        self._idx += 1
+        return line
+
+    def wait(self, timeout=None):
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        _HungProcessMock.wait_calls.append(kwargs)
+        # First wait() call (at L1083, wait(timeout=10)): raise TimeoutExpired
+        # to force the kill() path. Second wait() call (after kill at L1086):
+        # returns normally (but the fix must still pass timeout=).
+        _HungProcessMock.call_count += 1
+        if _HungProcessMock.call_count == 1:
+            raise subprocess.TimeoutExpired(cmd=["pytest", "tests/"], timeout=timeout)
+        return self.returncode
+
+    def communicate(self, timeout=None):
+        raise subprocess.TimeoutExpired(
+            cmd=["pytest", "tests/"],
+            output="".join(self._stdout_lines),
+            timeout=timeout,
+        )
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+def test_timeout_expired_uses_wait_with_timeout_after_kill(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """BEHAVIORAL: After communicate() raises TimeoutExpired, the cleanup wait()
+    after kill() must be called WITH a timeout argument.
+
+    This is the core test for WOT-2026-T-A1 (VUELO6 "Fiabilidad del sello"):
+    without timeout=, process.wait() blocks indefinitely when the child
+    process ignores terminate()/kill(). This test mocks Popen so that
+    communicate(timeout=...) raises subprocess.TimeoutExpired, and wait(timeout=10)
+    ALSO raises TimeoutExpired (simulating a hung process that doesn't die from
+    terminate()), forcing the code down the kill() -> wait() path at L1086.
+    The test verifies that wait() after kill() is invoked with a timeout argument.
+
+    ROJO: against the unpatched code, wait() is called without timeout -> FAIL.
+    VERDE: after the fix, wait(timeout=...) is used -> PASS.
+    MUTATION: removing the timeout= reverts to ROJO.
+    """
+    mod = load_runner_module()
+
+    def mock_popen(command, *a, **kw):
+        return _HungProcessMock()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", mock_popen)
+
+    last_run_log = tmp_path / "last-run.log"
+    monkeypatch.setattr(mod, "LAST_RUN_LOG", last_run_log)
+
+    mod.stream_pytest(["pytest", "tests/"])
+
+    wait_kws = _HungProcessMock.wait_calls
+    assert len(wait_kws) >= 2, (
+        f"stream_pytest must call process.wait() at least twice "
+        f"(once for wait(timeout=10), once for wait after kill()); "
+        f"got {len(wait_kws)} calls: {wait_kws}"
+    )
+    for call_idx, kwargs in enumerate(wait_kws):
+        assert "timeout" in kwargs, (
+            f"process.wait() call #{call_idx} must include a timeout= argument "
+            f"to avoid blocking indefinitely on hung processes; "
+            f"got kwargs={kwargs}"
+        )
