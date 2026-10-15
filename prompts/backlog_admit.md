@@ -32,6 +32,59 @@ flujos del PASO 0 del `finding_triage_protocol.md` (promocion de memoria y
 
 2. **Decision de triaje:** clasifica el hallazgo segun la tabla del protocolo.
 
+### Ampliar fila existente vs. ficha hija nueva (medido 2026-10-15)
+
+Cuando el hallazgo nuevo es una ampliacion de un DoD ya existente en una
+fila `pending`/`completed-partial`, decide explicitamente entre dos vias
+-- nunca en silencio:
+
+- **(a) Ampliar la fila existente** (el patron por defecto hoy): valido
+  SOLO si el ticket original todavia NO tiene ningun commit de cierre
+  real (ni siquiera parcial). Anadir la ampliacion a una fila sin
+  historial de cierre no genera ambiguedad. **Marcador OBLIGATORIO**: la
+  ampliacion se antepone en el cuerpo de la fila con uno de los
+  marcadores que `backlog_triage.md` reconoce como senal de ampliacion
+  (`== AMPLIACION <fecha>`, `== AMPLIADA <fecha>`, `== HALLAZGO NUEVO
+  <fecha>`, variantes equivalentes con fecha) -- sin el marcador, un
+  triaje futuro no puede distinguir "DoD original con varios sub-puntos
+  desde el principio" de "DoD que creció despues de un commit ya
+  existente", y esa distincion es la que `backlog_triage.md` exige para
+  no aceptar un commit antiguo como cierre total.
+- **(b) Ficha hija nueva con `Depende de: <ID padre>`**: OBLIGATORIO,
+  no opcional, si el DoD original YA tiene al menos un commit cuyo
+  subject empieza literalmente con el ID y que no es trivial (alta de
+  ficha, memoria, nota cruzada). Declara en la ficha hija, en su propio
+  texto, que parte del DoD original quedo cerrada (con su `commit:<sha>`)
+  y cual es la deuda NUEVA -- asi un triaje futuro no tiene que releer
+  todo el historial de ampliaciones acumuladas sobre la fila padre para
+  saber que esta hecho.
+
+Motivo: una fila que acumula ampliaciones indefinidamente sobre si misma
+se vuelve dificil de triar con un solo commit -- cada ampliacion obliga a
+releer el cuerpo completo para saber en que capa de DoD esta la fila.
+Medido 2026-10-15: filas con 2-3 capas de ampliacion de ~5000-6500
+caracteres cada una.
+
+### DoD de mecanismo vs. DoD de medicion (medido 2026-10-15)
+
+Si el DoD de la ficha nueva incluye un sub-punto de medicion temporal o de
+ventana (`tasa de bloqueo sobre >=N sesiones`, `before/after de la suite
+completa`, `corte por recencia verificado con N candidatas reales`),
+separa EXPLICITAMENTE en el cuerpo de la ficha:
+
+- **DoD de mecanismo**: lo implementable y cerrable dentro de una sola
+  sesion (el codigo/guard/test que hace la cosa).
+- **DoD de medicion**: solo cerrable tras una ventana de observacion real
+  (requiere que pase tiempo o que se acumulen datos de produccion).
+
+Sin esta separacion, un ticket cuyo mecanismo ya esta implementado queda
+`pending` indefinidamente esperando una ventana de datos que puede tardar
+meses, y un triaje futuro no puede distinguir "nada se hizo" de "el
+mecanismo esta pero falta medir". Con la separacion, el triaje puede
+proponer el mecanismo para archivar y dejar la medicion como deuda
+explicita (`deferred` con `Reactivation: condition:<N sesiones
+acumuladas>` o equivalente).
+
 3. **Si el resultado es ALTA** (fila nueva en `backlog.md`):
    a. Genera el recibo con `backlog_db_compare.py --emit-recibo` (el recibo
       mecanico lo emite ESTE generador, no `find_similar_signals`).
