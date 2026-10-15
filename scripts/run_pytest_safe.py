@@ -1036,6 +1036,12 @@ def stream_pytest(  # noqa: C901
         env["PYTHONPATH"] = f"{agent_path}{os.pathsep}{env['PYTHONPATH']}"
     else:
         env["PYTHONPATH"] = agent_path
+    # WOT-2026-T-A1 (VUELO6): activate pytest faulthandler watchdog so the
+    # pytest child process dumps a full thread traceback when it hangs
+    # internally.  Value kept well below MAX_RUNTIME_SECONDS to avoid
+    # false-positives during long test suites but short enough to surface
+    # hangs promptly.
+    env.setdefault("FAULTHANDLER_WATCHDOG_SECONDS", "60")
 
     # WOT-2026-040v (Pieza 1): isolate the process tree so a termination of the
     # invoking process does not cascade-kill the runner and pytest together.
@@ -1083,7 +1089,7 @@ def stream_pytest(  # noqa: C901
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait()
+                process.wait(timeout=10)
             returncode = process.returncode
             # Mark the run as "timeout" (not "aborted"): this distinguishes
             # an internal exceedance of the configured time limit from an
@@ -1121,7 +1127,7 @@ def stream_pytest(  # noqa: C901
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait()
+            process.wait(timeout=5)
         raise
     finally:
         LAST_RUN_LOG.write_text("\n".join(lines), encoding="utf-8")
@@ -1657,6 +1663,18 @@ def snapshot_canonical_state() -> dict[str, str]:
             )
     # WOT-2026-091a: snapshot regular files at the top-level of runtime/.
     snapshot.update(_snapshot_runtime_top_level())
+    # WOT-2026-100k-fix (H4): snapshot ALL regular files at the top-level of
+    # collaboration/ (non-recursive), not just the 4 canonical. This prevents
+    # false-positive leaks in destinos with extra top-level files (e.g.
+    # notifications.md, review_queue.md, backlog.md).
+    if collab.is_dir():
+        for entry in collab.iterdir():
+            if entry.is_dir():
+                continue
+            ckey = f"collaboration/{entry.name}"
+            if ckey not in snapshot:
+                with contextlib.suppress(OSError):
+                    snapshot[ckey] = entry.read_text(encoding="utf-8", errors="replace")
     return snapshot
 
 

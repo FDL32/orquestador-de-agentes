@@ -598,3 +598,113 @@ def test_058q_code_gates_never_seal_unit(monkeypatch, tmp_path):
 
     invocation = _pytest_invocation(calls)
     assert "unit" not in invocation, invocation
+
+
+# WOT-2026-043b / M1-A: skill-citations barrier must fire on prompt/skill surface.
+
+
+def test_dispatch_wires_skill_citations_barrier():
+    """Source-level: run_gates_dispatch invokes check_distribution_boundary --skill-citations."""
+    source = (PROJECT_ROOT / "scripts" / "run_gates_dispatch.py").read_text(
+        encoding="utf-8"
+    )
+    assert "--skill-citations" in source
+    assert "check_distribution_boundary.py" in source
+
+
+def test_dispatch_propagates_skill_citations_failure(monkeypatch, tmp_path):
+    """Behavioral: a failing --skill-citations makes main() return non-zero.
+
+    Mocks get_changed_files() to return an ABSOLUTE skill path (what production
+    emits via scope_gate.get_changed_files) so the barrier fires, then stubs
+    subprocess.run to return 1 for the citations check only.
+    Verifies main() returns 1 and the call was made with the right args.
+    """
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    motor.mkdir()
+    destino.mkdir()
+
+    calls: list[list[str]] = []
+
+    class _FakeCompleted:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        # Fail ONLY the citations check; everything else is green.
+        if "check_distribution_boundary.py" in str(cmd):
+            return _FakeCompleted(1)
+        return _FakeCompleted(0)
+
+    # PRODUCTION EMITS ABSOLUTE paths (scope_gate.py:508: str((git_root/path).resolve())).
+    fake_sg = type(
+        "FakeSG",
+        (),
+        {
+            "get_changed_files": lambda *a, **kw: {
+                str((destino / "skills/test-skill/SKILL.md").resolve())
+            },
+        },
+    )()
+
+    monkeypatch.setattr(dispatch, "read_deliverable_type", lambda: "documentation")
+    monkeypatch.setattr(dispatch, "PROJECT_ROOT", destino)
+    monkeypatch.setattr(dispatch, "MOTOR_ROOT", motor)
+    monkeypatch.setattr(dispatch, "MOTOR_SCRIPTS_DIR", motor / "scripts")
+    monkeypatch.setattr(dispatch, "_import_scope_gate", lambda: fake_sg)
+    monkeypatch.setattr(dispatch.subprocess, "run", fake_run)
+
+    rc = dispatch.main()
+
+    assert rc == 1
+    assert any("--skill-citations" in str(cmd) for cmd in calls), (
+        f"expected --skill-citations in calls: {calls}"
+    )
+
+
+def test_dispatch_no_skill_citations_when_no_relevant_paths(monkeypatch, tmp_path):
+    """Negative: changed files outside the skill/prompt surface must NOT
+    trigger the skill-citations barrier (zero cost when irrelevant)."""
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    motor.mkdir()
+    destino.mkdir()
+
+    calls: list[list[str]] = []
+
+    class _FakeCompleted:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        return _FakeCompleted(0)
+
+    # PRODUCTION EMITS ABSOLUTE paths (scope_gate.py:508).
+    fake_sg = type(
+        "FakeSG",
+        (),
+        {
+            "get_changed_files": lambda *a, **kw: {
+                str((destino / "scripts/other_script.py").resolve()),
+                str((motor / "agent_system/core.py").resolve()),
+            },
+        },
+    )()
+
+    monkeypatch.setattr(dispatch, "read_deliverable_type", lambda: "documentation")
+    monkeypatch.setattr(dispatch, "PROJECT_ROOT", destino)
+    monkeypatch.setattr(dispatch, "MOTOR_ROOT", motor)
+    monkeypatch.setattr(dispatch, "MOTOR_SCRIPTS_DIR", motor / "scripts")
+    monkeypatch.setattr(dispatch, "_import_scope_gate", lambda: fake_sg)
+    monkeypatch.setattr(dispatch.subprocess, "run", fake_run)
+
+    rc = dispatch.main()
+
+    assert rc == 0
+    assert not any("--skill-citations" in str(cmd) for cmd in calls), (
+        "run_motor_script must NOT be called with --skill-citations "
+        "when changed files are outside the protected surface"
+    )
