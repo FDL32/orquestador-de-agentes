@@ -34,6 +34,55 @@ for _root in (_AGENT_DIR, _MOTOR_ROOT):
         sys.path.insert(0, str(_root))
 
 
+def _extract_read_payload(input_data: dict) -> tuple[str, str]:  # noqa: C901
+    """Extract file_path and content from a Claude Code PostToolUse payload.
+
+    Real Claude Code sends: {tool_name, tool_input, tool_response, ...}
+    - file_path is in tool_input (as "file_path" or "path")
+    - content is in tool_response (as string, content-block array, or structured dict)
+
+    The old "result" key was a guess that never arrived in production.
+    Returns (file_path, content) — file_path defaults to "unknown".
+    """
+    file_path = "unknown"
+    content = ""
+
+    # 1) Pull file_path from tool_input (the original tool call)
+    tool_input = input_data.get("tool_input") or {}
+    for _k in ("file_path", "path"):
+        _v = tool_input.get(_k)
+        if isinstance(_v, str) and _v:
+            file_path = _v
+            break
+
+    # 2) Pull content from tool_response (the actual tool output)
+    tool_response = input_data.get("tool_response")
+    if isinstance(tool_response, str):
+        content = tool_response
+    elif isinstance(tool_response, list):
+        # Content-block array: [{type: "text", text: "…"}, ...]
+        parts: list[str] = []
+        for block in tool_response:
+            if isinstance(block, dict):
+                txt = block.get("text") or block.get("content", "")
+                if isinstance(txt, str):
+                    parts.append(txt)
+        content = "\n".join(parts) if parts else ""
+    elif isinstance(tool_response, dict):
+        resp_content = tool_response.get("content")
+        if isinstance(resp_content, str):
+            content = resp_content
+        else:
+            stdout_val = tool_response.get("stdout")
+            if isinstance(stdout_val, str):
+                content = stdout_val
+            stderr_val = tool_response.get("stderr")
+            if isinstance(stderr_val, str):
+                content = content + stderr_val
+
+    return file_path, content
+
+
 def main() -> None:
     """Main entry point for the native post-tool hook."""
     try:
@@ -46,8 +95,7 @@ def main() -> None:
     tool_name = input_data.get("tool_name", "")
     if tool_name == "Read":
         translated_name = "view_file"
-        file_path = input_data.get("result", {}).get("filePath", "unknown")
-        content = input_data.get("result", {}).get("content", "")
+        file_path, content = _extract_read_payload(input_data)
         line_count = len(content.splitlines()) if content else 0
         context = f"Read file {file_path}, {line_count} lines"
     else:
