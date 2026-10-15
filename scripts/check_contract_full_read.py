@@ -107,8 +107,16 @@ def resolve_telemetry_dir(motor_root: Path, explicit: Path | None) -> Path:
     return candidate
 
 
-def load_read_events(telemetry_dir: Path) -> list[dict[str, Any]]:
-    """Load Read events from the telemetry file."""
+def load_read_events(
+    telemetry_dir: Path,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load Read events from the telemetry file, optionally filtered by session.
+
+    Args:
+        telemetry_dir: Path to .agent/runtime/telemetry/
+        session_id: If provided, only return events from this session.
+    """
     events: list[dict[str, Any]] = []
     telemetry_file = telemetry_dir / "tool_usage.jsonl"
     if not telemetry_file.is_file():
@@ -124,22 +132,25 @@ def load_read_events(telemetry_dir: Path) -> list[dict[str, Any]]:
                 continue
             # Read events have context like "Read file <path>, <n> lines"
             context = record.get("context", "")
-            if context.startswith("Read file "):
-                inner = context[len("Read file ") :]
-                try:
-                    parts = inner.rsplit(", ", 1)
-                    if len(parts) == 2:
-                        file_path = parts[0].strip()
-                        line_count_str = parts[1].strip()
-                        line_count = int(line_count_str.replace(" lines", ""))
-                        events.append(
-                            {
-                                "file_path": file_path,
-                                "line_count": line_count,
-                            }
-                        )
-                except (ValueError, IndexError):
-                    continue
+            if not context.startswith("Read file "):
+                continue
+            if session_id is not None and record.get("session_id") != session_id:
+                continue
+            inner = context[len("Read file ") :]
+            try:
+                parts = inner.rsplit(", ", 1)
+                if len(parts) == 2:
+                    file_path = parts[0].strip()
+                    line_count_str = parts[1].strip()
+                    line_count = int(line_count_str.replace(" lines", ""))
+                    events.append(
+                        {
+                            "file_path": file_path,
+                            "line_count": line_count,
+                        }
+                    )
+            except (ValueError, IndexError):
+                continue
     return events
 
 
@@ -206,7 +217,7 @@ def _find_citations_in_artifact(  # noqa: C901
                     range_match = _LINE_RANGE_RE.search(prev_line)
                     if range_match:
                         start = int(range_match.group(1) or range_match.group(3))
-                        end = int(range_match.group(2))
+                        end = int(range_match.group(2) or range_match.group(4))
                         line_range = (start, end)
                     sampling_declared = True
                 # Also check the same line for sampling + range
@@ -218,7 +229,7 @@ def _find_citations_in_artifact(  # noqa: C901
                     range_match = _LINE_RANGE_RE.search(line)
                     if range_match:
                         start = int(range_match.group(1) or range_match.group(3))
-                        end = int(range_match.group(2))
+                        end = int(range_match.group(2) or range_match.group(4))
                         line_range = (start, end)
                     sampling_declared = True
 
@@ -301,13 +312,22 @@ def check_read_coverage(  # noqa: C901
 
         # Check if this file was read
         # Try to match against telemetry events
-        file_stem = resolved.name  # e.g. "orchestrator_launch_builder.md"
+        # B3: use full normalized path (not suffix matching) to avoid cross-session
+        # false-positives where a homonym file read in another session seals PASS.
         matched_line_count: int | None = None
 
         for fp, max_lc in coverage.items():
-            if fp == path_raw or fp == str(resolved) or fp.endswith(file_stem):
+            # Exact match on the raw file_path from telemetry
+            if fp == path_raw:
                 matched_line_count = max_lc
                 break
+            # Full normalized path match (B3 fix)
+            try:
+                if Path(fp).resolve() == resolved.resolve():
+                    matched_line_count = max_lc
+                    break
+            except (OSError, ValueError):
+                continue
 
         if matched_line_count is not None and matched_line_count >= wc_lines:
             # Full coverage: read with >= wc_lines
@@ -402,6 +422,11 @@ def main() -> int:  # noqa: C901
         default=None,
         help="Path to motor root. Default: auto-resolve from script location.",
     )
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Filter telemetry to a single session (default: all sessions).",
+    )
     args = parser.parse_args()
 
     artifact_path = None
@@ -452,7 +477,7 @@ def main() -> int:  # noqa: C901
     )
 
     # Load read events from telemetry
-    read_events = load_read_events(telemetry_dir)
+    read_events = load_read_events(telemetry_dir, session_id=args.session_id)
 
     # Extract citations from the artifact
     citations = _find_citations_in_artifact(artifact_path, motor_root)

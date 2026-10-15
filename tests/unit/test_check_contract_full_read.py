@@ -6,7 +6,7 @@ Cubre los DoD (a)-(e) del work_plan:
   (c) MUTATION en DOS direcciones: full-read->VERDE, grep-only->ROJO con
       lineas ausentes enumeradas
   (d) ANTI-FALSO-POSITIVO: muestreo declarado -> WARN, no ERROR
-  (e) check_guard_wiring exit 0 (cableado declarado) -- probado via import
+  (e) check_guard_wiring exit 0 (cableado declarado) -- probado via subprocess
 """
 
 from __future__ import annotations
@@ -434,8 +434,13 @@ def test_dod_c_sampling_range_covers_full(tmp_path: Path) -> Path:
 
 
 def test_dod_e_wiring_declared(tmp_path: Path) -> Path:
-    """DoD (e): el guard no es UNDECLARED (se detecta via CONFIG path del pre-commit)."""
-    pass  # La verificacion real esta en test_dod_e_check_guard_wiring_passes
+    """DoD (e): el hook new está en el pre-commit YAML (CONFIG path del ORC)."""
+    precommit = _ROOT / ".pre-commit-config.yaml"
+    assert precommit.is_file(), ".pre-commit-config.yaml debe existir"
+    content = precommit.read_text(encoding="utf-8")
+    assert "check-contract-full-read" in content, (
+        ".pre-commit-config.yaml debe contener 'check-contract-full-read'"
+    )
 
 
 def test_dod_e_check_guard_wiring_passes(tmp_path: Path) -> None:
@@ -453,6 +458,10 @@ def test_dod_e_check_guard_wiring_passes(tmp_path: Path) -> None:
         text=True,
         cwd=str(_ROOT),
         timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"Expected check_guard_wiring to exit 0, got rc={result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     output = result.stdout + result.stderr
     # Verificar que check_contract_full_read no es UNDECLARED
@@ -611,4 +620,137 @@ def test_nonexistent_file_warning(tmp_path: Path) -> Path:
         or "saltado" in stdout
         or "WARN" in stdout
         or "unresolved" in stdout.lower()
+    )
+
+
+# ------------------------------------------------------------------ B4: 'lines X-Y' format + B3: session scoping
+
+
+def test_dod_sampling_lines_x_y_format(tmp_path: Path) -> Path:
+    """B4: la forma documentada 'lines 100-200' pasa con WARN, no crash."""
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {
+            "prompts/sample.md": "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n"
+        },
+        [
+            {
+                "context": "Read file prompts/sample.md, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-14T00:00:00Z",
+            }
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        (
+            "Solo leo lines 1-3 por <motivo>, riesgo <Z>\n"
+            "Referencia: `prompts/sample.md`"
+        ),
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    # Must NOT crash (TypeError from group(2) being None)
+    # Should be WARN not ERROR: declared sampling
+    assert rc == 0, (
+        f"Expected PASS with WARN (lines X-Y format), got rc={rc}\nstdout: {stdout}"
+    )
+    assert "WARN" in stdout, f"Expected WARN for declared sampling, got: {stdout}"
+
+
+def test_dod_b3_session_scoping(tmp_path: Path) -> Path:
+    """B3: session_id filtrado -> eventos de otra sesion NO cuentan.
+
+    Two sessions: A leyo entero + B solo grepeo. Con --session-id=B, la cita
+    debe FALLAR (B no leyo).
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/sample.md": "line1\nline2\nline3\n"},
+        [
+            # Session A: full read
+            {
+                "context": "Read file prompts/sample.md, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-14T00:00:00Z",
+                "session_id": "session-a",
+            },
+            # Session B: only grep (no read)
+            {
+                "context": "Executed grep prompts/sample.md",
+                "tool_name": "grep",
+                "timestamp": "2026-10-14T00:00:01Z",
+                "session_id": "session-b",
+            },
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Referencia: `prompts/sample.md`",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # Without session filter: session A covers -> PASS
+    cmd = [
+        sys.executable,
+        str(_SCRIPT),
+        str(artifact),
+        str(telemetry_dir),
+        "--motor-root",
+        str(motor_root),
+    ]
+    result_no_filter = subprocess.run(
+        cmd, capture_output=True, text=True, cwd=str(motor_root), timeout=30
+    )
+    assert result_no_filter.returncode == 0, (
+        f"Without session filter should PASS (session A covers), got rc={result_no_filter.returncode}"
+    )
+
+    # With session-b filter: B has no Read -> FAIL
+    cmd_with_filter = [*cmd, "--session-id", "session-b"]
+    result_filtered = subprocess.run(
+        cmd_with_filter, capture_output=True, text=True, cwd=str(motor_root), timeout=30
+    )
+    assert result_filtered.returncode == 1, (
+        f"With --session-id=session-b should FAIL (B only grepped), got rc={result_filtered.returncode}"
+    )
+
+
+def test_dod_b3_full_path_no_suffix_false_positive(tmp_path: Path) -> Path:
+    """B3: homonimos en rutas distintas NO se confunden (full path match).
+
+    Two files with same name in different dirs: only the exact match counts.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {
+            "prompts/a/sample.md": "line1\nline2\nline3\n",
+            "prompts/b/sample.md": "line1\nline2\nline3\nline4\nline5\n",
+        },
+        [
+            # Read file in prompts/a/ (3 lines)
+            {
+                "context": "Read file prompts/a/sample.md, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-14T00:00:00Z",
+            }
+        ],
+    )
+
+    # Artifact cites prompts/b/sample.md (5 lines) — should FAIL because only
+    # prompts/a/sample.md was read (same name, different path).
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Cita: `prompts/b/sample.md`",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+    assert rc == 1, (
+        f"Homonimo en ruta distinta NO debe contar como cobertura. rc={rc}, stdout={stdout}"
     )
