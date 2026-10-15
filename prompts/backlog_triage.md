@@ -576,6 +576,46 @@ cambio, pero la justificacion del Builder era falsa y tuvo que corregirse.
 Un `grep` que no encuentra un termino es evidencia de que ESE TERMINO no
 aparece, nunca de que la FUNCION esta ausente.
 
+**Contrato duro de cita literal de estructuras de datos (medido 2026-10-15, campana Grupo A):**
+cuando el Builder o el Revisor citan el CONTENIDO de una coleccion de codigo (lista, frozenset,
+enum, diccionario) como evidencia de un DoD, deben pegar la salida LITERAL de un comando de
+lectura (`sed -n <rango>`, o equivalente) de esa seccion exacta del fichero -- nunca
+reescribirla de memoria/parafraseada. Medido: un Builder cito un `frozenset` de 7 estados
+omitiendo uno (`superseded`) por reconstruirlo de memoria en vez de releerlo, lo que invalido su
+analisis de divergencia (aunque el veredicto final no cambio porque el Revisor si releyo el
+fichero). Es el mismo fallo de fondo que el "Contrato duro de lectura entera" de arriba
+(evidencia no verificada presentada como verificada), pero manifestado al CITAR un dato ya
+leido antes, no al declarar ausencia de una funcion. Excepcion de seguridad heredada de
+`prompts/audit_agent_output.md`: "salida literal" nunca exige volcar secretos, tokens o
+credenciales -- si la seccion citada los contiene, se redacta (`***REDACTED***`) y se declara
+el redactado, nunca se omite la cita entera por eso.
+
+**Checklist estructurado por regla dura (medido 2026-10-15, campana Grupo A), reemplaza el
+grep de frases de auto-admision:** el informe final del Builder enumera PRIMERO, en una lista
+explicita, las reglas duras del prompt de tarea que lo invoco (nunca a criterio del Builder
+decidir cuales cuentan como "duras": son las que el prompt de tarea marca como tal), y despues
+incluye una fila por cada una: `regla | comando ejecutado (o root/topologia usado, ver Paso 0.4,
+si la regla no produce stdout) | salida literal o referencia reproducible y localizable a ella |
+resultado`. Un Builder omitio la verificacion de ancestria (`git merge-base --is-ancestor`) en
+su primer uso de un modelo nuevo en la sesion, y lo admitio en prosa libre dentro de una seccion
+de "dudas" al final del informe -- una deteccion automatica por grep de frases ("no se pudo
+verificar", "no ejecute") habria sido fragil ante sinonimos ("no lo revise porque parecia obvio"
+no coincide con ningun patron fijo). El checklist estructurado hace la omision visible por
+AUSENCIA DE FILA, no por coincidencia de texto libre, y el Revisor la contrasta linea por linea
+contra su propia ejecucion. Este checklist es ADITIVO: complementa el informe Builder existente
+(evidencia en disco, veredicto por ticket), nunca lo sustituye.
+
+**Refuerzo de primer uso de un modelo nuevo como Builder (medido 2026-10-15, campana Grupo A):**
+el primer lote de la sesion con cualquier modelo NUEVO en el rol Builder recibe, en su prompt
+de tarea, el bloque completo de reglas duras marcado como NO OPCIONAL de forma explicita (el
+texto que hoy solo se anade de forma REACTIVA tras detectar un fallo) -- no se espera a que el
+modelo falle una vez para reforzar el prompt. Medido: el mismo modelo (`qwen3.6`) omitio una
+regla dura en su primer uso de la sesion y la cumplio correctamente en el segundo, tras que el
+Manager anadiera manualmente ese refuerzo citando el fallo anterior. El coste de anadirlo desde
+el primer uso es una linea de prompt; el coste de no hacerlo fue un veredicto intermedio
+apoyado en una verificacion nunca ejecutada, atrapado solo porque el Revisor y el Manager lo
+notaron por lectura atenta, sin ningun mecanismo que lo garantizara.
+
 **Rol del Revisor mas alla de confirmar o refutar (medido 2026-10-15,
 WOT-2026-059r):** si una premisa resulta irresoluble por falta de un dato
 (p.ej. el nombre de un guard citado por una fuente ya drenada), el Revisor
