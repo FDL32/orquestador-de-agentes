@@ -349,6 +349,27 @@ def main(argv: list[str] | None = None) -> int:
         print("[dispatch] Backlog contract check FAILED: live-queue drift")
         return rc_backlog
 
+    # Skill-citations barrier (WOT-2026-043b / M1-A): fail closed on Direction 2
+    # (audit_skill_citations) ONLY when the diff touches a prompt<->skill pair
+    # or MANIFEST.distribute. Reuses the scope_gate seam already imported above.
+    _sg = _import_scope_gate()
+    changed = _sg.get_changed_files(project_root=PROJECT_ROOT, motor_root=MOTOR_ROOT)
+    if changed and any(
+        path == "MANIFEST.distribute"
+        or (path.startswith("prompts/") and path.endswith(".md"))
+        or (path.startswith("skills/") and path.endswith("SKILL.md"))
+        for path in changed
+    ):
+        print("[dispatch] Running check_distribution_boundary.py --skill-citations")
+        rc_citations = run_motor_script(
+            "check_distribution_boundary.py",
+            "--skill-citations",
+            project_root=PROJECT_ROOT,
+        )
+        if rc_citations != 0:
+            print("[dispatch] Skill-citations check FAILED: unexempt or stale citation")
+            return rc_citations
+
     return 0
 
 
