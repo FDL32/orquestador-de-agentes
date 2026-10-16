@@ -151,6 +151,58 @@ verifica la forma; este triage es el planificador semantico que viene despues.
 
 ---
 
+## Fase 0.pre.1: Verificacion de vuelos activos (obligatorio, antes de analizar)
+
+Antes de construir cualquier pipeline o DAG, verifica el estado real de los
+vuelos activos. Un triaje que propone ejecutar tickets cuya superficie ya esta
+siendo modificada por un vuelo en curso produce colisiones — medido 2026-10-16:
+INDEX.md declaraba VUELO6 "PREPARADO" cuando estaba activo, con worktree `w6_fiab`
+vivo; el triaje habria podido proponer planes que colisionaban con esa superficie.
+
+Comandos de verificacion:
+
+```powershell
+# 1. Worktrees activos (senal primaria de vuelo en curso)
+git -C <destino> worktree list
+git -C <MOTOR_ROOT> worktree list
+
+# 2. Planes de vuelo sueltos en raiz (convencion de este destino)
+Get-ChildItem <destino>/orchestrator_pipeline/flight_plans/ -Filter "PLAN_*.md" -File
+
+# 3. Subdirectorios de vuelo
+Get-ChildItem <destino>/orchestrator_pipeline/flight_plans/in_flight/ -File
+Get-ChildItem <destino>/orchestrator_pipeline/flight_plans/stopped/ -File
+Get-ChildItem <destino>/orchestrator_pipeline/flight_plans/staged/ -File
+
+# 4. INDEX.md vs realidad
+cat <destino>/orchestrator_pipeline/flight_plans/INDEX.md
+```
+
+Hay vuelo en curso si CUALQUIERA de estas condiciones se cumple:
+- `git worktree list` muestra worktrees distintos del principal (aparte del checkout base).
+- Existen archivos `PLAN_*.md` en la raiz de `flight_plans/` que INDEX.md no declara como ATERRIZADO/CERRADO.
+- `in_flight/` tiene archivos.
+- `stopped/` o `staged/` tienen archivos con tickets todavia `pending` en backlog.
+
+Accion obligatoria cuando hay vuelo en curso:
+1. Identifica los tickets del vuelo activo (leer el `PLAN_*.md` o `work_plan.md` correspondiente).
+2. Contrasta el estado declarado en INDEX.md con la realidad de `in_flight/`, `done/`, `stopped/`, `staged/`
+   y `PLAN_*.md` sueltos. Si divergen, anota `INDEX_STALE` en el informe de salida (Fase 3) con las discordancias.
+3. Para cada ticket del vuelo activo: su clasificacion en Fase 1 DEBE ser `REQUIERE_HUMANO` segun la regla de
+   superficie en vuelo (Fase 1, "Superficie en vuelo por otra sesion", fallo medido WOT-2026-016r). Esta Fase 0.pre.1
+   es el paso de DETECCION; la regla de clasificacion y su accion (`REQUIERE_HUMANO`) viven en Fase 1.
+4. Declara explicitamente en el informe de salida (Fase 3): que vuelos estan activos, que tickets quedan sujetos
+   a la regla de Fase 1, y si INDEX.md estaba stale.
+
+Si no hay worktrees extra, `PLAN_*.md` sueltos ya cerrados y `in_flight/` vacio: anota
+`VUELOS_ACTIVOS: ninguno` y continua.
+
+Nota de autoridad: este paso adapta el snapshot de estado del METODO de
+`orchestrator_session_bootstrap_design.md` (pasos 1-2) al contexto del triaje.
+`backlog_triage.md` es la fuente canonica; si divergen, prevalece este prompt.
+
+---
+
 ## Fase 0: Reconciliacion (recolector mas juicio, NO determinista)
 
 Leer `backlog.md` completo. Para cada ticket `pending`/`deferred`/

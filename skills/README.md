@@ -66,6 +66,7 @@ Fuentes y destinos:
 - `test-driven-development` - implement
 - `systematic-debugging` - implement
 - `code-audit` - review
+- `repo-audit` - review
 - `refactor-manager` - review
 - `project-finalize` - close
 - `version-changelog` - close

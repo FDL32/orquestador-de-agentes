@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 46 |
-| reference | 38 |
+| prompt | 47 |
+| reference | 39 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 46 |
-| **total** | **138** |
+| skill | 47 |
+| **total** | **141** |
 
 ## Entradas
 
@@ -64,6 +64,7 @@
 | prompt | `prompts/orchestrator_session_close_full_audit.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_session_close_full_audit_design.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/persona_system.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/repo_audit_multiagent.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/revisor_independent_review.md` | active | system | revisor | model-invoked | — |
 | prompt | `prompts/session_hop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | orchestrator | model-invoked | — |
@@ -89,6 +90,7 @@
 | reference | `skills/project-finalize/references/closeout-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/project-finalize/references/closeout-modes.md` | active | system | shared | model-invoked | — |
 | reference | `skills/project-finalize/references/closeout-plan-template.md` | active | system | shared | model-invoked | — |
+| reference | `skills/repo-audit/references/lane-examples.md` | active | system | shared | model-invoked | — |
 | reference | `skills/repo-compare/references/filter-criteria.md` | active | system | shared | model-invoked | — |
 | reference | `skills/repo-compare/references/output-format.md` | active | system | shared | model-invoked | — |
 | reference | `skills/scaffold-python-project/references/gitignore-template.md` | active | system | shared | model-invoked | — |
@@ -145,6 +147,7 @@
 | skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | orchestrator | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |
 | skill | `skills/project-finalize/SKILL.md` | active | agent | shared | model-invoked | /finalize, /finish, close |
 | skill | `skills/refactor-manager/SKILL.md` | active | agent | shared | model-invoked | /refactor, refactor, refactor-manager |
+| skill | `skills/repo-audit/SKILL.md` | active | agent | auditor | model-invoked | /cleanup-audit, /repo-audit-multiagent, audit-repo-multiagent |
 | skill | `skills/repo-compare/SKILL.md` | active | agent | shared | model-invoked | /compare, /gh-compare, /repo-compare |
 | skill | `skills/revisor-independent-review/SKILL.md` | active | agent | revisor | user-invoked | /revisor-review, /verify |
 | skill | `skills/scaffold-python-project/SKILL.md` | active | agent | shared | model-invoked | /new-project, /scaffold, /scaffold-python |

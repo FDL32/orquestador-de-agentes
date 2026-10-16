@@ -38,6 +38,7 @@
   "backends": {
     "kilo": {
       "executable": "kilo.cmd",
+      "timeout_s": 900,
       "args": [
         "run",
         "--auto",
@@ -96,6 +97,7 @@
     },
     "claude": {
       "executable": "claude",
+      "timeout_s": 600,
       "args": [
         "-p",
         "--tools",
