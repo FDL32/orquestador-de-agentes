@@ -1171,6 +1171,11 @@ class TestSessionClose:
         # Aisla el STATE.md real: el handler lo REESCRIBE al cerrar y sin esto
         # la corrida contamina el arbol (state leak medido 2026-07-27).
         monkeypatch.setattr(agent_controller, "STATE_FILE", tmp_path / "STATE.md")
+        # Aisla .session_state.json real: _handle_session_close llama
+        # save_session() en un close exitoso (WOT-2026-039d); sin este mock
+        # escribe en .agent/collaboration/.session_state.json del repo real
+        # (state leak medido 2026-10-16, suite --level all).
+        monkeypatch.setattr(agent_controller, "save_session", lambda: None)
 
         mock_run = MagicMock(
             return_value=MagicMock(returncode=0, stdout="ok\n", stderr="")
@@ -1339,6 +1344,9 @@ class TestSessionClose:
 
         monkeypatch.setattr(agent_controller, "write_file", mock_write)
         monkeypatch.setattr(agent_controller, "read_file", mock_read)
+        # Aisla .session_state.json real (ver docstring del fix hermano en
+        # test_042a_completed_mentioned_in_prose_does_not_skip_the_closeout).
+        monkeypatch.setattr(agent_controller, "save_session", lambda: None)
 
         mock_run = MagicMock(
             return_value=MagicMock(
@@ -1377,6 +1385,9 @@ class TestSessionClose:
 
         monkeypatch.setattr(agent_controller, "write_file", mock_write)
         monkeypatch.setattr(agent_controller, "read_file", mock_read)
+        # Aisla .session_state.json real (ver docstring del fix hermano en
+        # test_042a_completed_mentioned_in_prose_does_not_skip_the_closeout).
+        monkeypatch.setattr(agent_controller, "save_session", lambda: None)
 
         mock_run = MagicMock(
             return_value=MagicMock(
@@ -4830,6 +4841,9 @@ class TestCliContractSessionClose:
         script_dir.mkdir()
         (script_dir / "session_closeout.py").write_text("")
         monkeypatch.setattr(agent_controller, "PROJECT_ROOT", tmp_path)
+        # Aisla .session_state.json real en el close exitoso (returncode==0
+        # dispara save_session() -- ver fix hermano en TestSessionClose).
+        monkeypatch.setattr(agent_controller, "save_session", lambda: None)
         monkeypatch.setattr(
             agent_controller.subprocess,
             "run",
