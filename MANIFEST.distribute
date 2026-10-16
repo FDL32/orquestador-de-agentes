@@ -52,6 +52,7 @@ prompts/orchestrator_destination_bootstrap.md
 prompts/orchestrator_launch_builder.md
 prompts/orchestrator_pipeline.md
 prompts/orchestrator_refactor_bootstrap.md
+prompts/repo_audit_multiagent.md
 prompts/orchestrator_session_bootstrap.md
 prompts/orchestrator_session_close_chat.md
 prompts/persona_system.md

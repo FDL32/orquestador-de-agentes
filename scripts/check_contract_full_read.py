@@ -47,6 +47,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,15 @@ _MOTOR_ROOT_B5 = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT_B5) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_B5))
 from bus.redact import redact  # noqa: E402
+
+
+# WOT-2026-042z fix (2026-10-16): ventana de frescura para el fallback
+# sin-argumento (ver main()). Una nota de planning/ mas vieja que esto se
+# ignora -- su sesion probablemente ya cerro y su telemetria de lectura ya
+# no esta disponible para auditarla de forma fiable. 72h es generoso para
+# una sesion propia que cruza mas de un dia de trabajo, y estrecho frente a
+# las notas historicas medidas (8-29 dias) que originaron el bloqueo.
+_PLANNING_FRESHNESS_WINDOW_S = 72 * 3600
 
 
 # Citas canonicas de ficheros: rutas relativas al motor que terminan en .md
@@ -459,9 +469,22 @@ def main() -> int:  # noqa: C901
             )
             return 2
     else:
-        # No artifact provided: scan .agent/planning/ for citation-rich files
+        # No artifact provided: scan .agent/planning/ for citation-rich files.
+        #
+        # WOT-2026-042z fix (2026-10-16, bucle adversarial DBL-4, 7 lentes):
+        # sin filtro de frescura, este fallback auditaba notas de SESIONES YA
+        # CERRADAS (8-29 dias de antiguedad medido en vivo) contra telemetria
+        # de lectura por-sesion, que nunca pudo cubrirlas -- bloqueaba
+        # CUALQUIER commit en pre-commit mientras existiera una nota vieja en
+        # planning/, sin relacion con lo que el commit tocaba. Opcion (d) del
+        # bucle (opencode/glm): el fallback solo audita ficheros cuyo mtime
+        # sea MAS RECIENTE que `_PLANNING_FRESHNESS_WINDOW_S` (la sesion que
+        # los escribio puede seguir viva); notas mas viejas que la ventana
+        # se ignoran explicitamente, nunca se auditan en silencio como si
+        # fueran nuevas.
         motor_root = Path(args.motor_root) if args.motor_root else resolve_motor_root()
         planning_dir = motor_root / ".agent" / "planning"
+        now = time.time()
         if planning_dir.is_dir():
             # Find .md files with citations (heuristic: contain backtick-quoted paths)
             import glob
@@ -474,18 +497,19 @@ def main() -> int:  # noqa: C901
             ):
                 for md_file in glob.glob(str(planning_dir / pattern), recursive=True):
                     fp = Path(md_file)
-                    if (
-                        fp.is_file()
-                        and _CITATION_RE.search(fp.read_text(encoding="utf-8"))
-                        and (
-                            artifact_path is None
-                            or artifact_path.stat().st_mtime < fp.stat().st_mtime
-                        )
+                    if not fp.is_file():
+                        continue
+                    if now - fp.stat().st_mtime > _PLANNING_FRESHNESS_WINDOW_S:
+                        continue  # too old: session that wrote it already closed
+                    if _CITATION_RE.search(fp.read_text(encoding="utf-8")) and (
+                        artifact_path is None
+                        or artifact_path.stat().st_mtime < fp.stat().st_mtime
                     ):
                         artifact_path = fp
         if artifact_path is None:
             print(
-                "INFO: no artifacts with citations found, nothing to verify.",
+                "INFO: no recent artifacts with citations found "
+                f"(window: {_PLANNING_FRESHNESS_WINDOW_S}s), nothing to verify.",
                 file=sys.stderr,
             )
             print("PASS: no citations found (nothing to verify).")

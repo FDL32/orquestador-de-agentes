@@ -646,6 +646,9 @@ def test_dispatch_propagates_skill_citations_failure(monkeypatch, tmp_path):
             "get_changed_files": lambda *a, **kw: {
                 str((destino / "skills/test-skill/SKILL.md").resolve())
             },
+            "read_delivery_authority": staticmethod(
+                lambda content, default="repo_motor": default
+            ),
         },
     )()
 
@@ -691,6 +694,9 @@ def test_dispatch_no_skill_citations_when_no_relevant_paths(monkeypatch, tmp_pat
                 str((destino / "scripts/other_script.py").resolve()),
                 str((motor / "agent_system/core.py").resolve()),
             },
+            "read_delivery_authority": staticmethod(
+                lambda content, default="repo_motor": default
+            ),
         },
     )()
 

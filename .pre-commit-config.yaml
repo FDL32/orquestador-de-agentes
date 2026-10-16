@@ -98,25 +98,26 @@ repos:
       # declarado (:X-Y con "riesgo") pasa con WARN; muestreo silencioso ->
       # FAIL nombrando fichero + lineas ausentes.
       # WOT-2026-042z fix (2026-10-16, bucle adversarial DBL-4 7 lentes):
-      # `pass_filenames: false` + `always_run: true` + sin argumento posicional
-      # SIEMPRE caia en la rama de fallback (scripts/check_contract_full_read.py
-      # main(), args.artifact is None) que escanea TODO `.agent/planning/**/*.md`
+      # sin argumento, el fallback de scripts/check_contract_full_read.py
+      # (main(), args.artifact is None) escaneaba TODO `.agent/planning/**/*.md`
       # buscando el fichero con cita mas reciente -- auditando notas de
-      # SESIONES YA CERRADAS contra telemetria que nunca pudo cubrirlas
-      # (caduca por sesion). Bloqueaba CUALQUIER commit mientras quedara una
-      # nota vieja en planning/, sin relacion con lo que el commit tocaba.
-      # Fix: acotar a ficheros realmente tocados bajo .agent/planning/ via
-      # `files:` + `pass_filenames: true`. Riesgo de hueco declarado: un
-      # commit que NO toca .agent/planning/ (como el que origino este fix)
-      # ya no dispara este hook -- es correcto: ese tipo de artefacto
-      # (prompts/, skills/) nunca fue el objetivo del fallback de planning/,
-      # y auditarlo exige pasar su ruta explicita, no el escaneo ciego.
+      # SESIONES YA CERRADAS (8-29 dias de antiguedad medido en vivo) contra
+      # telemetria que nunca pudo cubrirlas. Bloqueaba CUALQUIER commit
+      # mientras quedara una nota vieja en planning/, sin relacion con lo
+      # que el commit tocaba. Primer intento de fix (acotar `files:` a
+      # .agent/planning/, que esta gitignorado) desbloqueaba el commit pero
+      # dejaba el hook sin disparo posible en la practica, rompiendo
+      # test_dod_e_check_guard_wiring_passes (exige WIRED via always_run,
+      # no inerte). Fix real: el filtro de frescura vive en el SCRIPT
+      # (_PLANNING_FRESHNESS_WINDOW_S, 72h) -- el YAML vuelve a
+      # always_run:true tal como estaba, el hook sigue disparando en cada
+      # commit, pero su fallback ignora notas mas viejas que la ventana.
       - id: check-contract-full-read
         name: check contract full read (cited prompts/contracts were fully read)
         entry: uv run python scripts/check_contract_full_read.py
         language: system
-        pass_filenames: true
-        files: ^\.agent/planning/.*\.(md|txt)$
+        pass_filenames: false
+        always_run: true
         stages: [pre-commit]
 
       # WOT-2026-024w: tres guards que el parser honesto de check_guard_wiring

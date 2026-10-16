@@ -61,37 +61,6 @@ known_unwired:
   # bloqueante) sobre el CF triple del motor. El AST lo alcanza ahora -> wired.
   # Dejarlo aqui seria una declaracion STALE que el propio gate caza.
   validate_agent_config: WOT-2026-019o
-  # WOT-2026-042z fix (2026-10-16): el hook en pre-commit tenia
-  # pass_filenames:false + always_run:true + sin argumento, lo que SIEMPRE
-  # caia en su rama de fallback (scripts/check_contract_full_read.py
-  # main(), args.artifact is None): escaneaba TODO .agent/planning/**/*.md
-  # buscando el fichero con cita mas reciente y lo auditaba contra
-  # telemetria de lectura por-sesion, que caduca. Bloqueaba CUALQUIER
-  # commit (sin relacion con lo que tocaba) mientras existiera una nota
-  # vieja en planning/ -- verificado con bucle adversarial DBL-4 (7
-  # lentes, convergencia: degradar a WARN abre hueco de seguridad real;
-  # pasar filenames sin acotar es inviable porque .agent/planning/ esta
-  # gitignorado desde WOT-2026-070g y git nunca lo stagea). Fix aplicado:
-  # `files:` acotado a .agent/planning/*.md|*.txt + pass_filenames:true,
-  # que en la practica deja el hook SIN disparo posible en el flujo normal
-  # (ese directorio nunca llega a git). Deuda declarada, no deuda oculta.
-  check_contract_full_read: >-
-    BY-DESIGN: temporal, el modo sin-argumento (escaneo de
-    .agent/planning/ via glob de filesystem) queda sin disparo posible
-    tras el fix de .pre-commit-config.yaml (WOT-2026-042z, 2026-10-16),
-    porque .agent/planning/ esta gitignorado y pass_filenames nunca
-    recibe nada de ahi. El proposito original del guard (auditar que un
-    prompt/contrato citado se leyo entero) sigue vivo como CLI manual
-    (`python scripts/check_contract_full_read.py <artefacto>`), pero no
-    tiene hoy un punto de invocacion automatico que reciba el artefacto
-    real en el momento de su autoria. Recablearlo exige: (1) cerrar la
-    deuda B declarada en la misma sesion (archivado de .agent/planning/
-    tras cierre de ticket, sin dueno hoy) o (2) invocarlo desde
-    session_closeout.py/orchestrator_prepare_and_launch_ticket.md con la
-    ruta explicita del prompt/work_plan recien redactado (opcion
-    preferida por el bucle adversarial, convergencia 5/7 lentes). Ninguna
-    de las dos esta hecha; se declara aqui para que el propio
-    check_guard_wiring no lo trate como huerfano silencioso.
   # WOT-2026-024w DISPUSO los 9 huerfanos que el parser honesto de v2/v4 destapo:
   #   - 3 CABLEADOS a pre-commit always_run: check_ruff_hook_scope,
   #     check_skill_collisions, check_ticket_nomenclature (.pre-commit-config.yaml).

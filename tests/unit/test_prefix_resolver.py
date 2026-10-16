@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from scripts import prefix_resolver
 from scripts.prefix_resolver import (
     discover_motor_root,
     extract_prefix,
@@ -184,7 +185,9 @@ def test_resolve_known_prefix(tmp_path: Path) -> None:
     assert resolve_prefix("CTL", motor) == ctl
 
 
-def test_resolve_wot_returns_workspace_via_scan(tmp_path: Path) -> None:
+def test_resolve_wot_returns_workspace_via_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """WOT-2026-023i: WOT resolves through scan_links like every other prefix.
 
     It used to short-circuit to motor_root via a hardcoded early-return,
@@ -193,20 +196,38 @@ def test_resolve_wot_returns_workspace_via_scan(tmp_path: Path) -> None:
     works and the special case is gone. Where WOT is WORKED (the _dev
     worktree) and where it is COMMITTED (repo_motor) are different axes --
     see scripts/check_worktree_topology.py.
+
+    Isolation: LOCAL_OVERRIDES is a FIXED path on the real script module
+    (scripts/prefix_resolver.local.json), not relative to the synthetic
+    `motor` passed in -- a real override on THIS machine (WOT-2026-071a)
+    would otherwise leak into this test's assertions. Point it at a
+    tmp_path file that never exists.
     """
+    monkeypatch.setattr(
+        prefix_resolver, "LOCAL_OVERRIDES", tmp_path / "no-overrides.json"
+    )
     motor, _, _, search_root = _make_tree(tmp_path)
     workspace = search_root / "orquestador_de_agentes_workspace"
     assert resolve_prefix("WOT", motor) == workspace
     assert resolve_prefix("WOT", motor) != motor
 
 
-def test_resolve_wot_duplicate_returns_none(tmp_path: Path) -> None:
+def test_resolve_wot_duplicate_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """WOT-2026-023i: with the special case gone, WOT is subject to the same
     ambiguity rule as any other prefix -- two links declaring it resolve to
     None. This failure mode did not exist while the early-return masked it,
     and it is why guard() must not require a resolution for WOT (a duplicate
     would otherwise block every WOT ticket; see
-    test_guard_wot_passes_from_motor_without_wot_link)."""
+    test_guard_wot_passes_from_motor_without_wot_link).
+
+    Isolation: see test_resolve_wot_returns_workspace_via_scan docstring --
+    a real local override would mask the ambiguity this test exercises.
+    """
+    monkeypatch.setattr(
+        prefix_resolver, "LOCAL_OVERRIDES", tmp_path / "no-overrides.json"
+    )
     motor, _, _, search_root = _make_tree(tmp_path)
     dup = search_root / "otro_workspace"
     dup.mkdir()
@@ -353,7 +374,9 @@ def test_guard_wot_from_dev_worktree_passes(tmp_path: Path) -> None:
     assert guard("WOT-2026-021g", cwd=dev, motor_root=motor) == 0
 
 
-def test_guard_wot_passes_from_motor_without_wot_link(tmp_path: Path) -> None:
+def test_guard_wot_passes_from_motor_without_wot_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """WOT-2026-023i (BLOCKER-1): guard() must authorize a WOT ticket from a
     worktree of the motor EVEN IF the WOT prefix does not resolve.
 
@@ -367,7 +390,14 @@ def test_guard_wot_passes_from_motor_without_wot_link(tmp_path: Path) -> None:
 
     Mutation-to-prove: move the WOT branch back below the `resolved is None`
     check and this test goes red with exit 2.
+
+    Isolation: see test_resolve_wot_returns_workspace_via_scan docstring --
+    a real local override on this machine (WOT-2026-071a) would otherwise
+    make resolve_prefix("WOT") non-None here.
     """
+    monkeypatch.setattr(
+        prefix_resolver, "LOCAL_OVERRIDES", tmp_path / "no-overrides.json"
+    )
     motor = tmp_path / "motor"
     motor.mkdir()
     _git_init_main(motor)
@@ -376,10 +406,18 @@ def test_guard_wot_passes_from_motor_without_wot_link(tmp_path: Path) -> None:
     assert guard("WOT-2026-023i", cwd=motor, motor_root=motor) == 0
 
 
-def test_guard_wot_passes_from_motor_with_duplicate_wot_link(tmp_path: Path) -> None:
+def test_guard_wot_passes_from_motor_with_duplicate_wot_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """WOT-2026-023i (BLOCKER-1): same as above for the AMBIGUOUS case. Two
     links declaring ticket_prefix WOT make resolve_prefix return None; guard()
-    must still authorize from the motor's own worktree."""
+    must still authorize from the motor's own worktree.
+
+    Isolation: see test_resolve_wot_returns_workspace_via_scan docstring.
+    """
+    monkeypatch.setattr(
+        prefix_resolver, "LOCAL_OVERRIDES", tmp_path / "no-overrides.json"
+    )
     motor, _, _, search_root = _make_tree(tmp_path)
     _git_init_main(motor)
     dup = search_root / "otro_workspace"
@@ -613,8 +651,17 @@ def test_cli_verify_detects_duplicate(
 
 
 def test_cli_verify_clean_exits_0(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Isolation: see test_resolve_wot_returns_workspace_via_scan docstring --
+    a real local override on this machine (WOT-2026-071a, WOT ->
+    orquestador_de_agentes_workspace) collides with this synthetic tree's
+    own WOT link and makes --verify report a false OVERRIDE collision."""
+    monkeypatch.setattr(
+        prefix_resolver, "LOCAL_OVERRIDES", tmp_path / "no-overrides.json"
+    )
     motor, _, _, _ = _make_tree(tmp_path)
     from scripts.prefix_resolver import main
 
