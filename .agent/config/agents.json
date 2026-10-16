@@ -54,7 +54,8 @@
         "extension_glob": "kilocode.kilo-code-*",
         "binary_name": "kilo.exe",
         "path_fallback": true
-      }
+      },
+      "timeout_s": 900
     },
     "codex": {
       "executable": "codex.cmd",
