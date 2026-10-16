@@ -581,9 +581,9 @@ def test_prefilter_equivalence_over_real_corpus(tmp_path: Path) -> None:
 
     Equivalence form that stays cheap: for every real test file the prefilter
     SKIPS, the reference AST scan must find nothing (the files it KEEPS are
-    scanned by the production path anyway). A synthetic OBFSUSCATED offender is
-    appended so the assertion has teeth: the prefilter must keep it and the full
-    pipeline must still catch it.
+    scanned by the production path anyway). A synthetic OBFUSCATED offender is
+    exercised end-to-end so the assertion has teeth: the prefilter must keep it
+    and the full pipeline must still catch it.
     """
     offender = _write_fixture(
         tmp_path,
