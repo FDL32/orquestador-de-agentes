@@ -10,18 +10,19 @@
 
 | kind | total |
 |------|-------|
-| prompt | 47 |
+| prompt | 48 |
 | reference | 39 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 47 |
-| **total** | **141** |
+| **total** | **142** |
 
 ## Entradas
 
 | kind | path | status | owner | role | invocation | aliases |
 |------|------|--------|-------|------|------------|---------|
 | prompt | `prompts/agent_execution_modes.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/agents_md_optimization_4layer_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/audit_agent_output.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_autonomous_ticket_batch.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/audit_bus.md` | active | system | auditor | model-invoked | — |

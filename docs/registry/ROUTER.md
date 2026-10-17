@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 41 de 54 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 42 de 55 (exento: hermes_soul.md). Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -61,6 +61,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 | Prompt | Rol | Skill | Cuando | NO es | Lineas |
 |---|---|---|---|---|---|
+| `prompts/agents_md_optimization_4layer_loop.md` | orchestrator | - | - | - | 253 |
 | `prompts/audit_bus.md` | auditor | - | Cuando el bus/supervisor se comporta de forma inesperada o hay que diagnosticar antes de recuperar/arrancar limpio un ticket. | NO ejecuta comandos de recuperacion (solo-lectura, propone); NO es el cierre de sesion (orchestrator_session_close_full_audit.md) ni la salud de 3 capas (audit_post_change_system_health.md). | 323 |
 | `prompts/audit_complete_motor_destination.md` | auditor | - | Analisis periodico de arquitectura/portabilidad, NO una accion inmediata (produce blueprint de tickets futuros). | NO muta el arbol; NO es la auditoria de salud post-cambio (audit_post_change_system_health.md, mas acotada y frecuente) ni la de superficie legacy (audit_portability_legacy_surface.md, inventario puntual). | 617 |
 | `prompts/audit_git_publication.md` | auditor | `audit-git-publication` | Antes de una primera publicacion o de una revision de exposicion de un repo_destino. | NO instala el destino (skills/setup-agent-system/SKILL.md), NO es el gate pre-push de estado vivo (scripts/check_destino_publish_ready.py) y NO publica, commitea ni borra nada. | 189 |
@@ -77,15 +78,16 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 |---|---|---|---|
 | `prompts/_shared/loop_readiness.md` | audit_goal_completion.md, orchestrator_destination_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Gate que decide si una tarea es apta para /goal autonomo: 4 condiciones conjuntas (recurrente, verificacion automatizable, presupuesto declarado, artefacto nombrado) mas una denylist. | 294 |
 | `prompts/audit_goal_completion.md` | audit_autonomous_ticket_batch.md, orchestrator_autonomous_ticket_batch.md, orchestrator_pipeline.md, orchestrator_session_bootstrap.md | Checker AISLADO del orquestador-ejecutor que verifica el cumplimiento de un /goal autonomo (maker/checker, Isolating Maker from Checker). route_kind: modulo porque lo invoca OTRO prompt como referencia (igual que loop_budget.md/loop_hard_stop.md), nunca un agente directamente en una fase fija del ciclo. | 180 |
-| `prompts/ensemble_loop.md` | transversal (7) | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 308 |
+| `prompts/ensemble_loop.md` | transversal (8) | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 308 |
 | `prompts/manager_orchestrator_loop_adapter_motor.md` | AGENTS.md, builder_invocation_contract.md, manager_orchestrator_loop_backlog.md | Adaptador del MOTOR al nucleo portable manager_orchestrator_loop.md: traduce cada capacidad del nucleo a los comandos y ficheros REALES de este repositorio, fija los minimos por tipo de entrega y declara la diferencia de identidad (D2). | 174 |
 | `prompts/orchestrator_launch_builder.md` | transversal (10) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 904 |
-| `prompts/persona_system.md` | AGENTS.md, agent_execution_modes.md, revisor_independent_review.md | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 115 |
+| `prompts/persona_system.md` | AGENTS.md, agent_execution_modes.md, agents_md_optimization_4layer_loop.md, revisor_independent_review.md | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 115 |
 
 ## Por rol
 
 ### Rol: orchestrator
 
+- `prompts/agents_md_optimization_4layer_loop.md` (mantenimiento)
 - `prompts/backlog_admit.md` (F1-backlog)
 - `prompts/doc_optimization.md` (mantenimiento)
 - `prompts/ensemble_loop.md` (modulo)
