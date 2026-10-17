@@ -161,7 +161,7 @@ Ese bloque pasaba (a), (b), (c) y (d). **Verifica la SALIDA del consumidor, no e
 
 En orden de preferencia:
 
-1. **Guard de clase en WARN**, que reporte el % consumido sin bloquear.
+1. **Guard de clase en WARN**, que reporte el % consumido sin bloquear: `scripts/check_context_budget.py` (guard, no "barrera" -- CEM: un mecanismo solo-WARN no es una barrera).
 2. **Deuda declarada** con ticket dueno y criterio de salida. Nunca silencio.
 3. **Tope duro**: SOLO para ficheros `generado`, aplicado **en el script generador** (editar el
    fichero lo prohibe el non-goal), y nunca sin procedimiento de subida: quien lo sube (el
