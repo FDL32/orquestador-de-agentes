@@ -120,17 +120,32 @@ def scan_links(search_root: Path) -> dict[str, list[Path]]:
     return mapping
 
 
-def load_overrides() -> dict[str, Path]:
-    """Load prefix_resolver.local.json overrides (gitignored, optional).
+def load_overrides(motor_root: Path | None = None) -> dict[str, Path]:
+    """Load ``prefix_resolver.local.json`` overrides (gitignored, optional).
 
-    Before: LOCAL_OVERRIDES may or may not exist.
-    During: reads JSON with {"overrides": {"PREFIX": "/path"}}.
-    After: returns dict prefix -> Path, or empty if missing/malformed.
+    Before: ``motor_root`` is the motor repository root, or ``None`` (legacy
+        mode: the directory of THIS script, kept only so an external caller
+        with no root keeps the old behaviour). The file is OPTIONAL.
+    During: resolves ``<motor_root>/scripts/prefix_resolver.local.json`` and
+        reads JSON ``{"overrides": {"PREFIX": "/path"}}``. Scoping the path to
+        the motor is the fix for a measured regression: the previous absolute
+        path (``Path(__file__).parent``) applied to EVERY ``--motor-root``,
+        including fixture motors under ``tmp_path``, so 5 tests that assert
+        ``resolve_prefix("WOT") is None`` / a clean ``--verify`` started failing
+        the moment a real local override existed (control medido: con override
+        5 failed / sin override 76 passed).
+    After: returns dict prefix -> Path, or empty if the file is missing or
+        malformed. Never raises.
     """
-    if not LOCAL_OVERRIDES.exists():
+    path = (
+        LOCAL_OVERRIDES
+        if motor_root is None
+        else Path(motor_root) / "scripts" / LOCAL_OVERRIDES.name
+    )
+    if not path.exists():
         return {}
     try:
-        data = json.loads(LOCAL_OVERRIDES.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             return {k: Path(v) for k, v in data.get("overrides", {}).items()}
     except (json.JSONDecodeError, OSError):
@@ -152,7 +167,7 @@ def resolve_prefix(prefix: str | None, motor_root: Path) -> Path | None:
     """
     if prefix is None:
         return None
-    overrides = load_overrides()
+    overrides = load_overrides(motor_root)
     if prefix in overrides:
         return overrides[prefix]
     mapping = scan_links(motor_root.parent)
@@ -512,7 +527,7 @@ def _collect_verify_issues(motor_root: Path) -> list[str]:
             for dest in dests
             if not dest.exists()
         )
-    overrides = load_overrides()
+    overrides = load_overrides(motor_root)
     for prefix, dest in sorted(overrides.items()):
         if prefix in mapping:
             issues.append(f"OVERRIDE collision: '{prefix}' in both overrides and scan")
