@@ -280,9 +280,15 @@ Reproduce las 9 condiciones exactas:
    `absorbed`/`not-pursued` con evidencia `external:`).
 
    **Clausula espejo para cierres por transferencia (`absorbed` / `not-pursued`).**
-   Los estados `absorbed` y `not-pursued` NO EXIGEN `commit:<sha>` citable
-   (WOT-2026-067a, premise): se archivan primariamente como transferencia de
-   responsabilidad, no como landing de commit, y la condicion 4 se cumple con
+   Los estados `absorbed` y `not-pursued` NO EXIGEN `commit:<sha>` citable para
+   cumplir la condicion 4 -- pero tampoco lo PROHIBEN: el guard SI admite y
+   audita un `commit:<sha>` en una fila `absorbed`/`not-pursued` cuando esta
+   presente (WOT-2026-067a, premisa corregida tras NIT-1 de WOT-2026-103a -- la
+   version anterior de esta frase, leida sola, sugeria que estos estados nunca
+   admiten commit, lo que `check_backlog_commits_landed.py:170-177` y
+   `tests/unit/test_check_backlog_commits_landed.py:1367` contradicen). Se
+   archivan primariamente como transferencia de responsabilidad, no como
+   landing de commit, y la condicion 4 se cumple con
    evidencia `external:<ticket-que-absorbe>` en la celda `Reactivation` de la
    fila archivada (p.ej. `Reactivation: external:WOT-2026-059v`). Esto NO
    prohibe que la fila ADEMAS porte un `commit:<sha>`: el guard
@@ -313,13 +319,29 @@ Reproduce las 9 condiciones exactas:
    auditor NO bloquea: declara `cierres_auditables: cumple (transferencia total,
    EXIT_SKIPPED_REQUIRED esperado)` y registra el exit code. Si el exit code es
    non-zero por CUALQUIER otro motivo (`EXIT_ARG`, `EXIT_DEGRADED`,
-    `EXIT_MALFORMED_EVIDENCE`, o `EXIT_SKIPPED_REQUIRED` motivado por filas que NO
-    son `absorbed`/`not-pursued`; tambien filas `completed`/`closed` con commit que
-    no aterrizo) el auditor BLOQUEA independientemente de que
+   `EXIT_MALFORMED_EVIDENCE`, o `EXIT_SKIPPED_REQUIRED` motivado por filas que NO
+   son `absorbed`/`not-pursued`; tambien filas `completed`/`closed` con commit que
+   no aterrizo) el auditor BLOQUEA independientemente de que
    `ERROR=0` en la linea de conteo -- esa linea cuenta celdas de `commit:`, no el
    exit code real; un `ERROR=0` con FAIL non-zero no es verde. Un auditor honesto
    NUNCA acepta `ERROR=0` como verde si hay un FAIL non-zero no explicado por esta
    clausula espejo.
+
+   **Lote mixto (NIT-2 de WOT-2026-103a): el criterio es la CAUSA, nunca el
+   total.** Un batch con terminales `completed`/`closed` con `commit:<sha>`
+   aterrizado CONVIVIENDO con terminales `absorbed`/`not-pursued` por
+   transferencia no es "todos los terminales son transferencia" (el primer
+   caso de este apartado) ni cae automaticamente en "CUALQUIER otro motivo"
+   (el segundo): el auditor decide mirando los `ticket-ids` que
+   `skipped_required_tickets` lista en el FAIL, nunca el total de filas. Si
+   CADA ticket-id listado ahi es `absorbed`/`not-pursued` con `external:`
+   valido, el exit non-zero sigue siendo `EXIT_SKIPPED_REQUIRED esperado` (no
+   bloquea) aunque el batch tenga ADEMAS otros terminales ya landed con
+   commit fuera de esa lista. Si CUALQUIER ticket-id listado en
+   `skipped_required_tickets` no es `absorbed`/`not-pursued` con evidencia
+   valida, el auditor BLOQUEA igual que en el caso general -- un solo
+   ticket-id sin excusa en esa lista basta para no declarar la transferencia
+   completa.
 
 5. **`suite_final_verde`** -- `run_pytest_safe --level all` corrido
    DESPUES del ULTIMO commit del batch, con `tested_commit_sha == HEAD` leido del
