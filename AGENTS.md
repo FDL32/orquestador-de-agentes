@@ -12,7 +12,7 @@
   - **Pipeline secuencial de un ticket:** `orchestrator`, `manager`,
     `builder`, `auditor`.
   - **Capa de revision independiente (sistema de 4 capas/"personas"):**
-    `revisor` (anadido WOT-2026-098b). Persona-2, Capa 1.5 del nucleo
+    `revisor` (anadido WOT-2026-098b). Persona-2 (Revisor) del nucleo
     `prompts/agent_execution_modes.md` -- NUNCA el mismo backend/modelo que
     implemento (condicion dura, ver `prompts/persona_system.md` Seccion 2).
     Para entender la numeracion de personas 0/1/2/3 y su correlacion con
@@ -463,6 +463,28 @@ nunca de un `-k` por nombre. Rationale completo (por que la comprobacion previa 
 medido WOT-2026-079d con 3 regresiones reales que `-k` dejo pasar): memoria de
 `repo_motor`, `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`
 (2026-09-27).
+
+**Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k):** cuando el
+despacho de un ticket se reparte entre tres roles (protocolo `prompts/kilo_trio_dispatch/`),
+SOLO el Manager corre la suite completa `--level all`, como gate de cierre, UNA vez,
+inmediatamente antes del push -- tras TODOS los commits del ticket, nunca "antes del commit
+final" (la regla de arriba ya fija que la suite es el ULTIMO paso, no uno intermedio). El
+Builder se limita a tests focales del area tocada durante la implementacion (nunca `--level all`
+como su propio cierre); el Revisor ejecuta de forma independiente sus propios tests focales
+sobre el area modificada -- NUNCA cita ni espera una corrida del Manager, porque en el orden
+canonico del trio (Manager -> Builder -> Revisor -> Manager-cierre) esa corrida todavia no
+existe cuando el Revisor actua. Medido en vivo (2026-10-18, WOT-2026-104j, sesion hija 4 capas):
+sin esta asignacion explicita, Builder y el Orquestador corrieron `--level all` CADA UNO por su
+cuenta, ambas veces antes de que el Revisor tuviera turno -- exactamente el patron de
+desperdicio que la regla de arriba ya advertia, mas una corrida redundante que la regla de
+arriba no cubria (quien tiene PERMISO de correrla, no solo cuando). Verificado por bucle de
+gobierno DESIGN_REVIEW (`UNI-5`, 4 lentes independientes: codex, opencode/glm, gemini, mistral;
+3/4 `APROBAR_CON_CAMBIOS` tras corregir una redaccion anacronica del primer borrador). **Alcance
+declarado, no se extiende por si solo:** esta regla cubre el protocolo trio
+`prompts/kilo_trio_dispatch/`. NO toca `scripts/run_gates_dispatch.py` ni
+`skills/builder-run-quality-gates` (hallazgo de la lente codex en el mismo bucle): esos
+mecanismos sirven tambien a tickets de un solo Builder sin Revisor/Manager separados, donde el
+Builder SI es el unico verificador legitimo de `--level all`.
 
 #### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
 
