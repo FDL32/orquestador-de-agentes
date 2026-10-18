@@ -898,6 +898,73 @@ def run_workspace_contract_formation_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_arranque_budget_check(project_root: Path) -> CheckResult:
+    """WOT-2026-103b: cablea el guard de presupuesto de arranque (CTL-2026-041a)
+    en el prepush del motor, para que corra en TODO push de TODO destino que lo
+    declare, en vez de quedar invocable solo a mano.
+
+    Before: ``project_root`` resoluble. El guard vive en el DESTINO, no en el
+    motor -- `<project_root>/scripts/check_arranque_budget.py`.
+    During: si el script no existe en ese destino, SKIP sin coste (la mayoria
+    de destinos no lo tienen todavia). Si existe, se invoca como subprocess
+    (`sys.executable <script> --project-root <project_root>`); un `rc=2`
+    (cadena de resolucion ausente) se trata como NO VERIFICABLE, nunca como
+    passed=True silencioso. Un `WARN:` en stdout (presupuesto excedido) se
+    propaga como WARN visible, nunca ocultado.
+    After: `passed=True` + skip/limpio silencioso en el camino feliz;
+    `passed=False` + `is_blocking=False` (patron WARN de
+    `run_workspace_contract_formation_check`) si el script no es verificable o
+    reporta WARN.
+    """
+    name = "Arranque Budget Check (CTL-2026-041a, WARN)"
+    script = project_root / "scripts" / "check_arranque_budget.py"
+    if not script.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"no {script} in this destino (skip)",
+            is_blocking=False,
+        )
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "--project-root", str(project_root)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"WARN: arranque budget check NO VERIFICABLE (exec error: {exc})",
+            is_blocking=False,
+        )
+    stdout = result.stdout or ""
+    if result.returncode == 2:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                "WARN: arranque budget check NO VERIFICABLE (rc=2, cadena de "
+                f"resolucion ausente). stdout: {stdout.strip()}"
+            ),
+            is_blocking=False,
+        )
+    if "WARN:" in stdout:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"WARN: arranque budget exceeded. {stdout.strip()}",
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="arranque budget within limits",
+        is_blocking=False,
+    )
+
+
 def run_batch_run_accounting_check(project_root: Path) -> CheckResult:
     """WOT-2026-025k + WOT-2026-058t: accounting and predicate-input checks
     over autonomous batch_run reports.
@@ -4237,6 +4304,11 @@ def run_preflight_check(
 
     # 5. Git Status Check
     results.append(run_git_status_check(project_root))
+
+    # 5-bis. Arranque Budget Check (WOT-2026-103b; WARN, corre en TODO push,
+    # no solo en cierre -- is_blocking=False siempre, skip sin coste en
+    # destinos sin scripts/check_arranque_budget.py)
+    results.append(run_arranque_budget_check(project_root))
 
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:
