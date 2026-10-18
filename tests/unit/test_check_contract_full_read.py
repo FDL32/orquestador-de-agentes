@@ -754,3 +754,148 @@ def test_dod_b3_full_path_no_suffix_false_positive(tmp_path: Path) -> Path:
     assert rc == 1, (
         f"Homonimo en ruta distinta NO debe contar como cobertura. rc={rc}, stdout={stdout}"
     )
+
+
+# ------------------------------------------------------------------ WOT-2026-104j: lecturas paginadas
+
+
+_PAGINATED_TOTAL_LINES = 968
+_PAGINATED_FIRST_PAGE = 563
+_PAGINATED_SECOND_PAGE = 405
+
+
+def _large_file_content(total_lines: int) -> str:
+    """Return deterministic content with exactly ``total_lines`` lines."""
+    return "".join(f"line{i}\n" for i in range(1, total_lines + 1))
+
+
+def test_paginated_read_union_coverage(tmp_path: Path) -> None:
+    """DoD (a)/(b)/(d): 2 lecturas paginadas cubren el fichero -> PASS.
+
+    ANTES del fix: max(563, 405) = 563 < 968 -> FAIL. Con union de rangos
+    [1,563] U [563,968] -> PASS.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": _large_file_content(_PAGINATED_TOTAL_LINES)},
+        [
+            {
+                "context": f"Read file prompts/large.md, {_PAGINATED_FIRST_PAGE} lines, offset=0",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:00Z",
+            },
+            {
+                "context": (
+                    f"Read file prompts/large.md, {_PAGINATED_SECOND_PAGE} lines, "
+                    f"offset={_PAGINATED_FIRST_PAGE}"
+                ),
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:01Z",
+            },
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, stderr = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Lectura paginada completa debe PASS (union de rangos). "
+        f"rc={rc}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "PASS" in stdout
+
+
+def test_paginated_read_gap_fails(tmp_path: Path) -> None:
+    """DoD (c): 2 lecturas paginadas con HUECO -> FAIL con lineas ausentes.
+
+    [1,300] U [600,900] de 968: faltan 301-599 y 901-968.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": _large_file_content(_PAGINATED_TOTAL_LINES)},
+        [
+            {
+                "context": "Read file prompts/large.md, 300 lines, offset=0",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:00Z",
+            },
+            {
+                "context": "Read file prompts/large.md, 300 lines, offset=600",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:01Z",
+            },
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, stderr = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 1, (
+        f"Hueco entre lecturas paginadas debe FAIL. rc={rc}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    output = stdout + stderr
+    assert "ausentes" in output
+    assert "301" in output, f"Debe enumerar el primer hueco (301), got: {output}"
+
+
+def test_mutation_verify_max_logic_fails(tmp_path: Path) -> None:
+    """DoD (d): discriminador de la mutacion `max`-de-un-evento.
+
+    El propio fixture prueba la mutacion: la logica `max(line_count)` daria
+    max(563, 405) = 563 < 968 -> FAIL, y con la union -> PASS. La mutacion REAL
+    (repoblar `check_read_coverage` con `max` y ver el test paginado caer) se
+    ejecuta aparte y queda registrada en el recibo del Builder.
+    """
+    line_counts = [_PAGINATED_FIRST_PAGE, _PAGINATED_SECOND_PAGE]
+    assert max(line_counts) < _PAGINATED_TOTAL_LINES, (
+        "El fixture debe ser discriminante: la logica max NO puede cubrir el fichero"
+    )
+
+    content = _large_file_content(_PAGINATED_TOTAL_LINES)
+    first_page_event = {
+        "context": f"Read file prompts/large.md, {_PAGINATED_FIRST_PAGE} lines, offset=0",
+        "tool_name": "view_file",
+        "timestamp": "2026-10-18T00:00:00Z",
+    }
+    second_page_event = {
+        "context": (
+            f"Read file prompts/large.md, {_PAGINATED_SECOND_PAGE} lines, "
+            f"offset={_PAGINATED_FIRST_PAGE}"
+        ),
+        "tool_name": "view_file",
+        "timestamp": "2026-10-18T00:00:01Z",
+    }
+    artifact_text = "Se debe leer `prompts/large.md` entero antes de trabajar."
+
+    # Direccion 1: solo la primera pagina (equivale a "max de un evento") -> FAIL
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [first_page_event],
+    )
+    artifact = _write_artifact(motor_root, "artifact.md", artifact_text)
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+    rc_one_event, stdout_one, _ = _run_check(motor_root, artifact, telemetry_dir)
+    assert rc_one_event == 1, (
+        f"Un solo evento (563/968) debe FAIL, got rc={rc_one_event}\nstdout: {stdout_one}"
+    )
+
+    # Direccion 2: la union de ambas paginas -> PASS
+    telemetry_file = telemetry_dir / "tool_usage.jsonl"
+    with telemetry_file.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(second_page_event, ensure_ascii=False) + "\n")
+    rc_both, stdout_both, _ = _run_check(motor_root, artifact, telemetry_dir)
+    assert rc_both == 0, (
+        f"La union de las 2 paginas debe PASS, got rc={rc_both}\nstdout: {stdout_both}"
+    )

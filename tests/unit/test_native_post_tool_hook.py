@@ -547,3 +547,57 @@ def test_probe_p1_abs_dir1_zero_dir2_one_r3(tmp_path: Path) -> None:
         f"stdout: {result_dir2.stdout.decode('utf-8', errors='replace')}\n"
         f"stderr: {result_dir2.stderr.decode('utf-8', errors='replace')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-104j: offset paginado en el contexto de telemetria (formato aditivo)
+# ---------------------------------------------------------------------------
+
+
+def test_paginated_read_emits_offset_suffix(tmp_path: Path) -> None:
+    """WOT-2026-104j: tool_input con offset -> sufijo ', offset=<k>'.
+
+    El hook debe reenviar el offset de la Read paginada para que
+    check_contract_full_read pueda unir rangos [offset, offset+line_count].
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 406))
+    payload = json.dumps(
+        {
+            "tool_name": "Read",
+            "session_id": "test-session-001",
+            "tool_input": {
+                "file_path": "prompts/canon.md",
+                "offset": 563,
+                "limit": 405,
+            },
+            "tool_response": content,
+        }
+    ).encode("utf-8")
+    result = _run_hook(payload, tmp_path=tmp_path)
+    assert result.returncode == 0, f"Expected exit 0.\nstderr: {result._decoded_stderr}"
+    telemetry_file = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    last_line = telemetry_file.read_text(encoding="utf-8").strip().split("\n")[-1]
+    record = json.loads(last_line)
+    assert "405 lines, offset=563" in record["context"], (
+        f"Expected offset suffix, got: {record['context']}"
+    )
+
+
+def test_read_without_offset_keeps_historic_format(tmp_path: Path) -> None:
+    """WOT-2026-104j: sin offset (o offset=0) el formato historico no cambia."""
+    payload = json.dumps(
+        {
+            "tool_name": "Read",
+            "session_id": "test-session-001",
+            "tool_input": {"file_path": "prompts/canon.md", "offset": 0},
+            "tool_response": "a\nb\n",
+        }
+    ).encode("utf-8")
+    result = _run_hook(payload, tmp_path=tmp_path)
+    assert result.returncode == 0, f"Expected exit 0.\nstderr: {result._decoded_stderr}"
+    telemetry_file = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    last_line = telemetry_file.read_text(encoding="utf-8").strip().split("\n")[-1]
+    record = json.loads(last_line)
+    assert record["context"].endswith("Read file prompts/canon.md, 2 lines"), (
+        f"Historic format must be byte-identical, got: {record['context']}"
+    )

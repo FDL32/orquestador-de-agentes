@@ -34,26 +34,39 @@ for _root in (_AGENT_DIR, _MOTOR_ROOT):
         sys.path.insert(0, str(_root))
 
 
-def _extract_read_payload(input_data: dict) -> tuple[str, str]:  # noqa: C901
-    """Extract file_path and content from a Claude Code PostToolUse payload.
+def _extract_read_payload(input_data: dict) -> tuple[str, str, int]:  # noqa: C901
+    """Extract file_path, content and offset from a Claude Code PostToolUse payload.
 
     Real Claude Code sends: {tool_name, tool_input, tool_response, ...}
     - file_path is in tool_input (as "file_path" or "path")
     - content is in tool_response (as string, content-block array, or structured dict)
+    - offset is in tool_input (WOT-2026-104j: paginated reads)
 
     The old "result" key was a guess that never arrived in production.
-    Returns (file_path, content) — file_path defaults to "unknown".
+    Returns (file_path, content, offset) — file_path defaults to "unknown",
+    offset defaults to 0 (no pagination).
     """
     file_path = "unknown"
     content = ""
+    offset = 0
 
-    # 1) Pull file_path from tool_input (the original tool call)
+    # 1) Pull file_path and offset from tool_input (the original tool call)
     tool_input = input_data.get("tool_input") or {}
     for _k in ("file_path", "path"):
         _v = tool_input.get(_k)
         if isinstance(_v, str) and _v:
             file_path = _v
             break
+    _offset_raw = tool_input.get("offset")
+    if isinstance(_offset_raw, int) and not isinstance(_offset_raw, bool):
+        offset = _offset_raw
+    elif isinstance(_offset_raw, str):
+        try:
+            offset = int(_offset_raw)
+        except ValueError:
+            offset = 0
+    if offset < 0:
+        offset = 0
 
     # 2) Pull content from tool_response (the actual tool output)
     tool_response = input_data.get("tool_response")
@@ -99,7 +112,7 @@ def _extract_read_payload(input_data: dict) -> tuple[str, str]:  # noqa: C901
                 if isinstance(stderr_val, str):
                     content = content + stderr_val
 
-    return file_path, content
+    return file_path, content, offset
 
 
 def main() -> None:
@@ -114,9 +127,14 @@ def main() -> None:
     tool_name = input_data.get("tool_name", "")
     if tool_name == "Read":
         translated_name = "view_file"
-        file_path, content = _extract_read_payload(input_data)
+        file_path, content, offset = _extract_read_payload(input_data)
         line_count = len(content.splitlines()) if content else 0
+        # WOT-2026-104j: formato ADITIVO. Sin offset (o offset=0) el string es
+        # byte-identico al historico; con offset se anade ", offset=<k>" para
+        # que check_contract_full_read pueda unir lecturas paginadas.
         context = f"Read file {file_path}, {line_count} lines"
+        if offset:
+            context += f", offset={offset}"
     else:
         translated_name = tool_name.lower()
         context = f"Executed {tool_name}"
