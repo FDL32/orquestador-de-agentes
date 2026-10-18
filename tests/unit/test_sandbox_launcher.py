@@ -125,6 +125,55 @@ def test_up_run_dentro_si_fuera_no_y_down_limpia(sbx):
 
 
 @pytestmark_int
+def test_sync_claude_credentials_sin_net_no_advierte(sbx, tmp_path):
+    """WOT-2026-104a: sin -Net, el aviso neutro de siempre, SIN la advertencia de
+    riesgo (control negativo -- si esto fallara con la advertencia presente aqui
+    tambien, el test positivo hermano no probaria nada).
+
+    Usa una credencial FALSA en un directorio temporal (CLAUDE_CONFIG_DIR), nunca
+    la credencial real del usuario (01-security-architecture.md: nunca leer secretos
+    reales en un test).
+    """
+    run, _, _ = sbx
+    cfg_dir = tmp_path / "fake_claude_config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".credentials.json").write_text('{"fake": "not-a-real-token"}')
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg_dir)}
+    r = run(
+        "run", "-Exe", "claude", "-ExeArgs", '-p "echo PONG"', "-NullStdin", env=env
+    )
+    assert "credencial de Claude sincronizada" in r.stderr
+    assert "ADVERTENCIA" not in r.stderr
+    assert "exfiltracion" not in r.stderr
+
+
+@pytestmark_int
+def test_sync_claude_credentials_con_net_advierte(sbx, tmp_path):
+    """WOT-2026-104a: con -Net, la copia de la credencial dispara una ADVERTENCIA
+    explicita de riesgo de exfiltracion (RED sin el fix de este ticket, GREEN con
+    el). Credencial FALSA, igual que el test hermano sin -Net.
+    """
+    run, _, _ = sbx
+    cfg_dir = tmp_path / "fake_claude_config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".credentials.json").write_text('{"fake": "not-a-real-token"}')
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg_dir)}
+    r = run(
+        "run",
+        "-Exe",
+        "claude",
+        "-ExeArgs",
+        '-p "echo PONG"',
+        "-NullStdin",
+        "-Net",
+        env=env,
+    )
+    assert "credencial de Claude sincronizada" in r.stderr
+    assert "ADVERTENCIA" in r.stderr
+    assert "exfiltracion" in r.stderr
+
+
+@pytestmark_int
 def test_entorno_limpio_y_control_positivo_de_passenv(sbx):
     run, _, _ = sbx
     env = {**os.environ, "SBXTEST_SECRET_KEY": "valor-secreto-123"}

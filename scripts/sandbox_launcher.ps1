@@ -232,6 +232,14 @@ function Sync-ClaudeCredentials($home_) {
   New-Item -ItemType Directory -Force $dstDir | Out-Null
   Copy-Item $src (Join-Path $dstDir '.credentials.json') -Force
   Say "credencial de Claude sincronizada desde $cfgDir (cuenta activa ahora)"
+  # WOT-2026-104a: la garantia "sin secretos" de la Seccion 1 del protocolo NO cubre
+  # este fichero (excepcion INCONDICIONAL: se copia siempre que $Exe -eq 'claude' no
+  # interactivo). Con $Net activo esa credencial viva queda alcanzable por cualquier
+  # proceso con red abierta dentro del sandbox -- advertencia explicita, solo en ese
+  # caso, para no repetir el aviso cuando no hay red y el riesgo de exfiltracion no aplica.
+  if ($Net) {
+    Say "ADVERTENCIA: credencial de Claude copiada dentro del sandbox CON red abierta (-Net) -- riesgo de exfiltracion si el agente dentro se ve comprometido"
+  }
   return $true
 }
 

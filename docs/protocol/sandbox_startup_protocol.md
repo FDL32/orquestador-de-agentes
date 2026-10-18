@@ -10,6 +10,7 @@
 |---|---|
 | El proceso lanzado lee y escribe solo bajo la raíz del sandbox (`work\`, `home\`); fuera falla, también por junction. | Nada de lo que **no** pase por el lanzador: un terminal normal, una extensión que lanza su propio agente, el propio IDE. |
 | Su entorno no trae secretos (lista blanca de variables estándar; el resto se elimina). | Una lista de hosts: la red es **todo o nada** (`-Net` concede internet completo). |
+| **EXCEPCION (WOT-2026-104a, 2026-10-18):** la garantia de arriba NO cubre el fichero de credencial de Claude. `Sync-ClaudeCredentials` copia `.credentials.json` de la cuenta ACTIVA a `home\.claude\.credentials.json` SIEMPRE que `-Exe claude` corre en modo no interactivo -- incondicional de `-Net`. | Si ademas `-Net` esta activo, esa credencial viva queda alcanzable por cualquier proceso de red dentro del sandbox: riesgo de exfiltracion. El lanzador emite una ADVERTENCIA explicita a stderr solo en ese caso (`-Net` + credencial copiada). |
 | El canario comprueba, antes de cada arranque, que dentro se lee y fuera no; si no, **no arranca** (fail-closed). | Que el agente sea inofensivo con lo que sí ve: ve `work\` y la red si se la das. |
 | Sin admin, sin instalar nada, deshacible (`down`). | Un agente lanzado a mano como el usuario conserva todo su acceso (AppLocker no activo, WDAC de usuario apagado). |
 
