@@ -172,7 +172,26 @@ def test_internal_ceiling_kills_the_false_green(
     setup.append(_run_git("init", "-b", "main", cwd=fixture))
     (fixture / ".git" / "HEAD").unlink()  # CONDITION 2: the .git is INCOMPLETE
 
+    # WOT-2026-104h: the destination must be a LINKED worktree of its own repo,
+    # not the primary checkout (and not a plain directory). Build dest_repo with
+    # the same synthetic pattern as motor, then let `git worktree add` CREATE
+    # the workspace directory as its linked worktree.
+    dest_repo = tmp_path / "dest_repo"
+    dest_repo.mkdir()
+    setup.extend(
+        [
+            _run_git("init", "-b", "main", cwd=dest_repo),
+            _run_git("config", "user.email", "probe@example.com", cwd=dest_repo),
+            _run_git("config", "user.name", "Probe", cwd=dest_repo),
+        ]
+    )
+    (dest_repo / "README.md").write_text("dest\n", encoding="utf-8")
+    setup.append(_run_git("add", "-A", cwd=dest_repo))
+    setup.append(_run_git("commit", "-m", "base", cwd=dest_repo))
+    # git refuses the same branch in two worktrees: detach the primary FIRST.
+    setup.append(_run_git("checkout", "--detach", "main", cwd=dest_repo))
     workspace = tmp_path / "orquestador_de_agentes_workspace"
+    setup.append(_run_git("worktree", "add", str(workspace), "main", cwd=dest_repo))
     link_dir = workspace / ".agent" / "config"
     link_dir.mkdir(parents=True)
     link = link_dir / "motor_destination_link.json"
@@ -205,6 +224,11 @@ def test_internal_ceiling_kills_the_false_green(
     # A work_plan in the synthetic motor would short-circuit check_topology with
     # rc=2 for an unrelated reason (contract incoherence), masking the false-green.
     assert not (motor / ".agent" / "collaboration" / "work_plan.md").exists()
+    # WOT-2026-104h added a destination-side check before the motor scenario is
+    # reached. The fixture must satisfy it FOR REAL (linked worktree), otherwise
+    # rc=2 from "not a git repo" would mask THE DAMAGE this test demonstrates.
+    assert cwt._git_common_dir_toplevel(workspace) == workspace.resolve()
+    assert cwt._check_destination_is_linked_worktree(workspace)[0] == 0
 
     # resolve_prefix consults load_overrides() BEFORE scan_links, and
     # scripts/prefix_resolver.local.json is gitignored: it does not exist here, but
