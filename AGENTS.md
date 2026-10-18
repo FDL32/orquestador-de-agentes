@@ -308,7 +308,17 @@ explicita"*).
 
 ### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
 
-**Norma, no barrera cableada** (depende de que el agente se acuerde). Es la regla hermana
+**Norma con barrera de FORMA parcial desde 2026-10-18 (WOT-2026-104b)**, no barrera
+semantica: `scripts/check_process_decision_search.py` (cableado como hook pre-commit en
+el motor sobre `prompts/**/*.md`, `.claude/rules/**/*.md`, `AGENTS.md`, `CLAUDE.md`, y como
+hook pre-push en el destino sobre `.agent/planning/*.md`/`STRATEGY_WOT-*.md` CAMBIADOS en
+el rango a publicar) bloquea un artefacto que se AUTODECLARA con el marcador
+`DECISION DE PROCESO:` si no declara ademas una seccion `BUSQUEDA-PREVIA:` valida
+(`PROTOCOLO ENCONTRADO: <ruta>` / `NO ENCONTRE PROTOCOLO` / `EXCEPCION: trivial
+<justificacion>`). **Limite declarado, no oculto:** verifica que la propiedad este
+DECLARADA, no que sea VERAZ -- mismo patron de `check_loop_bundle_protocol.py` --, y NO
+detecta una decision de proceso que el autor no etiquete con el marcador explicito: ese
+sigue siendo el modo de fallo n=3/n=4 de abajo, sin barrera mecanica. Es la regla hermana
 ANTERIOR de la regla de arriba, no su generalizacion: aquella exige leer entero un contrato YA
 CITADO; esta exige BUSCAR si existe uno ANTES de suponer que no hay ninguno. Son dos eslabones
 secuenciales de la misma cadena (buscar -> si se encuentra, leer entero), no una conteniendo a
@@ -348,11 +358,26 @@ desviacion (`obs-removing-a-control-stage-must-be-declared-and-attributed`); (3)
 propuesta de politica de suite/merge redactada sin comprobar antes si `builder_invocation_contract.md`
 o `ensemble_loop.md` ya cubrian el caso. Las tres correcciones ocurrieron solo por intervencion
 explicita del usuario, nunca por iniciativa del propio agente -- confianza media, no ley
-universal, pero suficiente para justificar esta norma con deuda de barrera declarada (candidato:
-auditar automaticamente una propuesta de proceso nueva contra los `contract_id`s declarados en
-`prompts/`, fuera del alcance de esta nota). Riesgo de performatividad declarado: un agente puede
-ejecutar un grep ritual sin intencion real de consultar el resultado, cumpliendo la forma de la
-norma sin su sustancia; mientras no exista auditoria automatica, este riesgo permanece abierto.
+universal, pero suficiente para justificar esta norma con deuda de barrera declarada. (4)
+2026-10-18, dispatch de un batch del bucle ensemble con timeout de background de 300000ms
+sin comprobar antes `backends.kilo.timeout_s` en `agents.json` (declarado 900s), pese a
+haber leido `prompts/ensemble_loop.md` Seccion 3.10 entera en la MISMA sesion -- 4 rondas
+murieron por limite de tiempo y tuvieron que relanzarse; corregido solo cuando el usuario
+pregunto directamente por el incumplimiento. Las cuatro correcciones ocurrieron solo por
+intervencion explicita del usuario, nunca por iniciativa del propio agente.
+
+**Candidato de barrera implementado PARCIALMENTE (WOT-2026-104b, 2026-10-18):**
+`check_process_decision_search.py` (ver arriba) NO es el candidato original ("auditar
+automaticamente una propuesta de proceso nueva contra los `contract_id`s declarados en
+`prompts/`") -- ese candidato exigiria deteccion de INTENCION (que un texto ES una
+decision de proceso sin que el autor lo declare), que sigue sin existir y sigue fuera de
+alcance (no hay oraculo para eso sin juicio humano). Lo que SI existe es un mecanismo mas
+debil: sube el coste de redactar una decision de proceso SIN declarar su busqueda previa,
+de cero a tener que escribir una frase -- no lo elimina. Riesgo de performatividad
+declarado: un agente puede escribir `BUSQUEDA-PREVIA: NO ENCONTRE PROTOCOLO` sin haber
+buscado de verdad, o citar una ruta inventada en `PROTOCOLO ENCONTRADO:`; el guard no lo
+detecta (barrera de FORMA, no de VERDAD). Mientras no exista deteccion de intencion ni
+verificacion de veracidad, ambos riesgos permanecen abiertos.
 
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.

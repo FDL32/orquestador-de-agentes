@@ -271,6 +271,10 @@ EXPECTED_WIRED_REAL = {
     "validate_contract_formation",  # WOT-2026-023m(c): cableado via import estatico en prepush_check.py::run_contract_formation_check (closeout; valida el CF triple del motor)
     "validate_observations",  # WOT-2026-035b: cableado via import estatico en check_portable_memory_archive_schema.py (retirado de known_unwired)
     "validate_ticket_prose",
+    # WOT-2026-104b: cableado como hook pre-commit en .pre-commit-config.yaml
+    # (id check-process-decision-search, files: prompts/**/*.md,
+    # .claude/rules/**/*.md, AGENTS.md, CLAUDE.md).
+    "check_process_decision_search",
 }
 
 
