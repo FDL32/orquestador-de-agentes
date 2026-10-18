@@ -155,7 +155,16 @@ Si falta el worktree de `repo_motor` con el MISMO sufijo que el de `repo_destino
 AGENTS.md, "Nomenclatura obligatoria del PAR de worktrees"), creala tu mismo
 (`git worktree add <ruta> <rama>` desde el checkout principal del motor) y escribe el
 `motor_destination_link.json` apuntando a ella ANTES de continuar -- no es tarea de la sesion
-lanzada, es responsabilidad de quien la lanza.
+lanzada, es responsabilidad de quien la lanza. Al escribirlo, usa forward slashes en las rutas
+(NUNCA backslashes a mano): un backslash mal escapado deja el JSON invalido, tolerado en silencio
+por `local_audit.py` pero rechazado por `destination_context.py` (WOT-2026-104g, verificado 2/2
+por dos sesiones de prueba independientes el 2026-10-18).
+
+**Si el mensaje de arranque le pide a la sesion lanzada que reporte de vuelta, dale el NOMBRE
+EXACTO de la sesion lanzadora** (el que devuelve `ListAgents`), nunca una descripcion generica
+como "la sesion coordinadora" -- una sesion hija que tiene que adivinar el destinatario puede
+enviar su informe a una sesion hermana de una prueba anterior y que nunca llegue (caso real,
+2026-10-18: `autonomo-b-20261018` reporto a un nombre de sesion obsoleto de su contexto heredado).
 
 **Regla canonica unica de worktree-dev (WOT-2026-019m):** en dogfooding del motor,
 el `repo_motor` operativo donde se commitea/pushea es la **worktree de

@@ -148,6 +148,27 @@ sola. Origen: un `t3_thread_launch` con `workspaceStrategy: worktree` solo provi
 `repo_destino` (y una vez ni eso: dejo el directorio vacio sin `git worktree add` real), dejando
 a la sesion sin `prompts/` ni enlace al motor hasta que lo reconstruyo manualmente.
 
+**Formato obligatorio de `motor_destination_link.json` (WOT-2026-104g, 2026-10-18):** las rutas
+`motor_root`/`destination_root` se escriben con **forward slashes** (ruta absoluta de
+Windows con `/` en vez de `\`), NUNCA con backslashes a mano -- un backslash sin escapar correctamente deja el JSON invalido, tolerado en
+silencio por `local_audit.py` pero rechazado por `destination_context.py`. Verificado 2/2 de forma
+INDEPENDIENTE: las dos sesiones de prueba del vuelo autonomo (`autonomo-a-20261018` y
+`autonomo-b-20261018`) encontraron y corrigieron el mismo defecto sin coordinarse entre ellas --
+senal de defecto sistemico del mecanismo que genera el fichero, no incidente aislado. Si generas
+este fichero a mano (via Bash, por el workaround de `guard_paths` de mas arriba), usa forward
+slashes o `json.dumps(..., ensure_ascii=False)` sobre un dict Python -- nunca interpoles
+backslashes de Windows directamente en un heredoc o f-string.
+
+**El lanzador debe dar el NOMBRE EXACTO de la sesion coordinadora a cada hija (2026-10-18):** un
+mensaje de arranque que dice "informa a la sesion coordinadora" sin el nombre/id exacto (el que
+devuelve `ListAgents`) fuerza a la hija a adivinarlo. Verificado en vivo: la sesion
+`autonomo-b-20261018` envio su informe final por `SendMessage` a una sesion hermana de una prueba
+ANTERIOR (nombre que aparecia en su contexto heredado) en vez de a la sesion que la habia lanzado
+realmente -- el informe nunca llego. El prompt de arranque de una sesion hija SIEMPRE debe incluir
+el nombre literal de la sesion lanzadora (el que esta usa para si misma, visible en su propio
+`ListAgents` o conocido de antemano), nunca una descripcion ("la sesion coordinadora") que la hija
+tenga que resolver por su cuenta.
+
 ### Glosario de nomenclatura de ticket (WOT-2026-010a)
 
 Nomenclatura canonica de identificadores y artefactos de ticket. "Plan" se
