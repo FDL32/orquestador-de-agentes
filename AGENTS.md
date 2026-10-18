@@ -128,6 +128,26 @@ motor NO sustituye la higiene de esa leccion (commitear siempre, nunca `stash` p
 trabajo "en limbo" entre worktrees, porque `refs/stash` es GLOBAL al repo y visible desde
 cualquier worktree hermano).
 
+**Nomenclatura obligatoria del PAR de worktrees (WOT-2026-104f, 2026-10-18):** cuando una
+sesion crea su `repo_motor` worktree y su `repo_destino` worktree, AMBOS deben llevar el
+MISMO sufijo de rama/directorio (`<nombre-de-sesion>`), difiriendo solo en la raiz padre:
+
+```
+.t3/worktrees/<carpeta-del-repo_motor>/<nombre-de-sesion>     (repo_motor)
+.t3/worktrees/<carpeta-del-repo_destino>/<nombre-de-sesion>   (repo_destino)
+```
+
+Motivo: sin esta regla, emparejar los dos worktrees de una sesion exige abrir
+`motor_destination_link.json` o preguntar; con el sufijo compartido, `git worktree list`
+en cualquiera de los dos repos basta para identificar la pareja a simple vista. Al crear el
+par: (1) crea primero el worktree de `repo_motor` (rama `<owner>/<nombre-de-sesion>`); (2) crea
+el worktree de `repo_destino` con el MISMO sufijo; (3) escribe
+`<repo_destino>/.agent/config/motor_destination_link.json` apuntando `motor_root` al worktree
+de (1) ANTES de lanzar o continuar la sesion -- nunca dejar que la sesion lanzada lo descubra
+sola. Origen: un `t3_thread_launch` con `workspaceStrategy: worktree` solo provisiono el lado
+`repo_destino` (y una vez ni eso: dejo el directorio vacio sin `git worktree add` real), dejando
+a la sesion sin `prompts/` ni enlace al motor hasta que lo reconstruyo manualmente.
+
 ### Glosario de nomenclatura de ticket (WOT-2026-010a)
 
 Nomenclatura canonica de identificadores y artefactos de ticket. "Plan" se

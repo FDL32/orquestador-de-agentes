@@ -142,6 +142,21 @@ un veredicto, es "no medi").
 **Regla de repos:** toda operacion git del tooling corre con `cwd=repo_motor`; el
 estado operativo (tickets, memoria del proyecto) vive en `repo_destino`.
 
+**Arranque via T3 con worktrees emparejados (WOT-2026-104f):** si la sesion se lanza con
+`t3_thread_launch` (`workspaceStrategy: worktree`), el lado `repo_destino` NO trae
+automaticamente su `repo_motor` emparejado -- verificado en vivo: una vez dejo el
+`motor_destination_link.json` sin escribir, y otra vez ni siquiera corrio `git worktree add`
+(dejo un directorio vacio). Antes de confiar en que `prompts/`, `scripts/` o
+`motor_destination_link.json` resuelven, comprueba:
+```
+git worktree list   # desde CUALQUIERA de los dos repos
+```
+Si falta el worktree de `repo_motor` con el MISMO sufijo que el de `repo_destino` (ver
+AGENTS.md, "Nomenclatura obligatoria del PAR de worktrees"), creala tu mismo
+(`git worktree add <ruta> <rama>` desde el checkout principal del motor) y escribe el
+`motor_destination_link.json` apuntando a ella ANTES de continuar -- no es tarea de la sesion
+lanzada, es responsabilidad de quien la lanza.
+
 **Regla canonica unica de worktree-dev (WOT-2026-019m):** en dogfooding del motor,
 el `repo_motor` operativo donde se commitea/pushea es la **worktree de
 desarrollo** (la que lleva `main`; su ruta se resuelve de forma PORTABLE via
