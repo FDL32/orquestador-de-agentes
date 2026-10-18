@@ -126,6 +126,7 @@ INLINE_IN_FULL: list[str] = [
     "prompts/orchestrator_session_bootstrap.md",
     "skills/local-audit/SKILL.md",
     "skills/repo-compare/SKILL.md",
+    ".agent/rules/common/ensemble_profile_nomenclature.md",
 ]
 
 

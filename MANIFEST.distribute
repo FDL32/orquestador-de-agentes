@@ -95,6 +95,9 @@ skills/
 .agent/runtime/__init__.py
 .agent/runtime/memory/memory_helpers.py
 
+# Reglas de referencia bajo demanda (piramide, pasada 1)
+.agent/rules/common/ensemble_profile_nomenclature.md
+
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.
 # El motor ya no distribuye estas superficies vivas (WOT-2026-020r, commit:5201482).
