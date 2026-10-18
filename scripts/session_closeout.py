@@ -158,6 +158,17 @@ EXECUTION_LOG_REL = Path(".agent") / "collaboration" / "execution_log.md"
 # cierre_backlog_triage_20261018.md seccion 2.1 (revisada tras bucle DBL-3).
 PROCESS_IMPROVEMENT_TAG = "[PROCESO-CIERRE]"
 PROCESS_IMPROVEMENT_NO_FINDINGS_MARKER = "2.5.j: sin_hallazgos_declarado"
+# WOT-2026-104e (ronda 2 DBL-4, hallazgo real kilo_deepseek BA07): anclado a
+# inicio de linea y con fences stripeados ANTES de buscar -- mismo patron que
+# scripts/check_process_decision_search.py, evitando el falso PASS de una cita
+# o un ejemplo de codigo que menciona el marcador sin declararlo de verdad.
+_PROCESS_IMPROVEMENT_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_PROCESS_IMPROVEMENT_TAG_RE = re.compile(r"^.*\[PROCESO-CIERRE\].*$", re.MULTILINE)
+# Exige justificacion NO VACIA tras el "--" (ronda 1 DBL-3 lo pedia; el codigo
+# original lo omitia -- hallazgo real de la ronda 2, no cosmetico).
+_PROCESS_IMPROVEMENT_NO_FINDINGS_RE = re.compile(
+    r"^.*2\.5\.j:\s*sin_hallazgos_declarado\s*--\s*\S.*$", re.MULTILINE
+)
 
 DELIVERABLE_TYPE_RE = re.compile(r"deliverable_type:\s*([^\s|]+)")
 
@@ -2652,13 +2663,13 @@ def _step_process_improvement_coverage(
         )
     elog = project_root / EXECUTION_LOG_REL
     try:
-        log_text = elog.read_text(encoding="utf-8")
+        log_text = elog.read_text(encoding="utf-8", errors="replace")
     except OSError:
         log_text = ""
-    if (
-        PROCESS_IMPROVEMENT_TAG in log_text
-        or PROCESS_IMPROVEMENT_NO_FINDINGS_MARKER in log_text
-    ):
+    searchable = _PROCESS_IMPROVEMENT_FENCE_RE.sub("", log_text)
+    if _PROCESS_IMPROVEMENT_TAG_RE.search(
+        searchable
+    ) or _PROCESS_IMPROVEMENT_NO_FINDINGS_RE.search(searchable):
         return StepResult(
             name=name,
             status="PASS",
@@ -2674,10 +2685,15 @@ def _step_process_improvement_coverage(
             "POSIBLE_2.5J_RUBBER_STAMP: "
             f"{len(warn_names)} WARN previos ({', '.join(warn_names)}) sin "
             f"ningun '{PROCESS_IMPROVEMENT_TAG}' ni "
-            f"'{PROCESS_IMPROVEMENT_NO_FINDINGS_MARKER}' en execution_log.md. "
-            "Registra una propuesta 2.5.j (prompts/orchestrator_session_"
-            "close_full_audit.md:273-276) o el marcador explicito de "
-            "sin-hallazgos antes de archivar el log."
+            "'2.5.j: sin_hallazgos_declarado -- <justificacion>' (no vacia) "
+            "en execution_log.md. Registra una propuesta 2.5.j (prompts/"
+            "orchestrator_session_close_full_audit.md:273-276) o el "
+            "marcador explicito de sin-hallazgos con su motivo antes de "
+            "archivar el log. LIMITE DECLARADO (ronda 2 DBL-4, hallazgo "
+            "real kilo_deepseek BA07): este paso SOLO lee execution_log.md; "
+            "2.5.j aun no tiene productor cableado en ningun prompt que "
+            "mande escribir el marcador ahi, ni en backlog.md/"
+            "observations.jsonl -- es deuda declarada, no silenciada."
         ),
     )
 

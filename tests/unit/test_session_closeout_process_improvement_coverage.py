@@ -92,3 +92,35 @@ def test_execution_log_ausente_con_warn_previo_produce_warn(tmp_path: Path) -> N
         tmp_path, [_warn_step("memory_health")]
     )
     assert result.status == "WARN"
+
+
+def test_marcador_sin_hallazgos_sin_justificacion_sigue_en_warn(tmp_path: Path) -> None:
+    """Hallazgo real ronda 2 (DBL-4, kilo_deepseek BA07): el marcador DESNUDO
+    (sin ``-- <justificacion>`` no vacia) no satisface el gate -- es el fix de
+    ronda 1 que el codigo original afirmaba aplicado y no lo estaba."""
+    elog = tmp_path / ".agent" / "collaboration" / "execution_log.md"
+    elog.parent.mkdir(parents=True)
+    elog.write_text(
+        "# Execution Log\n\n2.5.j: sin_hallazgos_declarado\n", encoding="utf-8"
+    )
+    result = sc._step_process_improvement_coverage(
+        tmp_path, [_warn_step("memory_health")]
+    )
+    assert result.status == "WARN"
+
+
+def test_tag_citado_dentro_de_bloque_de_codigo_no_cuenta(tmp_path: Path) -> None:
+    """Hallazgo real ronda 2: una cita/ejemplo dentro de un fence ``` no debe
+    producir un PASS falso -- el match se busca DESPUES de stripear fences,
+    igual que scripts/check_process_decision_search.py."""
+    elog = tmp_path / ".agent" / "collaboration" / "execution_log.md"
+    elog.parent.mkdir(parents=True)
+    elog.write_text(
+        "# Execution Log\n\n"
+        "Ejemplo de convencion:\n```\n[PROCESO-CIERRE] esto es solo un ejemplo citado\n```\n",
+        encoding="utf-8",
+    )
+    result = sc._step_process_improvement_coverage(
+        tmp_path, [_warn_step("memory_health")]
+    )
+    assert result.status == "WARN"
