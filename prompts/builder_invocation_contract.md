@@ -77,6 +77,37 @@ Notas obligatorias:
   requiere. No esperes ver la ronda en `scorecard.jsonl` ni en `leaders`/`status` de `ensemble_dispatch.py`
   -- esos comandos son del OTRO contrato (ver `prompts/ensemble_loop.md`).
 
+## 1.5. Provider explicito obligatorio cuando el modelo existe en mas de un proveedor (WOT-2026-103d)
+
+**Incidente que origina esta norma (VUELO6, REV-100K-r1, 2026-10-15):** un despacho de
+subagente con `model=mimo-v2.6-flash` SIN `provider` explicito resolvio una puerta DISTINTA
+de la esperada y fallo con "account balance is insufficient"; el diagnostico inicial
+("NaN agotado") fue FALSO -- una sonda con `provider=nan` explicito funciono de inmediato.
+Costo: una ronda perdida, un fallback gratuito activado sin necesidad, y riesgo de cambiar
+de persona de revision por una causa que no existia.
+
+**NORMA (vive AQUI, no se re-declara en otro prompt -- regla X-09):** toda invocacion de un
+subagente (Builder/Revisor/Manager, via el Task tool nativo de Claude Code o via el CLI de
+Kilo de la Seccion 1) para un modelo disponible en MAS de un proveedor DEBE declarar el
+proveedor explicitamente. Prohibido delegar la resolucion de la puerta de transporte en un
+vuelo multi-persona -- la ambiguedad la paga quien despacha, no quien recibe. Ante un fallo
+de transporte, la sonda minima para discriminar causa es UN intercambio de 1 token CON
+proveedor explicito, ANTES de concluir que el modelo/proveedor esta agotado y cambiar de
+plan.
+
+**Limite declarado (no se oculta): la "barrera cableable" que el ticket original pedia NO
+es construible en este repositorio.** El Task tool nativo de Claude Code es una herramienta
+del HARNESS, no un script que este motor posea o pueda envolver -- no hay un punto de codigo
+de `orquestador_de_agentes` por el que pase esa invocacion y que un guard de este repo pueda
+interceptar. La unica superficie que SI es codigo de este motor es el CLI de Kilo de la
+Seccion 1, donde el modelo YA se declara con el prefijo del proveedor en la propia cadena
+(`-m nan/<modelo>`) -- ahi la ambiguedad del incidente no puede reproducirse por diseno de
+ese comando. Por eso esta Seccion 1.5 es, deliberadamente, una NORMA documental y no un
+guard ejecutable: cablearla de verdad exigiria control sobre el propio harness, fuera del
+alcance de este repo. Decision de diseno tomada por Claude Code (fork) con autorizacion
+explicita del usuario (WOT-2026-103d, 2026-10-18); la leccion operativa del incidente ya
+esta en memoria L1 del workspace (`obs-3149cf70225b`, dominio builder-contract).
+
 ## 2. Cuando el prompt de arranque de un Builder debe citar ESTE contrato
 
 Cualquier prompt que vaya a lanzarse a un Builder real via Kilo/CLI-de-agente (no un bucle de ensemble)
