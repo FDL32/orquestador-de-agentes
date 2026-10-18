@@ -2606,6 +2606,98 @@ def test_059p_multiple_fichas_mixed_reported(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WOT-2026-103c: origin-confirmed coherence (WARN, non-blocking)
+# ---------------------------------------------------------------------------
+
+
+def test_103c_code_row_without_origin_confirmed_warns(tmp_path: Path) -> None:
+    """DoD (b): code row with a ficha that omits Origen-confirmado -> WARN."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900a | algo deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-900a - ficha detail\n- **Problema:** algo\n"),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert len(warnings) == 1, f"expected 1 warning, got: {warnings}"
+    assert "WOT-2026-900a" in warnings[0]
+    assert "Origen-confirmado" in warnings[0]
+
+
+def test_103c_code_row_with_origin_confirmed_no_warning(tmp_path: Path) -> None:
+    """DoD (c) CONTROL POSITIVO: code row whose ficha DOES declare
+    Origen-confirmado -> no warning."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900b | algo deliverable_type: code | s | pending | - | x | - |\n",
+        (
+            "### WOT-2026-900b - ficha detail\n"
+            "- **Origen-confirmado:** usuario\n"
+            "- **Problema:** algo\n"
+        ),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert warnings == [], f"expected no warnings, got: {warnings}"
+
+
+def test_103c_non_code_row_no_warning(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: a documentation/research row is out of scope --
+    it never needs Origen-confirmado, even with a bare ficha."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900c | algo deliverable_type: documentation | s | pending | - | x | - |\n",
+        ("### WOT-2026-900c - ficha detail\n- **Problema:** algo\n"),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert warnings == [], f"expected no warnings, got: {warnings}"
+
+
+def test_103c_code_row_without_ficha_no_warning(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: a compressed code row with NO ficha section at
+    all is out of scope -- nothing to check, not a violation."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900d | algo deliverable_type: code | s | pending | - | x | - |\n",
+        "",
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert warnings == [], f"expected no warnings, got: {warnings}"
+
+
+def test_103c_main_wires_the_check(tmp_path: Path, capsys) -> None:
+    """DoD (b): INVOCADA desde main() y el gate IMPRIME el id en WARN.
+
+    MUTACION QUE ESTE TEST MATA: si se retira la linea
+    ``origin_warnings = validate_origin_confirmed(root)`` de ``main()``,
+    este test queda ROJO porque el WARN no se imprime.
+    """
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900e | algo deliverable_type: mixed | s | pending | - | x | - |\n",
+        ("### WOT-2026-900e - ficha detail\n- **Problema:** algo\n"),
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    assert rc == 0  # WARN no bloquea
+    err = capsys.readouterr().err
+    assert "WOT-2026-900e" in err, f"WARN should be printed to stderr; got: {err}"
+    assert "Origen-confirmado" in err
+
+
+def test_103c_mutation_revert_predicate_fails(tmp_path: Path) -> None:
+    """DoD (e): revertir el predicado (la funcion devuelve [] siempre)
+    hace caer el test de deteccion -- el verde original no era vacuo."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900f | algo deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-900f - ficha detail\n- **Problema:** algo\n"),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert len(warnings) >= 1, (
+        "El mutante: retirar el predicado de busqueda de Origen-confirmado "
+        "deberia devolver [] -> ROJO. Si pasa, el predicado es la causa del verde."
+    )
+
+
+# ---------------------------------------------------------------------------
 # WOT-2026-073a: archive volume collapse detection (WARN, non-blocking)
 # ---------------------------------------------------------------------------
 
