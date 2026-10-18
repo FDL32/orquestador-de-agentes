@@ -5,12 +5,9 @@ route_kind: mantenimiento
 # Prompt: Optimizacion de AGENTS.md en pasadas consecutivas, protocolo trio (MAN/BUI/REV)
 
 <!-- PROMPT-SUMMARY
-what: Gobierna pasadas repetidas de doc_optimization.md sobre AGENTS.md, despachando cada
-      turno con las plantillas kilo_trio_dispatch (B0-B9), especializando solo su B2.
-when: Cuando el cierre transitivo de lo siempre-cargado supera ~5% de la ventana efectiva
-      y se quiere reducir con varias pasadas delegadas al trio.
-not: NO redefine QUE mover (doc_optimization.md) ni el esqueleto B0-B9 (kilo_trio_dispatch).
-      NO sustituye ensemble_dispatch.py para una propuesta de alto riesgo (Seccion 5).
+what: Gobierna pasadas repetidas de doc_optimization.md sobre AGENTS.md, despachando cada turno con las plantillas kilo_trio_dispatch (B0-B9), especializando B2 y declarando las adaptaciones de B3/B4/B7-B8.
+when: Cuando el cierre transitivo de lo siempre-cargado supera alguno de los gates absolutos por-backend de `prompts/doc_optimization.md` PASO 1 (bytes/Codex, chars/Claude Code) y se quiere reducir con varias pasadas delegadas al trio.
+not: NO redefine QUE mover (doc_optimization.md) ni el esqueleto B0-B9 (kilo_trio_dispatch). NO sustituye ensemble_dispatch.py para una propuesta de alto riesgo (Seccion 5).
 -->
 
 contract_id: cid-agents-md-optimization-trio-v1
@@ -26,7 +23,7 @@ DAG, nunca muta. Este prompt juega el MISMO papel para UN fichero siempre-cargad
 para el backlog: el Turno 1 (Manager) es solo-lectura (mide, clasifica el candidato contra
 las cinco condiciones de `doc_optimization.md` PASO 3), nunca mueve nada el mismo; el DAG de
 `backlog_triage.md` aqui es, trivialmente, una lista de UN candidato por pasada (restriccion
-dura de `doc_optimization.md`: "SOLO se propone y aplica UN fichero/bloque por corrida").
+dura de `doc_optimization.md`: "SOLO se propone y aplica UN fichero por corrida").
 
 Las plantillas `prompts/kilo_trio_dispatch/dispatch_manager.template.md`,
 `dispatch_builder.template.md` y `dispatch_revisor.template.md` se reusan SIN modificar su
@@ -116,8 +113,8 @@ B1 (mandato): "Aplicar PASO 0-3 de `prompts/doc_optimization.md` sobre {{FICHERO
 (default `AGENTS.md`) y proponer UN candidato, o declarar un estado terminal."
 B3 (artefacto): `.agent/planning/agents_md_optimization/pasada_<N>_manager.md`, con:
 1. Estampa `ESTADO_FRESCO` (PASO 0 de `doc_optimization.md`).
-2. Tabla de medicion del cierre transitivo: chars, proxy de tokens, % sobre la ventana
-   (PASO 1).
+2. Tabla de medicion del cierre transitivo contra CADA gate aplicable de PASO 1 (bytes para
+   Codex, caracteres para Claude Code -- nunca un proxy de tokens ni un % de ventana).
 3. El candidato elegido (seccion/lineas exactas) con su fila del PASO 2 y el veredicto letra
    por letra de las CINCO condiciones del PASO 3 -- o uno de los estados terminales
    (`SIN CANDIDATO MOVIBLE`, `NO APLICA`, `BLOQUEADO`) si no hay nada que mover esta pasada.
@@ -173,20 +170,25 @@ repite el Turno 1 con ese bloque marcado "intentado, revertido".
 Mismo despacho que el Turno 1, B1 distinto: "Medir el cierre transitivo FRESCO tras el
 commit del Builder (nunca reusar la medicion de la primera vez: el fichero cambio) y decidir
 si hay pasada siguiente." Output anadido al MISMO fichero del Turno 1 (no uno nuevo):
-1. % actual sobre la ventana, y cuanto bajo respecto a la pasada anterior.
-2. Si `% < 5%`: declara **SUELO** (`doc_optimization.md`, Restriccion dura) -- no se abre
-   pasada siguiente aunque queden bloques teoricamente movibles.
-3. Si `% >= 5%`: identifica el SIGUIENTE candidato (repite PASO 1-3), o declara
-   `SIN CANDIDATO MOVIBLE` -- tambien se para, como deuda declarada (PASO 5 de
-   `doc_optimization.md`, opcion 2: ticket dueno + criterio de salida, nunca silencio).
+1. Exceso actual sobre CADA gate aplicable (bytes/Codex, chars/Claude Code), y cuanto bajo
+   cada uno respecto a la pasada anterior.
+2. Si TODOS los gates aplicables se cumplen: declara **SUELO** (`doc_optimization.md`,
+   Restriccion dura) -- no se abre pasada siguiente aunque queden bloques teoricamente
+   movibles.
+3. Si algun gate aplicable sigue en exceso: identifica el SIGUIENTE candidato (repite
+   PASO 1-3), o declara `SIN CANDIDATO MOVIBLE` -- tambien se para, como deuda declarada
+   (PASO 5 de `doc_optimization.md`, opcion 2: ticket dueno + criterio de salida por CADA gate
+   que quede en exceso, nunca silencio -- o, en `repo_motor` code-only sin backlog operativo
+   como el que declara este mismo prompt en la Seccion 0, la via nombrada de PASO 5.2 que
+   materializa la deuda como follow-up tracked en `docs/followups/`).
 
 ## 3. Cierre de cada pasada (Orquestador, Capa 0)
 
 Tras el Turno 1 (segunda vez), el Orquestador reporta al usuario un resumen corto
 (<500 palabras, mismo limite que el resto de 4 capas, `agent_execution_modes.md` Seccion 1,
 tabla de modos -- celda "4 capas"):
-candidato movido, veredicto del Revisor, SHA del commit, nueva medicion %, y el estado
-terminal declarado por el Manager.
+candidato movido, veredicto del Revisor, SHA del commit, nueva medicion por gate (bytes/Codex,
+chars/Claude Code), y el estado terminal declarado por el Manager.
 
 El Orquestador NUNCA encadena la pasada siguiente sin confirmacion del usuario, salvo que el
 usuario haya pedido explicitamente ejecutar N pasadas seguidas sin pausa -- en ese caso el
@@ -212,7 +214,7 @@ Los mismos cuatro de `doc_optimization.md` Seccion "Salida", mas uno propio:
 - `APLICADO` -- con guard de no-degradacion verificado de forma independiente por el
   Revisor (no solo declarado por el Builder).
 - `SIN CANDIDATO MOVIBLE` -- ningun bloque pasa las cinco condiciones esta pasada.
-- `NO APLICA` -- el fichero ya cumple su presupuesto al medir.
+- `NO APLICA` -- el fichero ya cumple TODOS los gates aplicables al medir.
 - `BLOQUEADO` -- un consumidor no es ejecutable, o un turno devolvio transporte fallido sin
   sustituto vivo (declarar el perfil, nunca silencio).
 - `RECHAZADO_POR_REVISOR` (propio de este prompt) -- el Builder aplico algo que el Revisor
@@ -245,4 +247,4 @@ de este protocolo sigue corriendo igual.
 (`pasada_<N>_manager.md`, `pasada_<N>_builder.md`, `pasada_<N>_revisor.md`,
 `pasada_<N>_bitacora.md` de la Seccion 1). El Orquestador crea el directorio si no existe la
 primera vez. Al declarar `SUELO`, el Orquestador anade un `RESUMEN.md` en ese mismo
-directorio con la tabla completa de pasadas (candidato, SHA, % antes/despues).
+directorio con la tabla completa de pasadas (candidato, SHA, exceso por gate antes/despues).

@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 48 |
+| prompt | 49 |
 | reference | 39 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 47 |
-| **total** | **142** |
+| **total** | **143** |
 
 ## Entradas
 
@@ -41,6 +41,7 @@
 | prompt | `prompts/backlog_triage.md` | active | system | manager | model-invoked | — |
 | prompt | `prompts/builder_invocation_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/deep_research_current_docs.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/doc_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/ensemble_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/escalate_to_motor.md` | active | system | orchestrator | model-invoked | — |
