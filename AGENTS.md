@@ -684,8 +684,7 @@ Sin al menos una cifra por columna la balanza es sesgo de presente: el agente su
 
 ### Dos reglas durables
 
-- **Corregir un documento desechable NO corrige el sistema.** Si la ficha/backlog/memoria durable sigue con el diagnostico falso, el arreglo esta A MEDIAS. Un prompt de arranque es desechable y caduca; el backlog es la fuente durable (WOT-2026-024d/024f: el mismo diagnostico falso se pago dos veces).
-- **Los 8 gates NO son un detector de premisas falsas.** Caso fundacional (2026-07-15): WOT-2026-020o-B pasaba los 8 -- linea exacta, DoD con mutacion, una superficie, arquitectura existente, cadena fresca, sin decision humana -- y **el bug no existia**: el probe se habia medido en PowerShell, no en Git Bash (el shell REAL del hook). Lo unico que lo cazo fue **seguir midiendo hasta refutarse**, y el hallazgo llego DESPUES de que los 8 gates dieran verde. Por eso el gate 1 exige contexto de produccion y por eso la duda se resuelve aplazando.
+> Detalle en [hacer_ahora_vs_aplazar_dos_reglas_durables](docs/protocol/hacer_ahora_vs_aplazar_dos_reglas_durables.md).
 
 ## Skills Formales de Proceso
 

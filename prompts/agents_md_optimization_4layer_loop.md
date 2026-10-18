@@ -5,17 +5,12 @@ route_kind: mantenimiento
 # Prompt: Optimizacion de AGENTS.md en pasadas consecutivas, protocolo trio (MAN/BUI/REV)
 
 <!-- PROMPT-SUMMARY
-what: Gobierna pasadas repetidas de prompts/doc_optimization.md sobre un fichero
-      siempre-cargado (por defecto AGENTS.md), despachando cada turno con las plantillas
-      ya existentes prompts/kilo_trio_dispatch/dispatch_{manager,builder,revisor}.template.md
-      (esqueleto B0-B9), especializando su B2 con este prompt en vez de backlog_triage.md.
-when: Cuando el cierre transitivo de lo siempre-cargado supera el presupuesto (~5% de la
-      ventana efectiva) y se quiere reducirlo con varias pasadas delegadas al trio en vez
-      de una sesion manual por pasada.
-not: NO redefine QUE mover (prompts/doc_optimization.md, citado por referencia, nunca
-      redeclarado) ni el esqueleto de despacho B0-B9 (prompts/kilo_trio_dispatch/*.template.md,
-      reusado tal cual). NO sustituye el bucle adversarial de ensemble_dispatch.py cuando el
-      usuario lo pida explicitamente para una propuesta concreta (Seccion 5).
+what: Gobierna pasadas repetidas de doc_optimization.md sobre AGENTS.md, despachando cada
+      turno con las plantillas kilo_trio_dispatch (B0-B9), especializando solo su B2.
+when: Cuando el cierre transitivo de lo siempre-cargado supera ~5% de la ventana efectiva
+      y se quiere reducir con varias pasadas delegadas al trio.
+not: NO redefine QUE mover (doc_optimization.md) ni el esqueleto B0-B9 (kilo_trio_dispatch).
+      NO sustituye ensemble_dispatch.py para una propuesta de alto riesgo (Seccion 5).
 -->
 
 contract_id: cid-agents-md-optimization-trio-v1

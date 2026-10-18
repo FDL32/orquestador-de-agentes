@@ -61,7 +61,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 
 | Prompt | Rol | Skill | Cuando | NO es | Lineas |
 |---|---|---|---|---|---|
-| `prompts/agents_md_optimization_4layer_loop.md` | orchestrator | - | - | - | 253 |
+| `prompts/agents_md_optimization_4layer_loop.md` | orchestrator | - | Cuando el cierre transitivo de lo siempre-cargado supera ~5% de la ventana efectiva | NO redefine QUE mover (doc_optimization.md) ni el esqueleto B0-B9 (kilo_trio_dispatch). | 248 |
 | `prompts/audit_bus.md` | auditor | - | Cuando el bus/supervisor se comporta de forma inesperada o hay que diagnosticar antes de recuperar/arrancar limpio un ticket. | NO ejecuta comandos de recuperacion (solo-lectura, propone); NO es el cierre de sesion (orchestrator_session_close_full_audit.md) ni la salud de 3 capas (audit_post_change_system_health.md). | 323 |
 | `prompts/audit_complete_motor_destination.md` | auditor | - | Analisis periodico de arquitectura/portabilidad, NO una accion inmediata (produce blueprint de tickets futuros). | NO muta el arbol; NO es la auditoria de salud post-cambio (audit_post_change_system_health.md, mas acotada y frecuente) ni la de superficie legacy (audit_portability_legacy_surface.md, inventario puntual). | 617 |
 | `prompts/audit_git_publication.md` | auditor | `audit-git-publication` | Antes de una primera publicacion o de una revision de exposicion de un repo_destino. | NO instala el destino (skills/setup-agent-system/SKILL.md), NO es el gate pre-push de estado vivo (scripts/check_destino_publish_ready.py) y NO publica, commitea ni borra nada. | 189 |
