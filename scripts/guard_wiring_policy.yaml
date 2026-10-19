@@ -190,6 +190,28 @@ known_unwired:
   # BY-DESIGN de este bloque. Dueno: WOT-2026-094c.
   check_archive_hygiene: WOT-2026-094c
 
+  # WOT-2026-071a: guard de clase WARN-only para presupuesto de contexto de
+  # @import (scripts/check_context_budget.py, exit code SIEMPRE 0). El Builder
+  # intento cablearlo anadiendo un SEGUNDO item al array "SessionStart" de
+  # .claude/settings.json (mismo matcher ""), pero eso COLISIONA con
+  # check_claude_settings_portability.py::_NON_GATING_TARGETS -- ese dict es
+  # un mapeo 1:1 estricto (event, matcher) -> UN comando canonico, sin soporte
+  # para que dos hooks distintos compartan la misma clave. El segundo item se
+  # comparaba contra el comando canonico de session_start_hook.py y fallaba
+  # "not canonical", rompiendo 3 tests reales (test_real_motor_settings_pass,
+  # test_tracked_motor_settings_pass, test_real_repo_wired_set_is_exactly_expected).
+  # Diagnostico confirmado por aislamiento (git stash de los 4 ficheros del
+  # ticket): los 3 fallos desaparecen sin el cambio, reaparecen con el.
+  # DECISION (Manager, re-verificacion CEM-01): revertir el wiring en
+  # settings.json y dejar el guard como UNWIRED declarado -- extender
+  # _NON_GATING_TARGETS para soportar N comandos por clave, o cablear via
+  # subprocess dentro de session_start_hook.py (precedente: _health_line()
+  # llamando a check_memory_health.py), es trabajo de alcance mayor al
+  # declarado en "Files Likely Touched" de este ticket y toca un gate de
+  # seguridad -- aplazado a follow-up con dueno propio. El MECANISMO (script +
+  # 13 tests) se entrega aqui; su cableado real automatico NO.
+  check_context_budget: WOT-2026-071a
+
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
   pre_handoff_guard: scripts/pre_handoff_guard.py
