@@ -10,6 +10,8 @@ when: Despues del cierre o parada de un batch ejecutado por prompts/orchestrator
 not: NO la corre el agente que ejecuto el batch (aislamiento B1/B3), NO audita una cadena ticket a ticket (prompts/audit_pipeline.md o prompts/audit_pipeline_codeonly.md) y NO cierra la sesion ni ejecuta --session-close.
 -->
 
+**[AUDITOR]** -- ver tambien el EJECUTOR: `prompts/orchestrator_autonomous_ticket_batch.md`
+
 > **Modo:** READ-ONLY. Esta auditoria NUNCA modifica codigo, backlog, tickets,
 > DAG-JSON, ledger de aprendizaje ni estado operativo. Solo escribe sus propios
 > artefactos de auditoria (un `.md` y un `.json`).

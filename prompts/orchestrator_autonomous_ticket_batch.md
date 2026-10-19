@@ -10,6 +10,8 @@ when: Tras un triage con DAG validado y fresco y con el recibo de aislamiento de
 not: NO es el pipeline por ticket (prompts/orchestrator_pipeline.md ni prompts/orchestrator_pipeline_codeonly.md), NO es el triaje que produce el DAG (prompts/backlog_triage.md), NO es su auditor (prompts/audit_autonomous_ticket_batch.md) y nunca ejecuta tickets REQUIERE_HUMANO ni DISENO_PRIMERO.
 -->
 
+**[EJECUTOR]** -- ver tambien el AUDITOR: `prompts/audit_autonomous_ticket_batch.md`
+
 > Executor that consumes the DAG produced by `/backlog-triage`
 > (`prompts/backlog_triage.md`, schema `autonomous-batch-dag/v1`) and closes
 > the maximum number of tickets WITH GUARANTEES, stopping clean instead of
