@@ -281,6 +281,25 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      # WOT-2026-090u: llms.txt/llms-full.txt son una PROYECCION generada por
+      # build_llms.py --check existia desde WOT-2026-024g pero NUNCA se cableo
+      # a ningun camino que corriera solo (0 invocaciones en este fichero,
+      # prepush_check.py ni session_closeout.py): una barrera que nadie llama
+      # es una norma, no un gate. Medido 2026-10-06: llms-full.txt lleva desde
+      # 2026-07-16 sin regenerar mientras AGENTS.md siguio cambiando -- deriva
+      # silenciosa en el fichero que leen los agentes EXTERNOS del repo
+      # publico. always_run + pass_filenames:false: el denominador sale del
+      # render() en memoria contra las fuentes incrustadas (AGENTS.md,
+      # CLAUDE.md, ...), no del argv -- un commit que solo toca una fuente
+      # incrustada tambien debe re-verificar.
+      - id: check-llms-full-sync
+        name: check llms.txt/llms-full.txt sync (proyeccion no caduca en silencio)
+        entry: uv run python scripts/build_llms.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # WOT-2026-024l: docs/registry/INDEX.md es una PROYECCION generada por
       # discover_skills.py --generate-index. Un artefacto con estado embebido
       # CADUCA solo: se midio desincronizado (skill 31/prompt 22 vs 38/30 reales,
