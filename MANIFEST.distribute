@@ -98,6 +98,10 @@ skills/
 
 # Reglas de referencia bajo demanda (piramide, pasada 1)
 .agent/rules/common/ensemble_profile_nomenclature.md
+.agent/rules/common/builder_relaunch.md
+.agent/rules/common/deliverable_type_dispatch.md
+.agent/rules/common/host_install_integration.md
+.agent/rules/common/manifest_contracts.md
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.

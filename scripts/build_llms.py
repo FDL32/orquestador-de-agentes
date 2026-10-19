@@ -127,6 +127,10 @@ INLINE_IN_FULL: list[str] = [
     "skills/local-audit/SKILL.md",
     "skills/repo-compare/SKILL.md",
     ".agent/rules/common/ensemble_profile_nomenclature.md",
+    ".agent/rules/common/builder_relaunch.md",
+    ".agent/rules/common/deliverable_type_dispatch.md",
+    ".agent/rules/common/host_install_integration.md",
+    ".agent/rules/common/manifest_contracts.md",
 ]
 
 

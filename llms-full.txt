@@ -273,20 +273,7 @@ falla solo ante un generador/ejemplo vivo con prefijo legacy sin etiqueta.
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
 
-Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del repositorio definen el contrato estricto del motor central y el workspace destino:
-
-- **MANIFEST.distribute**: Define la frontera del motor central (codigo operativo del repo fuente). El motor NO se copia; este manifiesto delimita que rutas forman parte del codigo operativo.
-- **MANIFEST.workspace**: Define que se conserva EN el workspace destino (estado, memoria, eventos, configuracion del proyecto).
-- **Arquitectura**: El motor vive una unica vez en `orquestador_de_agentes/`; cada proyecto destino conserva solo su `.agent/` de workspace y referencia el motor externo.
-
-**Superficies vivas en `.agent/collaboration/`** (NO archivar, el codigo las escribe):
-- `work_plan.md`, `TURN.md`, `STATE.md`, `execution_log.md`, `notifications.md`, `review_queue.md`
-
-**Excluidos del workspace** (historial, runtime transitorio, caches):
-- `PLAN_WP-*.md`, `AUDIT_WP-*.md`, `_archive/`, `archive/`
-- `.agent/runtime/tmp/`, `uv-cache/`, `test_logs/`, `__pycache__/`, `reviews/`, `compare/`
-- `.ruff_cache/`, `.cache/`, `.uv-cache/`, `.venv/`
-- Logs y diagnosticos: `debug.log`, `opencode_models_error.log`
+Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del repositorio definen el contrato estricto del motor central y el workspace destino. Detalle (referencia bajo demanda, consulta al tocar la frontera de distribucion o el workspace destino): `.agent/rules/common/manifest_contracts.md`.
 
 ## Comandos principales
 
@@ -852,72 +839,44 @@ Cada `work_plan.md` declara `deliverable_type` en su sección Metadata. Valores:
 
 ### Contrato operativo por tipo de ticket
 
-El `deliverable_type` no es decorativo: cambia que evidencia debe producir el
-Builder y que debe auditar el Manager.
-
-- `code`: requiere diff/commit productivo del ticket, tests/ruff aplicables y
-  evidencia de gates en `execution_log.md`.
-- `mixed`: requiere el contrato de `code` mas existencia verificable de los
-  artefactos no-codigo declarados.
-- `documentation` / `research` / `analysis`: no debe exigirse commit de codigo
-  ni pytest/ruff salvo que el plan toque codigo. El cierre se basa en artefactos
-  documentales declarados y una linea de evidencia en `execution_log.md` que
-  combine artefacto y gate final, por ejemplo:
-  `Reporte .agent/runtime/compare/<archivo>.md creado. Validate: exit code 0, 0 errors, 0 warnings.`
-
-En tickets documentales, separa explicitamente las superficies:
-- `Builder`: archivos que debe crear o modificar y que cuentan como entregables.
-- `Read/inspect only`: fuentes que puede leer pero no deben contar como
-  entregables ni como scope productivo.
-- `Manager-only`: gates o revisiones que ejecuta el Manager y no el Builder.
-
-Si el plan mezcla estas superficies, `check_deliverables_exist.py` puede bloquear
-el handoff o validar una evidencia equivocada. El plan debe dejar claro que existe
-en disco al final y que solo era contexto.
+El `deliverable_type` no es decorativo: cambia que evidencia debe producir el Builder y que debe
+auditar el Manager. Detalle (referencia bajo demanda, consulta al redactar o revisar un
+`work_plan.md`): `.agent/rules/common/deliverable_type_dispatch.md`.
 
 ## Quality gates dispatch by deliverable_type (WP-2026-089)
 
-`builder-run-quality-gates` invoca ahora `scripts/run_gates_dispatch.py` que lee `deliverable_type` del work_plan activo y dispatchea:
-
-- `code` / fallback → ruff + pytest-safe + pip-audit (condicional)
-- `mixed` → ambos sets (code gates + deliverable existence check)
-- `documentation` / `research` / `analysis` → solo deliverable existence check
-
-**Conditional pip-audit policy (WP-2026-092)**:
-Para los perfiles `code` y `mixed`, `pip-audit` se ejecutará de forma exclusiva cuando la lista `Files Likely Touched` dentro de `work_plan.md` incluya un archivo de manifiesto de dependencias (`pyproject.toml`, `uv.lock`, `requirements.txt`, etc). Si no hay cambios en la superficie de dependencias, la política emitirá un salto auditable, reduciendo latencia.
-
-**Pre-commit Ruff Scope Guard (WP-2026-093)**:
-Para evitar regresiones o cambios accidentales en `.pre-commit-config.yaml` que expandan el alcance de `ruff` y causen falsos positivos en tickets no-código (Markdown, documentación, análisis, etc.), se implementa `scripts/check_ruff_hook_scope.py`. Este script verifica que los hooks `ruff-check` y `ruff-format` permanezcan limitados estrictamente a Python (`types: [python]` o `files: \.py$`). Cualquier desviación detiene las gates de pytest inmediatamente.
-
-El dispatcher, sus políticas y guardias son stdlib only; no añaden dependencias.
+`builder-run-quality-gates` despacha los gates segun el `deliverable_type` del work_plan activo
+via `scripts/run_gates_dispatch.py`: `code`/fallback -> ruff + pytest-safe + pip-audit
+(condicional); `mixed` -> ambos sets (code gates + deliverable existence check);
+`documentation`/`research`/`analysis` -> solo deliverable existence check. `pip-audit` solo corre
+si `Files Likely Touched` (en `work_plan.md`) incluye un manifiesto de dependencias (si no, salto
+auditable). Los hooks `ruff-check`/`ruff-format` deben seguir limitados estrictamente a Python
+(`scripts/check_ruff_hook_scope.py`); cualquier desviacion detiene inmediatamente las gates de
+pytest. Dispatcher, politicas y guardias: stdlib only; no anaden dependencias. Detalle
+(referencia bajo demanda): `.agent/rules/common/deliverable_type_dispatch.md`.
 
 ## Host-first skill precedence & Config Profiles (WP-2026-090)
 
-- **Host-first precedence**: Cuando el bundle `orquestador_de_agentes` se instala en un proyecto de destino (host), las skills definidas en el host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre las homónimas del bundle (`orquestador_de_agentes/skills/`). El bundle actúa estrictamente como un fallback determinista.
-- **Config Profiles**: `agents.json` define `"active_profile"`. El repo local de desarrollo usa `"engine-dev"`. El instalador `install_agent_system.py` cambia automáticamente este valor a `"host-project"` en el destino durante `--install` o `--sync`.
+En un destino, las skills del host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre
+las homonimas del bundle, que actua solo como fallback determinista. `agents.json` define
+`active_profile`: `engine-dev` en el motor; `install_agent_system.py` lo cambia a `host-project`
+en el destino durante `--install`/`--sync`. Detalle (referencia bajo demanda):
+`.agent/rules/common/host_install_integration.md`.
 
 ## Host setup hook (WP-2026-094)
 
-El proyecto destino puede declarar un script ejecutable `.agent/host-setup.sh`
-(o `.ps1` en Windows) que `scripts/install_agent_system.py` detecta tras la
-copia del bundle. Comportamiento:
-
-- Si el hook existe: el instalador muestra las primeras 20 líneas + pide
-  confirmación humana (`y/N`) antes de ejecutarlo. `--yes` salta el prompt.
-- Si el hook devuelve exit != 0: el install aborta y propaga el código.
-- Si el hook no existe: silencio (backward-compat absoluto).
-
-Plantillas: `.agent/host-setup.sh.example` / `.agent/host-setup.ps1.example`.
-Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
+Si el destino declara un script ejecutable `.agent/host-setup.sh`/`.ps1`,
+`scripts/install_agent_system.py` lo detecta tras la copia del bundle, muestra sus primeras 20 lineas y
+solo lo ejecuta con confirmacion humana (`y/N`; `--yes` la salta); exit != 0 aborta el install y
+propaga el codigo; sin hook, silencio. Detalle (referencia bajo demanda):
+`.agent/rules/common/host_install_integration.md`.
 
 ## Pluggable manager review rubric by deliverable_type (WP-2026-091)
 
-- **Pluggable Prompts**: El Review Bridge (`bus/review_bridge.py`) lee el campo `deliverable_type` del plan de trabajo activo. En lugar de utilizar un prompt único y ciego, adapta el prompt de revisión enviado al backend OpenCode Manager:
-  - `code`: Verifica la correctitud del código, cobertura de tests y estándares de estilo.
-  - `mixed`: Combina la verificación técnica de código con la revisión estructural y exhaustiva de todos los entregables no-código declarados.
-  - `documentation` / `research` / `analysis`: Enfoca la revisión del Manager estrictamente en la claridad, profundidad, calidad e integridad estructural de los entregables documentales correspondientes, omitiendo criterios de código irrelevantes.
-- **Salida formal**: Se conserva estrictamente el contrato canónico de salida (`DECISION: APPROVE` o `DECISION: CHANGES`) para mantener la interoperabilidad total del bus de eventos y la máquina de estados.
-- **Fallback**: Si `deliverable_type` no está declarado o contiene un tipo desconocido, se activa un fallback seguro y automático a la estrategia `code`.
+`bus/review_bridge.py` adapta el prompt de review del Manager al `deliverable_type` del plan
+(tipo ausente o desconocido: fallback seguro y automatico a `code`) y conserva intacta la salida
+canonica `DECISION: APPROVE` / `DECISION: CHANGES` (interoperabilidad con el bus y la maquina de
+estados). Detalle (referencia bajo demanda): `.agent/rules/common/deliverable_type_dispatch.md`.
 
 ## Secretos y seguridad
 
@@ -946,10 +905,11 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
 
 ## Robust Builder Relaunch (WP-2026-084)
 
-- **Liveness check**: El supervisor verifica si el Builder está vivo via PID + `tasklist` (Windows) antes de relanzar tras un CHANGES. Fallback: mtime <15 min.
-- **Flag `-ResumeBuilder`**: Launcher lo recibe del supervisor en requeue. Skip cleanup agresivo (`Stop-ProjectAgentProcesses`, `Remove-StaleRuntimeArtifacts`, `Assert-StartupAlignment`) para no matar Builder vivo.
-- **ADITIVIDAD**: Launcher sin `-ResumeBuilder` (primera apertura) comporta igual que antes. Cero regresión.
-- **Diagnóstico**: Supervisor captura stdout/stderr del launcher si falla, loggea a stderr con prefijo `[ticket-supervisor]`.
+Tras un CHANGES, el supervisor verifica que el Builder siga vivo (PID + `tasklist`; fallback
+mtime <15 min) antes de relanzar y pasa `-ResumeBuilder` al launcher, que entonces salta el
+cleanup agresivo para no matar un Builder vivo; sin el flag, el launcher se comporta igual que
+antes (aditivo, cero regresion). Detalle (referencia bajo demanda):
+`.agent/rules/common/builder_relaunch.md`.
 
 ## Criterio de cierre
 
@@ -1623,5 +1583,177 @@ corregidos en la misma sesion que fijo esta norma.
 "challenger_opencode_glm_5_2" tests/`. Caso completo de esta excepcion
 legacy (por que, estado exacto, consecuencia para rutas de seleccion
 nuevas) en `docs/protocol/ensemble_profile_naming_legacy_case.md`.
+
+```
+
+## .agent/rules/common/builder_relaunch.md
+
+```markdown
+# Relanzamiento robusto del Builder (capa 2 de la piramide)
+
+> **Procedencia:** piramide pasada 2 + lote R1, HEAD base
+> `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
+> - `## Robust Builder Relaunch (WP-2026-084)` -- `AGENTS.md:887-893`
+>
+> Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
+
+**Ownership:** este modulo conserva VERBATIM las secciones origen de `AGENTS.md` listadas en
+su cabecera de procedencia. La cuspide conserva encabezado, directiva (prohibiciones,
+obligaciones, comando canonico) y puntero. Este modulo es `referencia-bajo-demanda`: se
+consulta al trabajar en el mecanismo, no en cada sesion. En divergencia de CONTENIDO manda
+este modulo; toda modificacion de uno exige revisar el otro en el mismo commit.
+
+## Robust Builder Relaunch (WP-2026-084)
+
+- **Liveness check**: El supervisor verifica si el Builder está vivo via PID + `tasklist` (Windows) antes de relanzar tras un CHANGES. Fallback: mtime <15 min.
+- **Flag `-ResumeBuilder`**: Launcher lo recibe del supervisor en requeue. Skip cleanup agresivo (`Stop-ProjectAgentProcesses`, `Remove-StaleRuntimeArtifacts`, `Assert-StartupAlignment`) para no matar Builder vivo.
+- **ADITIVIDAD**: Launcher sin `-ResumeBuilder` (primera apertura) comporta igual que antes. Cero regresión.
+- **Diagnóstico**: Supervisor captura stdout/stderr del launcher si falla, loggea a stderr con prefijo `[ticket-supervisor]`.
+
+```
+
+## .agent/rules/common/deliverable_type_dispatch.md
+
+```markdown
+# Dispatch por deliverable_type: quality gates y rubrica de review (capa 2 de la piramide)
+
+> **Procedencia:** piramide pasada 2 + lote R1, HEAD base
+> `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
+> - `## Quality gates dispatch by deliverable_type (WP-2026-089)` -- `AGENTS.md:818-833`
+> - `## Pluggable manager review rubric by deliverable_type (WP-2026-091)` -- `AGENTS.md:853-861`
+> - `### Contrato operativo por tipo de ticket` -- `AGENTS.md:793-817`
+>
+> Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
+
+**Ownership:** este modulo conserva VERBATIM las secciones origen de `AGENTS.md` listadas en
+su cabecera de procedencia. La cuspide conserva encabezado, directiva (prohibiciones,
+obligaciones, comando canonico) y puntero. Este modulo es `referencia-bajo-demanda`: se
+consulta al trabajar en el mecanismo, no en cada sesion. En divergencia de CONTENIDO manda
+este modulo; toda modificacion de uno exige revisar el otro en el mismo commit.
+
+## Quality gates dispatch by deliverable_type (WP-2026-089)
+
+`builder-run-quality-gates` invoca ahora `scripts/run_gates_dispatch.py` que lee `deliverable_type` del work_plan activo y dispatchea:
+
+- `code` / fallback → ruff + pytest-safe + pip-audit (condicional)
+- `mixed` → ambos sets (code gates + deliverable existence check)
+- `documentation` / `research` / `analysis` → solo deliverable existence check
+
+**Conditional pip-audit policy (WP-2026-092)**:
+Para los perfiles `code` y `mixed`, `pip-audit` se ejecutará de forma exclusiva cuando la lista `Files Likely Touched` dentro de `work_plan.md` incluya un archivo de manifiesto de dependencias (`pyproject.toml`, `uv.lock`, `requirements.txt`, etc). Si no hay cambios en la superficie de dependencias, la política emitirá un salto auditable, reduciendo latencia.
+
+**Pre-commit Ruff Scope Guard (WP-2026-093)**:
+Para evitar regresiones o cambios accidentales en `.pre-commit-config.yaml` que expandan el alcance de `ruff` y causen falsos positivos en tickets no-código (Markdown, documentación, análisis, etc.), se implementa `scripts/check_ruff_hook_scope.py`. Este script verifica que los hooks `ruff-check` y `ruff-format` permanezcan limitados estrictamente a Python (`types: [python]` o `files: \.py$`). Cualquier desviación detiene las gates de pytest inmediatamente.
+
+El dispatcher, sus políticas y guardias son stdlib only; no añaden dependencias.
+
+## Pluggable manager review rubric by deliverable_type (WP-2026-091)
+
+- **Pluggable Prompts**: El Review Bridge (`bus/review_bridge.py`) lee el campo `deliverable_type` del plan de trabajo activo. En lugar de utilizar un prompt único y ciego, adapta el prompt de revisión enviado al backend OpenCode Manager:
+  - `code`: Verifica la correctitud del código, cobertura de tests y estándares de estilo.
+  - `mixed`: Combina la verificación técnica de código con la revisión estructural y exhaustiva de todos los entregables no-código declarados.
+  - `documentation` / `research` / `analysis`: Enfoca la revisión del Manager estrictamente en la claridad, profundidad, calidad e integridad estructural de los entregables documentales correspondientes, omitiendo criterios de código irrelevantes.
+- **Salida formal**: Se conserva estrictamente el contrato canónico de salida (`DECISION: APPROVE` o `DECISION: CHANGES`) para mantener la interoperabilidad total del bus de eventos y la máquina de estados.
+- **Fallback**: Si `deliverable_type` no está declarado o contiene un tipo desconocido, se activa un fallback seguro y automático a la estrategia `code`.
+
+### Contrato operativo por tipo de ticket
+
+El `deliverable_type` no es decorativo: cambia que evidencia debe producir el
+Builder y que debe auditar el Manager.
+
+- `code`: requiere diff/commit productivo del ticket, tests/ruff aplicables y
+  evidencia de gates en `execution_log.md`.
+- `mixed`: requiere el contrato de `code` mas existencia verificable de los
+  artefactos no-codigo declarados.
+- `documentation` / `research` / `analysis`: no debe exigirse commit de codigo
+  ni pytest/ruff salvo que el plan toque codigo. El cierre se basa en artefactos
+  documentales declarados y una linea de evidencia en `execution_log.md` que
+  combine artefacto y gate final, por ejemplo:
+  `Reporte .agent/runtime/compare/<archivo>.md creado. Validate: exit code 0, 0 errors, 0 warnings.`
+
+En tickets documentales, separa explicitamente las superficies:
+- `Builder`: archivos que debe crear o modificar y que cuentan como entregables.
+- `Read/inspect only`: fuentes que puede leer pero no deben contar como
+  entregables ni como scope productivo.
+- `Manager-only`: gates o revisiones que ejecuta el Manager y no el Builder.
+
+Si el plan mezcla estas superficies, `check_deliverables_exist.py` puede bloquear
+el handoff o validar una evidencia equivocada. El plan debe dejar claro que existe
+en disco al final y que solo era contexto.
+
+```
+
+## .agent/rules/common/host_install_integration.md
+
+```markdown
+# Integracion con el host destino: precedencia de skills, perfiles y host setup hook (capa 2 de la piramide)
+
+> **Procedencia:** piramide pasada 2 + lote R1, HEAD base
+> `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
+> - `## Host-first skill precedence & Config Profiles (WP-2026-090)` -- `AGENTS.md:834-838`
+> - `## Host setup hook (WP-2026-094)` -- `AGENTS.md:839-852`
+>
+> Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
+
+**Ownership:** este modulo conserva VERBATIM las secciones origen de `AGENTS.md` listadas en
+su cabecera de procedencia. La cuspide conserva encabezado, directiva (prohibiciones,
+obligaciones, comando canonico) y puntero. Este modulo es `referencia-bajo-demanda`: se
+consulta al trabajar en el mecanismo, no en cada sesion. En divergencia de CONTENIDO manda
+este modulo; toda modificacion de uno exige revisar el otro en el mismo commit.
+
+## Host-first skill precedence & Config Profiles (WP-2026-090)
+
+- **Host-first precedence**: Cuando el bundle `orquestador_de_agentes` se instala en un proyecto de destino (host), las skills definidas en el host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre las homónimas del bundle (`orquestador_de_agentes/skills/`). El bundle actúa estrictamente como un fallback determinista.
+- **Config Profiles**: `agents.json` define `"active_profile"`. El repo local de desarrollo usa `"engine-dev"`. El instalador `install_agent_system.py` cambia automáticamente este valor a `"host-project"` en el destino durante `--install` o `--sync`.
+
+## Host setup hook (WP-2026-094)
+
+El proyecto destino puede declarar un script ejecutable `.agent/host-setup.sh`
+(o `.ps1` en Windows) que `scripts/install_agent_system.py` detecta tras la
+copia del bundle. Comportamiento:
+
+- Si el hook existe: el instalador muestra las primeras 20 líneas + pide
+  confirmación humana (`y/N`) antes de ejecutarlo. `--yes` salta el prompt.
+- Si el hook devuelve exit != 0: el install aborta y propaga el código.
+- Si el hook no existe: silencio (backward-compat absoluto).
+
+Plantillas: `.agent/host-setup.sh.example` / `.agent/host-setup.ps1.example`.
+Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
+
+```
+
+## .agent/rules/common/manifest_contracts.md
+
+```markdown
+# Contrato de MANIFEST.distribute y MANIFEST.workspace (capa 2 de la piramide)
+
+> **Procedencia:** piramide pasada 2 + lote R1, HEAD base
+> `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
+> - `## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)` -- `AGENTS.md:214-230`
+>
+> Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
+
+**Ownership:** este modulo conserva VERBATIM las secciones origen de `AGENTS.md` listadas en
+su cabecera de procedencia. La cuspide conserva encabezado, directiva (prohibiciones,
+obligaciones, comando canonico) y puntero. Este modulo es `referencia-bajo-demanda`: se
+consulta al trabajar en el mecanismo, no en cada sesion. En divergencia de CONTENIDO manda
+este modulo; toda modificacion de uno exige revisar el otro en el mismo commit.
+
+## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
+
+Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del repositorio definen el contrato estricto del motor central y el workspace destino:
+
+- **MANIFEST.distribute**: Define la frontera del motor central (codigo operativo del repo fuente). El motor NO se copia; este manifiesto delimita que rutas forman parte del codigo operativo.
+- **MANIFEST.workspace**: Define que se conserva EN el workspace destino (estado, memoria, eventos, configuracion del proyecto).
+- **Arquitectura**: El motor vive una unica vez en `orquestador_de_agentes/`; cada proyecto destino conserva solo su `.agent/` de workspace y referencia el motor externo.
+
+**Superficies vivas en `.agent/collaboration/`** (NO archivar, el codigo las escribe):
+- `work_plan.md`, `TURN.md`, `STATE.md`, `execution_log.md`, `notifications.md`, `review_queue.md`
+
+**Excluidos del workspace** (historial, runtime transitorio, caches):
+- `PLAN_WP-*.md`, `AUDIT_WP-*.md`, `_archive/`, `archive/`
+- `.agent/runtime/tmp/`, `uv-cache/`, `test_logs/`, `__pycache__/`, `reviews/`, `compare/`
+- `.ruff_cache/`, `.cache/`, `.uv-cache/`, `.venv/`
+- Logs y diagnosticos: `debug.log`, `opencode_models_error.log`
 
 ```
