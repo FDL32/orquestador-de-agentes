@@ -701,7 +701,7 @@ def _regenerate_l2_l3(
             seen.add(("id", generate_stable_id(red)))
         projected: list[dict[str, Any]] = list(local)
         for a in archived:
-            k = dedup_key(a)
+            k = dedup_key(_redact_entry(a))
             if k in seen:
                 continue
             seen.add(k)

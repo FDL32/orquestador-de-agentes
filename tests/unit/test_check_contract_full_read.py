@@ -754,3 +754,350 @@ def test_dod_b3_full_path_no_suffix_false_positive(tmp_path: Path) -> Path:
     assert rc == 1, (
         f"Homonimo en ruta distinta NO debe contar como cobertura. rc={rc}, stdout={stdout}"
     )
+
+
+# ------------------------------------------------------------------ helpers for hook integration
+
+
+def _make_read_payload_with_offset(
+    file_path: str,
+    content: str,
+    offset: int,
+    limit: int,
+) -> bytes:
+    """Build a PostToolUse JSON payload for a Read tool with offset/limit."""
+    return json.dumps(
+        {
+            "tool_name": "Read",
+            "session_id": "test-session-105a",
+            "tool_input": {
+                "file_path": file_path,
+                "offset": offset,
+                "limit": limit,
+            },
+            "tool_response": content,
+        }
+    ).encode("utf-8")
+
+
+def _run_hook_subprocess(
+    payload: bytes,
+    tmp_path: Path,
+) -> subprocess.CompletedProcess:
+    """Run the native_post_tool_hook as a subprocess."""
+    hook_path = (
+        Path(__file__).resolve().parent.parent.parent
+        / ".agent"
+        / "hooks"
+        / "native_post_tool_hook.py"
+    )
+    return subprocess.run(
+        [sys.executable, str(hook_path)],
+        input=payload,
+        cwd=str(tmp_path),
+        capture_output=True,
+        timeout=30,
+    )
+
+
+# ------------------------------------------------------------------ WOT-2026-105a: interval union tests
+
+
+def _write_event_with_range(
+    file_path: str,
+    line_count: int,
+    read_offset: int,
+    read_limit: int,
+) -> dict:
+    """Build a telemetry event with structured range fields (WOT-2026-105a)."""
+    return {
+        "context": f"Read file {file_path}, {line_count} lines",
+        "tool_name": "view_file",
+        "timestamp": "2026-10-19T00:00:00Z",
+        "read_offset": read_offset,
+        "read_limit": read_limit,
+    }
+
+
+def test_e3_union_real_two_complementary_reads(tmp_path: Path) -> None:
+    """E3: Two complementary partial reads, union covers the file.
+
+    File has 20 lines. Event A: [0, 10) -- 10 lines. Event B: [10, 20) --
+    10 lines. Neither alone covers (each 10 < 20), but union [0, 20)
+    covers all 20 lines -> PASS.
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 21))
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [
+            _write_event_with_range("prompts/large.md", 10, 0, 10),
+            _write_event_with_range("prompts/large.md", 10, 10, 10),
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, stderr = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Union of complementary reads should PASS. rc={rc}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "PASS" in stdout or "leidos enteramente" in stdout
+
+
+def test_e3_fallback_legacy_no_range(tmp_path: Path) -> None:
+    """E3 fallback legado: evento sin offset/limit sigue cubriendo por line_count.
+
+    Single legacy event: "Read file X, 5 lines" without read_offset/read_limit.
+    File has 5 lines. [0, 5) covers all -> PASS (non-regression).
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 6))
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/sample.md": content},
+        [
+            {
+                "context": "Read file prompts/sample.md, 5 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-14T00:00:00Z",
+            }
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/sample.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, f"Legacy event without range should PASS. rc={rc}\nstdout: {stdout}"
+
+
+def test_e3_gap_real_two_reads(tmp_path: Path) -> None:
+    """E3 gap: two partial reads leave a gap -> FAIL listing gap lines.
+
+    File: 20 lines. Event A: [0, 8) -- 8 lines. Event B: [12, 20) -- 8 lines.
+    Gap: lines 8-11 (indices 8, 9, 10, 11) -> FAIL with gap lines listed.
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 21))
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [
+            _write_event_with_range("prompts/large.md", 8, 0, 8),
+            _write_event_with_range("prompts/large.md", 8, 12, 8),
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 1, f"Gap should FAIL. rc={rc}\nstdout: {stdout}"
+    assert "ausentes" in stdout or "FAIL" in stdout, (
+        f"Should list absent lines. stdout: {stdout}"
+    )
+
+
+def test_e3_overlap_two_ranges(tmp_path: Path) -> None:
+    """E3 overlap: two partially overlapping ranges merge into one interval.
+
+    File: 20 lines. Event A: [0, 12) -- 12 lines. Event B: [8, 20) -- 12 lines.
+    Overlap: [8, 12). Merged: [0, 20) -> PASS (no double-counting, no gap).
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 21))
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [
+            _write_event_with_range("prompts/large.md", 12, 0, 12),
+            _write_event_with_range("prompts/large.md", 12, 8, 12),
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, f"Overlapping ranges merged should PASS. rc={rc}\nstdout: {stdout}"
+
+
+def test_e3_adjacency_exact(tmp_path: Path) -> None:
+    """E3 adjacency: two ranges touching at the same boundary cover the file.
+
+    File: 20 lines. Event A: [0, 10) -- 10 lines. Event B: [10, 20) -- 10 lines.
+    Boundary: 10 is end of A and start of B -> merged [0, 20) -> PASS.
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 21))
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [
+            _write_event_with_range("prompts/large.md", 10, 0, 10),
+            _write_event_with_range("prompts/large.md", 10, 10, 10),
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, f"Adjacent ranges should PASS. rc={rc}\nstdout: {stdout}"
+
+
+def test_e3_range_exceeds_file(tmp_path: Path) -> None:
+    """E3 exceed: offset+limit > wc_lines does not break or inflate coverage.
+
+    File: 10 lines. Event: offset=5, limit=20 -> [5, 25). Clamped to [5, 10).
+    Uncovered: [0, 5) -> FAIL, but does NOT inflate past wc_lines.
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 11))
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [
+            _write_event_with_range("prompts/large.md", 10, 5, 20),
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    # Should FAIL (lines 1-5 not covered) but NOT crash or inflate
+    assert rc == 1, f"Exceeded range should still FAIL. rc={rc}\nstdout: {stdout}"
+    assert "ausentes" in stdout, (
+        f"Should list absent lines, not crash. stdout: {stdout}"
+    )
+
+
+def test_e3_mixed_legacy_and_structured(tmp_path: Path) -> None:
+    """E3 mix: legacy event + structured event for same file union correctly.
+
+    File: 20 lines. Legacy: [0, 10) -- line_count=10 without offset/limit.
+    Structured: [10, 20) -- offset=10, limit=10.
+    Union: [0, 20) -> PASS (legacy never masks a real gap).
+    """
+    content = "".join(f"line{i}\n" for i in range(1, 21))
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [
+            {
+                "context": "Read file prompts/large.md, 10 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-14T00:00:00Z",
+            },
+            _write_event_with_range("prompts/large.md", 10, 10, 10),
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, f"Mix of legacy + structured should PASS. rc={rc}\nstdout: {stdout}"
+
+
+def test_e3_payload_real_hook_with_offset(tmp_path: Path) -> None:
+    """E3 payload real: Run the hook with a real Read payload (offset/limit
+    in tool_input), verify telemetry contains structured fields, and then
+    verify the gate correctly unions the intervals.
+
+    Step 1: Create a 20-line file.
+    Step 2: Invoke the hook with Read(file_path, offset=5, limit=10).
+    Step 3: Check telemetry has read_offset=5, read_limit=10.
+    Step 4: Invoke a second Read(offset=15, limit=5) -- but we need to get
+             to line 20, so let's use offset=10, limit=10 instead.
+    Actually, step 2: Read(offset=0, limit=10) -> [0, 10)
+             step 3: Read(offset=10, limit=10) -> [10, 20)
+    Step 5: Run the gate -> should PASS because [0, 20) covers 20 lines.
+    """
+    test_file = tmp_path / "prompts" / "canon.md"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    content1 = "".join(f"line{i}\n" for i in range(1, 11))
+    test_file.write_text(content1, encoding="utf-8")
+
+    # Payload 1: Read with offset=0, limit=10
+    payload1 = _make_read_payload_with_offset(str(test_file), content1, 0, 10)
+    result1 = _run_hook_subprocess(payload1, tmp_path=tmp_path)
+    assert result1.returncode == 0, (
+        f"Hook 1 should exit 0. stderr: {result1.stderr.decode()}"
+    )
+
+    # Payload 2: Read with offset=10, limit=10 (simulate 2nd read on same file)
+    content2 = "".join(f"line{i}\n" for i in range(11, 21))
+    payload2 = _make_read_payload_with_offset(str(test_file), content2, 10, 10)
+    result2 = _run_hook_subprocess(payload2, tmp_path=tmp_path)
+    assert result2.returncode == 0, (
+        f"Hook 2 should exit 0. stderr: {result2.stderr.decode()}"
+    )
+
+    # Verify telemetry has structured fields
+    telemetry_file = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    lines = telemetry_file.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) >= 2, f"Expected 2+ telemetry records, got {len(lines)}"
+
+    rec0 = json.loads(lines[0])
+    rec1 = json.loads(lines[1])
+    assert rec0.get("read_offset") == 0, (
+        f"First record should have read_offset=0, got {rec0.get('read_offset')}"
+    )
+    assert rec0.get("read_limit") == 10, (
+        f"First record should have read_limit=10, got {rec0.get('read_limit')}"
+    )
+    assert rec1.get("read_offset") == 10, (
+        f"Second record should have read_offset=10, got {rec1.get('read_offset')}"
+    )
+    assert rec1.get("read_limit") == 10, (
+        f"Second record should have read_limit=10, got {rec1.get('read_limit')}"
+    )
+
+    # Now run the gate: create a mini motor and verify union coverage
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/canon.md": content1 + content2},  # 20 lines total (no extra \n)
+        [
+            _write_event_with_range("prompts/canon.md", 10, 0, 10),
+            _write_event_with_range("prompts/canon.md", 10, 10, 10),
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/canon.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Real payload with offset/limit union should PASS. rc={rc}\nstdout: {stdout}"
+    )
