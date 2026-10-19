@@ -34,6 +34,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
+# Bootstrap: motor root must be on sys.path before importing scripts.closeout_steps.
+# Necesario porque este modulo se invoca como subproceso standalone
+# (`python <motor>/scripts/rotate_kilo_logs.py`), lo que pone `scripts/` --no su
+# padre-- en sys.path[0]; sin esto, `from scripts.closeout_steps...` falla con
+# ModuleNotFoundError pese a que el paquete existe (medido 2026-10-19).
+_MOTOR_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
+
+
 # Umbrales canonicos (R13a)
 KILO_LOG_COMPRESS_DAYS = 7
 KILO_LOG_DELETE_DAYS = 30
