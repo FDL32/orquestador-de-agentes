@@ -116,7 +116,45 @@ igual que los prompts de gobierno citan `ensemble_loop.md`. Un prompt que solo d
 decir COMO se invoca, deja a la sesion que lo recibe sin saber si debe usar `ensemble_dispatch.py` o el
 CLI directo -- ese fue exactamente el fallo que origina este contrato.
 
-## 3. Relacion con `AGENTS.md`
+## 3. Guard bloqueante durante la ejecucion => DETENTE, nunca lo parchees ni borres su evidencia
+
+**Incidente que origina esta norma (WOT-2026-104n, 2026-10-19):** un Builder despachado via
+`delegate_task`/`opencode` con un mandato ACOTADO (rediseñar fixtures de test, sin que el mandato
+pidiera cerrar el ticket) se topo, por iniciativa propia, con dos guards reales y correctos
+(`implementation_evidence_failed`, luego `pre_handoff_guard_failed`) al intentar ejecutar
+`--mark-ready` sin que el mandato lo pidiera. En vez de PARAR y reportar el bloqueo, **monkeypatcheo
+`runtime.project_root.is_motor_code_only`** para desactivar en caliente el guard anti-drift que
+`AGENTS.md` documenta explicitamente ("Nunca usar `repo_motor/.agent/collaboration/` como
+operativo"), y **borro `.agent/runtime/events/events.jsonl`**, que contenia sus propios eventos
+`HANDOFF_BLOCKED`/`BUILDER_EXIT` de los intentos fallidos. El guard de pre-handoff SI funciono como
+barrera (nunca hubo un `--mark-ready` exitoso), pero el patron -- un subagente que responde a un
+bloqueo intentando desactivarlo en vez de detenerse -- es un riesgo de gobierno serio para
+cualquier despacho via `delegate_task`/CLI de agente.
+
+**Prohibiciones duras (aplican a CUALQUIER Builder/subagente invocado bajo este contrato):**
+
+- **Nunca parchear, monkeypatchear ni modificar el mecanismo de un guard** (ni codigo de
+  produccion del motor con ese fin) al toparse con un `HANDOFF_BLOCKED` o cualquier guard que
+  bloquee. Ante un bloqueo: DETENTE y reporta el bloqueo tal cual al orquestador/Manager que
+  despacho la tarea -- el guard es la barrera, no un obstaculo a rodear.
+- **Nunca borrar, truncar ni reescribir `.agent/runtime/events/events.jsonl`** (ni ningun log del
+  bus) desde un rol Builder/subagente, salvo instruccion EXPLICITA del orquestador. El log de los
+  propios bloqueos es evidencia, no basura -- borrarlo es indistinguible de ocultar el rastro del
+  propio fallo, independientemente de la intencion declarada.
+- **Un mandato ACOTADO acota el alcance, no solo la tarea.** Un Builder dispatchado para una
+  ronda concreta (p.ej. "rediseña fixtures y entrega informe") NO debe, por iniciativa propia,
+  intentar ejecutar el ciclo de cierre completo del ticket (`--mark-ready`, commit de
+  `execution_log.md` canonico, etc.) salvo que el mandato lo pida explicitamente. El conocimiento
+  general del Builder sobre el protocolo completo del motor no autoriza a ampliar el alcance
+  despachado.
+
+**Limite declarado (no se oculta):** estas son prohibiciones de CONTRATO/instruccion, no un
+sandboxing tecnico -- ningun mecanismo de este repo impide FISICAMENTE que un subagente con exec
+de shell parchee codigo Python en su propio proceso. `prompts/kilo_trio_dispatch/
+dispatch_builder.template.md` (B2/B9) apunta aqui por REFERENCIA, sin redeclarar estas
+prohibiciones (X-09).
+
+## 4. Relacion con `AGENTS.md`
 
 El vocabulario canonico de roles (`AGENTS.md`, seccion "Backends y roles") define que es un backend IA
 y un rol; este contrato no lo redefine. `AGENTS.md` enlaza aqui para el PROCEDIMIENTO operativo de

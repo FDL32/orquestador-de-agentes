@@ -31,7 +31,7 @@ Artefacto a emitir: diff/commit productivo + `builder_recibo_r{{R}}.md`
 
 [REF] Prompts y skills citados por REFERENCIA — NUNCA re-declarar criterios (X-09):
 
-- `prompts/builder_invocation_contract.md` (`cid-builder-invocation-v1`) — Contrato de invocación del Builder real.
+- `prompts/builder_invocation_contract.md` (`cid-builder-invocation-v1`) — Contrato de invocación del Builder real. Sección 3: guard bloqueante durante la ejecución => DETENTE, nunca lo parchees ni borres `events.jsonl`; un mandato ACOTADO (B1) no autoriza por iniciativa propia el ciclo de cierre completo.
 - `prompts/orchestrator_launch_builder.md` (`cid-bui-implement-v1`) — Arranque del Builder con identidad y paridad.
 - `skills/builder-implement-from-plan` (`cid-bui-implement-v1`) — Implementa las tareas del work_plan aprobado.
 - `skills/builder-self-audit` — Salida ES el `builder_recibo_rN.md`.
@@ -151,6 +151,9 @@ Mailbox: `mailbox/<session_id>/` en cada punto de sondeo.
 
 - **Presupuesto:** MAX 3 rondas.
 - **Escalación:** si se exceden, enviar paquete de resurrección al Manager.
+- **Guard bloqueante:** si un guard (`HANDOFF_BLOCKED`, `pre_handoff_guard_failed`, etc.) impide
+  avanzar, DETENTE y reporta — ver `builder_invocation_contract.md` Sección 3 (WOT-2026-104n:
+  prohibido parchear/monkeypatchear el guard o borrar `.agent/runtime/events/events.jsonl`).
 - **Cierre:** `builder_recibo_rN.md` escrito + `BUILDER_EXIT` emitido + `READY_FOR_REVIEW` en log.
 - **Snapshot:** inicial y final + `EXTERNAL_WRITE_DETECTED` (si HEAD movido / dirty flip / backlog.md tocado ⇒ declararlo literal y re-analizar).
 - **Terminal:** `BUILDER_EXIT` (nunca texto abierto sin cierre).

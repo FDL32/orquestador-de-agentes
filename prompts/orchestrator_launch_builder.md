@@ -302,6 +302,15 @@ git diff --cached --stat      # verifica el volumen antes de commitear
 Fallo real (2026-07-26): un `git add -A` metio 14.413 lineas de runtime en el
 commit del ticket.
 
+**Fallo real relacionado (WOT-2026-104n, 2026-10-19):** un `git add -A` final capturo solo
+`.loop_bundle_optimizacion.md` como volumen sospechoso, porque el trabajo que REALMENTE debia
+alarmar (un `execution_log.md` ad-hoc fuera de scope y la posterior ELIMINACION de
+`.agent/runtime/events/events.jsonl`) vivia en rutas GITIGNORADAS -- invisibles para
+`git status`/`git diff --cached --stat`. **Un `git add -A` puede parecer inocuo (volumen bajo, un
+solo fichero) precisamente cuando lo que deberia alarmar no pasa por git en absoluto.** Si
+sospechas actividad fuera de la whitelist, cruza tambien `git status --short --ignored`, no solo
+el diff staged.
+
 ### M3. Fichero vivo escaso => mira el `archive/` hermano antes de diagnosticar
 
 Varias superficies del sistema ROTAN: el fichero vivo conserva solo la ventana
