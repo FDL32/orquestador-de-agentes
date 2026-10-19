@@ -1294,6 +1294,88 @@ def test_058b3_colision_sin_id_y_con_id_derivado_no_duplica(
         f"se esperaba 1 regla (dedup por id derivado); got {total_rules}"
     )
 
+    # Pata (b): par legacy sin id en ambos lados, mismo (topic, source_ticket).
+    # Se colisiona por dedup_key fallback (no por id, porque ninguna lo tiene).
+    # Mutation: quitar la redacción de CUALQUIERA de los dos lados antes de
+    # calcular dedup_key debe hacer que el test caiga (2 reglas en vez de 1).
+    local_no_id_b = {
+        "signal": "Contact test@example.com before merging; "
+        "the signal must be re-measured with a command.",
+        "domain": "testing",
+        "source_ticket": "WOT-2026-050a",
+        "topic": "no-id-topic-b",
+        "timestamp": new_ts,
+    }
+    archived_no_id_b = {
+        "signal": "Contact test@example.com before merging; "
+        "the signal must be re-measured with a command.",
+        "domain": "testing",
+        "source_ticket": "WOT-2026-050a",
+        "topic": "no-id-topic-b",
+        "timestamp": old_ts,
+    }
+
+    test_obs_b = tmp_path / "observations_b.jsonl"
+    test_obs_b.write_text(
+        json.dumps(local_no_id_b, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    test_archive_b = tmp_path / "archive_b"
+    _write_archive(test_archive_b, "2020-01", [archived_no_id_b])
+    test_memory_md_b = tmp_path / "MEMORY_B.md"
+
+    monkeypatch.setattr(mc, "OBS", test_obs_b)
+    monkeypatch.setattr(mc, "MEMORY_DIR", tmp_path / "memory_dir_b")
+    (tmp_path / "memory_dir_b").mkdir()
+    monkeypatch.setattr(mc, "ARCHIVE_DIR", test_archive_b)
+    monkeypatch.setattr(mc, "MEMORY_MD", test_memory_md_b)
+    monkeypatch.setattr(mc, "MEMORY_RULES_MD", tmp_path / "memory_rules_b.md")
+    monkeypatch.setattr(mc, "MEMORY_PROFILE_MD", tmp_path / "memory_profile_b.md")
+
+    stats_b = {"kept": 1, "deduped": 0, "dropped": 0, "archived": 0}
+    mc._apply_consolidation(
+        recent=[local_no_id_b], archivable=[], stats=stats_b, verbose=False
+    )
+
+    rules_txt_b = (tmp_path / "memory_rules_b.md").read_text(encoding="utf-8")
+    total_rules_b = _header_int(rules_txt_b, "Total rules")
+    assert total_rules_b == 1, (
+        f"se esperaba 1 regla (dedup por dedup_key fallback); got {total_rules_b}"
+    )
+
+    # Mutation receipt: cambiar la redacción de un lado rompe la colisión.
+    local_mut = dict(local_no_id_b)
+    local_mut["signal"] = (
+        "Contact admin@other.org for validation; "
+        "the signal must be re-measured with a command."
+    )
+    test_obs_mut = tmp_path / "observations_mut.jsonl"
+    test_obs_mut.write_text(
+        json.dumps(local_mut, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    test_archive_mut = tmp_path / "archive_mut"
+    _write_archive(test_archive_mut, "2020-01", [archived_no_id_b])
+    test_memory_md_mut = tmp_path / "MEMORY_MUT.md"
+
+    monkeypatch.setattr(mc, "OBS", test_obs_mut)
+    monkeypatch.setattr(mc, "MEMORY_DIR", tmp_path / "memory_dir_mut")
+    (tmp_path / "memory_dir_mut").mkdir()
+    monkeypatch.setattr(mc, "ARCHIVE_DIR", test_archive_mut)
+    monkeypatch.setattr(mc, "MEMORY_MD", test_memory_md_mut)
+    monkeypatch.setattr(mc, "MEMORY_RULES_MD", tmp_path / "memory_rules_mut.md")
+    monkeypatch.setattr(mc, "MEMORY_PROFILE_MD", tmp_path / "memory_profile_mut.md")
+
+    stats_mut = {"kept": 1, "deduped": 0, "dropped": 0, "archived": 0}
+    mc._apply_consolidation(
+        recent=[local_mut], archivable=[], stats=stats_mut, verbose=False
+    )
+
+    rules_txt_mut = (tmp_path / "memory_rules_mut.md").read_text(encoding="utf-8")
+    total_rules_mut = _header_int(rules_txt_mut, "Total rules")
+    assert total_rules_mut == 2, (
+        f"la mutacion rompe la colision: se esperan 2 reglas (dedup_key distintas), "
+        f"got {total_rules_mut}"
+    )
+
 
 def test_058b3_archive_corrupto_aborta_antes_de_escribir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1361,6 +1443,8 @@ def test_058b3_archive_corrupto_aborta_antes_de_escribir(
     # L2/L3 no escritos.
     assert not (tmp_path / "memory_rules.md").exists()
     assert not (tmp_path / "memory_profile.md").exists()
+    # MEMORY.md tampoco.
+    assert not test_memory_md.exists()
 
 
 def test_058b3_tope_lleno_con_recent_no_deja_pasar_archivadas(

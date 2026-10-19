@@ -916,11 +916,11 @@ def _apply_consolidation(
     --strict` en prepush (`bus/memory_loader.py:43-44`) es la barrera
     fail-closed original; el abort de `--apply` se suma, no la sustituye.
     """
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-
     # D3: read archive BEFORE any writes -- fail-closed on corruption.
     archived = read_archive_dir(ARCHIVE_DIR)
+
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     backup_path = MEMORY_DIR / f"observations.jsonl.bak.{timestamp}"

@@ -1744,4 +1744,4 @@ def test_read_archive_dir_reads_all_months_and_fails_closed_on_the_dir(
     with pytest.raises(CorruptArchiveError) as exc:
         read_archive_dir(dirty_dir)
     assert "observations.2026-07.jsonl" in str(exc.value)
-    assert "2" in str(exc.value)  # line 2
+    assert ":2:" in str(exc.value)  # line 2
