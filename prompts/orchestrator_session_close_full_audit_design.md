@@ -74,6 +74,13 @@ F1. Por cada plan en queued/, corre el freshness gate:
       git diff <state_at_triage.motor>..HEAD. Premisa que ya no se reproduce -> ese ticket del plan
       esta STALE: anotalo (el vuelo debe congelarlo en su Paso 0).
 F2. Reporta por plan: FRESCO / STALE(tickets afectados) / DEAD.
+F3. GATE DE SALIDA DEL TRIAJE (solo si ESTA sesion produjo un triaje): si escribiste un
+    `backlog_triage_<ts>.json` en `<workspace>/orchestrator_pipeline/reports/` durante esta
+    sesion, corre
+      python <motor>/scripts/check_triage_outputs.py --project-root <workspace> --require-artifact
+    - exit != 0 -> ROJO: aplica la regla de parada. El recibo de exit 0 NOMBRA el fichero
+      auditado, asi que cualquier desajuste atributivo queda visible. Un cierre SIN triaje
+      propio NO invoca el gate (no lo bloquea un artefacto ajeno de otra linea).
 
 == BLOQUE A - PASADA ADVERSARIAL SOBRE LOS ARTEFACTOS (adaptado de B2) ==
 A1. Aplica prompts/audit_agent_output.md (checklist esceptico) SOBRE tus artefactos de esta sesion
