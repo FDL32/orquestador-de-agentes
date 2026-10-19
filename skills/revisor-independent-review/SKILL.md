@@ -1,7 +1,7 @@
 ---
 name: revisor-independent-review
 version: 1.0.0
-description: "Revision adversarial independiente del trabajo del Builder. Usar para la Capa 1.5 (Persona-2): el Revisor revisa con su propio modelo, nunca el mismo que el Builder. Triggers: /revisor-review, /verify."
+description: "Revision adversarial independiente del trabajo del Builder. Usar para Persona-2 (Revisor): el Revisor revisa con su propio modelo, nunca el mismo que el Builder. Triggers: /revisor-review, /verify."
 triggers: [/revisor-review, /verify]
 source_prompt: prompts/revisor_independent_review.md
 contract_id: cid-revisor-review-v1
@@ -19,7 +19,7 @@ disable-model-invocation: true
 ## Cuándo usar
 
 Cuando se necesita una revision adversarial independiente de la implementacion del Builder.
-Usar para la Capa 1.5 (Persona-2) del sistema de 4 capas: el Revisor revisa el trabajo
+Usar para Persona-2 (Revisor) del sistema de 4 capas: el Revisor revisa el trabajo
 del Builder con su propio backend/modelo, nunca el mismo que el Builder.
 
 ## Cuándo no usar

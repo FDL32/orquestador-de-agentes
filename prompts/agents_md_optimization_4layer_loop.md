@@ -80,7 +80,7 @@ invocacion (`prompts/builder_invocation_contract.md` Seccion 1) es explicita: "S
 eventos: Kilo no emite `BUILDER_EXIT` ni ningun otro evento al bus del orquestador."
 
 Por tanto, bajo este prompt, B7/B8 de cada plantilla se leen asi:
-- **B7 (puntos de sondeo):** sustituido por el Orquestador (Capa 0, esta sesion T3) leyendo
+- **B7 (puntos de sondeo):** sustituido por el Orquestador (Persona-0, esta sesion T3) leyendo
   el fichero de salida de cada turno (B3 de la plantilla) tras cada invocacion `kilo run`
   (comando canonico de `builder_invocation_contract.md` Seccion 1). No hay `board_post`; el
   "sondeo" es la lectura sincrona del fichero al terminar el proceso.
@@ -182,7 +182,7 @@ si hay pasada siguiente." Output anadido al MISMO fichero del Turno 1 (no uno nu
    como el que declara este mismo prompt en la Seccion 0, la via nombrada de PASO 5.2 que
    materializa la deuda como follow-up tracked en `docs/followups/`).
 
-## 3. Cierre de cada pasada (Orquestador, Capa 0)
+## 3. Cierre de cada pasada (Orquestador, Persona-0)
 
 Tras el Turno 1 (segunda vez), el Orquestador reporta al usuario un resumen corto
 (<500 palabras, mismo limite que el resto de 4 capas, `agent_execution_modes.md` Seccion 1,
