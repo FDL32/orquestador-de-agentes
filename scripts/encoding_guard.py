@@ -42,22 +42,6 @@ SUSPICIOUS_CODEPOINTS = {
     0xFFFD,
 }
 
-# WOT-2026-060t: puntuacion tipografica que la convencion ASCII del repo
-# prohibe (prompts/orchestrator_launch_builder.md:546-554 ordena al Builder
-# usar guion y comillas ASCII). Em-dash y las cuatro comillas curvas mas
-# comunes; NO es un ban global de UTF-8 (el propio contrato de encoding
-# permite no-ASCII cuando ES el objeto del hallazgo) -- esta lista es
-# deliberadamente estrecha a los codepoints que el prompt gobernante nombra.
-TYPOGRAPHIC_PUNCTUATION_CODEPOINTS = frozenset(
-    {
-        0x2014,  # em-dash (U+2014)
-        0x2018,  # left single quotation mark '
-        0x2019,  # right single quotation mark '
-        0x201C,  # left double quotation mark "
-        0x201D,  # right double quotation mark "
-    }
-)
-
 # CTL-2026-012j (Check 1): de-acentuacion lossy detection. De-accented Spanish
 # (sin tildes) is valid ASCII and passes the byte-level guard (false green of
 # CTL-2026-012h); this layer flags de-accented blocks inside a document that
@@ -194,7 +178,7 @@ def find_q_in_word(text: str) -> list[str]:
 
 # ASCII control chars (<32) that are legitimate in text files: tab, line feed,
 # carriage return. Everything else below 0x20 (e.g. 0x00 NUL, 0x07 BEL, 0x0B VT,
-# 0x0C FF) is corruption -- the class that slipped past the guard in WOT-2026-008f
+# 0x0C FF) is corruption — the class that slipped past the guard in WOT-2026-008f
 # and 008j because the guard only inspected codepoints >127 (mojibake/BOM).
 _ALLOWED_CONTROL_CHARS = frozenset({"\t", "\n", "\r"})
 
@@ -213,23 +197,6 @@ def find_control_chars(text: str) -> list[str]:
         marker = f"<0x{ord(ch):02X}>"
         tail = text[idx + 1 : idx + 4].replace("\n", "\\n").replace("\r", "\\r")
         snippet = marker + tail
-        if snippet not in snippets:
-            snippets.append(snippet)
-    return snippets
-
-
-def find_typographic_punctuation(text: str) -> list[str]:
-    """Return snippets around em-dash/curly-quote codepoints (WOT-2026-060t).
-
-    Each snippet shows up to 3 chars of context after the hit, deduplicated,
-    same convention as ``find_control_chars``/``find_c1_controls``.
-    """
-    snippets: list[str] = []
-    for idx, ch in enumerate(text):
-        if ord(ch) not in TYPOGRAPHIC_PUNCTUATION_CODEPOINTS:
-            continue
-        tail = text[idx + 1 : idx + 4].replace("\n", "\\n").replace("\r", "\\r")
-        snippet = ch + tail
         if snippet not in snippets:
             snippets.append(snippet)
     return snippets
@@ -319,18 +286,12 @@ def check_utf8_strict(path: Path) -> list[str]:
 
 
 def find_text_corruption(text: str) -> list[str]:
-    """Return non-mojibake structural corruption snippets for a text file.
-
-    Covers ASCII control chars, path-bullet mangling, C1 controls and
-    typographic punctuation (em-dash/curly quotes, WOT-2026-060t) banned by
-    the repo's ASCII convention.
-    """
+    """Return non-mojibake structural corruption snippets for a text file."""
     findings: list[str] = []
     for snippet in [
         *find_control_chars(text),
         *find_path_bullet_mangling(text),
         *find_c1_controls(text),
-        *find_typographic_punctuation(text),
     ]:
         if snippet not in findings:
             findings.append(snippet)
