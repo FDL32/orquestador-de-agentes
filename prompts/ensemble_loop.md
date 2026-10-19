@@ -95,6 +95,13 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
    absolutas.
    Si el destino no se resuelve, la fila lo declara en `lens_scope` (`motor:destino-no-resoluble`): en ese
    caso la lente NO vio el destino y su "no existe" sobre un artefacto del destino no vale.
+   Cuando `repo_scope: destino`, anade ademas un bloque `INVENTARIO GIT-IGNORED` con la salida de
+   `git status --ignored` del destino, para que la lente sepa que rutas existen pero no se incluyen
+   en el bundle por estar ignoradas por Git.
+3-bis. Verificacion de alcance fisico: SI la lente tiene `CANAL: agent` (o `repo_scope: destino`),
+   NO basta con afirmar "no existe X" en prosa. Pide a la lente que verifique con `Test-Path` (Windows)
+   o `ls`/`file` (Unix) antes de emitir un "no existe"; si una ruta se referencia como "no existe" en
+   el bundle o en el informe, la lente debe incluir el comando que usó para verificarlo (y su salida).
 4. Envia a cada lente solo lo que tiene que revisar. Un bundle de mas de 15 KB a un modelo razonador suele
    acabar en `empty_content_despite_sentinel`: pasa antes
    `preflight --content-sample-file <bundle> --backend-keys <lista>`. Limite medido: el preflight valida el

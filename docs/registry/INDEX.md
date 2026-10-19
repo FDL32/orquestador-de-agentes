@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 50 |
+| prompt | 51 |
 | reference | 39 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 48 |
-| **total** | **145** |
+| **total** | **146** |
 
 ## Entradas
 
@@ -68,6 +68,7 @@
 | prompt | `prompts/orchestrator_session_close_full_audit_design.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/persona_system.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/repo_audit_multiagent.md` | active | system | auditor | model-invoked | — |
+| prompt | `prompts/revisor_agent_filesystem_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/revisor_independent_review.md` | active | system | revisor | model-invoked | — |
 | prompt | `prompts/session_hop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | orchestrator | model-invoked | — |
