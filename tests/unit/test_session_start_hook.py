@@ -21,14 +21,38 @@ romper al llamante. La barrera fail-CLOSED para un archive corrupto es
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOK = _ROOT / ".agent" / "hooks" / "session_start_hook.py"
+
+
+def _hook_module():
+    """Carga el hook como modulo importable (in-process) para monkeypatch."""
+    spec = importlib.util.spec_from_file_location("ssh_hook_wot_100a", _HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _set_stdin_bytes(monkeypatch, payload: bytes) -> None:
+    """Sustituye `sys.stdin` por uno con `.buffer.read()` que devuelve payload."""
+
+    class _Buffer:
+        def read(self, *_args, **_kwargs) -> bytes:
+            return payload
+
+    class _Stdin:
+        buffer = _Buffer()
+
+    monkeypatch.setattr(sys, "stdin", _Stdin())
 
 
 def _run(payload: dict, cwd: Path) -> subprocess.CompletedProcess:
@@ -697,3 +721,163 @@ def test_hook_survives_unencodable_memory_entry_end_to_end(
     )
     assert "--recall" in ctx
     assert "M4. Validador o CONTRATO citado" in ctx
+
+
+# WOT-2026-100a ------------------------------------------------------------
+# El hook deja de ignorar el campo `source` del payload: `resume`/`compact`/
+# `fork` (sesion que CONTINUA, con historial ya presente) pasan a recibir el
+# contexto acotado por recencia (`get_compact_context`), mientras que
+# `startup`/`clear` y todo lo ilegible/desconocido conservan el indice completo
+# (`get_bootstrap_context`). Fail-open: la deteccion de `source` NUNCA puede
+# dejar a una sesion sin memoria.
+
+_BOOTSTRAP_CASES = [
+    b"",  # stdin vacio
+    b"{}",  # payload sin `source`
+    b"not-json",  # payload no-JSON
+    b'{"source":"startup"}',
+    b'{"source":"clear"}',
+    b'{"other":"x"}',  # campo ausente
+    b'{"source":"unknown"}',  # valor desconocido
+    b'{"source":123}',  # `source` no-string
+    b"[1, 2, 3]",  # JSON valido pero no-dict
+]
+_COMPACT_CASES = [
+    b'{"source":"resume"}',
+    b'{"source":"compact"}',
+    b'{"source":"fork"}',
+]
+
+
+class TestSourceRouting:
+    """DoD (2): el `source` del payload decide QUE puerta de memoria se abre."""
+
+    @pytest.mark.parametrize("payload", _BOOTSTRAP_CASES)
+    def test_bootstrap_sources_open_the_full_index(
+        self, payload, monkeypatch, tmp_path, capsys
+    ):
+        hook = _hook_module()
+        import bus.memory_loader as ml
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            ml,
+            "get_bootstrap_context",
+            lambda: (calls.append("bootstrap"), "BOOTSTRAP-CTX")[1],
+        )
+        monkeypatch.setattr(
+            ml,
+            "get_compact_context",
+            lambda: (calls.append("compact"), "COMPACT-CTX")[1],
+        )
+        monkeypatch.setattr(hook, "_health_line", lambda root: "")
+        _set_stdin_bytes(monkeypatch, payload)
+        monkeypatch.chdir(tmp_path)
+
+        assert hook.main() == 0
+        out = json.loads(capsys.readouterr().out)
+
+        assert calls == ["bootstrap"], (
+            f"{payload!r}: debe abrir el indice completo (fail-open para "
+            "payload ausente/ilegible/desconocido), no la puerta acotada"
+        )
+        assert "BOOTSTRAP-CTX" in out["additionalContext"]
+        assert set(out.keys()) == {"additionalContext"}, (
+            "el esquema de salida debe seguir siendo EXACTAMENTE "
+            '{"additionalContext": ...}'
+        )
+
+    @pytest.mark.parametrize("payload", _COMPACT_CASES)
+    def test_continuing_sources_open_the_compact_context(
+        self, payload, monkeypatch, tmp_path, capsys
+    ):
+        hook = _hook_module()
+        import bus.memory_loader as ml
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            ml,
+            "get_bootstrap_context",
+            lambda: (calls.append("bootstrap"), "BOOTSTRAP-CTX")[1],
+        )
+        monkeypatch.setattr(
+            ml,
+            "get_compact_context",
+            lambda: (calls.append("compact"), "COMPACT-CTX")[1],
+        )
+        monkeypatch.setattr(hook, "_health_line", lambda root: "")
+        _set_stdin_bytes(monkeypatch, payload)
+        monkeypatch.chdir(tmp_path)
+
+        assert hook.main() == 0
+        out = json.loads(capsys.readouterr().out)
+
+        assert calls == ["compact"], (
+            f"{payload!r}: una sesion que CONTINUA hereda historial, asi que "
+            "debe recibir el contexto acotado, no el indice completo reinyectado"
+        )
+        assert "COMPACT-CTX" in out["additionalContext"]
+        assert set(out.keys()) == {"additionalContext"}
+
+    def test_compact_failure_falls_back_to_full_index(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """DoD (3, fail-open): si la puerta acotada LANZA, se degrada al indice.
+
+        MUTACION ALCANZABLE: quitar el `except` interno que degrada -> este test
+        cae con excepcion en vez de devolver contexto.
+        """
+        hook = _hook_module()
+        import bus.memory_loader as ml
+
+        monkeypatch.setattr(ml, "get_bootstrap_context", lambda: "BOOTSTRAP-CTX")
+        monkeypatch.setattr(
+            ml,
+            "get_compact_context",
+            lambda: (_ for _ in ()).throw(RuntimeError("loader roto")),
+        )
+        monkeypatch.setattr(hook, "_health_line", lambda root: "")
+        _set_stdin_bytes(monkeypatch, b'{"source":"resume"}')
+        monkeypatch.chdir(tmp_path)
+
+        assert hook.main() == 0
+        out = json.loads(capsys.readouterr().out)
+        assert "BOOTSTRAP-CTX" in out["additionalContext"], (
+            "la deteccion de `source` no puede dejar la sesion sin memoria"
+        )
+
+    def test_fail_open_when_the_payload_cannot_be_parsed(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """DoD (3, MUTATION): `json.loads` lanza al parsear `source`.
+
+        `main()` debe seguir entregando `additionalContext` no vacio via
+        `get_bootstrap_context()`, sin propagar y con exit 0. Hoy NO existe el
+        guard de fail-open, asi que este test falla ANTES de implementarlo y pasa
+        DESPUES.
+
+        MUTACION ALCANZABLE: revertir el guard (dejar que `json.loads` propague
+        desde `_read_source`) -> la excepcion sale de `main()` y el test cae.
+        """
+        hook = _hook_module()
+        import bus.memory_loader as ml
+
+        monkeypatch.setattr(ml, "get_bootstrap_context", lambda: "BOOTSTRAP-CTX")
+        monkeypatch.setattr(ml, "get_compact_context", lambda: "COMPACT-CTX")
+        monkeypatch.setattr(hook, "_health_line", lambda root: "")
+        _set_stdin_bytes(monkeypatch, b'{"source":"resume"}')
+
+        class _FakeJson:
+            dumps = staticmethod(json.dumps)
+
+            @staticmethod
+            def loads(*_args, **_kwargs):
+                raise ValueError("payload no parseable")
+
+        monkeypatch.setattr(hook, "json", _FakeJson)
+        monkeypatch.chdir(tmp_path)
+
+        assert hook.main() == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["additionalContext"], "el contexto no puede quedar vacio"
+        assert "BOOTSTRAP-CTX" in out["additionalContext"]

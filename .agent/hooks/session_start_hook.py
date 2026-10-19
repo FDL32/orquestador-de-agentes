@@ -53,8 +53,12 @@ corresponde -- dentro del script--, y el arranque nunca se bloquea por memoria
 ilegible.
 
 Before: recibe el payload JSON de SessionStart por stdin (puede ir vacio).
-During: resuelve el project root, carga el indice via `get_bootstrap_context()`
-    y lo envuelve; anade una linea de salud de la memoria (WOT-2026-089e, por
+During: resuelve el project root; lee el campo `source` del payload y elige la
+    puerta de memoria (WOT-2026-100a): `startup`/`clear` -> indice completo
+    (`get_bootstrap_context`), `resume`/`compact`/`fork` -> contexto acotado por
+    recencia (`get_compact_context`); cualquier otro valor, campo ausente,
+    payload ilegible o excepcion en la deteccion -> indice completo (fail-open).
+    Envuelve el contenido; anade una linea de salud de la memoria (WOT-2026-089e, por
     subproceso de `check_memory_health.py`), DESPUES de la memoria un bloque
     con el backend/modelo de cada rol de capa resuelto desde `agents.json`
     (WOT-2026-098b), y SIEMPRE AL FINAL la seccion M4/M5 (2026-10-15):
@@ -72,7 +76,6 @@ After: imprime `{"additionalContext": ...}` por stdout y sale con 0 SIEMPRE.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import subprocess
 import sys
@@ -89,6 +92,15 @@ _EXPANSION_HINT = (
     '  python scripts/memory_context.py --recall --query "<termino de tu tarea>"\n'
     "  python scripts/memory_context.py --recall --id obs-<id-de-la-linea>\n"
 )
+
+
+# WOT-2026-100a: fuentes de SessionStart que CONTINUAN una sesion ya existente
+# (heredan su historial, o acaban de perderlo por compactacion). Para ellas el
+# indice completo de arranque es reinyeccion redundante, asi que se usa el
+# contexto acotado por recencia (`get_compact_context`, cuota por origen).
+# `startup`/`clear` -- y, por fail-open, cualquier valor ausente o desconocido --
+# conservan el indice completo historico (`get_bootstrap_context`).
+_COMPACT_SOURCES = frozenset({"resume", "compact", "fork"})
 
 
 def _resolve_root() -> Path:
@@ -396,13 +408,42 @@ def _m4_m5_section(root: Path) -> str:
         return _M4_M5_FALLBACK
 
 
-def _load_context(root: Path) -> str:
-    """Indice de memoria, o cadena vacia si no se puede cargar.
+def _read_source() -> str:
+    """Campo `source` del payload de SessionStart, o "" si no se puede leer.
+
+    WOT-2026-100a. NUNCA propaga: la deteccion de `source` no puede ser la razon
+    de que una sesion arranque sin memoria. Un payload vacio, no-JSON, no-dict,
+    sin `source` o con un `source` no-string devuelve "" -- que enruta al
+    fallback fail-open (indice completo). Drena stdin en todos los casos, para no
+    dejar la tuberia del llamante a medias.
+    """
+    try:
+        raw = sys.stdin.buffer.read()
+        if not raw:
+            return ""
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            return ""
+        source = payload.get("source")
+        return source if isinstance(source, str) else ""
+    except Exception:
+        return ""
+
+
+def _load_context(root: Path, source: str = "") -> str:
+    """Memoria segun la fuente de SessionStart, o cadena vacia si no se puede cargar.
+
+    WOT-2026-100a: `source` decide la puerta. `resume`/`compact`/`fork` usan
+    `get_compact_context()` (acotado por recencia, cuota por origen); cualquier
+    otra fuente -- `startup`, `clear`, valor desconocido o ausente -- usa
+    `get_bootstrap_context()`, el comportamiento historico.
 
     Nunca propaga: este hook es fail-open por contrato (ver docstring del
-    modulo). Un `except Exception` amplio es lo correcto AQUI y solo aqui --
-    cualquier fallo de importacion, de topologia o de parseo debe degradar a
-    "sin memoria", jamas impedir que la sesion abra.
+    modulo). La deteccion de `source` jamas puede ser la razon de arrancar sin
+    memoria: si la puerta acotada lanza, se degrada al indice completo. Un
+    `except Exception` amplio es lo correcto AQUI y solo aqui -- cualquier fallo
+    de importacion, de topologia o de parseo debe degradar a "sin memoria", jamas
+    impedir que la sesion abra.
     """
     try:
         import os
@@ -430,6 +471,19 @@ def _load_context(root: Path) -> str:
 
         if str(motor) not in sys.path:
             sys.path.insert(0, str(motor))
+
+        if source in _COMPACT_SOURCES:
+            try:
+                from bus.memory_loader import get_compact_context
+
+                return get_compact_context() or ""
+            except Exception:
+                # Fail-open: la puerta acotada fallo -> indice completo historico,
+                # nunca "sin memoria" por culpa de la logica de `source`.
+                from bus.memory_loader import get_bootstrap_context
+
+                return get_bootstrap_context() or ""
+
         from bus.memory_loader import get_bootstrap_context
 
         return get_bootstrap_context() or ""
@@ -477,13 +531,13 @@ def _print_context_safely(context: str) -> None:
 
 
 def main() -> int:
-    # Se drena stdin (el payload del hook) sin usarlo: este hook no necesita el
-    # evento, pero dejarlo sin leer puede romper la tuberia del llamante.
-    with contextlib.suppress(OSError, ValueError):
-        sys.stdin.buffer.read()
+    # El payload decide la puerta de memoria (WOT-2026-100a); `_read_source`
+    # drena stdin en TODOS los casos (tambien si no trae `source`), para no
+    # dejar la tuberia del llamante a medias.
+    source = _read_source()
 
     root = _resolve_root()
-    memory = _load_context(root)
+    memory = _load_context(root, source)
 
     if memory:
         context = (
