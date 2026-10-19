@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -351,6 +352,7 @@ def _absent_lines_from_ranges(
 def check_read_coverage(  # noqa: C901
     citations: list[dict[str, Any]],
     read_events: list[dict[str, Any]],
+    motor_root: Path | None = None,
 ) -> dict[str, Any]:
     """Check read coverage for each citation.
 
@@ -419,7 +421,7 @@ def check_read_coverage(  # noqa: C901
 
         for fp, ranges in coverage.items():
             # Exact match on the raw file_path from telemetry
-            if fp == path_raw:
+            if os.path.normcase(fp) == os.path.normcase(path_raw):
                 matched_ranges = ranges
                 break
             # Full normalized path match (B3 fix)
@@ -441,6 +443,18 @@ def check_read_coverage(  # noqa: C901
                     break
             except (OSError, ValueError):
                 continue
+            # WOT-2026-104l: relative path normalization — when telemetry
+            # carries a relative path (Kilo/nan style: "scripts/x.py") and the
+            # process CWD is NOT motor_root, Path(fp).resolve() anchors to the
+            # wrong root. Resolve the relative path against motor_root first.
+            if motor_root is not None and not os.path.isabs(fp):
+                try:
+                    motor_resolved = motor_root / fp
+                    if motor_resolved.resolve() == resolved.resolve():
+                        matched_ranges = ranges
+                        break
+                except (OSError, ValueError):
+                    continue
 
         absent_all: list[int] = []
         read_lines = 0
@@ -505,10 +519,43 @@ def check_read_coverage(  # noqa: C901
             detail["wc_lines"] = wc_lines
             detail["covered"] = False
             detail["absent_lines"] = absent_lines[:20]
-            result["errors"].append(
-                f"{path_raw}: {read_lines}/{wc_lines} lin leidas "
-                f"(ausentes: {absent_lines[:5] if absent_lines else 'N/A'})"
-            )
+            # F2: telemetry evidence — sessions that have events for this file
+            session_reads: dict[str, int] = {}
+            for ev in read_events:
+                fp_ev = ev["file_path"]
+                # Check if event relates to this file (exact or via motor_root)
+                norm_fp = os.path.normcase(fp_ev)
+                norm_cite = os.path.normcase(path_raw)
+                relates = False
+                if norm_fp == norm_cite:
+                    relates = True
+                if motor_root is not None and not os.path.isabs(fp_ev):
+                    try:
+                        if (motor_root / fp_ev).resolve() == resolved.resolve():
+                            relates = True
+                    except (OSError, ValueError):
+                        pass
+                if relates:
+                    sid = ev.get("session_id", "unknown")
+                    session_reads[sid] = session_reads.get(sid, 0) + ev["line_count"]
+            if session_reads:
+                reads_str = " ".join(
+                    f"session={sid} reads={n}"
+                    for sid, n in sorted(session_reads.items())
+                )
+                detail["telemetry_evidence"] = reads_str
+                result["errors"].append(
+                    f"{path_raw}: {read_lines}/{wc_lines} lin leidas "
+                    f"(ausentes: {absent_lines[:5] if absent_lines else 'N/A'}) "
+                    f"[{reads_str}]"
+                )
+            else:
+                detail["telemetry_evidence"] = None
+                result["errors"].append(
+                    f"{path_raw}: {read_lines}/{wc_lines} lin leidas "
+                    f"(ausentes: {absent_lines[:5] if absent_lines else 'N/A'}) "
+                    f"[no-telemetry-for-file]"
+                )
             result["ok"] = False
 
         result["details"].append(detail)
@@ -620,7 +667,7 @@ def main() -> int:  # noqa: C901
         return 0
 
     # Check coverage
-    result = check_read_coverage(citations, read_events)
+    result = check_read_coverage(citations, read_events, motor_root=motor_root)
 
     # Report
     if result["errors"]:

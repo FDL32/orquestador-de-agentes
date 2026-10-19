@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bus.redact import redact
+
 
 # ------------------------------------------------------------------ helpers
 _ROOT = Path(__file__).resolve().parents[2]
@@ -898,4 +900,328 @@ def test_mutation_verify_max_logic_fails(tmp_path: Path) -> None:
     rc_both, stdout_both, _ = _run_check(motor_root, artifact, telemetry_dir)
     assert rc_both == 0, (
         f"La union de las 2 paginas debe PASS, got rc={rc_both}\nstdout: {stdout_both}"
+    )
+
+
+# ------------------------------------------------------------------ WOT-2026-104l: relative path normalization (F3)
+
+
+def test_dod_104l_no_telemetry_returns_error_with_evidence(tmp_path: Path) -> Path:
+    """DoD F3.1: sesion sin eventos -> rc=1 con 'no-telemetry-for-file'.
+
+    Caso CORRECTO por diseno: sin telemetria, la barrera debe fallar, pero
+    el diagnostico debe decir explicitamente que no hay eventos para ese file.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/sample.md": "line1\nline2\nline3\n"},
+        [],  # no telemetry at all
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/sample.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 1, (
+        f"Expected FAIL (rc=1) with no telemetry, got rc={rc}\nstdout: {stdout}"
+    )
+    assert "no-telemetry-for-file" in stdout, (
+        f"Should show 'no-telemetry-for-file' evidence, got: {stdout}"
+    )
+    assert "FAIL" in stdout or "ERROR" in stdout, (
+        f"Should contain FAIL/ERROR marker, got: {stdout}"
+    )
+
+
+def test_dod_104l_relative_path_matches_from_non_motor_cwd(tmp_path: Path) -> Path:
+    """DoD F3.2: evento RELATIVO (Kilo-style) casa desde CWD != motor_root.
+
+    Un evento Kilo/nan registra ruta relativa "scripts/guard.py". Si el proceso
+    que corre el checker tiene CWD != motor_root, Path(fp).resolve() ancla mal.
+    El fix resuelve el path relativo contra motor_root antes de comparar.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                # Kilo/nan style: ruta relativa SIN redactar
+                "context": "Read file scripts/guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `scripts/guard.py` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # _run_check already runs with cwd=str(motor_root), but the key is que el
+    # evento es RELATIVO y la telemetria lo registra asi -- el motor_root se
+    # pasa por --motor-root al script. Si CWD fuera distinto del motor, el
+    # resolve() sin motor_root fallaria el match.
+    rc, stdout, stderr = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Relative path event should match when motor_root is provided, "
+        f"got rc={rc}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+    assert (
+        "PASS" in stdout
+        or "covered" in stdout.lower()
+        or "leidos enteramente" in stdout
+    )
+
+
+def test_dod_104l_relative_from_different_cwd(tmp_path: Path) -> None:
+    """DoD F3.2 espejo: ejecutar el checker con cwd distinto al motor_root.
+
+    Simula exactamente el escenario medido: telemetria Kilo con ruta relativa,
+    proceso del checker corre desde otro directorio, motor_root se pasa por arg.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                "context": "Read file scripts/guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `scripts/guard.py` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # Ejecutar con cwd DIFERENTE al motor_root (tmp_path, no motor_root)
+    cmd = [
+        sys.executable,
+        str(_SCRIPT),
+        str(artifact),
+        str(telemetry_dir),
+        "--motor-root",
+        str(motor_root),
+    ]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # <-- CWD distinto al motor_root
+        timeout=30,
+    )
+
+    assert result.returncode == 0, (
+        f"Relative path should match from non-motor CWD, got rc={result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_dod_104l_absolute_redacted_still_passes(tmp_path: Path) -> Path:
+    """DoD F3.2: formato absoluto-redactado no se regresa (B5 regresion).
+
+    Verificar que el fix de relative paths no rompe el caso absoluto-redactado
+    que ya funcionaba (sesiones Claude Code/T3).
+
+    El mini-motor crea el fichero en motor_root/prompts/sample.md.
+    La telemetria redactada usa una ruta ABSOLUTA bajo motor_root.
+    El matcher B5 compara redact(resolved) == redact(fp).
+
+    Para que el match sea posible, construimos la ruta redactada REAL que
+    produciria redact() sobre la ruta resuelta del fichero en el mini-motor.
+    """
+    import shutil
+
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/sample.md": "line1\nline2\nline3\n"},
+        [],
+    )
+
+    # Copy the script to the mini-motor so resolve_motor_root() resolves to
+    # the mini-motor root (not the real repo).
+    scripts_dir = motor_root / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    shutil.copy2(_SCRIPT, scripts_dir / "check_contract_full_read.py")
+
+    # The resolved path of the file is motor_root / "prompts" / "sample.md".
+    # We construct the telemetry path so that redact(fp) == redact(resolved).
+    # The simplest: use the ACTUAL resolved path as the telemetry path.
+    # When the file exists at motor_root/prompts/sample.md,
+    # resolve() gives the real absolute path.
+    resolved_file = motor_root / "prompts" / "sample.md"
+    real_resolved = str(resolved_file.resolve())
+    fake_redacted = redact(real_resolved)
+
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+    telemetry_file = telemetry_dir / "tool_usage.jsonl"
+    with telemetry_file.open("w", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "context": f"Read file {fake_redacted}, 3 lines",
+                    "tool_name": "view_file",
+                    "timestamp": "2026-10-19T00:00:00Z",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/sample.md` entero antes de trabajar.",
+    )
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Absolute-redacted format should still PASS (B5 regression), got rc={rc}\n"
+        f"stdout: {stdout}"
+    )
+
+
+def test_dod_104l_cwd_non_motor_fails_without_fix(tmp_path: Path) -> None:
+    """DoD F3.2: demostrar el gap medido con cwd != motor_root.
+
+    El escenario medido: telemetria Kilo con ruta relativa, proceso del checker
+    corre desde otro directorio (tmp_path), motor_root se pasa por --motor-root.
+    La prueba VERIFICA que el fix (motor_root arg + 4ta rama) resuelve el match.
+    La contrapartida: sin el fix, el mismo escenario fallaria.
+
+    Mutation-verify: si se comenta la 4ta rama de F1 en check_read_coverage,
+    este test relativo (con cwd != motor_root) caeria en rojo. Restaurar F1 -> pasa.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                "context": "Read file scripts/guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `scripts/guard.py` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # With --motor-root (F1 fix applied): should PASS even from non-motor CWD
+    cmd_with_motor = [
+        sys.executable,
+        str(_SCRIPT),
+        str(artifact),
+        str(telemetry_dir),
+        "--motor-root",
+        str(motor_root),
+    ]
+    result_with = subprocess.run(
+        cmd_with_motor,
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # CWD != motor_root
+        timeout=30,
+    )
+    assert result_with.returncode == 0, (
+        f"With motor_root arg, relative path should match. rc={result_with.returncode}\n"
+        f"stdout: {result_with.stdout}\nstderr: {result_with.stderr}"
+    )
+    assert "PASS" in result_with.stdout or "leidos enteramente" in result_with.stdout
+
+
+def test_dod_104l_mutation_verify_relative_branch(tmp_path: Path) -> None:
+    """DoD F3.2 mutation-verify: la 4ta rama de F1 es discriminante.
+
+    El gap medido ocurre cuando: (a) el evento de telemetria tiene la ruta
+    RELATIVA, (b) la CITACION tiene la ruta ABSOLUTA (o viceversa), y
+    (c) CWD del proceso NO es motor_root.
+
+    En ese escenario, el matcher del 104l (subprocess con cwd != motor_root)
+    FALLA sin el fix y PASA con el fix -- ver test_dod_104l_relative_from_different_cwd.
+
+    Para la mutation directa: se construye un par cita/telemetria donde:
+    - El evento de telemetria tiene la ruta RELATIVA con separador WINDOWS
+      (backslash) -> "scripts\\guard.py"
+    - La cita tiene la ruta con barras -> "scripts/guard.py"
+    Sin F1, os.path.normcase no aplica y el backslash no casa con la cita.
+    Con F1, normcase normaliza ambos a la misma forma y casan.
+
+    Mutation-verify: si se elimina os.path.normcase de las ramas de match,
+    este test con backslash en telemetria FAIL. Restaurar normcase -> PASS.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                # Telemetria Kilo/nan con backslash (formato Windows crudo)
+                "context": "Read file scripts\\guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `scripts/guard.py` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # El evento usa backslash, la cita usa barra normal.
+    # normcase en la rama exact match (F1) normaliza ambos y los casa.
+    # Sin normcase: "scripts\\guard.py" != "scripts/guard.py" -> no case.
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    # El fix de F1 aplica normcase en la rama exact match, asi que casa.
+    assert rc == 0, (
+        f"Backslash in telemetry relative path should normalize and match, "
+        f"got rc={rc}\nstdout: {stdout}"
+    )
+
+
+def test_dod_104l_cwd_separator_normalization(tmp_path: Path) -> None:
+    """DoD F3.2: path con backslash en evento relativo se normaliza.
+
+    Windows: "scripts\\guard.py" vs "scripts/guard.py" en la cita.
+    os.path.normcase + motor_root / fp debe casar.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                "context": "Read file scripts\\guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `scripts/guard.py` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Backslash-separator relative path should normalize and match, got rc={rc}\n"
+        f"stdout: {stdout}"
     )

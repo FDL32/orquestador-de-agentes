@@ -90,19 +90,23 @@ no justifica un ticket de barrera nueva (confianza insuficiente, n=1 vs n=1);
 se registra aqui como dato para la proxima sesion que quiera evaluar si se
 repite en otros vuelos.
 
-## F6 -- Dos hooks de esta instalacion bloquean commits de sesiones Claude Code/T3 por motivos DISTINTOS
+## F6 -- `check-contract-full-read` y `check-model-id-crystallization` bloquean commits
 
-- **`check-contract-full-read` (gap de instrumentacion, WOT-2026-104l,
-  pendiente):** esta sesion no esta cableada al mismo `native_post_tool_hook.py`
-  que instrumenta las llamadas `Read` de las sesiones Kilo/`nan`. Confirmado
-  empiricamente DOS VECES de forma independiente (hija y coordinadora, en
-  commits distintos) que leer un fichero ENTERO con la herramienta Read nativa
-  de esta sesion no mueve el contador de cobertura del hook. WOT-2026-104j
-  (bug de union de rangos) esta CERRADO y es correcto; este es un gap DISTINTO
-  que 104j no podia arreglar (no hay telemetria que unir si nunca se escribe).
-  Workaround usado en vivo (dos veces, funciono ambas): exportar el diff
-  pre-aprobado como `.patch` y pedir a una sesion Kilo/`nan` hermana que lo
-  aplique y commitee.
+- **`check-contract-full-read` (normalizacion de formato, WOT-2026-104l,
+  resuelto):** el cableado existe y siempre existio: `.claude/settings.json`
+  dispara `native_post_tool_hook.py` para Read events. El gap real era la
+  normalizacion de formato de ruta entre plataformas en el lector:
+  sesiones Kilo/nan emiten ruta RELATIVA (`"scripts/x.py, 656 lines"`),
+  mientras que Claude Code/T3 emiten ruta ABSOLUTA REDACTADA
+  (`"Read file C:\Users\***REDACTED***\...\prompts\x.md, 126 lines"`). El
+  lector (`check_contract_full_read.py`) solo resolvio absolutas y exactas,
+  no relativas. Corregido con WOT-2026-104l: se aporto una 4ta rama de
+  matching que resuelve relativas contra `motor_root`, mas `os.path.normcase`
+  para normalizar separadores en Windows. El fix incluye evidencia de
+  telemetria en el output FAIL (F2) y tests que reproducen el gap medido.
+  Limitacion declarada: sin `--session-id`, el lector carga TODAS las sesiones;
+  una sesion puede sellar PASS con telemetria de otra (falso-verde por
+  contaminacion cruzada) -- no cerrado aqui.
 - **`check-model-id-crystallization` (por diseno, no es un bug):** rechaza
   CUALQUIER trailer `Co-Authored-By` que nombre un modelo concreto con
   version (p.ej. "Claude Sonnet 5") + auto-firma `noreply@`, sin importar que
