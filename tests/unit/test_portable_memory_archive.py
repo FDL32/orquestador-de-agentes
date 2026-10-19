@@ -1699,3 +1699,49 @@ def test_045f_no_stale_entries_omits_the_section_entirely():
     }
     text = memory_loader._format_archive_as_text([activa])
     assert "Refutadas o supersedidas" not in text
+
+
+# --- WOT-2026-058b: read_archive_dir (D2, T8) -------------------------------
+
+
+def test_read_archive_dir_reads_all_months_and_fails_closed_on_the_dir(
+    tmp_path: Path,
+) -> None:
+    """WOT-2026-058b / T8: `read_archive_dir(dir)` lee todos los meses, [] si no existe, CorruptArchiveError si esta roto.
+
+    El nuevo API publico `read_archive_dir` necesita su propia barrera, no solo
+    pasarla por delegacion desde `test_corrupt_archive_raises_with_file_and_line`.
+
+    1. Dir con multiples meses -> lee TODOS.
+    2. Dir inexistente -> [].
+    3. Archivo roto -> CorruptArchiveError con fichero+linea.
+    """
+    # (1) Multi-month: two months, different records.
+    dir_ = tmp_path / "archive"
+    dir_.mkdir()
+    _write_jsonl(dir_ / "observations.2026-06.jsonl", [_observation("CANARY-JUN-58b")])
+    _write_jsonl(dir_ / "observations.2026-07.jsonl", [_observation("CANARY-JUL-58b")])
+
+    # Test `read_archive_dir` directly.
+    from bus.portable_memory_archive import read_archive_dir
+
+    result2 = read_archive_dir(dir_)
+    assert len(result2) == 2
+    ids = [e.get("id") for e in result2]
+    assert "CANARY-JUN-58b" in ids
+    assert "CANARY-JUL-58b" in ids
+
+    # (2) Non-existent dir -> []
+    empty = read_archive_dir(tmp_path / "nonexistent")
+    assert empty == []
+
+    # (3) Corrupt file -> CorruptArchiveError with file+line.
+    dirty_dir = tmp_path / "dirty_archive"
+    dirty_dir.mkdir()
+    (dirty_dir / "observations.2026-07.jsonl").write_text(
+        json.dumps({"ok": True}) + "\n{ROTO\n", encoding="utf-8"
+    )
+    with pytest.raises(CorruptArchiveError) as exc:
+        read_archive_dir(dirty_dir)
+    assert "observations.2026-07.jsonl" in str(exc.value)
+    assert "2" in str(exc.value)  # line 2
