@@ -166,6 +166,46 @@ como "la sesion coordinadora" -- una sesion hija que tiene que adivinar el desti
 enviar su informe a una sesion hermana de una prueba anterior y que nunca llegue (caso real,
 2026-10-18: `autonomo-b-20261018` reporto a un nombre de sesion obsoleto de su contexto heredado).
 
+**Mecanismo real de sesiones padre/hijo en T3 (WOT-2026-104i, verificado en vivo
+2026-10-18 -- NO es GitHub, una busqueda web lo sugirio y era incorrecto):**
+`t3_thread_launch` (y `create_threads`) crean SIEMPRE un hilo TOP-LEVEL ordinario --
+su propia descripcion de herramienta lo dice literalmente. Nunca queda enlazado al
+padre en el sistema de T3; cualquier "parentesco" construido encima (nombre de sesion
++ instruccion de reportar de vuelta, el patron usado hasta hoy) es coordinacion
+artificial, invisible para la UI de T3 y para cualquier notificacion nativa.
+`delegate_task` SI crea un hijo reconocido nativamente por T3 (`childThreadId` como
+almacenamiento de respaldo, notificacion automatica de finalizacion al padre,
+`task_status`), y admite `isolation: "worktree"` para darle su propio checkout
+aislado basado en el COMMIT LOCAL del padre (cambios sin commitear NO se copian).
+Si una sesion necesita lanzar trabajo hijo con parentesco real (no solo
+coordinacion por mensaje), usa `delegate_task` + `isolation: worktree`, no
+`t3_thread_launch`. **Sin verificar todavia:** si un hijo de `delegate_task` admite
+el mismo protocolo de emparejamiento motor+destino (sufijo compartido,
+`motor_destination_link.json`) que necesitan las sesiones de `t3_thread_launch` --
+su aislamiento es un unico checkout atado a un proyecto, asi que el problema del
+PAR motor+destino puede seguir necesitando aprovisionamiento manual igual que hoy.
+
+**Estado de gobierno de la arquitectura vuelo/hijo (NO ADOPTADA):** una propuesta de
+sesiones anidadas vuelo/hijo (`.agent/planning/PROPUESTA_sesiones_anidadas_vuelo_
+hijo_20261018.md` en el repo_destino de esa fecha) fue sometida a bucle adversarial
+(ROL-2) y rechazada 6/6 CHANGES el 2026-10-18 -- entre otros huecos, asumia que
+`t3_thread_launch` podia comportarse como hijo rastreado, lo cual es estructuralmente
+falso (ver parrafo anterior). Antes de implementar cualquier gate o protocolo de
+"sesion hijo" en produccion, re-evaluar la propuesta con `delegate_task` como
+mecanismo base y volver a pasar bucle de gobierno -- este parrafo es informativo/
+puntero, no autoriza la arquitectura.
+
+**Modo de ejecucion "4 capas" (pointer, no re-declara):** el patron de delegacion
+real a `nan` via Kilo CLI (Manager-nan/Revisor-nan/Builder-nan, con Claude Code como
+orquestador) vive en `prompts/agent_execution_modes.md` (modos Tradicional/4 capas/
+Intermedio, SECCION normativa unica) y su vocabulario de "personas" en
+`prompts/persona_system.md`. No confundir ninguno de los dos con el mecanismo de
+sesiones hijas de T3 de arriba: 4 capas es delegacion INTRA-sesion via Kilo CLI
+(mismo proceso T3, subprocesos `kilo run`), mientras que `delegate_task`/
+`t3_thread_launch` son hilos T3 DISTINTOS (procesos Claude Code independientes).
+Son ejes ortogonales -- una sesion T3 (hija o no) puede operar en modo 4 capas
+internamente, y una sesion en modo Tradicional puede, aun asi, lanzar hijas T3.
+
 **Regla canonica unica de worktree-dev (WOT-2026-019m):** en dogfooding del motor,
 el `repo_motor` operativo donde se commitea/pushea es la **worktree de
 desarrollo** (la que lleva `main`; su ruta se resuelve de forma PORTABLE via

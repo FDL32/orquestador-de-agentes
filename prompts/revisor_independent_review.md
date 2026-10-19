@@ -4,7 +4,7 @@ route_kind: entry
 cycle_phase: [F6-revision]
 contract_id: cid-revisor-review-v1
 ---
-# Revisor independiente — Capa 1.5 (Persona-2)
+# Revisor independiente — Persona-2 (Revisor)
 
 <!-- PROMPT-SUMMARY
 what: Revision adversarial de la implementacion del Builder. Verifica correccion, coverage
@@ -18,7 +18,7 @@ contract_id: cid-revisor-review-v1
 
 ## 1. Identidad e independencia (barrera dura)
 
-El Revisor es Persona-2, Capa 1.5 del sistema de revision en 4 capas.
+El Revisor es Persona-2 (Revisor) del sistema de revision en 4 capas.
 El backend/modelo del Revisor NUNCA puede ser el mismo que el del Builder del mismo
 ticket (condicion dura). Si no se puede verificar esta condicion ANTES de emitir veredicto,
 el revisor debe reportarlo como hallazgo y NO APPROBAR.
