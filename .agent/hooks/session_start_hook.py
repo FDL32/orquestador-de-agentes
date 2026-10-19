@@ -64,7 +64,8 @@ During: resuelve el project root; lee el campo `source` del payload y elige la
     (WOT-2026-098b), y SIEMPRE AL FINAL la seccion M4/M5 (2026-10-15):
     contratos de invocacion leidos EN VIVO desde
     `prompts/orchestrator_launch_builder.md`. Solo lectura; ninguna escritura.
-After: imprime `{"additionalContext": ...}` por stdout y sale con 0 SIEMPRE.
+After: imprime `{"additionalContext": ...}` por stdout (esquema IDENTICO al de
+    siempre; solo cambia el contenido segun la fuente) y sale con 0 SIEMPRE.
     Ante cualquier error emite un contexto minimo que apunta al comando manual.
     La seccion de roles hereda el mismo fail-open: si `agents.json` falta, esta
     corrupto o no declara `role_mapping`, se OMITE (cadena vacia) sin degradar la
