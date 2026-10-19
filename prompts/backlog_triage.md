@@ -79,7 +79,7 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<dominio del lot
 **Consulta obligatoria adicional de propuestas de PROCESO (WOT-2026-104e, 2026-10-18):**
 ademas de la consulta de dominio de arriba, ejecuta SIEMPRE una segunda consulta dirigida a
 lecciones de PROCESO de cierre (no de producto). El bloque 2.5.j del cierre
-(`prompts/orchestrator_session_close_full_audit.md:273-276`, PROCESS IMPROVEMENT PROPOSAL)
+(`prompts/orchestrator_session_close_full_audit.md`, sub-bloque 2.5.j, PROCESS IMPROVEMENT PROPOSAL)
 etiqueta sus `backlog_ticket`/`memory_candidate` con el prefijo literal `[PROCESO-CIERRE]`:
 
 ```powershell

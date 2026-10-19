@@ -187,6 +187,26 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
      `obs-mutation-verify-copy-restore-not-git-checkout`). Al terminar la
      pasada, `git status` debe quedar LIMPIO de restos de mutacion; una
      mutacion dejada sin restaurar es hallazgo y BLOQUEA el cierre.
+4.bis TRABAJO DELEGADO A HIJOS: INFORME DE CIERRE PARCIAL COMO FUENTE (WOT-2026-104q). Si parte de
+   los diffs de esta sesion los produjo un Builder/fork/hijo delegado, su `CIERRE_PARCIAL_<TICKET>.md`
+   es la fuente de partida de este punto. Formato, ruta y criterio de rechazo: `prompts/
+   builder_invocation_contract.md` Seccion 3.5 (`contract_id: cid-builder-invocation-v1`); no se
+   repiten aqui. Correspondencia campo -> punto de este checklist:
+   - Encuadre (commits/`git diff --stat`) <- `CP-1`.
+   - Barrera mutation-verified y COPY-RESTORE <- `CP-2`.
+   - 5.ter, SOLO su PRECONDICION del lado del hijo (brazo TERMINADO, mutaciones revertidas por
+     COPY-RESTORE, `git status` limpio de restos de mutacion, ver punto 4) <- `CP-3` (linea literal
+     `HIJO TERMINADO` + salida real de `git status --short`, que solo puede listar el entregable
+     declarado en `CP-1`; y, si el hijo era delegado bajo protocolo trio, sus gates focales sin
+     `--level all`). La ejecucion EXCLUSIVA de la suite de cierre es acto del Manager: no la
+     acredita ningun campo del informe del hijo.
+   - Push (`AGENTS.md` "Push por vuelo") <- `CP-4`.
+   - Bloqueos de guards (Seccion 3 del contrato del Builder) <- `CP-5`.
+   El informe es evidencia DECLARADA por el hijo, no verificada (CEM: ningun auto-reporte es
+   evidencia): el auditor/Manager re-ejecuta lo que cita (SHA, diff, rc). Reduce el coste de la
+   verificacion, no la sustituye. Informe ausente o incompleto (incluido un `CP-3` sin la linea
+   `HIJO TERMINADO` y su `git status --short`) -> ese trabajo queda `cierre NO
+   VERIFICABLE` hasta verificarlo a mano. El fichero no se commitea y se borra antes del Bloque 3.
 5. Herramientas de EVIDENCIA de esta pasada (no son las 3 auditorias estructurales). El auditor PROPONE hallazgos; estas skills son consumidoras que IMPLEMENTAN solo si procede y con tu OK:
    - `skills/builder-self-audit/SKILL.md`: las 3 barreras secuenciales del Builder (sintaxis por tipo via py_compile/yaml.safe_load/json.load, completitud multi-archivo, frescura documental PROJECT.md/QUICKSTART.md/TURN.md/STATE.md) deben tener evidencia de salida real, no exit code de un pipe.
    - `skills/builder-run-quality-gates/SKILL.md`: confirma que los gates corrieron via `scripts/run_gates_dispatch.py` (dispatch por deliverable_type), NO invocando ruff/pytest directo (eso evade el audit trail).

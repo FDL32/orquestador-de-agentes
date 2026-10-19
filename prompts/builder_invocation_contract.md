@@ -239,6 +239,65 @@ de shell parchee codigo Python en su propio proceso. `prompts/kilo_trio_dispatch
 dispatch_builder.template.md` (B2/B9) apunta aqui por REFERENCIA, sin redeclarar estas
 prohibiciones (X-09).
 
+## 3.5. Informe de cierre parcial del hijo delegado (WOT-2026-104q)
+
+**Problema que cierra:** ningun contrato exigia que un Builder/fork/hijo delegado entregara, al
+terminar, un informe estructurado; el Manager recibia prosa libre y reconstruia la verificacion a
+mano. Esta seccion fija el FORMATO de ese informe. NO define criterios nuevos: cada campo RELLENA un
+punto YA ESCRITO del checklist de `prompts/orchestrator_session_close_full_audit.md`
+(`contract_id: cid-session-close-full-audit-v0`), Bloque 2, o de `AGENTS.md`. Si un campo y su
+fuente divergen, prevalece la fuente (X-09: el informe rellena el checklist, no lo redeclara).
+
+**Obligacion:** todo Builder/subagente/hijo delegado invocado bajo este contrato, al terminar su
+mandato (con exito, parcial o bloqueado), escribe un INFORME DE CIERRE PARCIAL con los cinco campos
+de abajo, en este orden y con estos ids estables. Ningun campo se omite ni se deja vacio: cuando no
+aplica, lleva su valor literal permitido.
+
+| Id | Campo | Contenido exigido | Satisface (fuente) | Valor literal si no aplica |
+|---|---|---|---|---|
+| `CP-1` | Commits/diff | SHA(s) de commit + salida REAL de `git log` y `git diff --stat` (cwd = el checkout del hijo) | Bloque 2 punto 4, bullet "Encuadre" | `SIN COMMIT (cambios en working tree)` + salida real de `git diff --stat` + `git status --short` (caso del hijo SIN autorizacion de commitear) |
+| `CP-2` | Mutation-verify | Por cada guard/test NUEVO que afirme bloquear un fallo: node-id + rc ROJO con la mutacion + rc VERDE tras revertir; reversion por COPY-RESTORE (nunca `git checkout --`/`git restore`); salida de `git status` limpia de restos (`*.premut`) tras revertir | Bloque 2 punto 4, bullets "Barrera mutation-verified" y "COPY-RESTORE" | `N/A: sin guard/test nuevo` |
+| `CP-3` | Gates focales + hijo terminado | (a) Comando EXACTO de cada gate + su `exit_code` REAL (nunca el rc de una tuberia: usa `python scripts/tools/run_and_exit.py --tail N -- <cmd>`). Trampa conocida: `python scripts/check_encoding_guard.py` SIN argumentos y sin nada staged da un verde vacuo; pasa SIEMPRE las rutas explicitas tocadas. (b) Hijo delegado cuyo Manager/coordinador separado corre la suite de cierre (protocolo trio, `AGENTS.md` WOT-2026-104k): PROHIBIDO `--level all`. Fuera de ese caso rige el "Alcance declarado" de esa misma regla; si el hijo SI era el verificador legitimo de `--level all`, lo declara citando ese alcance. (c) SIEMPRE, como ultima linea del campo, la declaracion literal `HIJO TERMINADO: sin procesos propios en background ni mutaciones sin restaurar`, seguida de la salida REAL de `git status --short` tomada despues de esa ultima accion, que solo puede listar los ficheros del entregable declarados en `CP-1` y el propio informe: cualquier otra entrada (restos `*.premut`, temporales, cambios no declarados) es resto de mutacion y deja el campo invalido (5.ter pide `git status` "limpio" en el sentido de Bloque 2 punto 4, "LIMPIO de restos de mutacion", no arbol vacio: un hijo sin commit tiene su entregable en el working tree) | Bloque 2 punto 5.ter (precondicion: brazo TERMINADO, mutaciones revertidas, `git status` limpio) + `AGENTS.md` "Asignacion de rol en despacho trio (WOT-2026-104k)" | `N/A: sin gate aplicable` + motivo para (a) (raro: hasta un ticket documental corre encoding/nomenclatura); (c) NO admite N/A: sin la linea `HIJO TERMINADO` y su `git status --short` el campo cuenta como vacio |
+| `CP-4` | Push | Declaracion explicita `NO PUSH`, o, si hubo push, la cita literal de la autorizacion que lo amparaba | `AGENTS.md` "Push por vuelo: UN solo push al final de TODOS los tickets" | (sin N/A: siempre `NO PUSH` o la autorizacion) |
+| `CP-5` | Bloqueos | Cada guard bloqueante encontrado: nombre, comando, salida/rc, y que hizo el hijo (por la Seccion 3: DETENERSE y reportarlo aqui, nunca parchearlo) | Seccion 3 de este contrato | `NINGUNO` |
+
+La declaracion `HIJO TERMINADO` vive en `CP-3` y no en `CP-2` porque `CP-2` admite N/A (hijo sin
+guard/test nuevo), mientras la precondicion de 5.ter se exige a TODO hijo, y `CP-3` es el campo que
+ya responde ante 5.ter. Acredita solo el lado del hijo: que el Manager corra la suite de cierre en
+exclusiva sigue siendo acto del Manager, y ningun campo de este informe lo acredita.
+
+Seccion final opcional `HUECOS_DETECTADOS`: ambiguedades o contradicciones del mandato o de los
+contratos, con cita `fichero:linea`, en vez de improvisar en silencio.
+
+**Ruta fija y citable:** el informe se escribe a `<worktree-del-hijo>/CIERRE_PARCIAL_<TICKET>.md`
+(p.ej. `CIERRE_PARCIAL_WOT-2026-104q.md` en la raiz del worktree), no solo en la respuesta del chat
+(mismo motivo que la Seccion 1: escribir a fichero es consistente, responder por texto no). El
+fichero NO se commitea: es evidencia EFIMERA del handoff hijo->Manager.
+
+**Tension declarada con la raiz limpia y con session-close:** el fichero choca con "Mantiene la raiz
+limpia" de `AGENTS.md` y con el requisito de motor sin cambios sin commitear del cierre de sesion
+(`prepush_check` / `check_git_tree_clean`). Resolucion: el Manager, tras leerlo y volcar lo que haga
+falta a su propia evidencia (`execution_log.md` o informe de vuelo), lo BORRA antes de su propio
+commit y antes de cualquier `--session-close`; `git status --short` no debe listarlo al cerrar.
+LIMITE conocido: no hay entrada en `.gitignore` ni guard que lo impida colarse en un `git add -A`;
+la proteccion es de orden (norma), no mecanica.
+
+**Criterio de rechazo:** un hijo que NO produce el informe en este formato -- fichero ausente, algun
+`CP-n` faltante o vacio, un campo sin contenido exigido ni valor literal permitido, o un `CP-3` sin
+la linea `HIJO TERMINADO` seguida de la salida real de `git status --short` -- deja su
+trabajo en `cierre NO VERIFICABLE`. Nunca se acepta en silencio: el Manager no certifica ese trabajo
+hasta rehacer la verificacion a mano y declararlo asi en su propia evidencia.
+
+**El informe es evidencia DECLARADA, no verificada:** es un auto-reporte del hijo y por CEM no es
+evidencia por si solo. El Manager/auditor sigue re-ejecutando lo que el informe cita (SHA, diff,
+rc); el informe reduce el coste de esa verificacion, no la sustituye.
+
+**Limite declarado (barrera):** esta seccion es una NORMA, no una barrera cableada (vocabulario de
+`AGENTS.md` "Barrera cableada"): no existe test ni guard que compruebe la presencia o el formato del
+fichero. Ticket dueno: PENDIENTE de alta en el backlog del workspace del motor por la sesion
+coordinadora (este ensayo no tiene acceso de escritura al backlog); hasta entonces es deuda
+declarada, no barrera.
+
 ## 4. Relacion con `AGENTS.md`
 
 El vocabulario canonico de roles (`AGENTS.md`, seccion "Backends y roles") define que es un backend IA
