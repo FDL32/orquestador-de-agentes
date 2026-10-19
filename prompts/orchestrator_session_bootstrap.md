@@ -312,8 +312,10 @@ Reglas duras del orquestador (verificadas en sesiones reales):
   re-corres TU sobre el repo real (cazo false-greens y typos que los reportes
   ocultaban).
 - Modo por defecto: encadenar cierres canonicos EN LOCAL y UN solo push al
-  final de la cola, con OK humano explicito. Los guards operan sobre HEAD
-  local, no sobre origin.
+  final de TODOS los tickets de la cola/vuelo, con OK humano explicito
+  resuelto al preparar el vuelo (nunca ticket a ticket; sin OK registrado el
+  vuelo termina en `PUBLICACION_PENDIENTE_AUTORIZACION`). Los guards operan
+  sobre HEAD local, no sobre origin.
 - Review 2 adversarial fresh-context OBLIGATORIA si el ticket toca
   gate/bus/estado/CI/hooks/seguridad. NUNCA lances dos reviews en paralelo
   que muten el mismo archivo: usa git worktree aislada o copia en scratchpad.

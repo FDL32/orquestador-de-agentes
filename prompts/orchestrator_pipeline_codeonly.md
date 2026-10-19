@@ -196,9 +196,12 @@ fixture que satisface el assert por 2 rutas redundantes da falso-verde.
 - **Co-Authored-By DINAMICO**: firmar con la identidad REAL del modelo ejecutor de
   ESA sesion, no un valor hardcoded. Si no puedes determinar tu modelo con certeza,
   OMITE el trailer (mejor sin co-autoria que con una falsa).
-- **Push AGRUPADO al final de sesion, con autorizacion explicita del usuario** (NO push
-  por ticket: el usuario controla cuando el trabajo sale a remoto; incidente 2026-07-11).
-  Verificar HEAD == origin/main + arbol limpio tras el push autorizado.
+- **Push AGRUPADO al final de TODOS los tickets del vuelo, con autorizacion explicita
+  del usuario** (NO push por ticket: el usuario controla cuando el trabajo sale a remoto;
+  incidente 2026-07-11). La autorizacion se resuelve al PREPARAR el vuelo y se registra
+  una sola vez; sin ella, el vuelo cierra todo en local y termina en
+  `PUBLICACION_PENDIENTE_AUTORIZACION` (remoto intacto). Verificar HEAD == origin/main
+  + arbol limpio tras el push autorizado.
 
 ### 7. Verificar YO cada claim del Builder/Manager
 No fiarse del reporte; verificar con evidencia (diff/exit-code/test/grep), no con el

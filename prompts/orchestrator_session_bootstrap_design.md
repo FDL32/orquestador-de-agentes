@@ -82,6 +82,10 @@ QUE PRODUCES:
       python <motor>/scripts/validate_batch_dag.py <workspace>/orchestrator_pipeline/flight_plans/queued/<id>.json
   - <id>.md   : el prompt de vuelo listo para pegar (gobierno codeonly + batch) + el triaje
     (por ticket: DoD binario, ROJO verificado en vivo, MUTATION que aisla, superficie cerrada).
+    DECLARA ademas `PUBLICACION: autorizada | pendiente`: decision del operador preguntada
+    UNA vez en el diseno y registrada aqui. El vuelo pushea UNA sola vez al final de TODOS
+    los tickets (nunca por ticket); sin autorizacion registrada termina en
+    `PUBLICACION_PENDIENTE_AUTORIZACION` con el remoto intacto (AGENTS.md, "Push por vuelo").
     ARRANCA con un PASO 0 FRESHNESS (anti-staleness; el plan es una FOTO del triaje que puede caducar):
       0.1 validate_batch_dag.py <plan>.json --live-backlog <backlog.md> --head-sha $(git -C <motor> rev-parse HEAD)
           exit!=0 (ticket muerto, WOT-2026-023t) -> HARD-STOP, re-triage. WARN de HEAD -> dispara 0.2.
