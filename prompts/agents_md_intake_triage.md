@@ -87,14 +87,21 @@ Veredicto del PASO 1, obligatorio y con evidencia (`commit:`/`path:` o
 
 Remite a `prompts/doc_optimization.md` por los criterios (no los copies):
 
-- FUNCION (filas #1-#7 de PASO 2): decide si el contenido nuevo es una
-  directiva-que-se-queda (refutacion / prohibicion dura / comando operativo:
-  filas #1-#3) o contenido-que-se-mueve (flags condicionales, justificacion
-  forense, contenido condicional: filas #4, #5, #7; #6 evalua).
-- CLASE (las 5 de PASO 1: `siempre-cargado` / `router-condicional` /
-  `referencia-bajo-demanda` / `citado-obligatorio` / `generado`): decide DONDE
-  aterriza por defecto. El destino natural de lo nuevo es `referencia-bajo-
-  demanda` (base) o un modulo de dominio (capa intermedia), NO la cuspide.
+- FUNCION (la tabla de la seccion "PASO 2: clasifica cada bloque por FUNCION,
+  no por longitud" de `doc_optimization.md`; sus filas se citan por NOMBRE de
+  funcion, nunca por numero, porque una renumeracion del dueno reenviaria en
+  silencio -- extension X-09 prompt-hijo<->nucleo, 2026-10-08): decide si el
+  contenido nuevo es una directiva-que-se-queda (Refutacion / Prohibicion dura
+  / Comando operativo) o contenido-que-se-mueve (Flags condicionales y sus
+  excepciones / Justificacion forense / Contenido condicional; Ejemplo canonico
+  es la fila EVALUA). Ante match multiple gana la fila superior de la tabla
+  duena.
+- CLASE (la tabla de VIA DE CARGA de la seccion "PASO 1: mide, no estimes" de
+  `doc_optimization.md`, citada por nombre de clase: `siempre-cargado` /
+  `router-condicional` / `referencia-bajo-demanda` / `citado-obligatorio` /
+  `generado`): decide DONDE aterriza por defecto. El destino natural de lo
+  nuevo es `referencia-bajo-demanda` (base) o un modulo de dominio (capa
+  intermedia), NO la cuspide.
 
 ## PASO 3: regla de aterrizaje por defecto (normativa propia de este protocolo)
 
@@ -102,17 +109,29 @@ Contenido NUEVO de este prompt (Seccion 4 de
 `propuesta_restructuracion_arquitectonica.md`), no re-declaracion de un
 hermano. Copiar/adaptar, no contradecir:
 
-- Ninguna adicion nueva entra directa a la cuspide de `AGENTS.md`. El destino
-  por defecto de cualquier regla/contenido nuevo es un modulo de dominio (capa
-  intermedia) o `docs/protocol/` (base), SALVO que sea una directiva
-  verdaderamente universal (NUNCA/SIEMPRE con blast radius para TODA sesion,
-  sin excepcion de dominio) Y quepa en una linea.
-- Crecimiento presupuesto-neutral de la cuspide: si una directiva nueva es
-  genuinamente universal y debe entrar en la cuspide, su coste en bytes debe
-  compensarse moviendo o condensando otra directiva existente de la cuspide;
-  nunca se permite que la cuspide crezca sin una compensacion EXPLICITA. Evita
-  que la piramide reproduzca, con una sesion de retraso, el problema que la
-  motivo.
+- Ninguna adicion nueva entra directa a la cuspide de `AGENTS.md` ni a la de
+  `CLAUDE.md` (+ su cierre transitivo de `@imports`): "la cuspide" en este
+  protocolo son las DOS puntas siempre-cargadas que mide el PASO 4, no solo la
+  de bytes. El destino por defecto de cualquier regla/contenido nuevo es un
+  modulo de dominio (capa intermedia) o `docs/protocol/` (base), SALVO que sea
+  una directiva verdaderamente universal (NUNCA/SIEMPRE con blast radius para
+  TODA sesion, sin excepcion de dominio) Y quepa en una linea.
+- Crecimiento presupuesto-neutral de la cuspide, en AMBOS gates y no solo en
+  el de bytes (simetria con el PASO 4, que mide los dos): si una directiva
+  nueva es genuinamente universal y debe entrar en la cuspide, su coste debe
+  compensarse moviendo o condensando otra directiva existente de la cuspide,
+  en la unidad nativa del gate que la adicion mueve: BYTES en la jerarquia
+  `AGENTS.md` (gate Codex) y CARACTERES en el cierre transitivo `CLAUDE.md` +
+  `@imports` (gate Claude Code; las cifras duenas viven en `doc_optimization.md`
+  PASO 1 y no se re-declaran aqui, X-09). Los dos gates miden cierres
+  DISTINTOS: contenido que entra solo por `CLAUDE.md` o por un `@import` de su
+  cierre puede NO mover nada la suma de bytes que ve Codex y reventar aun asi
+  el gate de caracteres de Claude Code. La compensacion se exige por cada gate
+  afectado, nunca solo por el primero; tras la adicion mas su compensacion,
+  AMBOS gates deben quedar en <=1.0x de su estado actual (criterio vivo del
+  PASO 4). Nunca se permite que la cuspide crezca sin una compensacion
+  EXPLICITA. Evita que la piramide reproduzca, con una sesion de retraso, el
+  problema que la motivo.
 
 ## PASO 4: mide el gate ANTES y DESPUES de decidir el destino
 
@@ -142,8 +161,9 @@ propio mensaje de commit o en `execution_log.md`:
 
 1. El resultado del barrido (PASO 1): DUPLICADO (con la `path:` del hit leido
    entero) o SIN-DUPLICADO (con la superficie barrida y que se leyo completo).
-2. La clasificacion aplicada (PASO 2): fila de FUNCION (#1-#7) y CLASE
-   destino.
+2. La clasificacion aplicada (PASO 2): fila de FUNCION citada por NOMBRE (la
+   de la tabla "clasifica cada bloque por FUNCION" de `doc_optimization.md`) y
+   CLASE destino.
 3. El veredicto de aterrizaje (PASO 3): cuspide (con su compensacion explicita)
    o modulo/base.
 4. La medida del gate antes/despues (PASO 4), si el destino fue la cuspide.
@@ -164,6 +184,25 @@ en un gate automatico nuevo.
   ejecuta aqui: este prompt gobierna SOLO la ADMISION de contenido nuevo, no la
   reestructuracion del contenido existente (eso es `doc_optimization.md` y la
   decision de piramide).
+- Cuatro controles que el bucle DESIGN_REVIEW de `agents_md_intake_triage` (8
+  lentes, 2026-10-19; logs en `design_review_logs/intake_*.log`) senalo como
+  propios del intake y que este prompt NO implementa. Quedan aqui como deuda
+  DECLARADA y sin resolver; cada uno sigue SIN owner ni ticket formal al dia de
+  hoy (no se ficha un ID que no existe: el owner y el criterio de salida se
+  asignan al aceptarlos):
+  - Punteros rotos: nada verifica que toda ruta o modulo referenciado por el
+    contenido nuevo exista tras la escritura; el intake puede crear o mover
+    punteros y dejar referencias muertas.
+  - Carga real del modulo: nada verifica que un modulo referenciado o ascendido
+    se cargue de verdad en sesion; estar en disco no es estar siempre-cargado
+    (el cierre transitivo de `doc_optimization.md` es lo que decide).
+  - Duplicado semantico mecanico: el PASO 1 exige lectura completa y prohibe
+    descartar por titulo, pero no existe un chequeo AUTOMATIZADO de duplicado
+    semantico (hoy solo manda el criterio de lectura, cuyo dueno es
+    `memory_upload.md`; un grep por titulo no lo sustituye).
+  - Caducidad de la cuspide: no hay campo de owner/revision ni cadencia de
+    re-revision para contenido siempre-cargado ya admitido (Seccion 8 punto 6
+    de la propuesta, convergente entre lentes).
 
 ## Salida
 

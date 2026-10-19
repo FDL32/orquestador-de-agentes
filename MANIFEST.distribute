@@ -42,6 +42,7 @@ scripts/hermes_build_context_bundle.py
 # de planning ad-hoc de un vuelo, caso de persona_system.md)
 # =============================================================================
 prompts/agent_execution_modes.md
+prompts/agents_md_intake_triage.md
 prompts/audit_agent_output.md
 prompts/audit_git_publication.md
 prompts/audit_pipeline.md
