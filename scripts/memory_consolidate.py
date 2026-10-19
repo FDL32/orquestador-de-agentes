@@ -25,7 +25,9 @@ if str(_MOTOR_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT_BOOTSTRAP))
 
 from bus.portable_memory_archive import (  # noqa: E402
+    dedup_key,
     generate_stable_id,
+    read_archive_dir,
     record_key,
 )
 from bus.redact import redact_payload  # noqa: E402
@@ -628,6 +630,7 @@ def _regenerate_l2_l3(
     recent: list[dict[str, Any]],
     verbose: bool,
     archivable: list[dict[str, Any]] | None = None,
+    archived: list[dict[str, Any]] | None = None,
 ) -> None:
     """Regenerate memory_rules.md (L2) and memory_profile.md (L3).
 
@@ -638,24 +641,36 @@ def _regenerate_l2_l3(
     BORRAR desde el punto de vista del agente -- y ocurria dentro del cierre
     canonico, en silencio.
 
+    WOT-2026-058b. Antes de esta resolucion, el limite #3 ("solo cubre las
+    entradas que ESTA pasada procesa") era real: `_regenerate_l2_l3` construia
+    su proyeccion como `projected = list(recent) + list(archivable or [])`,
+    NUNCA leyendo `archive/observations.*.jsonl` de pasadas anteriores.
+    La solucion es leer el archive via `read_archive_dir` y hacer la union con
+    precedencia por-entrada: la copia VIVA (recent/archivable de esta pasada)
+    gana sobre la copias archivadas (misma regla A1/A2 que `bus/memory_loader.py`
+    Secciones 701-706, 723-726).
+
     Before:
         `recent` son las entradas post-cutoff; `archivable` las que se mueven al
-        archive en esta misma pasada (None = ninguna, para callers legacy).
+        archive en esta misma pasada; `archived` las de meses anteriores
+        (None = sin union historica, para callers legacy).
     During:
-        Las proyecciones se generan sobre la UNION de ambas: archivar cambia
-        DONDE vive el dato (L1), no si el agente puede LEERLO (L2/L3). El orden
-        es `recent` primero, DELIBERADO: los topes de abajo se llenan con lo
-        reciente ANTES de admitir archivadas, de modo que sumar archivadas NUNCA
-        desplaza a una reciente (medido con los datos reales del destino:
-        62 recent + 2 archivable -> 0 expulsadas, 1 recuperada). Lo que SI
-        expulsa lecciones nuevas es el TOPE, DENTRO de `recent` (punto 1 de la
-        lista de abajo).
+        Las proyecciones se generan sobre la UNION de las tres fuentes con
+        precedencia por-entrada: `recent` primero, luego `archivable`, luego
+        `archived` (filtrada por precedencia). El orden es `recent` primero,
+        DELIBERADO: los topes de abajo se llenan con lo reciente ANTES de
+        admitir archivadas, de modo que sumar archivadas NUNCA desplaza a una
+        reciente. Lo que SI expulsa lecciones nuevas es el TOPE, DENTRO de
+        `recent` (punto 1 de la lista de abajo). La union con precedencia se
+        calcula redactando ambos lados y usando `dedup_key` +
+        `generate_stable_id` para evitar falsos negativos por diferencias de
+        redaccion (mismo bug, otra via:
+        `scripts/memory_consolidate.py:826-831`).
     After:
         Retorna None. No lanza.
 
-    ALCANCE REAL Y SUS CUATRO LIMITES (review de Manager 2026-07-27: la version
-    anterior de este docstring afirmaba sin matiz que "L2 y L3 siguen nombrando
-    las lecciones archivadas", y eso es FALSO en los dos primeros casos):
+    ALCANCE REAL Y SUS TRES LIMITES (WOT-2026-058b: el limite #3 fue CORREGIDO;
+    los tres restantes permanecen declarados con su dueno WOT-2026-042e):
 
     1. L2 tiene tope `MAX_L2_RULES` (30) y `_extract_rules_from_entries` corta
        EN ORDEN DE LISTA. Si `recent` ya aporta 30 reglas, la union admite CERO
@@ -667,19 +682,32 @@ def _regenerate_l2_l3(
        `generate_memory_profile_md` REORDENA por timestamp descendente antes de
        cortar, asi que una archivada solo aparece si hay MENOS de 10 recientes:
        por construccion una entrada vieja nunca gana a una nueva en L3.
-    3. Solo cubre las entradas que ESTA pasada procesa. El LECTOR sigue sin
-       mirar `archive/` (WOT-2026-024r), asi que una leccion archivada en una
-       pasada ANTERIOR no reaparece sola.
-    4. L1 (`MEMORY.md`, el indice que un HUMANO lee primero) NO pasa por aqui:
+    3. L1 (`MEMORY.md`, el indice que un HUMANO lee primero) NO pasa por aqui:
        `regen_memory_md(recent, stats)` recibe solo `recent`, asi que sigue
        expulsando al 100%. Hallado por una lente adversarial DESPUES de que este
        docstring declarara "tres limites" como si fueran exhaustivos -- el propio
        fix media su alcance con vara mas floja que la que predicaba.
 
-    Los cuatro son deuda DECLARADA, no resuelta: dueno WOT-2026-042e, que por eso
-    queda en `completed-partial` y no en `completed`.
+    Los tres son deuda DECLARADA, no resuelta: dueno WOT-2026-042e.
+    El limite #3 fue CORREGIDO por WOT-2026-058b, que hace llegar el archive
+    de pasadas anteriores a L2/L3 via `read_archive_dir`.
     """
-    projected = list(recent) + list(archivable or [])
+    local = list(recent) + list(archivable or [])
+    if archived:
+        seen: set[tuple] = set()
+        for e in local:
+            red = _redact_entry(e)
+            seen.add(dedup_key(red))
+            seen.add(("id", generate_stable_id(red)))
+        projected: list[dict[str, Any]] = list(local)
+        for a in archived:
+            k = dedup_key(a)
+            if k in seen:
+                continue
+            seen.add(k)
+            projected.append(a)
+    else:
+        projected = local
 
     rules_md = generate_memory_rules_md(projected)
     MEMORY_RULES_MD.write_text(rules_md, encoding="utf-8")
@@ -874,9 +902,25 @@ def _apply_consolidation(
     stats: dict[str, int],
     verbose: bool,
 ) -> None:
-    """Apply consolidation: backup, archive, rewrite files."""
+    """Apply consolidation: backup, archive, rewrite files.
+
+    D3 (WOT-2026-058b): lee el archive ANTES de cualquier escritura. Si el
+    archive esta corrupto, se propaga `CorruptArchiveError` y se aborta
+    `--apply` sin tocar ningun fichero (fail-closed). Justificacion: el loader
+    sirve en frio cada sesion y degradar es el mal menor documentado
+    (`bus/memory_loader.py:373-376`); `--apply` es un acto deliberado de cierre,
+    y la alternativa de degradar aqui es exactamente el fallo que este ticket
+    combate: "L2 poblado mintiendo" (un archive corrupto que se ignora en
+    silencio dejaria L2/L3 poblados con solo `recent`, omitiendo decenas de
+    lecciones archivadas en meses anteriores). El guard `validate_observations
+    --strict` en prepush (`bus/memory_loader.py:43-44`) es la barrera
+    fail-closed original; el abort de `--apply` se suma, no la sustituye.
+    """
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # D3: read archive BEFORE any writes -- fail-closed on corruption.
+    archived = read_archive_dir(ARCHIVE_DIR)
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     backup_path = MEMORY_DIR / f"observations.jsonl.bak.{timestamp}"
@@ -902,7 +946,8 @@ def _apply_consolidation(
 
     # WOT-2026-042e: se pasan TAMBIEN las archivables -- archivar cambia donde
     # vive el dato, no si el agente puede leerlo.
-    _regenerate_l2_l3(recent, verbose, archivable=archivable)
+    # WOT-2026-058b: tambien se pasa el archive de pasadas anteriores.
+    _regenerate_l2_l3(recent, verbose, archivable=archivable, archived=archived)
 
     print(
         f"\n[APPLIED] Kept {len(recent)} entries, dropped {stats['dropped']}, deduped {stats['deduped']}, archived {stats['archived']}"
