@@ -582,6 +582,10 @@ class TestReconcileDeadRunResilience:
         )
         assert spec is not None and spec.loader is not None
         self.mod = importlib.util.module_from_spec(spec)
+        # dataclasses con anotaciones string (from __future__ import annotations)
+        # resuelven su modulo via sys.modules.get(cls.__module__); sin este
+        # registro, exec_module() rompe con AttributeError sobre None.
+        sys.modules["run_pytest_safe_reconcile"] = self.mod
         spec.loader.exec_module(self.mod)
 
         # Redirect runtime paths to tmp_path
