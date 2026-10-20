@@ -104,6 +104,10 @@
         "Read,Grep,Glob"
       ],
       "prompt_via_stdin": true,
+      "model_flag": [
+        "--model",
+        "{model}"
+      ],
       "discovery": {
         "method": "path_only"
       },
@@ -675,6 +679,16 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA251"
+    },
+    "challenger_claude_sonnet_cli": {
+      "backend": "claude",
+      "channel": "agent",
+      "model": "sonnet",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA252",
+      "repo_scope": "destino"
     }
   },
   "ensemble_pipelines": {
@@ -979,6 +993,24 @@
       "BA191": {
         "backend": "kiosapi_api",
         "model": "glm-5.3-flash-free",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA250": {
+        "backend": "anthropic_api",
+        "model": "claude-haiku-5-5",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA251": {
+        "backend": "anthropic_api",
+        "model": "claude-sonnet-5-5",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA252": {
+        "backend": "claude",
+        "model": "sonnet",
         "backend_version": null,
         "status": "active"
       }

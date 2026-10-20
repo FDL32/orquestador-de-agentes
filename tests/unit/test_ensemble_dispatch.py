@@ -7525,6 +7525,7 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         if p.get("channel") != "api" and p.get("repo_scope") == "destino"
     )
     assert con_arbol == [
+        "challenger_claude_sonnet_cli",
         "challenger_codex",
         "challenger_kilo_deepseek_flash",
         "challenger_kilo_gemma",
@@ -7534,7 +7535,10 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "challenger_kilo_qwen_flash",
         "challenger_opencode_glm_flash",
         "proposer_claude",
-    ], f"opcion B (ampliada 2026-10-08) = 9 con arbol; hoy: {con_arbol}"
+    ], (
+        "opcion B (ampliada 2026-10-20: + challenger_claude_sonnet_cli) = "
+        f"10 con arbol; hoy: {con_arbol}"
+    )
     claves = sorted(profiles[name]["backend_key"] for name in con_arbol)
     assert claves == [
         "BA01",
@@ -7546,7 +7550,8 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "BA07",
         "BA08",
         "BA09",
-    ], "9 lentes con arbol = 9 backend_key DISTINTAS, no 9 perfiles cualesquiera"
+        "BA252",
+    ], "10 lentes con arbol = 10 backend_key DISTINTAS, no 10 perfiles cualesquiera"
 
 
 # --- WOT-2026-059m: la ronda no acepta un commit_sha que no resuelve ----------

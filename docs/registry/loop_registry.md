@@ -76,6 +76,9 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA23 | nvidia_api | moonshotai/kimi-k3 | active |
 | BA24 | nvidia_api | nvidia/nemotron-3-super-120b-a12b | active |
 | BA25 | nan_api | mimo-v2.6-flash | active |
+| BA250 | anthropic_api | claude-haiku-5-5 | active |
+| BA251 | anthropic_api | claude-sonnet-5-5 | active |
+| BA252 | claude | sonnet | active |
 | BA30 | groq_api | qwen/qwen3.8-27b | active |
 | BA31 | groq_api | openai/gpt-oss-120b | active |
 | BA50 | openrouter_api | cohere/north-mini-code:free | active |

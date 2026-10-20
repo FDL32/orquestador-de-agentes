@@ -546,6 +546,7 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     # regenerate_leaders): la familia coincide con el propio backend.
     ("codex", None): "codex",
     ("claude", None): "claude",
+    ("claude", "sonnet"): "claude",
     # codex tiene filas HISTORICAS del scorecard (anteriores a la convencion
     # model=None) con el modelo real anotado -- verificado sobre el scorecard
     # real 2026-09-26: 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-luna',

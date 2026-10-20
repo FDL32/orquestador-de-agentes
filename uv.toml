@@ -6,4 +6,6 @@ exclude-newer = '2026-05-16'
 # sin fix posible y BLOQUEABA todo push (hook pip-audit, exit 1).
 # Corte POR-PAQUETE en vez de mover el global: sube solo pip (1 version) en lugar de
 # arrastrar 15 paquetes, que exigiria re-correr la suite sobre un entorno distinto.
-exclude-newer-package = { pip = '2026-08-21' }
+# certifi 2026.10.19 corrige GHSA-6q48-6c7w-9gw2; el cutoff global lo oculta,
+# asi que se abre una ventana por-paquete solo para certifi (mismo patron).
+exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20' }
