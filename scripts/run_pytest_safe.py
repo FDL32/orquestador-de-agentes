@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
+import functools
 import json
 import os
 import re
@@ -25,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +91,57 @@ RUNTIME_DIR = _LazyPath(lambda: AGENT_DIR.resolve() / "runtime" / "pytest-safe")
 LOCK_FILE = _LazyPath(lambda: RUNTIME_DIR.resolve() / "pytest.lock")
 LAST_RUN_LOG = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.log")
 LAST_RUN_JSON = _LazyPath(lambda: RUNTIME_DIR.resolve() / "last-run.json")
+
+
+@functools.lru_cache(maxsize=1)
+def _resolve_git_common_dir() -> Path | None:
+    """Resolve the ``.git`` common dir shared by every worktree of this repo.
+
+    Before: PROJECT_ROOT is resolved.
+    During: runs ``git rev-parse --path-format=absolute --git-common-dir``
+    with cwd=PROJECT_ROOT. Never raises: any failure (not a git repo, git
+    missing, timeout) is swallowed.
+    After: returns the shared ``.git`` dir, or None when it cannot be
+    resolved -- callers degrade to a per-checkout-only lock in that case,
+    they never crash the runner over this.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(PROJECT_ROOT),
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+# WOT-2026 (coordinacion cross-worktree): directorio PROPIO dentro del
+# git-common-dir (nunca directamente en .git/, para no colisionar con locks
+# internos de Git -- hallazgo convergente deepseek en la Fase C del bucle de
+# `propuesta_coordinacion_suites_crossworktree.md`). Si no se puede resolver
+# el git-common-dir, degrada a RUNTIME_DIR del checkout (coordinacion
+# cross-worktree deshabilitada de facto, pero el lock intra-checkout ya
+# existente sigue intacto).
+CROSS_WORKTREE_LOCK_DIR = _LazyPath(
+    lambda: (_resolve_git_common_dir() or RUNTIME_DIR.resolve()) / "agent-runtime"
+)
+CROSS_WORKTREE_LOCK_FILE = _LazyPath(
+    lambda: CROSS_WORKTREE_LOCK_DIR.resolve() / "pytest-canonical.lock"
+)
+
+# sysexits(3) EX_TEMPFAIL: condicion temporal, reintentable -- distinguible de
+# un fallo real de la suite (exit_code de pytest) o de un error de uso (2).
+EX_TEMPFAIL = 75
 # WOT-2026-021w: append-only run-history (one JSON line per run). Lives under the
 # already-gitignored RUNTIME_DIR (.gitignore .agent/runtime/pytest-safe/), so it
 # NEVER enters git (defense-in-depth). The record schema itself is deliberately
@@ -793,6 +847,188 @@ def release_lock() -> None:
     LOCK_FILE.unlink(missing_ok=True)
 
 
+@dataclasses.dataclass(frozen=True)
+class CrossWorktreeHolder:
+    """Payload of a live (or just-written) cross-worktree lock."""
+
+    pid: int
+    started_at: str
+    worktree: str
+    cwd: str
+
+
+@dataclasses.dataclass(frozen=True)
+class CrossWorktreeLockResult:
+    """Structured result of a cross-worktree lock attempt.
+
+    WOT-2026 (coordinacion cross-worktree), punto 1 del contrato corregido
+    tras el bucle DESIGN_REVIEW de `propuesta_coordinacion_suites_crossworktree.md`:
+    el contrato de retorno debe ser un objeto estructurado, nunca un booleano
+    ni una excepcion silenciosa, para que el caller pueda construir la
+    decision de UX sin re-leer el lock file a mano.
+    """
+
+    acquired: bool
+    holder: CrossWorktreeHolder | None = None
+
+
+def _normalize_worktree(path: object) -> str:
+    return str(Path(str(path)).resolve())
+
+
+def _read_cross_worktree_holder(lock_file: Path) -> CrossWorktreeHolder:
+    data = read_json(lock_file)
+    return CrossWorktreeHolder(
+        pid=int(data.get("pid", 0) or 0),
+        started_at=str(data.get("started_at", "")),
+        worktree=str(data.get("worktree", "")),
+        cwd=str(data.get("cwd", "")),
+    )
+
+
+def acquire_cross_worktree_lock() -> CrossWorktreeLockResult:
+    """Acquire the lock shared across ALL worktrees of this repo (via the
+    common ``.git`` dir), coordinating the canonical suite across sessions
+    that each operate their own `.agent/` checkout.
+
+    Before: no assumption about lock state.
+    During: reads any existing lock payload from CROSS_WORKTREE_LOCK_FILE and
+    checks liveness via `is_pid_running()` -- the SAME fail-safe criterion as
+    the existing intra-checkout lock (any doubt -> treated as alive, never
+    broken). A live lock recorded by THIS SAME worktree is never reported as
+    a cross-worktree conflict (punto 4 del contrato: esa colision la gobierna
+    ya el lock intra-checkout existente, `acquire_lock()`).
+    After: if no live lock from a DIFFERENT worktree exists, writes our own
+    payload atomically (``O_CREAT|O_EXCL``) and returns ``acquired=True``.
+    If a live lock from a different worktree exists, returns
+    ``acquired=False`` with ``holder`` populated and writes nothing -- the
+    caller (``ensure_cross_worktree_slot``) decides the UX (wait / force /
+    fail-closed).
+    """
+    lock_dir = CROSS_WORKTREE_LOCK_DIR.resolve()
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = CROSS_WORKTREE_LOCK_FILE.resolve()
+    own_worktree = _normalize_worktree(PROJECT_ROOT)
+
+    if lock_file.exists():
+        holder = _read_cross_worktree_holder(lock_file)
+        if is_pid_running(holder.pid):
+            if holder.worktree != own_worktree:
+                return CrossWorktreeLockResult(acquired=False, holder=holder)
+            # Same worktree holding it already (re-entrant call, or the
+            # intra-checkout lock already governs this case): clear it and
+            # fall through to re-write our own payload below.
+            lock_file.unlink(missing_ok=True)
+        else:
+            # Unambiguously dead PID: same stale criterion as the existing
+            # intra-checkout lock, never a weaker one.
+            lock_file.unlink(missing_ok=True)
+
+    payload = {
+        "pid": os.getpid(),
+        "started_at": iso_now(),
+        "cwd": str(PROJECT_ROOT),
+        "worktree": own_worktree,
+    }
+    try:
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        # Lost a race against another process that wrote between our read
+        # and our open(): report it as a conflict instead of crashing.
+        return CrossWorktreeLockResult(
+            acquired=False, holder=_read_cross_worktree_holder(lock_file)
+        )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+    except Exception:
+        lock_file.unlink(missing_ok=True)
+        raise
+    return CrossWorktreeLockResult(acquired=True)
+
+
+def release_cross_worktree_lock() -> None:
+    """Release the cross-worktree lock, but ONLY if this process owns it.
+
+    WOT-2026 (coordinacion cross-worktree), punto 3 del contrato corregido
+    (codex, Fase C del bucle): verifica ownership por pid ANTES de borrar,
+    para que una ejecucion parcial, un --force-unlock o una carrera no borre
+    el lock de OTRA sesion/worktree.
+
+    Before: may or may not hold the lock (acquire_cross_worktree_lock() may
+    have returned acquired=False, in which case we never held it).
+    During: reads the recorded pid; if it does not match our own, this is a
+    no-op.
+    After: our own lock file is removed; a foreign lock is left untouched.
+    """
+    lock_file = CROSS_WORKTREE_LOCK_FILE.resolve()
+    if not lock_file.exists():
+        return
+    data = read_json(lock_file)
+    if int(data.get("pid", 0) or 0) != os.getpid():
+        return
+    lock_file.unlink(missing_ok=True)
+
+
+def _describe_cross_worktree_conflict(holder: CrossWorktreeHolder) -> str:
+    return (
+        f"Suite canonica ya en vuelo en OTRO worktree: pid={holder.pid}, "
+        f"worktree={holder.worktree}, desde={holder.started_at}. Usa "
+        f"--wait-lock <segundos> para esperar, o --force-parallel para "
+        f"ignorar el lock y continuar en paralelo (riesgo de colision de "
+        f"CPU/RAM declarado, nunca borra el lock ajeno)."
+    )
+
+
+def ensure_cross_worktree_slot(
+    force_parallel: bool, wait_lock: int | None
+) -> tuple[int | None, CrossWorktreeLockResult]:
+    """Acquire (or explicitly bypass) the cross-worktree suite slot.
+
+    WOT-2026 (coordinacion cross-worktree), punto 2 del contrato corregido
+    (deepseek, Fase C del bucle): el comportamiento POR DEFECTO ante un lock
+    vivo de OTRO worktree no puede ser "decide el caller" en abstracto -- si
+    no se pasa ningun flag, esta funcion hace fallar la corrida (fail-closed)
+    con EX_TEMPFAIL en vez de lanzar la suite silenciosamente en paralelo.
+
+    Before: CLI flags ya resueltos (`--force-parallel`, `--wait-lock`).
+    During: intenta `acquire_cross_worktree_lock()`. Si hay conflicto:
+    - `--wait-lock N`: reintenta cada <=10s hasta agotar N segundos.
+    - `--force-parallel`: imprime el riesgo declarado y continua SIN
+      sostener el lock (nunca escribe sobre el lock ajeno).
+    - ninguno de los dos: imprime el diagnostico y falla cerrado.
+    After: devuelve `(exit_code_or_None, lock_result)`. `exit_code` es None
+    cuando el caller debe continuar; en ese caso `lock_result.acquired`
+    distingue si de verdad sostenemos el lock (False cuando
+    `--force-parallel` bypasseo un conflicto real sin adquirirlo).
+    """
+    deadline = time.monotonic() + wait_lock if wait_lock else None
+    while True:
+        result = acquire_cross_worktree_lock()
+        if result.acquired or result.holder is None:
+            return None, result
+        if force_parallel:
+            print(
+                "[run_pytest_safe] AVISO --force-parallel: "
+                + _describe_cross_worktree_conflict(result.holder)
+                + " Continuando en paralelo de todos modos."
+            )
+            return None, result
+        if deadline is not None and time.monotonic() < deadline:
+            print(
+                "[run_pytest_safe] Esperando lock cross-worktree... "
+                + _describe_cross_worktree_conflict(result.holder)
+            )
+            time.sleep(min(10.0, max(1.0, deadline - time.monotonic())))
+            continue
+        print(
+            f"[run_pytest_safe] FALLO CERRADO (exit {EX_TEMPFAIL}): "
+            + _describe_cross_worktree_conflict(result.holder),
+            file=sys.stderr,
+        )
+        return EX_TEMPFAIL, result
+
+
 def iter_project_temp_dirs() -> Iterable[Path]:
     for entry in PROJECT_ROOT.iterdir():
         if not entry.is_dir():
@@ -1407,6 +1643,26 @@ def parse_args() -> argparse.Namespace:
         help="Ignora un lock stale y continua.",
     )
     parser.add_argument(
+        "--force-parallel",
+        action="store_true",
+        help=(
+            "Ignora el lock cross-worktree de OTRO checkout y lanza la suite "
+            "en paralelo igualmente. Declara el riesgo de colision de "
+            "CPU/RAM en el output; nunca borra el lock ajeno."
+        ),
+    )
+    parser.add_argument(
+        "--wait-lock",
+        type=int,
+        default=None,
+        metavar="SEGUNDOS",
+        help=(
+            "Si otro worktree tiene la suite canonica en vuelo, espera hasta "
+            "SEGUNDOS reintentando antes de fallar cerrado (en vez de fallar "
+            "de inmediato con exit 75)."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Muestra el comando final de pytest sin ejecutarlo.",
@@ -1779,6 +2035,12 @@ def main() -> int:  # noqa: C901
     # and append to run_history so the telemetry is complete.
     _reconcile_dead_run()
 
+    cross_exit, _cross_lock_result = ensure_cross_worktree_slot(
+        force_parallel=args.force_parallel, wait_lock=args.wait_lock
+    )
+    if cross_exit is not None:
+        return cross_exit
+
     lock = acquire_lock(force_unlock=args.force_unlock)
     run_dir = make_run_dir()
 
@@ -1906,6 +2168,22 @@ def main() -> int:  # noqa: C901
         "delivery_authority": _da_value,
         "delivery_authority_reason": _da_reason,
         "lock": lock,
+        # WOT-2026 (coordinacion cross-worktree, punto 2 del contrato de
+        # `propuesta_coordinacion_suites_crossworktree.md` Fase C): un bypass
+        # `--force-parallel` deja un marcador de override SEPARADO del lock
+        # ajeno (la funcion nunca escribe ni borra sobre el lock de otra
+        # sesion); el registro vive aqui, por corrida, y es auditable.
+        "cross_worktree": {
+            "acquired": _cross_lock_result.acquired,
+            "forced_parallel_override": bool(
+                args.force_parallel and not _cross_lock_result.acquired
+            ),
+            "conflict_holder": (
+                None
+                if _cross_lock_result.holder is None
+                else dataclasses.asdict(_cross_lock_result.holder)
+            ),
+        },
         "level": args.level,
         "args_mode": args_mode,
         "default_discovery_target": default_test_target()
@@ -2139,6 +2417,7 @@ def main() -> int:  # noqa: C901
         # it reads a history that already includes this run. NOT a blocking gate.
         emit_suite_regression_report()
         release_lock()
+        release_cross_worktree_lock()
 
 
 if __name__ == "__main__":
