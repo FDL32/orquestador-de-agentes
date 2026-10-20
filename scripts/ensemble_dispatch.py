@@ -537,6 +537,11 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     # real si esos backends fallan, no duplicado de familia nueva.
     ("kiosapi_api", "deepseek-v4.1-flash-free"): "deepseek",
     ("kiosapi_api", "glm-5.3-flash-free"): "glm",
+    # anthropic_api BA250-BA259 (2026-10-20): API nativa de Anthropic (no
+    # OpenAI-compatible). Misma familia "claude" que el backend CLI: un
+    # fallback entre haiku/sonnet es razonable y conserva el historico.
+    ("anthropic_api", "claude-haiku-5-5"): "claude",
+    ("anthropic_api", "claude-sonnet-5-5"): "claude",
     # Backends mono-modelo (model=None por diseno VIGENTE, ver docstring de
     # regenerate_leaders): la familia coincide con el propio backend.
     ("codex", None): "codex",
@@ -1339,6 +1344,204 @@ def _accumulate_sse_deltas(
 
 _API_MAX_TOKENS = 8192
 
+# Anthropic's native API is NOT OpenAI-compatible. It uses `/v1/messages`,
+# `x-api-key` + `anthropic-version` headers, and a different SSE event shape.
+_ANTHROPIC_API_VERSION = "2023-06-01"
+_ANTHROPIC_ALLOWED_HOSTS = frozenset({"api.anthropic.com"})
+
+
+def _validate_anthropic_url(url: str) -> None:
+    """Rechaza esquemas u hosts no permitidos para la clave de Anthropic."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise TransportError(
+            f"anthropic_transport: esquema no permitido '{parsed.scheme}'",
+            status=None,
+            body=None,
+        )
+    if parsed.hostname not in _ANTHROPIC_ALLOWED_HOSTS:
+        raise TransportError(
+            f"anthropic_transport: host no permitido '{parsed.hostname}'",
+            status=None,
+            body=None,
+        )
+
+
+def _is_anthropic(profile: dict, backend_cfg: dict | None = None) -> bool:
+    """True si el perfil habla la API NATIVA de Anthropic (/v1/messages).
+
+    Prioridad: `protocol == "anthropic_messages"` (campo explicito, fuente
+    de verdad); despues `backend == "anthropic_api"`; el host de
+    `api_base_url` es solo un ultimo recurso de compatibilidad.
+    """
+    cfg = backend_cfg or {}
+    if cfg.get("protocol") == "anthropic_messages":
+        return True
+    if profile.get("protocol") == "anthropic_messages":
+        return True
+    if profile.get("backend") == "anthropic_api":
+        return True
+    url = profile.get("api_base_url") or ""
+    if backend_cfg:
+        url = backend_cfg.get("api_base_url") or url
+    return "api.anthropic.com" in url
+
+
+def _anthropic_messages_url(profile: dict) -> str:
+    """Deriva `/v1/messages` del `api_base_url` del perfil."""
+    base = (profile.get("api_base_url") or "https://api.anthropic.com").rstrip("/")
+    for suffix in ("/v1/chat/completions", "/v1/messages"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return f"{base}/v1/messages"
+
+
+def _collect_anthropic_sse_content(  # noqa: C901
+    resp, deadline: float, api_key: str | None
+) -> str:
+    """Consume el stream SSE nativo de Anthropic hasta `message_stop`.
+
+    Anthropic no envia `[DONE]`: el cierre logico es el evento
+    `message_stop`. Los deltas de texto llegan en `content_block_delta`
+    con `delta.type == "text_delta"`. Un `event: error` se propaga como
+    `TransportError`; un stream truncado (EOF antes de `message_stop`)
+    falla cerrado, nunca se devuelve texto parcial como exito.
+    """
+    parts: list[str] = []
+    saw_message_stop = False
+    for event_data in _sse_events(resp, deadline, api_key):
+        payload, parse_failure = _parse_sse_event(event_data, api_key)
+        if parse_failure is not None:
+            raise parse_failure
+        etype = payload.get("type")
+        if etype == "content_block_delta":
+            delta = payload.get("delta") or {}
+            if delta.get("type") == "text_delta":
+                piece = delta.get("text")
+                if isinstance(piece, str) and piece:
+                    parts.append(piece)
+        elif etype == "content_block_start":
+            block = payload.get("content_block") or {}
+            if block.get("type") == "text":
+                piece = block.get("text")
+                if isinstance(piece, str) and piece:
+                    parts.append(piece)
+        elif etype == "error":
+            err = payload.get("error") or {}
+            raise TransportError(
+                "anthropic_sse_error: "
+                f"{err.get('type', 'unknown')}: {err.get('message', '')}".strip(),
+                status=None,
+                body=None,
+            )
+        elif etype == "message_stop":
+            saw_message_stop = True
+            break
+    if not saw_message_stop:
+        raise TransportError(
+            "incomplete_stream: el stream Anthropic cerro sin `message_stop` "
+            "(respuesta parcial descartada)",
+            status=None,
+            body=None,
+        )
+    content = "".join(parts)
+    if not content:
+        raise TransportError(
+            "empty_content_despite_message_stop: el stream Anthropic cerro con "
+            "`message_stop` y content vacio",
+            status=None,
+            body=None,
+        )
+    return content
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Rechaza redirects: la clave nunca debe viajar a otro host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _transport_anthropic(  # noqa: C901
+    profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
+) -> str:
+    """POST /v1/messages (API nativa de Anthropic) con auth x-api-key."""
+    key_env = profile["api_key_env"]
+    api_key = os.environ.get(key_env)
+    if not api_key:
+        raise RuntimeError(
+            f"auth por-invocacion: la variable {key_env} no esta en el entorno"
+        )
+    max_tokens = backend_cfg.get("max_tokens") or _API_MAX_TOKENS
+    system_text: str | None = None
+    chat_messages: list[dict] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_text = (system_text + "\n\n" if system_text else "") + str(
+                msg.get("content", "")
+            )
+        else:
+            chat_messages.append(msg)
+    body_dict: dict = {
+        "model": profile.get("model"),
+        "messages": chat_messages,
+        "max_tokens": max_tokens,
+        "stream": True,
+    }
+    if system_text:
+        body_dict["system"] = system_text
+    body = json.dumps(body_dict).encode("utf-8")
+    url = _anthropic_messages_url(profile)
+    _validate_anthropic_url(url)
+    req = urllib.request.Request(  # noqa: S310 -- https exigido por el validador
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_API_VERSION,
+            "User-Agent": ENSEMBLE_USER_AGENT,
+        },
+        method="POST",
+    )
+    sanitized: TransportError | None = None
+    raw_body: bytes | None = None
+    streamed: str | None = None
+    deadline = time.monotonic() + timeout
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            if _response_is_sse(resp):
+                profile[_SSE_ROUTE_KEY] = "sse"
+                streamed = _collect_anthropic_sse_content(resp, deadline, api_key)
+            else:
+                profile[_SSE_ROUTE_KEY] = "no-sse"
+                raw_body = resp.read()
+    except (TransportError, json.JSONDecodeError):
+        raise
+    except Exception as exc:
+        sanitized = _sanitized_transport_error(exc, api_key)
+    if sanitized is not None:
+        raise sanitized
+    if streamed is not None:
+        return streamed
+    data = json.loads(raw_body.decode("utf-8"))
+    parts: list[str] = []
+    for block in data.get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    content = "".join(parts)
+    if not content:
+        raise TransportError(
+            "empty_content: la respuesta de Anthropic no trajo bloques de texto",
+            status=None,
+            body=None,
+        )
+    return content
+
 
 def _transport_api(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
@@ -1372,6 +1575,8 @@ def _transport_api(
     LECTURAS del dict copiado que el llamador smoke inyecta; el default de
     `loop-round` (backend_cfg sin esas claves) no cambia.
     """
+    if _is_anthropic(profile, backend_cfg):
+        return _transport_anthropic(profile, backend_cfg, messages, timeout)
     key_env = profile["api_key_env"]
     api_key = os.environ.get(key_env)
     if not api_key:
@@ -4328,9 +4533,10 @@ def _provider_models_url(api_base_url: str) -> str:
     cual (nunca se inventa un host ni una ruta distinta).
     """
     base = str(api_base_url or "").rstrip("/")
-    suffix = "/chat/completions"
-    if base.endswith(suffix):
-        base = base[: -len(suffix)]
+    for suffix in ("/chat/completions", "/messages"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
     return f"{base}/models"
 
 
@@ -4370,12 +4576,16 @@ def fetch_provider_models(
             f"auth por-invocacion: la variable {api_key_env} no esta en el entorno"
         )
     url = _provider_models_url(api_base_url)
+    headers = {"User-Agent": ENSEMBLE_USER_AGENT}
+    if "api.anthropic.com" in url:
+        _validate_anthropic_url(url)
+        headers["x-api-key"] = api_key
+        headers["anthropic-version"] = _ANTHROPIC_API_VERSION
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(  # noqa: S310 -- https exigido por el validador
         url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "User-Agent": ENSEMBLE_USER_AGENT,
-        },
+        headers=headers,
         method="GET",
     )
     # Mismo patron que `_transport_api`: el saneado se CONSTRUYE dentro del

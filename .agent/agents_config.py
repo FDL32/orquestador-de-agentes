@@ -167,6 +167,23 @@ class MigrationReport:
     backups: list[Path]  # paths a archivos .bak.<ts> creados
 
 
+def _no_duplicate_keys(pairs):
+    """object_pairs_hook que rechaza claves duplicadas en el JSON.
+
+    `json.loads` se queda silenciosamente con la ultima ocurrencia, lo que
+    oculta errores de configuracion (p.ej. dos perfiles con el mismo nombre).
+    """
+    seen = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise AgentsConfigError(
+                f"Duplicate key '{key}' in agents.json: json.loads would "
+                "silently keep the last one"
+            )
+        seen.add(key)
+    return dict(pairs)
+
+
 def load_agents_config(project_root: Path | None = None) -> dict[str, Any]:
     """
     Load and validate the agent configuration.
@@ -196,7 +213,7 @@ def load_agents_config(project_root: Path | None = None) -> dict[str, Any]:
 
     try:
         with open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
+            config = json.load(f, object_pairs_hook=_no_duplicate_keys)
     except json.JSONDecodeError as e:
         raise AgentsConfigError(f"Invalid JSON in configuration file: {e}") from e
 
