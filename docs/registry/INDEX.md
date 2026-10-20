@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 49 |
+| prompt | 50 |
 | reference | 39 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 47 |
-| **total** | **143** |
+| skill | 48 |
+| **total** | **145** |
 
 ## Entradas
 
@@ -53,6 +53,7 @@
 | prompt | `prompts/memory_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/orchestrator_child_dispatch_multiticket_multibackend_unlimited.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_launch_builder.md` | active | system | builder | model-invoked | — |
@@ -144,6 +145,7 @@
 | skill | `skills/manager-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
 | skill | `skills/memory-consolidate/SKILL.md` | active | agent | shared | model-invoked | /consolidate, /dream-cycle, /memory |
 | skill | `skills/orchestrate-autonomous-ticket-batch/SKILL.md` | active | agent | orchestrator | model-invoked | /orchestrate-autonomous-ticket-batch, batch-autonomo-de-tickets, orchestrate-autonomous-ticket-batch |
+| skill | `skills/orchestrate-child-dispatch-multiticket-multibackend-unlimited/SKILL.md` | active | agent | orchestrator | model-invoked | /orchestrate-child-dispatch, dispatch-hijos-multibackend, orchestrate-child-dispatch-multibackend |
 | skill | `skills/orchestrate-destination-batch/SKILL.md` | active | agent | orchestrator | model-invoked | /batch-destinos, batch-publicacion, orchestrate-destination-batch, preparar-repos |
 | skill | `skills/orchestrate-pipeline-codeonly/SKILL.md` | active | agent | manager | model-invoked | /orchestrate-pipeline-codeonly, orchestrate-pipeline-codeonly, pipeline-codeonly |
 | skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | orchestrator | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |
