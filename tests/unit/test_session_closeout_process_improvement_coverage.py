@@ -1,7 +1,7 @@
 """WOT-2026-104e: el cierre no debe poder declarar "Block 2.5 limpio" sin
 que exista NINGUNA evidencia de que se registro una propuesta 2.5.j (PROCESS
-IMPROVEMENT PROPOSAL, prompts/orchestrator_session_close_full_audit.md:
-273-276) cuando el propio cierre SI emitio WARN en otros pasos -- gap medido
+IMPROVEMENT PROPOSAL, prompts/orchestrator_session_close_full_audit.md,
+sub-bloque 2.5.j) cuando el propio cierre SI emitio WARN en otros pasos -- gap medido
 en vivo en la sesion continuacion-wot-2026-102a (2026-10-18): tres rondas de
 friccion real de cierre (recibos de backlog-admission, delivery_authority
 ausente tras archivado) no generaron ninguna propuesta 2.5.j, y nada lo

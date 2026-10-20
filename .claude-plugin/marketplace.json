@@ -50,7 +50,7 @@
         },
         {
           "name": "anti-patterns-reference",
-          "description": "Dataset of 6 anti-patterns with before/after examples in Python, z_scripts context",
+          "description": "Dataset of 6 anti-patterns with before/after examples in Python, orquestador_de_agentes_workspace context",
           "scope": "all"
         },
         {

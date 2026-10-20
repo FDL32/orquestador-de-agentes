@@ -151,7 +151,7 @@ BACKLOG_ARCHIVE_REL = Path(".agent") / "collaboration" / "_archive" / "backlog_d
 EXECUTION_LOG_REL = Path(".agent") / "collaboration" / "execution_log.md"
 
 # WOT-2026-104e: marcador textual que una entrada 2.5.j (PROCESS IMPROVEMENT
-# PROPOSAL, prompts/orchestrator_session_close_full_audit.md:273-276) deja en
+# PROPOSAL, prompts/orchestrator_session_close_full_audit.md, sub-bloque 2.5.j) deja en
 # una superficie persistente -- backlog_ticket/memory_candidate con prefijo
 # [PROCESO-CIERRE], o esta linea literal en execution_log.md cuando 2.5.j no
 # encontro nada que proponer. Ver .agent/planning/PROPUESTA_mejora_continua_
@@ -2687,7 +2687,7 @@ def _step_process_improvement_coverage(
             f"ningun '{PROCESS_IMPROVEMENT_TAG}' ni "
             "'2.5.j: sin_hallazgos_declarado -- <justificacion>' (no vacia) "
             "en execution_log.md. Registra una propuesta 2.5.j (prompts/"
-            "orchestrator_session_close_full_audit.md:273-276) o el "
+            "orchestrator_session_close_full_audit.md, sub-bloque 2.5.j) o el "
             "marcador explicito de sin-hallazgos con su motivo antes de "
             "archivar el log. LIMITE DECLARADO (ronda 2 DBL-4, hallazgo "
             "real kilo_deepseek BA07): este paso SOLO lee execution_log.md; "

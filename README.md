@@ -8,7 +8,7 @@ Central motor for multi-agent orchestration. Operational code lives once here; d
 - It does not own active ticket state for any project.
 - Active collaboration state always lives in the `.agent/` of the project being operated on.
 - `orquestador_de_agentes/.agent/` is the motor development workspace when working on the motor itself.
-- `z_scripts/.agent/` is an author reference workspace for the `z_scripts` project.
+- `orquestador_de_agentes_workspace/.agent/` is an author reference workspace for the `orquestador_de_agentes_workspace` project.
 - Any other destination project gets its own `<project>/.agent/` with the same collaboration structure.
 - Use `AGENT_PROJECT_ROOT` or the workspace `motor_destination_link.json` to select the current workspace.
 - Do not mix motor-side collaboration history with project-side collaboration history.
