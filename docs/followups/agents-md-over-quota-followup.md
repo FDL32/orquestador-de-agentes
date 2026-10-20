@@ -32,9 +32,21 @@ del cierre `CLAUDE.md` + `@imports`). Se considera cumplido cuando ambos ratios 
 (TRAMPA-1 de `doc_optimization.md` advierte que la misma medicion difiere en otro
 checkout/worktree -- revalidar si se retoma desde otra raiz.)
 
-- `wc -c AGENTS.md` = **77228 bytes**. Gate Codex = 32768 B (`PROJECT_DOC_MAX_BYTES`, fuente:
-  issues de comunidad #13386/#7138/#6038, no verificado contra el codigo fuente de Codex).
-  Ratio: **77228 / 32768 = 2,36x**.
+- `wc -c AGENTS.md` = **77228 bytes** en esa medicion (2026-10-18); re-medido
+  2026-10-19 en `FDL32-t3-dev-hub` tras el Lote 0+R1 (`96243c48`): **74321
+  bytes**. Gate Codex = 32768 B (`PROJECT_DOC_MAX_BYTES`). **Evidencia
+  actualizada 2026-10-19 (sesion `propuesta_continuidad_agentes_frios_
+  20261019.md`): verificado contra el CODIGO FUENTE real de `openai/codex`
+  via `gh api` (ya no "issues de comunidad, no verificado"):
+  `codex-rs/config/src/config_toml.rs` declara
+  `DEFAULT_PROJECT_DOC_MAX_BYTES: usize = 32 * 1024`; `codex-rs/core/src/
+  agents_md.rs` confirma presupuesto COMPARTIDO (un unico contador
+  `remaining` decrementado a traves de TODOS los `AGENTS.md` root-to-leaf Y
+  de multiples entornos) con truncado SILENCIOSO (`data.truncate()` + solo
+  `tracing::warn!`, nunca a UI/TUI); `codex-rs/codex-home/src/instructions/
+  mod.rs` confirma que `~/.codex/AGENTS.md` usa un camino de codigo
+  DISTINTO sin ese cap, exento.** Ratio con la cifra actual: **74321 / 32768
+  = 2,27x** (bajo de 2,36x tras el Lote 0+R1, sigue sin cumplir el gate).
 - Cierre Claude Code = `CLAUDE.md` (1983 chars) + `@AGENTS.md` (77092 chars, unico `@import`
   real de `CLAUDE.md:3`, confirmado con `grep '^@' CLAUDE.md AGENTS.md` -> un solo hit) =
   **79075 chars**. Gate Claude Code = 40000 chars (WARN no-bloqueante). Ratio:
@@ -89,3 +101,15 @@ checkout/worktree -- revalidar si se retoma desde otra raiz.)
   `.agent/planning/research_context_budget/review_h3_codex.md` y
   `.agent/planning/research_context_budget/review_h3_deepseek.md` (ronda de validacion de
   este propio artefacto como forma correcta de declarar la deuda).
+- **Pasada 3 (2026-10-18), hallazgo nuevo que no cierra esta deuda pero la reencuadra:**
+  `.agent/planning/agents_md_optimization/pasada_3_manager.md` -- censo real (Manager
+  `nan/qwen3.8-flash`) de contenido legitimamente movible via `doc_optimization.md`: suma
+  confirmada 5512 B, escenario optimista no verificado 17277 B, frente a un deficit de
+  46457 B para el gate Codex. **La extraccion incremental por si sola no puede cerrar esta
+  deuda** (cubre a lo sumo el 37.2% del deficit, incluso en el escenario mas favorable).
+  Via de salida propuesta (requiere decision humana, no mecanica):
+  `.agent/planning/agents_md_optimization/propuesta_restructuracion_arquitectonica.md`
+  (tres palancas: AGENTS.md anidados por directorio, desacoplar el `@import` de Claude Code,
+  o condensar la narrativa forense adyacente a reglas que se quedan). El usuario eligio
+  explorar esta via arquitectonica en vez de aceptar la deuda tal cual o seguir con pasadas
+  marginales (2026-10-18).
