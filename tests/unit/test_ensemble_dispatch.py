@@ -6396,6 +6396,7 @@ def test_direct_backends_removed_nan_is_sole_api_channel():
         "mistral_api",
         "llm7_api",
         "kiosapi_api",
+        "anthropic_api",
     }
     api_profiles = [p for p in profiles.values() if p.get("channel") == "api"]
     assert api_profiles, "debe haber al menos un perfil api"
@@ -10087,7 +10088,9 @@ _ATTR_HTTP_REQUEST_046c = "Request"
 # tokens en el TEXTO CRUDO posterior a su marcador. Componerlos mantiene el
 # censo exacto sin debilitar ese guard (misma convencion de :6108 y :6552).
 _PRIMITIVA_API_046c = "_transport_" + "api"
-_PRIMITIVAS_TRANSPORTE_046c = frozenset({"_transport_agent", _PRIMITIVA_API_046c})
+_PRIMITIVAS_TRANSPORTE_046c = frozenset(
+    {"_transport_agent", _PRIMITIVA_API_046c, "_transport_anthropic"}
+)
 _CAMINO_PERFIL_046c = "send_to" + "_profile"
 _BARRERA_046c = "privacy_preflight"
 _CENSO_DIRECTORIOS_046c = ("scripts", "bus", "runtime")
@@ -10137,6 +10140,14 @@ def _registro_salidas_046c():
             "motivo": (
                 "transporte HTTP chat-completions del payload; misma "
                 "invariante de referencias"
+            ),
+        },
+        ("scripts/ensemble_dispatch.py", "_transport_anthropic"): {
+            "mecanismo": "primitiva_tras_camino_perfil",
+            "motivo": (
+                "transporte HTTP nativo de Anthropic (/v1/messages); solo "
+                "alcanzable desde el camino preflightado (invariante de "
+                "referencias)"
             ),
         },
         ("scripts/ensemble_dispatch.py", "fetch_usage_report"): {
@@ -10698,7 +10709,8 @@ def test_046c_primitivas_de_transporte_solo_desde_el_camino_preflightado():
         clave for clave, rec in rutas.items() if "primitiva_referida" in rec["kinds"]
     ]
     assert set(con_referencias) == {
-        ("scripts/ensemble_dispatch.py", _CAMINO_PERFIL_046c)
+        ("scripts/ensemble_dispatch.py", _CAMINO_PERFIL_046c),
+        ("scripts/ensemble_dispatch.py", _PRIMITIVA_API_046c),
     }, (
         "una primitiva de transporte referida fuera del unico camino "
         f"preflightado: {sorted(con_referencias)}"
