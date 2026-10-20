@@ -1655,6 +1655,63 @@ def run_distributable_planning_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_collaboration_state_clean_check(project_root: Path) -> CheckResult:
+    """WOT-2026-026x (c): el motor no reintroduce estado operativo de collaboration.
+
+    Barrera de la retirada de DEC-025B-001 (commit b4379a93): el motor dejo de
+    trackear y de declarar distribuible las proyecciones de ``.agent/collaboration/``.
+    Este gate cace la reintroduccion por las DOS puertas: (i) volver a trackearlas en
+    el indice del motor, (ii) volver a declarlas en ``MANIFEST.distribute`` (lo que
+    el instalador copiaria del filesystem -- 024h: la oracle de "viaja" es la
+    declaracion, no el tracking).
+
+    BLOQUEANTE a proposito: es un invariante del motor que HOY ya se cumple, no hay
+    deuda legacy que amnistiar. El import es ESTATICO para que ``check_guard_wiring``
+    lo alcance (precedente: ``run_distributable_planning_check``, 024h).
+
+    Before: el gate mide el MOTOR (_MOTOR_ROOT), no el destino.
+    During: ejecuta find_violations sobre la raiz del motor (git ls-files + MANIFEST).
+    After:  passed=True si ambas superficies estan limpias; False (bloqueante) con el
+            listado de ficheros trackeados / lineas declaradas si reintroducen estado.
+    """
+    name = "Collaboration State Clean (WOT-2026-026x c)"
+    try:
+        from scripts.check_collaboration_state_clean import find_violations
+    except ImportError:
+        from check_collaboration_state_clean import (
+            find_violations,  # type: ignore[no-redef]
+        )
+    violations = find_violations(_MOTOR_ROOT)
+    if violations:
+        parts = [
+            f"  - TRACKeado en el indice del motor: {rel}"
+            for rel in violations.get("tracked", [])
+        ]
+        parts += [
+            f"  - DECLARADO distribuible en MANIFEST.distribute: {line}"
+            for line in violations.get("declared", [])
+        ]
+        detail = "\n".join(parts)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"operational collaboration state reintroduced in the motor (travel "
+                f"risk / repo-hygiene break; DEC-025B-001 removed it on purpose):\n{detail}\n"
+                "`git rm --cached` the tracked file (leave it in .gitignore) and remove "
+                "any .agent/collaboration/ line from MANIFEST.distribute. Do NOT add an "
+                "allowlist entry: exceptions require an explicit ADR."
+            ),
+            is_blocking=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="motor neither tracks nor declares operational collaboration state",
+        is_blocking=True,
+    )
+
+
 def run_guard_wiring_orphan_check(project_root: Path) -> CheckResult:
     """WOT-2026-026v: deuda declarada cuyo ticket dueno ya esta ARCHIVADO.
 
@@ -4376,6 +4433,7 @@ def run_preflight_check(
         results.append(run_sibling_audit_check(project_root))
         # 6j. Distributable Planning Clean (WOT-2026-024h C4'; bloqueante)
         results.append(run_distributable_planning_check(project_root))
+        results.append(run_collaboration_state_clean_check(project_root))
         # 6k. Guard Wiring Orphan Debt (WOT-2026-026v; WARN -- la deuda huerfana
         # de hoy es historica. Va en el cierre y no en pre-commit porque es el
         # unico punto que corre solo Y conoce el destino cuyo backlog decide si
