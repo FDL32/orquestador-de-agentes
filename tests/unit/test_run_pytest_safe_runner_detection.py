@@ -25,6 +25,11 @@ def load_runner_module():
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # WOT-2026 (coordinacion cross-worktree): el runner declara @dataclass
+    # bajo `from __future__ import annotations`; dataclasses resuelve la
+    # anotacion string via sys.modules.get(cls.__module__), que rompe con
+    # AttributeError si el modulo no esta registrado antes de exec_module().
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 

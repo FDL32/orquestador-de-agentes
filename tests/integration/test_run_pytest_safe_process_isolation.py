@@ -451,6 +451,11 @@ class TestTimeoutExplicit:
         )
         assert spec is not None
         mod = importlib.util.module_from_spec(spec)
+        # Ver _clean_state mas abajo: dataclasses con anotaciones string
+        # resuelve su modulo via sys.modules.get(cls.__module__), que
+        # rompe con AttributeError si el modulo no esta registrado antes
+        # de exec_module().
+        sys.modules["run_pytest_safe_timeout"] = mod
         spec.loader.exec_module(mod)
 
         # The timeout value should be configurable via env var
