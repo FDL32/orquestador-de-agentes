@@ -111,5 +111,21 @@ checkout/worktree -- revalidar si se retoma desde otra raiz.)
   `.agent/planning/agents_md_optimization/propuesta_restructuracion_arquitectonica.md`
   (tres palancas: AGENTS.md anidados por directorio, desacoplar el `@import` de Claude Code,
   o condensar la narrativa forense adyacente a reglas que se quedan). El usuario eligio
-  explorar esta via arquitectonica en vez de aceptar la deuda tal cual o seguir con pasadas
-  marginales (2026-10-18).
+explorar esta via arquitectonica en vez de aceptar la deuda tal cual o seguir con pasadas
+   marginales (2026-10-18).
+
+## Medicion post-P6 (recibo por gate, 2026-10-20)
+
+P6 mueve la seccion `## Memoria por proyecto` (`AGENTS.md:801-856`) a
+`.agent/rules/common/memory_hierarchy.md`. Secciones de gates re-medidas tras el traslado:
+
+    AGENTS.md bytes: 76930 (Codex gate 32768 B) -> ratio 2,35x
+    CLAUDE.md chars: 1983 + AGENTS.md chars: 76840 = 78823 (Claude gate 40000 chars) -> ratio 1,97x
+
+Evolucion de ratios:
+- Codex: 2,48x (antes P6) -> 2,35x (post P6). Reduccion: 4372 B (81302 -> 76930).
+- Claude: 2,08x (antes P6) -> 1,97x (post P6). Reduccion: 4366 chars (83189 -> 78823).
+
+Persiste exceso en AMBOS gates (ninguno <= 1,0x). P6 es rebanada legitima de la campana, no
+cierre de la deuda. La deuda continua abierta y esta via nombrada de seguimiento aplica
+segun PASO 5 de `prompts/doc_optimization.md`: **requiere decision del usuario para abrir WP**.
