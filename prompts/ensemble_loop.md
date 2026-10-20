@@ -109,6 +109,14 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
 5. Si generas el bundle con un heredoc de Bash, pon el delimitador entre comillas simples. Sin comillas,
    Bash ejecuta las comillas invertidas del texto y borra palabras del bundle. Si el texto lleva apostrofos,
    escribelo con una herramienta de ficheros en vez de con un heredoc.
+6. **Canal `agent` via Kilo (WOT-2026-108b): el bundle no autocarga `AGENTS.md`.** Igual que para un
+   Builder real (`prompts/builder_invocation_contract.md` Seccion 1.6), una lente con `CANAL: agent`
+   despachada con `-f <bundle>.md` NO ve `AGENTS.md` ni ningun puntero de capa 2 salvo que el bundle lo
+   pida EXPRESAMENTE. Si la revision depende de alguna convencion del repo (nomenclatura, gates,
+   arquitectura de seguridad), el bundle debe instruir leer `AGENTS.md` -- y sus punteros de capa 2 si la
+   revision toca memoria -- antes de verificar `scripts/check_builder_dispatch_prompt.py <bundle>`. No
+   aplica a lentes `api` (sin filesystem: no pueden leer nada por su cuenta, y el bundle les pega la
+   evidencia directamente, ver punto 2 de esta seccion).
 
 ### 3.4 Rondas de gobierno: nonce antes de la ronda
 

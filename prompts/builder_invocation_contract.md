@@ -72,6 +72,19 @@ Notas obligatorias:
   que responda por texto/log largo: medido repetidamente que responder por texto deja al Builder "mudo"
   (log cortado tras iniciar el stream, sin error visible) en 4 de cada 5 intentos; escribir a fichero fue
   consistente.
+- **Kilo NO autocarga `AGENTS.md` ni ningun puntero de capa 2 (WOT-2026-108b, verificado
+  `doc_optimization.md` PASO 1 punto 4).** Todo prompt pasado con `-f <prompt>.md` DEBE instruir
+  EXPRESAMENTE al Builder a leer `AGENTS.md` -- y, si la tarea toca memoria del proyecto, tambien sus
+  punteros de capa 2 (`MEMORY.md`, `memory_rules.md`/L2, `memory_profile.md`/L3) -- ANTES de actuar. Sin
+  esa frase explicita, el Builder-nan trabaja a ciegas de las convenciones del repo con independencia de
+  cuanto se reduzca `AGENTS.md`: no es un problema de tamano, es de ausencia total de carga automatica.
+  Antes de lanzar `kilo run -f <prompt>`, verifica el prompt con
+  `python scripts/check_builder_dispatch_prompt.py <prompt>` (Seccion 1.6); si bloquea, anade la
+  instruccion antes de dispachar.
+  Prueba de arranque en frio (2026-10-19, 3 backends, mismo fixture): Claude y `nan/qwen3.8-flash`
+  siguieron el puntero de capa 2 cuando el prompt lo pedia explicitamente; `nan/gemma4` NO lo siguio (n=2
+  con `obs-fs-reading-receipt-does-not-certify-correct-reasoning`, 2026-10-08) -- la prosa de esta norma no
+  garantiza que un backend debil la obedezca, solo que la instruccion exista; ver limite declarado abajo.
 - Sin bus de eventos: Kilo no emite `BUILDER_EXIT` ni ningun otro evento al bus del orquestador. El
   Manager (el backend que lanzo la tarea) anota a mano inicio/fin en `execution_log.md` si el ticket lo
   requiere. No esperes ver la ronda en `scorecard.jsonl` ni en `leaders`/`status` de `ensemble_dispatch.py`
@@ -192,6 +205,29 @@ guard ejecutable: cablearla de verdad exigiria control sobre el propio harness, 
 alcance de este repo. Decision de diseno tomada por Claude Code (fork) con autorizacion
 explicita del usuario (WOT-2026-103d, 2026-10-18); la leccion operativa del incidente ya
 esta en memoria L1 del workspace (`obs-3149cf70225b`, dominio builder-contract).
+
+## 1.6. Preflight mecanico: el prompt declara la lectura de AGENTS.md (WOT-2026-108b)
+
+**Por que un guard y no solo la prosa de la Seccion 1:** la misma leccion que motiva
+`check_loop_bundle_protocol.py` aplica aqui -- una norma que depende de que quien redacta el prompt se
+acuerde de escribir la frase es, por definicion de este repo, una NORMA, no una barrera (`AGENTS.md`,
+"Barrera cableada"). `scripts/check_builder_dispatch_prompt.py` lee el fichero de prompt ANTES de lanzar
+`kilo run -f <prompt>` y bloquea (`exit 1`) si falta la instruccion explicita de leer `AGENTS.md`. Si el
+prompt menciona memoria del proyecto (memoria, `MEMORY.md`, L2, L3, `memory_rules`, `memory_profile`) sin
+instruir tambien su lectura, el guard avisa (`WARN`, no bloquea -- la clausula de capa 2 es condicional a
+que la tarea toque memoria, no universal).
+
+    python scripts/check_builder_dispatch_prompt.py <ruta-al-prompt.md>
+
+**Limite declarado (mismo patron que la Seccion 1.5, no se oculta):** este guard es, como
+`check_loop_bundle_protocol.py`, una barrera de FORMA -- verifica que la instruccion de lectura este
+DECLARADA en el texto del prompt, no que el Builder la obedezca de verdad (ver la prueba de arranque en
+frio citada en la Seccion 1: `nan/gemma4` ignoro un puntero de capa 2 presente en su propio prompt). Y es
+una barrera **invocada por convencion, no cableada automaticamente**: no existe en este repo un punto de
+codigo que intercepte `kilo run` antes de ejecutarse (el mismo motivo declarado en la Seccion 1.5 para el
+Task tool nativo), porque el despacho de un Builder real es una invocacion manual de shell, no una
+llamada a traves de un script de este motor. Quien despacha es quien debe invocar el guard antes de
+lanzar; sin eso, el guard no se ejecuta solo.
 
 ## 2. Cuando el prompt de arranque de un Builder debe citar ESTE contrato
 
