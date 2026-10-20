@@ -451,6 +451,11 @@ class TestTimeoutExplicit:
         )
         assert spec is not None
         mod = importlib.util.module_from_spec(spec)
+        # Ver _clean_state mas abajo: dataclasses con anotaciones string
+        # resuelve su modulo via sys.modules.get(cls.__module__), que
+        # rompe con AttributeError si el modulo no esta registrado antes
+        # de exec_module().
+        sys.modules["run_pytest_safe_timeout"] = mod
         spec.loader.exec_module(mod)
 
         # The timeout value should be configurable via env var
@@ -582,6 +587,10 @@ class TestReconcileDeadRunResilience:
         )
         assert spec is not None and spec.loader is not None
         self.mod = importlib.util.module_from_spec(spec)
+        # dataclasses con anotaciones string (from __future__ import annotations)
+        # resuelven su modulo via sys.modules.get(cls.__module__); sin este
+        # registro, exec_module() rompe con AttributeError sobre None.
+        sys.modules["run_pytest_safe_reconcile"] = self.mod
         spec.loader.exec_module(self.mod)
 
         # Redirect runtime paths to tmp_path
