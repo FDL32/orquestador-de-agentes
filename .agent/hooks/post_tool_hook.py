@@ -26,6 +26,20 @@ except ImportError:
 TELEMETRY_DIR = Path(".agent/runtime/telemetry")
 TELEMETRY_FILE = TELEMETRY_DIR / "tool_usage.jsonl"
 
+# Keys that log_observation extracts from context into the observation dict
+_OBSERVATION_KEYS = frozenset(
+    (
+        "timestamp",
+        "topic",
+        "signal",
+        "source",
+        "tool",
+        "context",
+        "session_id",
+        "call_count",
+    )
+)
+
 # Global counter for tool calls
 _tool_call_counter = 0
 
@@ -57,11 +71,20 @@ def log_observation(context: dict[str, Any]) -> None:
     observation["signal"] = redact(observation["signal"])
     observation["context"] = redact(observation["context"])
 
+    # WOT-2026-105a: propagate extra structured keys from context (e.g.
+    # read_offset, read_limit) into the JSONL record so the gate can read
+    # them directly.  These keys are integer metadata, not secrets, so
+    # they skip redaction.
+    record = {
+        **observation,
+        **{k: v for k, v in context.items() if k not in _OBSERVATION_KEYS},
+    }
+
     # Write directly to the telemetry file (which may be patched in tests)
     with suppress(OSError, json.JSONDecodeError):
         TELEMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
         with TELEMETRY_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(observation, ensure_ascii=False) + "\n")
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def post_tool_hook(context: dict[str, Any]) -> None:

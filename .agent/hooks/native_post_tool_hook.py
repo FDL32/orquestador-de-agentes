@@ -117,9 +117,37 @@ def main() -> None:
         file_path, content = _extract_read_payload(input_data)
         line_count = len(content.splitlines()) if content else 0
         context = f"Read file {file_path}, {line_count} lines"
+
+        # WOT-2026-105a: capture the real offset/limit of the Read call so the
+        # gate can union intervals instead of only keeping max(line_count).
+        # Empirical verification (2026-10-19): the Kilo Read tool passes
+        # `offset` (0-based line index where to start reading) and `limit`
+        # (number of lines to return) in `tool_input`.  A call like
+        # Read("file.md", offset=100, limit=50) returns lines 100..149,
+        # i.e. offset is 0-based inclusive start and limit is a count.
+        tool_input = input_data.get("tool_input") or {}
+        read_offset: int | None = None
+        read_limit: int | None = None
+        for key in ("offset", "limit"):
+            val = tool_input.get(key)
+            if isinstance(val, int) and val >= 0:
+                if key == "offset":
+                    read_offset = val
+                else:
+                    read_limit = val
+
+        # Only emit structured fields when offset/limit are valid
+        if read_offset is not None and read_limit is not None and read_limit > 0:
+            context_data_extra: dict[str, int] = {
+                "read_offset": read_offset,
+                "read_limit": read_limit,
+            }
+        else:
+            context_data_extra = {}
     else:
         translated_name = tool_name.lower()
         context = f"Executed {tool_name}"
+        context_data_extra = {}
 
     # Create context for post-tool hook
     from datetime import datetime, timezone
@@ -130,6 +158,7 @@ def main() -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "session_id": input_data.get("session_id", "unknown"),
         "original_input": input_data,
+        **context_data_extra,
     }
 
     # The payload MUST reach post_tool_hook. An ImportError here is a real

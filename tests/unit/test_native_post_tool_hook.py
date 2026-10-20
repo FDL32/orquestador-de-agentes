@@ -299,6 +299,48 @@ def test_empty_content_yields_zero_lines(tmp_path: Path) -> None:
     assert "0 lines" in record["context"]
 
 
+def test_read_offset_limit_propagated_to_telemetry(tmp_path: Path) -> None:
+    """WOT-2026-105a: tool_input.offset/limit -> read_offset/read_limit en telemetria.
+
+    Completa el productor que check_contract_full_read.py (commit a4b31dbe) ya
+    consume: sin este cableado, el consumidor nunca recibe los campos
+    estructurados y cae siempre al fallback legacy [0, line_count).
+    """
+    content = "\n".join(f"line{i}" for i in range(50))
+    payload = json.dumps(
+        {
+            "tool_name": "Read",
+            "session_id": "test-session-001",
+            "tool_input": {"file_path": "test.md", "offset": 100, "limit": 50},
+            "tool_response": content,
+        }
+    ).encode("utf-8")
+    result = _run_hook(payload, tmp_path=tmp_path)
+    assert result.returncode == 0, result._decoded_stderr
+    telemetry_file = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    last_line = telemetry_file.read_text(encoding="utf-8").strip().split("\n")[-1]
+    record = json.loads(last_line)
+    assert record["read_offset"] == 100
+    assert record["read_limit"] == 50
+
+
+def test_read_without_offset_limit_omits_structured_fields(tmp_path: Path) -> None:
+    """Sin offset/limit en tool_input (Read completo), no se emiten campos
+    read_offset/read_limit -- el consumidor debe caer al fallback legacy, no
+    a un valor inventado como 0.
+    """
+    payload = _make_read_payload(
+        file_path="test.md", content="a\nb\n", use_tool_response=True
+    )
+    result = _run_hook(payload, tmp_path=tmp_path)
+    assert result.returncode == 0
+    telemetry_file = tmp_path / ".agent" / "runtime" / "telemetry" / "tool_usage.jsonl"
+    last_line = telemetry_file.read_text(encoding="utf-8").strip().split("\n")[-1]
+    record = json.loads(last_line)
+    assert "read_offset" not in record
+    assert "read_limit" not in record
+
+
 def test_session_id_propagated_to_telemetry(tmp_path: Path) -> None:
     """session_id from payload is propagated to telemetry record."""
     payload = _make_read_payload(
