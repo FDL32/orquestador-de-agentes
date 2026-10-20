@@ -12,7 +12,7 @@
   - **Pipeline secuencial de un ticket:** `orchestrator`, `manager`,
     `builder`, `auditor`.
   - **Capa de revision independiente (sistema de 4 capas/"personas"):**
-    `revisor` (anadido WOT-2026-098b). Persona-2, Capa 1.5 del nucleo
+    `revisor` (anadido WOT-2026-098b). Persona-2 (Revisor) del nucleo
     `prompts/agent_execution_modes.md` -- NUNCA el mismo backend/modelo que
     implemento (condicion dura, ver `prompts/persona_system.md` Seccion 2).
     Para entender la numeracion de personas 0/1/2/3 y su correlacion con
@@ -127,6 +127,47 @@ commits mientras la otra tiene cambios sin commitear sobre el mismo arbol). El w
 motor NO sustituye la higiene de esa leccion (commitear siempre, nunca `stash` para dejar
 trabajo "en limbo" entre worktrees, porque `refs/stash` es GLOBAL al repo y visible desde
 cualquier worktree hermano).
+
+**Nomenclatura obligatoria del PAR de worktrees (WOT-2026-104f, 2026-10-18):** cuando una
+sesion crea su `repo_motor` worktree y su `repo_destino` worktree, AMBOS deben llevar el
+MISMO sufijo de rama/directorio (`<nombre-de-sesion>`), difiriendo solo en la raiz padre:
+
+```
+.t3/worktrees/<carpeta-del-repo_motor>/<nombre-de-sesion>     (repo_motor)
+.t3/worktrees/<carpeta-del-repo_destino>/<nombre-de-sesion>   (repo_destino)
+```
+
+Motivo: sin esta regla, emparejar los dos worktrees de una sesion exige abrir
+`motor_destination_link.json` o preguntar; con el sufijo compartido, `git worktree list`
+en cualquiera de los dos repos basta para identificar la pareja a simple vista. Al crear el
+par: (1) crea primero el worktree de `repo_motor` (rama `<owner>/<nombre-de-sesion>`); (2) crea
+el worktree de `repo_destino` con el MISMO sufijo; (3) escribe
+`<repo_destino>/.agent/config/motor_destination_link.json` apuntando `motor_root` al worktree
+de (1) ANTES de lanzar o continuar la sesion -- nunca dejar que la sesion lanzada lo descubra
+sola. Origen: un `t3_thread_launch` con `workspaceStrategy: worktree` solo provisiono el lado
+`repo_destino` (y una vez ni eso: dejo el directorio vacio sin `git worktree add` real), dejando
+a la sesion sin `prompts/` ni enlace al motor hasta que lo reconstruyo manualmente.
+
+**Formato obligatorio de `motor_destination_link.json` (WOT-2026-104g, 2026-10-18):** las rutas
+`motor_root`/`destination_root` se escriben con **forward slashes** (ruta absoluta de
+Windows con `/` en vez de `\`), NUNCA con backslashes a mano -- un backslash sin escapar correctamente deja el JSON invalido, tolerado en
+silencio por `local_audit.py` pero rechazado por `destination_context.py`. Verificado 2/2 de forma
+INDEPENDIENTE: las dos sesiones de prueba del vuelo autonomo (`autonomo-a-20261018` y
+`autonomo-b-20261018`) encontraron y corrigieron el mismo defecto sin coordinarse entre ellas --
+senal de defecto sistemico del mecanismo que genera el fichero, no incidente aislado. Si generas
+este fichero a mano (via Bash, por el workaround de `guard_paths` de mas arriba), usa forward
+slashes o `json.dumps(..., ensure_ascii=False)` sobre un dict Python -- nunca interpoles
+backslashes de Windows directamente en un heredoc o f-string.
+
+**El lanzador debe dar el NOMBRE EXACTO de la sesion coordinadora a cada hija (2026-10-18):** un
+mensaje de arranque que dice "informa a la sesion coordinadora" sin el nombre/id exacto (el que
+devuelve `ListAgents`) fuerza a la hija a adivinarlo. Verificado en vivo: la sesion
+`autonomo-b-20261018` envio su informe final por `SendMessage` a una sesion hermana de una prueba
+ANTERIOR (nombre que aparecia en su contexto heredado) en vez de a la sesion que la habia lanzado
+realmente -- el informe nunca llego. El prompt de arranque de una sesion hija SIEMPRE debe incluir
+el nombre literal de la sesion lanzadora (el que esta usa para si misma, visible en su propio
+`ListAgents` o conocido de antemano), nunca una descripcion ("la sesion coordinadora") que la hija
+tenga que resolver por su cuenta.
 
 ### Glosario de nomenclatura de ticket (WOT-2026-010a)
 
@@ -409,6 +450,54 @@ nunca de un `-k` por nombre. Rationale completo (por que la comprobacion previa 
 medido WOT-2026-079d con 3 regresiones reales que `-k` dejo pasar): memoria de
 `repo_motor`, `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`
 (2026-09-27).
+
+**Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k):** cuando el
+despacho de un ticket se reparte entre tres roles (protocolo `prompts/kilo_trio_dispatch/`),
+SOLO el Manager corre la suite completa `--level all`, como gate de cierre, UNA vez,
+inmediatamente antes del push -- tras TODOS los commits del ticket, nunca "antes del commit
+final" (la regla de arriba ya fija que la suite es el ULTIMO paso, no uno intermedio). El
+Builder se limita a tests focales del area tocada durante la implementacion (nunca `--level all`
+como su propio cierre); el Revisor ejecuta de forma independiente sus propios tests focales
+sobre el area modificada -- NUNCA cita ni espera una corrida del Manager, porque en el orden
+canonico del trio (Manager -> Builder -> Revisor -> Manager-cierre) esa corrida todavia no
+existe cuando el Revisor actua. Medido en vivo (2026-10-18, WOT-2026-104j, sesion hija 4 capas):
+sin esta asignacion explicita, Builder y el Orquestador corrieron `--level all` CADA UNO por su
+cuenta, ambas veces antes de que el Revisor tuviera turno -- exactamente el patron de
+desperdicio que la regla de arriba ya advertia, mas una corrida redundante que la regla de
+arriba no cubria (quien tiene PERMISO de correrla, no solo cuando). Verificado por bucle de
+gobierno DESIGN_REVIEW (`UNI-5`, 4 lentes independientes: codex, opencode/glm, gemini, mistral;
+3/4 `APROBAR_CON_CAMBIOS` tras corregir una redaccion anacronica del primer borrador). **Alcance
+declarado, no se extiende por si solo:** esta regla cubre el protocolo trio
+`prompts/kilo_trio_dispatch/`. NO toca `scripts/run_gates_dispatch.py` ni
+`skills/builder-run-quality-gates` (hallazgo de la lente codex en el mismo bucle): esos
+mecanismos sirven tambien a tickets de un solo Builder sin Revisor/Manager separados, donde el
+Builder SI es el unico verificador legitimo de `--level all`.
+
+#### Push por vuelo: UN solo push al final de TODOS los tickets (2026-10-19)
+
+- DECISION DE PROCESO: la publicacion se difiere al final del vuelo, nunca por ticket (2026-10-19).
+  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: `prompts/orchestrator_session_bootstrap.md:314` ("UN solo push al final de la cola, con OK humano explicito"), `prompts/orchestrator_pipeline_codeonly.md:199` ("Push AGRUPADO al final de sesion ... NO push por ticket") y `prompts/manager_orchestrator_loop_backlog.md:455` (informe antes del push). Esta seccion EXTIENDE esa regla a todo vuelo multi-ticket; no la inventa.
+
+**La publicacion es una accion del VUELO, no del ticket.** Durante un vuelo (batch
+autonomo, pipeline code-only o cadena de cierres), cada ticket se cierra EN LOCAL con su
+commit y **NO se pushea entre tickets**. El push se ejecuta UNA sola vez, al final del
+vuelo: despues del ULTIMO ticket, con la suite canonica verde sobre el HEAD final y los
+gates de publicacion de la seccion siguiente (Gate 1/Gate 2) satisfechos.
+
+Motivo: cada push intermedio exige una autorizacion humana y rompe la autonomia del vuelo.
+La autorizacion de publicacion se resuelve en la PREPARACION del vuelo -- una sola
+decision, por adelantado, registrada en el arranque/plan de vuelo -- no goteando ticket a
+ticket (misma logica que `batch-agrupar-preguntas-antes-de-arrancar`).
+
+- **Sin autorizacion registrada no hay push.** Un vuelo que termina sin decision de
+  publicacion queda en estado declarado `PUBLICACION_PENDIENTE_AUTORIZACION`: todo
+  commiteado y verde en local, remoto intacto. La autorizacion NUNCA se infiere del
+  silencio ni se pide a mitad de vuelo.
+- **El push final es unico y agrupado.** Si la rama remota avanzo, aplica el Gate 2 de la
+  seccion siguiente; no se reabre el Gate 1 (el `tested_commit_sha == HEAD` del commit
+  final ya verificado sigue siendo el ancla).
+- **Alcance:** todo vuelo con uno o mas tickets. Un ticket suelto que NO forma parte de un
+  vuelo puede pushearse al cerrarlo; si forma parte de un vuelo, espera al final del vuelo.
 
 #### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
 

@@ -322,6 +322,40 @@ class TestCliOutput:
         assert "denominator" in payload
 
 
+class TestSubprocessInvocation:
+    """Reproduce la ruta productiva real: `run_script()` en
+    scripts/closeout_steps/support.py invoca este modulo como SUBPROCESO
+    standalone (`[sys.executable, <motor>/scripts/rotate_kilo_logs.py, ...]`,
+    cwd=project_root), nunca como `import`. Un test que solo haga `_load()`
+    o llame a `_rk.main()` in-process no ejercita ese sys.path[0]=scripts/ y
+    no detecta un ModuleNotFoundError en el import diferido de
+    scripts.closeout_steps (medido 2026-10-19: el modulo paso todos los
+    tests existentes mientras fallaba en produccion)."""
+
+    def test_subprocess_cli_does_not_raise_modulenotfound(self, tmp_path: Path) -> None:
+        """La invocacion real via subprocess no debe fallar por import roto."""
+        planning = tmp_path / ".agent" / "planning"
+        planning.mkdir(parents=True)
+        (planning / "test.log").write_text("data\n", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(_ROOT / "scripts" / "rotate_kilo_logs.py"),
+                "--project-root",
+                str(tmp_path),
+            ],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert "ModuleNotFoundError" not in result.stderr
+        assert "No module named" not in result.stdout
+        assert result.returncode == 0
+
+
 class TestAtomicity:
     """Pruebas de atomicidad (rename antes de comprimir)."""
 

@@ -5,10 +5,12 @@ route_kind: modo
 ---
 # Orchestrator Autonomous Ticket Batch (Executor)
 <!-- PROMPT-SUMMARY
-what: Ejecutor autonomo que consume el DAG de /backlog-triage y cierra el maximo de tickets con barreras duras por ticket, delegando cada uno en el pipeline canonico del modo detectado; un vuelo crea commits, mueve filas del backlog al archivo, escribe en el bus, el ledger y la memoria y puede publicar con push, ademas del recibo de aislamiento y de batch_run con su PREDICATE; nunca se audita a si mismo.
+what: Ejecutor autonomo que consume el DAG de /backlog-triage y cierra el maximo de tickets con barreras duras por ticket, delegando cada uno en el pipeline canonico del modo detectado; un vuelo crea commits, mueve filas del backlog al archivo, escribe en el bus, el ledger y la memoria y publica UNA sola vez al final de TODOS los tickets (nunca por ticket), ademas del recibo de aislamiento y de batch_run con su PREDICATE; nunca se audita a si mismo.
 when: Tras un triage con DAG validado y fresco y con el recibo de aislamiento de arranque RESUELTO por un tercero; gobierna el vuelo por grupos hasta DONE o hasta un GROUP_STOP_REPORT.
 not: NO es el pipeline por ticket (prompts/orchestrator_pipeline.md ni prompts/orchestrator_pipeline_codeonly.md), NO es el triaje que produce el DAG (prompts/backlog_triage.md), NO es su auditor (prompts/audit_autonomous_ticket_batch.md) y nunca ejecuta tickets REQUIERE_HUMANO ni DISENO_PRIMERO.
 -->
+
+**[EJECUTOR]** -- ver tambien el AUDITOR: `prompts/audit_autonomous_ticket_batch.md`
 
 > Executor that consumes the DAG produced by `/backlog-triage`
 > (`prompts/backlog_triage.md`, schema `autonomous-batch-dag/v1`) and closes
@@ -805,6 +807,34 @@ not just your one-line mutation (lesson
 finding and BLOCKS the close.
 
 ---
+
+## Publication is FLIGHT-LEVEL: ONE push at the END of ALL tickets (never per ticket)
+
+**The push is an action of the FLIGHT, not of the ticket.** Every ticket in the
+batch closes LOCALLY with its own commit; the executor **never pushes between
+tickets**. Publication runs exactly ONCE, after the LAST ticket of the flight,
+when the closing suite is green on the final HEAD (`tested_sha == HEAD`) and the
+close gates have passed.
+
+Why: a per-ticket push requires a human authorization each time and breaks the
+autonomy this executor exists to provide. The publication authorization is
+resolved during FLIGHT PREPARATION -- one decision, up front, recorded in the
+arranque prompt / flight plan -- and is not requested ticket by ticket mid-run.
+This is the same principle as "batch questions are asked together before the
+batch starts", applied to publication.
+
+- **Authorization is a PRE-FLIGHT input, never inferred.** If the flight's
+  arranque/plan records no publication decision, the executor does NOT push:
+  it finishes every ticket locally, emits `PUBLICACION_PENDIENTE_AUTORIZACION`
+  in `batch_run_<ts>.json`, and reports it. Silence is not consent, and the
+  question is NOT asked mid-flight.
+- **One grouped push, at the very end.** If the remote advanced while the
+  flight ran, the Gate 2 criteria of `AGENTS.md` apply; Gate 1 (suite green on
+  the exact published commit) is not re-opened.
+- **This is a NORM, not a wired barrier.** Nothing in this repo mechanically
+  prevents a per-ticket `git push` today; no test pins this section. It is
+  declared as a norm so it is not mistaken for an enforced mechanism
+  (same honesty as the start-context-isolation debt above).
 
 ## Outputs (design section 12)
 

@@ -229,7 +229,8 @@ una cifra 4x mas alta de la real, narrando una "crisis" ~4x peor que la medida h
 En orden de preferencia:
 
 1. **Guard de clase en WARN**, que reporte el EXCESO sobre el gate aplicable (p.ej. "2,36x del
-   gate Codex de 32768 bytes") sin bloquear.
+   gate Codex de 32768 bytes") sin bloquear: `scripts/check_context_budget.py` (guard, no
+   "barrera" -- CEM: un mecanismo solo-WARN no es una barrera).
 2. **Deuda declarada** con ticket dueno y criterio de salida. Nunca silencio. Si el fichero
    supera MAS DE UN gate (p.ej. Codex Y Claude Code a la vez), la deuda declara CADA exceso por
    separado con su propio recibo de medicion -- una deuda que solo cubre uno de los gates deja

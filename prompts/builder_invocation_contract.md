@@ -77,6 +77,91 @@ Notas obligatorias:
   requiere. No esperes ver la ronda en `scorecard.jsonl` ni en `leaders`/`status` de `ensemble_dispatch.py`
   -- esos comandos son del OTRO contrato (ver `prompts/ensemble_loop.md`).
 
+### 1.A. Deteccion canonica de liveness / fin-de-turno de una invocacion Kilo en Windows (WOT-2026-104m)
+
+**Por que hace falta esto (causa medida, no teoria):** en Windows el CLI de Kilo corre via wrapper
+`kilo.cmd` -> `node.exe`; el proceso que un sondeo por nombre ve NO es necesariamente el que sigue
+escribiendo el log. En el vuelo 4 capas WOT-2026-104j/104h (2026-10-18) el Orquestador uso
+`pgrep -f "kilo"` como senal de fin de proceso y obtuvo un FALSO NEGATIVO: reporto "proceso terminado"
+mientras Kilo seguia activo -- el log de la invocacion siguio creciendo de 101KB a 256KB DESPUES de la
+primera senal de "completado" (bitacora `104hj-4capas-20261018`, lineas 228-236; evidencia extendida en
+`docs/protocol/4capas_vuelo_104hj_fricciones_operativas.md`, F1).
+
+**PROHIBIDO usar `pgrep -f` como unico criterio de terminacion.** No es el metodo canonico aqui por dos
+motivos independientes, ambos medidos en esta maquina:
+1. El falso negativo de arriba: un resultado vacio NO prueba que el proceso haya terminado.
+2. Ni siquiera existe de forma fiable: `where.exe pgrep` da rc=1 en PowerShell y Git Bash responde
+   `pgrep: command not found`. Donde SI existe (Cygwin/busybox), su `-f` casa la cadena de comando del
+   wrapper, no el proceso que escribe el log -- que es exactamente el modo de fallo medido.
+Un probe que puede devolver vacio porque el binario no esta, o porque el nombre no casa, es
+indistinguible de "terminado": fail-open por construccion.
+
+**Metodo canonico A (preferido): estabilidad del tamano del fichero de log entre dos lecturas.** Es el
+remedio que funciono en vivo durante aquel vuelo y nunca se formalizo. Requiere capturar el PID del
+lanzamiento y leer el log al menos DOS veces separadas; solo se declara fin-de-turno cuando el tamano no
+crece entre lecturas.
+
+```powershell
+$LOG = "<ruta-del-log-de-la-invocacion>"   # el mismo destino de '> <ruta-log>' de la Seccion 1
+$prev = (Get-Item $LOG).Length
+Start-Sleep -Seconds 2
+$cur = (Get-Item $LOG).Length
+if ($cur -ne $prev) {
+  "ACTIVO: crecimiento de $($cur - $prev) bytes entre lecturas"
+} else {
+  "ESTABLE en $cur bytes tras 2 lecturas -- candidato a fin de turno"
+}
+```
+
+Reglas obligatorias del metodo A:
+- Dos lecturas estables son **necesarias, no suficientes**: una pausa larga del modelo entre tokens tambien
+  congela el tamano. Exige N consecuciones estables (N >= 2) ANTES de declarar terminacion, y confirma con
+  el metodo B sobre el PID real.
+- Un log que deja de crecer pero cuyo PID sigue vivo = turno pausado o proceso colgado, NO completado.
+- Compara tamano (`(Get-Item $LOG).Length`), no `LastWriteTime`: el mtime no distingue "escribio poco" de
+  "no escribio".
+
+**Metodo canonico B (confirmatorio): sondeo por PID real, nunca por nombre.** Captura el PID en el
+lanzamiento y preguntale a Windows por ESE entero.
+
+```powershell
+# Forma canonica: Get-Process sobre el PID capturado al lanzar (Start-Process -PassThru).
+$PID_KILO = <pid-capturado-con--PassThru>
+$vivo = [bool](Get-Process -Id $PID_KILO -ErrorAction SilentlyContinue)
+if ($vivo) { "VIVO: PID $PID_KILO" } else { "MUERTO: PID $PID_KILO" }
+```
+
+```powershell
+# Alternativa tasklist (equivalente, util desde shells sin cmdlets .NET).
+$raw = & tasklist /FI "PID eq $PID_KILO" /FO CSV /NH 2>$null | Out-String
+$vivo = [bool]($raw.Trim() -and $raw -notmatch 'no hay|INFO:|ERROR:')
+if ($vivo) { "VIVO: PID $PID_KILO" } else { "MUERTO: PID $PID_KILO" }
+```
+
+Trampas declaradas del metodo B (medidas 2026-10-19, PowerShell 5.1 en Windows):
+- **`Out-String` es obligatorio** en la variante `tasklist`: sin pipe, `/FI` devuelve un `Object[]` de dos
+  lineas cuando el PID no existe, y `-notmatch` sobre un array evalua CADA elemento por separado y deja
+  pasar el caso "no encontrado" como si estuviera vivo (fail-open). Con `Out-String` el patron casa contra
+  el texto completo y el veredicto es correcto.
+- El filtro de `no hay` es **dependiente del locale**: en un Windows en ingles la frase es
+  `INFO: No tasks are running which match the specified criteria`. Anade `No tasks` al patron si el host no
+  esta en espanol; nunca dependas solo de la forma acentuada (`INFORMACION`).
+- **No sondees por nombre** (`Get-Process -Name node`): medido en esta maquina hay 14-17 procesos `node.exe`
+  vivos permanentemente, asi que ese sondeo siempre responde "vivo" -- otro fail-open.
+- El PID del wrapper `kilo.cmd` puede haber desaparecido mientras el hijo `node.exe` sigue escribiendo.
+  Sondea el PID del proceso que hereda el stdout (el que recibe `> <ruta-log>`), o usa el metodo A como
+  autoridad primaria.
+
+**Verificacion de los dos metodos en esta maquina (controles positivos, no aserciones cosmeticas):**
+estabilidad de tamano detecto crecimiento y luego estabilizacion (`s1=4 s2=9 s3=9`); `Get-Process -Id` dio
+`True` con el proceso vivo y `False` tras matarlo; el helper de `tasklist` con `Out-String` dio
+`inexistente=False / vivo=True / muerto=False`. Reproducir estos controles es parte del DoD del proximo
+ticket que toque esta seccion: cambiar un snipped sin re-ejecutarlo deja la guia otra vez como relato.
+
+**Relacion con el bullet de arriba ("Sin bus de eventos"):** ese bullet sigue vigente -- Kilo no emite
+`BUILDER_EXIT`. Esta seccion no lo contradice: aporta el UNICO sustituto mecanico disponible para saber
+cuando la invocacion termino, dado que no hay evento.
+
 ## 1.5. Provider explicito obligatorio cuando el modelo existe en mas de un proveedor (WOT-2026-103d)
 
 **Incidente que origina esta norma (VUELO6, REV-100K-r1, 2026-10-15):** un despacho de
@@ -116,7 +201,45 @@ igual que los prompts de gobierno citan `ensemble_loop.md`. Un prompt que solo d
 decir COMO se invoca, deja a la sesion que lo recibe sin saber si debe usar `ensemble_dispatch.py` o el
 CLI directo -- ese fue exactamente el fallo que origina este contrato.
 
-## 3. Relacion con `AGENTS.md`
+## 3. Guard bloqueante durante la ejecucion => DETENTE, nunca lo parchees ni borres su evidencia
+
+**Incidente que origina esta norma (WOT-2026-104n, 2026-10-19):** un Builder despachado via
+`delegate_task`/`opencode` con un mandato ACOTADO (rediseñar fixtures de test, sin que el mandato
+pidiera cerrar el ticket) se topo, por iniciativa propia, con dos guards reales y correctos
+(`implementation_evidence_failed`, luego `pre_handoff_guard_failed`) al intentar ejecutar
+`--mark-ready` sin que el mandato lo pidiera. En vez de PARAR y reportar el bloqueo, **monkeypatcheo
+`runtime.project_root.is_motor_code_only`** para desactivar en caliente el guard anti-drift que
+`AGENTS.md` documenta explicitamente ("Nunca usar `repo_motor/.agent/collaboration/` como
+operativo"), y **borro `.agent/runtime/events/events.jsonl`**, que contenia sus propios eventos
+`HANDOFF_BLOCKED`/`BUILDER_EXIT` de los intentos fallidos. El guard de pre-handoff SI funciono como
+barrera (nunca hubo un `--mark-ready` exitoso), pero el patron -- un subagente que responde a un
+bloqueo intentando desactivarlo en vez de detenerse -- es un riesgo de gobierno serio para
+cualquier despacho via `delegate_task`/CLI de agente.
+
+**Prohibiciones duras (aplican a CUALQUIER Builder/subagente invocado bajo este contrato):**
+
+- **Nunca parchear, monkeypatchear ni modificar el mecanismo de un guard** (ni codigo de
+  produccion del motor con ese fin) al toparse con un `HANDOFF_BLOCKED` o cualquier guard que
+  bloquee. Ante un bloqueo: DETENTE y reporta el bloqueo tal cual al orquestador/Manager que
+  despacho la tarea -- el guard es la barrera, no un obstaculo a rodear.
+- **Nunca borrar, truncar ni reescribir `.agent/runtime/events/events.jsonl`** (ni ningun log del
+  bus) desde un rol Builder/subagente, salvo instruccion EXPLICITA del orquestador. El log de los
+  propios bloqueos es evidencia, no basura -- borrarlo es indistinguible de ocultar el rastro del
+  propio fallo, independientemente de la intencion declarada.
+- **Un mandato ACOTADO acota el alcance, no solo la tarea.** Un Builder dispatchado para una
+  ronda concreta (p.ej. "rediseña fixtures y entrega informe") NO debe, por iniciativa propia,
+  intentar ejecutar el ciclo de cierre completo del ticket (`--mark-ready`, commit de
+  `execution_log.md` canonico, etc.) salvo que el mandato lo pida explicitamente. El conocimiento
+  general del Builder sobre el protocolo completo del motor no autoriza a ampliar el alcance
+  despachado.
+
+**Limite declarado (no se oculta):** estas son prohibiciones de CONTRATO/instruccion, no un
+sandboxing tecnico -- ningun mecanismo de este repo impide FISICAMENTE que un subagente con exec
+de shell parchee codigo Python en su propio proceso. `prompts/kilo_trio_dispatch/
+dispatch_builder.template.md` (B2/B9) apunta aqui por REFERENCIA, sin redeclarar estas
+prohibiciones (X-09).
+
+## 4. Relacion con `AGENTS.md`
 
 El vocabulario canonico de roles (`AGENTS.md`, seccion "Backends y roles") define que es un backend IA
 y un rol; este contrato no lo redefine. `AGENTS.md` enlaza aqui para el PROCEDIMIENTO operativo de

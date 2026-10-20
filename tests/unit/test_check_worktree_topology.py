@@ -19,6 +19,15 @@ Covers the 9 cases (a)-(i) of the work_plan Fase 4:
     a link with the right destination_id but a foreign ticket_prefix must
     NOT resolve (exit 2). Plus: an ambiguous WOT prefix (two links) is exit
     2, not exit 1.
+(k) WOT-2026-104h: the DESTINATION workspace must be a linked worktree, not
+    its repo's primary checkout -- enforced on BOTH dispatch legs (WOT and
+    non-WOT) and on the bare project-name leg. Destination fixtures are
+    therefore real git repos with a real linked worktree
+    (`_make_linked_worktree`), never plain directories.
+(l) WOT-2026-104h r2 (H1): git's directory discovery ASCENDS, so a
+    project_root nested inside a repo is NOT a verifiable checkout -- whether
+    that repo is a linked worktree or its primary -- and must fail closed with
+    exit 2, never exit 0 (false green) nor a misleading exit 1.
 
 Every WOT fixture declares ticket_prefix "WOT" on the workspace link, mirroring
 the real link. They used to pass prefix=None -- encoding the very defect
@@ -105,6 +114,28 @@ def _make_git_tree(tmp_path: Path) -> tuple[Path, Path]:
     return motor, dev
 
 
+def _make_linked_worktree(base: Path, name: str) -> Path:
+    """Create a real git repo under base and return a LINKED worktree of it.
+
+    WOT-2026-104h: the destination workspace must be a linked worktree, not
+    the primary checkout, so destination fixtures can no longer be plain
+    directories. `git worktree add -b <branch>` is mandatory (the primary
+    already has `main` checked out). No subprocess mocking: the topology is
+    created by real git, exactly like the motor fixtures above.
+    """
+    primary = base / f"{name}_primary"
+    primary.mkdir()
+    _git_init_main(primary)
+    linked = base / name
+    subprocess.run(
+        ["git", "worktree", "add", "-b", f"session/{name}", str(linked), "main"],
+        cwd=primary,
+        check=True,
+        capture_output=True,
+    )
+    return linked
+
+
 def _make_link(
     dest_root: Path,
     motor_root: Path,
@@ -144,8 +175,7 @@ def _isolate_git_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_case_a_wot_dev_correct_workspace_exits_zero(tmp_path: Path) -> None:
     motor, dev = _make_git_tree(tmp_path)
-    workspace = tmp_path / "orquestador_de_agentes_workspace"
-    workspace.mkdir()
+    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
 
     exit_code, message = check_topology("WOT-2026-021g", dev, motor, workspace)
@@ -201,8 +231,7 @@ def test_case_d_destination_correct_workspace_exits_zero(tmp_path: Path) -> None
     motor.mkdir()
     (motor / ".agent").mkdir(parents=True)
     (motor / ".agent" / "agent_controller.py").write_text("# motor\n", encoding="utf-8")
-    ctl = search_root / "Crear_Texto_LLM"
-    ctl.mkdir()
+    ctl = _make_linked_worktree(search_root, "Crear_Texto_LLM")
     _make_link(ctl, motor, "CTL", "Crear_Texto_LLM")
 
     exit_code, message = check_topology("CTL-2026-001a", motor, motor, ctl)
@@ -222,8 +251,7 @@ def test_case_e_destination_wrong_workspace_exits_one(tmp_path: Path) -> None:
     motor.mkdir()
     (motor / ".agent").mkdir(parents=True)
     (motor / ".agent" / "agent_controller.py").write_text("# motor\n", encoding="utf-8")
-    ctl = search_root / "Crear_Texto_LLM"
-    ctl.mkdir()
+    ctl = _make_linked_worktree(search_root, "Crear_Texto_LLM")
     _make_link(ctl, motor, "CTL", "Crear_Texto_LLM")
     wrong_workspace = search_root / "Otro_Proyecto"
     wrong_workspace.mkdir()
@@ -381,8 +409,7 @@ def _make_seed_motor(tmp_path: Path, *, with_log: bool) -> Path:
 def _add_ctl_destination(motor: Path, tmp_path: Path) -> Path:
     """Register a CTL destination under <tmp>/projects so the CTL topology leg
     can resolve and the full CLI path is exercisable."""
-    ctl = tmp_path / "projects" / "Crear_Texto_LLM"
-    ctl.mkdir()
+    ctl = _make_linked_worktree(tmp_path / "projects", "Crear_Texto_LLM")
     _make_link(ctl, motor, "CTL", "Crear_Texto_LLM")
     return ctl
 
@@ -620,8 +647,7 @@ def test_verification_b_resolves_by_ticket_prefix_not_destination_id(
     of them distinguishes the two lookup mechanisms.
     """
     motor, dev = _make_git_tree(tmp_path)
-    workspace = tmp_path / "orquestador_de_agentes_workspace"
-    workspace.mkdir()
+    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
 
     # (1) The link declares ticket_prefix WOT -> resolves -> authorized.
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
@@ -667,11 +693,9 @@ def test_verification_b_two_wot_destinations_does_not_block_either(
     mensaje -- ver WOT-2026-023i; ese comportamiento era el BUG, no una
     propiedad a preservar.)"""
     motor, dev = _make_git_tree(tmp_path)
-    workspace = tmp_path / "orquestador_de_agentes_workspace"
-    workspace.mkdir()
+    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
-    otro_destino_wot = tmp_path / "otro_workspace"
-    otro_destino_wot.mkdir()
+    otro_destino_wot = _make_linked_worktree(tmp_path, "otro_workspace")
     _make_link(otro_destino_wot, motor, "WOT", "otro_workspace")
 
     # Verificar `workspace` como project_root -> exit 0, sin importar que
@@ -730,8 +754,7 @@ def test_wot_flight_worktree_matching_suffix_exits_zero(tmp_path: Path) -> None:
     """(d) DoD: WOT-2026-027h desde una worktree en rama flight/027h -> exit 0.
     Es el caso que bloqueaba los 3 vuelos paralelos."""
     motor, _dev = _make_git_tree(tmp_path)
-    workspace = tmp_path / "orquestador_de_agentes_workspace"
-    workspace.mkdir()
+    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
     flight = _add_flight_worktree(motor, tmp_path, "027h")
 
@@ -781,8 +804,7 @@ def test_wot_flight_worktree_wrong_workspace_exits_one(tmp_path: Path) -> None:
 def test_wot_dev_main_still_valid_after_flight_support(tmp_path: Path) -> None:
     """El flujo canonico _dev/main NO se rompe al anadir soporte de vuelo."""
     motor, dev = _make_git_tree(tmp_path)
-    workspace = tmp_path / "orquestador_de_agentes_workspace"
-    workspace.mkdir()
+    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
 
     exit_code, message = check_topology("WOT-2026-027h", dev, motor, workspace)
@@ -858,8 +880,7 @@ def test_wot_flight_worktree_unstaged_only_index_change_is_not_blocked(
     diff` sin `--cached`), este caso pasaria a exit 1 y el test moriria.
     """
     motor, _dev = _make_git_tree(tmp_path)
-    workspace = tmp_path / "orquestador_de_agentes_workspace"
-    workspace.mkdir()
+    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
     flight = _add_flight_worktree(motor, tmp_path, "027h")
 
@@ -878,11 +899,189 @@ def test_wot_dev_main_with_staged_index_still_passes(tmp_path: Path) -> None:
     dando exit 0.
     """
     motor, dev = _make_git_tree(tmp_path)
-    workspace = tmp_path / "orquestador_de_agentes_workspace"
-    workspace.mkdir()
+    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
     _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
 
     _stage_tracked_file_change(dev)
 
     exit_code, message = check_topology("WOT-2026-027h", dev, motor, workspace)
     assert exit_code == 0, message
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-104h: el workspace del DESTINO tambien debe ser una worktree
+# ENLAZADA, no el checkout principal de su repo. Dos sesiones sobre el mismo
+# project_root principal comparten work_plan.md/execution_log.md/backlog.
+# ---------------------------------------------------------------------------
+
+
+def test_destination_linked_worktree_exits_zero(tmp_path: Path) -> None:
+    """(positivo) Un project_root que es worktree ENLAZADA -> exit 0.
+
+    Fixture con `git worktree add` real (sin mockear subprocess): el repo
+    primario queda en <name>_primary y la worktree enlazada en <name>.
+    """
+    from scripts.check_worktree_topology import _check_destination_is_linked_worktree
+
+    linked = _make_linked_worktree(tmp_path, "destino_enlazado")
+
+    exit_code, message = _check_destination_is_linked_worktree(linked)
+    assert exit_code == 0, message
+    assert "enlazada" in message
+
+
+def test_destination_primary_checkout_exits_one(tmp_path: Path) -> None:
+    """(negativo) El checkout PRINCIPAL del repo del destino -> exit 1.
+
+    Mismo repo real que el positivo, pero apuntando a su working tree
+    primario: es el topology hazard que este guard bloquea.
+    """
+    from scripts.check_worktree_topology import _check_destination_is_linked_worktree
+
+    primary = tmp_path / "destino_primary"
+    primary.mkdir()
+    _git_init_main(primary)
+
+    exit_code, message = _check_destination_is_linked_worktree(primary)
+    assert exit_code == 1, message
+    assert "PRINCIPAL" in message
+    assert "worktree" in message.lower()
+
+
+def test_destination_non_git_workspace_fails_closed(tmp_path: Path) -> None:
+    """Si no se puede determinar la topologia (no es repo git), fail-closed
+    exit 2 -- misma semantica que la Verificacion A del motor, nunca 0 por
+    no poder confirmar el aislamiento."""
+    from scripts.check_worktree_topology import _check_destination_is_linked_worktree
+
+    plain = tmp_path / "plain_workspace"
+    plain.mkdir()
+
+    exit_code, message = _check_destination_is_linked_worktree(plain)
+    assert exit_code == 2, message
+    assert "no se puede determinar" in message
+
+
+def test_destination_plain_dir_nested_in_linked_worktree_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """(H1, caso C del Revisor) Un directorio LLANO anidado dentro de una
+    worktree ENLAZADA no es un checkout: git asciende y reporta la worktree
+    padre como toplevel.
+
+    Pre-fix devolvia exit 0 (falso verde: toplevel != primary), que es
+    exactamente el fallo real de WOT-2026-104f (el lanzador dejo un directorio
+    vacio sin `git worktree add`). La precondition toplevel == project_root
+    lo reclasifica a exit 2. Mutation-to-prove: quitar esa precondition
+    devuelve 0 y este test muere."""
+    from scripts.check_worktree_topology import _check_destination_is_linked_worktree
+
+    linked = _make_linked_worktree(tmp_path, "destino_enlazado")
+    nested = linked / "not_a_repo"
+    nested.mkdir()
+
+    exit_code, message = _check_destination_is_linked_worktree(nested)
+    assert exit_code == 2, message
+    assert "no se puede determinar" in message
+
+
+def test_destination_plain_dir_nested_in_primary_checkout_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """(NIT-2) Un directorio LLANO anidado en el checkout PRINCIPAL no ES el
+    checkout principal: pre-fix devolvia exit 1 con el mensaje falso "el
+    workspace ... es el checkout PRINCIPAL". La precondition lo reclasifica a
+    exit 2 ("no determinable"), que es lo que el docstring promete."""
+    from scripts.check_worktree_topology import _check_destination_is_linked_worktree
+
+    primary = tmp_path / "destino_primary"
+    primary.mkdir()
+    _git_init_main(primary)
+    nested = primary / "not_a_repo"
+    nested.mkdir()
+
+    exit_code, message = _check_destination_is_linked_worktree(nested)
+    assert exit_code == 2, message
+    assert "no se puede determinar" in message
+
+
+def test_ctl_primary_checkout_is_blocked_by_wiring(tmp_path: Path) -> None:
+    """El camino NO-WOT (prefijo CTL) exige la worktree enlazada: el checkout
+    principal del destino resuelve el prefijo correctamente y aun asi se
+    bloquea con exit 1. Sin el cableado en _check_destination_topology este
+    caso daria exit 0."""
+    search_root = tmp_path / "projects"
+    search_root.mkdir()
+    motor = search_root / "orquestador_de_agentes"
+    motor.mkdir()
+    (motor / ".agent").mkdir(parents=True)
+    (motor / ".agent" / "agent_controller.py").write_text("# motor\n", encoding="utf-8")
+    primary = search_root / "Crear_Texto_LLM"
+    primary.mkdir()
+    _git_init_main(primary)
+    _make_link(primary, motor, "CTL", "Crear_Texto_LLM")
+
+    exit_code, message = check_topology("CTL-2026-001a", motor, motor, primary)
+    assert exit_code == 1, message
+    assert "PRINCIPAL" in message
+
+
+def test_wot_primary_destination_checkout_is_blocked(tmp_path: Path) -> None:
+    """El camino WOT tambien exige la worktree enlazada: con la Verificacion A
+    del motor correcta (_dev/main) y un link WOT valido, el checkout primario
+    del destino bloquea con exit 1. Sin el cableado en _verify_wot_workspace
+    este caso daria exit 0."""
+    motor, dev = _make_git_tree(tmp_path)
+    primary = tmp_path / "destino_wot"
+    primary.mkdir()
+    _git_init_main(primary)
+    _make_link(primary, motor, "WOT", "destino_wot")
+
+    exit_code, message = check_topology("WOT-2026-104h", dev, motor, primary)
+    assert exit_code == 1, message
+    assert "PRINCIPAL" in message
+
+
+# H2 (WOT-2026-104h r2): the bare PROJECT-NAME leg dispatches without a ticket
+# prefix. It must carry the SAME linked-worktree requirement, otherwise
+# invoking the guard by project name (prompts/orchestrator_destination_
+# bootstrap.md:47 passes <TICKET_O_PROYECTO>) would be a trivial bypass.
+# Removing the `_check_destination_is_linked_worktree` call on that leg flips
+# the negative test below to exit 0 -> it dies.
+
+
+def test_project_name_linked_worktree_exits_zero(tmp_path: Path) -> None:
+    """(positivo, H2) Nombre de proyecto resuelto a una worktree ENLAZADA ->
+    exit 0, y el mensaje declara la worktree enlazada (NIT-1)."""
+    search_root = tmp_path / "projects"
+    search_root.mkdir()
+    motor = search_root / "orquestador_de_agentes"
+    motor.mkdir()
+    (motor / ".agent").mkdir(parents=True)
+    (motor / ".agent" / "agent_controller.py").write_text("# motor\n", encoding="utf-8")
+    linked = _make_linked_worktree(search_root, "Crear_Texto_LLM")
+    _make_link(linked, motor, "CTL", "Crear_Texto_LLM")
+
+    exit_code, message = check_topology("Crear_Texto_LLM", motor, motor, linked)
+    assert exit_code == 0, message
+    assert "enlazada" in message
+
+
+def test_project_name_primary_checkout_is_blocked_by_wiring(tmp_path: Path) -> None:
+    """(negativo, H2) Nombre de proyecto resuelto al checkout PRINCIPAL del
+    destino -> exit 1. Es el test que muerde la rama project-name: sin el
+    cableado en check_topology, este caso daria exit 0."""
+    search_root = tmp_path / "projects"
+    search_root.mkdir()
+    motor = search_root / "orquestador_de_agentes"
+    motor.mkdir()
+    (motor / ".agent").mkdir(parents=True)
+    (motor / ".agent" / "agent_controller.py").write_text("# motor\n", encoding="utf-8")
+    primary = search_root / "Crear_Texto_LLM"
+    primary.mkdir()
+    _git_init_main(primary)
+    _make_link(primary, motor, "CTL", "Crear_Texto_LLM")
+
+    exit_code, message = check_topology("Crear_Texto_LLM", motor, motor, primary)
+    assert exit_code == 1, message
+    assert "PRINCIPAL" in message

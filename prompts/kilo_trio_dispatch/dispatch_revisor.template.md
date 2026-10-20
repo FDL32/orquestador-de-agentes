@@ -14,7 +14,7 @@ contract_id: cid-kilo-trio-dispatch-revisor-v1
 ## B0 — Cabeza
 
 - **Nombre canónico:** `REV{{TICKET}}[-r{{R}}]`
-- **Rol:** Revisor (Persona-2, `revisor`) — capa 1.5 del trío (subagente Kilo, NO ensemble_dispatch)
+- **Rol:** Revisor (Persona-2, `revisor`) del trío (subagente Kilo, NO ensemble_dispatch)
 - **Fecha:** {{FECHA}}
 - **Worktree:** {{WORKTREE}}
 - **BASE_SHA:** {{BASE_SHA}}
@@ -25,7 +25,7 @@ contract_id: cid-kilo-trio-dispatch-revisor-v1
 
 Objetivo: {{OBJETIVO_UNA_FRASE}}
 
-Artefacto a emitir: `DECISION: APPROVE` / `DECISION: CHANGES` + hallazgos en formato `ruta:línea` (veredicto formal de la capa 1.5).
+Artefacto a emitir: `DECISION: APPROVE` / `DECISION: CHANGES` + hallazgos en formato `ruta:línea` (veredicto formal de Persona-2).
 
 ## B2 — Contrato que gobierna
 
@@ -33,7 +33,7 @@ Artefacto a emitir: `DECISION: APPROVE` / `DECISION: CHANGES` + hallazgos en for
 
 - `prompts/ensemble_loop.md` (`cid-ensemble-loop-v1`) — Formato del veredicto: `DECISION: APPROVE\|CHANGES` + hallazgos `ruta:línea`.
 - `prompts/persona_system.md` (`cid-persona-system-v1`) Seccion 2 — Condicion dura de independencia (Revisor ≠ modelo del Builder).
-- `prompts/manager_review.md` (`cid-man-review-v2`) — Contrato de la review del Manager; el Revisor usa este como base y la extiende con la capa 1.5.
+- `prompts/manager_review.md` (`cid-man-review-v2`) — Contrato de la review del Manager; el Revisor usa este como base y la extiende como Persona-2.
 - `skills/manager-review-implementation` (`cid-man-review-v2`) — Rubrica de revision de implementacion.
 - `scripts/check_role_models_distinct.py` — Barrera mecánica de la condicion dura.
 - `scripts/review_bundle_contract.py` — Invariante: bundle de review no truncado.
@@ -76,7 +76,11 @@ Checklist de verificación:
 3. **Integridad del bundle:** `review_bundle_contract.py` — verificar que el bundle no omite rutas del universo de código. Si omite: `CONTEXTO_INSUFICIENTE`.
 4. **Revisión mecanica:**
    a. Leer el diff completo (`git diff base..HEAD`).
-   b. Correr `run_pytest_safe.py --level all` y verificar green.
+   b. Correr tests focales del area tocada (`run_pytest_safe.py -k <scope>`). NO
+      ejecutar `--level all` completo (WOT-2026-104k): en el orden canonico del
+      trio (Manager -> Builder -> Revisor -> Manager-cierre) el Manager aun no ha
+      corrido la suite completa cuando el Revisor actua, asi que no hay corrida
+      previa que citar; la suite completa es gate EXCLUSIVO del Manager al cierre.
    c. Correr `ruff check .` y verificar zero errors.
    d. Verificar mutation-verify (el Builder no rompio nada al revertir).
 5. **Revision de contract:** verificar que el diff cumple el work_plan (scope, no creep).

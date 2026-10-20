@@ -34,7 +34,7 @@ Artefacto a emitir: {{ARTEFACTO_EXACTO}}
 - `prompts/contract_formation_pipeline.md` — Contrato de formación de contract para tickets de Contract Formation.
 - `prompts/_shared/memory_bootstrap.md` — Paso 0 de la skill manager-create-work-plan: consulta corpus antes de clasificar.
 - **Cuando el despacho sea de PLAN/triaje:** `prompts/backlog_triage.md` (`cid-backlog-triage-v1`, Fases 0-3). La plantilla REMITE a las fases del contrato de triaje; no las copia. Regla de gobierno: §2.5 y §2.6 del audit.
-- **Cuando el despacho sea de cierre/review (p2):** `prompts/manager_review.md` (`cid-man-review-v2`) + `skills/manager-review-implementation` (`cid-man-review-v2`). Ver regla 62: suite sellada `--level all` como gate de cierre.
+- **Cuando el despacho sea de cierre/review (p2):** `prompts/manager_review.md` (`cid-man-review-v2`) + `skills/manager-review-implementation` (`cid-man-review-v2`). El Manager es el UNICO rol del trio que corre `run_pytest_safe.py --level all`, como gate de cierre, UNA sola vez, inmediatamente antes del push (tras todos los commits del ticket -- `AGENTS.md` WOT-2026-026t, "la suite va la ultima"). Builder y Revisor NO la corren por su cuenta (WOT-2026-104k; ver sus propias plantillas).
 - `scripts/run_gates_dispatch.py` — Dispatcher de quality gates focal por `deliverable_type`.
 
 ## B3 — Artefacto de salida

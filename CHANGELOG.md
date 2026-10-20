@@ -1,3 +1,30 @@
+# 2026-10-12 - WOT-2026-100a: session_start_hook.py enruta la memoria por `source`
+
+### Added
+- `.agent/hooks/session_start_hook.py` deja de ignorar el campo `source` del
+  payload de SessionStart (hallazgo de repo-compare sobre
+  github.com/mksglu/context-mode). Ahora `main()` parsea stdin como JSON (bloque
+  que nunca propaga excepcion), lee `source` y elige la puerta de memoria:
+  - `startup` / `clear` -> `bus.memory_loader.get_bootstrap_context()` (indice
+    completo, comportamiento historico, sin cambios).
+  - `resume` / `compact` / `fork` -> `bus.memory_loader.get_compact_context()`
+    (contexto acotado por recencia con cuota por origen, YA existente y usado
+    por `pre_compact_hook.py`): una sesion que CONTINUA ya tiene su historial, y
+    el indice completo era reinyeccion redundante.
+- **Politica fail-open explicita y testeada:** cualquier otro valor, campo
+  ausente, payload vacio/corrupto o excepcion en la deteccion (`json.loads`,
+  import del loader, puerta acotada que lanza) degrada al comportamiento ACTUAL
+  (`get_bootstrap_context()`). La deteccion de `source` NUNCA puede ser la razon
+  de que una sesion arranque sin memoria. El esquema de salida
+  (`{"additionalContext": ...}`) es IDENTICO al de siempre; solo cambia el
+  contenido.
+- Tests en `tests/unit/test_session_start_hook.py` (`TestSourceRouting`):
+  parametrizado sobre los 5 valores reales mas payload vacio/`{}`/no-JSON/
+  no-dict/`source` no-string (mock de ambas puertas, verifica cual se invoca),
+  fail-open de la puerta acotada y mutacion de `json.loads` que debe caer si se
+  revierte el guard (verificada en scratch: sin guard -> `ValueError` propaga).
+  `bus/memory_loader.py` NO se toca (fuera de alcance).
+
 # 2026-10-12 - WOT-2026-049c: escritor unico del DAG de triaje (barrera de copia-puntero cableada)
 
 ### Added

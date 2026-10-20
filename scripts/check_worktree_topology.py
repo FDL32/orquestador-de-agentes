@@ -31,7 +31,15 @@ For WOT there are TWO independent verifications, BOTH mandatory:
 
 For any other prefix (destinations, e.g. CTL/EXF): the motor being detached
 is expected (no _dev requirement); only the active workspace must match the
-destination resolved by prefix_resolver.resolve_prefix().
+destination resolved by prefix_resolver.resolve_prefix(). Since
+WOT-2026-104h the DESTINATION workspace must ALSO be a linked worktree of
+its repo, never the primary checkout: two sessions sharing one destination
+checkout collide on work_plan.md/execution_log.md/backlog. The same
+requirement applies to the WOT destination in Verification B. That check
+(`_check_destination_is_linked_worktree`) reuses the `git worktree list`
+primitives of Verification A, and requires `project_root` to be the ROOT of
+the worktree it reports: a workspace nested inside some repo is NOT
+verifiable and fails closed (exit 2), never exit 0 by git's walk-up.
 
 CLI:
     python scripts/check_worktree_topology.py --ticket <TICKET_OR_PROJECT>
@@ -43,11 +51,13 @@ Env:
 Exit codes:
     0 = topology correct for the resolved prefix.
     1 = topology incorrect (WOT in the primary detached checkout, _dev
-        missing, or the active workspace does not match what is expected
-        for the resolved prefix).
+        missing, the active workspace does not match what is expected
+        for the resolved prefix, or the destination workspace is its
+        repo's primary checkout instead of a linked worktree).
     2 = contract incoherence (delivery_authority in the active work_plan.md
         does not match the prefix), the prefix/project could not be
-        resolved at all, or work_plan.md is present but UnicodeDecodeError
+        resolved at all, the destination topology could not be determined,
+        or work_plan.md is present but UnicodeDecodeError
         makes it unreadable ("ilegible", fail-closed).
     With --allow-diagnostic / WORKTREE_GUARD_BYPASS=1: ALWAYS exits 0,
     prints the real verdict (including what would have blocked) prefixed
@@ -380,7 +390,11 @@ def _verify_wot_workspace(motor_root: Path, project_root: Path) -> tuple[int, st
     resultado contra el prefijo esperado. No hace falta que exista un UNICO
     destino WOT en el sistema entero; solo hace falta que ESE path concreto
     declare WOT. `resolve_prefix` (la funcion que adivina) no se toca: otros
-    consumidores pueden depender de su semantica actual."""
+    consumidores pueden depender de su semantica actual.
+
+    WOT-2026-104h: superada la comprobacion de prefijo, el workspace WOT debe
+    ser ademas una worktree ENLAZADA de su repo (nunca el checkout principal),
+    con la misma exigencia que el camino de destinos no-WOT."""
     actual_prefix = prefix_resolver.resolve_prefix_for_destination(project_root)
     if actual_prefix is None:
         return (
@@ -397,9 +411,13 @@ def _verify_wot_workspace(motor_root: Path, project_root: Path) -> tuple[int, st
             f"{prefix_resolver.WOT_PREFIX}, pero {project_root} declara "
             f"ticket_prefix == {actual_prefix}.",
         )
+    linked_issue = _check_destination_is_linked_worktree(project_root)
+    if linked_issue[0] != 0:
+        return linked_issue
     return (
         0,
-        "topologia correcta: worktree del motor (_dev/main) y workspace correctos",
+        "topologia correcta: worktree del motor (_dev/main) y workspace "
+        "correctos (worktree enlazada del destino)",
     )
 
 
@@ -425,16 +443,81 @@ def _git_common_dir_toplevel(path: Path) -> Path | None:
     return Path(raw).resolve()
 
 
+def _check_destination_is_linked_worktree(project_root: Path) -> tuple[int, str]:
+    """The destination workspace must be a LINKED worktree, not its primary.
+
+    WOT-2026-104h. Verification A already forbids working the MOTOR from its
+    primary checkout; until this check the repo_destino side had no
+    equivalent, so two parallel sessions could share the same project_root
+    and collide on work_plan.md/execution_log.md/backlog.
+
+    Before: project_root is the active destination workspace.
+    During: resolves its toplevel and the repo's full worktree list with the
+            SAME primitives Verification A uses (rev-parse --show-toplevel
+            plus `git worktree list --porcelain`). Both of those ASCEND the
+            directory tree, so any path nested inside a repo would resolve
+            to an ancestor: project_root must therefore BE the toplevel it
+            reports (WOT-2026-104h r2, H1). That listing always prints the
+            primary working tree FIRST, followed by every linked worktree,
+            so worktrees[0] is the primary checkout.
+    After: returns (1, msg) when project_root IS the primary checkout;
+          (0, msg) when it is a linked worktree; (2, msg) when the topology
+          cannot be determined (not a git repo, a nested directory whose
+          toplevel is an ancestor, git unavailable, empty list) -- same
+          fail-closed semantics as Verification A, so an unverifiable
+          workspace is never waved through.
+    """
+    toplevel = _git_common_dir_toplevel(project_root)
+    worktrees = _git_worktree_list(project_root)
+    if toplevel is None or not worktrees:
+        return (
+            2,
+            f"no se puede determinar topologia del destino: {project_root} no "
+            "es un repo git legible (o git no esta en PATH). No se puede "
+            "confirmar que el workspace sea una worktree enlazada.",
+        )
+    expected_root = project_root.resolve()
+    if toplevel != expected_root:
+        # git rev-parse / worktree list ASCEND, so a directory nested inside
+        # any repo reports an ANCESTOR as its toplevel. Accepting that would
+        # be a false green for a workspace that is not a checkout at all
+        # (the real failure WOT-2026-104f documents: the launcher left an
+        # empty directory instead of running `git worktree add`).
+        return (
+            2,
+            f"no se puede determinar topologia del destino: {project_root} no "
+            f"es la raiz de una worktree propia -- git resuelve {toplevel} "
+            "ascendiendo por el arbol, asi que este path NO es un checkout "
+            "aislado. No se puede confirmar que el workspace sea una worktree "
+            "enlazada.",
+        )
+    primary = worktrees[0]
+    if toplevel == primary:
+        return (
+            1,
+            f"el workspace del destino {project_root} es el checkout PRINCIPAL "
+            f"de su repo ({primary}), no una worktree ENLAZADA (WOT-2026-104h). "
+            "Dos sesiones sobre el mismo checkout comparten work_plan.md, "
+            "execution_log.md y backlog: trabaja desde una worktree enlazada "
+            "(`git worktree add`) cuyo sufijo coincida con la sesion.",
+        )
+    return (0, f"worktree enlazada del destino correcta: {toplevel}")
+
+
 def _check_destination_topology(
     prefix: str, cwd: Path, motor_root: Path
 ) -> tuple[int, str]:
     """Verification for non-WOT prefixes: cwd must equal the resolved
-    destination_root for that prefix. The motor being detached is expected
-    and NOT checked here (no _dev requirement for destinations).
+    destination_root for that prefix, AND be a linked worktree of it. The
+    motor being detached is expected and NOT checked here (no _dev
+    requirement for destinations).
 
     Before: prefix is a resolved ticket prefix (e.g. "CTL", "EXF").
     During: resolves prefix via prefix_resolver.resolve_prefix. If it
             cannot be resolved -> exit 2. If cwd != resolved -> exit 1.
+            Once cwd matches the resolved destination, it must also pass
+            _check_destination_is_linked_worktree (WOT-2026-104h): the
+            destination's primary checkout -> exit 1; undeterminable -> 2.
     After: returns (exit_code, message).
     """
     resolved = prefix_resolver.resolve_prefix(prefix, motor_root)
@@ -442,7 +525,14 @@ def _check_destination_topology(
         return (2, f"prefijo desconocido: {prefix}")
     if cwd.resolve() != resolved.resolve():
         return (1, f"Ticket {prefix} necesita el workspace {resolved}, no {cwd}.")
-    return (0, f"topologia correcta: workspace {resolved} coincide con {prefix}")
+    linked_issue = _check_destination_is_linked_worktree(cwd)
+    if linked_issue[0] != 0:
+        return linked_issue
+    return (
+        0,
+        f"topologia correcta: workspace {resolved} coincide con {prefix} "
+        "(worktree enlazada)",
+    )
 
 
 def _check_contract_coherence(
@@ -547,9 +637,11 @@ def check_topology(
             checks delivery_authority coherence first (if a work_plan.md
             exists) -- an incoherence short-circuits before any topology
             check. Then dispatches: WOT -> _check_wot_topology (with
-            project_root); anything else -> _check_destination_topology
+            project_root); a ticket prefix -> _check_destination_topology
             (with project_root as the "cwd" being compared against the
-            resolved destination).
+            resolved destination); a bare project name -> the same
+            destination comparison done inline, including the
+            linked-worktree check (WOT-2026-104h).
     After: returns (exit_code, message).
     """
     try:
@@ -575,9 +667,13 @@ def check_topology(
             f"Ticket {ticket_or_project} necesita el workspace {resolved}, "
             f"no {project_root}.",
         )
+    linked_issue = _check_destination_is_linked_worktree(project_root)
+    if linked_issue[0] != 0:
+        return linked_issue
     return (
         0,
-        f"topologia correcta: workspace {resolved} coincide con {ticket_or_project}",
+        f"topologia correcta: workspace {resolved} coincide con "
+        f"{ticket_or_project} (worktree enlazada)",
     )
 
 

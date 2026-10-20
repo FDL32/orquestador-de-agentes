@@ -27,6 +27,7 @@ External ideas and patterns adopted in this project.
 | WOT-2026-014u | [cobusgreyling/loop-engineering](https://github.com/cobusgreyling/loop-engineering) | Economics of Loops: loop budget + idempotent run-log (paso 3; README loop-budget.md/loop-run-log.md) | [verify] | Adapted (templates + modulo idempotente, no code copied) |
 | WOT-2026-014v | [cobusgreyling/loop-engineering](https://github.com/cobusgreyling/loop-engineering) | Hard stop / limit tokens-timeout-iterations (runtime kill-switch guard; Ralph Wiggum) | [verify] | Adapted (guard Python de enforcement con tests; no code copied) |
 | WOT-2026-014t | [cobusgreyling/loop-engineering](https://github.com/cobusgreyling/loop-engineering) | Isolating Maker from Checker (paso 9 del roadmap Medium) | [verify] | Adapted (protocolo de prompt; no code copied) |
+| WOT-2026-104f | [google-research/harness2](https://github.com/google-research/harness2) | 8 editable harness components (system prompt, guardrails, memory, tool guidance, subagents, skills, scripts, plugins) -> 2 new 2.5.j taxonomy classes (`guardrail_proposal`, `tool_guidance_defect`) | Apache-2.0 | Adapted (taxonomy vocabulary only, no code copied; our mechanism remains text-judgment governance, not their Propose-Probe-Compose) |
 
 ---
 

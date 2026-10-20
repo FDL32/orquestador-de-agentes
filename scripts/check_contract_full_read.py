@@ -4,10 +4,9 @@ r"""Check contract full read (WOT-2026-042z).
 Dado un artefacto (prompt, work\_plan, informe) que CITA un prompt/contrato
 canonico por ruta, cruza esa cita contra el registro de Read de la sesion
 (eventos emitidos por `.agent/hooks/native_post_tool_hook.py`) y verifica
-que cada fichero citado este cubierto: la union de intervalos [offset,
-offset+limit) cubre [0, wc_lines) sin huecos. Los eventos legacy sin rango
-usan el fallback [0, line_count). Si no cubre: FALLA listando el fichero y
-las lineas ausentes.
+`line_count observado >= wc -l real` del fichero citado (o que la union de
+lecturas parciales cubre el fichero completo). Si no cubre: FALLA listando el
+fichero y las lineas ausentes.
 
 Distincion critica: LEER != GREPEAR
 ------------------------------------
@@ -46,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -126,41 +126,11 @@ def resolve_telemetry_dir(motor_root: Path, explicit: Path | None) -> Path:
     return candidate
 
 
-def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Merge overlapping/adjacent half-open intervals [start, end).
-
-    Returns a list of disjoint, sorted intervals covering the same
-    set of line numbers.
-    """
-    if not intervals:
-        return []
-    intervals.sort()
-    merged: list[tuple[int, int]] = [intervals[0]]
-    for start, end in intervals[1:]:
-        prev_start, prev_end = merged[-1]
-        if start <= prev_end:
-            # Overlap or adjacency: merge
-            merged[-1] = (prev_start, max(prev_end, end))
-        else:
-            merged.append((start, end))
-    return merged
-
-
 def load_read_events(
     telemetry_dir: Path,
     session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load Read events from the telemetry file, optionally filtered by session.
-
-    Each event dict contains:
-      - file_path: str (from telemetry context)
-      - line_count: int (legacy: lines returned, used as fallback)
-      - read_offset: int | None (structured, 0-based line index)
-      - read_limit: int | None (structured: number of lines returned)
-
-    When read_offset and read_limit are both present, the gate uses the
-    interval [read_offset, read_offset + read_limit) for coverage.
-    When absent, the gate falls back to [0, line_count).
 
     Args:
         telemetry_dir: Path to .agent/runtime/telemetry/
@@ -180,6 +150,8 @@ def load_read_events(
             except json.JSONDecodeError:
                 continue
             # Read events have context like "Read file <path>, <n> lines"
+            # WOT-2026-104j: las lecturas paginadas anaden un sufijo ADITIVO
+            # ", offset=<k>" ("Read file <path>, <n> lines, offset=<k>").
             context = record.get("context", "")
             if not context.startswith("Read file "):
                 continue
@@ -187,28 +159,33 @@ def load_read_events(
                 continue
             inner = context[len("Read file ") :]
             try:
-                parts = inner.rsplit(", ", 1)
-                if len(parts) == 2:
+                # rsplit desde la derecha: la ruta puede contener ", ".
+                parts = inner.rsplit(", ", 2)
+                offset = 0
+                if (
+                    len(parts) == 3
+                    and parts[1].strip().endswith(" lines")
+                    and parts[2].strip().startswith("offset=")
+                ):
                     file_path = parts[0].strip()
                     line_count_str = parts[1].strip()
-                    line_count = int(line_count_str.replace(" lines", ""))
-                    event: dict[str, Any] = {
+                    offset = int(parts[2].strip().replace("offset=", ""))
+                else:
+                    # Formato historico: "path, N lines" (con cualquier ", "
+                    # que forme parte de la ruta).
+                    tail = inner.rsplit(", ", 1)
+                    if len(tail) != 2:
+                        continue
+                    file_path = tail[0].strip()
+                    line_count_str = tail[1].strip()
+                line_count = int(line_count_str.replace(" lines", ""))
+                events.append(
+                    {
                         "file_path": file_path,
                         "line_count": line_count,
+                        "offset": offset,
                     }
-                    # WOT-2026-105a: structured range fields emitted by
-                    # native_post_tool_hook (read_offset, read_limit).
-                    offset = record.get("read_offset")
-                    limit = record.get("read_limit")
-                    if (
-                        isinstance(offset, int)
-                        and isinstance(limit, int)
-                        and offset >= 0
-                        and limit > 0
-                    ):
-                        event["read_offset"] = offset
-                        event["read_limit"] = limit
-                    events.append(event)
+                )
             except (ValueError, IndexError):
                 continue
     return events
@@ -317,50 +294,65 @@ def _find_citations_in_artifact(  # noqa: C901
     return citations
 
 
-def _build_coverage(
-    read_events: list[dict[str, Any]],
-) -> dict[str, list[tuple[int, int]]]:
-    """Build interval coverage per file from read events.
+def _merge_line_ranges(
+    ranges: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Merge inclusive 1-indexed line ranges into a sorted disjoint union.
 
-    For events with structured range (read_offset + read_limit): interval is
-    [read_offset, read_offset + read_limit).
-    For legacy events (no structured range): interval is [0, line_count).
-
-    Returns dict mapping file_path -> merged intervals.
+    Before: ``ranges`` may overlap, be adjacent or be unordered.
+    During: sorts by start and merges any range that starts at or before the
+    previous end + 1 (adjacent lines are contiguous coverage).
+    After: returns a sorted list of disjoint inclusive ``(start, end)`` pairs.
+    Degenerate ranges (``end < start``) are dropped.
     """
-    raw: dict[str, list[tuple[int, int]]] = {}
-    for ev in read_events:
-        fp = ev["file_path"]
-        if "read_offset" in ev and "read_limit" in ev:
-            offset = ev["read_offset"]
-            limit = ev["read_limit"]
-            raw.setdefault(fp, []).append((offset, offset + limit))
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if end < start:
+            continue
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
-            # Legacy fallback: covers [0, line_count)
-            lc = ev["line_count"]
-            raw.setdefault(fp, []).append((0, lc))
-
-    # Merge intervals for each file
-    return {fp: _merge_intervals(intervals) for fp, intervals in raw.items()}
+            merged.append((start, end))
+    return merged
 
 
-def _covered_lines(
-    intervals: list[tuple[int, int]],
+def _absent_lines_from_ranges(
+    merged_ranges: list[tuple[int, int]],
     wc_lines: int,
+    cap: int | None = None,
 ) -> list[int]:
-    """Return sorted list of 0-based line numbers NOT covered by intervals."""
-    if not intervals or wc_lines <= 0:
-        return list(range(wc_lines))
-    covered: set[int] = set()
-    for start, end in intervals:
-        for ln in range(max(0, start), min(wc_lines, end)):
-            covered.add(ln)
-    return [ln for ln in range(wc_lines) if ln not in covered]
+    """List the 1-indexed lines NOT covered by the union, up to ``wc_lines``.
+
+    Before: ``merged_ranges`` is the sorted disjoint union (see
+    ``_merge_line_ranges``); ``wc_lines`` is the real line count of the file.
+    During: walks the union from line 1, collecting every gap.
+    After: returns the absent line numbers (optionally capped at ``cap``).
+    """
+    absent: list[int] = []
+    cursor = 1
+    for start, end in merged_ranges:
+        if end < cursor:
+            continue
+        if start > cursor:
+            upper = min(start - 1, wc_lines)
+            if upper >= cursor:
+                absent.extend(range(cursor, upper + 1))
+            if cap is not None and len(absent) >= cap:
+                return absent[:cap]
+        cursor = max(cursor, end + 1)
+        if cursor > wc_lines:
+            break
+    if cursor <= wc_lines:
+        absent.extend(range(cursor, wc_lines + 1))
+    if cap is not None:
+        return absent[:cap]
+    return absent
 
 
 def check_read_coverage(  # noqa: C901
     citations: list[dict[str, Any]],
     read_events: list[dict[str, Any]],
+    motor_root: Path | None = None,
 ) -> dict[str, Any]:
     """Check read coverage for each citation.
 
@@ -370,7 +362,25 @@ def check_read_coverage(  # noqa: C901
       - warnings: list[str] -- sampling warnings
       - details: list of per-citation results
     """
-    coverage = _build_coverage(read_events)
+    # WOT-2026-104j: cobertura como UNION de rangos de linea, no como max de un
+    # solo evento. Cada evento `Read file <p>, <n> lines[, offset=<k>]` cubre
+    # las lineas [offset+1, offset+n] (el primer offset es 0 o 1 segun el
+    # emisor; ver nota abajo). Un fichero esta cubierto solo si la union no
+    # deja huecos entre 1 y wc_lines.
+    #
+    # Convencion (deliberada, tolerante al indice base): start = offset si
+    # offset >= 1, si no 1; end = offset + line_count. Asi funcionan tanto el
+    # fixture del work_plan (offset=0, 563 + offset=563, 405) como una
+    # paginacion 1-indexada real (offset=1, 563 + offset=564, 405) y el
+    # formato historico sin offset (start=1, end=line_count).
+    coverage: dict[str, list[tuple[int, int]]] = {}
+    for ev in read_events:
+        fp = ev["file_path"]
+        line_count = ev["line_count"]
+        offset = ev.get("offset", 0)
+        start = offset if offset > 0 else 1
+        end = offset + line_count
+        coverage.setdefault(fp, []).append((start, end))
 
     result: dict[str, Any] = {
         "ok": True,
@@ -403,20 +413,21 @@ def check_read_coverage(  # noqa: C901
             wc_lines = _count_lines(resolved)
             detail["wc_lines"] = wc_lines
 
-        # Check if this file was read — match telemetry path to citation path
+        # Check if this file was read
+        # Try to match against telemetry events
         # B3: use full normalized path (not suffix matching) to avoid cross-session
         # false-positives where a homonym file read in another session seals PASS.
-        matched_intervals: list[tuple[int, int]] | None = None
+        matched_ranges: list[tuple[int, int]] | None = None
 
-        for fp, intervals in coverage.items():
+        for fp, ranges in coverage.items():
             # Exact match on the raw file_path from telemetry
-            if fp == path_raw:
-                matched_intervals = intervals
+            if os.path.normcase(fp) == os.path.normcase(path_raw):
+                matched_ranges = ranges
                 break
             # Full normalized path match (B3 fix)
             try:
                 if Path(fp).resolve() == resolved.resolve():
-                    matched_intervals = intervals
+                    matched_ranges = ranges
                     break
             except (OSError, ValueError):
                 continue
@@ -428,36 +439,38 @@ def check_read_coverage(  # noqa: C901
                 redacted_resolved = redact(str(resolved.resolve()))
                 redacted_fp = redact(fp)
                 if redacted_resolved == redacted_fp:
-                    matched_intervals = intervals
+                    matched_ranges = ranges
                     break
             except (OSError, ValueError):
                 continue
+            # WOT-2026-104l: relative path normalization — when telemetry
+            # carries a relative path (Kilo/nan style: "scripts/x.py") and the
+            # process CWD is NOT motor_root, Path(fp).resolve() anchors to the
+            # wrong root. Resolve the relative path against motor_root first.
+            if motor_root is not None and not os.path.isabs(fp):
+                try:
+                    motor_resolved = motor_root / fp
+                    if motor_resolved.resolve() == resolved.resolve():
+                        matched_ranges = ranges
+                        break
+                except (OSError, ValueError):
+                    continue
 
-        if matched_intervals is not None:
-            # Check if merged intervals cover [0, wc_lines)
-            # Clamp intervals to wc_lines before checking coverage
-            clamped: list[tuple[int, int]] = []
-            for start, end in matched_intervals:
-                clamped.append((start, min(end, wc_lines)))
-            merged = _merge_intervals(clamped)
-            absent = _covered_lines(merged, wc_lines)
-            if not absent:
-                # Full coverage: intervals cover [0, wc_lines)
-                total_covered = sum(end - start for start, end in merged)
+        absent_all: list[int] = []
+        read_lines = 0
+        merged = _merge_line_ranges(matched_ranges or [])
+        if merged:
+            absent_all = _absent_lines_from_ranges(merged, wc_lines)
+            read_lines = max(0, wc_lines - len(absent_all))
+            if not absent_all:
+                # UNION covers [1, wc_lines] with no gaps
                 detail["status"] = "covered"
-                detail["read_lines"] = total_covered
+                detail["read_lines"] = read_lines
                 detail["wc_lines"] = wc_lines
                 detail["covered"] = True
                 continue
-            else:
-                # Convert 0-based line numbers to 1-based for reporting
-                absent_1based = [ln + 1 for ln in absent]
-                total_covered = wc_lines - len(absent)
-                detail["status"] = "partial_read"
-                detail["read_lines"] = total_covered
-                detail["wc_lines"] = wc_lines
-                detail["covered"] = False
-                detail["absent_lines"] = absent_1based[:20]
+        else:
+            absent_all = list(range(1, wc_lines + 1))
 
         # Check if line-range sampling covers the file
         if sampling_declared and line_range:
@@ -489,18 +502,7 @@ def check_read_coverage(  # noqa: C901
         # FAILED: file not read or partial read without declaration
         if sampling_declared and not (line_range and line_range[1] >= wc_lines):
             # Declared but insufficient -> WARN (not ERROR)
-            if matched_intervals is not None:
-                read_lines = wc_lines - len(_covered_lines(matched_intervals, wc_lines))
-            else:
-                read_lines = 0
-            if matched_intervals is not None and "absent_lines" not in detail:
-                absent_lines = [
-                    ln + 1 for ln in _covered_lines(matched_intervals, wc_lines)
-                ]
-            else:
-                absent_lines = list(
-                    range(read_lines + 1, wc_lines + 1) if read_lines < wc_lines else []
-                )
+            absent_lines = absent_all
             detail["status"] = "partial_declared"
             detail["read_lines"] = read_lines
             detail["wc_lines"] = wc_lines
@@ -511,26 +513,49 @@ def check_read_coverage(  # noqa: C901
                 f"(ausentes: {absent_lines[:5] if absent_lines else 'N/A'})"
             )
         else:
-            if matched_intervals is not None:
-                read_lines = wc_lines - len(_covered_lines(matched_intervals, wc_lines))
-                if "absent_lines" not in detail:
-                    absent_lines = [
-                        ln + 1 for ln in _covered_lines(matched_intervals, wc_lines)
-                    ]
-                else:
-                    absent_lines = detail.get("absent_lines", [])
-            else:
-                read_lines = 0
-                absent_lines = list(range(1, wc_lines + 1)) if wc_lines > 0 else []
+            absent_lines = absent_all
             detail["status"] = "not_read"
             detail["read_lines"] = read_lines
             detail["wc_lines"] = wc_lines
             detail["covered"] = False
             detail["absent_lines"] = absent_lines[:20]
-            result["errors"].append(
-                f"{path_raw}: {read_lines}/{wc_lines} lin leidas "
-                f"(ausentes: {absent_lines[:5] if absent_lines else 'N/A'})"
-            )
+            # F2: telemetry evidence — sessions that have events for this file
+            session_reads: dict[str, int] = {}
+            for ev in read_events:
+                fp_ev = ev["file_path"]
+                # Check if event relates to this file (exact or via motor_root)
+                norm_fp = os.path.normcase(fp_ev)
+                norm_cite = os.path.normcase(path_raw)
+                relates = False
+                if norm_fp == norm_cite:
+                    relates = True
+                if motor_root is not None and not os.path.isabs(fp_ev):
+                    try:
+                        if (motor_root / fp_ev).resolve() == resolved.resolve():
+                            relates = True
+                    except (OSError, ValueError):
+                        pass
+                if relates:
+                    sid = ev.get("session_id", "unknown")
+                    session_reads[sid] = session_reads.get(sid, 0) + ev["line_count"]
+            if session_reads:
+                reads_str = " ".join(
+                    f"session={sid} reads={n}"
+                    for sid, n in sorted(session_reads.items())
+                )
+                detail["telemetry_evidence"] = reads_str
+                result["errors"].append(
+                    f"{path_raw}: {read_lines}/{wc_lines} lin leidas "
+                    f"(ausentes: {absent_lines[:5] if absent_lines else 'N/A'}) "
+                    f"[{reads_str}]"
+                )
+            else:
+                detail["telemetry_evidence"] = None
+                result["errors"].append(
+                    f"{path_raw}: {read_lines}/{wc_lines} lin leidas "
+                    f"(ausentes: {absent_lines[:5] if absent_lines else 'N/A'}) "
+                    f"[no-telemetry-for-file]"
+                )
             result["ok"] = False
 
         result["details"].append(detail)
@@ -642,7 +667,7 @@ def main() -> int:  # noqa: C901
         return 0
 
     # Check coverage
-    result = check_read_coverage(citations, read_events)
+    result = check_read_coverage(citations, read_events, motor_root=motor_root)
 
     # Report
     if result["errors"]:
