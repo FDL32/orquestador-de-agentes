@@ -98,9 +98,10 @@ Revisa contra el work_plan del ticket activo:
 
 Este prompt exige evidencia proporcional al `deliverable_type` en §2. Este bloque explica
 por que y como prevenir el patron de confirmacion sin objecion (`confirmation_no_objection`)
-que detecta `scripts/filter_lens_output.py::classify_verdict()` (definicion en la linea 200,
-invocada desde `filter_lens_output()` en la linea 369, que devuelve el veto en la linea 414;
-no `classify_verdict_form` -- ese simbolo no existe en el fichero).
+que detecta `scripts/filter_lens_output.py::classify_verdict()` -- definida en la linea 200 e
+invocada desde `filter_lens_output()` en la linea 369; es `filter_lens_output()` (no
+`classify_verdict()`) quien devuelve el veto en la linea 414. (`classify_verdict_form` -- ese
+simbolo no existe en el fichero.)
 
 El patron `confirmation_no_objection` ocurre cuando un veredicto repite o valida el material
 presentado sin ofrecer objecion sustantiva -- un eco en vez de una revision. `filter_lens_output.py`
@@ -115,9 +116,11 @@ Declaras explicitamente por que el veredicto no es un eco del material presentad
 - Que alternativa de lectura no fue considerada por el autor del material.
 
 Un APPROVE sin esta declaracion es sospechoso de `confirmation_no_objection` y, si fue despachado
-por `ensemble_dispatch.py loop-round`, sera filtrado por `filter_lens_output()`. Si fue despachado
-por otro canal (ver `revisor_agent_filesystem_contract.md`), el despachador re-clasifica internamente
-como CHANGES y re-encola.
+por `ensemble_dispatch.py loop-round`, sera filtrado por `filter_lens_output()`. El modo 3 (Revisor
+con filesystem completo, `revisor_agent_filesystem_contract.md`) no pasa por un despachador: no hay
+bus que filtre por fuera, asi que es el propio agente quien corre el equivalente
+(`filter_lens_output.py` CLI standalone, ver ese contrato §3) y re-clasifica su propio veredicto
+como CHANGES antes de entregarlo.
 
 ## 5. Anclaje
 
