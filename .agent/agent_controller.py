@@ -7484,7 +7484,8 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             "[ERROR] Motor code-only mode: write operations require an external\n"
             "        workspace. Use --project-root <workspace> or set the\n"
             "        AGENT_PROJECT_ROOT environment variable to point to an\n"
-            "        external project workspace (e.g., z_scripts/).\n"
+            "        external project workspace (e.g., a destination project\n"
+            "        directory outside this repo).\n"
             "        Read-only operations (--validate, --json, --archive) still\n"
             "        work without it.",
             file=sys.stderr,
