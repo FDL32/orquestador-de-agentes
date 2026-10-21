@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +63,94 @@ def _run(payload: dict, cwd: Path) -> subprocess.CompletedProcess:
         capture_output=True,
         cwd=str(cwd),
     )
+
+
+RAYA = "\u2014"
+
+
+def _settings_hook_code(event: str) -> str:
+    """Codigo del comando REAL de `settings.json` para un evento de hook.
+
+    WOT-2026-110a. El DoD exige ejecutar "el comando REAL", y el comando real
+    es el wrapper `python -c "<code>"` que Claude Code lanza; aqui se extrae
+    `<code>` para lanzarlo con el MISMO interprete del test, en vez de
+    depender del `python` que resuelva el PATH.
+    """
+    settings = json.loads(
+        (_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
+    )
+    command = settings["hooks"][event][0]["hooks"][0]["command"]
+    prefix = 'python -c "'
+    assert command.startswith(prefix) and command.endswith('"'), command[:80]
+    return command[len(prefix) : -1]
+
+
+def _run_settings_hook(
+    event: str,
+    payload: bytes,
+    cwd: Path,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    """Ejecuta el comando REAL del hook con el entorno que reproduce el defecto.
+
+    `PYTHONUTF8` se RETIRA (no se pone a "0"): con `PYTHONUTF8=1` el hijo
+    emitiria UTF-8 valido y el fallo dejaria de ser el medido en produccion
+    (bytes invalidos), que es lo que el test debe reproducir. `PYTHONIOENCODING`
+    se FUERZA a cp1252 porque esa es la codepage del pipe en Windows y la unica
+    forma de que la asercion de UTF-8 estricto muerda por el motivo real.
+    """
+    env = dict(os.environ)
+    env.pop("PYTHONUTF8", None)
+    env["PYTHONIOENCODING"] = "cp1252"
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, "-c", _settings_hook_code(event)],
+        input=payload,
+        capture_output=True,
+        cwd=str(cwd),
+        env=env,
+    )
+
+
+def _destino_with_em_dash_archive(tmp_path: Path) -> Path:
+    """Destino sintetico con una leccion que contiene U+2014.
+
+    Dos piezas obligatorias:
+
+    1. `motor_destination_link.json`: el wrapper de settings resuelve el hook
+       contra `<destino>/.agent/hooks/...` y, si no existe, contra
+       `motor_root`. Sin link, el wrapper imprime "HOOK INACTIVE" y sale 2.
+       Se escribe con forward slashes (convencion WOT-2026-104g).
+    2. La entrada de archive con U+2014 en `signal`, dentro del tramo que el
+       indice no trunca: es el caracter que debe atravesar la serializacion.
+
+    El destino declara UN solo origen local; el loader puede unirlo con el
+    archive del motor, y el cupo por origen (`_cap_preserving_origins`)
+    garantiza que esta entrada no la expulsa la recencia del motor.
+    """
+    destino = tmp_path / "destino"
+    (destino / ".claude").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": _ROOT.as_posix()}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    archive = destino / ".agent" / "runtime" / "memory" / "archive"
+    archive.mkdir(parents=True)
+    entry = {
+        "timestamp": "2026-05-07T18:45:00Z",
+        "topic": "em-dash-wot-110a",
+        "signal": f"antes{RAYA}despues",
+        "source": "test",
+        "category": "convention",
+        "confidence": 0.6,
+        "applies_to": "all",
+    }
+    (archive / "observations.2026-07.jsonl").write_text(
+        json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return destino
 
 
 def test_hook_exists_and_is_wired() -> None:
@@ -659,8 +748,16 @@ def test_m4_m5_section_always_present_even_when_roles_omitted(
 def test_print_context_safely_falls_back_on_unencodable_char(
     monkeypatch, capsys
 ) -> None:
-    """MUTACION ALCANZABLE: sin el try/except de encoding, este caracter
-    propagaria UnicodeEncodeError hasta el caller.
+    """La rama de reintento `backslashreplace` sigue cubierta.
+
+    WOT-2026-110a: con `ensure_ascii=True` el payload ya es ASCII, asi que un
+    stdout cp1252 real NO fallaria por un caracter no codificable. El fake
+    fuerza el `UnicodeEncodeError` para mantener la rama cubierta (el DoD la
+    exige conservada); el recorrido de un caracter REAL hasta la salida lo
+    prueba `test_real_session_start_command_emits_ascii_with_cp1252_forced`.
+
+    MUTACION ALCANZABLE: quitar el `try/except` de `_print_context_safely` ->
+    la excepcion sale del hook y este test cae.
     """
     import importlib
     import sys as _sys
@@ -684,10 +781,9 @@ def test_print_context_safely_falls_back_on_unencodable_char(
             self.buffer = _FakeStdoutBuffer()
 
         def write(self, data):
-            # Replica el fallo REAL: un TextIOWrapper con encoding=cp1252
-            # lanza UnicodeEncodeError DENTRO de write() al intentar
-            # codificar, antes de llegar al buffer subyacente.
-            data.encode(self.encoding)
+            # Fuerza el fallo que el contrato exige seguir cubriendo: un
+            # stdout cuya codificacion no admite NI el payload escapado.
+            raise UnicodeEncodeError(self.encoding, data, 0, 1, "simulado")
 
         def flush(self):
             pass
@@ -704,6 +800,9 @@ def test_print_context_safely_falls_back_on_unencodable_char(
     assert isinstance(written, bytes)
     assert rb"\u043e" in written
     assert b"texto normal canonic" in written
+    assert all(byte < 0x80 for byte in written), (
+        "la rama de reintento debe emitir ASCII, nunca bytes de la codepage"
+    )
 
 
 def test_print_context_safely_passes_through_ascii_unchanged(capsys) -> None:
@@ -771,6 +870,50 @@ def test_hook_survives_unencodable_memory_entry_end_to_end(
     )
     assert "--recall" in ctx
     assert "M4. Validador o CONTRATO citado" in ctx
+
+
+# WOT-2026-110a (2026-10-21): el hardening de 2026-10-15 reaccionaba al
+# UnicodeEncodeError pero SEGUIA emitiendo bytes de la codepage del pipe. Este
+# test ejecuta el COMANDO REAL de settings.json con el entorno que reproduce el
+# defecto y exige las tres cosas a la vez: ASCII, UTF-8 estricto y caracter
+# original tras `json.loads`.
+
+
+def test_real_session_start_command_emits_ascii_with_cp1252_forced(
+    tmp_path: Path,
+) -> None:
+    """DoD WOT-2026-110a: el comando REAL de SessionStart emite SOLO ASCII.
+
+    Medido 2026-10-21 antes del fix: con cwd=destino, `PYTHONUTF8` retirado y
+    `PYTHONIOENCODING=cp1252`, una raya (U+2014) del archive salia como el byte
+    0x97 y `stdout.decode("utf-8")` fallaba.
+
+    MUTACION ALCANZABLE: `ensure_ascii=False` en `_print_context_safely` ->
+    reaparece el byte 0x97 y caen las tres aserciones.
+    """
+    destino = _destino_with_em_dash_archive(tmp_path)
+
+    result = _run_settings_hook(
+        "SessionStart",
+        json.dumps({"session_id": "t", "hook_event_name": "SessionStart"}).encode(
+            "utf-8"
+        ),
+        destino,
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    raw = result.stdout
+    assert all(byte < 0x80 for byte in raw), (
+        "el hook emitio bytes no-ASCII: con ensure_ascii=False el JSON sale en "
+        f"la codepage del pipe; sospechosos={[b for b in raw if b >= 0x80][:5]}"
+    )
+    text = raw.decode("utf-8")  # estricto: cualquier 0x97 revienta aqui
+    ctx = json.loads(text)["additionalContext"]
+    assert "em-dash-wot-110a" in ctx, "la leccion con U+2014 no llego al contexto"
+    assert RAYA in ctx, (
+        "json.loads debe recuperar el caracter ORIGINAL (U+2014), no un "
+        "sustituto: el escape \\uXXXX de ensure_ascii=True es reversible"
+    )
 
 
 # WOT-2026-100a ------------------------------------------------------------
