@@ -132,6 +132,11 @@ INLINE_IN_FULL: list[str] = [
     ".agent/rules/common/host_install_integration.md",
     ".agent/rules/common/manifest_contracts.md",
     ".agent/rules/common/memory_hierarchy.md",
+    ".agent/rules/common/contract_full_read_and_process_search.md",
+    ".agent/rules/common/do_now_vs_defer.md",
+    ".agent/rules/common/collaboration_live_surfaces.md",
+    ".agent/rules/common/x09_skill_prompt_governance.md",
+    ".agent/rules/common/credits_external_attributions.md",
 ]
 
 

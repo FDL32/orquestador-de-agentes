@@ -943,3 +943,52 @@ class TestPreCommitWiredChecksBite:
         )
         monkeypatch.setattr("scripts.discover_skills._get_bundle_root", lambda: bundle)
         assert _check_contract() == 1
+
+
+class TestModuleCitationsIncludesRulesCommon:
+    """WOT-2026-010e / pasada 2 piramide: module_citations() debe incluir
+    .agent/rules/common/*.md para que los modulos movidos desde AGENTS.md
+    no queden huérfanos (T9). Sin este parche, S5 deja artifact_ownership.md
+    sin citer detectable porque la UNICA cita vive en AGENTS.md.
+
+    Nota: los citers de .agent/rules/common/ se devuelven como
+    `artifact_ownership.md` (relative_to common dir), no `prompts/x.md`.
+    """
+
+    def test_citations_from_agent_rules_common_are_found(self, tmp_path: Path) -> None:
+        """Control rojo/verde: un modulo en .agent/rules/common es citado en
+        otro modulo del mismo directorio, y module_citations lo descubre."""
+        from scripts.discover_skills import module_citations
+
+        # Create prompts dir and a reference module
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "reference.md").write_text(
+            "# Reference\nSkill canonica: skills/ref/SKILL.md\n"
+            "contract_id: cid-ref\n"
+            "La matriz de ownership vive en "
+            ".agent/rules/common/artifact_ownership.md.\n"
+        )
+        # Module in .agent/rules/common that cites reference.md
+        common_dir = tmp_path / ".agent" / "rules" / "common"
+        common_dir.mkdir(parents=True)
+        (common_dir / "artifact_ownership.md").write_text(
+            "# Artifact Ownership\nSee prompts/reference.md for the full definition.\n"
+        )
+        # A module in prompts/ should find the citer in common
+        citers = module_citations(prompts_dir / "reference.md", tmp_path)
+        assert "artifact_ownership.md" in citers
+
+    def test_orphan_module_still_fails_without_promise(self, tmp_path: Path) -> None:
+        """Un modulo sin ningun citer (ni en prompts, ni en common) sigue
+        siendo huérfano (T9 rojo) -- la funcionalidad basica no se rompe."""
+        from scripts.discover_skills import module_citations
+
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "unused.md").write_text("# Unused\ncontract_id: cid-unused\n")
+        common_dir = tmp_path / ".agent" / "rules" / "common"
+        common_dir.mkdir(parents=True)
+        # No file cites unused.md
+        citers = module_citations(prompts_dir / "unused.md", tmp_path)
+        assert citers == []

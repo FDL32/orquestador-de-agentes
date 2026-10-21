@@ -129,3 +129,29 @@ Evolucion de ratios:
 Persiste exceso en AMBOS gates (ninguno <= 1,0x). P6 es rebanada legitima de la campana, no
 cierre de la deuda. La deuda continua abierta y esta via nombrada de seguimiento aplica
 segun PASO 5 de `prompts/doc_optimization.md`: **requiere decision del usuario para abrir WP**.
+
+## Medicion post-pasada-2 (recibo por gate, 2026-10-21)
+
+Pasada 2 mueve 7 secciones a modulos en `.agent/rules/common/`:
+- S1+S2: `contract_full_read_and_process_search.md` (8502 B)
+- S3: `flight_push_policy.md` (2317 B)
+- S4: `do_now_vs_defer.md` (4049 B)
+- S5: `x09_skill_prompt_governance.md` (3053 B)
+- S6: `collaboration_live_surfaces.md` (1190 B)
+- S7: `credits_external_attributions.md` (984 B)
+
+Medicion del HEAD post-reparacion y restauracion de literales E2/E4 (`1f0dbcab`; la medicion previa de `d640dca5` daba 60586/62421, inflada por el doble-encoding y los blancos duplicados corregidos despues):
+
+    AGENTS.md bytes: 61047 (Codex gate 32768 B) -> ratio 1,86x
+    cierre CLAUDE.md (CLAUDE.md + @AGENTS.md) chars: 62970 (Claude gate 40000 chars) -> ratio 1,57x
+
+Evolucion de ratios:
+- Codex: 2,35x (post P6) -> 1,86x (post pasada 2). Reduccion: ~16325 B desde la base `d965ee45` (77372 -> 61047).
+- Claude: 1,97x (post P6) -> 1,57x (post pasada 2). Reduccion: ~16318 chars desde la base `d965ee45` (79288 -> 62970).
+
+Persiste exceso en AMBOS gates (ninguno <= 1,0x). La piramide sola, incluso consumiendo el
+techo fresco (~30 KB), no cierra ambos gates: 61047 B = 1,86x del gate Codex. Confirma
+hallazgo #2 del bucle Seccion 8: cerrar el gate exige Palanca A (AGENTS.md anidados).
+
+La deuda sigue ABIERTA. Esta via nombrada de seguimiento aplica segun PASO 5 de
+`prompts/doc_optimization.md`: **requiere decision del usuario para abrir WP**.
