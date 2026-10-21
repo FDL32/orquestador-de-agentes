@@ -165,6 +165,10 @@ EXACTO de la sesion lanzadora** (el que devuelve `ListAgents`), nunca una descri
 como "la sesion coordinadora" -- una sesion hija que tiene que adivinar el destinatario puede
 enviar su informe a una sesion hermana de una prueba anterior y que nunca llegue (caso real,
 2026-10-18: `autonomo-b-20261018` reporto a un nombre de sesion obsoleto de su contexto heredado).
+**Ese nombre puede caducar DESPUES de dárselo** (compactacion/reinicio de la coordinadora): la
+sesion hija verifica con `ListAgents` antes de su primer `SendMessage` de informe y deja constancia
+de esa verificacion en el informe, en vez de asumir que el nombre del prompt sigue vivo (`AGENTS.md`
+seccion worktree, bucle UNI-7, 2026-10-21).
 
 **Mecanismo real de sesiones padre/hijo en T3 (WOT-2026-104i, verificado en vivo
 2026-10-18 -- NO es GitHub, una busqueda web lo sugirio y era incorrecto):**

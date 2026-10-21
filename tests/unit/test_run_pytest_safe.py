@@ -1120,6 +1120,83 @@ class TestErrorTestIdsInSummary:
             "if _error_re is removed or broken, error_ids stays empty"
         )
 
+    def test_stream_pytest_pops_pythonutf8_but_keeps_pythonioencoding(  # noqa: C901
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Regression test for the UNI-7 governance-loop fix (2026-10-21).
+
+        PYTHONUTF8=1 inherited from the parent forces UTF-8 as the default
+        text encoding for every subprocess the pytest child spawns (e.g. a
+        test decoding tasklist/PowerShell OEM-codepage output without an
+        explicit encoding), producing spurious UnicodeDecodeError failures
+        unrelated to the code under test (measured: 9 failing -> 0 once
+        PYTHONUTF8 is absent, same HEAD). stream_pytest must pop it from the
+        env it builds for the pytest subprocess.
+
+        PYTHONIOENCODING must be left untouched: two independent
+        governance-loop lenses (UNI-7) flagged that blindly stripping it too
+        could mask a legitimately-set UTF-8 declaration, and that narrower
+        claim was never isolated by measurement -- so the fix stays scoped
+        to PYTHONUTF8 only.
+
+        Mutation: removing `env.pop("PYTHONUTF8", None)` goes RED.
+        """
+        mod = load_runner_module()
+        monkeypatch.setenv("PYTHONUTF8", "1")
+        monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+
+        class _Capture:
+            env: dict | None = None
+
+        class _MockProcess:
+            returncode = 0
+
+            def __init__(self, *a, **kw):
+                pass
+
+            @property
+            def stdout(self):
+                return self
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                raise StopIteration
+
+            def wait(self):
+                return self.returncode
+
+            def communicate(self, timeout=None):
+                return "", None
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+            def poll(self):
+                return 0
+
+        cap = _Capture()
+
+        def mock_popen(command, *a, **kw):
+            cap.env = kw.get("env")
+            return _MockProcess()
+
+        monkeypatch.setattr(mod.subprocess, "Popen", mock_popen)
+
+        mod.stream_pytest(["pytest", "tests/"])
+
+        assert cap.env is not None, "Popen must be called with an env= kwarg"
+        assert "PYTHONUTF8" not in cap.env, (
+            "stream_pytest must pop PYTHONUTF8 from the pytest subprocess env"
+        )
+        assert cap.env.get("PYTHONIOENCODING") == "utf-8", (
+            "stream_pytest must NOT touch PYTHONIOENCODING (UNI-7 scope)"
+        )
+
     def test_stream_pytest_writes_last_run_log_with_real_newlines(
         self, tmp_path: Path, monkeypatch
     ) -> None:

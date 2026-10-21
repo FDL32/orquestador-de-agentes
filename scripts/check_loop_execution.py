@@ -841,7 +841,16 @@ def _print_verdict(v: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("--project-root", required=True)
+    ap.add_argument(
+        "--project-root",
+        required=True,
+        help=(
+            "repo_destino / AGENT_PROJECT_ROOT -- NO el repo_motor en topologia "
+            "motor+destino (code-only). Ahi vive .agent/runtime/ensemble/"
+            "emitted_nonces.jsonl y scorecard.jsonl; pasar el repo_motor da "
+            "silenciosamente 0 lentes sin ningun aviso."
+        ),
+    )
     ap.add_argument(
         "--commit-sha",
         action="append",
