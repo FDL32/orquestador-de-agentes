@@ -59,6 +59,11 @@ tests/.test_workspace/
 .agent/runtime/review_packets/
 .agent/runtime/events/logs/
 .agent/collaboration/.session_state.json
+# WOT-2026-090q: .session/ es session-scratch del motor (repo-compare escribe aqui
+# repomix_local.xml / repomix_remote.xml; ningun flujo lo versiona - git ls-files
+# 0 hits). La regla vivia solo en .git/info/exclude local y no viajaba a clones ni
+# worktrees nuevos. Regla hermana ya existente en el destino (workspace .gitignore).
+.session/
 .agent/context/
 .agent/audits/
 # WOT-2026-024h / DEC-024H-001: el motor DEJA DE VERSIONAR sus contratos de
