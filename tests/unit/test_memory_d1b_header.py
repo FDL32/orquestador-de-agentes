@@ -192,7 +192,7 @@ class TestPortabilityArchiveUnionDedup:
         # Verify per-origin tags
         origins = set(e.get("_origin") for e in result)
         assert "motor" in origins
-        assert "destino" in origins
+        assert "local" in origins
 
     def test_dedup_precedence_active_root_wins(self, tmp_path: Path) -> None:
         """When same entry exists in both surfaces, the active root version is kept."""
@@ -242,7 +242,7 @@ class TestPortabilityArchiveUnionDedup:
         # Provenance remains explicit even when dedup removes all motor entries.
         has_origin = "_origin" in result[0]
         assert has_origin is True
-        assert result[0]["_origin"] == "destino"
+        assert result[0]["_origin"] == "local"
 
     def test_single_surface_no_motor(self, tmp_path: Path) -> None:
         """When only one surface exists, no motor entries appear."""

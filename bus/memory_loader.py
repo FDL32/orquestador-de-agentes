@@ -389,8 +389,10 @@ def _read_portable_archive() -> list[dict[str, Any]]:
     motor_root = _resolve_motor_root()
     # In code-only mode there is no external destination: the active surface
     # is the motor. With an external link, the active surface is the destino.
+    # Preserve the historical ``local`` tag for an external active root; the
+    # formatter presents it canonically as ``destino``.
     active_origin = (
-        "destino" if motor_root is not None and motor_root != active_root else "motor"
+        "local" if motor_root is not None and motor_root != active_root else "motor"
     )
     if motor_root is None or motor_root == active_root:
         return [{**entry, "_origin": active_origin} for entry in active]
@@ -408,7 +410,7 @@ def _read_portable_archive() -> list[dict[str, Any]]:
     # cap is a global recency race and whichever repo was touched last evicts
     # the other wholesale -- see `_cap_preserving_origins`. Copies are shallow
     # on purpose: entries are read-only here and the tag must not reach disk.
-    return [{**entry, "_origin": "destino"} for entry in active] + [
+    return [{**entry, "_origin": "local"} for entry in active] + [
         {**entry, "_origin": "motor"} for entry in motor
     ]
 
@@ -693,6 +695,8 @@ def _format_archive_as_text(
     _origin_counts: dict[str, int] = {}
     for _o in vigent:
         _orig = str(_o.get("_origin") or "motor")
+        if _orig == "local":
+            _orig = "destino"
         _origin_counts[_orig] = _origin_counts.get(_orig, 0) + 1
     header_lines = _build_header_line(
         total, len(shown), _origin_counts if _origin_counts else None
