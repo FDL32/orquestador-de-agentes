@@ -30,12 +30,10 @@ from .blocker_signature import (
 from .decision_parser import (
     ReviewDecision,
     extract_decision_from_single_line,
-    extract_decision_from_text_events,
     load_decision_artifact,
     parse_opencode_decision,
     parse_opencode_decision_with_retry,
     parse_opencode_json_decision,
-    resolve_event_phase,
 )
 from .event_bus import EventBus
 from .skill_resolver import SkillResolver, create_resolver
@@ -674,19 +672,6 @@ class ReviewBridge:
     def _get_destination_diff_files(self) -> list[str]:
         return review_packet.get_destination_diff_files(self.project_root)
 
-    def _classify_diff_files(
-        self,
-        motor_files: list[str],
-        destination_files: list[str],
-    ) -> dict:
-        # Class-level pattern tuples remain the seam (tests may override them).
-        return review_packet.classify_diff_files(
-            motor_files,
-            destination_files,
-            docs_patterns=self.DOCS_ONLY_PATTERNS,
-            collab_patterns=self.COLLABORATION_ONLY_PATTERNS,
-        )
-
     def classify_review_packet(self, ticket_id: str) -> dict:
         """WT-2026-221b: Classify a review packet for evidence gate.
 
@@ -1060,9 +1045,6 @@ class ReviewBridge:
     # Thin wrappers kept for backward compatibility with existing tests
     # and any external callers that reach these private helpers.
 
-    def _observations_path(self) -> Path:
-        return review_observations.observations_path(self.project_root)
-
     def _canonical_anti_patterns_path(self) -> Path:
         return review_observations.canonical_anti_patterns_path()
 
@@ -1080,28 +1062,6 @@ class ReviewBridge:
         return review_observations.render_anti_pattern_inventory(
             self._canonical_anti_patterns
         )
-
-    @staticmethod
-    def _parse_observation_timestamp(raw_timestamp: object) -> datetime:
-        return review_observations.parse_observation_timestamp(raw_timestamp)
-
-    @staticmethod
-    def _truncate_observation_signal(signal: object) -> str:
-        return review_observations.truncate_observation_signal(signal)
-
-    @staticmethod
-    def _observation_matches_dtype(record: dict, dtype: str) -> bool:
-        return review_observations.observation_matches_dtype(record, dtype)
-
-    @staticmethod
-    def _parse_observation_record(raw_line: str) -> dict | None:
-        return review_observations.parse_observation_record(raw_line)
-
-    @staticmethod
-    def _record_to_observation_tuple(
-        record: dict,
-    ) -> tuple[datetime, str, str] | None:
-        return review_observations.record_to_observation_tuple(record)
 
     def _relevant_domains_for_dtype(self, dtype: str) -> set[str]:
         return review_observations.relevant_domains_for_dtype(dtype)
@@ -1132,9 +1092,6 @@ class ReviewBridge:
     # ── Adaptive review state ────────────────────────────────────────────
     # Extracted to bus/review_state.py (monolith decomposition).
     # Thin wrappers kept for backward compatibility.
-
-    def _adaptive_state_path(self) -> Path:
-        return review_state.adaptive_state_path(self.project_root)
 
     def _load_adaptive_state(self, ticket_id: str) -> dict:
         return review_state.load_adaptive_state(self.project_root, ticket_id)
@@ -1973,17 +1930,6 @@ class ReviewBridge:
     def _parse_opencode_json_decision(self, stdout: str) -> tuple[ReviewDecision, str]:
         """Delegate to bus.decision_parser.parse_opencode_json_decision (WT-2026-255a)."""
         return parse_opencode_json_decision(stdout)
-
-    def _extract_decision_from_text_events(
-        self, stdout: str, require_final_answer: bool
-    ) -> ReviewDecision | None:
-        """Delegate to bus.decision_parser.extract_decision_from_text_events (WT-2026-255a)."""
-        return extract_decision_from_text_events(stdout, require_final_answer)
-
-    @staticmethod
-    def _resolve_event_phase(event: dict) -> str:
-        """Delegate to bus.decision_parser.resolve_event_phase (WT-2026-255a)."""
-        return resolve_event_phase(event)
 
     def _extract_decision_from_single_line(
         self, line: str, require_final_answer: bool
