@@ -65,10 +65,13 @@ piloto limitado sobre la regla de que un `exit 0` puede significar “no hice
 nada”. El origen conservaría intactas la refutación, las obligaciones, las
 excepciones y los contraejemplos; los casos históricos mantendrían sus IDs,
 fechas y procedencia en `docs/followups/agents-md-over-quota-followup.md`, como
-referencia alcanzable para una sesión de diseño; el cargador que debe resolver
-la referencia en un piloto es `bus/memory_loader.py` mediante
-`get_review_context(domain)` (no se presume que una mención textual sea
-cargable). Hermes recibiría el bloque original con procedencia verificable.
+referencia alcanzable para una sesión de diseño. Hoy no existe evidencia de que
+el cargador resuelva ese documento: `bus/memory_loader.py` mediante
+`get_review_context(domain)` carga contexto de memoria, pero no implementa la
+resolución de esta referencia. Por tanto, la capacidad de carga es
+`NO VERIFICABLE`/ausente y debe definirse y probarse durante Fase 0R antes de
+llamarla alcanzable. Hermes recibiría el bloque original con procedencia
+verificable solo después de esa prueba.
 Esto requiere una modificación explícita del contrato: el piloto tendría que
 cambiar `prompts/doc_optimization.md`, PASO 3(c), que exige literalmente que
 una refutación no sea “ni entera ni repartida”. La propuesta no autoriza ese
