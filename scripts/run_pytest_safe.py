@@ -2619,6 +2619,10 @@ def main() -> int:  # noqa: C901
         exit_code, failed_ids, error_ids, timed_out = stream_pytest(command)
         # WOT-2026-109a: load averaged over the pytest window and the foreign
         # pytest sessions alive when it ended. Fail-open: telemetry only.
+        # Declared up front so a failing probe leaves an explicit None, not a
+        # missing key (every other probe degrades to None + a declared error).
+        summary["cpu_load_run_avg_pct"] = None
+        summary["foreign_pytest_at_end"] = None
         try:
             summary["cpu_load_run_avg_pct"] = _cpu_load_between(
                 _cpu_counters_start, _read_cpu_counters()
