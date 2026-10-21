@@ -10,6 +10,22 @@ when: Cuando el repo ha crecido y hace falta un censo repetible de codigo obsole
 not: NO ejecuta borrados ni cambios por su cuenta (Fase 5 es read-only; Fase 6 solo CONECTA con mecanismos de ejecucion ya existentes tras aprobacion humana); NO sustituye `audit_portability_legacy_surface.md` cuando el repo auditado ES el motor (ese prompt cubre naming/alias/stubs especificos del motor; este cubre dead-code+security+proceso de forma general, y dedupe con fingerprint compartido en Fase 3 si ambos aplican a la vez).
 -->
 
+<!-- v2.4 (2026-10-21): primera corrida real completa + bucle de lentes sobre la propuesta:
+- Fase 4: universo y ranking como tabla cerrada (cubre `DEAD (unverified dynamic)` y `ABANDONED`); elegibilidad por capas.
+- Fase 1: `exit_code`/`degraded`/`prompt_version` aditivos en el manifest; regla de entorno UTF-8.
+- Fase 4: cita completa en hallazgos de contradiccion doc/codigo; 5.1.1 remite el despacho a `ensemble_loop.md`.
+- Higiene: contradicciones de 0.1, R2, lane `proceso`, `NO VERIFICABLE`, orden de marcadores, referencia de Fase 6, dedupe sobre el informe.
+- Pendiente (no incluido): validador de informe, formato de tabla y `alcance: modulo` (Nivel 2); prerrequisito del script de dedupe (Fase 3).
+-->
+
+<!-- v2.3 (2026-10-20): correcciones CHA-6:
+- Fix duplicado: "(3)\n(3) admitir los follow-ups" → "(3) admitir los follow-ups"
+  (error de edicion en el orden secuencial de 5.2).
+- Typo: "verifcadas" → "verificadas" (linea 490, campos obligatorios).
+- Verificacion: los pasos 5-6 de 5.2 usan "Si" correctamente (no "If").
+  No se encontraron errores de idioma ingles en las revisiones.
+-->
+
 <!-- v2.2 (2026-10-20): correcciones de gramatica y claridad:
 - Grammar: "nunca se omitidos del informe" → "nunca se omiten del informe"
   (el error "omitidos" se perdio en los edits de Unicode de CHA-4).
@@ -25,14 +41,6 @@ not: NO ejecuta borrados ni cambios por su cuenta (Fase 5 es read-only; Fase 6 s
   verdad; un template separado seria redundante y propenso a drift.
   Nota: si se necesita template standalone para stakeholders, se creara
   como OPT-06b (mejora continua, no bloqueante).
--->
-
-<!-- v2.3 (2026-10-20): correcciones CHA-6:
-- Fix duplicado: "(3)\n(3) admitir los follow-ups" → "(3) admitir los follow-ups"
-  (error de edicion en el orden secuencial de 5.2).
-- Typo: "verifcadas" → "verificadas" (linea 490, campos obligatorios).
-- Verificacion: los pasos 5-6 de 5.2 usan "Si" correctamente (no "If").
-  No se encontraron errores de idioma ingles en las revisiones.
 -->
 
 <!-- v2.1 (2026-10-20): ajustes CHA-4 — resolución de ambigüedades adversarias:
@@ -86,10 +94,10 @@ que revisaron la propuesta de diseno completa — veredicto unanime CAMBIOS,
 ### 0.1 Estructura separada: triage (read-only) != implementacion (write)
 
 El proceso se divide en DOS fases separadas con invariante de separacion:
-- **Fase 0-4**: read-only. Solo se produce informe y hallazgos clasificados.
-  Nunca se modifican archivos del repo auditado (salvo artefactos propios
-  bajo `.agent/runtime/audit/`).
-- **Fase 5-6**: write. Solo despues de aprobacion humana se conecta con
+- **Fase 0-5**: read-only. Solo se producen hallazgos clasificados y el informe
+  final (Fase 5). Nunca se modifican archivos del repo auditado (salvo
+  artefactos propios bajo `.agent/runtime/audit/`).
+- **Fase 6**: write. Solo despues de aprobacion humana se conecta con
   mecanismos de ejecucion existentes (refactor-manager/Builder).
 
 Un hallazgo sin `veredicto_adversarial == confirmado` NUNCA entra a Fase 6,
@@ -109,9 +117,10 @@ Antes de nada, producir `AUDIT_SCOPING.md` (o equivalente) con la tabla siguient
 | LOC Python | `<n>` |
 | LOC otros (lenguaje, n) | `<n>` |
 
-Si `Privacidad == sensible` y `Ambito == motor`: anadir lane `proceso`
-(`prompts/*.md` + `skills/*/SKILL.md`) con categoria `PROCESO` en Fase 2, y
-dedupe cruzado con `audit_portability_legacy_surface.md` en Fase 3.
+Si `Ambito == motor` (con cualquier privacidad: esta solo decide el canal de
+las lentes de Fase 4): anadir lane `proceso` (`prompts/*.md` +
+`skills/*/SKILL.md`) con categoria `PROCESO` en Fase 2, y dedupe cruzado con
+`audit_portability_legacy_surface.md` en Fase 3.
 
 **Gate de privacidad fail-closed:** Si no se declara `publico` explicitamente,
 Fase 4 usa SOLO lentes `channel: agent` (filesystem). Las lentes `channel: api`
@@ -180,12 +189,15 @@ en esta fase.**
   {
     "ts": "2026-10-20T08:00:00Z",
     "commit_sha": "<sha40>",
+    "prompt_version": "<vX.Y, la ultima nota de version de este prompt>",
     "loop_id": "<forma si aplica>",
     "tools": {
       "<nombre_herramienta>": {
         "version": "<v1.2.3 o null>",
         "status": "executed" | "skipped",
-        "reason": "<solo si skipped>",
+        "exit_code": <int o null si skipped>,
+        "degraded": true | false,
+        "reason": "<obligatorio si skipped o degraded>",
         "output": "<primeras 200 lineas de stdout>"
       }
     }
@@ -195,6 +207,17 @@ en esta fase.**
   `version: null` + `status: skipped` ≠ `version: "v1.2.3"` + `status: executed`
   con `output: ""`. Ambos deben distinguirse: un pip-audit que no corrio no es
   lo mismo que un pip-audit que corrio y dio 0 hallazgos.
+
+  `status` sigue siendo binario. `degraded: true` marca una herramienta que SI
+  proceso ficheros reales pero termino con un fallo ajeno al analisis (p.ej.
+  crash de codificacion al imprimir, timeout tras salida parcial): no es
+  `skipped` (hubo analisis) ni un `executed` limpio. `exit_code` y `degraded`
+  son aditivos: un manifest sin ellos sigue siendo legible (se leen como
+  `null` / `false`). Hoy ningun script del motor consume estos campos.
+- **Entorno de ejecucion (Windows):** toda herramienta de esta fase corre con
+  `PYTHONUTF8=1` y `PYTHONIOENCODING=utf-8`, y su salida se lee como UTF-8.
+  Es la causa conocida de herramientas `degraded` (consola cp1252 que falla al
+  imprimir caracteres no representables).
 - **Herramientas no disponibles:** registrar `tools_executed` /
   `tools_skipped_reason` en el mismo `_meta/`. Un `pip-audit` que no corrio
   no es lo mismo que un `pip-audit` que corrio y dio 0 hallazgos — ambos
@@ -211,8 +234,8 @@ produce hallazgos clasificados:
 `SECURITY-{critica,alta,media,baja}` / `BUENAS-PRACTICAS` / `PROCESO`
 (solo lane `proceso`, ver Fase 0).
 
-Cada hallazgo exige evidencia citable (archivo:linea + comando
-reproducible) — nunca un hallazgo sin evidencia.
+Cada hallazgo exige evidencia citable (`archivo:linea` o `archivo:rango` +
+comando reproducible) — nunca un hallazgo sin evidencia.
 
 **Formato de salida obligatorio del triage (read-only, no modifica el repo
 auditado):**
@@ -224,7 +247,7 @@ auditado):**
   | `id` (H-NN) | obligatorio |
   | `categoria` (DEAD, SECURITY-alta, etc.) | obligatorio |
   | `archivo` + `linea/rango` | obligatorio |
-  | `evidencia` (archivo:linea + comando reproducible) | obligatorio |
+  | `evidencia` (`archivo:linea` o `archivo:rango` + comando reproducible) | obligatorio |
   | `confianza` (1-5 capas del gate de sostenibilidad) | obligatorio para DEAD |
   | `impacto` (alto/medio/bajo) | obligatorio |
   | `recomendacion` (eliminar/retirar/archivar/ignorar) | obligatorio |
@@ -232,8 +255,10 @@ auditado):**
   El archivo HALLAZGOS se produce como entregable legible por el humano y por
   las lentes de Fase 4 (para verificar). No es el diff: es un inventario
   estructurado de hallazgos. El dedupe de Fase 3 fusiona automáticamente
-  hallazgos duplicados (fingerprint por archivo+linea+categoria) entre
-  HALLAZGOS por lane y el reporte final de Fase 5.
+  hallazgos duplicados (fingerprint por archivo+linea+categoria) SOLO entre
+  los `HALLAZGOS_<lane>.md` (mismo formato de tabla: `id | categoria |
+  archivo ...`). Las tablas del informe de Fase 5 tienen otras columnas, no
+  se deduplican y citan ids que ya existen en un `HALLAZGOS_<lane>.md`.
 
 **`PROCESO` (solo lane `proceso`):** solapamiento entre prompts/skills,
 pasos de flujo de trabajo redundantes o ya sustituidos, friccion en
@@ -243,7 +268,12 @@ de severidad (mismo criterio que las categorias de codigo) — nunca se
 promueve a follow-up sin pasar el bucle solo porque su categoria es
 distinta.
 
-### 3.1 Gate de sostenibilidad (obligatorio para `DEAD`/`candidate-to-retire`)
+### 3.1 Gate de sostenibilidad (obligatorio para `DEAD`/`ABANDONED`/`candidate-to-retire`)
+
+Aplica tambien a `ABANDONED` (modulo sin consumidor de produccion): se le
+ejecutan las mismas 5 capas y se registra `capas_verificadas`. En la capa 1,
+las referencias desde los tests propios del modulo no cuentan como uso (es la
+definicion de `ABANDONED`); cualquier otra referencia si cuenta.
 
 `git grep -l <nombre>` demuestra CERO REFERENCIAS DE TEXTO, no cero USOS
 ACTIVOS. Da falso negativo ante carga dinamica (`importlib.import_module`,
@@ -301,14 +331,16 @@ bundle acotado, con inventario de evidencia y presupuesto de exploracion
 declarados, siguiendo `scripts/check_loop_bundle_protocol.py`). Lentes
 adversariales que **refutan o confirman** cada hallazgo de severidad
 alta/critica antes de proponer cualquier follow-up o eliminacion. Ningun
-hallazgo `DEAD`/`SECURITY-critica` se promueve a ticket sin pasar este
-bucle — mismo principio que mutation-verify en `test-audit`.
+hallazgo del universo de 5.1 (`SECURITY-critica`/`SECURITY-alta`/`DEAD`/
+`ABANDONED`) se promueve a ticket sin pasar este bucle — mismo principio que
+mutation-verify en `test-audit`.
 
 ### 5.1 Protocolo de bundle (OBLIGATORIO)
 
-Cada bundle enviado a una lente debe contener EXACTAMENTE estos marcadores,
-en este orden, al inicio del texto. `check_loop_bundle_protocol.py` los
-valida y `loop-round` avisa si faltan:
+Cada bundle enviado a una lente debe contener estos marcadores, por
+convencion en este orden y al inicio del texto. `check_loop_bundle_protocol.py`
+valida su PRESENCIA (busca la subcadena; no verifica el orden) y `loop-round`
+avisa si faltan:
 
 ```
 CANAL: agent | api  ← canal de la lente (coherente con el backend_key)
@@ -318,8 +350,12 @@ INVENTARIO DE EVIDENCIA  ← lista de lo que la lente puede verificar
   - <archivo:rango> — <que se puede comprobar>
   - ...
 PRESUPUESTO: no mas de <n> comandos de verificacion
-NO VERIFICABLE  ← marcador literal si la lente no puede comprobar algo
+NO VERIFICABLE  ← instruccion: responder esta palabra literal si la lente no puede comprobar algo
 ```
+
+Si el bundle toca superficie gobernante (este prompt, `AGENTS.md`, otros
+prompts de `prompts/`), anade tambien una seccion `REFUTACION-PREVIA:` (el
+checker avisa si falta; con `--requires-refutation` bloquea).
 
 **Tabla de roles (set controlado, ninguna otra opción válida):**
 
@@ -337,9 +373,10 @@ capacidad de escritura (ej. un Builder con canal `agent`).
 
 Un bundle `agent` sin `ROL DE LA LENTE:` definida BLOQUEA. Un bundle sin
 `CANAL:` solo registra WARN (deuda de adopción, no se bloquea retroactivamente).
-El marcador `NO VERIFICABLE` debe aparecer LITERALMENTE en el bundle (no es un
-comportamiento esperado, es un marcador que la lente usa para indicar que un
-hallazgo no puede verificarse con los recursos disponibles).
+El bundle debe contener LITERALMENTE la instruccion de responder
+`NO VERIFICABLE` (con espacio) en vez de afirmar o negar lo que la lente no
+puede comprobar con los recursos disponibles (`prompts/ensemble_loop.md`
+Seccion 3.3).
 
 **Nota sobre `CANAL:`:** los bundles van POR CANAL. El de FICHEROS (`agent`)
 lleva rutas absolutas y la lista "verifica X en <ruta>", sin framing de
@@ -356,20 +393,37 @@ contenido) y su framing. Nunca mezclar ambos.
   pueden escalar severidad o senalar inconsistencia logica.
 
 **Presupuesto:** maximo **5 hallazgos** por corrida entran al bucle
-completo, tomados del universo `SECURITY-critica`/`SECURITY-alta`/`DEAD`
-(no solo "critico/alta" — ver regla de seleccion abajo, que ya incluye
-`DEAD` explicitamente en el ranking); el resto quedan en Fase 5 marcados
-"diferido — no verificado por bucle, requiere corrida adicional", nunca se
-promueven silenciosamente. Lentes sin FS: **0 por defecto** (coherente con
-el gate de privacidad fail-closed de Fase 0); si Fase 0 declaro el repo
-publico/sin restriccion, el default pasa a **3**, salvo peticion explicita
-de mas (norma: "uno por backend si no se especifica cuantos").
+completo, tomados del universo de la tabla de abajo; el resto quedan en
+Fase 5 marcados "diferido — no verificado por bucle, requiere corrida
+adicional", nunca se promueven silenciosamente. Lentes sin FS: **0 por
+defecto** (coherente con el gate de privacidad fail-closed de Fase 0); si
+Fase 0 declaro el repo publico/sin restriccion, el default pasa a **3**, salvo
+peticion explicita de mas (norma: "uno por backend si no se especifica
+cuantos").
 
-**Seleccion determinista de los 5** (nunca por orden incidental, y el
-universo YA incluye `DEAD` junto a `SECURITY`): (1) severidad declarada
-(`SECURITY-critica` > `SECURITY-alta` > `DEAD` > resto), (2) confianza de
-la evidencia (numero de capas del gate de sostenibilidad que SI se
-ejecutaron sin hallar referencia), (3) fingerprint como desempate estable.
+**Universo y seleccion determinista de los 5** (tabla cerrada; nunca por orden
+incidental). Se ordena por tier ascendente; dentro de un tier, (1) mas
+`capas_verificadas` (capas del gate 3.1 que SI se ejecutaron sin hallar
+referencia), (2) fingerprint como desempate estable.
+
+| Tier | Categoria |
+|------|-----------|
+| 1 | `SECURITY-critica` |
+| 2 | `SECURITY-alta` |
+| 3 | `DEAD`, `DEAD (unverified dynamic)` |
+| 4 | `ABANDONED` |
+| fuera del universo | cualquier otra categoria |
+
+- Severidad primero: un tier inferior nunca desplaza a uno superior.
+  `SECURITY-critica`/`SECURITY-alta` solo quedan fuera si hay mas de 5.
+- Un `DEAD (unverified dynamic)` con `capas_verificadas == 0` NO es elegible:
+  es `diferido_no_loop` (ver Seccion 8).
+- Un veredicto `confirmado` sobre `ABANDONED` o `DEAD (unverified dynamic)`
+  certifica el HECHO (cero uso en produccion), nunca la DECISION de retirar el
+  codigo, que sigue siendo humana (Fase 6).
+- Cada veredicto es valido bajo la version del prompt registrada en
+  `prompt_version` del manifest; una version posterior de este prompt no
+  reabre veredictos ya emitidos.
 
 **Veredicto por hallazgo:** cada hallazgo que pasa por Fase 4 recibe
 `veredicto_adversarial: {confirmado | refutado | disputado |
@@ -380,6 +434,29 @@ diferido_no_loop}`. Fase 6 **solo** actua sobre hallazgos con
 agresivo puede esconder una vulnerabilidad real): ante desacuerdo entre
 lentes, el hallazgo SOBREVIVE a Fase 5 marcado `disputado`, nunca se
 descarta en silencio.
+
+**Cita completa en hallazgos de contradiccion (documentacion/codigo).** Si la
+tesis de un hallazgo depende de leer prosa (un docstring, un comentario o un
+documento que contradice el codigo), la evidencia cita el bloque ENTERO donde
+vive la frase, no solo la oracion que sustenta la tesis, y la lente copia la
+frase del bloque que mas la debilite o escribe `NINGUNA`. La severidad de un
+hallazgo de este tipo no se fija con la mitad del contexto.
+
+### 5.1.1 Despacho de la Fase 4 (remite; no re-declara criterios)
+
+El procedimiento vive en `prompts/ensemble_loop.md` (fuente de verdad; si
+divergen, prevalece ese prompt):
+- Toda ronda va por `ensemble_dispatch.py loop-round`, con `--project-root`
+  del destino (Secciones 2 y 3.1).
+- `--phase`, `--task-type` y forma de `loop_id`: tabla de la Seccion 3.4; sin
+  commit, `DESIGN_REVIEW` con `loop_id` `EXPLORATORY-<tema>`. No inventes un
+  `loop_id`.
+- Que cuenta como lente independiente y cuantas hacen falta: Secciones 4 y 5;
+  una sustitucion por `proposer_claude` (`BA01`) no cuenta.
+- Verificacion de cada ronda y `check_loop_execution.py`: Seccion 3.6. El
+  informe de Fase 5 cita la ruta real del `scorecard.jsonl` consultado.
+- Una lente que no puede leer una ruta responde `NO VERIFICABLE` (Seccion 3.3,
+  punto 3).
 
 ### 5.2 Revision adversarial del PLAN antes de implementacion (OPT-04)
 
@@ -455,9 +532,9 @@ Cada follow-up de Fase 5 aprobado por el humano y admitido como ticket via
 
 1. `scripts/mutation_cycle.py` **obligatorio** (no opcional) si el codigo
    borrado no tiene cobertura de tests existente que lo ejercite.
-   Si el script no existe (ver Fase 3: `dedupe_audit_findings.py` es
-   documentado como inexistente en pruebas reales), usar `pytest` como
-   minimo: re-run de toda la suite del repo. Si `pytest` no existe o el
+   Si `mutation_cycle.py` no existe o no es ejecutable en el repo auditado
+   (los destinos no lo traen), usar `pytest` como minimo: re-run de toda la
+   suite del repo. Si `pytest` no existe o el
    repo no tiene tests, el borrado se marca como `diferido — sin tests`
    y NO se ejecuta en Fase 6.
 2. Re-scan post-ejecucion: re-correr Fase 1 sobre el lane tocado + la suite
@@ -495,8 +572,8 @@ impacto, recomendacion.
   `diferido_no_loop` (solo si hay Fase 4). Sin este campo, el hallazgo
   no puede entrar a Fase 6.
 - `capas_verificadas`: numero de capas del gate de sostenibilidad
-  (0-5, solo para `DEAD`). Un `DEAD` con 0 capas verificadas es
-  `diferido_no_loop`.
+  (0-5, solo para `DEAD`/`DEAD (unverified dynamic)`/`ABANDONED`). Un hallazgo
+  de esas categorias con 0 capas verificadas es `diferido_no_loop`.
 
 ### 4. Rechazados / Diferidos / Refutados
 
@@ -559,7 +636,8 @@ Cada follow-up debe referenciar los hallazgos que lo justifican (por `id`):
   auditoria sirve de verdad para repos Python; otros lenguajes degradan a
   solo Semgrep+pip-audit-equivalente.
 - **R2 — Coste del bucle de Fase 4:** mitigado por el presupuesto de 5
-  hallazgos + 3 lentes sin FS por defecto (ver Fase 4).
+  hallazgos + 0 lentes sin FS por defecto (3 si Fase 0 declaro el repo
+  publico; ver Fase 4).
 - **R3 — Falsos negativos por sobre-filtrado:** mitigado por fail-open
   declarado (ver Fase 4).
 - **R4 — Secretos en la propia auditoria:** mitigado por gitleaks
