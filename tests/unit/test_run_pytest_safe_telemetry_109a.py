@@ -387,3 +387,34 @@ class TestVerdictEnv:
         assert "someone" not in repr(env)
         monkeypatch.delenv("AGENT_PROJECT_ROOT")
         assert rps._collect_verdict_env()["AGENT_PROJECT_ROOT"] is None
+
+    def test_git_config_value_is_masked_unless_it_is_the_longpaths_flag(
+        self, monkeypatch
+    ) -> None:
+        # GIT_CONFIG_KEY_0/VALUE_0 is how CI injects an Authorization header.
+        # Mutation: recording VALUE_0 raw leaks the credential into run_history.
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.extraheader")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", "AUTHORIZATION: basic c2VjcmV0")
+        env = rps._collect_verdict_env()
+        assert env["GIT_CONFIG_VALUE_0"] == "<set>"
+        assert "c2VjcmV0" not in repr(env)
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.longpaths")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+        assert rps._collect_verdict_env()["GIT_CONFIG_VALUE_0"] == "true"
+        monkeypatch.delenv("GIT_CONFIG_VALUE_0")
+        assert rps._collect_verdict_env()["GIT_CONFIG_VALUE_0"] is None
+
+
+class TestDurationsHeaderShape:
+    def test_only_pytests_exact_header_opens_a_table(self) -> None:
+        # Mutation: matching any line that starts with "=" and mentions the
+        # words would let an assertion message open a bogus table.
+        rows = [f"1.00s call     tests/y.py::t{i}" for i in range(30)]
+        fake = ["=== note: slowest durations are listed below (not a header) ==="]
+        assert rps._cap_durations_table_echo(fake + rows, limit=25) == fake + rows
+        for header in (
+            "=========== slowest durations ===========",
+            "=========== slowest 25 durations ===========",
+        ):
+            out = rps._cap_durations_table_echo([header, *rows], limit=25)
+            assert sum(" call " in ln for ln in out) == 25

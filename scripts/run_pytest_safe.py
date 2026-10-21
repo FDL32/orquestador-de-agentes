@@ -701,7 +701,10 @@ def _count_foreign_pytest(
     ancestors and its descendants. A match whose parent matches too is the
     same session (the runner and the pytest it spawned; the Windows venv
     launcher and the interpreter it re-execs), so only session ROOTS are
-    counted in ``sessions``; ``matched_procs`` keeps the raw count. Returns
+    counted in ``sessions``; ``matched_procs`` keeps the raw count. Declared
+    limit: a PID reused between two processes of the listing can re-parent a
+    process in this snapshot; the effect is bounded to one session more or
+    less and the figure is a contention signal, not an accounting. Returns
     None when ``own_pid`` is absent from the table: a table that cannot see
     ourselves is not evidence of "0 foreign".
     """
@@ -742,7 +745,7 @@ def _list_processes() -> tuple[list[tuple[int, int, str]] | None, list[str]]:
             ps,
             "-NoProfile",
             "-Command",
-            "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+            "Get-CimInstance Win32_Process -Filter \"Name like 'python%' or Name like 'pytest%'\" | "
             "ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, "
             "$_.CommandLine }",
         ]
@@ -815,7 +818,9 @@ def _collect_verdict_env() -> dict[str, str | None]:
     """Snapshot of the allowlisted env vars (None when unset). Pure read.
 
     Variables in ``_PRESENCE_ONLY_ENV_VARS`` record ``"<set>"`` instead of their
-    value, so run_history never stores a filesystem path.
+    value, so run_history never stores a filesystem path; GIT_CONFIG_VALUE_0
+    is masked unless GIT_CONFIG_KEY_0 is ``core.longpaths`` (it may hold a
+    credential).
     """
     snapshot: dict[str, str | None] = {}
     for name in _VERDICT_ENV_VARS:
@@ -823,6 +828,14 @@ def _collect_verdict_env() -> dict[str, str | None]:
         if value is not None and name in _PRESENCE_ONLY_ENV_VARS:
             value = "<set>"
         snapshot[name] = value
+    # GIT_CONFIG_VALUE_0 can carry a credential (CI checkouts inject an
+    # Authorization header through the KEY_0/VALUE_0 pair). Its value is kept
+    # only when the key says it is the longpaths flag this snapshot exists for.
+    if (
+        snapshot.get("GIT_CONFIG_VALUE_0") is not None
+        and snapshot.get("GIT_CONFIG_KEY_0") != "core.longpaths"
+    ):
+        snapshot["GIT_CONFIG_VALUE_0"] = "<set>"
     return snapshot
 
 
@@ -1700,6 +1713,8 @@ def _parse_durations_table(log_text: str) -> list[dict]:
 
 
 DURATIONS_TOP_N = 25
+# pytest's own header: "==== slowest 25 durations ====" / "==== slowest durations ====".
+_DURATIONS_HEADER_RE = re.compile(r"^=+\s*slowest(?:\s+\d+)?\s+durations\s*=+$")
 _DURATIONS_HIDDEN_RE = re.compile(r"\((\d+)\s+durations?\s*<\s*[\d.]+s\s+hidden")
 
 
@@ -1711,9 +1726,9 @@ def _cap_durations_table_echo(
     WOT-2026-109a. The log keeps every row (run_history aggregates them) but the
     console must look like the former ``--durations=25`` run, not dump
     thousands of lines into the operator's context. Pure; the caller still
-    appends the ORIGINAL lines to the log. Only a header line that starts with
-    ``=`` opens the table, so test output that merely mentions "slowest
-    durations" is never truncated.
+    appends the ORIGINAL lines to the log. Only pytest's exact header shape
+    (``=== slowest [N] durations ===``) opens the table, so test output that
+    merely mentions "slowest durations" is never truncated.
     """
     out: list[str] = []
     in_table = False
@@ -1727,11 +1742,7 @@ def _cap_durations_table_echo(
         stripped = line.strip()
         if not in_table:
             out.append(line)
-            if (
-                stripped.startswith("=")
-                and "slowest" in stripped
-                and "durations" in stripped
-            ):
+            if _DURATIONS_HEADER_RE.match(stripped):
                 in_table = True
                 seen = 0
                 omitted = 0

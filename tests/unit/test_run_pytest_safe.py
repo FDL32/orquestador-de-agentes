@@ -62,6 +62,14 @@ def load_runner_module():
     # AttributeError: 'NoneType' object has no attribute '__dict__'.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    # WOT-2026-109a: the two machine-contention probes (a 0.3 s CPU window and a
+    # PowerShell process listing, ~0.9 s together) ran inside every in-process
+    # main() harness below -- about 10 s added to a suite this family exists to
+    # shorten. These harnesses test orchestration, not the probes, so they get
+    # inert probes; the REAL probes are exercised (no mocks) by
+    # test_run_pytest_safe_telemetry_109a.py, which imports the module directly.
+    module._probe_cpu_load = lambda window_s=0.3: (None, [])
+    module._probe_foreign_pytest = lambda: (None, [])
     # WOT-2026-022g: structural anti-contamination. If the autouse fixture has
     # installed a redirect, EVERY freshly loaded runner points its run-history /
     # last-run write paths at the per-test tmp. A new harness that calls main()
@@ -3259,10 +3267,6 @@ def _fake_run_cmd(
             "Image Name                     PID Session Name        Mem Size\npython.exe                 1234 Console              102400\ncode.exe                  5678 Console              204800\nchrome.exe                9012 Console             512000\n",
             0,
         )
-    if "Win32_Process" in str(cmd) or "-eo" in cmd:
-        # Process listing (WOT-2026-109a): a coherent table has to include the
-        # caller itself, otherwise the probe rightly declares "own pid missing".
-        return Result(f"{os.getpid()} 1 python scripts/run_pytest_safe.py\n", 0)
     # Default: successful empty command
     return Result("", 0)
 
