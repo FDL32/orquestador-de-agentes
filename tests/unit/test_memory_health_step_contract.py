@@ -11,6 +11,7 @@ fijaba.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -93,6 +94,58 @@ def test_measurer_timeout_is_a_nonblocking_warn(tmp_path: Path) -> None:
     assert result.status == "WARN", result.detail
     assert not result.blocking
     assert "could not run" in result.detail
+
+
+def test_closeout_ignores_layer_warnings_with_the_real_measurer(tmp_path: Path) -> None:
+    """El cierre solo lee `triggers`: `warnings` (capas ausentes) no cambia su veredicto.
+
+    Se ejecuta el medidor REAL sobre una raiz sin L2/L3 (que SI publica un aviso) en
+    vez de un fixture a mano: un fixture sin la clave `warnings` no probaria nada.
+    """
+    mem = tmp_path / ".agent" / "runtime" / "memory"
+    mem.mkdir(parents=True)
+    (mem / "observations.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-10-01T00:00:00Z",
+                "topic": "algo-valido",
+                "signal": "Una observacion valida con longitud suficiente para el contrato",
+                "source": "session-2026-10-01",
+                "domain": "testing",
+                "applies_to": "code",
+                "confidence": 0.9,
+                "source_ticket": "WOT-2026-001a",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = ROOT / "scripts" / "check_memory_health.py"
+
+    def _real(script_name, args, project_root, timeout=120):
+        return subprocess.run(
+            [sys.executable, str(script), *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    measured = json.loads(
+        _real("x", ["--project-root", str(tmp_path), "--json"], tmp_path).stdout
+    )
+    assert measured["destino"]["warnings"], "precondicion: el medidor real debe avisar"
+
+    result = step_memory_health(
+        tmp_path,
+        None,
+        run_script_fn=_real,
+        step_result_cls=session_closeout.StepResult,
+    )
+
+    assert result.status == "PASS", result.detail
+    assert "AVISO" not in result.detail
+    assert "memory_optimization" not in result.detail
 
 
 def test_measurer_missing_script_is_a_nonblocking_warn(tmp_path: Path) -> None:

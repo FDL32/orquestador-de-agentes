@@ -155,3 +155,15 @@ hallazgo #2 del bucle Seccion 8: cerrar el gate exige Palanca A (AGENTS.md anida
 
 La deuda sigue ABIERTA. Esta via nombrada de seguimiento aplica segun PASO 5 de
 `prompts/doc_optimization.md`: **requiere decision del usuario para abrir WP**.
+
+## Diseno de la Palanca A (solo raiz), 2026-10-21
+
+El WP de DISENO esta en `docs/followups/palanca-a-raiz-agents-md-diseno.md` (revisado por
+2 rondas de lentes independientes). Conclusion con numeros: el TOPE de directivas que podrian
+quedarse en la raiz si se movieran enteros los grupos Vocabulario + CEM v0 + ola 2 es 4228 B para
+llegar al gate (951 B con 10% de margen); que la piramide sola llegue depende de la retencion
+real, que la Fase 0 del diseno mide. Esta deuda sigue ABIERTA: ratios 1,86x y 1,57x.
+
+## Arranque en frio (hermano, 2026-10-21)
+
+La revision del arranque de agentes en frio (hook UTF-8, memoria por cwd, par de worktrees, guard de topologia) vive en `docs/followups/arranque-agentes-frios-propuesta-optimizacion.md`. No toca `AGENTS.md`; la Fase 0 de la Palanca A debe medir con el hook ya corregido (D1a) para que el arranque conductual use la memoria completa.

@@ -169,6 +169,11 @@ el nombre literal de la sesion lanzadora (el que esta usa para si misma, visible
 `ListAgents` o conocido de antemano), nunca una descripcion ("la sesion coordinadora") que la hija
 tenga que resolver por su cuenta.
 
+**Ese nombre es una foto fija y puede caducar DESPUES de dárselo a la hija** (bucle UNI-7,
+2026-10-21): la hija verifica con `ListAgents` antes de su primer `SendMessage` de informe y deja
+constancia de esa verificacion. Detalle en
+[nombre_coordinadora_puede_caducar](docs/protocol/nombre_coordinadora_puede_caducar.md).
+
 ### Glosario de nomenclatura de ticket (WOT-2026-010a)
 
 Nomenclatura canonica de identificadores y artefactos de ticket. "Plan" se

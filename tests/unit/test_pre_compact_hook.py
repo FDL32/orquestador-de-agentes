@@ -19,6 +19,12 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.unit.test_session_start_hook import (
+    RAYA,
+    _destino_with_em_dash_archive,
+    _run_settings_hook,
+)
+
 
 # Importar el hook
 HOOK_PATH = pathlib.Path(__file__).parent.parent.parent / ".agent" / "hooks"
@@ -423,3 +429,44 @@ class TestRobustness:
         assert "**Memoria relevante**:" in section
         # Los valores se convierten a str sin TypeError
         assert "99" in section or "False" in section
+
+
+# WOT-2026-110a: mismo DoD que SessionStart sobre el comando REAL de PreCompact.
+# `AGENT_PROJECT_ROOT` se apunta al destino porque este hook no lo fija solo
+# (a diferencia de `session_start_hook._load_context`): es el canal canonico
+# para que la memoria que se serializa sea la del destino sintetico.
+
+
+def test_real_pre_compact_command_emits_ascii_with_cp1252_forced(tmp_path):
+    """DoD WOT-2026-110a: el comando REAL de PreCompact emite SOLO ASCII.
+
+    Medido 2026-10-21 antes del fix: con cwd=destino, `PYTHONUTF8` retirado y
+    `PYTHONIOENCODING=cp1252`, la raya (U+2014) de la leccion salia como el
+    byte 0x97 y `stdout.decode("utf-8")` fallaba.
+
+    MUTACION ALCANZABLE: `ensure_ascii=False` en `main()` -> reaparece el byte
+    0x97 y caen las tres aserciones.
+    """
+    destino = _destino_with_em_dash_archive(tmp_path)
+
+    result = _run_settings_hook(
+        "PreCompact",
+        b"{}",
+        destino,
+        {"AGENT_PROJECT_ROOT": str(destino)},
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    raw = result.stdout
+    assert all(byte < 0x80 for byte in raw), (
+        "el hook emitio bytes no-ASCII: con ensure_ascii=False el JSON sale en "
+        f"la codepage del pipe; sospechosos={[b for b in raw if b >= 0x80][:5]}"
+    )
+    payload = json.loads(raw.decode("utf-8"))  # estricto
+    assert payload["continue"] is True
+    ctx = payload["additionalContext"]
+    assert "em-dash-wot-110a" in ctx, "la leccion con U+2014 no llego al contexto"
+    assert RAYA in ctx, (
+        "json.loads debe recuperar el caracter ORIGINAL (U+2014), no un "
+        "sustituto: el escape \\uXXXX de ensure_ascii=True es reversible"
+    )

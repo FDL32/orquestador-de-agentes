@@ -306,7 +306,8 @@ def main() -> None:
         - Outputs JSON result with continue=true.
 
     After (Post-conditions and Errors):
-        - Prints valid JSON to stdout with "continue" and "additionalContext".
+        - Prints valid JSON (ASCII puro, `ensure_ascii=True`) to stdout with
+          "continue" and "additionalContext".
         - Exits with code 0 (continue) or 1 (error).
         - Never crashes on missing/corrupted files.
     """
@@ -342,7 +343,8 @@ def main() -> None:
     if additional_context:
         result["additionalContext"] = additional_context
 
-    print(json.dumps(result, ensure_ascii=False))
+    # WOT-2026-110a: evita bytes no-UTF-8 en la codepage del pipe (cp1252).
+    print(json.dumps(result, ensure_ascii=True))
     sys.exit(0 if continue_flag else 1)
 
 

@@ -57,6 +57,7 @@ tests/.test_workspace/
 .agent/runtime/compare/
 .agent/runtime/reviews/
 .agent/runtime/review_packets/
+.agent/runtime/reconcile/
 .agent/runtime/events/logs/
 .agent/collaboration/.session_state.json
 # WOT-2026-090q: .session/ es session-scratch del motor (repo-compare escribe aqui

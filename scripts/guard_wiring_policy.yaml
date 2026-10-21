@@ -220,6 +220,18 @@ known_unwired:
   # BY-DESIGN de este bloque. Dueno: WOT-2026-094c.
   check_archive_hygiene: WOT-2026-094c
 
+  # OPT-10 (repo_audit_multiagent v2.4): check post-auditoria ejecutado MANUALMENTE
+  # despues de cerrar una auditoria, no un hook automatico. Su uso es "python
+  # scripts/check_audit_process.py --ticket <ruta>" como verificacion final del
+  # proceso; cablearlo en pre-commit no tiene sentido porque no se corre en cada
+  # commit, solo tras una auditoria completa.
+  check_audit_process: >-
+    BY-DESIGN: invocacion manual como paso final post-auditoria (OPT-10 del
+    prompt repo_audit_multiagent v2.4), no un hook automatico. Su funcion es
+    verificar que todas las fases 0-6 y el bundle protocol se completaron
+    correctamente; correrlo en pre-commit seria sin proposito (no cada commit
+    es una auditoria).
+
   # WOT-2026-071a: guard de clase WARN-only para presupuesto de contexto de
   # @import (scripts/check_context_budget.py, exit code SIEMPRE 0). El Builder
   # intento cablearlo anadiendo un SEGUNDO item al array "SessionStart" de

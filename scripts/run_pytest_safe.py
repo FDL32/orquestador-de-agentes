@@ -1528,6 +1528,18 @@ def stream_pytest(  # noqa: C901
 
     # Ensure .agent is in PYTHONPATH for the subprocess
     env = os.environ.copy()
+    # governance loop UNI-7 (2026-10-21): PYTHONUTF8=1 inherited from the
+    # parent forces UTF-8 as the default text encoding for every subprocess
+    # the pytest child spawns (e.g. a test decoding `tasklist`/PowerShell
+    # OEM-codepage output without an explicit encoding), causing spurious
+    # UnicodeDecodeError failures unrelated to the code under test (measured:
+    # 9 failing -> 0 once PYTHONUTF8 is absent, same HEAD). Pop it
+    # unconditionally for the pytest subprocess only. PYTHONIOENCODING is
+    # deliberately left untouched here: two independent governance-loop
+    # lenses flagged that blindly stripping it could mask a legitimately-set
+    # UTF-8 declaration and produce mojibake instead, and that narrower claim
+    # was never isolated by measurement.
+    env.pop("PYTHONUTF8", None)
     agent_path = str(_PROJECT_ROOT_BOOTSTRAP / ".agent")
     if "PYTHONPATH" in env:
         env["PYTHONPATH"] = f"{agent_path}{os.pathsep}{env['PYTHONPATH']}"

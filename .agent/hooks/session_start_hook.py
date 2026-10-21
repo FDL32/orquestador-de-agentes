@@ -248,6 +248,8 @@ def _health_line(root: Path) -> str:
             )
             if fired:
                 part += f" -> DISPARA ({','.join(fired)})"
+            for warning in measure.get("warnings", []):
+                part += f" - AVISO: {warning}"
             parts.append(part)
         line = "Salud de la memoria: " + "; ".join(parts) + "."
         if fired_any:
@@ -505,23 +507,30 @@ def _print_context_safely(context: str) -> None:
     `{"additionalContext": ""}` -- PERDIDA TOTAL de memoria, salud, roles y
     M4/M5, no solo del caracter problematico.
 
-    Este es un fallo de SALIDA (no se puede imprimir), distinto de los dos
-    que el docstring del modulo ya distingue ("fichero ausente" / "memoria
-    no se puede leer"). La correccion: si falla por encoding, reintenta con
-    `errors="backslashreplace"` -- el caracter problematico se sustituye por
-    su escape literal (`\\uXXXX`), legible y sin perder el resto del
-    contexto, en vez de vaciarlo entero.
+    WOT-2026-110a. Aquel hardening reaccionaba al fallo, pero el defecto
+    SEGUIA emitiendose: con cwd=destino y `PYTHONIOENCODING=cp1252` el JSON
+    salia con bytes de la codepage (medido 2026-10-21: una raya U+2014 del
+    archive salia como el byte 0x97 y `stdout.decode("utf-8")` fallaba). Un
+    consumidor que decodifica UTF-8 estricto -- lo que hace cualquier
+    consumidor JSON -- recibe bytes invalidos ANTES de poder parsear nada.
+    `ensure_ascii=True` es la correccion: el payload queda en ASCII puro,
+    codificable byte a byte en cualquier codepage, y `json.loads` recupera
+    el caracter original a partir del escape `\\uXXXX`.
 
     Before: `context` es el texto final (memoria + salud + roles + M4/M5).
-    During: intenta `print(..., ensure_ascii=False)` tal cual; si
-        `UnicodeEncodeError`, re-codifica el JSON a los bytes de
-        `sys.stdout.encoding` (o UTF-8 si no se puede determinar) con
-        `errors="backslashreplace"` y escribe los bytes directamente.
+    During: serializa con `ensure_ascii=True`; si aun asi `print` lanza
+        `UnicodeEncodeError` (stdout con una codificacion que no admite ni
+        ASCII), re-codifica el payload a los bytes de `sys.stdout.encoding`
+        (o UTF-8 si no se puede determinar) con `errors="backslashreplace"` y
+        escribe los bytes directamente. Esa rama se CONSERVA por contrato
+        (WOT-2026-110a, 4/4 lentes): con `ensure_ascii=True` deja de ser
+        alcanzable por un caracter no codificable real, pero sigue siendo la
+        red de seguridad del unico canal de salida del hook.
     After: SIEMPRE imprime algo -- nunca degrada a contexto vacio por este
         motivo. Solo un fallo de un tipo DISTINTO (no de codificacion)
         seguiria propagando al `except Exception` de `__main__`.
     """
-    payload = json.dumps({"additionalContext": context}, ensure_ascii=False)
+    payload = json.dumps({"additionalContext": context}, ensure_ascii=True)
     try:
         print(payload)
     except UnicodeEncodeError:
