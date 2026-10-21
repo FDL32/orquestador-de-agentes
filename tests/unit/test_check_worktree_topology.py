@@ -122,6 +122,15 @@ def _make_linked_worktree(base: Path, name: str) -> Path:
     directories. `git worktree add -b <branch>` is mandatory (the primary
     already has `main` checked out). No subprocess mocking: the topology is
     created by real git, exactly like the motor fixtures above.
+
+    WOT-2026-109d: keep `name` SHORT (a few chars). Git names the worktree's
+    administrative directory after `name` (the basename of `linked`, not the
+    branch) -- `.git/worktrees/<name>/refs`. A long `name` (measured: 33
+    chars, `"orquestador_de_agentes_workspace"`, chosen for realism) combined
+    with pytest's own deep `tmp_path` and a long outer checkout prefix hits
+    Windows MAX_PATH with `Filename too long`, 100% reproducible, 7/7 callers
+    that used the long name. Shortening the branch alone does NOT fix it --
+    the failing path segment comes from `name`, not `session/{name}`.
     """
     primary = base / f"{name}_primary"
     primary.mkdir()
@@ -175,8 +184,8 @@ def _isolate_git_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_case_a_wot_dev_correct_workspace_exits_zero(tmp_path: Path) -> None:
     motor, dev = _make_git_tree(tmp_path)
-    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
-    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    workspace = _make_linked_worktree(tmp_path, "ws_wot")
+    _make_link(workspace, motor, "WOT", "ws_wot")
 
     exit_code, message = check_topology("WOT-2026-021g", dev, motor, workspace)
     assert exit_code == 0
@@ -647,15 +656,15 @@ def test_verification_b_resolves_by_ticket_prefix_not_destination_id(
     of them distinguishes the two lookup mechanisms.
     """
     motor, dev = _make_git_tree(tmp_path)
-    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
+    workspace = _make_linked_worktree(tmp_path, "ws_wot")
 
     # (1) The link declares ticket_prefix WOT -> resolves -> authorized.
-    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    _make_link(workspace, motor, "WOT", "ws_wot")
     exit_code, _ = check_topology("WOT-2026-023i", dev, motor, workspace)
     assert exit_code == 0
 
     # (2) No ticket_prefix (the pre-023i defect) -> WOT is not resolvable.
-    _make_link(workspace, motor, None, "orquestador_de_agentes_workspace")
+    _make_link(workspace, motor, None, "ws_wot")
     exit_code, message = check_topology("WOT-2026-023i", dev, motor, workspace)
     assert exit_code == 2
     assert "ticket_prefix" in message
@@ -665,7 +674,7 @@ def test_verification_b_resolves_by_ticket_prefix_not_destination_id(
     #     workspace"), never exit 0 (reintroducing the destination_id lookup
     #     would flip this to 0 and the test would die) nor exit 2 (the link
     #     DOES resolve, just to the wrong prefix).
-    _make_link(workspace, motor, "XXX", "orquestador_de_agentes_workspace")
+    _make_link(workspace, motor, "XXX", "ws_wot")
     exit_code, message = check_topology("WOT-2026-023i", dev, motor, workspace)
     assert exit_code == 1
     assert "ticket_prefix" in message
@@ -693,8 +702,8 @@ def test_verification_b_two_wot_destinations_does_not_block_either(
     mensaje -- ver WOT-2026-023i; ese comportamiento era el BUG, no una
     propiedad a preservar.)"""
     motor, dev = _make_git_tree(tmp_path)
-    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
-    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    workspace = _make_linked_worktree(tmp_path, "ws_wot")
+    _make_link(workspace, motor, "WOT", "ws_wot")
     otro_destino_wot = _make_linked_worktree(tmp_path, "otro_workspace")
     _make_link(otro_destino_wot, motor, "WOT", "otro_workspace")
 
@@ -754,8 +763,8 @@ def test_wot_flight_worktree_matching_suffix_exits_zero(tmp_path: Path) -> None:
     """(d) DoD: WOT-2026-027h desde una worktree en rama flight/027h -> exit 0.
     Es el caso que bloqueaba los 3 vuelos paralelos."""
     motor, _dev = _make_git_tree(tmp_path)
-    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
-    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    workspace = _make_linked_worktree(tmp_path, "ws_wot")
+    _make_link(workspace, motor, "WOT", "ws_wot")
     flight = _add_flight_worktree(motor, tmp_path, "027h")
 
     exit_code, message = check_topology("WOT-2026-027h", flight, motor, workspace)
@@ -804,8 +813,8 @@ def test_wot_flight_worktree_wrong_workspace_exits_one(tmp_path: Path) -> None:
 def test_wot_dev_main_still_valid_after_flight_support(tmp_path: Path) -> None:
     """El flujo canonico _dev/main NO se rompe al anadir soporte de vuelo."""
     motor, dev = _make_git_tree(tmp_path)
-    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
-    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    workspace = _make_linked_worktree(tmp_path, "ws_wot")
+    _make_link(workspace, motor, "WOT", "ws_wot")
 
     exit_code, message = check_topology("WOT-2026-027h", dev, motor, workspace)
     assert exit_code == 0, message
@@ -880,8 +889,8 @@ def test_wot_flight_worktree_unstaged_only_index_change_is_not_blocked(
     diff` sin `--cached`), este caso pasaria a exit 1 y el test moriria.
     """
     motor, _dev = _make_git_tree(tmp_path)
-    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
-    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    workspace = _make_linked_worktree(tmp_path, "ws_wot")
+    _make_link(workspace, motor, "WOT", "ws_wot")
     flight = _add_flight_worktree(motor, tmp_path, "027h")
 
     # Edit without `git add`: working tree dirty, INDEX clean.
@@ -899,8 +908,8 @@ def test_wot_dev_main_with_staged_index_still_passes(tmp_path: Path) -> None:
     dando exit 0.
     """
     motor, dev = _make_git_tree(tmp_path)
-    workspace = _make_linked_worktree(tmp_path, "orquestador_de_agentes_workspace")
-    _make_link(workspace, motor, "WOT", "orquestador_de_agentes_workspace")
+    workspace = _make_linked_worktree(tmp_path, "ws_wot")
+    _make_link(workspace, motor, "WOT", "ws_wot")
 
     _stage_tracked_file_change(dev)
 
