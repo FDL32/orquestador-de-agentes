@@ -88,4 +88,5 @@ hipótesis hasta repetirlas.
 
 Cada lente debe devolver: veredicto, hallazgos priorizados, objeciones no
 resueltas y cambios concretos a Fase 0R o al piloto. No debe editar el árbol ni
-implementar un lever.
+implementar un lever. Si una afirmación o comprobación no puede verificarse,
+debe responder literalmente `NO VERIFICABLE` en vez de inferirla.
