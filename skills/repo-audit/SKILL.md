@@ -1,6 +1,6 @@
 ---
 name: repo-audit
-version: 1.0.0
+version: 2.3.0
 description: Auditoria multifase multiagente de un repo (dead code, legacy, seguridad, proceso) con bucle adversarial de verificacion antes de proponer limpieza. Usar cuando el repo ha crecido y hace falta un censo repetible antes de limpiar/refactorizar a escala. No usar para un solo archivo ya identificado (ver refactor-manager) ni como sustituto de audit_portability_legacy_surface.md cuando el objetivo es la taxonomia legacy-stub-declared especifica del motor.
 triggers: [/repo-audit-multiagent, audit-repo-multiagent, /cleanup-audit]
 author: agent
@@ -11,7 +11,7 @@ writes_memory: false
 quality_gate: false
 tags: [core, system, audit, security]
 source_prompt: prompts/repo_audit_multiagent.md
-contract_id: cid-repo-audit-multiagent-v1
+contract_id: cid-repo-audit-multiagent-v2
 ---
 
 # repo-audit
@@ -85,7 +85,6 @@ prompt gobierna" — X-09).
 
 ---
 
-**Version:** 1.0.0
+**Version:** 2.3.0 (coincide con prompt v2.3)
 **Autor:** agent-system
-**Ultima actualizacion:** 2026-10-16 (propuesta v3 validada por bucle
-adversarial DBL-4, 8 lentes, 0 bloqueantes)
+**Ultima actualizacion:** 2026-10-20 (actualizado a contract_id v2, sync con prompt v2.3)
