@@ -168,23 +168,27 @@ def test_canonical_references_init_session_scratch() -> None:
     )
 
 
-def test_codeonly_push_policy_is_grouped_at_session_end() -> None:
-    """Step 6 must state the GROUPED push policy (022u).
+def test_codeonly_push_policy_is_grouped_at_flight_end() -> None:
+    """Step 6 must state the GROUPED push policy (022u; extended 2026-10-19).
 
     LOAD-BEARING (positive assertion): a test that only checked the absence of
     the old per-ticket line would false-green if the line were simply DELETED,
     leaving the prompt with no push guidance at all -- which is not the fix. The
-    policy has to be affirmatively present: grouped, at session end, with the
-    user's explicit authorization.
+    policy has to be affirmatively present: grouped, at the end of ALL tickets
+    of the flight, with the user's explicit authorization resolved up front.
     """
     text = _read(CODEONLY)
-    assert "Push AGRUPADO al final de sesion" in text, (
+    assert "Push AGRUPADO al final de TODOS los tickets del vuelo" in text, (
         "orchestrator_pipeline_codeonly.md step 6 must state the grouped-push "
-        "policy (push at end of session, not per ticket)"
+        "policy (one push at the end of all tickets of the flight, not per ticket)"
     )
     assert "autorizacion explicita del usuario" in text, (
         "the grouped-push policy must require the user's explicit authorization "
         "before pushing to remote"
+    )
+    assert "PUBLICACION_PENDIENTE_AUTORIZACION" in text, (
+        "without a recorded publication authorization the flight must end in the "
+        "declared PUBLICACION_PENDIENTE_AUTORIZACION state"
     )
 
 

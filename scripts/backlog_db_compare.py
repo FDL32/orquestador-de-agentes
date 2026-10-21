@@ -903,14 +903,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         action="append",
         default=None,
-        help="Tabla markdown de backlog/archive (repetible).",
+        help=(
+            "Tabla markdown de backlog/archive (repetible). Con --emit-recibo "
+            "NO altera el corpus (ese siempre sale de DEFAULT_BACKLOG/"
+            "DEFAULT_ARCHIVES via --git-root): solo declara cobertura "
+            "esperada para _check_universe_coverage (WOT-2026-104p)."
+        ),
     )
     p.add_argument(
         "--archive-file",
         type=Path,
         action="append",
         default=None,
-        help="Archivo de backlog completado (repetible, para --emit-recibo).",
+        help=(
+            "Archivo de backlog completado (repetible, para --emit-recibo). "
+            "Mismo aviso que --backlog: solo cuenta para la comprobacion de "
+            "cobertura, nunca sustituye el corpus real (WOT-2026-104p)."
+        ),
     )
     p.add_argument(
         "--inbox",
@@ -969,8 +978,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Modo generador de recibo para el alta de backlog. Emite un JSON "
             "BACKLOG-ADMISSION-RECIBO a stdout con las superficies del "
-            "universo obligatorio (DEFAULT_BACKLOG + DEFAULT_ARCHIVES). "
-            "Requiere --candidato-id."
+            "universo obligatorio (DEFAULT_BACKLOG + DEFAULT_ARCHIVES), "
+            "resueltas SIEMPRE contra --git-root/cwd (ignora --backlog/"
+            "--archive-file para el corpus, ver docstring de _emit_recibo). "
+            "Requiere --candidato-id. Para un recibo fiel a la revision "
+            "PADRE de un commit ya existente con varias altas: "
+            "'git worktree add --detach <ruta> <sha-padre>' y pasa "
+            "--git-root <ruta> (WOT-2026-104p; sin flag que lo automatice)."
         ),
     )
     p.add_argument(
@@ -1279,6 +1293,34 @@ def _emit_recibo(args: argparse.Namespace) -> int:
     Contrato de universo: si el invocante pasa MENOS que el universo
     obligatorio, el generador falla explicito y NO emite recibo (NG-RAIZ
     aplicado al emisor).
+
+    **`--backlog`/`--archive-file` NO alteran el corpus de este modo**
+    (WOT-2026-104p): `_build_corpus` siempre recalcula sobre
+    `DEFAULT_BACKLOG`/`DEFAULT_ARCHIVES` resueltos relativos a `--git-root`
+    (o cwd). `args.backlog`/`args.archive_file` solo entran en
+    `_check_universe_coverage` -- sirven para DECLARAR que superficies
+    espera cubrir el invocante, nunca para sustituir o ampliar el corpus
+    real que se censa. Un usuario que pase un `--backlog` distinto esperando
+    que el recibo se calcule sobre ESE fichero obtiene, en su lugar, el
+    corpus del `git_root` resuelto -- esta es la fuente del malentendido
+    documentado en WOT-2026-104p.
+
+    **Receta para un recibo fiel de un commit YA EXISTENTE que admitio
+    VARIAS filas de golpe** (caso medido 2026-10-19: 5 filas en un solo
+    commit): este modo siempre lee el `git_root` TAL CUAL esta en disco
+    (working tree actual), nunca una revision historica por si solo. Para
+    generar el recibo que hubiera correspondido al estado PADRE de ese
+    commit (antes del alta), crea un worktree temporal detached en esa
+    revision y apunta `--git-root` ahi:
+
+        git worktree add --detach <ruta-temporal> <sha-padre>
+        python scripts/backlog_db_compare.py --emit-recibo \\
+            --git-root <ruta-temporal> --candidato-id <ID> --veredicto NUEVA
+        git worktree remove <ruta-temporal>
+
+    No hay flag que automatice este worktree temporal (considerado y
+    diferido como mejora opcional en WOT-2026-104p, `--parent-sha`): la
+    receta manual de arriba es la via soportada hoy.
     """
     # Import DENTRO de la funcion para evitar circular import
     from scripts.check_backlog_admission import (

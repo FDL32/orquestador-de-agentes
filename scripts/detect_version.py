@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Detect z_scripts agent system version by architectural patterns.
+Detect orquestador_de_agentes_workspace agent system version by architectural patterns.
 
 Usage:
   python scripts/detect_version.py /path/to/project

@@ -2176,6 +2176,81 @@ def validate_detail_section_states(root: Path) -> list[str]:
     return errors
 
 
+# WOT-2026-103c: barrera de coherencia entre el origen del hallazgo (peticion
+# de usuario vs. hallazgo auto-generado) y el deliverable_type del ticket.
+# Solo code/mixed exigen la confirmacion: son los unicos tipos que aterrizan
+# codigo, y el incidente que origina este ticket fue precisamente un ticket
+# de CODIGO abierto para un hallazgo de housekeeping de memoria.
+_LANDING_REQUIRED_TYPES_FOR_ORIGIN = frozenset({"code", "mixed"})
+_ORIGIN_CONFIRMED_RE = re.compile(r"origen[\s_-]?confirmado", re.IGNORECASE)
+
+
+def validate_origin_confirmed(root: Path) -> list[str]:
+    """Return WARN strings for code/mixed live rows whose ficha omits Origen-confirmado.
+
+    WOT-2026-103c. ``check_backlog_contract`` already validates
+    ``deliverable_type``'s presence and value (``_deliverable_type_errors``)
+    but never whether the finding's ORIGIN (user request vs. an
+    auto-generated finding) was confirmed before a code/mixed row landed --
+    the gap that let a housekeeping/memory finding from the destino
+    Crear_Texto_LLM get opened as a development ticket (CTL-2026-055a,
+    retired after operator correction once noticed).
+
+    Severity: WARN only, by the ficha's own declared trade-off -- a hard
+    requirement adds friction to every new row, and without mechanical
+    evidence of the chat confirmation itself a BLOCKING field would be an
+    assisted norm dressed as a real barrier, not an actual one. A WARN
+    nudges the operator without manufacturing false confidence.
+
+    Before: ``root`` is the project root (backlog.md resolved from it).
+    During: parses the live table for code/mixed rows, cross-references
+        their ficha detail sections (if any) for an ``Origen-confirmado``
+        marker. A row with NO ficha section is skipped -- a compressed row
+        carries no detail section at all, not just a missing origin field,
+        so there is nothing to check.
+    After: one WARN string per code/mixed row whose ficha omits the marker.
+    """
+    bound, _prefix_err = ensure_bound(root)
+    if not bound:
+        return []  # already reported by other validate_* checks
+
+    collab = root / ".agent" / "collaboration"
+    backlog_path = collab / "backlog.md"
+    if not backlog_path.exists():
+        return []
+
+    content = backlog_path.read_text(encoding="utf-8-sig")
+    rows, table_error = _extract_active_table(content)
+    if table_error:
+        return []  # already reported by validate_backlog
+
+    fichas = dict(_extract_ficha_sections(content))
+
+    warnings: list[str] = []
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if len(cells) != len(_TABLE_HEADER_COLS):
+            continue  # already reported by validate_backlog
+        ticket = cells[1]
+        dtype_match = _DELIVERABLE_TYPE_RE.search(row)
+        if (
+            not dtype_match
+            or dtype_match.group(1) not in _LANDING_REQUIRED_TYPES_FOR_ORIGIN
+        ):
+            continue
+        lines = fichas.get(ticket)
+        if lines is None:
+            continue  # no detail section to check -- compressed row
+        if not any(_ORIGIN_CONFIRMED_RE.search(line) for line in lines):
+            warnings.append(
+                f"WARN: {ticket}: deliverable_type={dtype_match.group(1)} row "
+                f"has a ficha but it does not declare 'Origen-confirmado' "
+                f"(usuario|hallazgo) -- confirm the finding's origin before "
+                f"landing code (WOT-2026-103c)."
+            )
+    return warnings
+
+
 # ---------------------------------------------------------------------------
 # WOT-2026-073a: archive volume collapse detection.
 #
@@ -2457,6 +2532,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     # WOT-2026-059p: detail-section stale states after closure transfer (WARN).
     detail_warnings = validate_detail_section_states(root)
     for w in detail_warnings:
+        print(w, file=sys.stderr)
+    # WOT-2026-103c: code/mixed row lacking Origen-confirmado in its ficha (WARN).
+    origin_warnings = validate_origin_confirmed(root)
+    for w in origin_warnings:
         print(w, file=sys.stderr)
     # WOT-2026-073a: archive volume collapse detection (WARN, non-blocking).
     archive_volume_warnings = validate_archive_volume(root)

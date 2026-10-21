@@ -81,3 +81,47 @@ def test_missing_override_file_is_not_an_error(tmp_path: Path) -> None:
 
     assert load_overrides(motor) == {}
     assert isinstance(load_overrides(None), dict)
+
+
+def test_structurally_malformed_override_never_raises(tmp_path: Path) -> None:
+    """WOT-2026-103f: JSON-valid but structurally malformed overrides
+    (non-dict `overrides`, or non-string values) must not raise.
+
+    Before: this reproduces exactly the 3 cases a governance review found
+        escaping the narrower except clause: AttributeError/TypeError.
+    During: writes each malformed variant, then calls load_overrides.
+    After: all 3 return a dict (empty or partial), never an exception --
+        FAILS under the pre-fix code with AttributeError/TypeError.
+    """
+    motor = _make_motor(tmp_path, "motor_malformed")
+    override_path = motor / "scripts" / "prefix_resolver.local.json"
+
+    override_path.write_text(json.dumps({"overrides": None}), encoding="utf-8")
+    assert load_overrides(motor) == {}
+
+    override_path.write_text(json.dumps({"overrides": ["WOT"]}), encoding="utf-8")
+    assert load_overrides(motor) == {}
+
+    override_path.write_text(json.dumps({"overrides": {"WOT": 123}}), encoding="utf-8")
+    assert load_overrides(motor) == {}
+
+
+def test_malformed_override_mixed_with_valid_entry_keeps_the_valid_one(
+    tmp_path: Path,
+) -> None:
+    """A non-string value is skipped; a sibling valid entry still resolves.
+
+    This is the discriminating case: a function that caught the exception
+    by returning `{}` for the whole file (rather than validating per-value)
+    would also pass ``== {}`` tests above but would LOSE the valid entry
+    here -- this test pins the per-value validation, not just non-crashing.
+    """
+    motor = _make_motor(tmp_path, "motor_mixed")
+    destino = tmp_path / "destino_ctl"
+    override_path = motor / "scripts" / "prefix_resolver.local.json"
+    override_path.write_text(
+        json.dumps({"overrides": {"WOT": 123, "CTL": str(destino)}}),
+        encoding="utf-8",
+    )
+
+    assert dict(load_overrides(motor)) == {"CTL": destino}

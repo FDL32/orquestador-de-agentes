@@ -65,6 +65,7 @@ ADOPTED = (
     "session_hop.md",
     "orchestrator_pipeline_codeonly.md",
     "orchestrator_autonomous_ticket_batch.md",
+    "orchestrator_child_dispatch_multiticket_multibackend_unlimited.md",
     "orchestrator_destination_batch.md",
     "orchestrator_launch_builder.md",
     "orchestrator_session_bootstrap.md",
@@ -87,6 +88,8 @@ ADOPTED = (
     "persona_system.md",
     "revisor_independent_review.md",
     "repo_audit_multiagent.md",
+    "agents_md_optimization_4layer_loop.md",
+    "agents_md_intake_triage.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)

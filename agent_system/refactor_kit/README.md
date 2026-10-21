@@ -1,6 +1,6 @@
 ﻿# Refactor-Kit Portable
 
-Herramienta standalone para realizar reingenierÃ­a de cÃ³digo segura siguiendo el protocolo de 5 fases de `z_scripts`.
+Herramienta standalone para realizar reingenierÃ­a de cÃ³digo segura siguiendo el protocolo de 5 fases de `orquestador_de_agentes_workspace`.
 
 ## CaracterÃ­sticas
 - **Zero Dependencies:** Funciona con la librerÃ­a estÃ¡ndar de Python 3.10+.
@@ -9,7 +9,7 @@ Herramienta standalone para realizar reingenierÃ­a de cÃ³digo segura siguien
 
 ## InstalaciÃ³n
 
-Desde la raÃ­z de `z_scripts`:
+Desde la raÃ­z de `orquestador_de_agentes_workspace`:
 ```bash
 python agent_system/refactor-kit/install_refactor_kit.py /ruta/a/tu/proyecto
 ```
@@ -58,4 +58,4 @@ DetecciÃ³n automÃ¡tica de cambios usando hash MD5:
 Modificaciones al archivo invalidan automÃ¡ticamente el cache, forzando re-anÃ¡lisis.
 
 ---
-*Parte del ecosistema z_scripts - Multi-Agent Orchestration.*
+*Parte del ecosistema orquestador_de_agentes_workspace - Multi-Agent Orchestration.*

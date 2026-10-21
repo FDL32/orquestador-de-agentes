@@ -104,6 +104,10 @@
         "Read,Grep,Glob"
       ],
       "prompt_via_stdin": true,
+      "model_flag": [
+        "--model",
+        "{model}"
+      ],
       "discovery": {
         "method": "path_only"
       },
@@ -193,6 +197,19 @@
       "discovery": {
         "method": "path_only"
       }
+    },
+    "anthropic_api": {
+      "executable": "",
+      "args": [],
+      "protocol": "anthropic_messages",
+      "api_base_url": "https://api.anthropic.com/v1/messages",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "max_tokens": 4096,
+      "discovery": {
+        "method": "path_only"
+      },
+      "timeout_s": 900,
+      "quota_scope": "cuenta"
     },
     "default": {
       "executable": "",
@@ -640,6 +657,38 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA191"
+    },
+    "challenger_claude_haiku_api": {
+      "backend": "anthropic_api",
+      "channel": "api",
+      "model": "claude-haiku-5-5",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_base_url": "https://api.anthropic.com/v1/messages",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA250"
+    },
+    "challenger_claude_sonnet_api": {
+      "backend": "anthropic_api",
+      "channel": "api",
+      "model": "claude-sonnet-5-5",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_base_url": "https://api.anthropic.com/v1/messages",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA251"
+    },
+    "challenger_claude_sonnet_cli": {
+      "backend": "claude",
+      "channel": "agent",
+      "model": "sonnet",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA252",
+      "repo_scope": "destino"
     }
   },
   "ensemble_pipelines": {
@@ -944,6 +993,24 @@
       "BA191": {
         "backend": "kiosapi_api",
         "model": "glm-5.3-flash-free",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA250": {
+        "backend": "anthropic_api",
+        "model": "claude-haiku-5-5",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA251": {
+        "backend": "anthropic_api",
+        "model": "claude-sonnet-5-5",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA252": {
+        "backend": "claude",
+        "model": "sonnet",
         "backend_version": null,
         "status": "active"
       }

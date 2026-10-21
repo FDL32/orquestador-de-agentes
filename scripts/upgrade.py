@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart upgrade system for z_scripts agent system.
+Smart upgrade system for orquestador_de_agentes_workspace agent system.
 
 Public, documented entrypoint for the agent-system upgrade flow.
 

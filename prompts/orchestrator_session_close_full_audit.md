@@ -187,6 +187,26 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
      `obs-mutation-verify-copy-restore-not-git-checkout`). Al terminar la
      pasada, `git status` debe quedar LIMPIO de restos de mutacion; una
      mutacion dejada sin restaurar es hallazgo y BLOQUEA el cierre.
+4.bis TRABAJO DELEGADO A HIJOS: INFORME DE CIERRE PARCIAL COMO FUENTE (WOT-2026-104q). Si parte de
+   los diffs de esta sesion los produjo un Builder/fork/hijo delegado, su `CIERRE_PARCIAL_<TICKET>.md`
+   es la fuente de partida de este punto. Formato, ruta y criterio de rechazo: `prompts/
+   builder_invocation_contract.md` Seccion 3.5 (`contract_id: cid-builder-invocation-v1`); no se
+   repiten aqui. Correspondencia campo -> punto de este checklist:
+   - Encuadre (commits/`git diff --stat`) <- `CP-1`.
+   - Barrera mutation-verified y COPY-RESTORE <- `CP-2`.
+   - 5.ter, SOLO su PRECONDICION del lado del hijo (brazo TERMINADO, mutaciones revertidas por
+     COPY-RESTORE, `git status` limpio de restos de mutacion, ver punto 4) <- `CP-3` (linea literal
+     `HIJO TERMINADO` + salida real de `git status --short`, que solo puede listar el entregable
+     declarado en `CP-1`; y, si el hijo era delegado bajo protocolo trio, sus gates focales sin
+     `--level all`). La ejecucion EXCLUSIVA de la suite de cierre es acto del Manager: no la
+     acredita ningun campo del informe del hijo.
+   - Push (`AGENTS.md` "Push por vuelo") <- `CP-4`.
+   - Bloqueos de guards (Seccion 3 del contrato del Builder) <- `CP-5`.
+   El informe es evidencia DECLARADA por el hijo, no verificada (CEM: ningun auto-reporte es
+   evidencia): el auditor/Manager re-ejecuta lo que cita (SHA, diff, rc). Reduce el coste de la
+   verificacion, no la sustituye. Informe ausente o incompleto (incluido un `CP-3` sin la linea
+   `HIJO TERMINADO` y su `git status --short`) -> ese trabajo queda `cierre NO
+   VERIFICABLE` hasta verificarlo a mano. El fichero no se commitea y se borra antes del Bloque 3.
 5. Herramientas de EVIDENCIA de esta pasada (no son las 3 auditorias estructurales). El auditor PROPONE hallazgos; estas skills son consumidoras que IMPLEMENTAN solo si procede y con tu OK:
    - `skills/builder-self-audit/SKILL.md`: las 3 barreras secuenciales del Builder (sintaxis por tipo via py_compile/yaml.safe_load/json.load, completitud multi-archivo, frescura documental PROJECT.md/QUICKSTART.md/TURN.md/STATE.md) deben tener evidencia de salida real, no exit code de un pipe.
    - `skills/builder-run-quality-gates/SKILL.md`: confirma que los gates corrieron via `scripts/run_gates_dispatch.py` (dispatch por deliverable_type), NO invocando ruff/pytest directo (eso evade el audit trail).
@@ -271,8 +291,9 @@ Audita los artefactos que los prompts generaron durante la sesion Y el PROCESO q
    - **INFORMATIVO** (misma regla que el resto del bloque): NO bloquea el cierre. Si NO hay scorecard de la sesion (o `session_id` no cruza), dilo explicito ("2.5.i: sin scorecard cruzable para esta sesion, SKIP del cruce") y sigue con lo que el manifest si tenga -- ausencia de scorecard no es fallo.
 
 2.5.j PROCESS IMPROVEMENT PROPOSAL (WOT-2026-026d; pieza SEPARADA de `memory_upload.md`, decision usuario 2026-07-16). Con la telemetria de 2.5.c/2.5.h/2.5.i ya agregada, emite propuestas de mejora de PROCESO. Entrada = ledger de sesion + scorecard + prompts usados + herramientas usadas + errores/retries. Salida = propuestas CLASIFICADAS, SOLO PROPONE (no escribe aqui):
-   - Clases: `prompt_refactor` / `skill_refactor` / `script_guard` / `memory_candidate` / `backlog_ticket` / `handoff_prompt_defect`. Cada propuesta lleva su EVIDENCIA verificable (SHA/diff/exit-code/cita de prompt/fila de scorecard); sin evidencia -> se descarta (mismo umbral que 2.5.e / Bloque 4).
-   - **La escritura va por los canales EXISTENTES, no por un tercer destino**: `memory_candidate` -> Bloque 4 (memoria, con confirmacion humana); `prompt_refactor`/`skill_refactor`/`script_guard`/`backlog_ticket` -> Bloque 5 (backlog persistente del workspace del motor) via el triage de 2.5.e; `handoff_prompt_defect` -> ver clausula propia mas abajo, NUNCA al backlog generico.
+   - Clases: `prompt_refactor` / `skill_refactor` / `script_guard` / `memory_candidate` / `backlog_ticket` / `handoff_prompt_defect` / `guardrail_proposal` / `tool_guidance_defect`. Cada propuesta lleva su EVIDENCIA verificable (SHA/diff/exit-code/cita de prompt/fila de scorecard); sin evidencia -> se descarta (mismo umbral que 2.5.e / Bloque 4).
+   - **Clases `guardrail_proposal` y `tool_guidance_defect` (2026-10-18, origen: bucle ad-hoc DBL-6 sobre `.agent/planning/PROPUESTA_harness2_mejora_continua_20261018.md`, comparando contra los 8 componentes editables de harness2 -- google-research/harness2, Apache 2.0, "Adapted" no "Ported", ver CREDITS.md).** `guardrail_proposal`: una POLITICA/norma de guardrail YA EXISTENTE (declarada en AGENTS.md o un prompt, no necesariamente un script) resulto estar mal calibrada o incompleta -- distinto de `script_guard`, que es sobre anadir o corregir un CHECK EJECUTABLE nuevo. `tool_guidance_defect`: una instruccion de CUANDO o COMO usar una herramienta (CLI, flag, skill) esta mal o desactualizada -- distinto de un defecto de script (el script funciona bien; la guia sobre cuando invocarlo es la que esta mal) y distinto de `prompt_refactor` (no es el prompt entero, es la instruccion de uso de UNA herramienta dentro de el).
+   - **La escritura va por los canales EXISTENTES, no por un tercer destino**: `memory_candidate` -> Bloque 4 (memoria, con confirmacion humana); `prompt_refactor`/`skill_refactor`/`script_guard`/`backlog_ticket`/`guardrail_proposal`/`tool_guidance_defect` -> Bloque 5 (backlog persistente del workspace del motor) via el triage de 2.5.e; `handoff_prompt_defect` -> ver clausula propia mas abajo, NUNCA al backlog generico.
    - **Clase `handoff_prompt_defect` (2026-09-29, conecta este cierre con `session_hop.md`):** si durante esta sesion se ejecuto `session_hop.md` (para arrancar esta misma sesion, o para producir un arranque intermedio) y se encontro un defecto real en su redaccion -- un dato que resulto estar desactualizado sin que el prompt lo detectara, una ambiguedad que causo una ejecucion incorrecta, un contrato de identidad que alguna sesion pudo saltarse cumpliendo la letra pero no el espiritu -- registralo con esta clase. Evidencia obligatoria: la ejecucion concreta donde ocurrio (ID de sesion, informe de arranque, o commit), nunca una opinion abstracta sobre "el prompt podria ser mejor". Esta clase va a un artefacto especifico y citable, `<destination_root>/.agent/planning/PROPUESTA_mejoras_<prompt>_<fecha>.md`, y **antes de escribir esa propuesta, se somete a un bucle adversarial real** (mismo patron recolector->juez del resto de este bloque) -- si el cierre no tiene presupuesto para correr un bucle real, la propuesta se deja marcada `sin verificar por bucle` y su aplicacion queda pendiente de esa verificacion, nunca se aplica directamente al prompt real sin pasar por ese filtro.
    - **CLAUSULA DE PERSISTENCIA (nit revisor 2026-07-16)**: toda propuesta `script_guard`/`backlog_ticket` que SOBREVIVA el triage DEBE materializarse via el Bloque 5 en el backlog persistente. El ledger de sesion es gitignored y se purga (gc, KEEP_LAST_K=10): una propuesta que solo viva ahi es EFIMERA y se pierde. No la dejes en el ledger creyendo que quedo registrada.
    - Promocion de lo aprendido SOLO por Bloques 4/5 post-cierre (verde). Este sub-bloque PROPONE; NUNCA escribe backlog ni memoria durante el Bloque 2.5 (respeta el invariante de arbol de cierre de mas abajo: nada se escribe en `backlog.md` antes de `--session-close`).

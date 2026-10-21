@@ -76,16 +76,21 @@ def iter_archive_months(root: Path) -> list[Path]:
     return sorted(archive_dir.glob(ARCHIVE_GLOB))
 
 
-def read_archive_observations(root: Path) -> list[dict[str, Any]]:
-    """Todas las observaciones del archive portable de ``root``.
+def read_archive_dir(archive_dir: Path) -> list[dict[str, Any]]:
+    """Todas las observaciones de un directorio de archive dado directamente.
 
-    Before: ``root`` es la raiz de un repo.
-    During: recorre TODOS los meses (no solo el actual) y parsea cada linea.
-    After: lista de dicts en orden de fichero y linea. Lanza
-    ``CorruptArchiveError`` con fichero y numero de linea si el JSONL esta roto.
+    Before: ``archive_dir`` es la ruta al directorio que contiene los ficheros
+    ``observations.*.jsonl`` (p.ej. ``ARCHIVE_DIR`` de memory_consolidate).
+    During: hace glob de ``ARCHIVE_GLOB`` sobre ``archive_dir``, parsea cada
+    linea. No escribe NUNCA.
+    After: lista de dicts en orden de fichero y linea. ``[]`` si el dir no
+    existe. Lanza ``CorruptArchiveError`` con fichero y numero de linea si el
+    JSONL esta roto -- fail-closed explicito, nunca un verde silencioso.
     """
+    if not archive_dir.is_dir():
+        return []
     records: list[dict[str, Any]] = []
-    for path in iter_archive_months(root):
+    for path in sorted(archive_dir.glob(ARCHIVE_GLOB)):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
@@ -102,6 +107,17 @@ def read_archive_observations(root: Path) -> list[dict[str, Any]]:
             if isinstance(record, dict):
                 records.append(record)
     return records
+
+
+def read_archive_observations(root: Path) -> list[dict[str, Any]]:
+    """Todas las observaciones del archive portable de ``root``.
+
+    Before: ``root`` es la raiz de un repo.
+    During: delega en ``read_archive_dir(root / ARCHIVE_DIR_REL)``.
+    After: lista de dicts en orden de fichero y linea. Lanza
+    ``CorruptArchiveError`` con fichero y numero de linea si el JSONL esta roto.
+    """
+    return read_archive_dir(root / ARCHIVE_DIR_REL)
 
 
 def is_hook_telemetry(record: dict[str, Any]) -> bool:

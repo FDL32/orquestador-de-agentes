@@ -159,6 +159,11 @@ EXPECTED_WIRED_REAL = {
     # `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` -> exit 1;
     # sin trailer o con identidad humana/generica -> exit 0.
     "check_model_id_crystallization",
+    # Gate de crecimiento de la cuspide: cableado en .pre-commit-config.yaml
+    # con tres hooks (pre-commit early warning, commit-msg BLOCK, post-commit
+    # telemetria). Las tres entradas declaran el script en `entry:`; el
+    # baseline por-arista no necesita fila nueva (el guard es NUEVO y cableado).
+    "check_cuspide_growth_and_drift",
     "check_commit_worktree",
     "check_closeout_reconciliation",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     # WOT-2026-047v: cableado en .pre-commit-config.yaml (pre-commit always_run).
@@ -271,6 +276,10 @@ EXPECTED_WIRED_REAL = {
     "validate_contract_formation",  # WOT-2026-023m(c): cableado via import estatico en prepush_check.py::run_contract_formation_check (closeout; valida el CF triple del motor)
     "validate_observations",  # WOT-2026-035b: cableado via import estatico en check_portable_memory_archive_schema.py (retirado de known_unwired)
     "validate_ticket_prose",
+    # WOT-2026-104b: cableado como hook pre-commit en .pre-commit-config.yaml
+    # (id check-process-decision-search, files: prompts/**/*.md,
+    # .claude/rules/**/*.md, AGENTS.md, CLAUDE.md).
+    "check_process_decision_search",
 }
 
 

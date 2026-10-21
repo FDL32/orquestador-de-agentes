@@ -1,6 +1,6 @@
 # WOT-2026-046f: sin esto, `pre-commit install` solo cablea pre-commit y el
 # hook commit-msg NO se instalaria -- seria una norma, no una barrera.
-default_install_hook_types: [pre-commit, pre-push, commit-msg]
+default_install_hook_types: [pre-commit, pre-push, commit-msg, post-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -145,6 +145,22 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-104b: cablea AGENTS.md 'Decision de proceso sin
+      # instruccion exacta => BUSCA protocolo documentado antes de
+      # suponer uno' (2026-10-14), autodeclarada 'NORMA, no barrera'
+      # desde su redaccion. Activa SOLO cuando el propio artefacto se
+      # autodeclara con el marcador DECISION DE PROCESO: (propiedad
+      # detectable, no deteccion de intencion -- ver docstring del
+      # guard). files: acota a las superficies donde el propio
+      # AGENTS.md dice que viven las normas/protocolos del motor.
+      - id: check-process-decision-search
+        name: check process decision search (busca protocolo antes de suponer uno)
+        entry: uv run python scripts/check_process_decision_search.py
+        language: system
+        pass_filenames: true
+        files: '^(prompts/.*\.md|\.claude/rules/.*\.md|AGENTS\.md|CLAUDE\.md)$'
+        stages: [pre-commit]
+
       - id: check-skill-collisions
         name: check skill collisions (no duplicate skill name/trigger)
         entry: uv run python scripts/check_skill_collisions.py
@@ -254,6 +270,36 @@ repos:
         language: system
         stages: [commit-msg]
 
+      # Gate de crecimiento de la cuspide (AGENTS.md/CLAUDE.md + su cierre de
+      # @imports). Tres fases deliberadas: el mensaje de commit (donde vive el
+      # override) solo existe de forma fiable en commit-msg, y el sha solo
+      # existe en post-commit. always_run en pre-commit y post-commit: el
+      # stage post-commit no recibe ficheros, y la fase de pre-commit debe
+      # disparar aunque el commit solo toque un import resuelto en runtime.
+      # commit-msg NO lleva pass_filenames:false: git entrega ahi la ruta de
+      # COMMIT_EDITMSG como argv[1] y el guard la necesita para leer el override.
+      - id: check-cuspide-growth-warn
+        name: check cuspide growth early warning (medicion staged vs HEAD, nunca bloquea aca)
+        entry: uv run python scripts/check_cuspide_growth_and_drift.py --phase pre-commit
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: check-cuspide-growth-gate
+        name: check cuspide growth gate (BLOCK delta-based con override en mensaje)
+        entry: uv run python scripts/check_cuspide_growth_and_drift.py --phase commit-msg
+        language: system
+        stages: [commit-msg]
+
+      - id: check-cuspide-growth-audit
+        name: check cuspide growth audit (telemetria jsonl de overrides ya aterrizados)
+        entry: uv run python scripts/check_cuspide_growth_and_drift.py --phase post-commit
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [post-commit]
+
       # WOT-2026-003c: tracked .claude/settings.json must stay portable (no
       # personal permissions.allow) and any write-gating hook must FAIL CLOSED
       # (never exit 0 when its guard cannot be resolved). Prevents the A2d-class
@@ -263,6 +309,25 @@ repos:
         entry: uv run python scripts/check_claude_settings_portability.py .claude/settings.json
         language: system
         pass_filenames: false
+        stages: [pre-commit]
+
+      # WOT-2026-090u: llms.txt/llms-full.txt son una PROYECCION generada por
+      # build_llms.py --check existia desde WOT-2026-024g pero NUNCA se cableo
+      # a ningun camino que corriera solo (0 invocaciones en este fichero,
+      # prepush_check.py ni session_closeout.py): una barrera que nadie llama
+      # es una norma, no un gate. Medido 2026-10-06: llms-full.txt lleva desde
+      # 2026-07-16 sin regenerar mientras AGENTS.md siguio cambiando -- deriva
+      # silenciosa en el fichero que leen los agentes EXTERNOS del repo
+      # publico. always_run + pass_filenames:false: el denominador sale del
+      # render() en memoria contra las fuentes incrustadas (AGENTS.md,
+      # CLAUDE.md, ...), no del argv -- un commit que solo toca una fuente
+      # incrustada tambien debe re-verificar.
+      - id: check-llms-full-sync
+        name: check llms.txt/llms-full.txt sync (proyeccion no caduca en silencio)
+        entry: uv run python scripts/build_llms.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
         stages: [pre-commit]
 
       # WOT-2026-024l: docs/registry/INDEX.md es una PROYECCION generada por

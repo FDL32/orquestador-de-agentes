@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart upgrade system for z_scripts agent system.
+Smart upgrade system for orquestador_de_agentes_workspace agent system.
 
 Detects current version, backs up state, performs three-way merge to preserve
 local changes, and verifies integrity post-upgrade.
@@ -536,12 +536,16 @@ def _print_cli_result(result: dict, confirm: bool) -> None:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Upgrade z_scripts agent system")
+    parser = argparse.ArgumentParser(
+        description="Upgrade orquestador_de_agentes_workspace agent system"
+    )
     parser.add_argument(
         "project_dir", nargs="?", default=".", help="Project directory to upgrade"
     )
     parser.add_argument(
-        "--source", default=None, help="Source directory (default: z_scripts)"
+        "--source",
+        default=None,
+        help="Source directory (default: orquestador_de_agentes_workspace)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Simulate upgrade without changes"

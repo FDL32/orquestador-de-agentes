@@ -2152,6 +2152,266 @@ def test_068k_validate_backlog_falla_explicito_sin_link(
 
 
 # =========================================================================== #
+# WOT-2026-068l -- el gate reconoce el prefijo DECLARADO del destino TAMBIEN en
+# las cabeceras de ficha. 068k enlazo las 5 regex de ids desde el link, pero
+# `_check_ficha_bodies` seguia detectando fichas con la lista cerrada cableada
+# ("WOT-" in line or "WT-" in line or "WP-" in line or "CTL-" in line): un
+# destino RDS (o EXF, o cualquier prefijo declarado fuera de esa lista) seguia
+# imprimiendo OK sobre sus propias fichas MALFORMADAS -- el ultimo falso verde
+# de prefijo del modulo. El fix compila un 6o patron de deteccion desde la MISMA
+# alternancia enlazada (prefijo declarado + triada legacy).
+# =========================================================================== #
+
+
+def test_068l_destino_rds_caza_su_ficha_malformada(tmp_path: Path, capsys) -> None:
+    """MUTACION (DoD 3): prefijo declarado no cableado + ficha malformada ->
+    ANTES del fix rc=0 falso verde (la cabecera RDS no estaba en la lista
+    cableada, el gate la ignoraba); DESPUES rc=1 con la violacion nombrada.
+    Forma exacta de la premisa de 068l: el MISMO fichero con solo el prefijo
+    cambiado daba WOT -> rc=1 / RDS -> rc=0."""
+    _write_backlog(
+        tmp_path,
+        "| Alta | RDS-2026-001a | Bien deliverable_type: code | s | pending | - | x | - |\n",
+        "### RDS-2026-009a-malunida\n",
+    )
+    _write_prefix_link(tmp_path, "RDS")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    err = capsys.readouterr().err
+    assert rc == 1, err
+    assert "malformed ficha header" in err, err
+
+
+def test_068l_destino_rds_ficha_bien_formada_pasa(tmp_path: Path, capsys) -> None:
+    """Control positivo: reconocer el prefijo no es castigarlo -- una ficha RDS
+    bien formada valida igual que una WOT (no convierte el reconocimiento en
+    bloqueo sorpresa)."""
+    _write_backlog(
+        tmp_path,
+        "| Alta | RDS-2026-001a | Bien deliverable_type: code | s | pending | - | x | - |\n",
+        "### RDS-2026-009a - ficha correcta\n- **Problema:** algo.\n",
+    )
+    _write_prefix_link(tmp_path, "RDS")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+
+
+def test_068l_control_pareado_wot_sigue_cazando(tmp_path: Path, capsys) -> None:
+    """CONTROL NEGATIVO de la pareja (DoD 4, cara ficha): la MISMA forma
+    malformada con prefijo WOT sigue bloqueando -- el denominador de deteccion
+    no se relajo para el prefijo canonico."""
+    _write_backlog(
+        tmp_path,
+        "| Alta | WOT-2026-001a | Bien deliverable_type: code | s | pending | - | x | - |\n",
+        "### WOT-2026-009a-malunida\n",
+    )
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    err = capsys.readouterr().err
+    assert rc == 1, err
+    assert "malformed ficha header" in err, err
+
+
+def test_068l_control_negativo_denominador_cuadra_ambos_prefijos(
+    tmp_path: Path, capsys
+) -> None:
+    """CONTROL NEGATIVO (DoD 4): sobre la cola pareada de 20 filas (15 ids
+    canonicos + 5 celdas no canonicas), el recibo imprime validadas=15
+    saltadas=5 con WOT Y con RDS -- el fix de fichas NO mueve el denominador
+    de filas, que 068k ya dejo cuadrado para el prefijo declarado."""
+    rows = "".join(
+        f"| Alta | WOT-2026-{i:03d}a | Fila deliverable_type: code | s | pending | - | x | - |\n"
+        for i in range(15)
+    ) + (
+        "| Media | DEC-WOT-2026-900a | Suelta deliverable_type: code | s | pending | - | x | - |\n"
+        "| Media | WOT-2026-STATE-RECON-A | Suelta deliverable_type: code | s | pending | - | x | - |\n"
+        "| Media | WOT-2026-STATE-RECON-B | Suelta deliverable_type: code | s | pending | - | x | - |\n"
+        "| Media | WOT-AUDIT-CI | Suelta deliverable_type: code | s | pending | - | x | - |\n"
+        "| Media | TBD | Suelta deliverable_type: code | s | pending | - | x | - |\n"
+    )
+    _write_backlog(tmp_path, rows)
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "validadas=15 saltadas=5" in out, out
+
+    # la pareja RDS: mismos 5 saltados, 15 filas ahora CANONICAS por el link.
+    rows_rds = rows.replace("| WOT-2026-", "| RDS-2026-").replace(
+        "| DEC-WOT-2026-900a |", "| DEC-RDS-2026-900a |"
+    )
+    _write_backlog(tmp_path, rows_rds)
+    _write_prefix_link(tmp_path, "RDS")
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "validadas=15 saltadas=5" in out, out
+
+
+def test_068l_ficha_de_prefijo_ajeno_no_la_reclama_otro_destino(
+    tmp_path: Path, capsys
+) -> None:
+    """Politica del link aplicada a fichas: un destino que declara WOT NO audita
+    cabeceras CTL-ajenas. En HEAD (post-068k) esto era ADEMAS un falso positivo
+    latente: la deteccion cableada incluia "CTL-" pero el _FICHA_RE enlazado
+    (WOT|WP|WT) no la acepta, asi que una ficha CTL legitima en un backlog WOT
+    se denunciaba como malformed. Con el fix, cada destino audita las fichas de
+    SU prefijo declarado (verificado por el test anterior de la pareja RDS)."""
+    _write_backlog(
+        tmp_path,
+        _VALID_ROWS,
+        "### CTL-2026-026a - closure ficha de otro destino\n- **Nota:** vive en CTL.\n",
+    )
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "OK: live queue contract holds" in out, out
+
+
+# =========================================================================== #
+# WOT-2026-068m -- la red anti-fragmentacion 027t no se vacia por la CONJUNCION
+# prefijo-no-canonico + linea en blanco. Matriz 2x2 sobre el MISMO fichero,
+# variando UNA variable por vez, con el delta OUTSIDE atribuido solo al
+# truncamiento (FP-20260912: el emisor separo su violacion fantasma para no
+# inflar el hallazgo; aqui el fixture no lleva STATE.md, asi que el delta es
+# exactamente el de la red).
+# =========================================================================== #
+
+
+def _068m_rows(prefix: str, blank_line: bool) -> str:
+    """Cola con la tabla Vista rapida partida por UNA linea en blanco.
+
+    2 filas dentro de la tabla + 4 huerfanas debajo del blanco (o todas dentro
+    cuando ``blank_line=False``). Todas las filas son VALIDAS (estado, arity,
+    deliverable_type), asi que la UNICA fuente de rc/OUTSIDE es la red 027t --
+    atribucion aislada, sin violaciones cruzadas que inflen el delta.
+    """
+    in_table = (
+        f"| Alta | {prefix}-2026-901a | En tabla deliverable_type: code | s | pending | - | x | - |\n"
+        f"| Media | {prefix}-2026-901b | En tabla deliverable_type: code | s | pending | - | x | - |\n"
+    )
+    orphans = "".join(
+        f"| Alta | {prefix}-2026-901{c} | Huerfana deliverable_type: code | s | pending | - | x | - |\n"
+        for c in "cdef"
+    )
+    return in_table + ("\n" if blank_line else "") + orphans
+
+
+def test_068m_conjuncion_prefijo_no_canonico_y_linea_en_blanco_caza_huerfanas(
+    tmp_path: Path, capsys
+) -> None:
+    """DoD 1: destino no-canonico (RDS) + linea en blanco + filas huerfanas ->
+    rc=1 con OUTSIDE>0, IGUAL que un destino WOT. La matriz 2x2 del sobre daba
+    RDS+trunc -> rc=0 con la lista cerrada; con el discriminante enlazado desde
+    el link (WOT-2026-068k) la red caza las 4 filas. Sin este test, un
+    recableado de la lista cerrada (la mutacion exacta del defecto) volveria a
+    dejar el destino no-canonico sin guardia y NADA lo pinjaria: los tests de
+    068k cubren filas DENTRO de la tabla, no la red OUTSIDE."""
+    _write_backlog(tmp_path, _068m_rows("RDS", blank_line=True))
+    _write_prefix_link(tmp_path, "RDS")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    err = capsys.readouterr().err
+    assert rc == 1, err
+    assert err.count("OUTSIDE") == 4, err
+    assert "4 violation(s)" in err, err
+    assert "RDS-2026-901c" in err and "RDS-2026-901f" in err, err
+
+
+def test_068m_mutation_quitar_linea_en_blanco_delta_outside_cero(
+    tmp_path: Path, capsys
+) -> None:
+    """DoD 2 MUTATION: quitar la linea en blanco -> OUTSIDE 4 -> 0, delta limpio
+    atribuible SOLO al truncamiento (mismo fixture, misma prefijo RDS, una
+    variable por vez). Si el delta no fuese 0 sin el blanco, habria otra fuente
+    inflando la atribucion (la trampa del '0 vs 5' que el emisor corrigio)."""
+    _write_backlog(tmp_path, _068m_rows("RDS", blank_line=False))
+    _write_prefix_link(tmp_path, "RDS")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "OUTSIDE" not in captured.err, captured.err
+    assert "OUTSIDE" not in captured.out, captured.out
+
+
+def test_068m_control_negativo_prefijo_wot_sigue_cazando(
+    tmp_path: Path, capsys
+) -> None:
+    """DoD 3 CONTROL NEGATIVO: la MISMA fragmentacion con prefijo WOT sigue
+    caziendo (rc=1, 4 OUTSIDE). El fix por prefijo no puede pagar el precio
+    inverso: dejar de proteger al destino canonico."""
+    _write_backlog(tmp_path, _068m_rows("WOT", blank_line=True))
+    _write_prefix_link(tmp_path, "WOT")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    err = capsys.readouterr().err
+    assert rc == 1, err
+    assert err.count("OUTSIDE") == 4, err
+    assert "WOT-2026-901c" in err, err
+
+
+def test_068m_denominador_publica_n_y_m_de_la_red(tmp_path: Path, capsys) -> None:
+    """DoD 4: el gate publica el denominador de su red de seguridad
+    (`filas fuera de la tabla: N, auditables: M`), SIEMPRE -- un recibo que
+    solo aparece con dano vuelve a ser silencio. Aqui la clase del prefijo ya
+    esta cerrada, asi que N=M=4; el numero certifica que la red MIRÓ."""
+    _write_backlog(tmp_path, _068m_rows("RDS", blank_line=True))
+    _write_prefix_link(tmp_path, "RDS")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 1  # las 4 huerfanas siguen siendo violacion (DoD 1)
+    assert "filas fuera de la tabla: 4, auditables: 4" in out, out
+
+
+def test_068m_denominador_hace_visible_la_clase_ciega_residual(
+    tmp_path: Path, capsys
+) -> None:
+    """La clase que el patron enlazado NO cubre (id no canonico) no es
+    violacion -- rc=0 -- pero el denominador la LOCALIZA fuera de la tabla:
+    `filas fuera de la tabla: 1, auditables: 0`. Sin este recibo, la fragmentation
+    de esa fila no aparece en ninguna salida (el WARN de saltadas es file-wide,
+    sin lugar): exactamente el falso-verde que el denominador existe para
+    hacer visible sin tocar rc."""
+    rows = (
+        "| Alta | RDS-2026-901a | En tabla deliverable_type: code | s | pending | - | x | - |\n"
+        "\n"
+        "| Alta | RDS-2026-STATE-RECON-A | Huerfana id no canonico deliverable_type: code | s | pending | - | x | - |\n"
+    )
+    _write_backlog(tmp_path, rows)
+    _write_prefix_link(tmp_path, "RDS")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err + captured.out
+    assert "filas fuera de la tabla: 1, auditables: 0" in captured.out, captured.out
+
+
+def test_068m_denominador_no_inventa_ruido_sin_tabla(tmp_path: Path, capsys) -> None:
+    """Guardia del recibo: sin seccion '## Vista rapida' el denominador no
+    imprime NADA (None). La ausencia ya es table_error con rc=1; contar filas
+    de un fichero sin tabla inventaria 'fragmentacion' donde solo hay un
+    backlog malformado (un vacio no es una rotura)."""
+    collab = tmp_path / ".agent" / "collaboration"
+    collab.mkdir(parents=True, exist_ok=True)
+    (collab / "backlog.md").write_text(
+        "# Backlog sin vista rapida\n\n| Alta | WOT-2026-901a | fila suelta | s | pending | - | x | - |\n",
+        encoding="utf-8",
+    )
+    _write_prefix_link(tmp_path, "WOT")
+
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert rc == 1, captured.out
+    assert "missing" in captured.err, captured.err
+    assert "filas fuera de la tabla" not in captured.out, captured.out
+
+
+# =========================================================================== #
 # WOT-2026-059p: detail-section stale states after closure transfer          #
 # =========================================================================== #
 
@@ -2343,6 +2603,98 @@ def test_059p_multiple_fichas_mixed_reported(tmp_path: Path) -> None:
     assert len(errors) == 1, f"expected 1 warning; got: {errors}"
     assert "WOT-2026-001a" in errors[0]
     assert "WOT-2026-001b" not in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-103c: origin-confirmed coherence (WARN, non-blocking)
+# ---------------------------------------------------------------------------
+
+
+def test_103c_code_row_without_origin_confirmed_warns(tmp_path: Path) -> None:
+    """DoD (b): code row with a ficha that omits Origen-confirmado -> WARN."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900a | algo deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-900a - ficha detail\n- **Problema:** algo\n"),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert len(warnings) == 1, f"expected 1 warning, got: {warnings}"
+    assert "WOT-2026-900a" in warnings[0]
+    assert "Origen-confirmado" in warnings[0]
+
+
+def test_103c_code_row_with_origin_confirmed_no_warning(tmp_path: Path) -> None:
+    """DoD (c) CONTROL POSITIVO: code row whose ficha DOES declare
+    Origen-confirmado -> no warning."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900b | algo deliverable_type: code | s | pending | - | x | - |\n",
+        (
+            "### WOT-2026-900b - ficha detail\n"
+            "- **Origen-confirmado:** usuario\n"
+            "- **Problema:** algo\n"
+        ),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert warnings == [], f"expected no warnings, got: {warnings}"
+
+
+def test_103c_non_code_row_no_warning(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: a documentation/research row is out of scope --
+    it never needs Origen-confirmado, even with a bare ficha."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900c | algo deliverable_type: documentation | s | pending | - | x | - |\n",
+        ("### WOT-2026-900c - ficha detail\n- **Problema:** algo\n"),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert warnings == [], f"expected no warnings, got: {warnings}"
+
+
+def test_103c_code_row_without_ficha_no_warning(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: a compressed code row with NO ficha section at
+    all is out of scope -- nothing to check, not a violation."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900d | algo deliverable_type: code | s | pending | - | x | - |\n",
+        "",
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert warnings == [], f"expected no warnings, got: {warnings}"
+
+
+def test_103c_main_wires_the_check(tmp_path: Path, capsys) -> None:
+    """DoD (b): INVOCADA desde main() y el gate IMPRIME el id en WARN.
+
+    MUTACION QUE ESTE TEST MATA: si se retira la linea
+    ``origin_warnings = validate_origin_confirmed(root)`` de ``main()``,
+    este test queda ROJO porque el WARN no se imprime.
+    """
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900e | algo deliverable_type: mixed | s | pending | - | x | - |\n",
+        ("### WOT-2026-900e - ficha detail\n- **Problema:** algo\n"),
+    )
+    rc = cbc.main(["--project-root", str(tmp_path)])
+    assert rc == 0  # WARN no bloquea
+    err = capsys.readouterr().err
+    assert "WOT-2026-900e" in err, f"WARN should be printed to stderr; got: {err}"
+    assert "Origen-confirmado" in err
+
+
+def test_103c_mutation_revert_predicate_fails(tmp_path: Path) -> None:
+    """DoD (e): revertir el predicado (la funcion devuelve [] siempre)
+    hace caer el test de deteccion -- el verde original no era vacuo."""
+    _write_backlog_with_ficha(
+        tmp_path,
+        "| Alta | WOT-2026-900f | algo deliverable_type: code | s | pending | - | x | - |\n",
+        ("### WOT-2026-900f - ficha detail\n- **Problema:** algo\n"),
+    )
+    warnings = cbc.validate_origin_confirmed(tmp_path)
+    assert len(warnings) >= 1, (
+        "El mutante: retirar el predicado de busqueda de Origen-confirmado "
+        "deberia devolver [] -> ROJO. Si pasa, el predicado es la causa del verde."
+    )
 
 
 # ---------------------------------------------------------------------------

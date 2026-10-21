@@ -95,6 +95,13 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
    absolutas.
    Si el destino no se resuelve, la fila lo declara en `lens_scope` (`motor:destino-no-resoluble`): en ese
    caso la lente NO vio el destino y su "no existe" sobre un artefacto del destino no vale.
+   Cuando `repo_scope: destino`, anade ademas un bloque `INVENTARIO GIT-IGNORED` con la salida de
+   `git status --ignored` del destino, para que la lente sepa que rutas existen pero no se incluyen
+   en el bundle por estar ignoradas por Git.
+3-bis. Verificacion de alcance fisico: SI la lente tiene `CANAL: agent` (o `repo_scope: destino`),
+   NO basta con afirmar "no existe X" en prosa. Pide a la lente que verifique con `Test-Path` (Windows)
+   o `ls`/`file` (Unix) antes de emitir un "no existe"; si una ruta se referencia como "no existe" en
+   el bundle o en el informe, la lente debe incluir el comando que usó para verificarlo (y su salida).
 4. Envia a cada lente solo lo que tiene que revisar. Un bundle de mas de 15 KB a un modelo razonador suele
    acabar en `empty_content_despite_sentinel`: pasa antes
    `preflight --content-sample-file <bundle> --backend-keys <lista>`. Limite medido: el preflight valida el
@@ -102,6 +109,14 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
 5. Si generas el bundle con un heredoc de Bash, pon el delimitador entre comillas simples. Sin comillas,
    Bash ejecuta las comillas invertidas del texto y borra palabras del bundle. Si el texto lleva apostrofos,
    escribelo con una herramienta de ficheros en vez de con un heredoc.
+6. **Canal `agent` via Kilo (WOT-2026-108b): el bundle no autocarga `AGENTS.md`.** Igual que para un
+   Builder real (`prompts/builder_invocation_contract.md` Seccion 1.6), una lente con `CANAL: agent`
+   despachada con `-f <bundle>.md` NO ve `AGENTS.md` ni ningun puntero de capa 2 salvo que el bundle lo
+   pida EXPRESAMENTE. Si la revision depende de alguna convencion del repo (nomenclatura, gates,
+   arquitectura de seguridad), el bundle debe instruir leer `AGENTS.md` -- y sus punteros de capa 2 si la
+   revision toca memoria -- antes de verificar `scripts/check_builder_dispatch_prompt.py <bundle>`. No
+   aplica a lentes `api` (sin filesystem: no pueden leer nada por su cuenta, y el bundle les pega la
+   evidencia directamente, ver punto 2 de esta seccion).
 
 ### 3.4 Rondas de gobierno: nonce antes de la ronda
 
@@ -206,6 +221,56 @@ hereda:
   lente sin ficheros y se declara.
 - El bundle va POR CANAL: el de FICHEROS lleva rutas absolutas y la lista "verifica X en <ruta>", sin
   framing de lente sin ficheros; el de TEXTO lleva el contenido (contrato por contenido) y su framing.
+
+### 3.10 Verificar `timeout_s` del backend antes de lanzar (WOT-2026-timeout-kilo, 2026-10-15)
+
+**Antes de lanzar, verifica `backends.<backend>.timeout_s` en `agents.json` DEL MOTOR** (no del
+destino: editarlo ahi es un no-op, el dispatcher lee `backends.<backend>` del `agents.json` que
+`ensemble_dispatch.py` carga en su propio repo). Si no esta declarado, cae al default de 300s
+de `ensemble_dispatch.py:1944` -- insuficiente para cualquier encargo que no sea una ronda breve
+de revision.
+
+El timeout se configura por **`backend`** (`kilo`, `opencode`...), NUNCA por `backend_key`
+(`BA02`/`BA03`/`BA07`/`BA08` son todos `backend: kilo` y comparten el MISMO `timeout_s`): no
+edites el perfil, edita `backends.<backend>.timeout_s`.
+
+Caso real medido (2026-10-15): `backends.kilo` no declaraba `timeout_s` mientras todos los
+backends `api` si lo hacian (900s). Un Builder real lanzado sobre `challenger_kilo_qwen`
+(canal `agent`, `write: true`) murio a los 300s **habiendo ya escrito en disco de verdad**
+(movio una carpeta, edito un test) -- el timeout corto el proceso a mitad de trabajo real, no
+detecto un backend caido. El scorecard de la sesion ya tenia el patron ANTES de ese incidente:
+varias rondas `kilo` topando exactamente en 300-301k ms junto a rondas que completaban con
+exito hasta 259k ms (distribucion bimodal con cola larga, el MISMO patron que motivo subir
+`opencode` a 900s en `ensemble_dispatch.py:1994-2014` -- ajuste que nunca se replico para
+`kilo`). Correccion de cifra (bucle adversarial, lente con lectura directa del scorecard,
+2026-10-15): un recuento informal de "2 fallos previos en la sesion" resulto impreciso -- el
+recuento real depende de como se defina "sesion" (1 fallo el mismo dia calendario antes del
+incidente motivador, o 5 si se agrupa por `loop_id`), nunca exactamente 2. Mide con `grep` del
+patron literal `RuntimeError: backend CLI sin respuesta tras` sobre el scorecard completo antes
+de citar una cifra.
+
+Si el `backend_key` que vas a usar ya tiene fallos `RuntimeError: backend CLI sin respuesta
+tras <N>s` en rondas anteriores del MISMO scorecard, esa es la señal de subir `timeout_s` de
+ESE BACKEND antes de relanzar -- no reintentar con el mismo valor esperando suerte.
+
+**Riesgo a sopesar, no solo beneficio:** subir el timeout de un canal `agent` con `write: true`
+y sin sandbox verificable (ver la `write_enforcement_note` de `kilo` en `agents.json`) amplia la
+ventana durante la cual un agente descarriado puede escribir en disco sin que nada lo corte.
+No es gratis dar mas tiempo; es aceptar mas ventana de ejecucion desatendida. Ademas, un timeout
+mas largo puede ENMASCARAR un cuelgue real si la expectativa de diseno de ese backend era ser
+rapido: antes de subir el techo, confirma que la cola larga es TRABAJO legitimo (compara con
+rondas lentas que si completaron, no solo con las que murieron en el limite) y no un sintoma de
+otra causa.
+
+**`loop-round` no distingue "ronda de revision breve" de "encargo de implementacion completo"
+(Builder real).** El presupuesto de tiempo lo decide quien lanza, dimensionado a la carga real:
+una revision de bundle y un Builder moviendo ficheros no tienen el mismo perfil de duracion, y
+el mecanismo (`loop-round`) es el mismo para ambos casos -- la responsabilidad de no reusar un
+timeout pensado para revision en un encargo de implementacion es de quien lo invoca.
+
+Esta verificacion es NORMA documentada, no barrera mecanica: un check automatico (preflight que
+lea `backend_key -> backend -> timeout_s` y avise/bloquee si falta en canal `agent`+`write:true`)
+queda declarado como mejora pendiente, no implementado aqui.
 
 ## 4. Definicion unica de "lente independiente"
 

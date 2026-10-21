@@ -148,6 +148,27 @@ LOOP_TARGETS_SOURCE_TOKEN = "source=session-close"  # noqa: S105
 
 BACKLOG_REL = Path(".agent") / "collaboration" / "backlog.md"
 BACKLOG_ARCHIVE_REL = Path(".agent") / "collaboration" / "_archive" / "backlog_done.md"
+EXECUTION_LOG_REL = Path(".agent") / "collaboration" / "execution_log.md"
+
+# WOT-2026-104e: marcador textual que una entrada 2.5.j (PROCESS IMPROVEMENT
+# PROPOSAL, prompts/orchestrator_session_close_full_audit.md, sub-bloque 2.5.j) deja en
+# una superficie persistente -- backlog_ticket/memory_candidate con prefijo
+# [PROCESO-CIERRE], o esta linea literal en execution_log.md cuando 2.5.j no
+# encontro nada que proponer. Ver .agent/planning/PROPUESTA_mejora_continua_
+# cierre_backlog_triage_20261018.md seccion 2.1 (revisada tras bucle DBL-3).
+PROCESS_IMPROVEMENT_TAG = "[PROCESO-CIERRE]"
+PROCESS_IMPROVEMENT_NO_FINDINGS_MARKER = "2.5.j: sin_hallazgos_declarado"
+# WOT-2026-104e (ronda 2 DBL-4, hallazgo real kilo_deepseek BA07): anclado a
+# inicio de linea y con fences stripeados ANTES de buscar -- mismo patron que
+# scripts/check_process_decision_search.py, evitando el falso PASS de una cita
+# o un ejemplo de codigo que menciona el marcador sin declararlo de verdad.
+_PROCESS_IMPROVEMENT_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_PROCESS_IMPROVEMENT_TAG_RE = re.compile(r"^.*\[PROCESO-CIERRE\].*$", re.MULTILINE)
+# Exige justificacion NO VACIA tras el "--" (ronda 1 DBL-3 lo pedia; el codigo
+# original lo omitia -- hallazgo real de la ronda 2, no cosmetico).
+_PROCESS_IMPROVEMENT_NO_FINDINGS_RE = re.compile(
+    r"^.*2\.5\.j:\s*sin_hallazgos_declarado\s*--\s*\S.*$", re.MULTILINE
+)
 
 DELIVERABLE_TYPE_RE = re.compile(r"deliverable_type:\s*([^\s|]+)")
 
@@ -2610,6 +2631,73 @@ def _step_report_non_attributable_rounds(
     )
 
 
+def _step_process_improvement_coverage(
+    project_root: Path,
+    steps_so_far: list[StepResult],
+) -> StepResult:
+    """WOT-2026-104e: ¿este cierre tuvo WARN sin ninguna propuesta 2.5.j?
+
+    Before: `steps_so_far` es la lista de StepResult ya acumulados en este
+        mismo run_closeout (ANTES de `_step_archive_execution_log`, que
+        rota el fichero -- este paso DEBE correr antes de esa rotacion).
+    During: cuenta cuantos steps previos de ESTE cierre son WARN. Si hay al
+        menos uno, busca en el execution_log.md VIVO (su ambito ya queda
+        acotado por su propio ciclo de vida de sesion) el marcador
+        `PROCESS_IMPROVEMENT_TAG` o `PROCESS_IMPROVEMENT_NO_FINDINGS_MARKER`.
+    After: PASS si no hubo WARN previos (nada que exigir), o si el marcador
+        aparece. WARN `POSIBLE_2.5J_RUBBER_STAMP` si hubo WARN previos y
+        ninguno de los dos marcadores aparece. Nunca bloquea (FAIL): misma
+        severidad informativa que `non_attributable_rounds`.
+
+    Limite declarado (misma clase que `check_process_decision_search`): mide
+    FORMA (hubo WARN Y no hay marcador), nunca SEMANTICA (si la propuesta
+    registrada tiene calidad). No juzga el contenido, solo su presencia.
+    """
+    name = "process_improvement_coverage"
+    warn_names = [s.name for s in steps_so_far if s.status == "WARN"]
+    if not warn_names:
+        return StepResult(
+            name=name,
+            status="PASS",
+            detail="0 WARN previos en este cierre; nada que exigir a 2.5.j",
+        )
+    elog = project_root / EXECUTION_LOG_REL
+    try:
+        log_text = elog.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log_text = ""
+    searchable = _PROCESS_IMPROVEMENT_FENCE_RE.sub("", log_text)
+    if _PROCESS_IMPROVEMENT_TAG_RE.search(
+        searchable
+    ) or _PROCESS_IMPROVEMENT_NO_FINDINGS_RE.search(searchable):
+        return StepResult(
+            name=name,
+            status="PASS",
+            detail=(
+                f"{len(warn_names)} WARN previos ({', '.join(warn_names)}); "
+                "marcador 2.5.j presente en execution_log.md"
+            ),
+        )
+    return StepResult(
+        name=name,
+        status="WARN",
+        detail=(
+            "POSIBLE_2.5J_RUBBER_STAMP: "
+            f"{len(warn_names)} WARN previos ({', '.join(warn_names)}) sin "
+            f"ningun '{PROCESS_IMPROVEMENT_TAG}' ni "
+            "'2.5.j: sin_hallazgos_declarado -- <justificacion>' (no vacia) "
+            "en execution_log.md. Registra una propuesta 2.5.j (prompts/"
+            "orchestrator_session_close_full_audit.md, sub-bloque 2.5.j) o el "
+            "marcador explicito de sin-hallazgos con su motivo antes de "
+            "archivar el log. LIMITE DECLARADO (ronda 2 DBL-4, hallazgo "
+            "real kilo_deepseek BA07): este paso SOLO lee execution_log.md; "
+            "2.5.j aun no tiene productor cableado en ningun prompt que "
+            "mande escribir el marcador ahi, ni en backlog.md/"
+            "observations.jsonl -- es deuda declarada, no silenciada."
+        ),
+    )
+
+
 def _step_write_loop_execution_targets(
     project_root: Path,
     ticket_ids: list[str],
@@ -2877,6 +2965,7 @@ def run_closeout(
     report.steps.append(_step_rotate_kilo_logs(project_root, dry_run))
     report.steps.append(_step_rotate_bitacora_vuelo(project_root, dry_run))
     report.steps.append(_step_archive_manager_feedback(project_root, dry_run, events))
+    report.steps.append(_step_process_improvement_coverage(project_root, report.steps))
 
     report.steps.append(_step_archive_execution_log(project_root, dry_run))
     report.steps.append(_step_manifest_check(project_root))

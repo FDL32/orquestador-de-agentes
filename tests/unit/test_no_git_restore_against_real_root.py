@@ -8,8 +8,12 @@ technique is COPY-RESTORE (copy the file, mutate the copy, restore from the
 copy), never git (see observation
 ``obs-mutation-verify-copy-restore-not-git-checkout``).
 
-This module parses every test file under ``tests/**/*.py`` with :mod:`ast` and
-flags a destructive git argv wherever it is statically constructed:
+This module parses every *versioned* test file under ``tests/**/*.py`` with
+:mod:`ast` and flags a destructive git argv wherever it is statically
+constructed. Two scoping/pruning defences keep the scan on its real universe
+(gitignored volatile subtrees and caches are pruned before walking; doctrine
+WOT-2026-025w/013d) and skip files whose string literals cannot spell the
+destructive subcommand (a sound over-approximate prefilter, see limitations):
 
 - a list/tuple whose first element resolves to the constant ``"git"`` and whose
   subcommand resolves to ``"restore"`` (file-level by nature), or to
@@ -37,6 +41,13 @@ Limitations (declared, not hidden):
   ``shlex.split``) is NOT covered.
 - A construction is reported even if it is never executed: this is a guardrail
   against the concrete regression this ticket fixes, not a proof of absence.
+- The prefilter is SOUND (it may parse extra files, never skip a real offender):
+  it decodes the values of Python string literals with :func:`ast.literal_eval`
+  — the same decoding :mod:`ast` applies to a ``Constant`` — and re-joins runs
+  of adjacent literals (implicit concatenation), so every subcommand the scanner
+  can resolve to ``restore``/``checkout`` has its text present in some decoded
+  run. Splits (``"res" "tore"``), escapes (``"\\x72estore"``), comments and line
+  continuations between adjacent literals are all covered.
 
 Why not regex (WOT-2026-093g): the previous textual scan only saw the literal
 form of the argv. It missed a variable git token, a variable argv, star
@@ -47,7 +58,13 @@ docstrings that merely mention the argv.
 from __future__ import annotations
 
 import ast
+import io
+import subprocess
+import tokenize
 from pathlib import Path
+
+import pytest
+from scripts.project_scanner import _safe_walk
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +75,23 @@ _GIT = "git"
 _PATH_SEPARATOR = "--"
 _RESTORE = "restore"
 _CHECKOUT = "checkout"
+
+# A destructive git argv can only be resolved from string constants; if no
+# decoded string literal of the file spells one of these subcommands, the file
+# cannot contain an offender. Over-approximate by construction (never skips a
+# real one): the check only decides whether the expensive AST scan is worth it.
+_DESTRUCTIVE_MARKERS = (_RESTORE, _CHECKOUT)
+# Tokens that may appear BETWEEN adjacent string literals without breaking their
+# implicit concatenation (whitespace-newlines and comments); treated as transparent.
+_STRING_RUN_TRANSPARENT = frozenset(
+    {
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.COMMENT,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+    }
+)
 
 
 class _Unknown:
@@ -250,14 +284,84 @@ class _GitArgvScanner(ast.NodeVisitor):
         return False
 
 
+def _join_adjacent_string_literals(literals: list[str]) -> str:
+    """Values of a run of adjacent string literals, concatenated (implicit join)."""
+    parts: list[str] = []
+    for literal in literals:
+        try:
+            value = ast.literal_eval(literal)
+        except (ValueError, SyntaxError):
+            value = ""
+        parts.append(value if isinstance(value, str) else "")
+    return "".join(parts)
+
+
+def _decoded_string_runs(text: str) -> list[str]:
+    """Every run of adjacent string literals in *text*, decoded to its value.
+
+    Uses Python's own tokenizer so an escape (``"\\x72estore"``) or a split
+    (``"res" "tore"``) are decoded EXACTLY as :mod:`ast` would when folding the
+    literals into a ``Constant``. Returns a fallback ``[text]`` for a source the
+    tokenizer cannot handle, which keeps the prefilter over-approximate.
+    """
+    runs: list[str] = []
+    pending: list[str] = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type == tokenize.STRING:
+                pending.append(token.string)
+            elif token.type in _STRING_RUN_TRANSPARENT:
+                continue
+            elif pending:
+                runs.append(_join_adjacent_string_literals(pending))
+                pending = []
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return [text]
+    if pending:
+        runs.append(_join_adjacent_string_literals(pending))
+    return runs
+
+
+def _could_contain_destructive_git(text: str) -> bool:
+    """Cheap SOUND prefilter: False only when no literal can spell the subcommand.
+
+    Before: *text* is the decoded source of one Python file.
+    During: fast-paths on a raw substring hit (cheap), otherwise decodes the runs
+        of adjacent string literals (see :func:`_decoded_string_runs`) and looks
+        for the destructive markers.
+    After: returns True if any decoded run contains ``restore``/``checkout``.
+        It NEVER returns False for a file the AST scanner could flag (the scanner
+        resolves the subcommand only from a string constant, whose value is one
+        of those runs), so skipping the parse on False is safe.
+    """
+    if _RESTORE in text or _CHECKOUT in text:
+        return True
+    return any(
+        marker in run
+        for run in _decoded_string_runs(text)
+        for marker in _DESTRUCTIVE_MARKERS
+    )
+
+
+def _scan_source(path: Path, text: str) -> list[tuple[Path, int, str]]:
+    """AST scan of *text* with no prefilter (the reference used for equivalence)."""
+    try:
+        tree = ast.parse(text, filename=str(path))
+    except SyntaxError:
+        return []
+    scanner = _GitArgvScanner(text)
+    return [(path, lineno, snippet) for lineno, snippet in scanner.scan(tree)]
+
+
 def find_git_restore_offenders(files: list[Path]) -> list[tuple[Path, int, str]]:
     """Return ``(path, lineno, snippet)`` for each destructive git argv.
 
     Before: *files* is an explicit list of Python files (the caller can pass any
         set, e.g. a ``git show`` export of an older revision, for mutation
         verification).
-    During: parses each file and resolves statically constructed git argv (see
-        the module docstring for the covered forms).
+    During: reads each file, applies the sound prefilter
+        (:func:`_could_contain_destructive_git`) and parses only the survivors,
+        resolving statically constructed git argv (see the module docstring).
     After: returns one tuple per offender (empty when none). Files that cannot
         be read or parsed are skipped; it never raises on them.
     """
@@ -268,19 +372,28 @@ def find_git_restore_offenders(files: list[Path]) -> list[tuple[Path, int, str]]
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        try:
-            tree = ast.parse(text, filename=str(path))
-        except SyntaxError:
+        if not _could_contain_destructive_git(text):
             continue
-        scanner = _GitArgvScanner(text)
-        for lineno, snippet in scanner.scan(tree):
-            offenders.append((path, lineno, snippet))
+        offenders.extend(_scan_source(path, text))
     return offenders
 
 
 def _discover_test_files() -> list[Path]:
-    """Every ``tests/**/*.py`` file except this barrier itself."""
-    return sorted(p for p in TESTS_DIR.rglob("*.py") if p.resolve() != _SELF)
+    """Every versioned ``tests/**/*.py`` file except this barrier itself.
+
+    Walks with :func:`scripts.project_scanner._safe_walk` (doctrine
+    WOT-2026-025w/013d), which PRUNES the gitignored volatile subtrees
+    (``tests/sandbox/test_runtime``, caches, ``__pycache__``) before descending
+    and tolerates concurrent deletes. The barrier's universe is versioned source,
+    not the runtime files the suite generates under it.
+    """
+    return sorted(
+        path
+        for path in _safe_walk(PROJECT_ROOT)
+        if path.suffix == ".py"
+        and path.is_relative_to(TESTS_DIR)
+        and path.resolve() != _SELF
+    )
 
 
 def test_no_test_rewrites_files_with_git() -> None:
@@ -404,3 +517,91 @@ def test_barrier_ignores_docstring_mention(tmp_path: Path) -> None:
     )
     offenders = find_git_restore_offenders([fixture])
     assert offenders == [], f"a docstring mention is not code: {offenders}"
+
+
+# --- pilot A guards (WOT-2026-... suite optimization) -----------------------
+#
+# The scope/pruning fix and the prefilter must NOT weaken the barrier. These
+# adversarial forms are the exact regressions the ensemble round found: a
+# subcommand split across adjacent literals or written with escapes is folded
+# to the SAME ``Constant`` by :mod:`ast`, so the AST scanner flags them today;
+# the prefilter must keep flagging them.
+
+_ADVERSARIAL_SUBCOMMAND_FORMS: list[tuple[str, str]] = [
+    ("split_restore", 'X = ["git", "res" "tore", "f"]\n'),
+    ("escape_hex_restore", 'X = ["git", "\\x72estore", "f"]\n'),
+    ("escape_octal_restore", 'X = ["git", "\\162estore", "f"]\n'),
+    ("escape_unicode4_restore", 'X = ["git", "\\u0072estore", "f"]\n'),
+    ("escape_unicode8_restore", 'X = ["git", "\\U00000072estore", "f"]\n'),
+    ("split_checkout", 'X = ["git", "check" "out", "--", "f"]\n'),
+    ("escape_hex_checkout", 'X = ["git", "\\x63heckout", "--", "f"]\n'),
+    ("continuation_split", 'X = ["git", "res\\\ntore", "f"]\n'),
+    (
+        "comment_split",
+        'X = [\n    "git",\n    "res"  # note\n    "tore",\n    "f",\n]\n',
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    _ADVERSARIAL_SUBCOMMAND_FORMS,
+    ids=[name for name, _ in _ADVERSARIAL_SUBCOMMAND_FORMS],
+)
+def test_prefilter_keeps_obfuscated_subcommands(
+    tmp_path: Path, name: str, source: str
+) -> None:
+    """An obfuscated destructive argv must survive the prefilter and stay flagged."""
+    fixture = _write_fixture(tmp_path, f"test_{name}.py", source)
+    assert _could_contain_destructive_git(source), f"prefilter dropped {name}"
+    assert find_git_restore_offenders([fixture]), f"barrier must still flag {name}"
+
+
+def test_discover_keeps_every_versioned_test_file() -> None:
+    """The scope/pruning fix must not drop any git-versioned ``tests/**/*.py``."""
+    result = subprocess.run(
+        ["git", "-C", str(PROJECT_ROOT), "ls-files", "-z", "--", "tests"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    tracked = {
+        (PROJECT_ROOT / rel).resolve()
+        for rel in result.stdout.split("\0")
+        if rel.endswith(".py")
+    }
+    tracked.discard(_SELF)
+    discovered = {path.resolve() for path in _discover_test_files()}
+    missing = sorted(tracked - discovered)
+    assert missing == [], f"versioned test files dropped from the barrier: {missing}"
+
+
+def test_prefilter_equivalence_over_real_corpus(tmp_path: Path) -> None:
+    """The prefilter must not drop an offender the reference scan would find.
+
+    Equivalence form that stays cheap: for every real test file the prefilter
+    SKIPS, the reference AST scan must find nothing (the files it KEEPS are
+    scanned by the production path anyway). A synthetic OBFUSCATED offender is
+    exercised end-to-end so the assertion has teeth: the prefilter must keep it
+    and the full pipeline must still catch it.
+    """
+    offender = _write_fixture(
+        tmp_path,
+        "test_synthetic_obfuscated_offender.py",
+        'X = ["git", "res" "tore", "f"]\n',
+    )
+    corpus = _discover_test_files()
+    leaks: list[Path] = []
+    for path in corpus:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _could_contain_destructive_git(text):
+            continue
+        if _scan_source(path, text):
+            leaks.append(path)
+    assert leaks == [], f"prefilter skipped files the reference scan flags: {leaks}"
+    assert find_git_restore_offenders([offender]), (
+        "the synthetic obfuscated offender must survive the full pipeline"
+    )

@@ -162,6 +162,27 @@ known_unwired:
     no un commit. Cablearlo en pre-commit correria sin proposito. Follow-up:
     cablearlo por codigo si se automatiza el Paso 2 completo.
 
+  # WOT-2026-108b: guard que verifica que un prompt de arranque de Builder/
+  # lente despachado via Kilo (`kilo run -f <prompt>.md`) instruya leer
+  # AGENTS.md. Su sitio de invocacion NATURAL es el instante de despacho
+  # (`prompts/builder_invocation_contract.md` Seccion 1.6), que es una
+  # invocacion MANUAL de shell -- el despacho de un Builder real NO pasa por
+  # ningun script de este motor que un hook pueda interceptar (mismo motivo
+  # declarado en la Seccion 1.5 de ese contrato para el Task tool nativo).
+  # Analogo a check_prompt_parity y check_publication_gate: BY-DESIGN,
+  # invocacion manual en el punto de preparacion, no un hook automatico.
+  # Sometido a DESIGN_REVIEW real (4 lentes independientes, 2026-10-20,
+  # DECISION: CHANGES unanime sobre la cobertura de markers, ya aplicado).
+  check_builder_dispatch_prompt: >-
+    BY-DESIGN: invocacion manual antes de `kilo run -f <prompt>.md`
+    (`prompts/builder_invocation_contract.md` Seccion 1.6) -- el despacho de
+    un Builder real es una invocacion de shell, no una llamada a traves de
+    un script de este motor que un hook pueda interceptar. Cablearlo en
+    pre-commit no tiene sentido: audita un prompt de arranque que
+    normalmente ni siquiera se versiona. Follow-up: ninguno declarado, el
+    limite es estructural (ver Seccion 1.5 del mismo contrato para el caso
+    analogo del Task tool nativo).
+
   # WOT-2026-098b: gate `role_models.BUILDER != role_models.REVISOR`. Su sitio de
   # invocacion NATURAL es `bus/review_bridge.py` "antes de lanzar la Capa 2" -- y
   # `bus/review_bridge.py` es FORBIDDEN SURFACE de este ticket (Non-goal: "NO
@@ -198,6 +219,42 @@ known_unwired:
   # barrera de escritura). Invocacion manual/per-auditoria, como los demas
   # BY-DESIGN de este bloque. Dueno: WOT-2026-094c.
   check_archive_hygiene: WOT-2026-094c
+
+  # WOT-2026-071a: guard de clase WARN-only para presupuesto de contexto de
+  # @import (scripts/check_context_budget.py, exit code SIEMPRE 0). El Builder
+  # intento cablearlo anadiendo un SEGUNDO item al array "SessionStart" de
+  # .claude/settings.json (mismo matcher ""), pero eso COLISIONA con
+  # check_claude_settings_portability.py::_NON_GATING_TARGETS -- ese dict es
+  # un mapeo 1:1 estricto (event, matcher) -> UN comando canonico, sin soporte
+  # para que dos hooks distintos compartan la misma clave. El segundo item se
+  # comparaba contra el comando canonico de session_start_hook.py y fallaba
+  # "not canonical", rompiendo 3 tests reales (test_real_motor_settings_pass,
+  # test_tracked_motor_settings_pass, test_real_repo_wired_set_is_exactly_expected).
+  # Diagnostico confirmado por aislamiento (git stash de los 4 ficheros del
+  # ticket): los 3 fallos desaparecen sin el cambio, reaparecen con el.
+  # DECISION (Manager, re-verificacion CEM-01): revertir el wiring en
+  # settings.json y dejar el guard como UNWIRED declarado -- extender
+  # _NON_GATING_TARGETS para soportar N comandos por clave, o cablear via
+  # subprocess dentro de session_start_hook.py (precedente: _health_line()
+  # llamando a check_memory_health.py), es trabajo de alcance mayor al
+  # declarado en "Files Likely Touched" de este ticket y toca un gate de
+  # seguridad -- aplazado a follow-up con dueno propio. El MECANISMO (script +
+  # 13 tests) se entrega aqui; su cableado real automatico NO.
+  check_context_budget: WOT-2026-071a
+
+  # WOT-2026-071b: gate de FORMA sobre el artefacto de salida del triaje
+  # (`backlog_triage_*.json` + par `.md`). Invocacion manual en el cierre de
+  # sesion de DISENO (paso F3 de
+  # `prompts/orchestrator_session_close_full_audit_design.md`), un evento
+  # discreto gobernado por instrucciones de prompt -- no un proceso que corra
+  # solo (por eso NO `wired_via`) y sin owner-ticket (seria deuda huerfana en
+  # cuanto 071b se archive). Mismos precedentes BY-DESIGN vivos de esta misma
+  # politica: check_document_self_contradiction y check_prompt_parity.
+  check_triage_outputs: >-
+    BY-DESIGN: invocacion manual en `prompts/orchestrator_session_close_full_audit_design.md`
+    Bloque F paso F3, al cerrar una sesion de diseno que produjo un triaje -- evento
+    discreto gobernado por el prompt, no un hook automatico. Los prompts no son
+    superficie para el AST, asi que no hay camino que corra solo que lo cablee.
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.

@@ -43,6 +43,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import prepush_check as pc_module  # noqa: E402
 from prepush_check import (  # noqa: E402
     run_agent_controller_validate,
+    run_arranque_budget_check,
     run_ruff_check,
     run_ruff_format_check,
 )
@@ -1265,3 +1266,65 @@ def test_prepush_validate_cmd_contains_no_heal(tmp_path, monkeypatch):
     )
     assert "--validate" in captured_cmd
     assert "--force" in captured_cmd
+
+
+# ---------------------------------------------------- WOT-2026-103b: arranque budget
+def test_103b_skip_when_script_absent(tmp_path):
+    """(b) SKIP sin coste: destino sin scripts/check_arranque_budget.py.
+
+    MUTACION: si el early-return se quita, el subprocess intentaria ejecutar
+    un script inexistente y rompería con FileNotFoundError en vez de skip.
+    """
+    result = run_arranque_budget_check(tmp_path)
+    assert result.passed is True
+    assert result.is_blocking is False
+    assert "skip" in result.output
+
+
+def test_103b_warn_surfaces_non_blocking(tmp_path):
+    """(c) un destino con WARN lo ve en la salida del prepush sin bloquear.
+
+    MUTACION: si "WARN:" in stdout se reemplaza por una comprobacion que
+    siempre es False, este test cae (passed quedaria True indebidamente).
+    """
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "check_arranque_budget.py").write_text(
+        "import sys\nprint('WARN: arranque budget 25.0% exceeds threshold')\nsys.exit(0)\n",
+        encoding="utf-8",
+    )
+    result = run_arranque_budget_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is False
+    assert "WARN" in result.output
+
+
+def test_103b_clean_script_passes_silently(tmp_path):
+    """Camino feliz: script existe, no imprime WARN: -> passed=True silencioso."""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "check_arranque_budget.py").write_text(
+        "import sys\nprint('OK: within budget')\nsys.exit(0)\n",
+        encoding="utf-8",
+    )
+    result = run_arranque_budget_check(tmp_path)
+    assert result.passed is True
+    assert result.is_blocking is False
+
+
+def test_103b_rc2_is_no_verificable_not_silent_pass(tmp_path):
+    """rc=2 (cadena de resolucion ausente) -> NO VERIFICABLE, nunca passed=True.
+
+    MUTACION: si `result.returncode == 2` se borra, un rc=2 caeria al camino
+    feliz (passed=True) porque stdout no necesariamente contiene "WARN:".
+    """
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "check_arranque_budget.py").write_text(
+        "import sys\nprint('cadena de resolucion ausente')\nsys.exit(2)\n",
+        encoding="utf-8",
+    )
+    result = run_arranque_budget_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is False
+    assert "NO VERIFICABLE" in result.output

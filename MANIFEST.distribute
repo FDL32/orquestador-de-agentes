@@ -42,12 +42,14 @@ scripts/hermes_build_context_bundle.py
 # de planning ad-hoc de un vuelo, caso de persona_system.md)
 # =============================================================================
 prompts/agent_execution_modes.md
+prompts/agents_md_intake_triage.md
 prompts/audit_agent_output.md
 prompts/audit_git_publication.md
 prompts/audit_pipeline.md
 prompts/audit_ticket_contract.md
 prompts/hermes_soul.md
 prompts/manager_review.md
+prompts/orchestrator_child_dispatch_multiticket_multibackend_unlimited.md
 prompts/orchestrator_destination_bootstrap.md
 prompts/orchestrator_launch_builder.md
 prompts/orchestrator_pipeline.md
@@ -94,6 +96,14 @@ skills/
 # Runtime - solo lo estructural, no transitorio
 .agent/runtime/__init__.py
 .agent/runtime/memory/memory_helpers.py
+
+# Reglas de referencia bajo demanda (piramide, pasada 1)
+.agent/rules/common/ensemble_profile_nomenclature.md
+.agent/rules/common/builder_relaunch.md
+.agent/rules/common/deliverable_type_dispatch.md
+.agent/rules/common/host_install_integration.md
+.agent/rules/common/manifest_contracts.md
+.agent/rules/common/memory_hierarchy.md
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.

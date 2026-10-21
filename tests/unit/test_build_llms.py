@@ -86,3 +86,28 @@ def test_check_missing_file_is_drift(monkeypatch):
     monkeypatch.setattr(build_llms, "PROJECT_ROOT", tmp_root)
     # No files generated at all -> absent files count as drift.
     assert build_llms.main(["--check"]) == 1
+
+
+def test_check_detects_drift_when_inlined_source_changes_without_regen(monkeypatch):
+    """WOT-2026-090u: --check must be wired against SOURCE drift, not just
+    direct edits to the generated file. Mutating an INLINE_IN_FULL source
+    (AGENTS.md) and forgetting to regenerate must be caught by --check,
+    because that is exactly the real-world failure this ticket closes
+    (llms-full.txt unregenerated for months while AGENTS.md kept changing).
+    """
+    tmp_root = Path(pytest.importorskip("tempfile").mkdtemp())
+    monkeypatch.setattr(build_llms, "PROJECT_ROOT", tmp_root)
+
+    agents_md = tmp_root / "AGENTS.md"
+    agents_md.write_text("# AGENTS\n\noriginal content\n", encoding="utf-8")
+
+    assert build_llms.main([]) == 0
+    assert build_llms.main(["--check"]) == 0, "freshly generated tree must be in sync"
+
+    # Mutate the INLINED SOURCE (not the generated file) without regenerating.
+    agents_md.write_text(
+        "# AGENTS\n\nchanged content, nobody regenerated\n", encoding="utf-8"
+    )
+
+    rc = build_llms.main(["--check"])
+    assert rc == 1, "a changed inlined source without regen must be reported as drift"

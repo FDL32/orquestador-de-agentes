@@ -146,11 +146,19 @@ def load_overrides(motor_root: Path | None = None) -> dict[str, Path]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {k: Path(v) for k, v in data.get("overrides", {}).items()}
     except (json.JSONDecodeError, OSError):
-        pass
-    return {}
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    overrides = data.get("overrides", {})
+    if not isinstance(overrides, dict):
+        return {}
+    # WOT-2026-103f: a structurally malformed override value (non-dict
+    # `overrides`, or a non-string value) is skipped, not raised -- the
+    # docstring above promises "Never raises" and a syntactically valid but
+    # ill-shaped JSON file must not crash every caller (resolve_prefix,
+    # the --verify CLI) on a hand-edited gitignored file.
+    return {k: Path(v) for k, v in overrides.items() if isinstance(v, str)}
 
 
 def resolve_prefix(prefix: str | None, motor_root: Path) -> Path | None:

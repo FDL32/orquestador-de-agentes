@@ -45,3 +45,39 @@ python scripts/discover_skills.py --check-index     # stale gate (exit 1 si dive
 El `trigger_map` de `discover_skills()` solo enlaza skills `active`. Las skills
 `deprecated` o `draft` siguen en el catálogo (visibles, auditables) pero **no
 despachan triggers**. La metadata tiene efecto real, no es solo presencia en disco.
+
+## Clasificación funcional de los 40 prompts (navegación para agente sin contexto previo)
+
+`INDEX.md` (arriba) es el catálogo TÉCNICO autogenerado (kind/path/status/owner/role). Esta
+sección es una capa de NAVEGACIÓN FUNCIONAL complementaria, mantenida a mano, fruto de una
+auditoría de redundancia (2026-10-04, `.session/external_review/prompts_audit_2026-10-04/` del
+repo motor). Agrupa los 40 ficheros de `prompts/` en 16 líneas temáticas + 1 pieza singular, por
+QUÉ HACEN (no por prefijo de nombre), para que un agente sin contexto previo encuentre la
+herramienta correcta sin tener que leer los 40 ficheros.
+
+⚠️ **Dos nombres casi idénticos, NO son el mismo fichero:**
+`orchestrator_autonomous_ticket_batch.md` (EJECUTOR del batch) vs
+`audit_autonomous_ticket_batch.md` (AUDITOR del batch ya cerrado).
+
+| # | Línea | Ficheros |
+|---|---|---|
+| 1 | Motor metodológico transversal (CEM v0) | `audit_agent_output.md` |
+| 2 | Contract Formation (génesis, pre-ejecución) | `contract_formation_pipeline.md`, `audit_cf_repo_charter.md`, `audit_cf_plan_graph.md`, `audit_cf_ticket_contract.md` |
+| 3 | Auditoría pre-Builder del contrato materializado | `audit_ticket_contract.md` |
+| 4 | Pipelines de ejecución | `orchestrator_pipeline.md`, `orchestrator_pipeline_codeonly.md`, `orchestrator_autonomous_ticket_batch.md` (EJECUTOR), `orchestrator_prepare_and_launch_ticket.md` |
+| 5 | Contrato del Builder y despacho de backends IA | `orchestrator_launch_builder.md`, `builder_invocation_contract.md`, `ensemble_loop.md` |
+| 6 | Review de implementación (Manager) | `manager_review.md` |
+| 7 | Auditoría post-ejecución (meta-auditores) | `audit_pipeline.md`, `audit_pipeline_codeonly.md`, `audit_autonomous_ticket_batch.md` (AUDITOR), `audit_goal_completion.md` |
+| 8 | Auditoría de sistema / inventario estratégico | `audit_complete_motor_destination.md`, `audit_portability_legacy_surface.md`, `audit_git_publication.md`, `audit_post_change_system_health.md` |
+| 9 | Diagnóstico de infraestructura runtime (bus) | `audit_bus.md` |
+| 10 | Backlog: alta y triage (pre-pipeline) | `backlog_admit.md`, `backlog_triage.md` |
+| 11 | Optimizadores recolector→juez | `suite_optimization.md`, `doc_optimization.md`, `memory_optimization.md` |
+| 12 | Memoria operativa (gate de promoción) | `memory_upload.md` |
+| 13 | Bootstrap y cierre de sesión (desarrollo vs diseño) | `orchestrator_session_bootstrap.md`, `orchestrator_session_close_full_audit.md`, `orchestrator_session_close_chat.md`, `orchestrator_session_bootstrap_design.md`, `orchestrator_session_close_full_audit_design.md` |
+| 14 | Orquestación multi-repo / topología motor↔destino | `orchestrator_destination_bootstrap.md`, `orchestrator_destination_batch.md`, `escalate_to_motor.md` |
+| 15 | Refactor Kit | `orchestrator_refactor_bootstrap.md` |
+| 16 | Puente de continuidad entre sesiones | `session_hop.md` |
+| — | Pieza singular (backend externo) | `hermes_soul.md` |
+
+Detalle completo con citas textuales y justificación de cada línea:
+`.session/external_review/prompts_audit_2026-10-04/clasificacion_v3_final.md` (repo motor).

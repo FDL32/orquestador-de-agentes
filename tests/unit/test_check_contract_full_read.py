@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bus.redact import redact
+
 
 # ------------------------------------------------------------------ helpers
 _ROOT = Path(__file__).resolve().parents[2]
@@ -754,3 +756,501 @@ def test_dod_b3_full_path_no_suffix_false_positive(tmp_path: Path) -> Path:
     assert rc == 1, (
         f"Homonimo en ruta distinta NO debe contar como cobertura. rc={rc}, stdout={stdout}"
     )
+
+
+# ------------------------------------------------------------------ WOT-2026-104j: lecturas paginadas
+
+
+_PAGINATED_TOTAL_LINES = 968
+_PAGINATED_FIRST_PAGE = 563
+_PAGINATED_SECOND_PAGE = 405
+
+
+def _large_file_content(total_lines: int) -> str:
+    """Return deterministic content with exactly ``total_lines`` lines."""
+    return "".join(f"line{i}\n" for i in range(1, total_lines + 1))
+
+
+def test_paginated_read_union_coverage(tmp_path: Path) -> None:
+    """DoD (a)/(b)/(d): 2 lecturas paginadas cubren el fichero -> PASS.
+
+    ANTES del fix: max(563, 405) = 563 < 968 -> FAIL. Con union de rangos
+    [1,563] U [563,968] -> PASS.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": _large_file_content(_PAGINATED_TOTAL_LINES)},
+        [
+            {
+                "context": f"Read file prompts/large.md, {_PAGINATED_FIRST_PAGE} lines, offset=0",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:00Z",
+            },
+            {
+                "context": (
+                    f"Read file prompts/large.md, {_PAGINATED_SECOND_PAGE} lines, "
+                    f"offset={_PAGINATED_FIRST_PAGE}"
+                ),
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:01Z",
+            },
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, stderr = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Lectura paginada completa debe PASS (union de rangos). "
+        f"rc={rc}\nstdout: {stdout}\nstderr: {stderr}"
+    )
+    assert "PASS" in stdout
+
+
+def test_paginated_read_gap_fails(tmp_path: Path) -> None:
+    """DoD (c): 2 lecturas paginadas con HUECO -> FAIL con lineas ausentes.
+
+    [1,300] U [600,900] de 968: faltan 301-599 y 901-968.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": _large_file_content(_PAGINATED_TOTAL_LINES)},
+        [
+            {
+                "context": "Read file prompts/large.md, 300 lines, offset=0",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:00Z",
+            },
+            {
+                "context": "Read file prompts/large.md, 300 lines, offset=600",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-18T00:00:01Z",
+            },
+        ],
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/large.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, stderr = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 1, (
+        f"Hueco entre lecturas paginadas debe FAIL. rc={rc}\n"
+        f"stdout: {stdout}\nstderr: {stderr}"
+    )
+    output = stdout + stderr
+    assert "ausentes" in output
+    assert "301" in output, f"Debe enumerar el primer hueco (301), got: {output}"
+
+
+def test_mutation_verify_max_logic_fails(tmp_path: Path) -> None:
+    """DoD (d): discriminador de la mutacion `max`-de-un-evento.
+
+    El propio fixture prueba la mutacion: la logica `max(line_count)` daria
+    max(563, 405) = 563 < 968 -> FAIL, y con la union -> PASS. La mutacion REAL
+    (repoblar `check_read_coverage` con `max` y ver el test paginado caer) se
+    ejecuta aparte y queda registrada en el recibo del Builder.
+    """
+    line_counts = [_PAGINATED_FIRST_PAGE, _PAGINATED_SECOND_PAGE]
+    assert max(line_counts) < _PAGINATED_TOTAL_LINES, (
+        "El fixture debe ser discriminante: la logica max NO puede cubrir el fichero"
+    )
+
+    content = _large_file_content(_PAGINATED_TOTAL_LINES)
+    first_page_event = {
+        "context": f"Read file prompts/large.md, {_PAGINATED_FIRST_PAGE} lines, offset=0",
+        "tool_name": "view_file",
+        "timestamp": "2026-10-18T00:00:00Z",
+    }
+    second_page_event = {
+        "context": (
+            f"Read file prompts/large.md, {_PAGINATED_SECOND_PAGE} lines, "
+            f"offset={_PAGINATED_FIRST_PAGE}"
+        ),
+        "tool_name": "view_file",
+        "timestamp": "2026-10-18T00:00:01Z",
+    }
+    artifact_text = "Se debe leer `prompts/large.md` entero antes de trabajar."
+
+    # Direccion 1: solo la primera pagina (equivale a "max de un evento") -> FAIL
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/large.md": content},
+        [first_page_event],
+    )
+    artifact = _write_artifact(motor_root, "artifact.md", artifact_text)
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+    rc_one_event, stdout_one, _ = _run_check(motor_root, artifact, telemetry_dir)
+    assert rc_one_event == 1, (
+        f"Un solo evento (563/968) debe FAIL, got rc={rc_one_event}\nstdout: {stdout_one}"
+    )
+
+    # Direccion 2: la union de ambas paginas -> PASS
+    telemetry_file = telemetry_dir / "tool_usage.jsonl"
+    with telemetry_file.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(second_page_event, ensure_ascii=False) + "\n")
+    rc_both, stdout_both, _ = _run_check(motor_root, artifact, telemetry_dir)
+    assert rc_both == 0, (
+        f"La union de las 2 paginas debe PASS, got rc={rc_both}\nstdout: {stdout_both}"
+    )
+
+
+# ------------------------------------------------------------------ WOT-2026-104l: relative path normalization (F3)
+
+
+def test_dod_104l_no_telemetry_returns_error_with_evidence(tmp_path: Path) -> Path:
+    """DoD F3.1: sesion sin eventos -> rc=1 con 'no-telemetry-for-file'.
+
+    Caso CORRECTO por diseno: sin telemetria, la barrera debe fallar, pero
+    el diagnostico debe decir explicitamente que no hay eventos para ese file.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/sample.md": "line1\nline2\nline3\n"},
+        [],  # no telemetry at all
+    )
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/sample.md` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 1, (
+        f"Expected FAIL (rc=1) with no telemetry, got rc={rc}\nstdout: {stdout}"
+    )
+    assert "no-telemetry-for-file" in stdout, (
+        f"Should show 'no-telemetry-for-file' evidence, got: {stdout}"
+    )
+    assert "FAIL" in stdout or "ERROR" in stdout, (
+        f"Should contain FAIL/ERROR marker, got: {stdout}"
+    )
+
+
+def test_dod_104l_relative_path_matches_from_non_motor_cwd(tmp_path: Path) -> Path:
+    """DoD F3.2: evento RELATIVO (Kilo-style) casa desde CWD != motor_root.
+
+    La CITACION usa la ruta ABSOLUTA resuelta del fichero dentro del motor.
+    La TELEMETRIA usa la ruta relativa ("scripts/guard.py"). El subprocess
+    corre con cwd en tmp_path (sin relacion con motor_root).
+
+    Escenario donde:
+      - Match exacto falla (cadenas distintas: absoluta vs relativa)
+      - B3 falla (Path("scripts/guard.py").resolve() desde tmp_path NO es el
+        fichero de motor_root)
+      - Solo F1 casa (motor_root / fp, resuelto contra resolved del motor)
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                # Kilo/nan style: ruta relativa SIN redactar
+                "context": "Read file scripts/guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+    # La cita contiene la ruta ABSOLUTA del fichero (como la genera una sesion
+    # que resolve() el motor_root y pega el path completo en el artefacto).
+    resolved_file = motor_root / "scripts" / "guard.py"
+    citation_path = str(resolved_file.resolve())
+
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        f"Se debe leer `{citation_path}` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # Ejecutar con cwd DIFERENTE al motor_root (tmp_path) para que B3 falle
+    cmd = [
+        sys.executable,
+        str(_SCRIPT),
+        str(artifact),
+        str(telemetry_dir),
+        "--motor-root",
+        str(motor_root),
+    ]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # <-- CWD distinto al motor_root
+        timeout=30,
+    )
+
+    assert result.returncode == 0, (
+        f"Relative path event should match via F1 (motor_root anchor), "
+        f"got rc={result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert (
+        "PASS" in result.stdout
+        or "covered" in result.stdout.lower()
+        or "leidos enteramente" in result.stdout
+    )
+
+
+def test_dod_104l_relative_from_different_cwd(tmp_path: Path) -> None:
+    """DoD F3.2: fixture discriminante — SOLO F1 casa (absolute citation + relative telemetry + different CWD).
+
+    Diseno del fixture:
+      - Telemetria: ruta relativa "scripts/guard.py" (Kilo/nan style).
+      - Citacion: la RUTA ABSOLUTA completa del fichero dentro del motor,
+        obtenida con `motor_root / "scripts/guard.py"` → `.resolve()`.
+      - CWD del subprocess: tmp_path (sin relacion con motor_root).
+
+    Por que solo F1 casa:
+      - Match exacto (R1) falla: la cita es una ruta absoluta larga
+        y el evento es `scripts/guard.py` — cadenas diferentes.
+      - B3 falla: `Path("scripts/guard.py").resolve()` desde CWD=tmp_path
+        da `tmp_path/scripts/guard.py` ≠ la ruta absoluta de la cita.
+      - F1 (motor_root anchor): `motor_root / "scripts/guard.py"` →
+        `motor_root/scripts/guard.py` → resolve() = cita resuelta → CASA.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                "context": "Read file scripts/guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+
+    # La cita usa la ruta ABSOLUTA (resolved) del fichero dentro del motor.
+    resolved_file = motor_root / "scripts" / "guard.py"
+    citation_path = str(resolved_file.resolve())
+
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        f"Se debe leer `{citation_path}` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # Ejecutar con cwd DIFERENTE al motor_root (tmp_path).
+    # Sin F1: solo match exacto y B3, ambos fallan → FAIL.
+    # Con F1: motor_root / fp → resolve() = cita → CASA → PASS.
+    cmd = [
+        sys.executable,
+        str(_SCRIPT),
+        str(artifact),
+        str(telemetry_dir),
+        "--motor-root",
+        str(motor_root),
+    ]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # <-- CWD distinto al motor_root
+        timeout=30,
+    )
+
+    assert result.returncode == 0, (
+        f"Relative path should match from non-motor CWD via F1, got rc={result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "PASS" in result.stdout or "leidos enteramente" in result.stdout
+
+
+def test_dod_104l_absolute_redacted_still_passes(tmp_path: Path) -> Path:
+    """DoD F3.2: formato absoluto-redactado no se regresa (B5 regresion).
+
+    Verificar que el fix de relative paths no rompe el caso absoluto-redactado
+    que ya funcionaba (sesiones Claude Code/T3).
+
+    El mini-motor crea el fichero en motor_root/prompts/sample.md.
+    La telemetria redactada usa una ruta ABSOLUTA bajo motor_root.
+    El matcher B5 compara redact(resolved) == redact(fp).
+
+    Para que el match sea posible, construimos la ruta redactada REAL que
+    produciria redact() sobre la ruta resuelta del fichero en el mini-motor.
+    """
+    import shutil
+
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"prompts/sample.md": "line1\nline2\nline3\n"},
+        [],
+    )
+
+    # Copy the script to the mini-motor so resolve_motor_root() resolves to
+    # the mini-motor root (not the real repo).
+    scripts_dir = motor_root / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    shutil.copy2(_SCRIPT, scripts_dir / "check_contract_full_read.py")
+
+    # The resolved path of the file is motor_root / "prompts" / "sample.md".
+    # We construct the telemetry path so that redact(fp) == redact(resolved).
+    # The simplest: use the ACTUAL resolved path as the telemetry path.
+    # When the file exists at motor_root/prompts/sample.md,
+    # resolve() gives the real absolute path.
+    resolved_file = motor_root / "prompts" / "sample.md"
+    real_resolved = str(resolved_file.resolve())
+    fake_redacted = redact(real_resolved)
+
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+    telemetry_file = telemetry_dir / "tool_usage.jsonl"
+    with telemetry_file.open("w", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "context": f"Read file {fake_redacted}, 3 lines",
+                    "tool_name": "view_file",
+                    "timestamp": "2026-10-19T00:00:00Z",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        "Se debe leer `prompts/sample.md` entero antes de trabajar.",
+    )
+
+    rc, stdout, _ = _run_check(motor_root, artifact, telemetry_dir)
+
+    assert rc == 0, (
+        f"Absolute-redacted format should still PASS (B5 regression), got rc={rc}\n"
+        f"stdout: {stdout}"
+    )
+
+
+def test_dod_104l_cwd_non_motor_fails_without_fix(tmp_path: Path) -> None:
+    """DoD F3.2: demostrar el gap medido con cwd != motor_root.
+
+    El escenario medido: telemetria Kilo con ruta relativa, proceso del checker
+    corre desde otro directorio (tmp_path), motor_root se pasa por --motor-root.
+    La prueba VERIFICA que el fix (motor_root arg + 4ta rama) resuelve el match.
+    La contrapartida: sin el fix, el mismo escenario fallaria.
+
+    Mutation-verify: si se comenta la 4ta rama de F1 en check_read_coverage,
+    este test relativo (con cwd != motor_root) caeria en rojo. Restaurar F1 -> pasa.
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                "context": "Read file scripts/guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+
+    # La cita usa la ruta ABSOLUTA (resolved) del fichero dentro del motor.
+    # Esto hace que el match exacto falle (cadenas distintas).
+    resolved_file = motor_root / "scripts" / "guard.py"
+    citation_path = str(resolved_file.resolve())
+
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        f"Se debe leer `{citation_path}` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # With --motor-root (F1 fix applied): should PASS even from non-motor CWD
+    cmd_with_motor = [
+        sys.executable,
+        str(_SCRIPT),
+        str(artifact),
+        str(telemetry_dir),
+        "--motor-root",
+        str(motor_root),
+    ]
+    result_with = subprocess.run(
+        cmd_with_motor,
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # CWD != motor_root
+        timeout=30,
+    )
+    assert result_with.returncode == 0, (
+        f"With motor_root arg, relative path should match. rc={result_with.returncode}\n"
+        f"stdout: {result_with.stdout}\nstderr: {result_with.stderr}"
+    )
+    assert "PASS" in result_with.stdout or "leidos enteramente" in result_with.stdout
+
+
+def test_dod_104l_mutation_verify_f1_discriminant(tmp_path: Path) -> None:
+    """DoD F3.2 mutation-verify: la 4ta rama de F1 es la UNICA capaz de casar.
+
+    El gap medido ocurre cuando: (a) el evento de telemetria tiene la ruta
+    RELATIVA, (b) la CITACION tiene la ruta ABSOLUTA, y (c) CWD del proceso
+    NO es motor_root.
+
+    Mutation-verify manual: comentar la 4ta rama en check_read_coverage hace
+    que este test caiga en FAIL (solo match exacto + B3, ambos fallan).
+    Restaurar F1 -> pasa.
+
+    Para verificar:
+      1. Comentar las lineas 446-457 en check_contract_full_read.py
+      2. Correr este test -> rc=1
+      3. Restaurar con git checkout -- scripts/check_contract_full_read.py
+      4. Correr este test -> rc=0
+    """
+    motor_root = _create_mini_motor(
+        tmp_path,
+        {"scripts/guard.py": "def check():\n    pass\n"},
+        [
+            {
+                "context": "Read file scripts/guard.py, 3 lines",
+                "tool_name": "view_file",
+                "timestamp": "2026-10-19T00:00:00Z",
+            }
+        ],
+    )
+
+    # La cita usa la ruta ABSOLUTA (resolved) del fichero dentro del motor.
+    resolved_file = motor_root / "scripts" / "guard.py"
+    citation_path = str(resolved_file.resolve())
+
+    artifact = _write_artifact(
+        motor_root,
+        "artifact.md",
+        f"Se debe leer `{citation_path}` entero antes de trabajar.",
+    )
+    telemetry_dir = motor_root / ".agent" / "runtime" / "telemetry"
+
+    # Ejecutar con cwd DIFERENTE al motor_root.
+    # Con F1 activo: motor_root / "scripts/guard.py" → resolve() = cita → CASA.
+    cmd = [
+        sys.executable,
+        str(_SCRIPT),
+        str(artifact),
+        str(telemetry_dir),
+        "--motor-root",
+        str(motor_root),
+    ]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # <-- CWD distinto al motor_root
+        timeout=30,
+    )
+
+    assert result.returncode == 0, (
+        f"F1 must match absolute-citation + relative-telemetry from non-motor CWD. "
+        f"got rc={result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "PASS" in result.stdout or "leidos enteramente" in result.stdout

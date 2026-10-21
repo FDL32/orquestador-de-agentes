@@ -413,6 +413,48 @@ def test_e2e_realista_sin_vecinos_sobre_umbral(tmp_path: Path) -> None:
     assert "RECIBO_COHERENTE" in gout
 
 
+# ---------- WOT-2026-104p: --backlog/--archive-file no alteran el corpus ----------
+
+
+def test_backlog_extra_pasado_por_cli_no_entra_al_corpus(tmp_path: Path) -> None:
+    """WOT-2026-104p: un `--backlog` adicional (ruta que NO es DEFAULT_BACKLOG)
+    satisface la cobertura de universo pero NO se suma al corpus real.
+
+    El corpus de `_emit_recibo` siempre sale de `DEFAULT_BACKLOG` +
+    `DEFAULT_ARCHIVES` resueltos contra `--git-root`: un fichero decoy
+    pasado via `--backlog` (ademas de los obligatorios) no debe aparecer
+    en `recibo["corpus"]` ni inflar `entradas_censadas`, aunque el usuario
+    lo haya declarado explicitamente en la CLI.
+    """
+    repo = init_repo(tmp_path)
+    decoy = repo / "decoy_backlog.md"
+    decoy.write_text(
+        HEADER + row("WOT-2026-900a") + row("WOT-2026-900b") + row("WOT-2026-900c"),
+        encoding="utf-8",
+    )
+
+    rc, out = run_emit_recibo(
+        repo,
+        "--candidato-id",
+        "WOT-2026-901a",
+        "--backlog",
+        str(repo / BACKLOG_REL),
+        "--backlog",
+        str(decoy),
+        "--archive-file",
+        str(repo / ARCHIVE_REL),
+        "--veredicto",
+        "NUEVA",
+    )
+    assert rc == 0, f"emit-recibo fallo: {out}"
+    recibo = json.loads(out)
+    corpus_paths = {s["path"] for s in recibo["corpus"]}
+    assert corpus_paths == {BACKLOG_REL, ARCHIVE_REL}, (
+        f"el corpus debe limitarse al universo obligatorio, sin el decoy: {corpus_paths}"
+    )
+    assert "decoy_backlog.md" not in corpus_paths
+
+
 def test_contador_del_generador_coincide_con_el_del_guard(tmp_path: Path) -> None:
     """El campo `entradas` lo re-cuenta el guard: ambos deben contar IGUAL.
 

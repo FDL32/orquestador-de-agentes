@@ -10,18 +10,20 @@
 
 | kind | total |
 |------|-------|
-| prompt | 47 |
+| prompt | 52 |
 | reference | 39 |
 | script-consumer | 5 |
 | shared | 3 |
-| skill | 47 |
-| **total** | **141** |
+| skill | 49 |
+| **total** | **148** |
 
 ## Entradas
 
 | kind | path | status | owner | role | invocation | aliases |
 |------|------|--------|-------|------|------------|---------|
 | prompt | `prompts/agent_execution_modes.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/agents_md_intake_triage.md` | active | system | manager | model-invoked | — |
+| prompt | `prompts/agents_md_optimization_4layer_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/audit_agent_output.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/audit_autonomous_ticket_batch.md` | active | system | auditor | model-invoked | — |
 | prompt | `prompts/audit_bus.md` | active | system | auditor | model-invoked | — |
@@ -40,6 +42,7 @@
 | prompt | `prompts/backlog_triage.md` | active | system | manager | model-invoked | — |
 | prompt | `prompts/builder_invocation_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/contract_formation_pipeline.md` | active | system | shared | model-invoked | — |
+| prompt | `prompts/deep_research_current_docs.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/doc_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/ensemble_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/escalate_to_motor.md` | active | system | orchestrator | model-invoked | — |
@@ -51,6 +54,7 @@
 | prompt | `prompts/memory_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/orchestrator_child_dispatch_multiticket_multibackend_unlimited.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_launch_builder.md` | active | system | builder | model-invoked | — |
@@ -65,6 +69,7 @@
 | prompt | `prompts/orchestrator_session_close_full_audit_design.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/persona_system.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/repo_audit_multiagent.md` | active | system | auditor | model-invoked | — |
+| prompt | `prompts/revisor_agent_filesystem_contract.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/revisor_independent_review.md` | active | system | revisor | model-invoked | — |
 | prompt | `prompts/session_hop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | orchestrator | model-invoked | — |
@@ -117,6 +122,7 @@
 | shared | `skills/_shared/ticket-anti-patterns.md` | active | system | shared | model-invoked | — |
 | skill | `skills/adopt-existing-project/SKILL.md` | active | agent | user | model-invoked | /adecuar-proyecto, /adopt-existing, /adopt-project |
 | skill | `skills/agent-execution-mode/SKILL.md` | active | agent | orchestrator | model-invoked | /agent-mode, /execution-mode, /modo-agente |
+| skill | `skills/agents-md-intake-triage/SKILL.md` | active | agent | manager | model-invoked | /agents-md-triage, agents-md-intake |
 | skill | `skills/audit-autonomous-ticket-batch/SKILL.md` | active | agent | auditor | model-invoked | /audit-autonomous-ticket-batch, audit-autonomous-ticket-batch, auditar-batch-autonomo |
 | skill | `skills/audit-git-publication/SKILL.md` | active | agent | auditor | model-invoked | /audit-git-publication, audit-git-publication, auditar-publicacion-git, publicar-git |
 | skill | `skills/audit-pipeline-codeonly/SKILL.md` | active | agent | auditor | model-invoked | /audit-pipeline-codeonly, audit-pipeline-codeonly, auditar-pipeline-codeonly |
@@ -142,6 +148,7 @@
 | skill | `skills/manager-session-closeout/SKILL.md` | active | agent | manager | model-invoked | /close-session, /closeout, /session-closeout |
 | skill | `skills/memory-consolidate/SKILL.md` | active | agent | shared | model-invoked | /consolidate, /dream-cycle, /memory |
 | skill | `skills/orchestrate-autonomous-ticket-batch/SKILL.md` | active | agent | orchestrator | model-invoked | /orchestrate-autonomous-ticket-batch, batch-autonomo-de-tickets, orchestrate-autonomous-ticket-batch |
+| skill | `skills/orchestrate-child-dispatch-multiticket-multibackend-unlimited/SKILL.md` | active | agent | orchestrator | model-invoked | /orchestrate-child-dispatch, dispatch-hijos-multibackend, orchestrate-child-dispatch-multibackend |
 | skill | `skills/orchestrate-destination-batch/SKILL.md` | active | agent | orchestrator | model-invoked | /batch-destinos, batch-publicacion, orchestrate-destination-batch, preparar-repos |
 | skill | `skills/orchestrate-pipeline-codeonly/SKILL.md` | active | agent | manager | model-invoked | /orchestrate-pipeline-codeonly, orchestrate-pipeline-codeonly, pipeline-codeonly |
 | skill | `skills/orchestrate-pipeline/SKILL.md` | active | agent | orchestrator | model-invoked | /pipeline, ejecutar-backlog, implantar-planes, orchestrate-pipeline, run-backlog |

@@ -140,3 +140,26 @@ def test_systemdrive_survives_or_windows_writes_the_literal():
         "sin SYSTEMDRIVE, un subproceso en Windows escribe '%SystemDrive%' "
         "literal como directorio en el cwd"
     )
+
+
+def test_anthropic_api_key_does_not_reach_the_cli_lens():
+    """La lente CLI (BA252) debe usar OAuth/Max, no la API key del motor.
+
+    `ANTHROPIC_API_KEY` es la credencial del transporte API (BA251). Si viajara
+    al subproceso `claude`, el CLI podria facturar por consumo de API en vez de
+    usar la suscripcion. La allowlist la excluye por defecto; este test lo pina.
+
+    Mutation: anadir "ANTHROPIC_API_KEY" a `_BASE_ALLOWLIST` pone este test en
+    ROJO (y desviaria BA252 a facturacion API sin que nadie lo viera).
+    """
+    source = {
+        "PATH": "/usr/bin",
+        "ANTHROPIC_API_KEY": "sk-ant-secreto",
+        "USERPROFILE": r"C:\Users\u",
+    }
+
+    env = build_backend_env(source)
+
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "sk-ant-secreto" not in "".join(env.values())
+    assert env["USERPROFILE"] == r"C:\Users\u"

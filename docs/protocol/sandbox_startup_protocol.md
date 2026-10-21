@@ -10,6 +10,7 @@
 |---|---|
 | El proceso lanzado lee y escribe solo bajo la raíz del sandbox (`work\`, `home\`); fuera falla, también por junction. | Nada de lo que **no** pase por el lanzador: un terminal normal, una extensión que lanza su propio agente, el propio IDE. |
 | Su entorno no trae secretos (lista blanca de variables estándar; el resto se elimina). | Una lista de hosts: la red es **todo o nada** (`-Net` concede internet completo). |
+| **EXCEPCION (WOT-2026-104a, 2026-10-18):** la garantia de arriba NO cubre el fichero de credencial de Claude. `Sync-ClaudeCredentials` copia `.credentials.json` de la cuenta ACTIVA a `home\.claude\.credentials.json` SIEMPRE que `-Exe claude` corre en modo no interactivo -- incondicional de `-Net`. | Si ademas `-Net` esta activo, esa credencial viva queda alcanzable por cualquier proceso de red dentro del sandbox: riesgo de exfiltracion. El lanzador emite una ADVERTENCIA explicita a stderr solo en ese caso (`-Net` + credencial copiada). |
 | El canario comprueba, antes de cada arranque, que dentro se lee y fuera no; si no, **no arranca** (fail-closed). | Que el agente sea inofensivo con lo que sí ve: ve `work\` y la red si se la das. |
 | Sin admin, sin instalar nada, deshacible (`down`). | Un agente lanzado a mano como el usuario conserva todo su acceso (AppLocker no activo, WDAC de usuario apagado). |
 
@@ -143,3 +144,45 @@ Process Monitor (Sysinternals), que exige admin.
 
 Estado de la prueba antes de aplicarlo: el ciclo aplicar y deshacer está ensayado con tests sobre un directorio propio (no exige admin) y la vista previa y la
 negativa sin admin se prueban sobre `C:\` sin modificarla.
+
+
+## 10. Actualizacion 2026-10-18: `claude -p` SI funciona dentro del contenedor hoy
+
+Contradice la Seccion 8 (medida 2026-10-02: "se queda parado justo tras su
+inicializacion, sin error"). Reproducida la prueba hoy con el mismo
+lanzador, sin cambios de codigo entre medias que expliquen la diferencia
+(causa de la discrepancia NO aislada -- puede ser una actualizacion de
+`claude` o del propio almacen de credenciales entre el 2026-10-02 y hoy).
+Tres pruebas, todas con `-Net`, sin ajuste de ACL de `C:\` (Seccion 9 NO
+aplicada):
+
+1. `run -Exe claude -ExeArgs '-p "echo PONG"' -Cwd <snapshot> -Net
+   -TimeoutSec 60` -> `PONG`, 5.5s, exit 0. El lanzador sincroniza la
+   credencial de Claude desde `C:\Users\<usuario>\.claude` antes de
+   arrancar (log `[sandbox] credencial de Claude sincronizada...`).
+2. Lectura dentro vs fuera: pedido a Claude leer `PROJECT.md` (dentro,
+   exito, cita la primera linea real) y `C:\Users\<usuario>\.claude\
+   CLAUDE.md` (fuera) -> rechazado por la propia herramienta `Read` con
+   "Refusing to read ...: where it leads on disk could not be determined"
+   -- la barrera actua ANTES de que la herramienta intente abrir el
+   fichero, consistente con el junction/subst del lanzador.
+3. Escritura dentro vs fuera (sobre un `clone`, no un `snapshot`): mismo
+   patron -- escritura dentro (`Z:\work\<clon>\SANDBOX_PROBE_TOUCH.txt`)
+   exitosa con `--dangerously-skip-permissions` (sin ese flag, Claude Code
+   bloquea por SU PROPIO gate de permisos de sesion no interactiva, capa
+   distinta del sandbox); escritura fuera (`C:\Users\<usuario>\...`)
+   rechazada con el mismo mensaje "where it leads on disk could not be
+   determined". Verificado con `ls` tras la corrida: el fichero existe
+   SOLO dentro de `C:\agent_sandbox\work\<clon>\`; el repo real y el
+   home del usuario quedan intactos (0 ficheros nuevos en ninguno).
+
+**Conclusion operativa:** el nivel L1 (el lanzador arranca el agente) es
+viable HOY para Claude Code concretamente, con dos condiciones de uso: (a)
+usar `--dangerously-skip-permissions` para una sesion no interactiva que
+necesite escribir (el sandbox ya es la barrera de contencion; el gate de
+permisos de Claude Code es una SEGUNDA capa redundante que bloquea sin
+aportar nada en este contexto, porque no hay humano para aprobar); (b)
+seguir sin montar el repo real -- `clone`/`snapshot`, nunca apuntar al
+checkout autoritativo. No se repitio la prueba de `opencode` (Seccion 8,
+EPERM/cuelgue) ni la de los backends `kilo`/`nan` -- siguen con su estado
+documentado sin verificar hoy.

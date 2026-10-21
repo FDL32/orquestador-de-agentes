@@ -17,7 +17,7 @@ Namespace de tickets:
 The motor is the code in `orquestador_de_agentes/`. It is code-only and does not own the active ticket state.
 
 The active workspace is always the `.agent/` of the project you are operating on:
-- `z_scripts/.agent/` as an author reference workspace
+- `orquestador_de_agentes_workspace/.agent/` as an author reference workspace
 - `<destino>/.agent/` for any destination project
 
 Inside each workspace, `collaboration/` is the live operational surface for that project:
@@ -317,7 +317,7 @@ No reescribas el ticket entero.
 
 Important:
 - These surfaces belong to the active workspace, not to the motor repository itself.
-- If you are working in `z_scripts`, the canonical files are `z_scripts/.agent/collaboration/*`.
+- If you are working in `orquestador_de_agentes_workspace`, the canonical files are `orquestador_de_agentes_workspace/.agent/collaboration/*`.
 - If you are working in another destination, use that destination's `.agent/collaboration/*`.
 
 ## 3b. Flujo operativo para Builder
