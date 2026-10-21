@@ -1090,13 +1090,13 @@ def module_citations(module_path: Path, root: Path) -> list[str]:
     """Return who cites a module: names relative to prompts/, or ``AGENTS.md``.
 
     Before: ``module_path`` is a prompt file under ``root``/prompts.
-    During: searches prompts/*.md, prompts/_shared/*.md and AGENTS.md (the
-            module itself excluded) for a literal occurrence of its file with
-            extension: the prefixed path, or ``<name>.md`` as a token. Prose
-            mentions with the path COUNT on purpose (navigation heuristic, not
-            "who really uses it"); a bare word without ``.md`` does not.
-            A well-formed PROMPT-SUMMARY block is skipped: its ``not:`` line
-            says "this is NOT <file>", routing metadata, not a citation.
+    During: searches prompts/*.md, prompts/_shared/*.md, .agent/rules/common/*.md
+            and AGENTS.md (the module itself excluded) for a literal occurrence
+            of its file with extension: the prefixed path, or ``<name>.md`` as a
+            token. Prose mentions with the path COUNT on purpose (navigation
+            heuristic, not "who really uses it"); a bare word without ``.md``
+            does not. A well-formed PROMPT-SUMMARY block is skipped: its ``not:``
+            line says "this is NOT <file>", routing metadata, not a citation.
             Windows separators are normalised to ``/`` first, so
             ``skills\\_shared\\x.md`` is excluded like ``skills/_shared/x.md``.
     After: sorted list of citing names (empty == orphan module, T9 fails).
@@ -1105,6 +1105,12 @@ def module_citations(module_path: Path, root: Path) -> list[str]:
     target = module_path.resolve()
     citers: list[str] = []
     candidates = [*_prompt_files(root), root / "AGENTS.md"]
+    # Include .agent/rules/common/*.md so modules moved from AGENTS.md are not
+    # orphaned (T9): e.g. artifact_ownership.md is cited only in AGENTS.md
+    # and must be found as a citer when the module that references it moves.
+    common_dir = root / ".agent" / "rules" / "common"
+    if common_dir.is_dir():
+        candidates.extend(sorted(common_dir.glob("*.md")))
     for path in candidates:
         if not path.is_file() or path.resolve() == target:
             continue
@@ -1113,6 +1119,10 @@ def module_citations(module_path: Path, root: Path) -> list[str]:
         if pattern.search(text):
             if path.name == "AGENTS.md" and path.parent == root:
                 citers.append("AGENTS.md")
+            elif str(path).startswith(str(root / ".agent" / "rules" / "common")):
+                citers.append(
+                    path.relative_to(root / ".agent" / "rules" / "common").as_posix()
+                )
             else:
                 citers.append(path.relative_to(root / "prompts").as_posix())
     return sorted(citers)

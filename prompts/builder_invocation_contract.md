@@ -175,7 +175,52 @@ ticket que toque esta seccion: cambiar un snipped sin re-ejecutarlo deja la guia
 `BUILDER_EXIT`. Esta seccion no lo contradice: aporta el UNICO sustituto mecanico disponible para saber
 cuando la invocacion termino, dado que no hay evento.
 
-## 1.5. Provider explicito obligatorio cuando el modelo existe en mas de un proveedor (WOT-2026-103d)
+## 1.4. Nota doble-backgrounding: NUNCA combines `&` con el backgrounding gestionado por la herramienta (WOT-2026-108c)
+
+**Incidente que origina esta norma (2026-10-18, reportado por opencode/glm en vuelo 4 capas):**
+un Builder lanzo `kilo run ... & ; echo PID` (doble backgrounding: `&` interno + `background_process`
+de Kilo) y luego hizo cleanup del PID heredado, matando al hijo que Kilo seguia esperando. El fix
+(funcional) fue eliminar el `&` interno y dejar solo el `background_process` del lanzador; el
+huerfano desaparecio. Pero el contrato que originaba la sesion NUNCA recibo la instruccion de
+cerrar su propio dispatch -- el Builder no tiene rol de Manager/coordinador, asi que el cierre
+quedo en la sombra.
+
+**Regla dura:** nunca combines `&` interno (subshell, backgrounding manual) con el backgrounding
+ya gestionado por la herramienta invocadora (`background_process`, `Task background=true`).
+Invoca `kilo run` como comando UNICO directo de la herramienta, sin subshell.
+
+Comando VERIFICADO (n=1, el fix funciono en vivo):
+
+    kilo run \
+      --auto \
+      -m nan/<modelo> \
+      --dir "<ruta-absoluta>" \
+      --format json \
+      --print-logs \
+      -f "<ruta-absoluta-al-prompt>" \
+      -- \
+      "<mensaje corto>" \
+      > <ruta-log> 2>&1
+
+Comando INFERIDO (sintaxis invalida en POSIX tal como lo reporto opencode/glm):
+`kilo run ... & ; echo PID` -- tiene `&` ANTES del `>` de redirect, lo que rompe la tuberia
+en bash (el `&` backgrounds el comando pero el `>` se resuelve en el shell padre sin redirigir
+el stdout del hijo). Nit de fidelidad, no el fix real.
+
+**Cross-ref CEM "un `exit 0` puede significar 'no hice nada'":** el postflight obligatorio del
+Builder es el ARTEFACTO esperado (recibo del despacho), no el exit code del wrapper. Un
+`background_process` con `start` que no suspende el goal = la sesion puede cerrar sin verificar
+que el hijo termino. El artefacto (log crecio + estable + PID muerto) certifica completado, no
+el `exit 0`.
+
+**GUARD MECANICO (future work, fuera de este FLT):** rechazar `&` bajo background gestionado
++ postflight automatizado del artefacto -> `docs/followups/kilo-double-backgrounding-postflight-guard-followup.md`.
+
+**Relacion con el bullet de arriba ("Sin bus de eventos"):** ese bullet sigue vigente -- Kilo no emite
+`BUILDER_EXIT`. Esta seccion no lo contradice: aporta el UNICO sustituto mecanico disponible para saber
+cuando la invocacion termino, dado que no hay evento.
+
+## 1.6. Provider explicito obligatorio cuando el modelo existe en mas de un proveedor (WOT-2026-103d)
 
 **Incidente que origina esta norma (VUELO6, REV-100K-r1, 2026-10-15):** un despacho de
 subagente con `model=mimo-v2.6-flash` SIN `provider` explicito resolvio una puerta DISTINTA
@@ -206,7 +251,7 @@ alcance de este repo. Decision de diseno tomada por Claude Code (fork) con autor
 explicita del usuario (WOT-2026-103d, 2026-10-18); la leccion operativa del incidente ya
 esta en memoria L1 del workspace (`obs-3149cf70225b`, dominio builder-contract).
 
-## 1.6. Preflight mecanico: el prompt declara la lectura de AGENTS.md (WOT-2026-108b)
+## 1.7. Preflight mecanico: el prompt declara la lectura de AGENTS.md (WOT-2026-108b)
 
 **Por que un guard y no solo la prosa de la Seccion 1:** la misma leccion que motiva
 `check_loop_bundle_protocol.py` aplica aqui -- una norma que depende de que quien redacta el prompt se
