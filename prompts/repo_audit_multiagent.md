@@ -15,7 +15,7 @@ not: NO ejecuta borrados ni cambios por su cuenta (Fase 5 es read-only; Fase 6 s
 - Fase 1: `exit_code`/`degraded`/`prompt_version` aditivos en el manifest; regla de entorno UTF-8.
 - Fase 4: cita completa en hallazgos de contradiccion doc/codigo; 5.1.1 remite el despacho a `ensemble_loop.md`.
 - Higiene: contradicciones de 0.1, R2, lane `proceso`, `NO VERIFICABLE`, orden de marcadores, referencia de Fase 6, dedupe sobre el informe.
-- Pendiente (no incluido): validador de informe, formato de tabla y `alcance: modulo` (Nivel 2); prerrequisito del script de dedupe (Fase 3).
+- Fase 2/3/5: enum cerrado + columnas `calificador` y `alcance`; `check_audit_report.py` (ids, enum, bloque TALLY) y `dedupe_audit_findings.py` con tests.
 -->
 
 <!-- v2.3 (2026-10-20): correcciones CHA-6:
@@ -228,7 +228,8 @@ en esta fase.**
 Un agente con filesystem (builder-nan via Kilo, o subagente Claude si el
 lane tiene menos de 500 LOC o menos de 20 ficheros — umbral cuantificado,
 no juicio libre) lee la salida cruda de SU lane + el codigo real citado, y
-produce hallazgos clasificados:
+produce hallazgos clasificados con UNA categoria del enum cerrado (cualquier
+matiz va en la columna `calificador`, no en la celda de categoria):
 
 `DEAD` / `DEAD (unverified dynamic)` / `ABANDONED` / `LEGACY` / `SMELL` /
 `SECURITY-{critica,alta,media,baja}` / `BUENAS-PRACTICAS` / `PROCESO`
@@ -245,8 +246,10 @@ auditado):**
   | Campo | Obligatoriedad |
   |-------|----------------|
   | `id` (H-NN) | obligatorio |
-  | `categoria` (DEAD, SECURITY-alta, etc.) | obligatorio |
+  | `categoria` (UNA del enum cerrado de arriba, sin texto adicional) | obligatorio |
+  | `calificador` (matiz libre: `falso-positivo deadcode`, `dev-only`...) | opcional |
   | `archivo` + `linea/rango` | obligatorio |
+  | `alcance` (`simbolo` o `modulo`; ausente = `simbolo`) | opcional |
   | `evidencia` (`archivo:linea` o `archivo:rango` + comando reproducible) | obligatorio |
   | `confianza` (1-5 capas del gate de sostenibilidad) | obligatorio para DEAD |
   | `impacto` (alto/medio/bajo) | obligatorio |
@@ -313,16 +316,20 @@ aplica el dedupe cruzado con los hallazgos de
 que un mismo fichero `candidate-to-retire` nunca genere dos tickets
 independientes.
 
-**Prerrequisito de bootstrap (hallazgo convergente del bucle IMPLEMENTATION_REVIEW,
-7/9 lentes independientes):** `scripts/dedupe_audit_findings.py` **no existe
-todavia** en el motor. Antes de la PRIMERA corrida real de Fase 3, verificar
-con `test -f scripts/dedupe_audit_findings.py` (o equivalente); si no
-existe, crearlo es un paso bloqueante previo, separado de esta auditoria
-(requiere aprobacion humana explicita antes de anadir codigo nuevo al
-motor — no se crea solo porque este prompt lo referencia). Sin ese script,
+**Prerrequisito de bootstrap:** el script existe en el motor con tests
+(`tests/unit/test_check_audit_report.py`). Antes de la PRIMERA corrida de
+Fase 3 sobre un motor instalado, verificar con
+`test -f scripts/dedupe_audit_findings.py` (o equivalente); si no esta, es un
+paso bloqueante previo y separado de esta auditoria (requiere aprobacion
+humana explicita antes de anadir codigo nuevo al motor). Sin ese script,
 Fase 3 NO es ejecutable literalmente: no hay fallback de dedupe inline
 definido a proposito, para no introducir una via alternativa que luego
 diverja del dedupe real.
+
+**Hallazgos de alcance modulo:** un hallazgo que cubre un modulo entero (o
+varios simbolos relacionados de un mismo fichero) se registra en UNA fila con
+`alcance` = `modulo`, sin linea: su fingerprint es `(archivo, "*", categoria)`.
+Sin la columna `alcance` rige la regla de linea de arriba.
 
 ## 5. Fase 4 — Bucle adversarial de verificacion (gobierno)
 
@@ -513,6 +520,19 @@ rechaza el plan con el numero correcto.
 humano o un pipeline posterior decide que follow-up se convierte en ticket
 real via `backlog-admit`.
 
+**Antes de publicar el informe**, ejecuta el validador (no se cablea a ningun
+hook: lo corre quien audita) y copia su bloque, nunca cifras de memoria:
+
+    python <motor>/scripts/check_audit_report.py <HALLAZGOS_*.md> --informe <informe> --emit-tally
+    python <motor>/scripts/check_audit_report.py <HALLAZGOS_*.md> --informe <informe> --strict
+
+El primer comando imprime el bloque `<!-- TALLY: {...} -->` que el Resumen
+Ejecutivo incluye tal cual. El segundo debe salir con 0: ids unicos y
+canonicos, categorias del enum, ids citados con fila, categoria del
+encabezado coherente con la de la fila y bloque TALLY igual al recuento
+recalculado. Limite: no verifica numeros tecleados fuera del bloque; los
+numeros de la prosa se copian de el.
+
 ## 7. Fase 6 — Cierre/ejecucion real (CONEXION, no ejecucion nueva)
 
 Cada follow-up de Fase 5 aprobado por el humano y admitido como ticket via
@@ -554,6 +574,10 @@ Devuelve un unico Markdown con esta estructura:
 - commit auditado, ambito (`motor`/`destino`), lanes censados
 - numero total de hallazgos por categoria y severidad
 - veredicto_adversarial agregado: N confirmados, N disputados, N refutados, N diferidos
+- el bloque `<!-- TALLY: {...} -->` emitido por `check_audit_report.py --emit-tally`
+  (claves: `total`, `por_categoria` con las categorias del enum, `veredictos`
+  con `confirmado`/`disputado`/`refutado`/`diferido_no_loop`); las cifras de
+  los puntos anteriores se COPIAN de ese bloque
 - 3-5 conclusiones de mayor impacto
 
 ### 2. Inventario por lane
@@ -566,6 +590,14 @@ omitidas y motivo (`tools_skipped_reason`).
 Por severidad, cada uno con: id, categoria, evidencia (`archivo:rango` o
 comando reproducible), `veredicto_adversarial` (si paso Fase 4), problema,
 impacto, recomendacion.
+
+Formato de las tablas (lo lee `check_audit_report.py`): `id` en la primera
+columna, con un id de un `HALLAZGOS_<lane>.md` y nunca una variante con
+sufijo; la categoria sale de una columna `categoria` o, si no la hay, del
+primer termino del encabezado `###` de la seccion, que debe ser una categoria
+del enum. Una tabla que agrupe ids por otro criterio (tipo de problema, lane)
+cita los ids existentes sin reescribir su categoria; una fila sin id de un
+`HALLAZGOS` se marca `(sin id - pendiente de triage)` en vez de inventar uno.
 
 **Campo obligatorio en cada hallazgo:**
 - `veredicto_adversarial`: `confirmado` | `refutado` | `disputado` |

@@ -47,6 +47,15 @@ known_unwired:
     mas agresivo (recibo autocertificado; cablear-mas; vigilar la memoria
     privada del agente, que pertenece a otro ticket, WT-2026-192 -- frontera que
     WOT-2026-059u NO cruza). Dueno formal: WOT-2026-024r.
+  check_audit_report: >-
+    BY-DESIGN: validador del INFORME de `prompts/repo_audit_multiagent.md`; sus
+    entradas (`HALLAZGOS_*.md` e `INFORME_FINAL.md`) viven en
+    `<destino>/.agent/runtime/audit/repo_audit/`, que esta gitignored, y se
+    producen al final de una auditoria. No hay ninguna superficie que corra sola
+    (pre-commit, CI, cierre) sobre esos ficheros: lo ejecuta quien audita antes de
+    publicar el informe (Fase 5 del prompt) y por eso es NORMA con script, no
+    barrera. Por defecto informa sin fallar (informes anteriores al formato) y
+    `--strict` falla. No verifica cifras tecleadas fuera del bloque TALLY.
   # check_motor_pristine: RETIRADO de known_unwired (cierre 2026-07-22) -- SI esta
   # cableado, pero a 2 saltos que el AST de 1-hop no alcanza (string en lista de
   # subprocess dentro del recolector). Movido a wired_via con probe. Su dueno
