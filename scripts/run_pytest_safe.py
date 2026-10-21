@@ -577,18 +577,201 @@ def _probe_process_count() -> tuple[int | None, list[str]]:
     return max(0, len(lines) - 1), errors
 
 
-def _probe_cpu_load() -> tuple[float | None, list[str]]:
-    """Probe CPU load via CIM. Returns (load_pct, errors)."""
-    errors: list[str] = []
-    raw_cpu = _get_wmi_attribute("LoadPercentage")
-    if raw_cpu is None:
-        errors.append("cpu_load: WMI query failed")
-        return None, errors
+def _parse_proc_stat(text: str) -> tuple[int, int] | None:
+    """Parse the aggregate ``cpu`` line of /proc/stat into (idle, total) ticks.
+
+    WOT-2026-109a. ``idle`` counts idle + iowait; ``total`` is the sum of every
+    field of the line. Malformed or absent line -> None (never raises).
+    """
+    for line in text.splitlines():
+        parts = line.split()
+        if parts and parts[0] == "cpu":
+            try:
+                fields = [int(p) for p in parts[1:]]
+            except ValueError:
+                return None
+            if len(fields) < 5:
+                return None
+            return fields[3] + fields[4], sum(fields)
+    return None
+
+
+def _read_cpu_counters() -> tuple[int, int] | None:
+    """Read cumulative (idle, total) CPU counters, stdlib-only.
+
+    WOT-2026-109a. Before: nothing. During: Windows calls ``GetSystemTimes``
+    through ctypes (``kernel`` already includes idle time, so total =
+    kernel + user); POSIX reads /proc/stat. After: returns the pair of
+    monotonically increasing counters, or None when the platform offers no
+    source (macOS) or the call fails -- the caller declares the gap, a missing
+    counter is never turned into a 0% load.
+    """
     try:
-        return float(raw_cpu), errors
-    except (ValueError, TypeError):
-        errors.append("cpu_load: parse failed")
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            class _FileTime(ctypes.Structure):
+                _fields_ = [
+                    ("dwLowDateTime", wintypes.DWORD),
+                    ("dwHighDateTime", wintypes.DWORD),
+                ]
+
+            idle, kernel, user = _FileTime(), _FileTime(), _FileTime()
+            ok = ctypes.windll.kernel32.GetSystemTimes(  # type: ignore[attr-defined]
+                ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)
+            )
+            if not ok:
+                return None
+
+            def _ticks(ft: _FileTime) -> int:
+                return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+
+            return _ticks(idle), _ticks(kernel) + _ticks(user)
+        return _parse_proc_stat(Path("/proc/stat").read_text(encoding="utf-8"))
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def _cpu_load_between(
+    start: tuple[int, int] | None, end: tuple[int, int] | None
+) -> float | None:
+    """Mean CPU load percent between two ``_read_cpu_counters`` samples.
+
+    WOT-2026-109a. Pure. None when either sample is missing or no tick elapsed
+    (a zero window cannot tell 0% from "no data"); the result is clamped to
+    0..100 and rounded to one decimal.
+    """
+    if start is None or end is None:
+        return None
+    d_idle = end[0] - start[0]
+    d_total = end[1] - start[1]
+    if d_total <= 0:
+        return None
+    return round(max(0.0, min(100.0, 100.0 * (1.0 - d_idle / d_total))), 1)
+
+
+def _probe_cpu_load(window_s: float = 0.3) -> tuple[float | None, list[str]]:
+    """Probe the instantaneous CPU load over a short window. (load_pct, errors).
+
+    WOT-2026-109a: the previous implementation asked CIM for
+    ``Win32_OperatingSystem.LoadPercentage``, an attribute that class does not
+    have, so ``cpu_load_pct`` was None in EVERY run_history row. The load is
+    now measured from two real counter samples ``window_s`` apart.
+    """
+    errors: list[str] = []
+    first = _read_cpu_counters()
+    if first is None:
+        errors.append("cpu_load: no counter source on this platform")
         return None, errors
+    time.sleep(window_s)
+    load = _cpu_load_between(first, _read_cpu_counters())
+    if load is None:
+        errors.append("cpu_load: counters did not advance")
+    return load, errors
+
+
+_PYTEST_PROC_RE = re.compile(r"-m\s+pytest\b|[\\/]pytest(?:\.exe)?[\"']?(?:\s|$)")
+_RUNNER_PROC_RE = re.compile(r"run_pytest_safe\.py")
+
+
+def _parse_process_table(text: str) -> list[tuple[int, int, str]]:
+    """Parse ``<pid> <ppid> <command line>`` lines; skips anything malformed."""
+    rows: list[tuple[int, int, str]] = []
+    for line in text.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 2:
+            continue
+        try:
+            rows.append(
+                (int(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else "")
+            )
+        except ValueError:
+            continue
+    return rows
+
+
+def _count_foreign_pytest(
+    rows: list[tuple[int, int, str]], own_pid: int
+) -> dict[str, int] | None:
+    """Count pytest sessions that are NOT this runner. Pure.
+
+    WOT-2026-109a. A process matches when its command line carries
+    ``run_pytest_safe.py`` or ``-m pytest``. Excluded: this process, its
+    ancestors and its descendants. A match whose parent matches too is the
+    same session (the runner and the pytest it spawned; the Windows venv
+    launcher and the interpreter it re-execs), so only session ROOTS are
+    counted in ``sessions``; ``matched_procs`` keeps the raw count. Returns
+    None when ``own_pid`` is absent from the table: a table that cannot see
+    ourselves is not evidence of "0 foreign".
+    """
+    parent = {pid: ppid for pid, ppid, _ in rows}
+    if own_pid not in parent:
+        return None
+
+    def _chain(pid: int) -> set[int]:
+        seen: set[int] = set()
+        while pid in parent and pid not in seen:
+            seen.add(pid)
+            pid = parent[pid]
+        return seen
+
+    mine = _chain(own_pid)
+    matched: dict[int, int] = {}
+    for pid, ppid, cmd in rows:
+        if pid in mine or own_pid in _chain(pid):
+            continue
+        if _RUNNER_PROC_RE.search(cmd) or _PYTEST_PROC_RE.search(cmd):
+            matched[pid] = ppid
+    roots = sum(1 for pid in matched if not (_chain(parent[pid]) & matched.keys()))
+    return {"sessions": roots, "matched_procs": len(matched)}
+
+
+def _list_processes() -> tuple[list[tuple[int, int, str]] | None, list[str]]:
+    """List live processes as (pid, ppid, command line). (rows, errors).
+
+    WOT-2026-109a. Windows reads Win32_Process through PowerShell (tasklist
+    cannot show command lines); POSIX uses ``ps``. Any failure degrades to
+    (None, [reason]); this is telemetry and never aborts a run.
+    """
+    if os.name == "nt":
+        ps = shutil.which("powershell")
+        if not ps:
+            return None, ["foreign_pytest: powershell not found"]
+        cmd = [
+            ps,
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+            "ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, "
+            "$_.CommandLine }",
+        ]
+    else:
+        ps_exe = shutil.which("ps")
+        if not ps_exe:
+            return None, ["foreign_pytest: ps not found"]
+        cmd = [ps_exe, "-eo", "pid=,ppid=,args="]
+    result = _run_cmd(cmd, timeout=15.0)
+    if result is None or result.returncode != 0:
+        return None, ["foreign_pytest: process listing failed"]
+    return _parse_process_table(result.stdout), []
+
+
+def _probe_foreign_pytest() -> tuple[dict[str, int] | None, list[str]]:
+    """Count concurrent pytest sessions of OTHER runners. (counts, errors).
+
+    WOT-2026-109a. Before: nothing. During: one process listing
+    (``_list_processes``) filtered by ``_count_foreign_pytest``. After: counts
+    ``{"sessions", "matched_procs"}``, or (None, [reason]) when the listing
+    failed or could not see this very process.
+    """
+    rows, errors = _list_processes()
+    if rows is None:
+        return None, errors
+    counts = _count_foreign_pytest(rows, os.getpid())
+    if counts is None:
+        errors.append("foreign_pytest: own pid missing from process table")
+    return counts, errors
 
 
 def _probe_spawn_latency() -> tuple[float | None, list[str]]:
@@ -610,6 +793,39 @@ def _probe_spawn_latency() -> tuple[float | None, list[str]]:
         return None, errors
 
 
+# WOT-2026-109a: variables measured to change the VERDICT of the canonical suite
+# on Windows (PYTHONUTF8=1 turned 9 tests red with UnicodeDecodeError; the git
+# longpaths setting decides the sandbox tests). Allowlist of names only: the
+# values recorded are short flags, never paths or secrets.
+_VERDICT_ENV_VARS = (
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+    "PYTHONDONTWRITEBYTECODE",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_KEY_0",
+    "GIT_CONFIG_VALUE_0",
+    # Presence only (see _PRESENCE_ONLY_ENV_VARS): test_055t fails when it is
+    # exported, and its value is a filesystem path.
+    "AGENT_PROJECT_ROOT",
+)
+_PRESENCE_ONLY_ENV_VARS = frozenset({"AGENT_PROJECT_ROOT"})
+
+
+def _collect_verdict_env() -> dict[str, str | None]:
+    """Snapshot of the allowlisted env vars (None when unset). Pure read.
+
+    Variables in ``_PRESENCE_ONLY_ENV_VARS`` record ``"<set>"`` instead of their
+    value, so run_history never stores a filesystem path.
+    """
+    snapshot: dict[str, str | None] = {}
+    for name in _VERDICT_ENV_VARS:
+        value = os.environ.get(name)
+        if value is not None and name in _PRESENCE_ONLY_ENV_VARS:
+            value = "<set>"
+        snapshot[name] = value
+    return snapshot
+
+
 def _collect_environment() -> dict:
     """Collect a snapshot of the machine environment at startup.
 
@@ -620,9 +836,12 @@ def _collect_environment() -> dict:
     During: queries CIM/WMI for RAM and CPU, counts processes via tasklist,
         and measures spawn latency via 20 subprocess calls.
     After: returns a dict with keys: ram_free_mb, ram_used_pct, process_count,
-        cpu_load_pct, spawn_ms_mean, probe_cost_s, probe_errors, cwd_chars.
+        cpu_load_pct, foreign_pytest, spawn_ms_mean, probe_cost_s, probe_errors,
+        cwd_chars. ``cpu_load_pct`` and ``foreign_pytest`` are real since
+        WOT-2026-109a (the CIM query behind the former was always empty).
 
-    Cost measured in L1010: ~1.9 s total.
+    Cost measured in L1010: ~1.9 s total; WOT-2026-109a adds ~0.3 s (CPU
+    window) plus one process listing (~0.6 s measured on Windows).
     """
     all_errors: list[str] = []
     start = datetime.now(timezone.utc)
@@ -633,8 +852,19 @@ def _collect_environment() -> dict:
     process_count, proc_errors = _probe_process_count()
     all_errors.extend(proc_errors)
 
-    cpu_load_pct, cpu_errors = _probe_cpu_load()
+    # WOT-2026-109a: both probes are telemetry; an unexpected exception from
+    # either degrades to None + a declared error, never aborts the run.
+    try:
+        cpu_load_pct, cpu_errors = _probe_cpu_load()
+    except Exception as exc:
+        cpu_load_pct, cpu_errors = None, [f"cpu_load: {type(exc).__name__}"]
     all_errors.extend(cpu_errors)
+
+    try:
+        foreign_pytest, foreign_errors = _probe_foreign_pytest()
+    except Exception as exc:
+        foreign_pytest, foreign_errors = None, [f"foreign_pytest: {type(exc).__name__}"]
+    all_errors.extend(foreign_errors)
 
     spawn_ms_mean, spawn_errors = _probe_spawn_latency()
     all_errors.extend(spawn_errors)
@@ -646,6 +876,9 @@ def _collect_environment() -> dict:
         "ram_used_pct": ram_used_pct,
         "process_count": process_count,
         "cpu_load_pct": cpu_load_pct,
+        # WOT-2026-109a: pytest sessions of OTHER runners alive at this moment.
+        "foreign_pytest": foreign_pytest,
+        "verdict_env": _collect_verdict_env(),
         "spawn_ms_mean": spawn_ms_mean,
         "probe_cost_s": round(elapsed, 3),
         "probe_errors": all_errors if all_errors else [],
@@ -1195,13 +1428,16 @@ def select_test_runner(
         to pass to unittest discover -s; _probe overrides the pytest
         probe result (test seam only -- do NOT use in production code).
     During: calls probe_pytest(interpreter) unless _probe is supplied.
-        pytest branch: builds the command and injects --durations=25 so the
-            per-run last-run.log always carries pytest's "slowest N durations"
-            table for timing telemetry (WOT-2026-021t; the table is advisory
-            only -- it is emitted before the summary and never matches the
-            ^FAILED/^ERROR parser in stream_pytest). Reliable under --level all
-            (serial); approximate under the xdist unit-subset (durations are
-            aggregated per worker).
+        pytest branch: builds the command and injects --durations=0 so the
+            per-run last-run.log always carries pytest's FULL durations table
+            for timing telemetry (WOT-2026-021t; WOT-2026-109a widened it from
+            the top 25 rows so run_history can aggregate time per FILE; the
+            console echo stays capped at 25 rows, see
+            ``_cap_durations_table_echo``). The table is advisory only -- it
+            is emitted before the summary and never matches the ^FAILED/^ERROR
+            parser in stream_pytest. Reliable under --level all (serial);
+            approximate under the xdist unit-subset (durations are aggregated
+            per worker).
         unittest branch: omits xdist_flags (incompatible) and basetemp;
             passes -s <test_dir> to unittest discover.
     After: returns (command, runner) where runner is "pytest" or "unittest".
@@ -1211,14 +1447,14 @@ def select_test_runner(
     has_pytest = probe_pytest(interpreter) if _probe is None else _probe
 
     if has_pytest:
-        # --durations=25 goes BEFORE *pytest_args so an explicit user
+        # --durations=0 goes BEFORE *pytest_args so an explicit user
         # --durations (after `--`) wins via argparse last-wins.
         command = [
             interpreter,
             "-m",
             "pytest",
             *xdist_flags,
-            "--durations=25",
+            "--durations=0",
             *pytest_args,
             f"--basetemp={run_dir}",
         ]
@@ -1240,6 +1476,14 @@ def select_test_runner(
         test_dir,
     ]
     return command, "unittest"
+
+
+def _print_console_safe(line: str) -> None:
+    """Print one line; a console that cannot encode it gets an ASCII rendering."""
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode("ascii", "replace").decode("ascii"))
 
 
 def stream_pytest(  # noqa: C901
@@ -1351,12 +1595,10 @@ def stream_pytest(  # noqa: C901
         # for BOTH branches: a timeout still has whatever the drain above
         # recovered, and it must not be discarded (WOT-2026-077a follow-up).
         stdout_output = stdout_output or ""
-        for line in stdout_output.splitlines():
-            try:
-                print(line)
-            except UnicodeEncodeError:
-                print(line.encode("ascii", "replace").decode("ascii"))
-            lines.append(line)
+        all_lines = stdout_output.splitlines()
+        lines.extend(all_lines)
+        for line in _cap_durations_table_echo(all_lines):
+            _print_console_safe(line)
     except KeyboardInterrupt:
         process.terminate()
         try:
@@ -1457,6 +1699,89 @@ def _parse_durations_table(log_text: str) -> list[dict]:
     return rows
 
 
+DURATIONS_TOP_N = 25
+_DURATIONS_HIDDEN_RE = re.compile(r"\((\d+)\s+durations?\s*<\s*[\d.]+s\s+hidden")
+
+
+def _cap_durations_table_echo(
+    lines: list[str], limit: int = DURATIONS_TOP_N
+) -> list[str]:
+    """Lines to PRINT: the durations table cut to ``limit`` rows.
+
+    WOT-2026-109a. The log keeps every row (run_history aggregates them) but the
+    console must look like the former ``--durations=25`` run, not dump
+    thousands of lines into the operator's context. Pure; the caller still
+    appends the ORIGINAL lines to the log. Only a header line that starts with
+    ``=`` opens the table, so test output that merely mentions "slowest
+    durations" is never truncated.
+    """
+    out: list[str] = []
+    in_table = False
+    seen = 0
+    omitted = 0
+    note = (
+        "[pytest-safe] {n} fila(s) de durations omitidas en consola; "
+        "completas en last-run.log"
+    )
+    for line in lines:
+        stripped = line.strip()
+        if not in_table:
+            out.append(line)
+            if (
+                stripped.startswith("=")
+                and "slowest" in stripped
+                and "durations" in stripped
+            ):
+                in_table = True
+                seen = 0
+                omitted = 0
+            continue
+        if _SLOWEST_ROW_RE.match(stripped):
+            seen += 1
+            if seen <= limit:
+                out.append(line)
+            else:
+                omitted += 1
+            continue
+        if stripped.startswith("="):
+            if omitted:
+                out.append(note.format(n=omitted))
+            in_table = False
+        out.append(line)
+    if in_table and omitted:
+        out.append(note.format(n=omitted))
+    return out
+
+
+def _durations_hidden_count(log_text: str) -> int | None:
+    """Rows pytest left out of the table (below its threshold); None if absent."""
+    m = _DURATIONS_HIDDEN_RE.search(log_text)
+    return int(m.group(1)) if m else None
+
+
+def aggregate_durations_by_file(
+    rows: list[dict], top_n: int = DURATIONS_TOP_N
+) -> list[dict]:
+    """WOT-2026-109a: sum durations per test FILE and keep the top ``top_n``.
+
+    Pure. The key is the nodeid up to the first ``::`` (the whole nodeid when it
+    has none). Every phase row counts (setup + call + teardown), so a file's
+    figure is the time pytest attributed to it, fixtures included. Ties keep
+    path order so the output is deterministic.
+    """
+    totals: dict[str, list] = {}
+    for row in rows:
+        key = str(row.get("nodeid", "")).split("::", 1)[0]
+        acc = totals.setdefault(key, [0.0, 0])
+        acc[0] += float(row.get("seconds", 0.0))
+        acc[1] += 1
+    ranked = sorted(totals.items(), key=lambda kv: (-kv[1][0], kv[0]))
+    return [
+        {"file": file, "seconds": round(acc[0], 2), "rows": acc[1]}
+        for file, acc in ranked[:top_n]
+    ]
+
+
 def parse_run_metrics(log_text: str) -> dict:
     """WOT-2026-021w: pass/skip/fail counts + duration + top-slowest.
 
@@ -1467,11 +1792,25 @@ def parse_run_metrics(log_text: str) -> dict:
     None / [] when its line is absent (dry-run, aborted collection), so a
     malformed/partial log never raises.
 
+    WOT-2026-109a: ``top_slowest`` keeps the DURATIONS_TOP_N slowest rows even
+    though the log now carries the whole table; ``top_files`` aggregates EVERY
+    row per file, and ``durations_rows`` / ``durations_covered_s`` /
+    ``durations_hidden`` declare how much of the wall the table explains (rows
+    under pytest's 5 ms threshold are hidden, so per-file sums are a lower
+    bound, never a total).
+
     Returns a dict with keys: passed, skipped, failed_count, errors,
-    duration_s, top_slowest (list of {"seconds", "phase", "nodeid"}).
+    duration_s, top_slowest (list of {"seconds", "phase", "nodeid"}), top_files
+    (list of {"file", "seconds", "rows"}), durations_rows, durations_covered_s,
+    durations_hidden.
     """
     metrics = _parse_pytest_summary_line(log_text or "")
-    metrics["top_slowest"] = _parse_durations_table(log_text or "")
+    rows = _parse_durations_table(log_text or "")
+    metrics["top_slowest"] = rows[:DURATIONS_TOP_N]
+    metrics["top_files"] = aggregate_durations_by_file(rows)
+    metrics["durations_rows"] = len(rows)
+    metrics["durations_covered_s"] = round(sum(r["seconds"] for r in rows), 2)
+    metrics["durations_hidden"] = _durations_hidden_count(log_text or "")
     return metrics
 
 
@@ -1558,6 +1897,17 @@ def append_run_history(summary: dict) -> None:
             "errors": summary.get("errors"),
             "duration_s": summary.get("duration_s"),
             "top_slowest": summary.get("top_slowest") or [],
+            # WOT-2026-109a: time per FILE (relative paths only, PII-safe), how
+            # much of the wall the durations table explains, and the machine
+            # load / foreign pytest sessions AROUND the run. Without these a
+            # before/after of any suite pilot cannot separate code from
+            # contention.
+            "top_files": summary.get("top_files") or [],
+            "durations_rows": summary.get("durations_rows"),
+            "durations_covered_s": summary.get("durations_covered_s"),
+            "durations_hidden": summary.get("durations_hidden"),
+            "cpu_load_run_avg_pct": summary.get("cpu_load_run_avg_pct"),
+            "foreign_pytest_at_end": summary.get("foreign_pytest_at_end"),
             "tested_commit_sha": summary.get("tested_commit_sha"),
             "interpreter_kind": summary.get("interpreter_kind"),
             # WOT-2026-062e (Pieza A): environment snapshot at run start.
@@ -2251,7 +2601,20 @@ def main() -> int:  # noqa: C901
         print_default_discovery_notice(args_mode)
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
         state_snapshot = snapshot_canonical_state()
+        try:
+            _cpu_counters_start = _read_cpu_counters()
+        except Exception:
+            _cpu_counters_start = None
         exit_code, failed_ids, error_ids, timed_out = stream_pytest(command)
+        # WOT-2026-109a: load averaged over the pytest window and the foreign
+        # pytest sessions alive when it ended. Fail-open: telemetry only.
+        try:
+            summary["cpu_load_run_avg_pct"] = _cpu_load_between(
+                _cpu_counters_start, _read_cpu_counters()
+            )
+            summary["foreign_pytest_at_end"] = _probe_foreign_pytest()[0]
+        except Exception:  # noqa: S110 - telemetry must not abort the run
+            pass
         summary["status"] = "finished"
         summary["exit_code"] = exit_code
         # WOT-2026-077a (Blocker 1): an internal MAX_RUNTIME_SECONDS exceedance

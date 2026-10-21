@@ -177,10 +177,11 @@ def test_select_runner_pytest_when_pytest_present(tmp_path: Path) -> None:
 
 
 def test_select_runner_pytest_injects_durations_flag(tmp_path: Path) -> None:
-    """WOT-2026-021t: the pytest command carries --durations=25 as a single token.
+    """WOT-2026-021t: the pytest command carries --durations=0 as a single token.
 
-    The flag makes pytest emit the "slowest N durations" telemetry table into
-    last-run.log. It must be ONE list element (matched by exact membership) so
+    The flag makes pytest emit the durations telemetry table into last-run.log
+    (WOT-2026-109a widened it from 25 rows to the full table so run_history can
+    aggregate time per file). It must be ONE list element (matched by exact membership) so
     the mutation (removing it) has teeth; two tokens ['--durations','25'] would
     make this assertion silently pass or fail on the wrong axis.
     """
@@ -197,8 +198,8 @@ def test_select_runner_pytest_injects_durations_flag(tmp_path: Path) -> None:
         test_dir="tests",
         _probe=True,
     )
-    assert "--durations=25" in command_default, (
-        f"--durations=25 must be a single token in the pytest command; got {command_default!r}"
+    assert "--durations=0" in command_default, (
+        f"--durations=0 must be a single token in the pytest command; got {command_default!r}"
     )
 
     # Same seam with different args (user-style explicit discovery + xdist flags):
@@ -214,8 +215,8 @@ def test_select_runner_pytest_injects_durations_flag(tmp_path: Path) -> None:
         test_dir="tests",
         _probe=True,
     )
-    assert "--durations=25" in command_explicit, (
-        f"--durations=25 must survive explicit_args mode; got {command_explicit!r}"
+    assert "--durations=0" in command_explicit, (
+        f"--durations=0 must survive explicit_args mode; got {command_explicit!r}"
     )
 
 

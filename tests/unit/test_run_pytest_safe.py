@@ -1903,6 +1903,81 @@ class TestRunHistoryInSummary:
         assert rec["tested_commit_sha"] == "deadbeef"
         assert rec["level"] == "all"
 
+    def test_contention_fields_reach_the_history_line(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-109a: per-file time, run-average load and foreign pytest
+        sessions are persisted, derived from the SAME sources main() reads.
+
+        Mutations that must turn this red: dropping any new key from the
+        whitelist in append_run_history; computing the load from the wrong pair
+        of samples (start twice instead of start/end); not slicing
+        top_slowest to 25 while top_files still sees every row.
+        """
+        import json as _json
+
+        mod = load_runner_module()
+        samples = iter([(100, 1000), (150, 2000)])  # start, end -> 95.0 %
+        # The start-of-run environment probe also reads counters: park it so the
+        # iterator below only feeds the run-window pair main() takes itself.
+        monkeypatch.setattr(mod, "_probe_cpu_load", lambda window_s=0.3: (12.0, []))
+        monkeypatch.setattr(mod, "_read_cpu_counters", lambda: next(samples))
+        monkeypatch.setattr(
+            mod,
+            "_probe_foreign_pytest",
+            lambda: ({"sessions": 2, "matched_procs": 5}, []),
+        )
+        rows = "\n".join(
+            f"{0.5 + i / 100:.2f}s call     tests/unit/test_{'a' if i % 2 else 'b'}.py::t{i}"
+            for i in range(40)
+        )
+        log = (
+            "============ slowest durations ============\n"
+            f"{rows}\n"
+            "(7 durations < 0.005s hidden.  Use -vv to show these durations.)\n"
+            "==================== 40 passed in 30.00s ====================\n"
+        )
+        _, hist_lines = self._stub_main_with_log(mod, tmp_path, monkeypatch, log)
+        rec = _json.loads(hist_lines[0])
+        assert rec["cpu_load_run_avg_pct"] == 95.0
+        assert rec["foreign_pytest_at_end"] == {"sessions": 2, "matched_procs": 5}
+        assert len(rec["top_slowest"]) == 25, "top_slowest stays bounded"
+        assert rec["durations_rows"] == 40
+        assert rec["durations_hidden"] == 7
+        assert {f["file"] for f in rec["top_files"]} == {
+            "tests/unit/test_a.py",
+            "tests/unit/test_b.py",
+        }
+        # top_files sums EVERY row, not only the 25 kept in top_slowest.
+        assert sum(f["rows"] for f in rec["top_files"]) == 40
+        assert rec["durations_covered_s"] == round(
+            sum(0.5 + i / 100 for i in range(40)), 2
+        )
+
+    def test_probe_failures_never_abort_the_run(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """WOT-2026-109a fail-open: a raising probe leaves the run and its
+        history line intact, with the contention fields at None."""
+        import json as _json
+
+        mod = load_runner_module()
+
+        def _boom(*_a, **_k):
+            raise OSError("probe exploded")
+
+        monkeypatch.setattr(mod, "_read_cpu_counters", _boom)
+        monkeypatch.setattr(mod, "_probe_foreign_pytest", _boom)
+        summary, hist_lines = self._stub_main_with_log(
+            mod, tmp_path, monkeypatch, _REAL_SUMMARY_LOG
+        )
+        assert summary["status"] == "finished"
+        assert summary["exit_code"] == 0
+        rec = _json.loads(hist_lines[0])
+        assert rec["passed"] == 3757
+        assert rec["cpu_load_run_avg_pct"] is None
+        assert rec["foreign_pytest_at_end"] is None
+
 
 class TestRunHistoryTestIsolation:
     """WOT-2026-021w barrera anti-contaminacion: ningun harness que llame main()
@@ -3184,6 +3259,10 @@ def _fake_run_cmd(
             "Image Name                     PID Session Name        Mem Size\npython.exe                 1234 Console              102400\ncode.exe                  5678 Console              204800\nchrome.exe                9012 Console             512000\n",
             0,
         )
+    if "Win32_Process" in str(cmd) or "-eo" in cmd:
+        # Process listing (WOT-2026-109a): a coherent table has to include the
+        # caller itself, otherwise the probe rightly declares "own pid missing".
+        return Result(f"{os.getpid()} 1 python scripts/run_pytest_safe.py\n", 0)
     # Default: successful empty command
     return Result("", 0)
 
