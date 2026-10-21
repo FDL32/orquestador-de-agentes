@@ -52,6 +52,7 @@ tests/.test_workspace/
 # Runtime state per-process (no commitear)
 .agent/runtime/*.txt
 .agent/runtime/*.json
+.agent/runtime/cuspide_growth_overrides.jsonl
 .agent/runtime/audit/
 .agent/runtime/compare/
 .agent/runtime/reviews/

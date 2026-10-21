@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -52,6 +53,14 @@ def load_runner_module():
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # WOT-2026 (coordinacion cross-worktree): register before exec, same reason
+    # as load_selection_module: the runner now declares @dataclass classes
+    # (CrossWorktreeHolder / CrossWorktreeLockResult) under
+    # `from __future__ import annotations`, and CPython 3.10's dataclasses
+    # resolves string annotations via sys.modules.get(cls.__module__) --
+    # without the entry the class creation crashes with
+    # AttributeError: 'NoneType' object has no attribute '__dict__'.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     # WOT-2026-022g: structural anti-contamination. If the autouse fixture has
     # installed a redirect, EVERY freshly loaded runner points its run-history /
@@ -62,6 +71,16 @@ def load_runner_module():
         module.RUN_HISTORY_JSONL = _RUN_HISTORY_REDIRECT["run_history"]
         module.LAST_RUN_JSON = _RUN_HISTORY_REDIRECT["last_run_json"]
         module.LAST_RUN_LOG = _RUN_HISTORY_REDIRECT["last_run_log"]
+        # WOT-2026 (coordinacion cross-worktree): same structural barrier,
+        # same reason. Without this redirect, EVERY in-process main() harness
+        # would try to acquire the REAL shared lock under the repo's git
+        # common dir -- and while another session's canonical suite is in
+        # flight, the fail-closed default would make those harnesses exit 75
+        # instead of testing anything (contamination + false-red on a live
+        # sibling). Freshly loaded runners point the cross-worktree lock at
+        # the per-session tmp like the telemetry paths.
+        module.CROSS_WORKTREE_LOCK_DIR = _RUN_HISTORY_REDIRECT["cross_lock_dir"]
+        module.CROSS_WORKTREE_LOCK_FILE = _RUN_HISTORY_REDIRECT["cross_lock_file"]
     _LOADED_RUNNERS.append(module)
     return module
 
@@ -85,6 +104,11 @@ def _isolate_run_history(tmp_path):
             "run_history": base / "run_history.jsonl",
             "last_run_json": base / "last-run.json",
             "last_run_log": base / "last-run.log",
+            # WOT-2026 (coordinacion cross-worktree): isolate the shared lock
+            # too (see load_runner_module for the reason). acquire_cross_worktree_lock
+            # creates the dir itself, so it does not need to pre-exist here.
+            "cross_lock_dir": base / "agent-runtime",
+            "cross_lock_file": base / "agent-runtime" / "pytest-canonical.lock",
         }
     )
     # Redirect any runner already loaded during THIS test (rare: load happens in
@@ -93,6 +117,8 @@ def _isolate_run_history(tmp_path):
         mod.RUN_HISTORY_JSONL = _RUN_HISTORY_REDIRECT["run_history"]
         mod.LAST_RUN_JSON = _RUN_HISTORY_REDIRECT["last_run_json"]
         mod.LAST_RUN_LOG = _RUN_HISTORY_REDIRECT["last_run_log"]
+        mod.CROSS_WORKTREE_LOCK_DIR = _RUN_HISTORY_REDIRECT["cross_lock_dir"]
+        mod.CROSS_WORKTREE_LOCK_FILE = _RUN_HISTORY_REDIRECT["cross_lock_file"]
     yield
     _LOADED_RUNNERS.clear()
     _RUN_HISTORY_REDIRECT.clear()
@@ -3503,3 +3529,448 @@ def test_timeout_expired_uses_wait_with_timeout_after_kill(
             f"to avoid blocking indefinitely on hung processes; "
             f"got kwargs={kwargs}"
         )
+
+
+# WOT-2026 (coordinacion cross-worktree): contrato de
+# `.agent/planning/agents_md_optimization/propuesta_coordinacion_suites_crossworktree.md`
+# Fase C, puntos 1-7. Punto 7: los PIDs se combinan REALES (procesos hijos
+# reales spawneados) con mocks de `is_pid_running()` para los casos
+# stale/ambiguo no deterministas solo con procesos reales.
+
+
+@contextlib.contextmanager
+def _live_foreign_pid():
+    """Yield a REAL, distinct, unambiguously-live PID (a spawned sleeper).
+
+    Punto 7 (integracion): la liveness se comprueba con la implementacion
+    REAL de `is_pid_running` (tasklist en Windows), sin mocks.
+    """
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    try:
+        yield proc.pid
+    finally:
+        proc.terminate()
+        proc.wait(timeout=15)
+
+
+def _dead_pid_after_exit() -> int:
+    """Spawn a short-lived real process and return its PID once it exited."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait(timeout=30)
+    return proc.pid
+
+
+def _wire_cross_lock(mod, monkeypatch, tmp_path: Path) -> Path:
+    """Point the cross-worktree lock at tmp_path and make PROJECT_ROOT the
+    own worktree. Returns the lock FILE path."""
+    worktree = tmp_path / "checkout-own"
+    worktree.mkdir(parents=True, exist_ok=True)
+    lock_dir = tmp_path / "shared" / "agent-runtime"
+    lock_file = lock_dir / "pytest-canonical.lock"
+    monkeypatch.setattr(mod, "PROJECT_ROOT", worktree)
+    monkeypatch.setattr(mod, "CROSS_WORKTREE_LOCK_DIR", lock_dir)
+    monkeypatch.setattr(mod, "CROSS_WORKTREE_LOCK_FILE", lock_file)
+    return lock_file
+
+
+def _write_lock(lock_file: Path, pid: int, worktree: str) -> None:
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file.write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "started_at": "2026-10-19T00:00:00+00:00",
+                "cwd": worktree,
+                "worktree": worktree,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+class TestCrossWorktreeCoordination:
+    """Contrato de coordinacion cross-worktree (puntos 1-7 de la Fase C)."""
+
+    # --- punto 1: resultado estructurado, payload con worktree normalizado ---
+
+    def test_clean_acquire_returns_structured_result_with_normalized_worktree(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+
+        result = mod.acquire_cross_worktree_lock()
+
+        assert isinstance(result, mod.CrossWorktreeLockResult)
+        assert result.acquired is True
+        assert result.holder is None
+        payload = json.loads(lock_file.read_text(encoding="utf-8"))
+        assert payload["pid"] == os.getpid()
+        # punto 4: worktree es ruta absoluta NORMALIZADA, no el string crudo.
+        assert payload["worktree"] == str(
+            Path(str(tmp_path / "checkout-own")).resolve()
+        )
+        assert payload["started_at"]
+
+    def test_malformed_lock_file_degrades_to_stale_and_is_replaced(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """read_json() -> {} -> pid 0 -> is_pid_running(0) is False -> cleaned.
+
+        A corrupt payload must never crash the runner nor hang the lock forever.
+        """
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_file.write_text("{{{no-json", encoding="utf-8")
+
+        result = mod.acquire_cross_worktree_lock()
+
+        assert result.acquired is True
+        assert json.loads(lock_file.read_text(encoding="utf-8"))["pid"] == os.getpid()
+
+    # --- puntos 1+4+7: conflicto real con PID vivo de OTRO worktree ---
+
+    def test_foreign_live_real_pid_reports_holder_and_never_writes(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        with _live_foreign_pid() as foreign_pid:
+            # liveness REAL, sin mock (integracion punto 7)
+            assert mod.is_pid_running(foreign_pid) is True
+            other = str(tmp_path / "otro-worktree")
+            _write_lock(lock_file, foreign_pid, other)
+            before = lock_file.read_bytes()
+
+            result = mod.acquire_cross_worktree_lock()
+
+            assert result.acquired is False
+            assert result.holder is not None
+            assert result.holder.pid == foreign_pid
+            assert result.holder.worktree == other
+            assert lock_file.read_bytes() == before, (
+                "un lock vivo de otro worktree no se toca ni se reescribe"
+            )
+
+    def test_same_worktree_live_lock_is_not_a_cross_conflict(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """punto 4 (codex, gemma4): dos sesiones en el MISMO worktree no es
+        colision cross-worktree; la gobierna el lock intra-checkout."""
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        own = str(Path(str(tmp_path / "checkout-own")).resolve())
+        _write_lock(lock_file, os.getpid(), own)
+
+        result = mod.acquire_cross_worktree_lock()
+
+        assert result.acquired is True
+        assert json.loads(lock_file.read_text(encoding="utf-8"))["worktree"] == own
+
+    def test_ambiguous_pid_is_treated_alive_and_lock_survives(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Fail-safe conservador heredado: ante cualquier duda, vivo.
+
+        Mock de is_pid_running=True con worktree ajeno: debe reportar
+        conflicto y NO borrar el lock (criterio identico al lock
+        intra-checkout, punto: 'la misma disciplina, nunca una mas debil').
+        """
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        other = str(tmp_path / "otro-worktree")
+        _write_lock(lock_file, 424242, other)
+        before = lock_file.read_bytes()
+        monkeypatch.setattr(mod, "is_pid_running", lambda pid: True)
+
+        result = mod.acquire_cross_worktree_lock()
+
+        assert result.acquired is False
+        assert result.holder is not None and result.holder.pid == 424242
+        assert lock_file.read_bytes() == before
+
+    def test_unambiguously_dead_pid_lock_is_cleaned_and_acquired(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        # PID real muerto (punto 7: spawn real + exit) + liveness REAL.
+        dead = _dead_pid_after_exit()
+        assert mod.is_pid_running(dead) is False
+        _write_lock(lock_file, dead, str(tmp_path / "otro-worktree"))
+
+        result = mod.acquire_cross_worktree_lock()
+
+        assert result.acquired is True
+        payload = json.loads(lock_file.read_text(encoding="utf-8"))
+        assert payload["pid"] == os.getpid()
+
+    def test_stale_cleanup_path_with_mocked_dead_pid(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Mismo caso con mock (punto 7: los stale se hacen deterministas)."""
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        _write_lock(lock_file, 999999, str(tmp_path / "otro"))
+        monkeypatch.setattr(mod, "is_pid_running", lambda pid: False)
+
+        result = mod.acquire_cross_worktree_lock()
+
+        assert result.acquired is True
+
+    # --- punto 3: release solo borra el lock PROPIO ---
+
+    def test_release_removes_own_lock_by_pid_ownership(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        _write_lock(lock_file, os.getpid(), str(tmp_path / "checkout-own"))
+
+        mod.release_cross_worktree_lock()
+
+        assert not lock_file.exists()
+
+    def test_release_never_touches_foreign_lock(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """punto 3 (codex): una carrera o un --force-unlock no borran el lock
+        de OTRA sesion: el pid registrado no coincide -> no-op."""
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        with _live_foreign_pid() as foreign_pid:
+            _write_lock(lock_file, foreign_pid, str(tmp_path / "otro-worktree"))
+            before = lock_file.read_bytes()
+
+            mod.release_cross_worktree_lock()
+
+            assert lock_file.exists(), "el lock ajeno queda INTACTO"
+            assert lock_file.read_bytes() == before
+
+    def test_release_missing_lock_is_noop(self, tmp_path: Path, monkeypatch) -> None:
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        assert not lock_file.exists()
+        mod.release_cross_worktree_lock()  # no crash
+
+    # --- punto 2: UX del slot -- default fail-closed, flags explícitos ---
+
+    def test_ex_tempfail_is_the_distinguishable_code(self) -> None:
+        mod = load_runner_module()
+        assert mod.EX_TEMPFAIL == 75
+
+    def test_slot_fail_closed_by_default_returns_ex_tempfail(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        mod = load_runner_module()
+        _wire_cross_lock(mod, monkeypatch, tmp_path)
+        holder = mod.CrossWorktreeHolder(
+            pid=31548,
+            started_at="2026-10-19T13:31:55+00:00",
+            worktree="C:/otro/worktree",
+            cwd="C:/otro/worktree",
+        )
+        monkeypatch.setattr(
+            mod,
+            "acquire_cross_worktree_lock",
+            lambda: mod.CrossWorktreeLockResult(acquired=False, holder=holder),
+        )
+
+        exit_code, result = mod.ensure_cross_worktree_slot(
+            force_parallel=False, wait_lock=None
+        )
+
+        assert exit_code == mod.EX_TEMPFAIL
+        assert result.acquired is False
+        err = capsys.readouterr().err
+        # gate self-service: el fallo explica como continuar sin escalar (los
+        # dos escape valves y el holder con el que coordinar).
+        assert "--wait-lock" in err
+        assert "--force-parallel" in err
+        assert "31548" in err
+
+    def test_slot_force_parallel_continues_without_touching_foreign_lock(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        mod = load_runner_module()
+        lock_file = _wire_cross_lock(mod, monkeypatch, tmp_path)
+        with _live_foreign_pid() as foreign_pid:
+            other = str(tmp_path / "otro-worktree")
+            _write_lock(lock_file, foreign_pid, other)
+            before = lock_file.read_bytes()
+
+            exit_code, result = mod.ensure_cross_worktree_slot(
+                force_parallel=True, wait_lock=None
+            )
+
+            assert exit_code is None
+            assert result.acquired is False  # nunca sostiene el lock ajeno
+            assert lock_file.read_bytes() == before
+            out = capsys.readouterr().out
+            assert "--force-parallel" in out
+            assert "AVISO" in out
+
+    def test_slot_wait_lock_retries_until_the_slot_frees(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        _wire_cross_lock(mod, monkeypatch, tmp_path)
+        holder = mod.CrossWorktreeHolder(
+            pid=99, started_at="x", worktree="otro", cwd="otro"
+        )
+        calls: list[int] = []
+
+        def acquire_once():
+            calls.append(1)
+            if len(calls) == 1:
+                return mod.CrossWorktreeLockResult(acquired=False, holder=holder)
+            return mod.CrossWorktreeLockResult(acquired=True)
+
+        clock_now = {"t": 100.0}
+
+        class _FakeTime:
+            @staticmethod
+            def monotonic() -> float:
+                return clock_now["t"]
+
+            @staticmethod
+            def sleep(seconds: float) -> None:
+                clock_now["t"] += seconds
+
+        monkeypatch.setattr(mod, "acquire_cross_worktree_lock", acquire_once)
+        monkeypatch.setattr(mod, "time", _FakeTime)
+
+        exit_code, result = mod.ensure_cross_worktree_slot(
+            force_parallel=False, wait_lock=30
+        )
+
+        assert exit_code is None
+        assert result.acquired is True
+        assert len(calls) == 2
+        assert clock_now["t"] == 110.0  # un reintento, sin sleep real
+
+    def test_slot_wait_lock_timeout_fails_closed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        _wire_cross_lock(mod, monkeypatch, tmp_path)
+        holder = mod.CrossWorktreeHolder(
+            pid=99, started_at="x", worktree="otro", cwd="otro"
+        )
+        calls: list[int] = []
+
+        def acquire_always_conflict() -> object:
+            calls.append(1)
+            return mod.CrossWorktreeLockResult(acquired=False, holder=holder)
+
+        clock_now = {"t": 0.0}
+
+        class _FakeTime:
+            @staticmethod
+            def monotonic() -> float:
+                return clock_now["t"]
+
+            @staticmethod
+            def sleep(seconds: float) -> None:
+                clock_now["t"] += seconds
+
+        monkeypatch.setattr(mod, "acquire_cross_worktree_lock", acquire_always_conflict)
+        monkeypatch.setattr(mod, "time", _FakeTime)
+
+        exit_code, _ = mod.ensure_cross_worktree_slot(
+            force_parallel=False, wait_lock=15
+        )
+
+        assert exit_code == mod.EX_TEMPFAIL
+        assert len(calls) == 3  # poll cada <=10s hasta agotar los 15s
+
+
+class TestCrossWorktreeCliWiring:
+    """Flags nuevos parseables y marcador de override en el summary."""
+
+    def test_parse_args_accepts_new_flags(self, monkeypatch) -> None:
+        mod = load_runner_module()
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "run_pytest_safe.py",
+                "--level",
+                "all",
+                "--force-parallel",
+                "--wait-lock",
+                "60",
+            ],
+        )
+        args = mod.parse_args()
+        assert args.force_parallel is True
+        assert args.wait_lock == 60
+
+    def test_parse_args_defaults_leave_coordination_on(self, monkeypatch) -> None:
+        mod = load_runner_module()
+        monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py"])
+        args = mod.parse_args()
+        assert args.force_parallel is False
+        assert args.wait_lock is None
+
+    def test_main_records_forced_parallel_override_in_summary(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """punto 2: el bypass --force-parallel deja un marcador de override
+        SEPARADO del lock ajeno en el summary por corrida, y la corrida
+        end-to-end con main() nunca escribe ni borra el lock de otra sesion."""
+        mod = load_runner_module()
+        worktree = tmp_path / "checkout-own"
+        worktree.mkdir(parents=True, exist_ok=True)
+        lock_dir = tmp_path / "shared" / "agent-runtime"
+        lock_file = lock_dir / "pytest-canonical.lock"
+        base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+        base.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(mod, "PROJECT_ROOT", worktree)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT", worktree)
+        monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", worktree)
+        monkeypatch.setattr(mod, "CROSS_WORKTREE_LOCK_DIR", lock_dir)
+        monkeypatch.setattr(mod, "CROSS_WORKTREE_LOCK_FILE", lock_file)
+        monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
+        monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
+        monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", base / "run_history.jsonl")
+        monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (0, [], [], False))
+        monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "abc123")
+        monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
+        monkeypatch.setattr(mod, "release_lock", lambda: None)
+        monkeypatch.setattr(
+            mod,
+            "cleanup_known_temp_dirs",
+            lambda: {"removed": [], "failed": []},
+        )
+        monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+        monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+        monkeypatch.setattr(
+            mod,
+            "select_test_runner",
+            lambda interp, args, xdist, run_dir, test_dir: (["echo"], "pytest"),
+        )
+        monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+        monkeypatch.setattr(
+            sys, "argv", ["run_pytest_safe.py", "--level", "all", "--force-parallel"]
+        )
+
+        with _live_foreign_pid() as foreign_pid:
+            other = str(tmp_path / "otro-worktree")
+            _write_lock(lock_file, foreign_pid, other)
+            before = lock_file.read_bytes()
+
+            rc = mod.main()
+
+            assert rc == 0
+            summary = json.loads((base / "last-run.json").read_text(encoding="utf-8"))
+            cross = summary["cross_worktree"]
+            assert cross["acquired"] is False
+            assert cross["forced_parallel_override"] is True
+            assert cross["conflict_holder"]["pid"] == foreign_pid
+            assert cross["conflict_holder"]["worktree"] == other
+            # el marcador es SEPARADO: el lock ajeno sigue en disco, intacto,
+            # incluso tras el release del finally de main() (ownership check).
+            assert lock_file.read_bytes() == before

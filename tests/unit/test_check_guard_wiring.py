@@ -164,6 +164,11 @@ EXPECTED_WIRED_REAL = {
     # `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` -> exit 1;
     # sin trailer o con identidad humana/generica -> exit 0.
     "check_model_id_crystallization",
+    # Gate de crecimiento de la cuspide: cableado en .pre-commit-config.yaml
+    # con tres hooks (pre-commit early warning, commit-msg BLOCK, post-commit
+    # telemetria). Las tres entradas declaran el script en `entry:`; el
+    # baseline por-arista no necesita fila nueva (el guard es NUEVO y cableado).
+    "check_cuspide_growth_and_drift",
     "check_commit_worktree",
     "check_closeout_reconciliation",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     # WOT-2026-047v: cableado en .pre-commit-config.yaml (pre-commit always_run).

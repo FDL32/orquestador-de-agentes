@@ -95,6 +95,13 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
    absolutas.
    Si el destino no se resuelve, la fila lo declara en `lens_scope` (`motor:destino-no-resoluble`): en ese
    caso la lente NO vio el destino y su "no existe" sobre un artefacto del destino no vale.
+   Cuando `repo_scope: destino`, anade ademas un bloque `INVENTARIO GIT-IGNORED` con la salida de
+   `git status --ignored` del destino, para que la lente sepa que rutas existen pero no se incluyen
+   en el bundle por estar ignoradas por Git.
+3-bis. Verificacion de alcance fisico: SI la lente tiene `CANAL: agent` (o `repo_scope: destino`),
+   NO basta con afirmar "no existe X" en prosa. Pide a la lente que verifique con `Test-Path` (Windows)
+   o `ls`/`file` (Unix) antes de emitir un "no existe"; si una ruta se referencia como "no existe" en
+   el bundle o en el informe, la lente debe incluir el comando que usó para verificarlo (y su salida).
 4. Envia a cada lente solo lo que tiene que revisar. Un bundle de mas de 15 KB a un modelo razonador suele
    acabar en `empty_content_despite_sentinel`: pasa antes
    `preflight --content-sample-file <bundle> --backend-keys <lista>`. Limite medido: el preflight valida el
@@ -102,6 +109,14 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
 5. Si generas el bundle con un heredoc de Bash, pon el delimitador entre comillas simples. Sin comillas,
    Bash ejecuta las comillas invertidas del texto y borra palabras del bundle. Si el texto lleva apostrofos,
    escribelo con una herramienta de ficheros en vez de con un heredoc.
+6. **Canal `agent` via Kilo (WOT-2026-108b): el bundle no autocarga `AGENTS.md`.** Igual que para un
+   Builder real (`prompts/builder_invocation_contract.md` Seccion 1.6), una lente con `CANAL: agent`
+   despachada con `-f <bundle>.md` NO ve `AGENTS.md` ni ningun puntero de capa 2 salvo que el bundle lo
+   pida EXPRESAMENTE. Si la revision depende de alguna convencion del repo (nomenclatura, gates,
+   arquitectura de seguridad), el bundle debe instruir leer `AGENTS.md` -- y sus punteros de capa 2 si la
+   revision toca memoria -- antes de verificar `scripts/check_builder_dispatch_prompt.py <bundle>`. No
+   aplica a lentes `api` (sin filesystem: no pueden leer nada por su cuenta, y el bundle les pega la
+   evidencia directamente, ver punto 2 de esta seccion).
 
 ### 3.4 Rondas de gobierno: nonce antes de la ronda
 

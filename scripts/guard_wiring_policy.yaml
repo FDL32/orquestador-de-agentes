@@ -153,6 +153,27 @@ known_unwired:
     no un commit. Cablearlo en pre-commit correria sin proposito. Follow-up:
     cablearlo por codigo si se automatiza el Paso 2 completo.
 
+  # WOT-2026-108b: guard que verifica que un prompt de arranque de Builder/
+  # lente despachado via Kilo (`kilo run -f <prompt>.md`) instruya leer
+  # AGENTS.md. Su sitio de invocacion NATURAL es el instante de despacho
+  # (`prompts/builder_invocation_contract.md` Seccion 1.6), que es una
+  # invocacion MANUAL de shell -- el despacho de un Builder real NO pasa por
+  # ningun script de este motor que un hook pueda interceptar (mismo motivo
+  # declarado en la Seccion 1.5 de ese contrato para el Task tool nativo).
+  # Analogo a check_prompt_parity y check_publication_gate: BY-DESIGN,
+  # invocacion manual en el punto de preparacion, no un hook automatico.
+  # Sometido a DESIGN_REVIEW real (4 lentes independientes, 2026-10-20,
+  # DECISION: CHANGES unanime sobre la cobertura de markers, ya aplicado).
+  check_builder_dispatch_prompt: >-
+    BY-DESIGN: invocacion manual antes de `kilo run -f <prompt>.md`
+    (`prompts/builder_invocation_contract.md` Seccion 1.6) -- el despacho de
+    un Builder real es una invocacion de shell, no una llamada a traves de
+    un script de este motor que un hook pueda interceptar. Cablearlo en
+    pre-commit no tiene sentido: audita un prompt de arranque que
+    normalmente ni siquiera se versiona. Follow-up: ninguno declarado, el
+    limite es estructural (ver Seccion 1.5 del mismo contrato para el caso
+    analogo del Task tool nativo).
+
   # WOT-2026-098b: gate `role_models.BUILDER != role_models.REVISOR`. Su sitio de
   # invocacion NATURAL es `bus/review_bridge.py` "antes de lanzar la Capa 2" -- y
   # `bus/review_bridge.py` es FORBIDDEN SURFACE de este ticket (Non-goal: "NO

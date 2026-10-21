@@ -106,10 +106,28 @@ el commit real durante horas).
 ## 4. Que NO decide este documento
 
 - Si un vuelo debe usar 4 capas, Intermedio o Tradicional -- eso es `agent_execution_modes.md`
-  Seccion 2 (señales de seleccion).
+  Seccion 2 (senales de seleccion).
 - Que ficheros tocar, que comandos de Kilo lanzar, en que directorio escribir el informe de
   cada capa -- eso es el documento canonico de 4 capas (mecanismo operativo).
 - Si un ticket toca la allowlist de blast-radius-alto -- eso es `agent_execution_modes.md`
   Seccion 3 (fuente unica, no se re-declara aqui).
 - La numeracion interna de `agent_execution_modes.md` ni del documento canonico de 4 capas --
   ambos quedan SIN renumerar (ver seccion dedicada arriba).
+
+## 5. Despacho obligatorio de la Capa 1.5 / Persona-2 (Revisor)
+
+El despacho de Capa 1.5 / Persona-2 (Revisor) DEBE usar `ensemble_dispatch.py loop-round`
+(ver `prompts/ensemble_loop.md` Seccion 2: "Una sola puerta") para cualquier tarea de revision
+adversarial -- esto vale para cualquier modelo en rol Revisor, no solo a uno concreto.
+
+Excepcion: cuando la tarea de revision exige leer el repo completo sin bundle acotado (auditoria
+de repo que excede el limite de 15 KB de `ensemble_loop.md` §3.3 punto 4), usa el tercer modo
+documentado en `prompts/revisor_agent_filesystem_contract.md`.
+
+NUNCA invoques el CLI de Kilo (`builder_invocation_contract.md` Seccion 1) directamente para una
+tarea de Revisor sin pasar por `loop-round` o por `revisor_agent_filesystem_contract.md`: la
+Seccion 1 de ese contrato describe el MISMO binario que usan los dos canales permitidos, pero sin
+su bundle/marcadores/disciplina de veredicto, ese uso desnudo no tiene bus, no pasa por
+`filter_lens_output.py`, ni aplica barrera de verificacion de forma de veredicto -- ese fue
+exactamente el patron que fallo en la corrida reportada por la sesion VSC y que este ticket
+documenta.

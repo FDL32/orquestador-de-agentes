@@ -254,20 +254,7 @@ falla solo ante un generador/ejemplo vivo con prefijo legacy sin etiqueta.
 
 ## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)
 
-Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del repositorio definen el contrato estricto del motor central y el workspace destino:
-
-- **MANIFEST.distribute**: Define la frontera del motor central (codigo operativo del repo fuente). El motor NO se copia; este manifiesto delimita que rutas forman parte del codigo operativo.
-- **MANIFEST.workspace**: Define que se conserva EN el workspace destino (estado, memoria, eventos, configuracion del proyecto).
-- **Arquitectura**: El motor vive una unica vez en `orquestador_de_agentes/`; cada proyecto destino conserva solo su `.agent/` de workspace y referencia el motor externo.
-
-**Superficies vivas en `.agent/collaboration/`** (NO archivar, el codigo las escribe):
-- `work_plan.md`, `TURN.md`, `STATE.md`, `execution_log.md`, `notifications.md`, `review_queue.md`
-
-**Excluidos del workspace** (historial, runtime transitorio, caches):
-- `PLAN_WP-*.md`, `AUDIT_WP-*.md`, `_archive/`, `archive/`
-- `.agent/runtime/tmp/`, `uv-cache/`, `test_logs/`, `__pycache__/`, `reviews/`, `compare/`
-- `.ruff_cache/`, `.cache/`, `.uv-cache/`, `.venv/`
-- Logs y diagnosticos: `debug.log`, `opencode_models_error.log`
+Los archivos `MANIFEST.distribute` y `MANIFEST.workspace` en la raiz del repositorio definen el contrato estricto del motor central y el workspace destino. Detalle (referencia bajo demanda, consulta al tocar la frontera de distribucion o el workspace destino): `.agent/rules/common/manifest_contracts.md`.
 
 ## Comandos principales
 
@@ -617,39 +604,14 @@ medirse):
 
 ### Nomenclatura de perfiles ensemble (`ensemble_profiles` en `agents.json`)
 
-Norma establecida 2026-09-28 tras censar los 20 perfiles vivos de
-`.agent/config/agents.json`: NO existia una norma escrita, solo un patron
-implicito que 19/20 perfiles ya seguian. Se fija por escrito porque el
-dashboard de ensembles necesita poder derivar backend+familia del NOMBRE del
-perfil sin tener que resolver `agents.json` en cada lectura.
-
-**Forma:** `<rol>_<backend>_<familia>[_<caracteristica>]`
-
-- `rol`: `proposer` o `challenger`.
-- `backend`: nombre corto SIN el sufijo `_api` (`nan`, `nvidia`, `groq`,
-  `openrouter`, `aihubmix`, `tokenharbor` para `channel=api`; el nombre del
-  agente para `channel=agent`: `claude`, `codex`, `opencode`).
-- `familia`: UNA palabra que identifica el modelo, SIN version ni tamano
-  (`qwen`, `mimo`, `glm`, `gemma`, `kimi`, `nemotron`, `deepseek`, `gptoss`,
-  `northcode`, `codingglm`). El campo `model` del perfil ya lleva la version
-  exacta -- el nombre del perfil no la duplica.
-- `caracteristica` (opcional): SOLO cuando distingue dos variantes del MISMO
-  backend+familia dentro del pool (ej. `challenger_nan_qwen` vs
-  `challenger_nan_qwen_flash`, ambos en `nan_api`). No se anade si no hay
-  ambiguedad que resolver.
-
-**Ejemplos correctos:** `challenger_groq_qwen`, `challenger_groq_gptoss`,
-`challenger_nvidia_glm_flash`, `challenger_tokenharbor_qwen_flash`.
-
-**Ejemplos INCORRECTOS (version/tamano colados en el nombre):**
-`challenger_groq_qwen38`, `challenger_groq_gptoss120b`,
-`challenger_aihubmix_codingglm51`, `challenger_tokenharbor_qwen38flash` --
-corregidos en la misma sesion que fijo esta norma.
-
-**No renombrar `challenger_opencode_glm_5_2` sin revisar primero** `grep -rn
-"challenger_opencode_glm_5_2" tests/`. Caso completo de esta excepcion
-legacy (por que, estado exacto, consecuencia para rutas de seleccion
-nuevas) en `docs/protocol/ensemble_profile_naming_legacy_case.md`.
+- **Forma canonica:** `<rol>_<backend>_<familia>[_<caracteristica>]`, con `familia` = UNA
+  palabra que identifica el modelo SIN version ni tamano (el campo `model` del perfil ya lleva
+  la version exacta; el nombre no la duplica). Colar version/tamano en el nombre es error:
+  `challenger_groq_qwen38` es INCORRECTO. Especificacion completa de campos, ejemplos y origen
+  de la norma: `.agent/rules/common/ensemble_profile_nomenclature.md`.
+- **No renombrar `challenger_opencode_glm_5_2` sin revisar primero** `grep -rn
+  "challenger_opencode_glm_5_2" tests/`. Excepcion legacy (por que, estado exacto, consecuencia
+  para rutas de seleccion nuevas): `docs/protocol/ensemble_profile_naming_legacy_case.md`.
 
 ## Archivado de colaboracion (WP-2026-100)
 
@@ -847,56 +809,25 @@ Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |
 
 - **`--bootstrap` entrega un INDICE, no el corpus.** Las lineas marcadas
   `...[truncated]` son titulares con su `id`; el pie declara cuantas lecciones NO
-  muestra. Con mediana de 877 chars por leccion, la regla accionable de 82
-  entradas vive DESPUES del corte.
+  muestra.
 - **`--recall` es la puerta de EXPANSION**, y entrega la leccion ENTERA:
-   `python scripts/memory_context.py --recall --query "<termino>"` (ordenado por
-   cobertura, con fallback por terminos) o
-   `python scripts/memory_context.py --recall --id obs-<slug>` (exacto,
-   fail-closed). Ejecutalo ANTES de medir o disenar.
-- **El archive portable se lee como UNION de MOTOR + root activo.** Son conjuntos
-  DISJUNTOS y ambos importan: el motor trae las lecciones de ingenieria, el
-  destino las de topologia. Medido 2026-08-17: 207 + 135, interseccion CERO.
-  Cada origen tiene CUOTA en el indice -- la recencia no es relevancia, y sin
-  cuota el repo tocado mas recientemente expulsa al otro entero.
-- **El hook `SessionStart` inyecta el indice al abrir sesion**, asi que la carga
-  del indice dejo de ser una norma que alguien debia recordar. La EXPANSION sigue
+  `python scripts/memory_context.py --recall --query "<termino>"` (ordenado por
+  cobertura, con fallback por terminos) o
+  `python scripts/memory_context.py --recall --id obs-<slug>` (exacto,
+  fail-closed). Ejecutalo ANTES de medir o disenar.
+- **El archive portable se lee como UNION de MOTOR + root activo**, con cuota por
+  origen: la recencia no es relevancia, y sin cuota el repo tocado mas recientemente
+  expulsa al otro entero.
+- **El hook `SessionStart` inyecta el indice al abrir sesion.** La EXPANSION sigue
   siendo manual.
+- **La memoria PRIVADA de un backend no es autoritativa:** lo canonico es lo
+  versionado. Una leccion que solo vive en la memoria privada de un agente NO EXISTE
+  para el sistema.
 
-La jerarquia de tres niveles (L3 -> L2 -> L1) sigue existiendo, pero es el PASO 2
-de dos: primero el archive portable unido, despues el mejor tier local.
-Centralizado en `bus/memory_loader.py` para bootstrap, review bridge y
-pre-compact hook:
-
-- **L3 — `memory_profile.md`** (generado por `memory_consolidate.py --apply`): Perfil breve del proyecto con dominios activos, tickets referenciados y senales recientes. Cargado primero por `memory_loader.get_bootstrap_context()`.
-- **L2 — `memory_rules.md`** (generado por `memory_consolidate.py --apply`): Reglas deterministas organizadas por dominio, con IDs estables (R-XXX). Cargado por `memory_loader.get_review_context(domain)` para el review bridge.
-- **L1 — `observations.jsonl`**: Fuente de evidencia canonica. Contiene todas las observaciones persistentes. `memory_loader.recall_observations()` ofrece acceso directo con filtro opcional por keyword.
-- `MEMORY.md` es un indice humano acotado, con tope de 80 lineas. No es una fuente primaria.
-- `scripts/memory_consolidate.py` declara `MEMORY_MD_LINE_CAP = 80` y trunca el indice con un marcador visible cuando se supera el limite. Ademas genera L2 y L3 con `--apply`.
-- **Contrato de `MEMORY.md` (WOT-2026-074s): INDICE por topic, nunca volcado
-  completo de una senal.** `regen_memory_md` (`scripts/memory_consolidate.py`)
-  agrupa las entries por `topic`, lista cada topic bajo su propia seccion
-  `## <topic>` con hasta 10 entradas (las mas recientes), y cada `signal` se
-  trunca a `MAX_SIGNAL_MEMORY_MD` (200 caracteres) con marcador visible si se
-  corta -- el texto COMPLETO de la senal vive en `memory_rules.md` (L2) y en
-  `observations.jsonl` (L1), nunca en `MEMORY.md`. Un test que asertara "el
-  texto integro de la senal debe aparecer en MEMORY.md" estaria probando el
-  contrato EQUIVOCADO (volcado en vez de indice) -- origen de esta nota: un
-  test asi (`013e` del repo_destino `Crear_Texto_LLM`) fallo porque asumio esa
-  forma, y el fallo era del test, no del artefacto. Recibo re-ejecutable:
-  `python scripts/memory_consolidate.py --apply` deja un `MEMORY.md` de hasta
-  80 lineas con secciones `## <topic>` (indice), mientras la senal integra de
-  cada entrada nueva aparece en `memory_rules.md`.
-- `bus/memory_loader.py` es la unica puerta de entrada, y **cada puerta tiene su
-  propio tope, nunca uno global** (WOT-2026-057a): `get_bootstrap_context()`
-  (archive unido + tier local, CAPADO a un presupuesto de arranque),
-  `get_review_context(domain)` (por dominio y **SIN capar** -- un review decide
-  APPROVE/CHANGES y no puede perder lecciones; un cap filtrado ahi le costo al
-  Manager 14 de 74), `get_compact_context()` (capado por recencia con cuota por
-  origen, para el hook de pre-compact).
-- **La memoria PRIVADA de un agente no es autoritativa.** Cada backend (Claude Code, Kilo, Codex...) tiene su propio almacen personal, invisible para los demas y para el repo. Lo canonico es lo VERSIONADO: `archive/observations.YYYY-MM.jsonl`, este AGENTS.md, los prompts, las skills y los tests. Si una leccion solo vive en la memoria privada de un backend, para el sistema NO EXISTE.
-- **WOT-2026-024r (A1): el archive es la fuente portable de memoria, y el loader LA LEE.** `bus/memory_loader.py` incluye SIEMPRE las entradas de `archive/observations.YYYY-MM.jsonl` en el contexto de bootstrap, recorriendo TODOS los meses, no solo el actual. La precedencia es POR ENTRADA: ante colision de `id` estable gana la copia VIVA de L1, porque pudo editarse despues de archivarse. Antes de A1 el loader solo miraba L3/L2/L1 -- las tres gitignoradas --, asi que la memoria promovida se versionaba, viajaba por git y **no la leia nadie**; coste medido (2026-07-27): una leccion guardada dos veces se reincidio igual y destruyo 7 tests. No fue laguna de memoria: fue memoria escrita, versionada y no leida.
-- **Limites declarados de A1 (no son huecos, son alcance):** A1 NO cierra `WOT-2026-024r`. (a) La REGENERACION en bootstrap (quien invoca, cuando, idempotencia, y la reconciliacion con `memory_consolidate`, que hoy regenera L2 desde L1 viva y pierde reglas cuya fuente ya se archivo) es **A2**. (b) A1 **no filtra entradas refutadas**: el schema no tiene campo de vigencia y hay 12 entradas con refutacion en prosa; tocar el schema es NON-GOAL. (c) A1 **no promete portabilidad entre repos**: `scripts/install_agent_system.py` no propaga el `archive/` (0 menciones), asi que un destino nuevo arranca sin el -- eso es `WOT-2026-025o`.
+Arquitectura completa (jerarquia L3/L2/L1, `bus/memory_loader.py` y sus topes por
+puerta, contrato de `MEMORY.md`, historia A1/A2 y limites declarados) -- referencia
+bajo demanda, consulta al disenar o depurar el propio mecanismo de memoria:
+`.agent/rules/common/memory_hierarchy.md`.
 
 ## deliverable_type (work_plan schema, V2)
 
@@ -911,72 +842,44 @@ Cada `work_plan.md` declara `deliverable_type` en su sección Metadata. Valores:
 
 ### Contrato operativo por tipo de ticket
 
-El `deliverable_type` no es decorativo: cambia que evidencia debe producir el
-Builder y que debe auditar el Manager.
-
-- `code`: requiere diff/commit productivo del ticket, tests/ruff aplicables y
-  evidencia de gates en `execution_log.md`.
-- `mixed`: requiere el contrato de `code` mas existencia verificable de los
-  artefactos no-codigo declarados.
-- `documentation` / `research` / `analysis`: no debe exigirse commit de codigo
-  ni pytest/ruff salvo que el plan toque codigo. El cierre se basa en artefactos
-  documentales declarados y una linea de evidencia en `execution_log.md` que
-  combine artefacto y gate final, por ejemplo:
-  `Reporte .agent/runtime/compare/<archivo>.md creado. Validate: exit code 0, 0 errors, 0 warnings.`
-
-En tickets documentales, separa explicitamente las superficies:
-- `Builder`: archivos que debe crear o modificar y que cuentan como entregables.
-- `Read/inspect only`: fuentes que puede leer pero no deben contar como
-  entregables ni como scope productivo.
-- `Manager-only`: gates o revisiones que ejecuta el Manager y no el Builder.
-
-Si el plan mezcla estas superficies, `check_deliverables_exist.py` puede bloquear
-el handoff o validar una evidencia equivocada. El plan debe dejar claro que existe
-en disco al final y que solo era contexto.
+El `deliverable_type` no es decorativo: cambia que evidencia debe producir el Builder y que debe
+auditar el Manager. Detalle (referencia bajo demanda, consulta al redactar o revisar un
+`work_plan.md`): `.agent/rules/common/deliverable_type_dispatch.md`.
 
 ## Quality gates dispatch by deliverable_type (WP-2026-089)
 
-`builder-run-quality-gates` invoca ahora `scripts/run_gates_dispatch.py` que lee `deliverable_type` del work_plan activo y dispatchea:
-
-- `code` / fallback → ruff + pytest-safe + pip-audit (condicional)
-- `mixed` → ambos sets (code gates + deliverable existence check)
-- `documentation` / `research` / `analysis` → solo deliverable existence check
-
-**Conditional pip-audit policy (WP-2026-092)**:
-Para los perfiles `code` y `mixed`, `pip-audit` se ejecutará de forma exclusiva cuando la lista `Files Likely Touched` dentro de `work_plan.md` incluya un archivo de manifiesto de dependencias (`pyproject.toml`, `uv.lock`, `requirements.txt`, etc). Si no hay cambios en la superficie de dependencias, la política emitirá un salto auditable, reduciendo latencia.
-
-**Pre-commit Ruff Scope Guard (WP-2026-093)**:
-Para evitar regresiones o cambios accidentales en `.pre-commit-config.yaml` que expandan el alcance de `ruff` y causen falsos positivos en tickets no-código (Markdown, documentación, análisis, etc.), se implementa `scripts/check_ruff_hook_scope.py`. Este script verifica que los hooks `ruff-check` y `ruff-format` permanezcan limitados estrictamente a Python (`types: [python]` o `files: \.py$`). Cualquier desviación detiene las gates de pytest inmediatamente.
-
-El dispatcher, sus políticas y guardias son stdlib only; no añaden dependencias.
+`builder-run-quality-gates` despacha los gates segun el `deliverable_type` del work_plan activo
+via `scripts/run_gates_dispatch.py`: `code`/fallback -> ruff + pytest-safe + pip-audit
+(condicional); `mixed` -> ambos sets (code gates + deliverable existence check);
+`documentation`/`research`/`analysis` -> solo deliverable existence check. `pip-audit` solo corre
+si `Files Likely Touched` (en `work_plan.md`) incluye un manifiesto de dependencias (si no, salto
+auditable). Los hooks `ruff-check`/`ruff-format` deben seguir limitados estrictamente a Python
+(`scripts/check_ruff_hook_scope.py`); cualquier desviacion detiene inmediatamente las gates de
+pytest. Dispatcher, politicas y guardias: stdlib only; no anaden dependencias. Detalle
+(referencia bajo demanda): `.agent/rules/common/deliverable_type_dispatch.md`.
 
 ## Host-first skill precedence & Config Profiles (WP-2026-090)
 
-- **Host-first precedence**: Cuando el bundle `orquestador_de_agentes` se instala en un proyecto de destino (host), las skills definidas en el host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre las homónimas del bundle (`orquestador_de_agentes/skills/`). El bundle actúa estrictamente como un fallback determinista.
-- **Config Profiles**: `agents.json` define `"active_profile"`. El repo local de desarrollo usa `"engine-dev"`. El instalador `install_agent_system.py` cambia automáticamente este valor a `"host-project"` en el destino durante `--install` o `--sync`.
+En un destino, las skills del host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre
+las homonimas del bundle, que actua solo como fallback determinista. `agents.json` define
+`active_profile`: `engine-dev` en el motor; `install_agent_system.py` lo cambia a `host-project`
+en el destino durante `--install`/`--sync`. Detalle (referencia bajo demanda):
+`.agent/rules/common/host_install_integration.md`.
 
 ## Host setup hook (WP-2026-094)
 
-El proyecto destino puede declarar un script ejecutable `.agent/host-setup.sh`
-(o `.ps1` en Windows) que `scripts/install_agent_system.py` detecta tras la
-copia del bundle. Comportamiento:
-
-- Si el hook existe: el instalador muestra las primeras 20 líneas + pide
-  confirmación humana (`y/N`) antes de ejecutarlo. `--yes` salta el prompt.
-- Si el hook devuelve exit != 0: el install aborta y propaga el código.
-- Si el hook no existe: silencio (backward-compat absoluto).
-
-Plantillas: `.agent/host-setup.sh.example` / `.agent/host-setup.ps1.example`.
-Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
+Si el destino declara un script ejecutable `.agent/host-setup.sh`/`.ps1`,
+`scripts/install_agent_system.py` lo detecta tras la copia del bundle, muestra sus primeras 20 lineas y
+solo lo ejecuta con confirmacion humana (`y/N`; `--yes` la salta); exit != 0 aborta el install y
+propaga el codigo; sin hook, silencio. Detalle (referencia bajo demanda):
+`.agent/rules/common/host_install_integration.md`.
 
 ## Pluggable manager review rubric by deliverable_type (WP-2026-091)
 
-- **Pluggable Prompts**: El Review Bridge (`bus/review_bridge.py`) lee el campo `deliverable_type` del plan de trabajo activo. En lugar de utilizar un prompt único y ciego, adapta el prompt de revisión enviado al backend OpenCode Manager:
-  - `code`: Verifica la correctitud del código, cobertura de tests y estándares de estilo.
-  - `mixed`: Combina la verificación técnica de código con la revisión estructural y exhaustiva de todos los entregables no-código declarados.
-  - `documentation` / `research` / `analysis`: Enfoca la revisión del Manager estrictamente en la claridad, profundidad, calidad e integridad estructural de los entregables documentales correspondientes, omitiendo criterios de código irrelevantes.
-- **Salida formal**: Se conserva estrictamente el contrato canónico de salida (`DECISION: APPROVE` o `DECISION: CHANGES`) para mantener la interoperabilidad total del bus de eventos y la máquina de estados.
-- **Fallback**: Si `deliverable_type` no está declarado o contiene un tipo desconocido, se activa un fallback seguro y automático a la estrategia `code`.
+`bus/review_bridge.py` adapta el prompt de review del Manager al `deliverable_type` del plan
+(tipo ausente o desconocido: fallback seguro y automatico a `code`) y conserva intacta la salida
+canonica `DECISION: APPROVE` / `DECISION: CHANGES` (interoperabilidad con el bus y la maquina de
+estados). Detalle (referencia bajo demanda): `.agent/rules/common/deliverable_type_dispatch.md`.
 
 ## Secretos y seguridad
 
@@ -1005,10 +908,11 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
 
 ## Robust Builder Relaunch (WP-2026-084)
 
-- **Liveness check**: El supervisor verifica si el Builder está vivo via PID + `tasklist` (Windows) antes de relanzar tras un CHANGES. Fallback: mtime <15 min.
-- **Flag `-ResumeBuilder`**: Launcher lo recibe del supervisor en requeue. Skip cleanup agresivo (`Stop-ProjectAgentProcesses`, `Remove-StaleRuntimeArtifacts`, `Assert-StartupAlignment`) para no matar Builder vivo.
-- **ADITIVIDAD**: Launcher sin `-ResumeBuilder` (primera apertura) comporta igual que antes. Cero regresión.
-- **Diagnóstico**: Supervisor captura stdout/stderr del launcher si falla, loggea a stderr con prefijo `[ticket-supervisor]`.
+Tras un CHANGES, el supervisor verifica que el Builder siga vivo (PID + `tasklist`; fallback
+mtime <15 min) antes de relanzar y pasa `-ResumeBuilder` al launcher, que entonces salta el
+cleanup agresivo para no matar un Builder vivo; sin el flag, el launcher se comporta igual que
+antes (aditivo, cero regresion). Detalle (referencia bajo demanda):
+`.agent/rules/common/builder_relaunch.md`.
 
 ## Criterio de cierre
 
