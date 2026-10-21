@@ -15,8 +15,8 @@ ningun guard periodicamente re-mide los gates Codex (32768 B) y Claude Code (400
 ## Criterio de cierre
 
 Un script de revision periodica (cron, GitHub Action, o hook) que re-mida los gates de
-pasada 2 (77372/79288 -> 60420/62343 tras movidas y reparacion) y alerte si la cuspite vuelve a
-superar los umbrales. Ratio Codex: 1.84x. Ratio Claude: 1.56x.
+pasada 2 (77372/79288 -> 61047/62970 tras movidas y reparacion) y alerte si la cuspite vuelve a
+superar los umbrales. Ratio Codex: 1.86x. Ratio Claude: 1.57x.
 
 ## Estado_FRESCO (2026-10-21)
 
@@ -24,7 +24,7 @@ superar los umbrales. Ratio Codex: 1.84x. Ratio Claude: 1.56x.
 ESTADO_FRESCO: raiz=C:\Users\fdl\.t3\worktrees\orquestador_de_agentes\FDL32-agents-md-optimization-cont, HEAD=d640dca5, dirty=2, verificado=2026-10-21T06:22 (hora local del host)
 ```
 
-- Pasada 2 movio ~17 KB netos. Cuspite actual: 60420 B / 62343 C (medido en `cb71b83c`).
-- Gates actuales: 60420/32768 = **1.84x** (Codex), 62343/40000 = **1.56x** (Claude Code).
+- Pasada 2 movio ~17 KB netos. Cuspite actual: 61047 B / 62970 C (medido en `1f0dbcab`).
+- Gates actuales: 61047/32768 = **1.86x** (Codex), 62970/40000 = **1.57x** (Claude Code).
 - Ambas cifras siguen por encima de los gates -> deuda ABIERTA.
 - Palanca A (AGENTS.md anidados) se requiere para cerrar ambos gates (definido en contrato).
