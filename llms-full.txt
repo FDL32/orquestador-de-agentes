@@ -438,7 +438,7 @@ Builder SI es el unico verificador legitimo de `--level all`.
 #### Push por vuelo: UN solo push al final de TODOS los tickets (2026-10-19)
 
 - DECISION DE PROCESO: la publicacion se difiere al final del vuelo, nunca por ticket (2026-10-19).
-  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: prompts/orchestrator_session_bootstrap.md:314 (UN solo push al final de la cola, con OK humano explicito), prompts/orchestrator_pipeline_codeonly.md:199 (Push AGRUPADO al final de sesion ... NO push por ticket) y prompts/manager_orchestrator_loop_backlog.md:455 (informe antes del push).
+  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: `prompts/orchestrator_session_bootstrap.md:314` ("UN solo push al final de la cola, con OK humano explicito"), `prompts/orchestrator_pipeline_codeonly.md:199` ("Push AGRUPADO al final de sesion ... NO push por ticket") y `prompts/manager_orchestrator_loop_backlog.md:455` (informe antes del push). Esta seccion EXTIENDE esa regla a todo vuelo multi-ticket; no la inventa.
 
 **La publicacion es una accion del VUELO, no del ticket.** Ver detalles, fallos medidos y contract en `.agent/rules/common/flight_push_policy.md`.
 - **NO se pushea entre tickets** (mismo logico que `batch-agrupar-preguntas-antes-de-arrancar`).
@@ -557,7 +557,7 @@ medirse):
 - El archivador es idempotente: segunda ejecucion = no-op.
 - Usa `--dry-run` para previsualizar sin modificar, `--list-active` para ver archivos activos.
 
-## Superficies vivas vs historicas en .agent/collaboration/ (WP-2026-107)
+## Superficies vivas vs historicas en `.agent/collaboration/` (WP-2026-107)
 
 Ver las superficies vivas NO archivables y la regla de limpieza en .agent/rules/common/collaboration_live_surfaces.md.
 
@@ -621,7 +621,7 @@ Referencia ampliada: `.agent/rules/common/sustainable_engineering.md`.
 
 ## Hacer ahora vs aplazar (criterio de decision)
 
-El coste de APLAZAR **no es cero**. Ver criterio completo de 8 gates, balanza minima, STOP de degeneracion y dos reglas durables en .agent/rules/common/do_now_vs_defer.md.
+El coste de APLAZAR **no es cero**. **Cada gate se responde con un ARTEFACTO, no con un juicio.** Ante duda no resuelta POR EVIDENCIA, **aplazar gana**. Ver criterio completo de 8 gates, balanza minima, STOP de degeneracion y dos reglas durables en .agent/rules/common/do_now_vs_defer.md.
 
 ## Skills Formales de Proceso
 
@@ -635,7 +635,11 @@ No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir
 
 ### Gobierno skill<->prompt: skill apunta, prompt gobierna (WOT-2026-014r / X-09)
 
-Ver criterio de re-declaracion prohibido, auditoria automatica y matriz de ownership en .agent/rules/common/x09_skill_prompt_governance.md.
+PROHIBIDO re-declarar criterios normativos (gates, veredictos, estados, barreras) en la `SKILL.md`: viven una vez en el prompt y la skill remite. Ver criterio de re-declaracion prohibido, auditoria automatica y matriz de ownership en .agent/rules/common/x09_skill_prompt_governance.md.
+
+### Gobierno prompt-hijo<->prompt-nucleo: extension de X-09 un nivel arriba (2026-10-08)
+
+El prompt-hijo REMITE a las secciones del nucleo que coinciden en OBJETO, no las REDECLARA en prosa paralela. Detalle y caso medido en .agent/rules/common/x09_skill_prompt_governance.md.
 
 ## Atribuciones externas (CREDITS.md)
 

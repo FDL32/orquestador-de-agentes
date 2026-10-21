@@ -55,7 +55,8 @@ During: no escribe nada en pre-commit/commit-msg. En post-commit, y solo si el
     local. Todo git va por `subprocess.run` con lista de argumentos, nunca por
     shell.
 After: exit 0 en el camino silencioso y en todas las fases no bloqueantes;
-    exit 1 SOLO en commit-msg con growth sobre-ratio sin override valido. Ante
+    exit 1 SOLO en commit-msg con growth Y ambos ratios post <= 1.0x (el override
+    no exceptua). Ante
     un error propio (git no disponible, blob ilegible, mensaje ausente) degrada
     a exit 0 con diagnostico en stderr, precedente de
     `scripts/check_commit_message_encoding.py:158-165`: bloquear cada commit
@@ -302,7 +303,8 @@ def verdict_growth(pre: Metrics, post: Metrics) -> Growth:
     Before: `pre` y `post` son snapshots de la misma fuente del grafo.
     During: calcula deltas y compara ENTEROS contra los caps (`> 1.0x` es
         equivalente exacto a `X > gate`, sin ruido de punto flotante).
-    After: devuelve Growth; `over_cap` es la unica condicion bloqueante.
+    After: devuelve Growth; `over_cap` (algun ratio > 1.0x) degrada a WARN;
+        el BLOQUEO lo decide `_run_commit_msg` (grew y no over_cap).
     """
     delta_bytes = post.agents_bytes - pre.agents_bytes
     delta_chars = post.claude_chars - pre.claude_chars
