@@ -542,6 +542,66 @@ def _cap_preserving_origins(
     return _cap_by_recency(picked, cap)
 
 
+def _build_header_line(
+    total: int,
+    shown: int,
+    origin_breakdown: dict[str, int] | None = None,
+) -> list[str]:
+    """Build the header lines for the archive index.
+
+    WOT-2026-112a (D1b): the header names both surfaces (motor / destino) with
+    their per-origin counts, states the union invariant, and emits an explicit
+    warning when ``AGENT_PROJECT_ROOT`` is not set and the destination surface
+    is absent (code-only mode). The warning is informational, not a gate.
+
+    Before: ``total`` is the number of lessons that travel, ``shown`` is how
+        many are visible in the index; ``origin_breakdown`` is optional.
+    During: pure formatting, no I/O, no env lookups inside the function itself.
+    After: returns 3..4 markdown lines (the header lines only, no the "#
+        Portable Memory" title).
+    """
+    parts: list[str] = []
+    if origin_breakdown is not None:
+        motor_count = origin_breakdown.get("motor", 0)
+        destino_count = origin_breakdown.get("destino", 0)
+        # State the union invariant: the total is a UNION deduplicated, not a
+        # simple sum. The sum of both surfaces BEFORE dedup; the total printed
+        # is what actually exists after dedup.
+        parts.append(
+            f"{total} lesson(s) travel with this repo (UNION deduplicated; "
+            f"motor={motor_count}, destino={destino_count}); "
+            f"showing the {shown} newest."
+        )
+    else:
+        parts.append(
+            f"{total} lesson(s) travel with this repo; showing the {shown} newest."
+        )
+
+    # Warn (not gate) when AGENT_PROJECT_ROOT is not set and the destination
+    # surface is absent: the active root is the only surface loaded (code-only
+    # mode). A cold agent reading only one archive may be blind to half the
+    # memory; this lets it detect the gap without blocking.
+    import os
+
+    warning_lines: list[str] = []
+    if (
+        origin_breakdown is not None
+        and not os.environ.get("AGENT_PROJECT_ROOT")
+        and origin_breakdown.get("motor", 0) == 0
+    ):
+        # No motor-tagged entries and no AGENT_PROJECT_ROOT means the active
+        # root is the only surface (it IS the motor). The destination archive
+        # is not loaded.
+        warning_lines.append(
+            "WARNING: AGENT_PROJECT_ROOT is not set and the destination "
+            "surface is absent (code-only mode). Some memory may be "
+            "unavailable. Set AGENT_PROJECT_ROOT to the active project "
+            "root to load the full memory union."
+        )
+
+    return parts + warning_lines
+
+
 def _format_archive_as_text(
     observations: list[dict[str, Any]],
     cap: int | None = None,
@@ -596,12 +656,18 @@ def _format_archive_as_text(
     active entry" is a testable position claim, not a label on an otherwise
     identical line.
 
+    WOT-2026-112a (D1b): the header names both surfaces (motor / destino) with
+    their per-origin counts and emits an explicit warning when
+    ``AGENT_PROJECT_ROOT`` is not set and the destination surface is absent
+    (code-only mode). The warning is informational, not a gate.
+
     Before: ``observations`` may be empty.
     During: pure formatting, no I/O.
     After: returns markdown, or ``""``. Truncated entries carry both the marker
         and their ``id``; entries under the cap are emitted whole. Refuted or
         superseded entries never occupy a ``shown`` slot; they are listed
         after the main index, each prefixed with its status marker.
+        The header declares the union invariant with per-origin counts.
     """
     if not observations:
         return ""
@@ -609,7 +675,7 @@ def _format_archive_as_text(
     # `_cap_preserving_origins`, que documenta por que su propio filtro de
     # plantillas se aplica DENTRO de cada grupo (un origen 100% plantillas no
     # debe vaciarse antes de que la cuota lo proteja). Un origen cuyas
-    # entradas fueran TODAS refuted/superseded compartiria ese mismo riesgo
+    # entradas fueran TODAS refuted/superseded compartirian ese mismo riesgo
     # (desaparecer en vez de degradarse). No observado en el corpus real
     # (medido 2026-10-09: 0 entradas con status todavia) y la guarda `or
     # entries` de esa funcion ya cubre el caso "grupo vacio tras filtrar" --
@@ -618,14 +684,29 @@ def _format_archive_as_text(
     stale = [o for o in observations if o.get("status") in _STALE_STATUSES]
     total = total_override if total_override is not None else len(observations)
     shown = vigent if cap is None else _cap_preserving_origins(vigent, cap)
+    # WOT-2026-112a (D1b): compute per-origin counts from the tagged union.
+    _origin_counts: dict[str, int] = {}
+    for _o in vigent:
+        _orig = str(_o.get("_origin") or "local")
+        _origin_counts[_orig] = _origin_counts.get(_orig, 0) + 1
+    # Normalise key names to the vocabulary the header uses.
+    if "motor" not in _origin_counts and "local" in _origin_counts:
+        _origin_counts["motor"] = _origin_counts.pop("local")
+    header_lines = _build_header_line(
+        total, len(shown), _origin_counts if _origin_counts else None
+    )
     lines = [
         "# Portable Memory (tracked archive)",
         "",
-        f"{total} lesson(s) travel with this repo; showing the {len(shown)} newest.",
-        "Entries marked [truncated] are INDEX LINES, not the whole lesson:",
-        "expand with `python scripts/memory_context.py --recall --query <topic>`.",
-        "",
     ]
+    lines.extend(header_lines)
+    lines.extend(
+        [
+            "Entries marked [truncated] are INDEX LINES, not the whole lesson:",
+            "expand with `python scripts/memory_context.py --recall --query <topic>`.",
+            "",
+        ]
+    )
     lines.extend(_format_archive_line(obs) for obs in shown)
     if total - len(shown) - len(stale) > 0:
         lines.append("")
