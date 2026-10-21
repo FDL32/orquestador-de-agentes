@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Prepara un bundle reproducible para `claude -p` / `claude --cloud`.
+"""Prepara un bundle reproducible y el runbook de una sesion cloud.
 
 Before: el llamante tiene un repo git y una descripcion de tarea.
 During: construye `.agent/cloud_bundle.md` con contexto + tarea + criterios,
-    calcula su SHA-256 y escribe `.agent/cloud_manifest.json` con commit,
-    rama, modelo, tool policy y hash. No toca el repo ni la red.
-After: los dos ficheros quedan escritos; imprime los comandos exactos para
-    `claude -p` (local) y `claude --cloud` (manual) / follow-up
-    `claude -p --cloud <session_id>`.
+    calcula su SHA-256 y escribe `.agent/cloud_manifest.json` con task_id,
+    commit, rama de trabajo, modelo, tool policy y hash. No toca el repo ni la
+    red.
+After: los dos ficheros quedan escritos; imprime un runbook de una accion por
+    linea para crear la rama, lanzar `claude --cloud` (creacion manual, TTY) y
+    el comando de follow-up programatico `claude -p --cloud <session_id>`.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -40,25 +42,38 @@ def _git_value(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _slug(value: str) -> str:
+    """Slug estable para task_id/branch (minusculas, guiones)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug[:48] or "cloud-task"
+
+
 def build_bundle(
-    task: str, commit: str, branch: str, model: str, allowed_tools: str
+    task: str,
+    task_id: str,
+    commit: str,
+    branch: str,
+    model: str,
+    allowed_tools: str,
 ) -> str:
     """Construye el markdown del bundle (determinista salvo el timestamp)."""
     return (
         "# Cloud bundle\n\n"
+        f"- task_id: {task_id}\n"
         f"- Tarea: {task}\n"
-        f"- Commit: {commit}\n"
-        f"- Rama: {branch}\n"
+        f"- Commit base: {commit}\n"
+        f"- Rama de trabajo: {branch}\n"
         f"- Modelo: {model}\n"
         f"- Tools permitidas: {allowed_tools}\n"
         f"- Generado: {datetime.now(timezone.utc).isoformat()}\n\n"
         "## Instrucciones\n\n"
         "1. Lee este bundle completo antes de actuar.\n"
-        "2. Inspecciona el repo en el commit indicado.\n"
-        "3. Ejecuta la tarea con las tools permitidas.\n"
-        "4. Devuelve un informe con: cambios, evidencia (comandos/exit codes), "
+        f"2. Trabaja SOLO en la rama `{branch}`. No toques `main`.\n"
+        "3. Inspecciona el repo en el commit base indicado.\n"
+        "4. Ejecuta la tarea con las tools permitidas.\n"
+        "5. Devuelve un informe con: cambios, evidencia (comandos/exit codes), "
         "riesgos y siguiente paso.\n"
-        "5. No commitees ni pushees sin autorizacion explicita.\n\n"
+        "6. No commitees ni pushees sin autorizacion explicita.\n\n"
         "## Tarea\n\n"
         f"{task}\n"
     )
@@ -68,25 +83,36 @@ def main(argv: list[str] | None = None) -> int:
     """Punto de entrada CLI."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", required=True, help="Descripcion de la tarea")
+    parser.add_argument("--task-id", help="ID estable (default: slug de --task)")
     parser.add_argument("--repo", default=".", help="Raiz del repo (default: .)")
     parser.add_argument("--output", default=".agent/cloud_bundle.md")
     parser.add_argument("--manifest", default=".agent/cloud_manifest.json")
     parser.add_argument("--model", default="sonnet")
     parser.add_argument("--allowed-tools", default="Read,Grep,Glob")
+    parser.add_argument(
+        "--branch",
+        help="Rama de trabajo (default: cloud/<task-id>)",
+    )
     args = parser.parse_args(argv)
 
     repo = Path(args.repo).resolve()
+    task_id = args.task_id or _slug(args.task)
+    branch = args.branch or f"cloud/{task_id}"
     commit = _git_value(repo, "rev-parse", "HEAD")
-    branch = _git_value(repo, "rev-parse", "--abbrev-ref", "HEAD")
-    bundle = build_bundle(args.task, commit, branch, args.model, args.allowed_tools)
+    base_branch = _git_value(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    bundle = build_bundle(
+        args.task, task_id, commit, branch, args.model, args.allowed_tools
+    )
     bundle_path = repo / args.output
     manifest_path = repo / args.manifest
     bundle_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     bundle_path.write_text(bundle, encoding="utf-8", newline="\n")
     manifest = {
+        "task_id": task_id,
         "task": args.task,
         "commit": commit,
+        "base_branch": base_branch,
         "branch": branch,
         "model": args.model,
         "allowed_tools": args.allowed_tools,
@@ -99,23 +125,28 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf-8",
         newline="\n",
     )
+    short_sha = manifest["bundle_sha256"][:8]
     print(f"[OK] bundle: {bundle_path}")
     print(f"[OK] manifest: {manifest_path}")
+    print(f"[OK] task_id: {task_id}")
+    print(f"[OK] branch: {branch}")
     print(f"[OK] sha256: {manifest['bundle_sha256']}")
     print()
-    print("Local (claude -p):")
+    print("Runbook (una accion por linea):")
+    print(f"1. cd {repo}")
+    print(f"2. git switch -c {branch}  # o git switch {branch} si ya existe")
+    print(f"3. git push -u origin {branch}")
+    print("4. Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue")
     print(
-        f'claude -p --output-format json --append-system-prompt-file "{bundle_path}" '
-        f'--model {args.model} "Ejecuta la tarea del bundle"'
+        f'5. claude --cloud "Lee {bundle_path.relative_to(repo)} '
+        f'(sha256 {short_sha}), trabaja en {branch}, no toques main"'
     )
+    print("6. Copia la URL de la sesion que muestra y pegala al agente.")
     print()
-    print("Cloud (manual, TTY):")
-    print(f'claude --cloud "Lee {bundle_path} y ejecuta la tarea"')
-    print()
-    print("Cloud follow-up (programatico):")
+    print("Follow-up programatico (cuando el agente tenga el session_id):")
     print(
-        "claude -p --cloud <session_id> --output-format json "
-        '"Continua con la tarea del bundle"'
+        f"claude -p --cloud <session_id> --output-format json "
+        f'"Continua la tarea {task_id} del bundle (sha256 {short_sha})"'
     )
     return 0
 

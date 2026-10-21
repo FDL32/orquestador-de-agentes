@@ -53,8 +53,10 @@ def test_prepare_cloud_bundle_writes_bundle_and_manifest(tmp_path):
 
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["task"] == "revisar README"
+    assert data["task_id"] == "revisar-readme"
     assert data["commit"] == _git(repo, "rev-parse", "HEAD")
-    assert data["branch"] in {"main", "master"}
+    assert data["base_branch"] in {"main", "master"}
+    assert data["branch"] == "cloud/revisar-readme"
     assert data["model"] == "sonnet"
     assert data["allowed_tools"] == "Read,Grep,Glob"
     assert data["bundle"] == ".agent/cloud_bundle.md"
