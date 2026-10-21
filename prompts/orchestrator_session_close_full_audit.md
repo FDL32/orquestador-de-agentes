@@ -121,11 +121,30 @@ Ejecuta en este orden y reporta por bloque:
    - `motor_destination_link.json` es UNTRACKED, machine-specific y de runtime -- no es un artefacto versionado. **NO lo leas desde `repo_motor`**: puede no existir (worktree de trabajo) o existir STALE (el principal lo tiene de otra epoca, apuntando a si mismo). Leerlo del sitio equivocado no falla: acierta con datos caducados. Resuelve SIEMPRE por `AGENT_PROJECT_ROOT` o por el `--project-root` del cierre; si usas el link, usa el del **workspace activo** y comprueba que su `motor_root` apunta al checkout donde de verdad se commitea.
    - El motor no versiona artefactos de sesion ni output de auditorias (**WOT-2026-024o**, que ABSORBIO a 024y el 2026-07-15: eran el mismo trabajo sobre la misma superficie). Probe: `git ls-files destinos/ .agent/runtime/reviews/ .agent/runtime/audit/` -> **0 lineas**. Trackeado == publicado.
      (WOT-2026-024o cerrado 2026-07-15, commit 2480116: `destinos/pii-path-audit/INVENTARIO_PII_RUTAS.md` -- el unico fichero bajo `destinos/` -- se movio integro al `_archive` del workspace y el directorio se retiro. Este probe ya sale VERDE.)
-   - Topologia: **DOS worktrees de UN repo + UN repo SEPARADO** (no "3 worktrees"). Verificalo, no lo asumas: `git worktree list` + `git remote get-url origin`.
-     - `<repo_motor>` (worktree de trabajo) -> en `main`, aqui se commitea. Su `.git` es un FICHERO gitlink.
-     - `<principal>` -> worktree DETACHED (solo consumo; un commit ahi cuelga de ningun branch). Es el checkout que POSEE el `<common-git-dir>`: los hooks de AMBOS worktrees viven ahi.
-     - `<workspace_activo>` -> **repositorio INDEPENDIENTE** (su propio origin, distinto del motor; su propio `.git`, `main` y HEAD). NO comparte common-git-dir: sus hooks son suyos. `sync_principal.py` NO lo gobierna.
-     El `<principal>` STALE frente a `origin/main` es NORMAL entre syncs: lo sincroniza `sync_principal.py`, su primera barrera. NO lo "arregles" poniendolo en una rama. Pero OJO: un guard corrido DESDE el principal stale audita codigo viejo (ver 3.4).
+   - Topologia (corregido 2026-10-21, bucle de gobierno 4 lentes independientes -- la cifra fija
+     de abajo quedo obsoleta frente a WOT-2026-104f, norma de aislamiento por worktree adoptada
+     2026-10-18): **N worktrees de UN repo (uno por sesion/agent-workspace activo que escribe
+     codigo en el motor, regla WOT-2026-104f) + UN repo SEPARADO** (el `<workspace_activo>`). YA
+     NO es una cifra fija de "DOS worktrees": medido en vivo con `git worktree list` el
+     2026-10-21, 30 entradas en total para el repo motor (incluyendo `<principal>` y el worktree
+     legacy `_dev`). Verificalo SIEMPRE con `git worktree list` + `git remote get-url origin`,
+     declarando si tu cifra incluye o excluye `<principal>`/`_dev` -- el numero cambia con cada
+     sesion que abre o cierra su propio worktree, nunca lo des por una cifra fija ni por la de
+     esta nota.
+     - `<repo_motor>` (el worktree que estas usando, uno de los N) -> en `main` o tu rama de
+       sesion, aqui se commitea. Su `.git` es un FICHERO gitlink.
+     - `<principal>` -> worktree de CONSUMO (deberia estar DETACHED; un commit ahi no cuelga de
+       ningun branch). Es el checkout que POSEE el `<common-git-dir>`: los hooks de TODOS los
+       worktrees viven ahi. Si lo encuentras en una rama real (no detached), es posible senal de
+       incumplimiento del invariante de consumo de esta seccion (y de WOT-2026-104f si esa sesion
+       esta escribiendo codigo ahi en vez de en su propio worktree) -- reportalo, no lo "arregles"
+       tu poniendolo en detached sin mas contexto (podrias pisar trabajo ajeno).
+     - `<workspace_activo>` -> **repositorio INDEPENDIENTE** (su propio origin, distinto del
+       motor; su propio `.git`, `main` y HEAD). NO comparte common-git-dir: sus hooks son suyos.
+       `sync_principal.py` NO lo gobierna.
+     El `<principal>` STALE frente a `origin/main` es NORMAL entre syncs: lo sincroniza
+     `sync_principal.py`, su primera barrera. Pero OJO: un guard corrido DESDE el principal stale
+     audita codigo viejo (ver 3.4).
    - Reporta cada punto como VERIFICADO (con el comando) o NO VERIFICADO. Un hardcode en un fichero que VIAJA es bloqueante: contamina a todos los destinos.
 
 3.6 OPTIMIZACION DE SUITE (opcional, solo si la evidencia lo pide). NO es parte del cierre obligatorio: es una capacidad que el cierre PUEDE disparar cuando la telemetria justifica el gasto.
