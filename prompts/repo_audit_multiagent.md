@@ -248,7 +248,7 @@ auditado):**
   | `id` (H-NN) | obligatorio |
   | `categoria` (UNA del enum cerrado de arriba, sin texto adicional) | obligatorio |
   | `calificador` (matiz libre: `falso-positivo deadcode`, `dev-only`...) | opcional |
-  | `archivo` + `linea/rango` | obligatorio |
+  | `archivo` + `linea/rango` | obligatorio (con `alcance` = `modulo`: solo `archivo`, sin linea) |
   | `alcance` (`simbolo` o `modulo`; ausente = `simbolo`) | opcional |
   | `evidencia` (`archivo:linea` o `archivo:rango` + comando reproducible) | obligatorio |
   | `confianza` (1-5 capas del gate de sostenibilidad) | obligatorio para DEAD |
@@ -572,10 +572,12 @@ Devuelve un unico Markdown con esta estructura:
 ### 1. Resumen Ejecutivo
 
 - commit auditado, ambito (`motor`/`destino`), lanes censados
-- numero total de hallazgos por categoria y severidad
+- numero total de hallazgos por categoria (la severidad ya va dentro del enum:
+  `SECURITY-alta`, `SECURITY-baja`...)
 - veredicto_adversarial agregado: N confirmados, N disputados, N refutados, N diferidos
 - el bloque `<!-- TALLY: {...} -->` emitido por `check_audit_report.py --emit-tally`
-  (claves: `total`, `por_categoria` con las categorias del enum, `veredictos`
+  (claves: `total`, `por_categoria` con las categorias del enum (una fila fuera del enum sale como
+  `SIN-ENUM` y es un ERROR a corregir, no una categoria valida), `veredictos`
   con `confirmado`/`disputado`/`refutado`/`diferido_no_loop`); las cifras de
   los puntos anteriores se COPIAN de ese bloque
 - 3-5 conclusiones de mayor impacto

@@ -35,8 +35,9 @@ GFM; las columnas se leen POR NOMBRE de cabecera: `id`, `categoria`,
 `archivo`/`archivo:linea`, opcionalmente `calificador` y `alcance`). Parsing
 deliberadamente TOLERANTE: una fila sin ancla reconocible no bloquea el resto,
 se reporta aparte como "sin fingerprint" y pasa intacta (no se puede dedupear
-lo que no se puede anclar). Limite declarado: una celda con `|` literal
-(aunque este entre backticks) parte la fila; evitala en las tablas de hallazgos.
+lo que no se puede anclar). Un `|` literal en una celda se escribe `\\|` (como en
+GFM); sin escapar, aunque este entre backticks, parte la fila y el validador lo
+avisa como `FILA-ANCHO`.
 
 Before: uno o mas paths a `HALLAZGOS_*.md` existentes, legibles en UTF-8.
 During: parseo de tablas por cabecera, sin red, sin subprocess, sin escritura
@@ -52,6 +53,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 
@@ -76,7 +78,10 @@ ALCANCES = ("simbolo", "modulo")
 ID_CANONICO_RE = re.compile(r"H-\d+")
 ARCHIVO_LINEA_RE = re.compile(r"`?([^`:,\s]+\.\w+)[:,](\d+)")
 ARCHIVO_RE = re.compile(r"`?([^`:,\s]+\.\w+)")
-_SEPARADOR_CELDA_RE = re.compile(r"^:?-{2,}:?$")
+_SEPARADOR_CELDA_RE = re.compile(r"^:?-+:?$")
+_PIPE_NO_ESCAPADO_RE = re.compile(r"(?<!\\)\|")
+_BOM = chr(0xFEFF)
+_FENCES = ("```", "~~~")
 
 
 def _normaliza_archivo(archivo: str) -> str:
@@ -117,7 +122,9 @@ def _celdas(linea: str) -> list[str] | None:
     s = s[1:]
     if s.endswith("|"):
         s = s[:-1]
-    return [c.strip() for c in s.split("|")]
+    # `\|` es un pipe LITERAL en GFM (p.ej. `git grep "a\|b"` en una celda de
+    # evidencia): no parte la celda y se entrega ya sin la barra de escape.
+    return [c.strip().replace("\\|", "|") for c in _PIPE_NO_ESCAPADO_RE.split(s)]
 
 
 def _es_separador(celdas: list[str] | None) -> bool:
@@ -126,6 +133,11 @@ def _es_separador(celdas: list[str] | None) -> bool:
 
 def _norm_col(nombre: str) -> str:
     n = nombre.strip().strip("`*").lower()
+    # `categoría` (con acento) debe leerse igual que `categoria`: si no, la tabla entera
+    # deja de reconocerse como tabla de hallazgos y su censo desaparece sin aviso.
+    n = "".join(
+        c for c in unicodedata.normalize("NFKD", n) if not unicodedata.combining(c)
+    )
     return "archivo" if n.startswith("archivo") else n
 
 
@@ -137,16 +149,28 @@ def parse_tablas(contenido: str, fuente: str) -> list[dict]:
         separadora; las columnas se nombran por la cabecera normalizada
         (`archivo:linea` -> `archivo`). El ultimo encabezado `#` visto queda
         como `seccion` de cada fila.
-    After: lista de dicts `{fuente, seccion, header, cols, n_linea}`; `cols`
-        mapea nombre de columna -> texto de celda. No filtra por formato de id.
+    After: lista de dicts `{fuente, seccion, header, cols, n_linea, ancho_extra}`;
+        `cols` mapea nombre de columna -> texto de celda y `ancho_extra` es True si
+        la fila trae mas celdas que la cabecera (el dato sobrante no se lee). No
+        filtra por formato de id. Un BOM inicial se ignora y lo que queda dentro de
+        un bloque de codigo (``` o ~~~) NO se parsea: es un ejemplo citado.
     """
-    lineas = contenido.splitlines()
+    lineas = contenido.lstrip(_BOM).splitlines()
     filas: list[dict] = []
     header: list[str] | None = None
     seccion = ""
+    en_fence = False
     i = 0
     while i < len(lineas):
         linea = lineas[i]
+        if linea.lstrip().startswith(_FENCES):
+            en_fence = not en_fence
+            header = None
+            i += 1
+            continue
+        if en_fence:
+            i += 1
+            continue
         if linea.lstrip().startswith("#"):
             seccion = linea.lstrip("# ").strip()
             header = None
@@ -176,6 +200,7 @@ def parse_tablas(contenido: str, fuente: str) -> list[dict]:
                     "header": tuple(header),
                     "cols": cols,
                     "n_linea": i + 1,
+                    "ancho_extra": len(celdas) > len(header),
                 }
             )
         i += 1
@@ -281,7 +306,7 @@ def main() -> int:
             print(f"ERROR: no existe o no es fichero: {ruta}", file=sys.stderr)
             return 1
         try:
-            contenido = ruta.read_text(encoding="utf-8")
+            contenido = ruta.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError) as exc:
             print(f"ERROR: no se pudo leer {ruta}: {exc}", file=sys.stderr)
             return 1

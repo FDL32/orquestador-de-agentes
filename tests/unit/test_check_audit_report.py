@@ -125,9 +125,11 @@ class TestControlPositivo:
     def test_coherent_report_has_no_errors(self):
         res = audit()
         errores = [h for h in res.findings if h.severity == "ERROR"]
-        # El unico ERROR admisible es el calificador embebido en la categoria
-        # (formato legacy, ver TestFormatoCategoria); ninguno de los demas.
-        assert {h.code for h in errores} <= {"CAT-CALIFICADOR"}, errores
+        # El UNICO ERROR es el calificador embebido en la categoria (formato legacy
+        # de HALLAZGOS_A): igualdad, no subconjunto, para que borrar una
+        # comprobacion no deje este test en verde. El caso sin ningun ERROR vive en
+        # TestControlPositivoEstricto.
+        assert {h.code for h in errores} == {"CAT-CALIFICADOR"}, errores
 
     def test_tally_is_recomputed_from_tables_not_from_prose(self):
         tally = build_tally({"a.md": HALLAZGOS_A, "b.md": HALLAZGOS_B}, informe())
@@ -294,6 +296,303 @@ class TestModoYSalida:
             encoding="utf-8",
         )
         assert r.returncode == 2
+
+
+HALLAZGOS_A_LIMPIO = HALLAZGOS_A.replace("SMELL (falso-positivo deadcode)", "SMELL")
+
+
+def seccion(titulo: str, *ids: str, categoria: str | None = None) -> str:
+    """Seccion extra del informe: tabla con el formato real (sin `categoria`)."""
+    col = " categoria |" if categoria else ""
+    sep = "---|" if categoria else ""
+    filas = "\n".join(
+        f"| {i} | {(categoria + ' | ') if categoria else ''}`x.py` | e | **confirmado** |"
+        for i in ids
+    )
+    return (
+        f"### {titulo}\n\n| id |{col} archivo | evidencia | veredicto_adversarial |\n"
+        f"|----|{sep}---------|-----------|------------------------|\n{filas}\n"
+    )
+
+
+class TestControlPositivoEstricto:
+    """El control positivo de verdad: un informe limpio sale con exit 0 en --strict."""
+
+    def test_clean_report_has_zero_errors_in_memory(self):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO)
+        assert codigos(res, "ERROR") == []
+
+    def test_clean_report_exits_0_in_strict_mode(self, tmp_path):
+        (tmp_path / "HALLAZGOS_a.md").write_text(HALLAZGOS_A_LIMPIO, encoding="utf-8")
+        (tmp_path / "HALLAZGOS_b.md").write_text(HALLAZGOS_B, encoding="utf-8")
+        (tmp_path / "INFORME.md").write_text(informe(), encoding="utf-8")
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(CHECK),
+                str(tmp_path / "HALLAZGOS_a.md"),
+                str(tmp_path / "HALLAZGOS_b.md"),
+                "--informe",
+                str(tmp_path / "INFORME.md"),
+                "--strict",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+
+
+class TestTallyMalformado:
+    """BA07/BA06: JSON valido pero mal tipado reventaba con un traceback (exit != 0/1/2)."""
+
+    @pytest.mark.parametrize(
+        "mal",
+        [
+            {**TALLY_OK, "veredictos": None},
+            {**TALLY_OK, "veredictos": [1]},
+            {**TALLY_OK, "por_categoria": None},
+            {**TALLY_OK, "por_categoria": "x"},
+            {**TALLY_OK, "total": "5"},
+            {**TALLY_OK, "total": True},
+            {**TALLY_OK, "veredictos": {**TALLY_OK["veredictos"], "otros": 1}},
+            {**TALLY_OK, "veredictos": {**TALLY_OK["veredictos"], "confirmado": 1.5}},
+        ],
+    )
+    def test_wrong_shape_is_an_error_not_a_traceback(self, mal):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(tally=mal))
+        assert "TALLY-DESCUADRE" in codigos(res, "ERROR")
+
+    def test_two_tally_blocks_are_ambiguous(self):
+        extra = f"<!-- TALLY: {json.dumps(TALLY_OK)} -->"
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=extra))
+        assert "TALLY-MULTIPLE" in codigos(res, "ERROR")
+
+    def test_a_single_block_is_not_multiple(self):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO)
+        assert "TALLY-MULTIPLE" not in codigos(res)
+
+
+class TestSufijosDeId:
+    @pytest.mark.parametrize(
+        "cita",
+        ["H-01bis", "H-01bc", "H-01-2", "H-01_legacy", "H-01.v2", "H-01(ctx)", "H-01b"],
+    )
+    def test_any_suffix_variant_of_an_existing_id_is_caught(self, cita):
+        res = audit(
+            hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=f"Ver {cita} en el texto.")
+        )
+        assert "ID-SUFIJO" in codigos(res, "ERROR"), cita
+
+    @pytest.mark.parametrize(
+        "cita",
+        ["H-01.", "H-01, H-02", "(H-01)", "H-01-H-02", "H-01/H-02", "H-01:"],
+    )
+    def test_plain_citations_are_not_suffixes(self, cita):
+        res = audit(
+            hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=f"Ver {cita} en el texto.")
+        )
+        assert "ID-SUFIJO" not in codigos(res), cita
+
+    def test_same_suffix_is_only_forgiven_inside_a_code_span(self):
+        dentro = audit(inf=informe(extra="El borrador decia `H-01_legacy` antes."))
+        fuera = audit(inf=informe(extra="El borrador decia H-01_legacy antes."))
+        assert "ID-SUFIJO" not in codigos(dentro)
+        assert "ID-SUFIJO" in codigos(fuera)
+
+
+class TestIdsEnMinusculas:
+    def test_lowercase_id_in_prose_is_not_canonical(self):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra="Ver h-05 abajo."))
+        assert "ID-NO-CANONICO" in codigos(res, "ERROR")
+
+    def test_lowercase_id_inside_a_code_span_is_a_literal_quote(self):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra="Decia `h-05`."))
+        assert "ID-NO-CANONICO" not in codigos(res)
+
+    def test_lowercase_id_in_findings_table_is_reported(self):
+        mal = HALLAZGOS_B + "| h-06 | SMELL | `src/d.py:1` | x | bajo | y |\n"
+        assert "ID-NO-CANONICO" in codigos(audit(hall_b=mal), "ERROR")
+
+
+class TestCensoCompleto:
+    def test_row_with_unparseable_id_is_reported_not_dropped_silently(self):
+        mal = HALLAZGOS_B + "| X-07 | SMELL | `src/d.py:1` | x | bajo | y |\n"
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, hall_b=mal)
+        assert "ID-NO-CANONICO" in codigos(res, "ERROR")
+        assert res.tally["total"] == 5  # la fila X-07 no entra en el censo
+
+    def test_empty_id_cell_is_reported(self):
+        mal = HALLAZGOS_B + "|  | SMELL | `src/d.py:1` | x | bajo | y |\n"
+        assert "ID-NO-CANONICO" in codigos(audit(hall_b=mal), "ERROR")
+
+    def test_unrecognised_table_that_cites_ids_is_an_error(self):
+        # cabecera sin `categoria`: antes el fichero entero valia 0 filas en silencio
+        sin_cat = "| id | archivo |\n|----|---------|\n| H-01 | `a.py:1` |\n"
+        res = audit(hall_b=sin_cat)
+        assert "HALLAZGOS-SIN-FILAS" in codigos(res, "ERROR")
+
+    def test_file_without_any_id_is_only_a_warning(self):
+        res = audit(hall_b="# HALLAZGOS - lane b\n\nSin hallazgos en este lane.\n")
+        assert "HALLAZGOS-SIN-FILAS" in codigos(res, "WARN")
+        assert "HALLAZGOS-SIN-FILAS" not in codigos(res, "ERROR")
+
+    def test_wide_row_is_a_warning(self):
+        ancha = HALLAZGOS_B + "| H-06 | SMELL | `a.py:1` | x | bajo | y | sobrante |\n"
+        res = audit(hall_b=ancha)
+        assert "FILA-ANCHO" in codigos(res, "WARN")
+
+    def test_escaped_pipe_does_not_split_the_cell(self):
+        # `git grep "a\|b"` es la evidencia REAL de la corrida de Redes_Sociales
+        fila = '| H-06 | SMELL | `a.py:1` | `git grep "a\\|b"` | bajo | y |\n'
+        res = audit(hall_b=HALLAZGOS_B + fila)
+        assert "FILA-ANCHO" not in codigos(res)
+        assert res.tally["total"] == 6
+
+    def test_unescaped_pipe_is_flagged_instead_of_shifting_columns_silently(self):
+        fila = '| H-06 | SMELL | `a.py:1` | `git grep "a|b"` | bajo | y |\n'
+        assert "FILA-ANCHO" in codigos(audit(hall_b=HALLAZGOS_B + fila), "WARN")
+
+
+class TestParserRobusto:
+    def test_bom_on_first_table_line_keeps_the_rows(self):
+        # El BOM va pegado a la PRIMERA linea de tabla (sin encabezado `#` delante),
+        # que es el caso que antes descartaba la tabla entera: total 0 en silencio.
+        bom = chr(0xFEFF)
+        tabla = "| id | categoria |\n|----|-----------|\n| H-01 | SMELL |\n"
+        assert build_tally({"a.md": bom + tabla})["total"] == 1
+
+    def test_accented_header_is_the_same_column(self):
+        acento = HALLAZGOS_B.replace("| categoria |", "| categoría |")
+        assert audit(hall_b=acento).tally["total"] == 5
+
+    def test_single_dash_gfm_separator_is_a_separator(self):
+        t = "| id | categoria |\n|:-:|:-:|\n| H-01 | SMELL |\n"
+        assert build_tally({"a.md": t})["total"] == 1
+
+    # La fila de ejemplo pone H-05 (SMELL) bajo `### DEAD`: solo es un CAT-DIVERGE si
+    # la tabla se parsea. (El texto crudo sigue contando para ID-HUERFANO a proposito:
+    # una cita de id es una cita aunque este en un bloque.)
+    _TABLA_EJEMPLO = (
+        "| id | archivo | evidencia | veredicto_adversarial |\n"
+        "|----|---------|-----------|------------------------|\n"
+        "| H-05 | `x.py` | e | **confirmado** |\n"
+    )
+
+    def test_table_inside_a_code_fence_is_a_quoted_example(self):
+        extra = "### DEAD\n\n```\n" + self._TABLA_EJEMPLO + "```\n"
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=extra))
+        assert "CAT-DIVERGE" not in codigos(res)
+
+    def test_same_table_outside_the_fence_is_parsed(self):
+        extra = "### DEAD\n\n" + self._TABLA_EJEMPLO
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=extra))
+        assert "CAT-DIVERGE" in codigos(res)
+
+    def test_cli_reads_a_file_with_a_utf8_bom(self, tmp_path):
+        ruta = tmp_path / "HALLAZGOS_a.md"
+        ruta.write_bytes(b"\xef\xbb\xbf" + HALLAZGOS_A_LIMPIO.encode("utf-8"))
+        r = subprocess.run(
+            [sys.executable, str(CHECK), str(ruta), "--emit-tally"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert r.returncode == 0, r.stderr
+        assert '"total": 3' in r.stdout
+
+    def test_two_files_with_the_same_basename_are_both_counted(self, tmp_path):
+        for lane, texto in (("uno", HALLAZGOS_A_LIMPIO), ("dos", HALLAZGOS_B)):
+            (tmp_path / lane).mkdir()
+            (tmp_path / lane / "HALLAZGOS.md").write_text(texto, encoding="utf-8")
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(CHECK),
+                str(tmp_path / "uno" / "HALLAZGOS.md"),
+                str(tmp_path / "dos" / "HALLAZGOS.md"),
+                "--emit-tally",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert r.returncode == 0, r.stderr
+        assert '"total": 5' in r.stdout
+
+
+class TestCategoriaExacta:
+    """Severidad de SECURITY y encabezados: antes solo se comparaba la FAMILIA."""
+
+    def test_security_level_mismatch_is_caught(self):
+        # H-01 es SECURITY-alta en su fila y el informe lo lista bajo -baja
+        res = audit(inf=informe(extra=seccion("SECURITY-baja", "H-01")))
+        assert "CAT-DIVERGE" in codigos(res, "ERROR")
+
+    def test_same_security_level_is_fine(self):
+        res = audit(inf=informe(extra=seccion("SECURITY-alta", "H-01")))
+        assert "CAT-DIVERGE" not in codigos(res)
+
+    def test_grouped_heading_accepts_exactly_the_levels_it_names(self):
+        con_baja = HALLAZGOS_B + "| H-06 | SECURITY-baja | `d.py:1` | x | bajo | y |\n"
+        ok = audit(
+            hall_b=con_baja,
+            inf=informe(extra=seccion("SECURITY-media / baja (deps)", "H-06")),
+        )
+        mal = audit(
+            hall_b=con_baja,
+            inf=informe(extra=seccion("SECURITY-media / baja (deps)", "H-01")),
+        )
+        assert "CAT-DIVERGE" not in codigos(ok)  # baja cabe en "media / baja"
+        assert "CAT-DIVERGE" in codigos(mal)  # alta NO cabe en "media / baja"
+
+    def test_grouped_family_heading_accepts_any_of_its_members(self):
+        res = audit(inf=informe(extra=seccion("DEAD / ABANDONED", "H-04")))
+        assert "CAT-DIVERGE" not in codigos(res)
+
+    def test_dead_unverified_dynamic_is_not_plain_dead(self):
+        # H-02 es `DEAD (unverified dynamic)` (implicacion de gobierno distinta)
+        res = audit(inf=informe(extra=seccion("DEAD", "H-02")))
+        assert "CAT-DIVERGE" in codigos(res, "ERROR")
+
+    def test_plain_dead_is_not_dead_unverified_dynamic(self):
+        # El sentido inverso: una fila `DEAD` plana bajo el encabezado del nivel
+        # dinamico tampoco cabe; bajo `### DEAD` si.
+        fila = "| H-06 | DEAD | `src/d.py:1` | x | bajo | y |\n"
+        mal = audit(
+            hall_b=HALLAZGOS_B + fila,
+            inf=informe(extra=seccion("DEAD (unverified dynamic)", "H-06")),
+        )
+        bien = audit(
+            hall_b=HALLAZGOS_B + fila, inf=informe(extra=seccion("DEAD", "H-06"))
+        )
+        assert "CAT-DIVERGE" in codigos(mal, "ERROR")
+        assert "CAT-DIVERGE" not in codigos(bien)
+
+    @pytest.mark.parametrize(
+        "titulo",
+        ["Deadline de entrega", "DEADLINE de entrega", "Proceso de verificacion"],
+    )
+    def test_heading_prose_is_not_a_category(self, titulo):
+        res = audit(inf=informe(extra=seccion(titulo, "H-05")))
+        assert "CAT-DIVERGE" not in codigos(res)
+
+    def test_category_column_in_the_report_table_is_compared_exactly(self):
+        mal = audit(
+            inf=informe(extra=seccion("Otros", "H-01", categoria="SECURITY-baja"))
+        )
+        bien = audit(
+            inf=informe(extra=seccion("Otros", "H-01", categoria="SECURITY-alta"))
+        )
+        assert "CAT-DIVERGE" in codigos(mal)
+        assert "CAT-DIVERGE" not in codigos(bien)
+
+    def test_category_column_outside_the_enum_in_the_report_is_caught(self):
+        res = audit(inf=informe(extra=seccion("Otros", "H-05", categoria="INVENTADA")))
+        assert "CAT-FUERA-ENUM" in codigos(res, "ERROR")
 
 
 class TestDedupe:
