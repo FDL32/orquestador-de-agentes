@@ -1,8 +1,13 @@
-"""Barrier tests de scripts/check_cuspide_growth_and_drift.py.
+"""Barrier tests de scripts/check_cuspide_growth_and_drift.py (G1 flip).
 
 Cubre los 15 casos del contrato del Manager (Seccion 9 de
 `gate_impl_manager_plan.md`). Cada assert mide una transicion real sobre un
 repo git temporal: exit code, stderr/stdout o artefacto de telemetria.
+
+G1 flip (2026-10-21): semantica invertida
+  - commit-msg BLOCK si grew Y AMBOS ratios <= 1.0x (override no exceptua)
+  - commit-msg WARN si grew Y al menos un ratio > 1.0x
+  - Override sigue registrado en post-commit telemetria (leitura no revoca)
 
 Hermeticidad (vector git CEM): cada fixture hace `git init` en SU raiz y
 `_init_repo` verifica que `git rev-parse --show-toplevel` resuelve a esa misma
@@ -156,27 +161,30 @@ def test_reduction_is_silent(repo: Path) -> None:
         assert "BLOCK" not in result.stderr
 
 
-def test_growth_over_ratio_blocks_without_override(repo: Path) -> None:
-    """Caso 3: growth sobre-ratio sin override -> exit 1 con numeros exactos."""
+def test_growth_over_ratio_warns_without_override(repo: Path) -> None:
+    """Caso 3 (G1 flip): growth sobre-ratio sin override -> WARN, exit 0."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
     message = _message(repo, "grow")
 
     result = _run(repo, "commit-msg", str(message))
-    assert result.returncode == 1, result.stderr
-    assert "delta_bytes=+1" in result.stderr
-    assert "ratio_codex_post=1.0071" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "delta_bytes" in result.stderr
+    assert "ratio_codex_post" in result.stderr
+    assert "WARN" in result.stderr
 
 
 # ---------------------------------------------------------------- casos 4-6
-def test_override_allows_and_post_commit_audits(repo: Path) -> None:
-    """Caso 4: override valido -> permitido y exactamente 1 linea auditada."""
-    _seed(repo, "a" * 33000)
-    _write(repo, "AGENTS.md", "a" * 33001)
+def test_override_no_longer_excepts_in_cap(repo: Path) -> None:
+    """Caso 4 (G1 flip): growth dentro de caps con override -> BLOCK, exit 1.
+    Override ya no exceptua el bloqueo cuando ambos ratios <= 1.0x.
+    post-commit sigue registrando telemetria."""
+    _seed(repo, "a" * 100)
+    _write(repo, "AGENTS.md", "a" * 110)
     _git(repo, "add", "AGENTS.md")
     text = (
-        "grow with override\n\n"
+        "grow within caps\n\n"
         "GATE-OVERRIDE: cuspide_growth\n"
         "REASON: fixture override\n"
         "AFFECTED: codex_bytes\n"
@@ -184,8 +192,12 @@ def test_override_allows_and_post_commit_audits(repo: Path) -> None:
     message = _message(repo, text)
 
     commit_msg = _run(repo, "commit-msg", str(message))
-    assert commit_msg.returncode == 0, commit_msg.stderr
-    assert "override aceptado" in commit_msg.stderr
+    assert commit_msg.returncode == 1, commit_msg.stderr
+    assert "BLOCK" in commit_msg.stderr
+    assert (
+        "override" not in commit_msg.stderr.lower()
+        or "ya no exceptua" in commit_msg.stderr
+    )
 
     assert _git(repo, "commit", "-q", "-F", str(message)).returncode == 0
     sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
@@ -201,21 +213,21 @@ def test_override_allows_and_post_commit_audits(repo: Path) -> None:
     assert entry["commit"] == sha
     assert entry["reason"] == "fixture override"
     assert entry["affected"] == "codex_bytes"
-    assert entry["delta_bytes"] == 1
-    assert entry["delta_chars"] == 1
+    assert entry["delta_bytes"] == 10
+    assert entry["delta_chars"] == 10
 
 
-def test_growth_within_caps_warns(repo: Path) -> None:
-    """Caso 5: growth con ambos ratio_post <= 1.0 -> WARN, exit 0."""
+def test_growth_within_caps_blocks(repo: Path) -> None:
+    """Caso 5 (G1 flip): growth con ambos ratio_post <= 1.0 -> BLOCK, exit 1."""
     _seed(repo, "a" * 100)
     _write(repo, "AGENTS.md", "a" * 110)
     _git(repo, "add", "AGENTS.md")
     message = _message(repo, "small grow")
 
     result = _run(repo, "commit-msg", str(message))
-    assert result.returncode == 0, result.stderr
-    assert "WARN" in result.stderr
-    assert "ratio_post" in result.stderr
+    assert result.returncode == 1, result.stderr
+    assert "BLOCK" in result.stderr
+    assert "ratio_codex_post" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -225,17 +237,17 @@ def test_growth_within_caps_warns(repo: Path) -> None:
         "grow\n\nGATE-OVERRIDE: cuspide_growth\nREASON:   \n",
     ],
 )
-def test_override_without_reason_blocks(repo: Path, text: str) -> None:
-    """Caso 6: marcador sin REASON (o vacio) no es override."""
+def test_override_without_reason_over_ratio_warns(repo: Path, text: str) -> None:
+    """Caso 6 (G1 flip): over_ratio + marcador roto -> WARN (rc=0).
+    Over_ratio ya no usa override; es WARN sin consultar mensaje."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
     message = _message(repo, text)
 
     result = _run(repo, "commit-msg", str(message))
-    assert result.returncode == 1, result.stderr
-    assert "REASON" in result.stderr
-    assert "formulario" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "WARN" in result.stderr
 
 
 # ---------------------------------------------------------------- casos 7-10
@@ -248,12 +260,11 @@ def test_pre_commit_is_early_warning_never_blocks(repo: Path) -> None:
     result = _run(repo, "pre-commit")
     assert result.returncode == 0, result.stderr
     assert "EARLY WARNING" in result.stderr
-    assert "GATE-OVERRIDE: cuspide_growth" in result.stderr
-    assert "REASON:" in result.stderr
 
 
 def test_pre_commit_and_commit_msg_measure_the_same_index(repo: Path) -> None:
-    """Caso 8: paridad de numeros entre pre-commit y commit-msg."""
+    """Caso 8 (G1 flip): paridad de numeros entre pre-commit y commit-msg.
+    Ambos ahora WARN (rc=0) para over_ratio data."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
@@ -261,8 +272,8 @@ def test_pre_commit_and_commit_msg_measure_the_same_index(repo: Path) -> None:
 
     pre = _run(repo, "pre-commit")
     commit_msg = _run(repo, "commit-msg", str(message))
-    assert pre.returncode == 0
-    assert commit_msg.returncode == 1
+    assert pre.returncode == 0, pre.stderr
+    assert commit_msg.returncode == 0, commit_msg.stderr
     assert _extract_numbers(pre.stderr) == _extract_numbers(commit_msg.stderr)
     assert _extract_numbers(pre.stderr), "la fase no imprimio metricas"
 
@@ -313,7 +324,7 @@ def test_first_commit_without_parent_is_fail_safe(tmp_path: Path) -> None:
 
 
 def test_override_inside_a_comment_is_ignored(repo: Path) -> None:
-    """Caso 12: strip_comments antes de parsear el override."""
+    """Caso 12 (G1 flip): override comentado ignorado; over_ratio -> WARN."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
@@ -323,9 +334,9 @@ def test_override_inside_a_comment_is_ignored(repo: Path) -> None:
     )
 
     result = _run(repo, "commit-msg", str(message))
-    assert result.returncode == 1, result.stderr
-    assert "BLOCK" in result.stderr
-    assert "formulario" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "WARN" in result.stderr
+    assert "override" not in result.stderr.lower()
 
 
 # ---------------------------------------------------------------- caso 13
@@ -365,8 +376,8 @@ def test_drift_both_sides_is_silent(repo: Path) -> None:
 
 
 # ---------------------------------------------------------------- casos 14-15
-def test_import_outside_historical_regex_triggers_block(tmp_path: Path) -> None:
-    """Caso 14: un import fuera de AGENTS.md se resuelve y bloquea."""
+def test_import_outside_historical_regex_warns(tmp_path: Path) -> None:
+    """Caso 14 (G1 flip): import over-cap -> WARN, no BLOCK."""
     _init_repo(tmp_path)
     _write(tmp_path, "CLAUDE.md", "@docs/protocol/x.md\n")
     _write(tmp_path, "docs/protocol/x.md", "y" * 40050)
@@ -377,7 +388,7 @@ def test_import_outside_historical_regex_triggers_block(tmp_path: Path) -> None:
     message = _message(tmp_path, "grow imported file")
 
     result = _run(tmp_path, "commit-msg", str(message))
-    assert result.returncode == 1, result.stderr
+    assert result.returncode == 0, result.stderr
     assert "delta_chars=+1" in result.stderr
     assert "ratio_cc_post=" in result.stderr
 

@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """Guard de crecimiento de la cuspide y de drift cuspide <-> capa 2.
 
-Contrato: el commit que hace CRECER la superficie siempre-cargada solo puede
-aterrizar si (a) el ratio POST de ambos gates sigue <= 1.0, o (b) el mensaje
-del commit declara un override con justificacion. La direccion BLOCK-ya y la
-degradacion a WARN en <= 1.0x estan decididas; este script es su mecanismo, no
-una propuesta.
+Dos escalones (G1 flip confirmado 2026-10-21, WOT-2026-108d):
+  commit-msg   BLOCK (exit 1) si grew Y AMBOS ratios <= 1.0x, SIN consultar
+               el mensaje (override deja de exceptuar el bloqueo).
+               Crecimiento con al menos un ratio > 1.0 -> WARN (exit 0) con
+               deltas y ratios en unidad nativa.
+  pre-commit   WARN por cualquier crecimiento (unifica texto con over_cap).
+  post-commit  parseo del marcador SOLO como telemetria no decisoria.
 
 Tres fases, porque el stage donde git entrega cada dato es distinto:
 
-  pre-commit   medicion staged-vs-HEAD. EARLY WARNING: imprime el delta y la
-               gramatica del override, pero NUNCA bloquea (exit 0 siempre).
+  pre-commit   medicion staged-vs-HEAD. WARN: imprime el delta y ratios.
+               NUNCA bloquea (exit 0 siempre).
   commit-msg   re-mide el mismo indice y lee el mensaje. BLOCK autoritativo
-               (exit 1) si hay growth sobre-ratio y no hay override valido;
-               WARN (exit 0) si ambos ratio_post siguen <= 1.0.
+               (exit 1) si hay grew Y ambos ratios <= 1.0;
+               WARN (exit 0) si al menos un ratio > 1.0 (override no aplica).
   post-commit  mide HEAD^-vs-HEAD y lee el mensaje ya aterrizado. Si hay
-               override + growth, appendea una linea de telemetria al canal
-               gitignored. Exit 0 siempre: la telemetria no revoca un commit.
+               marcador de override + growth, appendea una linea de telemetria
+               al canal gitignored. Exit 0 siempre: la telemetria no revoca
+               commits.
 
 Medicion: SIEMPRE sobre los blobs de git (`git show :<path>` para el indice,
 `git show HEAD:<path>` / `HEAD^:<path>` para commits), nunca sobre el working
@@ -537,44 +540,33 @@ def _growth_message_lines() -> list[str]:
 
 
 def _report_warn(pre: Metrics, post: Metrics, growth: Growth) -> None:
-    """Imprime el veredicto WARN de growth dentro de caps.
+    """Imprime el veredicto WARN de growth sobre-ratio.
 
-    Before: hay growth y ambos ratio_post son <= 1.0.
+    Before: hay growth Y al menos un ratio_post > 1.0.
     During: escribe el header y las metricas en stderr.
     After: no devuelve nada; no lanza.
     """
     print(
-        f"{MARKER} WARN: growth con ratio_post <= 1.0 en ambos gates; no bloquea.",
+        f"{MARKER} WARN: growth con al menos un ratio_post > 1.0 en los gates.",
         file=sys.stderr,
     )
     for line in growth_lines(pre, post, growth):
         print(line, file=sys.stderr)
 
 
-def _report_block(pre: Metrics, post: Metrics, growth: Growth, message: str) -> None:
-    """Imprime el BLOCK autoritativo y su remedio self-service.
+def _report_block(pre: Metrics, post: Metrics, growth: Growth) -> None:
+    """Imprime el BLOCK autoritativo de growth dentro de caps.
 
-    Before: hay growth sobre-ratio y no hay override valido.
-    During: distingue el marcador sin REASON del caso sin marcador.
+    Before: hay grew Y ambos ratio_post <= 1.0x.
+    During: escribe el header y las metricas en stderr.
     After: no devuelve nada; el llamador decide el exit 1.
     """
     print(
-        f"{MARKER} BLOCK: el commit hace crecer la cuspide y el ratio_post "
-        "supera 1.0 en al menos un gate.",
+        f"{MARKER} BLOCK: el commit hace crecer la cuspide y AMBOS ratios "
+        "post estan <= 1.0x (el override ya no exceptua).",
         file=sys.stderr,
     )
     for line in growth_lines(pre, post, growth):
-        print(line, file=sys.stderr)
-    if has_override_marker(message):
-        print(
-            "  El mensaje declara GATE-OVERRIDE pero le falta un REASON no "
-            "vacio:\n"
-            "  un override sin justificacion es formulario, no barrera. "
-            "Anade 'REASON: <motivo>'\n"
-            "  a <= 3 lineas del marcador.",
-            file=sys.stderr,
-        )
-    for line in _growth_message_lines():
         print(line, file=sys.stderr)
 
 
@@ -582,7 +574,7 @@ def _run_pre_commit(repo: Path) -> int:
     """Fase pre-commit: early warning, nunca bloquea.
 
     Before: el indice contiene el commit candidato (puede no haber HEAD).
-    During: mide HEAD vs INDEX, imprime growth sobre-ratio y drift WARN.
+    During: mide HEAD vs INDEX, imprime growth y ratios.
     After: exit 0 siempre; silencio si el diff no toca la cuspide ni la capa 2.
     """
     touched = _staged_touched(repo)
@@ -592,21 +584,18 @@ def _run_pre_commit(repo: Path) -> int:
     if not _touches_cuspide(touched, cuspide) and not _layer2_files(touched):
         return 0
     growth = verdict_growth(pre, post)
-    if growth.grew and growth.over_cap:
-        print(
-            f"{MARKER} EARLY WARNING: growth con ratio_post > 1.0; "
-            "esta fase NO bloquea (el BLOCK vive en commit-msg).",
-            file=sys.stderr,
-        )
-        for line in growth_lines(pre, post, growth):
-            print(line, file=sys.stderr)
-        for line in _growth_message_lines():
-            print(line, file=sys.stderr)
-    elif growth.grew:
-        print(
-            f"{MARKER} WARN: growth con ratio_post <= 1.0 en ambos gates; no bloquea.",
-            file=sys.stderr,
-        )
+    if growth.grew:
+        if growth.over_cap:
+            print(
+                f"{MARKER} EARLY WARNING: growth con al menos un ratio_post > 1.0; "
+                "esta fase NO bloquea (el BLOCK vive en commit-msg).",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"{MARKER} WARN: growth con AMBOS ratios <= 1.0; BLOCK en commit-msg.",
+                file=sys.stderr,
+            )
         for line in growth_lines(pre, post, growth):
             print(line, file=sys.stderr)
     drift = verdict_drift(touched, cuspide)
@@ -616,25 +605,17 @@ def _run_pre_commit(repo: Path) -> int:
 
 
 def _run_commit_msg(repo: Path, message_path: Path | None) -> int:
-    """Fase commit-msg: BLOCK autoritativo con override en el mensaje.
+    """Fase commit-msg: BLOCK con semantica invertida (G1 flip).
 
     Before: git entrega la ruta de `COMMIT_EDITMSG` como argv[1].
-    During: re-deriva la medicion del indice (no confia en pre-commit) y parsea
-        el override. Si el mensaje no se puede leer, degrada a exit 0.
-    After: exit 1 si hay growth sobre-ratio sin override valido; exit 0 en
-        WARN/growth dentro de caps/override valido.
+    During: re-deriva la medicion del indice (no confia en pre-commit).
+            BLOCK (exit 1) si grew Y AMBOS ratios <= 1.0x (override ignorado).
+            WARN (exit 0) si grew Y al menos un ratio > 1.0x.
+    After: exit 1 si grew Y ambos <= 1.0x; exit 0 en WARN o sin growth.
     """
     if message_path is None:
         print(
             f"{MARKER} sin ruta de mensaje; no hay override que evaluar (fail-open)",
-            file=sys.stderr,
-        )
-        return 0
-    try:
-        message = message_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        print(
-            f"{MARKER} no se pudo leer {message_path}: {exc} (no bloquea)",
             file=sys.stderr,
         )
         return 0
@@ -649,20 +630,13 @@ def _run_commit_msg(repo: Path, message_path: Path | None) -> int:
     if not growth.grew:
         return 0
     if not growth.over_cap:
-        _report_warn(pre, post, growth)
-        return 0
+        # Ambos ratios <= 1.0x -> BLOCK (flip: antes era WARN)
+        _report_block(pre, post, growth)
+        return 1
 
-    override = parse_override(message)
-    if override is not None:
-        print(
-            f"{MARKER} override aceptado: reason={override.reason!r}"
-            + (f", affected={override.affected}" if override.affected else ""),
-            file=sys.stderr,
-        )
-        return 0
-
-    _report_block(pre, post, growth, message)
-    return 1
+    # Al menos un ratio > 1.0x -> WARN (flip: antes era BLOCK)
+    _report_warn(pre, post, growth)
+    return 0
 
 
 def _run_post_commit(repo: Path) -> int:

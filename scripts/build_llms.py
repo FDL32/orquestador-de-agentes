@@ -174,12 +174,12 @@ def build_index_block(base_url: str) -> str:
         [
             "## Operational tips",
             "",
-            "- `python scripts/local_audit.py [--quick]` â€” 40-line snapshot (version, active plan, git, skills, recent WPs, memory).",
-            "- `python .agent/agent_controller.py --validate --json --force` â€” drift detection.",
-            "- `python scripts/run_pytest_safe.py` â€” test suite for current scope.",
-            "- `ruff check . && ruff format .` â€” lint + format.",
-            "- `python scripts/pip_audit_project.py` â€” supply-chain audit from uv.lock.",
-            "- `python scripts/build_llms.py` â€” regenerate this file + llms-full.txt.",
+            "- `python scripts/local_audit.py [--quick]` — 40-line snapshot (version, active plan, git, skills, recent WPs, memory).",
+            "- `python .agent/agent_controller.py --validate --json --force` — drift detection.",
+            "- `python scripts/run_pytest_safe.py` — test suite for current scope.",
+            "- `ruff check . && ruff format .` — lint + format.",
+            "- `python scripts/pip_audit_project.py` — supply-chain audit from uv.lock.",
+            "- `python scripts/build_llms.py` — regenerate this file + llms-full.txt.",
             "",
         ]
     )

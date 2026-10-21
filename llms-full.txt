@@ -39,12 +39,12 @@ Repo: https://raw.githubusercontent.com/FDL32/orquestador-de-agentes/main
 
 ## Operational tips
 
-- `python scripts/local_audit.py [--quick]` â€” 40-line snapshot (version, active plan, git, skills, recent WPs, memory).
-- `python .agent/agent_controller.py --validate --json --force` â€” drift detection.
-- `python scripts/run_pytest_safe.py` â€” test suite for current scope.
-- `ruff check . && ruff format .` â€” lint + format.
-- `python scripts/pip_audit_project.py` â€” supply-chain audit from uv.lock.
-- `python scripts/build_llms.py` â€” regenerate this file + llms-full.txt.
+- `python scripts/local_audit.py [--quick]` — 40-line snapshot (version, active plan, git, skills, recent WPs, memory).
+- `python .agent/agent_controller.py --validate --json --force` — drift detection.
+- `python scripts/run_pytest_safe.py` — test suite for current scope.
+- `ruff check . && ruff format .` — lint + format.
+- `python scripts/pip_audit_project.py` — supply-chain audit from uv.lock.
+- `python scripts/build_llms.py` — regenerate this file + llms-full.txt.
 
 ## Forks
 
@@ -366,7 +366,9 @@ append `--project-root <destino>` to commands that operate on project state.
 
 ### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
 
-**Norma con barrera de FORMA parcial desde 2026-10-18 (WOT-2026-104b)**, no barrera semantica: scripts/check_process_decision_search.py (cableado como hook pre-commit en el motor sobre prompts/**/*.md, .claude/rules/**/*.md, AGENTS.md, CLAUDE.md, y como hook pre-push en el destino sobre .agent/planning/*.md/STRATEGY_WOT-*.md CAMBIADOS en el rango a publicar) bloquea un artefacto que se AUTODECLARA con el marcador DECISION DE PROCESO: si no declara ademas una seccion BUSQUEDA-PREVIA: valida (PROTOCOLO ENCONTRADO: <ruta> / NO ENCONTRE PROTOCOLO / EXCEPCION: trivial <justificacion>). Ver criterio de busqueda minima, clases de decision, y candidato de barrera PARCIAL en .agent/rules/common/contract_full_read_and_process_search.md.- Lee `PROJECT.md` antes de tocar arquitectura o estado.
+**Norma con barrera de FORMA parcial desde 2026-10-18 (WOT-2026-104b)**, no barrera semantica: scripts/check_process_decision_search.py (cableado como hook pre-commit en el motor sobre prompts/**/*.md, .claude/rules/**/*.md, AGENTS.md, CLAUDE.md, y como hook pre-push en el destino sobre .agent/planning/*.md/STRATEGY_WOT-*.md CAMBIADOS en el rango a publicar) bloquea un artefacto que se AUTODECLARA con el marcador DECISION DE PROCESO: si no declara ademas una seccion BUSQUEDA-PREVIA: valida (PROTOCOLO ENCONTRADO: <ruta> / NO ENCONTRE PROTOCOLO / EXCEPCION: trivial <justificacion>). Ver criterio de busqueda minima, clases de decision, y candidato de barrera PARCIAL en .agent/rules/common/contract_full_read_and_process_search.md.
+
+- Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
 - Para tickets que tocan sincronizacion de estado, bus, proyecciones o codigo topologia-aware (`repo_motor + repo_destino`), comprueba primero si el sintoma encaja con un patron documentado en `docs/KNOWN_FAILURE_PATTERNS.md` antes de proponer un fix nuevo.
 - Para arrancar una sesion nueva con cualquier agente, usa el bootstrap canonico en `prompts/orchestrator_session_bootstrap.md` (apunta a archivos clave en lugar de embeber).
@@ -1820,7 +1822,7 @@ declararlo en una linea antes de proceder ("EXCEPCION: trivial -- X no es decisi
 porque Y"), igual que la declaracion exigida cuando no se encuentra protocolo. Sin esa
 declaracion, la excepcion no aplica.
 
-**Â¿Que cuenta como decision de proceso?** SI cuenta: decisiones sobre dispatch de
+**¿Que cuenta como decision de proceso?** SI cuenta: decisiones sobre dispatch de
 Builder/Revisor, merge/push a rama compartida, gates de cierre/closeout, formato de memoria o
 bitacora, criterios de fusion de roles, cualquier decision que otro agente en otra sesion pueda
 necesitar replicar. NO cuenta: correccion ortografica, pregunta de hecho verificable con una
@@ -1856,7 +1858,6 @@ buscado de verdad, o citar una ruta inventada en `PROTOCOLO ENCONTRADO:`; el gua
 detecta (barrera de FORMA, no de VERDAD). Mientras no exista deteccion de intencion ni
 verificacion de veracidad, ambos riesgos permanecen abiertos.
 
-
 ```
 
 ## .agent/rules/common/do_now_vs_defer.md
@@ -1864,86 +1865,45 @@ verificacion de veracidad, ambos riesgos permanecen abiertos.
 ```markdown
 ## Hacer ahora vs aplazar (criterio de decision)
 
-
-
 El coste de APLAZAR **no es cero**: fichar "para la proxima sesion" cuesta prompt de arranque, recarga de contexto, re-medicion y revalidacion de premisas, y sobre todo **asciende el diagnostico de hoy a premisa heredada sin verificar**. Pero ese coste NO autoriza a perseguir parches que degeneran.
-
-
 
 **Asimetria (regla de oro, y mas en autonomo):** los gates de abajo son un filtro para PERMITIR hacer ahora, **nunca una obligacion de hacerlo**. Ante duda no resuelta POR EVIDENCIA, **aplazar gana**. Si el trabajo se sale del objetivo del ticket, se ficha y pasa a la sesion siguiente. El sistema debe ser fuente de soluciones, no de problemas: un arreglo dudoso metido a presion es un problema nuevo con commit.
 
-
-
 **Cada gate se responde con un ARTEFACTO, no con un juicio.** Un gate que se contesta con una opinion se relaja solo en cuanto el agente quiere avanzar (misma enfermedad que "aplicate tu propia vara"). Si no puedes pegar el artefacto, el gate NO pasa.
-
-
 
 ### Hazlo ahora SOLO si cumple los 8
 
-
-
 1. **Localizacion EJECUTADA EN LA RUTA PRODUCTIVA.** No basta "se la linea"; **ni siquiera basta "lo ejecute"**. Aplica la **equivalencia de ruta productiva** de CEM: declara actor real, launcher real, shell, cwd, PATH/env, fichero/config leido, y **por que ese probe reproduce la ruta que corre en produccion**. Si no la reproduce es **evidencia exploratoria** y este gate **NO pasa** (orienta, no cierra). Artefacto: `command:` + `exit_code:` + `shell/cwd/env:` + la frase de equivalencia. Si dos probes se contradicen, **el conflicto ES el hallazgo** (CEM): resuelvelo antes de tocar nada.
-
 2. **DoD con dientes.** Existe test/probe que falla HOY con el bug y pasa con el fix, o mutacion **alcanzable** definida (un test que no puede ALCANZAR la rama que muta no cuenta). Artefacto: node-id + rc rojo previo.
-
 3. **Una superficie acotada.** Una superficie, no una familia. Artefacto: lista de ficheros a tocar (numero cerrado).
-
 4. **Arquitectura existente.** Conecta una pieza ya prevista o corrige una desviacion local; no inventa subsistema. Artefacto: la ruta del mecanismo que extiendes.
-
 5. **Cadena fresca.** "Desbloquea la cadena" solo vale si el DAG/triage se revalido EN ESTA SESION; un DAG en disco caduca solo (WOT-2026-023t). Si esta caducado, **re-triage primero**. Artefacto: fecha/SHA del triage.
-
 6. **Cabe completo:** fix + tests + mutation + gates + commit + review proporcional. Artefacto: la balanza de abajo.
-
 7. **Bisect-safe:** cada commit publicable queda verde en su propio HEAD.
-
 8. **Sin decision humana pendiente.** Trade-off de producto, politica o arquitectura -> se pregunta o se ficha.
-
-
 
 ### STOP de degeneracion (durante el arreglo)
 
-
-
 Si tras el primer parche aparece cualquiera de estos, **parar y re-planificar**: superficie nueva no prevista; heuristica nueva; mas de un fichero/familia adicional; el test inicial no alcanza la rama real; el fix empieza a parecer diseno de sistema. **No parchear el parche:** ficha el alcance nuevo o abre sesion propia (WOT-2026-024u: de 3 lineas a "disenar un analizador estatico" en 5 parches; salio a WOT-2026-025c).
-
-
 
 ### Aplazalo si
 
-
-
 No hay probe ejecutado en contexto de produccion; el DoD es aspiracional; requiere medir la flota completa o datos externos; mezcla familias de commits; depende de decision humana; el DAG esta caducado; la solucion correcta es diseno nuevo; no puede quedar bisect-safe; o el contexto es largo y el riesgo de falso-verde sube.
-
-
 
 ### Balanza minima obligatoria (con cifras, no adjetivos)
 
-
-
 Sin al menos una cifra por columna la balanza es sesgo de presente: el agente subestima siempre lo hipotetico.
 
-
-
 | Hacer ahora | Aplazar |
-
 |---|---|
-
 | ficheros tocados (n) | re-medicion requerida: si/no |
-
 | tests/probes nuevos (n) | contexto a recargar |
-
 | tiempo/review estimado | riesgo vivo si se deja |
-
 | blast radius | sesiones futuras estimadas (n) |
-
-
 
 ### Dos reglas durables
 
-
-
 > Detalle en [hacer_ahora_vs_aplazar_dos_reglas_durables](docs/protocol/hacer_ahora_vs_aplazar_dos_reglas_durables.md).
-
 
 ```
 
@@ -1952,44 +1912,24 @@ Sin al menos una cifra por columna la balanza es sesgo de presente: el agente su
 ```markdown
 ## Superficies vivas vs historicas en `.agent/collaboration/` (WP-2026-107)
 
-
-
 No todo lo que parece "viejo" en `collaboration/` es archivable. Distingue:
 
-
-
 - **Superficies vivas (NO archivar, las escribe el codigo en cada ciclo):**
-
   - `archive/`: rotacion de snapshots de `notifications.md`. La escribe
-
     `agent_controller.py` (`ARCHIVE_DIR`) cada vez que rota la proyeccion.
-
     NO es legacy; borrarla rompe el controlador.
-
   - `review_queue.md`: log vivo de reviews del Manager. Le hace append
-
     `manager_review_bridge.py` (`_record_review`) en cada review.
-
   - `notifications.md`: proyeccion viva validada por `--validate`. Solo se
-
     resetea a placeholder, nunca se archiva entera.
-
 - **Superficie historica (`_archive/`):** solo cubre historicos de
-
   `PLAN_WP-*.md` / `AUDIT_WP-*.md` cerrados (`_archive/plan_audit/`) y
-
   snapshots legacy no operativos (`_archive/legacy/`). Su contenido puede
-
   ser un registro unico (p.ej. `_archive/legacy/review_queue.md` conserva
-
   reviews de WPs que el log vivo ya no tiene): verifica antes de borrar.
 
-
-
 Regla: antes de "limpiar" un archivo de `collaboration/`, comprueba si algun
-
 script lo escribe activamente. Si lo hace, es superficie viva.
-
 
 ```
 
@@ -1998,80 +1938,42 @@ script lo escribe activamente. Si lo hace, es superficie viva.
 ```markdown
 ### Gobierno skill<->prompt: skill apunta, prompt gobierna (WOT-2026-014r / X-09)
 
-
-
 Cuando una skill tiene prompt canonico (declara `contract_id` + `source_prompt`/`source_of_truth`), la skill es
-
 PUNTERO operativo, no fuente normativa. PROHIBIDO re-declarar criterios normativos (gates, veredictos, estados,
-
 barreras) en la `SKILL.md`: viven una vez en el prompt y la skill remite. Si divergen, prevalece el prompt y la
-
 divergencia es un bug de la skill. Verificado en vivo: el SKILL de `manager-review-implementation` OMITIA
-
 mutation-verify (E3) y el de `orchestrate-pipeline` OMITIA el reconcile post-close (E6) por re-declarar en vez de
-
 apuntar.
 
-
-
 **Auditoria automatica (R2):** un linter/gate puede grepear las `SKILL.md` por marcadores normativos
-
 (`DECISION:`, `deliverable_type`, `0 errors`, `APROBADO|CHANGES|BLOCKER`, `exit code`). Un marcador en una skill
-
 que TIENE prompt canonico es candidato a re-declaracion: el gate exige que la skill REMITA al prompt (cita
-
 `contract_id`) en vez de definir el criterio. Si el criterio diverge del prompt -> hallazgo automatico, prevalece
-
 el prompt. Verificado (3a pasada): 9 `SKILL.md` contienen esos marcadores -- adopt-existing-project, audit-pipeline,
-
 builder-run-quality-gates, manager-create-work-plan, manager-review-implementation, orchestrate-pipeline,
-
 refactor-manager, session-close-full-audit, setup-agent-system -- candidatas a re-declaracion (una parte solo
-
 menciona el marcador). La matriz de ownership de artefactos asociada vive en `prompts/_shared/artifact_ownership.md`.
-
-
 
 ### Gobierno prompt-hijo<->prompt-nucleo: extension de X-09 un nivel arriba (2026-10-08)
 
-
-
 El mismo principio de X-09 ("skill apunta, prompt gobierna") se aplica un nivel arriba: cuando un
-
 prompt declara `nucleo_referenciado` (un prompt-hijo especializa un nucleo portable, como
-
 `manager_orchestrator_loop_backlog.md` especializa a `manager_orchestrator_loop.md`), el prompt-hijo
-
 REMITE a las secciones del nucleo que coinciden en OBJETO, no las REDECLARA en prosa paralela. Si
-
 el objeto diverge de verdad (el hijo cubre un caso que el nucleo no contempla), el hijo puede
-
 reescribir esa seccion COMPLETA, pero debe etiquetarla explicitamente como EXCEPCION/ESPECIALIZACION
-
 -- nunca una copia silenciosa que se desincroniza en la siguiente correccion del nucleo.
 
-
-
 Motivo medido (bucle de gobierno DESIGN_REVIEW, 5 lentes independientes, 2026-10-08):
-
 `manager_orchestrator_loop_backlog.md` declaraba `source_of_truth: este prompt` pese a listar
-
 `nucleo_referenciado`, y SU SCHEMA DE METRICAS (seccion 6) redeclaraba el `SCHEMA: adjudicacion`
-
 del nucleo sin declarar sus diferencias reales. Corregido: la seccion 6 remite de verdad, con las
-
 diferencias de campos y de enum declaradas explicitamente.
 
-
-
 **Advertencia del propio caso (correccion posterior, MANAGER_REVIEW con lente
-
 nan/deepseek-v4-flash, 2026-10-08):** 5 lentes adjudicaron mal por semejanza estructural (numero
-
 de posicion) en vez de comparar contenido literal; detalle completo e incidente en
-
 `docs/protocol/x09_adjudication_position_vs_content_case.md`.
-
 
 ```
 
@@ -2080,27 +1982,15 @@ de posicion) en vez de comparar contenido literal; detalle completo e incidente 
 ```markdown
 ## Atribuciones externas (CREDITS.md)
 
-
-
-Cuando un WP incorpora una idea/patrÃ³n de un repositorio externo:
-
-
+Cuando un WP incorpora una idea/patrón de un repositorio externo:
 
 1. **`repo-compare`** emite al final de su reporte un bloque candidato listo para pegar en `CREDITS.md`.
-
-2. El humano decide cuÃ¡ndo adoptar la idea y pega la fila correspondiente en `CREDITS.md` (raÃ­z del repo).
-
+2. El humano decide cuándo adoptar la idea y pega la fila correspondiente en `CREDITS.md` (raíz del repo).
 3. El WP que implementa la idea incluye `Origen externo:` o `Inspired by:` en `work_plan.md`.
-
 4. **`project-finalize` Paso 8d** verifica que la fila CREDITS exista antes de cerrar el WP. Si falta, bloquea el cierre.
-
-
 
 Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |`. Detalle en `CREDITS.md`.
 
-
-
-**LimitaciÃ³n conocida:** `CREDITS.md` vive en raÃ­z; `scripts/install_agent_system.py` actualmente solo copia `.agent/`. Por tanto, esta convenciÃ³n **no se propaga automÃ¡ticamente** a proyectos derivados. Si forks/derivados quieren la convenciÃ³n, deben replicar `CREDITS.md` + skills `repo-compare` y `project-finalize` manualmente.
-
+**Limitación conocida:** `CREDITS.md` vive en raíz; `scripts/install_agent_system.py` actualmente solo copia `.agent/`. Por tanto, esta convención **no se propaga automáticamente** a proyectos derivados. Si forks/derivados quieren la convención, deben replicar `CREDITS.md` + skills `repo-compare` y `project-finalize` manualmente.
 
 ```

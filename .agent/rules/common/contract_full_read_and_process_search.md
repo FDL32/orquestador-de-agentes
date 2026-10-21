@@ -73,7 +73,7 @@ declararlo en una linea antes de proceder ("EXCEPCION: trivial -- X no es decisi
 porque Y"), igual que la declaracion exigida cuando no se encuentra protocolo. Sin esa
 declaracion, la excepcion no aplica.
 
-**Â¿Que cuenta como decision de proceso?** SI cuenta: decisiones sobre dispatch de
+**¿Que cuenta como decision de proceso?** SI cuenta: decisiones sobre dispatch de
 Builder/Revisor, merge/push a rama compartida, gates de cierre/closeout, formato de memoria o
 bitacora, criterios de fusion de roles, cualquier decision que otro agente en otra sesion pueda
 necesitar replicar. NO cuenta: correccion ortografica, pregunta de hecho verificable con una
@@ -108,4 +108,3 @@ declarado: un agente puede escribir `BUSQUEDA-PREVIA: NO ENCONTRE PROTOCOLO` sin
 buscado de verdad, o citar una ruta inventada en `PROTOCOLO ENCONTRADO:`; el guard no lo
 detecta (barrera de FORMA, no de VERDAD). Mientras no exista deteccion de intencion ni
 verificacion de veracidad, ambos riesgos permanecen abiertos.
-
