@@ -64,12 +64,22 @@ Si, y solo si, la medición corregida demuestra un déficit real, proponer un
 piloto limitado sobre la regla de que un `exit 0` puede significar “no hice
 nada”. El origen conservaría intactas la refutación, las obligaciones, las
 excepciones y los contraejemplos; los casos históricos mantendrían sus IDs,
-fechas y procedencia en una referencia alcanzable; Hermes recibiría el bloque
-original con procedencia verificable. Esto requiere una modificación explícita
-del contrato porque el contrato actual prohíbe resumir o separar ese material.
+fechas y procedencia en `docs/followups/agents-md-over-quota-followup.md`, como
+referencia alcanzable para una sesión de diseño; el cargador que debe resolver
+la referencia en un piloto es `bus/memory_loader.py` mediante
+`get_review_context(domain)` (no se presume que una mención textual sea
+cargable). Hermes recibiría el bloque original con procedencia verificable.
+Esto requiere una modificación explícita del contrato: el piloto tendría que
+cambiar `prompts/doc_optimization.md`, PASO 3(c), que exige literalmente que
+una refutación no sea “ni entera ni repartida”. La propuesta no autoriza ese
+cambio: requiere una decisión humana explícita y un nuevo bucle
+`DESIGN_REVIEW` antes de cualquier implementación.
 
 Mientras Fase 0R no esté cerrada, la opción recomendada es deuda declarada con
-owner y criterio de salida, no implementar ningún lever.
+owner humano y criterio de salida, no implementar ningún lever. El artefacto de
+deuda abierto es `docs/followups/agents-md-over-quota-followup.md`; se considera
+cerrado solo cuando ambos gates quedan <= 1.0x, o cuando el usuario decide
+expresamente aceptar la deuda.
 
 ## Resultado esperado del bucle
 
