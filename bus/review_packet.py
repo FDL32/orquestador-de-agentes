@@ -5,11 +5,12 @@ owns the WT-2026-221b evidence-gate primitives:
 
 - Best-effort diff-file collection from the motor repo (unstaged, staged,
   recent commits) and the destination repo (unstaged, recent commits).
-- Classification of diff files into docs-only / collaboration-only /
-  productive buckets, and the canonical pattern tuples that define them.
+- ``path_matches_any`` and ``DOCS_ONLY_PATTERNS``, the canonical pattern
+  tuple that classification call sites build on.
 
-``ReviewBridge.classify_review_packet`` orchestrates these functions with
-bus/state context; the primitives themselves never raise.
+``ReviewBridge.classify_review_packet`` orchestrates these primitives (via
+``bus.evidence.resolve_evidence``) with bus/state context; the primitives
+themselves never raise.
 """
 
 from __future__ import annotations
@@ -30,11 +31,6 @@ DOCS_ONLY_PATTERNS: tuple[str, ...] = (
     "CREDITS.md",
     "REPOSITORY_STRUCTURE.md",
     "repomix.config.json",
-)
-
-COLLABORATION_ONLY_PATTERNS: tuple[str, ...] = (
-    ".agent/collaboration/",
-    ".agent/runtime/",
 )
 
 

@@ -651,9 +651,6 @@ class ReviewBridge:
 
     # WT-2026-221b: canonical source bus/review_packet.py (re-exported here).
     DOCS_ONLY_PATTERNS: tuple[str, ...] = review_packet.DOCS_ONLY_PATTERNS
-    COLLABORATION_ONLY_PATTERNS: tuple[str, ...] = (
-        review_packet.COLLABORATION_ONLY_PATTERNS
-    )
 
     # ── Diff collection and classification ──────────────────────────────
     # Extracted to bus/review_packet.py (monolith decomposition).
