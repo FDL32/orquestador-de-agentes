@@ -58,7 +58,7 @@
   - `agent_system/templates/repomix.config.json`: plantilla de configuracion de Repomix.
 - `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
 - `skills/`: micro-habilidades reutilizables.
-- `.agent/collaboration/`: estado operacional canonico â€” vive en el `repo_destino`, no en el motor. El motor contiene seeds neutros; apuntar al destino via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
+- `.agent/collaboration/`: estado operacional canonico — vive en el `repo_destino`, no en el motor. El motor contiene seeds neutros; apuntar al destino via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
 - `.agent/context/repomix.xml`: contexto comprimido del workspace generado por Repomix (bootstrapping).
 - `.agent/council/`: broker de consejo y auditoria paralela.
@@ -72,7 +72,7 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 
 | Termino | Descripcion |
 |---------|-------------|
-| `repo_motor` | `orquestador_de_agentes/` â€” motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
+| `repo_motor` | `orquestador_de_agentes/` — motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
 | `repo_destino` | El proyecto que usa el motor. Tiene su propio `.agent/` con estado operativo (tickets, memoria, config). Nunca comparte estado con otros destinos. |
 | `workspace_activo` | Raiz operativa con `.agent/` desde la que corre el ticket actual. En la topologia actual coincide con `repo_destino`. Se configura via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. |
 | `entorno_multi_root` | IDE abierto con `repo_motor` + `repo_destino` a la vez (VS Code multi-folder workspace). No es un concepto de codigo: solo describe el entorno de desarrollo. |
@@ -100,8 +100,8 @@ ver `prompts/agent_execution_modes.md` y el vuelo que lo origino,
 `PROMPT_ARRANQUE_vuelo_limpieza_backlog_4capas_20261010.md`), e **Intermedio** (delega SOLO el
 triaje/contrato de todo el lote; implementa Y revisa el mismo, sin delegar ninguna de las dos,
 los tickets de blast-radius-alto -- regla dura de seguridad, nunca se delega la revision de esos
-tickets aunque si se delegue su triaje). El agente PROPONE un modo por seÃ±ales objetivas
-(peticion explicita, disponibilidad de Kilo, blast radius con fuente verificable, tamaÃ±o del
+tickets aunque si se delegue su triaje). El agente PROPONE un modo por señales objetivas
+(peticion explicita, disponibilidad de Kilo, blast radius con fuente verificable, tamaño del
 vuelo) y el usuario confirma; se puede cambiar de modo en caliente a mitad de sesion
 (`/agent-mode <modo>`, skill `agent-execution-mode`). Nucleo normativo completo y UNICO:
 `prompts/agent_execution_modes.md` (skill apunta, prompt gobierna, X-09) -- **estado `frozen`**
@@ -219,7 +219,7 @@ nomenclatura distingue dos usos muy distintos de un ID con prefijo legacy:
 
 - **Generador / ejemplo vivo** (DEBE usar `WOT-`): plantillas, placeholders,
   ejemplos de comando, texto de `--help`, esquemas de formato (`source_ticket`,
-  `Plan ID`, `Ticket relacionado`, `--ticket WP-...`). Crean o enseÃ±an
+  `Plan ID`, `Ticket relacionado`, `--ticket WP-...`). Crean o enseñan
   nomenclatura nueva. La gate FALLA si usan `WP-`/`WT-` sin etiqueta.
 - **Historia de commit** (legacy-compat implicito, NO se reescribe): un
   comentario o docstring de la forma `# <TICKET>: <descripcion de lo que se
@@ -503,26 +503,26 @@ Ver las superficies vivas NO archivables y la regla de limpieza en .agent/rules/
 
 Adaptado de las directrices operativas open-source en `dify-agent`:
 
-### 1. Docstrings como especificaciÃ³n de ejecuciÃ³n (Docstrings-as-Spec)
+### 1. Docstrings como especificación de ejecución (Docstrings-as-Spec)
 
-Cada funciÃ³n, clase o mÃ³dulo operativo del sistema debe contar con un docstring claro y estructurado en **3 fases**. El agente o auditor contrastarÃ¡ la firma tÃ©cnica con esta especificaciÃ³n semÃ¡ntica para asegurar el cumplimiento:
-- **Before (Pre-condiciones):** QuÃ© estados, variables, archivos o privilegios requiere la funciÃ³n antes de invocarse.
-- **During (Proceso y Recursos):** CuÃ¡l es el flujo de transformaciÃ³n de datos, quÃ© efectos colaterales (I/O, llamadas de red) realiza y quÃ© recursos del sistema consume.
-- **After (Post-condiciones y Errores):** QuÃ© salidas exactas se garantizan, cÃ³mo cambian los estados canÃ³nicos y quÃ© excepciones especÃ­ficas se interceptan y lanzan.
+Cada función, clase o módulo operativo del sistema debe contar con un docstring claro y estructurado en **3 fases**. El agente o auditor contrastará la firma técnica con esta especificación semántica para asegurar el cumplimiento:
+- **Before (Pre-condiciones):** Qué estados, variables, archivos o privilegios requiere la función antes de invocarse.
+- **During (Proceso y Recursos):** Cuál es el flujo de transformación de datos, qué efectos colaterales (I/O, llamadas de red) realiza y qué recursos del sistema consume.
+- **After (Post-condiciones y Errores):** Qué salidas exactas se garantizan, cómo cambian los estados canónicos y qué excepciones específicas se interceptan y lanzan.
 
-### 2. RÃºbrica de testing de alta fidelidad (Test Ãštil vs Basura)
+### 2. Rúbrica de testing de alta fidelidad (Test Útil vs Basura)
 
-Para evitar la inflaciÃ³n artificial de cobertura sin validaciÃ³n lÃ³gica real, el Builder y los quality gates rechazarÃ¡n cualquier test cosmÃ©tico. Se define la siguiente rÃºbrica de aceptaciÃ³n:
-- **Test InÃºtil (descartable):** Aquel que solo hace aserciones pasivas como `assert obj is not None` o verifica constantes mocked estÃ¡ticas sin desencadenar lÃ³gica real.
-- **Test Ãštil (aceptado):** Aquel que fuerza casos lÃ­mite (boundary limits), valida transiciones reales de estado (en el Event Bus, archivos de configuraciÃ³n o memoria persistente) y verifica explÃ­citamente el lanzamiento de excepciones esperadas (`pytest.raises`).
+Para evitar la inflación artificial de cobertura sin validación lógica real, el Builder y los quality gates rechazarán cualquier test cosmético. Se define la siguiente rúbrica de aceptación:
+- **Test Inútil (descartable):** Aquel que solo hace aserciones pasivas como `assert obj is not None` o verifica constantes mocked estáticas sin desencadenar lógica real.
+- **Test Útil (aceptado):** Aquel que fuerza casos límite (boundary limits), valida transiciones reales de estado (en el Event Bus, archivos de configuración o memoria persistente) y verifica explícitamente el lanzamiento de excepciones esperadas (`pytest.raises`).
 
 **Anti-patrones de test que el Builder debe evitar y el Manager debe rechazar:**
-- **Mock drift:** el patch apunta a `X` pero el cÃ³digo llama a `Y` (distinta API). El test pasa sin probar nada real. Ejemplo: parchear `pathlib.Path.open` cuando el cÃ³digo usa el built-in `open()`.
-- **Floor assertion:** el umbral de una aserciÃ³n numÃ©rica es satisfecho por el valor base sin la feature probada. Ejemplo: `assert score >= 150` cuando el score de recencia solo ya es `~20_000_000`.
+- **Mock drift:** el patch apunta a `X` pero el código llama a `Y` (distinta API). El test pasa sin probar nada real. Ejemplo: parchear `pathlib.Path.open` cuando el código usa el built-in `open()`.
+- **Floor assertion:** el umbral de una aserción numérica es satisfecho por el valor base sin la feature probada. Ejemplo: `assert score >= 150` cuando el score de recencia solo ya es `~20_000_000`.
 
-### 3. Anti-patrones de implementaciÃ³n
+### 3. Anti-patrones de implementación
 
-- **Zero-logic wrapper:** una funciÃ³n cuyo cuerpo completo es una Ãºnica llamada delegada 1:1 sin lÃ³gica propia debe ser inlineada o eliminada. AÃ±ade indirecciÃ³n cognitiva sin valor.
+- **Zero-logic wrapper:** una función cuyo cuerpo completo es una única llamada delegada 1:1 sin lógica propia debe ser inlineada o eliminada. Añade indirección cognitiva sin valor.
 
 ## CEM v0 - Contrato, Evidencia y Memoria
 
@@ -539,7 +539,7 @@ CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en
   - **Asimetria dura:** un probe que NO reproduce la ruta productiva puede **REFUTAR** una hipotesis, pero **NUNCA CONFIRMAR un cierre**. La confirmacion es la que mata: hoy el probe de PowerShell *confirmo* una hipotesis falsa, y fue el probe en la ruta REAL (Git Bash) el que la refuto.
   - **Recibo obligatorio (no basta afirmarlo):** el probe **imprime** su propio contexto -- `sys.executable`, `cwd`, la parte relevante de `PATH`/env, y la cadena de launcher-- y ese recibo se pega junto al `exit_code:`. Sin recibo, es evidencia exploratoria por defecto.
   - **Declara y justifica:** actor real, launcher real, shell, cwd, PATH/env, fichero/config leido, y **POR QUE** ese probe reproduce la ruta productiva.
-  - **Vector git (WOT-2026-020r):** si el probe invoca git, pregunta explicitamente **Â¿el cwd tiene su propio `.git`?** Si no lo tiene, el walk-up de git **alcanza el repo REAL** y te contesta el arbol de la maquina, no el fixture: el probe NO es hermetico y su verde no significa nada.
+  - **Vector git (WOT-2026-020r):** si el probe invoca git, pregunta explicitamente **¿el cwd tiene su propio `.git`?** Si no lo tiene, el walk-up de git **alcanza el repo REAL** y te contesta el arbol de la maquina, no el fixture: el probe NO es hermetico y su verde no significa nada.
   - **Por que esto es una regla y no un consejo:** un probe en la ruta equivocada se ve IDENTICO a uno bueno -- tiene `command:` y tiene `exit_code:` -- y por eso atraviesa a los revisores. Casos: `check_entrypoint_fails_closed` valida el entrypoint con `[sys.executable, ENTRYPOINT]` mientras produccion lo lanza **por shell** con `python` pelado, asi que prueba una ruta que produccion nunca toma; y el diagnostico de WOT-2026-020o midio `python` en **PowerShell** cuando el hook corre en **Git Bash**, lo que subio la ficha a Alta y ato WOT-2026-024f a ella sobre una premisa falsa (2026-07-15).
   - **ESTATUS DECLARADO: esto es una NORMA, no una barrera** (segun la definicion de "Barrera cableada" de esta misma lista: nadie la invoca sola, depende de que el agente se acuerde). Se declara asi a proposito en vez de disfrazarla de gate. El recibo es mecanizable y los checks POR DOMINIO si son cableables (p.ej. el censo de WOT-2026-024f debe resolver en Git Bash); un verificador GENERICO de equivalencia no es trivial, porque **no existe oraculo universal de "la ruta productiva"**: para comparar contra produccion hay que ejecutar en produccion, y entonces la comparacion sobra. Deuda declarada con dueno: **WOT-2026-025f**.
 - **El conflicto entre probes ES el hallazgo:** si dos mediciones del mismo hecho se contradicen, **no elijas la que confirma tu tesis, ni promedies, ni descartes la incomoda**: averigua QUE mide cada una, porque casi siempre **una de las dos no es produccion**. `python -c "pass"` dio TRES exit codes el mismo dia en la misma maquina -- `subprocess(shell=False)` -> 0 (CreateProcess resuelve primero el dir del ejecutable PADRE: el python del venv), cmd/PowerShell -> 1 (shim `python.BAT`), Git Bash -> 0 (el `python.exe` real). Dos de los tres producian un veredicto FALSO sobre produccion: uno un falso VERDE y otro un falso ROJO. La contradiccion es material de auditoria de primer nivel, no ruido a resolver por mayoria.
@@ -564,12 +564,12 @@ El coste de APLAZAR **no es cero**. Ver criterio completo de 8 gates, balanza mi
 ## Skills Formales de Proceso
 
 El repositorio define skills operativas formales para estructurar el trabajo del agente.
-Ãšsalas invocando sus triggers (ej. `/tdd`, `/debug`):
+Úsalas invocando sus triggers (ej. `/tdd`, `/debug`):
 
-- **Test-Driven Development (TDD)** (`skills/test-driven-development/SKILL.md`): Usar para asegurar cobertura y evitar regresiones en cÃ³digo nuevo o fixes. Obliga a escribir el test primero (Red), el cÃ³digo mÃ­nimo (Green) y refactorizar con calidad (`ruff` + `pytest`).
-- **Systematic Debugging** (`skills/systematic-debugging/SKILL.md`): Usar ante errores no triviales. Exige investigaciÃ³n de causa raÃ­z antes de parchear y establece un lÃ­mite estricto de 3 intentos antes de detener la iteraciÃ³n y cuestionar el entendimiento del problema.
+- **Test-Driven Development (TDD)** (`skills/test-driven-development/SKILL.md`): Usar para asegurar cobertura y evitar regresiones en código nuevo o fixes. Obliga a escribir el test primero (Red), el código mínimo (Green) y refactorizar con calidad (`ruff` + `pytest`).
+- **Systematic Debugging** (`skills/systematic-debugging/SKILL.md`): Usar ante errores no triviales. Exige investigación de causa raíz antes de parchear y establece un límite estricto de 3 intentos antes de detener la iteración y cuestionar el entendimiento del problema.
 
-No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir un README o depuraciÃ³n para un typo reportado por el linter).
+No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir un README o depuración para un typo reportado por el linter).
 
 ### Gobierno skill<->prompt: skill apunta, prompt gobierna (WOT-2026-014r / X-09)
 
@@ -607,14 +607,14 @@ bajo demanda, consulta al disenar o depurar el propio mecanismo de memoria:
 
 ## deliverable_type (work_plan schema, V2)
 
-Cada `work_plan.md` declara `deliverable_type` en su secciÃ³n Metadata. Valores:
-- `code` â€” el deliverable principal es cÃ³digo fuente (Python u otro).
-- `documentation` â€” markdown, AGENTS.md, READMEs.
-- `research` â€” anÃ¡lisis comparativos, reportes (gap analysis, repo-compare).
-- `analysis` â€” estudios tÃ©cnicos, audits.
-- `mixed` â€” combinaciÃ³n legÃ­tima (ej. WP que toca cÃ³digo y docs).
+Cada `work_plan.md` declara `deliverable_type` en su sección Metadata. Valores:
+- `code` — el deliverable principal es código fuente (Python u otro).
+- `documentation` — markdown, AGENTS.md, READMEs.
+- `research` — análisis comparativos, reportes (gap analysis, repo-compare).
+- `analysis` — estudios técnicos, audits.
+- `mixed` — combinación legítima (ej. WP que toca código y docs).
 
-`agent_controller --validate` valida que exista el campo y no tenga valores invÃ¡lidos.
+`agent_controller --validate` valida que exista el campo y no tenga valores inválidos.
 
 ### Contrato operativo por tipo de ticket
 
@@ -692,7 +692,7 @@ antes (aditivo, cero regresion). Detalle (referencia bajo demanda):
 
 ## Criterio de cierre
 
-> Detalle operativo de los quality gates y comandos diarios (incluye flags exactos y secuencia recomendada): ver [QUICKSTART.md secciÃ³n "6. Comandos diarios"](QUICKSTART.md#6-comandos-diarios).
+> Detalle operativo de los quality gates y comandos diarios (incluye flags exactos y secuencia recomendada): ver [QUICKSTART.md sección "6. Comandos diarios"](QUICKSTART.md#6-comandos-diarios).
 
 Considera una tarea cerrada solo cuando:
 1. `ruff`, `pytest` y `pip-audit` pasan.
