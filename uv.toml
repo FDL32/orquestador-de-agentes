@@ -8,4 +8,20 @@ exclude-newer = '2026-05-16'
 # arrastrar 15 paquetes, que exigiria re-correr la suite sobre un entorno distinto.
 # certifi 2026.10.19 corrige GHSA-6q48-6c7w-9gw2; el cutoff global lo oculta,
 # asi que se abre una ventana por-paquete solo para certifi (mismo patron).
-exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20' }
+# virtualenv 21.14.2/21.14.4/21.14.7 corrigen CVE-2026-113776/113732/113726/113725
+# (publicadas 2026-10-01 a 2026-10-12); el cutoff global las oculta igual que a pip
+# y certifi -- mismo patron, ventana por-paquete en vez de ignore-vuln (esas 4 CVEs
+# SI tienen fix real, a diferencia de PYSEC-2026-4011..4014 que siguen sin resolver).
+# distlib: virtualenv 21.14.7 exige distlib>=0.4.3,<1 (publicada 2026-06-12), que el
+# cutoff global tambien ocultaba -- sin esta ventana el resolver de virtualenv falla
+# con "Because only distlib<=0.4.0 is available". Misma ventana que virtualenv.
+# packaging: virtualenv 21.14.7 exige packaging>=26.3 (publicada 2026-08-04), tercera
+# dependencia en cadena bloqueada por el mismo cutoff. Confirmado via OSV
+# (api.osv.dev) que CVE-2026-113725 (la 4a de las 4 CVEs de virtualenv) SOLO se
+# corrige en 21.14.7 exacta -- no hay version intermedia que cubra las 4 sin esta
+# cadena completa (distlib + packaging + python-discovery).
+# python-discovery: virtualenv 21.14.7 exige python-discovery>=1.6.1 (publicada
+# 2026-09-18), cuarta dependencia en cadena bloqueada por el mismo cutoff.
+# typing-extensions: virtualenv 21.14.7 exige typing-extensions>=4.16 (publicada
+# 2026-07-02) en python<3.11, quinta dependencia en cadena.
+exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20', virtualenv = '2026-10-13', distlib = '2026-10-13', packaging = '2026-10-13', python-discovery = '2026-10-13', typing-extensions = '2026-10-13' }
