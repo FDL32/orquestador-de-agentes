@@ -97,6 +97,10 @@ ignore-vuln = [
     "PYSEC-2026-4012", # virtualenv >=21.7.11 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
     "PYSEC-2026-4013", # virtualenv >=21.7.13 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
     "PYSEC-2026-4014", # virtualenv >=21.7.12 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+    "CVE-2026-113726", # virtualenv >=21.14.4 (dev, via pre-commit) -- mismo paquete/debt de WOT-2026-086f bajo alias CVE nuevo, revalidado 2026-10-21, sin resolver
+    "CVE-2026-113776", # virtualenv >=21.14.2 (dev, via pre-commit) -- mismo paquete/debt de WOT-2026-086f bajo alias CVE nuevo, revalidado 2026-10-21, sin resolver
+    "CVE-2026-113732", # virtualenv >=21.14.2 (dev, via pre-commit) -- mismo paquete/debt de WOT-2026-086f bajo alias CVE nuevo, revalidado 2026-10-21, sin resolver
+    "CVE-2026-113725", # virtualenv >=21.14.7 (dev, via pre-commit) -- mismo paquete/debt de WOT-2026-086f bajo alias CVE nuevo, revalidado 2026-10-21, sin resolver
 ]
 
 [tool.uv]
