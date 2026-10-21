@@ -36,6 +36,7 @@ from scripts.check_audit_report import (
 from scripts.dedupe_audit_findings import (
     dedupe,
     extraer_filas,
+    fence_sin_cerrar,
     normaliza_categoria,
 )
 
@@ -522,6 +523,57 @@ class TestParserRobusto:
         )
         assert r.returncode == 0, r.stderr
         assert '"total": 5' in r.stdout
+
+
+class TestFencesCommonMark:
+    """Un bloque de codigo mal cerrado no puede tragarse filas en silencio."""
+
+    _TABLA = "| id | categoria |\n|----|-----------|\n| H-0{n} | SMELL |\n"
+
+    def _dos_tablas(self, entre: str) -> str:
+        return self._TABLA.format(n=1) + entre + "\n" + self._TABLA.format(n=2)
+
+    def test_unclosed_fence_between_tables_is_an_error_not_silent_row_loss(self):
+        texto = self._dos_tablas("```\nejemplo sin cerrar\n")
+        res = audit_report({"a.md": texto})
+        assert "FENCE-SIN-CERRAR" in codigos(res, "ERROR")
+        assert res.tally["total"] == 1  # la fila H-02 queda dentro del fence
+
+    def test_unclosed_fence_in_the_report_is_an_error(self):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra="```\nabierto\n"))
+        assert "FENCE-SIN-CERRAR" in codigos(res, "ERROR")
+
+    def test_properly_closed_fence_is_not_an_error(self):
+        texto = self._dos_tablas("```python\nx = 1\n```\n")
+        res = audit_report({"a.md": texto})
+        assert "FENCE-SIN-CERRAR" not in codigos(res)
+        assert res.tally["total"] == 2
+
+    def test_inline_triple_backticks_do_not_open_a_fence(self):
+        texto = self._dos_tablas("```x``` es codigo en linea\n")
+        res = audit_report({"a.md": texto})
+        assert "FENCE-SIN-CERRAR" not in codigos(res)
+        assert res.tally["total"] == 2
+
+    def test_tilde_fence_is_not_closed_by_backticks(self):
+        texto = self._dos_tablas("~~~\ncodigo\n```\n")
+        res = audit_report({"a.md": texto})
+        assert "FENCE-SIN-CERRAR" in codigos(res, "ERROR")
+
+    def test_closing_fence_must_be_at_least_as_long_as_the_opening(self):
+        corto = self._dos_tablas("````\ncodigo\n```\n")  # 3 no cierra 4
+        largo = self._dos_tablas("```\ncodigo\n````\n")  # 4 si cierra 3
+        assert "FENCE-SIN-CERRAR" in codigos(audit_report({"a.md": corto}), "ERROR")
+        assert "FENCE-SIN-CERRAR" not in codigos(audit_report({"a.md": largo}))
+
+    def test_closing_fence_cannot_carry_text(self):
+        texto = self._dos_tablas("```\ncodigo\n``` texto\n")
+        assert "FENCE-SIN-CERRAR" in codigos(audit_report({"a.md": texto}), "ERROR")
+
+    def test_unclosed_fence_line_number_points_at_the_opening(self):
+        texto = "# L\n\n```\nabierto\n"
+        assert fence_sin_cerrar(texto) == 3
+        assert fence_sin_cerrar("# L\n\n```\ncodigo\n```\n") is None
 
 
 class TestCategoriaExacta:

@@ -22,6 +22,8 @@ Sobre los `HALLAZGOS_<lane>.md`:
   HALLAZGOS-SIN-FILAS  fichero sin ninguna fila de hallazgo reconocida: ERROR si
                    alguna linea de tabla cita un `H-<n>` (tabla no reconocida,
                    p.ej. cabecera sin `categoria`), WARN si no cita ninguno.
+  FENCE-SIN-CERRAR un bloque ``` o ~~~ que nunca se cierra: el parser ignora todo lo
+                   que le sigue (tablas incluidas) y las filas perdidas no darian error.
   FILA-ANCHO       (WARN) fila con mas celdas que la cabecera: el dato sobrante no
                    se lee y un `|` literal en una celda desplaza las columnas.
 Sobre el informe (`--informe`):
@@ -80,6 +82,7 @@ try:  # importado como modulo del paquete (tests)
     from scripts.dedupe_audit_findings import (
         ALCANCES,
         ID_CANONICO_RE,
+        fence_sin_cerrar,
         normaliza_categoria,
         parse_tablas,
     )
@@ -90,6 +93,7 @@ except (
     from dedupe_audit_findings import (  # type: ignore[no-redef]
         ALCANCES,
         ID_CANONICO_RE,
+        fence_sin_cerrar,
         normaliza_categoria,
         parse_tablas,
     )
@@ -475,6 +479,24 @@ def _comprueba_informe(
     _comprueba_tally(informe_text, hallazgos, res)
 
 
+def _comprueba_fences(
+    hallazgos: dict[str, str], informe_text: str | None, res: AuditResult
+) -> None:
+    """Un bloque de codigo sin cerrar hace que el parser ignore TODO lo que le sigue."""
+    textos = dict(hallazgos)
+    if informe_text is not None:
+        textos["informe"] = informe_text
+    for nombre, texto in textos.items():
+        linea = fence_sin_cerrar(texto)
+        if linea is not None:
+            res.add(
+                "ERROR",
+                "FENCE-SIN-CERRAR",
+                f"{nombre}:{linea}: bloque de codigo sin cerrar; las tablas que le "
+                "siguen se ignoran como codigo (las filas perdidas no darian error)",
+            )
+
+
 def audit_report(
     hallazgos: dict[str, str], informe_text: str | None = None
 ) -> AuditResult:
@@ -486,6 +508,7 @@ def audit_report(
     After: `AuditResult` con la lista de `Finding` (codigo estable) y el tally recalculado.
     """
     res = AuditResult()
+    _comprueba_fences(hallazgos, informe_text, res)
     categoria_de = _recolecta(hallazgos, res)
     if informe_text is not None:
         _comprueba_informe(informe_text, categoria_de, hallazgos, res)

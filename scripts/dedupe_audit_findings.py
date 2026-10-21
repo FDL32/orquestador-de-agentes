@@ -81,7 +81,7 @@ ARCHIVO_RE = re.compile(r"`?([^`:,\s]+\.\w+)")
 _SEPARADOR_CELDA_RE = re.compile(r"^:?-+:?$")
 _PIPE_NO_ESCAPADO_RE = re.compile(r"(?<!\\)\|")
 _BOM = chr(0xFEFF)
-_FENCES = ("```", "~~~")
+_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 
 
 def _normaliza_archivo(archivo: str) -> str:
@@ -141,6 +141,42 @@ def _norm_col(nombre: str) -> str:
     return "archivo" if n.startswith("archivo") else n
 
 
+def _marca_fences(lineas: list[str]) -> tuple[list[bool], int | None]:
+    """Marca las lineas que estan dentro de un bloque de codigo (delimitadores incluidos).
+
+    Reglas de CommonMark: un fence abre con 3+ ``` o ~~~ (con ``` el texto que le
+    sigue no puede llevar otro backtick: `` ```x``` `` es codigo en linea, no un
+    fence) y solo lo cierra el MISMO caracter, con longitud >= la de apertura y
+    nada mas en la linea. Devuelve (`dentro`, linea 1-based del fence que nunca se
+    cerro o None): un fence sin cerrar se extiende hasta el final del fichero.
+    """
+    dentro = [False] * len(lineas)
+    abierto: tuple[str, int, int] | None = None  # (caracter, longitud, indice)
+    for i, linea in enumerate(lineas):
+        m = _FENCE_RE.match(linea)
+        marca, resto = m.groups() if m else ("", "")
+        if abierto is not None:
+            dentro[i] = True
+            cierra = marca[:1] == abierto[0] and len(marca) >= abierto[1]
+            if cierra and not resto.strip():
+                abierto = None
+        elif marca and not (marca[0] == "`" and "`" in resto):
+            dentro[i] = True
+            abierto = (marca[0], len(marca), i)
+    return dentro, (abierto[2] + 1 if abierto else None)
+
+
+def fence_sin_cerrar(contenido: str) -> int | None:
+    """Linea (1-based) del bloque de codigo que nunca se cierra, o None.
+
+    Before: `contenido` es el texto de un Markdown (un BOM inicial se ignora).
+    During: aplica las mismas reglas de fence que `parse_tablas`.
+    After: sin cerrar, `parse_tablas` ignora TODO lo que sigue a esa linea como
+        codigo; el llamador debe avisarlo, porque las filas perdidas no dan error.
+    """
+    return _marca_fences(contenido.lstrip(_BOM).splitlines())[1]
+
+
 def parse_tablas(contenido: str, fuente: str) -> list[dict]:
     """Extrae TODAS las filas de las tablas GFM de un Markdown, por cabecera.
 
@@ -159,16 +195,12 @@ def parse_tablas(contenido: str, fuente: str) -> list[dict]:
     filas: list[dict] = []
     header: list[str] | None = None
     seccion = ""
-    en_fence = False
+    dentro, _ = _marca_fences(lineas)
     i = 0
     while i < len(lineas):
         linea = lineas[i]
-        if linea.lstrip().startswith(_FENCES):
-            en_fence = not en_fence
+        if dentro[i]:
             header = None
-            i += 1
-            continue
-        if en_fence:
             i += 1
             continue
         if linea.lstrip().startswith("#"):
