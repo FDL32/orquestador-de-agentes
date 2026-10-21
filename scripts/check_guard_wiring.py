@@ -822,22 +822,47 @@ def collect_evidence(
     return ev
 
 
-def audit(root: Path, policy: dict | None = None):
-    """Devuelve (wired, unwired) -- compat con la firma de v1-v3."""
+def audit(
+    root: Path,
+    policy: dict | None = None,
+    *,
+    evidence: dict[str, list[tuple[str, int]]] | None = None,
+):
+    """Devuelve (wired, unwired) -- compat con la firma de v1-v3.
+
+    `evidence` (opcional) reutiliza un dict ya devuelto por `collect_evidence`
+    con los MISMOS `root`/`extra_guards` (p.ej. main(), que lo comparte con
+    `_dewired`); None (default) recalcula, como siempre."""
     policy = policy or _load_policy()
     guards = find_guards(root, policy["extra_guards"])
-    ev = collect_evidence(root, policy["extra_guards"])
+    ev = (
+        evidence
+        if evidence is not None
+        else collect_evidence(root, policy["extra_guards"])
+    )
     wired, unwired = [], []
     for g in sorted(guards):
         (wired if ev.get(g) else unwired).append(g)
     return wired, unwired
 
 
-def wiring_edges(root: Path, policy: dict | None = None) -> dict[str, set[str]]:
+def wiring_edges(
+    root: Path,
+    policy: dict | None = None,
+    *,
+    evidence: dict[str, list[tuple[str, int]]] | None = None,
+) -> dict[str, set[str]]:
     """guard -> conjunto de FICHEROS que lo cablean. La 'arista' robusta a edits
-    inocentes (no fija numeros de linea, solo el fichero+config de origen)."""
+    inocentes (no fija numeros de linea, solo el fichero+config de origen).
+
+    `evidence` (opcional) reutiliza el dict de `collect_evidence` del llamador
+    en vez de recalcular; None (default) mantiene el comportamiento actual."""
     policy = policy or _load_policy()
-    ev = collect_evidence(root, policy["extra_guards"])
+    ev = (
+        evidence
+        if evidence is not None
+        else collect_evidence(root, policy["extra_guards"])
+    )
     return {g: {where.split(":")[0] for where, _ln in sites} for g, sites in ev.items()}
 
 
@@ -950,13 +975,20 @@ def _orphan_owners(
     )
 
 
-def _dewired(root: Path, policy: dict) -> list[str]:
+def _dewired(
+    root: Path,
+    policy: dict,
+    *,
+    evidence: dict[str, list[tuple[str, int]]] | None = None,
+) -> list[str]:
     """Guards del baseline que YA NO se cablean desde su fichero declarado. La
-    asimetria gemela: un guard que estaba WIRED por un call-site y lo perdio."""
+    asimetria gemela: un guard que estaba WIRED por un call-site y lo perdio.
+
+    `evidence` (opcional) se reenvia a `wiring_edges`; None (default) recalcula."""
     baseline = _load_baseline()
     if not baseline:
         return []
-    edges = wiring_edges(root, policy)
+    edges = wiring_edges(root, policy, evidence=evidence)
     bad: list[str] = []
     for guard, expected_files in baseline.items():
         got = edges.get(guard, set())
@@ -1000,7 +1032,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
         print("  An owner must be a ticket (WOT-YYYY-NNNx) or start with 'BY-DESIGN:'.")
         return 1
 
-    wired, unwired = audit(root, policy)
+    ev = collect_evidence(root, policy["extra_guards"])
+    wired, unwired = audit(root, policy, evidence=ev)
     unwired = [g for g in unwired if g not in wired_via]
     undeclared = [g for g in unwired if g not in known]
     declared = [g for g in unwired if g in known]
@@ -1012,7 +1045,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
         f"{len(wired_via)} via, {len(stale)} stale)"
     )
 
-    dewired = _dewired(root, policy)
+    dewired = _dewired(root, policy, evidence=ev)
     if dewired:
         print("\n[guard-wiring] ERROR: guard(s) DES-CABLEADOS (estaban wired, ya no):")
         for d in dewired:
