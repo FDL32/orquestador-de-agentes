@@ -34,10 +34,12 @@ from scripts.check_audit_report import (
     format_tally_block,
 )
 from scripts.dedupe_audit_findings import (
+    _celdas,
     dedupe,
     extraer_filas,
     fence_sin_cerrar,
     normaliza_categoria,
+    parse_tablas,
 )
 
 
@@ -525,6 +527,208 @@ class TestParserRobusto:
         assert '"total": 5' in r.stdout
 
 
+class TestPipesEscapadosGFM:
+    """`\\|` es un pipe literal; una barra escapada seguida de `|` SI delimita."""
+
+    BS = chr(92)
+
+    def test_escaped_pipe_stays_inside_the_cell(self):
+        celdas = _celdas(f"| H-01 | git grep a{self.BS}|b | SMELL |")
+        assert celdas == ["H-01", "git grep a|b", "SMELL"]
+
+    def test_escaped_backslash_before_a_pipe_still_delimits(self):
+        # `C:{BS}dir{BS}{BS}|` = ruta que acaba en barra + delimitador de celda
+        celdas = _celdas(f"| H-01 | C:{self.BS}dir{self.BS}{self.BS}| SMELL |")
+        assert celdas == ["H-01", f"C:{self.BS}dir{self.BS}{self.BS}", "SMELL"]
+
+    def test_odd_run_of_backslashes_escapes_the_pipe(self):
+        # 3 barras = `\\` (barra literal) + `\|` (pipe escapado): una sola celda
+        tres = self.BS * 3
+        assert _celdas(f"| a{tres}|b | c |") == [f"a{self.BS}{self.BS}|b", "c"]
+
+    def test_trailing_escaped_pipe_is_not_the_closing_delimiter(self):
+        assert _celdas(f"| a | b{self.BS}|") == ["a", "b|"]
+
+    def test_empty_last_cell_is_kept_but_the_closing_pipe_is_dropped(self):
+        assert _celdas("| a | |") == ["a", ""]
+        assert _celdas("| a | b |") == ["a", "b"]
+        assert _celdas("| a | b") == ["a", "b"]
+
+    def test_lone_trailing_backslash_does_not_crash(self):
+        assert _celdas(f"| a | b{self.BS}") == ["a", f"b{self.BS}"]
+
+    def test_row_with_escaped_backslash_then_pipe_is_not_misaligned(self):
+        # la barra escapada pega al delimitador: con el lookbehind antiguo se fusionaban
+        # las celdas `archivo` y `evidencia` y la fila salia con una columna de menos
+        dos = self.BS * 2
+        fila = f"| H-06 | SMELL | C:{self.BS}dir{dos}| x | bajo | y |\n"
+        res = audit(hall_b=HALLAZGOS_B + fila)
+        assert "FILA-ANCHO" not in codigos(res)
+        assert res.tally["total"] == 6
+
+
+class TestCensoPerdidoRonda2:
+    """BA07 ronda 2: formas de perder filas con exit 0 que la ronda 1 no cerro."""
+
+    _VALIDA = "| id | categoria |\n|----|-----------|\n| H-01 | SMELL |\n"
+    _MALA = "| id | categ | archivo |\n|---|---|---|\n| H-77 | SMELL | `b.py:2` |\n"
+
+    def test_malformed_table_next_to_a_valid_one_is_an_error(self):
+        # el fichero YA tiene filas, asi que HALLAZGOS-SIN-FILAS no salta: este es el hueco
+        res = audit_report({"a.md": self._VALIDA + "\n" + self._MALA})
+        assert "TABLA-SIN-CATEGORIA" in codigos(res, "ERROR")
+        assert res.tally["total"] == 1  # H-77 no entra en el censo
+
+    def test_a_table_with_categoria_is_not_flagged(self):
+        res = audit_report({"a.md": self._VALIDA})
+        assert "TABLA-SIN-CATEGORIA" not in codigos(res)
+
+    def test_an_id_table_without_hallazgo_ids_is_not_flagged(self):
+        # tabla auxiliar (p.ej. lanes) con columna `id` pero sin ids H-<n>
+        aux = "| id | lane |\n|----|------|\n| 1 | tools |\n"
+        res = audit_report({"a.md": self._VALIDA + "\n" + aux})
+        assert "TABLA-SIN-CATEGORIA" not in codigos(res)
+
+    def test_three_files_with_the_same_basename_and_parent_all_count(self, tmp_path):
+        rutas = []
+        for k in (1, 2, 3):
+            carpeta = tmp_path / f"r{k}" / "lane"
+            carpeta.mkdir(parents=True)
+            fichero = carpeta / "HALLAZGOS.md"
+            fichero.write_text(
+                self._VALIDA.replace("H-01", f"H-0{k}"), encoding="utf-8"
+            )
+            rutas.append(str(fichero))
+        r = subprocess.run(
+            [sys.executable, str(CHECK), *rutas, "--emit-tally"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert r.returncode == 0, r.stderr
+        assert '"total": 3' in r.stdout
+
+    def test_the_same_path_passed_twice_does_not_crash_or_overwrite(self, tmp_path):
+        fichero = tmp_path / "HALLAZGOS.md"
+        fichero.write_text(self._VALIDA, encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(CHECK), str(fichero), str(fichero), str(fichero)],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert r.returncode == 0, r.stderr
+        # cada repeticion se ve (2 duplicados de 3 ficheros), ninguna se pisa en silencio
+        assert r.stdout.count("ID-DUPLICADO") == 2
+
+
+class TestAnclasYCerosRonda2:
+    """BA06: un ancla de enlace no es una cita, y H-30 / H-030 son el mismo hallazgo."""
+
+    def test_link_anchor_with_a_lowercase_id_is_not_a_citation(self):
+        extra = "[Ver H-01](#h-01) y la ruta docs/h-01.md citan el mismo ancla.\n"
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=extra))
+        assert "ID-NO-CANONICO" not in codigos(res)
+
+    def test_lowercase_id_in_plain_prose_is_still_caught(self):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra="Ver h-01 abajo.\n"))
+        assert "ID-NO-CANONICO" in codigos(res, "ERROR")
+
+    def test_leading_zeros_do_not_disguise_a_duplicate(self):
+        uno = "| id | categoria |\n|----|-----------|\n| H-30 | SMELL |\n"
+        otro = "| id | categoria |\n|----|-----------|\n| H-030 | SMELL |\n"
+        res = audit_report({"a.md": uno, "b.md": otro})
+        assert "ID-DUPLICADO" in codigos(res, "ERROR")
+        assert res.tally["total"] == 1  # el segundo no entra en el censo
+
+    def test_distinct_numbers_with_zeros_are_not_duplicates(self):
+        uno = "| id | categoria |\n|----|-----------|\n| H-30 | SMELL |\n"
+        otro = "| id | categoria |\n|----|-----------|\n| H-031 | SMELL |\n"
+        res = audit_report({"a.md": uno, "b.md": otro})
+        assert "ID-DUPLICADO" not in codigos(res)
+        assert res.tally["total"] == 2
+
+
+class TestEncabezadosYEjemplosRonda2:
+    def test_group_heading_levels_are_case_insensitive_and_exact(self):
+        con_baja = HALLAZGOS_B + "| H-06 | SECURITY-baja | `d.py:1` | x | bajo | y |\n"
+        ok = audit(
+            hall_b=con_baja,
+            inf=informe(extra=seccion("SECURITY-alta / MEDIA", "H-01")),
+        )
+        mal = audit(
+            hall_b=con_baja,
+            inf=informe(extra=seccion("SECURITY-alta / MEDIA", "H-06")),
+        )
+        assert "CAT-DIVERGE" not in codigos(ok)  # alta cabe en "alta / MEDIA"
+        assert "CAT-DIVERGE" in codigos(mal)  # baja NO cabe en "alta / MEDIA"
+
+    def test_a_level_listed_in_uppercase_after_the_slash_is_accepted(self):
+        # `MEDIA` en mayusculas debe contar como `SECURITY-media`, no ignorarse
+        con_media = (
+            HALLAZGOS_B + "| H-06 | SECURITY-media | `d.py:1` | x | bajo | y |\n"
+        )
+        res = audit(
+            hall_b=con_media,
+            inf=informe(extra=seccion("SECURITY-alta / MEDIA", "H-06")),
+        )
+        assert "CAT-DIVERGE" not in codigos(res)
+
+    def test_an_uppercase_level_in_the_heading_still_compares_exactly(self):
+        # `### SECURITY-ALTA` es el nivel alta: una fila baja bajo el NO cabe, y una alta SI
+        con_baja = HALLAZGOS_B + "| H-06 | SECURITY-baja | `d.py:1` | x | bajo | y |\n"
+        mal = audit(
+            hall_b=con_baja, inf=informe(extra=seccion("SECURITY-ALTA", "H-06"))
+        )
+        bien = audit(
+            hall_b=con_baja, inf=informe(extra=seccion("SECURITY-ALTA", "H-01"))
+        )
+        assert "CAT-DIVERGE" in codigos(mal)
+        assert "CAT-DIVERGE" not in codigos(bien)
+
+    def test_id_cited_inside_a_code_fence_is_a_quoted_example(self):
+        ejemplo = "```\n| H-99 | ejemplo |\n```\n"
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=ejemplo))
+        assert "ID-HUERFANO" not in codigos(res)
+
+    def test_same_id_outside_the_fence_is_still_an_orphan(self):
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra="Ver H-99 abajo.\n"))
+        assert "ID-HUERFANO" in codigos(res, "ERROR")
+
+    def test_example_tally_block_inside_a_fence_is_not_a_second_block(self):
+        ejemplo = f"```\n<!-- TALLY: {json.dumps(TALLY_OK)} -->\n```\n"
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(extra=ejemplo))
+        assert "TALLY-MULTIPLE" not in codigos(res)
+
+    def test_a_real_tally_only_inside_a_fence_counts_as_absent(self):
+        envuelto = f"```\n<!-- TALLY: {json.dumps(TALLY_OK)} -->\n```\n"
+        res = audit(hall_a=HALLAZGOS_A_LIMPIO, inf=informe(tally=None, extra=envuelto))
+        assert "TALLY-AUSENTE" in codigos(res, "ERROR")
+
+
+class TestFencesSangria:
+    """El cierre solo vale con <= 3 espacios MAS de sangrado que la apertura."""
+
+    _TABLA = "| id | categoria |\n|---|---|\n| H-99 | SMELL |\n"
+
+    def test_over_indented_closing_fence_does_not_close_the_block(self):
+        texto = "```text\n    ```\n" + self._TABLA
+        assert fence_sin_cerrar(texto) == 1  # ruidoso, no una fila fantasma
+        assert parse_tablas(texto, "x") == []
+
+    def test_closing_fence_with_up_to_three_extra_spaces_closes(self):
+        texto = "```text\n   ```\n" + self._TABLA
+        assert fence_sin_cerrar(texto) is None
+        assert [f["cols"]["id"] for f in parse_tablas(texto, "x")] == ["H-99"]
+
+    def test_nested_fence_in_a_list_item_closes_with_its_own_indent(self):
+        texto = "- item\n\n    ```text\n    codigo\n    ```\n\n" + self._TABLA
+        assert fence_sin_cerrar(texto) is None
+        assert [f["cols"]["id"] for f in parse_tablas(texto, "x")] == ["H-99"]
+
+
 class TestFencesCommonMark:
     """Un bloque de codigo mal cerrado no puede tragarse filas en silencio."""
 
@@ -564,7 +768,9 @@ class TestFencesCommonMark:
         corto = self._dos_tablas("````\ncodigo\n```\n")  # 3 no cierra 4
         largo = self._dos_tablas("```\ncodigo\n````\n")  # 4 si cierra 3
         assert "FENCE-SIN-CERRAR" in codigos(audit_report({"a.md": corto}), "ERROR")
-        assert "FENCE-SIN-CERRAR" not in codigos(audit_report({"a.md": largo}))
+        res_largo = audit_report({"a.md": largo})
+        assert "FENCE-SIN-CERRAR" not in codigos(res_largo)
+        assert res_largo.tally["total"] == 2  # el cierre largo SI cerro: H-02 cuenta
 
     def test_closing_fence_cannot_carry_text(self):
         texto = self._dos_tablas("```\ncodigo\n``` texto\n")

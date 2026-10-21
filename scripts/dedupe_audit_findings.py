@@ -79,7 +79,6 @@ ID_CANONICO_RE = re.compile(r"H-\d+")
 ARCHIVO_LINEA_RE = re.compile(r"`?([^`:,\s]+\.\w+)[:,](\d+)")
 ARCHIVO_RE = re.compile(r"`?([^`:,\s]+\.\w+)")
 _SEPARADOR_CELDA_RE = re.compile(r"^:?-+:?$")
-_PIPE_NO_ESCAPADO_RE = re.compile(r"(?<!\\)\|")
 _BOM = chr(0xFEFF)
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 
@@ -115,16 +114,40 @@ def normaliza_categoria(raw: str) -> tuple[str | None, str]:
     return None, txt
 
 
+def _divide_celdas(s: str) -> list[str]:
+    r"""Parte `s` por los `|` SIN escapar; `\|` es un pipe literal, `\x` se conserva.
+
+    GFM trata `\` + caracter como una unidad: `a\\|b` es una barra escapada seguida de
+    un pipe delimitador (2 celdas), no un pipe escapado. Mirar solo el caracter
+    anterior (un lookbehind) falla justo ahi, con rutas Windows que acaban en barra.
+    """
+    celdas: list[str] = []
+    actual: list[str] = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and i + 1 < len(s):
+            actual.append("|" if s[i + 1] == "|" else c + s[i + 1])
+            i += 2
+        elif c == "|":
+            celdas.append("".join(actual))
+            actual = []
+            i += 1
+        else:
+            actual.append(c)
+            i += 1
+    celdas.append("".join(actual))
+    return celdas
+
+
 def _celdas(linea: str) -> list[str] | None:
     s = linea.strip()
     if not s.startswith("|"):
         return None
-    s = s[1:]
-    if s.endswith("|"):
-        s = s[:-1]
-    # `\|` es un pipe LITERAL en GFM (p.ej. `git grep "a\|b"` en una celda de
-    # evidencia): no parte la celda y se entrega ya sin la barra de escape.
-    return [c.strip().replace("\\|", "|") for c in _PIPE_NO_ESCAPADO_RE.split(s)]
+    celdas = _divide_celdas(s[1:])
+    if s.endswith("|") and celdas[-1] == "":  # `|` final delimitador (no escapado)
+        celdas.pop()
+    return [c.strip() for c in celdas]
 
 
 def _es_separador(celdas: list[str] | None) -> bool:
@@ -141,28 +164,46 @@ def _norm_col(nombre: str) -> str:
     return "archivo" if n.startswith("archivo") else n
 
 
+def _sangria(linea: str) -> int:
+    expandida = linea.expandtabs(4)
+    return len(expandida) - len(expandida.lstrip())
+
+
 def _marca_fences(lineas: list[str]) -> tuple[list[bool], int | None]:
     """Marca las lineas que estan dentro de un bloque de codigo (delimitadores incluidos).
 
-    Reglas de CommonMark: un fence abre con 3+ ``` o ~~~ (con ``` el texto que le
-    sigue no puede llevar otro backtick: `` ```x``` `` es codigo en linea, no un
-    fence) y solo lo cierra el MISMO caracter, con longitud >= la de apertura y
-    nada mas en la linea. Devuelve (`dentro`, linea 1-based del fence que nunca se
-    cerro o None): un fence sin cerrar se extiende hasta el final del fichero.
+    Reglas al estilo CommonMark: un fence abre con 3+ ``` o ~~~ (con ``` el texto que
+    le sigue no puede llevar otro backtick: `` ```x``` `` es codigo en linea, no un
+    fence) y solo lo cierra el MISMO caracter, con longitud >= la de apertura, nada
+    mas en la linea y como mucho 3 espacios MAS de sangrado que la apertura.
+    Devuelve (`dentro`, linea 1-based del fence que nunca se cerro o None): un fence
+    sin cerrar se extiende hasta el final del fichero.
+
+    Limite declarado: NO es CommonMark completo. Un fence de apertura se acepta con
+    cualquier sangrado (un fence dentro de un item de lista va sangrado), aunque con
+    4+ espacios CommonMark estricto lo vea como bloque de codigo indentado: el error
+    posible es ruidoso (`FENCE-SIN-CERRAR`). Ignorar los fences sangrados dejaria
+    contar como filas reales las tablas de un ejemplo, en silencio.
     """
     dentro = [False] * len(lineas)
-    abierto: tuple[str, int, int] | None = None  # (caracter, longitud, indice)
+    abierto: tuple[str, int, int, int] | None = (
+        None  # (caracter, longitud, indice, sangria)
+    )
     for i, linea in enumerate(lineas):
         m = _FENCE_RE.match(linea)
         marca, resto = m.groups() if m else ("", "")
         if abierto is not None:
             dentro[i] = True
-            cierra = marca[:1] == abierto[0] and len(marca) >= abierto[1]
+            cierra = (
+                marca[:1] == abierto[0]
+                and len(marca) >= abierto[1]
+                and _sangria(linea) - abierto[3] <= 3
+            )
             if cierra and not resto.strip():
                 abierto = None
         elif marca and not (marca[0] == "`" and "`" in resto):
             dentro[i] = True
-            abierto = (marca[0], len(marca), i)
+            abierto = (marca[0], len(marca), i, _sangria(linea))
     return dentro, (abierto[2] + 1 if abierto else None)
 
 
@@ -175,6 +216,21 @@ def fence_sin_cerrar(contenido: str) -> int | None:
         codigo; el llamador debe avisarlo, porque las filas perdidas no dan error.
     """
     return _marca_fences(contenido.lstrip(_BOM).splitlines())[1]
+
+
+def sin_fences(contenido: str) -> str:
+    """El texto con las lineas de bloques de codigo vaciadas (mismo numero de lineas).
+
+    Before: `contenido` es el texto de un Markdown (un BOM inicial se ignora).
+    During: usa las mismas reglas de fence que `parse_tablas`.
+    After: lo que queda es el texto "visible" fuera de ejemplos citados; sirve para
+        que ids y bloques TALLY dentro de un ejemplo no cuenten como citas reales.
+    """
+    lineas = contenido.lstrip(_BOM).splitlines()
+    dentro, _ = _marca_fences(lineas)
+    return "\n".join(
+        "" if d else linea for linea, d in zip(lineas, dentro, strict=True)
+    )
 
 
 def parse_tablas(contenido: str, fuente: str) -> list[dict]:

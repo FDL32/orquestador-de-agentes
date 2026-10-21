@@ -12,7 +12,7 @@ Todas se detectaron por revision humana o de lentes, no por una barrera.
 Que comprueba (cada hallazgo lleva un codigo estable)
 ------------------------------------------------------
 Sobre los `HALLAZGOS_<lane>.md`:
-  ID-NO-CANONICO   un id vacio o que no es `H-<digitos>` (p.ej. `H-30(ctx)`, `X-07`,
+  ID-NO-CANONICO   un id vacio o que no es `H-<digitos>` EN UNA FILA de HALLAZGOS (`H-30(ctx)`, `X-07`,
                    `h-3`): una fila con id no parseable se saldria del censo.
   ID-DUPLICADO     el mismo id en dos filas.
   CAT-FUERA-ENUM   una `categoria` que no empieza por ninguna del enum cerrado.
@@ -22,6 +22,8 @@ Sobre los `HALLAZGOS_<lane>.md`:
   HALLAZGOS-SIN-FILAS  fichero sin ninguna fila de hallazgo reconocida: ERROR si
                    alguna linea de tabla cita un `H-<n>` (tabla no reconocida,
                    p.ej. cabecera sin `categoria`), WARN si no cita ninguno.
+  TABLA-SIN-CATEGORIA  tabla con columna `id` (filas H-<n>) y sin `categoria`: sus filas no
+                   entran en el censo y, sin este aviso, desaparecerian en silencio.
   FENCE-SIN-CERRAR un bloque ``` o ~~~ que nunca se cierra: el parser ignora todo lo
                    que le sigue (tablas incluidas) y las filas perdidas no darian error.
   FILA-ANCHO       (WARN) fila con mas celdas que la cabecera: el dato sobrante no
@@ -85,6 +87,7 @@ try:  # importado como modulo del paquete (tests)
         fence_sin_cerrar,
         normaliza_categoria,
         parse_tablas,
+        sin_fences,
     )
 except (
     ImportError
@@ -96,22 +99,26 @@ except (
         fence_sin_cerrar,
         normaliza_categoria,
         parse_tablas,
+        sin_fences,
     )
 
 VEREDICTOS = ("confirmado", "disputado", "refutado", "diferido_no_loop")
 TALLY_RE = re.compile(r"<!--\s*TALLY:\s*(\{.*?\})\s*-->", re.DOTALL)
+# `(?<![#/])`: un ancla de enlace (`#h-05`, GitHub las pone en minusculas) o una ruta
+# (`/h-05`) no es una cita de id.
 # Sufijo: `(texto)`, letras (`b`, `bis`, `legacy`) o `-`/`_`/`.` + alfanumerico
 # (`-2`, `_legacy`, `.v2`). `H-30-H-35` (rango) no cuenta como sufijo.
 ID_CITADO_RE = re.compile(
-    r"\b[Hh]-(\d+)(\([^)\n]*\)|[A-Za-z][A-Za-z0-9_]*|[-_.](?!H-\d)[A-Za-z0-9]+)?"
+    r"(?<![#/])\b[Hh]-(\d+)(\([^)\n]*\)|[A-Za-z][A-Za-z0-9_]*|[-_.](?!H-\d)[A-Za-z0-9]+)?"
 )
 # Categorias nombradas en un encabezado: en MAYUSCULAS (un `### Proceso de
 # verificacion` o `### Deadline` no son categorias) y con frontera de palabra.
 ENCABEZADO_CAT_RE = re.compile(
     r"(?<![\w-])(DEAD \(unverified dynamic\)|DEAD|ABANDONED|LEGACY|SMELL"
-    r"|BUENAS-PRACTICAS|PROCESO|SECURITY(?:-(?:critica|alta|media|baja))?)(?![\w-])"
+    r"|BUENAS-PRACTICAS|PROCESO|SECURITY(?:-(?i:critica|alta|media|baja))?)(?![\w-])"
 )
-NIVEL_AGRUPADO_RE = re.compile(r"\s*/\s*(critica|alta|media|baja)\b")
+NIVEL_AGRUPADO_RE = re.compile(r"\s*/\s*(critica|alta|media|baja)\b", re.IGNORECASE)
+ID_CUALQUIERA_RE = re.compile(r"[Hh]-\d")
 LINEA_TABLA_CON_ID_RE = re.compile(r"^\s*\|.*\bH-\d", re.MULTILINE)
 
 
@@ -154,8 +161,9 @@ def _categorias_encabezado(seccion: str) -> set[str]:
         nombre = m.group(1)
         pos = m.end()
         if nombre.startswith("SECURITY-"):
+            nombre = "SECURITY-" + nombre[len("SECURITY-") :].lower()
             while siguiente := NIVEL_AGRUPADO_RE.match(seccion, pos):
-                cats.add(f"SECURITY-{siguiente.group(1)}")
+                cats.add(f"SECURITY-{siguiente.group(1).lower()}")
                 pos = siguiente.end()
             if seccion[pos:].lstrip().startswith("/"):  # agrupador no reconocido
                 nombre = "SECURITY"
@@ -208,12 +216,38 @@ def _comprueba_ficheros_vacios(
         )
 
 
+def _comprueba_tablas_sin_categoria(
+    hallazgos: dict[str, str], res: AuditResult
+) -> None:
+    """Una tabla con columna `id` y SIN `categoria` no entra en el censo: avisalo.
+
+    Sin esto, un fichero que ya tiene otras filas pierde las de la tabla mal
+    cabeceada (`categ`, `tipo`...) sin ningun error, y `--strict` sale 0.
+    """
+    for nombre, texto in hallazgos.items():
+        avisadas: set[tuple[str, ...]] = set()
+        for fila in parse_tablas(texto, nombre):
+            cols = fila["cols"]
+            if "id" not in cols or "categoria" in cols or fila["header"] in avisadas:
+                continue
+            if not ID_CUALQUIERA_RE.match(_limpia(cols["id"])):
+                continue
+            avisadas.add(fila["header"])
+            res.add(
+                "ERROR",
+                "TABLA-SIN-CATEGORIA",
+                f"{nombre}:{fila['n_linea']}: tabla con `id` y sin columna `categoria` "
+                f"(cabecera {list(fila['header'])}); sus filas no entran en el censo",
+            )
+
+
 def _recolecta(hallazgos: dict[str, str], res: AuditResult) -> dict[str, str | None]:
     """Valida las filas de hallazgo y devuelve `id -> categoria base` (ids validos)."""
     categoria_de: dict[str, str | None] = {}
     vistos: dict[str, str] = {}
     filas = _filas_hallazgo(hallazgos)
     _comprueba_ficheros_vacios(hallazgos, filas, res)
+    _comprueba_tablas_sin_categoria(hallazgos, res)
     for fila in filas:
         cols = fila["cols"]
         origen = f"{fila['fuente']}:{fila['n_linea']}"
@@ -231,10 +265,11 @@ def _recolecta(hallazgos: dict[str, str], res: AuditResult) -> dict[str, str | N
                 f"{origen}: id `{id_}` no es H-<digitos> (la fila queda fuera del censo)",
             )
             continue
-        if id_ in vistos:
-            res.add("ERROR", "ID-DUPLICADO", f"{id_} en {vistos[id_]} y en {origen}")
+        numero = f"H-{int(id_[2:])}"  # H-30 y H-030 son el MISMO hallazgo
+        if numero in vistos:
+            res.add("ERROR", "ID-DUPLICADO", f"{id_} en {vistos[numero]} y en {origen}")
             continue
-        vistos[id_] = origen
+        vistos[numero] = origen
         base, calificador = normaliza_categoria(cols["categoria"])
         if base is None:
             res.add(
@@ -425,7 +460,8 @@ def _comprueba_categoria_de_tablas(
 def _comprueba_tally(
     informe_text: str, hallazgos: dict[str, str], res: AuditResult
 ) -> None:
-    declarado = parse_tally_block(informe_text)
+    visible = sin_fences(informe_text)  # un TALLY de ejemplo en un fence no cuenta
+    declarado = parse_tally_block(visible)
     if declarado is None:
         res.add(
             "ERROR",
@@ -433,7 +469,7 @@ def _comprueba_tally(
             "el informe no lleva el bloque <!-- TALLY: {...} --> (usa --emit-tally)",
         )
         return
-    if len(TALLY_RE.findall(informe_text)) > 1:
+    if len(TALLY_RE.findall(visible)) > 1:
         res.add(
             "ERROR",
             "TALLY-MULTIPLE",
@@ -473,7 +509,7 @@ def _comprueba_informe(
     hallazgos: dict[str, str],
     res: AuditResult,
 ) -> None:
-    sin_bloque = TALLY_RE.sub("", informe_text)
+    sin_bloque = TALLY_RE.sub("", sin_fences(informe_text))
     _comprueba_ids_citados(sin_bloque, categoria_de, res)
     _comprueba_categoria_de_tablas(sin_bloque, categoria_de, res)
     _comprueba_tally(informe_text, hallazgos, res)
@@ -556,8 +592,12 @@ def main() -> int:
             return 2
         ruta = Path(ruta_str)
         clave = ruta.name
-        if clave in textos:  # dos `<lane>/HALLAZGOS.md`: no pisar el primero
-            clave = f"{ruta.parent.name}/{ruta.name}"
+        if clave in textos:  # varios `HALLAZGOS.md`: no pisar el primero
+            clave = ruta.as_posix()
+        orden = 1
+        while clave in textos:  # la misma ruta repetida
+            orden += 1
+            clave = f"{ruta.as_posix()}#{orden}"
         textos[clave] = texto
     informe_text = None
     if args.informe:
