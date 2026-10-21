@@ -387,23 +387,28 @@ def _read_portable_archive() -> list[dict[str, Any]]:
     active = _safe_read(active_root)
 
     motor_root = _resolve_motor_root()
+    # In code-only mode there is no external destination: the active surface
+    # is the motor. With an external link, the active surface is the destino.
+    active_origin = (
+        "destino" if motor_root is not None and motor_root != active_root else "motor"
+    )
     if motor_root is None or motor_root == active_root:
-        return active
+        return [{**entry, "_origin": active_origin} for entry in active]
 
     motor = _safe_read(motor_root)
     if not motor:
-        return active
+        return [{**entry, "_origin": active_origin} for entry in active]
     if active:
         seen = {dedup_key(entry) for entry in active}
         motor = [e for e in motor if dedup_key(e) not in seen]
     if not motor:
-        return active
+        return [{**entry, "_origin": active_origin} for entry in active]
 
     # Tag provenance so the index can reserve a quota per origin. Without it the
     # cap is a global recency race and whichever repo was touched last evicts
     # the other wholesale -- see `_cap_preserving_origins`. Copies are shallow
     # on purpose: entries are read-only here and the tag must not reach disk.
-    return [{**entry, "_origin": "local"} for entry in active] + [
+    return [{**entry, "_origin": "destino"} for entry in active] + [
         {**entry, "_origin": "motor"} for entry in motor
     ]
 
@@ -587,7 +592,7 @@ def _build_header_line(
     if (
         origin_breakdown is not None
         and not os.environ.get("AGENT_PROJECT_ROOT")
-        and origin_breakdown.get("motor", 0) == 0
+        and origin_breakdown.get("destino", 0) == 0
     ):
         # No motor-tagged entries and no AGENT_PROJECT_ROOT means the active
         # root is the only surface (it IS the motor). The destination archive
@@ -687,11 +692,8 @@ def _format_archive_as_text(
     # WOT-2026-112a (D1b): compute per-origin counts from the tagged union.
     _origin_counts: dict[str, int] = {}
     for _o in vigent:
-        _orig = str(_o.get("_origin") or "local")
+        _orig = str(_o.get("_origin") or "motor")
         _origin_counts[_orig] = _origin_counts.get(_orig, 0) + 1
-    # Normalise key names to the vocabulary the header uses.
-    if "motor" not in _origin_counts and "local" in _origin_counts:
-        _origin_counts["motor"] = _origin_counts.pop("local")
     header_lines = _build_header_line(
         total, len(shown), _origin_counts if _origin_counts else None
     )
