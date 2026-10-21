@@ -3281,9 +3281,20 @@ def test_055t_abort_when_cwd_has_different_agent_dir(
 ) -> None:
     """DoD-1: cwd con .agent/ distinto al del project_root -> abort (exit 1).
 
+    WOT-2026-109c: `_detect_mismatched_agent_dir` devuelve None sin abortar
+    cuando `AGENT_PROJECT_ROOT` ya esta exportada (comportamiento deliberado
+    del guard de produccion, no se toca). Si el shell que lanza esta suite
+    ya la tiene exportada, el test heredaba ese valor ambiente y
+    `pytest.raises(SystemExit)` nunca veia la excepcion -> falso rojo
+    condicional al entorno. `delenv` aisla el test de ese ambiente.
+
     Mutation: eliminar la deteccion -> este test da exit 0 (no aborta).
+    Mutation (hermeticidad): quitar el `delenv` y correr con
+    `AGENT_PROJECT_ROOT` exportada en el shell -> este test vuelve a fallar.
     """
     import pathlib
+
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
 
     fake_dest = tmp_path / "fake_dest"
     fake_dest.mkdir()
@@ -3305,10 +3316,17 @@ def test_055t_no_abort_when_cwd_agent_matches_project_root(
 ) -> None:
     """Control positivo: cwd = motor (sin AGENT_PROJECT_ROOT) -> no abort.
 
+    WOT-2026-109c: `delenv` explicito por la misma razon que el test
+    hermano -- este caso en concreto ya era inmune de carambola (el guard
+    tambien devuelve None con AGENT_PROJECT_ROOT ambiente), pero dejarlo
+    implicito oculta esa coincidencia al siguiente lector.
+
     Mutation: si el guard se vuelve demasiado amplio y aborta tambien en el
     motor, este test va RED.
     """
     import pathlib
+
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
 
     motor = tmp_path / "motor"
     motor.mkdir()
