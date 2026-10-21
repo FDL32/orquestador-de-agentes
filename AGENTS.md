@@ -58,7 +58,7 @@
   - `agent_system/templates/repomix.config.json`: plantilla de configuracion de Repomix.
 - `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
 - `skills/`: micro-habilidades reutilizables.
-- `.agent/collaboration/`: estado operacional canonico — vive en el `repo_destino`, no en el motor. El motor contiene seeds neutros; apuntar al destino via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
+- `.agent/collaboration/`: estado operacional canonico â€” vive en el `repo_destino`, no en el motor. El motor contiene seeds neutros; apuntar al destino via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
 - `.agent/context/repomix.xml`: contexto comprimido del workspace generado por Repomix (bootstrapping).
 - `.agent/council/`: broker de consejo y auditoria paralela.
@@ -72,7 +72,7 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 
 | Termino | Descripcion |
 |---------|-------------|
-| `repo_motor` | `orquestador_de_agentes/` — motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
+| `repo_motor` | `orquestador_de_agentes/` â€” motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
 | `repo_destino` | El proyecto que usa el motor. Tiene su propio `.agent/` con estado operativo (tickets, memoria, config). Nunca comparte estado con otros destinos. |
 | `workspace_activo` | Raiz operativa con `.agent/` desde la que corre el ticket actual. En la topologia actual coincide con `repo_destino`. Se configura via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. |
 | `entorno_multi_root` | IDE abierto con `repo_motor` + `repo_destino` a la vez (VS Code multi-folder workspace). No es un concepto de codigo: solo describe el entorno de desarrollo. |
@@ -100,8 +100,8 @@ ver `prompts/agent_execution_modes.md` y el vuelo que lo origino,
 `PROMPT_ARRANQUE_vuelo_limpieza_backlog_4capas_20261010.md`), e **Intermedio** (delega SOLO el
 triaje/contrato de todo el lote; implementa Y revisa el mismo, sin delegar ninguna de las dos,
 los tickets de blast-radius-alto -- regla dura de seguridad, nunca se delega la revision de esos
-tickets aunque si se delegue su triaje). El agente PROPONE un modo por señales objetivas
-(peticion explicita, disponibilidad de Kilo, blast radius con fuente verificable, tamaño del
+tickets aunque si se delegue su triaje). El agente PROPONE un modo por seÃ±ales objetivas
+(peticion explicita, disponibilidad de Kilo, blast radius con fuente verificable, tamaÃ±o del
 vuelo) y el usuario confirma; se puede cambiar de modo en caliente a mitad de sesion
 (`/agent-mode <modo>`, skill `agent-execution-mode`). Nucleo normativo completo y UNICO:
 `prompts/agent_execution_modes.md` (skill apunta, prompt gobierna, X-09) -- **estado `frozen`**
@@ -219,7 +219,7 @@ nomenclatura distingue dos usos muy distintos de un ID con prefijo legacy:
 
 - **Generador / ejemplo vivo** (DEBE usar `WOT-`): plantillas, placeholders,
   ejemplos de comando, texto de `--help`, esquemas de formato (`source_ticket`,
-  `Plan ID`, `Ticket relacionado`, `--ticket WP-...`). Crean o enseñan
+  `Plan ID`, `Ticket relacionado`, `--ticket WP-...`). Crean o enseÃ±an
   nomenclatura nueva. La gate FALLA si usan `WP-`/`WT-` sin etiqueta.
 - **Historia de commit** (legacy-compat implicito, NO se reescribe): un
   comentario o docstring de la forma `# <TICKET>: <descripcion de lo que se
@@ -302,116 +302,11 @@ append `--project-root <destino>` to commands that operate on project state.
 
 ### Prompt/contrato citado => LEELO ENTERO antes de redactar contra el (2026-07-29)
 
-**Norma dura, no consejo.** Si un prompt te lo pegan en el chat, lo enlaza otro prompt que te
-pegaron, o un proceso lo declara como su contrato, **lo abres y lo lees ENTERO antes de producir
-nada que se mida contra el**. `grep` dirigido, `diff` contra otra copia y lectura de la seccion que
-creias relevante **NO cuentan como leerlo**: son muestreo, y el muestreo no puede ver lo que OMITES.
-
-- **El grep responde tu pregunta, no la del contrato.** Solo encuentra lo que ya sospechabas que
-  estaba; las clausulas que no imaginaste son justo las que no vas a grepear.
-- **Es aplicacion directa de M4** (`prompts/orchestrator_launch_builder.md:140-155`, *"validador
-  citado => ejecutalo antes de redactar"*) a la superficie NORMATIVA: si un validador ejecutable
-  define el formato de un artefacto, un contrato define el formato de un PROCESO. M4 cubria solo lo
-  primero; esta norma cierra lo segundo.
-- **Coste medido y asumible:** los 7 prompts canonicos del pipeline suman ~2400 lineas. Es
-  drasticamente mas barato que el fallo que evita.
-- **Enrutar NO exime de leer.** Este repo prohibe re-declarar criterios normativos (*"skill apunta,
-  prompt gobierna"*): sigues sin copiarlos, pero **no puedes enrutar hacia un contrato que no has
-  leido** -- no sabrias que clausulas existen para nombrarlas.
-- **Si decides NO leer entero, DECLARALO ANTES** con su motivo y su riesgo. Un muestreo declarado es
-  una decision; un muestreo silencioso que se presenta como cobertura es `falso_verde`.
-
-**Fallo real que la origina (2026-07-29, cazado por el USUARIO, no por el bucle):** se redacto el
-prompt de arranque de un vuelo trabajando `prompts/orchestrator_autonomous_ticket_batch.md` (571
-lineas) por grep + diff, sin abrirlo entero. Quedaron fuera `:193-220` (un `MANAGER_REVIEW` **por
-ticket** y la forma exacta `1->9->2` con lector-FS obligatorio), `:355-380` (`GROUP_STOP_REPORT`) y
-`:439-462` (cierre bloqueante: `batch_run_<ts>.json` + auditoria hermana + condicion 6
-dual-contract). El prompt resultante decia *"antes de CADA fan-out emite el nonce"* sin decir cuantos
-ni cuando, y `MANAGER_REVIEW` aparecia **0 veces**: un ejecutor podia implementar dos tickets, correr
-UN bucle al final y creerse conforme.
-
-**Agravante que hace la norma insuficiente por si sola:** ese prompt SE PASO por un bucle de 4 lentes
-y **ninguna lo cazo**, porque a las lentes se les paso el contrato **por REFERENCIA (rutas), no por
-CONTENIDO**: solo podian auditar coherencia interna. La barrera complementaria -- que el recolector
-meta el contenido del contrato EN el bundle -- esta fichada como `WOT-2026-042y`. Lo predijo, literal,
-una leccion que ya estaba en memoria: `obs-api-only-reader-reads-current-state-not-ought-to-be`
-(*"un review multi-backend necesita un lector-con-filesystem o un bundle que incluya la semantica
-explicita"*).
+**Norma dura, no consejo.** Si un prompt te lo pegan en el chat, lo enlaza otro prompt que te pegaron, o un proceso lo declara como su contrato, **lo abres y lo lees ENTERO antes de producir nada que se mida contra el**. Ver detalles, fallos medidos y agravantes en .agent/rules/common/contract_full_read_and_process_search.md.
 
 ### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
 
-**Norma con barrera de FORMA parcial desde 2026-10-18 (WOT-2026-104b)**, no barrera
-semantica: `scripts/check_process_decision_search.py` (cableado como hook pre-commit en
-el motor sobre `prompts/**/*.md`, `.claude/rules/**/*.md`, `AGENTS.md`, `CLAUDE.md`, y como
-hook pre-push en el destino sobre `.agent/planning/*.md`/`STRATEGY_WOT-*.md` CAMBIADOS en
-el rango a publicar) bloquea un artefacto que se AUTODECLARA con el marcador
-`DECISION DE PROCESO:` si no declara ademas una seccion `BUSQUEDA-PREVIA:` valida
-(`PROTOCOLO ENCONTRADO: <ruta>` / `NO ENCONTRE PROTOCOLO` / `EXCEPCION: trivial
-<justificacion>`). **Limite declarado, no oculto:** verifica que la propiedad este
-DECLARADA, no que sea VERAZ -- mismo patron de `check_loop_bundle_protocol.py` --, y NO
-detecta una decision de proceso que el autor no etiquete con el marcador explicito: ese
-sigue siendo el modo de fallo n=3/n=4 de abajo, sin barrera mecanica. Es la regla hermana
-ANTERIOR de la regla de arriba, no su generalizacion: aquella exige leer entero un contrato YA
-CITADO; esta exige BUSCAR si existe uno ANTES de suponer que no hay ninguno. Son dos eslabones
-secuenciales de la misma cadena (buscar -> si se encuentra, leer entero), no una conteniendo a
-la otra.
-
-**Antes de tratar de resolver una decision de proceso por razonamiento propio, el agente
-comprueba primero si existe un protocolo YA ESCRITO para ese caso.** Comprobacion minima:
-(a) `grep`/busqueda por palabra clave en `AGENTS.md` y en los prompts de `prompts/` cuyo nombre
-sugiere el dominio (p.ej. `*_loop.md`, `*_invocation_contract.md`, `*_closeout*.md`);
-(b) `python scripts/memory_context.py --recall --query <termino>` sobre la memoria portable,
-que indexa precisamente casos medidos de este tipo; (c) si el dominio tiene un `contract_id`
-conocido o sospechado, leerlo ENTERO (aplica la regla de arriba).
-
-**Declaracion explicita cuando no se encuentra nada:** si la busqueda no encuentra protocolo
-aplicable, el agente lo declara ("busque en X, Y, Z; no encontre protocolo para este caso")
-antes de proponer su propia solucion ad-hoc.
-
-**No aplica a:** decisiones triviales sin ambiguedad de proceso (un typo, una pregunta de hecho
-verificable con una sola lectura), ni a tareas ya en curso bajo un contrato ya verificado en la
-misma sesion. **Declaracion simetrica:** quien invoque esta excepcion de trivialidad debe
-declararlo en una linea antes de proceder ("EXCEPCION: trivial -- X no es decision de proceso
-porque Y"), igual que la declaracion exigida cuando no se encuentra protocolo. Sin esa
-declaracion, la excepcion no aplica.
-
-**¿Que cuenta como decision de proceso?** SI cuenta: decisiones sobre dispatch de
-Builder/Revisor, merge/push a rama compartida, gates de cierre/closeout, formato de memoria o
-bitacora, criterios de fusion de roles, cualquier decision que otro agente en otra sesion pueda
-necesitar replicar. NO cuenta: correccion ortografica, pregunta de hecho verificable con una
-sola lectura de fichero, eleccion de nombre de variable o formato de commit sin convencion
-previa declarada.
-
-**Evidencia (n=3, tres sesiones independientes, mismo patron):** (1) 2026-09-26, dispatch plano
-sin `loop_id`/`nonce` para una decision de cierre de sesion, corregido solo cuando el usuario
-pidio explicitamente revisar `ensemble_loop.md` (`obs-ensemble-adhoc-abbreviation-must-be-declared-before-dispatch`);
-(2) 2026-10-07, un revisor nan se dejo de ejecutar en 3 de 14 vuelos sin que nadie declarara la
-desviacion (`obs-removing-a-control-stage-must-be-declared-and-attributed`); (3) 2026-10-14,
-propuesta de politica de suite/merge redactada sin comprobar antes si `builder_invocation_contract.md`
-o `ensemble_loop.md` ya cubrian el caso. Las tres correcciones ocurrieron solo por intervencion
-explicita del usuario, nunca por iniciativa del propio agente -- confianza media, no ley
-universal, pero suficiente para justificar esta norma con deuda de barrera declarada. (4)
-2026-10-18, dispatch de un batch del bucle ensemble con timeout de background de 300000ms
-sin comprobar antes `backends.kilo.timeout_s` en `agents.json` (declarado 900s), pese a
-haber leido `prompts/ensemble_loop.md` Seccion 3.10 entera en la MISMA sesion -- 4 rondas
-murieron por limite de tiempo y tuvieron que relanzarse; corregido solo cuando el usuario
-pregunto directamente por el incumplimiento. Las cuatro correcciones ocurrieron solo por
-intervencion explicita del usuario, nunca por iniciativa del propio agente.
-
-**Candidato de barrera implementado PARCIALMENTE (WOT-2026-104b, 2026-10-18):**
-`check_process_decision_search.py` (ver arriba) NO es el candidato original ("auditar
-automaticamente una propuesta de proceso nueva contra los `contract_id`s declarados en
-`prompts/`") -- ese candidato exigiria deteccion de INTENCION (que un texto ES una
-decision de proceso sin que el autor lo declare), que sigue sin existir y sigue fuera de
-alcance (no hay oraculo para eso sin juicio humano). Lo que SI existe es un mecanismo mas
-debil: sube el coste de redactar una decision de proceso SIN declarar su busqueda previa,
-de cero a tener que escribir una frase -- no lo elimina. Riesgo de performatividad
-declarado: un agente puede escribir `BUSQUEDA-PREVIA: NO ENCONTRE PROTOCOLO` sin haber
-buscado de verdad, o citar una ruta inventada en `PROTOCOLO ENCONTRADO:`; el guard no lo
-detecta (barrera de FORMA, no de VERDAD). Mientras no exista deteccion de intencion ni
-verificacion de veracidad, ambos riesgos permanecen abiertos.
-
-- Lee `PROJECT.md` antes de tocar arquitectura o estado.
+**Norma con barrera de FORMA parcial desde 2026-10-18 (WOT-2026-104b)**, no barrera semantica: scripts/check_process_decision_search.py (cableado como hook pre-commit en el motor sobre prompts/**/*.md, .claude/rules/**/*.md, AGENTS.md, CLAUDE.md, y como hook pre-push en el destino sobre .agent/planning/*.md/STRATEGY_WOT-*.md CAMBIADOS en el rango a publicar) bloquea un artefacto que se AUTODECLARA con el marcador DECISION DE PROCESO: si no declara ademas una seccion BUSQUEDA-PREVIA: valida (PROTOCOLO ENCONTRADO: <ruta> / NO ENCONTRE PROTOCOLO / EXCEPCION: trivial <justificacion>). Ver criterio de busqueda minima, clases de decision, y candidato de barrera PARCIAL en .agent/rules/common/contract_full_read_and_process_search.md.- Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
 - Para tickets que tocan sincronizacion de estado, bus, proyecciones o codigo topologia-aware (`repo_motor + repo_destino`), comprueba primero si el sintoma encaja con un patron documentado en `docs/KNOWN_FAILURE_PATTERNS.md` antes de proponer un fix nuevo.
 - Para arrancar una sesion nueva con cualquier agente, usa el bootstrap canonico en `prompts/orchestrator_session_bootstrap.md` (apunta a archivos clave en lugar de embeber).
@@ -645,26 +540,26 @@ script lo escribe activamente. Si lo hace, es superficie viva.
 
 Adaptado de las directrices operativas open-source en `dify-agent`:
 
-### 1. Docstrings como especificación de ejecución (Docstrings-as-Spec)
+### 1. Docstrings como especificaciÃ³n de ejecuciÃ³n (Docstrings-as-Spec)
 
-Cada función, clase o módulo operativo del sistema debe contar con un docstring claro y estructurado en **3 fases**. El agente o auditor contrastará la firma técnica con esta especificación semántica para asegurar el cumplimiento:
-- **Before (Pre-condiciones):** Qué estados, variables, archivos o privilegios requiere la función antes de invocarse.
-- **During (Proceso y Recursos):** Cuál es el flujo de transformación de datos, qué efectos colaterales (I/O, llamadas de red) realiza y qué recursos del sistema consume.
-- **After (Post-condiciones y Errores):** Qué salidas exactas se garantizan, cómo cambian los estados canónicos y qué excepciones específicas se interceptan y lanzan.
+Cada funciÃ³n, clase o mÃ³dulo operativo del sistema debe contar con un docstring claro y estructurado en **3 fases**. El agente o auditor contrastarÃ¡ la firma tÃ©cnica con esta especificaciÃ³n semÃ¡ntica para asegurar el cumplimiento:
+- **Before (Pre-condiciones):** QuÃ© estados, variables, archivos o privilegios requiere la funciÃ³n antes de invocarse.
+- **During (Proceso y Recursos):** CuÃ¡l es el flujo de transformaciÃ³n de datos, quÃ© efectos colaterales (I/O, llamadas de red) realiza y quÃ© recursos del sistema consume.
+- **After (Post-condiciones y Errores):** QuÃ© salidas exactas se garantizan, cÃ³mo cambian los estados canÃ³nicos y quÃ© excepciones especÃ­ficas se interceptan y lanzan.
 
-### 2. Rúbrica de testing de alta fidelidad (Test Útil vs Basura)
+### 2. RÃºbrica de testing de alta fidelidad (Test Ãštil vs Basura)
 
-Para evitar la inflación artificial de cobertura sin validación lógica real, el Builder y los quality gates rechazarán cualquier test cosmético. Se define la siguiente rúbrica de aceptación:
-- **Test Inútil (descartable):** Aquel que solo hace aserciones pasivas como `assert obj is not None` o verifica constantes mocked estáticas sin desencadenar lógica real.
-- **Test Útil (aceptado):** Aquel que fuerza casos límite (boundary limits), valida transiciones reales de estado (en el Event Bus, archivos de configuración o memoria persistente) y verifica explícitamente el lanzamiento de excepciones esperadas (`pytest.raises`).
+Para evitar la inflaciÃ³n artificial de cobertura sin validaciÃ³n lÃ³gica real, el Builder y los quality gates rechazarÃ¡n cualquier test cosmÃ©tico. Se define la siguiente rÃºbrica de aceptaciÃ³n:
+- **Test InÃºtil (descartable):** Aquel que solo hace aserciones pasivas como `assert obj is not None` o verifica constantes mocked estÃ¡ticas sin desencadenar lÃ³gica real.
+- **Test Ãštil (aceptado):** Aquel que fuerza casos lÃ­mite (boundary limits), valida transiciones reales de estado (en el Event Bus, archivos de configuraciÃ³n o memoria persistente) y verifica explÃ­citamente el lanzamiento de excepciones esperadas (`pytest.raises`).
 
 **Anti-patrones de test que el Builder debe evitar y el Manager debe rechazar:**
-- **Mock drift:** el patch apunta a `X` pero el código llama a `Y` (distinta API). El test pasa sin probar nada real. Ejemplo: parchear `pathlib.Path.open` cuando el código usa el built-in `open()`.
-- **Floor assertion:** el umbral de una aserción numérica es satisfecho por el valor base sin la feature probada. Ejemplo: `assert score >= 150` cuando el score de recencia solo ya es `~20_000_000`.
+- **Mock drift:** el patch apunta a `X` pero el cÃ³digo llama a `Y` (distinta API). El test pasa sin probar nada real. Ejemplo: parchear `pathlib.Path.open` cuando el cÃ³digo usa el built-in `open()`.
+- **Floor assertion:** el umbral de una aserciÃ³n numÃ©rica es satisfecho por el valor base sin la feature probada. Ejemplo: `assert score >= 150` cuando el score de recencia solo ya es `~20_000_000`.
 
-### 3. Anti-patrones de implementación
+### 3. Anti-patrones de implementaciÃ³n
 
-- **Zero-logic wrapper:** una función cuyo cuerpo completo es una única llamada delegada 1:1 sin lógica propia debe ser inlineada o eliminada. Añade indirección cognitiva sin valor.
+- **Zero-logic wrapper:** una funciÃ³n cuyo cuerpo completo es una Ãºnica llamada delegada 1:1 sin lÃ³gica propia debe ser inlineada o eliminada. AÃ±ade indirecciÃ³n cognitiva sin valor.
 
 ## CEM v0 - Contrato, Evidencia y Memoria
 
@@ -681,7 +576,7 @@ CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en
   - **Asimetria dura:** un probe que NO reproduce la ruta productiva puede **REFUTAR** una hipotesis, pero **NUNCA CONFIRMAR un cierre**. La confirmacion es la que mata: hoy el probe de PowerShell *confirmo* una hipotesis falsa, y fue el probe en la ruta REAL (Git Bash) el que la refuto.
   - **Recibo obligatorio (no basta afirmarlo):** el probe **imprime** su propio contexto -- `sys.executable`, `cwd`, la parte relevante de `PATH`/env, y la cadena de launcher-- y ese recibo se pega junto al `exit_code:`. Sin recibo, es evidencia exploratoria por defecto.
   - **Declara y justifica:** actor real, launcher real, shell, cwd, PATH/env, fichero/config leido, y **POR QUE** ese probe reproduce la ruta productiva.
-  - **Vector git (WOT-2026-020r):** si el probe invoca git, pregunta explicitamente **¿el cwd tiene su propio `.git`?** Si no lo tiene, el walk-up de git **alcanza el repo REAL** y te contesta el arbol de la maquina, no el fixture: el probe NO es hermetico y su verde no significa nada.
+  - **Vector git (WOT-2026-020r):** si el probe invoca git, pregunta explicitamente **Â¿el cwd tiene su propio `.git`?** Si no lo tiene, el walk-up de git **alcanza el repo REAL** y te contesta el arbol de la maquina, no el fixture: el probe NO es hermetico y su verde no significa nada.
   - **Por que esto es una regla y no un consejo:** un probe en la ruta equivocada se ve IDENTICO a uno bueno -- tiene `command:` y tiene `exit_code:` -- y por eso atraviesa a los revisores. Casos: `check_entrypoint_fails_closed` valida el entrypoint con `[sys.executable, ENTRYPOINT]` mientras produccion lo lanza **por shell** con `python` pelado, asi que prueba una ruta que produccion nunca toma; y el diagnostico de WOT-2026-020o midio `python` en **PowerShell** cuando el hook corre en **Git Bash**, lo que subio la ficha a Alta y ato WOT-2026-024f a ella sobre una premisa falsa (2026-07-15).
   - **ESTATUS DECLARADO: esto es una NORMA, no una barrera** (segun la definicion de "Barrera cableada" de esta misma lista: nadie la invoca sola, depende de que el agente se acuerde). Se declara asi a proposito en vez de disfrazarla de gate. El recibo es mecanizable y los checks POR DOMINIO si son cableables (p.ej. el censo de WOT-2026-024f debe resolver en Git Bash); un verificador GENERICO de equivalencia no es trivial, porque **no existe oraculo universal de "la ruta productiva"**: para comparar contra produccion hay que ejecutar en produccion, y entonces la comparacion sobra. Deuda declarada con dueno: **WOT-2026-025f**.
 - **El conflicto entre probes ES el hallazgo:** si dos mediciones del mismo hecho se contradicen, **no elijas la que confirma tu tesis, ni promedies, ni descartes la incomoda**: averigua QUE mide cada una, porque casi siempre **una de las dos no es produccion**. `python -c "pass"` dio TRES exit codes el mismo dia en la misma maquina -- `subprocess(shell=False)` -> 0 (CreateProcess resuelve primero el dir del ejecutable PADRE: el python del venv), cmd/PowerShell -> 1 (shim `python.BAT`), Git Bash -> 0 (el `python.exe` real). Dos de los tres producian un veredicto FALSO sobre produccion: uno un falso VERDE y otro un falso ROJO. La contradiccion es material de auditoria de primer nivel, no ruido a resolver por mayoria.
@@ -744,12 +639,12 @@ Sin al menos una cifra por columna la balanza es sesgo de presente: el agente su
 ## Skills Formales de Proceso
 
 El repositorio define skills operativas formales para estructurar el trabajo del agente.
-Úsalas invocando sus triggers (ej. `/tdd`, `/debug`):
+Ãšsalas invocando sus triggers (ej. `/tdd`, `/debug`):
 
-- **Test-Driven Development (TDD)** (`skills/test-driven-development/SKILL.md`): Usar para asegurar cobertura y evitar regresiones en código nuevo o fixes. Obliga a escribir el test primero (Red), el código mínimo (Green) y refactorizar con calidad (`ruff` + `pytest`).
-- **Systematic Debugging** (`skills/systematic-debugging/SKILL.md`): Usar ante errores no triviales. Exige investigación de causa raíz antes de parchear y establece un límite estricto de 3 intentos antes de detener la iteración y cuestionar el entendimiento del problema.
+- **Test-Driven Development (TDD)** (`skills/test-driven-development/SKILL.md`): Usar para asegurar cobertura y evitar regresiones en cÃ³digo nuevo o fixes. Obliga a escribir el test primero (Red), el cÃ³digo mÃ­nimo (Green) y refactorizar con calidad (`ruff` + `pytest`).
+- **Systematic Debugging** (`skills/systematic-debugging/SKILL.md`): Usar ante errores no triviales. Exige investigaciÃ³n de causa raÃ­z antes de parchear y establece un lÃ­mite estricto de 3 intentos antes de detener la iteraciÃ³n y cuestionar el entendimiento del problema.
 
-No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir un README o depuración para un typo reportado por el linter).
+No uses estos skills si contradicen el flujo general (ej. usar TDD para escribir un README o depuraciÃ³n para un typo reportado por el linter).
 
 ### Gobierno skill<->prompt: skill apunta, prompt gobierna (WOT-2026-014r / X-09)
 
@@ -792,16 +687,16 @@ de posicion) en vez de comparar contenido literal; detalle completo e incidente 
 
 ## Atribuciones externas (CREDITS.md)
 
-Cuando un WP incorpora una idea/patrón de un repositorio externo:
+Cuando un WP incorpora una idea/patrÃ³n de un repositorio externo:
 
 1. **`repo-compare`** emite al final de su reporte un bloque candidato listo para pegar en `CREDITS.md`.
-2. El humano decide cuándo adoptar la idea y pega la fila correspondiente en `CREDITS.md` (raíz del repo).
+2. El humano decide cuÃ¡ndo adoptar la idea y pega la fila correspondiente en `CREDITS.md` (raÃ­z del repo).
 3. El WP que implementa la idea incluye `Origen externo:` o `Inspired by:` en `work_plan.md`.
 4. **`project-finalize` Paso 8d** verifica que la fila CREDITS exista antes de cerrar el WP. Si falta, bloquea el cierre.
 
 Formato: tabla compacta `| WP | Source | Pattern | License | Adapted vs Ported |`. Detalle en `CREDITS.md`.
 
-**Limitación conocida:** `CREDITS.md` vive en raíz; `scripts/install_agent_system.py` actualmente solo copia `.agent/`. Por tanto, esta convención **no se propaga automáticamente** a proyectos derivados. Si forks/derivados quieren la convención, deben replicar `CREDITS.md` + skills `repo-compare` y `project-finalize` manualmente.
+**LimitaciÃ³n conocida:** `CREDITS.md` vive en raÃ­z; `scripts/install_agent_system.py` actualmente solo copia `.agent/`. Por tanto, esta convenciÃ³n **no se propaga automÃ¡ticamente** a proyectos derivados. Si forks/derivados quieren la convenciÃ³n, deben replicar `CREDITS.md` + skills `repo-compare` y `project-finalize` manualmente.
 
 ## Memoria por proyecto
 
@@ -831,14 +726,14 @@ bajo demanda, consulta al disenar o depurar el propio mecanismo de memoria:
 
 ## deliverable_type (work_plan schema, V2)
 
-Cada `work_plan.md` declara `deliverable_type` en su sección Metadata. Valores:
-- `code` — el deliverable principal es código fuente (Python u otro).
-- `documentation` — markdown, AGENTS.md, READMEs.
-- `research` — análisis comparativos, reportes (gap analysis, repo-compare).
-- `analysis` — estudios técnicos, audits.
-- `mixed` — combinación legítima (ej. WP que toca código y docs).
+Cada `work_plan.md` declara `deliverable_type` en su secciÃ³n Metadata. Valores:
+- `code` â€” el deliverable principal es cÃ³digo fuente (Python u otro).
+- `documentation` â€” markdown, AGENTS.md, READMEs.
+- `research` â€” anÃ¡lisis comparativos, reportes (gap analysis, repo-compare).
+- `analysis` â€” estudios tÃ©cnicos, audits.
+- `mixed` â€” combinaciÃ³n legÃ­tima (ej. WP que toca cÃ³digo y docs).
 
-`agent_controller --validate` valida que exista el campo y no tenga valores inválidos.
+`agent_controller --validate` valida que exista el campo y no tenga valores invÃ¡lidos.
 
 ### Contrato operativo por tipo de ticket
 
@@ -916,7 +811,7 @@ antes (aditivo, cero regresion). Detalle (referencia bajo demanda):
 
 ## Criterio de cierre
 
-> Detalle operativo de los quality gates y comandos diarios (incluye flags exactos y secuencia recomendada): ver [QUICKSTART.md sección "6. Comandos diarios"](QUICKSTART.md#6-comandos-diarios).
+> Detalle operativo de los quality gates y comandos diarios (incluye flags exactos y secuencia recomendada): ver [QUICKSTART.md secciÃ³n "6. Comandos diarios"](QUICKSTART.md#6-comandos-diarios).
 
 Considera una tarea cerrada solo cuando:
 1. `ruff`, `pytest` y `pip-audit` pasan.

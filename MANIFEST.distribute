@@ -104,6 +104,7 @@ skills/
 .agent/rules/common/host_install_integration.md
 .agent/rules/common/manifest_contracts.md
 .agent/rules/common/memory_hierarchy.md
+.agent/rules/common/contract_full_read_and_process_search.md
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.

@@ -132,6 +132,7 @@ INLINE_IN_FULL: list[str] = [
     ".agent/rules/common/host_install_integration.md",
     ".agent/rules/common/manifest_contracts.md",
     ".agent/rules/common/memory_hierarchy.md",
+    ".agent/rules/common/contract_full_read_and_process_search.md",
 ]
 
 
