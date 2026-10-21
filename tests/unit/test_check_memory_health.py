@@ -292,3 +292,138 @@ def test_058b_a_single_header_line_degrades_field_by_field(tmp_path) -> None:
     assert measure["l2"]["expelled"] is None
     detail_a = next(t["detail"] for t in measure["triggers"] if t["id"] == "a")
     assert "n/d" in detail_a
+
+
+# --- Avisos de capa (EXPLORATORY-aviso-memoria, 2026-10-21) ------------------------
+
+
+def _layers(root: Path, *, l2: bool = False, l3: bool = False, archives: int = 0):
+    """Anade L2/L3/archive a una raiz de `_root` (L1 ya creada por `_root`)."""
+    mem = root / ".agent" / "runtime" / "memory"
+    if l2:
+        (mem / "memory_rules.md").write_text("#### R-001\ntexto\n", encoding="utf-8")
+    if l3:
+        (mem / "memory_profile.md").write_text("# Perfil\n", encoding="utf-8")
+    if archives:
+        (mem / "archive").mkdir()
+        for i in range(archives):
+            (mem / "archive" / f"observations.2026-0{i + 1}.jsonl").write_text(
+                json.dumps(_lesson(i)) + "\n", encoding="utf-8"
+            )
+    return root
+
+
+def test_layer_warning_fires_when_l2_l3_missing_and_l1_exists(tmp_path) -> None:
+    root = _root(tmp_path, "r", lessons=2)
+    measure = measure_root(root, run_validate=False)
+    assert measure["layers"] == {"l1": True, "l2": False, "l3": False, "archives": 0}
+    (warning,) = measure["warnings"]
+    assert "L2/L3" in warning
+    assert "decision manual del usuario" in warning
+
+
+def test_layer_warning_never_recommends_a_command_or_the_optimization(tmp_path) -> None:
+    """`--apply` regenera L2 desde L1 viva y puede perder reglas (memory_hierarchy.md).
+
+    Las 3 lentes del bucle lo senalaron: el aviso informa, no prescribe. Se barren los
+    tres textos posibles (L1 si/no, archive si/no).
+    """
+    cases = [
+        _root(tmp_path, "con_l1", lessons=1),
+        _layers(_root(tmp_path, "sin_l1_archive", lessons=0), archives=2),
+        _root(tmp_path, "sin_nada", lessons=0),
+    ]
+    seen = set()
+    for root in cases:
+        if root.name != "con_l1":
+            (root / ".agent" / "runtime" / "memory" / "observations.jsonl").unlink()
+        (warning,) = measure_root(root, run_validate=False)["warnings"]
+        seen.add(warning)
+        assert "--apply" not in warning
+        assert "memory_optimization" not in warning
+        assert ";" not in warning  # el hook une las raices con ";"
+    assert len(seen) == 3
+
+
+def test_layer_warning_without_l1_reports_the_archive_count(tmp_path) -> None:
+    root = _layers(_root(tmp_path, "r", lessons=0), archives=3)
+    (root / ".agent" / "runtime" / "memory" / "observations.jsonl").unlink()
+    (warning,) = measure_root(root, run_validate=False)["warnings"]
+    assert "archive versionado (3 ficheros)" in warning
+
+
+def test_layer_warning_without_l1_nor_archive_says_there_is_no_memory(tmp_path) -> None:
+    root = _root(tmp_path, "r", lessons=0)
+    (root / ".agent" / "runtime" / "memory" / "observations.jsonl").unlink()
+    (warning,) = measure_root(root, run_validate=False)["warnings"]
+    assert "no tiene memoria persistente" in warning
+
+
+def test_layer_warning_is_silent_when_l2_and_l3_exist(tmp_path) -> None:
+    root = _layers(_root(tmp_path, "r", lessons=2), l2=True, l3=True)
+    measure = measure_root(root, run_validate=False)
+    assert measure["warnings"] == []
+    assert measure["layers"]["l2"] and measure["layers"]["l3"]
+
+
+def test_layer_warning_names_only_the_missing_layer(tmp_path) -> None:
+    only_l2 = _layers(_root(tmp_path, "a", lessons=1), l2=True)
+    (warning,) = measure_root(only_l2, run_validate=False)["warnings"]
+    assert "L3" in warning and "L2" not in warning
+    only_l3 = _layers(_root(tmp_path, "b", lessons=1), l3=True)
+    (warning,) = measure_root(only_l3, run_validate=False)["warnings"]
+    assert "L2" in warning and "L3" not in warning
+
+
+def test_layer_warning_never_says_no_memory_while_a_distilled_layer_exists(
+    tmp_path,
+) -> None:
+    """Hallazgo de la lente DeepSeek: con L2 presente, sin L1 ni archive, el texto
+    "no tiene memoria persistente" seria falso (L2 ES persistente)."""
+    root = _layers(_root(tmp_path, "r", lessons=0), l2=True)
+    (root / ".agent" / "runtime" / "memory" / "observations.jsonl").unlink()
+    (warning,) = measure_root(root, run_validate=False)["warnings"]
+    assert "L3 ausente" in warning
+    assert "no tiene memoria persistente" not in warning
+
+
+def test_layer_warning_agrees_in_number_with_the_missing_layers(tmp_path) -> None:
+    one = measure_root(_layers(_root(tmp_path, "uno", lessons=1), l2=True))
+    (warning,) = one["warnings"]
+    assert "L3 ausente" in warning and "ausentes" not in warning
+    assert "regenerarla" in warning
+    both = measure_root(_root(tmp_path, "dos", lessons=1))
+    (warning,) = both["warnings"]
+    assert "L2/L3 ausentes" in warning and "regenerarlas" in warning
+
+
+def test_archive_count_ignores_directories_that_match_the_pattern(tmp_path) -> None:
+    root = _layers(_root(tmp_path, "r", lessons=0), archives=1)
+    archive = root / ".agent" / "runtime" / "memory" / "archive"
+    (archive / "observations.falso.jsonl").mkdir()
+    assert measure_root(root, run_validate=False)["layers"]["archives"] == 1
+
+
+def test_layer_warning_on_an_absent_root_does_not_raise(tmp_path) -> None:
+    measure = measure_root(tmp_path / "no_existe", run_validate=False)
+    assert measure["layers"] == {"l1": False, "l2": False, "l3": False, "archives": 0}
+    assert len(measure["warnings"]) == 1
+
+
+def test_layer_warning_is_not_a_trigger(tmp_path) -> None:
+    """Un trigger disparado dice "aplica memory_optimization.md": accion equivocada."""
+    measure = measure_root(_root(tmp_path, "r", lessons=2), run_validate=False)
+    assert measure["warnings"]
+    assert _fired(measure) == set()
+    assert {t["id"] for t in measure["triggers"]} == {"a", "b", "c", "d"}
+
+
+def test_text_output_prints_the_aviso_only_when_a_layer_is_missing(
+    tmp_path, capsys
+) -> None:
+    sin = _root(tmp_path, "sin", lessons=1)
+    con = _layers(_root(tmp_path, "con", lessons=1), l2=True, l3=True)
+    assert main(["--project-root", str(sin), "--skip-validate"]) == 0
+    assert "AVISO:" in capsys.readouterr().out
+    assert main(["--project-root", str(con), "--skip-validate"]) == 0
+    assert "AVISO" not in capsys.readouterr().out

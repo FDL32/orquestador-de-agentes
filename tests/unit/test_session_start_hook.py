@@ -407,6 +407,56 @@ def test_089e_the_health_line_is_fail_open(tmp_path: Path) -> None:
     assert "Salud de la memoria" not in ctx
 
 
+def _destino_health_part(destino: Path) -> str:
+    """Tramo `destino: ...` de la linea de salud (hermetico respecto al motor real).
+
+    La linea une las raices con "; " y ningun aviso contiene ";" (lo fija
+    `test_layer_warning_never_recommends_a_command_or_the_optimization`).
+    """
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    line = next(ln for ln in ctx.splitlines() if ln.startswith("Salud de la memoria:"))
+    return next(p for p in line.split("; ") if "destino:" in p)
+
+
+def _destino_with_l1(tmp_path: Path) -> Path:
+    destino = tmp_path / "destino"
+    mem = destino / ".agent" / "runtime" / "memory"
+    mem.mkdir(parents=True)
+    (destino / ".claude").mkdir()
+    lesson = {
+        "id": "obs-x",
+        "topic": "t",
+        "signal": "leccion valida larga",
+        "source": "s",
+    }
+    (mem / "observations.jsonl").write_text(json.dumps(lesson) + "\n", encoding="utf-8")
+    return destino
+
+
+def test_layer_warning_reaches_the_cold_agent_when_l2_l3_are_missing(tmp_path) -> None:
+    """El aviso de capas llega al contexto de arranque cuando faltan L2/L3.
+
+    MUTACION ALCANZABLE: quitar el bucle `for warning in measure.get("warnings")` de
+    `_health_line` -> este test cae.
+    """
+    part = _destino_health_part(_destino_with_l1(tmp_path))
+    assert " - AVISO: " in part
+    assert "L2/L3" in part
+
+
+def test_layer_warning_is_silent_in_the_hook_when_l2_l3_exist(tmp_path) -> None:
+    """Control negativo: con L2 y L3 presentes la linea de salud no lleva aviso."""
+    destino = _destino_with_l1(tmp_path)
+    mem = destino / ".agent" / "runtime" / "memory"
+    (mem / "memory_rules.md").write_text("#### R-001\ntexto\n", encoding="utf-8")
+    (mem / "memory_profile.md").write_text("# Perfil\n", encoding="utf-8")
+    part = _destino_health_part(destino)
+    assert "AVISO" not in part
+    assert part.startswith("destino: L1 1 entradas")
+
+
 # --------------------------------------------------------------------------- #
 # WOT-2026-098b: la seccion de roles de capa, DESPUES de la memoria, sin romper
 # el contrato fail-open del hook. El agente en frio debe poder descubrir el

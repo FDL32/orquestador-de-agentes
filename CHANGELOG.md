@@ -1,3 +1,29 @@
+# 2026-10-21 - SessionStart avisa cuando faltan las capas destiladas de memoria (L2/L3)
+
+### Added
+- `scripts/check_memory_health.py` publica `layers` (presencia de L1/L2/L3 y numero de
+  ficheros del `archive/` versionado) y `warnings`: un aviso informativo cuando faltan
+  L2 (`memory_rules.md`) o L3 (`memory_profile.md`), y silencio cuando estan las dos. NO es
+  un disparador: no dice "aplica memory_optimization.md" ni nombra ningun comando, porque
+  L2/L3 se generan desde L1 viva y regenerarlas (`memory_consolidate.py --apply`) es
+  decision manual del usuario; el aviso solo informa.
+- `.agent/hooks/session_start_hook.py` (`_health_line`) añade ese aviso a la linea
+  "Salud de la memoria" de cada raiz. Mismo contrato fail-open y mismo esquema
+  `additionalContext`; no escribe nada y no ejecuta `--apply` (no es P4).
+- `closeout_steps/memory_health.py` IGNORA `warnings` a proposito (solo lee `triggers`);
+  fijado por un test que ejecuta el medidor real.
+
+### Notes
+- Medido 2026-10-21: 26 de 29 worktrees del motor nacen sin L1/L2/L3 (estan en
+  `.gitignore`), asi que el aviso salta en el caso mayoritario. Es lo que se pidio
+  ("avisa si faltan L2/L3"); la alternativa V2 (avisar solo si L1 existe) es un cambio de
+  una condicion en `_layer_warnings`. El agente en frio no esta sin memoria: el loader lee
+  el `archive/` versionado directamente.
+- Diseno revisado por un bucle DESIGN_REVIEW de 3 lentes independientes (Gemini, GPT-OSS,
+  DeepSeek; Mistral devolvio 503) y la implementacion por otra ronda de las mismas 3 sobre
+  el diff. Las lentes descartaron `--apply` en el texto, la condicion "el directorio
+  existe" y el texto "sin memoria" con una capa presente.
+
 # 2026-10-12 - WOT-2026-100a: session_start_hook.py enruta la memoria por `source`
 
 ### Added

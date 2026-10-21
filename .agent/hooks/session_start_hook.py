@@ -248,6 +248,8 @@ def _health_line(root: Path) -> str:
             )
             if fired:
                 part += f" -> DISPARA ({','.join(fired)})"
+            for warning in measure.get("warnings", []):
+                part += f" - AVISO: {warning}"
             parts.append(part)
         line = "Salud de la memoria: " + "; ".join(parts) + "."
         if fired_any:

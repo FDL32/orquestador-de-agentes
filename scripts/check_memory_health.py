@@ -24,6 +24,17 @@ After: imprime, por raiz, el denominador (lineas parseadas, malformadas, ruido) 
     Exit 0 siempre que la medicion se complete (es informativo: el veredicto va en la
     salida); exit 2 solo por uso erroneo.
 
+Avisos de capa (`warnings`, aparte de los disparadores)
+-------------------------------------------------------
+Ademas de (a)-(d), `measure_root` publica `layers` (presencia de L1/L2/L3 y numero
+de ficheros del archive) y `warnings`: un aviso informativo cuando faltan L2/L3. NO es un
+disparador: no dice "aplica memory_optimization.md" ni nombra comando alguno, porque
+L2/L3 se generan desde L1 viva y regenerarlas es decision manual del usuario. Lo
+muestra el hook `SessionStart`; el paso de cierre (`closeout_steps/memory_health.py`)
+lo IGNORA a proposito (solo lee `triggers`): en el cierre la ausencia de capas no es
+una accion de optimizacion. Origen: bucle DESIGN_REVIEW EXPLORATORY-aviso-memoria,
+2026-10-21 (3 lentes).
+
 KNOBS (NO medidos)
 ------------------
 El propio Bloque 4.0 declara que 500 y 80 % son "KNOBS, no valores medidos optimos"; el
@@ -141,6 +152,65 @@ def _memory_md_staleness(mem: Path) -> dict[str, Any]:
     }
 
 
+def _measure_layers(mem: Path) -> dict[str, Any]:
+    """Presencia de las capas L1/L2/L3 y numero de ficheros del archive versionado.
+
+    Before: `mem` es `<raiz>/.agent/runtime/memory`; puede no existir.
+    During: solo `is_file()`/`glob`; no lee contenido ni escribe.
+    After: dict con `l1`, `l2`, `l3` (bool) y `archives` (int). Una raiz sin
+        directorio de memoria se mide como todo ausente, sin lanzar.
+    """
+    return {
+        "l1": (mem / "observations.jsonl").is_file(),
+        "l2": (mem / "memory_rules.md").is_file(),
+        "l3": (mem / "memory_profile.md").is_file(),
+        "archives": sum(
+            1 for a in (mem / "archive").glob("observations.*.jsonl") if a.is_file()
+        ),
+    }
+
+
+def _layer_warnings(layers: dict[str, Any]) -> list[str]:
+    """Avisos informativos por capa destilada (L2/L3) ausente; vacio si estan las dos.
+
+    NO es un disparador del Bloque 4.0: un trigger hace que el cierre y el hook
+    digan "aplica memory_optimization.md", que es la accion equivocada para "faltan
+    capas" (esas capas se generan desde L1 y el `--apply` es decision del usuario).
+    Por eso el texto no nombra ningun comando: informa, no repara. Los textos son
+    ASCII y sin ";" (el hook une las raices con ";").
+
+    Before: `layers` sale de `_measure_layers`.
+    During: funcion pura; elige UNO de cuatro textos segun L1, el archive y cuantas capas faltan.
+    After: lista de 0 o 1 aviso. Vacia cuando L2 y L3 existen.
+    """
+    missing = [name for name, key in (("L2", "l2"), ("L3", "l3")) if not layers[key]]
+    if not missing:
+        return []
+    absent = "/".join(missing)
+    plural = len(missing) > 1
+    ausente = "ausentes" if plural else "ausente"
+    if layers["l1"]:
+        return [
+            f"capa destilada {absent} {ausente} aunque L1 existe, "
+            f"regenerar{'las' if plural else 'la'} es decision manual del usuario "
+            "(no lo ejecutes por tu cuenta)"
+        ]
+    if layers["archives"]:
+        return [
+            f"{absent} {ausente} (gitignored, por worktree, normal en uno nuevo), "
+            f"la memoria portable sale del archive versionado ({layers['archives']}"
+            " ficheros)"
+        ]
+    if plural:
+        # Solo aqui se afirma "sin memoria": con una capa presente (p.ej. L2) el
+        # arranque SI tiene memoria persistente (hallazgo de la lente DeepSeek).
+        return [
+            f"{absent} {ausente} y sin archive versionado ni L1, "
+            "este arranque no tiene memoria persistente"
+        ]
+    return [f"{absent} {ausente} y sin archive versionado ni L1"]
+
+
 def _validate_l1(path: Path) -> int | None:
     """rc de `validate_observations.py --strict` sobre L1; None si L1 no existe."""
     if not path.is_file():
@@ -205,6 +275,7 @@ def measure_root(root: Path, *, run_validate: bool = True) -> dict[str, Any]:
             f" ({ratio:.1%}; umbral {L1_MIN_ENTRIES} y {L1_NOISE_RATIO:.0%})",
         },
     ]
+    layers = _measure_layers(mem)
     return {
         "root": str(root),
         "l1": {**l1, "noise_ratio": round(ratio, 4)},
@@ -212,6 +283,8 @@ def measure_root(root: Path, *, run_validate: bool = True) -> dict[str, Any]:
         "memory_md": stale,
         "validate_rc": validate_rc,
         "triggers": triggers,
+        "layers": layers,
+        "warnings": _layer_warnings(layers),
     }
 
 
@@ -226,6 +299,7 @@ def _format(measure: dict[str, Any], label: str) -> str:
     for trig in measure["triggers"]:
         mark = "DISPARA" if trig["fired"] else "ok"
         lines.append(f"  ({trig['id']}) {mark}: {trig['detail']}")
+    lines.extend(f"  AVISO: {w}" for w in measure.get("warnings", []))
     lines.append(
         "  -> dispara: aplicar prompts/memory_optimization.md"
         if fired
