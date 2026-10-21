@@ -133,24 +133,24 @@ segun PASO 5 de `prompts/doc_optimization.md`: **requiere decision del usuario p
 ## Medicion post-pasada-2 (recibo por gate, 2026-10-21)
 
 Pasada 2 mueve 7 secciones a modulos en `.agent/rules/common/`:
-- S1+S2: `contract_full_read_and_process_search.md` (8503 B)
-- S3: `flight_push_policy.md` (2345 B)
-- S4: `do_now_vs_defer.md` (4090 B)
-- S5: `x09_skill_prompt_governance.md` (3091 B)
-- S6: `collaboration_live_surfaces.md` (1210 B)
-- S7: `credits_external_attributions.md` (996 B)
+- S1+S2: `contract_full_read_and_process_search.md` (8502 B)
+- S3: `flight_push_policy.md` (2317 B)
+- S4: `do_now_vs_defer.md` (4049 B)
+- S5: `x09_skill_prompt_governance.md` (3053 B)
+- S6: `collaboration_live_surfaces.md` (1190 B)
+- S7: `credits_external_attributions.md` (984 B)
 
-Medicion del HEAD post-pasada-2 (`d640dca5`):
+Medicion del HEAD post-reparacion (`cb71b83c`; la medicion previa de `d640dca5` daba 60586/62421, inflada por el doble-encoding y los blancos duplicados corregidos despues):
 
-    AGENTS.md bytes: 60586 (Codex gate 32768 B) -> ratio 1,85x
-    CLAUDE.md chars: 1983 + AGENTS.md chars: 60438 = 62421 (Claude gate 40000 chars) -> ratio 1,56x
+    AGENTS.md bytes: 60420 (Codex gate 32768 B) -> ratio 1,84x
+    cierre CLAUDE.md (CLAUDE.md + @AGENTS.md) chars: 62343 (Claude gate 40000 chars) -> ratio 1,56x
 
 Evolucion de ratios:
-- Codex: 2,35x (post P6) -> 1,85x (post pasada 2). Reduccion: ~16344 B (~76930 -> 60586).
-- Claude: 1,97x (post P6) -> 1,56x (post pasada 2). Reduccion: ~16402 chars (~78823 -> 62421).
+- Codex: 2,35x (post P6) -> 1,84x (post pasada 2). Reduccion: ~16952 B desde la base `d965ee45` (77372 -> 60420).
+- Claude: 1,97x (post P6) -> 1,56x (post pasada 2). Reduccion: ~16945 chars desde la base `d965ee45` (79288 -> 62343).
 
 Persiste exceso en AMBOS gates (ninguno <= 1,0x). La piramide sola, incluso consumiendo el
-techo fresco (~30 KB), no cierra ambos gates: 60586 B = 1,85x del gate Codex. Confirma
+techo fresco (~30 KB), no cierra ambos gates: 60420 B = 1,84x del gate Codex. Confirma
 hallazgo #2 del bucle Seccion 8: cerrar el gate exige Palanca A (AGENTS.md anidados).
 
 La deuda sigue ABIERTA. Esta via nombrada de seguimiento aplica segun PASO 5 de
