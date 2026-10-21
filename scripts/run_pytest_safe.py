@@ -1013,9 +1013,13 @@ def _warn_cwd_maxpath(env: dict) -> None:
             f"({cwd_chars} chars > umbral 53): riesgo de MAX_PATH en los "
             "sandboxes git de los tests. Evidencia medida: <= 53 chars "
             "pasa (139/139), >= 94 chars falla (firma 'remote: error: "
-            "unable to write file ... origin.git'). Remedio: corre la "
-            "suite/sello desde un checkout de prefijo corto (patron "
-            "Temp\\kilo\\<id>). WARN no bloqueante: no cambia exit codes.\n"
+            "unable to write file ... origin.git'); WOT-2026-109d anadio un "
+            "segundo punto a 78 chars con OTRA firma ('git worktree add' -> "
+            "'Filename too long' en tests/unit/test_check_worktree_topology.py, "
+            "arreglado acortando el nombre sintetico del fixture, no el "
+            "umbral). Remedio: corre la suite/sello desde un checkout de "
+            "prefijo corto (patron Temp\\kilo\\<id>). WARN no bloqueante: no "
+            "cambia exit codes.\n"
         )
 
 
