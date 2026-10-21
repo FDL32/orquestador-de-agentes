@@ -217,7 +217,11 @@ en esta fase.**
 - **Entorno de ejecucion (Windows):** toda herramienta de esta fase corre con
   `PYTHONUTF8=1` y `PYTHONIOENCODING=utf-8`, y su salida se lee como UTF-8.
   Es la causa conocida de herramientas `degraded` (consola cp1252 que falla al
-  imprimir caracteres no representables).
+  imprimir caracteres no representables). **Se aplica POR COMANDO** (prefijo en
+  la propia linea), nunca con `export` en una shell persistente: con
+  `PYTHONUTF8=1` en el entorno la suite canonica (`run_pytest_safe.py`) falla 9
+  tests ajenos (`UnicodeDecodeError` al decodificar la salida OEM de PowerShell
+  y `tasklist` como UTF-8; medido 2026-10-21, 170 passed sin la variable).
 - **Herramientas no disponibles:** registrar `tools_executed` /
   `tools_skipped_reason` en el mismo `_meta/`. Un `pip-audit` que no corrio
   no es lo mismo que un `pip-audit` que corrio y dio 0 hallazgos — ambos
