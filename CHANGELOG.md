@@ -1,3 +1,8 @@
+# 2026-10-21 - Propuesta de optimizacion del arranque de agentes en frio (docs, sin cambio de comportamiento)
+
+### Added
+- `docs/followups/arranque-agentes-frios-propuesta-optimizacion.md`: re-medicion de H1-H6 del informe de revision, causa demostrada del hook no-UTF-8 (codepage cp1252 por pipe; tambien `pre_compact_hook.py`), contradiccion entre el guard de topologia y los worktrees T3, H5 corregido (el fichero esta versionado en el destino), fichas D1a/D1b/D2/D3 y adjudicacion de un bucle DESIGN_REVIEW de 4 lentes. Sin implementar.
+
 # 2026-10-21 - SessionStart avisa cuando faltan las capas destiladas de memoria (L2/L3)
 
 ### Added

@@ -19,7 +19,7 @@ Reproduccion (comando EXACTO de `.claude/settings.json`, ejecutado con `bash -c`
 | worktree del destino (`orquestador_de_agentes_workspace`) | 38191 | 3 | INVALIDO: byte `0x97` en el offset 1557, contexto `task_id \x97 nunca un subagente` |
 | worktree del motor | 33629 | 0 | VALIDO |
 
-`0x97` es la raya (em dash) en cp1252. Causa probable (no demostrada con instrumentacion):
+`0x97` es la raya (em dash) en cp1252. Causa (DEMOSTRADA 2026-10-21, ver propuesta `arranque-agentes-frios-propuesta-optimizacion.md`: `PYTHONUTF8=1` -> UTF-8 valido, `PYTHONIOENCODING=cp1252` -> invalido, locale por pipe = cp1252):
 `_print_context_safely` hace `print(payload)` con `ensure_ascii=False`, y solo cae al camino
 `backslashreplace` ante `UnicodeEncodeError`; un caracter codificable en la pagina de codigos del
 sistema (cp1252) sale en cp1252, no en UTF-8. La memoria del destino contiene ese caracter; la del
@@ -32,6 +32,8 @@ Direccion de fix a evaluar (no aplicada): escribir siempre bytes UTF-8 explicito
 `sys.stdout.buffer` (`payload.encode("utf-8", errors="backslashreplace")`) en vez de depender de la
 codificacion de la consola, o emitir `ensure_ascii=True` (JSON ASCII puro, independiente de la
 codificacion). Hay tests de `_print_context_safely` que habria que adaptar.
+
+Alcance ampliado: `.agent/hooks/pre_compact_hook.py:345` tiene el mismo `print(json.dumps(..., ensure_ascii=False))`. Restriccion medida por la coordinadora: el arreglo NO puede ser ambiental (`PYTHONUTF8=1` en shell/settings rompe 9 tests de la suite canonica en Windows); debe ser de codigo.
 
 ## Hallazgo 2: la memoria inyectada depende del cwd
 
@@ -51,3 +53,7 @@ Dirección a evaluar: que la cabecera nombre las superficies leidas y su recuent
 ## Estado_FRESCO (2026-10-21)
 
     ESTADO_FRESCO: raiz=<worktree del motor de la sesion sessionstart-palanca-a>, HEAD=99737636, verificado=2026-10-21
+
+## Seguimiento
+
+Propuesta completa, bucle de 4 lentes y fichas D1a/D1b/D2/D3: `docs/followups/arranque-agentes-frios-propuesta-optimizacion.md`.

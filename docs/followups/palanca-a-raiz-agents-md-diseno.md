@@ -235,6 +235,8 @@ No bloquea nada de este diseno. Se ficha en `docs/followups/` al cerrar esta ses
 
 ## 10. Fuera de alcance
 
+- Arranque en frio (hook UTF-8, memoria por cwd, par de worktrees, guard de topologia): `docs/followups/arranque-agentes-frios-propuesta-optimizacion.md`. Relacion: la verificacion conductual de este diseno (seccion 7) se hace en un arranque en frio y se beneficia de D1a/D1b; no es precondicion de ninguna fase de reduccion.
+
 Anidados (decision 2), Palanca B, `scripts/filter_lens_output.py`, esquema de
 `observations.jsonl`, P4 (`--apply` automatico), WOT-2026-058b y 105a.
 
