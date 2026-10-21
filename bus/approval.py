@@ -33,10 +33,6 @@ class ApprovalReason(str, Enum):
     HUMAN_APPROVED = "human_approved"
     HUMAN_REJECTED = "human_rejected"
     TIMEOUT_EXPIRED = "timeout_expired"
-    AUTO_APPROVED = "auto_approved"
-    AUTO_REJECTED = "auto_rejected"
-    CANCELLED_BY_USER = "cancelled_by_user"
-    CANCELLED_BY_SYSTEM = "cancelled_by_system"
 
 
 @dataclass(slots=True)

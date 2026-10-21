@@ -418,23 +418,6 @@ class SequentialTicketSupervisor:
             if self.supervisor_lock_path.exists():
                 self.supervisor_lock_path.unlink()
 
-    def _get_supervisor_lock_holder(self) -> dict | None:
-        """Read lock file and return lock holder info.
-
-        Before: No way to inspect lock holder.
-        During: Parses lock file JSON if it exists and is valid.
-        After: Returns dict with ticket_id, pid, started_at or None if no lock.
-        """
-        import json
-
-        if not self.supervisor_lock_path.exists():
-            return None
-
-        try:
-            return json.loads(self.supervisor_lock_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return None
-
     @staticmethod
     def _normalize_ticket_id(ticket_id: str | None) -> str | None:
         if ticket_id is None:

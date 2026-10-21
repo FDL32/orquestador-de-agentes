@@ -8,15 +8,6 @@ from typing import Any
 from bus.redact import redact
 
 
-# Import memory helpers
-try:
-    from memory_helpers import append_observation
-except ImportError:
-    # Fallback if memory_helpers not available
-    def append_observation(observation: dict[str, Any]) -> bool:
-        return True
-
-
 # Constants
 # WOT-2026-089e: the tool-call trace is TELEMETRY, not a lesson. It used to be
 # appended to `memory/observations.jsonl` (the lessons buffer, L1), where it made
