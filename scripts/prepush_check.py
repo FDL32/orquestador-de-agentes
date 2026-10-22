@@ -436,34 +436,28 @@ def run_agent_controller_validate(project_root: Path) -> CheckResult:
 
 
 def run_git_status_check(project_root: Path) -> CheckResult:
-    """Ejecuta git status --short y verifica que el arbol este limpio.
+    """Ejecuta git status --short y verifica que el arbol del DESTINO este limpio.
 
-    WT-2026-215: ejecuta git sobre motor_root (repositorio del motor), no
-    sobre project_root (workspace destino). Si motor_root no es resoluble,
-    reporta un WARN no bloqueante en lugar de FAIL, para soportar la
-    arquitectura workspace activo + motor portable.
+    WOT-2026-058l: corrige WT-2026-215, que hacia este check auditar
+    ``motor_root`` (el repo del motor, compartido y activo por TODAS las
+    sesiones en vuelo) en vez de ``project_root`` (el repo_destino que
+    realmente se esta cerrando). Esa semantica anterior hacia el cierre de
+    un destino estructuralmente imposible mientras CUALQUIER otra sesion
+    dejara el motor sucio, sin relacion alguna con el estado real del
+    destino (medido en vivo: ficha WOT-2026-058l, caso ``Crear_Texto_LLM``
+    2026-08-21). El check ahora audita exclusivamente ``project_root``.
 
     Args:
-        project_root: Raiz del proyecto (usado para resolver motor_root).
+        project_root: Raiz del repo_destino que se esta cerrando/empujando.
 
     Returns:
-        CheckResult con passed=True si no hay cambios en el arbol.
+        CheckResult con passed=True si no hay cambios en el arbol de
+        project_root.
     """
     try:
-        from runtime.motor_link import resolve_motor_root
-
-        motor_root = resolve_motor_root(project_root)
-        if motor_root is None:
-            return CheckResult(
-                name="Git Status Check",
-                passed=True,
-                output="motor_root no resoluble (motor_destination_link.json ausente); "
-                "check de git saltado (no bloqueante)",
-                is_blocking=False,
-            )
         result = subprocess.run(
             ["git", "status", "--short"],  # noqa: S607
-            cwd=motor_root,
+            cwd=project_root,
             capture_output=True,
             text=True,
             check=False,
@@ -2952,7 +2946,7 @@ def run_handoff_state_sha_check(project_root: Path) -> CheckResult:
     )
 
 
-def run_handoff_committed_check(motor_root: Path | None = None) -> CheckResult:
+def run_handoff_committed_check(project_root: Path | None = None) -> CheckResult:
     """WOT-2026-040t (Pieza 1): reject a closeout whose work is not committed.
 
     Wires the rejector into a path that runs on its own. A commit is immutable;
@@ -2976,9 +2970,17 @@ def run_handoff_committed_check(motor_root: Path | None = None) -> CheckResult:
     at closeout time is always a live defect, never legacy. Making it WARN would
     reproduce the M20 never-blocks-reporter shape the policy rejects.
 
-    Scope is the MOTOR repo: refs/stash is global to the repository and shared
-    across every flight worktree, so a stash pushed by another flight is limbo
-    work indistinguishable from this one's (failure mode F3).
+    SCOPE CORRECTED (WOT-2026-058l): this used to default unconditionally to
+    the MOTOR repo, so a destination's closeout was blocked by a stash or
+    dirty state left by ANY other flight working the shared motor -- a
+    defect with no relation to the destination actually being closed
+    (measured in vivo, ficha WOT-2026-058l, case Crear_Texto_LLM
+    2026-08-21). Scope is now ``project_root`` (the repo_destino being
+    closed): ``refs/stash`` is global to a SINGLE repository, so this still
+    cannot miss a stash pushed by another worktree of that SAME
+    destination -- it is simply no longer entangled with the motor's own
+    stash/dirty state. Falls back to this script's own repo (the motor)
+    only when no ``project_root`` is supplied.
     """
     name = "Handoff Committed (WOT-2026-040t)"
     try:
@@ -2988,7 +2990,7 @@ def run_handoff_committed_check(motor_root: Path | None = None) -> CheckResult:
             EXIT_OK,
             evaluate,
         )
-    root = (motor_root or Path(__file__).resolve().parent.parent).resolve()
+    root = (project_root or Path(__file__).resolve().parent.parent).resolve()
     code, lines = evaluate(root)
     return CheckResult(
         name=name,
@@ -4380,7 +4382,7 @@ def run_preflight_check(
         results.append(run_handoff_state_sha_check(project_root))
         # 6c-bis. Handoff Committed (WOT-2026-040t Pieza 1; BLOQUEANTE: un arbol
         # sucio o un stash pendiente en el cierre es siempre defecto vivo)
-        results.append(run_handoff_committed_check())
+        results.append(run_handoff_committed_check(project_root))
         # 6d. Destination PII Leak (WOT-2026-020t; WARN default, FAIL opt-in)
         results.append(run_destination_pii_check(project_root))
         # 6e. Closeout Reconciliation (WOT-2026-024w; WARN default, FAIL opt-in)

@@ -183,17 +183,6 @@ known_unwired:
     limite es estructural (ver Seccion 1.5 del mismo contrato para el caso
     analogo del Task tool nativo).
 
-  # WOT-2026-098b: gate `role_models.BUILDER != role_models.REVISOR`. Su sitio de
-  # invocacion NATURAL es `bus/review_bridge.py` "antes de lanzar la Capa 2" -- y
-  # `bus/review_bridge.py` es FORBIDDEN SURFACE de este ticket (Non-goal: "NO
-  # modifica bus/review_bridge.py ni scripts/manager_review_bridge.py para que
-  # resuelvan dinamicamente otros roles"). Mismo patron que `check_prompt_bias` /
-  # `check_bundle_receipts`: el MECANISMO se entrega aqui; el cableado desde el
-  # review bridge es follow-up de un ticket propio. El dueno VIVO es esta ficha
-  # mientras resuelva; si se archiva sin cablear, el orphan-owner check lo
-  # reportara (WARN, no bloqueante) para que no se olvide, y el follow-up lo
-  # re-declarara con su dueno real.
-  check_role_models_distinct: WOT-2026-098b
   # WOT-2026-040a: validador de CONTENIDO del delta operativo esperado del batch
   # (PREDICATE v2, condicion 8 `estado_operativo_destino_atribuible`). Su
   # invocacion natural es la evaluacion del PREDICATE por el ejecutor o el

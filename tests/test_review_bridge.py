@@ -1667,3 +1667,84 @@ class TestDecisionParser249c:
             f"expected json_final_answer, got {method}"
         )
         assert decision == ReviewDecision.CHANGES, f"expected CHANGES, got {decision}"
+
+
+class TestRoleModelsDistinctGate:
+    """WOT-2026-113a: mutation-verify for the role_models.BUILDER==REVISOR gate.
+
+    check_guard_wiring.py only proves the gate is reachable via a static
+    import; it never proves the gate actually REJECTS the collision it
+    claims to block at runtime. These tests exercise
+    run_manager_review_cycle end to end against a collided config.
+    """
+
+    def test_check_role_models_distinct_returns_none_without_collision(
+        self, review_bridge, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agents_config.load_agents_config",
+            lambda project_root=None: {
+                "role_models": {"BUILDER": "claude-sonnet", "REVISOR": "gpt-5"},
+                "backends": {},
+            },
+        )
+        assert review_bridge._check_role_models_distinct() is None
+
+    def test_check_role_models_distinct_returns_reason_on_collision(
+        self, review_bridge, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "agents_config.load_agents_config",
+            lambda project_root=None: {
+                "role_models": {"BUILDER": "claude-sonnet", "REVISOR": "claude-sonnet"},
+                "backends": {},
+            },
+        )
+        reason = review_bridge._check_role_models_distinct()
+        assert reason is not None
+        assert "BUILDER" in reason and "REVISOR" in reason
+
+    def test_run_manager_review_cycle_blocks_on_role_models_collision(
+        self, review_bridge, event_bus, tmp_path
+    ):
+        """Mutation-verify: the gate must actually reject READY_FOR_REVIEW.
+
+        Before: ticket is READY_FOR_REVIEW and role_models.BUILDER ==
+            role_models.REVISOR (the exact collision WOT-2026-098b forbids).
+        During: run_manager_review_cycle is invoked; the collision must be
+            caught before any backend subprocess is spawned.
+        After: result.decision == INSPECT, result.exit_code == 1, and a
+            REVIEW_ROLE_MODELS_BLOCKED event is recorded on the bus. Without
+            the gate (pre-WOT-2026-113a wiring) this test fails because the
+            cycle proceeds to invoke a review backend instead of rejecting.
+        """
+        event_bus.emit(
+            "STATE_CHANGED",
+            ticket_id="WP-TEST-001",
+            actor="BUILDER",
+            payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+        )
+
+        with patch.object(
+            review_bridge,
+            "_check_role_models_distinct",
+            return_value=(
+                "role_models.BUILDER y role_models.REVISOR comparten el mismo model_id"
+            ),
+        ):
+            result = review_bridge.run_manager_review_cycle(
+                ticket_id="WP-TEST-001",
+                supervisor=MagicMock(),
+                timeout_seconds=10,
+            )
+
+        assert result.decision == ReviewDecision.INSPECT
+        assert result.exit_code == 1
+        assert "BUILDER" in result.stderr and "REVISOR" in result.stderr
+
+        blocked_events = [
+            e
+            for e in event_bus.read_events(ticket_id="WP-TEST-001")
+            if e.event_type == "REVIEW_ROLE_MODELS_BLOCKED"
+        ]
+        assert len(blocked_events) == 1
