@@ -250,14 +250,17 @@ completa (`--level all`), nunca de un `-k` por nombre. Caso forense completo (in
 WOT-2026-079d, 3 regresiones reales que `-k` dejo pasar, memoria
 `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`): [T1].
 
-**Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k):** en el protocolo
-`prompts/kilo_trio_dispatch/`, SOLO el Manager corre la suite completa `--level all`, UNA vez,
-tras TODOS los commits del ticket, nunca antes. El Builder se limita a tests focales; el Revisor
-corre sus propios focales de forma independiente, sin esperar al Manager. **Alcance: cubre SOLO
-el protocolo trio -- NO toca `scripts/run_gates_dispatch.py` ni `skills/builder-run-quality-gates`**,
-donde el Builder SI es el unico verificador legitimo de `--level all` (tickets de un solo
-Builder sin Revisor/Manager separados). Caso forense completo (incidente medido WOT-2026-104j,
-bucle de gobierno `UNI-5`): [T2].
+**Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k): en el protocolo
+`prompts/kilo_trio_dispatch/`, SOLO el Manager corre `--level all`, nunca el Builder ni el
+Revisor.** El Builder se limita a focales; el Revisor corre sus propios focales de forma
+independiente, sin esperar al Manager. **Alcance: cubre SOLO el protocolo trio -- NO toca
+`scripts/run_gates_dispatch.py` ni `skills/builder-run-quality-gates`**, donde el Builder SI es
+el unico verificador legitimo de `--level all` (tickets de un solo Builder sin Revisor/Manager
+separados). Enforcement mecanico (WOT-2026-117a): `scripts/check_manager_role_for_suite.py`,
+cableado en `run_pytest_safe.py --level all`, bloquea la invocacion si
+`.agent/collaboration/TURN.md` declara un rol no-Manager, con exencion explicita (no inferida)
+para el self-check del Builder via `run_gates_dispatch.py`. Caso forense completo (incidente
+medido WOT-2026-104j, bucle de gobierno `UNI-5`): [T2].
 
 #### Push por vuelo: UN solo push al final de TODOS los tickets (2026-10-19)
 

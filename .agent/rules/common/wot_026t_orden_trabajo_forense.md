@@ -40,3 +40,18 @@ declarado, no se extiende por si solo:** esta regla cubre el protocolo trio
 `skills/builder-run-quality-gates` (hallazgo de la lente codex en el mismo bucle): esos
 mecanismos sirven tambien a tickets de un solo Builder sin Revisor/Manager separados, donde el
 Builder SI es el unico verificador legitimo de `--level all`.
+
+**Enforcement mecanico anadido (WOT-2026-117a, no reemplaza esta narrativa, la complementa):**
+hasta este ticket, la asignacion de rol de arriba era una NORMA (dependia de que el agente se
+acordara). `scripts/check_manager_role_for_suite.py`, cableado en
+`run_pytest_safe.py::main()` para `--level all`, la verifica de forma mecanica leyendo
+`.agent/collaboration/TURN.md` (fila `**ROL**`, unico productor: `agent_controller.py::
+update_turn_file()`) -- bloquea (exit 77) si el rol declarado no es MANAGER. Para no romper la
+excepcion de arriba (Builder solo, via `run_gates_dispatch.py`), ese script declara una exencion
+EXPLICITA por invocador conocido (`RUN_PYTEST_SAFE_SELFCHECK_EXEMPT`) en vez de inferirla de
+TURN.md -- una primera version inferida de la ausencia de TURN.md rompia exactamente este caso
+(regresion confirmada por revision adversarial, commit `ab0f4ba8` -> fix `7e24d07c`). Riesgo
+residual declarado, no resuelto por este ticket: TURN.md proyecta la SIGUIENTE ACCION del
+ticket (bus -> controller), no la identidad del PROCESO que invoca `--level all` -- un proceso
+podria invocarla manualmente mientras TURN.md aun no se actualizo. Resolverlo del todo exigiria
+un mecanismo de identidad de proceso/sesion nuevo, fuera del alcance de WOT-2026-117a.
