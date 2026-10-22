@@ -71,11 +71,22 @@ GENERATED_ARTIFACT_PATHS = [
 # them; the GENERAL pre-push gate (default) must NOT forgive them.
 # Shared with scripts/closeout_steps/rotation.py (imported there instead of
 # being redefined locally) so the two gates always agree on the same set.
+# WOT-2026-058l: once the closeout gates audit project_root instead of
+# motor_root, the allowlist must also cover the destination's OWN runtime
+# artifacts the close writes AFTER this step runs (bus emission + STATE
+# sync): STATE.md, events.jsonl, memory_profile.md and memory_rules.md.
+# Measured live (WOT-2026-055o close, ficha WOT-2026-058l): without these,
+# the project_root-scoped check would newly WARN "unexpected" on files that
+# are legitimate closeout output, not drift.
 EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS: list[str] = [
     "session_close_report.md",
     "CONSOLIDATION_REPORT.md",
     "MEMORY.md",
     "observations.jsonl",
+    "STATE.md",
+    "events.jsonl",
+    "memory_profile.md",
+    "memory_rules.md",
 ]
 
 

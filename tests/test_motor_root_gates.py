@@ -172,69 +172,133 @@ def test_review_packet_uses_motor_diff_with_workspace_noise(tmp_path):
 
 
 # =============================================================================
-# Test 4: prepush_check run_git_status_check uses motor_root
+# Test 4: prepush_check run_git_status_check uses project_root, not motor_root
 # =============================================================================
 
 
-def test_prepush_check_uses_motor_root(tmp_path, monkeypatch):
-    """run_git_status_check resolves motor_root and runs git on it."""
+def test_prepush_check_uses_project_root_not_motor(tmp_path, monkeypatch):
+    """WOT-2026-058l: run_git_status_check audits project_root (el destino que
+    se cierra), nunca motor_root. CONTROL POSITIVO: motor sucio + destino
+    limpio -> PASA, y el cwd real es el destino, no el motor (corrige
+    WT-2026-215, que ataba el cierre de CUALQUIER destino al estado de un
+    repo ajeno y compartido)."""
     from scripts.prepush_check import run_git_status_check
 
     workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True, exist_ok=True)
     motor = tmp_path / "motor"
     init_git_repo(motor)
+    # El link se escribe ANTES del commit inicial del destino: asi queda
+    # trackeado y el arbol del destino sigue limpio tras init_git_repo.
     link_workspace_to_motor(workspace, motor)
+    init_git_repo(workspace)
+    # Motor sucio: fichero sin commitear en el repo del motor.
+    (motor / "leftover_motor.py").write_text("m = 1")
 
     original_run = subprocess.run
     captured_cwds = []
 
     def tracking_run(*args, **kwargs):
         if "cwd" in kwargs:
-            captured_cwds.append(kwargs["cwd"])
+            captured_cwds.append(str(kwargs["cwd"]))
         return original_run(*args, **kwargs)
 
     monkeypatch.setattr("scripts.prepush_check.subprocess.run", tracking_run)
     result = run_git_status_check(workspace)
 
-    assert result.passed, f"Expected passed=True, got {result}"
+    assert result.passed, (
+        f"Motor sucio no debe bloquear un destino limpio, got {result}"
+    )
+    workspace_str = str(workspace.resolve())
     motor_str = str(motor.resolve())
-    assert any(motor_str in str(cwd) for cwd in captured_cwds), (
-        f"Expected cwd containing {motor_str}, got {captured_cwds}"
+    assert any(workspace_str in cwd for cwd in captured_cwds), (
+        f"Expected cwd containing {workspace_str}, got {captured_cwds}"
+    )
+    assert not any(motor_str in cwd for cwd in captured_cwds), (
+        f"El check no debe tocar el motor en absoluto, got {captured_cwds}"
     )
 
 
-# =============================================================================
-# Test 5: session_closeout _step_git_clean uses motor_root
-# =============================================================================
-
-
-def test_session_closeout_git_clean_uses_motor_root(tmp_path, monkeypatch):
-    """_step_git_clean resolves motor_root and runs git on it."""
-    from scripts.session_closeout import _step_git_clean
+def test_prepush_check_destino_dirty_still_blocks_with_clean_motor(
+    tmp_path, monkeypatch
+):
+    """CONTROL NEGATIVO: destino sucio sigue bloqueando aunque el motor este
+    limpio -- la correccion de alcance no abre un agujero."""
+    from scripts.prepush_check import run_git_status_check
 
     workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True, exist_ok=True)
+    init_git_repo(workspace)
+    (workspace / "leftover_destino.py").write_text("d = 2")
     motor = tmp_path / "motor"
     init_git_repo(motor)
     link_workspace_to_motor(workspace, motor)
+
+    result = run_git_status_check(workspace)
+
+    assert result.passed is False
+    assert result.is_blocking is True
+    assert "leftover_destino.py" in result.output
+
+
+# =============================================================================
+# Test 5: session_closeout _step_git_clean uses project_root, not motor_root
+# =============================================================================
+
+
+def test_session_closeout_git_clean_uses_project_root_not_motor(tmp_path, monkeypatch):
+    """WOT-2026-058l: _step_git_clean audita project_root, nunca motor_root.
+    CONTROL POSITIVO: motor sucio + destino limpio -> PASS, y el cwd real es
+    el destino (corrige la 2a instancia de WT-2026-215 medida en el cierre de
+    WOT-2026-055o, donde el paso PASS citaba el motor y no vio 8 ficheros
+    sucios reales del workspace)."""
+    from scripts.session_closeout import _step_git_clean
+
+    workspace = tmp_path / "workspace"
+    motor = tmp_path / "motor"
+    init_git_repo(motor)
+    link_workspace_to_motor(workspace, motor)
+    init_git_repo(workspace)
+    (motor / "leftover_motor.py").write_text("m = 1")
 
     original_run = subprocess.run
     captured_cwds = []
 
     def tracking_run(*args, **kwargs):
         if "cwd" in kwargs:
-            captured_cwds.append(kwargs["cwd"])
+            captured_cwds.append(str(kwargs["cwd"]))
         return original_run(*args, **kwargs)
 
     monkeypatch.setattr("scripts.session_closeout.subprocess.run", tracking_run)
     result = _step_git_clean(workspace, dry_run=False)
 
     assert result.status == "PASS", f"Expected PASS, got {result}"
+    workspace_str = str(workspace.resolve())
     motor_str = str(motor.resolve())
-    assert any(motor_str in str(cwd) for cwd in captured_cwds), (
-        f"Expected cwd containing {motor_str}, got {captured_cwds}"
+    assert any(workspace_str in cwd for cwd in captured_cwds), (
+        f"Expected cwd containing {workspace_str}, got {captured_cwds}"
     )
+    assert not any(motor_str in cwd for cwd in captured_cwds), (
+        f"El paso no debe tocar el motor en absoluto, got {captured_cwds}"
+    )
+
+
+def test_session_closeout_git_clean_destino_dirty_warns_with_clean_motor(
+    tmp_path, monkeypatch
+):
+    """CONTROL NEGATIVO: destino sucio sigue reportandose (WARN) aunque el
+    motor este limpio -- la correccion de alcance no abre un agujero."""
+    from scripts.session_closeout import _step_git_clean
+
+    workspace = tmp_path / "workspace"
+    init_git_repo(workspace)
+    (workspace / "leftover_destino.py").write_text("d = 2")
+    motor = tmp_path / "motor"
+    init_git_repo(motor)
+    link_workspace_to_motor(workspace, motor)
+
+    result = _step_git_clean(workspace, dry_run=False)
+
+    assert result.status == "WARN", f"Expected WARN, got {result}"
+    assert "leftover_destino.py" in result.detail
 
 
 # =============================================================================

@@ -168,7 +168,7 @@ def test_prepush_wiring_is_blocking_and_reports_the_rejection(tmp_path: Path) ->
     init_git_repo(repo)
     (repo / "leftover.py").write_text("z = 3\n", encoding="utf-8")
 
-    result = run_handoff_committed_check(motor_root=repo)
+    result = run_handoff_committed_check(project_root=repo)
 
     assert result.passed is False
     assert result.is_blocking is True
@@ -177,7 +177,7 @@ def test_prepush_wiring_is_blocking_and_reports_the_rejection(tmp_path: Path) ->
     # And it passes once the work is anchored to a commit.
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "anchor the work")
-    assert run_handoff_committed_check(motor_root=repo).passed is True
+    assert run_handoff_committed_check(project_root=repo).passed is True
 
 
 def test_non_git_path_fails_closed(tmp_path: Path) -> None:
@@ -188,3 +188,51 @@ def test_non_git_path_fails_closed(tmp_path: Path) -> None:
     result = run_check(plain)
 
     assert result.returncode != 0
+
+
+def test_wiring_scope_is_project_root_not_motor(tmp_path: Path) -> None:
+    """WOT-2026-058l: scope is project_root (the destino being closed), not the
+    motor. CONTROL POSITIVO: motor dirty + destino limpio -> PASA. CONTROL
+    NEGATIVO (en el siguiente test): destino sucio -> sigue fallando.
+    """
+    sys.path.insert(0, str(SCRIPT_PATH.parent))
+    try:
+        from prepush_check import run_handoff_committed_check
+    finally:
+        sys.path.pop(0)
+
+    destino = tmp_path / "destino"
+    init_git_repo(destino)
+
+    motor = tmp_path / "motor"
+    init_git_repo(motor)
+    (motor / "leftover_motor.py").write_text("m = 1\n", encoding="utf-8")
+
+    result = run_handoff_committed_check(project_root=destino)
+
+    assert result.passed is True, (
+        f"Motor sucio no debe bloquear el cierre de un destino limpio: {result}"
+    )
+
+
+def test_wiring_destino_dirty_still_blocks_with_clean_motor(tmp_path: Path) -> None:
+    """CONTROL NEGATIVO: destino sucio sigue bloqueando aunque el motor este
+    limpio -- la correccion de alcance no abre un agujero."""
+    sys.path.insert(0, str(SCRIPT_PATH.parent))
+    try:
+        from prepush_check import run_handoff_committed_check
+    finally:
+        sys.path.pop(0)
+
+    destino = tmp_path / "destino"
+    init_git_repo(destino)
+    (destino / "leftover_destino.py").write_text("d = 2\n", encoding="utf-8")
+
+    motor = tmp_path / "motor"
+    init_git_repo(motor)
+
+    result = run_handoff_committed_check(project_root=destino)
+
+    assert result.passed is False
+    assert result.is_blocking is True
+    assert "leftover_destino.py" in result.output

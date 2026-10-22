@@ -563,7 +563,17 @@ def step_git_clean(
     subprocess_run,
     step_result_cls: type[StepResult],
 ) -> StepResult:
-    """Verify git status --short is clean (except expected runtime files)."""
+    """Verify git status --short is clean (except expected runtime files).
+
+    WOT-2026-058l: audits ``project_root`` (the repo_destino being closed)
+    instead of ``motor_root``. The previous scope made this step report
+    PASS/WARN against the shared motor repo, blind to the real runtime
+    artifacts the closeout writes into the destination (STATE.md,
+    events.jsonl, memory_profile.md, memory_rules.md, ...) -- measured
+    live during the WOT-2026-055o close: step 18 reported "Tree clean"
+    while the destination workspace itself had 8 dirty files the step
+    never looked at (ficha WOT-2026-058l, AMPLIACION 2026-09-29).
+    """
     if dry_run:
         return step_result_cls(
             name="git_clean",
@@ -571,19 +581,9 @@ def step_git_clean(
             detail="Skipped in dry-run mode",
         )
     try:
-        from runtime.motor_link import resolve_motor_root
-
-        motor_root = resolve_motor_root(project_root)
-        if motor_root is None:
-            return step_result_cls(
-                name="git_clean",
-                status="WARN",
-                detail="motor_root no resoluble (motor_destination_link.json ausente); "
-                "check de git saltado (no bloqueante)",
-            )
         result = subprocess_run(
             ["git", "status", "--short"],
-            cwd=str(motor_root),
+            cwd=str(project_root),
             capture_output=True,
             text=True,
             encoding="utf-8",
