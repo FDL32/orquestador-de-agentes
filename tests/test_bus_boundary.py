@@ -7,7 +7,15 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUS_DIR = PROJECT_ROOT / "bus"
-ALLOWED_SCRIPTS_IMPORTS = {"scripts.discover_skills"}
+ALLOWED_SCRIPTS_IMPORTS = {
+    "scripts.discover_skills",
+    # WOT-2026-098b/113a: review_bridge.py invoca el gate
+    # role_models.BUILDER != role_models.REVISOR justo antes de la revision de
+    # la Capa 1.5 -- el propio script declara ese call-site como su sitio de
+    # invocacion NATURAL (scripts/check_role_models_distinct.py docstring).
+    # Sin dependencia inversa: solo importa stdlib + agents_config.
+    "scripts.check_role_models_distinct",
+}
 
 
 def _collect_scripts_imports(path: Path) -> set[str]:
