@@ -62,12 +62,21 @@ def _write_utf8(path: Path, text: str) -> None:
 # conservador (mayusculas/minusculas y espaciado). Tolerante NO es laxo: el
 # patron sigue anclado al nivel de encabezado y al texto del titulo, asi que
 # una seccion DISTINTA no se cuela; lo que deja de romper es la tipografia.
+#
+# WOT-2026-114a (Fase 1 Palanca A, docs/followups/palanca-a-raiz-agents-md-
+# diseno.md D1): cada entrada suma un tercer campo `source` (ruta relativa al
+# motor donde VIVE el cuerpo de la seccion). Hoy las tres apuntan a
+# "AGENTS.md" (delta 0 B, nada se mueve en este ticket); una fase futura que
+# traslade el CUERPO de una seccion a un modulo bajo `.agent/rules/common/`
+# solo necesita repuntar este campo, sin que Hermes reciba menos contenido
+# del que recibe hoy (TRAMPA-3 de doc_optimization.md).
 # ---------------------------------------------------------------------------
 
-AGENTS_SECTIONS_REGISTRY: tuple[tuple[str, re.Pattern[str]], ...] = (
+AGENTS_SECTIONS_REGISTRY: tuple[tuple[str, re.Pattern[str], str], ...] = (
     (
         "vocabulario_canonico",
         re.compile(r"^##\s+Vocabulario\s+canonico\s*$", re.IGNORECASE),
+        "AGENTS.md",
     ),
     (
         "cem_v0",
@@ -75,20 +84,50 @@ AGENTS_SECTIONS_REGISTRY: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"^##\s+CEM\s+v0\s*-\s*Contrato,\s*Evidencia\s+y\s+Memoria\s*$",
             re.IGNORECASE,
         ),
+        "AGENTS.md",
     ),
     (
         "secretos_y_seguridad",
         re.compile(r"^##\s+Secretos\s+y\s+seguridad\s*$", re.IGNORECASE),
+        "AGENTS.md",
     ),
 )
 
-_REGISTRY_BY_ID = dict(AGENTS_SECTIONS_REGISTRY)
+_REGISTRY_BY_ID: dict[str, tuple[re.Pattern[str], str]] = {
+    sid: (pattern, source) for sid, pattern, source in AGENTS_SECTIONS_REGISTRY
+}
+
+
+def _registered_section_source(section_id: str) -> str:
+    """Before: section_id may or may not be registered. During: look up the
+    `source` field. After: returns the relative path, or raises ValueError
+    naming the unknown id (same message shape as the extraction lookup)."""
+    try:
+        _, source = _REGISTRY_BY_ID[section_id]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown section id: {section_id!r}; registered ids are "
+            f"{sorted(_REGISTRY_BY_ID)}"
+        ) from exc
+    return source
+
+
+def _registry_sources() -> list[str]:
+    """Before: none. During: walk the registry. After: distinct `source`
+    paths in registry order, deduplicated (today all three collapse to the
+    single entry "AGENTS.md")."""
+    seen: list[str] = []
+    for _, _, source in AGENTS_SECTIONS_REGISTRY:
+        if source not in seen:
+            seen.append(source)
+    return seen
 
 
 def _extract_registered_section(text: str, section_id: str) -> str:
     """Extract a REGISTERED section by its stable id, not by literal title.
 
-    Before: `section_id` is a key of AGENTS_SECTIONS_REGISTRY.
+    Before: `section_id` is a key of AGENTS_SECTIONS_REGISTRY; `text` is the
+        content of whatever file that id's `source` field names.
     During: match each line against the registered tolerant pattern; the
         section runs until the next header of the SAME level.
     After: returns the section text. Raises ValueError naming the id AND the
@@ -96,7 +135,7 @@ def _extract_registered_section(text: str, section_id: str) -> str:
         "renamed beyond tolerance" from "typo in my id".
     """
     try:
-        pattern = _REGISTRY_BY_ID[section_id]
+        pattern, _source = _REGISTRY_BY_ID[section_id]
     except KeyError as exc:
         raise ValueError(
             f"Unknown section id: {section_id!r}; registered ids are "
@@ -121,6 +160,16 @@ def _extract_registered_section(text: str, section_id: str) -> str:
             end = index
             break
     return "\n".join(lines[start:end]).rstrip()
+
+
+def _read_registered_section(motor_root: Path, section_id: str) -> str:
+    """Before: section_id is registered. During: read its declared `source`
+    file under motor_root and extract by registry pattern. After: returns
+    the section text -- IDENTICAL to reading AGENTS.md directly as long as
+    `source` points there (Fase 1: it always does)."""
+    source = _registered_section_source(section_id)
+    text = _read_utf8(motor_root / source)
+    return _extract_registered_section(text, section_id)
 
 
 def _extract_section(text: str, heading: str) -> str:
@@ -196,7 +245,6 @@ def build_motor_context(motor_root: Path, generated_at: str) -> str:
     After:
         Returns a self-contained Markdown snapshot for Hermes uploads.
     """
-    agents = _read_utf8(motor_root / "AGENTS.md")
     bootstrap = _read_utf8(motor_root / CONTEXT_SOURCES[1])
     version = _motor_version(motor_root)
     commit = _source_commit(motor_root)
@@ -204,9 +252,12 @@ def build_motor_context(motor_root: Path, generated_at: str) -> str:
         "# Contexto operativo del motor",
         _metadata_header(version, commit, generated_at),
         # WOT-2026-036g: por ID DE REGISTRY, nunca por titulo literal.
-        _extract_registered_section(agents, "vocabulario_canonico"),
-        _extract_registered_section(agents, "cem_v0"),
-        _extract_registered_section(agents, "secretos_y_seguridad"),
+        # WOT-2026-114a: cada id resuelve su propio `source` (hoy, los tres
+        # apuntan a AGENTS.md; una fase futura puede repuntarlos sin tocar
+        # esta linea).
+        _read_registered_section(motor_root, "vocabulario_canonico"),
+        _read_registered_section(motor_root, "cem_v0"),
+        _read_registered_section(motor_root, "secretos_y_seguridad"),
         "## Bootstrap canonico de repo_destino",
         bootstrap,
     ]
@@ -264,6 +315,14 @@ def build_bundle(
     timestamp = generated_at or datetime.now(timezone.utc).isoformat()
     source_paths = [motor / SOUL_SOURCE, *(motor / p for p in CONTEXT_SOURCES)]
     source_paths.append(motor / CLOSEOUT_SOURCE)
+    # WOT-2026-114a (D1-bis): la procedencia del manifiesto debe cubrir CADA
+    # `source` distinta del registro, no solo los ficheros hardcodeados de
+    # arriba -- si una fase futura repunta una seccion a un modulo, ese
+    # modulo entra aqui sin tocar esta linea.
+    for registry_source in _registry_sources():
+        candidate = motor / registry_source
+        if candidate not in source_paths:
+            source_paths.append(candidate)
     for source in source_paths:
         if not source.is_file():
             raise FileNotFoundError(f"Required canonical source not found: {source}")

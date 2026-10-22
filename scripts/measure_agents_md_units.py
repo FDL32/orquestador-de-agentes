@@ -457,7 +457,7 @@ def registry_crosscheck(units: list[Unit]) -> list[dict]:
     )
 
     results: list[dict] = []
-    for section_id, pattern in AGENTS_SECTIONS_REGISTRY:
+    for section_id, pattern, _source in AGENTS_SECTIONS_REGISTRY:
         matches = [u for u in units if u.level == 2 and pattern.match(u.heading)]
         match_count = len(matches)
         subtree_bytes_val = matches[0].subtree_bytes if len(matches) == 1 else None
@@ -554,7 +554,7 @@ def _format_table(units: list[Unit], crosscheck: list[dict]) -> str:  # noqa: C9
                 AGENTS_SECTIONS_REGISTRY,
             )
 
-            for _sid, pat in AGENTS_SECTIONS_REGISTRY:
+            for _sid, pat, _src in AGENTS_SECTIONS_REGISTRY:
                 if pat.match(u.heading):
                     for cc in crosscheck:
                         if cc["id"] == _sid:

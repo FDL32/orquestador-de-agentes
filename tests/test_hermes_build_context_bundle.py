@@ -109,7 +109,7 @@ def test_036g_registry_existe_y_saca_los_literales_del_hot_path() -> None:
     """El registry es la lista CERRADA de secciones que el bundle necesita."""
     import scripts.hermes_build_context_bundle as mod
 
-    ids = [sid for sid, _ in mod.AGENTS_SECTIONS_REGISTRY]
+    ids = [sid for sid, _, _ in mod.AGENTS_SECTIONS_REGISTRY]
     assert ids == ["vocabulario_canonico", "cem_v0", "secretos_y_seguridad"]
 
     # Los titulos literales solo pueden vivir en el REGISTRY (como patron).
@@ -119,7 +119,13 @@ def test_036g_registry_existe_y_saca_los_literales_del_hot_path() -> None:
     assert '_extract_section(agents, "##' not in source, (
         "el hot-path volvio a anclar por titulo literal; debe usar el registry"
     )
-    assert source.count("_extract_registered_section(agents,") == 3
+    # WOT-2026-114a: el invariante ya no es "3 llamadas con este texto
+    # literal" (fragil ante refactors de la indireccion por `source`) sino
+    # "los 3 ids resuelven cada uno desde su `source` declarada en el
+    # registro, y ningun id carece de `source`".
+    for sid, _, registered_source in mod.AGENTS_SECTIONS_REGISTRY:
+        assert registered_source, f"{sid} no declara source"
+        assert mod._registered_section_source(sid) == registered_source
 
 
 def test_036g_renombrado_conservador_ya_no_rompe_el_lector() -> None:
@@ -167,5 +173,94 @@ def test_036g_las_tres_anclas_reales_resuelven_contra_agents_md() -> None:
     agents = (Path(mod.__file__).resolve().parents[1] / "AGENTS.md").read_text(
         encoding="utf-8"
     )
-    for sid, _ in mod.AGENTS_SECTIONS_REGISTRY:
+    for sid, _, _ in mod.AGENTS_SECTIONS_REGISTRY:
         assert mod._extract_registered_section(agents, sid).strip(), sid
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-114a (Fase 1 Palanca A): registro re-apuntable por `source`.
+# docs/followups/palanca-a-raiz-agents-md-diseno.md Seccion 4, D1/D1-bis/D2.
+# ---------------------------------------------------------------------------
+
+
+def test_114a_manifiesto_cubre_cada_source_distinta_del_registro(
+    tmp_path: Path,
+) -> None:
+    """D1-bis: `source_files` del manifiesto debe incluir TODA `source`
+    distinta declarada en el registro, no solo los 4 ficheros hardcodeados
+    historicos. Hoy las tres colapsan en "AGENTS.md" (ya cubierto); esto fija
+    el invariante por el que una fase futura que repunte una seccion a un
+    modulo nuevo entra aqui sin que nadie edite build_bundle a mano."""
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _write_motor_fixture(motor)
+
+    manifest = hermes_build_context_bundle.build_bundle(motor, tmp_path / "out")
+
+    hashed_paths = {record["path"] for record in manifest["source_files"]}
+    for registry_source in hermes_build_context_bundle._registry_sources():
+        assert registry_source in hashed_paths, (
+            f"{registry_source!r} no aparece en source_files del manifiesto"
+        )
+
+
+def test_114a_baseline_e7_indireccion_identica_a_lectura_directa(
+    tmp_path: Path,
+) -> None:
+    """D2/E7: para CADA id registrado, resolver por indireccion (`source`)
+    debe devolver una seccion BYTE-IDENTICA (sha256) a extraerla leyendo
+    AGENTS.md directamente -- el guard de no-degradacion que una fase futura
+    (repuntar `source` a un modulo) tiene que seguir satisfaciendo."""
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _write_motor_fixture(motor)
+    agents_text = (motor / "AGENTS.md").read_text(encoding="utf-8")
+
+    for sid, _, _ in hermes_build_context_bundle.AGENTS_SECTIONS_REGISTRY:
+        direct = hermes_build_context_bundle._extract_registered_section(
+            agents_text, sid
+        )
+        via_registry = hermes_build_context_bundle._read_registered_section(motor, sid)
+        assert hashlib.sha256(via_registry.encode("utf-8")).hexdigest() == (
+            hashlib.sha256(direct.encode("utf-8")).hexdigest()
+        ), f"{sid}: la indireccion por source diverge de la lectura directa"
+        assert via_registry == direct
+
+
+def test_114a_mutacion_fuente_no_registrada_se_detecta(tmp_path: Path) -> None:
+    """Mutacion obligatoria del guard E7: si `source` apuntara a un fichero
+    con contenido DISTINTO del AGENTS.md real, la indireccion debe devolver
+    ese contenido distinto (prueba de que el campo `source` esta REALMENTE
+    cableado al hot-path, no un campo muerto que nadie lee)."""
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _write_motor_fixture(motor)
+
+    mutated_source = motor / "AGENTS_MUTATED.md"
+    mutated_source.write_text(
+        "# Agents\n\n## Vocabulario canonico\nCUERPO MUTADO.\n",
+        encoding="utf-8",
+    )
+
+    original = hermes_build_context_bundle.AGENTS_SECTIONS_REGISTRY
+    try:
+        hermes_build_context_bundle.AGENTS_SECTIONS_REGISTRY = tuple(
+            (sid, pattern, "AGENTS_MUTATED.md")
+            if sid == "vocabulario_canonico"
+            else (sid, pattern, source)
+            for sid, pattern, source in original
+        )
+        hermes_build_context_bundle._REGISTRY_BY_ID = {
+            sid: (pattern, source)
+            for sid, pattern, source in hermes_build_context_bundle.AGENTS_SECTIONS_REGISTRY
+        }
+        seccion = hermes_build_context_bundle._read_registered_section(
+            motor, "vocabulario_canonico"
+        )
+        assert "CUERPO MUTADO" in seccion
+        assert "repo_motor y repo_destino" not in seccion
+    finally:
+        hermes_build_context_bundle.AGENTS_SECTIONS_REGISTRY = original
+        hermes_build_context_bundle._REGISTRY_BY_ID = {
+            sid: (pattern, source) for sid, pattern, source in original
+        }
