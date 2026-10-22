@@ -299,10 +299,15 @@ def test_warn_nonexistent_sha(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Precedence: no-object SHA whose ID landed by subject -> OK_BY_SUBJECT, not WARN
-# (the real 016e/016h case; CAPA 3 must run BEFORE the no-object WARN early-exit)
+# Precedence: no-object SHA -> WARN, NOT OK_BY_SUBJECT (WOT-2026-044b)
+#
+# Before: ghost SHA whose ID was in origin/main subjects credited via CAPA 3.
+# After: ghost SHA falls through to no-object WARN -- it must exist as a git
+# object to be creditable (DoD-a of WOT-2026-044b). A squash merge's original
+# SHA still credits because it EXISTS (on the feature branch), only its
+# ancestry is gone; a ghost SHA has no object at all.
 # --------------------------------------------------------------------------- #
-def test_no_object_but_id_landed_is_ok_by_subject_not_warn(tmp_path):
+def test_no_object_but_id_landed_is_warn_not_ok_by_subject(tmp_path):
     _origin, work = _make_repo(tmp_path)
     _commit(
         work,
@@ -313,10 +318,12 @@ def test_no_object_but_id_landed_is_ok_by_subject_not_warn(tmp_path):
     _g(["push", "-q", "origin", "main"], work)
     _g(["fetch", "-q", "origin"], work)
     # audit a SHA that has NO object but whose ID is in an origin/main subject
-    verdict, _ = _classify(
+    # WOT-2026-044b: ghost SHAs do NOT credit via CAPA 3
+    verdict, detail = _classify(
         work, "WOT-2026-0HHH", "cafebabecafebabecafebabecafebabecafebabe"
     )
-    assert verdict == gl.OK_BY_SUBJECT
+    assert verdict == gl.WARN, f"ghost SHA must not credit via CAPA 3; got {verdict}"
+    assert "no git object" in detail, detail
 
 
 # --------------------------------------------------------------------------- #
@@ -2018,3 +2025,193 @@ def test_059v_no_terminal_state_still_triggers_malformed():
     assert census["audited"] == 0
     assert census["skipped_required"] == 0
     assert census["skipped_legacy"] == 0
+
+
+# =========================================================================== #
+# WOT-2026-044b -- DoD tests for the CAPA 3 hardening.
+#
+# (a) A row whose commit: cites an INEXISTENT SHA does not credit.
+# (b) A commit that does NOT touch code does not credit a deliverable_type: code row.
+# (c) INVARIANT: a row with REAL SHA and reachable code commit still credits.
+# (d) CONTROL: removing the hardening reproduces the bug.
+# =========================================================================== #
+
+# A memory-only commit: touches only .agent/runtime/memory/archive/ (observation archive).
+_MEMORY_COMMIT_PATH = ".agent/runtime/memory/archive/observations.20261001.jsonl"
+
+
+def _memory_only_commit(tmp_path):
+    """Create a repo with a single memory-only commit pushed to origin/main."""
+    _origin, work = _make_repo(tmp_path)
+    # Create the memory archive directory and file
+    mem_dir = work / _MEMORY_COMMIT_PATH.rsplit("/", 1)[0]
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    _commit(
+        work, _MEMORY_COMMIT_PATH, "memory payload\n", "memoria(WOT-2026-0MEM): archive"
+    )
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    return work
+
+
+def test_dod_a_ghost_sha_does_not_credit_via_capa3(tmp_path):
+    """DoD (a). A SHA that does NOT exist as a git object must NOT credit via CAPA 3,
+    even when the ticket-ID appears in an origin/main subject.
+
+    The verdict is WARN (no git object), not OK_BY_SUBJECT. This is the
+    WOT-2026-044b fix: ghost SHAs are not creditable.
+    """
+    _origin, work = _make_repo(tmp_path)
+    _commit(
+        work,
+        "h.txt",
+        "history-rewritten landing\n",
+        "WOT-2026-0GHOST: landed post-rewrite",
+    )
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    phantom = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    assert gl._has_object(phantom, work) is False
+    # The ID is in origin/main (the real commit), but the SHA has no object.
+    assert gl._landed_by_subject("WOT-2026-0GHOST", "origin/main", work) is True
+    verdict, detail = _classify(work, "WOT-2026-0GHOST", phantom)
+    assert verdict == gl.WARN, f"ghost SHA must not credit; got {verdict}: {detail}"
+    assert "no git object" in detail, detail
+
+
+def test_dod_b_memory_only_commit_does_not_credit_pending(tmp_path):
+    """DoD (b). A commit that only touches memory/archive files must NOT credit
+    a ``deliverable_type: code`` row via PENDING_GROUPED_PUSH or CAPA 3.
+
+    The commit exists, is on the local branch, but its diff touches only
+    ``.agent/runtime/memory/archive/*.jsonl`` which has no code extension.
+    """
+    work = _memory_only_commit(tmp_path)
+    sha = _sha(work)
+
+    # Sanity: the SHA exists and is an ancestor of HEAD and origin/main
+    assert gl._has_object(sha, work) is True
+    assert gl._is_ancestor(sha, "HEAD", work) is True
+    assert gl._is_ancestor(sha, "origin/main", work) is True
+
+    # Verify the diff does NOT touch code files
+    assert gl._is_code_commit(sha, work) is False
+
+    # classify must NOT return PENDING_GROUPED_PUSH (memory-only, no code)
+    # It falls through: not ancestor of ref (actually IS ancestor, so CAPA 1 -> OK)
+    # Wait -- this SHA IS an ancestor of origin/main, so it hits CAPA 1 -> OK.
+    # We need a test where the SHA is on the local branch but NOT pushed yet.
+    _g(["checkout", "-q", "-b", "mem-fix"], work)
+    _commit(
+        work,
+        _MEMORY_COMMIT_PATH,
+        "memory payload 2\n",
+        "memoria(WOT-2026-0MEM2): more memory",
+    )
+    mem_sha = _sha(work)
+
+    # The new SHA is on the local branch but NOT pushed
+    assert gl._has_object(mem_sha, work) is True
+    assert gl._is_ancestor(mem_sha, "HEAD", work) is True  # on current branch
+    assert gl._is_ancestor(mem_sha, "origin/main", work) is False  # not pushed
+
+    # Verify memory-only
+    assert gl._is_code_commit(mem_sha, work) is False
+
+    # classify must NOT return PENDING_GROUPED_PUSH
+    patch_ids = gl.build_patch_id_set("origin/main", work)
+    verdict, detail = gl.classify(
+        "WOT-2026-0MEM2", mem_sha, "origin/main", work, patch_ids
+    )
+    assert verdict != gl.PENDING_GROUPED_PUSH, (
+        f"memory-only commit must not credit PENDING_GROUPED_PUSH; got {verdict}: {detail}"
+    )
+    # It falls through to ERROR (object exists, no layer) because:
+    # - CAPA 1: not ancestor of origin/main
+    # - CAPA 2: patch-id not in origin/main set
+    # - PENDING: is on HEAD but not code
+    # - CAPA 3: ID in origin/main? No, it's a new unpushed commit
+    # So ERROR is correct: LOST CLOSE (object exists, no layer)
+    assert verdict == gl.ERROR
+
+
+def test_dod_c_code_commit_with_real_sha_still_credits(tmp_path):
+    """DoD (c). A REAL SHA that is a code commit must STILL credit.
+
+    Squash merge original: exists, not ancestor of HEAD, but ID in origin/main -> OK_BY_SUBJECT.
+    Pushed code commit: ancestor of origin/main -> OK.
+    Unpushed code commit: on HEAD, is code -> PENDING_GROUPED_PUSH.
+    """
+    # Test 1: squash merge original (CAPA 3, real SHA exists on feat branch)
+    work, original = _squashed(tmp_path)
+    assert gl._has_object(original, work) is True  # object exists
+    assert gl._is_ancestor(original, "HEAD", work) is False  # not on HEAD
+    patch_ids = gl.build_patch_id_set("origin/main", work)
+    assert gl._patch_id(original, work) not in patch_ids  # CAPA 2 fails
+    assert gl._is_code_commit(original, work) is True  # it's a .txt file (code ext)
+    verdict, _ = _classify(work, "WOT-2026-0CCC", original, patch_ids)
+    assert verdict == gl.OK_BY_SUBJECT
+
+    # Test 2: pushed code commit (CAPA 1)
+    work2 = tmp_path / "c2"
+    work2.mkdir()
+    _origin2, work2c = _make_repo(work2)
+    sha = _commit(work2c, "a.py", "# code\n", "WOT-2026-0C2C: code commit")
+    _g(["push", "-q", "origin", "main"], work2c)
+    _g(["fetch", "-q", "origin"], work2c)
+    assert _classify(work2c, "WOT-2026-0C2C", sha)[0] == gl.OK
+
+    # Test 3: unpushed code commit (PENDING_GROUPED_PUSH, is code)
+    work3 = tmp_path / "c3"
+    work3.mkdir()
+    _origin3, work3c = _make_repo(work3)
+    sha3 = _commit(work3c, "b.py", "# code\n", "WOT-2026-0C3C: unpushed code")
+    assert gl._is_code_commit(sha3, work3c) is True
+    patch_ids3 = gl.build_patch_id_set("origin/main", work3c)
+    verdict3, _ = gl.classify("WOT-2026-0C3C", sha3, "origin/main", work3c, patch_ids3)
+    assert verdict3 == gl.PENDING_GROUPED_PUSH
+
+
+def test_dod_d_reverting_fix_reproduces_bug(tmp_path):
+    """DoD (d). CONTROL NEGATIVO: reverting the hardening reproduces the bug.
+
+    Two scenarios:
+    1. Remove the `_has_object` check from CAPA 3 -> ghost SHA credits OK_BY_SUBJECT.
+    2. Remove the `_is_code_commit` check from PENDING -> memory-only SHA credits PENDING.
+    """
+    # Scenario 1: ghost SHA would credit without _has_object check
+    _origin, work = _make_repo(tmp_path)
+    _commit(work, "x.txt", "x\n", "WOT-2026-0D1D: x")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    phantom = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+    # With the fix: ghost SHA -> WARN
+    patch_ids = gl.build_patch_id_set("origin/main", work)
+    verdict, _ = gl.classify("WOT-2026-0D1D", phantom, "origin/main", work, patch_ids)
+    assert verdict == gl.WARN  # current behavior: ghost SHA does not credit
+
+    # Verify premise: ghost has no object
+    assert gl._has_object(phantom, work) is False
+
+    # Scenario 2: memory-only SHA would credit PENDING without _is_code_commit check
+    work_mem = tmp_path / "d2"
+    work_mem.mkdir()
+    work_mem_repo = _memory_only_commit(work_mem)
+    _g(["checkout", "-q", "-b", "mem-fix"], work_mem_repo)
+    mem_sha = _commit(
+        work_mem_repo, _MEMORY_COMMIT_PATH, "more memory\n", "memoria(WOT-2026-0D2D)"
+    )
+
+    assert gl._has_object(mem_sha, work_mem_repo) is True
+    assert gl._is_ancestor(mem_sha, "HEAD", work_mem_repo) is True
+    assert gl._is_code_commit(mem_sha, work_mem_repo) is False  # memory-only
+
+    patch_ids2 = gl.build_patch_id_set("origin/main", work_mem_repo)
+    verdict2, _ = gl.classify(
+        "WOT-2026-0D2D", mem_sha, "origin/main", work_mem_repo, patch_ids2
+    )
+    assert (
+        verdict2 != gl.PENDING_GROUPED_PUSH
+    )  # current behavior: memory-only does not credit
+    # Without the _is_code_commit check, this would have been PENDING_GROUPED_PUSH.

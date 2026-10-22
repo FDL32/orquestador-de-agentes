@@ -260,6 +260,91 @@ _DELIVERABLE_TYPE_RE = re.compile(
 _LANDING_REQUIRED_TYPES = frozenset({"code", "mixed"})
 # Revert subjects to exclude from CAPA 3 (git's `Revert "..."` and manual revert:).
 _REVERT_RE = re.compile(r"^\s*revert\b", re.IGNORECASE)
+# WOT-2026-044b: file extensions considered code (diff-validated CAPA 3 SHA).
+_CODE_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".html",
+        ".css",
+        ".scss",
+        ".sh",
+        ".bash",
+        ".ps1",
+        ".bat",
+        ".cmd",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cc",
+        ".cxx",
+        ".hh",
+        ".java",
+        ".kt",
+        ".kts",
+        ".groovy",
+        ".scala",
+        ".clj",
+        ".go",
+        ".rs",
+        ".rb",
+        ".php",
+        ".pl",
+        ".pm",
+        ".lua",
+        ".zig",
+        ".dart",
+        ".yml",
+        ".yaml",
+        ".toml",
+        ".json",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".proto",
+        ".sql",
+        ".graphql",
+        ".md",
+        ".rst",
+        ".txt",
+    }
+)
+
+
+def _is_code_commit(sha: str, repo: Path) -> bool:
+    """True if the commit's diff touches at least one file with a code extension.
+
+    WOT-2026-044b. Before crediting a CAPA 3 subject hit, verify that the commit
+    actually modifies code files (not only ``.agent/runtime/memory/`` or other
+    non-code paths). A SHA that exists in git but is memory-only must NOT credit
+    a ``deliverable_type: code`` row.
+
+    Returns False (no credit) when:
+      - the SHA has no git object (diff command fails), or
+      - the diff is empty, or
+      - no changed file has a recognised code extension.
+    """
+    show = _run(["git", "show", "--raw", "--no-color", sha], repo)
+    if show["exit_code"] != 0:
+        return False
+    for line in show["stdout"].splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) < 2:
+            parts = line.split(None, 5)
+            if len(parts) >= 6 and parts[5]:
+                filename = parts[5]
+            else:
+                continue
+        else:
+            filename = parts[1]
+        ext = Path(filename).suffix.lower()
+        if ext in _CODE_EXTENSIONS:
+            return True
+    return False
 
 
 def _run(cmd: list[str], cwd: Path, timeout: int = 300) -> dict:
@@ -832,19 +917,27 @@ def classify(
     # WOT-2026-023q: this MUST precede CAPA 3. The object existing AND being reachable
     # from the local branch is a fact about THIS repo; the ID appearing in some subject
     # is a convention about SOME commit. The fact wins.
-    if _has_object(sha, repo) and _is_ancestor(sha, "HEAD", repo):
+    if _has_object(sha, repo) and _is_ancestor(sha, "HEAD", repo):  # noqa: SIM102
         # WOT-2026-022x. Committed but not pushed YET (grouped-push policy, 022u).
         # Never fail-open: the UNREACHABLE case below stays ERROR (a lost close).
-        return (
-            PENDING_GROUPED_PUSH,
-            "committed and reachable from the local branch, but not in "
-            f"{ref} -- pending the session's grouped push (not a lost close)",
-        )
-    if _landed_by_subject(ticket_id, ref, repo):
-        return (
-            OK_BY_SUBJECT,
-            "ticket-ID in an origin/main subject (CAPA 3, squash/cherry-pick)",
-        )
+        # WOT-2026-044b: a memory-only commit must NOT credit a
+        # ``deliverable_type: code`` row.
+        if _is_code_commit(sha, repo):
+            return (
+                PENDING_GROUPED_PUSH,
+                "committed and reachable from the local branch, but not in "
+                f"{ref} -- pending the session's grouped push (not a lost close)",
+            )
+    if _landed_by_subject(ticket_id, ref, repo):  # noqa: SIM102
+        # WOT-2026-044b: before crediting a CAPA 3 subject hit, verify that
+        # the SHA is a real git object (ghost SHAs are NOT creditable).
+        # For non-HEAD-ancestor SHAs (squash merges), only check existence.
+        if _has_object(sha, repo):
+            return (
+                OK_BY_SUBJECT,
+                "ticket-ID in an origin/main subject (CAPA 3, squash/cherry-pick)",
+            )
+        # SHA is a ghost (no git object): do not credit, fall through.
     if _has_object(sha, repo):
         return ERROR, "object exists but landed by no layer -- LOST CLOSE (fail-closed)"
     # WOT-2026-048u: check the other repo before emitting the WARN. If the sha
