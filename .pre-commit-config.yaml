@@ -384,6 +384,19 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # check-reference-keys (WOT-2026-114d): toda cita `(ver X#)` en AGENTS.md
+      # o .agent/rules/common/*.md debe resolver a exactamente un ancla `**X#.**`
+      # en el fichero que la leyenda docs/registry/reference_keys.md mapea para
+      # esa letra. Cablea en el mismo commit que introduce el guard (regla dura
+      # de AGENTS.md: "el guard que crees se cablea en el mismo commit").
+      - id: check-reference-keys
+        name: check reference keys (claves (ver X#) resuelven a un ancla)
+        entry: uv run python scripts/check_reference_keys.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
       # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
       # Garantia: audita la superficie real del proyecto, no el Python del sistema.
