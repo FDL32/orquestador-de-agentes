@@ -409,7 +409,7 @@ class ReviewBridge:
         return opencode_transport.normalize_opencode_model(model)
 
     def _check_role_models_distinct(self) -> str | None:
-        """Gate: role_models.BUILDER != role_models.REVISOR (WOT-2026-098b/112a).
+        """Gate: role_models.BUILDER != role_models.REVISOR (WOT-2026-098b/113a).
 
         Before: self.project_root may or may not have a readable agents.json.
         During: delegates the comparison to

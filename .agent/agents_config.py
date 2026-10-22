@@ -76,7 +76,7 @@ CONFIG_PATH = _LazyPath(_config_path)
 #    actor_runtime aparte). `user` tampoco esta aqui, por el mismo motivo que
 #    SUPERVISOR: no tiene backend/model_id que resolver (role_mapping es
 #    fail-closed, exige backend real para cada clave).
-# WOT-2026-098b: anadido "revisor"/"REVISOR" -- Capa 2 (Persona-2, ver
+# WOT-2026-098b: anadido "revisor"/"REVISOR" -- Capa 1.5 (Persona-2, ver
 # prompts/persona_system.md) del sistema de 4 capas
 # (PROPUESTA_vocabulario_roles_capas_20261011.md v6, Seccion 7), rol de capa
 # de revision independiente, distinto de "auditor" (gobierno transversal, no
