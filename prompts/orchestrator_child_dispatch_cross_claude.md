@@ -76,8 +76,11 @@ Checklist operativo de la sesion ORIGEN, en este orden:
 1. Cierra en firme lo que ya aterrizo (commits, verificaciones ya hechas) --
    proporcional, no un cierre canonico completo si el vuelo sigue abierto
    (ver `orchestrator_session_close_full_audit.md`, modo mid-flight).
+1bis. **Mapea TODAS las sesiones abiertas conocidas ANTES de preparar el
+   prompt** -- ver Seccion 1bis (abajo) para el procedimiento exacto. El
+   mapa resultante es un campo OBLIGATORIO del prompt de arranque (Seccion 2).
 2. Prepara el prompt de arranque de la sesion destino (contenido minimo en
-   la Seccion 2).
+   la Seccion 2, incluido el mapa de sesiones del paso 1bis).
 3. Lanza o deja listo el comando de arranque de la cuenta destino
    (`cc-brabander`/`vscode-brabander`/`ag-brabander`/etc., ver memoria
    `cc-watch-account-switch.md` -- NUNCA inventes un comando nuevo, usa los
@@ -85,6 +88,51 @@ Checklist operativo de la sesion ORIGEN, en este orden:
 4. **DETENTE.** No emitas mas turnos ni tool calls sobre este vuelo hasta que
    la sesion destino confirme por OTRO CANAL (el propio usuario, nunca
    `SendMessage` -- ver Seccion 3) que ha tomado el relevo.
+
+---
+
+## 1bis. Mapeo de sesiones abiertas (obligatorio, antes de lanzar)
+
+**Motivo:** la sesion DESTINO arranca ciega si nadie le dice que mas sesiones
+conviven sobre el MISMO repo/rama -- y un push a `main`/rama compartida sin
+coordinar con ellas es exactamente el riesgo que la Seccion 1 ya declara
+(dos sesiones vivas a la vez). El mapeo hace explicito ANTES del arranque lo
+que cada sesion puede contactar y como, para que la DESTINO se presente a
+todas nada mas arrancar.
+
+Procedimiento de la sesion ORIGEN (en este orden, antes de redactar el
+prompt):
+
+1. `ListAgents` -- lista las sesiones peer visibles desde la cuenta ORIGEN
+   (solo vera peers de la MISMA cuenta; es una limitacion conocida, no un
+   fallo de este paso -- documentala igual).
+2. `t3_thread_search` con el titulo/ticket del vuelo activo -- puede
+   encontrar sesiones adicionales (incluida la que se esta a punto de
+   lanzar, una vez exista su `threadId`) que `ListAgents` no ve.
+3. Construye una TABLA literal con columnas `nombre/id | cuenta (si se
+   conoce) | modo/estado | canal de contacto`, donde `canal de contacto` es
+   uno de:
+   - `SendMessage a <nombre>` -- si la sesion aparece en `ListAgents` de la
+     cuenta DESTINO (confirmalo o declaralo desconocido, no lo asumas igual
+     a la cuenta ORIGEN).
+   - `t3_thread_read`/mensaje de seguimiento por `threadId` conocido -- si
+     solo se conoce el ID (p.ej. el propio thread origen, que la destino
+     puede necesitar re-contactar).
+   - `coordinar por el usuario` -- si ningun primitivo la alcanza (fallback
+     que siempre funciona, nunca asumir que no hay ninguno).
+4. Incluye esa tabla LITERAL (no un resumen) en el prompt de arranque
+   (Seccion 2) con la instruccion: la sesion DESTINO debe PRESENTARSE a
+   CADA fila de la tabla nada mas arrancar (antes de disenar o implementar
+   nada), usando el canal que esa fila declara, con el proposito explicito
+   de anunciar su propia existencia y coordinar cualquier intento de push a
+   `main`/rama compartida -- nunca asumir que es la unica sesion viva sobre
+   el repo solo porque el mapeo es, por construccion, incompleto (ver punto 1).
+
+**Limite declarado, no un defecto a silenciar:** este mapeo es un SNAPSHOT
+desde la cuenta ORIGEN en el momento de lanzar -- no detecta sesiones que
+arranquen DESPUES, ni sesiones de una tercera cuenta que ni ORIGEN ni
+DESTINO puedan ver. Es una mejora sobre "arrancar sin mapa", no una garantia
+de visibilidad completa.
 
 ---
 
@@ -111,6 +159,9 @@ sobre el primer prompt real de este tipo):
   original, o un objetivo nuevo como el experimento de la Seccion 3 de abajo
   -- decidido por el usuario, nunca asumido).
 - La regla de la Seccion 1 (la origen se detuvo, no coexiste).
+- **Mapa de sesiones abiertas** (tabla literal de la Seccion 1bis) con la
+  instruccion de presentarse a cada una nada mas arrancar, antes de disenar
+  o implementar nada, para coordinar cualquier push a `main`/rama compartida.
 - **Si el prompt pide leer ficheros del worktree de la ORIGEN desde la
   DESTINO** (necesario para que la destino tenga contexto): declara
   explicitamente el riesgo de permisos de la Seccion 5 y su fallback.
