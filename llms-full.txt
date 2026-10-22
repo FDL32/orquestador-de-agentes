@@ -243,45 +243,27 @@ sesion es legitimo, y bloquearlo forzaria a correr la suite entre cada par de co
 desperdicio que se quiere evitar. La barrera BLOQUEANTE (no publicar con suite stale) ya existe y
 vive en `pre_handoff_guard`.
 
-**No uses `-k` como evidencia de cobertura de una funcion compartida.** El filtro selecciona por
-nombre de clase/fichero, no por grafo de call-sites: una funcion ejercitada desde clases con
-nombres distintos al filtro puede quedar sin cubrir aunque `-k` de verde. La evidencia final de
-cobertura de una funcion compartida debe venir de la suite canonica completa (`--level all`),
-nunca de un `-k` por nombre. Rationale completo (por que la comprobacion previa no bastaba, caso
-medido WOT-2026-079d con 3 regresiones reales que `-k` dejo pasar): memoria de
-`repo_motor`, `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`
-(2026-09-27).
+**No uses `-k` como evidencia de cobertura de una funcion compartida: selecciona por nombre de
+clase/fichero, no por grafo de call-sites, asi que una funcion ejercitada desde otra clase puede
+quedar sin cubrir aunque `-k` de verde.** La evidencia final debe venir de la suite canonica
+completa (`--level all`), nunca de un `-k` por nombre. Caso forense completo (incidente medido
+WOT-2026-079d, 3 regresiones reales que `-k` dejo pasar, memoria
+`obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`): [T1].
 
-**Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k):** cuando el
-despacho de un ticket se reparte entre tres roles (protocolo `prompts/kilo_trio_dispatch/`),
-SOLO el Manager corre la suite completa `--level all`, como gate de cierre, UNA vez,
-inmediatamente antes del push -- tras TODOS los commits del ticket, nunca "antes del commit
-final" (la regla de arriba ya fija que la suite es el ULTIMO paso, no uno intermedio). El
-Builder se limita a tests focales del area tocada durante la implementacion (nunca `--level all`
-como su propio cierre); el Revisor ejecuta de forma independiente sus propios tests focales
-sobre el area modificada -- NUNCA cita ni espera una corrida del Manager, porque en el orden
-canonico del trio (Manager -> Builder -> Revisor -> Manager-cierre) esa corrida todavia no
-existe cuando el Revisor actua. Medido en vivo (2026-10-18, WOT-2026-104j, sesion hija 4 capas):
-sin esta asignacion explicita, Builder y el Orquestador corrieron `--level all` CADA UNO por su
-cuenta, ambas veces antes de que el Revisor tuviera turno -- exactamente el patron de
-desperdicio que la regla de arriba ya advertia, mas una corrida redundante que la regla de
-arriba no cubria (quien tiene PERMISO de correrla, no solo cuando). Verificado por bucle de
-gobierno DESIGN_REVIEW (`UNI-5`, 4 lentes independientes: codex, opencode/glm, gemini, mistral;
-3/4 `APROBAR_CON_CAMBIOS` tras corregir una redaccion anacronica del primer borrador). **Alcance
-declarado, no se extiende por si solo:** esta regla cubre el protocolo trio
-`prompts/kilo_trio_dispatch/`. NO toca `scripts/run_gates_dispatch.py` ni
-`skills/builder-run-quality-gates` (hallazgo de la lente codex en el mismo bucle): esos
-mecanismos sirven tambien a tickets de un solo Builder sin Revisor/Manager separados, donde el
-Builder SI es el unico verificador legitimo de `--level all`.
+**Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k):** en el protocolo
+`prompts/kilo_trio_dispatch/`, SOLO el Manager corre la suite completa `--level all`, UNA vez,
+tras TODOS los commits del ticket, nunca antes. El Builder se limita a tests focales; el Revisor
+corre sus propios focales de forma independiente, sin esperar al Manager. **Alcance: cubre SOLO
+el protocolo trio -- NO toca `scripts/run_gates_dispatch.py` ni `skills/builder-run-quality-gates`**,
+donde el Builder SI es el unico verificador legitimo de `--level all` (tickets de un solo
+Builder sin Revisor/Manager separados). Caso forense completo (incidente medido WOT-2026-104j,
+bucle de gobierno `UNI-5`): [T2].
 
 #### Push por vuelo: UN solo push al final de TODOS los tickets (2026-10-19)
 
-- DECISION DE PROCESO: la publicacion se difiere al final del vuelo, nunca por ticket (2026-10-19).
-  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: `prompts/orchestrator_session_bootstrap.md:314` ("UN solo push al final de la cola, con OK humano explicito"), `prompts/orchestrator_pipeline_codeonly.md:199` ("Push AGRUPADO al final de sesion ... NO push por ticket") y `prompts/manager_orchestrator_loop_backlog.md:455` (informe antes del push). Esta seccion EXTIENDE esa regla a todo vuelo multi-ticket; no la inventa.
-
-**La publicacion es una accion del VUELO, no del ticket.** Ver detalles, fallos medidos y contract en `.agent/rules/common/flight_push_policy.md`.
-- **NO se pushea entre tickets** (mismo logico que `batch-agrupar-preguntas-antes-de-arrancar`).
-- **Sin autorizacion registrada no hay push.** Un vuelo que termina sin decision de publicacion queda en estado declarado `PUBLICACION_PENDIENTE_AUTORIZACION`: todo commiteado y verde en local, remoto intacto.
+**La publicacion es una accion del VUELO, no del ticket: NO se pushea entre tickets, solo al
+final con autorizacion registrada.** Detalle completo (decision de proceso, busqueda previa,
+motivo y estado `PUBLICACION_PENDIENTE_AUTORIZACION`): `.agent/rules/common/flight_push_policy.md`.
 
 #### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
 
@@ -1479,7 +1461,9 @@ Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
 
 > **Procedencia:** piramide pasada 2 + lote R1, HEAD base
 > `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
-> - `## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)` -- `AGENTS.md:214-230`
+> - `## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)` -- `AGENTS.md:95-97`
+>   (rango valido a `f093b8c4`; si vuelve a desplazarse, localiza por el encabezado exacto
+>   de arriba, no asumas que el rango sigue vigente)
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 

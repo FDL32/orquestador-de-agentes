@@ -1,3 +1,10 @@
+> **Documento historico de `WP-2026-058`.** Pre-fecha el flujo actual: hoy el agente SI
+> ejecuta `git commit`/`git add`/`git status` directamente via herramienta (ver `AGENTS.md`
+> seccion "Orden de trabajo: AGRUPA los commits..." para el flujo vigente, y
+> `.agent/rules/common/flight_push_policy.md` para la politica de push). La premisa de la
+> primera linea de abajo ("el agente no ejecuta comandos de git") ya NO es cierta. Se conserva
+> como referencia historica, no como procedimiento vigente.
+
 # Checklist de Publicacion Manual - WP-2026-058
 
 Este checklist documenta los pasos manuales necesarios para completar la publicacion del snapshot limpio, ya que el agente no ejecuta comandos de git.

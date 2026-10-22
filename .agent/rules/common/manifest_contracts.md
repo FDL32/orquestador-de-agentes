@@ -2,7 +2,9 @@
 
 > **Procedencia:** piramide pasada 2 + lote R1, HEAD base
 > `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
-> - `## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)` -- `AGENTS.md:214-230`
+> - `## MANIFEST.distribute y MANIFEST.workspace (WP-2026-111)` -- `AGENTS.md:95-97`
+>   (rango valido a `f093b8c4`; si vuelve a desplazarse, localiza por el encabezado exacto
+>   de arriba, no asumas que el rango sigue vigente)
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 
