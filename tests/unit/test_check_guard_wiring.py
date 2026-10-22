@@ -574,6 +574,30 @@ def test_prefix_is_not_a_substring_match(tmp_path):
     assert "check_backlog" in unwired, "el prefijo no hereda el cableado del largo"
 
 
+# ----------------------------------------- reuse de evidence (piloto suite-opt)
+def test_audit_and_wiring_edges_reuse_passed_evidence(tmp_path):
+    """Camino `evidence=ev` explicito (piloto suite-optimization): `audit` y
+    `wiring_edges` deben USAR el dict ya devuelto por `collect_evidence` que se
+    les pasa, no recalculalo ni sustituirlo. Una implementacion rota que ignore
+    el parametro (p.ej. use {} cuando se lo pasan) deja de ver todo cableado."""
+    motor = _motor(
+        tmp_path,
+        {
+            "scripts/prepush_check.py": (
+                "import subprocess, sys\n"
+                'subprocess.run([sys.executable, "scripts/check_evidence_probe.py"])\n'
+            )
+        },
+        guards=["check_evidence_probe"],
+    )
+    ev = cgw.collect_evidence(motor, {})
+    wired, unwired = cgw.audit(motor, _EMPTY_POLICY, evidence=ev)
+    assert "check_evidence_probe" in wired
+    assert "check_evidence_probe" not in unwired
+    edges = cgw.wiring_edges(motor, _EMPTY_POLICY, evidence=ev)
+    assert edges.get("check_evidence_probe") == {"scripts/prepush_check.py"}
+
+
 # ------------------------------------------- deuda HUERFANA (WOT-2026-026v)
 # La declaracion acota la deuda solo mientras su dueno siga VIVO. Owner archivado
 # + guard AUN sin cablear = la declaracion paso de ACOTAR la deuda a ESCONDERLA.

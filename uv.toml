@@ -24,4 +24,11 @@ exclude-newer = '2026-05-16'
 # 2026-09-18), cuarta dependencia en cadena bloqueada por el mismo cutoff.
 # typing-extensions: virtualenv 21.14.7 exige typing-extensions>=4.16 (publicada
 # 2026-07-02) en python<3.11, quinta dependencia en cadena.
-exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20', virtualenv = '2026-10-13', distlib = '2026-10-13', packaging = '2026-10-13', python-discovery = '2026-10-13', typing-extensions = '2026-10-13' }
+# virtualenv 21.14.9 corrige GHSA-c978-59m8-c77v, publicada fuera de la ventana
+# 2026-10-13 que 21.14.7 ya necesitaba -- WOT-2026-086f resurgio con un GHSA nuevo
+# apenas se subio a 21.14.7 (mismo patron de alias/CVE-nuevo-sobre-fix-reciente que
+# las 4 CVEs de arriba); revalidado 2026-10-22 con `uv pip install "virtualenv==
+# 21.14.9" --dry-run` bajo esta ventana extendida, 7 paquetes resueltos sin tocar
+# distlib/packaging/python-discovery/typing-extensions (sus propias ventanas siguen
+# sirviendo a 21.14.9 sin cambios).
+exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20', virtualenv = '2026-10-22', distlib = '2026-10-13', packaging = '2026-10-13', python-discovery = '2026-10-13', typing-extensions = '2026-10-13' }
