@@ -4,11 +4,11 @@ cycle_phase: [F7-cierre-sesion]
 route_kind: modo
 status: experimental
 ---
-# Orchestrator Cross-Account Session Handoff (Capa 0)
+# Orchestrator Child Dispatch Cross-Claude (Capa 0)
 <!-- PROMPT-SUMMARY
 what: Gobierna el handoff de un vuelo autonomo de la Capa 0 entre DOS CUENTAS Claude distintas (no dos sesiones de la misma cuenta -- eso ya lo cubre la Seccion 10 de `orchestrator_pipeline/reports/metodo_vuelo_autonomo_4capas_20261022.md`): parada activa de la sesion origen, verificacion empirica de visibilidad cross-cuenta por doble primitivo con timeout, canal de handoff por artefacto en disco (no por `ListAgents`/`SendMessage`, no fiables cruzando cuentas), y reconciliacion obligatoria de checkpoint/idempotencia al reanudar.
 when: Cuando la Capa 0 de un vuelo (o uno de sus Manager-hijos) va a agotar la cuota de su cuenta Claude activa, o cualquier otro corte de sesion (limite de contexto, cierre forzado) obliga a continuar el vuelo desde OTRA cuenta Claude en la misma maquina (`cc-watch`, `CLAUDE_CONFIG_DIR` distinto).
-not: NO sustituye el handoff intra-cuenta (Seccion 10 del metodo de vuelo citado, donde `ListAgents`/`SendMessage` SI funcionan). NO es un mecanismo de fallback automatico de Revisor/Builder (eso es la "Politica de modelo del Revisor" del mismo metodo de vuelo). NO decide POR SI SOLO cuando cambiar de cuenta -- esa decision humana/de monitor (`cc-watch`) es previa a este prompt.
+not: NO sustituye el handoff intra-cuenta (Seccion 10 del metodo de vuelo citado, donde `ListAgents`/`SendMessage` SI funcionan). NO es un mecanismo de fallback automatico de Revisor/Builder (eso es la "Politica de modelo del Revisor" del mismo metodo de vuelo). NO decide POR SI SOLO cuando cambiar de cuenta -- esa decision humana/de monitor (`cc-watch`) es previa a este prompt. NO es una variante de `orchestrator_child_dispatch_multiticket_multibackend_unlimited.md`: ese prompt orquesta fan-out de VARIOS tickets a VARIOS backends IA (Claude/Kilo/OpenCode) con el padre vivo y los hijos corriendo en paralelo; este prompt gobierna la continuidad de UNA sola Capa 0, sin fan-out ni padre-vivo, saltando de cuenta Claude A a cuenta Claude B con la origen deteniendose -- comparten solo el prefijo de nomenclatura `orchestrator_child_dispatch_`, no la mecanica.
 -->
 
 **[EXPERIMENTAL -- status: experimental, ver frontmatter]** -- diseno nacido
@@ -26,10 +26,10 @@ corrido un vuelo real todavia -- su primer uso real es el experimento que lo
 origino (sesion `brabander`, pendiente de resultado al escribir esto). NO
 promover a `status: stable` sin esa evidencia (ver "Que NO hacer").
 
-contract_id: cid-orchestrator-cross-account-session-handoff-v0
+contract_id: cid-orchestrator-child-dispatch-cross-claude-v0
 Skill canonica: pendiente -- sin skill wrapper todavia; invocar este prompt
 directamente (cita su ruta completa) hasta que exista
-`skills/orchestrate-cross-account-session-handoff/SKILL.md`.
+`skills/orchestrate-child-dispatch-cross-claude/SKILL.md`.
 source_of_truth: este prompt opera sobre el vuelo citado en `when`; si diverge
 de la Seccion 10 de `metodo_vuelo_autonomo_4capas_20261022.md` (handoff
 intra-cuenta), ESTE prompt prevalece SOLO para el caso cross-cuenta -- la

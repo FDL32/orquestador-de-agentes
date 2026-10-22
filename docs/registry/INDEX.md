@@ -53,8 +53,8 @@
 | prompt | `prompts/memory_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/orchestrator_child_dispatch_cross_claude.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_child_dispatch_multiticket_multibackend_unlimited.md` | active | system | orchestrator | model-invoked | — |
-| prompt | `prompts/orchestrator_cross_account_session_handoff.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_launch_builder.md` | active | system | builder | model-invoked | — |
