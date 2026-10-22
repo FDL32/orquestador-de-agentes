@@ -20,7 +20,15 @@ from pathlib import Path
 
 FRONTMATTER_RE = re.compile(r"\A﻿?---\n(?P<frontmatter>.*?)\n---", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(?P<name>.+?)\s*$", re.MULTILINE)
-TRIGGERS_RE = re.compile(r"^triggers:\s*\[(?P<triggers>.+?)\]\s*$", re.MULTILINE)
+TRIGGERS_LIST_RE = re.compile(r"^triggers:\s*\[(?P<triggers>.+?)\]\s*$", re.MULTILINE)
+# Revisor finding (WOT-2026-118a, Codex): a scalar `triggers: foo` (no [...])
+# bypassed TRIGGERS_LIST_RE entirely, so a malformed scalar trigger reached
+# discover_skills.py's trigger_map while this guard silently saw zero
+# triggers for that skill. discover_skills.py's _parse_fm_lines() treats a
+# bare (non-bracketed) value as a single-item list; this regex mirrors that.
+TRIGGERS_SCALAR_RE = re.compile(
+    r"^triggers:\s*(?P<trigger>[^\[\n][^\n]*?)\s*$", re.MULTILINE
+)
 
 # [D1] .agent/rules/common/skill_trigger_governance.md -- closed FORMAT
 # vocabulary for a trigger (not a fixed word list): a kebab-case lowercase
@@ -36,8 +44,20 @@ DEFAULT_CONFLICT_POLICY = "deny-wins"
 
 
 def _is_host_path(path: Path) -> bool:
-    """True when *path* lives under a `.agent/skills/` tree (host layer)."""
-    return ".agent" in path.parts and "skills" in path.parts
+    """True when *path* lives under a `.agent/skills/` tree (host layer).
+
+    Revisor finding (WOT-2026-118a, Codex): checking membership of ".agent"
+    and "skills" independently anywhere in `path.parts` false-positives when
+    the REPO ROOT itself happens to sit under a directory literally named
+    ".agent" (e.g. a checkout under a `.agent` ancestor dir with its own
+    unrelated `skills/` subfolder). Require the contiguous pair instead --
+    the actual `.agent/skills/` shape `discover_skills.py`'s
+    `host_skills_dir` resolves against.
+    """
+    parts = path.parts
+    return any(
+        parts[i] == ".agent" and parts[i + 1] == "skills" for i in range(len(parts) - 1)
+    )
 
 
 def _invalid_trigger_formats(
@@ -63,10 +83,13 @@ def resolve_conflict(paths: list[Path], policy: str) -> bool:
         ``policy`` is one of CONFLICT_POLICIES.
     During: ``deny-wins`` never resolves anything -- always denied.
         ``host-wins`` resolves ONLY a 1:1 bundle/host pair (exactly one path
-        under a `.agent/skills/` tree and one that is not) -- the exact shape
-        discover_skills.py's host-first precedence already resolves at
-        runtime. Any other shape (same-layer duplicate, 3+ files) stays
-        denied, because no runtime rule resolves it either.
+        under a `.agent/skills/` tree and one that is not). This is a
+        deliberately CONSERVATIVE subset of what discover_skills.py's
+        host-first precedence resolves at runtime (which also covers 1:N/N:1
+        host-vs-multiple-bundle cases) -- see D2's correction note in
+        .agent/rules/common/skill_trigger_governance.md. Any other shape
+        (same-layer duplicate, 3+ files) stays denied here even though the
+        runtime may resolve it.
     After: True (still a conflict, contributes to exit code) or False
         (resolved, reported as info only). Depends only on path structure,
         never on discovery order (D3: deterministic across runs).
@@ -93,11 +116,15 @@ def _extract_name(frontmatter: str) -> str | None:
 
 
 def _extract_triggers(frontmatter: str) -> list[str]:
-    match = TRIGGERS_RE.search(frontmatter)
-    if not match:
-        return []
-    items = match.group("triggers").split(",")
-    return [item.strip().strip("\"'") for item in items if item.strip()]
+    list_match = TRIGGERS_LIST_RE.search(frontmatter)
+    if list_match:
+        items = list_match.group("triggers").split(",")
+        return [item.strip().strip("\"'") for item in items if item.strip()]
+    scalar_match = TRIGGERS_SCALAR_RE.search(frontmatter)
+    if scalar_match:
+        value = scalar_match.group("trigger").strip().strip("\"'")
+        return [value] if value else []
+    return []
 
 
 def scan_skills(root: Path) -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
@@ -204,7 +231,12 @@ def main() -> int:
         print("OK: no skill name or trigger collisions")
         return 0
 
-    if args.allow_duplicates:
+    # [D1] Revisor finding (WOT-2026-118a, Codex): --allow-duplicates is a
+    # waiver for DUPLICATES (dup_names/denied_triggers), never for a malformed
+    # trigger -- D1 declares format violations "SIEMPRE un error". A skill
+    # with an invalid trigger and zero duplicates must still exit 1 even with
+    # --allow-duplicates.
+    if args.allow_duplicates and not invalid_format:
         return 0
     print(
         "\nERROR: collisions found (use --allow-duplicates to make non-fatal)",

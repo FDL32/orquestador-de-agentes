@@ -55,19 +55,25 @@ deterministicamente sin bloquear.
     `skills/` (bundle) y el otro en `.agent/skills/` (host) -- es un
     conflicto denegado. Es la politica mas estricta y la que se aplica si no
     se declara ninguna.
-  - `host-wins`: formaliza mecanicamente la precedencia host-first que
-    `scripts/discover_skills.py::discover_skills()` YA aplica en runtime
-    (un trigger reclamado por un skill de `.agent/skills/` elimina ese mismo
-    trigger de la lista de triggers de un skill homonimo de `skills/` antes
-    de construir `trigger_map`). Bajo `host-wins`, un conflicto se considera
-    RESUELTO (no bloquea) UNICAMENTE cuando el conjunto de ficheros en
-    conflicto es exactamente {una ruta bajo `skills/`, una ruta bajo
-    `.agent/skills/`} -- un par bundle/host 1:1. Cualquier otro patron (dos
-    skills del MISMO layer con el mismo trigger, o mas de dos ficheros en
-    conflicto) sigue siendo un conflicto denegado incluso bajo `host-wins`,
-    porque `discover_skills.py` no tiene ninguna regla de precedencia para
-    esos casos -- `host-wins` resuelve exactamente lo que el runtime YA
-    resuelve, ni mas ni menos.
+  - `host-wins`: formaliza mecanicamente, de forma CONSERVADORA, la
+    precedencia host-first que `scripts/discover_skills.py::discover_skills()`
+    YA aplica en runtime (cualquier trigger reclamado por ALGUN skill de
+    `.agent/skills/` se elimina de la lista de triggers de TODO skill
+    homonimo-de-trigger de `skills/`, sin exigir que sean 1:1, antes de
+    construir `trigger_map`). **Correccion tras revision adversarial
+    (WOT-2026-118a, hallazgo Codex):** la primera redaccion de esta nota
+    afirmaba que `host-wins` resolvia "exactamente lo que el runtime YA
+    resuelve, ni mas ni menos" -- es FALSO: el runtime resuelve tambien el
+    caso 1:N (un host contra varios bundles con el mismo trigger) y N:1,
+    mientras que el guard, por diseno, solo rescata el par 1:1 {una ruta
+    `skills/`, una ruta `.agent/skills/`}. `host-wins` es un SUBCONJUNTO
+    CONSERVADOR deliberado de la resolucion real del runtime, no una
+    equivalencia -- se queda corto a proposito (fail-closed en los casos
+    1:N/N:1/mismo-layer) en vez de asumir que generalizar la regla sin
+    evidencia adicional es seguro. Cualquier otro patron (dos skills del
+    MISMO layer con el mismo trigger, un host contra 2+ bundles, o 3+
+    ficheros en conflicto) sigue siendo un conflicto denegado incluso bajo
+    `host-wins`.
   - **Gap cerrado por este ticket:** antes de WOT-2026-118a,
     `check_skill_collisions.py` (hook `check-skill-collisions`, pre-commit)
     trataba un par host/bundle como colision bloqueante aunque
