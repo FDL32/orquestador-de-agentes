@@ -1,3 +1,29 @@
+# 2026-10-22 - WOT-2026-114c: Fase 2 de la Palanca A -- mueve `## Vocabulario canonico` a modulo
+
+### Changed
+- `AGENTS.md`: el cuerpo de la seccion "## Vocabulario canonico" (tablas de
+  terminos, tipos de sesion, modos de ejecucion, convencion de worktrees
+  pareados, glosario de nomenclatura de ticket y distincion
+  `.agent/collaboration/` motor-vs-destino) se traslada verbatim a
+  `.agent/rules/common/vocabulario_canonico.md`. La cuspide que queda en
+  `AGENTS.md` conserva solo las frases normativas literales (prohibiciones
+  duras) y un puntero al modulo. Posible solo tras WOT-2026-114b: el unico
+  bloqueo PASO 3(e) de `prompts/doc_optimization.md` sobre esta seccion era
+  Hermes extrayendola por encabezado; sin Hermes, nada mas la consume.
+- `MANIFEST.distribute`: anade `.agent/rules/common/vocabulario_canonico.md`.
+- `tests/unit/test_vocabulario_canonico_cuspide_drift.py` (nuevo): guard E8
+  (deriva cuspide/modulo) que lee AGENTS.md REAL del disco -- no una copia
+  hardcodeada -- y verifica que cada linea retenida de la cuspide sigue
+  siendo subcadena del modulo; incluye mutation-verify sobre el texto real.
+- Medicion (misma receta que `docs/followups/agents-md-over-quota-followup.md`):
+  gate Codex (bytes) 61115 B (1.87x) -> 48652 B (1.48x); gate Claude Code
+  (chars, cierre CLAUDE.md+@AGENTS.md) 63123 (1.58x) -> 50660 (1.26x). Ningun
+  gate queda por debajo de 1.0x: pendiente `## CEM v0` (Fase 4 de la Palanca
+  A, deliberadamente la ultima, con su propio bucle) y/o otra palanca para
+  cerrar el deficit restante.
+- `llms.txt`/`llms-full.txt`: regenerados (proyeccion derivada, nunca editada
+  a mano).
+
 # 2026-10-22 - WOT-2026-114b: retirada de Hermes (bundle de contexto para agente externo)
 
 ### Removed

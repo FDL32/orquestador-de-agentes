@@ -107,6 +107,7 @@ skills/
 .agent/rules/common/collaboration_live_surfaces.md
 .agent/rules/common/x09_skill_prompt_governance.md
 .agent/rules/common/credits_external_attributions.md
+.agent/rules/common/vocabulario_canonico.md
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.
