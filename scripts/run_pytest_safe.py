@@ -505,7 +505,7 @@ def read_json(path: Path) -> dict:
 
 
 def _run_cmd(
-    cmd: list[str], timeout: float = 10.0
+    cmd: list[str], timeout: float = 10.0, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str] | None:
     """Run *cmd*, return CompletedProcess or None on any failure."""
     try:
@@ -516,6 +516,7 @@ def _run_cmd(
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env=env,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
@@ -736,7 +737,20 @@ def _list_processes() -> tuple[list[tuple[int, int, str]] | None, list[str]]:
     WOT-2026-109a. Windows reads Win32_Process through PowerShell (tasklist
     cannot show command lines); POSIX uses ``ps``. Any failure degrades to
     (None, [reason]); this is telemetry and never aborts a run.
+
+    WOT-2026-109a (fix): GNU ``ps`` truncates the ``args=`` column to a
+    default line width (measured: exactly 80 chars) whenever it cannot see a
+    real terminal AND ``COLUMNS`` is unset -- the case of a `subprocess.run`
+    from Python on a CI runner. A GitHub Actions checkout path is long enough
+    that any real python/pytest cmdline overflows 80 chars and loses the tail
+    (where ``-m pytest`` lives), making every match silently fail. Forcing
+    ``COLUMNS`` in the child's env is the documented, portable override
+    (``man ps``: "The COLUMNS environment variable ... may be used to exactly
+    determine the width"); 4096 is far below procps' own OUTBUF_SIZE cap, so
+    it is honored rather than silently ignored. Harmless on Windows (the
+    PowerShell branch never reads ``COLUMNS``).
     """
+    ps_env = {**os.environ, "COLUMNS": "4096"}
     if os.name == "nt":
         ps = shutil.which("powershell")
         if not ps:
@@ -754,7 +768,7 @@ def _list_processes() -> tuple[list[tuple[int, int, str]] | None, list[str]]:
         if not ps_exe:
             return None, ["foreign_pytest: ps not found"]
         cmd = [ps_exe, "-eo", "pid=,ppid=,args="]
-    result = _run_cmd(cmd, timeout=15.0)
+    result = _run_cmd(cmd, timeout=15.0, env=ps_env)
     if result is None or result.returncode != 0:
         return None, ["foreign_pytest: process listing failed"]
     return _parse_process_table(result.stdout), []
