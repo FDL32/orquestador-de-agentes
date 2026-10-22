@@ -151,6 +151,44 @@ class TestCountForeignPytest:
         assert rps._count_foreign_pytest([(20, 1, _RUNNER)], own_pid=10) is None
 
 
+class TestListProcessesForcesWideColumns:
+    def test_posix_ps_call_gets_columns_override_in_env(self, monkeypatch) -> None:
+        """WOT-2026-109a (fix): the ``ps`` subprocess must receive a widened
+        ``COLUMNS`` in its environment.
+
+        GNU ``ps`` truncates its ``args=`` column to a default line width
+        (measured on a real CI runner: exactly 80 chars) whenever it cannot
+        see a terminal and ``COLUMNS`` is unset -- silently dropping the
+        ``-m pytest`` tail of any sufficiently long cmdline. Mutation that
+        turns this red: dropping the ``env=`` kwarg (or passing ``env=None``)
+        on the ``ps`` call in ``_list_processes`` -- `_run_cmd` would then
+        fall back to inheriting the parent's unmodified environment, and this
+        test would see no ``COLUMNS`` override.
+        """
+        if rps.os.name == "nt":
+            pytest.skip("this probe exercises the POSIX ps branch")
+        captured: dict[str, object] = {}
+
+        class _FakeResult:
+            returncode = 0
+            stdout = ""
+
+        def _fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env")
+            return _FakeResult()
+
+        monkeypatch.setattr(rps.subprocess, "run", _fake_run)
+        monkeypatch.setattr(
+            rps.shutil, "which", lambda name: "/usr/bin/ps" if name == "ps" else None
+        )
+        rps._list_processes()
+        assert captured["env"] is not None
+        assert captured["env"]["COLUMNS"] == "4096"
+        # The override ADDS to the real environment rather than replacing it.
+        assert captured["env"].get("PATH") == os.environ.get("PATH")
+
+
 class TestRealForeignPytestProbe:
     def test_detects_a_real_orphan_pytest_process(self) -> None:
         """Positive control on the REAL listing path (no mocks).
