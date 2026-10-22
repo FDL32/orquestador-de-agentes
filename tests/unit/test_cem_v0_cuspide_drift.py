@@ -3,10 +3,10 @@
 Before: AGENTS.md tiene una seccion "## CEM v0 - Contrato, Evidencia y Memoria" con una
     mezcla de bullets Grupo A (principios cortos de una linea, se quedan integros) y
     Grupo B (casos forenses truncados a su frase-refutacion-nucleo + puntero inline
-    `(ver F<n>)`, cuyo caso COMPLETO vive en
-    .agent/rules/common/cem_v0_evidencia_forense.md).
+    `[F<n>]` (formato migrado desde `(ver F<n>)` en WOT-2026-114e), cuyo caso COMPLETO
+    vive en .agent/rules/common/cem_v0_evidencia_forense.md).
 During: lee el contenido REAL de la cuspide en AGENTS.md (no una copia hardcodeada). Para
-    cada bullet Grupo B (identificado por el puntero `(ver F<n>)` al final de la linea),
+    cada bullet Grupo B (identificado por el puntero `[F<n>]` al final de la linea),
     quita el puntero y verifica que el texto RESTANTE sigue siendo subcadena del modulo
     (E8 de docs/followups/palanca-a-raiz-agents-md-diseno.md Seccion 6, extendido a
     cortes de PREFIJO puro en vez de parrafo-completo-movido). Los bullets Grupo A (sin
@@ -26,7 +26,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_MD = REPO_ROOT / "AGENTS.md"
 MODULE_MD = REPO_ROOT / ".agent" / "rules" / "common" / "cem_v0_evidencia_forense.md"
-POINTER_RE = re.compile(r"\s*\(ver (F\d+)\)\s*$")
+POINTER_RE = re.compile(r"\s*\[(F\d+)\]\s*$")
 
 
 def _normalized(text: str) -> str:
@@ -65,7 +65,7 @@ def test_cuspide_has_group_b_lines_to_verify() -> None:
     agents_md_text = AGENTS_MD.read_text(encoding="utf-8")
     pairs = _group_b_lines(agents_md_text)
     assert pairs, (
-        "la cuspide no tiene bullets Grupo B con puntero '(ver F<n>)' (precondicion rota)"
+        "la cuspide no tiene bullets Grupo B con puntero '[F<n>]' (precondicion rota)"
     )
     assert {k for k, _ in pairs} == {"F1", "F2", "F3", "F4", "F5", "F6", "F7"}
 

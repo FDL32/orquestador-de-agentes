@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard: toda clave de referencia `(ver X#)` resuelve a exactamente un ancla `**X#.**`.
+"""Guard: toda clave de referencia `[X#]` resuelve a exactamente un ancla `**X#.**`.
 
 Que protege
 -----------
@@ -22,10 +22,16 @@ acuerde (CEM: "barrera cableada" sobre "norma").
 
 Formato (literal, sin variantes -- ver prosa de diseno en
 `docs/followups/propuesta-optimizacion-cem-v0-y-claves-referencia-20261022.md`
-Seccion 6/6.1 para el porque de esta estrictez):
+Seccion 6/6.1 para el porque de esta estrictez; el formato de cita paso de `(ver X#)` a
+`[X#]` en WOT-2026-114e, a peticion del usuario, para no repetir la palabra "ver" en cada
+puntero):
 
-    cita:  (ver F3)              regex: \\(ver ([A-Z]\\d+)\\)
+    cita:  [F3]                  regex: \\[([A-Z]\\d+)\\]
     ancla: **F3.** <texto>       regex: ^\\s*\\*\\*([A-Z])(\\d+)\\.\\*\\*  (al inicio de linea)
+
+La leyenda (`docs/registry/reference_keys.md`) declara el fichero de cada letra como un
+enlace markdown real `[texto](ruta)` (navegable en GitHub/VS Code); el guard extrae la ruta
+del parentesis del enlace, no de backticks sueltos.
 
 Antes de buscar citas o anclas, el guard excluye bloques de codigo fenced
 (` ``` ` o `~~~`, longitud >= 3, se empareja por el mismo caracter y una
@@ -55,8 +61,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LEGEND_PATH = PROJECT_ROOT / "docs" / "registry" / "reference_keys.md"
 
-_LEGEND_ROW_RE = re.compile(r"^\|\s*([A-Z])\s*\|\s*`([^`]+)`\s*\|\s*$")
-_CITATION_RE = re.compile(r"\(ver ([A-Z]\d+)\)")
+_LEGEND_ROW_RE = re.compile(r"^\|\s*([A-Z])\s*\|\s*\[[^\]]*\]\(([^)]+)\)\s*\|\s*$")
+_CITATION_RE = re.compile(r"\[([A-Z]\d+)\]")
 _ANCHOR_RE = re.compile(r"^\s*\*\*([A-Z]\d+)\.\*\*")
 _FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 
@@ -99,10 +105,13 @@ def parse_legend(legend_path: Path, project_root: Path) -> dict[str, Path]:
     r"""Parse the letter -> file table of *legend_path*.
 
     Before: a markdown file with a `| letra | fichero |` table, rows of the
-        form `| X | \`relative/path.md\` |`.
-    During: matches each row with `_LEGEND_ROW_RE`; resolves the path
-        relative to *project_root* (not necessarily the module's own repo
-        root -- tests point this at a throwaway tmp_path tree).
+        form `| X | [texto](ruta/relativa/al/propio/legend.md) |` -- un
+        enlace markdown real, navegable, no un backtick suelto.
+    During: matches each row with `_LEGEND_ROW_RE`; resolves the link target
+        relative to *legend_path's own directory* (estandar markdown: un
+        enlace relativo se resuelve contra el fichero que lo contiene, NO
+        contra *project_root* -- aunque en la practica ambos coinciden
+        cuando la leyenda vive bajo `docs/registry/` y el enlace usa `../..`).
     After: dict mapping each letter to its resolved absolute Path. Raises
         no exception on a missing target file -- callers check existence
         explicitly so every violation is reported, not just the first.
@@ -113,13 +122,13 @@ def parse_legend(legend_path: Path, project_root: Path) -> dict[str, Path]:
     for line in legend_path.read_text(encoding="utf-8").splitlines():
         m = _LEGEND_ROW_RE.match(line.strip())
         if m:
-            letter, rel_path = m.group(1), m.group(2)
-            legend[letter] = project_root / rel_path
+            letter, rel_link = m.group(1), m.group(2)
+            legend[letter] = (legend_path.parent / rel_link).resolve()
     return legend
 
 
 def find_citations(text: str) -> list[tuple[str, int]]:
-    """Return (key, 1-indexed line number) for every `(ver X#)` citation.
+    """Return (key, 1-indexed line number) for every `[X#]` citation.
 
     Before: raw text (caller is responsible for stripping fenced code
         first, via `strip_fenced_code`).
@@ -194,13 +203,13 @@ def _check_citations_resolve(
             letter = key[0]
             if letter not in legend:
                 violations.append(
-                    f"{rel}:{lineno}: cita '(ver {key})' usa la letra '{letter}', "
+                    f"{rel}:{lineno}: cita '[{key}]' usa la letra '{letter}', "
                     f"ausente de la leyenda ({legend_path.relative_to(project_root)})"
                 )
                 continue
             if not anchors_for(letter).get(key):
                 violations.append(
-                    f"{rel}:{lineno}: cita '(ver {key})' no tiene ningun ancla "
+                    f"{rel}:{lineno}: cita '[{key}]' no tiene ningun ancla "
                     f"'**{key}.**' en {legend[letter].relative_to(project_root)}"
                 )
     return violations
@@ -235,7 +244,7 @@ def check(project_root: Path, legend_path: Path) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Valida que toda cita '(ver X#)' resuelva a exactamente un ancla."
+        description="Valida que toda cita '[X#]' resuelva a exactamente un ancla."
     )
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--legend", default=str(LEGEND_PATH))

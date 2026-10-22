@@ -7,7 +7,11 @@
 >
 > Origen: propuesta del usuario (2026-10-22), evaluada en
 > `docs/followups/propuesta-optimizacion-cem-v0-y-claves-referencia-20261022.md` Seccion 3.
+>
+> **Formato de cita:** `[X#]` (p.ej. `[F3]`), sin "ver" ni parentesis. **Formato de ancla:**
+> `**X#.**` al inicio de linea dentro del fichero mapeado, precedido de un ancla HTML navegable
+> `<a id="x#"></a>` en su propia linea (minusculas, para enlaces `#x3` en GitHub/VS Code).
 
 | letra | fichero |
 |-------|---------|
-| F | `.agent/rules/common/cem_v0_evidencia_forense.md` |
+| F | [`.agent/rules/common/cem_v0_evidencia_forense.md`](../../.agent/rules/common/cem_v0_evidencia_forense.md) |
