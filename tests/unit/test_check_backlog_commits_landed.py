@@ -2215,3 +2215,106 @@ def test_dod_d_reverting_fix_reproduces_bug(tmp_path):
         verdict2 != gl.PENDING_GROUPED_PUSH
     )  # current behavior: memory-only does not credit
     # Without the _is_code_commit check, this would have been PENDING_GROUPED_PUSH.
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-044b/DoD-b regression (codex revisor, 2026-10-22):
+# A code commit on a local branch that is NOT an ancestor of ref + a SEPARATE
+# memory-only commit in ref with the SAME ticket ID must NOT credit OK_BY_SUBJECT.
+#
+# Before the fix: _landed_by_subject returned True, _has_object(sha) was True ->
+# OK_BY_SUBJECT. After: the landed SHA is memory-only -> no code commit -> no
+# OK_BY_SUBJECT (falls through to ERROR).
+# --------------------------------------------------------------------------- #
+def test_dod_b_regression_memory_only_commit_in_ref_does_not_credit(tmp_path):
+    """DoD-b regression. Code SHA not in ref + memory SHA IS in ref with same ID.
+
+    Reproduces the codex-revisor scenario: original code commit on a feature branch
+    (never merged) + a separate memory-only commit in origin/main that mentions the
+    same ticket ID. classify(original_code_sha, ...) must NOT return OK_BY_SUBJECT.
+
+    The code SHA is a real git object (on the feature branch), so _has_object is
+    True. Without the fix, _landed_by_subject + _has_object => OK_BY_SUBJECT.
+    With the fix, the landed commit is memory-only => no _is_code_commit => ERROR.
+    """
+    _origin, work = _make_repo(tmp_path)
+    ticket_id = "WOT-2026-0REG"
+
+    # 1. Feature branch: real code commit, NEVER pushed
+    _g(["checkout", "-q", "-b", "original-code"], work)
+    code_sha = _commit(
+        work,
+        "feature.py",
+        "def feature():\n    return 42\n",
+        f"fix({ticket_id}): original code, never merged",
+    )
+    _g(["checkout", "-q", "main"], work)
+
+    # 2. Main: separate memory-only commit mentioning the same ticket ID
+    mem_dir = work / ".agent/runtime/memory/archive"
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    _commit(
+        work,
+        ".agent/runtime/memory/archive/observations.20261022.jsonl",
+        '{"observation": "memory only"}\n',
+        f"memoria({ticket_id}): observation only",
+    )
+    memory_sha = _sha(work)
+
+    # Push only the memory commit to origin/main
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+
+    # Setup assertions
+    assert not gl._is_ancestor(code_sha, "origin/main", work), (
+        "original code must NOT be an ancestor of ref"
+    )
+    assert gl._is_code_commit(code_sha, work), "original code commit must be code"
+    assert not gl._is_code_commit(memory_sha, work), "memory commit must NOT be code"
+    assert gl._has_object(code_sha, work), (
+        "code SHA must be a real git object (on feature branch)"
+    )
+    assert not gl._has_object("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", work)
+
+    # verify matching commits in ref mention the ticket
+    assert gl._find_first_subject_sha(ticket_id, "origin/main", work) == memory_sha
+
+    # classify the code SHA -> must NOT be OK_BY_SUBJECT
+    patch_ids = gl.build_patch_id_set("origin/main", work)
+    verdict, detail = gl.classify(ticket_id, code_sha, "origin/main", work, patch_ids)
+    assert verdict != gl.OK_BY_SUBJECT, (
+        f"a code commit on a separate branch must NOT be credited by a "
+        f"memory-only commit in ref; got {verdict}: {detail}"
+    )
+    # The code SHA has an object but is not reachable by any layer -> ERROR
+    assert verdict == gl.ERROR, (
+        f"the code SHA must fall through to ERROR; got {verdict}: {detail}"
+    )
+
+
+def test_dod_b_positive_squash_code_commit_still_credits(tmp_path):
+    """DoD-b positive control: a code commit squashed into ref still credits OK_BY_SUBJECT.
+
+    Ensures the fix does NOT break the legitimate squash/cherry-pick case where the
+    landed commit in ref IS a code commit (even though the original SHA is not an
+    ancestor of ref).
+    """
+    work, original = _squashed(tmp_path)
+    patch_ids = gl.build_patch_id_set("origin/main", work)
+
+    # Original SHA: not ancestor of ref, not ancestor of HEAD, but has object
+    assert gl._has_object(original, work) is True
+    assert gl._is_ancestor(original, "HEAD", work) is False
+
+    # Verify the squash commit (in ref) is a code commit
+    squash_sha = gl._find_first_subject_sha("WOT-2026-0CCC", "origin/main", work)
+    assert squash_sha is not None
+    assert gl._is_code_commit(squash_sha, work), (
+        "the squashed commit in ref must be code"
+    )
+
+    # classify must still return OK_BY_SUBJECT
+    verdict, _ = _classify(work, "WOT-2026-0CCC", original, patch_ids)
+    assert verdict == gl.OK_BY_SUBJECT, (
+        f"a code commit squashed into ref must still credit; got {verdict}"
+    )

@@ -323,6 +323,11 @@ def _is_code_commit(sha: str, repo: Path) -> bool:
     non-code paths). A SHA that exists in git but is memory-only must NOT credit
     a ``deliverable_type: code`` row.
 
+    WOT-2026-044b/DoD-b extension (2026-10-22): any path under
+    ``.agent/runtime/memory/`` is excluded BEFORE checking the extension.
+    Files like ``.json`` or ``.md`` inside that directory are memory artifacts,
+    not code, and must NOT credit a ``deliverable_type: code`` row.
+
     Returns False (no credit) when:
       - the SHA has no git object (diff command fails), or
       - the diff is empty, or
@@ -341,6 +346,11 @@ def _is_code_commit(sha: str, repo: Path) -> bool:
                 continue
         else:
             filename = parts[1]
+        # WOT-2026-044b/DoD-b: exclude memory paths BEFORE checking extension.
+        # .json/.md/.txt inside .agent/runtime/memory/ are memory artifacts,
+        # not code -- they must never credit a deliverable_type: code row.
+        if ".agent/runtime/memory/" in filename:
+            continue
         ext = Path(filename).suffix.lower()
         if ext in _CODE_EXTENSIONS:
             return True
@@ -759,55 +769,83 @@ def build_patch_id_set(ref: str, repo: Path) -> set[str]:
     return _parse_patch_id_lines(proc.stdout)
 
 
+def _find_first_subject_sha(ticket_id: str, ref: str, repo: Path) -> str | None:
+    """First exact-ID, non-Revert subject SHA reachable from ref that mentions ID.
+
+    Companion of ``_landed_by_subject``: that function now delegates to this helper.
+    The matching predicate is the SAME (substring ``--grep`` prefilter, exact
+    ``\\bID\\b`` word-boundary, ``Revert`` excluded, anchored to ref) so that the
+    two callers share a single predicate (no drift).
+
+    Before: ``ticket_id``/``ref``/``repo`` as in ``_landed_by_subject``.
+    During: one read-only ``git log`` with ``--format=%H%x09%s``; the exact-ID
+        regex and Revert exclusion are applied locally.
+    After: the SHA of the first matching commit, or ``None`` when nothing matches.
+        Never raises.
+    """
+    res = _run(
+        [
+            "git",
+            "log",
+            ref,
+            f"--grep={ticket_id}",
+            "--fixed-strings",
+            "--format=%H%x09%s",
+        ],
+        repo,
+    )
+    if res["exit_code"] != 0 or not res["stdout"]:
+        return None
+    exact = re.compile(rf"(?<![\w-]){re.escape(ticket_id)}(?![\w-])", re.IGNORECASE)
+    for line in res["stdout"].splitlines():
+        sha_raw, _, subject = line.partition("\t")
+        subject = subject.strip()
+        if _REVERT_RE.match(subject):
+            continue
+        if exact.search(subject):
+            return sha_raw.strip()
+    return None
+
+
 def _landed_by_subject(ticket_id: str, ref: str, repo: Path) -> bool:
     """CAPA 3: an EXACT-ID, non-Revert commit subject reachable from ref mentions ID.
 
     ``git log <ref> --grep`` is a substring pre-filter (anchored to ref, NEVER
     ``--all``); the exact ``\\bID\\b`` word-boundary match and the Revert exclusion are
     applied in Python so a longer id (021c2) or a revert can't false-OK.
+
+    WOT-2026-044b/DoD-b (2026-10-22): now delegates to ``_find_first_subject_sha``
+    (SHA-returning), re-uses the sha only for its truthiness to preserve the bool
+    return type. The SHA path is what ``classify`` keys on (see CAPA 3 below).
+    ``_find_first_subject_sha`` is the single source of the matching predicate;
+    this function is NOT modified separately -- any predicate change must go
+    through ``_find_first_subject_sha`` first.
     """
-    res = _run(
-        ["git", "log", ref, f"--grep={ticket_id}", "--fixed-strings", "--format=%s"],
-        repo,
-    )
-    if res["exit_code"] != 0 or not res["stdout"]:
-        return False
-    exact = re.compile(rf"(?<![\w-]){re.escape(ticket_id)}(?![\w-])", re.IGNORECASE)
-    for subject in res["stdout"].splitlines():
-        if _REVERT_RE.match(subject):
-            continue
-        if exact.search(subject):
-            return True
-    return False
+    return _find_first_subject_sha(ticket_id, ref, repo) is not None
 
 
 def _first_landed_subject(ticket_id: str, ref: str, repo: Path) -> str:
     """The first EXACT-ID, non-Revert subject reachable from ref that mentions ID.
 
-    WOT-2026-078b. Companion of ``_landed_by_subject``: that function answers only
-    yes/no, but the live-queue census must REPORT which commit landed a row. The
-    matching predicate is intentionally the SAME (substring ``--grep`` prefilter,
-    exact ``\\bID\\b`` word-boundary, ``Revert`` excluded, anchored to ref) so that a
-    row ``_landed_by_subject`` calls landed ALWAYS yields a non-empty subject here.
-    ``_landed_by_subject`` itself is reused verbatim as the gate and is NOT modified.
+    WOT-2026-078b. Companion of ``_landed_by_subject``: that function returns a bool,
+    but the live-queue census must REPORT which commit landed a row. The matching
+    predicate is the SAME (substring ``--grep`` prefilter, exact ``\\bID\\b``
+    word-boundary, ``Revert`` excluded, anchored to ref) so that a row
+    ``_landed_by_subject`` calls landed ALWAYS yields a non-empty subject here.
 
     Before: ``ticket_id``/``ref``/``repo`` as in ``_landed_by_subject``.
-    During: one read-only ``git log``; the exact-ID regex and Revert exclusion are
-        re-applied locally (the same 3 lines) because the sibling returns a bool.
+    During: delegates to ``_find_first_subject_sha`` (SHA path) and reads the
+        subject from ``git show <sha> --format=%s -s`` (one call). Same predicate,
+        no drift.
     After: the first matching subject, or ``""`` when nothing matches. Never raises.
     """
-    res = _run(
-        ["git", "log", ref, f"--grep={ticket_id}", "--fixed-strings", "--format=%s"],
-        repo,
-    )
-    if res["exit_code"] != 0 or not res["stdout"]:
+    sha = _find_first_subject_sha(ticket_id, ref, repo)
+    if sha is None:
         return ""
-    exact = re.compile(rf"(?<![\w-]){re.escape(ticket_id)}(?![\w-])", re.IGNORECASE)
-    for subject in res["stdout"].splitlines():
-        if _REVERT_RE.match(subject):
-            continue
-        if exact.search(subject):
-            return subject
+    # Read the subject from the matching commit
+    res = _run(["git", "show", sha, "--format=%s", "-s"], repo)
+    if res["exit_code"] == 0 and res["stdout"]:
+        return res["stdout"].strip()
     return ""
 
 
@@ -928,11 +966,18 @@ def classify(
                 "committed and reachable from the local branch, but not in "
                 f"{ref} -- pending the session's grouped push (not a lost close)",
             )
-    if _landed_by_subject(ticket_id, ref, repo):  # noqa: SIM102
+    # WOT-2026-044b/DoD-b: the subject ID must land in a CODE commit reachable from
+    # ref, not just any commit (memory-only commits must NOT credit a
+    # ``deliverable_type: code`` row).  _find_first_subject_sha returns the SHA of
+    # the FIRST matching commit in ref; if that commit is code we credit, otherwise
+    # we fall through (no OK_BY_SUBJECT).
+    landed_sha = _find_first_subject_sha(ticket_id, ref, repo)
+    if landed_sha is not None:  # noqa: SIM102
         # WOT-2026-044b: before crediting a CAPA 3 subject hit, verify that
-        # the SHA is a real git object (ghost SHAs are NOT creditable).
-        # For non-HEAD-ancestor SHAs (squash merges), only check existence.
-        if _has_object(sha, repo):
+        # the SHA of the LANDED commit (not the cited SHA) is a real git object
+        # (ghost SHAs are NOT creditable) AND is a code commit.  For non-HEAD-
+        # ancestor SHAs (squash merges), only check existence.
+        if _has_object(sha, repo) and _is_code_commit(landed_sha, repo):
             return (
                 OK_BY_SUBJECT,
                 "ticket-ID in an origin/main subject (CAPA 3, squash/cherry-pick)",
