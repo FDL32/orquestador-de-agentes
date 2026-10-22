@@ -204,13 +204,59 @@ def test_114a_manifiesto_cubre_cada_source_distinta_del_registro(
         )
 
 
-def test_114a_baseline_e7_indireccion_identica_a_lectura_directa(
+# D2/E7: baseline PINNED, escrito a mano a partir de `_write_motor_fixture`,
+# NUNCA derivado llamando a la propia funcion bajo prueba -- si se deriva
+# llamando a `_extract_registered_section`, una mutacion que trunque esa
+# misma funcion trunca los DOS lados de la comparacion por igual y el test
+# queda ciego (hallazgo real del Revisor, backend distinto, sobre la Ronda 1
+# de este ticket: `_extract_registered_section` mutado a "solo la primera
+# linea" dejaba el test en verde). El literal de abajo es independiente del
+# codigo bajo prueba.
+_FIXTURE_BASELINE_SECTIONS: dict[str, str] = {
+    "vocabulario_canonico": "## Vocabulario canonico\nrepo_motor y repo_destino.",
+    "cem_v0": (
+        "## CEM v0 - Contrato, Evidencia y Memoria\nEvidencia antes que relato."
+    ),
+    "secretos_y_seguridad": "## Secretos y seguridad\nNo exponer secretos.",
+}
+
+
+def test_114a_baseline_e7_pin_independiente_del_codigo_bajo_prueba(
     tmp_path: Path,
 ) -> None:
-    """D2/E7: para CADA id registrado, resolver por indireccion (`source`)
-    debe devolver una seccion BYTE-IDENTICA (sha256) a extraerla leyendo
-    AGENTS.md directamente -- el guard de no-degradacion que una fase futura
-    (repuntar `source` a un modulo) tiene que seguir satisfaciendo."""
+    """D2/E7: cada seccion extraida debe ser BYTE-IDENTICA (sha256 + longitud)
+    a un baseline fijado a mano (no derivado llamando a la funcion bajo
+    prueba). Una mutacion que trunque `_extract_registered_section` (p.ej. a
+    "solo la primera linea") debe hacer caer este test -- a diferencia de
+    comparar dos llamadas a la MISMA funcion mutada, que no detecta nada."""
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    _write_motor_fixture(motor)
+
+    assert set(_FIXTURE_BASELINE_SECTIONS) == {
+        sid for sid, _, _ in hermes_build_context_bundle.AGENTS_SECTIONS_REGISTRY
+    }
+
+    for sid, expected in _FIXTURE_BASELINE_SECTIONS.items():
+        via_registry = hermes_build_context_bundle._read_registered_section(motor, sid)
+        assert via_registry == expected, (
+            f"{sid}: extraccion diverge del baseline pinned "
+            f"(got={via_registry!r} expected={expected!r})"
+        )
+        assert len(via_registry) == len(expected)
+        assert (
+            hashlib.sha256(via_registry.encode("utf-8")).hexdigest()
+            == hashlib.sha256(expected.encode("utf-8")).hexdigest()
+        )
+
+
+def test_114a_indireccion_identica_a_lectura_directa(
+    tmp_path: Path,
+) -> None:
+    """Consistencia complementaria (no sustituye el pin de arriba): resolver
+    por indireccion (`source`) y leer AGENTS.md directamente deben coincidir
+    -- detecta divergencia ENTRE los dos caminos, aunque por si sola no
+    detecte una regresion compartida por ambos (por eso el pin es aparte)."""
     motor = tmp_path / "motor"
     motor.mkdir()
     _write_motor_fixture(motor)
@@ -221,9 +267,6 @@ def test_114a_baseline_e7_indireccion_identica_a_lectura_directa(
             agents_text, sid
         )
         via_registry = hermes_build_context_bundle._read_registered_section(motor, sid)
-        assert hashlib.sha256(via_registry.encode("utf-8")).hexdigest() == (
-            hashlib.sha256(direct.encode("utf-8")).hexdigest()
-        ), f"{sid}: la indireccion por source diverge de la lectura directa"
         assert via_registry == direct
 
 
