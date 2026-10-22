@@ -1,3 +1,43 @@
+# 2026-10-22 - WOT-2026-114b: retirada de Hermes (bundle de contexto para agente externo)
+
+### Removed
+- `scripts/hermes_build_context_bundle.py`, `prompts/hermes_soul.md` y
+  `tests/test_hermes_build_context_bundle.py`: retirados por decision del
+  usuario (confirmo explicitamente que no usa el flujo de exportar un bundle
+  de contexto a un agente externo llamado "Hermes"). Verificado que el
+  contenido operativo de `hermes_soul.md` no aportaba nada que no exista ya
+  nativo en el motor: su jerarquia de Prioridades ya esta promovida literal
+  en `CONSTITUTION.md`, su regla de autonomia es la misma idea que el Tenet
+  T4 de `CONSTITUTION.md`, y su taxonomia de etiquetas de evidencia
+  (`VERIFICADO EN CODIGO/TEST/BUS/GIT`, veredictos `APROBADO CON
+  NITS`/`CAMBIOS NECESARIOS`/`NO ACEPTAR TODAVIA`) ya existe verbatim en
+  `prompts/audit_agent_output.md`. Linea de "Comandos principales" de
+  `AGENTS.md` retirada junto con el script.
+- `scripts/discover_skills.py::EXTERNAL_ALLOWLIST` queda vacio
+  (`frozenset()`); la entrada `"hermes_soul.md"` ya no tiene fichero que
+  exentar. El mecanismo sigue disponible para un futuro fichero externo real.
+
+### Changed
+- `scripts/measure_agents_md_units.py` pasa a ser el UNICO dueño de
+  `AGENTS_SECTIONS_REGISTRY` (reubicado desde el script retirado, que era su
+  unico otro consumidor real). La cobertura de tests del registro/extraccion
+  tolerante por id (WOT-2026-036g) y de la indireccion por `source`
+  (WOT-2026-114a) se migro integra a `tests/unit/test_measure_agents_md_units.py`.
+
+### Notes
+- Hallazgo para el siguiente ticket (Fase 2 de la Palanca A,
+  `docs/followups/palanca-a-raiz-agents-md-diseno.md`): con Hermes retirado,
+  `## Vocabulario canonico` y `## CEM v0` de `AGENTS.md` YA NO tienen un
+  consumidor que extraiga su cuerpo por encabezado para embeberlo en otro
+  artefacto -- el bloqueo de PASO 3(e) de `prompts/doc_optimization.md` que
+  las mantenia "SIEMPRE se queda" por esa via especifica ya no aplica. Siguen
+  bloqueadas por PASO 3(e) via el registry de Hermes extraccion para
+  `measure_agents_md_units.py`'s propio `registry_crosscheck`: NO, ese
+  consumidor solo verifica deriva de patrones (lee bytes ya medidos, nunca
+  extrae/embebe el cuerpo en otro artefacto), asi que tampoco cuenta como
+  bloqueo de PASO 3(e). El siguiente ticket puede evaluar mover esas 2
+  secciones sin volver a derivar este analisis.
+
 # 2026-10-21 - Propuesta de optimizacion del arranque de agentes en frio (docs, sin cambio de comportamiento)
 
 ### Added

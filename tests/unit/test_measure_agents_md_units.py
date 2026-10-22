@@ -7,6 +7,7 @@ smoke test on the real AGENTS.md.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -338,6 +339,178 @@ class TestRegistryCrosscheck:
         vocab = next(r for r in result if r["id"] == "vocabulario_canonico")
         assert vocab["status"] == "DRIFT"
         assert vocab["matches"] == 2
+
+
+# ===================================================================
+# 5-bis. AGENTS_SECTIONS_REGISTRY: extraccion y campo `source`
+#
+# WOT-2026-114b: migrado desde el retirado scripts/hermes_build_context_bundle.py
+# (su unico consumidor real, el bundle para un agente externo "Hermes", se
+# retiro por decision del usuario -- confirmado que no lo usa). El registro y
+# su extraccion tolerante por id (WOT-2026-036g) y su indireccion por `source`
+# (WOT-2026-114a) siguen vivos aqui porque este medidor es ahora su dueno.
+# ===================================================================
+
+_VOCAB_DOC = "# T\n\n## Vocabulario canonico\n\ncuerpo A\n\n## Otra\n\nx\n"
+
+
+def _write_minimal_agents_md(root: Path) -> None:
+    """Fixture minima (sin git/pyproject): solo lo que el registro necesita."""
+    (root / "AGENTS.md").write_text(
+        """# Agents
+
+## Vocabulario canonico
+repo_motor y repo_destino.
+
+## CEM v0 - Contrato, Evidencia y Memoria
+Evidencia antes que relato.
+
+## Secretos y seguridad
+No exponer secretos.
+
+## Siguiente
+Fin.
+""",
+        encoding="utf-8",
+    )
+
+
+class TestAgentsSectionsRegistryExtraction:
+    """WOT-2026-036g + WOT-2026-114a: extraccion tolerante por id y por `source`."""
+
+    def test_registry_ids_y_source_declarada(self):
+        """El registry es la lista CERRADA de secciones; cada id declara `source`."""
+        mod = _load_module()
+        ids = [sid for sid, _, _ in mod.AGENTS_SECTIONS_REGISTRY]
+        assert ids == ["vocabulario_canonico", "cem_v0", "secretos_y_seguridad"]
+        for sid, _, registered_source in mod.AGENTS_SECTIONS_REGISTRY:
+            assert registered_source, f"{sid} no declara source"
+            assert mod._registered_section_source(sid) == registered_source
+
+    def test_renombrado_conservador_no_rompe_el_lector(self):
+        """La MUTACION del ticket 036g: renombrar el header sin tocar el registry."""
+        mod = _load_module()
+        variantes = (
+            "## Vocabulario Canonico",
+            "## Vocabulario canonico  ",
+            "##  Vocabulario  canonico",
+        )
+        for variante in variantes:
+            doc = _VOCAB_DOC.replace("## Vocabulario canonico", variante)
+            seccion = mod._extract_registered_section(doc, "vocabulario_canonico")
+            assert "cuerpo A" in seccion, f"la variante {variante!r} no resolvio"
+
+    def test_tolerante_no_es_laxo_una_seccion_distinta_no_se_cuela(self):
+        mod = _load_module()
+        doc = _VOCAB_DOC.replace("## Vocabulario canonico", "## Vocabulario extendido")
+        with pytest.raises(ValueError):
+            mod._extract_registered_section(doc, "vocabulario_canonico")
+
+    def test_error_nombra_el_id_y_el_patron(self):
+        mod = _load_module()
+        with pytest.raises(ValueError, match="vocabulario_canonico"):
+            mod._extract_registered_section("# nada\n", "vocabulario_canonico")
+        with pytest.raises(ValueError, match="Unknown section id"):
+            mod._extract_registered_section(_VOCAB_DOC, "no_registrado")
+
+    def test_las_tres_anclas_reales_resuelven_contra_agents_md(self):
+        """Control de realidad: el registry sirve para el AGENTS.md de verdad."""
+        mod = _load_module()
+        agents = (_SCRIPT_DIR.parent / "AGENTS.md").read_text(encoding="utf-8")
+        for sid, _, _ in mod.AGENTS_SECTIONS_REGISTRY:
+            assert mod._extract_registered_section(agents, sid).strip(), sid
+
+    def test_registry_sources_distintas_y_deduplicadas(self):
+        mod = _load_module()
+        sources = mod._registry_sources()
+        assert sources == list(dict.fromkeys(sources)), "debe estar deduplicado"
+        assert "AGENTS.md" in sources
+
+
+# D2/E7: baseline PINNED a mano, NUNCA derivado llamando a la propia funcion
+# bajo prueba -- si se deriva llamando a `_extract_registered_section`, una
+# mutacion que trunque esa misma funcion trunca los DOS lados de la
+# comparacion por igual y el test queda ciego (hallazgo real del Revisor,
+# backend distinto, Ronda 1 de WOT-2026-114a).
+_FIXTURE_BASELINE_SECTIONS: dict[str, str] = {
+    "vocabulario_canonico": "## Vocabulario canonico\nrepo_motor y repo_destino.",
+    "cem_v0": (
+        "## CEM v0 - Contrato, Evidencia y Memoria\nEvidencia antes que relato."
+    ),
+    "secretos_y_seguridad": "## Secretos y seguridad\nNo exponer secretos.",
+}
+
+
+class TestAgentsSectionsRegistrySource:
+    """WOT-2026-114a: registro re-apuntable por `source`, indireccion contra disco."""
+
+    def test_baseline_e7_pin_independiente_del_codigo_bajo_prueba(self, tmp_path):
+        mod = _load_module()
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        _write_minimal_agents_md(motor)
+
+        assert set(_FIXTURE_BASELINE_SECTIONS) == {
+            sid for sid, _, _ in mod.AGENTS_SECTIONS_REGISTRY
+        }
+        for sid, expected in _FIXTURE_BASELINE_SECTIONS.items():
+            via_registry = mod._read_registered_section(motor, sid)
+            assert via_registry == expected, (
+                f"{sid}: extraccion diverge del baseline pinned "
+                f"(got={via_registry!r} expected={expected!r})"
+            )
+            assert len(via_registry) == len(expected)
+            assert (
+                hashlib.sha256(via_registry.encode("utf-8")).hexdigest()
+                == hashlib.sha256(expected.encode("utf-8")).hexdigest()
+            )
+
+    def test_indireccion_identica_a_lectura_directa(self, tmp_path):
+        mod = _load_module()
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        _write_minimal_agents_md(motor)
+        agents_text = (motor / "AGENTS.md").read_text(encoding="utf-8")
+
+        for sid, _, _ in mod.AGENTS_SECTIONS_REGISTRY:
+            direct = mod._extract_registered_section(agents_text, sid)
+            via_registry = mod._read_registered_section(motor, sid)
+            assert via_registry == direct
+
+    def test_mutacion_fuente_no_registrada_se_detecta(self, tmp_path):
+        """Mutacion obligatoria del guard E7: `source` debe estar REALMENTE
+        cableado al hot-path, no ser un campo muerto que nadie lee."""
+        mod = _load_module()
+        motor = tmp_path / "motor"
+        motor.mkdir()
+        _write_minimal_agents_md(motor)
+
+        mutated_source = motor / "AGENTS_MUTATED.md"
+        mutated_source.write_text(
+            "# Agents\n\n## Vocabulario canonico\nCUERPO MUTADO.\n",
+            encoding="utf-8",
+        )
+
+        original = mod.AGENTS_SECTIONS_REGISTRY
+        try:
+            mod.AGENTS_SECTIONS_REGISTRY = tuple(
+                (sid, pattern, "AGENTS_MUTATED.md")
+                if sid == "vocabulario_canonico"
+                else (sid, pattern, source)
+                for sid, pattern, source in original
+            )
+            mod._REGISTRY_BY_ID = {
+                sid: (pattern, source)
+                for sid, pattern, source in mod.AGENTS_SECTIONS_REGISTRY
+            }
+            seccion = mod._read_registered_section(motor, "vocabulario_canonico")
+            assert "CUERPO MUTADO" in seccion
+            assert "repo_motor y repo_destino" not in seccion
+        finally:
+            mod.AGENTS_SECTIONS_REGISTRY = original
+            mod._REGISTRY_BY_ID = {
+                sid: (pattern, source) for sid, pattern, source in original
+            }
 
 
 # ===================================================================

@@ -2,7 +2,7 @@
 
 Splits a markdown file into non-overlapping ATX-header units, computes
 own/subtree byte and character metrics across the full @-import closure,
-checks the partition invariant, cross-references the Hermes registry,
+checks the partition invariant, cross-references AGENTS_SECTIONS_REGISTRY,
 and reports gates against context-budget limits.
 """
 
@@ -16,6 +16,126 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# AGENTS_SECTIONS_REGISTRY (WOT-2026-114b: reubicado desde el retirado
+# scripts/hermes_build_context_bundle.py -- este modulo es ahora su UNICO
+# dueno y consumidor).
+#
+# WOT-2026-036g: el lector original ANCLABA POR HEADER EXACTO
+# (``lines.index(heading)``): un renombrado conservador del header, o incluso
+# un espacio final invisible, rompian la extraccion con ValueError. El
+# REGISTRY es la lista CERRADA de secciones que este medidor cruza contra
+# AGENTS.md: cada entrada mapea un id estable -> patron de header tolerante a
+# renombrado conservador (mayusculas/minusculas y espaciado), sin dejar de
+# anclar al nivel de encabezado y al texto del titulo.
+#
+# WOT-2026-114a (Fase 1 Palanca A, docs/followups/palanca-a-raiz-agents-md-
+# diseno.md D1): cada entrada suma un tercer campo `source` (ruta relativa al
+# motor donde VIVE el cuerpo de la seccion). Hoy las tres apuntan a
+# "AGENTS.md"; una fase futura que traslade el CUERPO de una seccion a un
+# modulo bajo `.agent/rules/common/` solo necesita repuntar este campo.
+# ---------------------------------------------------------------------------
+
+AGENTS_SECTIONS_REGISTRY: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    (
+        "vocabulario_canonico",
+        re.compile(r"^##\s+Vocabulario\s+canonico\s*$", re.IGNORECASE),
+        "AGENTS.md",
+    ),
+    (
+        "cem_v0",
+        re.compile(
+            r"^##\s+CEM\s+v0\s*-\s*Contrato,\s*Evidencia\s+y\s+Memoria\s*$",
+            re.IGNORECASE,
+        ),
+        "AGENTS.md",
+    ),
+    (
+        "secretos_y_seguridad",
+        re.compile(r"^##\s+Secretos\s+y\s+seguridad\s*$", re.IGNORECASE),
+        "AGENTS.md",
+    ),
+)
+
+_REGISTRY_BY_ID: dict[str, tuple[re.Pattern[str], str]] = {
+    sid: (pattern, source) for sid, pattern, source in AGENTS_SECTIONS_REGISTRY
+}
+
+
+def _registered_section_source(section_id: str) -> str:
+    """Before: section_id may or may not be registered. During: look up the
+    `source` field. After: returns the relative path, or raises ValueError
+    naming the unknown id (same message shape as the extraction lookup)."""
+    try:
+        _, source = _REGISTRY_BY_ID[section_id]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown section id: {section_id!r}; registered ids are "
+            f"{sorted(_REGISTRY_BY_ID)}"
+        ) from exc
+    return source
+
+
+def _registry_sources() -> list[str]:
+    """Before: none. During: walk the registry. After: distinct `source`
+    paths in registry order, deduplicated (today all three collapse to the
+    single entry "AGENTS.md")."""
+    seen: list[str] = []
+    for _, _, source in AGENTS_SECTIONS_REGISTRY:
+        if source not in seen:
+            seen.append(source)
+    return seen
+
+
+def _extract_registered_section(text: str, section_id: str) -> str:
+    """Extract a REGISTERED section by its stable id, not by literal title.
+
+    Before: `section_id` is a key of AGENTS_SECTIONS_REGISTRY; `text` is the
+        content of whatever file that id's `source` field names.
+    During: match each line against the registered tolerant pattern; the
+        section runs until the next header of the SAME level.
+    After: returns the section text. Raises ValueError naming the id AND the
+        pattern when no header matches -- a caller must be able to tell
+        "renamed beyond tolerance" from "typo in my id".
+    """
+    try:
+        pattern, _source = _REGISTRY_BY_ID[section_id]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown section id: {section_id!r}; registered ids are "
+            f"{sorted(_REGISTRY_BY_ID)}"
+        ) from exc
+
+    lines = text.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if pattern.match(line)),
+        None,
+    )
+    if start is None:
+        raise ValueError(
+            f"Required section not found: id={section_id!r} pattern={pattern.pattern!r}"
+        )
+
+    heading = lines[start]
+    level = len(heading) - len(heading.lstrip("#"))
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if lines[index].startswith("#" * level + " "):
+            end = index
+            break
+    return "\n".join(lines[start:end]).rstrip()
+
+
+def _read_registered_section(motor_root: Path, section_id: str) -> str:
+    """Before: section_id is registered. During: read its declared `source`
+    file under motor_root and extract by registry pattern. After: returns
+    the section text -- IDENTICAL to reading AGENTS.md directly as long as
+    `source` points there (Fase 1: it always does)."""
+    source = _registered_section_source(section_id)
+    text = (motor_root / source).read_text(encoding="utf-8")
+    return _extract_registered_section(text, section_id)
 
 
 # ---------------------------------------------------------------------------
@@ -439,23 +559,14 @@ def gates(agents_raw: bytes, closure: list[Path]) -> dict:
 
 
 def registry_crosscheck(units: list[Unit]) -> list[dict]:
-    """Cross-check units against the Hermes AGENTS_SECTIONS_REGISTRY.
+    """Cross-check units against AGENTS_SECTIONS_REGISTRY.
 
     Before: *units* from ``split_units`` on AGENTS.md.
-    During: import the registry, match each ``(id, pattern)`` against
-        level-2 unit headings, count matches.
+    During: match each ``(id, pattern)`` against level-2 unit headings,
+        count matches.
     After: list of dicts with ``id``, ``matches``, ``subtree_bytes``,
         ``status`` (``"OK"`` or ``"DRIFT"``).
     """
-    # Bootstrap sys.path to find hermes_build_context_bundle
-    scripts_dir = Path(__file__).resolve().parent
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
-
-    from hermes_build_context_bundle import (
-        AGENTS_SECTIONS_REGISTRY,
-    )
-
     results: list[dict] = []
     for section_id, pattern, _source in AGENTS_SECTIONS_REGISTRY:
         matches = [u for u in units if u.level == 2 and pattern.match(u.heading)]
@@ -531,7 +642,7 @@ def stamp(repo_root: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _format_table(units: list[Unit], crosscheck: list[dict]) -> str:  # noqa: C901 - formateo de tabla markdown con anchos y cruzamiento con registry
+def _format_table(units: list[Unit], crosscheck: list[dict]) -> str:
     """Format units as a markdown table."""
     headers = [
         "#",
@@ -541,24 +652,17 @@ def _format_table(units: list[Unit], crosscheck: list[dict]) -> str:  # noqa: C9
         "own_B",
         "own_chars",
         "subtree_B",
-        "hermes",
+        "registry",
     ]
     rows: list[list[str]] = []
     for i, u in enumerate(units, start=1):
-        hermes_status = ""
+        registry_status = ""
         if u.level == 2:
-            scripts_dir = Path(__file__).resolve().parent
-            if str(scripts_dir) not in sys.path:
-                sys.path.insert(0, str(scripts_dir))
-            from hermes_build_context_bundle import (
-                AGENTS_SECTIONS_REGISTRY,
-            )
-
             for _sid, pat, _src in AGENTS_SECTIONS_REGISTRY:
                 if pat.match(u.heading):
                     for cc in crosscheck:
                         if cc["id"] == _sid:
-                            hermes_status = cc["status"]
+                            registry_status = cc["status"]
                             break
                     break
         rows.append(
@@ -570,7 +674,7 @@ def _format_table(units: list[Unit], crosscheck: list[dict]) -> str:  # noqa: C9
                 str(u.own_bytes),
                 str(u.own_chars),
                 str(u.subtree_bytes),
-                hermes_status,
+                registry_status,
             ]
         )
 
