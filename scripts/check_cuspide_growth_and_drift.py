@@ -30,7 +30,8 @@ Gates, cada uno en su unidad nativa (prohibido convertir bytes <-> chars,
 invariante de `prompts/doc_optimization.md:82-98`):
   - Codex: suma en BYTES de los `AGENTS.md` de la jerarquia. Limite 32768.
   - Claude Code: cierre transitivo de `CLAUDE.md` + `@imports`, en CHARS.
-    Limite 40000.
+    Limite 40000 -- SLO de producto propio de este motor, no un limite
+    documentado upstream de Claude Code (WOT-2026-115a).
 
 Drift (WARN-only): si el diff toca la cuspide sin tocar `.agent/rules/common/`
 o al reves, se avisa. No bloquea.
@@ -80,7 +81,10 @@ from pathlib import Path
 
 
 GATE_CODEX_BYTES = 32768
-GATE_CLAUDE_CHARS = 40000
+# SLO de producto propio del motor, no un limite documentado upstream de Claude Code.
+# La documentacion de Claude Code recomienda <200 lineas/CLAUDE.md y omite ficheros >4 MiB,
+# pero no fija 40.000 caracteres (WOT-2026-115a).
+ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS = 40000
 MARKER = "[cuspide-growth]"
 AUDIT_LOG_REL = Path(".agent/runtime/cuspide_growth_overrides.jsonl")
 LAYER2_PREFIX = ".agent/rules/common/"
@@ -310,7 +314,8 @@ def verdict_growth(pre: Metrics, post: Metrics) -> Growth:
     delta_chars = post.claude_chars - pre.claude_chars
     grew = delta_bytes > 0 or delta_chars > 0
     over_cap = (
-        post.agents_bytes > GATE_CODEX_BYTES or post.claude_chars > GATE_CLAUDE_CHARS
+        post.agents_bytes > GATE_CODEX_BYTES
+        or post.claude_chars > ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS
     )
     return Growth(
         delta_bytes=delta_bytes,
@@ -329,7 +334,7 @@ def growth_lines(pre: Metrics, post: Metrics, growth: Growth) -> list[str]:
     After: devuelve lineas estables (los tests extraen `delta_*` y `ratio_*_post`).
     """
     ratio_codex = post.agents_bytes / GATE_CODEX_BYTES
-    ratio_cc = post.claude_chars / GATE_CLAUDE_CHARS
+    ratio_cc = post.claude_chars / ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS
     return [
         (
             f"  AGENTS.md (Codex, bytes): {pre.agents_bytes} -> {post.agents_bytes} "
@@ -673,8 +678,8 @@ def _run_post_commit(repo: Path) -> int:
         "delta_chars": growth.delta_chars,
         "ratio_codex_pre": pre.agents_bytes / GATE_CODEX_BYTES,
         "ratio_codex_post": post.agents_bytes / GATE_CODEX_BYTES,
-        "ratio_cc_pre": pre.claude_chars / GATE_CLAUDE_CHARS,
-        "ratio_cc_post": post.claude_chars / GATE_CLAUDE_CHARS,
+        "ratio_cc_pre": pre.claude_chars / ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS,
+        "ratio_cc_post": post.claude_chars / ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS,
         "reason": override.reason,
         "affected": override.affected,
     }

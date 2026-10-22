@@ -228,10 +228,7 @@ una cifra 4x mas alta de la real, narrando una "crisis" ~4x peor que la medida h
 
 En orden de preferencia:
 
-1. **Guard de clase en WARN**, que reporte el EXCESO sobre el gate aplicable (p.ej. "2,36x del
-   gate Codex de 32768 bytes") sin bloquear: `scripts/check_context_budget.py` (guard, no
-   "barrera" -- CEM: un mecanismo solo-WARN no es una barrera).
-2. **Deuda declarada** con ticket dueno y criterio de salida. Nunca silencio. Si el fichero
+1. **Deuda declarada** con ticket dueno y criterio de salida. Nunca silencio. Si el fichero
    supera MAS DE UN gate (p.ej. Codex Y Claude Code a la vez), la deuda declara CADA exceso por
    separado con su propio recibo de medicion -- una deuda que solo cubre uno de los gates deja
    al otro en silencio, violando este mismo paso.
@@ -246,7 +243,7 @@ En orden de preferencia:
      `[DECIDIDO: 2026-10-18, bucle DESIGN_REVIEW tras rechazar una declaracion inline sin
      owner/trigger/superficie -- ver `docs/followups/agents-md-over-quota-followup.md` como
      primera instancia.]`
-3. **Tope duro**: SOLO para ficheros `generado`, aplicado **en el script generador** (editar el
+2. **Tope duro**: SOLO para ficheros `generado`, aplicado **en el script generador** (editar el
    fichero lo prohibe el non-goal), y nunca sin procedimiento de subida: quien lo sube (el
    operador, jamas el agente), con que evidencia (el cierre transitivo re-medido contra CADA
    gate aplicable) y donde queda el rastro (fecha y motivo).

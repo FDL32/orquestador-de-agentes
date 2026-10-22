@@ -17,6 +17,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.check_cuspide_growth_and_drift import (
+    ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS,
+)
+
 
 # ---------------------------------------------------------------------------
 # AGENTS_SECTIONS_REGISTRY (WOT-2026-114b: reubicado desde el retirado
@@ -515,7 +519,6 @@ def resolve_closure(claude_md: Path) -> list[Path]:  # noqa: C901 - fence tracki
 # ---------------------------------------------------------------------------
 
 _codex_bytes_limit = 32768
-_claude_chars_limit = 40000
 
 
 def gates(agents_raw: bytes, closure: list[Path]) -> dict:
@@ -538,8 +541,8 @@ def gates(agents_raw: bytes, closure: list[Path]) -> dict:
         claude_chars_total += len(decoded)
 
     claude_chars = claude_chars_total
-    claude_ratio = claude_chars / _claude_chars_limit if _claude_chars_limit else 0.0
-    claude_deficit = max(0, claude_chars - _claude_chars_limit)
+    claude_ratio = claude_chars / ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS
+    claude_deficit = max(0, claude_chars - ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS)
 
     return {
         "codex_bytes": codex_bytes,
@@ -547,7 +550,7 @@ def gates(agents_raw: bytes, closure: list[Path]) -> dict:
         "codex_ratio": round(codex_ratio, 4),
         "codex_deficit": codex_deficit,
         "claude_chars": claude_chars,
-        "claude_limit": _claude_chars_limit,
+        "claude_limit": ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS,
         "claude_ratio": round(claude_ratio, 4),
         "claude_deficit": claude_deficit,
     }
