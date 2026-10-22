@@ -300,6 +300,27 @@ repos:
         always_run: true
         stages: [post-commit]
 
+      # Registro GENERICO de excepciones YAML (WOT-2026-119a), sustituto del
+      # override por commit-message (WOT-2026-108d, hoy impotente a proposito
+      # -- ver scripts/override_registry.py). Dos fases, mismo patron que
+      # cuspide arriba: pre-commit solo avisa (expiry sin archivar), commit-msg
+      # bloquea en firme (self-approval + expiry sin archivar). No necesita
+      # fase post-commit: no hay telemetria de overrides que auditar aqui
+      # (el propio YAML versionado ES la auditoria durable).
+      - id: check-override-registry-warn
+        name: check override registry early warning (expiry sin archivar, nunca bloquea aca)
+        entry: uv run python scripts/check_override_registry.py --phase pre-commit
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: check-override-registry-gate
+        name: check override registry gate (BLOCK self-approval + expiry sin archivar)
+        entry: uv run python scripts/check_override_registry.py --phase commit-msg
+        language: system
+        stages: [commit-msg]
+
       # WOT-2026-003c: tracked .claude/settings.json must stay portable (no
       # personal permissions.allow) and any write-gating hook must FAIL CLOSED
       # (never exit 0 when its guard cannot be resolved). Prevents the A2d-class
