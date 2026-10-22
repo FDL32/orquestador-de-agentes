@@ -28,6 +28,13 @@ _PROJECT_ROOT_BOOTSTRAP = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT_BOOTSTRAP))
 
+# WOT-2026-117a: nombre de la variable de exencion, importado desde la unica
+# fuente de verdad (el propio gate) para que el nombre nunca diverja entre
+# quien lo declara (aqui) y quien lo comprueba (check_manager_role_for_suite).
+from scripts.check_manager_role_for_suite import (  # noqa: E402
+    SELFCHECK_EXEMPT_ENV as _ROLE_GATE_SELFCHECK_EXEMPT_ENV,
+)
+
 
 def _import_scope_gate():
     """Import scope_gate from the motor .agent/ directory."""
@@ -172,11 +179,17 @@ CANONICAL_SUITE_LEVEL = "all"
 
 
 def run_motor_script(
-    script_name: str, *args: str, project_root: Path | None = None
+    script_name: str,
+    *args: str,
+    project_root: Path | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> int:
     env = None
     if project_root is not None:
         env = build_project_env(project_root)
+    if extra_env:
+        env = dict(env) if env is not None else os.environ.copy()
+        env.update(extra_env)
     return subprocess.run(  # noqa: S603
         [sys.executable, str(MOTOR_SCRIPTS_DIR / script_name), *args],
         cwd=MOTOR_ROOT,
@@ -235,11 +248,17 @@ def run_code_gates(delivery_authority: str) -> int:
         # haya tocado codigo (acoplamiento de ORDEN, medido 2026-08-23 en el
         # cierre de un destino). Es la misma clase de falso-verde formal que
         # WOT-2026-025p documenta: sin `--level all` el verde es unit-only.
+        # WOT-2026-117a: declara la exencion del gate de rol-Manager
+        # (scripts/check_manager_role_for_suite.py). Este es el self-check
+        # del Builder que AGENTS.md nombra explicitamente como exento del
+        # protocolo de rol-unico -- la exencion va por INVOCADOR CONOCIDO,
+        # no por inferencia sobre TURN.md.
         rc_pytest = run_motor_script(
             "run_pytest_safe.py",
             "--level",
             CANONICAL_SUITE_LEVEL,
             project_root=authority_root,
+            extra_env={_ROLE_GATE_SELFCHECK_EXEMPT_ENV: "1"},
         )
         if rc_pytest != 0:
             return rc_pytest

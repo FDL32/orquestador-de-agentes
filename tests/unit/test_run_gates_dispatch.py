@@ -585,6 +585,31 @@ def test_058q_code_gates_run_the_canonical_level(monkeypatch, tmp_path):
     assert invocation[invocation.index("--level") + 1] == "all", invocation
 
 
+def test_117a_pytest_safe_invocation_carries_role_gate_exemption(monkeypatch, tmp_path):
+    """WOT-2026-117a: el self-check del Builder debe declarar la exencion del
+    gate de rol-Manager (scripts/check_manager_role_for_suite.py) en el
+    `env` del subprocess, o la regresion confirmada por revision adversarial
+    (el gate bloqueando este mismo self-check sancionado por AGENTS.md)
+    vuelve a producirse de forma silenciosa.
+    """
+    from scripts.check_manager_role_for_suite import SELFCHECK_EXEMPT_ENV
+
+    calls = _fake_gate_env(monkeypatch, tmp_path)
+
+    rc = dispatch.run_code_gates("repo_motor")
+
+    assert rc == 0
+    for cmd, _cwd, env in calls:
+        if any("run_pytest_safe" in str(part) for part in cmd):
+            assert env is not None, "run_pytest_safe debe recibir un env explicito"
+            assert env.get(SELFCHECK_EXEMPT_ENV, "").strip(), (
+                f"falta {SELFCHECK_EXEMPT_ENV} en el env de la invocacion: {env}"
+            )
+            break
+    else:
+        pytest.fail("el dispatcher no invoco run_pytest_safe")
+
+
 def test_058q_code_gates_never_seal_unit(monkeypatch, tmp_path):
     """CONTROL NEGATIVO del mismo par: el gate de codigo NUNCA sella `unit`.
 
