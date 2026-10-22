@@ -22,6 +22,61 @@ FRONTMATTER_RE = re.compile(r"\A﻿?---\n(?P<frontmatter>.*?)\n---", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(?P<name>.+?)\s*$", re.MULTILINE)
 TRIGGERS_RE = re.compile(r"^triggers:\s*\[(?P<triggers>.+?)\]\s*$", re.MULTILINE)
 
+# [D1] .agent/rules/common/skill_trigger_governance.md -- closed FORMAT
+# vocabulary for a trigger (not a fixed word list): a kebab-case lowercase
+# token with an optional leading "/". Verified non-disruptive against every
+# live skills/*/SKILL.md trigger before adoption (WOT-2026-118a).
+TRIGGER_FORMAT_RE = re.compile(r"^/?[a-z][a-z0-9-]*$")
+
+# [D2] closed vocabulary for conflict_policy. "deny-wins" is the historical
+# default (any duplicate trigger blocks); "host-wins" formalizes mechanically
+# the host-first precedence discover_skills.py already applies at runtime.
+CONFLICT_POLICIES = ("deny-wins", "host-wins")
+DEFAULT_CONFLICT_POLICY = "deny-wins"
+
+
+def _is_host_path(path: Path) -> bool:
+    """True when *path* lives under a `.agent/skills/` tree (host layer)."""
+    return ".agent" in path.parts and "skills" in path.parts
+
+
+def _invalid_trigger_formats(
+    triggers_by_path: dict[str, list[Path]],
+) -> list[tuple[str, list[Path]]]:
+    """[D1] Return (trigger, paths) for every trigger violating TRIGGER_FORMAT_RE.
+
+    A malformed trigger is always an error, independent of conflict_policy:
+    it can never be resolved deterministically (see D1).
+    """
+    return [
+        (trigger, paths)
+        for trigger, paths in sorted(triggers_by_path.items())
+        if not TRIGGER_FORMAT_RE.match(trigger)
+    ]
+
+
+def resolve_conflict(paths: list[Path], policy: str) -> bool:
+    """[D2]/[D3] Return True if *paths* (sharing one trigger) stay denied under *policy*.
+
+    Before: ``paths`` is the full set of SKILL.md files declaring the same
+        trigger (len >= 2, duplicates already established by the caller);
+        ``policy`` is one of CONFLICT_POLICIES.
+    During: ``deny-wins`` never resolves anything -- always denied.
+        ``host-wins`` resolves ONLY a 1:1 bundle/host pair (exactly one path
+        under a `.agent/skills/` tree and one that is not) -- the exact shape
+        discover_skills.py's host-first precedence already resolves at
+        runtime. Any other shape (same-layer duplicate, 3+ files) stays
+        denied, because no runtime rule resolves it either.
+    After: True (still a conflict, contributes to exit code) or False
+        (resolved, reported as info only). Depends only on path structure,
+        never on discovery order (D3: deterministic across runs).
+    """
+    if policy == "host-wins":
+        host_count = sum(1 for p in paths if _is_host_path(p))
+        if len(paths) == 2 and host_count == 1:
+            return False
+    return True
+
 
 def _read_frontmatter(path: Path) -> str | None:
     content = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
@@ -79,6 +134,33 @@ def _report_duplicates(label: str, mapping: dict[str, list[Path]], root: Path) -
     return len(duplicates)
 
 
+def _report_trigger_conflicts(
+    triggers: dict[str, list[Path]], root: Path, policy: str
+) -> int:
+    """[D2]/[D3] Report trigger duplicates, applying *policy* to each.
+
+    A duplicate resolved by `resolve_conflict()` under *policy* is still
+    printed (D3: resolution is informational, never silent) but does not
+    count toward the returned denied-conflict total.
+    """
+    duplicates = {key: paths for key, paths in triggers.items() if len(paths) > 1}
+    if not duplicates:
+        return 0
+    denied = 0
+    for trigger, paths in sorted(
+        duplicates.items(), key=lambda kv: (-len(kv[1]), kv[0])
+    ):
+        still_denied = resolve_conflict(paths, policy)
+        verdict = "DENIED" if still_denied else f"RESOLVED by {policy}"
+        print(f"\ntrigger {trigger!r} ({len(paths)} files) -- {verdict}:")
+        for path in paths:
+            tag = "host" if _is_host_path(path) else "bundle"
+            print(f"    - [{tag}] {path.relative_to(root)}")
+        if still_denied:
+            denied += 1
+    return denied
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -92,15 +174,33 @@ def main() -> int:
         action="store_true",
         help="Report duplicates but exit 0 (informational mode).",
     )
+    parser.add_argument(
+        "--conflict-policy",
+        choices=CONFLICT_POLICIES,
+        default=DEFAULT_CONFLICT_POLICY,
+        help=(
+            "[D2] How a duplicate trigger is resolved: 'deny-wins' (default, "
+            "any duplicate blocks) or 'host-wins' (a 1:1 bundle/host pair "
+            "resolves the way discover_skills.py already resolves it at "
+            "runtime; any other shape still blocks)."
+        ),
+    )
     args = parser.parse_args()
 
     root = args.root.resolve()
     names, triggers = scan_skills(root)
 
     dup_names = _report_duplicates("name", names, root)
-    dup_triggers = _report_duplicates("trigger", triggers, root)
+    denied_triggers = _report_trigger_conflicts(triggers, root, args.conflict_policy)
+    invalid_format = _invalid_trigger_formats(triggers)
+    if invalid_format:
+        print(f"\n{len(invalid_format)} trigger(s) violate the closed format [D1]:")
+        for trigger, paths in invalid_format:
+            print(f"  {trigger!r}")
+            for path in paths:
+                print(f"    - {path.relative_to(root)}")
 
-    if dup_names == 0 and dup_triggers == 0:
+    if dup_names == 0 and denied_triggers == 0 and not invalid_format:
         print("OK: no skill name or trigger collisions")
         return 0
 

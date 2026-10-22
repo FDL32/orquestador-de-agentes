@@ -14,5 +14,6 @@
 
 | letra | fichero |
 |-------|---------|
+| D | [`.agent/rules/common/skill_trigger_governance.md`](../../.agent/rules/common/skill_trigger_governance.md) |
 | F | [`.agent/rules/common/cem_v0_evidencia_forense.md`](../../.agent/rules/common/cem_v0_evidencia_forense.md) |
 | T | [`.agent/rules/common/wot_026t_orden_trabajo_forense.md`](../../.agent/rules/common/wot_026t_orden_trabajo_forense.md) |
