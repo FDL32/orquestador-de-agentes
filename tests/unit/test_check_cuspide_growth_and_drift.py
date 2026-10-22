@@ -177,6 +177,28 @@ def test_growth_over_ratio_blocks_without_override(repo: Path) -> None:
     assert "en deuda" in result.stderr
 
 
+def test_growth_over_ratio_blocks_even_with_valid_override(repo: Path) -> None:
+    """Caso 3b (WOT-2026-116a): growth sobre-ratio CON override valido
+    (marcador + REASON no vacio) -> BLOCK, exit 1. "No crecer nunca, incluso
+    en deuda" es literal: el override nunca exceptua este escalon, ni
+    siquiera cuando esta sintacticamente bien formado."""
+    _seed(repo, "a" * 33000)
+    _write(repo, "AGENTS.md", "a" * 33001)
+    _git(repo, "add", "AGENTS.md")
+    text = (
+        "grow over cap\n\n"
+        "GATE-OVERRIDE: cuspide_growth\n"
+        "REASON: fixture override valido\n"
+        "AFFECTED: codex_bytes\n"
+    )
+    message = _message(repo, text)
+
+    result = _run(repo, "commit-msg", str(message))
+    assert result.returncode == 1, result.stderr
+    assert "BLOCK" in result.stderr
+    assert "en deuda" in result.stderr
+
+
 # ---------------------------------------------------------------- casos 4-6
 def test_override_no_longer_excepts_in_cap(repo: Path) -> None:
     """Caso 4 (G1 flip): growth dentro de caps con override -> BLOCK, exit 1.
