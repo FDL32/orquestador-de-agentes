@@ -209,3 +209,109 @@ introduce las primeras claves `F1`-`F6` (pre-commit, mismo patron que `check_gua
    PRIMERA adopcion (Seccion 3.2 punto 4, sin cambios) -- extender el escaneo a otras clases
    `citado-obligatorio`/`referencia-bajo-demanda` (p.ej. `CONSTITUTION.md`) es una decision de
    adopcion FUTURA, fuera de alcance de este ticket, que solo introduce las primeras 6 claves.
+
+## 7. Pasada post-WOT-2026-114e: hallazgos y propuesta
+
+WOT-2026-114e (264830ad) acorto la cita de `(ver F1)` a `[F1]` y anadio anclas HTML
+navegables (`<a id="f1"></a>`) en `cem_v0_evidencia_forense.md` y un enlace markdown real en
+la leyenda. Nueva pasada sobre el estado resultante:
+
+1. **Regex del guard sigue siendo exacto tras el cambio de formato:** `_CITATION_RE = \[([A-Z]\d+)\]`
+   censado contra `AGENTS.md` + `.agent/rules/common/*.md` solo matchea las 9 citas reales
+   (`[F1]`..`[F7]`, con F1 y F7 repetidos en el resumen de linea 393) -- cero falsos positivos
+   de otros patrones `[LETRA+digitos]` en el alcance de citas (verificado por censo literal).
+2. **Hallazgo real, ya corregido en este mismo pase:** `.pre-commit-config.yaml:387-393`
+   (comentario + `name:` del hook `check-reference-keys`) seguia citando el formato VIEJO
+   `(ver X#)`, aunque el guard ya validaba `[X#]` desde 264830ad -- la salida del propio hook en
+   consola ("claves (ver X#) resuelven a un ancla") contradecia visualmente el formato real.
+   Corregido en el mismo commit que esta seccion: comentario y `name:` ahora dicen `[X#]`, mas
+   una linea que fecha el cambio de formato a WOT-2026-114e.
+3. **Barrido de `(ver [A-Z]\d+)` fuera de la superficie de citas:** las unicas coincidencias
+   restantes son (a) `.agent/runtime/ensemble/bundle_cemv0_api.md` -- artefacto de runtime de la
+   RONDA 1, cita textual de la propuesta en el momento en que se envio el bundle, no una fuente
+   editable; (b) referencias `(ver I7)`, `(ver D5)`, `(ver R2)`, `(ver D2)` en otros documentos
+   (`BUS_PROGRESS_AUDIT_2026-06-02.md`, los dos `DEC-router-*`, `palanca-a-raiz-agents-md-
+   diseno.md`) que son numeracion ad hoc DENTRO de un unico fichero, nunca el esquema letra-cruza-
+   fichero de este ticket -- confirma la Seccion 3.2 punto 4: no se retrofitean, siguen fuera de
+   alcance. (c) El propio `tests/unit/test_check_reference_keys.py:111-120` usa `(ver F9)` a
+   proposito como CONTROL NEGATIVO ("formato viejo, ya no es una cita") -- correcto, no stale.
+4. **No se encontro ninguna inconsistencia nueva entre lo que la leyenda documenta (Seccion
+   "Formato de cita") y lo que el guard aplica** -- ambos coinciden en `[X#]` / `**X#.**` /
+   enlace markdown real para la fila de la leyenda.
+
+**Propuesta:** ningun cambio de diseno adicional. El unico defecto real que esta pasada
+encontro (el comentario stale de `.pre-commit-config.yaml`) ya esta corregido en este mismo
+commit. Se declara el estado como ESTABLE para pasar a la RONDA 3 del bucle adversarial
+(Seccion 8) sin cambios pendientes de higiene documental conocidos.
+
+## 8. Bucle adversarial RONDA 3 (post-114e), resultado real
+
+`loop_id: EXPLORATORY-cem-v0-post-114e-20261022`, fase `DESIGN_REVIEW`, `task_type: prose`
+(mismo patron que RONDA 1/2 -- `contract-audit` exige nonce+commit-sha, improcedente para una
+revision exploratoria sin commit de gobierno), sin nonce ni commit-sha. Dos bundles: uno `api`
+(contenido pegado, sin ficheros -- el diff de los 4 cambios de WOT-2026-114e resumido) y uno
+`agent` (rutas absolutas del worktree). Roster pedido: `challenger_codex` y
+`challenger_opencode_glm_5_2` (agent), `challenger_nan_deepseek_flash` y
+`challenger_nan_qwen_flash` (api -- el usuario pidio "con fs" para estos dos, pero el motor
+define `nan_api` como canal `api` sin `repo_scope` en `agents.json`: no existe una variante
+"nan con filesystem" en este motor, asi que se despacharon como api estandar, con la evidencia
+pegada en el bundle en vez de rutas de fichero; se declara aqui en vez de fabricar un modo que
+no existe), `challenger_gemini_gemini`, `challenger_mistral`, `challenger_nvidia_kimi`,
+`challenger_llm7_minimax`, `challenger_cohere_command` (api).
+
+**Resultado real (no fabricado), 9/9 lentes pedidas respondieron, 0 bloqueadas por
+`privacy_preflight_blocked`** (a diferencia de RONDA 1: el bundle de esta ronda no pega ningun
+SHA de 40 hex ni token largo, solo fragmentos de regex/codigo y prosa -- evita el disparador de
+entropia que bloqueo RONDA 1):
+
+- **7 lentes `api` (deepseek, qwen3.8, gemini, mistral, kimi, minimax, cohere):** las 7
+  respondieron de forma sustantiva. Convergencia total en los 3 puntos pedidos: (1) el regex
+  `\[([A-Z]\d+)\]` no colisiona con `[^nota]`, `[texto][ref]` ni citas bibliograficas
+  multi-letra -- varias lentes (gemini, cohere) senalaron el mismo borde teorico no bloqueante:
+  un enlace markdown futuro con la clave como texto visible (`[F1](url)`) matchearia igual,
+  mitigado por el censo empirico de 0 falsos positivos; (2) el cambio de la leyenda a enlace
+  markdown real es seguro porque solo existe una fila (`F`) y se actualizo atomicamente; (3)
+  las 7 lentes confirmaron, releyendo el regex pegado, que `_ANCHOR_RE` no referencia
+  `<a id="...">` -- borrar las anclas HTML no afectaria al guard, consistente con la
+  declaracion de diseno. **Veredicto expreso:** `nan_qwen_flash` y `cohere` dijeron APPROVE
+  explicito; el resto no marco veredicto formal pero no encontro ninguna inconsistencia
+  bloqueante. **Dos huecos NO VERIFICABLE senalados** (nan_deepseek, kimi): (a) un censo de
+  `[LETRA+digitos]` fuera del alcance declarado, (b) otros consumidores del formato backtick
+  viejo de la leyenda. **Verificados por el autor de esta ronda tras el loop** (no por las
+  lentes, que no tienen filesystem): `grep -rn '\[[A-Z][0-9]\+\]' --include=*.md --include=*.py
+  --include=*.yaml .` fuera de `AGENTS.md`/`.agent/rules/common/*.md` -- cero coincidencias
+  reales (el unico match fuera de alcance, `.venv/.../mypy/types.py:3517`, es texto vendored de
+  una dependencia, no una cita); `grep -rln "reference_keys.md"` -- los 7 consumidores
+  (`cem_v0_evidencia_forense.md`, `bundle_cemv0_api.md` [artefacto de runtime RONDA 1, congelado],
+  `.pre-commit-config.yaml`, `AGENTS.md`, este documento, el guard y sus tests) estan todos
+  DENTRO del repo y se actualizaron en el mismo commit o son snapshots historicos sin
+  pretension de vigencia. Ambos huecos quedan cerrados: cero hallazgo real.
+- **`challenger_codex` (agent, destino=worktree del motor):** `APROBAR` ("No se requieren
+  cambios"), con lectura real y citas `archivo:linea` -- confirmo las 7 anclas unicas y su
+  adyacencia (`cem_v0_evidencia_forense.md:12-13,16-17,19-20,28-29,31-32,34-35,37-38`), ejecuto
+  el guard el mismo (`python scripts/check_reference_keys.py` -> `exit 0`), reviso la cobertura
+  de tests caso por caso (positivo, cita huerfana, ancla duplicada, control negativo `(ver F9)`,
+  fences con backtick y tilde) y confirmo cero restos del formato viejo en el alcance de citas.
+- **`challenger_opencode_glm_5_2` (agent):** bloqueada de nuevo (3/3 veces ya en este vuelo
+  CEM v0, RONDA 1 + RONDA 2 + RONDA 3) por el mismo bug de permisos `external_directory` --
+  declaro **CHANGES dirigido al DESPACHO, no al commit**, registrando explicitamente "nada de
+  lo anterior es evidencia en contra del codigo de 264830ad" y proponiendo dos remedios
+  (allowlist efectiva o bundle con fragmentos embebidos + log de ejecucion del guard). Esto es
+  un defecto de infraestructura reproducible y ya documentado (Seccion 5 de RONDA 1), ajeno a
+  esta propuesta; se registra aqui como tercera confirmacion del mismo patron, no se arregla en
+  este ticket.
+
+**Conteo de lentes independientes:** 8/9 sustantivas (las 7 api + codex), muy por encima del
+minimo de 2 que exige `check_loop_execution.min_distinct_for` para `deliverable_type:
+documentation`/`research`. `opencode_glm` cuenta como intento pedido, no como lente
+independiente (respuesta no sustantiva por bloqueo de infraestructura, declarada honesta).
+
+**Veredicto consolidado de RONDA 3:** ninguna lente encontro un defecto real en el cambio
+264830ad. Los dos huecos NO VERIFICABLE que las lentes `api` senalaron se verificaron
+manualmente tras el loop y no revelaron ningun hallazgo. **No hay accion de codigo pendiente.**
+
+**Deuda declarada (no nueva, tercera confirmacion):** el bug de `external_directory` de
+`opencode` que impide a esa lente leer el worktree real (WOT-2026-086/el mismo patron citado
+en `prompts/ensemble_loop.md`) sigue sin resolverse; no es alcance de este ticket documental,
+pero acumula ya 3 rondas consecutivas del mismo vuelo con el mismo sintoma, lo que refuerza el
+caso para priorizarlo como ticket de infraestructura propio en una sesion futura.
