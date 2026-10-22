@@ -211,11 +211,36 @@ class TestRealForeignPytestProbe:
             runner_match = bool(
                 orphan_row and rps._RUNNER_PROC_RE.search(orphan_row[2])
             )
+            raw_ps = subprocess.run(
+                ["ps", "-eo", "pid=,ppid=,args="],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            ).stdout
+            raw_lines_for_orphan = [
+                ln
+                for ln in raw_ps.splitlines()
+                if ln.strip().startswith(str(orphan_pid))
+            ]
+            try:
+                with open(f"/proc/{orphan_pid}/cmdline", "rb") as fh:
+                    proc_cmdline = fh.read()
+            except OSError as exc:
+                proc_cmdline = repr(exc)
+            try:
+                with open(f"/proc/{orphan_pid}/stat") as fh:
+                    proc_stat = fh.read().strip()
+            except OSError as exc:
+                proc_stat = repr(exc)
             print(
                 f"\n[DIAG-109a] platform={sys.platform!r} own_pid={os.getpid()!r} "
                 f"orphan_pid={orphan_pid!r} orphan_row={orphan_row!r} "
                 f"n_rows={len(rows)!r} before={before!r} after={after!r} "
-                f"regex_pytest_match={pytest_match!r} regex_runner_match={runner_match!r}"
+                f"regex_pytest_match={pytest_match!r} regex_runner_match={runner_match!r}\n"
+                f"[DIAG-109a] COLUMNS={os.environ.get('COLUMNS')!r} "
+                f"raw_ps_lines_for_orphan={raw_lines_for_orphan!r}\n"
+                f"[DIAG-109a] proc_cmdline_raw_bytes={proc_cmdline!r}\n"
+                f"[DIAG-109a] proc_stat={proc_stat!r}"
             )
             assert before is not None and after is not None
             assert after["matched_procs"] >= before["matched_procs"] + 1
