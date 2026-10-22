@@ -408,6 +408,40 @@ class ReviewBridge:
     def _normalize_opencode_model(model: str | None) -> str | None:
         return opencode_transport.normalize_opencode_model(model)
 
+    def _check_role_models_distinct(self) -> str | None:
+        """Gate: role_models.BUILDER != role_models.REVISOR (WOT-2026-098b/112a).
+
+        Before: self.project_root may or may not have a readable agents.json.
+        During: delegates the comparison to
+            scripts.check_role_models_distinct.compare_role_models (single
+            source, no copy of its typing/collision rules).
+        After: returns None if there is no collision, or if agents.json could
+            not be loaded (fail-OPEN on missing/unreadable config, same
+            posture as `_get_manager_backend`/`_get_manager_model` below --
+            this gate only blocks a REAL, confirmed collision, never an
+            absent config). Returns a human-readable rejection reason when
+            BUILDER and REVISOR share the same model_id.
+        """
+        try:
+            import scripts.check_role_models_distinct as role_models_gate
+            from agents_config import load_agents_config
+
+            config = load_agents_config(self.project_root)
+        except Exception:
+            return None
+        builder_raw, _revisor_raw, collision = role_models_gate.compare_role_models(
+            config
+        )
+        if not collision:
+            return None
+        return (
+            "role_models.BUILDER y role_models.REVISOR comparten el mismo "
+            f"model_id ({builder_raw!r}): la Capa 1.5 (Revisor/Manager) no "
+            "puede auditar de forma independiente el diff que produjo la "
+            "Capa 2 (Builder) con el mismo modelo "
+            "(scripts/check_role_models_distinct.py, WOT-2026-098b)."
+        )
+
     def _get_canonical_files(self) -> list[Path]:
         """Get list of canonical collaboration files to attach to OpenCode review."""
         collaboration_dir = self.project_root / ".agent" / "collaboration"
@@ -1994,6 +2028,29 @@ class ReviewBridge:
                 stderr=f"Review requested but ticket state is {latest_state}, expected READY_FOR_REVIEW.",
                 exit_code=1,
                 feedback="Review bridge blocked due to invalid ticket state.",
+            )
+
+        # WOT-2026-113a: role_models.BUILDER != role_models.REVISOR, cableado
+        # fail-closed justo antes de que la Capa 1.5 (Revisor/Manager) revise
+        # el diff de la Capa 2 (Builder). Mecanismo original: WOT-2026-098b.
+        role_models_reason = self._check_role_models_distinct()
+        if role_models_reason:
+            print(
+                f"[role-models-gate] REJECTED: {role_models_reason}",
+                file=sys.stderr,
+            )
+            self.event_bus.emit(
+                "REVIEW_ROLE_MODELS_BLOCKED",
+                ticket_id=ticket_id,
+                actor="MANAGER",
+                payload={"reason": role_models_reason},
+            )
+            return ReviewResult(
+                decision=ReviewDecision.INSPECT,
+                stdout="",
+                stderr=role_models_reason,
+                exit_code=1,
+                feedback=role_models_reason,
             )
 
         # WP-2026-118: Wrap initial emit in fail-safe

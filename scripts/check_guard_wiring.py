@@ -688,6 +688,10 @@ _DECLARED_ROOTS = (
     "scripts/prepush_check.py",
     "scripts/session_closeout.py",
     ".agent/agent_controller.py",
+    # bus/supervisor.py spawns this as a detached subprocess (string path,
+    # not an import), so the AST-based import closure never reaches it on
+    # its own even though supervisor.py itself is in the closure.
+    "scripts/manager_review_bridge.py",
 )
 _DECLARED_ROOT_GLOBS = ("scripts/preflight_*.py",)
 
