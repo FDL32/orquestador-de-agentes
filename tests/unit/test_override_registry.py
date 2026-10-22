@@ -176,3 +176,68 @@ def test_load_overrides_fail_closed_on_any_bad_file(tmp_path: Path):
 
 def test_load_overrides_on_missing_directory_returns_empty(tmp_path: Path):
     assert reg.load_overrides(tmp_path / "nonexistent") == []
+
+
+# --- Regresion: hallazgos del Revisor independiente (OpenCode/GLM-5.3) ------
+
+
+def test_normalize_relpath_does_not_collapse_hidden_dir_with_bare_name():
+    """(c) bug: lstrip('./') recortaba caracteres sueltos, no el prefijo
+    literal './' -- '.agent/x' colapsaba con 'agent/x'."""
+    assert reg.normalize_relpath(".agent/config/real.json") == ".agent/config/real.json"
+    assert reg.normalize_relpath("agent/config/real.json") == "agent/config/real.json"
+    assert reg.normalize_relpath(".agent/config/real.json") != reg.normalize_relpath(
+        "agent/config/real.json"
+    )
+
+
+def test_normalize_relpath_strips_only_leading_dot_slash_prefix():
+    assert reg.normalize_relpath("./scripts/x.py") == "scripts/x.py"
+    assert reg.normalize_relpath("././scripts/x.py") == "scripts/x.py"
+
+
+def test_normalize_relpath_does_not_collapse_parent_reference():
+    """(c) bug: '../scripts/guarded.py' colapsaba con 'scripts/guarded.py'."""
+    assert reg.normalize_relpath("../scripts/guarded.py") != reg.normalize_relpath(
+        "scripts/guarded.py"
+    )
+
+
+def test_scope_with_dotdot_segment_is_rejected_fail_closed():
+    broken = VALID_YAML.replace(
+        "scripts/example_guarded.py", "../scripts/example_guarded.py"
+    )
+    with pytest.raises(reg.OverrideRegistryError, match=r"\.\."):
+        _parse(broken)
+
+
+def test_scope_with_hidden_dir_does_not_match_bare_name_equivalent():
+    broken = VALID_YAML.replace("scripts/example_guarded.py", ".agent/config/real.json")
+    o = _parse(broken)
+    assert reg.scope_matches(o, "agent/config/real.json") is False
+    assert reg.scope_matches(o, ".agent/config/real.json") is True
+
+
+def test_expiry_as_yaml_datetime_is_rejected_fail_closed():
+    """(d) bug: un timestamp con hora ('2099-01-01 10:00:00') lo autoconvierte
+    PyYAML a datetime.datetime, que pasaba isinstance(x, date) sin filtrar y
+    reventaba sin capturar en is_expired. Debe rechazarse en parse."""
+    broken = VALID_YAML.replace("expiry: 2099-01-01", "expiry: 2099-01-01 10:00:00")
+    with pytest.raises(reg.OverrideRegistryError, match="expiry"):
+        _parse(broken)
+
+
+def test_duplicate_top_level_key_is_rejected_fail_closed():
+    """(d) bug: dos bloques 'scope:' parseaban sin error con last-wins
+    silencioso -- ambiguo entre lo que el aprobador lee y lo que el
+    mecanismo ejecuta."""
+    duplicated = (
+        "id: OVERRIDE-DUP-001\n"
+        "scope:\n  - scripts/harmless.py\n"
+        "scope:\n  - scripts/example_guarded.py\n"
+        "expiry: 2099-01-01\n"
+        "aprobador: tester\n"
+        "justificacion: motivo de prueba no vacio\n"
+    )
+    with pytest.raises(reg.OverrideRegistryError):
+        _parse(duplicated)

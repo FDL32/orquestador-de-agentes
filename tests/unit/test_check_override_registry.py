@@ -277,3 +277,93 @@ def test_one_corrupt_override_blocks_even_though_another_is_healthy(tmp_path: Pa
 
     result = _run_cli(tmp_path, "commit-msg")
     assert result.returncode == 1, result.stdout + result.stderr
+
+
+# --- Regresion (a): bypass via git mv, hallazgo del Revisor independiente --
+# (OpenCode/GLM-5.3). `--diff-filter=ACM` sin `R` dejaba invisible cualquier
+# rename; las 3 variantes de abajo reproducen exactamente los bypasses que
+# encontro antes del fix de staged_files() (--diff-filter=ACMR).
+
+
+def test_rename_resurrect_from_archive_is_still_self_approval(tmp_path: Path):
+    """Bypass 1: reactivar un override archivado con `git mv` en el MISMO
+    commit que modifica su fichero scoped no debe colar."""
+    _init_repo(tmp_path)
+    _write(tmp_path, "scripts/guarded.py", "x = 1\n")
+    _write(
+        tmp_path,
+        ".agent/overrides/_archive/vault.yaml",
+        _valid_override_yaml(
+            "OVERRIDE-RESURRECT-001", "scripts/guarded.py", "2099-01-01"
+        ),
+    )
+    _stage(tmp_path, ".")
+    commit = _git(tmp_path, "commit", "-q", "-m", "seed archived override")
+    assert commit.returncode == 0, commit.stderr
+
+    rename = _git(
+        tmp_path,
+        "mv",
+        ".agent/overrides/_archive/vault.yaml",
+        ".agent/overrides/vault.yaml",
+    )
+    assert rename.returncode == 0, rename.stderr
+    _write(tmp_path, "scripts/guarded.py", "x = 2\n")
+    _stage(tmp_path, ".")
+
+    result = _run_cli(tmp_path, "commit-msg")
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_renewal_disguised_as_rename_is_still_self_approval(tmp_path: Path):
+    """Bypass 2: `git mv old.yaml new.yaml` + editar expiry (alta similitud,
+    git lo reporta como R, no D+A) en el MISMO commit que el scoped."""
+    _init_repo(tmp_path)
+    _write(tmp_path, "scripts/guarded.py", "x = 1\n")
+    _write(
+        tmp_path,
+        ".agent/overrides/old.yaml",
+        _valid_override_yaml("OVERRIDE-RENEW-001", "scripts/guarded.py", "2026-01-01"),
+    )
+    _stage(tmp_path, ".")
+    commit = _git(tmp_path, "commit", "-q", "-m", "seed override")
+    assert commit.returncode == 0, commit.stderr
+
+    rename = _git(
+        tmp_path, "mv", ".agent/overrides/old.yaml", ".agent/overrides/new.yaml"
+    )
+    assert rename.returncode == 0, rename.stderr
+    _write(
+        tmp_path,
+        ".agent/overrides/new.yaml",
+        _valid_override_yaml("OVERRIDE-RENEW-001", "scripts/guarded.py", "2099-01-01"),
+    )
+    _write(tmp_path, "scripts/guarded.py", "x = 2\n")
+    _stage(tmp_path, ".")
+
+    result = _run_cli(tmp_path, "commit-msg")
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_renamed_scoped_file_with_new_override_is_still_self_approval(tmp_path: Path):
+    """Bypass 3: renombrar el fichero SCOPED (`git mv`, invisible) y anadir
+    el override para la ruta NUEVA en el mismo commit."""
+    _init_repo(tmp_path)
+    _write(tmp_path, "scripts/guarded.py", "x = 1\n")
+    _stage(tmp_path, "scripts/guarded.py")
+    commit = _git(tmp_path, "commit", "-q", "-m", "seed scoped file")
+    assert commit.returncode == 0, commit.stderr
+
+    rename = _git(tmp_path, "mv", "scripts/guarded.py", "scripts/guarded2.py")
+    assert rename.returncode == 0, rename.stderr
+    _write(
+        tmp_path,
+        ".agent/overrides/new.yaml",
+        _valid_override_yaml(
+            "OVERRIDE-RENAME-SCOPED-001", "scripts/guarded2.py", "2099-01-01"
+        ),
+    )
+    _stage(tmp_path, ".")
+
+    result = _run_cli(tmp_path, "commit-msg")
+    assert result.returncode == 1, result.stdout + result.stderr

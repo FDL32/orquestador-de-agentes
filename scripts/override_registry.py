@@ -74,7 +74,7 @@ import shutil
 import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
@@ -92,6 +92,38 @@ class OverrideRegistryError(RuntimeError):
     """Error fail-closed: YAML de override ilegible, incompleto o malformado."""
 
 
+class _StrictNoDuplicateKeysLoader(yaml.SafeLoader):
+    """SafeLoader que rechaza claves duplicadas (en vez del last-wins por defecto).
+
+    Hallazgo del Revisor independiente (WOT-2026-119a): un YAML con dos
+    bloques `scope:` parsea SIN error con `yaml.safe_load` y la maquina usa
+    el ULTIMO silenciosamente, mientras un humano que lo lee por encima ve
+    el primero -- ambiguedad real entre lo que el aprobador aprueba y lo que
+    el mecanismo ejecuta. Sigue siendo un SafeLoader (ningun constructor de
+    `!!python/*`); solo cambia la construccion de mappings.
+    """
+
+
+def _construct_mapping_no_duplicates(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_StrictNoDuplicateKeysLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping_no_duplicates
+)
+
+
 @dataclass(frozen=True)
 class Override:
     """Una excepcion registrada. `source_path` es el YAML que la declara."""
@@ -105,8 +137,19 @@ class Override:
 
 
 def normalize_relpath(path_str: str) -> str:
-    """Normaliza separadores para comparar rutas de forma portable (Windows/POSIX)."""
-    return path_str.strip().replace("\\", "/").lstrip("./")
+    """Normaliza separadores para comparar rutas de forma portable (Windows/POSIX).
+
+    Solo recorta un prefijo LITERAL `./` (repetido), nunca caracteres sueltos:
+    `lstrip("./")` recorta cualquier `.`/`/` iniciales como CONJUNTO de
+    caracteres, no como prefijo -- eso colapsaba `.agent/x` en `agent/x` y
+    `../x` en `x` (hallazgo del Revisor independiente, WOT-2026-119a,
+    bypass de salvaguarda c/a via normalizacion). `_parse_scope` ademas
+    rechaza cualquier entrada de `scope` con un segmento `..` (fail-closed).
+    """
+    normalized = path_str.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
 
 
 def _require_nonempty_str(data: dict, field: str, source_path: Path) -> str:
@@ -133,12 +176,28 @@ def _parse_scope(data: dict, source_path: Path) -> tuple[str, ...]:
                 f"{source_path}: 'scope' no admite comodines "
                 f"(matching estricto, salvaguarda c): {entry!r}"
             )
+        normalized_entry = entry.strip().replace("\\", "/")
+        if ".." in normalized_entry.split("/"):
+            raise OverrideRegistryError(
+                f"{source_path}: 'scope' no admite segmentos '..' "
+                f"(matching estricto, salvaguarda c): {entry!r}"
+            )
         scope.append(normalize_relpath(entry))
     return tuple(scope)
 
 
 def _parse_expiry(data: dict, source_path: Path) -> date:
     expiry_raw = data["expiry"]
+    # `datetime` es subclase de `date`: un `isinstance(x, date)` desnudo
+    # aceptaba un timestamp con hora (PyYAML lo autoconvierte) y el TypeError
+    # resultante explotaba sin capturar en `is_expired` (hallazgo del Revisor
+    # independiente, WOT-2026-119a) -- se rechaza aqui explicitamente, ANTES
+    # del isinstance(date) general.
+    if isinstance(expiry_raw, datetime):
+        raise OverrideRegistryError(
+            f"{source_path}: 'expiry' debe ser fecha ISO YYYY-MM-DD sin hora "
+            f"(recibido un datetime con hora): {expiry_raw!r}"
+        )
     if isinstance(expiry_raw, date):
         return expiry_raw
     if isinstance(expiry_raw, str):
@@ -164,7 +223,10 @@ def parse_override(text: str, source_path: Path) -> Override:
     patron laxo).
     """
     try:
-        data = yaml.safe_load(text)
+        # S506: el linter no distingue loaders por herencia -- este SIGUE
+        # siendo un yaml.SafeLoader (ver su definicion arriba), solo con la
+        # construccion de mappings sobreescrita para rechazar duplicados.
+        data = yaml.load(text, Loader=_StrictNoDuplicateKeysLoader)  # noqa: S506
     except yaml.YAMLError as exc:
         raise OverrideRegistryError(f"{source_path}: YAML ilegible: {exc}") from exc
     if not isinstance(data, dict):
@@ -237,9 +299,18 @@ _GIT = shutil.which("git") or "git"
 
 
 def staged_files(cwd: Path = MOTOR_ROOT) -> list[str]:
-    """Ficheros staged para el commit en curso (antes de que exista el SHA)."""
+    """Ficheros staged para el commit en curso (antes de que exista el SHA).
+
+    `--diff-filter` incluye `R` (renames) a proposito: sin ella, `git mv` deja
+    invisible tanto al override (reactivado desde `_archive/` o renombrado)
+    como al fichero scoped renombrado, y `self_approval_violation` no puede
+    ver lo que nunca aparece en la lista -- bypass de la salvaguarda (a) via
+    `git mv`, encontrado por el Revisor independiente (WOT-2026-119a). Con
+    `R` en el filtro, `--name-only` reporta la ruta NUEVA del rename, que es
+    exactamente la ruta vigente que `scope`/`source_path` necesitan comparar.
+    """
     result = subprocess.run(  # noqa: S603
-        [_GIT, "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        [_GIT, "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
         cwd=str(cwd),
         capture_output=True,
         text=True,
