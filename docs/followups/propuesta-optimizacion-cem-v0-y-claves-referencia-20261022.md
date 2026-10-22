@@ -186,3 +186,26 @@ tambien falla si una letra de la leyenda apunta a un fichero que no existe.
 (los ficheros `citado-obligatorio`/`referencia-bajo-demanda` del motor); las anclas se
 verifican dentro de cada fichero que la leyenda mapea. Se cablea en el MISMO commit que
 introduce las primeras claves `F1`-`F6` (pre-commit, mismo patron que `check_guard_wiring.py`).
+
+### 6.1 Ronda 2 del bucle: 4 puntos adicionales de Codex, resueltos o declarados non-goal
+
+1. **Variantes de fence (` ``` ` vs `~~~`, longitud variable):** el detector de bloques de
+   codigo reconoce AMBOS delimitadores (regex de apertura/cierre: `^(\`{3,}|~{3,})`, empareja
+   por el mismo caracter y longitud >= la de apertura, igual que el parser de Markdown
+   estandar -- no una deteccion ad hoc solo de ` ``` ` literal).
+2. **El regex de ancla puede matchear texto en negrita que no es una ancla real** (p.ej.
+   `**X3.** importante` usado como enfasis, no como referencia): se acepta como limitacion
+   conocida, NON-GOAL -- distinguir intencion semantica de un patron mecanico no es el trabajo
+   de un guard de sintaxis. Mitigacion suficiente: el prefijo de letra+numero de este esquema
+   (`F`, `R`, `E`...) se reserva por convencion para claves de referencia, nunca para enfasis
+   editorial -- se declara en la leyenda como regla de estilo, no se fuerza por codigo.
+3. **Deriva semantica (la cita apunta a un ancla que existe pero ya no es el caso correcto
+   tras una renumeracion, o la leyenda apunta a un fichero existente pero conceptualmente
+   distinto):** NON-GOAL declarado. Un guard mecanico verifica SINTAXIS (?existe la ancla?
+   ?es unica?), nunca SEMANTICA (?sigue siendo el caso correcto?) -- eso exige revision humana
+   o de Revisor en cada PR que toque un fichero de referencia, igual que cualquier otro cambio
+   de contenido. Se documenta como riesgo residual aceptado, no como hueco del guard.
+4. **Alcance limitado a `AGENTS.md` + `.agent/rules/common/*.md`:** se mantiene para esta
+   PRIMERA adopcion (Seccion 3.2 punto 4, sin cambios) -- extender el escaneo a otras clases
+   `citado-obligatorio`/`referencia-bajo-demanda` (p.ej. `CONSTITUTION.md`) es una decision de
+   adopcion FUTURA, fuera de alcance de este ticket, que solo introduce las primeras 6 claves.
