@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 51 |
+| prompt | 52 |
 | reference | 39 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 49 |
-| **total** | **147** |
+| **total** | **148** |
 
 ## Entradas
 
@@ -54,6 +54,7 @@
 | prompt | `prompts/memory_upload.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_child_dispatch_multiticket_multibackend_unlimited.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/orchestrator_cross_account_session_handoff.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_launch_builder.md` | active | system | builder | model-invoked | — |
