@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
 """Guard de crecimiento de la cuspide y de drift cuspide <-> capa 2.
 
-Dos escalones (G1 flip confirmado 2026-10-21, WOT-2026-108d):
-  commit-msg   BLOCK (exit 1) si grew Y AMBOS ratios <= 1.0x, SIN consultar
-               el mensaje (override deja de exceptuar el bloqueo).
-               Crecimiento con al menos un ratio > 1.0 -> WARN (exit 0) con
-               deltas y ratios en unidad nativa.
+Tres escalones en commit-msg (G1 flip confirmado 2026-10-21, WOT-2026-108d;
+WOT-2026-116a anade el tercero, politica "no crecer nunca, incluso en
+deuda", como escalon ADICIONAL, sin tocar el comportamiento del primero):
+  1. grew Y AMBOS ratios <= 1.0x -> BLOCK (exit 1), SIN consultar el mensaje
+     (override no exceptua). Sin cambios desde el G1 flip.
+  2. grew Y AL MENOS un ratio > 1.0x (la cuspide ya esta "en deuda", por
+     encima de cap) -> BLOCK (exit 1) TAMBIEN (WOT-2026-116a). Antes de este
+     ticket este caso era WARN (exit 0); el override tampoco exceptua este
+     escalon -- "no crecer nunca" es literal, incluida la cuspide en deuda.
+  3. sin growth -> silencio, exit 0.
   pre-commit   WARN por cualquier crecimiento (unifica texto con over_cap).
+               Sigue sin bloquear nunca (exit 0 siempre): es early warning,
+               el BLOCK autoritativo de ambos escalones vive en commit-msg.
   post-commit  parseo del marcador SOLO como telemetria no decisoria.
 
 Tres fases, porque el stage donde git entrega cada dato es distinto:
 
   pre-commit   medicion staged-vs-HEAD. WARN: imprime el delta y ratios.
                NUNCA bloquea (exit 0 siempre).
-  commit-msg   re-mide el mismo indice y lee el mensaje. BLOCK autoritativo
-               (exit 1) si hay grew Y ambos ratios <= 1.0;
-               WARN (exit 0) si al menos un ratio > 1.0 (override no aplica).
-  post-commit  mide HEAD^-vs-HEAD y lee el mensaje ya aterrizado. Si hay
-               marcador de override + growth, appendea una linea de telemetria
-               al canal gitignored. Exit 0 siempre: la telemetria no revoca
-               commits.
+  commit-msg   re-mide el mismo indice. BLOCK (exit 1) con cualquier growth,
+               dentro o fuera de cap (los dos escalones de arriba); no lee
+               el mensaje para decidir en ninguno de los dos.
+  post-commit  mide el merge-base real con `origin/main` vs HEAD (WOT-2026-116a:
+               no solo el padre inmediato -- un rebase o varios commits locales
+               pueden dejar HEAD^ distinto del punto real de divergencia; si
+               `origin/main` no resuelve -- remoto ausente, fixture hermetico --
+               degrada a HEAD^) y lee el mensaje ya aterrizado. Si hay marcador
+               de override + growth, appendea una linea de telemetria al canal
+               gitignored. Exit 0 siempre: la telemetria no revoca commits.
 
 Medicion: SIEMPRE sobre los blobs de git (`git show :<path>` para el indice,
 `git show HEAD:<path>` / `HEAD^:<path>` para commits), nunca sobre el working
@@ -486,6 +496,21 @@ def _commit_message(repo: Path) -> str:
     return result.stdout.decode("utf-8", errors="replace").strip()
 
 
+def _merge_base(repo: Path, base: str = "origin/main", head: str = "HEAD") -> str:
+    """Resuelve el punto real de divergencia entre `base` y `head` (WOT-2026-116a).
+
+    Before: `repo` es la raiz del repositorio; `base` puede no existir (remoto
+        ausente, fixture hermetico, primer commit sin remoto configurado).
+    During: `git merge-base <base> <head>`.
+    After: devuelve el SHA del merge-base, o cadena vacia si no resuelve; el
+        llamador decide el fallback (nunca lanza).
+    """
+    result = _run_git(repo, "merge-base", base, head)
+    if result.returncode != 0:
+        return ""
+    return result.stdout.decode("utf-8", errors="replace").strip()
+
+
 def _rev(repo: Path, revision: str) -> str:
     """Resuelve una revision a SHA.
 
@@ -546,21 +571,6 @@ def _growth_message_lines() -> list[str]:
     return list(_OVERRIDE_GRAMMAR)
 
 
-def _report_warn(pre: Metrics, post: Metrics, growth: Growth) -> None:
-    """Imprime el veredicto WARN de growth sobre-ratio.
-
-    Before: hay growth Y al menos un ratio_post > 1.0.
-    During: escribe el header y las metricas en stderr.
-    After: no devuelve nada; no lanza.
-    """
-    print(
-        f"{MARKER} WARN: growth con al menos un ratio_post > 1.0 en los gates.",
-        file=sys.stderr,
-    )
-    for line in growth_lines(pre, post, growth):
-        print(line, file=sys.stderr)
-
-
 def _report_block(pre: Metrics, post: Metrics, growth: Growth) -> None:
     """Imprime el BLOCK autoritativo de growth dentro de caps.
 
@@ -571,6 +581,25 @@ def _report_block(pre: Metrics, post: Metrics, growth: Growth) -> None:
     print(
         f"{MARKER} BLOCK: el commit hace crecer la cuspide y AMBOS ratios "
         "post estan <= 1.0x (el override ya no exceptua).",
+        file=sys.stderr,
+    )
+    for line in growth_lines(pre, post, growth):
+        print(line, file=sys.stderr)
+
+
+def _report_block_debt(pre: Metrics, post: Metrics, growth: Growth) -> None:
+    """Imprime el BLOCK del escalon "no crecer nunca, incluso en deuda" (WOT-2026-116a).
+
+    Before: hay grew Y al menos un ratio_post > 1.0 (la cuspide ya esta sobre
+        cap, "en deuda"). Antes de este ticket este caso era WARN (exit 0);
+        ahora bloquea tambien, como escalon ADICIONAL al BLOCK dentro-de-cap.
+    During: escribe el header y las metricas en stderr.
+    After: no devuelve nada; el llamador decide el exit 1.
+    """
+    print(
+        f"{MARKER} BLOCK: el commit hace crecer la cuspide con la cuspide YA "
+        "en deuda (al menos un ratio_post > 1.0). Politica 'no crecer nunca, "
+        "incluso en deuda' (WOT-2026-116a): el override tampoco exceptua.",
         file=sys.stderr,
     )
     for line in growth_lines(pre, post, growth):
@@ -612,13 +641,18 @@ def _run_pre_commit(repo: Path) -> int:
 
 
 def _run_commit_msg(repo: Path, message_path: Path | None) -> int:
-    """Fase commit-msg: BLOCK con semantica invertida (G1 flip).
+    """Fase commit-msg: BLOCK con dos escalones (G1 flip + WOT-2026-116a).
 
     Before: git entrega la ruta de `COMMIT_EDITMSG` como argv[1].
     During: re-deriva la medicion del indice (no confia en pre-commit).
-            BLOCK (exit 1) si grew Y AMBOS ratios <= 1.0x (override ignorado).
-            WARN (exit 0) si grew Y al menos un ratio > 1.0x.
-    After: exit 1 si grew Y ambos <= 1.0x; exit 0 en WARN o sin growth.
+            BLOCK (exit 1) si grew Y AMBOS ratios <= 1.0x (override ignorado,
+            G1 flip, sin cambios en este ticket).
+            BLOCK (exit 1) TAMBIEN si grew Y al menos un ratio > 1.0x --
+            escalon ADICIONAL "no crecer nunca, incluso en deuda"
+            (WOT-2026-116a): antes de este ticket era WARN (exit 0); el
+            override tampoco exceptua aqui.
+    After: exit 1 con cualquier growth (dentro o fuera de cap); exit 0 sin
+        growth.
     """
     if message_path is None:
         print(
@@ -641,22 +675,30 @@ def _run_commit_msg(repo: Path, message_path: Path | None) -> int:
         _report_block(pre, post, growth)
         return 1
 
-    # Al menos un ratio > 1.0x -> WARN (flip: antes era BLOCK)
-    _report_warn(pre, post, growth)
-    return 0
+    # Al menos un ratio > 1.0x (en deuda) -> BLOCK tambien (WOT-2026-116a:
+    # antes de este ticket era WARN, exit 0)
+    _report_block_debt(pre, post, growth)
+    return 1
 
 
 def _run_post_commit(repo: Path) -> int:
     """Fase post-commit: telemetria de overrides ya aterrizados.
 
     Before: el commit ya existe; HEAD^ puede no existir (primer commit).
-    During: mide HEAD^ vs HEAD, lee el mensaje final y, solo si hay
-        override + growth, appendea una linea al canal local.
+    During: mide el merge-base real con `origin/main` vs HEAD (WOT-2026-116a):
+        un rebase o varios commits locales pueden dejar HEAD^ distinto del
+        punto real de divergencia, lo que dejaria fuera growth repartido
+        entre varios commits. Si `origin/main` no resuelve (remoto ausente,
+        fixture hermetico, primer commit), degrada a HEAD^ -- mismo
+        comportamiento que antes de este ticket. Lee el mensaje final y,
+        solo si hay override + growth, appendea una linea al canal local.
     After: exit 0 siempre, incluso si el canal falla (la telemetria no revoca
         ni bloquea commits).
     """
     touched = _commit_touched(repo)
-    pre = measure_snapshot("HEAD^", repo)
+    merge_base = _merge_base(repo)
+    pre_ref = merge_base or "HEAD^"
+    pre = measure_snapshot(pre_ref, repo)
     post = measure_snapshot("HEAD", repo)
     cuspide = set(pre.cuspide_files) | set(post.cuspide_files)
     if not _touches_cuspide(touched, cuspide):
@@ -674,6 +716,7 @@ def _run_post_commit(repo: Path) -> int:
         "event": "cuspide_override",
         "commit": sha,
         "parent": parent,
+        "pre_ref": pre_ref,
         "delta_bytes": growth.delta_bytes,
         "delta_chars": growth.delta_chars,
         "ratio_codex_pre": pre.agents_bytes / GATE_CODEX_BYTES,
