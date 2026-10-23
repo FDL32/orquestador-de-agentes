@@ -9,13 +9,13 @@
 - `00-startup.md`: protocolo de inicio, carga de memoria y quality gates.
 - `01-security-architecture.md`: si tocas variables de entorno, hooks o permisos.
 - `03-skills-discovery.md`: si disenas o modificas micro-habilidades bajo `skills/`.
-- `04-refactor-kit.md`: si utilizas el refactor kit portable.
 - `README.md`: este indice y router.
 
 ## Router (si tocas X, lee Y; no se autocarga):
 - `.agent/collaboration/` (work_plan, logs, TURN, backlog): `.agent/rules/common/session_artifacts.md`.
   Cerrar ticket MUEVE su fila de `backlog.md` a `_archive/backlog_done.md` (estado terminal +
   `commit:<sha>`); ningun script lo hace; verifica con `check_backlog_contract.py`.
+- `agent_system/refactor_kit/` (solo stdlib, NUNCA importes del motor): `.agent/rules/common/refactor_kit.md`.
 
 ## Referencias bajo demanda (fuera de aqui; leelas solo al entrar en su dominio):
 - Backends y roles canonicos: `AGENTS.md`, seccion "Backends y roles".
