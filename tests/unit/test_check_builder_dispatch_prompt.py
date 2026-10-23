@@ -74,6 +74,10 @@ FALSE_NEGATIVE_PHRASES = (
     "Read the AGENTS.md file before starting.",
     "Consulta el archivo AGENTS.md para las convenciones del repo.",
     "Lee el AGENTS.md archivo.",
+    # WOT-2026-role-doc-audit (DESIGN_REVIEW, 2 lentes nan, 2026-10-23): un
+    # backtick inmediatamente antes de AGENTS.MD rompia el \s+ literal.
+    "Lee AGENTS.md entero antes de actuar.",
+    "Lee `AGENTS.md` entero antes de actuar.",
 )
 
 

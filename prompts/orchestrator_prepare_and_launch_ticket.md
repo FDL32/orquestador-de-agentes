@@ -176,11 +176,11 @@ copia), y no redactes el prompt hasta que el guard de exit 0.
 
 Con `work_plan.md` ya auditado, `--bootstrap-ticket` verde y la paridad de
 contratos confirmada, redacta el prompt de lanzamiento siguiendo
-**`prompts/orchestrator_launch_builder.md`** completo (578+ lineas — leelo
+**`prompts/orchestrator_launch_builder.md`** completo (leelo
 entero DESDE EL WORKTREE `<MOTOR_ROOT>`, no muestrees por grep; regla M4).
 Sustituye `{{TICKET_ID}}` y embebe la identidad del contrato que exige su
-Paso 0 (`contract_head`, `contract_sha256` de cada fichero citado —
-ver `orchestrator_launch_builder.md` seccion "Paso 0: Verificacion de
+Paso -1 (`contract_path`, `contract_sha256` de cada fichero citado —
+ver `orchestrator_launch_builder.md` seccion "Paso -1: Verificacion de
 identidad del contrato"). Deja el prompt listo para pegar en una sesion
 Builder nueva.
 
@@ -198,13 +198,23 @@ ticket es `code`/`mixed` de blast radius no trivial.
 sus claims antes de aceptar el cierre. Un Builder que miente sobre gates produce
 falsos verdes (medido: WOT-2026-072c — ruff claim falso, dirty tree fantasma).
 
+Este paso corresponde a la fase MANAGER_REVIEW del pipeline canonico (revision
+independiente: rol `revisor` del vocabulario de AGENTS.md). El metodo — Review
+1/Review 2 y la regla de doble revision adversarial — vive en
+`prompts/manager_review.md`, `prompts/audit_agent_output.md` y
+`prompts/orchestrator_pipeline.md` (secciones 5 y 6). Este atajo ENRUTA, no
+reimplementa (source_of_truth arriba).
+
 ```powershell
 # 1. Verificar ruff sobre archivos Python del diff
 git show --name-only <commit_builder> | Select-String "\.py$"
 # Luego: uv run ruff check <archivos_py_encontrados>
 
 # 2. Verificar que los tests declarados existen y pasan
-python -m pytest <tests_declarados_por_builder> -x -q
+#    (runner canonico: configura sys.path; AGENTS.md prohibe `python -m pytest`
+#     directo sobre tests que importan el controller. Ojo: args explicitos tras
+#     `--` = subset focal (explicit_args), NO cuenta como suite completa)
+python <MOTOR_ROOT>/scripts/run_pytest_safe.py -- -x -q <tests_declarados_por_builder>
 
 # 3. Verificar dirty tree: ¿los archivos marcados como dirty existen?
 git status --short
@@ -227,7 +237,7 @@ Solo tras el bucle sin BLOCKER vivo:
 
 1. `git add` **acotado** a los artefactos de este ticket (contrato, work_plan,
    prompt de arranque, reports del bucle) — nunca `git add -A` / `git add .`
-   (M2, `orchestrator_launch_builder.md:196`).
+   (M2, `orchestrator_launch_builder.md` seccion "M2. Prohibido `git add -A` / `git add .`").
 2. Commit con el ID de ticket completo con prefijo (regla de nomenclatura de
    AGENTS.md).
 3. Push.

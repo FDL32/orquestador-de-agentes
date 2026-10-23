@@ -222,7 +222,8 @@ transcribe para que no dependas de leerlo primero).
 
 **Eres un SUBAGENTE: no heredas el hook `SessionStart`.** El agente que te lanzo
 recibio el indice de memoria automaticamente; tu no. Si no ejecutas esto,
-trabajas con cero lecciones sobre un corpus de ~340 que ya documenta los fallos
+trabajas con cero lecciones sobre un corpus ya registrado (cientos de entradas en
+`.agent/runtime/memory/archive/`, union motor+destino) que documenta los fallos
 de esta casa.
 
 ```powershell
@@ -241,8 +242,8 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --id obs-<slug>
 ```
 
 **Por que esto no es ceremonia:** las cuatro reglas M1-M4 de la seccion siguiente
-son lecciones del corpus TRANSCRITAS A MANO a este prompt. Son cuatro de ~340.
-Las otras 336 solo te llegan si preguntas.
+son lecciones del corpus TRANSCRITAS A MANO a este prompt. Son cuatro de los
+cientos que lo componen. Las demas solo te llegan si preguntas.
 
 La memoria te da HECHOS (como ya fallo esta casa). Ante una duda de diseno
 que ni tu contrato citado (`work_plan.md`/`STRATEGY_`/`AUDIT_`) ni el
@@ -702,7 +703,7 @@ anterior de esta lista se auto-contradecia -- el bullet de archivado decia
   (WOT-2026-066i D2, un default silencioso en un guard fail-closed);
 - usa `{{TICKET_ID}}` en el mensaje del commit;
 - verifica que el diff revisable corresponde al contrato;
-- si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: ver el comando exacto en "Contrato de handoff canonico" mas abajo.
+- si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que no apunta a `HEAD`, no uses override: ver el comando exacto en "Contrato de handoff canonico" mas abajo.
 
 Contrato de handoff canonico:
 
@@ -733,7 +734,7 @@ Este override cubre UNICAMENTE el caso del scope gate. NO lo uses para un
 rechazo por `stale` / `expected HEAD`: ese caso se resuelve re-creando M3, como
 indica el parrafo siguiente.
 
-Si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que esperaba `HEAD`, no uses override: relanza `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff --project-root <repo_destino> --json --force` para recrear M3 en el commit actual y luego repite `mark-ready`.
+Si `mark-ready` dice que `checkpoint/review-<ticket>` esta `stale` o que no apunta a `HEAD`, no uses override: relanza `python <MOTOR_ROOT>/.agent/agent_controller.py --pre-handoff --project-root <repo_destino> --json --force` para recrear M3 en el commit actual y luego repite `mark-ready`.
 
 No hagas rondas vacias: cada nuevo `mark-ready` despues de un rechazo debe
 aportar diff, commit o evidencia nueva.
@@ -845,14 +846,18 @@ Reglas del informe:
   del commit.
 - `Lineas` se reporta solo para archivos presentes en el diff real. Si un archivo
   no cambio en el commit, no lo incluyas en la metrica.
-- Cifras de tests SOLO de `run_pytest_safe.py` (suite canonica allowlist por defecto;
-  no la llames "suite completa" salvo que hayas pasado args explicitos de
-  descubrimiento, por ejemplo `-- tests`);
+- Cifras de tests SOLO de `run_pytest_safe.py` (la suite canonica es
+  `--level all` SIN args explicitos: `args_mode=default_discovery`; pasar
+  `-- tests` o cualquier ruta produce `explicit_args` -- un subset focal que NO
+  es suite completa y que `pre_handoff_guard` rechaza como `not_full_suite`);
   no sumes conteos parciales de archivos sueltos.
 - **(WOT-2026-039m) La suite canonica NO se corre ni se reporta en este
   Builder Report.** Vive exclusivamente en "Cierre final tras aprobacion",
   despues del veredicto del Manager y el permiso del usuario. Se lee desde
-  `repo_motor/.agent/runtime/pytest-safe/last-run.json` y `last-run.log` en
+  `<PROJECT_ROOT>/.agent/runtime/pytest-safe/last-run.json` y `last-run.log`
+  (el repo segun `delivery_authority`: destino para `repo_destino`, motor para
+  `repo_motor`; mismo criterio con que se resuelve el stamp, ver "Cierre
+  cross-repo y replay closeout-only") en
   ESE paso, y solo cuenta si `tested_commit_sha == HEAD`, `level=all`,
   `args_mode=default_discovery` y `exit_code=0`.
 - Una suite verde de un commit anterior NO cuenta nunca como evidencia del

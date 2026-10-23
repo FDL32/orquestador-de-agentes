@@ -4,9 +4,12 @@ This template supports two operating modes:
 
 All commands below are relative to the repository root.
 
-## Agent backends
+## Roles vs backends
 
-Builder and Manager are roles, not products. You can run each role with any supported agent frontend as long as it can read and write the canonical files.
+`AGENTS.md` defines the canonical roles (Orquestador, Manager, Builder, Revisor,
+auditor, proposer, challenger, user). Builder and Manager are roles, not products.
+You can run each role with any supported agent frontend as long as it can read and
+write the canonical files.
 
 ### Supported backends
 

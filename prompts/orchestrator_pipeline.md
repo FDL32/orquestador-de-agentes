@@ -803,6 +803,14 @@ historial de la sesion del Manager (mismo patron que la seccion 10 / 11, donde
 `audit_goal_completion.md` corre el checker en fresh-context y solo recibe el
 bundle de evidencia dura). El objetivo es que Rev2 no herede el sesgo de Rev1.
 
+Nota de vocabulario de rol (AGENTS.md, WOT-2026-098b): la Revision 2 es la capa
+de revision INDEPENDIENTE de la implementacion -- el rol `revisor`. Aqui la
+encarna el MANAGER como subagente adversarial fresh-context; en los modos con
+delegacion (4 capas / Intermedio) la encarna Revisor-nan. Su condicion dura de
+independencia y su correlacion con las capas NO se re-declaran aqui: viven en
+`prompts/agent_execution_modes.md` -> `prompts/persona_system.md` (Seccion 2).
+Este prompt remite a esa fuente unica (T5/X-09), no la copia.
+
 Criterio operativo de independencia (reemplaza el vago "mismos checks"): Rev2
 debe aportar AL MENOS 2 SENALES NUEVAS frente a Rev1, elegidas de esta lista
 enumerada:

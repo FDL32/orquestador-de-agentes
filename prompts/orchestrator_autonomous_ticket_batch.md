@@ -72,7 +72,7 @@ in `prompts/audit_agent_output.md`.
    `-- auditor:      audit_agent_output.md          (CEM v0, evidence over narrative)
 ```
 
-Acyclic graph (verified by design): `triage -> executor -> {builder, reviewer,
+Acyclic graph (verified by design): `triage -> executor -> {builder, revisor,
 auditor} -> executor`. The return to the executor is a CONTROL return (it
 receives a verdict), never an INVOCATION: builder/reviewer/auditor never
 invoke the executor. No cycle.
@@ -83,8 +83,8 @@ invoke the executor. No cycle.
 
 This prompt declares below that **THE ACCEPTANCE TEST IS THE COLD AGENT**. That
 test applies to the executor's own memory first: a flight that closes tickets
-without a human in the loop, reading zero of the ~340 recorded lessons, is the
-coldest agent in the system.
+without a human in the loop, reading zero of the recorded lessons in the memory
+archive, is the coldest agent in the system.
 
 Run this BEFORE the accessibility gate -- it costs one command and no network:
 
@@ -282,7 +282,7 @@ writes `start_context_isolation.json` in the destino-rol reports dir BEFORE
    states it arrives AFTER the batch closes or stops, so it is structurally
    incapable of resolving a PREVENTIVE gate. The resolution is recorded in
    `start_context_isolation.json` as `{status: RESOLVED, approved_by,
-   approved_at, prompt_sha256, project_root_resolved, flight}`.
+   approved_at, prompt_sha256, project_root_resolved, scope, flight}`.
 
    **`flight` is MANDATORY and it is what makes the receipt ATTRIBUTABLE.**
    Without it a receipt is indistinguishable from a valid one belonging to
@@ -305,13 +305,13 @@ writes `start_context_isolation.json` in the destino-rol reports dir BEFORE
    `utf-8-sig`.
 
    **DECLARED DEBT, so this reads as a contract-in-force and not as a mechanism
-   that already bites:** today this gate is a NORM, not a wired barrier -- nothing
-   refuses to run when the receipt is missing, and neither the sibling auditor
-   prompt nor its skill nor any test currently reads
-   `start_context_isolation.json`. Wiring it (the barrier, its parity across both
-   prompts and the skill, and its tests) is `WOT-2026-044r`. Until that lands, an
-   executor that finds no receipt MUST stop and ask for one; it must not infer
-   approval from its absence.
+   that already bites:** the parity landed (`WOT-2026-044r`): the sibling auditor
+   prompt (section 4.bis), its skill and the parity tests now read
+   `start_context_isolation.json`, and a mechanical guard runs in prepush
+   (`scripts/check_seal_staleness.py`, `WOT-2026-055c`). What is still NOT wired
+   is the refusal: that guard is WARN-only -- nothing stops a run when the receipt
+   is missing. An executor that finds no receipt MUST stop and ask for one; it
+   must not infer approval from its absence.
 
    **SEALING ORDER -- the receipt is the LAST step, never the first (measured
    2026-08-05).** `prompt_sha256` binds the receipt to the EXACT bytes of the
@@ -554,7 +554,9 @@ CLOSE adds a **phase 2 (challenge)** after phase 1's `1->9->2`:
 - **`9` = challenge fan-out = Claude + 4 nan + 1 Claude reader.** A Claude
   challenger leads, the 4 nan attack, a Claude reader (filesystem) arbitrates.
 - **close = Claude -> glm -> Codex (final).** Claude drafts the close verdict;
-  glm-5.2 (via `opencode run --model opencode-go/glm-5.2`) refines it
+  glm (via the profile `challenger_opencode_glm_5_2` -- run the `model` field
+from `.agent/config/agents.json`, never a hardcoded model id: the glm-5.2
+string was drift, WOT-2026-082a) refines it
   incrementally (chain -- refine, never verify); Codex delivers the final
   adversarial pass. If glm fails (0 bytes / timeout / rc!=0 / no round-trip),
   fall back to the best nan by scorecard (WOT-2026-034a).
@@ -583,7 +585,7 @@ Skipping emit-nonce leaves the barrier in SKIP -- the loop reverts to a norm.
 Dispatch particulars are non-negotiable and cost real time when ignored: NEVER
 more than 4-5 nan concurrent (HTTP 429); prefer sequential with a pause, retry
 429s; verdict by CONTENT, never by rc (PONG-019o). Canonical loop reference:
-`prompts/backlog_triage.md`. The DAG's `ensemble_policy` per group (see
+`prompts/ensemble_loop.md`. The DAG's `ensemble_policy` per group (see
 `backlog_triage_<YYYYMMDD-HHMMSS>.json`) declares which extra loops a group triggers beyond
 these three fixed governance loops; the schema formalization is `WOT-2026-026b`.
 The synthesis verdict is ALWAYS the main thread's, never a subagent's self-report
@@ -644,7 +646,8 @@ fabricates false-greens:
 - `suite_roja_heredada` (a red suite inherited from before this run is
   classified and blocked, never "recovered")
 - `flaky` (reproducible only sometimes)
-- `falso_verde` detected by an auditor
+- `falso_verde` detected by independent review (revisor, e.g. Review 2; the
+  sibling auditor catches it only after close, never mid-run)
 - `bus_drift` **without a canonical tool** to fix it
 - `scope_dirty_no_atribuible` (dirty git that cannot be attributed)
 - `estado_canonico_dividido` (measured **against the bus**, not against
@@ -943,10 +946,12 @@ closing predicate. It lives in its own artifact, `start_context_isolation.json`,
 written BEFORE any ticket; `batch_run_<ts>.json` only COPIES the resolved receipt
 into a top-level `start_context_isolation` field, OUTSIDE the `PREDICATE` block.
 A receipt self-marked `RESOLVED` by the executor is self-certification:
-`falso_verde`. **Parity debt (`WOT-2026-044r`): moving this out of the PREDICATE
-avoids the cardinality split, but the new channel has NO parity test of its own
-yet -- the sibling auditor prompt, its skill and the test suite do not read this
-field today. Until that is wired, this is a NORM, not a barrier, and it is
+`falso_verde`. **Parity status (`WOT-2026-044r`): moving this out of the
+PREDICATE avoids the cardinality split. The parity landed: the sibling auditor
+prompt (section 4.bis), its skill and the test suite now read this field, and
+`scripts/check_seal_staleness.py` (`WOT-2026-055c`) checks it in prepush as a
+WARN. What remains unwired is the blocking refusal -- the guard warns but does
+not stop the run, so enforcement is still a NORM, not a barrier, and it is
 declared as such rather than presented as an enforced mechanism.**
 
 Emit it as a `PREDICATE` block inside `batch_run_<ts>.json`, one entry per
@@ -1016,8 +1021,8 @@ the batch STARTS:
 This prompt's audit lives in `prompts/audit_autonomous_ticket_batch.md`
 (sibling ticket). **The executor cannot audit itself** -- fresh-context
 isolation is mandatory, the same pattern as
-`prompts/audit_goal_completion.md`'s "checker isolated from the
-orchestrator-executor". Any claim that a batch run is verified without that
+`prompts/audit_goal_completion.md`'s isolated checker (its literal wording:
+"Checker AISLADO del orquestador-ejecutor"). Any claim that a batch run is verified without that
 sibling audit having run is self-certification, and CEM prohibits it.
 
 ---

@@ -104,25 +104,25 @@ Builder run. The current default model is `opencode-go/deepseek-v4-flash`.
 
 ## 0b. Role-to-backend mapping
 
-Builder and Manager are roles; the backend can vary.
+Builder, Manager, and Revisor are roles; the backend can vary.
+The Revisor (Persona-2, Capa 1.5) MUST use a backend/model different from the Builder
+(this is a hard condition per `AGENTS.md` and `prompts/persona_system.md`).
 
-| Backend | Builder use | Manager use | Where to configure |
-|---------|-------------|-------------|--------------------|
-| OpenCode | Default Builder sessions for this repo | N/A for review flow | `.opencode/opencode.json` and `.opencode/agents/builder.md` |
-| Claude Code | Chat-driven builder sessions or terminal sessions | Review bridge / orchestration | Claude Code app/session settings |
-| Codex | File-driven builder or manager runs | Review bridge and terminal orchestration | `~/.codex/config.toml` |
-| Cline | VS Code agent manager for Builder or Manager tasks | Manual review or bridge-like workflows | `~/.cline/data/settings/cline_mcp_settings.json` |
-| Kilo | Alternate Builder or Manager backend when explicitly selected | Alternate Builder or Manager backend when explicitly selected | `~/.config/kilo/kilo.jsonc` |
+| Backend | Builder use | Manager use | Revisor use | Where to configure |
+|---------|-------------|-------------|-------------|--------------------|
+| OpenCode | Default Builder sessions for this repo | N/A for review flow | N/A for review flow | `.opencode/opencode.json` and `.opencode/agents/builder.md` |
+| Claude Code | Chat-driven builder sessions or terminal sessions | Review bridge / orchestration | Can be used for Revisor (when different from Builder backend) | Claude Code app/session settings |
+| Codex | File-driven builder or manager runs | Review bridge and terminal orchestration | Can be used for Revisor (when different from Builder backend) | `~/.codex/config.toml` |
+| Cline | VS Code agent manager for Builder or Manager tasks | Manual review or bridge-like workflows | N/A | `~/.cline/data/settings/cline_mcp_settings.json` |
+| Kilo | Alternate Builder or Manager backend when explicitly selected | Alternate Builder or Manager backend when explicitly selected | Can be used for Revisor (when different from Builder backend) | `~/.config/kilo/kilo.jsonc` |
 
-Rule:
-- If you switch backend during a ticket, update `.agent/collaboration/TURN.md`, `.agent/collaboration/STATE.md`, `.agent/collaboration/execution_log.md`, and `.agent/collaboration/notifications.md`.
-- The role stays the same even if the backend changes.
+Rule for Revisor: the Revisor's backend/model MUST differ from the Builder's.
+Use `ensemble_dispatch.py loop-round` to dispatch the Revisor with a different model.
+See `scripts/check_role_models_distinct.py` for the mechanical gate that enforces this.
 
 ## 0c. Startup Templates
 
 `WP-2026-040` introduced startup templates by role/backend to eliminate manual prompt copying. `WP-2026-041` added automated review loop reusing templates with previous feedback. `WP-2026-042` achieved canonical closure with full archival and documentation synchronization. `WP-2026-043` hardened the closeout boundary so completion required explicit Manager approval before returning to `COMPLETED`, and the repository is now back in idle clean state. `WP-2026-066` aligns integration tests and public documentation with the recovered baseline.
-
-The current cycle is `WP-2026-075` completed (Event Bus Observability). DeepEval / LLM evals are kept separate from the deterministic supervisor flow. `WP-2026-053` remains closed as session closeout robustness.
 
 If you need a clean restart after an interrupted session, use the supervisor directly:
 
@@ -254,6 +254,9 @@ For the current active ticket, the launcher follows `.agent/collaboration/work_p
 
 ### Terminal 1: Builder (when active ticket is ready)
 
+The Revisor (Persona-2) runs separately when the 4-layer pattern is active.
+See section 0b and `prompts/agent_execution_modes.md` for when the Revisor is dispatched.
+
 ```powershell
 code .
 ```
@@ -314,6 +317,12 @@ No reescribas el ticket entero.
 - **Builder**: Implements approved tickets following `.agent/collaboration/work_plan.md`, registers evidence in `.agent/collaboration/execution_log.md`, executes quality gates, and performs mandatory closure protocol.
 - **Supervisor**: Orchestrates the sequential queue via terminal-driven workflow, synchronizes `.agent/collaboration/TURN.md`, `.agent/collaboration/execution_log.md`, and `.agent/collaboration/notifications.md`, advances the queue when appropriate.
 - **Review Bridge**: Launches Manager review automatically when tickets reach READY_FOR_REVIEW, handles APPROVE/CHANGES decisions with deterministic flow.
+- **Revisor (Persona-2, Capa 1.5)**: Independent adversarial review run by a backend/model different from the Builder. Dispatched via `ensemble_dispatch.py loop-round` when the 4-layer execution pattern is active. Not launched as a separate terminal by default; run on demand or via the ensemble dispatch protocol.
+
+Note: the 4-layer execution pattern (Orquestador/Manager/Builder/Revisor) from
+`AGENTS.md` adds the Revisor as an independent review layer. The terminal model
+above covers the basic 3-agent workflow; the Revisor layer is activated when
+needed (see `prompts/agent_execution_modes.md`).
 
 Important:
 - These surfaces belong to the active workspace, not to the motor repository itself.

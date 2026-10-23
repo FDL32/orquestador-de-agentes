@@ -155,7 +155,7 @@ significa que esa numeracion no tiene fase propia para ese tramo; se traduce al 
 | bucle sobre cada plan | F3-auditoria-contrato | CONTRACT_AUDIT |
 | implantacion por riesgo ascendente | F4-lanzamiento | - |
 | bucle sobre el prompt del ejecutor | F5-implementacion | - |
-| ejecucion y revision | F6-revision | MANAGER_REVIEW |
+| ejecucion y revision por un modelo distinto | F6-revision | MANAGER_REVIEW |
 | mejora continua medible | - | - |
 | limites de autoridad / cierre | F7-cierre-sesion | CLOSE |
 

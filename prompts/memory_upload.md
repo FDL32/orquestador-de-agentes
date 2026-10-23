@@ -123,7 +123,7 @@ Antes de escribir cualquier memoria, declara EXPLÍCITAMENTE su destino. No bast
 
 ### El fichero al que se promueve es el ARCHIVE VERSIONADO (no `observations.jsonl`)
 
-> **`.agent/runtime/memory/observations.jsonl` está GITIGNORED** (`.gitignore:104`) en
+> **`.agent/runtime/memory/observations.jsonl` está GITIGNORED** (`.gitignore:153`) en
 > TODAS las worktrees. **Escribir ahí NO promueve nada**: ningún commit lo recoge y ningún
 > push lo mueve. Es el buffer de runtime (lo escriben los hooks en cada tool call y
 > `session_close_observations.py` en cada cierre): telemetría efímera y lección portable

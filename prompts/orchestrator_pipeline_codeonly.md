@@ -174,7 +174,11 @@ memoria"); para cambios mayores, delegar al Builder con la instruccion de persis
   suite CONCURRENTE con un Review 2 que muta** (false-fail por solapamiento).
 
 ### 5. Review 2 fresh-context OBLIGATORIO (toca superficie del motor = alto blast)
-Un auditor fresh-context que VERIFICA cada claim y **MUTA produccion para probar que
+Un revisor fresh-context (capa de revision INDEPENDIENTE de la implementacion --
+rol `revisor` del vocabulario canonico de `AGENTS.md`, WOT-2026-098b; su
+condicion dura de independencia vive en `prompts/agent_execution_modes.md` ->
+`prompts/persona_system.md`, se remite a ella, no se re-declara aqui)
+que VERIFICA cada claim y **MUTA produccion para probar que
 las barreras/retiradas son genuinas** (mutation-to-prove: romper el fix debe romper
 el test; quitar un import "conservado" debe romper el fichero). Un test verde +
 docstring plausible != barrera. **Secuenciar** el Review 2 respecto a la suite (no

@@ -43,7 +43,7 @@ Goal:
 ### Session Closeout
 
 - `python .agent\agent_controller.py --validate --json --force` passes without drift.
-- Note: `scripts/session_closeout.py` exists in `repo_motor` and is the live delegate of `--session-close` (`agent_controller.py` handles the flag by calling it directly — see its docstring for the before/during/after contract). This note previously claimed it was removed in `WP-2026-061`; that was false as of `f093b8c4` (2026-10-22) — verify it still exists before trusting this note, since it describes `repo_motor` state, not `repo_destino`.
+- Closeout runs through the canonical entrypoint `python .agent/agent_controller.py --session-close` (see QUICKSTART.md section "Session close"), which delegates to `scripts/session_closeout.py`. Closeout edits `work_plan.md` and `execution_log.md` to `COMPLETED`, regenerates `TURN.md` with `--reset-turn`, then validates.
 
 ### System Closeout
 

@@ -70,7 +70,7 @@ iniciales detectados, siguiente accion.
 
 ## Cuando NO usarlo
 
-- A mitad de un ticket de implementacion en curso (rompe el flujo Manager -> Builder normal).
+- A mitad de un ticket de implementacion en curso (rompe el flujo canonico del ticket: Orquestador -> Manager -> Builder).
 - Para fixes puntuales de bug: usa el ciclo canonico, no este bootstrap.
 - En llamadas one-shot desde el launcher: ahi ya sirve el prompt compuesto del ticket.
 

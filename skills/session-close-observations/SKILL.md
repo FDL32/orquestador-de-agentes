@@ -18,7 +18,7 @@ Skill compartida para convertir lo aprendido al final de cada ciclo en observaci
 
 ## Overview
 
-Esta skill es invocada por Builder, Manager o Supervisor al cerrar una sesion para generar observaciones candidatas que seran filtradas y potencialmente promovidas a `observations.jsonl`.
+Esta skill es invocada por Builder, Manager, Revisor u Orquestador al cerrar una sesion para generar observaciones candidatas que seran filtradas y potencialmente promovidas a `observations.jsonl`.
 
 ### Cuando activar
 
