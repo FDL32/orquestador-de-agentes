@@ -201,7 +201,7 @@ Sigue esa fuente. Si esta skill y el prompt divergen, prevalece el prompt.
 - `references/code-rules.md` - Reglas completas de codigo Python
 - `references/log-format.md` - Formato de execution_log.md
 - `.agent/rules/builder/` - Restricciones del rol
-- `.agent/workflows/builder_workflow.md` - Flujo completo
+- `prompts/orchestrator_launch_builder.md` - Flujo canonico del Builder
 
 ## Constraints
 

@@ -12,7 +12,7 @@ Este checklist documenta los pasos manuales necesarios para completar la publica
    - Ejecutar `git add .` para agregar todos los cambios.
 
 3. **Crear commit:**
-   - Ejecutar `git commit -m "feat: publicar snapshot limpio v9.6.0 - validacion final completada"` o mensaje similar.
+   - Ejecutar `git commit -m "feat: publicar snapshot limpio v<version> - validacion final completada"` o mensaje similar.
 
 4. **Empujar a remoto:**
    - Ejecutar `git push origin main` (o la rama correspondiente).

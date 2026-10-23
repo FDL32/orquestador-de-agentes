@@ -28,23 +28,27 @@ The motor now follows **CEM: Contract, Evidence, Memory** as its lightweight eng
 
 The expanded v0 rule lives in `.agent/rules/common/sustainable_engineering.md`. Current field work has moved the loop toward bus-first state, motor-aware gates, and portable closeout checks.
 
-### Three-agent loop
+### Four-layer loop (4-layer execution pattern)
 
 | Role | Responsibility | Default backend |
 |---|---|---|
-| **Supervisor** | Generates plans, derives tickets, coordinates the cycle | Claude Code |
-| **Builder** | Implements tickets, runs gates, emits `BUILDER_EXIT` | OpenCode → DeepSeek V4 Flash (`opencode-go/deepseek-v4-flash`) |
-| **Manager** | Reviews Builder output with a deliverable-type-aware rubric; emits `APPROVE` / `CHANGES` | OpenCode → OpenAI (`openai/gpt-5.4-mini`, routed natively since WP-072) |
+| **Orquestador** (Claude Code, Capa 0) | Plans, delegates, coordinates the cycle. The SIEMPRE-ORQUESTA role, never delegable. | Claude Code |
+| **Manager** (Capa 1) | Creates work_plan, approves, requests changes | Claude Code / OpenCode |
+| **Builder** (Capa 2) | Implements tickets, runs gates, emits `BUILDER_EXIT` | OpenCode → DeepSeek V4 Flash (`opencode-go/deepseek-v4-flash`) |
+| **Revisor** (Capa 1.5 / Persona-2) | Independent adversarial review; NUNCA el mismo backend/modelo que el Builder | `ensemble_dispatch.py loop-round` |
 
 Backends are pluggable per role in `.agent/config/agents.json` (`role_assignments` + `role_models`).
+
+See `AGENTS.md` "Backends y roles" and `prompts/agent_execution_modes.md` for the full 4-layer vocabulary.
 
 ### Current reference setup
 
 The author's working configuration on Windows:
 
-- **Supervisor**: Claude Code (chat-driven planning + terminal control)
+- **Orquestador** (Claude Code): chat-driven planning + terminal control
 - **Manager**: OpenCode routed to OpenAI Codex / GPT (`openai/gpt-5.4-mini`)
 - **Builder**: OpenCode routed to MiMo V2.5 via the [opencode.ai/go](https://opencode.ai/go) plan
+- **Revisor**: dispatched via `ensemble_dispatch.py loop-round` with a model different from the Builder
 - **Approximate cost**: ~50 EUR/month (Anthropic + opencode-go bundle)
 
 This is a **reference** setup, not a constraint. Swap any role for another backend by editing `agents.json`. The bus, state machine and review bridge are backend-agnostic.
