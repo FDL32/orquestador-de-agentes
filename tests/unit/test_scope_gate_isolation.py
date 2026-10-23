@@ -252,3 +252,128 @@ class TestExcludeFilesSessionScratch:
         )
 
         assert str((tmp_path / ".session").resolve()) not in excluded
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-055k: warning message clarity for cross-root contamination
+# ---------------------------------------------------------------------------
+
+
+class TestCheckScopeForValidateCrossRoot:
+    """Verify the improved contaminacion_productiva warning (WOT-2026-055k).
+
+    Tests that `_check_scope_for_validate` produces a warning that:
+    (a) names the cause (cambios SIN COMMITEAR) and that it's TRANSITORIO,
+    (b) offers the correct action (wait/commit/re-validate),
+    (c) does NOT silence the warning (still fires for uncommitted productive files).
+    """
+
+    def test_uncommitted_file_produces_clarified_warning(self, tmp_path):
+        """With an uncommitted productive file in the other root,
+        the warning names the cause and that it's transient."""
+        from unittest.mock import patch
+
+        import agent_controller
+
+        da = "repo_motor"
+        work_plan = (
+            "Ticket: WOT-TEST-0001a\r\n"
+            "delivery_authority: repo_motor\r\n"
+            "### repo_motor\r\n"
+            "src/main.py\r\n"
+        )
+
+        cross_result = {
+            "productive": {str((tmp_path / "src" / "feature.py").resolve())},
+            "operational": set(),
+        }
+
+        with (
+            patch.object(
+                agent_controller,
+                "_read_delivery_authority",
+                return_value=da,
+            ),
+            patch.object(
+                agent_controller,
+                "parse_flt_namespaced",
+                return_value={"motor": {"src/main.py"}, "destino": set()},
+            ),
+            patch.object(
+                agent_controller,
+                "_check_cross_root_contamination",
+                return_value=cross_result,
+            ),
+            patch.object(
+                agent_controller,
+                "get_productive_changed_files",
+                return_value=set(),
+            ),
+        ):
+            _, warnings = agent_controller._check_scope_for_validate(
+                work_plan, "READY_FOR_REVIEW"
+            )
+
+        # Should produce exactly one warning for the cross-root contamination
+        cross_warnings = [
+            w for w in warnings if w.startswith("contaminacion_productiva")
+        ]
+        assert len(cross_warnings) == 1
+        msg = cross_warnings[0]
+
+        # Must contain the prefix that consumers may parse
+        assert "contaminacion_productiva (repo_destino):" in msg
+
+        # WOT-2026-055k: message explains working-tree transient nature
+        assert "SIN COMMITEAR" in msg
+        assert "transitorios" in msg
+
+        # WOT-2026-055k: message offers corrective action
+        assert "re-valida" in msg or "revalidate" in msg.lower()
+
+    def test_clean_other_root_produces_no_warning(self, tmp_path):
+        """When the other root has no productive changes, no warning fires."""
+        from unittest.mock import patch
+
+        import agent_controller
+
+        da = "repo_motor"
+        work_plan = (
+            "Ticket: WOT-TEST-0001a\r\n"
+            "delivery_authority: repo_motor\r\n"
+            "### repo_motor\r\n"
+            "src/main.py\r\n"
+        )
+
+        cross_result = {"productive": set(), "operational": set()}
+
+        with (
+            patch.object(
+                agent_controller,
+                "_read_delivery_authority",
+                return_value=da,
+            ),
+            patch.object(
+                agent_controller,
+                "parse_flt_namespaced",
+                return_value={"motor": {"src/main.py"}, "destino": set()},
+            ),
+            patch.object(
+                agent_controller,
+                "_check_cross_root_contamination",
+                return_value=cross_result,
+            ),
+            patch.object(
+                agent_controller,
+                "get_productive_changed_files",
+                return_value=set(),
+            ),
+        ):
+            _, warnings = agent_controller._check_scope_for_validate(
+                work_plan, "READY_FOR_REVIEW"
+            )
+
+        cross_warnings = [
+            w for w in warnings if w.startswith("contaminacion_productiva")
+        ]
+        assert len(cross_warnings) == 0
