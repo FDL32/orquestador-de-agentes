@@ -1448,6 +1448,10 @@ def _own_row_deliverable_type(line: str, ticket_id: str) -> str | None:
         `banana`) is still ignored -- deciding taxonomy remains a DEC. Side
         effect, declared: a dirty token (`documentation,`) used to miss the
         taxonomy and fall to the strict fallback; it now counts as its type.
+        Scope differs from `_backlog_table_row_for_ticket` (WOT-2026-073d), which
+        compares only `cells[2]`: this helper accepts cell 1 or 2 because ~186
+        archived rows use the `| <ID> | ...` layout. Do not unify them without
+        covering both layouts.
     After: returns the token with the highest minimum of distinct lenses (the
         strictest; prose that cites a laxer type cannot relax the row), or
         None if the line is not an own row or has no known token. Never raises:
