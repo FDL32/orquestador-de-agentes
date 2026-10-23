@@ -144,7 +144,7 @@ def build_index_block(base_url: str) -> str:
     lines = [
         "# orquestador_de_agentes",
         "",
-        "> Multi-agent orchestration template (Manager/Builder/Supervisor). "
+        "> Multi-agent orchestration template (orchestrator/Manager/Builder). "
         "Python 3.10+ runtime, OpenCode backend, terminal-driven flow, canonical "
         "state in `.agent/`, skills under `skills/`, hard scope gate, anti-fabrication "
         "verification protocol. Local audit + repo compare + refactor manager are "
