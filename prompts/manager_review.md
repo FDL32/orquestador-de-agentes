@@ -432,9 +432,25 @@ Cierra cada review con este bloque, ademas del decision artifact:
 | <claim>           | <comando ejecutado>        | confirmado / impreciso / falso |
 
 ### Evidencia propia del Manager
-- Tests: <comando + linea final literal>
+- Tests: <comando + linea final literal> | NO EJECUTABLE DESDE MI CANAL
 - Diff: <stat real>
-- Ruff/gates: <resultado>
+- Ruff/gates: <resultado> | NO EJECUTABLE DESDE MI CANAL
+
+Una lente SIN capacidad de ejecucion (sin shell ni filesystem real) que rellene
+estas lineas con una salida de comando (pytest/ruff) que NO ejecuto realmente
+FABRICA evidencia y emite un informe **INVALIDO**, no meramente "flojo" o
+"impreciso".
+
+Una lente CON shell o filesystem real (p.ej. un lector de ficheros, codex con
+filesystem) SIGUE obligada al comando literal de verdad -- `NO EJECUTABLE DESDE
+MI CANAL` NO es una salida facil disponible para cualquier lente, solo para la
+que genuinamente no tiene canal de ejecucion.
+
+Nota de verificacion de proceso: la correccion se valida re-despachando el mismo
+bundle que en el incidente historico de la fila `WOT-2026-055i` en
+`backlog.md` (identificado alli como "L042v") a una lente de `channel: api` y
+comprobando que ahora devuelve `NO EJECUTABLE DESDE MI CANAL` en vez de fabricar
+una salida de pytest/ruff (verificacion de proceso/prosa, no test automatizado).
 
 ### Acciones de cierre ejecutadas
 - <decision artifact escrito en ruta X | commit <sha> | push | ninguna>
