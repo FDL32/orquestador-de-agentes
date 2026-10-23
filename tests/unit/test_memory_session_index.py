@@ -222,6 +222,41 @@ def test_always_loaded_surfaces_never_spell_the_index_marker(rel):
     assert "<memory-index" not in text, f"{rel} deletrea el marcador del indice"
 
 
+NO_HOOK_DISPATCH_SURFACES = [
+    "templates/startup/builder_kilo.md",
+    "templates/startup/builder_codex.md",
+    "prompts/kilo_trio_dispatch/dispatch_builder.template.md",
+    "prompts/kilo_trio_dispatch/dispatch_revisor.template.md",
+    "prompts/orchestrator_launch_builder.md",
+]
+
+
+@pytest.mark.parametrize("rel", NO_HOOK_DISPATCH_SURFACES)
+def test_no_hook_dispatch_surfaces_order_the_memory_bootstrap(rel):
+    """Ronda 4 #50: Kilo/Codex/subagentes no tienen hook SessionStart; la unica
+    via por la que cargan memoria es que su prompt de arranque lo ORDENE. Antes
+    las plantillas del trio tenian 0 menciones de `memory_context`.
+    """
+    text = (ROOT / rel).read_text(encoding="utf-8")
+    assert "memory_context.py --bootstrap" in text, f"{rel} no ordena el paso 0"
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        *NO_HOOK_DISPATCH_SURFACES,
+        "prompts/_shared/memory_bootstrap.md",
+        "prompts/orchestrator_session_bootstrap.md",
+        *ALWAYS_LOADED,
+    ],
+)
+def test_no_surface_describes_the_retired_truncated_marker(rel):
+    """Ronda 4 #45: el indice acotado ya no marca lineas con `[truncated]`;
+    describirlo deja a un agente buscando un marcador que no existe.
+    """
+    assert "truncated]" not in (ROOT / rel).read_text(encoding="utf-8"), rel
+
+
 # --- CLI: --bootstrap acotado, --full entero, --recall llega mas alla -------
 
 

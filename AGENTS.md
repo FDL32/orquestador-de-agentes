@@ -33,7 +33,6 @@
 - **Artefactos:** prompts, skills, scripts, gates y DEC. No llamarlos agentes.
 - Claude Code: backend IA principal en esta instalacion.
 - Codex / GitHub Copilot: backends IA soportados si leen este archivo dentro del arbol.
-- Goose / Claw: **[DEPRECATED - WT-2026-254a]** motores orquestados por `scripts/orquestador.py`. No usar en proyectos nuevos; reemplazados por Claude Code como backend IA principal.
 - **No confundir Builder real con lente de ensemble:** una tarea de implementacion, lectura o
   escritura con filesystem usa el CLI directo del agente y `prompts/builder_invocation_contract.md`;
   una revision adversarial corta usa `ensemble_dispatch.py loop-round` y `prompts/ensemble_loop.md`.
@@ -56,8 +55,6 @@
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
 - `.agent/context/repomix.xml`: contexto comprimido del workspace generado por Repomix (bootstrapping).
 - `.agent/council/`: broker de consejo y auditoria paralela.
-- `.session/repomix_local.xml`: contexto local comprimido para comparacion acelerada (repo-compare skill).
-- `.session/repomix_remote.xml`: contexto remoto comprimido para comparacion acelerada (repo-compare skill).
 - `REPOSITORY_STRUCTURE.md`: mapa interno publicable del repositorio.
 
 ## Vocabulario canonico
@@ -342,9 +339,9 @@ El prompt-hijo REMITE a las secciones del nucleo que coinciden en OBJETO, no las
 
 **Lo primero, porque es lo que mas se malinterpreta (WOT-2026-057a/b):**
 
-- **`--bootstrap` entrega un INDICE, no el corpus.** Las lineas marcadas
-  `...[truncated]` son titulares con su `id`; el pie declara cuantas lecciones NO
-  muestra.
+- **Si tu contexto no trae el bloque delimitado del indice de memoria: ejecuta
+  `python scripts/memory_context.py --bootstrap`.** Es un INDICE acotado (`id` +
+  titular), no el corpus; el pie cuenta lo omitido.
 - **`--recall` es la puerta de EXPANSION**, y entrega la leccion ENTERA:
   `python scripts/memory_context.py --recall --query "<termino>"` (ordenado por
   cobertura, con fallback por terminos) o
@@ -353,8 +350,8 @@ El prompt-hijo REMITE a las secciones del nucleo que coinciden en OBJETO, no las
 - **El archive portable se lee como UNION de MOTOR + root activo**, con cuota por
   origen: la recencia no es relevancia, y sin cuota el repo tocado mas recientemente
   expulsa al otro entero.
-- **El hook `SessionStart` inyecta el indice al abrir sesion.** La EXPANSION sigue
-  siendo manual.
+- **El hook `SessionStart` inyecta el indice (solo Claude Code).** Sin hook, la
+  comprobacion de arriba es el detector. La EXPANSION sigue siendo manual.
 - **La memoria PRIVADA de un backend no es autoritativa:** lo canonico es lo
   versionado. Una leccion que solo vive en la memoria privada de un agente NO EXISTE
   para el sistema.

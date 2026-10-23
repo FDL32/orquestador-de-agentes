@@ -220,13 +220,15 @@ transcribe para que no dependas de leerlo primero).
 
 ## Memoria: consultala ANTES de medir (WOT-2026-057b)
 
-**Eres un SUBAGENTE: no heredas el hook `SessionStart`.** El agente que te lanzo
-recibio el indice de memoria automaticamente; tu no. Si no ejecutas esto,
+**Eres un SUBAGENTE: no heredas el hook `SessionStart`.** Solo Claude Code tiene
+ese hook, y ni siquiera alli llega a un subagente: tu arrancas sin indice de
+memoria (Kilo, Codex y OpenCode nunca lo reciben solos). Si no ejecutas esto,
 trabajas con cero lecciones sobre un corpus ya registrado (cientos de entradas en
 `.agent/runtime/memory/archive/`, union motor+destino) que documenta los fallos
-de esta casa.
+de esta casa. Paso 0: el indice acotado; despues, expande.
 
 ```powershell
+python <MOTOR_ROOT>/scripts/memory_context.py --bootstrap
 python <MOTOR_ROOT>/scripts/memory_context.py --recall --ticket {{TICKET_ID}}
 python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<superficie que vas a tocar>"
 ```
@@ -235,7 +237,7 @@ Consulta por la SUPERFICIE, no por el numero de ticket: `"backlog"`, `"suite"`,
 `"encoding"`, `"guard"`, `"bus"`, `"memoria"`. El ranking ordena por cobertura de
 la consulta, y una frase de varias palabras tambien vale.
 
-Si una linea llega marcada `...[truncated]`, es INDICE: expandela por su id.
+Cada linea del indice (`- <id>: <titular>`) es un TITULAR: expandela por su id.
 
 ```powershell
 python <MOTOR_ROOT>/scripts/memory_context.py --recall --id obs-<slug>

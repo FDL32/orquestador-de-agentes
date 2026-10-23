@@ -24,9 +24,12 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --id obs-<slug>
 
 ## Regla del indice
 
-El indice que devuelve `--bootstrap` contiene lineas marcadas `...[truncated]`
-que son TITULARES con su `id`. La leccion completa vive despues del corte;
-se expande con `--recall --id obs-<slug>`.
+El indice que devuelve `--bootstrap` (y que el hook `SessionStart` inyecta en
+Claude Code) es un bloque delimitado y ACOTADO: cada linea es un TITULAR con su
+`id`, y el pie cuenta las lecciones omitidas. La leccion completa se expande con
+`--recall --id obs-<slug>`; el corpus entero, con `--full`. Un backend sin hook
+que no vea ese bloque en su contexto debe ejecutar `--bootstrap`: la
+comprobacion por presencia ES su detector de entrega.
 
 ## Profundizacion vertical por FAMILIA (domain, WOT-2026-096a)
 

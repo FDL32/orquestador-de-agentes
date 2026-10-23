@@ -79,8 +79,10 @@ Notas obligatorias:
   esa frase explicita, el Builder-nan trabaja a ciegas de las convenciones del repo con independencia de
   cuanto se reduzca `AGENTS.md`: no es un problema de tamano, es de ausencia total de carga automatica.
   Antes de lanzar `kilo run -f <prompt>`, verifica el prompt con
-  `python scripts/check_builder_dispatch_prompt.py <prompt>` (Seccion 1.6); si bloquea, anade la
-  instruccion antes de dispachar.
+  `python scripts/check_builder_dispatch_prompt.py --require-memory-bootstrap <prompt>` (Seccion 1.6);
+  si bloquea, anade la instruccion antes de dispachar. Kilo tampoco tiene hook `SessionStart`: el
+  prompt de un Builder/Revisor real DEBE llevar un paso 0 con
+  `python scripts/memory_context.py --bootstrap` (el flag lo exige); una lente corta de ensemble no.
   Prueba de arranque en frio (2026-10-19, 3 backends, mismo fixture): Claude y `nan/qwen3.8-flash`
   siguieron el puntero de capa 2 cuando el prompt lo pedia explicitamente; `nan/gemma4` NO lo siguio (n=2
   con `obs-fs-reading-receipt-does-not-certify-correct-reasoning`, 2026-10-08) -- la prosa de esta norma no
@@ -262,7 +264,11 @@ prompt menciona memoria del proyecto (memoria, `MEMORY.md`, L2, L3, `memory_rule
 instruir tambien su lectura, el guard avisa (`WARN`, no bloquea -- la clausula de capa 2 es condicional a
 que la tarea toque memoria, no universal).
 
-    python scripts/check_builder_dispatch_prompt.py <ruta-al-prompt.md>
+    python scripts/check_builder_dispatch_prompt.py --require-memory-bootstrap <ruta-al-prompt.md>
+
+Con `--require-memory-bootstrap` (obligatorio para Builder/Revisor reales, no para lentes cortas) bloquea
+tambien si el prompt no ordena `python scripts/memory_context.py --bootstrap`: nombrar la memoria no la
+carga, y Kilo no tiene hook `SessionStart` (diseno v6, 2026-10-23).
 
 **Limite declarado (mismo patron que la Seccion 1.5, no se oculta):** este guard es, como
 `check_loop_bundle_protocol.py`, una barrera de FORMA -- verifica que la instruccion de lectura este
