@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from scripts import project_scanner
 from scripts.install_agent_system import (
     DESTINATION_ONLY_PROJECTION_ENTRIES,
+    MEMORY_ARCHIVE_REOPEN_LINES,
     PROJECTIONS_GITIGNORE_ENTRIES,
     PROJECTIONS_GITIGNORE_MARKER,
     ensure_destination_projections_ignored,
@@ -31,8 +33,11 @@ class TestEnsureProjectionsIgnored:
         added = ensure_destination_projections_ignored(root)
         # WOT-2026-020t: a destination (default, motor_root=None) also gets the
         # destination-only collaboration entry.
-        expected = set(PROJECTIONS_GITIGNORE_ENTRIES) | set(
-            DESTINATION_ONLY_PROJECTION_ENTRIES
+        # WOT-2026-059f: also returns the memory archive reopen lines.
+        expected = (
+            set(PROJECTIONS_GITIGNORE_ENTRIES)
+            | set(DESTINATION_ONLY_PROJECTION_ENTRIES)
+            | set(MEMORY_ARCHIVE_REOPEN_LINES)
         )
         assert set(added) == expected
         text = (root / ".gitignore").read_text(encoding="utf-8")
@@ -146,3 +151,101 @@ class TestGeneratorsPiiSafe:
         assert motor_link is not None
         # La seccion de identidad se construye con nombres, no rutas
         assert Path(str(motor_link.get("motor_root"))).name == "motor_falso"
+
+
+class TestMemoryArchiveReopenLines:
+    """WOT-2026-059f: MEMORY_ARCHIVE_REOPEN_LINES must make the memory archive
+    visible to git while keeping .agent/runtime/ and .agent/runtime/memory/
+    (non-archive) hidden. Uses real git check-ignore on a scratch repo."""
+
+    @staticmethod
+    def _git_check_ignore(repo: Path, path: str) -> bool:
+        """Return True if path is ignored, False if not."""
+        result = subprocess.run(
+            ["git", "-C", str(repo), "check-ignore", path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def _init_git_repo(self, repo: Path) -> None:
+        subprocess.run(
+            ["git", "-C", str(repo), "init"],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.name", "Test"],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+    def test_memory_archive_not_ignored(self, tmp_path: Path) -> None:
+        """A file inside .agent/runtime/memory/archive/ must NOT be ignored
+        after ensure_destination_projections_ignored runs."""
+        root = _make_destino(tmp_path)
+        self._init_git_repo(root)
+        # Touch a file so git sees the path (git check-ignore works on
+        # working tree files, not just the index).
+        archive_dir = root / ".agent" / "runtime" / "memory" / "archive"
+        archive_dir.mkdir(parents=True)
+        (archive_dir / "observations.2026-11.jsonl").write_text(
+            "data", encoding="utf-8"
+        )
+
+        ensure_destination_projections_ignored(root)
+
+        assert not self._git_check_ignore(
+            root, ".agent/runtime/memory/archive/observations.2026-11.jsonl"
+        ), ".agent/runtime/memory/archive/ MUST be visible (not ignored)"
+
+    def test_runtime_memory_buffer_still_ignored(self, tmp_path: Path) -> None:
+        """A file in .agent/runtime/memory/ (buffer, not inside archive/) MUST
+        remain ignored."""
+        root = _make_destino(tmp_path)
+        self._init_git_repo(root)
+        (root / ".agent" / "runtime" / "memory").mkdir(parents=True)
+        (root / ".agent" / "runtime" / "memory" / "observations.jsonl").write_text(
+            "data", encoding="utf-8"
+        )
+
+        ensure_destination_projections_ignored(root)
+
+        assert self._git_check_ignore(
+            root, ".agent/runtime/memory/observations.jsonl"
+        ), ".agent/runtime/memory/ (buffer) must remain ignored"
+
+    def test_runtime_ensemble_scorecard_still_ignored(self, tmp_path: Path) -> None:
+        """A file in .agent/runtime/ensemble/ MUST remain ignored."""
+        root = _make_destino(tmp_path)
+        self._init_git_repo(root)
+        (root / ".agent" / "runtime" / "ensemble").mkdir(parents=True)
+        (root / ".agent" / "runtime" / "ensemble" / "scorecard.jsonl").write_text(
+            "data", encoding="utf-8"
+        )
+
+        ensure_destination_projections_ignored(root)
+
+        assert self._git_check_ignore(
+            root, ".agent/runtime/ensemble/scorecard.jsonl"
+        ), ".agent/runtime/ensemble/ must remain ignored"
+
+    def test_reopen_lines_are_present_in_gitignore(self, tmp_path: Path) -> None:
+        """The reopen lines must actually be written into .gitignore."""
+        root = _make_destino(tmp_path)
+        ensure_destination_projections_ignored(root)
+
+        text = (root / ".gitignore").read_text(encoding="utf-8")
+        for line in MEMORY_ARCHIVE_REOPEN_LINES:
+            assert line in text.splitlines(), (
+                f"Missing reopen line in .gitignore: {line}"
+            )

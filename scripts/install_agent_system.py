@@ -234,6 +234,25 @@ DESTINATION_ONLY_PROJECTION_ENTRIES: tuple[str, ...] = (
 )
 
 
+# WOT-2026-059f: la memoria portable (archive/) es memoria CANONICA (AGENTS.md:
+# "lo canonico es lo versionado"), pero el blanket .agent/runtime/ de arriba la
+# oculta. Reabre SOLO ese subarbol con la cadena de niveles que git exige
+# (no basta negar el fichero: el PADRE sigue excluido). El buffer
+# observations.jsonl (posible PII, L1 sin promocionar) y el resto de
+# .agent/runtime/ (scorecard, sesiones, etc.) siguen ocultos. Lineas
+# SEPARADAS de PROJECTIONS_GITIGNORE_ENTRIES a proposito: esa tupla
+# tambien se usa como PATHSPECS de `git ls-files` en
+# `_tracked_managed_projections`, y un prefijo `!` ahi no es pathspec
+# valido.
+MEMORY_ARCHIVE_REOPEN_LINES: tuple[str, ...] = (
+    "!.agent/runtime/",
+    ".agent/runtime/*",
+    "!.agent/runtime/memory/",
+    ".agent/runtime/memory/*",
+    "!.agent/runtime/memory/archive/",
+)
+
+
 def ensure_destination_projections_ignored(
     project_root: Path,
     dry_run: bool = False,
@@ -249,6 +268,9 @@ def ensure_destination_projections_ignored(
             versions .agent/collaboration/ for dogfooding and manages its own
             .gitignore), this is a no-op and nothing is added.
     After: returns the list of entries added (empty when everything was covered).
+           Also appends MEMORY_ARCHIVE_REOPEN_LINES (separate from the managed
+           block) so that the canonical memory archive at .agent/runtime/memory/
+           is visible to git despite the blanket .agent/runtime/ on top.
     """
     if motor_root is not None and project_root.resolve() == motor_root.resolve():
         return []
@@ -261,11 +283,17 @@ def ensure_destination_projections_ignored(
     )
     existing_set = {line.strip() for line in existing}
     missing = [e for e in entries if e not in existing_set]
-    if not missing:
+    if not missing and not any(
+        e not in existing_set for e in MEMORY_ARCHIVE_REOPEN_LINES
+    ):
         return []
     if dry_run:
-        print(f"[DRY-RUN] Would add to .gitignore: {', '.join(missing)}")
-        return missing
+        missing_reopen = [
+            e for e in MEMORY_ARCHIVE_REOPEN_LINES if e not in existing_set
+        ]
+        added = missing + missing_reopen
+        print(f"[DRY-RUN] Would add to .gitignore: {', '.join(added)}")
+        return added
     block = [""] if existing and existing[-1].strip() else []
     if PROJECTIONS_GITIGNORE_MARKER not in existing_set:
         block.append(PROJECTIONS_GITIGNORE_MARKER)
@@ -273,7 +301,24 @@ def ensure_destination_projections_ignored(
     with gitignore.open("a", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(block) + "\n")
     print(f"[INSTALL] .gitignore: added projection entries: {', '.join(missing)}")
-    return missing
+    # WOT-2026-059f: append MEMORY_ARCHIVE_REOPEN_LINES AFTER the managed block
+    # so the chain (negate dir -> exclude contents -> negate sub-dir) lands in
+    # the right order inside .gitignore.
+    existing = (
+        gitignore.read_text(encoding="utf-8", errors="replace").splitlines()
+        if gitignore.exists()
+        else []
+    )
+    existing_set = {line.strip() for line in existing}
+    missing_reopen = [e for e in MEMORY_ARCHIVE_REOPEN_LINES if e not in existing_set]
+    if missing_reopen:
+        with gitignore.open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(missing_reopen) + "\n")
+        print(
+            f"[INSTALL] .gitignore: added memory archive reopen lines: "
+            f"{', '.join(missing_reopen)}"
+        )
+    return missing + missing_reopen
 
 
 def _tracked_managed_projections(project_root: Path, git: str) -> list[str]:
