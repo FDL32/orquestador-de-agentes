@@ -17,7 +17,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.check_cuspide_growth_and_drift import (
+
+# Launched by path (`python scripts/measure_agents_md_units.py`) sys.path[0] is
+# scripts/, so the `scripts.` package import below would fail without the repo root.
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from scripts.check_cuspide_growth_and_drift import (  # noqa: E402
     ORCHESTRATOR_CLAUDE_CUSP_MAX_CHARS,
 )
 
