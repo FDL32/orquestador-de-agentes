@@ -40,6 +40,7 @@ def load_decision_artifact(
     reviews_dir: Path,
     ticket_id: str,
     not_before: float | None = None,
+    expected_commit_sha: str | None = None,
 ) -> tuple[ReviewDecision, str] | None:
     """Load the Manager's structured decision artifact, if valid.
 
@@ -48,6 +49,13 @@ def load_decision_artifact(
     under ``.agent/runtime/reviews/`` during its review session. The bridge
     consumes it as the primary decision channel; transcript parsing remains
     the fallback and the transcript remains the evidence.
+
+    WT-2026-047m: when ``expected_commit_sha`` is passed, the function
+    compares it against the ``reviewed_commit_sha`` field stored in the
+    artifact.  Legacy artifacts that lack this field still return a valid
+    result with a ``WARN`` printed to stdout (never a hard failure).  When
+    both shas are present and differ, the artifact is stale and the
+    function returns ``None`` (the caller falls back to transcript parsing).
 
     Validation (any failure returns None so the caller falls back):
     - file exists and is valid JSON;
@@ -59,6 +67,10 @@ def load_decision_artifact(
       mtime granularity/rounding: stale artifacts are minutes or hours
       old, while an artifact written milliseconds after ``not_before``
       can legitimately receive an earlier rounded mtime.
+    - if ``expected_commit_sha`` is passed, the artifact's
+      ``reviewed_commit_sha`` is compared; mismatch means the artifact
+      approved a different commit than HEAD (returns None); absence of
+      the field in a legacy artifact is downgraded to a WARN.
     """
     mtime_tolerance_seconds = 2.0
     path = reviews_dir / f"decision_{ticket_id}.json"
@@ -81,6 +93,26 @@ def load_decision_artifact(
     decision = _ARTIFACT_DECISIONS.get(decision_raw)
     if decision is None:
         return None
+    # WT-2026-047m: compare reviewed_commit_sha when expected_commit_sha is passed.
+    if expected_commit_sha is not None:
+        artifact_sha = payload.get("reviewed_commit_sha")
+        if artifact_sha is None:
+            # Legacy artifact without reviewed_commit_sha — degrade to WARN,
+            # never fail the call retroactively.
+            print(
+                f"[decision_parser] WARN: decision artifact for {ticket_id} is "
+                "legacy (missing reviewed_commit_sha); accepted for backward "
+                "compatibility but should be re-reviewed against the current HEAD."
+            )
+        elif artifact_sha != expected_commit_sha:
+            # Stale artifact: the review approved a different commit than HEAD.
+            print(
+                f"[decision_parser] decision artifact for {ticket_id} approved "
+                f"commit {artifact_sha!r} which differs from the current HEAD "
+                f"{expected_commit_sha!r}; artifact is stale, falling back to "
+                "transcript parsing."
+            )
+            return None
     return decision, "decision_artifact"
 
 

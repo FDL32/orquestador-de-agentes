@@ -335,11 +335,15 @@ bridge):
 - Contenido JSON:
 
 ```json
-{"ticket_id": "<ticket_id>", "decision": "APPROVE|CHANGES", "blockers": []}
+{"ticket_id": "<ticket_id>", "decision": "APPROVE|CHANGES", "blockers": [], "reviewed_commit_sha": "<git rev-parse HEAD>", "created_at": "<ISO-8601 UTC timestamp>"}
 ```
 
 - `decision` solo admite `APPROVE` o `CHANGES`; en `CHANGES`, lista cada
   blocker como string breve en `blockers`.
+- `reviewed_commit_sha` debe resolverse con `git rev-parse HEAD` en el
+  mismo turno en que escribe el artefacto.
+- `created_at` debe escribirse con la hora UTC actual en formato
+  ISO-8601.
 - Escribe el archivo en el mismo turno en que emites el veredicto. Si no
   puedes escribirlo, emite igualmente el veredicto en texto: el bridge
   caera al parser de transcript sin bloquear la review.

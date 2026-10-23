@@ -117,8 +117,12 @@ Antes de emitir el veredicto en texto, escribe el decision artifact
 estructurado (canal primario del bridge; el transcript es fallback):
 
 - Ruta: `.agent/runtime/reviews/decision_<ticket_id>.json` (en `repo_destino`).
-- Contenido: `{"ticket_id": "<ticket_id>", "decision": "APPROVE|CHANGES", "blockers": []}`
+- Contenido: `{"ticket_id": "<ticket_id>", "decision": "APPROVE|CHANGES", "blockers": [], "reviewed_commit_sha": "<git rev-parse HEAD>", "created_at": "<ISO-8601 UTC timestamp>"}`
 - En `CHANGES`, lista cada blocker como string breve en `blockers`.
+- `reviewed_commit_sha` debe resolverse con `git rev-parse HEAD` en el
+  mismo turno en que escribe el artefacto.
+- `created_at` debe escribirse con la hora UTC actual en formato
+  ISO-8601.
 - Si no puedes escribir el archivo, emite igualmente el veredicto en texto.
 
 #### Barrera de regresion (SOLO bugfix/regresion/barrera-nueva)

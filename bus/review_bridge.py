@@ -2205,6 +2205,7 @@ class ReviewBridge:
                         self.project_root / ".agent" / "runtime" / "reviews",
                         ticket_id,
                         not_before=start_time,
+                        expected_commit_sha=self._get_current_git_head(),
                     )
                     if artifact is not None:
                         decision, parse_method = artifact
