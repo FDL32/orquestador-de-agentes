@@ -624,6 +624,28 @@ approach.
   evidencia, enfoque_intentado, refutacion}`. `enfoque_intentado` is
   MANDATORY (the anti-loop discriminator); `ticket` maps to `ticket_id` and
   `subtipo_CEM` to `subtipo_cem`.
+  **MANDATORY, on the SAME `add` call that writes `event=batch_retry`:**
+  `--generator orchestrator_autonomous_ticket_batch.md` (this prompt's own
+  filename, literally -- never a path, alias, or the name of whichever
+  backend/executor is running it) AND `--prompt-type governing
+  --prompt-content <the full text of this prompt as actually executed>`
+  (the CLI hashes `--prompt-content` itself into `prompt_version.sha256`;
+  never pass a filename or a hand-computed hash there). Without both,
+  `prompt_version` is never written and 2.5.c has nothing to group on --
+  this is not optional decoration, it is what WOT-2026-039i exists to fix.
+  WOT-2026-039i (verified empirically against the real CLI, not assumed):
+  `generator` and `prompt_version` are ALREADY in the global `LEDGER_FIELDS`
+  allowlist and survive the scrub for `batch_retry` exactly like for any
+  other event. The "REAL persisted schema" list two paragraphs above is
+  SCOPED to the anti-loop MANDATORY subset only (`enfoque_intentado` and its
+  siblings) -- it is NOT the full allowlist, and reading it as one would
+  wrongly conclude `generator`/`prompt_version` get scrubbed. Before this
+  correction, the retry rule never emitted either field because no
+  instruction told it to, which is why `prompts/orchestrator_session_close_full_audit.md`'s
+  2.5.c friction-by-`prompt_version` metric found every `batch_retry`
+  grouped as "(sin generator)" on its first real run (measured 2026-07-22)
+  -- a reporting gap in THIS prompt's emission instructions, not a schema
+  gap; no `.py` change was needed or made.
 - **Retry rule**: a new attempt MUST declare an `enfoque_intentado` DIFFERENT
   from every one already recorded for that `(ticket, gate)`. A retry with the
   same approach does not execute: that is the operational definition of an
