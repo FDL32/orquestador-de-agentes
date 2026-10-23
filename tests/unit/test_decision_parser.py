@@ -260,3 +260,87 @@ class TestLoadDecisionArtifact:
         result = load_decision_artifact(tmp_path, "WT-2026-100", not_before=past)
         assert result is not None
         assert result[0] == ReviewDecision.APPROVE
+
+    def test_legacy_artifact_without_sha_degrades_to_warn(
+        self, tmp_path, capsys
+    ) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path,
+            "WT-2026-100",
+            {"ticket_id": "WT-2026-100", "decision": "APROBADO"},
+        )
+        result = load_decision_artifact(
+            tmp_path, "WT-2026-100", expected_commit_sha="deadbeef"
+        )
+        assert result is not None
+        assert result[0] == ReviewDecision.APPROVE
+        captured = capsys.readouterr()
+        assert "WARN" in captured.out
+        assert "reviewed_commit_sha" in captured.out or "legacy" in captured.out.lower()
+
+    def test_stale_commit_sha_returns_none(self, tmp_path, capsys) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        sha_anterior_obtenido = "80b8c84a"  # git log --oneline --skip=50 -n 1
+
+        self._write_artifact(
+            tmp_path,
+            "WT-2026-100",
+            {
+                "ticket_id": "WT-2026-100",
+                "decision": "APROBADO",
+                "reviewed_commit_sha": sha_anterior_obtenido,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+        # Before WOT-2026-047m fix, this call with absent expected_commit_sha
+        # parameter could not even express this case — the stale artifact
+        # would pass without any comparison.
+        result = load_decision_artifact(
+            tmp_path,
+            "WT-2026-100",
+            expected_commit_sha="0000000000000000000000000000000000000000",
+        )
+        assert result is None
+        captured = capsys.readouterr()
+        assert "stale" in captured.out.lower() or "differs from" in captured.out.lower()
+
+    def test_matching_commit_sha_accepts(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path,
+            "WT-2026-100",
+            {
+                "ticket_id": "WT-2026-100",
+                "decision": "APROBADO",
+                "reviewed_commit_sha": "80b8c84a",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+        result = load_decision_artifact(
+            tmp_path,
+            "WT-2026-100",
+            expected_commit_sha="80b8c84a",
+        )
+        assert result is not None
+        assert result[0] == ReviewDecision.APPROVE
+
+    def test_no_expected_sha_skips_comparison(self, tmp_path) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path,
+            "WT-2026-100",
+            {
+                "ticket_id": "WT-2026-100",
+                "decision": "APROBADO",
+                "reviewed_commit_sha": "80b8c84a",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+        result = load_decision_artifact(tmp_path, "WT-2026-100")
+        assert result is not None
+        assert result[0] == ReviewDecision.APPROVE
