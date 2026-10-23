@@ -241,18 +241,31 @@ def test_no_hook_dispatch_surfaces_order_the_memory_bootstrap(rel):
     assert "memory_context.py --bootstrap" in text, f"{rel} no ordena el paso 0"
 
 
-@pytest.mark.parametrize(
-    "rel",
-    [
+INSTRUCTION_SURFACES = sorted(
+    {
         *NO_HOOK_DISPATCH_SURFACES,
-        "prompts/_shared/memory_bootstrap.md",
-        "prompts/orchestrator_session_bootstrap.md",
         *ALWAYS_LOADED,
-    ],
+        "llms-full.txt",
+        *(str(p.relative_to(ROOT)) for p in (ROOT / "prompts").rglob("*.md")),
+        *(
+            str(p.relative_to(ROOT))
+            for p in (ROOT / ".agent" / "rules" / "common").glob("*.md")
+        ),
+        *(
+            str(p.relative_to(ROOT))
+            for p in (ROOT / "templates" / "startup").glob("*.md")
+        ),
+    }
 )
+
+
+@pytest.mark.parametrize("rel", INSTRUCTION_SURFACES)
 def test_no_surface_describes_the_retired_truncated_marker(rel):
-    """Ronda 4 #45: el indice acotado ya no marca lineas con `[truncated]`;
-    describirlo deja a un agente buscando un marcador que no existe.
+    """Ronda 4 #45 / ronda 5: el indice acotado ya no marca lineas con
+    `[truncated]`; describirlo deja a un agente buscando un marcador que no
+    existe. Ronda 5 amplio el universo de una lista cerrada a TODO `prompts/`,
+    `.agent/rules/common/`, `templates/startup/` y `llms-full.txt`: la lista
+    cerrada dejo pasar tres superficies que las cuatro lentes encontraron.
     """
     assert "truncated]" not in (ROOT / rel).read_text(encoding="utf-8"), rel
 
@@ -285,9 +298,14 @@ def test_cli_bootstrap_is_bounded_and_carries_the_session_sections(monkeypatch, 
     assert "M4/M5" in out
 
 
-def test_cli_full_is_wrapped_and_unbounded(monkeypatch, capsys):
-    """Ronda 4 #46: `--full` lleva el mismo envoltorio (un backend que lo
-    ejecuto no debe recargar con `--bootstrap`) y no aplica el presupuesto.
+def test_cli_full_enumerates_every_lesson_in_the_same_wrapper(monkeypatch, capsys):
+    """Ronda 4 #46 + ronda 5 (sonnet/kilo): `--full` lleva el mismo envoltorio
+    y enumera TODAS las lecciones. La version anterior llamaba a
+    `get_bootstrap_context` (capado a 60, con `[truncated]`) y su test solo
+    media la longitud -- floor assertion que 60 lineas largas ya satisfacian.
+
+    MUTACION ALCANZABLE: volver a `get_bootstrap_context` -> faltan ids y
+    aparece `[truncated]`.
     """
     corpus = [_obs(i) for i in range(400)]
     _patch_memory(monkeypatch, corpus)
@@ -299,7 +317,95 @@ def test_cli_full_is_wrapped_and_unbounded(monkeypatch, capsys):
     assert rc == 0
     assert out.startswith(ml.MEMORY_INDEX_OPEN)
     assert out.rstrip().endswith(ml.MEMORY_INDEX_CLOSE)
-    assert len(out) > ml.SESSION_CONTEXT_MAX_CHARS
+    assert "truncated]" not in out
+    missing = [o["id"] for o in corpus if f"- {o['id']}:" not in out]
+    assert not missing, f"--full omite {len(missing)} lecciones, p.ej. {missing[:3]}"
+
+
+@pytest.mark.parametrize("mode", ["--bootstrap", "--full"])
+def test_cli_empty_corpus_exits_zero_with_a_message(mode, monkeypatch, capsys):
+    """Corpus vacio: rc 0 y mensaje explicito en AMBOS modos (ronda 5: antes
+    `--full` salia 1 y `--bootstrap` 0)."""
+    _patch_memory(monkeypatch, [])
+    monkeypatch.setattr("sys.argv", ["memory_context.py", mode])
+
+    assert memory_context.main() == 0
+    assert "corpus esta vacio" in capsys.readouterr().out
+
+
+def test_cli_bootstrap_fails_with_rc1_when_the_loader_breaks(monkeypatch, capsys):
+    """Fallo de carga != corpus vacio tambien en el CLI: rc 1 y el aviso."""
+
+    def _boom(budget=0):
+        raise RuntimeError("loader roto")
+
+    _patch_memory(monkeypatch, [])
+    monkeypatch.setattr(ml, "get_session_index", _boom)
+    monkeypatch.setattr(memory_context, "get_session_index", _boom)
+    monkeypatch.setattr("sys.argv", ["memory_context.py", "--bootstrap"])
+
+    assert memory_context.main() == 1
+    assert "NO se pudo cargar" in capsys.readouterr().out
+
+
+def test_cli_run_from_a_destino_reads_the_destino_memory(tmp_path, monkeypatch, capsys):
+    """Ronda 5 (kilo #2): `<MOTOR>/scripts/memory_context.py --bootstrap` con
+    cwd en un destino y SIN `AGENT_PROJECT_ROOT` resuelve el destino, igual que
+    el hook. Antes resolvia el motor y el canario local no aparecia.
+
+    MUTACION ALCANZABLE: quitar la resolucion por ancestro con `.claude/` en
+    `_anchor_memory_root` -> el canario desaparece.
+    """
+    import json as _json
+
+    destino = tmp_path / "destino"
+    (destino / ".claude").mkdir(parents=True)
+    archive = destino / ".agent" / "runtime" / "memory" / "archive"
+    archive.mkdir(parents=True)
+    (archive / "observations.2026-10.jsonl").write_text(
+        _json.dumps(
+            {
+                "id": "obs-canario-cli-destino",
+                "timestamp": "2026-10-23T00:00:00Z",
+                "topic": "canario-cli",
+                "signal": "CANARIO-CLI-DESTINO",
+                "source": "test",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sub = destino / "sub"
+    sub.mkdir()
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    monkeypatch.chdir(sub)
+
+    # Resolucion pura (in-process) y, con ella aplicada, ningun leak de entorno.
+    assert memory_context._anchor_memory_root() == destino.resolve()
+    monkeypatch.setattr("sys.argv", ["memory_context.py", "--status"])
+    memory_context.main()
+    capsys.readouterr()
+    import os as _os
+
+    assert "AGENT_PROJECT_ROOT" not in _os.environ, "el CLI no deja el anclaje puesto"
+
+    # Ruta productiva: proceso nuevo (`get_agent_dir` esta cacheado por
+    # proceso, asi que in-process no reproduce lo que ve un backend).
+    import subprocess as _sp
+    import sys as _sys
+
+    env = {k: v for k, v in _os.environ.items() if k != "AGENT_PROJECT_ROOT"}
+    proc = _sp.run(
+        [_sys.executable, str(ROOT / "scripts" / "memory_context.py"), "--full"],
+        cwd=str(sub),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr[-500:]
+    assert "obs-canario-cli-destino" in proc.stdout
 
 
 def test_recall_reaches_a_lesson_the_index_omits(monkeypatch, capsys):
@@ -333,3 +439,116 @@ def test_print_recall_keeps_later_entries_that_still_fit(capsys):
 
     assert "A" * 50 in out and "B" * 50 in out
     assert "1 entrada(s) omitida(s)" in out
+
+
+# --- ronda 5: suelo por origen, hook y ensamblador --------------------------
+
+
+def test_per_origin_floor_is_enforced_not_emergent():
+    """Ronda 5 (glm #3): con un tier local que se come el presupuesto, el
+    origen pequeno conserva min(10, disp.) -- la cadena de suelos degrada el
+    tier local ANTES de dejar a un origen por debajo de su suelo.
+    """
+    motor = [_obs(i, "motor") for i in range(300)]
+    destino = [_obs(1000 + i, "local") for i in range(12)]
+    for entry in destino:
+        entry["timestamp"] = "2026-01-01T00:00:00Z"
+    index = ml.format_memory_index(
+        motor + destino, local_text="L2 " * 2_000, budget=ml.INDEX_BUDGET_CHARS
+    )
+    bullets = _bullets(index)
+    assert len(index) <= ml.INDEX_BUDGET_CHARS
+    assert sum("obs-local-" in b for b in bullets) >= ml.INDEX_FLOOR_PER_ORIGIN
+    assert sum("obs-motor-" in b for b in bullets) >= ml.INDEX_FLOOR_PER_ORIGIN
+
+
+def _hook():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "ssh_hook_r5", ROOT / ".agent" / "hooks" / "session_start_hook.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _quiet(monkeypatch, hook, *, roles="", health="", m4m5="M4/M5 corto"):
+    monkeypatch.setattr(hook, "_role_section", lambda root: roles)
+    monkeypatch.setattr(hook, "_health_line", lambda root: health)
+    monkeypatch.setattr(hook, "_m4_m5_section", lambda root: m4m5)
+
+
+def test_motor_link_with_bom_is_read(tmp_path):
+    """Ronda 5 (kilo #3): un link escrito por PowerShell 5.1 lleva BOM; con
+    `utf-8` estricto el hook entregaba CERO memoria en ese destino (medido en
+    FDL32-t3-dev-hub). Hook y `runtime.motor_link` deben leerlo.
+
+    MUTACION ALCANZABLE: volver a `encoding="utf-8"` -> JSONDecodeError.
+    """
+    import importlib
+    import json as _json
+
+    destino = tmp_path / "destino"
+    (destino / ".agent" / "config").mkdir(parents=True)
+    link = destino / ".agent" / "config" / "motor_destination_link.json"
+    link.write_bytes(
+        b"\xef\xbb\xbf" + _json.dumps({"motor_root": str(ROOT)}).encode("utf-8")
+    )
+
+    assert _hook()._motor_root(destino).resolve() == ROOT.resolve()
+    motor_link = importlib.import_module("runtime.motor_link")
+    assert motor_link.resolve_motor_root(destino) == ROOT.resolve()
+
+
+def test_load_context_restores_agent_project_root(tmp_path, monkeypatch):
+    """Ronda 5 (codex #1): el anclaje vive solo durante la lectura."""
+    hook = _hook()
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", "PREVIO")
+    monkeypatch.setattr(ml, "get_session_index", lambda budget=0: "IDX")
+    assert hook._load_context(tmp_path, "startup", 2000) == "IDX"
+    import os as _os
+
+    assert _os.environ["AGENT_PROJECT_ROOT"] == "PREVIO"
+
+
+def test_assemble_honours_an_explicit_zero_cap(tmp_path, monkeypatch):
+    """Ronda 5 (codex #2): `max_chars=0` es un tope, no "usa el defecto"."""
+    hook = _hook()
+    _quiet(monkeypatch, hook)
+    ctx, failed = hook.assemble_session_context(tmp_path, lambda b: "IDX", max_chars=0)
+    assert ctx == "" and failed is False
+
+
+def test_assemble_without_budget_says_omitted_not_empty(tmp_path, monkeypatch):
+    """Ronda 5 (sonnet/kilo/glm): sin sitio para el indice el mensaje dice
+    "omitido por presupuesto", nunca "corpus vacio", y no se llama al indice.
+    """
+    hook = _hook()
+    _quiet(monkeypatch, hook)
+    calls: list[int] = []
+    ctx, failed = hook.assemble_session_context(
+        tmp_path, lambda b: (calls.append(b), "IDX")[1], max_chars=1_000
+    )
+    assert "omitido por presupuesto" in ctx
+    assert "corpus esta vacio" not in ctx
+    assert calls == [] and failed is False
+
+
+def test_fixed_sections_degrade_before_the_index_is_cut(tmp_path, monkeypatch):
+    """Ronda 5 (kilo #7): con secciones fijas enormes se degradan salud, M4/M5
+    y roles; el bloque del indice sale ENTERO y cerrado.
+
+    MUTACION ALCANZABLE: quitar el bucle de degradacion -> el recorte duro
+    final corta dentro del bloque y desaparece el cierre.
+    """
+    hook = _hook()
+    _quiet(monkeypatch, hook, roles="R" * 5_000, health="H" * 300, m4m5="M" * 6_000)
+    corpus = [_obs(i) for i in range(400)]
+    ctx, _failed = hook.assemble_session_context(
+        tmp_path, lambda b: ml.format_memory_index(corpus, budget=b)
+    )
+    assert len(ctx) <= ml.SESSION_CONTEXT_MAX_CHARS
+    assert ml.MEMORY_INDEX_OPEN in ctx
+    assert ml.MEMORY_INDEX_CLOSE in ctx
+    assert "M" * 3_000 not in ctx, "M4/M5 debia caer a su fallback corto"

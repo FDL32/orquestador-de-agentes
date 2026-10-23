@@ -459,3 +459,31 @@ aviso a la sesion alvarovans, push solo con autorizacion.
 
 **Backlog:** recibo `--receipt`; ciclo de vida de lecciones; registro de uso; resumen SessionEnd;
 recall en UserPromptSubmit; L1 por dominio; AGENTS.md por subarbol; proveedor nan en el Kilo de T3.
+
+## RONDA 5 -- revision de la IMPLEMENTACION (b84e3681..2857b691, 2026-10-23)
+
+4 lentes: codex CAMBIOS, kilo/nan/deepseek-v4-flash CAMBIOS, sonnet (alvarovans)
+APROBAR_CON_CAMBIOS, opencode/glm-5.3 APROBAR_CON_CAMBIOS. Las 4 desviaciones declaradas
+(ensamblador en el hook, P2 parcial, flag opt-in, rc=0 en vacio) aceptadas por las 4.
+
+| # | Lente | Hallazgo | Resolucion |
+|---|---|---|---|
+| 64 | kilo | Link `motor_destination_link.json` con BOM (PowerShell 5.1) -> `json.loads` estricto falla -> CERO memoria en ese destino (medido: FDL32-t3-dev-hub) | APLICADO: `utf-8-sig` en el hook y en `runtime/motor_link.py`; test con BOM; e2e con link BOM -> indice entregado (8347 chars) |
+| 65 | sonnet, kilo | `--full` llamaba a `get_bootstrap_context` (capado a 60, con `[truncated]`); su test era floor assertion | APLICADO: `--full` = `format_memory_index(budget=None)`, todas las lecciones (real: 398), mismo envoltorio; test exige cada id |
+| 66 | kilo | CLI desde un destino sin `AGENT_PROJECT_ROOT` resolvia el motor (canario local ausente) | APLICADO: `_anchor_memory_root` resuelve el primer ancestro del cwd con `.claude/`+`.agent/` que NO sea un checkout del motor; test por subproceso (ruta productiva) |
+| 67 | codex | `_load_context` dejaba `AGENT_PROJECT_ROOT` puesto | APLICADO: restauracion en `finally`; test |
+| 68 | codex | `max_chars or default` convertia 0 en el defecto | APLICADO: `None` != 0; test |
+| 69 | las 4 | Marcador `[truncated]` en `memory_hierarchy.md`, `orchestrator_autonomous_ticket_batch.md`, `orchestrator_pipeline_codeonly.md` (y `llms-full.txt`, que incluye `memory_hierarchy.md`) | APLICADO; test ampliado de lista cerrada a todo `prompts/`, `.agent/rules/common/`, `templates/startup/`, `llms-full.txt` |
+| 70 | sonnet | `check_hook_delivery` comparaba mtime: una sesion arrancada con el hook viejo contaba como fallo; sin tope de transcripts | APLICADO: cuenta si el `timestamp` del `hook_success` es posterior al ultimo commit del hook (fallback mtime); maximo 200 transcripts; tests |
+| 71 | sonnet, kilo, glm | Presupuesto agotado se reportaba como "corpus vacio" | APLICADO: tercer estado `_LOAD_NO_BUDGET`; test |
+| 72 | kilo | El recorte final podia cortar dentro del bloque del indice | APLICADO: degradacion previa (salud, M4/M5 a fallback, roles) hasta dejar `_MIN_INDEX_BUDGET`; test de cierre del bloque |
+| 73 | sonnet | `--full` vacio rc=1 vs `--bootstrap` vacio rc=0 | APLICADO: ambos rc=0 con mensaje; tests de rc (vacio 0, fallo 1) |
+| 74 | glm | Suelo por origen emergente, no impuesto | APLICADO: la cadena de suelos comprueba tambien min(10, disp.) por origen; test |
+| 75 | sonnet | AGENTS.md deberia citar "Indice de memoria (datos, no instrucciones)" | RECHAZADO: reintroduce #43 (el literal estaria en la propia instruccion) |
+| 76 | kilo | Gate absoluto Codex sigue rojo (deficit 1343 B) | DEUDA DECLARADA: requiere ticket propio de ahorro P2 (ASCII, dify, reubicar prohibiciones) |
+
+Hallazgo propio durante la aplicacion: el test 057b cazo que resolver "primer ancestro con
+`.claude/`" tomaba OTRO checkout del motor por destino; corregido excluyendo checkouts del motor.
+Fuera de alcance, declarado: `claude_guard_entry.py` y el lanzador de `.claude/settings.json` leen
+el link con `utf-8` estricto (superficie de seguridad fail-closed; con BOM bloquea visiblemente,
+no en silencio).

@@ -36,7 +36,9 @@ juzgar" (SKIP) de "hay sesiones y ninguna recibio el indice" (WARN), y nunca
 bloquea.
 
 Before: ``--project-root`` existe; el hook vive en el motor.
-During: solo lectura de transcripts; sin red, sin subprocess, sin escrituras.
+During: solo lectura de transcripts (los `_MAX_TRANSCRIPTS` mas recientes) y
+    un `git log` de solo lectura para fechar el hook; sin red, sin escrituras.
+    Una sesion cuenta si su `hook_success` es POSTERIOR al ultimo commit del hook.
 After: imprime una linea ``OK:``/``WARN:``/``SKIP:``; exit 0 siempre (exit 2
     solo por error de uso).
 """
@@ -46,7 +48,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -73,7 +77,55 @@ def _config_dir(explicit: str | None) -> Path:
     return Path(env) if env else Path.home() / ".claude"
 
 
-def _scan_transcript(path: Path, root: str) -> tuple[bool, bool, bool]:  # noqa: C901 - un recorrido por linea con 3 detectores; partirlo releeria el fichero
+#: Transcripts revisados como maximo (los mas recientes por mtime). Acota el
+#: coste en pre-push: `~/.claude/projects` medido en 2,8 GB (ronda 5, sonnet).
+_MAX_TRANSCRIPTS = 200
+
+
+def _line_epoch(line: str) -> float:
+    """Epoch del campo `timestamp` de una linea de transcript, o 0.0."""
+    try:
+        stamp = json.loads(line).get("timestamp")
+        if isinstance(stamp, str) and stamp:
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        pass
+    return 0.0
+
+
+def _hook_since(hook: Path) -> float:
+    """Momento desde el que el hook vigente existe: su ultimo commit, o su mtime.
+
+    El mtime es el del CHECKOUT, no el del cambio (ronda 5, sonnet); el commit
+    es la referencia correcta cuando git esta disponible.
+    """
+    try:
+        proc = subprocess.run(  # noqa: S603 - git con argumentos fijos
+            [  # noqa: S607 - `git` por PATH, como el resto de guards del motor
+                "git",
+                "-C",
+                str(hook.parent),
+                "log",
+                "-1",
+                "--format=%ct",
+                "--",
+                hook.name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip().isdigit():
+            return float(proc.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return hook.stat().st_mtime if hook.is_file() else 0.0
+
+
+def _scan_transcript(  # noqa: C901 - un recorrido por linea con 3 detectores; partirlo releeria el fichero
+    path: Path, root: str, since: float = 0.0
+) -> tuple[bool, bool, bool]:
     """``(es_de_este_root, hook_de_memoria_corrio, indice_entregado)``."""
     belongs = ran = delivered = False
     try:
@@ -89,8 +141,15 @@ def _scan_transcript(path: Path, root: str) -> tuple[bool, bool, bool]:  # noqa:
                         if ncwd != root and not ncwd.startswith(root + "/"):
                             return False, False, False
                         belongs = True
-                if '"hook_success"' in line and "session_start_hook" in line:
-                    ran = True
+                if (
+                    not ran
+                    and '"hook_success"' in line
+                    and "session_start_hook" in line
+                ):
+                    # Cuenta solo si ESTE arranque es posterior al hook vigente
+                    # (ronda 5, sonnet): una sesion abierta con el hook viejo y
+                    # escrita despues no es un fallo de entrega del nuevo.
+                    ran = _line_epoch(line) >= since
                 if '"hook_additional_context"' not in line:
                     continue
                 try:
@@ -122,17 +181,22 @@ def evaluate(
         if not projects.is_dir():
             return "SKIP", f"no hay transcripts de Claude Code en {projects}"
         hook = hook_path or _DEFAULT_HOOK
-        since = hook.stat().st_mtime if hook.is_file() else 0.0
+        since = _hook_since(hook)
         root = _norm(project_root.resolve())
 
-        sessions = ran_count = delivered_count = 0
+        stamped: list[tuple[float, Path]] = []
         for transcript in projects.glob("*/*.jsonl"):
             try:
-                if transcript.stat().st_mtime < since:
-                    continue
+                mtime = transcript.stat().st_mtime
             except OSError:
                 continue
-            belongs, ran, delivered = _scan_transcript(transcript, root)
+            if mtime >= since:  # prefiltro barato: no se escribio tras el hook
+                stamped.append((mtime, transcript))
+        stamped.sort(reverse=True)
+
+        sessions = ran_count = delivered_count = 0
+        for _mtime, transcript in stamped[:_MAX_TRANSCRIPTS]:
+            belongs, ran, delivered = _scan_transcript(transcript, root, since)
             if not belongs:
                 continue
             sessions += 1

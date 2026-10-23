@@ -109,6 +109,16 @@ _LOAD_EMPTY = (
     'Cuando las haya, se expanden con `--recall --query "<termino>"`.'
 )
 
+_LOAD_NO_BUDGET = (
+    "**Memoria del proyecto**: indice omitido por presupuesto de arranque (el "
+    "corpus NO esta vacio). Enumeralo con `python scripts/memory_context.py "
+    '--full` y expande con `--recall --query "<termino>"`.'
+)
+
+#: Por debajo de esto el indice no cabe con cabecera y pie utiles: se declara
+#: omitido en vez de emitir un bloque recortado o confundirlo con "vacio".
+_MIN_INDEX_BUDGET = 1500
+
 # Topes por seccion (chars). El total lo fija `SESSION_CONTEXT_MAX_CHARS` del
 # loader; el indice recibe lo que queda tras las partes fijas.
 _HEALTH_CAP = 400
@@ -201,7 +211,10 @@ def _motor_root(root: Path) -> Path:
     motor = Path(__file__).resolve().parents[2]
     link = root / ".agent" / "config" / "motor_destination_link.json"
     if link.exists():
-        data = json.loads(link.read_text(encoding="utf-8"))
+        # `utf-8-sig`: un link escrito por PowerShell 5.1 lleva BOM, y con
+        # `utf-8` estricto `json.loads` lanza -> el hook entregaba CERO memoria
+        # en ese destino (medido 2026-10-23, FDL32-t3-dev-hub, ronda 5).
+        data = json.loads(link.read_text(encoding="utf-8-sig"))
         candidate = data.get("motor_root")
         if isinstance(candidate, str) and Path(candidate).is_dir():
             motor = Path(candidate)
@@ -489,14 +502,23 @@ def _load_context(
         # programa el motor recibe las dos memorias. Sin esta rama, abrir en el
         # motor daba 207 en vez de 342 (ver `_dogfooding_workspace`).
         anchor = _dogfooding_workspace(root) or root
+        # El anclaje vive SOLO durante la lectura y se restaura (ronda 5,
+        # codex): ahora el ensamblador tambien se llama in-process desde el
+        # CLI, y una variable global puesta y no restaurada es un state-leak.
+        previous = os.environ.get("AGENT_PROJECT_ROOT")
         os.environ["AGENT_PROJECT_ROOT"] = str(anchor)
+        try:
+            if str(motor) not in sys.path:
+                sys.path.insert(0, str(motor))
 
-        if str(motor) not in sys.path:
-            sys.path.insert(0, str(motor))
+            from bus.memory_loader import INDEX_BUDGET_CHARS, get_session_index
 
-        from bus.memory_loader import INDEX_BUDGET_CHARS, get_session_index
-
-        return get_session_index(INDEX_BUDGET_CHARS if budget is None else budget)
+            return get_session_index(INDEX_BUDGET_CHARS if budget is None else budget)
+        finally:
+            if previous is None:
+                os.environ.pop("AGENT_PROJECT_ROOT", None)
+            else:
+                os.environ["AGENT_PROJECT_ROOT"] = previous
     except Exception:
         return None
 
@@ -506,10 +528,12 @@ def _cap(text: str, limit: int, label: str) -> str:
     if len(text) <= limit:
         return text
     note = f"\n[{label} recortado a {limit} chars]"
-    return text[: max(0, limit - len(note))].rstrip() + note
+    if limit <= len(note):
+        return text[: max(0, limit)]
+    return text[: limit - len(note)].rstrip() + note
 
 
-def assemble_session_context(
+def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 estados de memoria: ramas inherentes
     root: Path,
     index_for_budget,
     max_chars: int | None = None,
@@ -529,7 +553,11 @@ def assemble_session_context(
     During: lee roles, M4/M5 y salud (subproceso de solo lectura); sin
         escrituras.
     After: ``(contexto, memoria_fallo)`` con ``len(contexto) <= max_chars``.
-        Nunca lanza.
+        Tres estados de memoria distintos: fallo de carga (`_LOAD_FAILED`,
+        ``memoria_fallo=True``), corpus vacio (`_LOAD_EMPTY`) e indice omitido
+        por presupuesto (`_LOAD_NO_BUDGET`). Si las partes fijas no dejan
+        `_MIN_INDEX_BUDGET`, se degradan (salud, M4/M5 a fallback, roles) antes
+        de omitir el indice; el bloque del indice nunca se corta. Nunca lanza.
     """
     try:
         motor = str(_motor_root(root))
@@ -541,33 +569,57 @@ def assemble_session_context(
         session_cap = loader.SESSION_CONTEXT_MAX_CHARS
     except Exception:
         index_cap, session_cap = 4300, 9000
-    limit = max_chars or session_cap
+    # `None` y 0 NO son lo mismo (ronda 5, codex): `x or default` convertia un
+    # tope explicito de 0 en el valor por defecto.
+    limit = session_cap if max_chars is None else max_chars
+    wanted = index_cap if index_budget is None else index_budget
 
     roles = _role_section(root)
     m4m5 = _cap(_m4_m5_section(root), _M4_M5_CAP, "M4/M5")
     # `_health_line` ya se acota conservando la accion; el `_cap` aqui es la red
     # de seguridad (idempotente) por si un sustituto devuelve algo mayor.
     health = _cap(_health_line(root), _HEALTH_CAP, "Salud")
-    fixed = [p for p in (_EXPANSION_HINT, health, roles, m4m5) if p]
-    used = sum(len(p) + 2 for p in fixed)
-    budget = min(index_budget or index_cap, max(0, limit - used - 2))
 
-    try:
-        memory = index_for_budget(budget)
-    except Exception:
-        memory = None
-    failed = memory is None
-    if failed:
-        memory_part = _LOAD_FAILED
-    elif not memory:
-        memory_part = _LOAD_EMPTY
+    def _used() -> int:
+        return sum(len(p) + 2 for p in (_EXPANSION_HINT, health, roles, m4m5) if p)
+
+    # Si las partes fijas no dejan sitio al indice minimo, se degradan en orden
+    # inverso de prioridad (salud, M4/M5 a su fallback corto, roles) ANTES de
+    # tocar nada mas: asi el recorte final nunca cae dentro del bloque del
+    # indice (ronda 5, kilo #7).
+    for degrade in ("health", "m4m5", "roles"):
+        if limit - _used() - 2 >= _MIN_INDEX_BUDGET:
+            break
+        if degrade == "health":
+            health = ""
+        elif degrade == "m4m5":
+            m4m5 = _M4_M5_FALLBACK
+        else:
+            roles = ""
+    budget = min(wanted, max(0, limit - _used() - 2))
+
+    failed = False
+    if budget < _MIN_INDEX_BUDGET:
+        # Tercer estado (ronda 5): ni fallo de carga ni corpus vacio.
+        memory_part = _LOAD_NO_BUDGET
     else:
-        memory_part = memory
+        try:
+            memory = index_for_budget(budget)
+        except Exception:
+            memory = None
+        failed = memory is None
+        if failed:
+            memory_part = _LOAD_FAILED
+        elif not memory:
+            memory_part = _LOAD_EMPTY
+        else:
+            memory_part = memory
 
     parts = [_EXPANSION_HINT, memory_part, health, roles, m4m5]
     context = "\n\n".join(p.strip("\n") for p in parts if p)
     if len(context) > limit:
-        # Recorte duro de ultimo recurso; nunca lanza (el assert vive en tests).
+        # Ultimo recurso (solo si la pista sola excede el tope): aqui ya no hay
+        # bloque de indice que partir, porque sin presupuesto no se emite.
         context = _cap(context, limit, "Contexto de arranque")
     return context, failed
 

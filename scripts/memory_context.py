@@ -105,6 +105,31 @@ def _anchor_memory_root() -> Path | None:
 
     if os.environ.get("AGENT_PROJECT_ROOT"):
         return None
+    # Ronda 5 (kilo #2): sin la variable, resolver como el hook SessionStart --
+    # el primer ancestro del cwd con `.claude/` y `.agent/` -- antes que el
+    # motor. La invocacion documentada para backends sin hook es
+    # `<MOTOR_ROOT>/scripts/memory_context.py --bootstrap` CON cwd en el
+    # destino; resolviendo solo por `_MOTOR_ROOT` el CLI leia la memoria del
+    # motor y perdia la del destino (medido: canario local 0 por CLI, presente
+    # por hook en el mismo cwd).
+    try:
+        here = Path.cwd().resolve()
+        motor = _MOTOR_ROOT.resolve()
+        for candidate in (here, *here.parents):
+            if (candidate / ".claude").is_dir():
+                # Un checkout del MOTOR (otro worktree) no es un destino: lo
+                # delata su propio `scripts/memory_context.py`. Para el motor
+                # manda el workspace de dogfooding de abajo (test 057b).
+                is_motor = (candidate / "scripts" / "memory_context.py").is_file()
+                if (
+                    candidate != motor
+                    and not is_motor
+                    and (candidate / ".agent").is_dir()
+                ):
+                    return candidate
+                break
+    except OSError:
+        pass
     try:
         decl = _MOTOR_ROOT / ".agent" / "config" / "motor_workspace.txt"
         if not decl.is_file():
@@ -159,9 +184,6 @@ def _anchored_env():
 
 from bus.memory_loader import (  # noqa: E402
     INDEX_BUDGET_CHARS,
-    MEMORY_INDEX_CLOSE,
-    MEMORY_INDEX_OPEN,
-    get_bootstrap_context,
     get_compact_context,
     get_memory_tier_status,
     get_session_index,
@@ -729,11 +751,14 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
             return 1
 
     elif mode == "full":
-        ctx = get_bootstrap_context()
-        if not ctx:
-            print("# Full Context\n\nNo memory files found.", file=sys.stderr)
-            return 1
-        print(f"{MEMORY_INDEX_OPEN}\n{ctx}\n{MEMORY_INDEX_CLOSE}")
+        # El indice SIN presupuesto: todas las lecciones, mismo formato y
+        # envoltorio que `--bootstrap` (ronda 5: antes llamaba a
+        # `get_bootstrap_context`, capado a 60 y con `[truncated]`). Corpus
+        # vacio = rc 0 con mensaje, igual que `--bootstrap`.
+        ctx = get_session_index(None)
+        print(
+            ctx or "Memoria del proyecto: el corpus esta vacio (aun no hay lecciones)."
+        )
 
     elif mode == "compact":
         ctx = get_compact_context()

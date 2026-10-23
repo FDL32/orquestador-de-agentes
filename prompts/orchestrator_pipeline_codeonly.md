@@ -62,7 +62,7 @@ o sea con menos red de seguridad, no con mas.
 python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<superficie del ticket>" --limit 8
 ```
 
-Las lineas `...[truncated]` son INDICE: expandelas por id con `--recall --id obs-<slug>`.
+Cada linea del indice (`- <id>: <titular>`) es INDICE: expandela por id con `--recall --id obs-<slug>`.
 
 ## PASO 0: PREFLIGHT (obligatorio, antes de tocar nada)
 

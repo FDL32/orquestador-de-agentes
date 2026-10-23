@@ -93,9 +93,9 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<domain of this 
 ```
 
 Query by the SURFACE the flight touches (`backlog`, `suite`, `guard`, `bus`,
-`encoding`, `memoria`), not by ticket id. Lines that arrive marked
-`...[truncated]` are INDEX entries: expand the ones that matter by their id with
-`--recall --id obs-<slug>`.
+`encoding`, `memoria`), not by ticket id. Each memory index line
+(`- <id>: <headline>`) is an INDEX entry: expand the ones that matter by their id
+with `--recall --id obs-<slug>`.
 
 Do this once per GROUP too, not only at flight start: each group touches a
 different surface, and the lesson that saves you is the one about the surface

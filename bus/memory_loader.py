@@ -860,13 +860,14 @@ def _clip_block(text: str, limit: int, label: str) -> str:
 def format_memory_index(  # noqa: C901 - carriles + sub-topes + suelos: un render, ramas inherentes
     observations: list[dict[str, Any]],
     local_text: str = "",
-    budget: int = INDEX_BUDGET_CHARS,
+    budget: int | None = INDEX_BUDGET_CHARS,
 ) -> str:
     """Render the BOUNDED memory index shared by the hook and the CLI.
 
     Before: ``observations`` is the archive union (may carry ``_origin``);
         ``local_text`` is the best local tier already formatted (may be "");
-        ``budget`` is the char ceiling for the whole wrapped block.
+        ``budget`` is the char ceiling for the whole wrapped block, or
+        ``None`` for the WHOLE corpus (`--full`: every lesson, no sub-caps).
     During: pure formatting, no I/O. Dedups by ``dedup_key``; splits out
         refuted/superseded entries; builds a STABLE lane (entries tagged with
         ``memory_class``, at most ``_STABLE_LANE_CAP``, one per topic) and a
@@ -951,21 +952,63 @@ def format_memory_index(  # noqa: C901 - carriles + sub-topes + suelos: un rende
         parts.append(MEMORY_INDEX_CLOSE)
         return "\n".join(parts)
 
+    if budget is None:
+        # `--full` (ronda 5, sonnet/kilo #2): el corpus ENTERO, en el mismo
+        # formato y envoltorio -- todas las vigentes (plantillas incluidas),
+        # tier local y refutadas sin sub-tope. Una linea por leccion; la
+        # leccion completa sigue en `--recall --id`.
+        everything = _sorted_newest_first(recent_pool)
+        full_stale = ""
+        if stale:
+            full_stale = "\n".join(
+                [f"## Refutadas o supersedidas ({len(stale)})"]
+                + [
+                    "[SUPERSEDIDA] " + _index_line(o)[2:]
+                    if o.get("status") == "superseded"
+                    else "[REFUTADA] " + _index_line(o)[2:]
+                    for o in stale
+                ]
+            )
+        return _render(everything, local_text.strip(), full_stale)
+
+    def _origin(obs: dict[str, Any]) -> str:
+        return str(obs.get("_origin") or "motor")
+
+    # Suelos (ronda 5, glm #3): total min(25, disp.) Y por origen min(10, disp.),
+    # medidos sobre lo que la cuota PUEDE dar (sin plantillas, como la cuota).
+    available = _cap_preserving_origins(recent_pool, max(1, len(recent_pool)))
+    per_origin_avail: dict[str, int] = {}
+    for obs in available:
+        per_origin_avail[_origin(obs)] = per_origin_avail.get(_origin(obs), 0) + 1
+    floor = min(INDEX_FLOOR_TOTAL, len(available))
+
+    def _floors_met(recent: list[dict[str, Any]]) -> bool:
+        if len(recent) < floor:
+            return False
+        shown: dict[str, int] = {}
+        for obs in recent:
+            shown[_origin(obs)] = shown.get(_origin(obs), 0) + 1
+        return all(
+            shown.get(name, 0) >= min(INDEX_FLOOR_PER_ORIGIN, avail)
+            for name, avail in per_origin_avail.items()
+        )
+
     def _fit(local: str, stale_txt: str) -> list[dict[str, Any]]:
+        if len(_render(available, local, stale_txt)) <= budget:
+            return available
         best: list[dict[str, Any]] = []
-        for n in range(1, len(recent_pool) + 1):
+        for n in range(1, len(available) + 1):
             candidate = _cap_preserving_origins(recent_pool, n)
             if len(_render(candidate, local, stale_txt)) > budget:
                 break
             best = candidate
         return best
 
-    floor = min(INDEX_FLOOR_TOTAL, len(recent_pool))
     recent = _fit(local_block, stale_block)
-    if len(recent) < floor and stale_block:
+    if not _floors_met(recent) and stale_block:
         stale_block = ""
         recent = _fit(local_block, stale_block)
-    if len(recent) < floor and local_block:
+    if not _floors_met(recent) and local_block:
         local_block = "[Tier local omitido por presupuesto: ver --full]"
         recent = _fit(local_block, stale_block)
 
@@ -1240,7 +1283,7 @@ def get_compact_context() -> str:
     return "\n\n".join(sections)
 
 
-def get_session_index(budget: int = INDEX_BUDGET_CHARS) -> str:
+def get_session_index(budget: int | None = INDEX_BUDGET_CHARS) -> str:
     """Bounded memory index for ANY session start (hook or CLI, any backend).
 
     Diseno v6 (2026-10-23). Replaces `get_bootstrap_context` (startup) and

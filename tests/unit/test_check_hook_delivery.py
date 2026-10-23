@@ -23,7 +23,14 @@ def _line(**fields) -> str:
 
 
 def _transcript(
-    config: Path, root: Path, name: str, *, ran: bool, delivered: bool, cwd=None
+    config: Path,
+    root: Path,
+    name: str,
+    *,
+    ran: bool,
+    delivered: bool,
+    cwd=None,
+    started: str = "2026-10-23T12:00:00Z",
 ) -> Path:
     folder = config / "projects" / "slug-que-no-importa"
     folder.mkdir(parents=True, exist_ok=True)
@@ -31,13 +38,14 @@ def _transcript(
     if ran:
         lines.append(
             _line(
+                timestamp=started,
                 attachment={
                     "type": "hook_success",
                     "hookName": "SessionStart:startup",
                     "hookEvent": "SessionStart",
                     "content": "",
                     "command": 'python -c "...session_start_hook.py..."',
-                }
+                },
             )
         )
     if delivered:
@@ -108,6 +116,39 @@ def test_other_roots_and_older_sessions_are_ignored(tmp_path):
 
     status, _message = chd.evaluate(root, config, _hook(tmp_path, mtime=1_000.0))
     assert status == "SKIP"
+
+
+def test_session_started_with_the_old_hook_is_not_a_delivery_failure(tmp_path):
+    """Ronda 5 (sonnet): una sesion ARRANCADA antes del hook vigente pero escrita
+    despues (mtime nuevo) no puede contar como "el hook nuevo no entrego".
+
+    MUTACION ALCANZABLE: volver a filtrar solo por mtime del transcript ->
+    este caso da WARN y el test cae.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = tmp_path / "cfg"
+    _transcript(
+        config, root, "vieja", ran=True, delivered=False, started="1970-01-01T00:00:05Z"
+    )
+
+    status, _message = chd.evaluate(root, config, _hook(tmp_path, mtime=1_000.0))
+    assert status == "SKIP"
+
+
+def test_only_the_most_recent_transcripts_are_scanned(tmp_path, monkeypatch):
+    """El coste en pre-push esta acotado a `_MAX_TRANSCRIPTS` (los mas nuevos)."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = tmp_path / "cfg"
+    for i in range(5):
+        path = _transcript(config, root, f"s{i}", ran=True, delivered=(i == 0))
+        os.utime(path, (2_000.0 + i, 2_000.0 + i))
+    monkeypatch.setattr(chd, "_MAX_TRANSCRIPTS", 2)
+
+    status, message = chd.evaluate(root, config, _hook(tmp_path, mtime=1_000.0))
+    assert status == "WARN", "la unica entrega esta en el transcript mas viejo"
+    assert "2 sesion" in message
 
 
 def test_subdirectory_sessions_belong_to_the_root(tmp_path):
