@@ -167,7 +167,6 @@ ALLOWLIST = {
     ".agent/state_validation.py",
     ".claude/README.md",
     ".claude/commands/sync-core.md",
-    ".claude/rules/05-session-artifacts.md",
     "AGENTS.md",
     "CHANGELOG.md",
     "CLOSURE_MODEL.md",
