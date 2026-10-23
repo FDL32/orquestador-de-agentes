@@ -278,6 +278,15 @@ Un aviso vale si tiene medicion detras. Los que este repo tiene medidos y suelen
   `cat >>`/`printf` deja LF. Mezclarlas aborta el commit.
 - **Orden de trabajo:** la suite canonica va la **ULTIMA**. Cualquier commit posterior la
   invalida (`tested_commit_sha == HEAD`).
+- **SHAs del linaje fuera de la seccion de estado:** los SHAs que la sesion siguiente
+  necesita para clasificar el drift (Paso 2) van en una seccion propia que NO se llame
+  estado (p. ej. "Ancla de linaje"), con la aclaracion de que no describe el estado sino
+  el punto de medida; la seccion de estado lleva cifras sin SHA y sus comandos de
+  re-medicion. Motivo medido: `scripts/check_handoff_state_sha.py` marca todo SHA bajo un
+  encabezado de estado y no exime `[snapshot`; hoy no mira `arranques/`, pero si se
+  amplia su alcance todo arranque con SHAs en su estado daria WARN (y rojo con
+  `HANDOFF_STATE_SHA_STRICT=1`). (Origen: `PROPUESTA_mejoras_session_hop_2026-10-08.md`
+  del destino, A1, verificada por bucle el 2026-10-08.)
 - **Cifra de un documento de diseño != cifra real de filesystem** (medido
   2026-09-29): una cifra citada de un documento de diseño sobre una superficie
   con **crecimiento sin control declarado** (rotacion pendiente, cola sin
@@ -380,7 +389,8 @@ Un unico bloque markdown pegable como PRIMER mensaje de la sesion nueva, con:
 
 1. Contratos que gobiernan (ruta absoluta + lineas)
 2. Topologia resuelta y **medida**, con su comando de re-medicion
-3. Estado `[snapshot <fecha>]`, cada dato con `command:` + `exit_code:`
+3. Estado `[snapshot <fecha>]`, cada dato con `command:` + `exit_code:`, sin SHAs:
+   los del linaje (Paso 2) van aparte, en una seccion "Ancla de linaje" (ver Paso 5)
 4. Slugs de memoria **verificados `rc=0`** + STOP CONDITION
 5. Puente de memoria del cierre anterior (`closeout_lessons.md`): contenido
    transportado con su procedencia, o su ausencia declarada explicitamente
