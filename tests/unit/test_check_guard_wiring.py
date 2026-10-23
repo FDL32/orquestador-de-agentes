@@ -320,6 +320,12 @@ EXPECTED_WIRED_REAL = {
     # registro de overrides del motor (expiry barrido por proceso real,
     # exit 1 si hay deuda sin declarar).
     "check_override_registry",
+    # WOT-2026-090d: cableado via import estatico en
+    # prepush_check.py::run_prompt_line_budget_check -- BLOQUEANTE, verifica
+    # que los prompts normativos (NORMATIVE_PROMPTS) declaran y respetan su
+    # line_budget. Nace sin deuda heredada (ambos prompts ya cumplen en el
+    # mismo commit que introduce el campo).
+    "check_prompt_line_budget",
 }
 
 
