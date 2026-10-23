@@ -1426,6 +1426,52 @@ def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
     )
 
 
+# Puntuacion y comillas que la prosa real del backlog pega a un valor de
+# `deliverable_type:` (`code,` x103, `documentation,` x19, `code;`, `code.`,
+# `documentation\``, ...): se quitan de los dos extremos antes de comparar.
+_DELIVERABLE_VALUE_STRIP = "`'\",.;:()*"
+
+
+def _own_row_deliverable_type(line: str, ticket_id: str) -> str | None:
+    """Strictest known ``deliverable_type`` of ``line`` if it is ``ticket_id``'s own row.
+
+    Before: ``line`` is one raw line of a backlog surface.
+    During: the line is an OWN row only if it is a table row whose raw cell 1
+        or cell 2 is exactly ``ticket_id`` (the two real layouts:
+        `| <ID> | ...` and `| <prioridad> | <ID> | ...`); a mention in the
+        prose of another ticket's row is not. Every `deliverable_type:` token
+        of the own row is cleaned of `_DELIVERABLE_VALUE_STRIP` and kept only
+        if it fullmatches a key of `check_loop_execution.
+        DEFAULT_MIN_DISTINCT_BACKENDS` (the barrier's own taxonomy).
+    After: returns the token with the highest minimum of distinct lenses (the
+        strictest; prose that cites a laxer type cannot relax the row), or
+        None if the line is not an own row or has no known token. Never raises:
+        an import failure of the taxonomy yields None (caller falls back to
+        `code`).
+    """
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    cells = stripped.split("|")
+    if not any(len(cells) > i and cells[i].strip() == ticket_id for i in (1, 2)):
+        return None
+    try:
+        from scripts.check_loop_execution import DEFAULT_MIN_DISTINCT_BACKENDS
+    except Exception:  # fail-closed: sin taxonomia, el llamador cae a code
+        return None
+    known = [
+        token
+        for token in (
+            raw.strip(_DELIVERABLE_VALUE_STRIP).lower()
+            for raw in DELIVERABLE_TYPE_RE.findall(line)
+        )
+        if token in DEFAULT_MIN_DISTINCT_BACKENDS
+    ]
+    if not known:
+        return None
+    return max(known, key=lambda token: DEFAULT_MIN_DISTINCT_BACKENDS[token])
+
+
 def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> str:
     """Resolve the ``deliverable_type`` declared for ``ticket_id`` in the backlog.
 
@@ -1434,32 +1480,30 @@ def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> 
 
     Before: ``project_root`` is the repo_destino; ``ticket_id`` is a resolved
         ticket string.
-    During: Searches for a row containing ``ticket_id`` first in the live
-        backlog (`.agent/collaboration/backlog.md`), then in the archive
-        (`_archive/backlog_done.md`). Within the matching row, extracts the
-        literal ``deliverable_type: <value>`` cell text with
-        ``DELIVERABLE_TYPE_RE``. Values are NEVER normalized (e.g. `doc` or
-        `process` are emitted verbatim): deciding taxonomy is a DEC, not
-        Builder work.
-    After: Returns the raw string value found. Falls back to `"code"` (the
-        ticket's own declared type and the strictest alongside `mixed`) when
-        the ticket has no row in either file, the row has no
-        `deliverable_type:` cell, or the file cannot be read. Never raises.
+    During: Looks for the ticket's OWN row (`_own_row_deliverable_type`: ID
+        cell, never a substring of the line) first in the live backlog
+        (`.agent/collaboration/backlog.md`), then in the archive
+        (`_archive/backlog_done.md`). Matching by substring let the live rows
+        of 120b/120c, which cite "WOT-2026-120a" in prose, stamp 120a as
+        `mixed` over its real archived `documentation` row (cierre del vuelo
+        WOT-2026-120a, 2026-10-23).
+    After: Returns the strictest known type of the first own row that declares
+        one. Falls back to `"code"` (the strictest alongside `mixed`) when the
+        ticket has no own row in either file, its own rows carry no known
+        `deliverable_type:` token, or the files cannot be read. Never raises.
     """
     for rel in (BACKLOG_REL, BACKLOG_ARCHIVE_REL):
         path = project_root / rel
         try:
             content = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         for line in content.splitlines():
-            if ticket_id not in line:
-                continue
-            m = DELIVERABLE_TYPE_RE.search(line)
-            if m:
-                return m.group(1)
-    # No row found in either surface, or the row lacked the cell: fall back
-    # to "code" (documented default per contract WOT-2026-045a).
+            dtype = _own_row_deliverable_type(line, ticket_id)
+            if dtype is not None:
+                return dtype
+    # No own row found in either surface, or none declared a known type: fall
+    # back to "code" (documented default per contract WOT-2026-045a).
     return "code"
 
 
