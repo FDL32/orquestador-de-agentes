@@ -500,12 +500,12 @@ aprobacion" y `manager_review.md` Paso 5-bis remiten aqui):
   runtime del checkout del motor que corrio la suite; para `repo_destino` se lee
   del destino (`assert_canonical_suite_green`, `scripts/pre_handoff_guard.py`).
   Declara la ruta usada en el informe.
-- **Clasificacion antes de reabrir.** Antes de volver a `CHANGES` por un rojo de
-  la suite, descarta rojo de ENTORNO: si la corrida emitio el WARN de prefijo
-  largo o los fallos son de sandbox git (`unable to write file`,
-  `Filename too long`), el Builder repite la suite desde un checkout que cumpla
-  el techo. Solo un rojo que sobrevive a esa repeticion reabre la revision; un
-  rojo real tras `APPROVE` sigue invalidando la aprobacion.
+- **Clasificacion antes de reportar.** Antes de REPORTAR al Manager un rojo de la
+  suite, el Builder descarta rojo de ENTORNO: si la corrida emitio el WARN de
+  prefijo largo o los fallos son de sandbox git (`unable to write file`,
+  `Filename too long`), repite la suite desde un checkout que cumpla el techo.
+  Solo un rojo que sobrevive se reporta y produce el `CHANGES` de 039m
+  (`manager_review.md`, Reingreso unico, Pasos 1-5 integros).
 
 ## 7. Multi-Ticket Integration Smoke
 

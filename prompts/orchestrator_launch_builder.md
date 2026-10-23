@@ -598,7 +598,7 @@ para la secuencia exacta.
   1. suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all` (precondicion de ruta: QUICKSTART.md "Sellos largos") con
      `last-run.json` en `status=finished`, `exit_code=0`, `level=all`,
      `args_mode=default_discovery` y `tested_commit_sha == HEAD` (commit que se cierra);
-  2. si la suite falla (y no es rojo de ENTORNO, ver QUICKSTART.md "Sellos largos"): NO se cierra. El ticket vuelve a `CHANGES` y repite
+  2. si la suite falla (rojo que sobrevive a la clasificacion de ENTORNO del Builder, QUICKSTART.md "Sellos largos"): NO se cierra. El ticket vuelve a `CHANGES` y repite
      integramente los Pasos 1-5 de `manager_review.md` (no solo re-emitir el
      Paso 5, no un parche puntual): un fallo de suite tras el `APROBADO`
      del Paso 5 invalida esa aprobacion por completo, porque el Manager
@@ -767,7 +767,7 @@ que el Manager aprobo -- si hubo commits posteriores a la aprobacion, la
 suite corre sobre un commit distinto al aprobado y eso es un hallazgo, no un
 cierre valido).
 
-- Si la suite **falla**: NO cierres (descarta antes rojo de ENTORNO, QUICKSTART.md "Sellos largos"). Reporta el fallo al Manager como un
+- Si la suite **falla**: NO cierres; descarta primero rojo de ENTORNO (QUICKSTART.md "Sellos largos") y despues reporta al Manager el rojo que sobrevive como un
   blocker nuevo. La aprobacion anterior queda invalidada por completo: el
   ticket vuelve a `CHANGES` y el Manager repite integramente los Pasos 1-5
   de `manager_review.md` sobre el commit actual (Clasificacion, gates

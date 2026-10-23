@@ -324,7 +324,7 @@ re-emitir el Paso 5 sin re-ejecutar los pasos intermedios. El `APPROVE`
 anterior queda invalidado: reescribe `decision_<ticket_id>.json` a
 `"decision": "CHANGES"` en el mismo turno en que detectas el fallo,
 para que no quede una aprobacion persistida mientras se corrige.
-Escribe ese `CHANGES` igualmente; si el Builder, al repetir la suite (Paso 5-bis, QUICKSTART.md "Sellos largos"), demuestra rojo de ENTORNO, el reingreso no reabre los Pasos 1-5.
+El fallo de suite de esta formula es el que sobrevive a la clasificacion de ENTORNO que hace el Builder (QUICKSTART.md "Sellos largos"); un rojo de entorno no llega aqui.
 
 Ademas del veredicto en texto, escribe el decision artifact estructurado
 (canal primario del bridge; el transcript queda como fallback y evidencia).
