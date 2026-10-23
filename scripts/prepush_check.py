@@ -1968,6 +1968,12 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
     confirmed = [p for p in dyn_pairs if not p.get("error")]
     measurement_failed = [p for p in dyn_pairs if p.get("error")]
 
+    # WOT-2026-059j: separar "agente permisivo" de "agente ausente".
+    # Ambos son vectores confirmados, pero el permisivo tiene la forma
+    # {permissive_agent, first_rule} y el ausente {missing_agent, cwd}.
+    permissive = [p for p in confirmed if p.get("permissive_agent") is not None]
+    missing = [p for p in confirmed if p.get("permissive_agent") is None]
+
     if not confirmed:
         # Solo mediciones fallidas (CLI ausente, timeout, cwd invalido): WARN,
         # nunca bloquea. "No medi" no es "hay un vector real".
@@ -1987,14 +1993,25 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
             is_blocking=False,
         )
 
-    # Hay al menos un agente CONFIRMADO ausente (rc=0, listado leido, el
-    # nombre no aparece): vector de escritura real, bloqueante. Las mediciones
-    # fallidas (si las hay ademas) se reportan aparte, sin degradar el bloqueo.
-    detalle_confirmed = "; ".join(
+    # Hay al menos un agente CONFIRMADO (ausente o permisivo): vector de
+    # escritura real, bloqueante. Las mediciones fallidas (si las hay ademas)
+    # se reportan aparte, sin degradar el bloqueo.
+    detalle_confirmed_parts: list[str] = []
+    for p in permissive:
+        rule = p.get("first_rule", {})
+        detalle_confirmed_parts.append(
+            f"{p['profile']} -> {p['backend']} (agente '{p['permissive_agent']}' "
+            f"con primera regla permisiva: "
+            f"permission={rule.get('permission', '?')!r}, "
+            f"action={rule.get('action', '?')!r}, "
+            f"pattern={rule.get('pattern', '?')!r})"
+        )
+    detalle_confirmed_parts.extend(
         f"{p['profile']} -> {p['backend']} (agente '{p['missing_agent']}' "
         f"ausente en cwd={p['cwd']})"
-        for p in confirmed
+        for p in missing
     )
+    detalle_confirmed = "; ".join(detalle_confirmed_parts)
     if measurement_failed:
         detalle_confirmed += "; ADEMAS " + "; ".join(
             f"{p['profile']} -> {p['backend']} sin medicion ({p['error']})"

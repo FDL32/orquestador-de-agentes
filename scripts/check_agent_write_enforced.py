@@ -136,6 +136,177 @@ def find_unenforced_pairs(config: dict) -> list[dict]:
 # con `cwd=<destino>` opencode caia al agente por defecto (`build`).
 _AGENT_LINE_RE = re.compile(r"^([a-zA-Z0-9_-]+)\b")
 
+# WOT-2026-059j: formato de salida real medido de `<backend> agent list`:
+# una linea sin indentacion con "nombre (primary)" o "nombre (secondary)",
+# seguida de un bloque JSON tipo array indentado con espacios, hasta la linea
+# que es exactamente "]". Este parser extrae los permisos reales de cada
+# agente sin necesidad de I/O adicional.
+_AGENT_HEADER_RE = re.compile(r"^([a-zA-Z0-9_-]+)\s+\(")
+
+
+def _try_parse_block(
+    agent_name: str, lines: list[str], result: dict[str, list[dict]]
+) -> None:
+    """Intenta parsear y añadir un bloque de permisos al resultado.
+
+    Si el bloque reconstruido es JSON valido y es un array, se añade a
+    `result[agent_name]`. Si no, se ignora sin elevar excepcion.
+    """
+    block_text = _reconstruct_block(lines)
+    if block_text:
+        try:
+            parsed = json.loads(block_text)
+            if isinstance(parsed, list):
+                result[agent_name] = parsed
+        except (json.JSONDecodeError, ValueError):
+            pass  # bloque invalido: se ignora
+
+
+def _parse_agent_permission_blocks(stdout: str) -> dict[str, list[dict]]:
+    """Parsea el stdout crudo de `<backend> agent list` en un dict de permisos.
+
+    Before: `stdout` es la salida literal del proceso `agent list` (formato real
+        medido: cabeceras "nombre (primary/secondary)" sin indentacion seguidas
+        de un bloque JSON tipo array hasta una linea `]`).
+    During: puro, sin I/O. Recorre linea por linea, detecta cabeceras con regex,
+        y recopila bloques JSON. El contenido entre `[` y `]` se reconstruye
+        como JSON valido (el formato real de opencode pone la coma del array
+        en linea separada del objeto siguiente).
+    After: dict `{agent_name: [perm_dict1, perm_dict2, ...]}` en el orden de
+        aparicion. Un bloque vacio devuelve lista vacia. Si un bloque JSON es
+        invalido se ignora (no se eleva la excepcion: mejor omitir que fallar).
+    """
+    result: dict[str, list[dict]] = {}
+    current_agent: str | None = None
+    block_lines: list[str] = []
+    in_block = False
+
+    for line in stdout.splitlines():
+        m = _AGENT_HEADER_RE.match(line)
+        if m:
+            # Bloque anterior: anadir ] si falta (truncado por nuevo header)
+            if current_agent is not None:
+                if "]" not in block_lines:
+                    block_lines.append("]")
+                _try_parse_block(current_agent, block_lines, result)
+                block_lines = []
+
+            current_agent = m.group(1)
+            result.setdefault(current_agent, [])
+            in_block = True
+            continue
+
+        if in_block and current_agent is not None:
+            stripped = line.strip()
+            if stripped == "]":
+                # Cierre de bloque: anadir ] para que _reconstruct_block
+                # lo incluya en el JSON reconstruido.
+                block_lines.append("]")
+                _try_parse_block(current_agent, block_lines, result)
+                in_block = False
+                block_lines = []
+            else:
+                # Recopilar linea del bloque JSON (stripped de indentacion)
+                block_lines.append(stripped)
+
+    # Cerrar ultimo bloque si queda abierto
+    if current_agent is not None and block_lines:
+        if "]" not in block_lines:
+            block_lines.append("]")
+        _try_parse_block(current_agent, block_lines, result)
+
+    return result
+
+
+def _reconstruct_block(lines: list[str]) -> str | None:
+    """Reconstruye un bloque JSON de `agent list` permisos en un string valido.
+
+    Las lineas vienen de strip() de la salida real de opencode. El formato real
+    tiene objetos del array en lineas separadas con la coma al final del objeto:
+        { ... }
+      },
+      { ... }
+    Al strip/join sin tratamiento, esto produce JSON invalido (coma en linea
+    separada del objeto siguiente). Se corrige fusionando `},` con el `{`
+    siguiente en `},{`.
+    """
+    if not lines:
+        return None
+    raw_parts: list[str] = []
+    skip_next_open = False
+    for i, line in enumerate(lines):
+        if skip_next_open and line.startswith("{"):
+            # El `{` siguiente a `},` ya fue fusionado: saltarlo.
+            skip_next_open = False
+            continue
+        skip_next_open = False
+        if line == "[":
+            raw_parts.append("[")
+        elif line == "]":
+            raw_parts.append("]")
+        elif line == "},":
+            # Verificar si la siguiente linea es un objeto (seguira en el array)
+            if i + 1 < len(lines) and lines[i + 1].startswith("{"):
+                raw_parts.append("},{")
+                skip_next_open = True
+            else:
+                raw_parts.append("}")
+        else:
+            raw_parts.append(line)
+    return "".join(raw_parts)
+
+
+def _first_permission_rule(executable: str, cwd: str, agent_name: str) -> dict | None:
+    """Obtiene la PRIMERA regla de permisos de un agente dado su nombre.
+
+    Before: `executable` es el binario del backend; `cwd` es la raiz desde la que
+        se lanzaria; `agent_name` es el nombre del agente a consultar.
+    During: ejecuta `<executable> agent list`, parsea con
+        `_parse_agent_permission_blocks`, y devuelve la primera regla (indize 0)
+        del agente buscado. Lanza RuntimeError si el proceso falla (rc!=0),
+        igual que `_list_agents`.
+    After: dict de la primera regla si el agente existe y tiene reglas; None si
+        el agente no aparece en el listado o su bloque esta vacio. NUNCA parsea
+        stdout de un proceso fallido.
+    """
+    proc = subprocess.run(  # noqa: S603 - executable/cwd vienen de agents.json
+        [executable, "agent", "list"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        shell=False,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"'{executable} agent list' salio con rc={proc.returncode}: "
+            f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        )
+    blocks = _parse_agent_permission_blocks(proc.stdout or "")
+    rules = blocks.get(agent_name, [])
+    if rules:
+        return rules[0]
+    return None
+
+
+def _is_permissive_rule(rule: dict | None) -> bool:
+    """Verifica si una regla de permiso es permisiva (open allow-all).
+
+    Before: `rule` es el dict de la primera regla de un agente (o None).
+    During: puro, sin I/O. Comprueba los campos clave.
+    After: True solo si rule es un dict con permission=="*", action=="allow",
+        pattern==".*"; False en cualquier otro caso (None, campos ausentes,
+        valores distintos).
+    """
+    if rule is None:
+        return False
+    return (
+        rule.get("permission") == "*"
+        and rule.get("action") == "allow"
+        and rule.get("pattern") == "*"
+    )
+
 
 def _list_agents(executable: str, cwd: str) -> list[str]:
     """Nombres de agentes que `<executable> agent list` reporta desde `cwd`.
@@ -184,7 +355,7 @@ def _list_agents(executable: str, cwd: str) -> list[str]:
 def find_dynamic_unenforced_pairs(
     config: dict, *, motor_root: str, project_root: str
 ) -> list[dict]:
-    """Pares (perfil, backend) cuyo `readonly_agent` DECLARADO no existe donde hace falta.
+    """Pares (perfil, backend) cuyo `readonly_agent` DECLARADO no existe o es permisivo.
 
     Before: `config` es `agents.json` ya parseado; `motor_root`/`project_root`
         son las raices reales del motor y del destino-rol.
@@ -196,10 +367,10 @@ def find_dynamic_unenforced_pairs(
         resolucion de ambito): `repo_scope: destino` -> `project_root`;
         cualquier otro caso -> `motor_root`.
     After: lista de dicts `{profile, backend, missing_agent, cwd}` (mas
-        `error` si `_list_agents` lanzo). Vacia = todo agente declarado existe
-        donde se necesita. Un fallo del subproceso SE REPORTA, nunca se da
-        por bueno en silencio (misma disciplina fail-closed del resto del
-        gate).
+        `error` si `_list_agents` lanzo) O `{profile, backend, permissive_agent,
+        first_rule, cwd}` para el caso WOT-2026-059j de permiso permisivo. Vacia
+        = todo enforceado. Un fallo del subproceso SE REPORTA, nunca se da por
+        bueno en silencio (misma disciplina fail-closed del resto del gate).
     """
     backends = config.get("backends") or {}
     out: list[dict] = []
@@ -235,6 +406,33 @@ def find_dynamic_unenforced_pairs(
                     "profile": name,
                     "backend": backend_name,
                     "missing_agent": agent,
+                    "cwd": cwd,
+                }
+            )
+            continue
+        # WOT-2026-059j: el agente existe, verificar que su primera regla de
+        # permisos reales NO es un allow-all (open permissions vector).
+        try:
+            first_rule = _first_permission_rule(executable, cwd, agent)
+        except Exception as exc:
+            out.append(
+                {
+                    "profile": name,
+                    "backend": backend_name,
+                    "missing_agent": agent,
+                    "cwd": cwd,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        if _is_permissive_rule(first_rule):
+            out.append(
+                {
+                    "profile": name,
+                    "backend": backend_name,
+                    "missing_agent": None,
+                    "permissive_agent": agent,
+                    "first_rule": first_rule,
                     "cwd": cwd,
                 }
             )
@@ -317,26 +515,72 @@ def _run_dynamic_check(config: dict, motor_root: str, project_root: str) -> int:
     if not dyn_pairs:
         print(
             "[agent-write] OK (dinamico): todo readonly_agent declarado existe "
-            "desde el cwd real de su perfil."
+            "desde el cwd real de su perfil y no tiene permisos permisivos."
         )
         return 0
-    print(
-        "[agent-write] FALLO (dinamico): el readonly_agent declarado NO existe "
-        "desde el cwd real -- la restriccion es DECORATIVA aunque el chequeo "
-        "estatico pase:",
-        file=sys.stderr,
-    )
-    for p in dyn_pairs:
-        detalle = p.get("error") or f"ausente del listado en cwd={p['cwd']}"
+
+    confirmed = [p for p in dyn_pairs if not p.get("error")]
+    measurement_failed = [p for p in dyn_pairs if p.get("error")]
+
+    # Separar "agente permisivo" de "agente ausente"
+    permissive = [p for p in confirmed if p.get("permissive_agent") is not None]
+    missing = [p for p in confirmed if p.get("permissive_agent") is None]
+
+    has_issues = bool(permissive or missing or measurement_failed)
+
+    if has_issues:
         print(
-            f"  - perfil '{p['profile']}' -> backend '{p['backend']}': "
-            f"agente '{p['missing_agent']}' {detalle}",
+            "[agent-write] FALLO (dinamico): problemas con readonly_agent "
+            "declarado desde el cwd real de su perfil:",
             file=sys.stderr,
         )
+
+    if permissive:
+        print(
+            "\n  Permisos REALMENTE PERMISIVOS (vector de escritura CONFIRMADO):",
+            file=sys.stderr,
+        )
+        for p in permissive:
+            rule = p.get("first_rule", {})
+            print(
+                f"  - perfil '{p['profile']}' -> backend '{p['backend']}': "
+                f"agente '{p['permissive_agent']}' tiene primera regla "
+                f"{{permission={rule.get('permission', '?')!r}, "
+                f"action={rule.get('action', '?')!r}, "
+                f"pattern={rule.get('pattern', '?')!r}}} -- allow-all open",
+                file=sys.stderr,
+            )
+
+    if missing:
+        print(
+            "\n  Agentes AUSENTES del listado real:",
+            file=sys.stderr,
+        )
+        for p in missing:
+            print(
+                f"  - perfil '{p['profile']}' -> backend '{p['backend']}': "
+                f"agente '{p['missing_agent']}' ausente en cwd={p['cwd']}",
+                file=sys.stderr,
+            )
+
+    if measurement_failed:
+        print(
+            "\n  Medicion FALLIDA (CLI no disponible, timeout, etc.):",
+            file=sys.stderr,
+        )
+        for p in measurement_failed:
+            print(
+                f"  - perfil '{p['profile']}' -> backend '{p['backend']}': "
+                f"agente '{p['missing_agent']}': {p.get('error', 'error desconocido')}",
+                file=sys.stderr,
+            )
+
     print(
-        "\nRemedio: crea el agente declarado en el cwd real (p.ej. copia el "
-        ".opencode/agents/<nombre>.md al destino), o corrige repo_scope/cwd "
-        "del perfil. Ver DEC-086P10-001.",
+        "\nRemedio: para perfiles permisivos, corrige los permisos reales del "
+        "agente (NO con este gate). Para agentes ausentes, crea el agente "
+        "declarado en el cwd real (p.ej. copia el .opencode/agents/<nombre>.md "
+        "al destino), o corrige repo_scope/cwd del perfil. Ver "
+        "DEC-086P10-001 y WOT-2026-059j.",
         file=sys.stderr,
     )
     return 1
