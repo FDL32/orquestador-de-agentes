@@ -383,6 +383,17 @@ def test_dynamic_check_passes_when_agent_is_present(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cawe, "_list_agents", lambda executable, cwd: ["build", "auditor", "manager"]
     )
+    # WOT-2026-059j: mockear _first_permission_rule para que no ejecute
+    # subprocess contra el backend real.
+    monkeypatch.setattr(
+        cawe,
+        "_first_permission_rule",
+        lambda executable, cwd, agent_name: {
+            "permission": "edit",
+            "action": "deny",
+            "pattern": "*",
+        },
+    )
     project_root = tmp_path / "destino"
     project_root.mkdir()
 
@@ -541,6 +552,17 @@ class TestDynamicReadonlyAgentExistence:
             "_list_agents",
             lambda executable, cwd: ["build", "auditor", "manager"],
         )
+        # WOT-2026-059j: _first_permission_rule llama subprocess.run directo;
+        # hay que mockearlo para que no intente ejecutar el backend real.
+        monkeypatch.setattr(
+            cawe,
+            "_first_permission_rule",
+            lambda executable, cwd, agent_name: {
+                "permission": "edit",
+                "action": "deny",
+                "pattern": "*",
+            },
+        )
         pairs = find_dynamic_unenforced_pairs(
             config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
         )
@@ -570,6 +592,17 @@ class TestDynamicReadonlyAgentExistence:
             return ["build", "auditor", "manager"]
 
         monkeypatch.setattr(cawe, "_list_agents", _fake_list)
+        # WOT-2026-059j: mockear _first_permission_rule para que no ejecute
+        # subprocess contra el backend real.
+        monkeypatch.setattr(
+            cawe,
+            "_first_permission_rule",
+            lambda executable, cwd, agent_name: {
+                "permission": "edit",
+                "action": "deny",
+                "pattern": "*",
+            },
+        )
         pairs = find_dynamic_unenforced_pairs(
             config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
         )
@@ -700,3 +733,482 @@ class TestDynamicReadonlyAgentExistence:
             ]
         )
         assert rc == 1, "la barrera dinamica debe fallar aunque la estatica pase"
+
+
+class TestParseAgentPermissionBlocks:
+    """WOT-2026-059j: _parse_agent_permission_blocks convierte el stdout crudo
+    de `<backend> agent list` en un dict {nombre_agente: [reglas...]}.
+
+    El formato real medido es una cabecera "nombre (primary)" sin indentacion,
+    seguida de un bloque JSON tipo array indentado con espacios, hasta una linea
+    `]`.
+    """
+
+    def test_parses_real_fixture_format(self):
+        """Fixture real medido con este repo: dos agentes, cada uno con reglas."""
+        from scripts.check_agent_write_enforced import _parse_agent_permission_blocks
+
+        stdout = (
+            "build (primary)\n"
+            "  [\n"
+            "  {\n"
+            '    "permission": "*",\n'
+            '    "action": "allow",\n'
+            '    "pattern": "*"\n'
+            "  },\n"
+            "  {\n"
+            '    "permission": "doom_loop",\n'
+            '    "action": "ask",\n'
+            '    "pattern": "*"\n'
+            "  }\n"
+            "]\n"
+            "auditor (primary)\n"
+            "  [\n"
+            "  {\n"
+            '    "permission": "*",\n'
+            '    "action": "allow",\n'
+            '    "pattern": "*"\n'
+            "  }\n"
+            "]\n"
+        )
+        result = _parse_agent_permission_blocks(stdout)
+        assert "build" in result
+        assert "auditor" in result
+        assert len(result["build"]) == 2
+        assert result["build"][0]["permission"] == "*"
+        assert result["build"][0]["action"] == "allow"
+        assert result["build"][0]["pattern"] == "*"
+        assert len(result["auditor"]) == 1
+        assert result["auditor"][0]["permission"] == "*"
+
+    def test_parses_multiple_rules_in_order(self):
+        """El orden de las reglas se preserva tal como aparece en el fixture."""
+        from scripts.check_agent_write_enforced import _parse_agent_permission_blocks
+
+        stdout = (
+            "build (primary)\n"
+            "  [\n"
+            '  {"permission": "*", "action": "allow", "pattern": "*"},\n'
+            '  {"permission": "edit", "action": "deny", "pattern": "*"}\n'
+            "]\n"
+        )
+        result = _parse_agent_permission_blocks(stdout)
+        assert len(result["build"]) == 2
+        assert result["build"][0]["permission"] == "*"
+        assert result["build"][1]["permission"] == "edit"
+
+    def test_empty_block_gives_empty_list(self):
+        """Un bloque sin reglas (solo []) -> lista vacia."""
+        from scripts.check_agent_write_enforced import _parse_agent_permission_blocks
+
+        stdout = "solo (primary)\n  []\n"
+        result = _parse_agent_permission_blocks(stdout)
+        assert result["solo"] == []
+
+
+class TestFirstPermissionRule:
+    """WOT-2026-059j: _first_permission_rule obtiene la primera regla de un agente."""
+
+    def test_returns_first_rule_for_existing_agent(self, monkeypatch):
+        """Devuelve la primera regla del agente pedido."""
+        import scripts.check_agent_write_enforced as cawe
+
+        class _OkProc:
+            returncode = 0
+            stdout = (
+                "build (primary)\n"
+                "  [\n"
+                '  {"permission": "*", "action": "allow", "pattern": "*"}\n'
+                "  ]\n"
+            )
+            stderr = ""
+
+        monkeypatch.setattr(cawe.subprocess, "run", lambda *a, **k: _OkProc())
+        rule = cawe._first_permission_rule("opencode", "C:/fake", "build")
+        assert rule == {"permission": "*", "action": "allow", "pattern": "*"}
+
+    def test_returns_none_for_agent_not_in_listing(self, monkeypatch):
+        """El agente no aparece en el listado -> None."""
+        import scripts.check_agent_write_enforced as cawe
+
+        class _OkProc:
+            returncode = 0
+            stdout = 'build (primary)\n  [\n  {"permission": "*", "action": "allow", "pattern": "*"}\n  ]\n'
+            stderr = ""
+
+        monkeypatch.setattr(cawe.subprocess, "run", lambda *a, **k: _OkProc())
+        rule = cawe._first_permission_rule("opencode", "C:/fake", "no_existe")
+        assert rule is None
+
+    def test_returns_none_for_empty_agent_block(self, monkeypatch):
+        """Agente con bloque vacio -> None."""
+        import scripts.check_agent_write_enforced as cawe
+
+        class _OkProc:
+            returncode = 0
+            stdout = "solo (primary)\n  []\n"
+            stderr = ""
+
+        monkeypatch.setattr(cawe.subprocess, "run", lambda *a, **k: _OkProc())
+        rule = cawe._first_permission_rule("opencode", "C:/fake", "solo")
+        assert rule is None
+
+    def test_raises_on_nonzero_returncode(self, monkeypatch):
+        """Un CLI que falla (rc!=0) -> RuntimeError, nunca parsea stdout de error."""
+        import pytest
+        import scripts.check_agent_write_enforced as cawe
+
+        class _FailingProc:
+            returncode = 1
+            stdout = "auditor: agent not found in this directory\n"
+            stderr = "error: unknown command"
+
+        monkeypatch.setattr(cawe.subprocess, "run", lambda *a, **k: _FailingProc())
+        with pytest.raises(RuntimeError, match="rc=1"):
+            cawe._first_permission_rule("opencode", "C:/fake", "auditor")
+
+    def test_ignores_nonzero_process_not_parsing_failing_stdout(self, monkeypatch):
+        """Bucle adversarial WOT-2026-059j: el stdout de un proceso fallido
+        podria contener el nombre del agente buscado por casualidad. Si se
+        parsea, se colaria como listado valido -> FALSO OK del gate.
+
+        Mutation: quitar la comprobacion de `returncode` hace que este test
+        falle (el nombre del agente en el "mensaje de error" se colaria como
+        regla valida).
+        """
+        import pytest
+        import scripts.check_agent_write_enforced as cawe
+
+        class _FailingProc:
+            returncode = 1
+            stdout = (
+                "error: permission denied\n"
+                "auditor (primary)\n"
+                "  [\n"
+                '  {"permission": "*", "action": "allow", "pattern": "*"}\n'
+                "  ]\n"
+            )
+            stderr = "failed"
+
+        monkeypatch.setattr(cawe.subprocess, "run", lambda *a, **k: _FailingProc())
+        with pytest.raises(RuntimeError, match="rc=1"):
+            cawe._first_permission_rule("opencode", "C:/fake", "auditor")
+
+
+class TestIsPermissiveRule:
+    """WOT-2026-059j: _is_permissive_rule verifica si una regla es allow-all."""
+
+    def test_permissive_rule_returns_true(self):
+        """{permission: *, action: allow, pattern: *} -> True."""
+        from scripts.check_agent_write_enforced import _is_permissive_rule
+
+        assert (
+            _is_permissive_rule({"permission": "*", "action": "allow", "pattern": "*"})
+            is True
+        )
+
+    def test_non_permissive_rule_returns_false(self):
+        """Cualquier otra combinacion -> False."""
+        from scripts.check_agent_write_enforced import _is_permissive_rule
+
+        assert (
+            _is_permissive_rule(
+                {"permission": "edit", "action": "deny", "pattern": "*"}
+            )
+            is False
+        )
+        assert (
+            _is_permissive_rule({"permission": "*", "action": "ask", "pattern": "*"})
+            is False
+        )
+        assert (
+            _is_permissive_rule(
+                {"permission": "*", "action": "allow", "pattern": "*.py"}
+            )
+            is False
+        )
+
+    def test_none_returns_false(self):
+        """None nunca es permisivo."""
+        from scripts.check_agent_write_enforced import _is_permissive_rule
+
+        assert _is_permissive_rule(None) is False
+
+    def test_empty_dict_returns_false(self):
+        """Un dict vacio no tiene los campos necesarios -> False."""
+        from scripts.check_agent_write_enforced import _is_permissive_rule
+
+        assert _is_permissive_rule({}) is False
+
+
+class TestPermissiveAgentDetection:
+    """WOT-2026-059j: ROJO-a-VERDE -- un readonly_agent declarado y EXISTENTE
+    pero con primera regla permisiva debe ser detectado como hallazgo.
+
+    Caso medido: `challenger_opencode_glm_5_2` (readonly_agent: auditor, write: false)
+    tenia como primera regla real {"permission": "*", "action": "allow", "pattern": "*"},
+    identica a la del agente de escritura `build`.
+    """
+
+    def test_rojo_permissive_agent_detected(self, monkeypatch):
+        """Perfil write:false + readonly_agent declarado y EXISTENTE, pero con
+        primera regla permisiva -> find_dynamic_unenforced_pairs lo lista."""
+        import scripts.check_agent_write_enforced as cawe
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "challenger_test": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_opencode",
+                    "repo_scope": "destino",
+                }
+            },
+            "backends": {
+                "b_opencode": {
+                    "executable": "opencode",
+                    "readonly_agent": "auditor",
+                }
+            },
+        }
+
+        def _fake_list_agents(executable, cwd):
+            return ["build", "auditor", "manager"]
+
+        def _fake_first_rule(executable, cwd, agent_name):
+            if agent_name == "auditor":
+                return {"permission": "*", "action": "allow", "pattern": "*"}
+            return None
+
+        monkeypatch.setattr(cawe, "_list_agents", _fake_list_agents)
+        monkeypatch.setattr(cawe, "_first_permission_rule", _fake_first_rule)
+
+        pairs = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert len(pairs) == 1, f"debe detectar el agente permisivo: {pairs}"
+        assert pairs[0]["profile"] == "challenger_test"
+        assert pairs[0]["permissive_agent"] == "auditor"
+        assert pairs[0]["first_rule"]["permission"] == "*"
+        assert pairs[0]["first_rule"]["action"] == "allow"
+        assert pairs[0]["first_rule"]["pattern"] == "*"
+
+    def test_green_readonly_rule_passes(self, monkeypatch):
+        """Control negativo: con una primera regla genuinamente read-only, no
+        hay hallazgo para ese perfil."""
+        import scripts.check_agent_write_enforced as cawe
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "challenger_test": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_opencode",
+                    "repo_scope": "destino",
+                }
+            },
+            "backends": {
+                "b_opencode": {
+                    "executable": "opencode",
+                    "readonly_agent": "auditor",
+                }
+            },
+        }
+
+        def _fake_list_agents(executable, cwd):
+            return ["build", "auditor", "manager"]
+
+        def _fake_first_rule(executable, cwd, agent_name):
+            if agent_name == "auditor":
+                return {"permission": "edit", "action": "deny", "pattern": "*"}
+            return None
+
+        monkeypatch.setattr(cawe, "_list_agents", _fake_list_agents)
+        monkeypatch.setattr(cawe, "_first_permission_rule", _fake_first_rule)
+
+        pairs = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert pairs == [], f"una regla no-permisiva no debe generar hallazgo: {pairs}"
+
+    def test_mutation_isolates_branch(self, monkeypatch):
+        """Mutation que aisla la rama _is_permissive_rule: compara baseline (sin
+        mock) contra version mutada (_is_permissive_rule -> False) y exige que
+        los resultados SEAN DISTINTOS.
+
+        baseline: no mock _is_permissive_rule -> la implementacion real detecta
+            el agente permisivo -> pairs_baseline == [1 hallazgo].
+        mutada: monkeypatch _is_permissive_rule a False -> si la rama se
+            comenta/quita, el resultado es identico a baseline -> test FALLA.
+            Con el fix cableado: pairs_mutada == [] (se pierden los permisivos).
+        """
+        import scripts.check_agent_write_enforced as cawe
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "challenger_test": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_opencode",
+                    "repo_scope": "destino",
+                }
+            },
+            "backends": {
+                "b_opencode": {
+                    "executable": "opencode",
+                    "readonly_agent": "auditor",
+                }
+            },
+        }
+
+        def _fake_list_agents(executable, cwd):
+            return ["build", "auditor", "manager"]
+
+        def _fake_first_rule(executable, cwd, agent_name):
+            if agent_name == "auditor":
+                return {"permission": "*", "action": "allow", "pattern": "*"}
+            return None
+
+        monkeypatch.setattr(cawe, "_list_agents", _fake_list_agents)
+        monkeypatch.setattr(cawe, "_first_permission_rule", _fake_first_rule)
+
+        # PASO 1: baseline SIN mock _is_permissive_rule (antes del patch).
+        pairs_baseline = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert len(pairs_baseline) == 1, (
+            f"baseline debe detectar el agente permisivo: {pairs_baseline}"
+        )
+        assert pairs_baseline[0]["permissive_agent"] == "auditor"
+
+        # PASO 2: mutacion -- _is_permissive_rule SIEMPRE False.
+        monkeypatch.setattr(cawe, "_is_permissive_rule", lambda rule: False)
+
+        pairs_mutada = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert pairs_mutada == [], (
+            f"con _is_permissive_rule forzado a False, no debe haber hallazgo: "
+            f"{pairs_mutada}"
+        )
+
+        # PASO 3: los resultados SON DISTINTOS -> _is_permissive_rule es
+        # load-bearing. Si se comenta la llamada en find_dynamic_unenforced_pairs,
+        # baseline y mutada darian [] y este assert falla.
+        assert pairs_baseline != pairs_mutada, (
+            "baseline y mutada deben diferir; si son iguales, la rama "
+            "_is_permissive_rule no se ejecuta en find_dynamic_unenforced_pairs"
+        )
+
+    def test_dynamic_cli_fails_with_permissive_agent(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Extremo a extremo: el CLI (main con --check-dynamic) retorna 1
+        cuando hay un agente permisivo detectado."""
+        import scripts.check_agent_write_enforced as cawe
+
+        cfg_path = tmp_path / "agents.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "ensemble_profiles": {
+                        "challenger_test": {
+                            "channel": "agent",
+                            "write": False,
+                            "backend": "b_opencode",
+                            "repo_scope": "destino",
+                        }
+                    },
+                    "backends": {
+                        "b_opencode": {
+                            "executable": "opencode",
+                            "readonly_agent": "auditor",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def _fake_list_agents(executable, cwd):
+            return ["build", "auditor", "manager"]
+
+        def _fake_first_rule(executable, cwd, agent_name):
+            if agent_name == "auditor":
+                return {"permission": "*", "action": "allow", "pattern": "*"}
+            return None
+
+        monkeypatch.setattr(cawe, "_list_agents", _fake_list_agents)
+        monkeypatch.setattr(cawe, "_first_permission_rule", _fake_first_rule)
+
+        rc = cawe.main(
+            [
+                "--config",
+                str(cfg_path),
+                "--check-dynamic",
+                "--motor-root",
+                "C:/fake/motor",
+                "--project-root",
+                "C:/fake/destino",
+            ]
+        )
+        assert rc == 1, "el CLI debe fallar con un agente permisivo detectado"
+        err = capsys.readouterr().err
+        assert "permisiva" in err or "PERMISIVOS" in err, (
+            f"el mensaje debe distinguir permisisvo de ausente: {err}"
+        )
+
+    def test_mixed_permissive_and_missing_reports_both(self, monkeypatch):
+        """Si hay un perfil con agente permisivo y otro con agente ausente,
+        ambos se reportan."""
+        import scripts.check_agent_write_enforced as cawe
+        from scripts.check_agent_write_enforced import find_dynamic_unenforced_pairs
+
+        config = {
+            "ensemble_profiles": {
+                "p_permissive": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_a",
+                    "repo_scope": "destino",
+                },
+                "p_missing": {
+                    "channel": "agent",
+                    "write": False,
+                    "backend": "b_b",
+                    "repo_scope": "destino",
+                },
+            },
+            "backends": {
+                "b_a": {"executable": "opencode", "readonly_agent": "auditor"},
+                "b_b": {"executable": "opencode", "readonly_agent": "ghost"},
+            },
+        }
+
+        def _fake_list_agents(executable, cwd):
+            # "ghost" NO aparece en el listado (agente ausente)
+            return ["build", "auditor", "manager"]
+
+        def _fake_first_rule(executable, cwd, agent_name):
+            if agent_name == "auditor":
+                return {"permission": "*", "action": "allow", "pattern": "*"}
+            return None
+
+        monkeypatch.setattr(cawe, "_list_agents", _fake_list_agents)
+        monkeypatch.setattr(cawe, "_first_permission_rule", _fake_first_rule)
+
+        pairs = find_dynamic_unenforced_pairs(
+            config, motor_root="C:/fake/motor", project_root="C:/fake/destino"
+        )
+        assert len(pairs) == 2
+        profiles = {p["profile"] for p in pairs}
+        assert "p_permissive" in profiles
+        assert "p_missing" in profiles
+        permissive_pair = next(p for p in pairs if p["profile"] == "p_permissive")
+        missing_pair = next(p for p in pairs if p["profile"] == "p_missing")
+        assert permissive_pair["permissive_agent"] == "auditor"
+        assert permissive_pair["first_rule"]["permission"] == "*"
+        assert missing_pair["missing_agent"] == "ghost"
