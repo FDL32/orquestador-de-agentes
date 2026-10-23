@@ -20,6 +20,12 @@
 
 ## 1. Comunicacion entre cuentas distintas (cross-account)
 
+> **Primitivos y handoff de una Capa 0 entre dos cuentas Claude:** los gobierna
+> `prompts/orchestrator_child_dispatch_cross_claude.md` (experimental), que los verifico
+> empiricamente: `ListAgents`/`SendMessage` por nombre NO cruzan cuenta; `t3_thread_read` y
+> `t3_thread_send` por `threadId` SI. Esta seccion no lo redeclara: cubre solo el AVISO
+> proactivo entre sesiones que siguen vivas a la vez.
+
 Cuando dos sesiones T3 bajo cuentas humanas DISTINTAS (p.ej. dos worktrees del mismo repo,
 cada uno ligado a una cuenta) trabajan en el mismo flight o en flights que tocan superficies
 compartidas:
