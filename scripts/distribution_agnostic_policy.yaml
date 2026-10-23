@@ -55,9 +55,10 @@ allowlist:
     match: '(`C:\Users\...`, `/home/...`), emails, hostnames `.local`, nombres sensibles'
     needle: user_profile_root
     reason: 'meta-mencion: ensena a buscar C:\Users\... como sintoma de PII; la aguja es el sujeto, no un valor'
-  # META-MENCION: comentario de WOT-2026-020t que explica POR QUE se excluyen rutas
-  # C:\Users\<user>\ de la proyeccion de los destinos.
+  # META-MENCION: comentario de WOT-2026-059f (reemplaza al de WOT-2026-020t
+  # tras narrow de DESTINATION_ONLY_PROJECTION_ENTRIES) que explica POR QUE
+  # se excluyen rutas C:\Users\<user>\ de la proyeccion de los destinos.
   - file: 'scripts/install_agent_system.py'
-    match: '# (execution_log/STATE/TURN/work_plan carry local C:\Users\<user>\ paths and'
+    match: '# 6 specific files carry local C:\Users\<user>\ paths and leak PII on'
     needle: user_profile_root
-    reason: 'meta-mencion: comentario WOT-2026-020t que explica por que se excluyen rutas C:\Users\<user>\ de la proyeccion del destino'
+    reason: 'meta-mencion: comentario WOT-2026-059f que explica por que se excluyen rutas C:\Users\<user>\ de la proyeccion del destino'

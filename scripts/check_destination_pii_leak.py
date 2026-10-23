@@ -55,17 +55,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.check_claude_settings_portability import _discover_destinations
+from scripts.install_agent_system import DESTINATION_ONLY_PROJECTION_ENTRIES
 from scripts.prefix_resolver import _git_executable
 
 
 _MOTOR_ROOT = Path(__file__).resolve().parent.parent
 
 # Managed known surfaces that carry local absolute paths (CF-audit E2: the
-# closed audit scope, not a general PII scan). POSIX separators on purpose:
-# git pathspecs want `/` even on Windows; never build these with Path().
+# closed audit scope, not a general PII scan). Single source with
+# install_agent_system::DESTINATION_ONLY_PROJECTION_ENTRIES (WOT-2026-059f:
+# no longer redeclared by hand; expanded here so the tuple shape stays the
+# same for callers). POSIX separators on purpose: git pathspecs want `/` even
+# on Windows; never build these with Path().
 AUDIT_PATHSPECS: tuple[str, ...] = (
     ".agent/config/motor_destination_link.json",
-    ".agent/collaboration/",
+    *DESTINATION_ONLY_PROJECTION_ENTRIES,
 )
 
 

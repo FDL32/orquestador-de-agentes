@@ -48,19 +48,44 @@ class TestEnsureProjectionsIgnored:
         assert added == []
         assert not (root / ".gitignore").exists()
 
-    def test_motor_root_adds_collaboration_for_destination(
+    def test_motor_root_adds_collaboration_files_for_destination(
         self, tmp_path: Path
     ) -> None:
-        """WOT-2026-020t: a real destination (motor_root != project_root) gets
-        collaboration gitignored even when motor_root is explicit."""
+        """WOT-2026-059f: a real destination (motor_root != project_root) gets
+        the 6 explicit collaboration files gitignored (not the blanket dir);
+        motor_root is explicit.
+
+        HARDCODED, not derived from DESTINATION_ONLY_PROJECTION_ENTRIES: a
+        version of that constant reads its own value, so it is a tautology
+        that passes under ANY content of the constant, including a reverted
+        blanket ".agent/collaboration/" -- measured by the Manager via
+        mutation-verify (restoring the pre-fix blanket entry left this test,
+        and the other 20 in the two affected modules, all green). The literal
+        list below is the actual DoD of WOT-2026-059f and must NOT be
+        re-derived from the constant under test."""
         root = _make_destino(tmp_path)
         motor_root = tmp_path / "motor"
         motor_root.mkdir()
         added = ensure_destination_projections_ignored(root, motor_root=motor_root)
-        assert ".agent/collaboration/" in added
-        assert ".agent/collaboration/" in (root / ".gitignore").read_text(
-            encoding="utf-8"
+        expected_files = {
+            ".agent/collaboration/work_plan.md",
+            ".agent/collaboration/STATE.md",
+            ".agent/collaboration/TURN.md",
+            ".agent/collaboration/execution_log.md",
+            ".agent/collaboration/notifications.md",
+            ".agent/collaboration/review_queue.md",
+        }
+        assert expected_files.issubset(set(added))
+        assert ".agent/collaboration/" not in added, (
+            "la entrada blanket NO debe reaparecer: WOT-2026-059f la retiro "
+            "porque oculta STRATEGY_WOT-*.md/AUDIT_WOT-*.md, que son "
+            "canonicos y deben poder versionarse"
         )
+        text = (root / ".gitignore").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for entry in expected_files:
+            assert entry in lines
+        assert ".agent/collaboration/" not in lines
 
     def test_idempotent_no_duplicates_on_rerun(self, tmp_path: Path) -> None:
         root = _make_destino(tmp_path)

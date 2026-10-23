@@ -218,12 +218,20 @@ PROJECTIONS_GITIGNORE_ENTRIES: tuple[str, ...] = (
     ".agent/.last_upgrade_result.json",
     ".agent/runtime/",
 )
-# WOT-2026-020t: destinations must NOT version .agent/collaboration/ artifacts
-# (execution_log/STATE/TURN/work_plan carry local C:\Users\<user>\ paths and
-# leak PII on publication). The MOTOR itself versions .agent/collaboration/
-# for dogfooding, so these entries are added ONLY for destinations, i.e. when
-# project_root != motor_root.
-DESTINATION_ONLY_PROJECTION_ENTRIES: tuple[str, ...] = (".agent/collaboration/",)
+# WOT-2026-059f: the blanket .agent/collaboration/ was over-reaching -- only
+# 6 specific files carry local C:\Users\<user>\ paths and leak PII on
+# publication. STRATEGY_WOT-*.md and AUDIT_WOT-*.md are canonical artefacts
+# and deliberately excluded (they version fine in a destination repo).
+# The MOTOR itself versions .agent/collaboration/ for dogfooding, so these
+# entries are added ONLY for destinations, i.e. when project_root != motor_root.
+DESTINATION_ONLY_PROJECTION_ENTRIES: tuple[str, ...] = (
+    ".agent/collaboration/work_plan.md",
+    ".agent/collaboration/STATE.md",
+    ".agent/collaboration/TURN.md",
+    ".agent/collaboration/execution_log.md",
+    ".agent/collaboration/notifications.md",
+    ".agent/collaboration/review_queue.md",
+)
 
 
 def ensure_destination_projections_ignored(
