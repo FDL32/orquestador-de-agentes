@@ -65,6 +65,7 @@ ADOPTED = (
     "session_hop.md",
     "orchestrator_pipeline_codeonly.md",
     "orchestrator_autonomous_ticket_batch.md",
+    "orchestrator_child_dispatch_cross_claude.md",
     "orchestrator_child_dispatch_multiticket_multibackend_unlimited.md",
     "orchestrator_destination_batch.md",
     "orchestrator_launch_builder.md",
