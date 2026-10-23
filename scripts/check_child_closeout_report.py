@@ -2,8 +2,9 @@
 
 Contrato fuente (no se redeclara aqui, X-09): `prompts/builder_invocation_contract.md`
 Seccion 3.5 (`contract_id: cid-builder-invocation-v1`). Este guard es una verificacion
-MECANICA de FORMATO (las 5 secciones CP-1..CP-5 presentes, en orden, no vacias, y el
-literal HIJO_TERMINADO seguido de contenido no vacio en CP-3) -- NO verifica el CONTENIDO
+MECANICA de FORMATO (las 5 secciones CP-1..CP-5 presentes, en orden, no vacias; CP-4 con
+`NO PUSH` o una cita de autorizacion, nunca N/A; y el literal HIJO_TERMINADO seguido de
+contenido no vacio en CP-3) -- NO verifica el CONTENIDO
 semantico (SHAs reales, rc reales, que lo que sigue a HIJO_TERMINADO sea realmente un
 `git status --short`): esa verificacion sigue siendo acto del Manager/auditor (el informe
 es evidencia DECLARADA, no verificada, CEM).
@@ -44,15 +45,10 @@ def _split_sections(text: str) -> dict[str, str]:
     return sections
 
 
-def validate_report(text: str) -> list[str]:
-    """Devuelve la lista de violaciones del FORMATO (vacia = informe valido).
-
-    No lanza excepciones por contenido faltante: cada violacion es una cadena
-    legible, lista para reportarse tal cual en el checklist de 4.bis.
-    """
+def _check_headings_present_and_ordered(
+    text: str, sections: dict[str, str]
+) -> list[str]:
     violations: list[str] = []
-    sections = _split_sections(text)
-
     found_order = [m.group(1) for m in _CP_HEADING_RE.finditer(text)]
     missing = [cp for cp in CP_IDS if cp not in sections]
     if missing:
@@ -64,32 +60,60 @@ def validate_report(text: str) -> list[str]:
             f"Los campos CP-n no estan en el orden exigido CP-1..CP-5: "
             f"orden hallado {present_order}"
         )
-
-    for cp in CP_IDS:
-        if cp not in sections:
-            continue
-        if not sections[cp].strip():
-            violations.append(
-                f"`{cp}` esta presente pero vacio (sin contenido ni valor literal)"
-            )
-
-    if "CP-3" in sections and sections["CP-3"].strip():
-        cp3_content = sections["CP-3"]
-        if HIJO_TERMINADO_LINE not in cp3_content:
-            violations.append(
-                f'`CP-3` no contiene la linea literal exigida: "{HIJO_TERMINADO_LINE}"'
-            )
-        else:
-            after_line = cp3_content.split(HIJO_TERMINADO_LINE, 1)[1]
-            if not after_line.strip():
-                violations.append(
-                    "`CP-3` tiene la linea HIJO TERMINADO pero nada a continuacion: "
-                    "falta contenido posterior (el contrato exige ahi la salida real "
-                    "de `git status --short`, pero este guard solo verifica que algo "
-                    "este escrito, no que sea esa salida)"
-                )
-
     return violations
+
+
+def _check_sections_non_empty(sections: dict[str, str]) -> list[str]:
+    return [
+        f"`{cp}` esta presente pero vacio (sin contenido ni valor literal)"
+        for cp in CP_IDS
+        if cp in sections and not sections[cp].strip()
+    ]
+
+
+def _check_cp4_no_push_or_authorization(sections: dict[str, str]) -> list[str]:
+    if "CP-4" not in sections or not sections["CP-4"].strip():
+        return []
+    cp4_content = sections["CP-4"].upper()
+    if "NO PUSH" in cp4_content or "AUTORIZ" in cp4_content:
+        return []
+    return [
+        "`CP-4` no declara `NO PUSH` ni cita una autorizacion (el contrato "
+        "no admite N/A aqui: siempre uno de los dos, literal "
+        "`builder_invocation_contract.md` Seccion 3.5)"
+    ]
+
+
+def _check_cp3_hijo_terminado(sections: dict[str, str]) -> list[str]:
+    if "CP-3" not in sections or not sections["CP-3"].strip():
+        return []
+    cp3_content = sections["CP-3"]
+    if HIJO_TERMINADO_LINE not in cp3_content:
+        return [f'`CP-3` no contiene la linea literal exigida: "{HIJO_TERMINADO_LINE}"']
+    after_line = cp3_content.split(HIJO_TERMINADO_LINE, 1)[1]
+    if after_line.strip():
+        return []
+    return [
+        "`CP-3` tiene la linea HIJO TERMINADO pero nada a continuacion: falta "
+        "contenido posterior (el contrato exige ahi la salida real de "
+        "`git status --short`, pero este guard solo verifica que algo este "
+        "escrito, no que sea esa salida)"
+    ]
+
+
+def validate_report(text: str) -> list[str]:
+    """Devuelve la lista de violaciones del FORMATO (vacia = informe valido).
+
+    No lanza excepciones por contenido faltante: cada violacion es una cadena
+    legible, lista para reportarse tal cual en el checklist de 4.bis.
+    """
+    sections = _split_sections(text)
+    return (
+        _check_headings_present_and_ordered(text, sections)
+        + _check_sections_non_empty(sections)
+        + _check_cp4_no_push_or_authorization(sections)
+        + _check_cp3_hijo_terminado(sections)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

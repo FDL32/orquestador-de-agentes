@@ -105,6 +105,20 @@ class TestValidateReportViolations:
         violations = validate_report(mutated)
         assert any("falta contenido posterior" in v for v in violations)
 
+    def test_cp4_missing_no_push_or_autorizacion(self) -> None:
+        mutated = VALID_REPORT.replace(
+            "## CP-4\n\nNO PUSH\n", "## CP-4\n\nalgo irrelevante sin relacion\n"
+        )
+        violations = validate_report(mutated)
+        assert any("no declara" in v and "CP-4" in v for v in violations)
+
+    def test_cp4_authorization_citation_is_accepted(self) -> None:
+        mutated = VALID_REPORT.replace(
+            "## CP-4\n\nNO PUSH\n",
+            "## CP-4\n\nautorizado por el usuario en el mensaje X\n",
+        )
+        assert validate_report(mutated) == []
+
     def test_out_of_order_sections_flagged(self) -> None:
         mutated = (
             VALID_REPORT.replace("## CP-1", "## CP-X-PLACEHOLDER-1")
