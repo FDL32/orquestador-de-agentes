@@ -25,3 +25,10 @@ Existen 3 enums de codigo con nombres parecidos y dominios DISTINTOS por diseno
 Ninguno de los 3 es, ni pretende ser, una copia literal de la lista de roles canonicos de
 `AGENTS.md` -- cada uno valida su propio dominio. Armonizado 2026-10-12 tras bucle adversarial
 de 3 lentes (codex, nan-fs, opencode/glm) sobre vocabulario de roles.
+
+## Backends retirados
+
+Goose/Claw retirados (WT-2026-254a); `scripts/orquestador.py` es hoy el lanzador de skills.
+(Antes en `AGENTS.md` "Backends y roles"; la linea, que los daba por "motores orquestados por
+`scripts/orquestador.py`", salio de la cuspide en `2857b691` sin destino -- se restituye aqui
+con la redaccion correcta, WOT-2026-120a.)

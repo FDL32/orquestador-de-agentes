@@ -220,16 +220,8 @@ ORDEN CORRECTO                          ORDEN QUE DESPERDICIA
 4. push
 ```
 
-**Es la misma familia que la regla del bucle** (`obs-canonical-suite-runs-after-the-loop-not-before`:
-el bucle adversarial pide cambios, asi que una suite previa queda invalidada). Ahora generalizada:
-**cualquier** escritura posterior invalida la corrida, venga de un bucle o de un commit propio.
-
-**Barrera cableada, no norma** (`scripts/check_suite_freshness.py`, hook `check-suite-freshness` en
-`pre-commit`): avisa ANTES de commitear si existe una suite verde COMPLETA en el HEAD actual que
-ese commit invalidaria, citando cuantos tests se pierden. **No bloquea** -- un commit a mitad de
-sesion es legitimo, y bloquearlo forzaria a correr la suite entre cada par de commits, que es el
-desperdicio que se quiere evitar. La barrera BLOQUEANTE (no publicar con suite stale) ya existe y
-vive en `pre_handoff_guard`.
+**Barrera cableada, no norma:** el hook `check-suite-freshness` avisa y **no bloquea**; la
+BLOQUEANTE vive en `pre_handoff_guard`. Racional: `scripts/check_suite_freshness.py`.
 
 **No uses `-k` como evidencia de cobertura de una funcion compartida: selecciona por nombre de
 clase/fichero, no por grafo de call-sites, asi que una funcion ejercitada desde otra clase puede
@@ -240,15 +232,9 @@ WOT-2026-079d, 3 regresiones reales que `-k` dejo pasar, memoria
 
 **Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k): en el protocolo
 `prompts/kilo_trio_dispatch/`, SOLO el Manager corre `--level all`, nunca el Builder ni el
-Revisor.** El Builder se limita a focales; el Revisor corre sus propios focales de forma
-independiente, sin esperar al Manager. **Alcance: cubre SOLO el protocolo trio -- NO toca
-`scripts/run_gates_dispatch.py` ni `skills/builder-run-quality-gates`**, donde el Builder SI es
-el unico verificador legitimo de `--level all` (tickets de un solo Builder sin Revisor/Manager
-separados). Enforcement mecanico (WOT-2026-117a): `scripts/check_manager_role_for_suite.py`,
-cableado en `run_pytest_safe.py --level all`, bloquea la invocacion si
-`.agent/collaboration/TURN.md` declara un rol no-Manager, con exencion explicita (no inferida)
-para el self-check del Builder via `run_gates_dispatch.py`. Caso forense completo (incidente
-medido WOT-2026-104j, bucle de gobierno `UNI-5`): [T2].
+Revisor.** **Alcance: cubre SOLO el protocolo trio -- NO toca `scripts/run_gates_dispatch.py`
+ni `skills/builder-run-quality-gates`**, donde el Builder SI es el unico verificador legitimo de
+`--level all`. Enforcement (`scripts/check_manager_role_for_suite.py`) y caso forense: [T2].
 
 #### Push por vuelo: UN solo push al final de TODOS los tickets (2026-10-19)
 
@@ -316,8 +302,6 @@ sobrevivieron. Sintoma, causa medida y las dos creencias falsas que NO conviene 
 Ver las superficies vivas NO archivables y la regla de limpieza en .agent/rules/common/collaboration_live_surfaces.md.
 
 ## Convenciones de docstrings y testing
-
-Adaptado de las directrices operativas open-source en `dify-agent`:
 
 ### 1. Docstrings como especificación de ejecución (Docstrings-as-Spec)
 
@@ -446,28 +430,19 @@ via `scripts/run_gates_dispatch.py`: `code`/`mixed` -> ruff + pytest-safe + pip-
 Politica de pip-audit condicional, guard de alcance de ruff y detalle completo:
 `.agent/rules/common/deliverable_type_dispatch.md`.
 
-## Host-first skill precedence & Config Profiles (WP-2026-090)
+## Referencias de instalacion, review y relanzamiento
 
-En un destino, las skills del host (`<destino>/.agent/skills/`) toman precedencia absoluta sobre
-las homonimas del bundle, que actua solo como fallback determinista. `agents.json` define
-`active_profile`: `engine-dev` en el motor; `install_agent_system.py` lo cambia a `host-project`
-en el destino durante `--install`/`--sync`. Detalle (referencia bajo demanda):
-`.agent/rules/common/host_install_integration.md`.
-
-## Host setup hook (WP-2026-094)
-
-Si el destino declara un script ejecutable `.agent/host-setup.sh`/`.ps1`,
-`scripts/install_agent_system.py` lo detecta tras la copia del bundle, muestra sus primeras 20 lineas y
-solo lo ejecuta con confirmacion humana (`y/N`; `--yes` la salta); exit != 0 aborta el install y
-propaga el codigo; sin hook, silencio. Detalle (referencia bajo demanda):
-`.agent/rules/common/host_install_integration.md`.
-
-## Pluggable manager review rubric by deliverable_type (WP-2026-091)
-
-`bus/review_bridge.py` adapta el prompt de review del Manager al `deliverable_type` del plan
-(tipo ausente o desconocido: fallback seguro y automatico a `code`) y conserva intacta la salida
-canonica `DECISION: APPROVE` / `DECISION: CHANGES` (interoperabilidad con el bus y la maquina de
-estados). Detalle (referencia bajo demanda): `.agent/rules/common/deliverable_type_dispatch.md`.
+Detalle de cada item (referencia bajo demanda) en el modulo citado:
+- WP-2026-090: en un destino, las skills del host (`<destino>/.agent/skills/`) toman precedencia
+  absoluta sobre las del bundle (solo fallback); `active_profile`: `engine-dev` en el motor,
+  `host-project` en el destino. `.agent/rules/common/host_install_integration.md`.
+- WP-2026-094: el `.agent/host-setup.sh`/`.ps1` del destino solo se ejecuta con confirmacion
+  humana (`y/N`; `--yes` la salta); exit != 0 aborta el install. Mismo modulo.
+- WP-2026-091: `bus/review_bridge.py` adapta la review al `deliverable_type` (fallback seguro a
+  `code`) sin tocar la salida `DECISION: APPROVE` / `DECISION: CHANGES`.
+  `.agent/rules/common/deliverable_type_dispatch.md`.
+- WP-2026-084: tras un CHANGES, `-ResumeBuilder` no mata un Builder vivo (el supervisor verifica
+  su liveness antes de relanzar). `.agent/rules/common/builder_relaunch.md`.
 
 ## Secretos y seguridad
 
@@ -485,14 +460,6 @@ estados). Detalle (referencia bajo demanda): `.agent/rules/common/deliverable_ty
   force-push y deletion (sin exigir PRs, para no romper el push directo del
   cierre). La activacion es accion humana; la verificacion re-ejecutable y la
   prueba de rechazo no destructiva viven en `RELEASE_CHECKLIST.md` (paso 6).
-
-## Robust Builder Relaunch (WP-2026-084)
-
-Tras un CHANGES, el supervisor verifica que el Builder siga vivo (PID + `tasklist`; fallback
-mtime <15 min) antes de relanzar y pasa `-ResumeBuilder` al launcher, que entonces salta el
-cleanup agresivo para no matar un Builder vivo; sin el flag, el launcher se comporta igual que
-antes (aditivo, cero regresion). Detalle (referencia bajo demanda):
-`.agent/rules/common/builder_relaunch.md`.
 
 ## Criterio de cierre
 
@@ -1247,6 +1214,9 @@ nuevas) en `docs/protocol/ensemble_profile_naming_legacy_case.md`.
 > **Procedencia:** piramide pasada 2 + lote R1, HEAD base
 > `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
 > - `## Robust Builder Relaunch (WP-2026-084)` -- `AGENTS.md:887-893`
+> - Las lineas citadas son de esa HEAD base. Desde WOT-2026-120a (2026-10-23) la cuspide ya no
+>   tiene este encabezado: lo funde en `## Referencias de instalacion, review y
+>   relanzamiento`, como item por ID WP (directiva + puntero aqui).
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 
@@ -1275,6 +1245,9 @@ este modulo; toda modificacion de uno exige revisar el otro en el mismo commit.
 > - `## Quality gates dispatch by deliverable_type (WP-2026-089)` -- `AGENTS.md:818-833`
 > - `## Pluggable manager review rubric by deliverable_type (WP-2026-091)` -- `AGENTS.md:853-861`
 > - `### Contrato operativo por tipo de ticket` -- `AGENTS.md:793-817`
+> - Las lineas citadas son de esa HEAD base. Desde WOT-2026-120a (2026-10-23) la cuspide ya no
+>   tiene el encabezado WP-2026-091: lo funde en `## Referencias de instalacion, review y
+>   relanzamiento`, como item por ID WP (directiva + puntero aqui).
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 
@@ -1345,6 +1318,9 @@ en disco al final y que solo era contexto.
 > `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
 > - `## Host-first skill precedence & Config Profiles (WP-2026-090)` -- `AGENTS.md:834-838`
 > - `## Host setup hook (WP-2026-094)` -- `AGENTS.md:839-852`
+> - Las lineas citadas son de esa HEAD base. Desde WOT-2026-120a (2026-10-23) la cuspide ya no
+>   tiene estos encabezados: los funde en `## Referencias de instalacion, review y
+>   relanzamiento`, con un item por ID WP (directiva + puntero aqui).
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 

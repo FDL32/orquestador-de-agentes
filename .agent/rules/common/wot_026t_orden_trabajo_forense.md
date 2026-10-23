@@ -18,6 +18,11 @@ medido WOT-2026-079d con 3 regresiones reales que `-k` dejo pasar): memoria de
 `repo_motor`, `obs-canonical-suite-k-filter-insufficient-for-shared-function-coverage`
 (2026-09-27).
 
+Familia de la regla de la seccion (trasladado verbatim desde `AGENTS.md`, WOT-2026-120a):
+**Es la misma familia que la regla del bucle** (`obs-canonical-suite-runs-after-the-loop-not-before`:
+el bucle adversarial pide cambios, asi que una suite previa queda invalidada). Ahora generalizada:
+**cualquier** escritura posterior invalida la corrida, venga de un bucle o de un commit propio.
+
 <a id="t2"></a>
 **T2.** Asignacion de rol en despacho trio (Manager/Builder/Revisor, WOT-2026-104k): cuando el
 despacho de un ticket se reparte entre tres roles (protocolo `prompts/kilo_trio_dispatch/`),

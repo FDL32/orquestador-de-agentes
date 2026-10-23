@@ -3,6 +3,9 @@
 > **Procedencia:** piramide pasada 2 + lote R1, HEAD base
 > `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
 > - `## Robust Builder Relaunch (WP-2026-084)` -- `AGENTS.md:887-893`
+> - Las lineas citadas son de esa HEAD base. Desde WOT-2026-120a (2026-10-23) la cuspide ya no
+>   tiene este encabezado: lo funde en `## Referencias de instalacion, review y
+>   relanzamiento`, como item por ID WP (directiva + puntero aqui).
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 
