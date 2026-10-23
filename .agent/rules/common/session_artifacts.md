@@ -1,5 +1,9 @@
 # Artefactos de Sesión y Estado Canónico
 
+> Referencia bajo demanda (WOT-2026-120a corrida 2): movida literal desde
+> `.claude/rules/05-session-artifacts.md` para sacarla de la autocarga de Claude Code.
+> Router: `.claude/rules/README.md`.
+
 ## Superficie canónica: `.agent/collaboration/`
 
 El estado operativo de tickets vive en `.agent/collaboration/` del `repo_destino`:

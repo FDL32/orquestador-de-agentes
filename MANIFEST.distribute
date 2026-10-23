@@ -119,6 +119,7 @@ skills/
 .agent/rules/common/opencode_permission_preflight.md
 .agent/rules/common/project_manifest_architecture.md
 .agent/rules/common/t3_ade_coordination.md
+.agent/rules/common/session_artifacts.md
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.
