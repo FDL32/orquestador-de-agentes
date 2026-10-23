@@ -282,7 +282,8 @@ Un aviso vale si tiene medicion detras. Los que este repo tiene medidos y suelen
   necesita para clasificar el drift (Paso 2) van en una seccion propia que NO se llame
   estado (p. ej. "Ancla de linaje"), con la aclaracion de que no describe el estado sino
   el punto de medida; la seccion de estado lleva cifras sin SHA y sus comandos de
-  re-medicion. Motivo medido: `scripts/check_handoff_state_sha.py` marca todo SHA bajo un
+  re-medicion. No es renombrar para esquivar el guard: el ancla es un punto de MEDIDA,
+  se re-mide con `git merge-base --is-ancestor` (Paso 2) y nunca se copia como estado. Motivo medido: `scripts/check_handoff_state_sha.py` marca todo SHA bajo un
   encabezado de estado y no exime `[snapshot`; hoy no mira `arranques/`, pero si se
   amplia su alcance todo arranque con SHAs en su estado daria WARN (y rojo con
   `HANDOFF_STATE_SHA_STRICT=1`). (Origen: `PROPUESTA_mejoras_session_hop_2026-10-08.md`
