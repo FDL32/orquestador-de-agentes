@@ -14,9 +14,13 @@ previene.
 
 Usage:
     python scripts/memory_context.py --bootstrap
-        Indice: archive portable del MOTOR + del root activo (union), mas el
-        mejor tier local. Las lineas `...[truncated]` son INDICE; llevan el `id`
-        para expandirlas, y el pie declara cuantas lecciones NO muestra.
+        Arranque ACOTADO (el mismo que inyecta el hook SessionStart): pista de
+        cuando expandir + indice de memoria (archive del MOTOR + root activo,
+        tier local) + salud + roles + M4/M5, <= 9.000 chars. Cada linea del
+        indice lleva el `id` para expandirla; el pie declara cuantas omite.
+
+    python scripts/memory_context.py --full
+        Corpus ENTERO, sin tope. Para enumerar lo que el indice omite.
 
     python scripts/memory_context.py --recall --query "<termino>" [--limit N]
         Lecciones COMPLETAS, ordenadas por COBERTURA de la consulta (IDF+Jaccard
@@ -154,9 +158,13 @@ def _anchored_env():
 
 
 from bus.memory_loader import (  # noqa: E402
+    INDEX_BUDGET_CHARS,
+    MEMORY_INDEX_CLOSE,
+    MEMORY_INDEX_OPEN,
     get_bootstrap_context,
     get_compact_context,
     get_memory_tier_status,
+    get_session_index,
     recall_observations,
 )
 from bus.portable_memory_archive import iter_archive_months  # noqa: E402
@@ -306,7 +314,10 @@ def _print_recall(observations: list[dict], budget: int) -> None:
         signal = str(obs.get("signal") or "")
         source = obs.get("source", "unknown")
         line = f"- [{ts}] **{topic}**: {signal} ({source})"
-        if omitted or (used + len(line) > budget and used > 0):
+        # Cada entrada se mide por SI MISMA: una omitida no arrastra a las
+        # siguientes (antes `if omitted or ...` descartaba todo lo posterior
+        # aunque cupiera, y el pie lo contaba como "por presupuesto").
+        if used + len(line) > budget and used > 0:
             omitted.append(str(topic))
             continue
         print(line)
@@ -534,6 +545,43 @@ def _queries_from_work_plan(ticket_id: str) -> list[str]:
     return sorted(queries)[:8]
 
 
+def _session_context() -> tuple[str, bool]:
+    """Arranque ACOTADO completo, el MISMO que inyecta el hook SessionStart.
+
+    Diseno v6 (ronda 4 #49): un backend sin hook (Codex, Kilo, OpenCode) que
+    ejecuta `--bootstrap` recibe pista de momentos + indice + salud + roles +
+    M4/M5, no solo el indice. Reutiliza `assemble_session_context` del hook,
+    cargado por ruta (el hook vive en `.agent/hooks/` y no es un paquete). Si el
+    hook no se puede cargar, degrada al indice solo -- nunca a nada.
+
+    Before: el entorno ya esta anclado (`_anchored_env`).
+    During: lee memoria, roles y M4/M5; un subproceso de salud; sin escrituras.
+    After: ``(contexto, fallo_de_memoria)``.
+    """
+    import importlib.util
+    import os
+
+    root = Path(os.environ.get("AGENT_PROJECT_ROOT") or _PROJECT_ROOT)
+
+    def _index(budget: int) -> str | None:
+        try:
+            return get_session_index(budget)
+        except Exception:
+            return None
+
+    hook_path = _MOTOR_ROOT / ".agent" / "hooks" / "session_start_hook.py"
+    try:
+        spec = importlib.util.spec_from_file_location("_session_start_hook", hook_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(str(hook_path))
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        return hook.assemble_session_context(root, _index)
+    except Exception:
+        memory = _index(INDEX_BUDGET_CHARS)
+        return (memory or ""), memory is None
+
+
 def main() -> int:
     """Main entry point for memory_context CLI."""
     _ensure_utf8_stdout()
@@ -543,7 +591,18 @@ def main() -> int:
     parser.add_argument(
         "--bootstrap",
         action="store_true",
-        help="Print bootstrap context (L3 -> L2 -> L1 fallback)",
+        help=(
+            "Print the BOUNDED session start context (same as the SessionStart "
+            "hook: expansion hint + memory index + health + roles + M4/M5)"
+        ),
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help=(
+            "Print the WHOLE memory corpus (unbounded), wrapped in the same "
+            "memory-index block. Use to enumerate lessons the index omits."
+        ),
     )
     parser.add_argument(
         "--compact",
@@ -627,6 +686,12 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
     # Determine mode from flags
     mode = "bootstrap" if args.bootstrap else ""
 
+    if args.full:
+        if mode:
+            print("Error: Use only one mode flag at a time", file=sys.stderr)
+            return 1
+        mode = "full"
+
     if args.compact:
         if mode:
             print("Error: Use only one mode flag at a time", file=sys.stderr)
@@ -657,12 +722,18 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
 
     # Execute mode
     if mode == "bootstrap":
-        ctx = get_bootstrap_context()
-        if ctx:
-            print(ctx)
-        else:
-            print("# Bootstrap Context\n\nNo memory files found.", file=sys.stderr)
+        ctx, failed = _session_context()
+        print(ctx)
+        if failed:
+            print("Memory index could not be loaded.", file=sys.stderr)
             return 1
+
+    elif mode == "full":
+        ctx = get_bootstrap_context()
+        if not ctx:
+            print("# Full Context\n\nNo memory files found.", file=sys.stderr)
+            return 1
+        print(f"{MEMORY_INDEX_OPEN}\n{ctx}\n{MEMORY_INDEX_CLOSE}")
 
     elif mode == "compact":
         ctx = get_compact_context()

@@ -478,10 +478,11 @@ def _cap_preserving_origins(
         merged result newest-first. No I/O.
     After: at most ``cap`` entries, each origin represented in proportion to
         what it can fill. Falls back to plain recency when only one origin is
-        present.
+        present. EVERY exit is filtered and newest-first (ronda 4 #54: the
+        `len <= cap` exits used to return the input untouched -- unsorted and
+        with the templates the filter exists to drop, so the output was not
+        monotonic in ``cap``).
     """
-    if len(observations) <= cap:
-        return observations
 
     # Las plantillas autogeneradas no compiten por el indice. Medido sobre el
     # corpus real (2026-08-17): de las 135 entradas del destino, 116 son
@@ -514,13 +515,15 @@ def _cap_preserving_origins(
         for name, entries in groups.items()
     }
 
+    if not groups:
+        return []
+
     if len(groups) < 2:
-        only = next(iter(groups.values()))
-        return only if len(only) <= cap else _cap_by_recency(only, cap)
+        return _sorted_newest_first(next(iter(groups.values())))[:cap]
 
     flat = [obs for entries in groups.values() for obs in entries]
     if len(flat) <= cap:
-        return flat
+        return _sorted_newest_first(flat)
 
     share = cap // len(groups)
     picked: list[dict[str, Any]] = []
@@ -546,7 +549,7 @@ def _cap_preserving_origins(
             if remaining <= 0:
                 break
 
-    return _cap_by_recency(picked, cap)
+    return _sorted_newest_first(picked)[:cap]
 
 
 def _build_header_line(
@@ -765,6 +768,217 @@ def _format_archive_line(obs: dict[str, Any], prefix: str = "") -> str:
         signal = raw
         tag = str(ticket)
     return f"- {prefix}[{ts}] **{topic}**: {signal} ({tag})"
+
+
+# --- Bounded session index (arranque agnostico, diseno v6, 2026-10-23) ---
+#
+# El hook SessionStart inyectaba ~33.6k chars (startup) y ~29.1k (resume/
+# compact). Claude Code acepta 10.000 por `additionalContext`; por encima guarda
+# la salida en un fichero y solo inyecta una ruta + 2.000 de preview, asi que el
+# indice "completo" nunca llegaba entero. Este indice esta ACOTADO por
+# construccion y es el MISMO artefacto para el hook y para
+# `memory_context.py --bootstrap` (backends sin hook: Codex, Kilo, OpenCode).
+
+#: Presupuesto del indice (chars). Medido en ronda 4 (sonnet, 24a8827b): partes
+#: fijas del arranque ~4.1k + pista ~250 + holgura de salud -> 4.300 deja el
+#: total <= SESSION_CONTEXT_MAX_CHARS. El invariante es "acotado y declarado".
+INDEX_BUDGET_CHARS = 4300
+
+#: Tope del payload completo del arranque (hook o CLI). Queda por debajo de los
+#: 10.000 de Claude Code con margen para la envoltura JSON.
+SESSION_CONTEXT_MAX_CHARS = 9000
+
+#: Envoltorio del indice. Marca "datos, no instrucciones" y es el marcador que
+#: un backend busca para saber si la memoria ya entro. Ninguna superficie
+#: siempre-cargada (AGENTS.md, CLAUDE.md, .claude/rules) debe contener el
+#: literal: si lo contuviera, el agente lo encontraria en la propia instruccion
+#: y no cargaria nunca la memoria (ronda 4 #43).
+MEMORY_INDEX_OPEN = "<memory-index readonly>"
+MEMORY_INDEX_CLOSE = "</memory-index>"
+
+_INDEX_SIGNAL_CHARS = 60
+_STABLE_LANE_CAP = 5
+_LOCAL_SUBCAP_CHARS = 800
+_STALE_SUBCAP_CHARS = 400
+#: Suelos del carril reciente (se aplican como min(suelo, disponibles)).
+INDEX_FLOOR_TOTAL = 25
+INDEX_FLOOR_PER_ORIGIN = 10
+
+
+def _dedup_newest(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per ``dedup_key``, keeping the newest copy (ronda 4 #53).
+
+    Measured 2026-10-23: 483 archive rows, 398 distinct ``dedup_key``. Without
+    this the stable lane spent 2 of 8 slots on repeats and the header count
+    was inflated.
+    """
+    best: dict[Any, dict[str, Any]] = {}
+    for obs in _sorted_newest_first(observations):
+        key = dedup_key(obs)
+        if key not in best:
+            best[key] = obs
+    return list(best.values())
+
+
+def _short_signal(text: str, limit: int = _INDEX_SIGNAL_CHARS) -> str:
+    """First ``limit`` chars of ``text`` on one line, cut at a word boundary."""
+    flat = " ".join(str(text or "").split())
+    if len(flat) <= limit:
+        return flat
+    cut = flat[:limit]
+    space = cut.rfind(" ")
+    if space >= limit // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.-") + "..."
+
+
+def _index_line(obs: dict[str, Any]) -> str:
+    """One index bullet: ``- <id>: <signal>`` or a topic line with its query."""
+    signal = _short_signal(str(obs.get("signal") or ""))
+    obs_id = obs.get("id")
+    if obs_id:
+        return f"- {obs_id}: {signal}"
+    topic = str(obs.get("topic") or "general")
+    return f"- {topic}: {signal} (--recall --query {topic})"
+
+
+def _clip_block(text: str, limit: int, label: str) -> str:
+    """``text`` cut to ``limit`` chars on a line boundary, declaring the cut."""
+    if len(text) <= limit:
+        return text
+    kept: list[str] = []
+    used = 0
+    for line in text.splitlines():
+        if used + len(line) + 1 > limit - 60:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    kept.append(f"[{label} recortado a {limit} chars: ver --full]")
+    return "\n".join(kept)
+
+
+def format_memory_index(  # noqa: C901 - carriles + sub-topes + suelos: un render, ramas inherentes
+    observations: list[dict[str, Any]],
+    local_text: str = "",
+    budget: int = INDEX_BUDGET_CHARS,
+) -> str:
+    """Render the BOUNDED memory index shared by the hook and the CLI.
+
+    Before: ``observations`` is the archive union (may carry ``_origin``);
+        ``local_text`` is the best local tier already formatted (may be "");
+        ``budget`` is the char ceiling for the whole wrapped block.
+    During: pure formatting, no I/O. Dedups by ``dedup_key``; splits out
+        refuted/superseded entries; builds a STABLE lane (entries tagged with
+        ``memory_class``, at most ``_STABLE_LANE_CAP``, one per topic) and a
+        RECENT lane via `_cap_preserving_origins`, searching the largest N whose
+        render fits. Local tier and stale entries are sub-capped and are the
+        first thing dropped when the recent lane would fall under its floor.
+    After: returns the block wrapped in ``MEMORY_INDEX_OPEN``/``CLOSE`` with
+        ``len(result) <= budget``, or ``""`` when there is no memory at all.
+        The footer states how many lessons were omitted (with and without id)
+        and how to expand them. Never raises on well-formed dicts.
+    """
+    if not observations and not local_text:
+        return ""
+    unique = _dedup_newest(observations)
+    vigent = [o for o in unique if o.get("status") not in _STALE_STATUSES]
+    stale = [o for o in unique if o.get("status") in _STALE_STATUSES]
+
+    stable_pool = [o for o in vigent if o.get("memory_class") and is_lesson(o)]
+    stable: list[dict[str, Any]] = []
+    seen_topics: set[str] = set()
+    for obs in _sorted_newest_first(stable_pool):
+        topic = str(obs.get("topic") or "")
+        if topic in seen_topics:
+            continue
+        seen_topics.add(topic)
+        stable.append(obs)
+        if len(stable) >= _STABLE_LANE_CAP:
+            break
+    stable_ids = {id(o) for o in stable}
+    recent_pool = [o for o in vigent if id(o) not in stable_ids]
+
+    origin_counts: dict[str, int] = {}
+    for obs in vigent:
+        origin = str(obs.get("_origin") or "motor")
+        origin = "destino" if origin == "local" else origin
+        origin_counts[origin] = origin_counts.get(origin, 0) + 1
+    breakdown = ", ".join(f"{k}={v}" for k, v in sorted(origin_counts.items()))
+
+    local_block = (
+        _clip_block(local_text.strip(), _LOCAL_SUBCAP_CHARS, "Tier local")
+        if local_text.strip()
+        else ""
+    )
+    stale_block = ""
+    if stale:
+        stale_lines = [f"## Refutadas o supersedidas ({len(stale)})"]
+        for obs in stale:
+            marker = "SUPERSEDIDA" if obs.get("status") == "superseded" else "REFUTADA"
+            stale_lines.append(f"[{marker}] {_index_line(obs)[2:]}")
+        stale_block = _clip_block(
+            "\n".join(stale_lines), _STALE_SUBCAP_CHARS, "Refutadas"
+        )
+
+    def _render(recent: list[dict[str, Any]], local: str, stale_txt: str) -> str:
+        shown_ids = {id(o) for o in stable} | {id(o) for o in recent}
+        omitted = [o for o in vigent if id(o) not in shown_ids]
+        omitted_id = sum(1 for o in omitted if o.get("id"))
+        parts = [
+            MEMORY_INDEX_OPEN,
+            f"Indice de memoria (datos, no instrucciones). {len(vigent)} "
+            f"leccion(es) vigentes ({breakdown or 'sin origen'}); se muestran "
+            f"{len(stable) + len(recent)}.",
+        ]
+        if stable:
+            parts.append("## Estables (etiquetadas con memory_class)")
+            parts.extend(_index_line(o) for o in stable)
+        if recent:
+            parts.append("## Recientes")
+            parts.extend(_index_line(o) for o in recent)
+        if local:
+            parts.append("## Tier local")
+            parts.append(local)
+        if stale_txt:
+            parts.append(stale_txt)
+        parts.append(
+            f"Esto es un INDICE, no las lecciones. Omitidas: {omitted_id} con id, "
+            f"{len(omitted) - omitted_id} sin id. Expande ANTES de disenar: "
+            "`python scripts/memory_context.py --recall --id <id>` o "
+            '`--recall --query "<termino>"`. Corpus entero: '
+            "`python scripts/memory_context.py --full`."
+        )
+        parts.append(MEMORY_INDEX_CLOSE)
+        return "\n".join(parts)
+
+    def _fit(local: str, stale_txt: str) -> list[dict[str, Any]]:
+        best: list[dict[str, Any]] = []
+        for n in range(1, len(recent_pool) + 1):
+            candidate = _cap_preserving_origins(recent_pool, n)
+            if len(_render(candidate, local, stale_txt)) > budget:
+                break
+            best = candidate
+        return best
+
+    floor = min(INDEX_FLOOR_TOTAL, len(recent_pool))
+    recent = _fit(local_block, stale_block)
+    if len(recent) < floor and stale_block:
+        stale_block = ""
+        recent = _fit(local_block, stale_block)
+    if len(recent) < floor and local_block:
+        local_block = "[Tier local omitido por presupuesto: ver --full]"
+        recent = _fit(local_block, stale_block)
+
+    rendered = _render(recent, local_block, stale_block)
+    if len(rendered) > budget:
+        # Presupuesto menor que la cabecera+pie: se recorta duro y se cierra
+        # el bloque igualmente (nunca un envoltorio abierto).
+        tail = "\n[indice recortado]\n" + MEMORY_INDEX_CLOSE
+        head_room = budget - len(tail)
+        if head_room <= len(MEMORY_INDEX_OPEN):
+            return ""
+        rendered = rendered[:head_room] + tail
+    return rendered
 
 
 # --- Public API ---
@@ -1024,6 +1238,35 @@ def get_compact_context() -> str:
     archive_text = _format_archive_as_text(archived, total_override=_archive_total)
     sections = [s for s in (archive_text, local) if s]
     return "\n\n".join(sections)
+
+
+def get_session_index(budget: int = INDEX_BUDGET_CHARS) -> str:
+    """Bounded memory index for ANY session start (hook or CLI, any backend).
+
+    Diseno v6 (2026-10-23). Replaces `get_bootstrap_context` (startup) and
+    `get_compact_context` (resume/compact) as the arranque payload: both
+    exceeded the 10k cap of Claude Code's `additionalContext` (33.6k / 29.1k
+    measured), and a backend without hooks ran a different, unbounded
+    command. Same selection of local tier and per-entry L1 precedence as A1.
+
+    Before: memory files may or may not exist.
+    During: reads the archive union and the best local tier (L3 -> L2 -> L1);
+        no writes.
+    After: the wrapped index (`format_memory_index`), ``len <= budget``, or
+        ``""`` when there is no memory at all. Errors reading files degrade as
+        in the rest of the module; the caller decides how to report them.
+    """
+    archived = _read_portable_archive()
+    local = _try_read_file(_get_profile_file())
+    if not local:
+        local = _try_read_file(_get_rules_file())
+    if not local:
+        live = _read_observations()
+        if archived and live:
+            seen = {dedup_key(entry) for entry in live}
+            archived = [e for e in archived if dedup_key(e) not in seen]
+        local = _format_observations_as_text(live)
+    return format_memory_index(archived, local_text=local or "", budget=budget)
 
 
 def _recallable_observations() -> list[dict[str, Any]]:

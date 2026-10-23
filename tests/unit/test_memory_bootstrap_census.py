@@ -137,10 +137,10 @@ def test_denominador(tmp_path: Path) -> None:
     lines = result.stdout.strip().split("\n")
     families_found = set()
     for line in lines:
-        m = re.match(r"^(PROMPTS|SKILLS|RULES): (\d+)/(\d+)$", line)
+        m = re.match(r"^(PROMPTS|SKILLS|RULES|STARTUP|DISPATCH): (\d+)/(\d+)$", line)
         if m:
             families_found.add(m.group(1))
-    assert families_found == {"PROMPTS", "SKILLS", "RULES"}
+    assert families_found == {"PROMPTS", "SKILLS", "RULES", "STARTUP", "DISPATCH"}
     m_total = re.search(r"^TOTAL: (\d+)/(\d+)$", result.stdout, re.MULTILINE)
     assert m_total, f"TOTAL line missing in output:\n{result.stdout}"
     assert int(m_total.group(2)) == 1 + 2 + 1

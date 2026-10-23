@@ -88,6 +88,17 @@ LAYER2_POINTER_RE = re.compile(
 )
 
 
+# Diseno v6 (ronda 4 #51, opt-in con `--require-memory-bootstrap`): un backend
+# sin hook SessionStart solo carga memoria si el prompt se lo ordena. Se exige
+# el COMANDO, no la palabra "memoria": nombrar la memoria no la carga.
+MEMORY_BOOTSTRAP_RE = re.compile(r"memory_context\.py\s+--bootstrap\b")
+
+
+def has_memory_bootstrap_instruction(text: str) -> bool:
+    """True si el prompt ordena ejecutar `memory_context.py --bootstrap`."""
+    return bool(MEMORY_BOOTSTRAP_RE.search(text))
+
+
 def has_agents_md_instruction(text: str) -> bool:
     """True si el prompt instruye expresamente leer AGENTS.md."""
     return bool(AGENTS_MD_INSTRUCTION_RE.search(text))
@@ -111,6 +122,15 @@ def main() -> int:
         )
     )
     ap.add_argument("prompt", help="ruta del fichero de prompt de arranque")
+    ap.add_argument(
+        "--require-memory-bootstrap",
+        action="store_true",
+        help=(
+            "Bloquea tambien si el prompt no ordena "
+            "'memory_context.py --bootstrap' (despacho de un Builder/Revisor "
+            "real a un backend sin hook; diseno v6)."
+        ),
+    )
     args = ap.parse_args()
 
     path = Path(args.prompt)
@@ -132,6 +152,16 @@ def main() -> int:
             f"memory_rules.md/memory_profile.md). No bloquea.",
             file=sys.stderr,
         )
+
+    if args.require_memory_bootstrap and not has_memory_bootstrap_instruction(text):
+        print(
+            f"[builder-dispatch] BLOQUEA: {path.name} no instruye cargar la "
+            f"memoria. Un backend sin hook SessionStart (Kilo, Codex) no la "
+            f"recibe sola: anade un paso 0 con "
+            f"'python scripts/memory_context.py --bootstrap' antes de dispachar.",
+            file=sys.stderr,
+        )
+        return 1
 
     if has_agents_md_instruction(text):
         print(f"[builder-dispatch] OK: {path.name} instruye leer AGENTS.md")

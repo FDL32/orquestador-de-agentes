@@ -146,3 +146,40 @@ def test_cli_exits_2_on_missing_file(tmp_path: Path) -> None:
     """El CLI falla con exit 2 si el fichero de prompt no existe."""
     result = _run_cli(tmp_path / "no_existe.md")
     assert result.returncode == 2
+
+
+def test_require_memory_bootstrap_blocks_a_prompt_that_only_names_memory(
+    tmp_path: Path,
+) -> None:
+    """Diseno v6: con `--require-memory-bootstrap`, nombrar la memoria no basta;
+    hace falta el COMANDO. Sin el flag el comportamiento historico no cambia.
+    """
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "check_builder_dispatch_prompt.py"
+    )
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text(
+        PROMPT_CON_INSTRUCCION + "\nUsa la memoria del proyecto.\n", encoding="utf-8"
+    )
+
+    def _cli(*flags: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(script), str(prompt_file), *flags],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert _cli().returncode == 0
+    blocked = _cli("--require-memory-bootstrap")
+    assert blocked.returncode == 1
+    assert "memory_context.py --bootstrap" in blocked.stderr
+
+    prompt_file.write_text(
+        PROMPT_CON_INSTRUCCION
+        + "\nPaso 0: python scripts/memory_context.py --bootstrap\n",
+        encoding="utf-8",
+    )
+    assert _cli("--require-memory-bootstrap").returncode == 0

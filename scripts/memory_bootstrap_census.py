@@ -5,15 +5,17 @@ Before:
     desde __file__ via pathlib). No necesita ningun argumento obligatorio.
 
 During:
-    Recorre tres familias de ficheros markdown (prompts/*.md,
-    skills/*/SKILL.md, .claude/rules/*.md) y aplica el predicado de cobertura:
+    Recorre cinco familias de ficheros markdown (prompts/*.md,
+    skills/*/SKILL.md, .claude/rules/*.md, templates/startup/*.md,
+    prompts/kilo_trio_dispatch/*.md) y aplica el predicado de cobertura:
     una superficie esta CUBIERTA si (a) su texto contiene una invocacion
     'memory_context.py --bootstrap' o 'memory_context.py --recall', O (b) su
     texto contiene 'memory_bootstrap' (referencia al shared doc). El token
     '--status' JAMAS suma.
 
 After:
-    Imprime en stdout las cifras por familia (PROMPTS, SKILLS, RULES) con
+    Imprime en stdout las cifras por familia (PROMPTS, SKILLS, RULES, STARTUP,
+    DISPATCH) con
     formato cubiertas/total y la lista de superficies NO cubiertas. Exit 0
     siempre que corra (reporter, no guard); exit 1 solo por error de uso.
 """
@@ -63,10 +65,15 @@ def main(root: pathlib.Path | None = None) -> int:
     if root is None:
         root = pathlib.Path(__file__).resolve().parents[1]
 
+    # STARTUP y DISPATCH (diseno v6, ronda 4 #51): las plantillas con que se
+    # arranca o despacha un backend SIN hook (Codex, Kilo) eran invisibles al
+    # censo, y son justo las superficies por las que ese backend carga memoria.
     families = [
         ("PROMPTS", "prompts/*.md"),
         ("SKILLS", "skills/*/SKILL.md"),
         ("RULES", ".claude/rules/*.md"),
+        ("STARTUP", "templates/startup/*.md"),
+        ("DISPATCH", "prompts/kilo_trio_dispatch/*.md"),
     ]
 
     totals: dict[str, int] = {}

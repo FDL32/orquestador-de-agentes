@@ -231,6 +231,10 @@ EXPECTED_WIRED_REAL = {
     "check_flt_versionable",
     "check_guard_wiring",
     "check_handoff_committed",  # WOT-2026-040t(P1): cableado en prepush_check.py (closeout, BLOQUEANTE)
+    # Diseno v6 (2026-10-23): cableado via import de nivel de funcion en
+    # prepush_check.py::run_hook_delivery_check (todo push, WARN, Claude-only).
+    # Mutaciones propias en tests/unit/test_check_hook_delivery.py.
+    "check_hook_delivery",
     "check_handoff_state_sha",  # WOT-2026-024t(s2): cableado en prepush_check.py (closeout, WARN/FAIL)
     # WOT-2026-089e: cableado via `_run_script("check_memory_health.py")` en
     # scripts/closeout_steps/memory_health.py, paso `memory_health` de

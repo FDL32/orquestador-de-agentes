@@ -892,6 +892,33 @@ def run_workspace_contract_formation_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_hook_delivery_check(project_root: Path) -> CheckResult:
+    """Diseno v6: la memoria del hook SessionStart llega al modelo (WARN).
+
+    Before: ``project_root`` resoluble; el guard vive en el motor.
+    During: import estatico de `scripts.check_hook_delivery.evaluate` (solo
+        lectura de transcripts de Claude Code; nunca lanza).
+    After: `passed=True` para OK y SKIP (SKIP marcado `skipped=True`: "no habia
+        nada que juzgar" no es "cumplido"); `passed=False` + `is_blocking=False`
+        para WARN (patron WARN de `run_arranque_budget_check`).
+    """
+    from scripts.check_hook_delivery import evaluate
+
+    name = "Hook Delivery Check (SessionStart -> modelo, Claude-only, WARN)"
+    status, message = evaluate(project_root)
+    if status == "WARN":
+        return CheckResult(
+            name=name, passed=False, output=f"WARN: {message}", is_blocking=False
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=f"{status}: {message}",
+        is_blocking=False,
+        skipped=status == "SKIP",
+    )
+
+
 def run_arranque_budget_check(project_root: Path) -> CheckResult:
     """WOT-2026-103b: cablea el guard de presupuesto de arranque (CTL-2026-041a)
     en el prepush del motor, para que corra en TODO push de TODO destino que lo
@@ -4368,6 +4395,11 @@ def run_preflight_check(
     # no solo en cierre -- is_blocking=False siempre, skip sin coste en
     # destinos sin scripts/check_arranque_budget.py)
     results.append(run_arranque_budget_check(project_root))
+
+    # 5-ter. Hook Delivery Check (diseno v6, 2026-10-23; WARN, Claude-only):
+    # la memoria del hook SessionStart LLEGA al modelo, medido en el lado del
+    # consumidor (transcripts). SKIP sin coste si no hay transcripts.
+    results.append(run_hook_delivery_check(project_root))
 
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:
