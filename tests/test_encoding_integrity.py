@@ -9,6 +9,7 @@ from scripts.encoding_guard import (
     ROOT,
     collect_files_to_check,
     file_issues,
+    find_typographic_punctuation,
     has_utf8_bom,
     is_in_scope,
     relative_path,
@@ -249,3 +250,146 @@ def test_dirty_ps1_would_be_blocked(tmp_path):
     assert has_utf8_bom(dirty), "fixture must carry a BOM"
     mojibake, _q, _c = file_issues(dirty)
     assert mojibake, "guard must flag mojibake in a dirty .ps1"
+
+
+# WOT-2026-060t: typographic punctuation detection (em-dash, curly quotes).
+
+
+def test_find_typographic_punctuation_catches_em_dash():
+    """U+2014 em-dash is detected."""
+    text = "hello\u2014world"  # em-dash between words
+    result = find_typographic_punctuation(text)
+    assert any("<typo:2014>" in s for s in result), (
+        f"Expected em-dash hit, got: {result}"
+    )
+
+
+def test_find_typographic_punctuation_catches_left_single_quote():
+    """U+2018 left single quotation mark is detected."""
+    text = "\u2018hello"  # 'hello'
+    result = find_typographic_punctuation(text)
+    assert any("<typo:2018>" in s for s in result)
+
+
+def test_find_typographic_punctuation_catches_right_single_quote():
+    """U+2019 right single quotation mark is detected."""
+    text = "hello\u2019"  # hello'
+    result = find_typographic_punctuation(text)
+    assert any("<typo:2019>" in s for s in result)
+
+
+def test_find_typographic_punctuation_catches_left_double_quote():
+    """U+201C left double quotation mark is detected."""
+    text = "\u201chello"  # "hello"
+    result = find_typographic_punctuation(text)
+    assert any("<typo:201C>" in s for s in result)
+
+
+def test_find_typographic_punctuation_catches_right_double_quote():
+    """U+201D right double quotation mark is detected."""
+    text = "hello\u201d"  # hello"
+    result = find_typographic_punctuation(text)
+    assert any("<typo:201D>" in s for s in result)
+
+
+def test_find_typographic_punctuation_catches_all_five():
+    """All five codepoints in one string are each detected once."""
+    text = "\u2014\u2018\u2019\u201c\u201d"
+    result = find_typographic_punctuation(text)
+    codepoints_found = {s[:11] for s in result}  # e.g. "<typo:2014>"
+    assert codepoints_found == {
+        "<typo:2014>",
+        "<typo:2018>",
+        "<typo:2019>",
+        "<typo:201C>",
+        "<typo:201D>",
+    }
+
+
+def test_find_typographic_punctuation_deduplicates():
+    """Same codepoint with identical context produces one snippet."""
+    # 12 chars total: each em-dash has 3 chars of context after it
+    text = "\u2014abc\u2014abc\u2014abc"
+    result = find_typographic_punctuation(text)
+    assert len(result) == 1
+
+
+def test_find_typographic_punctuation_empty_when_clean():
+    """ASCII-only text produces empty result."""
+    result = find_typographic_punctuation('hello - "world"')
+    assert result == []
+
+
+def test_check_encoding_guard_blocks_em_dash(tmp_path):
+    """Integration: a file with em-dash triggers the guard (rc=1, Typographic)."""
+    file_path = tmp_path / "corrupt.md"
+    file_path.write_text("hello \u2014 world\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check_encoding_guard.py"),
+            str(file_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Typographic punctuation detected" in result.stderr
+    assert "<typo:2014>" in result.stderr
+
+
+def test_check_encoding_guard_blocks_curly_quotes(tmp_path):
+    """Integration: a file with curly double-quotes triggers the guard (rc=1)."""
+    file_path = tmp_path / "corrupt.md"
+    file_path.write_text('say "\u201chello\u201d"\n', encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check_encoding_guard.py"),
+            str(file_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Typographic punctuation detected" in result.stderr
+
+
+def test_check_encoding_guard_allows_clean_ascii(tmp_path):
+    """Control negative: ASCII hyphen and ASCII quotes stay clean (rc=0)."""
+    file_path = tmp_path / "clean.md"
+    file_path.write_text('hello - "world"\n', encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "check_encoding_guard.py"),
+            str(file_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_file_issues_typographic_in_text_corruption(tmp_path):
+    """Typographic punctuation lands in the third element of the file_issues 3-tuple."""
+    file_path = tmp_path / "curly.md"
+    file_path.write_text("\u201chello\u201d\n", encoding="utf-8")
+
+    mojibake, q_in_word, text_corruption = file_issues(file_path)
+    assert not mojibake
+    assert not q_in_word
+    assert text_corruption
+    assert any("<typo:" in s for s in text_corruption)

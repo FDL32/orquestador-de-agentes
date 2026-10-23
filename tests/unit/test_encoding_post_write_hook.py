@@ -1,4 +1,4 @@
-"""Tests for encoding_post_write_hook.py — early detection after Write|Edit|MultiEdit.
+"""Tests for encoding_post_write_hook.py - early detection after Write|Edit|MultiEdit.
 
 TDD: these tests MUST fail before the hook implementation exists.
 They verify: payload parsing, extension filtering, root resolution,
@@ -216,19 +216,25 @@ def test_clean_ascii_passes(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Legitimate em-dash (valid Unicode, not suspicious)
+# Legitimate em-dash (valid Unicode, now caught by WOT-2026-060t guard)
 # ---------------------------------------------------------------------------
 
 
-def test_emdash_passes_clean(tmp_path: Path) -> None:
+def test_emdash_now_flagged_by_guard(tmp_path: Path) -> None:
+    """WOT-2026-060t: the post-write hook now correctly flags em-dash
+    (U+2014) as typographic punctuation. This test replaced the old
+    test_emdash_passes_clean which was written around the defect."""
     em_file = tmp_path / "essay.md"
     _write_emdash(em_file)
     payload = _make_payload(tool_input={"file_path": str(em_file)})
     result = _run_hook(payload)
-    assert result.returncode == 0, (
-        f"Expected exit 0 for em-dash.\nstderr: {result._decoded_stderr}"
+    assert result.returncode == 1, (
+        f"Expected exit 1 for em-dash (typographic punctuation). "
+        f"stderr: {result._decoded_stderr}"
     )
-    assert "ERROR" not in result._decoded_stderr
+    assert "ERROR" in result._decoded_stderr
+    assert "text_corruption" in result._decoded_stderr
+    assert "<typo:2014>" in result._decoded_stderr
 
 
 # ---------------------------------------------------------------------------
