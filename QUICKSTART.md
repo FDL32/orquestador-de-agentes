@@ -490,6 +490,23 @@ Remedio: corre la suite/sello desde un checkout de prefijo corto tipo
 El runner AVISA: el preflight emite un WARN no bloqueante por stderr si el cwd
 excede 53 chars (no cambia exit codes, no bloquea).
 
+En el cierre de un ticket (`orchestrator_launch_builder.md` "Cierre final tras
+aprobacion" y `manager_review.md` Paso 5-bis remiten aqui):
+
+- **Precondicion de ruta.** Si el worktree no cumple el techo de arriba, crea un
+  `git worktree` en el HEAD a cerrar bajo una ruta corta y ejecuta DESDE ESE MISMO
+  CHECKOUT la suite y la puerta de cierre (`--mark-ready`/`--manager-approve`).
+  Para `delivery_authority: repo_motor` el sello `last-run.json` vive en el
+  runtime del checkout del motor que corrio la suite; para `repo_destino` se lee
+  del destino (`assert_canonical_suite_green`, `scripts/pre_handoff_guard.py`).
+  Declara la ruta usada en el informe.
+- **Clasificacion antes de reabrir.** Antes de volver a `CHANGES` por un rojo de
+  la suite, descarta rojo de ENTORNO: si la corrida emitio el WARN de prefijo
+  largo o los fallos son de sandbox git (`unable to write file`,
+  `Filename too long`), el Builder repite la suite desde un checkout que cumpla
+  el techo. Solo un rojo que sobrevive a esa repeticion reabre la revision; un
+  rojo real tras `APPROVE` sigue invalidando la aprobacion.
+
 ## 7. Multi-Ticket Integration Smoke
 
 Para validar la seguridad multi-ticket y que tickets consecutivos no arrastran estado:

@@ -595,11 +595,10 @@ para la secuencia exacta.
 - **Cierre final** (unico paso que autoriza `--manager-approve`/commit de
   cierre real) exige, EN ESTE ORDEN, DESPUES de que el Manager apruebe (ver
   Manager Review Paso 5-bis) y el usuario de permiso explicito para cerrar:
-  1. suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all`
-     (con la precondicion de ruta de "Cierre final tras aprobacion") con
+  1. suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all` (precondicion de ruta: QUICKSTART.md "Sellos largos") con
      `last-run.json` en `status=finished`, `exit_code=0`, `level=all`,
      `args_mode=default_discovery` y `tested_commit_sha == HEAD` (commit que se cierra);
-  2. si la suite falla: NO se cierra. El ticket vuelve a `CHANGES` y repite
+  2. si la suite falla (y no es rojo de ENTORNO, ver QUICKSTART.md "Sellos largos"): NO se cierra. El ticket vuelve a `CHANGES` y repite
      integramente los Pasos 1-5 de `manager_review.md` (no solo re-emitir el
      Paso 5, no un parche puntual): un fallo de suite tras el `APROBADO`
      del Paso 5 invalida esa aprobacion por completo, porque el Manager
@@ -639,9 +638,7 @@ Replay closeout-only (p.ej. reactivar un ticket cuya feature ya esta commiteada,
 sin tocar codigo productivo):
 
 ```powershell
-# 0) cwd dentro de la ventana de QUICKSTART "Sellos largos" (precondicion de
-#    ruta de "Cierre final tras aprobacion").
-# 1) Suite canonica con el interprete del destino (lanzable desde el motor):
+# 1) Suite canonica con el interprete del destino, cwd dentro de QUICKSTART.md "Sellos largos":
 $env:AGENT_PROJECT_ROOT = "C:\ruta\repo_destino"
 python C:\ruta\repo_motor\scripts\run_pytest_safe.py --level all
 #    Verifica last-run.json: status=finished, exit_code=0, level=all,
@@ -758,16 +755,7 @@ cuando se cumplen, EN ESTE ORDEN, las dos condiciones previas:
    actos distintos del mismo actor Manager, y el segundo (pedir permiso) es
    quien inicia este paso -- ver `manager_review.md` Paso 5-bis punto 1.
 
-Con ambas condiciones cumplidas:
-
-**Precondicion de ruta (unico dueno; los demas sitios remiten aqui):** corre
-la suite desde un checkout que cumpla la ventana de `QUICKSTART.md` "Sellos
-largos" (techo de prefijo de cwd; las cifras viven alli, no aqui). Si tu
-worktree no la cumple, crea un `git worktree` en el HEAD a cerrar bajo una
-ruta que si la cumpla y ejecuta DESDE ESE MISMO CHECKOUT la suite Y la puerta
-de cierre (`--mark-ready`/`--manager-approve`): el sello `last-run.json` vive
-en el runtime del checkout que corrio la suite y `assert_canonical_suite_green`
-lo lee de ahi. Declara la ruta usada en el informe.
+Con ambas condiciones cumplidas, y la precondicion de ruta de QUICKSTART.md "Sellos largos" (suite y puerta de cierre desde el MISMO checkout):
 
 ```powershell
 python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all
@@ -779,10 +767,7 @@ que el Manager aprobo -- si hubo commits posteriores a la aprobacion, la
 suite corre sobre un commit distinto al aprobado y eso es un hallazgo, no un
 cierre valido).
 
-- Si la suite **falla**: NO cierres. Antes de reabrir, descarta rojo de
-  ENTORNO con la clasificacion de `manager_review.md` ("Reingreso unico tras
-  fallo de suite"); un rojo que sobrevive a esa clasificacion es un fallo de
-  codigo. Reporta el fallo al Manager como un
+- Si la suite **falla**: NO cierres (descarta antes rojo de ENTORNO, QUICKSTART.md "Sellos largos"). Reporta el fallo al Manager como un
   blocker nuevo. La aprobacion anterior queda invalidada por completo: el
   ticket vuelve a `CHANGES` y el Manager repite integramente los Pasos 1-5
   de `manager_review.md` sobre el commit actual (Clasificacion, gates

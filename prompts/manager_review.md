@@ -324,16 +324,7 @@ re-emitir el Paso 5 sin re-ejecutar los pasos intermedios. El `APPROVE`
 anterior queda invalidado: reescribe `decision_<ticket_id>.json` a
 `"decision": "CHANGES"` en el mismo turno en que detectas el fallo,
 para que no quede una aprobacion persistida mientras se corrige.
-
-**Clasificacion antes del reingreso (unico sitio; el prompt del Builder
-remite aqui):** antes de volver a `CHANGES` por un fallo de suite, descarta
-rojo de ENTORNO. Si la corrida emitio el WARN de prefijo de cwd largo del
-runner, o los fallos son de sandbox git (`unable to write file`,
-`Filename too long`), repite la suite desde un checkout que cumpla la ventana
-de `QUICKSTART.md` "Sellos largos" (precondicion de ruta de "Cierre final tras
-aprobacion" en `orchestrator_launch_builder.md`). Solo un rojo que sobrevive a
-esa repeticion reabre la revision. Declara la ruta usada en el informe. No
-cambia la regla de fondo: un rojo real tras `APPROVE` invalida la aprobacion.
+Antes de ese `CHANGES`, descarta rojo de ENTORNO: el Builder repite la suite (Paso 5-bis) segun QUICKSTART.md "Sellos largos".
 
 Ademas del veredicto en texto, escribe el decision artifact estructurado
 (canal primario del bridge; el transcript queda como fallback y evidencia).
@@ -389,8 +380,7 @@ lo saltes ni lo asumas implicito.
    aprobar.
 2. Con permiso obtenido, el rol BUILDER ejecuta la suite canonica (el
    Manager puede pedirsela; quien la corre y aporta la evidencia es el
-   Builder, igual que el resto de gates del ticket), con la precondicion de
-   ruta de "Cierre final tras aprobacion" (`orchestrator_launch_builder.md`):
+   Builder, igual que el resto de gates del ticket; precondicion de ruta en QUICKSTART.md "Sellos largos"):
    ```
    python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all
    ```
