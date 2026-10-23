@@ -25,15 +25,9 @@
   - **Actor humano:** `user`. No es backend IA, no tiene model_id que
     resolver -- analogo a `ACTOR_RUNTIME_ROLES` (`SUPERVISOR`, ver abajo):
     actor fuera de los enums de codigo que validan backend, no un olvido.
-- **Nota de enums de codigo (por que NO hay un enum 1:1 con esta lista):**
-  existen 3 enums de codigo con nombres parecidos y dominios DISTINTOS por
-  diseno (DEC-router-skills-001 Seccion 7; no se fusionan):
-  `.agent/agents_config.py::CANONICAL_ROLES` (valida `role_mapping`/backend
-  resolution), `scripts/discover_skills.py::CANONICAL_ROLES` (valida el
-  campo `role` escalar del frontmatter de prompts) y `agents.json::
-  ensemble_profiles` (perfiles `proposer`/`challenger`). Ninguno de los 3
-  es, ni pretende ser, una copia literal de esta lista -- cada uno valida
-  su propio dominio.
+- **Nota de enums de codigo:** NO hay un enum 1:1 con esta lista -- existen 3 enums de codigo
+  con dominios DISTINTOS por diseno que no se fusionan. Detalle:
+  `.agent/rules/common/backends_roles_detail.md`.
 - **Supervisor:** actor runtime del bus ya existente (`bus/supervisor.py`,
   eventos `actor="SUPERVISOR"`). No es sinonimo de orchestrator ni de backend IA.
 - **Artefactos:** prompts, skills, scripts, gates y DEC. No llamarlos agentes.
@@ -88,7 +82,7 @@ worktrees pareados, glosario de nomenclatura de ticket y la tabla motor-vs-desti
 - `MANIFEST.distribute` define la frontera del motor central (codigo operativo).
 - `MANIFEST.workspace` define el contrato del workspace destino (estado, memoria, config).
 - Los comandos canonical y legacy se documentan por separado.
-- Estado actual: `v9.17.1` motor central + workspace destino, cierre canonico con suite verde, pipeline autonomo por chat, meta-auditoria, auditoria de publicacion Git, guard de integridad del motor, encoding guard endurecido y CEM v0 adoptado.
+- Estado actual: ver `PROJECT.md` (version, hitos recientes).
 - El motor vive una unica vez en `orquestador_de_agentes/`; los proyectos destino lo referencian externamente.
 - La senal VIVA de staleness NO es esta cadena de version hardcodeada (queda fija hasta el proximo bump manual): es `motor_sha` en el link motor<->destino, comparado en vivo contra el HEAD real del motor en cada `destination_context.py --bootstrap` (WOT-2026-024j, WARN de drift, nunca gate).
 
@@ -124,15 +118,12 @@ append `--project-root <destino>` to commands that operate on project state.
   las 8 barreras ni el `GROUP_STOP_REPORT` de ese ejecutor.
 - Meta-auditar pipeline cerrado: skill `/audit-pipeline`
 - Auditar publicacion Git: skill `/audit-git-publication`
-- Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista: `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. El script RECOLECTA (read-only: por defecto no toca ningun fichero TRACKED); el agente AUDITA. Salida en `<repo_destino>/.agent/audits/system_health/general_audit_YYYYMMDD[_HHMM]/`. El registro en `INDEX.md` (fichero tracked en el workspace) es opt-in via `--publish-index`, OFF por defecto (WOT-2026-023x). Ver `prompts/audit_post_change_system_health.md`.
+- Auditar salud del sistema post-cambio (motor+destino+integracion): skill `/audit-system-health`. Recolector determinista (read-only): `python scripts/collect_system_health.py --motor-root <repo_motor> --project-root <repo_destino> --mode auto`. Detalle de salida e indice opt-in: `prompts/audit_post_change_system_health.md`.
 - Interaccion por terminal: `python scripts/ticket_supervisor.py --reactive [--project-root <workspace>]`
 - Tests: `python scripts/run_pytest_safe.py` (NO acepta `--project-root`; runs against `repo_motor` tests by design)
-  - NO usar `python -m pytest` directo sobre tests que importan el controller:
-    al insertar `.agent/` en sys.path, `runtime` puede resolver a
-    `.agent/runtime/` (que tiene `__init__.py`) en vez de `<motor>/runtime/`,
-    y la coleccion falla con `No module named 'runtime.project_root'`.
-    El runner seguro configura el entorno correcto y ademas incluye la
-    barrera de state-leak (falla si la suite muta `.agent/collaboration/`).
+  - NO usar `python -m pytest` directo sobre tests que importan el controller (resuelve
+    `runtime` al modulo equivocado via sys.path). Causa medida y barrera de state-leak:
+    `.agent/rules/common/comandos_tests_runner_detail.md`.
 - Calidad: `ruff check . && ruff format .`
 - Auditoria de dependencias: `python scripts/pip_audit_project.py`
 - Archivar colaboracion: `python scripts/archive_collaboration_artifacts.py [--dry-run] [--project-root <workspace>]`
@@ -145,7 +136,7 @@ append `--project-root <destino>` to commands that operate on project state.
 
 ### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
 
-**Norma con barrera de FORMA parcial desde 2026-10-18 (WOT-2026-104b)**, no barrera semantica: scripts/check_process_decision_search.py (cableado como hook pre-commit en el motor sobre prompts/**/*.md, .claude/rules/**/*.md, AGENTS.md, CLAUDE.md, y como hook pre-push en el destino sobre .agent/planning/*.md/STRATEGY_WOT-*.md CAMBIADOS en el rango a publicar) bloquea un artefacto que se AUTODECLARA con el marcador DECISION DE PROCESO: si no declara ademas una seccion BUSQUEDA-PREVIA: valida (PROTOCOLO ENCONTRADO: <ruta> / NO ENCONTRE PROTOCOLO / EXCEPCION: trivial <justificacion>). Ver criterio de busqueda minima, clases de decision, y candidato de barrera PARCIAL en .agent/rules/common/contract_full_read_and_process_search.md.
+**Norma con barrera de FORMA parcial (WOT-2026-104b):** antes de actuar sobre una decision de proceso sin instruccion exacta, busca si ya existe un protocolo documentado. Mecanismo, limites y clases de decision: `.agent/rules/common/contract_full_read_and_process_search.md`.
 
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
@@ -210,48 +201,15 @@ motivo y estado `PUBLICACION_PENDIENTE_AUTORIZACION`): `.agent/rules/common/flig
 
 #### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
 
-**Gate 2 (push con la rama remota avanzada por otras sesiones):** si, al intentar publicar un
-commit YA VERIFICADO por el Gate 1, la rama remota avanzo con commits de otras sesiones, el
-merge de esos commits se verifica asi:
-- Si el merge es disjunto en ficheros (ninguno tocado por ambos lados) **y** el auto-merge de
-  Git no reporta conflicto de texto: ademas de `ast.parse`/sintaxis de los ficheros que SI
-  cambiaron y confirmar que no quedan marcadores de conflicto (`<<<<<<<`), se exige ADEMAS
-  (i) ausencia de dependencia de import cruzada entre los ficheros tocados por cada lado, y
-  (ii) que ninguno de los ficheros tocados sea una superficie transversal de alto blast radius
-  (`conftest.py`, `pyproject.toml`, `uv.lock`, `.pre-commit-config.yaml`, `AGENTS.md`,
-  `CLAUDE.md`, `bus/`, `runtime/`, `.agent/agents_config.py`). Si cualquiera de las tres
-  condiciones falla, tratar como "mismo fichero compartido" (exige suite completa).
-- Si el merge toca el mismo fichero en ambos lados: la suite completa SI debe correr antes de
-  publicar -- nunca "suite focalizada" por `-k` (ver regla de arriba, WOT-2026-079d).
-- El camino relajado del primer bullet NUNCA es alcanzable para el commit resultante de un
-  MERGE: el `tested_commit_sha` del Gate 1 es el del commit padre, nunca el del merge commit.
-  La "relajacion" ahorra la RE-suite solo cuando se demuestra ANTES de mergear que el merge es
-  disjunto y seguro, nunca despues de que el merge commit ya existe.
-- Si tras publicar el remoto volvio a avanzar (`non-fast-forward`), repetir el criterio arriba
-  en la nueva ronda, sin acumular re-verificaciones completas solo porque ya se hizo una vez.
-
-**Condiciones de rechazo del Gate 2 (default fail-closed):** el Gate 2 relajado NO aplica si
-(1) no existe evidencia VERIFICABLE de que el lado entrante corrio su Gate 1 (`tested_commit_sha`
-registrado, evento de bus, log de cierre citable -- no basta "presumiblemente"); (2) el lado
-entrante toca una superficie transversal (lista arriba); (3) hay dependencia de import cruzada
-entre los ficheros tocados por ambos lados; (4) el commit publicado es un merge commit cuyo
-`tested_commit_sha` no coincide con el HEAD resultante; (5) han ocurrido 2+ intentos de push
-rechazados consecutivos sin que ninguna ronda haya corrido la suite completa sobre el estado
-integrado. El default es FAIL-CLOSED: el Gate 2 relajado es la excepcion estrecha, no el
-comportamiento esperado por defecto.
-
-**Alcance:** esta politica SOLO aplica a ramas o flujos donde exista, en algun punto del ciclo
-de vida del commit, una verificacion equivalente a `assert_canonical_suite_green` (via
-`--mark-ready` de un ticket formal, o via un registro explicito de `tested_commit_sha` en la
-bitacora de un vuelo sin ticket). Sin esa evidencia, tratar como si el Gate 1 nunca se hubiera
-verificado y exigir suite completa, sin excepcion.
-
-**Riesgo residual declarado:** esta politica asume que cada sesion concurrente aplica su propio
-Gate 1 antes de publicar. A diferencia de un equipo con CI real (que tiene un verificador
-automatico TERCERO sobre el HEAD integrado), aqui no existe ningun verificador automatico
-equivalente -- el riesgo es MAYOR que en un equipo con CI, no igual. `check_suite_freshness.py`
-no es comparable: es local y depende de que `pre_handoff_guard` corra aguas abajo, lo cual no
-ocurre en un push de vuelo sin ticket formal.
+**Default fail-closed: si la rama remota avanzo con commits de otras sesiones, el Gate 2
+relajado NO aplica salvo que se cumplan TODAS estas 5 condiciones: (1) TU propio commit ya
+paso el Gate 1 con evidencia registrada (sin eso, suite completa, sin excepcion); (2) evidencia
+VERIFICABLE de que el lado entrante tambien corrio su Gate 1; (3) ningun lado toca una
+superficie transversal de alto blast radius; (4) sin import cruzado entre los lados; (5) commit
+NO-merge y menos de 2 rechazos previos sin re-suite.** Por que: sin las 5, el HEAD integrado
+publicado queda sin verificacion real (evidencia no atribuible), rompiendo `tested_commit_sha
+== HEAD`. Checklist completa (criterio de merge disjunto vs mismo-fichero) y riesgo residual
+declarado (sin verificador CI tercero equivalente): `.agent/rules/common/flight_push_policy.md` [G1].
 
 ### Convencion de encoding y gap v1 (WOT-2026-010e)
 
@@ -269,39 +227,14 @@ ocurre en un push de vuelo sin ticket formal.
 
 #### No MEZCLES vias de escritura en el mismo fichero (line endings, medido 2026-08-04)
 
-**El sintoma:** `git commit` ABORTA con `mixed line ending ... Failed` y el hook deja el fichero
-"arreglado" pero SIN commitear. El commit **no existe**; hay que re-`git add` y repetir. Paso TRES
-veces en una sola sesion, y las tres por lo mismo.
-
-**La causa, medida (no la que parece):** en Windows, las dos vias de escritura del agente dejan
-finales de linea DISTINTOS en el mismo repo.
-
-| Via | Deja |
-|---|---|
-| `Write`/`Edit` (y `Path.write_text()` en modo texto) | **CRLF** -- Windows traduce `\n` al escribir |
-| `cat >> f <<'EOF'`, `printf`, `Path.write_bytes()`, `write_text(..., newline="")` | **LF** |
-
-Escribir un fichero con una via y AMPLIARLO con la otra lo deja MIXTO, que es lo que el hook caza.
-Reproducido: `write_text()` (CRLF) + `cat >>` heredoc -> `CRLF=2 LF_total=3 bare_LF=1` -> MIXTO.
-
-**Dos creencias FALSAS que conviene no heredar** (ambas se sostuvieron una sesion entera antes de
-medirse):
-1. *"La mezcla la introduce `git add` al aplicar `.gitattributes`"*. **NO.** Probado: `git add` no
-   toca el working tree (`CRLF=0 LF=2` antes y despues; la normalizacion ocurre solo en el INDICE).
-2. *"Verificar los line endings antes de stagear no sirve"*. **SI sirve** -- y es la barrera. Lo que
-   no servia era mi comprobacion, porque medi el fichero ENTERO (`crlf == lf` -> "homogeneo") en vez
-   de buscar LF SOLITARIOS. Un fichero con 2248 CRLF y 1 bare LF pasa el primer test y falla el hook.
-
-**Regla operativa:**
-- Elige UNA via por fichero. Para `.py`/`.md` del motor, `Write`/`Edit` (la que el hook de encoding
-  ya cubre); si amplias por `Bash`, hazlo con la MISMA via con que se creo.
-- Anadir tests a un fichero existente con `cat >>` es el caso que mas muerde: usa `Edit`, o
-  normaliza despues.
-- Comprobacion correcta (cuenta bare LF, no compara totales):
-  `raw.count(b"\r\n")` vs `raw.count(b"\n")`; si la diferencia es > 0 **y** hay CRLF, esta MIXTO.
-- Si el hook ya aborto: **no es un fallo, es el flujo**. El fichero queda arreglado en disco; haz
-  `git add` de nuevo y repite el commit. Verifica antes que tus cambios sobrevivieron
-  (`grep` de un token propio), porque el arreglo reescribe el fichero.
+**Regla operativa:** elige UNA via de escritura por fichero (para `.py`/`.md` del motor,
+`Write`/`Edit`; si amplias por `Bash`, usa la MISMA via con que se creo). Mezclar `Write`/`Edit`
+con heredoc/`cat >>` sobre el mismo fichero deja finales de linea MIXTOS y el commit ABORTA --
+anadir asi a un fichero creado con `Write` es el caso que mas muerde. Comprobacion correcta
+(cuenta bare LF, no compara totales): `raw.count(b"\r\n")` vs `raw.count(b"\n")`; si la
+diferencia es > 0 **y** hay CRLF, esta MIXTO. Si el hook ya aborto: no es un fallo, es el flujo
+-- el fichero queda arreglado en disco, repite `git add`+commit y verifica que tus cambios
+sobrevivieron. Sintoma, causa medida y las dos creencias falsas que NO conviene heredar: [E1].
 
 ### Nomenclatura de perfiles ensemble (`ensemble_profiles` en `agents.json`)
 
@@ -451,14 +384,10 @@ auditar el Manager. Detalle (referencia bajo demanda, consulta al redactar o rev
 ## Quality gates dispatch by deliverable_type (WP-2026-089)
 
 `builder-run-quality-gates` despacha los gates segun el `deliverable_type` del work_plan activo
-via `scripts/run_gates_dispatch.py`: `code`/fallback -> ruff + pytest-safe + pip-audit
-(condicional); `mixed` -> ambos sets (code gates + deliverable existence check);
-`documentation`/`research`/`analysis` -> solo deliverable existence check. `pip-audit` solo corre
-si `Files Likely Touched` (en `work_plan.md`) incluye un manifiesto de dependencias (si no, salto
-auditable). Los hooks `ruff-check`/`ruff-format` deben seguir limitados estrictamente a Python
-(`scripts/check_ruff_hook_scope.py`); cualquier desviacion detiene inmediatamente las gates de
-pytest. Dispatcher, politicas y guardias: stdlib only; no anaden dependencias. Detalle
-(referencia bajo demanda): `.agent/rules/common/deliverable_type_dispatch.md`.
+via `scripts/run_gates_dispatch.py`: `code`/`mixed` -> ruff + pytest-safe + pip-audit
+(condicional); `documentation`/`research`/`analysis` -> solo deliverable existence check.
+Politica de pip-audit condicional, guard de alcance de ruff y detalle completo:
+`.agent/rules/common/deliverable_type_dispatch.md`.
 
 ## Host-first skill precedence & Config Profiles (WP-2026-090)
 
@@ -489,19 +418,11 @@ estados). Detalle (referencia bajo demanda): `.agent/rules/common/deliverable_ty
 - No toques `privada/`.
 - No desactives `guard_paths` para trabajar mas rapido.
 - No pidas dependencias nuevas sin aprobacion.
-- `OpenCode Permission Preflight`: si el ticket requiere modificar archivos
-  fuera de `.agent/collaboration/` o `scripts/` del `repo_destino` (por
-  ejemplo `PROJECT.md`, `AGENTS.md` o `CHANGELOG.md`), el plan o el arranque
-  debe verificar antes que esas rutas esten permitidas en
-  `.opencode/opencode.json` bajo `external_directory`. Si no lo estan, el
-  Builder debe bloquear el arranque con diagnostico claro en vez de continuar
-  ciego. En OpenCode, esa allowlist puede necesitar el root completo del
-  `repo_destino` (`repo_destino\*`) y no solo permisos por archivo, porque el
-  backend puede resolver la lectura como acceso al arbol externo completo.
-- La configuracion versionada de `.opencode/opencode.json` debe permanecer
-  portable y sin rutas absolutas del `repo_destino` actual. Los permisos
-  `external_directory` especificos del proyecto se inyectan en runtime desde el
-  launcher y se restauran al terminar; no deben quedar commiteados en el motor.
+- `OpenCode Permission Preflight`: si el backend es OpenCode y el ticket toca rutas fuera de
+  `.agent/collaboration/`/`scripts/`, verifica ANTES que esten permitidas en
+  `.opencode/opencode.json` (`external_directory`); si no, bloquea el arranque con
+  diagnostico claro. Detalle completo (allowlist de root, portabilidad del fichero
+  versionado): `.agent/rules/common/opencode_permission_preflight.md`.
 - Proteger `main` del motor en origin (WOT-2026-024i): `main` es la fuente
   canonica de los destinos; debe llevar un ruleset de GitHub que bloquee
   force-push y deletion (sin exigir PRs, para no romper el push directo del

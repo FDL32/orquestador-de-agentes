@@ -15,5 +15,7 @@
 | letra | fichero |
 |-------|---------|
 | D | [`.agent/rules/common/skill_trigger_governance.md`](../../.agent/rules/common/skill_trigger_governance.md) |
+| E | [`.agent/rules/common/wot_010e_line_endings_forense.md`](../../.agent/rules/common/wot_010e_line_endings_forense.md) |
 | F | [`.agent/rules/common/cem_v0_evidencia_forense.md`](../../.agent/rules/common/cem_v0_evidencia_forense.md) |
+| G | [`.agent/rules/common/decision_capsule_schema.md`](../../.agent/rules/common/decision_capsule_schema.md) |
 | T | [`.agent/rules/common/wot_026t_orden_trabajo_forense.md`](../../.agent/rules/common/wot_026t_orden_trabajo_forense.md) |

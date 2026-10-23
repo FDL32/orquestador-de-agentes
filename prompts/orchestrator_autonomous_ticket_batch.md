@@ -829,8 +829,9 @@ batch starts", applied to publication.
   in `batch_run_<ts>.json`, and reports it. Silence is not consent, and the
   question is NOT asked mid-flight.
 - **One grouped push, at the very end.** If the remote advanced while the
-  flight ran, the Gate 2 criteria of `AGENTS.md` apply; Gate 1 (suite green on
-  the exact published commit) is not re-opened.
+  flight ran, the Gate 2 criteria apply (`AGENTS.md` keeps the default-deny
+  summary; full checklist in `.agent/rules/common/flight_push_policy.md`);
+  Gate 1 (suite green on the exact published commit) is not re-opened.
 - **This is a NORM, not a wired barrier.** Nothing in this repo mechanically
   prevents a per-ticket `git push` today; no test pins this section. It is
   declared as a norm so it is not mistaken for an enforced mechanism

@@ -46,6 +46,7 @@ prompts/audit_agent_output.md
 prompts/audit_git_publication.md
 prompts/audit_pipeline.md
 prompts/audit_ticket_contract.md
+prompts/doc_optimization.md
 prompts/manager_review.md
 prompts/orchestrator_child_dispatch_multiticket_multibackend_unlimited.md
 prompts/orchestrator_destination_bootstrap.md
@@ -110,6 +111,12 @@ skills/
 .agent/rules/common/vocabulario_canonico.md
 .agent/rules/common/cem_v0_evidencia_forense.md
 .agent/rules/common/wot_026t_orden_trabajo_forense.md
+.agent/rules/common/flight_push_policy.md
+.agent/rules/common/wot_010e_line_endings_forense.md
+.agent/rules/common/decision_capsule_schema.md
+.agent/rules/common/backends_roles_detail.md
+.agent/rules/common/comandos_tests_runner_detail.md
+.agent/rules/common/opencode_permission_preflight.md
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.
