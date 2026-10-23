@@ -3,6 +3,7 @@ legacy_aliases: [review_manager]
 role: manager
 cycle_phase: [F6-revision]
 route_kind: entry
+line_budget: 444
 ---
 # Manager Review Prompt
 <!-- PROMPT-SUMMARY
@@ -214,11 +215,7 @@ exclusivo de `gh`. Si necesitas acotar la salida, redirige a fichero y lee el rc
 antes de filtrar (`cmd >/tmp/out 2>&1; rc=$?; tail /tmp/out`), o usa
 `set -o pipefail`.
 
-Caso medido (2026-08-08): un gate se reporto como defectuoso ("devuelve rc=0 con
-violaciones") por leer `$?` tras `| tail`; su `main()` hacia `return 1`
-correctamente. El defecto era del probe, no del gate. Un rc leido mal es un
-hallazgo FALSO con formato de evidencia: cumple `command:` + `exit_code:` y aun
-asi miente.
+**Caso medido:** ver `skills/manager-review-implementation/references/exit-code-pipe-false-negative.md`.
 
 Formato obligatorio del par (mismo literal en este Paso 3, en el SKILL y en el review artifact):
 
