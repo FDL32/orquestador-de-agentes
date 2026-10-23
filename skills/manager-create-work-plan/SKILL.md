@@ -256,9 +256,6 @@ El handoff al Builder genera/actualiza, sin omitir ninguno:
 
 - `references/plan-template.md` - Template base del plan
 - `references/risk-guide.md` - Guía de asignación de riesgos
-- `.agent/templates/work_plan_template.md` - Template completo del sistema
-- `.agent/rules/manager/` - Restricciones del rol
-
 - `references/plan-quality-checklist.md` - Checklist de calidad para planes y audits
 - `../../_shared/ticket-anti-patterns.md` - Catalogo TP compartido para prompts de Manager y Builder
 - `../manager-session-closeout/SKILL.md` - Cierre de sesion y puente de learnings

@@ -195,8 +195,3 @@ El Builder ejecuta graphify al inicio de la fase IMPLEMENT cuando el corpus es g
 - **NO** reconstruir si `graph.json` existe y el corpus no ha cambiado (usar `--update`)
 - Para corpus > 200 archivos o > 2M palabras, advertir y sugerir limitar el scope (`src/` en vez de raíz)
 - **NO** activar en proyectos pequeños (< 30 archivos): el overhead de construcción supera el beneficio
-
-## References
-
-- `references/graph-query-patterns.md` - Patrones de consulta sobre NetworkX
-- `references/ast-extraction.md` - Extracción AST sin LLM para código Python

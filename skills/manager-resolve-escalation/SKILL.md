@@ -148,8 +148,6 @@ El Builder debe escalar cuando:
 ## References
 
 - `references/escalation-levels.md` - Guía de niveles de urgencia
-- `.agent/protocols/escalation_protocol.md` - Protocolo completo
-- `.agent/rules/manager/` - Restricciones del rol
 
 ## Constraints
 
