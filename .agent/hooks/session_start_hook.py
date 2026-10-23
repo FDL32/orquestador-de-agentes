@@ -110,10 +110,29 @@ _LOAD_EMPTY = (
 )
 
 _LOAD_NO_BUDGET = (
-    "**Memoria del proyecto**: indice omitido por presupuesto de arranque (el "
-    "corpus NO esta vacio). Enumeralo con `python scripts/memory_context.py "
+    "**Memoria del proyecto**: indice no emitido por presupuesto de arranque "
+    "(no se consulto el corpus). Enumeralo con `python scripts/memory_context.py "
     '--full` y expande con `--recall --query "<termino>"`.'
 )
+
+_DEFAULT_CLI = "python scripts/memory_context.py"
+
+
+def _memory_cli(root: Path, motor: Path) -> str:
+    """Comando del CLI de memoria ejecutable desde ``root``.
+
+    Relativo si ``root`` tiene el script (el motor o un checkout suyo); si no
+    (destino instalado: el instalador no copia `scripts/`), con la ruta del
+    motor. Ronda 6 (kilo): el relativo fallaba en todo destino instalado.
+    """
+    if (root / "scripts" / "memory_context.py").is_file():
+        return _DEFAULT_CLI
+    return f"python {motor.as_posix()}/scripts/memory_context.py"
+
+
+def _with_cli(text: str, cli: str) -> str:
+    return text.replace(_DEFAULT_CLI, cli) if cli != _DEFAULT_CLI else text
+
 
 #: Por debajo de esto el indice no cabe con cabecera y pie utiles: se declara
 #: omitido en vez de emitir un bloque recortado o confundirlo con "vacio".
@@ -559,6 +578,7 @@ def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 esta
         `_MIN_INDEX_BUDGET`, se degradan (salud, M4/M5 a fallback, roles) antes
         de omitir el indice; el bloque del indice nunca se corta. Nunca lanza.
     """
+    motor = str(Path(__file__).resolve().parents[2])
     try:
         motor = str(_motor_root(root))
         if motor not in sys.path:
@@ -574,6 +594,14 @@ def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 esta
     limit = session_cap if max_chars is None else max_chars
     wanted = index_cap if index_budget is None else index_budget
 
+    # En un destino instalado `scripts/memory_context.py` no existe (el
+    # instalador no copia `scripts/`): los comandos emitidos llevan la ruta del
+    # motor (ronda 6, kilo). El sobrecoste de las 2 apariciones del pie del
+    # indice se descuenta de su presupuesto.
+    cli = _memory_cli(root, Path(motor))
+    hint = _with_cli(_EXPANSION_HINT, cli)
+    footer_extra = 2 * (len(cli) - len(_DEFAULT_CLI))
+
     roles = _role_section(root)
     m4m5 = _cap(_m4_m5_section(root), _M4_M5_CAP, "M4/M5")
     # `_health_line` ya se acota conservando la accion; el `_cap` aqui es la red
@@ -581,7 +609,7 @@ def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 esta
     health = _cap(_health_line(root), _HEALTH_CAP, "Salud")
 
     def _used() -> int:
-        return sum(len(p) + 2 for p in (_EXPANSION_HINT, health, roles, m4m5) if p)
+        return sum(len(p) + 2 for p in (hint, health, roles, m4m5) if p)
 
     # Si las partes fijas no dejan sitio al indice minimo, se degradan en orden
     # inverso de prioridad (salud, M4/M5 a su fallback corto, roles) ANTES de
@@ -596,12 +624,12 @@ def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 esta
             m4m5 = _M4_M5_FALLBACK
         else:
             roles = ""
-    budget = min(wanted, max(0, limit - _used() - 2))
+    budget = min(wanted, max(0, limit - _used() - 2)) - max(0, footer_extra)
 
     failed = False
     if budget < _MIN_INDEX_BUDGET:
         # Tercer estado (ronda 5): ni fallo de carga ni corpus vacio.
-        memory_part = _LOAD_NO_BUDGET
+        memory_part = _with_cli(_LOAD_NO_BUDGET, cli)
     else:
         try:
             memory = index_for_budget(budget)
@@ -609,13 +637,15 @@ def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 esta
             memory = None
         failed = memory is None
         if failed:
-            memory_part = _LOAD_FAILED
+            memory_part = _with_cli(_LOAD_FAILED, cli)
         elif not memory:
             memory_part = _LOAD_EMPTY
         else:
-            memory_part = memory
+            # Solo el pie (comandos); las lecciones son datos y no se tocan.
+            head, sep, foot = memory.rpartition("\nEsto es un INDICE")
+            memory_part = head + sep + _with_cli(foot, cli) if sep else memory
 
-    parts = [_EXPANSION_HINT, memory_part, health, roles, m4m5]
+    parts = [hint, memory_part, health, roles, m4m5]
     context = "\n\n".join(p.strip("\n") for p in parts if p)
     if len(context) > limit:
         # Ultimo recurso (solo si la pista sola excede el tope): aqui ya no hay

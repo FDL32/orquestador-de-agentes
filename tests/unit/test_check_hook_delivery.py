@@ -151,6 +151,43 @@ def test_only_the_most_recent_transcripts_are_scanned(tmp_path, monkeypatch):
     assert "2 sesion" in message
 
 
+def test_other_roots_do_not_consume_the_cap(tmp_path, monkeypatch):
+    """Ronda 6 (kilo): el tope cuenta sesiones DE ESTE ROOT. Antes se aplicaba
+    antes del filtro y 2 sesiones ajenas mas nuevas dejaban fuera la entrega.
+
+    MUTACION ALCANZABLE: volver a `stamped[:_MAX_TRANSCRIPTS]` -> SKIP.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = tmp_path / "cfg"
+    own = _transcript(config, root, "propia", ran=True, delivered=True)
+    os.utime(own, (2_000.0, 2_000.0))
+    for i in range(3):
+        other = _transcript(
+            config, root, f"ajena{i}", ran=True, delivered=False, cwd=tmp_path / "otro"
+        )
+        os.utime(other, (3_000.0 + i, 3_000.0 + i))
+    monkeypatch.setattr(chd, "_MAX_TRANSCRIPTS", 2)
+
+    status, message = chd.evaluate(root, config, _hook(tmp_path, mtime=1_000.0))
+    assert status == "OK", message
+
+
+def test_unparsable_hook_timestamp_counts_as_ran(tmp_path):
+    """Ronda 6 (sonnet): una fecha ilegible no es "sesion antigua". Con 0.0 la
+    sesion caia en SKIP y el detector callaba justo donde debia avisar.
+
+    MUTACION ALCANZABLE: `_line_epoch` devolviendo 0.0 al fallar -> SKIP.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = tmp_path / "cfg"
+    _transcript(config, root, "s1", ran=True, delivered=False, started="no-es-fecha")
+
+    status, _message = chd.evaluate(root, config, _hook(tmp_path, mtime=1_000.0))
+    assert status == "WARN"
+
+
 def test_subdirectory_sessions_belong_to_the_root(tmp_path):
     root = tmp_path / "repo"
     (root / "sub").mkdir(parents=True)

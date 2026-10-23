@@ -487,3 +487,19 @@ Hallazgo propio durante la aplicacion: el test 057b cazo que resolver "primer an
 Fuera de alcance, declarado: `claude_guard_entry.py` y el lanzador de `.claude/settings.json` leen
 el link con `utf-8` estricto (superficie de seguridad fail-closed; con BOM bloquea visiblemente,
 no en silencio).
+
+## RONDA 6 -- revision corta de las correcciones de la ronda 5 (c5aea818, 2026-10-23)
+
+4 lentes: codex APROBAR, sonnet (alvarovans) APROBAR, opencode/glm-5.3 APROBAR_CON_CAMBIOS,
+kilo/nan/deepseek-v4-flash APROBAR_CON_CAMBIOS. #64, #65, #66, #72 y #74 verificados EJECUTANDO
+por al menos una lente. Cada test nuevo de esta ronda verificado por mutacion (6/6 muerden).
+
+| # | Lente | Hallazgo | Resolucion |
+|---|---|---|---|
+| 77 | glm | El test de #74 no muerde: con 2 origenes la cuota ya da >=10 a cada uno (mutante con el chequeo por origen anulado: verde) | APLICADO: caso 3 origenes + 40 refutadas, presupuesto 2900 (medido: 9/9 sin el chequeo, 10/10 y refutadas fuera con el) |
+| 78 | kilo | (a) un destino que vendoriza `scripts/memory_context.py` se tomaba por motor; (b) el hook emitia `python scripts/memory_context.py`, inexistente en un destino instalado (el instalador no copia `scripts/`; (b) preexistia a v6) | APLICADO: (a) el link motor<->destino declara destino y gana a la heuristica (alinea CLI y hook en los 3 checkouts del motor con link medidos); (b) en un destino, pista, mensajes y pie del indice llevan la ruta del motor, sobrecoste descontado del presupuesto del indice; e2e con link BOM: 8382 chars, 0 comandos relativos |
+| 79 | sonnet | `--full` sin camino de fallo (traceback en vez de rc 1) | APLICADO: rc 1 + aviso en stderr; test |
+| 80 | sonnet | `_line_epoch` ilegible = 0.0 -> sesion en SKIP | APLICADO: `None` = ejecutada (el prefiltro ya exige mtime >= hook); test |
+| 81 | kilo | `_LOAD_NO_BUDGET` afirmaba "el corpus NO esta vacio" sin consultarlo | APLICADO: "indice no emitido por presupuesto (no se consulto el corpus)" |
+| 82 | kilo | El tope de 200 transcripts se aplicaba antes de filtrar por root | APLICADO: el tope cuenta sesiones de este root; test |
+| 83 | kilo | Sin suite canonica en HEAD; ultimas `--level all` de la rama (2026-10-22, pre-v6): 17-19 rojos | PENDIENTE: suite canonica al final, comparada test a test con esa baseline |

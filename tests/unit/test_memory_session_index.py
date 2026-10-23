@@ -348,6 +348,23 @@ def test_cli_bootstrap_fails_with_rc1_when_the_loader_breaks(monkeypatch, capsys
     assert "NO se pudo cargar" in capsys.readouterr().out
 
 
+def test_cli_full_fails_with_rc1_when_the_loader_breaks(monkeypatch, capsys):
+    """Ronda 6 (sonnet): `--full` no tenia camino de fallo -- un loader roto
+    salia por traceback en vez de rc 1 con aviso, como `--bootstrap`."""
+
+    def _boom(budget=0):
+        raise RuntimeError("loader roto")
+
+    _patch_memory(monkeypatch, [])
+    monkeypatch.setattr(memory_context, "get_session_index", _boom)
+    monkeypatch.setattr("sys.argv", ["memory_context.py", "--full"])
+
+    assert memory_context.main() == 1
+    captured = capsys.readouterr()
+    assert "could not be loaded" in captured.err
+    assert "loader roto" in captured.err
+
+
 def test_cli_run_from_a_destino_reads_the_destino_memory(tmp_path, monkeypatch, capsys):
     """Ronda 5 (kilo #2): `<MOTOR>/scripts/memory_context.py --bootstrap` con
     cwd en un destino y SIN `AGENT_PROJECT_ROOT` resuelve el destino, igual que
@@ -408,6 +425,30 @@ def test_cli_run_from_a_destino_reads_the_destino_memory(tmp_path, monkeypatch, 
     assert "obs-canario-cli-destino" in proc.stdout
 
 
+def test_linked_destino_with_vendored_cli_is_still_a_destino(tmp_path, monkeypatch):
+    """Ronda 6 (kilo): un destino que vendoriza `scripts/memory_context.py` se
+    tomaba por checkout del motor y el CLI leia la memoria del motor en
+    silencio. El link motor<->destino declara destino y gana a la heuristica.
+
+    MUTACION ALCANZABLE: ignorar el link en `_anchor_memory_root` -> ``None``.
+    """
+    destino = tmp_path / "destino"
+    (destino / ".claude").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (destino / "scripts").mkdir()
+    (destino / "scripts" / "memory_context.py").write_text("", encoding="utf-8")
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    monkeypatch.chdir(destino)
+    assert memory_context._anchor_memory_root() == destino.resolve()
+
+    # Sin link, el mismo arbol es un checkout del motor: no se ancla ahi.
+    (destino / ".agent" / "config" / "motor_destination_link.json").unlink()
+    assert memory_context._anchor_memory_root() != destino.resolve()
+
+
 def test_recall_reaches_a_lesson_the_index_omits(monkeypatch, capsys):
     """Lo que el indice omite sigue siendo alcanzable por `--recall --id`."""
     corpus = [_obs(i) for i in range(400)]
@@ -460,6 +501,34 @@ def test_per_origin_floor_is_enforced_not_emergent():
     assert len(index) <= ml.INDEX_BUDGET_CHARS
     assert sum("obs-local-" in b for b in bullets) >= ml.INDEX_FLOOR_PER_ORIGIN
     assert sum("obs-motor-" in b for b in bullets) >= ml.INDEX_FLOOR_PER_ORIGIN
+
+
+def test_per_origin_floor_drops_the_stale_block_to_pay_a_small_origin():
+    """Ronda 6 (glm): con 2 origenes la cuota ya da >=10 a cada uno y el test
+    de arriba no distingue. Con 3 origenes y bloque de refutadas, el ajuste
+    inicial deja a los pequenos en 9; solo el suelo POR ORIGEN obliga a soltar
+    las refutadas (medido: presupuesto 2900, 9/9 sin el chequeo, 10/10 con el).
+
+    MUTACION ALCANZABLE: quitar el chequeo por origen de `_floors_met` (o
+    `INDEX_FLOOR_PER_ORIGIN = 0`) -> los pequenos se quedan en 9 y las
+    refutadas siguen.
+    """
+    motor = [_obs(i, "motor") for i in range(300)]
+    small = []
+    for origin, base in (("local", 1000), ("otro", 2000)):
+        for i in range(12):
+            entry = _obs(base + i, origin)
+            entry["timestamp"] = "2026-01-01T00:00:00Z"
+            small.append(entry)
+    refuted = [
+        _obs(5000 + i, status="refuted", refuted_by="obs-motor-1") for i in range(40)
+    ]
+    index = ml.format_memory_index(motor + small + refuted, budget=2900)
+    bullets = _bullets(index)
+    assert len(index) <= 2900
+    assert sum("obs-local-" in b for b in bullets) >= ml.INDEX_FLOOR_PER_ORIGIN
+    assert sum("obs-otro-" in b for b in bullets) >= ml.INDEX_FLOOR_PER_ORIGIN
+    assert "[REFUTADA]" not in index
 
 
 def _hook():
@@ -530,9 +599,43 @@ def test_assemble_without_budget_says_omitted_not_empty(tmp_path, monkeypatch):
     ctx, failed = hook.assemble_session_context(
         tmp_path, lambda b: (calls.append(b), "IDX")[1], max_chars=1_000
     )
-    assert "omitido por presupuesto" in ctx
+    assert "no emitido por presupuesto" in ctx
     assert "corpus esta vacio" not in ctx
+    # Ronda 6 (kilo): sin consultar el loader no se afirma nada del corpus.
+    assert "NO esta vacio" not in ctx
     assert calls == [] and failed is False
+
+
+def test_destino_commands_carry_the_motor_path(tmp_path, monkeypatch):
+    """Ronda 6 (kilo): en un destino instalado `scripts/memory_context.py` no
+    existe; la pista y el pie del indice deben llevar la ruta del motor, y el
+    sobrecoste no puede sacar el contexto del tope.
+
+    MUTACION ALCANZABLE: devolver siempre `_DEFAULT_CLI` en `_memory_cli` ->
+    el comando relativo vuelve a la pista y al pie.
+    """
+    hook = _hook()
+    _quiet(monkeypatch, hook)
+    motor = ROOT.as_posix()
+    corpus = [_obs(i) for i in range(400)]
+    ctx, failed = hook.assemble_session_context(
+        tmp_path, lambda b: ml.format_memory_index(corpus, budget=b)
+    )
+    assert not failed
+    assert len(ctx) <= ml.SESSION_CONTEXT_MAX_CHARS
+    assert ml.MEMORY_INDEX_CLOSE in ctx
+    footer = next(ln for ln in ctx.splitlines() if ln.startswith("Esto es un INDICE"))
+    assert f"python {motor}/scripts/memory_context.py --full" in footer
+    assert f'python {motor}/scripts/memory_context.py --recall --query "' in ctx
+    assert "python scripts/memory_context.py" not in ctx
+
+
+def test_motor_checkout_keeps_the_relative_command(monkeypatch):
+    """En el motor (o un checkout suyo) el script existe: comando relativo."""
+    hook = _hook()
+    _quiet(monkeypatch, hook)
+    ctx, _failed = hook.assemble_session_context(ROOT, lambda b: "")
+    assert "python scripts/memory_context.py --recall" in ctx
 
 
 def test_fixed_sections_degrade_before_the_index_is_cut(tmp_path, monkeypatch):

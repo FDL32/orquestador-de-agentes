@@ -119,8 +119,16 @@ def _anchor_memory_root() -> Path | None:
             if (candidate / ".claude").is_dir():
                 # Un checkout del MOTOR (otro worktree) no es un destino: lo
                 # delata su propio `scripts/memory_context.py`. Para el motor
-                # manda el workspace de dogfooding de abajo (test 057b).
-                is_motor = (candidate / "scripts" / "memory_context.py").is_file()
+                # manda el workspace de dogfooding de abajo (test 057b). El
+                # link motor<->destino gana a esa heuristica (ronda 6, kilo):
+                # un destino que vendorice el script sigue siendo destino.
+                is_destino = (
+                    candidate / ".agent" / "config" / "motor_destination_link.json"
+                ).is_file()
+                is_motor = (
+                    not is_destino
+                    and (candidate / "scripts" / "memory_context.py").is_file()
+                )
                 if (
                     candidate != motor
                     and not is_motor
@@ -754,8 +762,16 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
         # El indice SIN presupuesto: todas las lecciones, mismo formato y
         # envoltorio que `--bootstrap` (ronda 5: antes llamaba a
         # `get_bootstrap_context`, capado a 60 y con `[truncated]`). Corpus
-        # vacio = rc 0 con mensaje, igual que `--bootstrap`.
-        ctx = get_session_index(None)
+        # vacio = rc 0 con mensaje, igual que `--bootstrap`; fallo de carga =
+        # rc 1 con aviso, tambien igual (ronda 6, sonnet).
+        try:
+            ctx = get_session_index(None)
+        except Exception as exc:
+            print(
+                f"Memory index could not be loaded ({type(exc).__name__}: {exc}).",
+                file=sys.stderr,
+            )
+            return 1
         print(
             ctx or "Memoria del proyecto: el corpus esta vacio (aun no hay lecciones)."
         )

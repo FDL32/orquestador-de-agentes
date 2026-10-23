@@ -82,15 +82,20 @@ def _config_dir(explicit: str | None) -> Path:
 _MAX_TRANSCRIPTS = 200
 
 
-def _line_epoch(line: str) -> float:
-    """Epoch del campo `timestamp` de una linea de transcript, o 0.0."""
+def _line_epoch(line: str) -> float | None:
+    """Epoch del campo `timestamp` de una linea de transcript, o ``None``.
+
+    ``None`` (no legible) NO es "antiguo" (ronda 6, sonnet): con 0.0 la sesion
+    contaba como no ejecutada y el detector se callaba (SKIP) justo cuando no
+    podia leer la fecha.
+    """
     try:
         stamp = json.loads(line).get("timestamp")
         if isinstance(stamp, str) and stamp:
             return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
     except (ValueError, AttributeError):
         pass
-    return 0.0
+    return None
 
 
 def _hook_since(hook: Path) -> float:
@@ -149,7 +154,10 @@ def _scan_transcript(  # noqa: C901 - un recorrido por linea con 3 detectores; p
                     # Cuenta solo si ESTE arranque es posterior al hook vigente
                     # (ronda 5, sonnet): una sesion abierta con el hook viejo y
                     # escrita despues no es un fallo de entrega del nuevo.
-                    ran = _line_epoch(line) >= since
+                    # Sin fecha legible manda el criterio del transcript: el
+                    # prefiltro de `evaluate` ya exige mtime >= since.
+                    epoch = _line_epoch(line)
+                    ran = epoch is None or epoch >= since
                 if '"hook_additional_context"' not in line:
                     continue
                 try:
@@ -167,6 +175,29 @@ def _scan_transcript(  # noqa: C901 - un recorrido por linea con 3 detectores; p
     except OSError:
         return False, False, False
     return belongs, ran, delivered
+
+
+def _tally(
+    stamped: list[tuple[float, Path]], root: str, since: float
+) -> tuple[int, int, int]:
+    """``(sesiones, con_hook, con_entrega)`` de este root, como maximo `_MAX_TRANSCRIPTS`.
+
+    El tope cuenta sesiones DE ESTE ROOT (ronda 6, kilo): aplicado antes del
+    filtro, las sesiones de otros proyectos podian dejar fuera una entrega
+    real. Descartar una ajena es barato: `_scan_transcript` corta en su primera
+    linea con `cwd`.
+    """
+    sessions = ran_count = delivered_count = 0
+    for _mtime, transcript in stamped:
+        if sessions >= _MAX_TRANSCRIPTS:
+            break
+        belongs, ran, delivered = _scan_transcript(transcript, root, since)
+        if not belongs:
+            continue
+        sessions += 1
+        ran_count += ran
+        delivered_count += delivered
+    return sessions, ran_count, delivered_count
 
 
 def evaluate(
@@ -194,14 +225,7 @@ def evaluate(
                 stamped.append((mtime, transcript))
         stamped.sort(reverse=True)
 
-        sessions = ran_count = delivered_count = 0
-        for _mtime, transcript in stamped[:_MAX_TRANSCRIPTS]:
-            belongs, ran, delivered = _scan_transcript(transcript, root, since)
-            if not belongs:
-                continue
-            sessions += 1
-            ran_count += ran
-            delivered_count += delivered
+        sessions, ran_count, delivered_count = _tally(stamped, root, since)
 
         if delivered_count:
             return (
