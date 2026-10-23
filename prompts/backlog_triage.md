@@ -610,13 +610,35 @@ caso de un censo grande del recolector), el analisis multi-lente de arriba
 puede sustituirse por un patron mas fuerte: un **Builder real** (CLI
 directo, canal `agent`, filesystem propio -- ver
 `prompts/builder_invocation_contract.md`, NUNCA `ensemble_dispatch.py`
-para esto) investiga un lote pequeno (3-5 tickets) y clasifica
+para esto) investiga un lote pequeno (3-5 tickets, ver presupuesto por lente
+mas abajo) y clasifica
 `LIKELY_DONE_COMPLETO | PARCIAL | NO_CIERRA` con evidencia en disco; un
 **Revisor real** (modelo distinto, mismo mecanismo) re-verifica de forma
 independiente CUALQUIER veredicto `LIKELY_DONE_COMPLETO` antes de que se
 proponga para archivar -- nunca se fia de las citas del Builder, repite
 sus propios comandos. Quien EJECUTA el informe de este triage (no este
 prompt) aplica el resultado final.
+
+**El tamano del lote es un presupuesto de PASOS del lente mas debil, no un
+conteo de caracteres de ficha (medido 2026-10-23):** "3-5 tickets" es un
+techo, no una talla fija -- antes de lanzar, calibra el lote contra el
+MODELO concreto elegido para Revisor (normalmente el eslabon mas caro,
+porque re-verifica de forma independiente ademas de leer), no solo contra
+el tamano en caracteres de las fichas (ver medicion de tamano de fichas
+mas abajo, que SOLO cubre el proxy de contexto, no el presupuesto de
+turnos). Medido: un lote de 3 candidatos sin bracket previo, mismas
+fichas, mismo mecanismo -- Builder (`qwen3.6`) completo las 3 en ~2
+minutos; Revisor (`gemma4`) se quedo sin presupuesto de pasos a mitad de
+la 3a ficha tras ~20 minutos sin escribir su entregable. La causa no fue
+el tamano del texto (identico para ambos lentes): fue que el Revisor, al
+re-ejecutar sus propios comandos en vez de solo leer el informe del
+Builder, consume su presupuesto de turnos mas rapido por ficha. Regla
+operativa: si el Revisor elegido se queda sin presupuesto en un lote de
+tamano N, reduce a N-1 (tipicamente hasta 1-2 tickets por lanzamiento) en
+el SIGUIENTE lote, no en el mismo; si incluso con lote de 1 el Revisor no
+cierra, trata eso como senal de que el propio modelo/backend es el cuello
+de botella (no el tamano del lote) y escala para cambiar de Revisor en
+vez de seguir reduciendo indefinidamente.
 
 **Condicion dura de esta tecnica**: quien aplica el veredicto final (el
 Manager o quien ejecuta el informe) **debe** haber ejecutado su propia
