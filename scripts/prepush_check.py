@@ -2786,6 +2786,72 @@ def run_builder_prompt_obligations_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_prompt_line_budget_check(project_root: Path) -> CheckResult:
+    """WOT-2026-090d: los prompts normativos respetan su `line_budget` declarado.
+
+    Por que un guard y no solo la prosa del ticket: la norma ("declara un
+    presupuesto en cabecera") no se auto-cumple -- sin un camino que corra solo
+    sobre el commit, el presupuesto declarado se vuelve decorativo en cuanto el
+    prompt vuelve a crecer (RIESGO explicito del ticket: "fail-open si el nuevo
+    lint no se cablea -- el gate debe fallar cerrado"). Mismo precedente de
+    cableado que `run_launch_prompt_paths_check`/`run_builder_prompt_obligations_check`:
+    import ESTATICO del modulo para que `check_guard_wiring` cuente la arista.
+
+    A diferencia de esos dos hermanos (WARN por deuda heredada), este guard
+    nace BLOQUEANTE: los dos prompts canonicos ya cumplen su presupuesto en el
+    mismo commit que introduce el campo (no hay deuda historica que heredar),
+    asi que no existe el riesgo de falso-rojo heredado que motivo el WARN ahi.
+
+    Before: `project_root` es la raiz del repo_motor (donde viven los dos
+        prompts de `check_prompt_line_budget.NORMATIVE_PROMPTS`).
+    During: invoca `check_prompt_line_budget.audit()` sobre cada prompt del
+        universo cerrado. Read-only, sin red ni subprocess.
+    After: passed=True si todos declaran `line_budget` y lo cumplen; False
+        (BLOQUEANTE) si falta el campo o si algun fichero supera su propio
+        presupuesto, con el detalle de cada hallazgo.
+    """
+    name = "Prompt Line Budget (WOT-2026-090d)"
+    try:
+        from scripts.check_prompt_line_budget import NORMATIVE_PROMPTS, audit
+    except ImportError:
+        from check_prompt_line_budget import (  # type: ignore[no-redef]
+            NORMATIVE_PROMPTS,
+            audit,
+        )
+
+    findings = []
+    audited = []
+    for rel in NORMATIVE_PROMPTS:
+        path = project_root / rel
+        if not path.is_file():
+            continue
+        result = audit(path)
+        audited.append(rel)
+        if not result.within_budget:
+            findings.append(f"{rel}: {result.motivo}")
+
+    denom = f"{len(audited)} prompt(s) auditado(s)"
+    if findings:
+        nl = chr(10)
+        detail = nl.join(f"  - {f}" for f in findings)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{denom}, {len(findings)} hallazgo(s):{nl}{detail}{nl}"
+                "Un prompt sin line_budget o que lo supera deja el presupuesto "
+                "declarado en AGENTS.md/WOT-2026-090d como decorativo."
+            ),
+            is_blocking=True,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=f"{denom}, todos dentro de presupuesto",
+        is_blocking=True,
+    )
+
+
 def run_arranques_index_check(project_root: Path) -> CheckResult:
     """WOT-2026-067m: cuadre `arranques/_archive/` <-> `_archive/INDEX.md` (AMBAS direcciones).
 
@@ -4528,6 +4594,10 @@ def run_preflight_check(
         # enganche TEMPRANO (redaccion->lanzamiento) es MANUAL y esta declarado
         # en el docstring del guard: este cableado es el punto de CIERRE.)
         results.append(run_builder_prompt_obligations_check(project_root))
+        # 6m-cuinquies. Prompt Line Budget (WOT-2026-090d; BLOQUEANTE --
+        # nace sin deuda heredada: ambos prompts canonicos ya cumplen su
+        # line_budget en el mismo commit que lo introduce.)
+        results.append(run_prompt_line_budget_check(project_root))
         # 6m-ter. Arranques Index (WOT-2026-067m; BLOQUEANTE -- el `_archive/` nace
         # consistente porque `archive_arranques.py` invoca el mismo guard, asi que
         # no hay deuda heredada que degradar a WARN). El indice que hace

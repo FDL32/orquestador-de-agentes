@@ -11,11 +11,11 @@
 | kind | total |
 |------|-------|
 | prompt | 52 |
-| reference | 39 |
+| reference | 41 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 49 |
-| **total** | **148** |
+| **total** | **150** |
 
 ## Entradas
 
@@ -76,6 +76,7 @@
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |
+| reference | `skills/builder-implement-from-plan/references/project-root-resolution-fallback.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-run-quality-gates/references/common-fixes.md` | active | system | shared | model-invoked | — |
 | reference | `skills/code-audit/references/audit-report-template.md` | active | system | shared | model-invoked | — |
 | reference | `skills/code-audit/references/audit-tools-guide.md` | active | system | shared | model-invoked | — |
@@ -86,6 +87,7 @@
 | reference | `skills/manager-create-work-plan/references/plan-template.md` | active | system | shared | model-invoked | — |
 | reference | `skills/manager-create-work-plan/references/risk-guide.md` | active | system | shared | model-invoked | — |
 | reference | `skills/manager-resolve-escalation/references/escalation-levels.md` | active | system | shared | model-invoked | — |
+| reference | `skills/manager-review-implementation/references/exit-code-pipe-false-negative.md` | active | system | shared | model-invoked | — |
 | reference | `skills/manager-review-implementation/references/review-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/manager-review-implementation/references/verdict-format.md` | active | system | shared | model-invoked | — |
 | reference | `skills/manager-session-closeout/references/closeout-lessons-format.md` | active | system | shared | model-invoked | — |
