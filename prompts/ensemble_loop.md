@@ -89,7 +89,8 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
    retroactivamente). Origen: un bundle `agent` sin framing dejo a una lente con filesystem real confundir
    una propuesta de diseno con un encargo de implementacion.
 2. Lentes `api` (sin ficheros): pega la evidencia (fragmentos y mediciones con su comando). Nunca les pidas
-   "comprueba si existe X".
+    "comprueba si existe X". El bundle dirigido a una lente sin ficheros NO debe pedirle que rellene una
+    seccion de "Evidencia propia del Manager" (esa seccion es exclusiva de quien ejecuta comandos reales).
 3. Lentes `agent` con `repo_scope: destino` (codex): su directorio de trabajo es el DESTINO y leen el motor
    por ruta absoluta (desde WOT-2026-042v; `resolve_lens_repo_root` en `ensemble_dispatch.py`). Dales rutas
    absolutas.
@@ -220,7 +221,13 @@ hereda:
   lectura en el log del CLI) y su salida cita `ruta:linea` comprobable; si responde sin leer, cuenta como
   lente sin ficheros y se declara.
 - El bundle va POR CANAL: el de FICHEROS lleva rutas absolutas y la lista "verifica X en <ruta>", sin
-  framing de lente sin ficheros; el de TEXTO lleva el contenido (contrato por contenido) y su framing.
+    framing de lente sin ficheros; el de TEXTO lleva el contenido (contrato por contenido) y su framing.
+- Una lente SIN ficheros (ver la definicion de "lente sin ficheros" en este mismo punto: "si responde sin
+    leer, cuenta como lente sin ficheros") SOLO puede responder `NO VERIFICABLE` ante un hallazgo que
+    requeriria leer el repo; su marca `CONFIRMADA` sobre ese hallazgo se DESCARTA (no cuenta como
+    confirmacion independiente); un hallazgo de severidad "alta" emitido por una lente sin ficheros NO
+    decide por si solo -- lo adjudica el Manager, y la adjudicacion del Manager debe citar un comando
+    real que lo verifique.
 
 ### 3.10 Verificar `timeout_s` del backend antes de lanzar (WOT-2026-timeout-kilo, 2026-10-15)
 
