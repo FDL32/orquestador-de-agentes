@@ -65,7 +65,7 @@ from pathlib import Path
 # una frase literal: un verbo con un articulo o sustantivo intermedio
 # ("Lee el archivo AGENTS.md") es una redaccion natural, no una excepcion.
 AGENTS_MD_INSTRUCTION_RE = re.compile(
-    r"\b(LEE|LEELO|LEER|LEA|READ|CONSULTA|REVISA)\b(?:\s+\S+){0,5}?\s+AGENTS\.MD\b",
+    r"\b(LEE|LEELO|LEER|LEA|READ|CONSULTA|REVISA)\b(?:\s+\S+){0,5}?\s+[`'\"]?AGENTS\.MD\b",
     re.IGNORECASE,
 )
 
