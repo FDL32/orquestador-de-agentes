@@ -122,6 +122,7 @@ skills/
 .agent/rules/common/session_artifacts.md
 .agent/rules/common/refactor_kit.md
 .agent/rules/common/skills_discovery.md
+.agent/rules/common/manager_builder_flow.md
 
 # Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
 # Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.
