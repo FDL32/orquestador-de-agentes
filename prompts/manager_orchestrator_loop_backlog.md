@@ -179,7 +179,7 @@ generico del nucleo, porque este prompt ya es especifico de `orquestador_de_agen
 | FILTRO_BACKLOG | `grep`/lectura de `<destino>/.agent/collaboration/backlog.md` + `_archive/backlog_done.md` por `[LINEA: ...]` o texto libre | sin filtro declarado, la serie no esta definida -- STOP |
 | RECONCILIACION | Paso 0 de `backlog_triage.md` aplicado al subconjunto filtrado | sin reconciliar, un ticket ya-hecho entra al bucle por error |
 | CONTRACT_FORMATION | `orchestrator_prepare_and_launch_ticket.md` + `audit_cf_ticket_contract.md` + `scripts/validate_contract_formation.py` | el ticket no puede prepararse sin contrato valido |
-| LANZAMIENTO | `orchestrator_pipeline.md` (modo destino) o `orchestrator_pipeline_codeonly.md` (modo motor), segun `is_motor_code_only()` CON `AGENT_PROJECT_ROOT` exportada | modo equivocado produce commits en el repo que no corresponde |
+| LANZAMIENTO | `orchestrator_pipeline.md` (modo destino) o `orchestrator_pipeline_codeonly.md` (modo motor), segun `is_motor_code_only()`: code-only es verdadero solo con `AGENT_PROJECT_ROOT` UNSET o apuntando al propio motor; con la env apuntando a un destino externo el detector da False (WOT-2026-025r, ver `orchestrator_pipeline_codeonly.md`) | modo equivocado produce commits en el repo que no corresponde |
 | REVISION | `manager_review.md`, fase MANAGER_REVIEW | sin revision, un ticket con `CHANGES` real se cerraria igual |
 | REGISTRO_METRICAS | entradas M3 (seccion 6) escritas en memoria de la sesion, compiladas al cierre en `.agent/planning/INFORME_automejora_<serie>_<fecha>.md` | sin registro, la seccion 7 (automejora) queda vacia y sin evidencia |
 | EVIDENCIA_CIERRE | commit por ticket, `git diff --stat`, exit codes de los gates | sin VCS no hay cierre verificable |
@@ -231,6 +231,14 @@ frontmatter).
    bajo ninguna circunstancia** (verificado por bucle de gobierno de 5 lentes
    independientes, 2026-10-08: el nucleo no tiene logica de reintentos de
    ticket, asi que remitir esta regla la perderia).
+4. **`BLOCKED` es un estado TERMINAL de esta iteracion, no un fallo del bucle.**
+   El bucle sigue con el siguiente ticket; `BLOCKED` se registra en el backlog con
+   evidencia del motivo, nunca se omite en silencio. **Ademas, CADA estado
+   terminal (`BLOCKED` o el cierre normal del ticket) escribe OBLIGATORIAMENTE
+   su entrada M3 (seccion 6) antes de avanzar al siguiente ticket** -- sin esta
+   obligacion explicita, un `BLOCKED` silencioso (sin fila de metrica) es
+   indistinguible de un hallazgo nunca ocurrido, y la seccion 7 (automejora)
+   queda ciega a el. (a) (hallazgo C, nvidia/glm-flash BA21, 2026-10-08)
 5. **N8 del nucleo aplica por TICKET, no por serie:** los hallazgos adoptados de
    un ticket se aplican en UN commit, y ese commit es el ancla de su propia
    verificacion (gates + suite). No se abre un commit por hallazgo dentro de un
@@ -248,14 +256,6 @@ frontmatter).
      cierra con `APPROVE` (revert entre intentos), o (b) se acepta un commit
      por intento con su propio ancla de verificacion parcial. Declarar la
      decision tomada antes de empezar la serie, no durante.
-4. **`BLOCKED` es un estado TERMINAL de esta iteracion, no un fallo del bucle.**
-   El bucle sigue con el siguiente ticket; `BLOCKED` se registra en el backlog con
-   evidencia del motivo, nunca se omite en silencio. **Ademas, CADA estado
-   terminal (`BLOCKED` o el cierre normal del ticket) escribe OBLIGATORIAMENTE
-   su entrada M3 (seccion 6) antes de avanzar al siguiente ticket** -- sin esta
-   obligacion explicita, un `BLOCKED` silencioso (sin fila de metrica) es
-   indistinguible de un hallazgo nunca ocurrido, y la seccion 7 (automejora)
-   queda ciega a el. (a) (hallazgo C, nvidia/glm-flash BA21, 2026-10-08)
 6. **Condicion de terminacion:** el bucle termina cuando la serie CONGELADA del
    paso 1 se agota -- cada ticket en estado terminal (`APPROVE` o `BLOCKED`).
    Nunca por "parece que ya no quedan": siempre por recorrer la lista entera y
@@ -286,7 +286,9 @@ frontmatter).
 
 4. **Lanzar al Builder.** `orchestrator_pipeline.md` (destino) o
    `orchestrator_pipeline_codeonly.md` (motor code-only) segun
-   `is_motor_code_only()` con `AGENT_PROJECT_ROOT` exportada.
+   `is_motor_code_only()` (code-only exige `AGENT_PROJECT_ROOT` UNSET o al
+   propio motor; destino exige la env apuntando al `repo_destino` --
+   WOT-2026-025r).
    - **Si el Builder falla a mitad:** no avanzar sin resolver. Registrar,
      reintentar una vez (regla de validez 3), si persiste `BLOCKED` y continuar.
 

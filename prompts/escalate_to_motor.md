@@ -29,8 +29,8 @@ DEC); aqui no se re-declara ninguno de esos criterios — se remite a el.
 
 ## 1. Regla de autoridad (leela antes de escribir nada)
 
-El invariante del motor **no es de ruta, es de AUTORIDAD**. La linea 151 del cierre
-canonico prohibe TRES cosas, no una:
+El invariante del motor **no es de ruta, es de AUTORIDAD**. El paso 3.7 (REGISTRO DE
+FOLLOW-UPS DEL MOTOR) del cierre canonico prohibe TRES cosas, no una:
 
 > "NO escribir el follow-up en `repo_motor`, NI en el repo_destino de ESTA sesion,
 > NI dejarlo solo en memoria."
@@ -44,7 +44,7 @@ Consecuencias directas para ti:
 - **No escribas el hallazgo solo en el backlog de TU destino.** Eso lo entierra.
 - **Si el buzon no es alcanzable** (destino en otra maquina, sin filesystem
   compartido, sin `motor_destination_link.json` resoluble): **DETENTE**. Nunca
-  fabriques la ruta ni la inventes. Es la misma salida que impone la linea 151.
+  fabriques la ruta ni la inventes. Es la misma salida que impone ese paso 3.7.
   Emite el sobre en el chat **precedido de la linea literal**
   `[FALLBACK-ESCALADO-NO-ATERRIZADO]` y con el contenido integro que habria ido al
   fichero. **Di explicitamente que NO esta aterrizado y que un humano debe copiarlo
