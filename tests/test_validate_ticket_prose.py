@@ -494,12 +494,20 @@ class TestDetectAuditMissingTpCheck:
     """Tests para detect_audit_missing_tp_check."""
 
     def test_no_audit_files(self, plan_missing_audit: tuple):
-        """Emite warning cuando no hay AUDIT."""
+        """WOT-2026-055b: invariante cambiado -- sin AUDIT no hay warning,
+        alineado con detect_audit_malformed_tp_check (que tambien retorna
+        vacio cuando no hay audits). Trade-off declarado y NO mitigado por
+        otro gate independiente (verificado en revision adversarial, Rev1
+        Codex del ticket: pre_handoff_guard.py trata AUDIT_* como superficie
+        EXCLUIDA del scope-check, no como presencia exigida; prepush_check.py
+        valida `sibling_audit`, un artefacto JSON distinto, no este fichero):
+        un destino cuyo flujo SI deberia producir un AUDIT y no lo hace deja
+        de recibir este aviso especifico. Aceptado porque la alternativa
+        (mantener el aviso) deja permanentemente atascado a un destino cuyo
+        flujo legitimo NUNCA genera AUDIT_*.md, sin salida honesta."""
         _, collab_dir = plan_missing_audit
         warnings = detect_audit_missing_tp_check(collab_dir)
-        assert len(warnings) == 1
-        assert warnings[0]["rule_id"] == "TP-STRUCT-01"
-        assert warnings[0]["rule_name"] == "audit-missing-tp-check"
+        assert len(warnings) == 0
 
     def test_audit_without_tp_check(self, plan_with_audit_no_tp_check: tuple):
         """Emite warning cuando AUDIT no tiene TP Check."""
