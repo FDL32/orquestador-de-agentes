@@ -26,6 +26,9 @@ from pathlib import Path
 
 _MOTOR_ROOT = Path(__file__).resolve().parents[2]
 _AGENTS = _MOTOR_ROOT / "AGENTS.md"
+_FLIGHT_PUSH_POLICY = (
+    _MOTOR_ROOT / ".agent" / "rules" / "common" / "flight_push_policy.md"
+)
 _BATCH = _MOTOR_ROOT / "prompts" / "orchestrator_autonomous_ticket_batch.md"
 _CODEONLY = _MOTOR_ROOT / "prompts" / "orchestrator_pipeline_codeonly.md"
 _BOOTSTRAP = _MOTOR_ROOT / "prompts" / "orchestrator_session_bootstrap.md"
@@ -37,17 +40,24 @@ def _read(path: Path) -> str:
 
 
 def test_agents_md_declares_flight_level_push() -> None:
+    """WOT-2026-114d comprimio esta seccion (X-09): AGENTS.md conserva la
+    regla transversal corta y apunta al detalle en flight_push_policy.md;
+    no re-declara el texto largo original."""
     text = _read(_AGENTS)
     assert "Push por vuelo: UN solo push al final de TODOS los tickets" in text
-    assert "La publicacion es una accion del VUELO, no del ticket." in text
+    assert "La publicacion es una accion del VUELO, no del ticket:" in text
     assert "NO se pushea entre tickets" in text
     assert "PUBLICACION_PENDIENTE_AUTORIZACION" in text
+    assert ".agent/rules/common/flight_push_policy.md" in text
 
 
 def test_agents_md_declares_process_decision_search() -> None:
     """El guard ``check_process_decision_search`` exige BUSQUEDA-PREVIA cuando
-    el artefacto se autodeclara DECISION DE PROCESO (AGENTS.md, WOT-2026-104b)."""
-    text = _read(_AGENTS)
+    el artefacto se autodeclara DECISION DE PROCESO (WOT-2026-104b). Tras la
+    compresion WOT-2026-114d (X-09: AGENTS.md apunta, el fichero referenciado
+    gobierna), esta auto-declaracion concreta vive en flight_push_policy.md,
+    no inline en AGENTS.md -- se verifica ahi."""
+    text = _read(_FLIGHT_PUSH_POLICY)
     assert "DECISION DE PROCESO: la publicacion se difiere al final del vuelo" in text
     assert "BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO:" in text
 

@@ -294,6 +294,22 @@ EXPECTED_WIRED_REAL = {
     # (id check-process-decision-search, files: prompts/**/*.md,
     # .claude/rules/**/*.md, AGENTS.md, CLAUDE.md).
     "check_process_decision_search",
+    # WOT-2026-114d: cableado como hook pre-commit en .pre-commit-config.yaml
+    # (id check-reference-keys, entry: uv run python
+    # scripts/check_reference_keys.py) -- valida toda cita [X#] en AGENTS.md
+    # contra docs/registry/reference_keys.md.
+    "check_reference_keys",
+    # WOT-2026-117a: cableado via import estatico en
+    # run_pytest_safe.py ("from scripts.check_manager_role_for_suite import
+    # ..."), bloquea --level all si TURN.md declara un rol no-Manager
+    # (exencion explicita para run_gates_dispatch.py).
+    "check_manager_role_for_suite",
+    # Cableado como DOS hooks pre-commit en .pre-commit-config.yaml (fases
+    # pre-commit y commit-msg, entry: uv run python
+    # scripts/check_override_registry.py --phase <fase>) -- valida el
+    # registro de overrides del motor (expiry barrido por proceso real,
+    # exit 1 si hay deuda sin declarar).
+    "check_override_registry",
 }
 
 
