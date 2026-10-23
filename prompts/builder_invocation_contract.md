@@ -350,6 +350,12 @@ exclusiva sigue siendo acto del Manager, y ningun campo de este informe lo acred
 Seccion final opcional `HUECOS_DETECTADOS`: ambiguedades o contradicciones del mandato o de los
 contratos, con cita `fichero:linea`, en vez de improvisar en silencio.
 
+**Markup del informe (WOT-2026-104s):** cada campo se escribe como encabezado markdown de nivel 2
+`## CP-n` (p.ej. `## CP-1`), en este orden, seguido de su contenido hasta el siguiente encabezado
+`## CP-n` o el fin del fichero. Es el formato que consume el guard de abajo; un hijo que use otra
+marca (negrita, numeracion, tabla) no es parseable mecanicamente y su informe cuenta como mal
+formado por la misma razon que uno con un `CP-n` faltante.
+
 **Ruta fija y citable:** el informe se escribe a `<worktree-del-hijo>/CIERRE_PARCIAL_<TICKET>.md`
 (p.ej. `CIERRE_PARCIAL_WOT-2026-104q.md` en la raiz del worktree), no solo en la respuesta del chat
 (mismo motivo que la Seccion 1: escribir a fichero es consistente, responder por texto no). El
@@ -373,11 +379,14 @@ hasta rehacer la verificacion a mano y declararlo asi en su propia evidencia.
 evidencia por si solo. El Manager/auditor sigue re-ejecutando lo que el informe cita (SHA, diff,
 rc); el informe reduce el coste de esa verificacion, no la sustituye.
 
-**Limite declarado (barrera):** esta seccion es una NORMA, no una barrera cableada (vocabulario de
-`AGENTS.md` "Barrera cableada"): no existe test ni guard que compruebe la presencia o el formato del
-fichero. Ticket dueno: PENDIENTE de alta en el backlog del workspace del motor por la sesion
-coordinadora (este ensayo no tiene acceso de escritura al backlog); hasta entonces es deuda
-declarada, no barrera.
+**Limite declarado (barrera) -- RESUELTO PARCIALMENTE (WOT-2026-104s):** `scripts/
+check_child_closeout_report.py` verifica mecanicamente el FORMATO del fichero (las 5 secciones
+`## CP-n`, no vacias, y la linea `HIJO TERMINADO` seguida de contenido no vacio en `CP-3`), y su invocacion
+esta cableada en `prompts/orchestrator_session_close_full_audit.md` Bloque 2 punto 4.bis (se
+dispara ahi, no por un hook automatico). Sigue siendo una barrera de FORMATO, no de CONTENIDO: no
+verifica que los SHA/diff/rc citados sean reales -- eso sigue siendo acto del Manager/auditor
+(parrafo anterior, "evidencia DECLARADA, no verificada"). Test de sincronia contrato<->guard:
+`tests/unit/test_check_child_closeout_report.py::TestSyncWithContract`.
 
 ## 4. Relacion con `AGENTS.md`
 

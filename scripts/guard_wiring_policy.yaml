@@ -256,6 +256,14 @@ known_unwired:
     Bloque F paso F3, al cerrar una sesion de diseno que produjo un triaje -- evento
     discreto gobernado por el prompt, no un hook automatico. Los prompts no son
     superficie para el AST, asi que no hay camino que corra solo que lo cablee.
+  check_child_closeout_report: >-
+    BY-DESIGN: WOT-2026-104s. Invocacion manual en
+    `prompts/orchestrator_session_close_full_audit.md` Bloque 2 punto 4.bis, cuando
+    el Manager/auditor de cierre encuentra un `CIERRE_PARCIAL_<TICKET>.md` de un
+    hijo delegado -- evento discreto gobernado por el prompt (depende de si hubo
+    trabajo delegado en la sesion), no un hook automatico sobre cada commit. Mismo
+    patron que check_triage_outputs/check_builder_dispatch_prompt: los prompts no
+    son superficie para el AST, asi que no hay camino que corra solo que lo cablee.
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
