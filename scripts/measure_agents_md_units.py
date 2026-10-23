@@ -521,6 +521,29 @@ def resolve_closure(claude_md: Path) -> list[Path]:  # noqa: C901 - fence tracki
     return visited
 
 
+def autoloaded_rules(repo_root: Path) -> list[Path]:
+    """Rule files Claude Code autoloads at session start.
+
+    Before: *repo_root* -- repo root (may lack ``.claude/rules``).
+    During: list ``.claude/rules/*.md`` and drop those whose YAML frontmatter
+        declares ``paths:`` (Claude Code loads those only on matching files).
+    After: sorted list of paths; empty if the directory does not exist.
+    """
+    rules_dir = repo_root / ".claude" / "rules"
+    if not rules_dir.is_dir():
+        return []
+    result: list[Path] = []
+    for p in sorted(rules_dir.glob("*.md")):
+        text = p.read_text(encoding="utf-8")
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            front = text[3:end] if end != -1 else ""
+            if re.search(r"^paths\s*:", front, re.MULTILINE):
+                continue
+        result.append(p)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Public API: gates
 # ---------------------------------------------------------------------------
@@ -770,8 +793,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 
+    # Claude Code also autoloads every .claude/rules/*.md lacking a `paths:`
+    # frontmatter (TRAMPA-5 of prompts/doc_optimization.md): the @-import closure
+    # alone under-reports the real cold-start load.
+    seen = {p.resolve() for p in closure}
+    rules = [p for p in autoloaded_rules(repo_root) if p.resolve() not in seen]
+
     # Compute gates
-    gates_data = gates(agents_raw, closure)
+    gates_data = gates(agents_raw, closure + rules)
+    gates_data["claude_rules_autoload_files"] = len(rules)
+    gates_data["claude_rules_autoload_chars"] = sum(
+        len(p.read_text(encoding="utf-8")) for p in rules
+    )
 
     # Stamp
     stamp_data = stamp(repo_root)
@@ -813,6 +846,11 @@ def main(argv: list[str] | None = None) -> int:
             f"| claude={gates_data['claude_chars']}/{gates_data['claude_limit']} "
         )
         output_str += f"(ratio={gates_data['claude_ratio']}, deficit={gates_data['claude_deficit']})\n"
+        output_str += (
+            f"  claude incluye {gates_data['claude_rules_autoload_files']} fichero(s) "
+            f"autocargado(s) de .claude/rules sin `paths:` "
+            f"({gates_data['claude_rules_autoload_chars']} chars)\n"
+        )
 
     if args.out:
         args.out.write_text(output_str, encoding="utf-8", newline="\n")

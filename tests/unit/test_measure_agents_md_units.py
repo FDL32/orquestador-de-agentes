@@ -813,3 +813,45 @@ class TestDoubleCountingRegression:
         assert buggy_h1_subtree > len(raw), (
             "La version con doble conteo deberia dar subtree_bytes > len(raw)"
         )
+
+
+# ===================================================================
+# 9. autoloaded_rules -- TRAMPA-5: .claude/rules sin `paths:` se autocarga
+# ===================================================================
+
+
+class TestAutoloadedRules:
+    def test_rule_without_paths_is_autoloaded_with_paths_is_not(
+        self, tmp_path: Path
+    ) -> None:
+        mod = _load_module()
+        rules = tmp_path / ".claude" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "a.md").write_text("# siempre\n", encoding="utf-8")
+        (rules / "b.md").write_text(
+            '---\npaths:\n  - "src/**"\n---\n# condicional\n', encoding="utf-8"
+        )
+        (rules / "c.md").write_text(
+            "---\nname: x\n---\n# sin paths\n", encoding="utf-8"
+        )
+        names = [p.name for p in mod.autoloaded_rules(tmp_path)]
+        assert names == ["a.md", "c.md"]
+
+    def test_missing_rules_dir_returns_empty(self, tmp_path: Path) -> None:
+        mod = _load_module()
+        assert mod.autoloaded_rules(tmp_path) == []
+
+    def test_autoloaded_rules_push_claude_gate_over_limit(self, tmp_path: Path) -> None:
+        mod = _load_module()
+        (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+        (tmp_path / "AGENTS.md").write_text("x" * 100, encoding="utf-8")
+        rules = tmp_path / ".claude" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "big.md").write_text("y" * 40000, encoding="utf-8")
+        closure = mod.resolve_closure(tmp_path / "CLAUDE.md")
+        agents_raw = (tmp_path / "AGENTS.md").read_bytes()
+        without = mod.gates(agents_raw, closure)
+        with_rules = mod.gates(agents_raw, closure + mod.autoloaded_rules(tmp_path))
+        assert without["claude_deficit"] == 0
+        assert with_rules["claude_chars"] == without["claude_chars"] + 40000
+        assert with_rules["claude_deficit"] > 0

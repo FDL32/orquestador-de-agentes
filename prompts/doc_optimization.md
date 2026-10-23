@@ -106,7 +106,7 @@ directorio con ficheros de clases distintas se clasifica uno a uno y su total no
 
 | Clase | Que es | Presupuesto |
 |---|---|---|
-| `siempre-cargado` | entra en CADA sesion (fichero de entrada + cierre de sus `@imports` + los marcados "Siempre" en un indice de reglas) | **gates absolutos del PASO 1** (bytes para Codex, chars para Claude Code; ningun % de ventana) |
+| `siempre-cargado` | entra en CADA sesion (fichero de entrada + cierre de sus `@imports` + los marcados "Siempre" en un indice de reglas + en Claude Code, TODO `.claude/rules/*.md` sin frontmatter `paths:`, ver TRAMPA-5) | **gates absolutos del PASO 1** (bytes para Codex, chars para Claude Code; ningun % de ventana) |
 | `citado-obligatorio` | un contrato **ORDENA** leerlo entero ("lee X entero", "antes de Y, lee X") | el de la sesion que lo cita. NO es "sin tope" |
 | `router-condicional` | se lee para decidir a donde ir | tope propio; **recortarlo es lo mas peligroso** |
 | `referencia-bajo-demanda` | un contrato lo **OFRECE** ("ver detalle en X") | sin tope: es el DESTINO de lo que se saca |
@@ -207,6 +207,19 @@ reporto 38.55 % cuando la correcta era **9.64 %**. El invariante del 5 % se comp
 una cifra 4x mas alta de la real, narrando una "crisis" ~4x peor que la medida honesta.
 **Verifica la UNIDAD del denominador antes de dividir, no solo su valor.**
 `[EVIDENCIA: 2026-10-18, pasada_1_manager.md mediciones pasada 1 y 2, recalculo manual]`
+
+### TRAMPA-5: `.claude/rules/` se autocarga aunque su indice diga "bajo demanda"
+Claude Code carga en CADA sesion todo `.claude/rules/*.md` que no declare `paths:` en su
+frontmatter (con `paths:` solo se carga al tocar ficheros que casen). Ningun `@import` lo
+trae, asi que contar solo el cierre de `@imports` (la leccion de TRAMPA-2) sigue mintiendo: el
+medidor daba `claude=36338/40000` (verde) mientras la sesion fria recibia 61.633 chars de
+instrucciones del repo (9 ficheros de rules sin `paths:`, ninguno contado), y el indice
+`README.md` de rules llamaba "bajo demanda" a 6 de ellos. **Cuenta las rules sin `paths:` como
+siempre-cargado; para que algo sea bajo demanda de verdad, dale `paths:` o sacalo de
+`.claude/rules/`.** `scripts/measure_agents_md_units.py::autoloaded_rules` ya las suma al gate
+Claude.
+`[EVIDENCIA: 2026-10-23, contenido de .claude/rules inyectado al arrancar sesion + medicion;
+bucle adversarial con 3 lentes, ver docs/followups/propuesta-arranque-frio-y-relevo-t3-20261023.md]`
 
 ---
 
