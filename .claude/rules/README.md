@@ -8,7 +8,6 @@
 ## En este directorio (se autocargan en Claude Code):
 - `00-startup.md`: protocolo de inicio, carga de memoria y quality gates.
 - `01-security-architecture.md`: si tocas variables de entorno, hooks o permisos.
-- `03-skills-discovery.md`: si disenas o modificas micro-habilidades bajo `skills/`.
 - `README.md`: este indice y router.
 
 ## Router (si tocas X, lee Y; no se autocarga):
@@ -16,6 +15,7 @@
   Cerrar ticket MUEVE su fila de `backlog.md` a `_archive/backlog_done.md` (estado terminal +
   `commit:<sha>`); ningun script lo hace; verifica con `check_backlog_contract.py`.
 - `agent_system/refactor_kit/` (solo stdlib, NUNCA importes del motor): `.agent/rules/common/refactor_kit.md`.
+- `skills/` (frontmatter YAML con `triggers`, max 3), `scripts/discover_skills.py`, `scripts/orquestador.py`: `.agent/rules/common/skills_discovery.md`.
 
 ## Referencias bajo demanda (fuera de aqui; leelas solo al entrar en su dominio):
 - Backends y roles canonicos: `AGENTS.md`, seccion "Backends y roles".

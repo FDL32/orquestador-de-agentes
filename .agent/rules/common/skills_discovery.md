@@ -1,5 +1,8 @@
 # Sistema de Skills y Triggers (Fases 2 y 3)
 
+> Referencia bajo demanda (WOT-2026-120a corrida 4): movida literal desde
+> `.claude/rules/03-skills-discovery.md`. Router: `.claude/rules/README.md`.
+
 ## 1. Triggers en YAML (Forward Compatibility)
 Cada skill en `skills/` DEBE declarar un bloque YAML al inicio con palabras clave (triggers) que la activan.
 
