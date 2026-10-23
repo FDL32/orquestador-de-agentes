@@ -228,7 +228,7 @@ def _collect_file_errors(file_path) -> list[str]:  # noqa: C901
         # WOT-2026-069i (latente): allowlist is opt-out explicit by operator.
         # The Mixed check runs AFTER this early return, so an allowlisted
         # file NEVER reports "Mixed" here. A mixed-ONLY allowlisted file
-        # hits the "now clean" branch below (rc=1 — the message blames
+        # hits the "now clean" branch below (rc=1 - the message blames
         # cleanliness instead of the mixture, misleading but fail-closed);
         # a mixed file that ALSO carries mojibake/q-mark/text_corruption
         # returns [] and is fully silent. Documented, not fixed (opt-out
@@ -244,7 +244,13 @@ def _collect_file_errors(file_path) -> list[str]:  # noqa: C901
     if q_in_word:
         errors.append(f"Question-mark corruption detected in {rel}: {q_in_word[:12]}")
     if text_corruption:
-        errors.append(f"Text corruption detected in {rel}: {text_corruption[:12]}")
+        has_typo = any(s.startswith("<typo:") for s in text_corruption)
+        if has_typo:
+            errors.append(
+                f"Typographic punctuation detected in {rel}: {text_corruption[:12]}"
+            )
+        else:
+            errors.append(f"Text corruption detected in {rel}: {text_corruption[:12]}")
     # WOT-2026-069i: mixed line endings (CRLF + bare LF) on raw bytes.
     raw = file_path.read_bytes()
     mixed = find_mixed_line_endings(raw)

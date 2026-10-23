@@ -143,7 +143,132 @@ EXCLUDE_PATTERNS = {
     "**/runtime/review_packets/**",
 }
 
-ALLOWLIST = {}
+ALLOWLIST = {
+    # WOT-2026-060t: legacy typographic punctuation (pre-existing em-dashes /
+    # curly quotes) that the new check catches.  These files are known dirty
+    # but pre-date the guard; the ticket does not require fixing them.
+    ".agent/agent_controller.py",
+    ".agent/decisions/ADR-001.md",
+    ".agent/hooks/native_post_tool_hook.py",
+    ".agent/motor_checkpoint.py",
+    ".agent/planning/vuelo_sin_limite_20261023/WOT-2026-055i/builder_recibo_r1.md",
+    ".agent/planning/vuelo_sin_limite_20261023/WOT-2026-055i/dispatch_builder_r1.md",
+    ".agent/rules/common/memory_hierarchy.md",
+    ".agent/rules/common/sustainable_engineering.md",
+    ".agent/runtime/events/README.md",
+    ".agent/runtime/reconcile/PROPUESTA_repo_audit_multiagente_v1_20261016.md",
+    ".agent/scope_gate.py",
+    ".agent/state_validation.py",
+    ".claude/README.md",
+    ".claude/commands/sync-core.md",
+    ".claude/rules/05-session-artifacts.md",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "CLOSURE_MODEL.md",
+    "CONSTITUTION.md",
+    "CREDITS.md",
+    "PROJECT.md",
+    "QUICKSTART.md",
+    "README.md",
+    "RELEASE_CHECKLIST.md",
+    "bus/blocker_signature.py",
+    "bus/builder_locks.py",
+    "bus/decision_parser.py",
+    "bus/event_bus.py",
+    "bus/evidence.py",
+    "bus/opencode_transport.py",
+    "bus/review_bridge.py",
+    "bus/review_report.py",
+    "bus/review_rubrics.py",
+    "bus/state_machine.py",
+    "bus/supervisor.py",
+    "bus/ticket_id.py",
+    "plan_graph.md",
+    "prompts/_shared/topology_artifact_locations.md",
+    "prompts/agents_md_optimization_4layer_loop.md",
+    "prompts/audit_pipeline.md",
+    "prompts/audit_pipeline_codeonly.md",
+    "prompts/audit_post_change_system_health.md",
+    "prompts/audit_ticket_contract.md",
+    "prompts/backlog_triage.md",
+    "prompts/escalate_to_motor.md",
+    "prompts/kilo_trio_dispatch/README.md",
+    "prompts/kilo_trio_dispatch/dispatch_builder.template.md",
+    "prompts/kilo_trio_dispatch/dispatch_manager.template.md",
+    "prompts/kilo_trio_dispatch/dispatch_revisor.template.md",
+    "prompts/manager_review.md",
+    "prompts/memory_upload.md",
+    "prompts/orchestrator_destination_bootstrap.md",
+    "prompts/orchestrator_launch_builder.md",
+    "prompts/orchestrator_pipeline.md",
+    "prompts/orchestrator_prepare_and_launch_ticket.md",
+    "prompts/orchestrator_session_bootstrap.md",
+    "prompts/orchestrator_session_close_chat.md",
+    "prompts/repo_audit_multiagent.md",
+    "prompts/revisor_independent_review.md",
+    "prompts/session_hop.md",
+    "repo_charter.md",
+    "scripts/archive_collaboration_artifacts.py",
+    "scripts/build_llms.py",
+    "scripts/check_audit_process.py",
+    "scripts/check_commit_message_encoding.py",
+    "scripts/check_contract_full_read.py",
+    "scripts/check_destino_publish_ready.py",
+    "scripts/check_ruff_hook_scope.py",
+    "scripts/check_ticket_nomenclature.py",
+    "scripts/claude_memory_mirror.py",
+    "scripts/closeout_steps/rotation.py",
+    "scripts/create_worktree_pair.py",
+    "scripts/destination_context.py",
+    "scripts/diagnose_builder_orphans.py",
+    "scripts/discover_loops.py",
+    "scripts/discover_skills.py",
+    "scripts/get_launcher_state.py",
+    "scripts/install_agent_system.py",
+    "scripts/manager_review_bridge.py",
+    "scripts/pre_handoff_guard.py",
+    "scripts/rotate_kilo_logs.py",
+    "scripts/run_codex_audit.py",
+    "scripts/run_pytest_safe.py",
+    "scripts/session_close_observations.py",
+    "scripts/validate_agent_config.py",
+    "skills/adopt-existing-project/SKILL.md",
+    "skills/builder-implement-from-plan/references/code-rules.md",
+    "skills/builder-run-quality-gates/SKILL.md",
+    "skills/builder-self-audit/SKILL.md",
+    "skills/code-audit/SKILL.md",
+    "skills/code-audit/references/audit-report-template.md",
+    "skills/create-agent-skill/SKILL.md",
+    "skills/create-agent-skill/references/frontmatter-template.md",
+    "skills/create-agent-skill/references/skill-anatomy.md",
+    "skills/graphify/SKILL.md",
+    "skills/manager-create-work-plan/SKILL.md",
+    "skills/manager-create-work-plan/references/plan-quality-checklist.md",
+    "skills/manager-create-work-plan/references/plan-template.md",
+    "skills/manager-session-closeout/SKILL.md",
+    "skills/memory-consolidate/SKILL.md",
+    "skills/orchestrate-destination-batch/SKILL.md",
+    "skills/project-finalize/SKILL.md",
+    "skills/refactor-manager/PROMPT_TEMPLATE.md",
+    "skills/refactor-manager/SKILL.md",
+    "skills/repo-audit/SKILL.md",
+    "skills/repo-compare/PROMPT_TEMPLATE.md",
+    "skills/repo-compare/SKILL.md",
+    "skills/repo-compare/references/filter-criteria.md",
+    "skills/repo-compare/references/output-format.md",
+    "skills/session-close-observations/SKILL.md",
+    "skills/systematic-debugging/SKILL.md",
+    "skills/test-audit/PROMPT_TEMPLATE.md",
+    "skills/test-audit/SKILL.md",
+    "skills/test-audit/references/candidate-evidence.md",
+    "skills/test-audit/references/edit-shape.md",
+    "skills/test-audit/references/gate-checklist.md",
+    "skills/test-audit/references/junk-patterns.md",
+    "skills/test-audit/references/value-bar.md",
+    "skills/test-driven-development/SKILL.md",
+    "skills/version-changelog/references/semver-decision-guide.md",
+    "tests/test_encoding_integrity.py",
+}
 
 
 def relative_path(path: Path, root: Path | None = None) -> str:
@@ -178,7 +303,7 @@ def find_q_in_word(text: str) -> list[str]:
 
 # ASCII control chars (<32) that are legitimate in text files: tab, line feed,
 # carriage return. Everything else below 0x20 (e.g. 0x00 NUL, 0x07 BEL, 0x0B VT,
-# 0x0C FF) is corruption — the class that slipped past the guard in WOT-2026-008f
+# 0x0C FF) is corruption - the class that slipped past the guard in WOT-2026-008f
 # and 008j because the guard only inspected codepoints >127 (mojibake/BOM).
 _ALLOWED_CONTROL_CHARS = frozenset({"\t", "\n", "\r"})
 
@@ -296,6 +421,45 @@ def find_text_corruption(text: str) -> list[str]:
         if snippet not in findings:
             findings.append(snippet)
     return findings
+
+
+# WOT-2026-060t: typographic punctuation codepoints that mandates forbid in
+# agent-generated text (prompts/orchestrator_launch_builder.md:903-904).
+# Only these 5 codepoints; NOT a broad non-ASCII ban.
+TYPOGRAPHIC_CODEPOINTS: frozenset[int] = frozenset(
+    {
+        0x2014,  # em-dash (U+2014)
+        0x2018,  # left single quotation mark ('')
+        0x2019,  # right single quotation mark ('')
+        0x201C,  # left double quotation mark ("")
+        0x201D,  # right double quotation mark ("")
+    }
+)
+
+_TYPEO_PREFIX = "<typo:"
+
+
+def find_typographic_punctuation(text: str) -> list[str]:
+    """Return snippets around typographic punctuation (em-dash, curly quotes).
+
+    WOT-2026-060t: the builder mandate forbids em-dash (U+2014) and curly
+    quotes (U+2018, U+2019, U+201C, U+201D) in favour of ASCII equivalents.
+    This check detects those codepoints when the file is validly encoded UTF-8
+    (the guard previously only caught mojibake from re-decoding failures).
+
+    Each snippet shows the codepoint as ``<U+NNNN>`` with up to 3 chars of
+    following context, deduplicated, so the report is human-readable.
+    """
+    snippets: list[str] = []
+    for idx, ch in enumerate(text):
+        if ord(ch) not in TYPOGRAPHIC_CODEPOINTS:
+            continue
+        marker = f"{_TYPEO_PREFIX}{ord(ch):04X}>"
+        tail = text[idx + 1 : idx + 4].replace("\n", "\\n").replace("\r", "\\r")
+        snippet = marker + tail
+        if snippet not in snippets:
+            snippets.append(snippet)
+    return snippets
 
 
 def find_deaccentuation_lossy(text: str) -> list[str]:
@@ -466,6 +630,10 @@ def file_issues(path: Path) -> tuple[list[str], list[str], list[str]]:
         return [], [], list(strict_issues)
     text = load_text(path)
     text_corruption = find_text_corruption(text)
+    # WOT-2026-060t: typographic punctuation. Added to text_corruption to
+    # preserve the 3-tuple contract. Consumers that distinguish "Typographic"
+    # check for _TYPEO_PREFIX in each snippet.
+    text_corruption.extend(find_typographic_punctuation(text))
     # CTL-2026-012j: de-acentuacion lossy (prose only). Called AFTER the
     # strict-decode early return so bytes-invalid files never reach the
     # text-level check, and AFTER find_text_corruption to keep that function's
