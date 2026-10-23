@@ -26,6 +26,11 @@ ticket (misma logica que `batch-agrupar-preguntas-antes-de-arrancar`).
 
 #### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
 
+> Este apartado es el mecanismo GIT reactivo (que hacer cuando la rama ya avanzo). La capa
+> PROACTIVA previa -- avisar a las otras sesiones T3 antes de tocar una superficie compartida,
+> coordinar suite/push y cierre de worktrees -- vive en
+> `.agent/rules/common/t3_ade_coordination.md`.
+
 **Gate 1 (nunca se relaja):** antes de que un commit propio EXISTA en cualquier rama
 compartida, la suite canonica completa corre sobre ESE commit (regla de arriba, sin excepcion).
 
