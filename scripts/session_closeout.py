@@ -1442,7 +1442,12 @@ def _own_row_deliverable_type(line: str, ticket_id: str) -> str | None:
         prose of another ticket's row is not. Every `deliverable_type:` token
         of the own row is cleaned of `_DELIVERABLE_VALUE_STRIP` and kept only
         if it fullmatches a key of `check_loop_execution.
-        DEFAULT_MIN_DISTINCT_BACKENDS` (the barrier's own taxonomy).
+        DEFAULT_MIN_DISTINCT_BACKENDS` (the barrier's own taxonomy). Only the
+        punctuation glued to a token is normalized, against that EXISTING
+        taxonomy: no new type is invented and an unknown value (`process`,
+        `banana`) is still ignored -- deciding taxonomy remains a DEC. Side
+        effect, declared: a dirty token (`documentation,`) used to miss the
+        taxonomy and fall to the strict fallback; it now counts as its type.
     After: returns the token with the highest minimum of distinct lenses (the
         strictest; prose that cites a laxer type cannot relax the row), or
         None if the line is not an own row or has no known token. Never raises:
