@@ -3,7 +3,7 @@ legacy_aliases: [review_manager]
 role: manager
 cycle_phase: [F6-revision]
 route_kind: entry
-line_budget: 444
+line_budget: 465
 ---
 # Manager Review Prompt
 <!-- PROMPT-SUMMARY
