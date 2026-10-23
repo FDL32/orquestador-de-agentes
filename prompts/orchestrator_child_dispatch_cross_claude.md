@@ -180,7 +180,7 @@ sobre el primer prompt real de este tipo):
 ## 3. Verificacion empirica del canal de comunicacion (5 primitivos, con timeout)
 
 **Correccion aplicada tras bucle de 3 lentes (codex/BA05, opencode-glm/BA06,
-nan-deepseek/BA10, `EXPLORATORY-cross-account-comms-pass2`, consenso 3/3
+nan-deepseek/BA10, bucle `EXPLORATORY-cross-account-comms` pasada 2, consenso 3/3
 PROCEDER CON CAMBIOS) sobre datos REALES del primer experimento en vivo
 (sesion `brabander`, 2026-10-22/23):** la version anterior de esta seccion
 trataba `ListAgents` y `t3_thread_search` como "doble primitivo" equivalente.
