@@ -1227,8 +1227,10 @@ def test_propagate_session_start_hook_fixes_all_duplicate_gating_entries(tmp_pat
 
 
 def test_destination_projections_adds_collaboration_for_destination(tmp_path):
-    """A real destination (motor_root != project_root) gets .agent/collaboration/
-    gitignored alongside the shared projection entries."""
+    """WOT-2026-059f: a real destination (motor_root != project_root) gets the
+    6 explicit collaboration files gitignored (not the blanket directory --
+    STRATEGY_WOT-*.md/AUDIT_WOT-*.md are canonical artefacts excluded on
+    purpose) alongside the shared projection entries."""
     motor_root = tmp_path / "motor"
     motor_root.mkdir()
     dest_root = tmp_path / "dest"
@@ -1239,9 +1241,20 @@ def test_destination_projections_adds_collaboration_for_destination(tmp_path):
     )
 
     gitignore = (dest_root / ".gitignore").read_text(encoding="utf-8")
-    assert ".agent/collaboration/" in added
+    expected_files = {
+        ".agent/collaboration/work_plan.md",
+        ".agent/collaboration/STATE.md",
+        ".agent/collaboration/TURN.md",
+        ".agent/collaboration/execution_log.md",
+        ".agent/collaboration/notifications.md",
+        ".agent/collaboration/review_queue.md",
+    }
+    assert expected_files.issubset(set(added))
+    assert ".agent/collaboration/" not in added
     assert ".agent/config/motor_destination_link.json" in added
-    assert ".agent/collaboration/" in gitignore
+    for entry in expected_files:
+        assert entry in gitignore
+    assert ".agent/collaboration/\n" not in gitignore
     assert "# motor-managed: regenerable projections (WOT-2026-016p)" in gitignore
 
 
@@ -1291,7 +1304,8 @@ def test_destination_projections_dry_run_does_not_write(tmp_path):
         dest_root, dry_run=True, motor_root=motor_root
     )
 
-    assert ".agent/collaboration/" in added
+    assert ".agent/collaboration/work_plan.md" in added
+    assert ".agent/collaboration/" not in added
     assert not (dest_root / ".gitignore").exists()
 
 
@@ -1303,10 +1317,10 @@ def test_destination_projections_no_motor_root_defaults_to_destination(tmp_path)
 
     added = ensure_destination_projections_ignored(dest_root, dry_run=False)
 
-    assert ".agent/collaboration/" in added
-    assert ".agent/collaboration/" in (dest_root / ".gitignore").read_text(
-        encoding="utf-8"
-    )
+    assert ".agent/collaboration/work_plan.md" in added
+    assert ".agent/collaboration/" not in added
+    text = (dest_root / ".gitignore").read_text(encoding="utf-8")
+    assert ".agent/collaboration/work_plan.md" in text
 
 
 def test_destination_projections_respects_existing_entries(tmp_path):
@@ -1317,18 +1331,19 @@ def test_destination_projections_respects_existing_entries(tmp_path):
     dest_root = tmp_path / "dest"
     dest_root.mkdir()
     (dest_root / ".gitignore").write_text(
-        ".agent/collaboration/\n.agent/runtime/\n", encoding="utf-8"
+        ".agent/collaboration/work_plan.md\n.agent/runtime/\n", encoding="utf-8"
     )
 
     added = ensure_destination_projections_ignored(
         dest_root, dry_run=False, motor_root=motor_root
     )
 
-    assert ".agent/collaboration/" not in added
+    assert ".agent/collaboration/work_plan.md" not in added
     assert ".agent/runtime/" not in added
+    assert ".agent/collaboration/STATE.md" in added
     assert ".agent/config/motor_destination_link.json" in added
     text = (dest_root / ".gitignore").read_text(encoding="utf-8")
-    assert text.count(".agent/collaboration/") == 1
+    assert text.count(".agent/collaboration/work_plan.md") == 1
 
 
 # ---------------------------------------------------------------------------

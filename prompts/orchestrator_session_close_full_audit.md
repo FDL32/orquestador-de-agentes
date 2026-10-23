@@ -210,7 +210,16 @@ Esta es la barrera critica que el flujo anterior omitia: la salida del Builder n
    los diffs de esta sesion los produjo un Builder/fork/hijo delegado, su `CIERRE_PARCIAL_<TICKET>.md`
    es la fuente de partida de este punto. Formato, ruta y criterio de rechazo: `prompts/
    builder_invocation_contract.md` Seccion 3.5 (`contract_id: cid-builder-invocation-v1`); no se
-   repiten aqui. Correspondencia campo -> punto de este checklist:
+   repiten aqui. **Guard de FORMATO (WOT-2026-104s):** el Manager/auditor de este Bloque 2 corre,
+   UNA VEZ POR CADA informe delegado que encuentre (puede haber varios hijos/worktrees en la misma
+   sesion), antes de leerlo a mano:
+   `python scripts/check_child_closeout_report.py --report <worktree-del-hijo>/CIERRE_PARCIAL_<TICKET>.md`.
+   Verifica mecanicamente que las 5 secciones `## CP-1`..`## CP-5` estan presentes, en orden, no vacias,
+   y que `CP-3` lleva la linea `HIJO TERMINADO` seguida de contenido no vacio (la salida real de
+   `git status --short`). Un `rc != 0` es el mismo veredicto que "informe ausente o incompleto" de abajo:
+   `cierre NO VERIFICABLE` sin excepcion. El guard NO sustituye la re-ejecucion del contenido citado
+   (SHA, diff, rc reales): solo descarta de forma barata los informes mal formados antes de gastar esa
+   verificacion. Correspondencia campo -> punto de este checklist:
    - Encuadre (commits/`git diff --stat`) <- `CP-1`.
    - Barrera mutation-verified y COPY-RESTORE <- `CP-2`.
    - 5.ter, SOLO su PRECONDICION del lado del hijo (brazo TERMINADO, mutaciones revertidas por

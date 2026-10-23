@@ -148,6 +148,12 @@ EXPECTED_WIRED_REAL = {
     # restaurada la fila, exit 0. No bloqueante por decision declarada (un
     # fantasma es fallo de REGISTRO, no de codigo).
     "check_ghost_ticket_ids",
+    # WOT-2026-059f: retirado de `wired_via` en guard_wiring_policy.yaml (declaracion
+    # manual stale); el AST de 1-hop lo alcanza por su cuenta via el call-site real
+    # `install_agent_system.py:1421::from scripts.check_gitleaks_seed_divergence
+    # import warn_on_seed_divergence` -- verificado por grep contra el fichero real,
+    # no es falso-WIRED.
+    "check_gitleaks_seed_divergence",
     "check_batch_run_accounting",  # WOT-2026-025k: cableado via import estatico en batch_destination_controller.py::_batch_run_orphan_gsr_tickets y prepush_check.py::run_batch_run_accounting_check (closeout, WARN)
     "check_claude_settings_portability",
     # WOT-2026-046f: cableado en pre-commit con stages: [commit-msg] MAS

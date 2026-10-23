@@ -500,15 +500,9 @@ def detect_audit_missing_tp_check(collab_dir: Path) -> list[ProseWarning]:
         + list(collab_dir.glob("AUDIT_WP-*.md"))  # legacy-compat
         + list(collab_dir.glob("AUDIT_WT-*.md"))  # legacy-compat
     )
+    # WOT-2026-055b: alinear con detect_audit_malformed_tp_check que ya usa
+    # `if not audit_files: return warnings`. Sin audits no hay warning.
     if not audit_files:
-        warnings.append(
-            ProseWarning(
-                rule_id="TP-STRUCT-01",
-                rule_name="audit-missing-tp-check",
-                evidence="No se encontro AUDIT_WOT-*.md (canonical) ni AUDIT_WP-*.md/AUDIT_WT-*.md (legacy) en .agent/collaboration/",
-                suggestion="Crea un AUDIT_WOT-*.md con seccion '## TP Check' que verifique los 5 TP-P.",
-            )
-        )
         return warnings
 
     # Verificar que al menos un AUDIT tenga TP Check

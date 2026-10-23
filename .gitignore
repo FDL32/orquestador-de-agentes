@@ -174,3 +174,11 @@ checkpoint/
 # commit 1828fe2 y hacia FALLAR `versioned_filenames` en cada cierre de sesion.
 # Sin esta regla, el siguiente contrato se cuela igual: era norma, no barrera.
 .agent/planning/
+
+# WOT-2026-104s: CIERRE_PARCIAL_<TICKET>.md es evidencia EFIMERA del handoff
+# hijo delegado -> Manager (prompts/builder_invocation_contract.md Seccion 3.5).
+# El contrato ya exige que el Manager lo borre antes de su propio commit/
+# --session-close, pero esto es proteccion de orden (norma), no mecanica: sin
+# esta entrada, un `git add -A` descuidado lo cuela igual que el caso de
+# .agent/planning/ de arriba.
+CIERRE_PARCIAL_*.md

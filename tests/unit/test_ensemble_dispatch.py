@@ -3385,14 +3385,78 @@ def test_042v_unresolvable_path_degrades_instead_of_raising():
     )
 
 
-def test_042v_profile_without_repo_scope_keeps_inherited_behaviour(monkeypatch):
-    """ADITIVIDAD: un perfil que no declara `repo_scope` no cambia en nada, ni
-    siquiera con AGENT_PROJECT_ROOT puesto. Es lo que permite dejar lentes
-    CIEGAS a proposito como calibracion permanente: si todas pasaran a ver el
-    arbol se perderia la referencia contra la que medir su degradacion."""
+def test_055m_profile_without_repo_scope_forces_explicit_motor_cwd(monkeypatch):
+    """INVARIANTE CAMBIADO por WOT-2026-055m (no se borra el test, se declara
+    por que cambia -- DoD (b)): el test anterior,
+    `test_042v_profile_without_repo_scope_keeps_inherited_behaviour`, fijaba
+    `(None, "motor")`, es decir, un perfil sin `repo_scope: destino` dejaba el
+    cwd SIN resolver y el hijo heredaba el del proceso padre. Eso permitia que
+    la etiqueta `motor` mintiera si el padre corria desde otro arbol (medido
+    en produccion: BA06 con cwd=<destino> registrado como `motor`). Ahora
+    `resolve_lens_repo_root` retorna el `MOTOR_ROOT` EXPLICITO en vez de
+    `None`: la etiqueta `motor` pasa a ser una garantia verificable del cwd
+    real, no una suposicion sobre la herencia del padre. AGENT_PROJECT_ROOT
+    puesto y ademas IGNORADO por esta rama (sigue siendo aditivo respecto al
+    camino `repo_scope: destino`, que es el unico que lo consulta)."""
     monkeypatch.setenv("AGENT_PROJECT_ROOT", str(Path.cwd()))
     cwd, scope = ed.resolve_lens_repo_root({"channel": "agent"}, {}, None)
-    assert (cwd, scope) == (None, "motor")
+    assert (cwd, scope) == (str(ed.MOTOR_ROOT), "motor")
+
+
+def test_055m_mutation_dispatch_from_destino_cwd_no_longer_mislabels_motor(
+    monkeypatch, tmp_path
+):
+    """MUTATION del DoD (c), por la ruta PRODUCTIVA real (no solo
+    `resolve_lens_repo_root` aislada -- hallazgo de revision Codex sobre el
+    primer borrador de este test, que solo probaba la funcion de resolucion
+    sin pasar por `send_to_profile`/`_transport_agent`/`Popen`).
+
+    Dispatcha un perfil SIN `repo_scope: destino` via `send_to_profile`
+    (la salida real por perfil, WOT-2026-042k) con el proceso padre corriendo
+    desde un cwd de destino simulado, y verifica con un shim REAL
+    (`_fake_cwd_echo_executable`, mismo patron que WOT-2026-038o) que el
+    SUBPROCESO imprime el `MOTOR_ROOT`, no el cwd del padre. Antes del fix
+    (rama vieja `return None, "motor"`), `backend_cfg["repo_root"]` nunca se
+    rellenaba y el hijo heredaba el cwd de destino mientras el scorecard
+    seguia diciendo `motor`: el falso-verde exacto que WOT-2026-055m cierra."""
+    destino_falso = tmp_path / "repo_destino_simulado"
+    destino_falso.mkdir()
+    monkeypatch.chdir(destino_falso)
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(destino_falso))
+    config = {
+        "schema_version": "1.3",
+        "backends": {
+            "fake_cli": {
+                "executable": _fake_cwd_echo_executable(tmp_path),
+                "args": [],
+                "discovery": {"method": "path_only"},
+            }
+        },
+        "ensemble_profiles": {
+            "p_lente": {
+                "backend": "fake_cli",
+                "channel": "agent",
+                "data_sensitivity": "public",
+                "write": False,
+            }
+        },
+        "ensemble_private_roots": [],
+    }
+
+    out = ed.send_to_profile(
+        "p_lente",
+        [{"role": "user", "content": "x"}],
+        config=config,
+        sensitivity="public",
+        project_root=destino_falso,
+    )
+
+    assert Path(out.strip()).resolve() == ed.MOTOR_ROOT.resolve(), (
+        f"el hijo observo {out.strip()!r}, no el MOTOR_ROOT real: la etiqueta "
+        "'motor' sigue sin estar garantizada por el cwd efectivo del Popen"
+    )
+    assert Path(out.strip()).resolve() != destino_falso.resolve()
+    assert config["ensemble_profiles"]["p_lente"][ed._LENS_SCOPE_KEY] == "motor"
 
 
 def test_042v_scorecard_row_records_the_effective_scope(tmp_path):
