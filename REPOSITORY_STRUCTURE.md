@@ -9,10 +9,19 @@ It is written so the repository can be cloned or published without any knowledge
 orquestador_de_agentes/
 |-- .agent/
 |   |-- collaboration/
+|   |-- config/
+|   |-- context/
+|   |-- hooks/
+|   |-- planning/
+|   |-- rules/
 |   |-- runtime/
+|   |-- templates/
+|   |-- agent_controller.py
+|   |-- agents_config.py
 |   |-- project_manifest.toml
 |   `-- .version_manifest.json
 |-- agent_system/
+|-- bus/
 |-- docs/
 |-- prompts/
 |-- scripts/
@@ -22,10 +31,21 @@ orquestador_de_agentes/
 |-- AGENTS.md
 |-- CHANGELOG.md
 |-- CLAUDE.md
+|-- CREDITS.md
+|-- CLOSURE_MODEL.md
+|-- CONSTITUTION.md
+|-- DISTRIBUTION_GUIDE.md
 |-- INTERACTION_MODES.md
+|-- MANUAL_PUBLICATION_CHECKLIST.md
 |-- PROJECT.md
 |-- QUICKSTART.md
 |-- README.md
+|-- REPOSITORY_STRUCTURE.md
+|-- RELEASE_CHECKLIST.md
+|-- UPGRADE_CLEANUP_GUIDE.md
+|-- UPGRADE_GUIDE.md
+|-- plan_graph.md
+|-- repo_charter.md
 `-- pyproject.toml
 ```
 

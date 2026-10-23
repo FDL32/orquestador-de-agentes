@@ -35,8 +35,9 @@ python .agent/agent_controller.py --validate --json --force
 
 ## Scope check
 
-`scripts/orquestador.py` can capture before/after snapshots for write-scoped runs.
-That is observability only; it does not replace human review or blocking hooks.
+Write-scoped runs are tracked through `execution_log.md` and the event bus;
+snapshot diffs use git status/diff. That is observability only; it does not
+replace human review or blocking hooks.
 
 ## Copy cleanup
 

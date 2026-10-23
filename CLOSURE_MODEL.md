@@ -43,7 +43,7 @@ Goal:
 ### Session Closeout
 
 - `python .agent\agent_controller.py --validate --json --force` passes without drift.
-- Note: the standalone `scripts/session_closeout.py` utility referenced in earlier revisions was removed in `WP-2026-061` cleanup. Closeout is currently a manual canonical handoff (edit `work_plan.md` and `execution_log.md` to `COMPLETED`, regenerate `TURN.md` with `--reset-turn`, then validate). An integrated replacement is pending design.
+- Closeout runs through the canonical entrypoint `python .agent/agent_controller.py --session-close` (see QUICKSTART.md section "Session close"), which delegates to `scripts/session_closeout.py`. Closeout edits `work_plan.md` and `execution_log.md` to `COMPLETED`, regenerates `TURN.md` with `--reset-turn`, then validates.
 
 ### System Closeout
 
