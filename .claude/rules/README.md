@@ -6,16 +6,19 @@
 > casi siempre; lo condicional vive en `.agent/rules/common/` (no se autocarga).
 
 ## En este directorio (se autocargan en Claude Code):
-- `00-startup.md`: protocolo de inicio, carga de memoria y quality gates.
+- `00-startup.md`: protocolo de inicio, carga de memoria y puntero a quality gates.
 - `01-security-architecture.md`: si tocas variables de entorno, hooks o permisos.
 - `README.md`: este indice y router.
 
 ## Router (si tocas X, lee Y; no se autocarga):
 - `.agent/collaboration/` (work_plan, logs, TURN, backlog): `.agent/rules/common/session_artifacts.md`.
   Cerrar ticket MUEVE su fila de `backlog.md` a `_archive/backlog_done.md` (estado terminal +
-  `commit:<sha>`); ningun script lo hace; verifica con `check_backlog_contract.py`.
-- `agent_system/refactor_kit/` (solo stdlib, NUNCA importes del motor): `.agent/rules/common/refactor_kit.md`.
-- `skills/` (frontmatter YAML con `triggers`, max 3), `scripts/discover_skills.py`, `scripts/orquestador.py`: `.agent/rules/common/skills_discovery.md`.
+  `commit:<sha>`); ningun script lo hace; verifica con `check_backlog_contract.py`. NO es
+  `.session/` (patron antiguo, ya no vigente).
+- `agent_system/refactor_kit/` (solo stdlib, NUNCA importes del motor; valida con
+  `ruff check agent_system/refactor_kit/`): `.agent/rules/common/refactor_kit.md`.
+- `skills/` (frontmatter YAML con `triggers`, max 3; `python scripts/discover_skills.py --json`;
+  `python scripts/orquestador.py --skill /review --query "revisa cambios"`): `.agent/rules/common/skills_discovery.md`.
 
 ## Referencias bajo demanda (fuera de aqui; leelas solo al entrar en su dominio):
 - Backends y roles canonicos: `AGENTS.md`, seccion "Backends y roles".
