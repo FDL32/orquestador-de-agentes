@@ -5112,12 +5112,20 @@ def _check_scope_for_validate(
         warnings.extend([f"Warning: {w}" for w in gate_result["warnings"]])
 
     # WOT-2026-009c: reciprocal isolation — inspect non-authority root
+    # WOT-2026-055k: explain working-tree transient nature so consumer does not
+    # mistake another session's in-flight edits for a permanent foreign state.
     cross = _check_cross_root_contamination(da)
     if cross["productive"]:
         other = "repo_destino" if da == "repo_motor" else "repo_motor"
+        _other_label = "la otra raiz" if other == "repo_motor" else "el otro repo"
         warnings.extend(
-            f"contaminacion_productiva ({other}): {f}"
-            for f in sorted(cross["productive"])
+            f"contaminacion_productiva ({other}): {prod_file} -- "
+            f"git status --porcelain -z detecta cambios SIN COMMITEAR "
+            f"en {_other_label}; en topologia multi-sesion suelen ser "
+            f"transitorios (otra sesion editando). Espera el commit "
+            f"de esa sesion y re-valida: python .agent/agent_controller.py "
+            f"--validate --json --project-root <destino>"
+            for prod_file in sorted(cross["productive"])
         )
 
     return errors, warnings
