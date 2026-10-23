@@ -1,8 +1,10 @@
 # Protocolo de Inicio y Flujo Principal
 
 > **Carga de memoria:** ejecuta el mecanismo en `prompts/_shared/memory_bootstrap.md`
-> al arrancar. Motivo: sin carga, el agente opera con 0 lecciones y repite
-> errores ya documentados en la memoria del proyecto.
+> al arrancar **solo si el indice de memoria NO esta ya en tu contexto**. En Claude Code el
+> hook SessionStart lo inyecta en arranque `startup` (no lo repitas: ~30k chars duplicados);
+> si ves el indice inyectado, usa `--recall` para expandir. Motivo: sin carga, el agente
+> opera con 0 lecciones y repite errores ya documentados en la memoria del proyecto.
 
 ## Flujo de Trabajo (Manager → Builder)
 

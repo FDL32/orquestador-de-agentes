@@ -158,7 +158,7 @@ repos:
         entry: uv run python scripts/check_process_decision_search.py
         language: system
         pass_filenames: true
-        files: '^(prompts/.*\.md|\.claude/rules/.*\.md|AGENTS\.md|CLAUDE\.md)$'
+        files: '^(prompts/.*\.md|\.claude/rules/.*\.md|\.agent/rules/common/.*\.md|AGENTS\.md|CLAUDE\.md)$'
         stages: [pre-commit]
 
       - id: check-skill-collisions

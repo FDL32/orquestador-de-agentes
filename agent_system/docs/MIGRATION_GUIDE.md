@@ -10,7 +10,7 @@ Esta guÃ­a proporciona instrucciones operativas para migrar proyectos legacy a
 - No cubre instalaciÃ³n inicial ni proyectos ya canÃ³nicos.
 
 **Consistencia:**
-- Alineada con `.claude/rules/06-project-manifest-architecture.md`.
+- Alineada con `.agent/rules/common/project_manifest_architecture.md`.
 - Compatible con `agent_system/docs/MANIFEST_SPEC.md`.
 
 ## DefiniciÃ³n de Proyecto Legacy
