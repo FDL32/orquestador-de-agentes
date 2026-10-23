@@ -1,5 +1,9 @@
 # Artefactos de Sesión y Estado Canónico
 
+> Referencia bajo demanda (WOT-2026-120a corrida 2): movida literal desde
+> `.claude/rules/05-session-artifacts.md` para sacarla de la autocarga de Claude Code.
+> Router: `.claude/rules/README.md`.
+
 ## Superficie canónica: `.agent/collaboration/`
 
 El estado operativo de tickets vive en `.agent/collaboration/` del `repo_destino`:
@@ -8,13 +12,13 @@ El estado operativo de tickets vive en `.agent/collaboration/` del `repo_destino
 .agent/collaboration/
 ├── work_plan.md          (aprobado por Manager, ejecutado por Builder)
 ├── execution_log.md      (bitácora de ejecución actual)
-├── TURN.md               (turno actual del agente — protegido por guard_paths)
+├── TURN.md               (turno actual del agente -- protegido por guard_paths)
 ├── STATE.md              (proyección del ticket activo)
 ├── backlog.md            (cola de candidatos pendientes/activos)
 ├── review_queue.md       (cola viva de reviews)
 ├── notifications.md      (mensajes Manager <-> Builder)
 ├── archive/              (snapshots operativos, p.ej. review_queue_YYYY-MM-DD.md)
-├── _archive/backlog_done.md  (histórico TERMINAL del backlog — ver nota abajo)
+├── _archive/backlog_done.md  (histórico TERMINAL del backlog -- ver nota abajo)
 └── _archive/plan_audit/  (histórico canónico de PLAN_/AUDIT_ cerrados)
 ```
 
@@ -27,7 +31,7 @@ El estado operativo de tickets vive en `.agent/collaboration/` del `repo_destino
 - **Archivado:** al cerrar un ticket, sus `PLAN_*/AUDIT_*` van a `_archive/plan_audit/` (lo hace `scripts/archive_collaboration_artifacts.py`).
 - **Cerrar un ticket es un TRASPASO entre DOS superficies, no un cambio de etiqueta** (WOT-2026-026t). La FILA del ticket **se mueve** de `backlog.md` a `_archive/backlog_done.md` con un estado terminal (`completed`/`done`/`closed`/`absorbed`/`superseded`/`blocked-final`/`not-pursued`) y su evidencia de aterrizaje (`commit:<sha>`) en la celda `Reactivation`. Ningún script lo hace por ti: `archive_collaboration_artifacts.py` mueve `PLAN_/AUDIT_`, **no filas de backlog**.
   - Escribir un estado terminal en la cola viva es la violación evidente y el gate la bloquea.
-  - **El fallo silencioso es el inverso:** una fila archivada que conserva estado VIVO es trabajo pendiente guardado como historia — la cola no lo lista y el archivo lo declara pendiente, así que queda invisible en las dos superficies (medidas 18 filas así el 2026-08-04).
+  - **El fallo silencioso es el inverso:** una fila archivada que conserva estado VIVO es trabajo pendiente guardado como historia -- la cola no lo lista y el archivo lo declara pendiente, así que queda invisible en las dos superficies (medidas 18 filas así el 2026-08-04).
   - Verificación: `python <MOTOR_ROOT>/scripts/check_backlog_contract.py --project-root <repo_destino>` (audita ambas superficies; cableado también en el closeout vía `prepush_check`).
 - **Consolidación:** las decisiones arquitectónicas importantes NUNCA se quedan aquí de forma permanente. Deben consolidarse post-sesión en `PROJECT.md` o `CHANGELOG.md`.
 

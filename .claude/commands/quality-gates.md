@@ -1,10 +1,10 @@
-Ejecuta los Quality Gates del proyecto en este orden:
+Ejecuta los Quality Gates del proyecto (los de "Criterio de cierre" en `AGENTS.md`) en este orden; la suite va la ULTIMA porque cualquier cambio posterior la invalida:
 
 ```bash
-python scripts/run_pytest_safe.py --status
-ruff check .agent/hooks/guard_paths.py tests --fix
-ruff format .agent/hooks/guard_paths.py tests
+ruff check .
+ruff format .
+python scripts/pip_audit_project.py
 python scripts/run_pytest_safe.py
 ```
 
-Si algún paso falla, muestra el error completo, explica la causa más probable y propone la corrección concreta. Si todos pasan, confirma con un resumen: N tests pasados, 0 errores ruff, formato correcto.
+Si `ruff format .` reformatea algo, vuelve a pasar `ruff check .` antes de la suite. Lee el resultado de cada paso con su exit code real (no tras una tuberia). Si algun paso falla, muestra el error completo, explica la causa mas probable y propone la correccion concreta. Si todos pasan, confirma con un resumen: N tests pasados / 0 failed, 0 errores ruff, formato correcto, 0 vulnerabilidades sin mitigar.

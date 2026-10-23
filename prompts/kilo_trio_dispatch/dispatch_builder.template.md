@@ -58,6 +58,7 @@ Antes de arrancar, verificar:
 - [ ] El predecesor (Manager/PLAN) dejó `work_plan.md` escrito y aprobado en `.agent/collaboration/work_plan.md`
 - [ ] El despacho del Manager existe: `.agent/planning/vuelo_{{VUELO_ID}}/{{TICKET}}/dispatch_manager_r{{R}}.md`
 - [ ] `AGENT_PROJECT_ROOT` resuelve al `workspace_activo` (no al motor)
+- [ ] Memoria cargada: `python scripts/memory_context.py --bootstrap` (Kilo no tiene hook `SessionStart`: sin este paso 0 el Builder arranca con cero lecciones; expande despues con `--recall`)
 - [ ] Si scope está en vuelo por otra sesión → `REQUIERE_HUMANO`
 
 ## B5 — Capacidades del modelo (micro-pasos)

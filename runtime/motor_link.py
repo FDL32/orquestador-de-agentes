@@ -37,7 +37,9 @@ def resolve_motor_root(project_root: Path) -> Path | None:
     if not link_path.exists():
         return None
     try:
-        data = json.loads(link_path.read_text(encoding="utf-8"))
+        # `utf-8-sig` tolera el BOM que deja PowerShell 5.1; con `utf-8`
+        # estricto el link se trataba como ausente (ronda 5, 2026-10-23).
+        data = json.loads(link_path.read_text(encoding="utf-8-sig"))
         motor_root = data.get("motor_root")
         if motor_root and Path(motor_root).exists():
             return Path(motor_root).resolve()

@@ -5,6 +5,9 @@
 > - `## Quality gates dispatch by deliverable_type (WP-2026-089)` -- `AGENTS.md:818-833`
 > - `## Pluggable manager review rubric by deliverable_type (WP-2026-091)` -- `AGENTS.md:853-861`
 > - `### Contrato operativo por tipo de ticket` -- `AGENTS.md:793-817`
+> - Las lineas citadas son de esa HEAD base. Desde WOT-2026-120a (2026-10-23) la cuspide ya no
+>   tiene el encabezado WP-2026-091: lo funde en `## Referencias de instalacion, review y
+>   relanzamiento`, como item por ID WP (directiva + puntero aqui).
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 

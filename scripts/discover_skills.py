@@ -933,7 +933,10 @@ CANONICAL_ROLES: tuple[str, ...] = (
     "revisor",
 )
 # D2: external artifacts consumed whole by another system; exempt from metadata.
-EXTERNAL_ALLOWLIST: frozenset[str] = frozenset({"hermes_soul.md"})
+# WOT-2026-114b: "hermes_soul.md" retirado (el usuario confirmo que no usa el
+# flujo externo); el mecanismo queda vacio pero disponible para el proximo
+# fichero externo real.
+EXTERNAL_ALLOWLIST: frozenset[str] = frozenset()
 # D4: (role rule, cycle_phase rule) per route_kind.
 _ROUTE_RULES: dict[str, tuple[str, str]] = {
     "entry": ("required", "required"),

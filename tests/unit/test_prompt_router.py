@@ -203,8 +203,10 @@ class TestValidateRouteMetadata:
         errors = validate_route_metadata("other.md", {"route_kind": "externo"})
         assert any("externo" in e for e in errors)
 
-    def test_externo_allowlist_is_exactly_hermes_soul(self):
-        assert frozenset({"hermes_soul.md"}) == EXTERNAL_ALLOWLIST
+    def test_externo_allowlist_is_empty_after_hermes_retirement(self):
+        """WOT-2026-114b: hermes_soul.md se retiro (usuario confirmo que no lo
+        usa); el mecanismo de allowlist queda vacio pero disponible."""
+        assert frozenset() == EXTERNAL_ALLOWLIST
 
 
 class TestModuleCitations:
@@ -416,12 +418,19 @@ class TestRouterRendering:
                 "_shared/gate.md": _prompt(
                     {"route_kind": "modulo"}, "Gate", what="gate de goal"
                 ),
-                "hermes_soul.md": "# Soul\n",
+                "example_external.md": "# External\n",
                 "pending.md": "# Pending\n",
             },
         )
 
-    def test_router_sections_and_rows(self, tmp_path):
+    def test_router_sections_and_rows(self, tmp_path, monkeypatch):
+        # WOT-2026-114b: EXTERNAL_ALLOWLIST quedo vacio tras retirar
+        # hermes_soul.md; este test cubre el MECANISMO generico de exencion
+        # con un fichero sintetico, decoupled del fichero real ya retirado.
+        monkeypatch.setattr(
+            "scripts.discover_skills.EXTERNAL_ALLOWLIST",
+            frozenset({"example_external.md"}),
+        )
         text = build_router(self._tree(tmp_path))
         assert "`prompts/audit_x.md`" in text
         assert "F3-auditoria-contrato" in text
@@ -431,9 +440,9 @@ class TestRouterRendering:
         assert "`prompts/opt.md`" in text
         assert "`prompts/_shared/gate.md`" in text and "audit_x.md" in text
         assert (
-            "hermes_soul.md" in text
+            "example_external.md" in text
         )  # declared as exempt in the header, never routed
-        assert "`prompts/hermes_soul.md`" not in text
+        assert "`prompts/example_external.md`" not in text
         assert "`prompts/pending.md`" not in text
         assert "Adoptados: 4 de 5" in text
 

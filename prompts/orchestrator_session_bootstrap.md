@@ -38,11 +38,11 @@ relevante o con drift.
 python scripts/local_audit.py
 # luego lee .agent/runtime/audit/AUDIT.md
 
-# 2. INDICE de memoria. El hook `SessionStart` YA te lo inyecto al abrir la
-#    sesion: busca en tu contexto un bloque con lineas marcadas [truncated] y
-#    un pie que declara cuantas lecciones retiene. Si lo ves, NO ejecutes
-#    --bootstrap (duplicarias ~29 KB): salta al paso 3.
-#    Ejecutalo SOLO si tu backend no dispara hooks (Codex/OpenCode one-shot):
+# 2. INDICE de memoria. En Claude Code el hook `SessionStart` YA te lo
+#    inyecto: busca en tu contexto el bloque delimitado del indice (lineas
+#    `- <id>: <titular>` y un pie que cuenta las omitidas). Si lo ves, NO
+#    ejecutes --bootstrap (lo duplicarias): salta al paso 3.
+#    Si NO lo ves (backend sin hook: Codex, Kilo, OpenCode), ejecutalo:
 python scripts/memory_context.py --bootstrap
 #    --status NO carga memoria: solo verifica que el root resuelve. Opcional.
 python scripts/memory_context.py --status

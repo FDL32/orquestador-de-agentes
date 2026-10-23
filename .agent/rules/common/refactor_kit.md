@@ -1,5 +1,8 @@
 # Refactor Kit Portable
 
+> Referencia bajo demanda (WOT-2026-120a corrida 3): movida literal desde
+> `.claude/rules/04-refactor-kit.md`. Router: `.claude/rules/README.md`.
+
 ## Propósito
 Proveer un framework de refactorización automatizada en 5 fases que funciona en CUALQUIER proyecto Python, de forma portátil y sin dependencias externas (solo librería estándar).
 

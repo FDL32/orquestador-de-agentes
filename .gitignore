@@ -3,6 +3,9 @@
 .agent/config/hooks_config.local.json
 .agent/config/agents.local.json
 
+# Debris recurrente de bucles ensemble (WOT-2026-104n): un git add -A de un bucle lo reintroduce
+.loop_bundle_*.md
+
 # Caches y artefactos temporales
 .pytest_cache/
 .ruff_cache/

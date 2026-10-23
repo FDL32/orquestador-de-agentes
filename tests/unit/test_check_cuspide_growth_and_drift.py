@@ -161,18 +161,42 @@ def test_reduction_is_silent(repo: Path) -> None:
         assert "BLOCK" not in result.stderr
 
 
-def test_growth_over_ratio_warns_without_override(repo: Path) -> None:
-    """Caso 3 (G1 flip): growth sobre-ratio sin override -> WARN, exit 0."""
+def test_growth_over_ratio_blocks_without_override(repo: Path) -> None:
+    """Caso 3 (WOT-2026-116a): growth sobre-ratio, en deuda, sin override ->
+    BLOCK, exit 1 ("no crecer nunca, incluso en deuda"; antes era WARN)."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
     message = _message(repo, "grow")
 
     result = _run(repo, "commit-msg", str(message))
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
     assert "delta_bytes" in result.stderr
     assert "ratio_codex_post" in result.stderr
-    assert "WARN" in result.stderr
+    assert "BLOCK" in result.stderr
+    assert "en deuda" in result.stderr
+
+
+def test_growth_over_ratio_blocks_even_with_valid_override(repo: Path) -> None:
+    """Caso 3b (WOT-2026-116a): growth sobre-ratio CON override valido
+    (marcador + REASON no vacio) -> BLOCK, exit 1. "No crecer nunca, incluso
+    en deuda" es literal: el override nunca exceptua este escalon, ni
+    siquiera cuando esta sintacticamente bien formado."""
+    _seed(repo, "a" * 33000)
+    _write(repo, "AGENTS.md", "a" * 33001)
+    _git(repo, "add", "AGENTS.md")
+    text = (
+        "grow over cap\n\n"
+        "GATE-OVERRIDE: cuspide_growth\n"
+        "REASON: fixture override valido\n"
+        "AFFECTED: codex_bytes\n"
+    )
+    message = _message(repo, text)
+
+    result = _run(repo, "commit-msg", str(message))
+    assert result.returncode == 1, result.stderr
+    assert "BLOCK" in result.stderr
+    assert "en deuda" in result.stderr
 
 
 # ---------------------------------------------------------------- casos 4-6
@@ -237,17 +261,17 @@ def test_growth_within_caps_blocks(repo: Path) -> None:
         "grow\n\nGATE-OVERRIDE: cuspide_growth\nREASON:   \n",
     ],
 )
-def test_override_without_reason_over_ratio_warns(repo: Path, text: str) -> None:
-    """Caso 6 (G1 flip): over_ratio + marcador roto -> WARN (rc=0).
-    Over_ratio ya no usa override; es WARN sin consultar mensaje."""
+def test_override_without_reason_over_ratio_blocks(repo: Path, text: str) -> None:
+    """Caso 6 (WOT-2026-116a): over_ratio + marcador roto -> BLOCK (rc=1).
+    Over_ratio ya no usa override; bloquea sin consultar el mensaje."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
     message = _message(repo, text)
 
     result = _run(repo, "commit-msg", str(message))
-    assert result.returncode == 0, result.stderr
-    assert "WARN" in result.stderr
+    assert result.returncode == 1, result.stderr
+    assert "BLOCK" in result.stderr
 
 
 # ---------------------------------------------------------------- casos 7-10
@@ -263,8 +287,11 @@ def test_pre_commit_is_early_warning_never_blocks(repo: Path) -> None:
 
 
 def test_pre_commit_and_commit_msg_measure_the_same_index(repo: Path) -> None:
-    """Caso 8 (G1 flip): paridad de numeros entre pre-commit y commit-msg.
-    Ambos ahora WARN (rc=0) para over_ratio data."""
+    """Caso 8 (WOT-2026-116a): paridad de numeros entre pre-commit y commit-msg.
+    pre-commit sigue sin bloquear (early warning); commit-msg ahora BLOQUEA
+    tambien el over_ratio data (escalon "no crecer nunca, incluso en deuda").
+    Las metricas numericas deben coincidir en ambas fases con independencia
+    de quien bloquea."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
@@ -273,7 +300,7 @@ def test_pre_commit_and_commit_msg_measure_the_same_index(repo: Path) -> None:
     pre = _run(repo, "pre-commit")
     commit_msg = _run(repo, "commit-msg", str(message))
     assert pre.returncode == 0, pre.stderr
-    assert commit_msg.returncode == 0, commit_msg.stderr
+    assert commit_msg.returncode == 1, commit_msg.stderr
     assert _extract_numbers(pre.stderr) == _extract_numbers(commit_msg.stderr)
     assert _extract_numbers(pre.stderr), "la fase no imprimio metricas"
 
@@ -324,7 +351,9 @@ def test_first_commit_without_parent_is_fail_safe(tmp_path: Path) -> None:
 
 
 def test_override_inside_a_comment_is_ignored(repo: Path) -> None:
-    """Caso 12 (G1 flip): override comentado ignorado; over_ratio -> WARN."""
+    """Caso 12 (WOT-2026-116a): override comentado ignorado; over_ratio ->
+    BLOCK igual que sin override (commit-msg no consulta el mensaje para
+    decidir en ninguno de los dos escalones; antes del ticket era WARN)."""
     _seed(repo, "a" * 33000)
     _write(repo, "AGENTS.md", "a" * 33001)
     _git(repo, "add", "AGENTS.md")
@@ -334,9 +363,9 @@ def test_override_inside_a_comment_is_ignored(repo: Path) -> None:
     )
 
     result = _run(repo, "commit-msg", str(message))
-    assert result.returncode == 0, result.stderr
-    assert "WARN" in result.stderr
-    assert "override" not in result.stderr.lower()
+    assert result.returncode == 1, result.stderr
+    assert "BLOCK" in result.stderr
+    assert "en deuda" in result.stderr
 
 
 # ---------------------------------------------------------------- caso 13
@@ -376,8 +405,8 @@ def test_drift_both_sides_is_silent(repo: Path) -> None:
 
 
 # ---------------------------------------------------------------- casos 14-15
-def test_import_outside_historical_regex_warns(tmp_path: Path) -> None:
-    """Caso 14 (G1 flip): import over-cap -> WARN, no BLOCK."""
+def test_import_outside_historical_regex_blocks(tmp_path: Path) -> None:
+    """Caso 14 (WOT-2026-116a): import over-cap -> BLOCK (antes era WARN)."""
     _init_repo(tmp_path)
     _write(tmp_path, "CLAUDE.md", "@docs/protocol/x.md\n")
     _write(tmp_path, "docs/protocol/x.md", "y" * 40050)
@@ -388,9 +417,81 @@ def test_import_outside_historical_regex_warns(tmp_path: Path) -> None:
     message = _message(tmp_path, "grow imported file")
 
     result = _run(tmp_path, "commit-msg", str(message))
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
     assert "delta_chars=+1" in result.stderr
     assert "ratio_cc_post=" in result.stderr
+    assert "BLOCK" in result.stderr
+
+
+# ------------------------------------------------- WOT-2026-116a (merge-base)
+def test_post_commit_measures_against_merge_base_not_immediate_parent(
+    repo: Path,
+) -> None:
+    """post-commit debe comparar contra el merge-base real con `origin/main`,
+    no contra HEAD^: tras un rebase o varios commits locales, HEAD^ puede no
+    ser el punto de divergencia, y comparar solo contra el padre inmediato
+    deja fuera el growth repartido entre commits intermedios."""
+    _seed(repo, "a" * 100)
+    # Fija origin/main en la baseline (simula el punto de divergencia real).
+    base_sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "update-ref", "refs/remotes/origin/main", base_sha)
+
+    # Commit intermedio: crece 5 bytes (simula "varios commits locales" tras
+    # el fork de origin/main, o el resultado visible de un rebase).
+    _write(repo, "AGENTS.md", "a" * 105)
+    _git(repo, "add", "AGENTS.md")
+    _commit_all(repo, "intermediate grow")
+
+    # Commit final con override: crece otros 5 bytes. HEAD^ es el commit
+    # intermedio (delta=5), pero el merge-base real con origin/main es la
+    # baseline (delta acumulado=10).
+    _write(repo, "AGENTS.md", "a" * 110)
+    _git(repo, "add", "AGENTS.md")
+    text = "final grow\n\nGATE-OVERRIDE: cuspide_growth\nREASON: fixture merge-base\n"
+    message = _message(repo, text)
+    assert _git(repo, "commit", "-q", "-F", str(message)).returncode == 0
+    sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    parent_sha = _git(repo, "rev-parse", "HEAD^").stdout.strip()
+    assert parent_sha != base_sha, "el padre inmediato no debe ser la baseline"
+
+    post = _run(repo, "post-commit")
+    assert post.returncode == 0, post.stderr
+
+    audit = repo / ".agent/runtime/cuspide_growth_overrides.jsonl"
+    lines = audit.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["commit"] == sha
+    assert entry["pre_ref"] == base_sha, (
+        "post-commit debio usar el merge-base real, no HEAD^"
+    )
+    assert entry["delta_bytes"] == 10, (
+        "delta acumulado desde el merge-base (100->110), no desde HEAD^ (105->110=5)"
+    )
+    assert entry["delta_chars"] == 10
+
+
+def test_post_commit_falls_back_to_parent_without_origin_main(repo: Path) -> None:
+    """Sin `origin/main` resoluble (remoto ausente, fixture hermetico), post-
+    commit degrada a HEAD^ -- mismo comportamiento que antes de WOT-2026-116a."""
+    _seed(repo, "a" * 100)
+    _write(repo, "AGENTS.md", "a" * 110)
+    _git(repo, "add", "AGENTS.md")
+    text = (
+        "grow without origin/main\n\n"
+        "GATE-OVERRIDE: cuspide_growth\n"
+        "REASON: fixture fallback\n"
+    )
+    message = _message(repo, text)
+    assert _git(repo, "commit", "-q", "-F", str(message)).returncode == 0
+
+    post = _run(repo, "post-commit")
+    assert post.returncode == 0, post.stderr
+
+    audit = repo / ".agent/runtime/cuspide_growth_overrides.jsonl"
+    entry = json.loads(audit.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["pre_ref"] == "HEAD^"
+    assert entry["delta_bytes"] == 10
 
 
 def test_guard_is_wired_by_config_and_classifier() -> None:

@@ -68,6 +68,15 @@ def _run(payload: dict, cwd: Path) -> subprocess.CompletedProcess:
 RAYA = "\u2014"
 
 
+def _ctx(payload: dict) -> str:
+    """`additionalContext` segun el esquema DOCUMENTADO de SessionStart.
+
+    Diseno v6 (2026-10-23): Claude Code solo lee
+    `hookSpecificOutput.additionalContext`; el campo en la raiz se descartaba.
+    """
+    return payload.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+
 def _settings_hook_code(event: str) -> str:
     """Codigo del comando REAL de `settings.json` para un evento de hook.
 
@@ -176,7 +185,7 @@ def test_hook_emits_memory_context(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
     payload = json.loads(result.stdout.decode("utf-8", "replace"))
-    ctx = payload.get("additionalContext", "")
+    ctx = _ctx(payload)
     assert "Portable Memory" in ctx or "memory_context.py" in ctx, (
         "el hook no inyecta memoria: su unica razon de ser"
     )
@@ -216,7 +225,7 @@ def test_hook_fails_open_on_broken_memory(tmp_path: Path) -> None:
     # texto solo se emite por la ruta degradada de `main()`, no por el catch
     # final, que devuelve contexto vacio.
     payload = json.loads(result.stdout.decode("utf-8", "replace"))
-    assert "--recall" in payload.get("additionalContext", ""), (
+    assert "--recall" in _ctx(payload), (
         "el hook degrado hasta perder la instruccion de expansion: un arranque "
         "sin memoria DEBE seguir diciendo como recuperarla"
     )
@@ -258,9 +267,7 @@ def test_hook_anchors_memory_at_the_root_it_runs_in(tmp_path: Path) -> None:
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0
-    ctx = json.loads(result.stdout.decode("utf-8", "replace")).get(
-        "additionalContext", ""
-    )
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "CANARIO-LOCAL-DEL-DESTINO" in ctx, (
         "el hook no vio el archive del root donde corre: resolvio a otra raiz y "
         "perdio las lecciones locales"
@@ -381,9 +388,7 @@ def test_hook_from_the_motor_also_loads_its_dogfooding_workspace(
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, motor)
 
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:300]
-    ctx = json.loads(result.stdout.decode("utf-8", "replace")).get(
-        "additionalContext", ""
-    )
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "CANARIO-DEL-MOTOR" in ctx, "el hook perdio la memoria del propio motor"
     assert "CANARIO-DEL-WORKSPACE" in ctx, (
         "abriendo en el MOTOR se pierde la memoria del workspace de dogfooding: "
@@ -465,7 +470,7 @@ def test_089e_hook_shows_the_memory_health_of_both_roots(tmp_path: Path) -> None
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "Salud de la memoria:" in ctx
     assert "motor: L1" in ctx
     assert "destino: L1 600 entradas (ruido 600)" in ctx
@@ -491,7 +496,7 @@ def test_089e_the_health_line_is_fail_open(tmp_path: Path) -> None:
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "--recall" in ctx
     assert "Salud de la memoria" not in ctx
 
@@ -504,7 +509,7 @@ def _destino_health_part(destino: Path) -> str:
     """
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     line = next(ln for ln in ctx.splitlines() if ln.startswith("Salud de la memoria:"))
     return next(p for p in line.split("; ") if "destino:" in p)
 
@@ -608,7 +613,7 @@ def test_098b_injects_role_mapping_after_memory(tmp_path: Path) -> None:
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "Roles del sistema" in ctx
     assert "revisor: backend=nan_api, modelo=nan/glm5.3-flash" in ctx
     assert "builder: backend=opencode" in ctx
@@ -627,7 +632,7 @@ def test_098b_omits_section_when_agents_json_absent(tmp_path: Path) -> None:
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "--recall" in ctx
     assert "Roles del sistema" not in ctx
 
@@ -639,7 +644,7 @@ def test_098b_omits_section_when_agents_json_corrupt(tmp_path: Path) -> None:
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "--recall" in ctx
     assert "Roles del sistema" not in ctx
 
@@ -653,7 +658,7 @@ def test_098b_omits_section_when_role_mapping_missing(tmp_path: Path) -> None:
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "--recall" in ctx
     assert "Roles del sistema" not in ctx
 
@@ -685,7 +690,7 @@ def test_m4_m5_section_present_after_memory_with_live_content(
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "lectura en vivo de prompts/orchestrator_launch_builder.md" in ctx
     assert "M4. Validador o CONTRATO citado" in ctx
     assert "M5. Exit code REAL" in ctx
@@ -713,7 +718,7 @@ def test_m4_m5_section_falls_back_when_source_prompt_absent(
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "--recall" in ctx
     assert "Contratos de invocacion (M4/M5)" in ctx
     assert "lectura en vivo" not in ctx
@@ -731,7 +736,7 @@ def test_m4_m5_section_always_present_even_when_roles_omitted(
     result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, destino)
 
     assert result.returncode == 0
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert "Roles del sistema" not in ctx
     assert "M4. Validador o CONTRATO citado" in ctx
 
@@ -863,7 +868,7 @@ def test_hook_survives_unencodable_memory_entry_end_to_end(
     )
 
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
-    ctx = json.loads(result.stdout.decode("utf-8", "replace"))["additionalContext"]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
     assert ctx != "", (
         "BUG ORIGINAL: el contexto se vacio por completo por un solo "
         "caracter no codificable -- perdida total de memoria/M4/M5"
@@ -908,7 +913,7 @@ def test_real_session_start_command_emits_ascii_with_cp1252_forced(
         f"la codepage del pipe; sospechosos={[b for b in raw if b >= 0x80][:5]}"
     )
     text = raw.decode("utf-8")  # estricto: cualquier 0x97 revienta aqui
-    ctx = json.loads(text)["additionalContext"]
+    ctx = _ctx(json.loads(text))
     assert "em-dash-wot-110a" in ctx, "la leccion con U+2014 no llego al contexto"
     assert RAYA in ctx, (
         "json.loads debe recuperar el caracter ORIGINAL (U+2014), no un "
@@ -916,15 +921,16 @@ def test_real_session_start_command_emits_ascii_with_cp1252_forced(
     )
 
 
-# WOT-2026-100a ------------------------------------------------------------
-# El hook deja de ignorar el campo `source` del payload: `resume`/`compact`/
-# `fork` (sesion que CONTINUA, con historial ya presente) pasan a recibir el
-# contexto acotado por recencia (`get_compact_context`), mientras que
-# `startup`/`clear` y todo lo ilegible/desconocido conservan el indice completo
-# (`get_bootstrap_context`). Fail-open: la deteccion de `source` NUNCA puede
-# dejar a una sesion sin memoria.
+# WOT-2026-100a + diseno v6 (2026-10-23) -----------------------------------
+# WOT-2026-100a hizo que `source` eligiera puerta (`get_bootstrap_context` para
+# startup, `get_compact_context` para resume/compact/fork). Medido 2026-10-23:
+# ambas puertas pasaban del tope de 10.000 chars de `additionalContext` de
+# Claude Code (33.6k y 29.1k), asi que ninguna llegaba entera. Diseno v6: TODAS
+# las fuentes usan el MISMO indice acotado (`get_session_index(budget)`), y el
+# esquema de salida es el documentado (`hookSpecificOutput`). Fail-open intacto:
+# la deteccion de `source` NUNCA puede dejar a una sesion sin memoria.
 
-_BOOTSTRAP_CASES = [
+_ALL_SOURCE_CASES = [
     b"",  # stdin vacio
     b"{}",  # payload sin `source`
     b"not-json",  # payload no-JSON
@@ -934,130 +940,144 @@ _BOOTSTRAP_CASES = [
     b'{"source":"unknown"}',  # valor desconocido
     b'{"source":123}',  # `source` no-string
     b"[1, 2, 3]",  # JSON valido pero no-dict
-]
-_COMPACT_CASES = [
     b'{"source":"resume"}',
     b'{"source":"compact"}',
     b'{"source":"fork"}',
 ]
 
 
+def _quiet_sections(monkeypatch, hook) -> None:
+    """Silencia salud/roles para aislar la memoria (sin subprocesos)."""
+    monkeypatch.setattr(hook, "_health_line", lambda root: "")
+    monkeypatch.setattr(hook, "_role_section", lambda root: "")
+
+
 class TestSourceRouting:
-    """DoD (2): el `source` del payload decide QUE puerta de memoria se abre."""
+    """Toda fuente abre el MISMO indice acotado, con el esquema documentado."""
 
-    @pytest.mark.parametrize("payload", _BOOTSTRAP_CASES)
-    def test_bootstrap_sources_open_the_full_index(
+    @pytest.mark.parametrize("payload", _ALL_SOURCE_CASES)
+    def test_every_source_opens_the_bounded_index(
         self, payload, monkeypatch, tmp_path, capsys
     ):
         hook = _hook_module()
         import bus.memory_loader as ml
 
-        calls: list[str] = []
+        budgets: list[int] = []
         monkeypatch.setattr(
             ml,
-            "get_bootstrap_context",
-            lambda: (calls.append("bootstrap"), "BOOTSTRAP-CTX")[1],
+            "get_session_index",
+            lambda budget=0: (budgets.append(budget), "SESSION-IDX")[1],
         )
-        monkeypatch.setattr(
-            ml,
-            "get_compact_context",
-            lambda: (calls.append("compact"), "COMPACT-CTX")[1],
-        )
-        monkeypatch.setattr(hook, "_health_line", lambda root: "")
+        _quiet_sections(monkeypatch, hook)
         _set_stdin_bytes(monkeypatch, payload)
         monkeypatch.chdir(tmp_path)
 
         assert hook.main() == 0
         out = json.loads(capsys.readouterr().out)
 
-        assert calls == ["bootstrap"], (
-            f"{payload!r}: debe abrir el indice completo (fail-open para "
-            "payload ausente/ilegible/desconocido), no la puerta acotada"
+        assert len(budgets) == 1, f"{payload!r}: una sola lectura de memoria"
+        assert 0 < budgets[0] <= ml.INDEX_BUDGET_CHARS
+        assert "SESSION-IDX" in _ctx(out)
+        assert set(out.keys()) == {"hookSpecificOutput"}, (
+            "sin fallo, el esquema es EXACTAMENTE hookSpecificOutput (sin "
+            "systemMessage ni additionalContext en la raiz)"
         )
-        assert "BOOTSTRAP-CTX" in out["additionalContext"]
-        assert set(out.keys()) == {"additionalContext"}, (
-            "el esquema de salida debe seguir siendo EXACTAMENTE "
-            '{"additionalContext": ...}'
-        )
+        assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
 
-    @pytest.mark.parametrize("payload", _COMPACT_CASES)
-    def test_continuing_sources_open_the_compact_context(
-        self, payload, monkeypatch, tmp_path, capsys
-    ):
-        hook = _hook_module()
-        import bus.memory_loader as ml
-
-        calls: list[str] = []
-        monkeypatch.setattr(
-            ml,
-            "get_bootstrap_context",
-            lambda: (calls.append("bootstrap"), "BOOTSTRAP-CTX")[1],
-        )
-        monkeypatch.setattr(
-            ml,
-            "get_compact_context",
-            lambda: (calls.append("compact"), "COMPACT-CTX")[1],
-        )
-        monkeypatch.setattr(hook, "_health_line", lambda root: "")
-        _set_stdin_bytes(monkeypatch, payload)
-        monkeypatch.chdir(tmp_path)
-
-        assert hook.main() == 0
-        out = json.loads(capsys.readouterr().out)
-
-        assert calls == ["compact"], (
-            f"{payload!r}: una sesion que CONTINUA hereda historial, asi que "
-            "debe recibir el contexto acotado, no el indice completo reinyectado"
-        )
-        assert "COMPACT-CTX" in out["additionalContext"]
-        assert set(out.keys()) == {"additionalContext"}
-
-    def test_compact_failure_falls_back_to_full_index(
+    def test_root_level_additional_context_is_never_emitted(
         self, monkeypatch, tmp_path, capsys
     ):
-        """DoD (3, fail-open): si la puerta acotada LANZA, se degrada al indice.
+        """P0 (diseno v6): la forma vieja `{"additionalContext": ...}` en la raiz
+        la DESCARTA Claude Code -- 577 ejecuciones del hook sin un solo
+        `hook_additional_context`. Caso negativo del contrato del esquema.
 
-        MUTACION ALCANZABLE: quitar el `except` interno que degrada -> este test
-        cae con excepcion en vez de devolver contexto.
+        MUTACION ALCANZABLE: volver a `json.dumps({"additionalContext": ctx})`
+        -> este test cae.
         """
         hook = _hook_module()
         import bus.memory_loader as ml
 
-        monkeypatch.setattr(ml, "get_bootstrap_context", lambda: "BOOTSTRAP-CTX")
-        monkeypatch.setattr(
-            ml,
-            "get_compact_context",
-            lambda: (_ for _ in ()).throw(RuntimeError("loader roto")),
-        )
-        monkeypatch.setattr(hook, "_health_line", lambda root: "")
-        _set_stdin_bytes(monkeypatch, b'{"source":"resume"}')
+        monkeypatch.setattr(ml, "get_session_index", lambda budget=0: "IDX")
+        _quiet_sections(monkeypatch, hook)
+        _set_stdin_bytes(monkeypatch, b'{"source":"startup"}')
         monkeypatch.chdir(tmp_path)
 
         assert hook.main() == 0
         out = json.loads(capsys.readouterr().out)
-        assert "BOOTSTRAP-CTX" in out["additionalContext"], (
-            "la deteccion de `source` no puede dejar la sesion sin memoria"
-        )
+        assert "additionalContext" not in out
+        assert isinstance(out["hookSpecificOutput"]["additionalContext"], str)
+
+    def test_loader_failure_is_reported_and_distinct_from_empty(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """Ronda 4 #59: fallo de carga != corpus vacio. El fallo lleva el
+        imperativo agnostico y un `systemMessage`; el vacio no alarma.
+
+        MUTACION ALCANZABLE: devolver "" en vez de None desde `_load_context`
+        ante una excepcion -> el fallo se confunde con vacio y el test cae.
+        """
+        hook = _hook_module()
+        import bus.memory_loader as ml
+
+        def _boom(budget=0):
+            raise RuntimeError("loader roto")
+
+        monkeypatch.setattr(ml, "get_session_index", _boom)
+        _quiet_sections(monkeypatch, hook)
+        _set_stdin_bytes(monkeypatch, b'{"source":"resume"}')
+        monkeypatch.chdir(tmp_path)
+        assert hook.main() == 0
+        failed = json.loads(capsys.readouterr().out)
+        assert "NO se pudo cargar" in _ctx(failed)
+        assert "memory_context.py --bootstrap" in _ctx(failed)
+        assert "--bootstrap" in failed.get("systemMessage", "")
+
+        monkeypatch.setattr(ml, "get_session_index", lambda budget=0: "")
+        _set_stdin_bytes(monkeypatch, b'{"source":"startup"}')
+        assert hook.main() == 0
+        empty = json.loads(capsys.readouterr().out)
+        assert "corpus esta vacio" in _ctx(empty)
+        assert "NO se pudo cargar" not in _ctx(empty)
+        assert "systemMessage" not in empty
+
+    def test_total_payload_respects_the_session_cap(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """El payload final nunca pasa `SESSION_CONTEXT_MAX_CHARS`, aunque las
+        secciones fijas y el indice vengan sobredimensionados (recorte duro, sin
+        excepcion).
+
+        MUTACION ALCANZABLE: quitar el recorte final de
+        `assemble_session_context` -> este test cae.
+        """
+        hook = _hook_module()
+        import bus.memory_loader as ml
+
+        monkeypatch.setattr(ml, "get_session_index", lambda budget=0: "X" * 50_000)
+        monkeypatch.setattr(hook, "_health_line", lambda root: "H" * 5_000)
+        monkeypatch.setattr(hook, "_role_section", lambda root: "R" * 5_000)
+        _set_stdin_bytes(monkeypatch, b'{"source":"startup"}')
+        monkeypatch.chdir(tmp_path)
+
+        assert hook.main() == 0
+        ctx = _ctx(json.loads(capsys.readouterr().out))
+        assert len(ctx) <= ml.SESSION_CONTEXT_MAX_CHARS
+        assert "Memoria: cuando expandir" in ctx, "la pista va primero y sobrevive"
 
     def test_fail_open_when_the_payload_cannot_be_parsed(
         self, monkeypatch, tmp_path, capsys
     ):
-        """DoD (3, MUTATION): `json.loads` lanza al parsear `source`.
+        """`json.loads` lanza al parsear `source`: `main()` sigue entregando el
+        indice, sin propagar y con exit 0.
 
-        `main()` debe seguir entregando `additionalContext` no vacio via
-        `get_bootstrap_context()`, sin propagar y con exit 0. Hoy NO existe el
-        guard de fail-open, asi que este test falla ANTES de implementarlo y pasa
-        DESPUES.
-
-        MUTACION ALCANZABLE: revertir el guard (dejar que `json.loads` propague
-        desde `_read_source`) -> la excepcion sale de `main()` y el test cae.
+        MUTACION ALCANZABLE: dejar que `json.loads` propague desde
+        `_read_source` -> la excepcion sale de `main()` y el test cae.
         """
         hook = _hook_module()
         import bus.memory_loader as ml
 
-        monkeypatch.setattr(ml, "get_bootstrap_context", lambda: "BOOTSTRAP-CTX")
-        monkeypatch.setattr(ml, "get_compact_context", lambda: "COMPACT-CTX")
-        monkeypatch.setattr(hook, "_health_line", lambda root: "")
+        monkeypatch.setattr(ml, "get_session_index", lambda budget=0: "SESSION-IDX")
+        _quiet_sections(monkeypatch, hook)
         _set_stdin_bytes(monkeypatch, b'{"source":"resume"}')
 
         class _FakeJson:
@@ -1072,5 +1092,4 @@ class TestSourceRouting:
 
         assert hook.main() == 0
         out = json.loads(capsys.readouterr().out)
-        assert out["additionalContext"], "el contexto no puede quedar vacio"
-        assert "BOOTSTRAP-CTX" in out["additionalContext"]
+        assert "SESSION-IDX" in _ctx(out)

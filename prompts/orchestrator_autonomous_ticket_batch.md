@@ -93,9 +93,9 @@ python <MOTOR_ROOT>/scripts/memory_context.py --recall --query "<domain of this 
 ```
 
 Query by the SURFACE the flight touches (`backlog`, `suite`, `guard`, `bus`,
-`encoding`, `memoria`), not by ticket id. Lines that arrive marked
-`...[truncated]` are INDEX entries: expand the ones that matter by their id with
-`--recall --id obs-<slug>`.
+`encoding`, `memoria`), not by ticket id. Each memory index line
+(`- <id>: <headline>`) is an INDEX entry: expand the ones that matter by their id
+with `--recall --id obs-<slug>`.
 
 Do this once per GROUP too, not only at flight start: each group touches a
 different surface, and the lesson that saves you is the one about the surface
@@ -854,8 +854,9 @@ batch starts", applied to publication.
   in `batch_run_<ts>.json`, and reports it. Silence is not consent, and the
   question is NOT asked mid-flight.
 - **One grouped push, at the very end.** If the remote advanced while the
-  flight ran, the Gate 2 criteria of `AGENTS.md` apply; Gate 1 (suite green on
-  the exact published commit) is not re-opened.
+  flight ran, the Gate 2 criteria apply (`AGENTS.md` keeps the default-deny
+  summary; full checklist in `.agent/rules/common/flight_push_policy.md`);
+  Gate 1 (suite green on the exact published commit) is not re-opened.
 - **This is a NORM, not a wired barrier.** Nothing in this repo mechanically
   prevents a per-ticket `git push` today; no test pins this section. It is
   declared as a norm so it is not mistaken for an enforced mechanism

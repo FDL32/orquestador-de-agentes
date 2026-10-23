@@ -53,20 +53,21 @@ corresponde -- dentro del script--, y el arranque nunca se bloquea por memoria
 ilegible.
 
 Before: recibe el payload JSON de SessionStart por stdin (puede ir vacio).
-During: resuelve el project root; lee el campo `source` del payload y elige la
-    puerta de memoria (WOT-2026-100a): `startup`/`clear` -> indice completo
-    (`get_bootstrap_context`), `resume`/`compact`/`fork` -> contexto acotado por
-    recencia (`get_compact_context`); cualquier otro valor, campo ausente,
-    payload ilegible o excepcion en la deteccion -> indice completo (fail-open).
-    Envuelve el contenido; anade una linea de salud de la memoria (WOT-2026-089e, por
+During: resuelve el project root; lee el campo `source` del payload (ya no
+    elige puerta: diseno v6 usa el MISMO indice acotado, `get_session_index`,
+    para todas las fuentes) y ensambla con `assemble_session_context`, que
+    respeta `SESSION_CONTEXT_MAX_CHARS` (9.000, bajo el tope de 10k de Claude
+    Code). Antepone la pista de momentos de expansion; anade una linea de salud de la memoria (WOT-2026-089e, por
     subproceso de `check_memory_health.py`), DESPUES de la memoria un bloque
     con el backend/modelo de cada rol de capa resuelto desde `agents.json`
     (WOT-2026-098b), y SIEMPRE AL FINAL la seccion M4/M5 (2026-10-15):
     contratos de invocacion leidos EN VIVO desde
     `prompts/orchestrator_launch_builder.md`. Solo lectura; ninguna escritura.
-After: imprime `{"additionalContext": ...}` por stdout (esquema IDENTICO al de
-    siempre; solo cambia el contenido segun la fuente) y sale con 0 SIEMPRE.
-    Ante cualquier error emite un contexto minimo que apunta al comando manual.
+After: imprime `{"hookSpecificOutput": {"hookEventName": "SessionStart",
+    "additionalContext": ...}}` por stdout (esquema documentado de Claude Code;
+    el `additionalContext` en la raiz que se emitio hasta 2026-10-23 nunca llego
+    al modelo) y sale con 0 SIEMPRE. Ante cualquier error emite el imperativo de
+    carga manual, y un `systemMessage` para el usuario si la memoria fallo.
     La seccion de roles hereda el mismo fail-open: si `agents.json` falta, esta
     corrupto o no declara `role_mapping`, se OMITE (cadena vacia) sin degradar la
     memoria ya inyectada ni bloquear el arranque. La seccion M4/M5 es distinta:
@@ -84,24 +85,63 @@ from pathlib import Path
 
 
 # Instruccion que viaja SIEMPRE, incluso si la memoria no carga: el indice son
-# titulares y la regla accionable suele vivir despues del corte, asi que el
-# agente necesita saber que existe una puerta de expansion y como cruzarla.
+# titulares y la regla accionable vive en la leccion entera, asi que el agente
+# necesita saber CUANDO cruzar la puerta de expansion, no solo que existe
+# (diseno v6: momentos nombrados).
 _EXPANSION_HINT = (
-    "\n\n---\n"
-    "Las lineas marcadas `...[truncated]` son INDICE, no la leccion entera.\n"
-    "Expandelas ANTES de medir o disenar nada:\n"
-    '  python scripts/memory_context.py --recall --query "<termino de tu tarea>"\n'
-    "  python scripts/memory_context.py --recall --id obs-<id-de-la-linea>\n"
+    "**Memoria: cuando expandir** (el indice de abajo son titulares, no "
+    "lecciones):\n"
+    '- al empezar una tarea: python scripts/memory_context.py --recall --query "<dominio de la tarea>"\n'
+    "- antes de medir, disenar o proponer una barrera: --recall --query sobre ese tema\n"
+    '- antes de commit, suite, push o cierre: --recall --query "<cierre|suite|push>"\n'
+    "- al ver un id relevante en el indice: --recall --id <id>\n"
 )
 
+# Mensaje de FALLO de carga: distinto del de corpus vacio (ronda 4 #59). Lleva
+# el mismo imperativo agnostico que AGENTS.md: si la memoria no entro, cargala.
+_LOAD_FAILED = (
+    "**Memoria del proyecto**: NO se pudo cargar el indice en este arranque. "
+    "Ejecuta `python scripts/memory_context.py --bootstrap` antes de trabajar "
+    '(y `--recall --query "<termino>"` para expandir).'
+)
+_LOAD_EMPTY = (
+    "**Memoria del proyecto**: el corpus esta vacio (aun no hay lecciones). "
+    'Cuando las haya, se expanden con `--recall --query "<termino>"`.'
+)
 
-# WOT-2026-100a: fuentes de SessionStart que CONTINUAN una sesion ya existente
-# (heredan su historial, o acaban de perderlo por compactacion). Para ellas el
-# indice completo de arranque es reinyeccion redundante, asi que se usa el
-# contexto acotado por recencia (`get_compact_context`, cuota por origen).
-# `startup`/`clear` -- y, por fail-open, cualquier valor ausente o desconocido --
-# conservan el indice completo historico (`get_bootstrap_context`).
-_COMPACT_SOURCES = frozenset({"resume", "compact", "fork"})
+_LOAD_NO_BUDGET = (
+    "**Memoria del proyecto**: indice no emitido por presupuesto de arranque "
+    "(no se consulto el corpus). Enumeralo con `python scripts/memory_context.py "
+    '--full` y expande con `--recall --query "<termino>"`.'
+)
+
+_DEFAULT_CLI = "python scripts/memory_context.py"
+
+
+def _memory_cli(root: Path, motor: Path) -> str:
+    """Comando del CLI de memoria ejecutable desde ``root``.
+
+    Relativo si ``root`` tiene el script (el motor o un checkout suyo); si no
+    (destino instalado: el instalador no copia `scripts/`), con la ruta del
+    motor. Ronda 6 (kilo): el relativo fallaba en todo destino instalado.
+    """
+    if (root / "scripts" / "memory_context.py").is_file():
+        return _DEFAULT_CLI
+    return f"python {motor.as_posix()}/scripts/memory_context.py"
+
+
+def _with_cli(text: str, cli: str) -> str:
+    return text.replace(_DEFAULT_CLI, cli) if cli != _DEFAULT_CLI else text
+
+
+#: Por debajo de esto el indice no cabe con cabecera y pie utiles: se declara
+#: omitido en vez de emitir un bloque recortado o confundirlo con "vacio".
+_MIN_INDEX_BUDGET = 1500
+
+# Topes por seccion (chars). El total lo fija `SESSION_CONTEXT_MAX_CHARS` del
+# loader; el indice recibe lo que queda tras las partes fijas.
+_HEALTH_CAP = 400
+_M4_M5_CAP = 3600
 
 
 def _resolve_root() -> Path:
@@ -190,7 +230,10 @@ def _motor_root(root: Path) -> Path:
     motor = Path(__file__).resolve().parents[2]
     link = root / ".agent" / "config" / "motor_destination_link.json"
     if link.exists():
-        data = json.loads(link.read_text(encoding="utf-8"))
+        # `utf-8-sig`: un link escrito por PowerShell 5.1 lleva BOM, y con
+        # `utf-8` estricto `json.loads` lanza -> el hook entregaba CERO memoria
+        # en ese destino (medido 2026-10-23, FDL32-t3-dev-hub, ronda 5).
+        data = json.loads(link.read_text(encoding="utf-8-sig"))
         candidate = data.get("motor_root")
         if isinstance(candidate, str) and Path(candidate).is_dir():
             motor = Path(candidate)
@@ -251,10 +294,15 @@ def _health_line(root: Path) -> str:
             for warning in measure.get("warnings", []):
                 part += f" - AVISO: {warning}"
             parts.append(part)
-        line = "Salud de la memoria: " + "; ".join(parts) + "."
-        if fired_any:
-            line += " Aplica prompts/memory_optimization.md."
-        return line
+        # La accion (que prompt aplicar) es lo unico accionable de la linea:
+        # el tope `_HEALTH_CAP` recorta la medicion, nunca la accion.
+        action = " Aplica prompts/memory_optimization.md." if fired_any else ""
+        body = _cap(
+            "Salud de la memoria: " + "; ".join(parts) + ".",
+            _HEALTH_CAP - len(action),
+            "Salud",
+        )
+        return body + action
     except Exception:
         return ""
 
@@ -433,21 +481,24 @@ def _read_source() -> str:
         return ""
 
 
-def _load_context(root: Path, source: str = "") -> str:
-    """Memoria segun la fuente de SessionStart, o cadena vacia si no se puede cargar.
+def _load_context(
+    root: Path, source: str = "", budget: int | None = None
+) -> str | None:
+    """Indice ACOTADO de memoria; ``""`` si el corpus esta vacio, ``None`` si fallo.
 
-    WOT-2026-100a: `source` decide la puerta. `resume`/`compact`/`fork` usan
-    `get_compact_context()` (acotado por recencia, cuota por origen); cualquier
-    otra fuente -- `startup`, `clear`, valor desconocido o ausente -- usa
-    `get_bootstrap_context()`, el comportamiento historico.
+    Diseno v6 (2026-10-23): TODAS las fuentes (`startup`, `clear`, `resume`,
+    `compact`, `fork`, desconocida) usan `get_session_index(budget)`. Antes
+    `startup` inyectaba ~33.6k chars y `resume`/`compact` ~29.1k, ambos por
+    encima del tope de 10k de `additionalContext` de Claude Code. `source` se
+    conserva en la firma por trazabilidad (WOT-2026-100a), ya no elige puerta.
 
     Nunca propaga: este hook es fail-open por contrato (ver docstring del
-    modulo). La deteccion de `source` jamas puede ser la razon de arrancar sin
-    memoria: si la puerta acotada lanza, se degrada al indice completo. Un
-    `except Exception` amplio es lo correcto AQUI y solo aqui -- cualquier fallo
-    de importacion, de topologia o de parseo debe degradar a "sin memoria", jamas
+    modulo). Un `except Exception` amplio es lo correcto AQUI y solo aqui --
+    cualquier fallo de importacion, de topologia o de parseo debe degradar a
+    "sin memoria" (``None``, que el llamante distingue de corpus vacio), jamas
     impedir que la sesion abra.
     """
+    del source  # ya no decide la puerta; ver docstring
     try:
         import os
 
@@ -470,31 +521,160 @@ def _load_context(root: Path, source: str = "") -> str:
         # programa el motor recibe las dos memorias. Sin esta rama, abrir en el
         # motor daba 207 en vez de 342 (ver `_dogfooding_workspace`).
         anchor = _dogfooding_workspace(root) or root
+        # El anclaje vive SOLO durante la lectura y se restaura (ronda 5,
+        # codex): ahora el ensamblador tambien se llama in-process desde el
+        # CLI, y una variable global puesta y no restaurada es un state-leak.
+        previous = os.environ.get("AGENT_PROJECT_ROOT")
         os.environ["AGENT_PROJECT_ROOT"] = str(anchor)
+        try:
+            if str(motor) not in sys.path:
+                sys.path.insert(0, str(motor))
 
-        if str(motor) not in sys.path:
-            sys.path.insert(0, str(motor))
+            from bus.memory_loader import INDEX_BUDGET_CHARS, get_session_index
 
-        if source in _COMPACT_SOURCES:
-            try:
-                from bus.memory_loader import get_compact_context
-
-                return get_compact_context() or ""
-            except Exception:
-                # Fail-open: la puerta acotada fallo -> indice completo historico,
-                # nunca "sin memoria" por culpa de la logica de `source`.
-                from bus.memory_loader import get_bootstrap_context
-
-                return get_bootstrap_context() or ""
-
-        from bus.memory_loader import get_bootstrap_context
-
-        return get_bootstrap_context() or ""
+            return get_session_index(INDEX_BUDGET_CHARS if budget is None else budget)
+        finally:
+            if previous is None:
+                os.environ.pop("AGENT_PROJECT_ROOT", None)
+            else:
+                os.environ["AGENT_PROJECT_ROOT"] = previous
     except Exception:
-        return ""
+        return None
 
 
-def _print_context_safely(context: str) -> None:
+def _cap(text: str, limit: int, label: str) -> str:
+    """``text`` recortado a ``limit`` chars, declarando el corte."""
+    if len(text) <= limit:
+        return text
+    note = f"\n[{label} recortado a {limit} chars]"
+    if limit <= len(note):
+        return text[: max(0, limit)]
+    return text[: limit - len(note)].rstrip() + note
+
+
+def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 estados de memoria: ramas inherentes
+    root: Path,
+    index_for_budget,
+    max_chars: int | None = None,
+    index_budget: int | None = None,
+) -> tuple[str, bool]:
+    """Ensambla el contexto de arranque ACOTADO (hook y `memory_context.py --bootstrap`).
+
+    Diseno v6: UN ensamblador para todos los backends. Prioridad de
+    presupuesto: pista de momentos > roles > M4/M5 > salud > indice (el indice
+    recibe lo que queda, con techo `INDEX_BUDGET_CHARS`). Orden de EMISION:
+    pista, indice, salud, roles, M4/M5 (el de siempre, para que la memoria
+    vaya primero).
+
+    Before: ``root`` es la raiz resuelta; ``index_for_budget(budget)`` devuelve
+        el indice (``""`` vacio, ``None`` fallo) y no escribe el entorno del
+        proceso -- el llamante ancla la memoria.
+    During: lee roles, M4/M5 y salud (subproceso de solo lectura); sin
+        escrituras.
+    After: ``(contexto, memoria_fallo)`` con ``len(contexto) <= max_chars``.
+        Tres estados de memoria distintos: fallo de carga (`_LOAD_FAILED`,
+        ``memoria_fallo=True``), corpus vacio (`_LOAD_EMPTY`) e indice omitido
+        por presupuesto (`_LOAD_NO_BUDGET`). Si las partes fijas no dejan
+        `_MIN_INDEX_BUDGET`, se degradan (salud, M4/M5 a fallback, roles) antes
+        de omitir el indice; el bloque del indice nunca se corta. Nunca lanza.
+    """
+    motor = str(Path(__file__).resolve().parents[2])
+    try:
+        motor = str(_motor_root(root))
+        if motor not in sys.path:
+            sys.path.insert(0, motor)
+        import bus.memory_loader as loader
+
+        index_cap = loader.INDEX_BUDGET_CHARS
+        session_cap = loader.SESSION_CONTEXT_MAX_CHARS
+    except Exception:
+        index_cap, session_cap = 4300, 9000
+    # `None` y 0 NO son lo mismo (ronda 5, codex): `x or default` convertia un
+    # tope explicito de 0 en el valor por defecto.
+    limit = session_cap if max_chars is None else max_chars
+    wanted = index_cap if index_budget is None else index_budget
+
+    # En un destino instalado `scripts/memory_context.py` no existe (el
+    # instalador no copia `scripts/`): los comandos emitidos llevan la ruta del
+    # motor (ronda 6, kilo). El sobrecoste de las 2 apariciones del pie del
+    # indice se descuenta de su presupuesto.
+    cli = _memory_cli(root, Path(motor))
+    hint = _with_cli(_EXPANSION_HINT, cli)
+    footer_extra = 2 * (len(cli) - len(_DEFAULT_CLI))
+
+    roles = _role_section(root)
+    m4m5 = _cap(_m4_m5_section(root), _M4_M5_CAP, "M4/M5")
+    # `_health_line` ya se acota conservando la accion; el `_cap` aqui es la red
+    # de seguridad (idempotente) por si un sustituto devuelve algo mayor.
+    health = _cap(_health_line(root), _HEALTH_CAP, "Salud")
+
+    def _used() -> int:
+        return sum(len(p) + 2 for p in (hint, health, roles, m4m5) if p)
+
+    # Si las partes fijas no dejan sitio al indice minimo, se degradan en orden
+    # inverso de prioridad (salud, M4/M5 a su fallback corto, roles) ANTES de
+    # tocar nada mas: asi el recorte final nunca cae dentro del bloque del
+    # indice (ronda 5, kilo #7).
+    for degrade in ("health", "m4m5", "roles"):
+        if limit - _used() - 2 >= _MIN_INDEX_BUDGET:
+            break
+        if degrade == "health":
+            health = ""
+        elif degrade == "m4m5":
+            m4m5 = _M4_M5_FALLBACK
+        else:
+            roles = ""
+    budget = min(wanted, max(0, limit - _used() - 2)) - max(0, footer_extra)
+
+    failed = False
+    if budget < _MIN_INDEX_BUDGET:
+        # Tercer estado (ronda 5): ni fallo de carga ni corpus vacio.
+        memory_part = _with_cli(_LOAD_NO_BUDGET, cli)
+    else:
+        try:
+            memory = index_for_budget(budget)
+        except Exception:
+            memory = None
+        failed = memory is None
+        if failed:
+            memory_part = _with_cli(_LOAD_FAILED, cli)
+        elif not memory:
+            memory_part = _LOAD_EMPTY
+        else:
+            # Solo el pie (comandos); las lecciones son datos y no se tocan.
+            head, sep, foot = memory.rpartition("\nEsto es un INDICE")
+            memory_part = head + sep + _with_cli(foot, cli) if sep else memory
+
+    parts = [hint, memory_part, health, roles, m4m5]
+    context = "\n\n".join(p.strip("\n") for p in parts if p)
+    if len(context) > limit:
+        # Ultimo recurso (solo si la pista sola excede el tope): aqui ya no hay
+        # bloque de indice que partir, porque sin presupuesto no se emite.
+        context = _cap(context, limit, "Contexto de arranque")
+    return context, failed
+
+
+def _payload(context: str, system_message: str | None = None) -> dict:
+    """Payload con el esquema DOCUMENTADO de SessionStart de Claude Code.
+
+    Diseno v6, P0. Claude Code solo lee `hookSpecificOutput.additionalContext`
+    (con `hookEventName: "SessionStart"`). Durante meses este hook emitio
+    `{"additionalContext": ...}` en la RAIZ: 577 ejecuciones `hook_success` en
+    219 sesiones y CERO `hook_additional_context` -- el emisor funcionaba y el
+    consumidor lo descartaba. `systemMessage` (raiz) se muestra al usuario.
+    """
+    payload: dict = {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    }
+    if system_message:
+        payload["systemMessage"] = system_message
+    return payload
+
+
+def _print_context_safely(context: str, system_message: str | None = None) -> None:
     """Print the `additionalContext` JSON, tolerant of the terminal's encoding.
 
     WOT (M4/M5 encoding hardening, 2026-10-15). Medido en vivo: en Windows,
@@ -530,7 +710,7 @@ def _print_context_safely(context: str) -> None:
         motivo. Solo un fallo de un tipo DISTINTO (no de codificacion)
         seguiria propagando al `except Exception` de `__main__`.
     """
-    payload = json.dumps({"additionalContext": context}, ensure_ascii=True)
+    payload = json.dumps(_payload(context, system_message), ensure_ascii=True)
     try:
         print(payload)
     except UnicodeEncodeError:
@@ -547,44 +727,27 @@ def main() -> int:
     source = _read_source()
 
     root = _resolve_root()
-    memory = _load_context(root, source)
-
-    if memory:
-        context = (
-            f"**Memoria del proyecto (indice portable)**:\n\n{memory}{_EXPANSION_HINT}"
-        )
-    else:
-        context = (
-            "**Memoria del proyecto**: no se pudo cargar el indice en el arranque."
-            + _EXPANSION_HINT
-        )
-
-    health = _health_line(root)
-    if health:
-        context += f"\n\n{health}\n"
-
-    # WOT-2026-098b: tras la memoria (y su linea de salud), expone el
-    # backend/modelo de cada rol de capa para un agente en frio. Si falla, se
-    # omite sin tocar nada de lo anterior.
-    roles = _role_section(root)
-    if roles:
-        context += f"\n\n{roles}\n"
-
-    # Fase 0 + Via A (M4/M5 integration, 2026-10-15): siempre presente --
-    # a diferencia de las secciones anteriores (que se OMITEN si fallan),
-    # esta usa su propio fallback en vez de desaparecer, porque M4/M5 son
-    # normas de invocacion que aplican AUNQUE la lectura en vivo falle.
-    context += f"\n\n{_m4_m5_section(root)}\n"
-
-    _print_context_safely(context)
+    # Salud y roles se OMITEN si fallan (WOT-2026-089e/098b); M4/M5 nunca se
+    # omite, cae a su fallback. Todo lo ensambla `assemble_session_context`.
+    context, failed = assemble_session_context(
+        root, lambda budget: _load_context(root, source, budget)
+    )
+    _print_context_safely(
+        context,
+        "Memoria del proyecto no cargada en el arranque: ejecuta "
+        "`python scripts/memory_context.py --bootstrap`."
+        if failed
+        else None,
+    )
     return 0
 
 
 if __name__ == "__main__":
     # Fail-open absoluto: ni siquiera un fallo inesperado en `main()` puede
-    # impedir que la sesion abra.
+    # impedir que la sesion abra. Mismo esquema documentado y el imperativo
+    # agnostico, nunca un contexto vacio mudo.
     try:
         sys.exit(main())
     except Exception:
-        print(json.dumps({"additionalContext": ""}))
+        print(json.dumps(_payload(_LOAD_FAILED + "\n\n" + _EXPANSION_HINT)))
         sys.exit(0)

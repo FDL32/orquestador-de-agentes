@@ -301,6 +301,27 @@ Un aviso vale si tiene medicion detras. Los que este repo tiene medidos y suelen
   no necesita este formato, pero decláralo explicitamente como interpretacion
   para que no se confunda con una medicion verificada.
 
+## Paso 5-bis: coordinacion T3 (best-effort), si hay sesiones paralelas
+
+Si la sesion corre en T3 junto a otras sesiones (otros hilos, otras cuentas, otros worktrees
+del mismo repo), transporta su estado de coordinacion. Son herramientas MCP sin CLI, asi que
+el script del Paso 1 NO las recoge: las consulta el agente y cada dato lleva la herramienta
+usada como `command:`. Es **best-effort**: lo que no veas (otra cuenta sin visibilidad) se
+declara "no visible", nunca se omite en silencio.
+
+- **Hilos paralelos activos** que tocan este repo o este vuelo (`t3_thread_list`,
+  `t3_worktree_list`): hilo, rama, worktree, y si tienen commits sin publicar.
+- **`delegate_task` sin cerrar** (taskId + `clientRequestId`): la sesion siguiente debe
+  leerlos con `task_status` y, si el resumen no trae veredicto, con `t3_thread_read` sobre el
+  `childThreadId` antes de darlos por mudos.
+- **Promesas abiertas** a otras sesiones (p.ej. "te aviso antes de mi push", "verifica Gate 2
+  contra `<sha>` de origin"), con el hilo destinatario. Una promesa no transportada se rompe sin
+  que nadie lo note.
+- **HEAD remotos ajenos ya publicados** desde que empezo la sesion (`git fetch` + `git log
+  origin/<rama>`), porque fuerzan el Gate 2 de `.agent/rules/common/flight_push_policy.md`.
+
+Protocolo completo de coordinacion: `.agent/rules/common/t3_ade_coordination.md`.
+
 ## Paso 6: escribe LO QUE NO HACER
 
 Es la seccion que mas evita incidentes. Deriva del rol de la sesion siguiente: si es de
@@ -366,10 +387,18 @@ Un unico bloque markdown pegable como PRIMER mensaje de la sesion nueva, con:
 6. Avisos medidos que apliquen
 7. **Lo que NO hacer**
 8. Sello, si aplica
+9. Coordinacion T3 (Paso 5-bis), si hay sesiones paralelas; si no, "sin sesiones paralelas"
 
-Opcionalmente escrito en
-`<DESTINO_ROOT>/orchestrator_pipeline/arranques/ARRANQUE_<slug-corto>.md`.
-**Slug corto** (ver Paso 5).
+Portador, segun topologia (una sola ruta por modo):
+
+- **Destino con `orchestrator_pipeline/`:** opcionalmente escrito en
+  `<DESTINO_ROOT>/orchestrator_pipeline/arranques/ARRANQUE_<slug-corto>.md`.
+  **Slug corto** (ver Paso 5).
+- **Sesion siguiente lanzada desde T3:** el bloque va como `message` de `t3_thread_launch`
+  (o por `t3_thread_send` al hilo que continua). Es el portador natural del ADE: llega al
+  agente frio sin depender de que alguien lo pegue, y no crea fichero.
+- **Motor code-only:** NUNCA en un fichero versionado (`docs/followups/` incluido): lo prohibe
+  la restriccion dura de abajo. Bloque pegable o mensaje T3.
 
 ## Restriccion dura
 

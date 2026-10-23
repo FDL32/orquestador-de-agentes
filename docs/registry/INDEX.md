@@ -46,7 +46,6 @@
 | prompt | `prompts/doc_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/ensemble_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/escalate_to_motor.md` | active | system | orchestrator | model-invoked | — |
-| prompt | `prompts/hermes_soul.md` | active | system | shared | model-invoked | — |
 | prompt | `prompts/manager_orchestrator_loop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/manager_orchestrator_loop_adapter_motor.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/manager_orchestrator_loop_backlog.md` | active | system | manager | model-invoked | — |
@@ -54,6 +53,7 @@
 | prompt | `prompts/memory_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/orchestrator_child_dispatch_cross_claude.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_child_dispatch_multiticket_multibackend_unlimited.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_batch.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_destination_bootstrap.md` | active | system | orchestrator | model-invoked | — |

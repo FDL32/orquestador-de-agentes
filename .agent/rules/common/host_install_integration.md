@@ -4,6 +4,9 @@
 > `8e956837`, 2026-10-19. Secciones origen (verbatim abajo):
 > - `## Host-first skill precedence & Config Profiles (WP-2026-090)` -- `AGENTS.md:834-838`
 > - `## Host setup hook (WP-2026-094)` -- `AGENTS.md:839-852`
+> - Las lineas citadas son de esa HEAD base. Desde WOT-2026-120a (2026-10-23) la cuspide ya no
+>   tiene estos encabezados: los funde en `## Referencias de instalacion, review y
+>   relanzamiento`, con un item por ID WP (directiva + puntero aqui).
 >
 > Extractores por encabezado: leer este modulo; la cuspide solo conserva la directiva.
 

@@ -1,15 +1,29 @@
 # Claude Code Rules (Modular Context)
 
-Este directorio contiene instrucciones modulares que se cargan selectivamente según el contexto de la tarea para evitar sobrecargar la ventana de contexto principal.
+> **Ojo: en Claude Code TODO `.md` de este directorio sin frontmatter `paths:` se autocarga en
+> cada sesion** (no es "bajo demanda") y suma al gate Claude (`measure_agents_md_units.py` lo
+> cuenta: `autoloaded_rules`). Aqui solo va lo que una sesion necesita siempre o
+> casi siempre; lo condicional vive en `.agent/rules/common/` (no se autocarga).
 
-## Cargas automáticas recomendadas:
-- `00-startup.md`: Siempre (protocolo de inicio y bitácoras).
-- `01-security-architecture.md`: Si tocas variables de entorno, hooks o cambias permisos.
+## En este directorio (se autocargan en Claude Code):
+- `00-startup.md`: protocolo de inicio, carga de memoria y puntero a quality gates.
+- `01-security-architecture.md`: si tocas variables de entorno, hooks o permisos.
+- `README.md`: este indice y router.
 
-## Cargas bajo demanda recomendadas:
-- `02-multi-agent-system.md`: Si trabajas en el sistema orquestador `.agent/`.
-- `03-skills-discovery.md`: Si estás diseñando o modificando micro-habilidades bajo `skills/`.
-- `04-refactor-kit.md`: Si utilizas el refactor kit portable.
-- `05-session-artifacts.md`: Si requieres entender el flujo profundo de la carpeta `.session/` y el ciclo de vida de los logs.
+## Router (si tocas X, lee Y; no se autocarga):
+- `.agent/collaboration/` (work_plan, logs, TURN, backlog): `.agent/rules/common/session_artifacts.md`.
+  Cerrar ticket MUEVE su fila de `backlog.md` a `_archive/backlog_done.md` (estado terminal +
+  `commit:<sha>`); ningun script lo hace; verifica con `check_backlog_contract.py`. NO es
+  `.session/` (patron antiguo, ya no vigente).
+- `agent_system/refactor_kit/` (solo stdlib, NUNCA importes del motor; valida con
+  `ruff check agent_system/refactor_kit/`): `.agent/rules/common/refactor_kit.md`.
+- `skills/` (frontmatter YAML con `triggers`, max 3; `python scripts/discover_skills.py --json`;
+  `python scripts/orquestador.py --skill /review --query "revisa cambios"`): `.agent/rules/common/skills_discovery.md`.
 
-> **Nota para el Agente:** Usa tu comando natural para leer estos archivos únicamente cuando entres en uno de estos dominios. Ver `CLAUDE.md` (raíz) para instrucciones de Claude Code específicas.
+## Referencias bajo demanda (fuera de aqui; leelas solo al entrar en su dominio):
+- Backends y roles canonicos: `AGENTS.md`, seccion "Backends y roles".
+- `.agent/rules/common/project_manifest_architecture.md`: si trabajas con `project_manifest.toml`, `.version_manifest.json` o deteccion/upgrade de proyectos.
+- `.agent/rules/common/t3_ade_coordination.md`: si operas con sesiones T3 paralelas (multi-cuenta o multi-worktree) sobre el mismo vuelo o el mismo repo.
+- Resto de reglas de referencia del motor: `.agent/rules/common/` (indexadas desde `AGENTS.md`).
+
+> **Nota para el Agente:** ver `CLAUDE.md` (raiz) para instrucciones de Claude Code especificas.

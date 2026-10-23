@@ -32,6 +32,10 @@ from MANIFEST.distribute. In-prose mentions are WARN. The debt measured on
 2026-10-07 (14 of 19 normative citations) is FROZEN in `_FROZEN_DEBT` and
 adjudicated by WOT-2026-043c; a frozen entry that stops reproducing fails as
 STALE. This direction is deliberately NOT wired into pre-commit in this flight.
+
+2026-10-23: the `doc-optimization` entry was resolved via path (1) of the
+WOT-2026-043c criterion (`prompts/doc_optimization.md` entered
+MANIFEST.distribute) and removed from `_FROZEN_DEBT`; 13 entries remain frozen.
 """
 
 from __future__ import annotations
@@ -91,7 +95,6 @@ _FROZEN_DEBT: tuple[tuple[str, str], ...] = (
     ("skills/audit-pipeline-codeonly/SKILL.md", "prompts/audit_pipeline_codeonly.md"),
     ("skills/backlog-admit/SKILL.md", "prompts/backlog_admit.md"),
     ("skills/backlog-triage/SKILL.md", "prompts/backlog_triage.md"),
-    ("skills/doc-optimization/SKILL.md", "prompts/doc_optimization.md"),
     ("skills/escalate-to-motor/SKILL.md", "prompts/escalate_to_motor.md"),
     (
         "skills/manager-orchestrator-loop/SKILL.md",

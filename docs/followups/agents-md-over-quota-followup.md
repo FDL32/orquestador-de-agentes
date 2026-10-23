@@ -167,3 +167,26 @@ real, que la Fase 0 del diseno mide. Esta deuda sigue ABIERTA: ratios 1,86x y 1,
 ## Arranque en frio (hermano, 2026-10-21)
 
 La revision del arranque de agentes en frio (hook UTF-8, memoria por cwd, par de worktrees, guard de topologia) vive en `docs/followups/arranque-agentes-frios-propuesta-optimizacion.md`. No toca `AGENTS.md`; la Fase 0 de la Palanca A debe medir con el hook ya corregido (D1a) para que el arranque conductual use la memoria completa.
+
+## Medicion post-arranque-frio (recibo por gate, 2026-10-23)
+
+    ESTADO_FRESCO: raiz=C:\Users\fdl\.t3\worktrees\orquestador_de_agentes\optimizacion-arranque-frio-cont-20261022, HEAD=affe5af6, dirty=si (medidor con TRAMPA-5), verificado=2026-10-23
+    comando: uv run python scripts/measure_agents_md_units.py
+    AGENTS.md bytes: 34409 (Codex gate 32768 B) -> ratio 1,05x, deficit 1641 B
+    cierre CLAUDE.md + @AGENTS.md chars: 36338 + .claude/rules sin `paths:` (6 ficheros) 10979 = 47317 (Claude gate 40000 chars) -> ratio 1,18x, deficit 7317
+
+- **Codex:** 1,86x -> 1,05x. Tres lentes independientes no encontraron mas traslado seguro;
+  deficit 1641 B declarado. Crecer esta bloqueado por el gate de commit-msg ("no crecer nunca,
+  incluso en deuda", WOT-2026-116a).
+- **Claude (correccion, no regresion):** el recibo anterior (1,57x) y la medicion "36338 =
+  verde" de esta sesion NO contaban `.claude/rules/*.md` sin `paths:`, que Claude Code
+  autocarga (TRAMPA-5 de `prompts/doc_optimization.md`). Antes de sacar 02/06/07 de
+  `.claude/rules/` la carga real era 61633 chars de instrucciones del repo; tras sacarlos,
+  47317. El medidor ya las suma.
+- **Deuda nueva declarada (barrera de alcance):** `check_cuspide_growth_and_drift.py::_closure`
+  (el gate de commit-msg, el que BLOQUEA) sigue sin contar `.claude/rules/`, asi que hoy una
+  rule puede crecer sin que el gate lo vea. Extenderlo cambia el comportamiento de un gate
+  bloqueante y requiere su propio bucle; mientras tanto, el medidor lo hace visible (WARN).
+
+Persiste exceso en AMBOS gates. La deuda sigue ABIERTA: **requiere decision del usuario para
+abrir WP** (via nombrada de PASO 5).

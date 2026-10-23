@@ -1,3 +1,16 @@
+> **CERRADO por WOT-2026-115a (2026-10-22).** Decision tomada: NINGUNA de las
+> dos opciones de abajo (A/B) -- `check_context_budget.py` nunca estuvo
+> cableado en pre-commit (verificado: `grep check_context_budget
+> .pre-commit-config.yaml` sin match), asi que no habia cableado que migrar.
+> Se retiro el script y sus tests por completo. El resto de este documento
+> queda como HISTORIA de diseno (el analisis y las cifras de abajo siguen
+> siendo correctos para el contexto de su fecha); el checklist de cierre
+> original NO se marca porque ninguna de sus opciones se ejecuto tal cual.
+> Nota retroactiva sobre el propio documento: el `40000` que cita abajo como
+> "gate absoluto Claude Code" es, como el resto del repo documenta ahora
+> (WOT-2026-115a), un SLO de producto propio del motor, no un limite
+> documentado upstream de Claude Code.
+
 # Follow-up: `check_context_budget.py` obsoleto (gates absolutos)
 
 ## Metadata propuesta
@@ -38,7 +51,7 @@ El contrato P6 (Seccion 7, deuda 1) declaro que:
 - No cambiar los gates absolutos (decisión de producto).
 - No reestructurar AGENTS.md (eso es `agents-md-over-quota-followup.md`).
 
-## Criterio binario de cierre
-- [ ] `check_context_budget.py` mide los gates absolutos (A) o fue retirado (B).
-- [ ] Cableado actualizado en `.pre-commit-config.yaml`.
-- [ ] `ruff` + `pytest` verdes.
+## Criterio binario de cierre (historico -- ver nota CERRADO de cabecera)
+- [x] `check_context_budget.py` mide los gates absolutos (A) o fue retirado (B). -- RETIRADO.
+- [x] Cableado actualizado en `.pre-commit-config.yaml`. -- N/A: nunca hubo cableado que actualizar.
+- [x] `ruff` + `pytest` verdes. -- verificado en WOT-2026-115a.

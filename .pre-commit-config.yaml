@@ -158,7 +158,7 @@ repos:
         entry: uv run python scripts/check_process_decision_search.py
         language: system
         pass_filenames: true
-        files: '^(prompts/.*\.md|\.claude/rules/.*\.md|AGENTS\.md|CLAUDE\.md)$'
+        files: '^(prompts/.*\.md|\.claude/rules/.*\.md|\.agent/rules/common/.*\.md|AGENTS\.md|CLAUDE\.md)$'
         stages: [pre-commit]
 
       - id: check-skill-collisions
@@ -300,6 +300,27 @@ repos:
         always_run: true
         stages: [post-commit]
 
+      # Registro GENERICO de excepciones YAML (WOT-2026-119a), sustituto del
+      # override por commit-message (WOT-2026-108d, hoy impotente a proposito
+      # -- ver scripts/override_registry.py). Dos fases, mismo patron que
+      # cuspide arriba: pre-commit solo avisa (expiry sin archivar), commit-msg
+      # bloquea en firme (self-approval + expiry sin archivar). No necesita
+      # fase post-commit: no hay telemetria de overrides que auditar aqui
+      # (el propio YAML versionado ES la auditoria durable).
+      - id: check-override-registry-warn
+        name: check override registry early warning (expiry sin archivar, nunca bloquea aca)
+        entry: uv run python scripts/check_override_registry.py --phase pre-commit
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: check-override-registry-gate
+        name: check override registry gate (BLOCK self-approval + expiry sin archivar)
+        entry: uv run python scripts/check_override_registry.py --phase commit-msg
+        language: system
+        stages: [commit-msg]
+
       # WOT-2026-003c: tracked .claude/settings.json must stay portable (no
       # personal permissions.allow) and any write-gating hook must FAIL CLOSED
       # (never exit 0 when its guard cannot be resolved). Prevents the A2d-class
@@ -379,6 +400,20 @@ repos:
       - id: check-portable-memory-archive
         name: check portable memory archive (archive/observations.*.jsonl schema)
         entry: uv run python scripts/check_portable_memory_archive_schema.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      # check-reference-keys (WOT-2026-114d): toda cita `[X#]` en AGENTS.md
+      # o .agent/rules/common/*.md debe resolver a exactamente un ancla `**X#.**`
+      # en el fichero que la leyenda docs/registry/reference_keys.md mapea para
+      # esa letra. Cablea en el mismo commit que introduce el guard (regla dura
+      # de AGENTS.md: "el guard que crees se cablea en el mismo commit").
+      # Formato de cita cambio de `(ver X#)` a `[X#]` en WOT-2026-114e.
+      - id: check-reference-keys
+        name: check reference keys (claves [X#] resuelven a un ancla)
+        entry: uv run python scripts/check_reference_keys.py
         language: system
         pass_filenames: false
         always_run: true

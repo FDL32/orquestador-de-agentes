@@ -59,6 +59,7 @@ Antes de arrancar, verificar:
 - [ ] El despacho del Builder existe: `.agent/planning/vuelo_{{VUELO_ID}}/{{TICKET}}/dispatch_builder_r{{R}}.md`.
 - [ ] `check_role_models_distinct.py` confirma que el modelo del Revisor es DISTINCTO del Builder (si NO: `REQUIERE_HUMANO`).
 - [ ] `review_bundle_contract.py` confirma que el bundle de review no está truncado (si NO: `CONTEXTO_INSUFICIENTE`).
+- [ ] Memoria cargada: `python scripts/memory_context.py --bootstrap` (Kilo no tiene hook `SessionStart`: sin este paso 0 el Revisor juzga sin las lecciones de fallos ya cometidos; expande despues con `--recall`).
 - [ ] Si scope está en vuelo por otra sesión → `REQUIERE_HUMANO`.
 
 ## B5 — Capacidades del modelo (checklist de verificación)

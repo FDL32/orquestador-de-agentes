@@ -106,7 +106,7 @@ directorio con ficheros de clases distintas se clasifica uno a uno y su total no
 
 | Clase | Que es | Presupuesto |
 |---|---|---|
-| `siempre-cargado` | entra en CADA sesion (fichero de entrada + cierre de sus `@imports` + los marcados "Siempre" en un indice de reglas) | **gates absolutos del PASO 1** (bytes para Codex, chars para Claude Code; ningun % de ventana) |
+| `siempre-cargado` | entra en CADA sesion (fichero de entrada + cierre de sus `@imports` + los marcados "Siempre" en un indice de reglas + en Claude Code, TODO `.claude/rules/*.md` sin frontmatter `paths:`, ver TRAMPA-5) | **gates absolutos del PASO 1** (bytes para Codex, chars para Claude Code; ningun % de ventana) |
 | `citado-obligatorio` | un contrato **ORDENA** leerlo entero ("lee X entero", "antes de Y, lee X") | el de la sesion que lo cita. NO es "sin tope" |
 | `router-condicional` | se lee para decidir a donde ir | tope propio; **recortarlo es lo mas peligroso** |
 | `referencia-bajo-demanda` | un contrato lo **OFRECE** ("ver detalle en X") | sin tope: es el DESTINO de lo que se saca |
@@ -208,6 +208,19 @@ una cifra 4x mas alta de la real, narrando una "crisis" ~4x peor que la medida h
 **Verifica la UNIDAD del denominador antes de dividir, no solo su valor.**
 `[EVIDENCIA: 2026-10-18, pasada_1_manager.md mediciones pasada 1 y 2, recalculo manual]`
 
+### TRAMPA-5: `.claude/rules/` se autocarga aunque su indice diga "bajo demanda"
+Claude Code carga en CADA sesion todo `.claude/rules/*.md` que no declare `paths:` en su
+frontmatter (con `paths:` solo se carga al tocar ficheros que casen). Ningun `@import` lo
+trae, asi que contar solo el cierre de `@imports` (la leccion de TRAMPA-2) sigue mintiendo: el
+medidor daba `claude=36338/40000` (verde) mientras la sesion fria recibia 61.633 chars de
+instrucciones del repo (9 ficheros de rules sin `paths:`, ninguno contado), y el indice
+`README.md` de rules llamaba "bajo demanda" a 6 de ellos. **Cuenta las rules sin `paths:` como
+siempre-cargado; para que algo sea bajo demanda de verdad, dale `paths:` o sacalo de
+`.claude/rules/`.** `scripts/measure_agents_md_units.py::autoloaded_rules` ya las suma al gate
+Claude.
+`[EVIDENCIA: 2026-10-23, contenido de .claude/rules inyectado al arrancar sesion + medicion;
+bucle adversarial con 3 lentes, ver docs/followups/propuesta-arranque-frio-y-relevo-t3-20261023.md]`
+
 ---
 
 ## PASO 4: aplica CON before/after y GUARD DE NO-DEGRADACION
@@ -228,10 +241,7 @@ una cifra 4x mas alta de la real, narrando una "crisis" ~4x peor que la medida h
 
 En orden de preferencia:
 
-1. **Guard de clase en WARN**, que reporte el EXCESO sobre el gate aplicable (p.ej. "2,36x del
-   gate Codex de 32768 bytes") sin bloquear: `scripts/check_context_budget.py` (guard, no
-   "barrera" -- CEM: un mecanismo solo-WARN no es una barrera).
-2. **Deuda declarada** con ticket dueno y criterio de salida. Nunca silencio. Si el fichero
+1. **Deuda declarada** con ticket dueno y criterio de salida. Nunca silencio. Si el fichero
    supera MAS DE UN gate (p.ej. Codex Y Claude Code a la vez), la deuda declara CADA exceso por
    separado con su propio recibo de medicion -- una deuda que solo cubre uno de los gates deja
    al otro en silencio, violando este mismo paso.
@@ -246,7 +256,7 @@ En orden de preferencia:
      `[DECIDIDO: 2026-10-18, bucle DESIGN_REVIEW tras rechazar una declaracion inline sin
      owner/trigger/superficie -- ver `docs/followups/agents-md-over-quota-followup.md` como
      primera instancia.]`
-3. **Tope duro**: SOLO para ficheros `generado`, aplicado **en el script generador** (editar el
+2. **Tope duro**: SOLO para ficheros `generado`, aplicado **en el script generador** (editar el
    fichero lo prohibe el non-goal), y nunca sin procedimiento de subida: quien lo sube (el
    operador, jamas el agente), con que evidencia (el cierre transitivo re-medido contra CADA
    gate aplicable) y donde queda el rastro (fecha y motivo).

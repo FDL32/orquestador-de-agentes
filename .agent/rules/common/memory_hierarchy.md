@@ -19,10 +19,12 @@ revisar el otro en el mismo commit. No confundir con `.agent/runtime/memory/memo
 
 **Lo primero, porque es lo que mas se malinterpreta (WOT-2026-057a/b):**
 
-- **`--bootstrap` entrega un INDICE, no el corpus.** Las lineas marcadas
-  `...[truncated]` son titulares con su `id`; el pie declara cuantas lecciones NO
-  muestra. Con mediana de 877 chars por leccion, la regla accionable de 82
-  entradas vive DESPUES del corte.
+- **`--bootstrap` entrega un INDICE ACOTADO, no el corpus** (el mismo que inyecta
+  el hook `SessionStart` en Claude Code, <= 9.000 chars en total, diseno v6
+  2026-10-23). Cada linea `- <id>: <titular>` es un titular; el pie declara
+  cuantas lecciones NO muestra (con y sin id). Con mediana de 877 chars por
+  leccion, la regla accionable vive en la leccion entera, no en el titular.
+  `--full` enumera TODAS las lecciones en el mismo formato.
 - **`--recall` es la puerta de EXPANSION**, y entrega la leccion ENTERA:
    `python scripts/memory_context.py --recall --query "<termino>"` (ordenado por
    cobertura, con fallback por terminos) o

@@ -65,6 +65,7 @@ ADOPTED = (
     "session_hop.md",
     "orchestrator_pipeline_codeonly.md",
     "orchestrator_autonomous_ticket_batch.md",
+    "orchestrator_child_dispatch_cross_claude.md",
     "orchestrator_child_dispatch_multiticket_multibackend_unlimited.md",
     "orchestrator_destination_batch.md",
     "orchestrator_launch_builder.md",
@@ -165,7 +166,13 @@ def test_every_routed_file_is_listed_in_adopted() -> None:
 
 
 def test_externo_files_carry_no_routing_frontmatter() -> None:
-    """T6: the exempt external artifacts stay untouched (Hermes exports them whole)."""
+    """T6: any exempt external artifact stays untouched by routing frontmatter.
+
+    WOT-2026-114b: EXTERNAL_ALLOWLIST is empty today (hermes_soul.md retired,
+    user confirmed unused); this loop is vacuously true until a future entry
+    is added, which is the intended behavior of an empty allowlist, not a
+    dropped check.
+    """
     for name in EXTERNAL_ALLOWLIST:
         fm, _error, _body, _offset = read_prompt_parts(PROMPTS_DIR / name)
         assert "route_kind" not in fm, name

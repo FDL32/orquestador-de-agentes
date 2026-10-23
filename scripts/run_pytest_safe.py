@@ -41,6 +41,13 @@ if str(_PROJECT_ROOT_BOOTSTRAP) not in sys.path:
 # WP-2026-122 / WP-2026-155: Centralized path resolution via runtime.project_root
 from runtime.project_root import get_agent_dir, resolve_project_root  # noqa: E402
 
+# WOT-2026-117a: gate de rol para --level all. Import estatico (no diferido
+# dentro de main()) para que check_guard_wiring.py's AST walker alcance este
+# call-site, igual que worktree_audit_invariant abajo.
+from scripts.check_manager_role_for_suite import (  # noqa: E402
+    evaluate_role_gate as _evaluate_role_gate,
+)
+
 # WOT-2026-079c: reutiliza la fuente canonica de superficies vivas del guard
 # para que el sello del runner comparta EL MISMO set que pre_handoff_guard.
 from scripts.pre_handoff_guard import (  # noqa: E402
@@ -142,6 +149,11 @@ CROSS_WORKTREE_LOCK_FILE = _LazyPath(
 # sysexits(3) EX_TEMPFAIL: condicion temporal, reintentable -- distinguible de
 # un fallo real de la suite (exit_code de pytest) o de un error de uso (2).
 EX_TEMPFAIL = 75
+# sysexits(3) EX_NOPERM: quien invoca no tiene el rol requerido (WOT-2026-117a,
+# scripts/check_manager_role_for_suite.py). Distinguible de EX_TEMPFAIL (75,
+# reintentable) porque bloquear por rol no se arregla reintentando: se arregla
+# dejando que el Manager lo corra.
+EX_ROLE_NOT_PERMITTED = 77
 # WOT-2026-021w: append-only run-history (one JSON line per run). Lives under the
 # already-gitignored RUNTIME_DIR (.gitignore .agent/runtime/pytest-safe/), so it
 # NEVER enters git (defense-in-depth). The record schema itself is deliberately
@@ -2403,6 +2415,11 @@ def check_canonical_state_leak(snapshot: dict[str, str]) -> list[str]:  # noqa: 
 
 def main() -> int:  # noqa: C901
     args = parse_args()
+    if args.level == "all":
+        role_allowed, role_reason = _evaluate_role_gate(Path(PROJECT_ROOT.resolve()))
+        print(f"[role-gate] {role_reason}")
+        if not role_allowed:
+            return EX_ROLE_NOT_PERMITTED
     _abort_on_mismatch()
     ensure_runtime_dir()
     if args.status:
