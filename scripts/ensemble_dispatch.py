@@ -2098,6 +2098,15 @@ def resolve_lens_repo_root(
         nombra (`motor:destino-no-resoluble`), porque un fallback silencioso
         haria indistinguible "la lente vio el arbol" de "la lente iba ciega",
         que es justo el falso verde que este ticket persigue.
+
+    WOT-2026-055m: la rama `repo_scope != "destino"` YA NO retorna
+    `(None, "motor")`. Devolver `None` dejaba la etiqueta `motor` afirmando un
+    ambito que el Popen no garantizaba -- el hijo heredaba el cwd real del
+    proceso padre, y si ese padre corria desde un destino (medido en
+    produccion, bucle L942: BA06 corrio con cwd=<destino> y el scorecard
+    registro `motor`), la etiqueta mentia. Ahora se fuerza `MOTOR_ROOT`
+    explicito: la etiqueta `motor` pasa a ser una garantia del cwd real del
+    hijo, no una suposicion sobre el cwd heredado del padre.
     """
     # Limite de CLASE, no bug: un `channel: api` no tiene filesystem que apuntar
     # (NON-GOAL explicito de la ficha). Se etiqueta para que el scorecard no
@@ -2110,7 +2119,8 @@ def resolve_lens_repo_root(
     if declared is not None:
         return str(declared), "declarado"
     if profile.get("repo_scope") != "destino":
-        return None, "motor"
+        # WOT-2026-055m: cwd explicito, no None -- ver nota del docstring.
+        return str(MOTOR_ROOT), "motor"
     candidato = project_root or os.environ.get("AGENT_PROJECT_ROOT") or ""
     if not str(candidato).strip():
         return None, "motor:destino-no-resoluble"
