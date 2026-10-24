@@ -1,0 +1,13 @@
+# BASELINE CONGELADO DE DEUDA DEL BACKLOG (WOT-2026-068y) -- lista literal de ids.
+#
+# "Nueva" deuda se define por NO pertenencia a esta lista, nunca por fecha ni
+# por numero (WOT-2026-024t): un ticket_id que aparezca en
+# scripts/backlog_debt_policy.yaml SIN owner y SIN estar aqui es la barrera real
+# (FAIL); uno que SI esta aqui es grandfathered (WARN) mientras su fila y, si
+# alguna vez tuvo owner, ese owner sigan vivos.
+#
+# Nace VACIO: el registro que grandfathers (declared_debt) tambien nace vacio
+# -- no hay deuda conocida todavia que grandfather. Poblar ambos ficheros es
+# el mismo triaje manual, deliberadamente fuera del alcance de este ticket.
+
+debt_baseline: []

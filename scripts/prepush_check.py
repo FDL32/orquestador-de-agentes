@@ -1819,6 +1819,83 @@ def run_guard_wiring_orphan_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_backlog_debt_ownership_check(project_root: Path) -> CheckResult:
+    """WOT-2026-068y: deuda de backlog declarada en `backlog_debt_policy.yaml`
+    cuyo dueno esta archivado, o cuya propia fila cerro, o que es deuda NUEVA
+    (fuera del baseline congelado) sin ningun dueno.
+
+    Mismo porque-aqui que `run_guard_wiring_orphan_check` (WOT-2026-026v): este
+    es el unico punto del cierre que corre solo Y conoce el destino cuyo
+    backlog decide si una fila/owner sigue viva -- el hook de pre-commit es
+    portable y no puede llevar cableada la ruta de un destino sin dejar de
+    serlo. El import es ESTATICO para que `check_guard_wiring` alcance este
+    call-site (mismo precedente).
+
+    BLOQUEANTE para deuda nueva sin dueno o para un grandfather expirado
+    (owner o fila archivados): ahi esta la barrera real (WOT-2026-068y DoD-c).
+    El baseline grandfathered sin owner sigue siendo solo WARN.
+
+    Before: project_root resoluble; el guard lee el backlog VIVO del destino.
+    During: cruza `declared_debt` contra el baseline congelado y los ids VIVOS
+        (extractor estricto de celda propia, no el scraper laxo de citas).
+    After: passed=True si no hay deuda registrada, el destino no es resoluble
+        (SKIP explicito) o toda la deuda esta owned/grandfathered; False
+        (BLOQUEANTE) con el listado si hay deuda nueva o grandfather expirado.
+        Read-only.
+    """
+    try:
+        from scripts.check_backlog_debt_ownership import (
+            _load_debt_baseline,
+            _load_debt_policy,
+            _strict_live_ticket_ids,
+            debt_findings,
+        )
+    except ImportError:
+        from check_backlog_debt_ownership import (  # type: ignore[no-redef]
+            _load_debt_baseline,
+            _load_debt_policy,
+            _strict_live_ticket_ids,
+            debt_findings,
+        )
+    name = "Backlog Debt Ownership (WOT-2026-068y)"
+    live, err = _strict_live_ticket_ids(project_root)
+    if live is None:
+        return CheckResult(
+            name=name, passed=True, output=f"SKIP: {err}", is_blocking=False
+        )
+    policy = _load_debt_policy()
+    if not policy:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="no declared debt registered",
+            is_blocking=False,
+        )
+    baseline = _load_debt_baseline()
+    fails, warns = debt_findings(policy, baseline, live)
+    if fails:
+        detail = "\n".join(f"  - {f}" for f in fails)
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"{len(fails)} backlog-debt entr{'y' if len(fails) == 1 else 'ies'} "
+                f"FAILED ownership:\n{detail}\n"
+                "Give it a live owner (a ticket or a reasoned 'BY-DESIGN:' string) "
+                "in scripts/backlog_debt_policy.yaml, or remove the entry if the "
+                "row it names has already closed."
+            ),
+            is_blocking=True,
+        )
+    output = (
+        f"{len(policy)} declared debt entr{'y' if len(policy) == 1 else 'ies'}, "
+        "all owned or grandfathered"
+    )
+    if warns:
+        output += ":\n" + "\n".join(f"  - {w}" for w in warns)
+    return CheckResult(name=name, passed=True, output=output, is_blocking=False)
+
+
 def run_prompt_wired_invocations_check(project_root: Path) -> CheckResult:
     """WOT-2026-042m: instruccion(es) sin invocador automatico en prompts/skills.
 
@@ -4673,6 +4750,10 @@ def run_preflight_check(
         # unico punto que corre solo Y conoce el destino cuyo backlog decide si
         # un owner sigue vivo.)
         results.append(run_guard_wiring_orphan_check(project_root))
+        # 6k-bis2. Backlog Debt Ownership (WOT-2026-068y; BLOQUEANTE para deuda
+        # nueva sin dueno o grandfather expirado. Mismo punto que 6k: conoce el
+        # destino cuyo backlog decide si una fila/owner sigue viva.)
+        results.append(run_backlog_debt_ownership_check(project_root))
         # 6k-bis. Prompt-Wired Invocations (WOT-2026-042m; WARN -- la huella de
         # una instruccion sin invocador automatico en prompts/skills. Es un
         # DETECTOR de la huella, no un gate de cumplimiento.)

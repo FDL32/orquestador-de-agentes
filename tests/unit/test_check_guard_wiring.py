@@ -94,6 +94,11 @@ EXPECTED_WIRED_REAL = {
     # prepush_check.py::run_backlog_contract_check (closeout, WARN --
     # fantasma/colgante en la celda "Depende de" es un hueco de registro,
     # no motivo de bloquear un cierre).
+    # WOT-2026-068y: cableado via import ESTATICO en
+    # prepush_check.py::run_backlog_debt_ownership_check (closeout, BLOQUEANTE
+    # para deuda nueva sin dueno o grandfather expirado -- mismo punto donde
+    # corre check_guard_wiring's propio orphan check hermano, WOT-2026-026v).
+    "check_backlog_debt_ownership",
     "check_backlog_dependency_graph",
     # WOT-2026-054m: cableado via import estatico en
     # prepush_check.py::run_backlog_admission_check (closeout, BLOQUEANTE --

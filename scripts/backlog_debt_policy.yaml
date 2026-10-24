@@ -1,0 +1,19 @@
+# REGISTRO DE DEUDA DEL BACKLOG (WOT-2026-068y) -- datos, no codigo.
+#
+# Sibling de scripts/guard_wiring_policy.yaml, MISMA gramatica de owner, para un
+# universo DISTINTO: no guards (known_unwired), sino filas del backlog cuya
+# prosa declara una NORMA o una DEUDA sin atarla a ningun ticket que la vigile.
+#
+# declared_debt: ticket_id -> owner (un ticket WOT-YYYY-NNNx que la cierra, o
+#   "BY-DESIGN: <motivo>" razonado). Un ticket_id SIN owner (valor vacio/ausente)
+#   es deuda TODAVIA sin dueno -- valida si esta en el baseline congelado
+#   (tests/fixtures/backlog_debt_baseline.yaml, WARN), invalida si no lo esta
+#   (FAIL, scripts/check_backlog_debt_ownership.py).
+#
+# POBLACION DELIBERADAMENTE MANUAL (NON-GOAL explicito del ticket): este
+# registro nace VACIO. Identificar que filas del backlog declaran deuda es un
+# triaje separado -- igual que una entrada de known_unwired se anade a mano
+# tras auditar, no se auto-detecta por heuristica de prosa (inventar una
+# arriesgaria un guard mudo o uno ruidoso con falsos positivos).
+
+declared_debt: {}
