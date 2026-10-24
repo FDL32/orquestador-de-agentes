@@ -2060,7 +2060,7 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
 
     # WOT-2026-059j: separar "agente permisivo" de "agente ausente".
     # Ambos son vectores confirmados, pero el permisivo tiene la forma
-    # {permissive_agent, first_rule} y el ausente {missing_agent, cwd}.
+    # {permissive_agent, open_permissions} y el ausente {missing_agent, cwd}.
     permissive = [p for p in confirmed if p.get("permissive_agent") is not None]
     missing = [p for p in confirmed if p.get("permissive_agent") is None]
 
@@ -2088,13 +2088,10 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
     # se reportan aparte, sin degradar el bloqueo.
     detalle_confirmed_parts: list[str] = []
     for p in permissive:
-        rule = p.get("first_rule", {})
+        open_perms = ", ".join(p.get("open_permissions", []))
         detalle_confirmed_parts.append(
             f"{p['profile']} -> {p['backend']} (agente '{p['permissive_agent']}' "
-            f"con primera regla permisiva: "
-            f"permission={rule.get('permission', '?')!r}, "
-            f"action={rule.get('action', '?')!r}, "
-            f"pattern={rule.get('pattern', '?')!r})"
+            f"resuelve a allow para: {open_perms})"
         )
     detalle_confirmed_parts.extend(
         f"{p['profile']} -> {p['backend']} (agente '{p['missing_agent']}' "

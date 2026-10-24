@@ -256,18 +256,19 @@ def _reconstruct_block(lines: list[str]) -> str | None:
     return "".join(raw_parts)
 
 
-def _first_permission_rule(executable: str, cwd: str, agent_name: str) -> dict | None:
-    """Obtiene la PRIMERA regla de permisos de un agente dado su nombre.
+def _agent_permission_rules(
+    executable: str, cwd: str, agent_name: str
+) -> list[dict] | None:
+    """Obtiene la lista COMPLETA de reglas de permisos de un agente.
 
     Before: `executable` es el binario del backend; `cwd` es la raiz desde la que
         se lanzaria; `agent_name` es el nombre del agente a consultar.
     During: ejecuta `<executable> agent list`, parsea con
-        `_parse_agent_permission_blocks`, y devuelve la primera regla (indize 0)
-        del agente buscado. Lanza RuntimeError si el proceso falla (rc!=0),
-        igual que `_list_agents`.
-    After: dict de la primera regla si el agente existe y tiene reglas; None si
-        el agente no aparece en el listado o su bloque esta vacio. NUNCA parsea
-        stdout de un proceso fallido.
+        `_parse_agent_permission_blocks`. Lanza RuntimeError si el proceso falla
+        (rc!=0), igual que `_list_agents`.
+    After: lista COMPLETA de reglas (orden de aparicion) si el agente existe;
+        None si no aparece en el listado. Lista vacia si existe sin reglas.
+        NUNCA parsea stdout de un proceso fallido.
     """
     proc = subprocess.run(  # noqa: S603 - executable/cwd vienen de agents.json
         [executable, "agent", "list"],
@@ -284,27 +285,72 @@ def _first_permission_rule(executable: str, cwd: str, agent_name: str) -> dict |
             f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
         )
     blocks = _parse_agent_permission_blocks(proc.stdout or "")
-    rules = blocks.get(agent_name, [])
-    if rules:
-        return rules[0]
-    return None
+    if agent_name not in blocks:
+        return None
+    return blocks[agent_name]
 
 
-def _is_permissive_rule(rule: dict | None) -> bool:
-    """Verifica si una regla de permiso es permisiva (open allow-all).
+# Tipos de permiso capaces de MUTAR el arbol en el vocabulario de opencode.
+# Espejo de `WRITE_CAPABLE_TOOLS` (arriba) pero a nivel de `agent list`:
+# coincide exactamente con los 4 permisos que `.opencode/agents/auditor.md`
+# deniega explicitamente (edit/bash/task/todowrite).
+WRITE_CAPABLE_PERMISSIONS = {"edit", "bash", "task", "todowrite"}
 
-    Before: `rule` es el dict de la primera regla de un agente (o None).
-    During: puro, sin I/O. Comprueba los campos clave.
-    After: True solo si rule es un dict con permission=="*", action=="allow",
-        pattern==".*"; False en cualquier otro caso (None, campos ausentes,
-        valores distintos).
+
+def _effective_action(rules: list[dict], permission: str) -> str | None:
+    """Accion EFECTIVA de un tipo de permiso tras aplicar last-match-wins.
+
+    Before: `rules` es la lista COMPLETA de reglas de un agente (no solo la
+        primera); `permission` es el tipo exacto a resolver (p.ej. "edit").
+    During: puro, sin I/O. Recorre las reglas en orden; una regla cuyo
+        `permission` es EXACTAMENTE `permission` o la generica `"*"` puede fijar
+        la accion vigente -- la ULTIMA que matchea (de cualquiera de las dos
+        formas) gana. Esto refleja el formato REAL medido de `opencode agent
+        list` (2026-10-25): la regla generica allow-all siempre aparece
+        PRIMERO para TODO agente, y las reglas especificas por tipo que la
+        sobreescriben vienen despues en la misma lista.
+    After: "allow"/"ask"/"deny" segun la ULTIMA regla que matchea `permission`
+        o `"*"`; None si ninguna regla matchea (ausencia total de dato).
     """
-    if rule is None:
-        return False
-    return (
-        rule.get("permission") == "*"
-        and rule.get("action") == "allow"
-        and rule.get("pattern") == "*"
+    effective: str | None = None
+    for rule in rules:
+        rule_perm = rule.get("permission")
+        if rule_perm == permission or rule_perm == "*":
+            action = rule.get("action")
+            if action is not None:
+                effective = action
+    return effective
+
+
+def _permissive_write_permissions(rules: list[dict] | None) -> list[str]:
+    """Permisos de ESCRITURA cuya accion efectiva resuelve a "allow".
+
+    Before: `rules` es la lista COMPLETA de reglas de un agente (o None/vacia
+        si no se pudo determinar).
+
+    MEDIDO 2026-10-25 (sesion de cierre nocturno-alvarovans-20261024): la
+    version anterior de esta comprobacion (`_is_permissive_rule` sobre
+    `rules[0]`) daba FALSO POSITIVO para TODO agente, incluido uno
+    correctamente restringido -- `build`, `plan`, `manager` y `auditor`
+    muestran identicamente `{permission: "*", action: "allow", pattern: "*"}`
+    como primera regla (confirmado via `opencode agent list` real desde el
+    cwd del destino); las reglas especificas que SI restringen (`edit: deny`,
+    `bash: deny`, `task: deny`, `todowrite: deny` para `auditor`, coincidiendo
+    con su YAML) aparecen mas abajo en la MISMA lista y nunca se miraban.
+
+    During: puro, sin I/O. Resuelve la accion EFECTIVA (last-match-wins) de
+        cada permiso en `WRITE_CAPABLE_PERMISSIONS` via `_effective_action`.
+    After: lista (puede ser vacia) de los permisos de escritura cuya accion
+        efectiva es "allow" -- vacia significa que todos resuelven a
+        "deny"/"ask", o que `rules` es None/vacia (no se puede afirmar
+        permisividad sin datos).
+    """
+    if not rules:
+        return []
+    return sorted(
+        perm
+        for perm in WRITE_CAPABLE_PERMISSIONS
+        if _effective_action(rules, perm) == "allow"
     )
 
 
@@ -368,9 +414,12 @@ def find_dynamic_unenforced_pairs(
         cualquier otro caso -> `motor_root`.
     After: lista de dicts `{profile, backend, missing_agent, cwd}` (mas
         `error` si `_list_agents` lanzo) O `{profile, backend, permissive_agent,
-        first_rule, cwd}` para el caso WOT-2026-059j de permiso permisivo. Vacia
-        = todo enforceado. Un fallo del subproceso SE REPORTA, nunca se da por
-        bueno en silencio (misma disciplina fail-closed del resto del gate).
+        open_permissions, cwd}` para el caso WOT-2026-059j de permiso
+        permisivo (`open_permissions` es la lista de permisos de escritura
+        cuya accion efectiva resuelve a "allow", ver
+        `_permissive_write_permissions`). Vacia = todo enforceado. Un fallo
+        del subproceso SE REPORTA, nunca se da por bueno en silencio (misma
+        disciplina fail-closed del resto del gate).
     """
     backends = config.get("backends") or {}
     out: list[dict] = []
@@ -410,10 +459,13 @@ def find_dynamic_unenforced_pairs(
                 }
             )
             continue
-        # WOT-2026-059j: el agente existe, verificar que su primera regla de
-        # permisos reales NO es un allow-all (open permissions vector).
+        # WOT-2026-059j (corregido 2026-10-25, ver docstring de
+        # `_permissive_write_permissions`): el agente existe, verificar que
+        # sus permisos de ESCRITURA (edit/bash/task/todowrite) no resuelvan a
+        # "allow" tras aplicar last-match-wins sobre la lista COMPLETA de
+        # reglas -- no solo la primera.
         try:
-            first_rule = _first_permission_rule(executable, cwd, agent)
+            rules = _agent_permission_rules(executable, cwd, agent)
         except Exception as exc:
             out.append(
                 {
@@ -425,14 +477,15 @@ def find_dynamic_unenforced_pairs(
                 }
             )
             continue
-        if _is_permissive_rule(first_rule):
+        open_permissions = _permissive_write_permissions(rules)
+        if open_permissions:
             out.append(
                 {
                     "profile": name,
                     "backend": backend_name,
                     "missing_agent": None,
                     "permissive_agent": agent,
-                    "first_rule": first_rule,
+                    "open_permissions": open_permissions,
                     "cwd": cwd,
                 }
             )
@@ -541,13 +594,11 @@ def _run_dynamic_check(config: dict, motor_root: str, project_root: str) -> int:
             file=sys.stderr,
         )
         for p in permissive:
-            rule = p.get("first_rule", {})
+            open_perms = ", ".join(p.get("open_permissions", []))
             print(
                 f"  - perfil '{p['profile']}' -> backend '{p['backend']}': "
-                f"agente '{p['permissive_agent']}' tiene primera regla "
-                f"{{permission={rule.get('permission', '?')!r}, "
-                f"action={rule.get('action', '?')!r}, "
-                f"pattern={rule.get('pattern', '?')!r}}} -- allow-all open",
+                f"agente '{p['permissive_agent']}' resuelve a allow para: "
+                f"{open_perms}",
                 file=sys.stderr,
             )
 
