@@ -801,7 +801,10 @@ def _usage_report(  # noqa: C901
     During: opens and scans the log file (read-only), counts by category,
         computes the verdict, writes ONE JSON line to stdout.
     After: returns 0 if the log is readable (even if empty/missing); returns 2
-        if ``since_str`` is not a valid date.  Never raises.
+        if ``since_str`` is not a valid date; returns 1 (stderr) if the log
+        exists but cannot be read.  A line that is not JSON, not an object, or
+        carries a non-int ``v`` / non-text ``timestamp``/``caller`` / non-text
+        non-null ``session`` counts as ``lineas_invalidas``.  Never raises.
     """
     import json
     from datetime import datetime as dt, timezone as tz
@@ -827,8 +830,19 @@ def _usage_report(  # noqa: C901
     lineas_invalidas = 0
     has_any_session = False  # True if any real-use line has a non-null session
 
+    log_lines: list[str] = []
     if log_file.is_file():
-        for line in log_file.read_text(encoding="utf-8").splitlines():
+        try:
+            # errors="replace": a corrupt byte makes that line invalid JSON
+            # (counted below), not a crash of the whole report.
+            log_lines = log_file.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except OSError as exc:
+            print(f"Error: cannot read {log_file}: {exc}", file=sys.stderr)
+            return 1
+    if log_lines:
+        for line in log_lines:
             if not line.strip():
                 continue
             try:
@@ -837,13 +851,26 @@ def _usage_report(  # noqa: C901
                 lineas_invalidas += 1
                 continue
 
+            # Valid JSON is not a valid record: a list/null/string line, or a
+            # non-text timestamp/caller/session, is counted as invalid instead
+            # of raising (codex review of ae04a8fe, MAJOR 1).
+            if not isinstance(rec, dict):
+                lineas_invalidas += 1
+                continue
             v = rec.get("v")
-            if v not in (1, 2):
+            if type(v) is not int or v not in (1, 2):
                 lineas_invalidas += 1
                 continue
 
             ts_str = rec.get("timestamp")
-            if not ts_str:
+            caller = rec.get("caller", "unknown")
+            session_val = rec.get("session")
+            if (
+                not isinstance(ts_str, str)
+                or not ts_str
+                or not isinstance(caller, str)
+                or not (session_val is None or isinstance(session_val, str))
+            ):
                 lineas_invalidas += 1
                 continue
 
@@ -858,8 +885,6 @@ def _usage_report(  # noqa: C901
             if ts < since:
                 continue
 
-            caller = rec.get("caller", "unknown")
-
             if caller not in REAL_USE_CALLERS:
                 lineas_fuera_de_lista += 1
                 continue
@@ -868,7 +893,6 @@ def _usage_report(  # noqa: C901
             llamadas_reales += 1
 
             # Track session and day
-            session_val = rec.get("session")
             if session_val is not None:
                 has_any_session = True
                 sesiones_distintas.add(session_val)

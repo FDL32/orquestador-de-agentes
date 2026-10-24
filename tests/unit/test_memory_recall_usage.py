@@ -327,3 +327,30 @@ def test_verdict_29_calls_three_sessions_is_not_real_use(tmp_path):
     assert report["sesiones_distintas"] == 3
     assert report["llamadas_reales"] == 29
     assert report["veredicto"] == "uso insuficiente"
+
+
+def test_malformed_records_are_invalid_not_a_crash(tmp_path):
+    """codex MAJOR 1 (ae04a8fe): valid JSON that is not a usable record is
+    counted in ``lineas_invalidas`` and never raises."""
+    now = datetime(2026, 10, 25, 12, 0, 0, tzinfo=timezone.utc)
+    good = _make_entry("2026-10-21T10:00:00", "agent", session="s1")
+    bad_lines = [
+        "[]",
+        "null",
+        '"texto"',
+        "42",
+        json.dumps({**good, "timestamp": 20261021}),
+        json.dumps({**good, "caller": ["agent"]}),
+        json.dumps({**good, "session": ["s1"]}),
+        json.dumps({**good, "v": True}),
+    ]
+    log_file = tmp_path / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    log_file.parent.mkdir(parents=True)
+    log_file.write_text(
+        "\n".join([json.dumps(good), *bad_lines]) + "\n", encoding="utf-8"
+    )
+    rc, stdout = _run_usage_report(tmp_path, "2026-10-20T00:00:00", 30, now=now)
+    report = _parse_report(stdout)
+    assert rc == 0
+    assert report["lineas_invalidas"] == len(bad_lines)
+    assert report["llamadas_reales"] == 1
