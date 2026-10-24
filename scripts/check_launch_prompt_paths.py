@@ -95,13 +95,22 @@ _SKIP_DIRS = {
     "runtime",
 }
 
-PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
+PLACEHOLDER_RE = re.compile(
+    r"\{\{[A-Z_]+\}\}|<(?:MOTOR_ROOT|DESTINO_ROOT|MOTOR|DESTINO)>", re.IGNORECASE
+)
+
+# Subconjunto de PLACEHOLDER_RE que marca "esto es una PLANTILLA del motor, no
+# un arranque instanciado" (usado SOLO por find_stray_prompts para decidir
+# membresia en el universo). Deliberadamente mas ESTRECHO que PLACEHOLDER_RE:
+# un arranque instanciado puede tener un metavalor angular suelto sin resolver
+# (justo el defecto que este guard caza) y eso no lo convierte en plantilla --
+# si se usara PLACEHOLDER_RE completo aqui, ese mismo metavalor lo eximiria de
+# la deteccion de stray, reabriendo el punto ciego que WOT-2026-068s cierra.
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
 
 # Marca de ruta absoluta de destino. No se busca una ruta concreta de maquina (seria
 # PII y no viajaria): basta con que la linea ancle la mencion a una raiz explicita.
-ABSOLUTE_HINT_RE = re.compile(
-    r"(?:[A-Za-z]:[\\/])|(?:<DESTINO_ROOT>[\\/])|(?:<destino>[\\/])", re.IGNORECASE
-)
+ABSOLUTE_HINT_RE = re.compile(r"[A-Za-z]:[\\/]")
 
 # Verbos que convierten una MENCION en una ORDEN DE LECTURA. Este es el discriminante,
 # y es POSITIVO a proposito: se busca la orden, no se intenta enumerar la prosa.
@@ -231,7 +240,7 @@ def find_stray_prompts(project_root: Path) -> list[Path]:
         # resolver. No son prompts de arranque INSTANCIADOS, y meterlas aqui seria
         # el falso rojo masivo que `test_los_prompts_del_motor_no_entran_en_el_
         # denominador` pinea desde WOT-2026-067n.
-        if PLACEHOLDER_RE.search(_read(path)):
+        if _TEMPLATE_PLACEHOLDER_RE.search(_read(path)):
             continue
         try:
             if path.parent.resolve() == canonical:
@@ -246,7 +255,22 @@ def find_stray_prompts(project_root: Path) -> list[Path]:
 def audit(project_root: Path) -> tuple[list[Finding], list[Path]]:
     """Devuelve (hallazgos, prompts_auditados). El segundo ES el denominador."""
     planning = project_root / ".agent" / "planning"
-    prompts = sorted(planning.glob("builder_prompt_*.md")) if planning.is_dir() else []
+    # R-a: deteccion-por-CONTENIDO en lugar de glob por nombre; reusa
+    # la misma clasificacion (_is_builder_prompt) que ya usa find_stray_prompts
+    # para decidir si un .md es un prompt de arranque. Un fichero
+    # LAUNCH_BUILDER_*.md o ARRANQUE_*.md en la misma carpeta canonica
+    # entra ahora al universo auditado (antes invisible por las dos vias).
+    prompts: list[Path] = []
+    if planning.is_dir():
+        for path in planning.rglob("*.md"):
+            try:
+                if any(part in _SKIP_DIRS for part in path.parts):
+                    continue
+                if _is_builder_prompt(path):
+                    prompts.append(path)
+            except OSError:
+                continue
+    prompts = sorted(prompts)
     findings: list[Finding] = []
     for prompt in prompts:
         findings.extend(scan_prompt(prompt))
