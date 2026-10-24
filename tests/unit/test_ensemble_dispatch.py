@@ -699,7 +699,10 @@ def test_scorecard_fields_prefix_is_frozen():
         # WOT-2026-089n: channel (api | agent | None) distingue labs sin
         # filesystem de labs con filesystem real. Al final, mismo mecanismo.
         "channel",
-    ], "los 13 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
+        # WOT-2026-044l: SHA-256 del bundle EXACTO enviado a la lente, calculado
+        # por el despachador. Al final, mismo mecanismo.
+        "bundle_sha256",
+    ], "los 14 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
     # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
     # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
     # colapsaria en silencio (la 2a pisa la 1a) sin error. Invariante: la
@@ -707,6 +710,120 @@ def test_scorecard_fields_prefix_is_frozen():
     assert len(ed.SCORECARD_FIELDS) == len(set(ed.SCORECARD_FIELDS)), (
         "SCORECARD_FIELDS no puede tener claves duplicadas: append_scorecard "
         "las colapsaria silenciosamente (dict-comprehension)."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-044l: el scorecard prueba que hubo rondas, no que auditaran el
+# bundle correcto. `bundle_sha256` ata cada receipt al CONTENIDO exacto que el
+# despachador envio a la lente.
+# --------------------------------------------------------------------------- #
+
+
+def test_bundle_sha256_helper_matches_manual_hash():
+    content = "=== MATERIAL ===\nalgo que revisar\n"
+    expected = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    assert ed.bundle_sha256(content) == expected
+
+
+def test_run_loop_round_records_bundle_sha256_of_sent_content(tmp_path):
+    """DoD (a)/(b): cada receipt de ronda lleva bundle_sha256 del contenido
+    EXACTO enviado (no de `reply`, no de `payload` sin envolver), calculado por
+    el despachador -- el transport fake nunca ve ni declara el hash."""
+    content = "revisa este artefacto concreto"
+    transport = _FakeTransport(replies=["hallazgo"])
+
+    ed.run_loop_round(
+        "p_chal",
+        content,
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-044l",
+        task_type="prose",
+        rol="challenger",
+        phase="MANAGER_REVIEW",
+        loop_id="L044l",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+        ronda=1,
+    )
+    sent_content = transport.calls[-1]["messages"][0]["content"]
+    rows = _rows(tmp_path)
+
+    assert sent_content == content
+    assert (
+        rows[-1]["bundle_sha256"] == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    )
+
+
+def test_mutation_altered_bundle_between_nonce_and_dispatch_changes_hash(tmp_path):
+    """DoD (d): MUTATION -- alterar el bundle entre la emision del nonce y el
+    despacho hace que la verificacion CAIGA. Simula el escenario: se calcula
+    el hash ESPERADO sobre el bundle que existia cuando se emitio el nonce
+    (`original_content`); si el contenido REALMENTE despachado difiere (se
+    altero despues), el `bundle_sha256` registrado NO coincide con el
+    esperado -- la discrepancia es detectable comparando ambos hashes."""
+    original_content = "bundle tal como estaba cuando se emitio el nonce"
+    tampered_content = "bundle tal como estaba cuando se emitio el nonce + inyeccion"
+    expected_hash = hashlib.sha256(original_content.encode("utf-8")).hexdigest()
+
+    transport = _FakeTransport(replies=["hallazgo"])
+    ed.run_loop_round(
+        "p_chal",
+        tampered_content,
+        config=_config(),
+        project_root=tmp_path,
+        ticket="WOT-TEST-044l",
+        task_type="prose",
+        rol="challenger",
+        phase="MANAGER_REVIEW",
+        loop_id="L044l",
+        backend_key="BA11",
+        sensitivity="public",
+        transport=transport,
+        ronda=1,
+    )
+    rows = _rows(tmp_path)
+
+    assert rows[-1]["bundle_sha256"] != expected_hash, (
+        "un bundle alterado entre la emision del nonce y el despacho debe "
+        "producir un bundle_sha256 DISTINTO del esperado -- si coincidiera, "
+        "la alteracion seria invisible"
+    )
+
+
+def test_bundle_sha256_present_on_blocked_and_failure_paths(tmp_path, monkeypatch):
+    """DoD (a) cubre TAMBIEN las filas de fallo (bloqueo de privacidad,
+    transporte caido): el bundle SI se construyo y SI se intento enviar, asi
+    que su hash debe quedar en el receipt igual que en el camino feliz."""
+
+    def _raise_blocked(*_a, **_k):
+        raise ed.DispatchBlockedError("vetado por preflight de privacidad")
+
+    monkeypatch.setattr(ed, "send_to_profile", _raise_blocked)
+    content = "bundle que nunca llega a enviarse por el veto"
+
+    with pytest.raises(ed.DispatchBlockedError):
+        ed.run_loop_round(
+            "p_chal",
+            content,
+            config=_config(),
+            project_root=tmp_path,
+            ticket="WOT-TEST-044l",
+            task_type="prose",
+            rol="challenger",
+            phase="MANAGER_REVIEW",
+            loop_id="L044l",
+            backend_key="BA11",
+            sensitivity="public",
+            ronda=1,
+        )
+    rows = _rows(tmp_path)
+
+    assert (
+        rows[-1]["bundle_sha256"] == hashlib.sha256(content.encode("utf-8")).hexdigest()
     )
 
 

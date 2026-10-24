@@ -322,6 +322,19 @@ Cuenta como lente independiente una ronda que cumpla TODO:
 
 Las ramas (`comun`/`dif`) y los prompts distintos NO multiplican lentes: solo cuentan `backend_key` distintos.
 
+**Ejecutar una ronda valida no es lo mismo que AUDITAR un commit (WOT-2026-044l, DoD f).** El join
+commit+nonce+backend_key de arriba prueba que una lente RESPONDIO a un challenge de ese commit, pero no que el
+bundle que recibio fuera el diff de ese commit: un `--commit-sha` pasado por inercia desde un bucle sobre OTRA
+cosa pasa esa barrera igual (medido 2026-08-11: 17 citas del mismo commit entre tres bucles ajenos, 0
+legitimas). Cuenta como ronda que AUDITA un commit la que cumple las TRES condiciones a la vez: `ticket ==
+dueno del commit`; `phase` en `{CONTRACT_AUDIT, MANAGER_REVIEW}`; `output_chars > 0`. Es el criterio que el
+propio auditado eligio al reconstruir la independencia a mano para ese incidente -- declararlo aqui evita que
+cada orquestador tenga que acertarlo de nuevo. `check_loop_execution.auditing_rounds_for_commit` lo aplica;
+`check_loop_execution.foreign_bundle_rounds` complementa comparando `bundle_sha256` (el hash del contenido
+EXACTO que el despachador envio, scorecard WOT-2026-044l) entre las rondas de un mismo commit, para nombrar
+las que auditaron un bundle distinto del mayoritario. Ambas son ADITIVAS (diagnostico): no cambian el veredicto
+de `distinct_execution_backends` ni bloquean nada por si solas.
+
 ## 5. Minimos por tipo de entrega
 
 Los fija `check_loop_execution.min_distinct_for(deliverable_type)`: `code`/`mixed` 4, `analysis` 3,
