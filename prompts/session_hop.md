@@ -58,10 +58,18 @@ predica no cristalizar estado no puede cristalizarlo.)*
 ## Paso 0: ¿hay una mejora a ESTE prompt ya verificada por bucle, sin aplicar todavia?
 
 (Paso 0 y umbral "2 arranques": origen `PROPUESTA_cierre_produce_mejor_arranque.md`
-§3-4, `sin verificar por bucle` a fecha del commit que introdujo este Paso 0 --
-"prompts: aplica al canonico las mejoras de session_hop.md verificadas por bucle
-real"; localizalo con `git log --oneline -- prompts/session_hop.md` si necesitas
-el SHA exacto.)
+§3-4, aplicados en el commit que introdujo este Paso 0 -- "prompts: aplica al
+canonico las mejoras de session_hop.md verificadas por bucle real"; localizalo
+con `git log --oneline -- prompts/session_hop.md` si necesitas el SHA exacto --
+SIN el bucle que esa misma propuesta exigia en su §7. Bucle RETROACTIVO
+corrido 2026-10-25 sobre el Paso 0 y el umbral tal como estaban escritos
+(WOT-2026-091e, 3 lentes independientes -- codex, nan qwen3.6, kilo
+nan/deepseek -- consenso `CAMBIOS` en las 3): encontro huecos reales de
+diseno, corregidos mas abajo en este mismo Paso 0 (rama de propuesta
+superada, identidad de "la MISMA correccion" y el enlace con el filtro
+adversarial de 2.5.j). Detalle:
+`.agent/planning/PROPUESTA_mejoras_session_hop_2026-09-30.md` y la fila de
+WOT-2026-091e en `backlog.md`.)
 
 Antes de recolectar nada, busca en
 `<DESTINO_ROOT>/.agent/planning/PROPUESTA_mejoras_session_hop_*.md` (o el
@@ -84,16 +92,52 @@ identificable**, no por coincidencia literal del texto de la propuesta:
   esperar a que alguien edite y commitee este fichero primero. Decláralo
   explicitamente en el arranque: "Este arranque incorpora la correccion <N>
   de <ruta de la propuesta>, pendiente de aplicar a este prompt canonico."
+  Aplica SOLO el hallazgo concreto con consenso, nunca la propuesta entera:
+  si la propuesta enruta otros hallazgos a `script_guard`/decision humana
+  (ver su propia tabla de estado por hallazgo), esos NO se aplican al
+  arranque.
+- **Si el paso o seccion que la propuesta corrige fue reescrito o
+  eliminado por una revision POSTERIOR de este mismo prompt** (compara la
+  fecha/sha de la correccion de la propuesta contra `git log --oneline --
+  <este fichero>`), no la apliques ni la declares pendiente: declarala
+  `superada` y no la repitas en el arranque. (Hallazgo del bucle
+  retroactivo WOT-2026-091e, 2026-10-25: una propuesta con `Estado:`
+  obsoleto puede ordenar re-aplicar algo que una correccion posterior ya
+  reemplazo.)
 
 Al editar este prompt con una propuesta, actualiza la linea `Estado:` de
-la propuesta a `APLICADA en <sha>`.
+la propuesta a `APLICADA en <sha>` (o `SUPERADA`, si cae en la rama
+anterior) -- hazlo tambien cuando la rama 1 ("ya esta incorporada")
+dispara, no solo cuando tu mismo edites el canonico.
 
-Si la MISMA correccion se aplica manualmente en 2 o mas arranques
-consecutivos, es momento de editar este prompt directamente — dejo de ser
-una excepcion puntual y se volvio parte del metodo (mismo umbral que la
-regla `prompt_override` de `orchestrator_session_close_full_audit.md`, ver
-su Bloque 2.5.d, aplicado aqui con umbral mas bajo porque el volumen de
-arranques reales es mucho menor que el de sesiones de trabajo).
+**Identidad de "la MISMA correccion" (bucle retroactivo WOT-2026-091e,
+2026-10-25):** dos aplicaciones cuentan como la MISMA correccion solo si
+citan la MISMA ruta de propuesta Y el MISMO paso/seccion corregido -- no
+por similitud de texto. "Arranques consecutivos" cuenta por orden de
+produccion del arranque en esta linea de trabajo, sin otra correccion
+distinta intercalada sobre el MISMO paso.
+
+Si la MISMA correccion (con esa identidad) se aplica manualmente en 2 o
+mas arranques consecutivos, es momento de editar este prompt directamente
+— dejo de ser una excepcion puntual y se volvio parte del metodo (mismo
+umbral que la regla `prompt_override` de
+`orchestrator_session_close_full_audit.md`, ver su Bloque 2.5.d, aplicado
+aqui con un numero de repeticiones mas bajo -- 2, no el `>=3` de esa regla
+-- porque el volumen de arranques reales es mucho menor que el de sesiones
+de trabajo). **Esta promocion NO exime del filtro adversarial que exige la
+clase `handoff_prompt_defect` (2.5.j):** si al editar el canonico por este
+umbral la correccion no tiene todavia una seccion de "bucle adversarial
+real corrido" propia, marca el cambio `sin verificar por bucle` en el
+mensaje del commit **y abre de inmediato un ticket de seguimiento en el
+backlog para correr ese bucle** -- la etiqueta sola no sustituye el filtro,
+es el mismo compromiso declarado que la clase `handoff_prompt_defect` exige
+para su propia reactivacion (2.5.j); si no hay presupuesto ni para abrir ese
+ticket, no edites el canonico todavia, deja los parches manuales acumularse
+(bucle retroactivo WOT-2026-091e, 2026-10-25, hallazgo de la 2a ronda de
+verificacion: una etiqueta sin ticket de seguimiento deja la promocion por
+umbral mas debil que lo que esa misma clase exige para si misma -- el commit
+que introdujo este mismo Paso 0, ver nota de procedencia arriba, invoco este
+umbral sin haber pasado ningun filtro).
 
 ## Paso 1: recolecta el ESTADO con el script, no de memoria
 
