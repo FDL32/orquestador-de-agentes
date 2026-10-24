@@ -133,6 +133,24 @@ Antes de escribir cualquier memoria, declara EXPLÍCITAMENTE su destino. No bast
 > `.agent/runtime/memory/archive/observations.YYYY-MM.jsonl` (un fichero por mes, UTC).
 > `git ls-files .agent/runtime/memory/archive/` lo confirma.
 
+**Precondicion WOT-2026-027j:** la promocion de una propuesta de memoria a `observations.jsonl`
+requiere que exista el sidecar del Bloque 2.6 de
+`prompts/orchestrator_session_close_full_audit.md` para la sesion actual y que
+`python scripts/check_closure_adversarial_pass.py --sidecar <ruta>` haya dado exit 0 sobre el.
+Si no existe el sidecar o el guard rechazo, NO promuevas memoria hasta resolver.
+
+### Como se identifica "la sesion actual" y el sidecar
+
+- **La "sesion actual"** se identifica por el ticket activo en `STATE.md` (`ACTIVE_TICKET`)
+  en el momento del cierre de sesion. No se necesita un campo `session_id` separado:
+  `ACTIVE_TICKET` es suficiente para identificar la sesion de forma inequivoca a este alcance.
+- **El sidecar** se escribe en `.agent/runtime/session/closure_adversarial_pass_<TICKET>.json`
+  (ej. `closure_adversarial_pass_WOT-2026-027j.json`), tal como lo arma el Bloque 2.6 del cierre.
+  El campo `"ticket"` dentro del JSON del sidecar es el que ata el sidecar a la sesion; el guard
+  `check_closure_adversarial_pass.py` ya exige que este campo sea obligatorio (no puede estar
+  vacio). El prompt de memory_upload lo usa para localizar el sidecar canonico: lee
+  `ACTIVE_TICKET` de `STATE.md`, construye la ruta esperada, y la pasa al guard.
+
 Procedimiento de promoción (con confirmación humana explícita):
 
 1. Muestra el JSON exacto que se insertaría y **espera aprobación**.

@@ -326,6 +326,46 @@ Audita los artefactos que los prompts generaron durante la sesion Y el PROCESO q
    - **CLAUSULA DE PERSISTENCIA (nit revisor 2026-07-16)**: toda propuesta `script_guard`/`backlog_ticket` que SOBREVIVA el triage DEBE materializarse via el Bloque 5 en el backlog persistente. El ledger de sesion es gitignored y se purga (gc, KEEP_LAST_K=10): una propuesta que solo viva ahi es EFIMERA y se pierde. No la dejes en el ledger creyendo que quedo registrada.
    - Promocion de lo aprendido SOLO por Bloques 4/5 post-cierre (verde). Este sub-bloque PROPONE; NUNCA escribe backlog ni memoria durante el Bloque 2.5 (respeta el invariante de arbol de cierre de mas abajo: nada se escribe en `backlog.md` antes de `--session-close`).
 
+== BLOQUE 2.6: PASADA ADVERSARIAL BLOQUEANTE SOBRE EL INFORME DE CIERRE Y LA PROPUESTA DE MEMORIA (WOT-2026-027j) ==
+Esta seccion cubre lo que el Bloque 2.5 NO cubre: la validacion adversarial del INFORME DE CIERRE
+y la PROPUESTA DE MEMORIA ya redactados (texto/prosa, no diffs de codigo). El incidente real
+`cierre FP-20260721d` (2026-07-21) mostro que 2 lentes adversariales sobre el informe cazaron
+3 defectos reales (razonamiento circular sin verificar, decision tomada sin analizar los datos,
+atribucion reportada como nota al margen) que ninguna gate ve porque no hay exit code que falle.
+El Bloque 2.5 es explicitamente INFORMATIVO; este Bloque 2.6 es BLOQUEANTE.
+
+2.6.a Metodo adversarial. Aplica el mismo patron de pasada adversarial usado en el Bloque 2 y
+    en el Bloque 2.5: arma un bundle con la prosa del informe de cierre y la propuesta de memoria,
+    lanza dos lentes de clase distinta, recopila sus hallazgos y veredictos. El metodo adversarial
+    (como se arma el bundle, como se lanzan las lentes, criterio GO/CHANGES) se REMITE a
+    `prompts/manager_review.md` + `prompts/audit_agent_output.md` (no lo reimplementa aqui;
+    gobierno skill-apunta/prompt-gobierna, X-09).
+
+2.6.b Escribe el sidecar JSON con la forma:
+    ```json
+    {
+      "ticket": "WOT-2026-XXXXX",
+      "lentes": [
+        {"backend": "<backend>", "verdict": "GO|CHANGES", "hallazgos": [
+          {"texto": "<descripcion del hallazgo>", "evidence": "<ruta:linea | exit N | timestamp ISO>"}
+        ]}
+      ]
+    }
+    ```
+    Cada hallazgo DEBE llevar `evidence` que case un patron verificable (exit code `exit N`/`rc=N`,
+    ruta con linea `archivo:N`, o timestamp ISO `YYYY-MM-DD` o `YYYY-MM-DDTHH:MM`). Si un hallazgo
+    no tiene evidence verificable, es un hallazgo NO VALIDADO.
+
+2.6.c Corre el guard:
+    `python scripts/check_closure_adversarial_pass.py --sidecar <ruta-sidecar>`
+    Exit 0 = aprobado; exit 1 = rechazo con motivo en stderr.
+
+PUNTO DE CONTROL antes del Bloque 3/Bloque 4: si `check_closure_adversarial_pass.py` da exit != 0,
+NO continues al Bloque 3 ni al Bloque 4 (promocion de memoria) hasta resolver los rechazos.
+Mismo patron textual que "PUNTO DE CONTROL antes del Bloque 3" del Bloque 2: detente en el punto
+de control, surfacea los hallazgos RECHAZADOS y no cristalizas ni memoria ni cierre hasta que el
+guard salga en verde.
+
 == BLOQUE 3: CIERRE CANONICO ==
 Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--session-close`, NINGUN write-surface no incluido en `EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS` puede haber sido modificado por este flujo (en particular `backlog.md`). Si lo fue, es un error de ORDEN del propio flujo: difiere esa escritura al post-cierre (Bloque 5). El gate no se relaja; el flujo se reordena.
 

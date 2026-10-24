@@ -15,6 +15,17 @@
 #                   ya no existe es STALE y FALLA.
 
 known_unwired:
+  # WOT-2026-027j: invocacion manual desde el Bloque 2.6 de
+  # prompts/orchestrator_session_close_full_audit.md (pasada adversarial
+  # bloqueante sobre el informe de cierre y la propuesta de memoria). Es
+  # DELIBERADO, no deuda huerfana: el ticket evaluo anadir wiring a
+  # agent_controller.py/session_closeout.py para crear un call-site mutable y
+  # lo DESCARTO (decision del orquestador del vuelo 2026-10-24, scope creep
+  # sobre un ticket que nacio como exigencia de PROMPT, no de codigo) -- ver
+  # DoD(c) declarado como gap en el cierre completed-partial de esta fila.
+  # Si algun dia se decide cablearlo (ticket de seguimiento), esta entrada se
+  # retira entonces, igual que sus precedentes (check_backlog_commits_landed).
+  check_closure_adversarial_pass: WOT-2026-027j
   # Citados en prompts, ejecutados por nadie. El orquestador corrio estos A MANO
   # el 2026-07-14 como barreras obligatorias -- funcionaron porque alguien se acordo.
   # check_backlog_commits_landed: RETIRADO (WOT-2026-024q) -- ahora cableado via
