@@ -192,6 +192,47 @@ liveness is re-verified anyway when the first ticket actually dispatches.
 
 ---
 
+## Paso 0.5: flight preflight census (WOT-2026-037c)
+
+Before consuming the DAG, run a READ-ONLY fail-closed census over four
+blocking classes. This is a HARD-STOP: any condition found must be
+resolved before the first ticket starts.
+
+- **Tool**: `python <MOTOR_ROOT>/scripts/preflight_flight.py`, invoked with:
+
+    ```
+    python <MOTOR_ROOT>/scripts/preflight_flight.py \
+        --dag <dag.json> \
+        --workspace-root <DESTINO_ROOT> \
+        --backlog <backlog.md> \
+        [--json]
+    ```
+
+- **Checks**:
+
+    1. **(a) GATE NO EJECUTABLE**: every `common_gate` script from every
+       group must accept its command + `--help` (argparse exit 0). Detected by
+       `usage:` ABSENT in combined stdout+stderr or by a message containing
+       `"unrecognized argument"` / `"invalid choice"`. HARD-STOP naming the
+       group and the exact command.
+    2. **(c) ESTADO STALE**: the workspace `session_state` must not be `"stale"`
+       (derived from `init_session_scratch.py list` via the imported
+       `derive_session_state` helper). HARD-STOP if stale.
+    3. **(d) DECISION HUMANA**: tickets in `autonomy_mode: "autonomous"` groups
+       must not carry `REQUIERE_HUMANO` or `DISENO_PRIMERO` in their live
+       backlog row (case-insensitive literal search). HARD-STOP naming ticket
+       + group.
+
+- **Criterion**: exit 0 = clean (all three deterministic classes pass).
+  Exit 1 = blocking condition found (exit 1 with the list of blocks).
+  Exit 2 = execution/collection error (bad paths, script not found).
+
+This gate is a sibling of the "Validate the DAG before executing it" section
+below: both are pre-flight barriers that run BEFORE the state machine, and
+both fail closed rather than let a latent blocking condition surface mid-batch.
+
+---
+
 ## Paso 0-bis: START CONTEXT ISOLATION is DUAL-CONTRACT -- never self-certified
 
 > **Naming, deliberate:** this is `start_context_isolation`, NOT a "freshness
