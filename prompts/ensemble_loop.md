@@ -118,6 +118,23 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
    revision toca memoria -- antes de verificar `scripts/check_builder_dispatch_prompt.py <bundle>`. No
    aplica a lentes `api` (sin filesystem: no pueden leer nada por su cuenta, y el bundle les pega la
    evidencia directamente, ver punto 2 de esta seccion).
+7. **El contrato citado va EN el bundle, no por ruta (WOT-2026-042y).** Si el artefacto que la lente va a
+   auditar CITA un contrato (una ruta bajo `prompts/` o `.agent/rules/`), un bucle que solo audite
+   coherencia interna del artefacto NO PUEDE ver lo que el artefacto OMITE de ese contrato -- es la clase de
+   falso verde medida 2026-07-29 (un prompt de arranque paso un bucle de 4 lentes sin que ninguna detectara
+   que faltaban tres secciones enteras del contrato del ejecutor, porque a las lentes se les paso el prompt
+   y sus contratos por REFERENCIA, no por CONTENIDO). Por tanto: incluye en el bundle el CONTENIDO del
+   contrato citado, no solo su ruta. Si el contrato no cabe completo en el presupuesto del punto 4, incluye
+   solo sus secciones normativas (tablas de fases, campos marcados obligatorios, identificadores en
+   mayusculas con guion o guion bajo como `MANAGER_REVIEW` o `GROUP_STOP_REPORT`, lineas `**OBLIGATORIO**` /
+   `**NUNCA**` / `**SIEMPRE**` / `**PROHIBIDO**` / `**BLOQUEANTE**` / `**NON-NEGOTIABLE**`) y DECLARA
+   explicitamente en el propio bundle que secciones se omitieron y por que -- omitir contenido sin
+   declararlo deja el bundle en el mismo punto ciego que la ruta sola. Antes de enviar el bundle, verifica
+   la cobertura de clausulas con `python scripts/check_contract_clause_coverage.py --artifact <bundle o
+   artefacto auditado> --project-root <root>`: enumera, por cada contrato citado, los identificadores
+   normativos ausentes del bundle. Un artefacto que legitimamente ENRUTA a un contrato sin re-declararlo
+   (regla del repo "skill apunta, prompt gobierna") no falla por no copiar el texto completo -- basta con
+   que NOMBRE el identificador y su fuente en el bundle.
 
 ### 3.4 Rondas de gobierno: nonce antes de la ronda
 
