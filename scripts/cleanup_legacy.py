@@ -22,9 +22,9 @@ class LegacyCleanup:
     """Identify and remove legacy files from older agent system versions."""
 
     # Old script names that were renamed
-    OLD_SCRIPT_NAMES: ClassVar[list[str]] = [
-        "detect_agent_system_version.py",
-    ]
+    # detect_agent_system_version.py is a documented alias (UPGRADE_GUIDE.md,
+    # DISTRIBUTION_GUIDE.md) and must NOT be listed here.
+    OLD_SCRIPT_NAMES: ClassVar[list[str]] = []
 
     # Debug/temporary files from execution
     DEBUG_FILES: ClassVar[list[str]] = [
@@ -35,9 +35,8 @@ class LegacyCleanup:
     ]
 
     # Old configuration files
-    OLD_CONFIG_FILES: ClassVar[list[str]] = [
-        "UPGRADE_GUIDE.md",
-    ]
+    # UPGRADE_GUIDE.md must NOT be listed: UPGRADE_CLEANUP_GUIDE.md orders to keep it.
+    OLD_CONFIG_FILES: ClassVar[list[str]] = []
 
     # Directories that should be cleaned
     LEGACY_DIRS: ClassVar[list[str]] = [

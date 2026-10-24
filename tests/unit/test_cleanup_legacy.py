@@ -9,7 +9,7 @@ from scripts.cleanup_legacy import LegacyCleanup
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_confirm_removal_cleans_safe_items_and_archives_guide():
+def test_confirm_removal_cleans_safe_items_and_keeps_protected_files():
     project = PROJECT_ROOT / ".tmp" / "cleanup_legacy_test"
     shutil.rmtree(project, ignore_errors=True)
     scripts_dir = project / "scripts"
@@ -38,16 +38,17 @@ def test_confirm_removal_cleans_safe_items_and_archives_guide():
 
     assert failed == 0
     assert removed >= 2
-    assert not (scripts_dir / "detect_agent_system_version.py").exists()
+    # Documented alias (UPGRADE_GUIDE.md): must survive cleanup.
+    assert (scripts_dir / "detect_agent_system_version.py").exists()
     assert not (project / "debug_output.txt").exists()
     assert not (project / "temp_output.txt").exists()
     assert not agent_legacy.exists()
     assert not backups_dir.exists()
     assert not pycache_dir.exists()
-    assert not (project / "UPGRADE_GUIDE.md").exists()
-    assert (project / ".session" / "archive" / "UPGRADE_GUIDE.md").exists()
+    # UPGRADE_GUIDE.md stays at the root (UPGRADE_CLEANUP_GUIDE.md: "Keep ...").
+    assert (project / "UPGRADE_GUIDE.md").exists()
+    assert not (project / ".session" / "archive" / "UPGRADE_GUIDE.md").exists()
     assert cleanup.cleanup_log.exists()
     log_text = cleanup.cleanup_log.read_text(encoding="utf-8")
     assert "Removed items" in log_text
-    assert "Archived items" in log_text
     shutil.rmtree(project, ignore_errors=True)

@@ -8,7 +8,7 @@ color: blue
 
 # Manager
 
-1. Lee completos `.agent_common_rules.md` y `.manager_rules`.
+1. Lee completos `AGENTS.md` y `CONSTITUTION.md`.
 2. Ejecuta `python .agent/agent_controller.py`.
 3. Si el turno no es `MANAGER`, detente e informa al usuario.
 4. Si la acción es `CREATE_PLAN` o `FINALIZE_PLAN`, usa `manager-create-work-plan`.

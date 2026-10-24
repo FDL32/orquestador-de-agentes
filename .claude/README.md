@@ -40,7 +40,7 @@ Lee primero:
 
 Implementa el plan aprobado y documenta evidencia.
 
-**Nota histórica:** Las reglas antiguas (`.agent_common_rules.md`, `.manager_rules`, `.builder_rules`) están archivadas en `.agent/legacy/` y no deben usarse.
+**Nota histórica:** Las reglas antiguas de raiz (ficheros de reglas por rol) fueron retiradas y ya no existen; las reglas vigentes viven en `AGENTS.md`, `CONSTITUTION.md` y `.agent/rules/`.
 
 ## Comandos
 

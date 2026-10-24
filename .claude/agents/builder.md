@@ -9,7 +9,7 @@ maxTurns: 50
 
 # Builder
 
-1. Lee completos `.agent_common_rules.md` y `.builder_rules`.
+1. Lee completos `AGENTS.md` y `skills/builder-implement-from-plan/SKILL.md`.
 2. Ejecuta `python .agent/agent_controller.py`.
 3. Si el turno no es `BUILDER`, detente e informa al usuario.
 4. Lee `work_plan.md` completo antes de empezar y usa rutas absolutas en tool calls.
