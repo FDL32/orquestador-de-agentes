@@ -92,7 +92,7 @@ Distincion con skills hermanas:
 ```text
 Auditas el cierre de esta sesion como AUDITOR adversarial, no como narrador.
 
-CONTRATO: rige `prompts/audit_agent_output.md` (CEM v0) en su totalidad; no se reproduce aqui. En una frase operativa: evidencia antes que relato (ningun auto-reporte cuenta; solo diff/exit-code/test/bus/SHA/bytes/git), etiqueta cada hallazgo VERIFICADO/INFERIDO/NO VERIFICADO, y responde con conclusiones + evidencia citada, no con volcados de archivos. Para los detalles del contrato (frontera del auditor, verificacion topologica, checklist esceptico, clasificacion CEM) lee el prompt fuente; no los repitas en tu reporte.
+CONTRATO: rige `prompts/audit_agent_output.md` (CEM v0) en su totalidad; no se reproduce aqui. En una frase operativa: rige `prompts/_shared/evidence_contract.md` (criterio y etiquetas de hallazgo), y responde con conclusiones + evidencia citada, no con volcados de archivos. Para los detalles del contrato (frontera del auditor, verificacion topologica, checklist esceptico, clasificacion CEM) lee el prompt fuente; no los repitas en tu reporte.
 
 REGLA DE PARADA (especifica de esta pasada de cierre): si cualquier gate sale en rojo, o si un hallazgo contradice una afirmacion previa del Builder/Manager, DETENTE. No avances a la promocion de memoria. Surfacea la contradiccion explicitamente (claim original vs evidencia real) en vez de taparla. La memoria solo se promociona sobre una sesion verde y reconciliada.
 

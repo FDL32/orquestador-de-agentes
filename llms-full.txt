@@ -331,7 +331,7 @@ CEM es el contrato minimo para trabajar con agentes sin convertir cada ticket en
 **Fallback ante duda de diseno sin contrato que la resuelva:** `CONSTITUTION.md` (raiz del motor, carga ON-DEMAND, leelo entero cuando lo consultes) tiene la jerarquia de 6 niveles y 15 tenets de ingenieria que amplian lo de abajo.
 
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de tocar codigo o tests.
-- **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; usa diff, exit code, test, evento de bus, commit o artefacto verificable.
+- **Evidencia antes que relato:** auto-reporte no es evidencia; criterio en `prompts/_shared/evidence_contract.md`.
 - **Un `exit 0` puede significar "no hice nada":** en operaciones IDEMPOTENTES o con SKIP (cierres, syncs, instaladores), `exit 0` es indistinguible de "ya estaba hecho" o "me salte el trabajo". `exit code` es evidencia NECESARIA pero no SUFICIENTE para estas: verifica el ARTEFACTO (fichero/informe/diff/contador que la operacion debia producir), no solo el codigo de salida; y busca en la salida las palabras de skip (`already`, `skipped`, `nothing to do`, `none present`, `up to date`, `no files to check`). Y lee el CODIGO antes de temer un flag: un `--force` puede vencer SOLO la idempotencia sin tocar los gates (leer 12 lineas convierte un "no me atrevo" en un cierre real). [F1]
 - **El exit code tras una tuberia MIENTE (autoengano-por-pipe):** `$?` tras `cmd | tail` lee el rc del ULTIMO tramo de la tuberia (el consumidor), no del productor: un comando que FALLA se disfraza de exit 0. Cuando necesites a la vez esquilar la salida Y reportar el rc REAL, usa el wrapper aprobado `scripts/tools/run_and_exit.py` (WOT-2026-022p): `python scripts/tools/run_and_exit.py --tail 20 -- <cmd> [args...]` imprime las ultimas lineas y despues `[run-and-exit] exit_code: <n>`, y el proceso sale con ese mismo codigo (127 si el comando no existe, 2 si no hay comando). [F2]
 - **Equivalencia de ruta productiva (evidencia exploratoria vs evidencia de cierre):** un `exit_code:` solo es evidencia de CIERRE si el probe **reproduce la ruta que corre en produccion**. Aplica **rigor proporcional**: obligatorio para todo lo que toca runtime (hooks, guards, CI, tests, scripts ejecutables, instalador); se salta para docs, typos y prosa sin logica de ejecucion. [F3]
@@ -875,7 +875,7 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 subconjunto operativo, no su sustituto.
 
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
-- **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
+- **Evidencia antes que relato:** criterio en `prompts/_shared/evidence_contract.md`.
 - **Exit code REAL, nunca el de la tuberia:** `$?` tras `cmd | tail` (o
   cualquier pipe) lee el rc del consumidor, no del productor -- un comando que
   falla se disfraza de exit 0 ("autoengano-por-pipe", 2026-07-11/12). Para

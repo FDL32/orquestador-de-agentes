@@ -82,8 +82,7 @@ Evalua con CEM v0:
    - No conviertas "el test pasa" en "el sistema es correcto" sin contrastar produccion real.
 
 2. **Evidencia antes que relato**
-   - Todo claim relevante necesita evidencia verificable.
-   - Si algo es inferencia, etiquetalo como inferencia.
+   - Criterio y etiquetas: `prompts/_shared/evidence_contract.md`.
 
 3. **Rigor proporcional**
    - Ajusta la validacion al blast radius, reversibilidad y criticidad.

@@ -356,7 +356,7 @@ Reglas duras del orquestador (verificadas en sesiones reales):
 subconjunto operativo, no su sustituto.
 
 - **Contrato antes que fix:** identifica que comportamiento canonico protege el cambio antes de modificar codigo o tests.
-- **Evidencia antes que relato:** ningun auto-reporte de agente es evidencia; verifica con diff, test, exit code, bus o artefacto real.
+- **Evidencia antes que relato:** criterio en `prompts/_shared/evidence_contract.md`.
 - **Exit code REAL, nunca el de la tuberia:** `$?` tras `cmd | tail` (o
   cualquier pipe) lee el rc del consumidor, no del productor -- un comando que
   falla se disfraza de exit 0 ("autoengano-por-pipe", 2026-07-11/12). Para

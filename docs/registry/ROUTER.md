@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 45 de 60. Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 45 de 61. Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 

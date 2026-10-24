@@ -49,9 +49,8 @@ Ese prompt prevalece si esta skill diverge.
   la memoria la gobierna `memory_upload.md`.
 - **Read-only por defecto.** Audita y propone el cambio minimo; no parchea salvo
   instruccion explicita (hereda `prompts/audit_agent_output.md`).
-- **Evidencia antes que relato.** Ningun auto-reporte cuenta como evidencia; solo
-  diff, exit code, salida real de test, evento de bus, commit/SHA, bytes, git.
-  Etiqueta cada hallazgo VERIFICADO/INFERIDO/NO VERIFICADO.
+- **Evidencia antes que relato.** Rige `prompts/_shared/evidence_contract.md`
+  (criterio y etiquetas de hallazgo).
 - **Regla de parada.** Si un gate sale en rojo o un hallazgo contradice un claim
   previo del Builder/Manager, DETENTE: no avances a la promocion de memoria.
 - **Barrera mutation-verified.** Un guard/test nuevo solo cuenta como barrera si

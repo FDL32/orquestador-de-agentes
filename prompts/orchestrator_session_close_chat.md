@@ -166,8 +166,8 @@ Aplica estos principios durante todo el cierre:
 
 - **Contrato antes que fix**: verifica que el cierre respeta los contratos de
   las skills y artefactos canonicos.
-- **Evidencia antes que relato**: no des por bueno un "cierre completado" sin
-  evidencia verificable.
+- **Evidencia antes que relato**: aplica `prompts/_shared/evidence_contract.md`
+  a todo "cierre completado".
 - **Rigor proporcional**: el esfuerzo de cierre debe ser proporcional al riesgo
   y complejidad de la sesion.
 - **Memoria despues de aprender**: no promociones a memoria nada que aun no
