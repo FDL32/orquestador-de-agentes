@@ -5479,7 +5479,7 @@ def _record_round(
     )
 
 
-def run_loop_round(
+def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis glm->nan a una funcion ya en el umbral (10)
     profile_name: str,
     content: str,
     *,
@@ -5562,6 +5562,16 @@ def run_loop_round(
         challenge_nonce=challenge_nonce,
     )
     profile = config["ensemble_profiles"][profile_name]
+    # WOT-2026-034a: el gatillo del fallback de sintesis acepta el perfil
+    # ACTIVO y cualquier perfil legacy cuyo `replaced_by` apunte a el (Revisor
+    # H2: `prompts/orchestrator_autonomous_ticket_batch.md` despacha close via
+    # el nombre legacy `challenger_opencode_glm_5_2`, mismo backend/model,
+    # `replaced_by` lo confirma en agents.json -- sin esto el fallback queda
+    # muerto en la ruta de despacho canonica documentada).
+    _is_glm_close_synthesis_profile = (
+        profile_name == "challenger_opencode_glm_flash"
+        or (profile.get("replaced_by") == "challenger_opencode_glm_flash")
+    )
     # WOT-2026-026t: `backend_key` es el RECIBO de quien ejecuto la ronda, y
     # `check_loop_execution` cuenta claves DISTINTAS para acreditar la
     # independencia del bucle. Una clave que no es la del perfil no "elige" nada
@@ -5680,6 +5690,31 @@ def run_loop_round(
             challenge_nonce=challenge_nonce,
         )
         if clase != "transport_failed":
+            # WOT-2026-034a (Revisor N1): `clase != "transport_failed"` ya
+            # IMPLICA `not isinstance(exc, (TransportError, OSError))` (misma
+            # ternaria de arriba) -- repetir el isinstance aqui era tautologico.
+            if phase == "close" and _is_glm_close_synthesis_profile:
+                return _retry_with_nan_leader_fallback(
+                    failed_profile_name=profile_name,
+                    content=content,
+                    config=config,
+                    project_root=project_root,
+                    ticket=ticket,
+                    task_type=task_type,
+                    rol=rol,
+                    phase=phase,
+                    loop_id=loop_id,
+                    sensitivity=sensitivity,
+                    ronda=ronda,
+                    context_kind=context_kind,
+                    transport=transport,
+                    session_id=session_id,
+                    commit_sha=commit_sha,
+                    challenge_nonce=challenge_nonce,
+                    original_exc=exc,
+                    failure_class="unexpected_synthesis_failure",
+                    tried_profiles=_tried_profiles | {profile_name},
+                )
             raise
         return _retry_with_similar_fallback(
             profile_name,
@@ -5770,6 +5805,48 @@ def run_loop_round(
         commit_sha=commit_sha,
         challenge_nonce=challenge_nonce,
     )
+
+    _reply_stripped = reply.strip()
+    # WOT-2026-034a (Revisor H1): el canal `agent` NO lanza ante rc!=0 (cuota
+    # agotada, auth, crash del CLI) -- devuelve TEXTO con
+    # `_TRANSPORT_FAILED_PREFIX` (ver `_transport_agent`, WOT-2026-048g). Sin
+    # esta rama, ese texto se devolvia tal cual como "sintesis", exactamente
+    # el modo de fallo ("fin de cuota") que motivo el alta del ticket.
+    _reply_is_transport_failed_text = _reply_stripped.startswith(
+        _TRANSPORT_FAILED_PREFIX
+    )
+    if (
+        phase == "close"
+        and _is_glm_close_synthesis_profile
+        and (not _reply_stripped or _reply_is_transport_failed_text)
+    ):
+        _bad_content_detail = (
+            f"transport-failed text: {_reply_stripped[:200]}"
+            if _reply_is_transport_failed_text
+            else "Empty reply (0 bytes / no-PONG)"
+        )
+        return _retry_with_nan_leader_fallback(
+            failed_profile_name=profile_name,
+            content=content,
+            config=config,
+            project_root=project_root,
+            ticket=ticket,
+            task_type=task_type,
+            rol=rol,
+            phase=phase,
+            loop_id=loop_id,
+            sensitivity=sensitivity,
+            ronda=ronda,
+            context_kind=context_kind,
+            transport=transport,
+            session_id=session_id,
+            commit_sha=commit_sha,
+            challenge_nonce=challenge_nonce,
+            original_exc=RuntimeError(_bad_content_detail),
+            failure_class="bad_content",
+            tried_profiles=_tried_profiles | {profile_name},
+        )
+
     return reply
 
 
@@ -7929,3 +8006,156 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _get_best_nan_for_task(
+    task_type: str,
+    *,
+    config: dict,
+    project_root: Path,
+    transport=None,
+) -> tuple[str, str] | tuple[None, None]:
+    """Finds the best nan model for a given task_type based on backend_leaders.json.
+
+    `backend_leaders.json` (escrito por `regenerate_leaders`) nunca lleva una
+    clave `profile`: el lider se declara como `{"lider": {"backend", "model"}}`
+    (ya filtrado por `LEADER_MIN_N`, o `"lider": None` con `nota` si n < umbral).
+    Aqui se resuelve ese par `(backend, model)` al perfil `nan_api` vivo que lo
+    sirve; si no hay match o no hay lider, cae a rotacion PONG-019o.
+
+    Returns `(profile_name, selection)` con `selection` en
+    `{"lider", "pong_rotacion"}` -- DoD (b) exige que el fallback sea
+    EXPLICITO, no silencioso: el caller lo persiste en `fallback_events.jsonl`
+    (Revisor N2, WOT-2026-034a) en vez de dejar la procedencia solo en este
+    docstring. `(None, None)` si ni el lider ni la rotacion encuentran nada.
+    """
+    leaders_path = project_root / LEADERS_REL
+    if leaders_path.exists():
+        try:
+            leaders = json.loads(leaders_path.read_text(encoding="utf-8"))
+            entry = leaders.get("por_task_type", leaders).get(task_type)
+            lider = entry.get("lider") if entry else None
+            if lider:
+                for name, prof in config.get("ensemble_profiles", {}).items():
+                    if (
+                        prof.get("backend") == "nan_api"
+                        and prof.get("backend") == lider.get("backend")
+                        and prof.get("model") == lider.get("model")
+                    ):
+                        return name, "lider"
+        except Exception:  # noqa: S110 - JSON de leaders corrupto o ausente: caer a rotacion PONG, no es motivo de abortar
+            pass
+
+    nan_profiles = [
+        name
+        for name, prof in config.get("ensemble_profiles", {}).items()
+        if prof.get("backend") == "nan_api"
+    ]
+
+    for name in nan_profiles:
+        try:
+            res = smoke_profile(
+                name,
+                config=config,
+                transport=transport,
+                project_root=project_root,
+                nonce="PONG-019o",
+                timeout=30,
+            )
+            if res.get("alive") and res.get("outcome") == "ok":
+                return name, "pong_rotacion"
+        except Exception:  # noqa: PERF203, S112 - rotacion PONG: un candidato caido no debe abortar el barrido de los demas
+            continue
+
+    return None, None
+
+
+def _retry_with_nan_leader_fallback(
+    failed_profile_name: str,
+    content: str,
+    *,
+    config: dict,
+    project_root: Path,
+    ticket: str,
+    task_type: str,
+    rol: str,
+    phase: str,
+    loop_id: str,
+    sensitivity: str,
+    ronda: int,
+    context_kind: str,
+    transport,
+    session_id: str | None,
+    commit_sha: str | None,
+    challenge_nonce: str | None,
+    original_exc: Exception,
+    failure_class: str,
+    tried_profiles: frozenset[str],
+) -> str:
+    """Specialized fallback for synthesis using the best nan model from leaders.json."""
+    fallback_profile, fallback_selection = _get_best_nan_for_task(
+        task_type,
+        config=config,
+        project_root=project_root,
+        transport=transport,
+    )
+
+    if fallback_profile is None:
+        raise original_exc from None
+
+    fallback_profile_cfg = config["ensemble_profiles"][fallback_profile]
+    fallback_backend_key = fallback_profile_cfg.get("backend_key")
+
+    append_fallback_event(
+        project_root,
+        {
+            "ts": _now_iso(),
+            "ticket": ticket,
+            "loop_id": loop_id,
+            "phase": phase,
+            "failed_profile": failed_profile_name,
+            "failed_backend": config["ensemble_profiles"][failed_profile_name].get(
+                "backend"
+            ),
+            "failure_class": failure_class,
+            "failure_detail": f"synthesis_fallback_triggered: {type(original_exc).__name__}: {original_exc}"[
+                :300
+            ],
+            "fallback_profile": fallback_profile,
+            "fallback_backend": fallback_profile_cfg.get("backend"),
+            "fallback_backend_key": fallback_backend_key,
+            # DoD (b)/Revisor N2: procedencia EXPLICITA del fallback, nunca
+            # solo implicita en el docstring -- "lider" (backend_leaders.json,
+            # n>=LEADER_MIN_N) vs "pong_rotacion" (sin lider calificado).
+            "selection": fallback_selection,
+            "challenge_nonce": challenge_nonce,
+        },
+    )
+
+    print(
+        f"[fallback] '{failed_profile_name}' (synthesis) fallo ({failure_class}); "
+        f"sustituido por '{fallback_profile}' (nan leader) via backend_leaders.json. "
+        f"Evento registrado en {FALLBACK_EVENTS_REL}.",
+        file=sys.stderr,
+    )
+
+    return run_loop_round(
+        fallback_profile,
+        content,
+        config=config,
+        project_root=project_root,
+        ticket=ticket,
+        task_type=task_type,
+        rol=rol,
+        phase=phase,
+        loop_id=loop_id,
+        backend_key=fallback_backend_key,
+        sensitivity=sensitivity,
+        ronda=ronda,
+        context_kind=context_kind,
+        transport=transport,
+        session_id=session_id,
+        commit_sha=commit_sha,
+        challenge_nonce=challenge_nonce,
+        _tried_profiles=tried_profiles,
+    )
