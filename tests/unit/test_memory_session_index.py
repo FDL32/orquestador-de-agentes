@@ -449,8 +449,16 @@ def test_linked_destino_with_vendored_cli_is_still_a_destino(tmp_path, monkeypat
     assert memory_context._anchor_memory_root() != destino.resolve()
 
 
-def test_recall_reaches_a_lesson_the_index_omits(monkeypatch, capsys):
-    """Lo que el indice omite sigue siendo alcanzable por `--recall --id`."""
+def test_recall_reaches_a_lesson_the_index_omits(monkeypatch, tmp_path, capsys):
+    """Lo que el indice omite sigue siendo alcanzable por `--recall --id`.
+
+    Aislado: se borra AGENT_PROJECT_ROOT y se apunta _PROJECT_ROOT a tmp_path
+    para que no se escape recall_log.jsonl al repo del motor.
+    """
+    import json
+
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    monkeypatch.setattr(memory_context, "_PROJECT_ROOT", tmp_path)
     corpus = [_obs(i) for i in range(400)]
     index = ml.format_memory_index(corpus)
     omitted = next(o for o in corpus if f"{o['id']}:" not in index)
@@ -465,6 +473,16 @@ def test_recall_reaches_a_lesson_the_index_omits(monkeypatch, capsys):
 
     assert rc == 0
     assert omitted["signal"].split(":")[0] in out
+    # El log se escribio en tmp_path, no en el repo del motor.
+    log_file = tmp_path / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    assert log_file.is_file(), "recall_log.jsonl must be written in tmp_path"
+    log_lines = [
+        json.loads(ln)
+        for ln in log_file.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert len(log_lines) >= 1
+    assert log_lines[-1]["mode"] == "id"
 
 
 def test_print_recall_keeps_later_entries_that_still_fit(capsys):

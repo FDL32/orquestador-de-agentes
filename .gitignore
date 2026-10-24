@@ -151,6 +151,9 @@ prompts/debug_*.md
 # Checkpoints
 checkpoint/
 
+# WOT-2026-124f: telemetria de recall (uso de --recall)
+.agent/runtime/memory/recall_log.jsonl
+
 # Runtime state generado en sesion (WOT-2026-015c) - NO distribuir con el motor
 .agent/runtime/events/events.jsonl
 .agent/runtime/memory/observations.jsonl

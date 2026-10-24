@@ -22,6 +22,10 @@ import pytest
 MOTOR_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(MOTOR_ROOT))
 
+# Import helper from recall_log tests.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_memory_context_recall_log import _build_args  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -471,35 +475,83 @@ def test_headlines_limit_warning_inside_budget():
     )
 
 
-def test_headlines_cli_ticket_inexistent():
-    """(124d.6 MINOR) --ticket <inexistent> falls back to plain recall in headlines."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(MOTOR_ROOT / "scripts" / "memory_context.py"),
-            "--recall",
-            "--ticket",
-            "FAKE-DOES-NOT-EXIST-12345",
-            "--headlines",
-            "--limit",
-            "3",
-            "--budget",
-            "500",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(MOTOR_ROOT),
-    )
+def test_headlines_cli_ticket_inexistent(monkeypatch, tmp_path):
+    """(124f.4) --ticket <inexistent> falls back to plain recall in headlines.
+
+    Hermetic: AGENT_PROJECT_ROOT points to tmp_path, synthetic corpus injected.
+    Asserts rc 0, headline format output, budget respect, and log written to
+    tmp_path (not the live repo).
+    """
+    from scripts.memory_context import _run
+
+    test_root = tmp_path / "ticket_inexistent"
+    test_root.mkdir(exist_ok=True)
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(test_root))
+
+    # 2 known lessons with id.
+    obs = [
+        {
+            "id": "obs-ti-0",
+            "topic": "testing",
+            "signal": "SEÑAL de prueba titular 0.",
+            "source": "test",
+            "timestamp": "2026-10-24T12:00:00",
+        },
+        {
+            "id": "obs-ti-1",
+            "topic": "testing",
+            "signal": "SEÑAL de prueba titular 1.",
+            "source": "test",
+            "timestamp": "2026-10-24T12:01:00",
+        },
+    ]
+
+    with mock.patch("scripts.memory_context.recall_observations", return_value=obs):
+        args = _build_args("ticket", ticket="FAKE-DOES-NOT-EXIST-12345")
+        args.headlines = True
+        args.budget = 500
+        rc = _run(args)
+
     # Should succeed (rc 0) with fallback to plain recall
-    # Output should be headline format
-    if result.returncode == 0 and result.stdout:
-        for line in result.stdout.splitlines():
-            if line.startswith("- "):
-                # Headline lines start with "- " (either "- obs-" or "- topic:")
-                break
-        else:
-            # If no headline lines, that's fine too (could be empty)
-            pass
+    assert rc == 0
+
+    # Output should be headline format: each non-empty line starts with "- "
+    # Read from the live output via capture
+    import io
+
+    captured = io.StringIO()
+    with (
+        mock.patch("scripts.memory_context.recall_observations", return_value=obs),
+        mock.patch("sys.stdout", captured),
+    ):
+        args2 = _build_args("ticket", ticket="FAKE-DOES-NOT-EXIST-12345")
+        args2.headlines = True
+        args2.budget = 500
+        _run(args2)
+
+    output = captured.getvalue()
+    non_empty_lines = [ln for ln in output.splitlines() if ln.strip()]
+    for line in non_empty_lines:
+        assert line.startswith("- "), f"Headline line must start with '- ': {line!r}"
+
+    # Output fits in --budget (UTF-8 bytes)
+    assert len(output.encode("utf-8")) <= 500, (
+        f"Output {len(output.encode('utf-8'))} bytes exceeds budget 500"
+    )
+
+    # Log was written to tmp_path, not the live repo
+    log_file = test_root / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    assert log_file.is_file(), "recall_log.jsonl must be created in tmp_path"
+    import json
+
+    log_lines = [
+        json.loads(ln)
+        for ln in log_file.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert len(log_lines) >= 1
+    assert log_lines[-1]["mode"] == "ticket"
+    assert log_lines[-1]["query"] == "FAKE-DOES-NOT-EXIST-12345"
 
 
 def test_headlines_break_omitted_count():

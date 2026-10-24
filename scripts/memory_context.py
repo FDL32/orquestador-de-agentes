@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import sys
 from pathlib import Path
 
@@ -718,6 +719,73 @@ def _queries_from_work_plan(ticket_id: str) -> list[str]:
     return sorted(queries)[:8]
 
 
+def _write_recall_log(
+    root: Path,
+    caller: str,
+    mode: str,
+    query: str,
+    observations: list[dict],
+) -> None:
+    """Append a JSON line with telemetry for this recall execution.
+
+    WOT-2026-124f. UNA linea JSON por ejecucion de --recall (query/ticket/id/plain),
+    en modo append, en `<raiz>/.agent/runtime/memory/recall_log.jsonl`.
+
+    Before: ``root`` es la raiz del proyecto (AGENT_PROJECT_ROOT o _PROJECT_ROOT);
+        ``caller`` es el flag --caller (por defecto "unknown"); ``mode`` es
+        "query", "ticket", "id" o "plain"; ``query`` es el texto de --query,
+        el ID de --ticket, el id pedido, o cadena vacia en plain;
+        ``observations`` son los resultados DEVUELTOS (tras --limit).
+    During: crea el directorio si no existe; escribe UNA linea JSON con \n final;
+        nunca lanza, nunca modifica salida stdout ni exit code.
+    After: el fichero crece por append; un fallo se reporta por stderr.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    log_dir = root / ".agent" / "runtime" / "memory"
+    log_file = log_dir / "recall_log.jsonl"
+
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        print(
+            f"[WARN] recall log: cannot create directory {log_dir}",
+            file=sys.stderr,
+        )
+        return
+
+    results: list = []
+    for obs in observations:
+        oid = obs.get("id")
+        if isinstance(oid, str) and oid:
+            results.append(oid)
+        else:
+            # No id: store dedup_key as a plain list.
+            from bus.portable_memory_archive import dedup_key
+
+            dk = dedup_key(obs)
+            results.append(list(dk))
+
+    entry = {
+        "v": 1,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "caller": caller,
+        "mode": mode,
+        "query": query,
+        "results": results,
+    }
+
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        print(
+            f"[WARN] recall log: cannot write to {log_file}",
+            file=sys.stderr,
+        )
+
+
 def _session_context() -> tuple[str, bool]:
     """Arranque ACOTADO completo, el MISMO que inyecta el hook SessionStart.
 
@@ -856,6 +924,16 @@ def main() -> int:
             "the loop. Default budget: 2000 bytes (24000 without --headlines)."
         ),
     )
+    parser.add_argument(
+        "--caller",
+        type=str,
+        default="unknown",
+        help=(
+            "Identifier for the caller of this recall (e.g. session id, "
+            "agent name). Written to the recall telemetry log. "
+            "Default: unknown."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -942,6 +1020,20 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
         print(_format_status())
 
     elif mode == "recall":
+        # Track recall telemetry: mode + query before producing output.
+        if args.obs_id:
+            recall_mode = "id"
+            recall_query = args.obs_id.strip()
+        elif args.ticket:
+            recall_mode = "ticket"
+            recall_query = args.ticket
+        elif args.query:
+            recall_mode = "query"
+            recall_query = args.query
+        else:
+            recall_mode = "plain"
+            recall_query = ""
+
         if args.obs_id:
             # Resolucion EXACTA por id, y fail-CLOSED si no existe. Nunca cae al
             # recall plano: devolver ruido cuando el agente pidio una leccion
@@ -960,12 +1052,26 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
                     "archive.",
                     file=sys.stderr,
                 )
+                _write_recall_log(
+                    Path(os.environ.get("AGENT_PROJECT_ROOT") or _PROJECT_ROOT),
+                    args.caller,
+                    recall_mode,
+                    recall_query,
+                    [],
+                )
                 return 1
             effective_budget = _resolve_recall_budget(args)
             if args.headlines:
                 _print_headlines(match, budget=effective_budget)
             else:
                 _print_recall(match, budget=effective_budget)
+            _write_recall_log(
+                Path(os.environ.get("AGENT_PROJECT_ROOT") or _PROJECT_ROOT),
+                args.caller,
+                recall_mode,
+                recall_query,
+                match,
+            )
             return 0
 
         if args.ticket:
@@ -998,6 +1104,13 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
             observations = _rank_by_similarity(pool, args.query)[: args.limit]
         if not observations:
             print("No observations found.", file=sys.stderr)
+            _write_recall_log(
+                Path(os.environ.get("AGENT_PROJECT_ROOT") or _PROJECT_ROOT),
+                args.caller,
+                recall_mode,
+                recall_query,
+                [],
+            )
             return 1
         # El recorte por CARDINALIDAD (`--limit`) tambien se declara: es el que
         # mas muerde (default 15 sobre un pool de cientos) y era el unico corte
@@ -1022,6 +1135,13 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
             )
         else:
             _print_recall(observations, budget=effective_budget)
+        _write_recall_log(
+            Path(os.environ.get("AGENT_PROJECT_ROOT") or _PROJECT_ROOT),
+            args.caller,
+            recall_mode,
+            recall_query,
+            observations,
+        )
 
     elif mode == "why":
         # Matchea por id EXACTO si parece uno (prefijo `obs-`), si no por
