@@ -1712,6 +1712,33 @@ _LANDING_EVIDENCE_LEGACY_BASELINE: dict[str, str] = {
     "WOT-2026-047h": "-",
 }
 
+# WOT-2026-059s: validate_archive_prose_preservation ONLY protects prose for
+# ids that REMAIN in _LANDING_EVIDENCE_LEGACY_BASELINE. The moment an id is
+# retired from that dict (because someone "repairs" its row), that function
+# stops looking at it FOREVER -- regardless of whether the repair actually
+# preserved the distilled lesson text or silently destroyed it while adding
+# unrelated landing evidence. That is the exact blind spot measured by
+# WOT-2026-056e: commit 9a0db6a added real `commit:<sha>` cells to 35 rows
+# while destroying 2 of their distilled prose comments, and f953519 retired
+# those same 35 ids from the baseline in the SAME act, so no validator ever
+# saw the destruction (baseline census 86 -> 0 errors after retirement vs.
+# 5 errors measured against the OLD census over the SAME archive state).
+#
+# This dict is NOT about landing evidence (validate_archive_landing_evidence
+# already re-enforces that unconditionally the instant an id leaves the
+# baseline -- its exemption simply disappears, no new code needed for that).
+# This dict is about PROSE: it captures the exact baseline prose value being
+# retired, so prose preservation keeps being checked forever even after the
+# id leaves the shrinking baseline.
+#
+# PROTOCOL: retiring an id from _LANDING_EVIDENCE_LEGACY_BASELINE without
+# adding it here, in the SAME commit, with the EXACT prose value it carried
+# in the baseline, reproduces the bug this ticket closes. Append-only: a
+# retired entry is never removed from this dict. Ids whose baseline value
+# was "-" or an HTML comment (not prose per `_is_prose_baseline`) carry no
+# preservation obligation and do not need an entry here.
+_LANDING_EVIDENCE_LEGACY_RETIRED: dict[str, str] = {}
+
 
 def _archive_row_reactivation(cells: list[str]) -> str:
     """Locate the Reactivation cell of an archived row, tolerating pipe-shifted rows.
@@ -1802,6 +1829,79 @@ def validate_archive_landing_evidence(root: Path) -> list[str]:
                 f"evidence in Reactivation column ('{reactivation}'). Expected "
                 f"'commit:<sha>' or 'external:<ref>' -- a terminal row without "
                 f"landing evidence violates the transfer contract (WOT-2026-026t)."
+            )
+    return errors
+
+
+def validate_archive_retired_prose_preservation(root: Path) -> list[str]:
+    """Return violations for RETIRED ids whose distilled prose was destroyed.
+
+    Before: ``root`` is the destino root; the archive may or may not exist.
+    During: for every tid in ``_LANDING_EVIDENCE_LEGACY_RETIRED`` (ids that
+        USED to be prose-censused in ``_LANDING_EVIDENCE_LEGACY_BASELINE``
+        and were retired from it), checks that the preserved prose value
+        recorded at retirement time STILL appears as a substring in that
+        tid's CURRENT Reactivation cell in ``_archive/backlog_done.md`` --
+        the exact same criterion ``validate_archive_prose_preservation``
+        applies to entries still in the baseline. A row missing entirely
+        from the archive is also an error (the retirement claimed the row
+        was repaired; it must still exist).
+    After: one error per retired tid whose prose was destroyed or whose row
+        vanished. No mutation.
+
+    WOT-2026-059s: unlike landing evidence (which
+        ``validate_archive_landing_evidence`` already re-enforces the
+        instant an id leaves the baseline -- its exemption simply
+        disappears), PROSE preservation has no such automatic fallback:
+        once an id leaves ``_LANDING_EVIDENCE_LEGACY_BASELINE``,
+        ``validate_archive_prose_preservation`` stops looking at it
+        forever, with no other validator picking up the slack. That is the
+        blind spot measured by WOT-2026-056e (commit 9a0db6a destroyed 2 of
+        35 retired rows' distilled prose while adding real `commit:<sha>`
+        cells; f953519 retired those same 35 ids from the baseline in the
+        SAME act, so nothing ever flagged the destruction). This function
+        is the fallback: it keeps checking prose preservation for ids after
+        they leave the shrinking baseline, forever (append-only dict).
+    """
+    bound, prefix_err = ensure_bound(root)
+    if not bound:
+        return [f"[fail-closed] ticket_prefix no resoluble para {root}: {prefix_err}"]
+    collab = root / ".agent" / "collaboration"
+    archive = collab / "_archive" / "backlog_done.md"
+    if not archive.exists():
+        return []
+
+    archive_reactivations = _read_archive_reactivations(archive)
+
+    # WOT-2026-058k (same guard as validate_archive_prose_preservation,
+    # Codex review WOT-2026-059s objection 3): _LANDING_EVIDENCE_LEGACY_RETIRED
+    # censes debt of ONE workspace (the motor). A foreign destino's archive
+    # never had these WOT rows -- without this guard, every entry here would
+    # become a permanent, irresolvable "row missing from archive" error for
+    # any OTHER destino the moment the dict gains a real entry.
+    if not any(
+        tid in archive_reactivations for tid in _LANDING_EVIDENCE_LEGACY_RETIRED
+    ):
+        return []
+
+    errors: list[str] = []
+    for tid, preserved_prose in _LANDING_EVIDENCE_LEGACY_RETIRED.items():
+        if not _is_prose_baseline(preserved_prose):
+            continue  # "-" or an HTML comment: no preservation obligation.
+        if tid not in archive_reactivations:
+            errors.append(
+                f"{tid}: retirado de _LANDING_EVIDENCE_LEGACY_BASELINE pero su "
+                f"fila ya no existe en el archive -- retirada incoherente "
+                f"(WOT-2026-059s)."
+            )
+            continue
+        actual = archive_reactivations[tid]
+        if preserved_prose not in actual:
+            errors.append(
+                f"{tid}: prosa destilada destruida tras la retirada del censo "
+                f"(WOT-2026-059s/WOT-2026-056e); esperada substring "
+                f"'{preserved_prose[:80]}...' pero la celda actual es "
+                f"'{actual[:80]}...'."
             )
     return errors
 
@@ -2527,6 +2627,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     violations = violations + validate_archive_landing_evidence(root)
     # WOT-2026-054u: distilled prose in censused rows must be preserved.
     violations = violations + validate_archive_prose_preservation(root)
+    # WOT-2026-059s: same obligation keeps biting after an id is RETIRED
+    # from the shrinking baseline (054u stops looking the instant it leaves).
+    violations = violations + validate_archive_retired_prose_preservation(root)
     # WOT-2026-049c: una fila VIVA no puede depender de un ticket ya cerrado.
     violations = violations + validate_live_dependencies(root)
     # WOT-2026-059p: detail-section stale states after closure transfer (WARN).

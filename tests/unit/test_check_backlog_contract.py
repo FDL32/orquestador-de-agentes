@@ -3094,3 +3094,244 @@ def test_lost_id_wired_blocks_closeout(tmp_path: Path) -> None:
     assert "WOT-2026-086g" in result.output, (
         f"must name the lost ID in output: {result.output}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-059s: ids retired from _LANDING_EVIDENCE_LEGACY_BASELINE must keep
+# their distilled prose preserved forever -- validate_archive_prose_preservation
+# stops looking at them the instant they leave the (shrinking) baseline. Not
+# about landing evidence: validate_archive_landing_evidence already
+# re-enforces that automatically once an id's baseline exemption disappears.
+# ---------------------------------------------------------------------------
+
+
+def _write_archive_row_for_retirement_test(
+    root: Path, ticket: str, estado: str, reactivation: str
+) -> None:
+    """Escribe UNA fila Prioridad-led en el archive del destino ``root``.
+
+    Forma canonica (8 celdas): ``| Prioridad | Ticket | Titulo | Scope | Estado |
+    Depende | Origen | Reactivation |``
+    """
+    arch = root / ".agent" / "collaboration" / "_archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "backlog_done.md").write_text(
+        f"| Media | {ticket} | titulo | scope | {estado} | - | origen | {reactivation} |\n",
+        encoding="utf-8",
+    )
+
+
+def test_059s_retired_prose_destroyed_fails(tmp_path: Path) -> None:
+    """MUTANTE NEGATIVO (el bug que se cierra): un tid monkeypatcheado en
+    ``_LANDING_EVIDENCE_LEGACY_RETIRED`` con prosa preservada, cuya fila en
+    el archive fue "reparada" sobreescribiendo esa prosa con un
+    ``commit:<sha>`` a secas (el patron EXACTO de 9a0db6a: evidencia real
+    anadida, prosa destruida) -> la funcion nueva debe devolver al menos un
+    error mencionando ese tid.
+
+    Antes de este cambio, retirar un id de ``_LANDING_EVIDENCE_LEGACY_BASELINE``
+    sin anadirlo a ningun otro sitio no generaba NINGUN error en ningun
+    validador existente para la PROSA: ``validate_archive_prose_preservation``
+    deja de mirarlo (no esta en baseline), y ``validate_archive_landing_evidence``
+    nunca miro la prosa (solo landing evidence). Ese es el punto ciego de
+    WOT-2026-056e.
+    """
+    tid = "WOT-2026-099r"
+    prose = "leccion destilada que no debe perderse"
+    old = dict(cbc._LANDING_EVIDENCE_LEGACY_RETIRED)
+    try:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED[tid] = prose
+        # La fila fue "reparada": tiene commit real, pero perdio la prosa.
+        _write_archive_row_for_retirement_test(
+            tmp_path, tid, "completed", "commit:abc1234"
+        )
+        errors = cbc.validate_archive_retired_prose_preservation(tmp_path)
+        assert any(tid in e for e in errors), (
+            f"expected error mentioning {tid}; got: {errors}"
+        )
+    finally:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.clear()
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.update(old)
+
+
+def test_059s_retired_prose_preserved_passes(tmp_path: Path) -> None:
+    """MUTANTE POSITIVO: mismo tid sintetico, pero su fila SI conserva la
+    prosa (ademas de ganar evidencia real) ->
+    ``validate_archive_retired_prose_preservation`` devuelve ``[]``.
+
+    Esto demuestra que la funcion NUEVA no bloquea una reparacion LEGITIMA
+    (prosa conservada, evidencia anadida -- la forma correcta de reparar).
+    """
+    tid = "WOT-2026-099q"
+    prose = "leccion destilada que no debe perderse"
+    old = dict(cbc._LANDING_EVIDENCE_LEGACY_RETIRED)
+    try:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED[tid] = prose
+        _write_archive_row_for_retirement_test(
+            tmp_path, tid, "completed", f"commit:abc1234 -- {prose}"
+        )
+        assert cbc.validate_archive_retired_prose_preservation(tmp_path) == []
+    finally:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.clear()
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.update(old)
+
+
+def test_059s_id_never_retired_is_not_checked(tmp_path: Path) -> None:
+    """CONTROL: un tid que NO esta en ``_LANDING_EVIDENCE_LEGACY_RETIRED``
+    (nunca se retiro) y cuya fila no conserva ninguna prosa -> la funcion
+    nueva NO lo reporta (no es su responsabilidad; un tid que nunca estuvo
+    censado como prosa no tiene obligacion de preservacion)."""
+    old = dict(cbc._LANDING_EVIDENCE_LEGACY_RETIRED)
+    try:
+        # Este tid NO está en _LANDING_EVIDENCE_LEGACY_RETIRED.
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.clear()
+        _write_archive_row_for_retirement_test(
+            tmp_path, "WOT-2026-099z", "completed", "-"
+        )
+        # No hay entradas en el dict de retirados -> sin errores.
+        assert cbc.validate_archive_retired_prose_preservation(tmp_path) == []
+    finally:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.update(old)
+
+
+def test_059s_retired_row_missing_from_archive_fails(tmp_path: Path) -> None:
+    """MUTANTE: un tid con prosa retirada cuya fila YA NO EXISTE en el
+    archive -> error de retirada incoherente (no basta con no tener fila;
+    la retirada afirmaba que la fila fue reparada, debe seguir existiendo).
+
+    Incluye un SEGUNDO tid retirado que SI esta presente en el archive, para
+    satisfacer el guard anti-destino-ajeno (WOT-2026-058k, replicado aqui
+    tras la revision de WOT-2026-059s): sin NINGUNA de las entradas de
+    ``_LANDING_EVIDENCE_LEGACY_RETIRED`` presente en el archive, la funcion
+    asume "destino ajeno" y devuelve ``[]`` -- este test fija el caso donde
+    el archive SI es el que gobierna el censo.
+    """
+    tid = "WOT-2026-099v"
+    anchor_tid = "WOT-2026-099w"
+    old = dict(cbc._LANDING_EVIDENCE_LEGACY_RETIRED)
+    try:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED[tid] = "leccion que se perdio"
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED[anchor_tid] = "ancla presente"
+        arch = tmp_path / ".agent" / "collaboration" / "_archive"
+        arch.mkdir(parents=True, exist_ok=True)
+        (arch / "backlog_done.md").write_text(
+            f"| Media | {anchor_tid} | fila ancla | scope | completed | - |"
+            " origen | commit:deadbee -- ancla presente |\n",
+            encoding="utf-8",
+        )
+        errors = cbc.validate_archive_retired_prose_preservation(tmp_path)
+        assert any(tid in e for e in errors), (
+            f"expected error mentioning {tid}; got: {errors}"
+        )
+    finally:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.clear()
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.update(old)
+
+
+def test_059s_retired_prose_does_not_govern_a_foreign_destino(
+    tmp_path: Path,
+) -> None:
+    """CONTROL (WOT-2026-058k replicado, hallazgo 3 de la revision Codex de
+    WOT-2026-059s): un archive SIN NINGUNA de las entradas de
+    ``_LANDING_EVIDENCE_LEGACY_RETIRED`` no es el workspace que las censo --
+    no debe reportar "fila ausente" para ids que ese destino AJENO nunca
+    tuvo. Sin este guard, el dia que el registro gane una entrada real,
+    CUALQUIER destino ajeno empezaria a fallar `check_backlog_contract.py`
+    de forma permanente e irresoluble.
+    """
+    old = dict(cbc._LANDING_EVIDENCE_LEGACY_RETIRED)
+    try:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED["WOT-2026-099v"] = (
+            "leccion de un workspace distinto"
+        )
+        arch = tmp_path / ".agent" / "collaboration" / "_archive"
+        arch.mkdir(parents=True, exist_ok=True)
+        (arch / "backlog_done.md").write_text(
+            "| Media | CTL-2026-001a | fila ajena | scope | completed | - |"
+            " origen | commit:abc1234 |\n",
+            encoding="utf-8",
+        )
+        assert cbc.validate_archive_retired_prose_preservation(tmp_path) == []
+    finally:
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.clear()
+        cbc._LANDING_EVIDENCE_LEGACY_RETIRED.update(old)
+
+
+# Snapshot FECHADO de las claves+VALORES PROSA de
+# _LANDING_EVIDENCE_LEGACY_BASELINE tal como existian el 2026-10-24 (51
+# claves totales, 7 con prosa real segun ``_is_prose_baseline``), al cerrar
+# WOT-2026-059s. Es EVIDENCIA, nunca un numero que deba permanecer fijo
+# (AGENTS.md: "criterio invariante, evidencia fechada") -- lo que el test de
+# abajo exige que sea invariante es la TRANSFERENCIA FIEL (toda clave con
+# prosa que desaparezca de BASELINE debe reaparecer en RETIRED con el MISMO
+# valor exacto, no debilitado a "-" ni truncado), no los numeros en si.
+#
+# Ronda 2 de revision Codex (WOT-2026-059s): la primera version de este
+# tripwire solo comparaba CLAVES, no VALORES -- retirar
+# WOT-2026-021k con valor "-" en vez de su prosa real habria pasado el
+# test mientras reproducia el bug (_is_prose_baseline("-") es False, el
+# validador real lo saltaria sin protestar). Corregido comparando el VALOR
+# exacto, no solo la presencia de la clave.
+_BASELINE_PROSE_SNAPSHOT_20261024: dict[str, str] = {
+    "WOT-2026-021k": (
+        "el guard aprobaba lo que no podia verificar; DOS barreras "
+        "separadas, cada una con su mutacion"
+    ),
+    "WOT-2026-023i": (
+        "3 agentes no hallaron el estado operativo: la causa era un campo null"
+    ),
+    "WOT-2026-023r": (
+        "el test llamaba bug a una reentrada legitima Y ocultaba un "
+        "TOCTOU real: era ambiguo, no falso"
+    ),
+    "WOT-2026-023s": (
+        "Review 2 cazo que la mitad cross-process del fix no tenia barrera"
+    ),
+    "WOT-2026-024d": (
+        "un fix que cubre UN vector de dos es un falso-verde con los "
+        "tests en verde: los tests median copy_tree mientras el dano "
+        "vivia en prune_residues. Lo caza el PLAN-AUDIT, antes de "
+        "construir; y la AUDITORIA HERMANA caza lo que el autor se "
+        "auto-certifica despues."
+    ),
+    "WOT-2026-024z": (
+        "una norma no es un mecanismo: la regla estaba escrita en el "
+        "prompt de cierre 3.5 y nadie la imponia. El guard BLOQUEO su "
+        "propio commit hasta que 025e limpio la fuga -> guard con dientes "
+        "reales. checkout_princ NO es aguja: el nombre del repo es "
+        "identidad, no fuga (47 falsos rojos evitados)."
+    ),
+    "WOT-2026-025e": (
+        "024z declaro el motor agnostico midiendo UNA aguja (verde que "
+        "no gano); 025e amplio a 4 agujas + denominador cerrado. El "
+        "denominador roto (35% auditado) era el defecto de 024c en el "
+        "propio probe: un guard sin denominador salta en silencio."
+    ),
+}
+
+
+def test_059s_baseline_shrink_must_transfer_to_retired_with_fidelity() -> None:
+    """MUTANTE (hallazgo 1 de la revision Codex de WOT-2026-059s, corregido
+    en ronda 2): el PROTOCOLO de WOT-2026-059s (retirar un id de BASELINE
+    exige anadirlo a RETIRED en el MISMO commit, con su prosa EXACTA) solo
+    vivia en un comentario -- nada lo hacia mecanico. Este test es el
+    tripwire: para cada id con prosa real en el snapshot fechado de
+    2026-10-24 que desaparezca de ``_LANDING_EVIDENCE_LEGACY_BASELINE``,
+    exige que ``_LANDING_EVIDENCE_LEGACY_RETIRED`` tenga ESE MISMO id con
+    el VALOR EXACTO (no solo la clave presente, no debilitado a "-", no
+    truncado). Hoy (0 retiradas desde el snapshot) pasa trivialmente; el
+    valor esta en que una retirada FUTURA silenciosa o debilitada ya no
+    pasa inadvertida.
+    """
+    errors = []
+    for tid, original_prose in _BASELINE_PROSE_SNAPSHOT_20261024.items():
+        if tid in cbc._LANDING_EVIDENCE_LEGACY_BASELINE:
+            continue  # aun no retirado, nada que transferir todavia.
+        transferred = cbc._LANDING_EVIDENCE_LEGACY_RETIRED.get(tid)
+        if transferred != original_prose:
+            errors.append(
+                f"{tid}: retirado de BASELINE pero su valor en RETIRED "
+                f"({transferred!r}) no coincide EXACTO con la prosa "
+                f"original ({original_prose!r})"
+            )
+    assert not errors, "; ".join(errors)
