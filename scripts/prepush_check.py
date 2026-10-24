@@ -570,6 +570,9 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
             validate_live_archive_integrity,
             validate_lost_ids,
         )
+        from scripts.check_backlog_dependency_graph import (
+            run_backlog_dependency_graph_check,
+        )
     except ImportError:
         from check_backlog_contract import (  # type: ignore[no-redef]
             _partition_prioridad_rows,
@@ -645,10 +648,20 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
     # stayed silent during 072c; never add to violations (rc stays 0).
     archive_volume_warnings = validate_archive_volume(project_root)
     vol_lines = "\n".join(f"  {w}" for w in archive_volume_warnings)
+    # WOT-2026-027e: dependency-graph check (phantom/hanging ids in the
+    # "Depende de" cell). WARN, non-blocking: a stale dependency annotation is a
+    # registration gap, not a reason to stop a closeout.
+    dep_graph_result = run_backlog_dependency_graph_check(project_root)
+    dep_graph_lines = (
+        "\n".join(f"  WARN: {line}" for line in dep_graph_result.output.splitlines())
+        if not dep_graph_result.passed
+        else ""
+    )
+    output_parts = ["live queue contract holds", f"  {censo}"]
     if vol_lines:
-        output_parts = ["live queue contract holds", f"  {censo}", vol_lines]
-    else:
-        output_parts = ["live queue contract holds", f"  {censo}"]
+        output_parts.append(vol_lines)
+    if dep_graph_lines:
+        output_parts.append(dep_graph_lines)
     output = "\n".join(output_parts)
     return CheckResult(
         name=name,
