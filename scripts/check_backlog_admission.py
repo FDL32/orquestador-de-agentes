@@ -691,13 +691,37 @@ def _veredicto_con_recibo(
     return lines, finding, registro
 
 
+def _commit_parents(repo: Path, sha: str) -> list[str]:
+    """SHAs de los padres de `sha`, en orden (1 para commit normal, 2+ para merge)."""
+    out = git(repo, "log", "-1", "--format=%P", sha).strip()
+    return out.split() if out else []
+
+
 def _parent_row_ids(repo: Path, sha: str, surfaces: list[str]) -> set[str]:
-    """Ids presentes en la UNION de superficies en la revision PADRE del sha."""
+    """Ids presentes en la UNION de superficies en los padres del sha.
+
+    MERGE-AWARE (WOT-2026-coordinacion-nocturna, medido 2026-10-24): `sha^`
+    resuelve SIEMPRE al PRIMER padre, tambien en un merge commit de 2+
+    padres. Un id ya admitido con recibo coherente en la rama del SEGUNDO
+    padre (p.ej. un merge que incorpora historia de otra rama ya mergeada a
+    origin/main) aparecia marcado "nuevo" en el commit de merge -- SIN
+    recibo propio, porque el merge no es quien lo admitio -- y el guard lo
+    reportaba como SIN_RECIBO. Medido con el merge real `952328d64f84`
+    ("Merge origin/main ... into vuelo-sin-limite-20261023"): sus dos
+    padres son `5715f447` y `0833e4048ddd`; `WOT-2026-120a`/`WOT-2026-120c`
+    ya existian en `0833e4048ddd` (con recibo coherente en commits
+    anteriores de esa misma rama) pero no en `5715f447` -- `sha^` solo ve
+    el primero y los reporta como alta nueva sin recibo. La union de TODOS
+    los padres es el conjunto correcto de "lo que ya existia antes de que
+    este commit decidiera nada": para un commit normal (1 padre) el
+    resultado es identico al anterior (no hay regresion).
+    """
     ids: set[str] = set()
-    for surface in surfaces:
-        content = rev_content(repo, f"{sha}^", surface)
-        if content is not None:
-            ids |= _row_ids_of_content(content)
+    for parent in _commit_parents(repo, sha) or [f"{sha}^"]:
+        for surface in surfaces:
+            content = rev_content(repo, parent, surface)
+            if content is not None:
+                ids |= _row_ids_of_content(content)
     return ids
 
 
