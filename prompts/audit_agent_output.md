@@ -353,6 +353,16 @@ Cada hallazgo debe incluir una:
 - `VERIFICADO POR TOPOLOGIA` (archivo localizado en la ruta canonica correcta tras pre-requisito topologico)
 - `INFERENCIA RAZONABLE`
 - `NO VERIFICADO`
+- `EN VUELO (PENDIENTE)` (WOT-2026-049d): la comprobacion fue LANZADA y SIGUE
+  EN CURSO en el momento de auditar (suite en background, bucle despachado,
+  CI corriendo). Ni `VERIFICADO` (todavia no termino: etiquetarlo asi miente)
+  ni `NO VERIFICADO` (SI se esta midiendo: infra-declararlo esconde que hay
+  una medicion real en marcha). Un hallazgo con esta etiqueta NO PUEDE
+  sostener un cierre -- el auditor debe esperar el resultado, declararlo
+  pendiente en el informe, o no citar ese claim como evidencia de cierre.
+  Cuando el resultado llegue, re-etiqueta con la etiqueta que corresponda
+  (`VERIFICADO EN TEST`, `NO VERIFICADO`, etc.); `EN VUELO (PENDIENTE)` nunca
+  es un estado terminal.
 
 No mezcles inferencia con hecho confirmado.
 `VERIFICADO POR TOPOLOGIA` complementa, no sustituye, a `VERIFICADO EN CODIGO`,
