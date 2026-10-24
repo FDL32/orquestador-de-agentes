@@ -95,6 +95,70 @@ GRANDFATHER_CUTOFF = "2026-07-29"
 # error de argparse (reservado). Es un rc DISTINGUIBLE, no parseo de texto.
 EXIT_EMPTY_UNIVERSE = 3
 
+# Los DOS buzones reales que el llamante (`prepush_check.py::run_dec_receipt_check`)
+# conoce HOY (medido 2026-07-29: 6 + 8 = las 14 fichas del censo del contrato).
+# UNICA fuente de verdad (WOT-2026-043a): antes vivian duplicados, hardcodeados,
+# en el llamante -- un tercer buzon (o un rename de cualquiera de estos dos) se
+# habria ignorado EN SILENCIO porque nada comparaba "lo wireado" contra "lo que
+# existe en disco". `find_undiscovered_inboxes` usa ESTE set como el lado
+# "wireado" de esa comparacion.
+KNOWN_BACKLOG_INBOX_RELS = (
+    Path("orchestrator_pipeline") / "backlog_inbox",
+    Path(".agent") / "collaboration" / "backlog_inbox",
+)
+
+# Directorios que no pueden contener un buzon legitimo y cuyo recorrido es puro
+# coste (o directamente incorrecto: `.git` interno no es arbol de trabajo). Poda
+# el `os.walk` de `find_undiscovered_inboxes`, no filtra resultados.
+_INBOX_SCAN_PRUNE = frozenset(
+    {
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".ruff_cache",
+        "_archive",
+        "_drained",
+    }
+)
+
+
+def find_undiscovered_inboxes(project_root: Path) -> list[Path]:
+    """Busca un directorio `backlog_inbox` que el llamante NO tiene wireado (WOT-2026-043a).
+
+    Before: `project_root` es la raiz del destino sobre la que corre el preflight.
+    During: recorre el arbol (podando `_INBOX_SCAN_PRUNE`, read-only, sin seguir
+        symlinks) buscando cualquier directorio cuyo NOMBRE sea exactamente
+        `backlog_inbox`. Compara su ruta relativa contra `KNOWN_BACKLOG_INBOX_RELS`
+        -- no contra una lista que el llamante le pase, porque el llamante es
+        precisamente lo que puede estar desactualizado.
+    After: lista (puede ser vacia) de rutas ABSOLUTAS de `backlog_inbox` que
+        existen en disco pero NO estan en `KNOWN_BACKLOG_INBOX_RELS`. Nunca
+        lanza: un `project_root` inexistente o sin permisos de lectura produce
+        lista vacia (no hay nada que discutir sobre un arbol que no se puede
+        leer; el fallo de resolucion de `project_root` es responsabilidad de
+        otro gate, no de este).
+    """
+    import os
+
+    if not project_root.is_dir():
+        return []
+    known_abs = {project_root / rel for rel in KNOWN_BACKLOG_INBOX_RELS}
+    found: list[Path] = []
+    for dirpath, dirnames, _filenames in os.walk(project_root):
+        dirnames[:] = [d for d in dirnames if d not in _INBOX_SCAN_PRUNE]
+        if Path(dirpath).name == "backlog_inbox":
+            candidate = Path(dirpath)
+            if candidate not in known_abs:
+                found.append(candidate)
+            # No descender DENTRO de un backlog_inbox (conocido o no): no hay
+            # buzones anidados legitimos y evita doble-conteo si alguna vez
+            # existiera uno.
+            dirnames[:] = []
+    return found
+
+
 # Las TRES formas exactas del recibo (contrato de 042w). El scope entre
 # parentesis es obligatorio: dice contra QUE registro se resuelve el id.
 _RE_SCOPED = re.compile(r"\bDEC-([A-Za-z0-9][A-Za-z0-9-]*?-\d+)\s*\((motor|destino)\)")
@@ -499,6 +563,42 @@ def _check_inbox_surface(
     return errors
 
 
+def _check_flight_plan_surface(
+    plan_files: list[Path],
+    motor_registry: set[str],
+    destino_registry: set[str] | None,
+) -> int:
+    """Clasifica los planes de `flight_plans/queued/*.json` (WOT-2026-043a).
+
+    REUSO deliberado: `check_file` ya opera sobre TEXTO CRUDO via regex (nunca
+    parsea el fichero como su formato nativo), asi que un `.json` es un
+    fichero valido para la misma funcion sin cambio ninguno -- el recibo vive
+    en un campo string del plan (`"dec_receipt": "DEC-<id> (motor)"` o
+    `"dec_receipt": "DEC-no-aplica: <motivo>"`), y la busqueda por regex lo
+    encuentra igual que en la prosa de una ficha. El grandfathering tambien se
+    reusa sin cambio: los planes siguen el mismo patron de nombre
+    `FP-YYYYMMDD-...json` que `is_grandfathered` ya sabe leer.
+
+    Returns: numero de ERRORES de la superficie `--flight-plans-queued`.
+    """
+    oks = warns = errors = 0
+    for path in plan_files:
+        level, message = check_file(path, motor_registry, destino_registry)
+        if level == "ERROR":
+            errors += 1
+            print(f"[dec-receipt] ERROR (plan) {message}")
+        elif level == "WARN":
+            warns += 1
+            print(f"[dec-receipt] WARN  (plan) {message}")
+        else:
+            oks += 1
+    print(
+        f"[dec-receipt] planes queued/: {oks} ok / {warns} warn (grandfathered < "
+        f"{GRANDFATHER_CUTOFF}) / {errors} error de {len(plan_files)} plan(es)"
+    )
+    return errors
+
+
 def _check_ticket_contracts_surface(
     ticket_contracts: list[Path],
     motor_registry: set[str],
@@ -586,6 +686,30 @@ def main(argv: list[str] | None = None) -> int:
             "(WOT-2026-088g)."
         ),
     )
+    parser.add_argument(
+        "--flight-plans-queued",
+        type=Path,
+        action="append",
+        default=None,
+        help=(
+            "Directorio `flight_plans/queued/` a validar (repetible). Cada "
+            "`*.json` necesita el mismo recibo DEC que una ficha, en un campo "
+            "string (p.ej. `dec_receipt`); mismo grandfathering por nombre "
+            "`FP-YYYYMMDD-...` (WOT-2026-043a)."
+        ),
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help=(
+            "Raiz del destino. Si se pasa, el guard se auto-audita: busca un "
+            "directorio `backlog_inbox` en disco que NO este en "
+            "KNOWN_BACKLOG_INBOX_RELS (un tercer buzon, o un rename, que "
+            "nadie wireo via --inbox) y FALLA nombrandolo -- un buzon no "
+            "cubierto no puede dar verde (WOT-2026-043a)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     motor_registry = load_motor_registry(args.motor_root)
@@ -609,28 +733,49 @@ def main(argv: list[str] | None = None) -> int:
     inboxes = [d for d in (args.inbox or []) if d.is_dir()]
     files = sorted(f for d in inboxes for f in d.glob("*.tickets.md"))
     ticket_contracts = list(args.ticket_contracts or [])
+    plan_dirs = [d for d in (args.flight_plans_queued or []) if d.is_dir()]
+    plan_files = sorted(f for d in plan_dirs for f in d.glob("*.json"))
 
-    # El universo vacio se evalua por SUPERFICIE (DoD D2): solo cuando NINGUNA de
-    # las dos superficies tiene materia se mantiene el SKIP con rc distinguible.
-    # Si hay `--ticket-contracts`, el veredicto es de ESA superficie (no se
+    # Auto-audita ANTES del gate de universo-vacio (WOT-2026-043a): un buzon no
+    # wireado no es "no hay materia", es "no se sabe mirar ahi" -- no puede
+    # colarse como SKIP. Corre siempre que se pase --project-root, sin importar
+    # si las demas superficies tienen contenido.
+    errors = 0
+    if args.project_root is not None:
+        for extra in find_undiscovered_inboxes(args.project_root):
+            errors += 1
+            print(
+                f"[dec-receipt] ERROR {extra}: directorio 'backlog_inbox' "
+                "existe en disco pero NO esta en KNOWN_BACKLOG_INBOX_RELS -- "
+                "un buzon no cubierto no puede dar verde (WOT-2026-043a)."
+            )
+
+    # El universo vacio se evalua por SUPERFICIE (DoD D2): solo cuando NINGUNA
+    # de las superficies tiene materia Y no hubo buzon no-wireado se mantiene
+    # el SKIP con rc distinguible. Si hay `--ticket-contracts` o
+    # `--flight-plans-queued`, el veredicto es de ESA superficie (no se
     # reimprime el SKIP de inbox vacio como si fuera el resultado final).
-    if not files and not ticket_contracts:
+    if not files and not ticket_contracts and not plan_files and not errors:
         # El vacio publica su DENOMINADOR completo (Quality Bar + DEC-047S-001:
         # un verde con `inspeccionados == 0` solo es legitimo con la tupla y la
         # lista de saltados) y sale con un rc DISTINGUIBLE, no `0`.
         print(
             "[dec-receipt] SKIP EXPLICITO: 0 fichas a validar "
             "(inspeccionados=0, hits=0, saltados=0, lista_saltados=[]; "
-            f"inboxes existentes: {len(inboxes)}). No es un PASS."
+            f"inboxes existentes: {len(inboxes)}, planes existentes: "
+            f"{len(plan_files)}). No es un PASS."
         )
         return EXIT_EMPTY_UNIVERSE
 
-    errors = 0
     if files:
         errors += _check_inbox_surface(files, motor_registry, destino_registry)
     if ticket_contracts:
         errors += _check_ticket_contracts_surface(
             ticket_contracts, motor_registry, destino_registry
+        )
+    if plan_files:
+        errors += _check_flight_plan_surface(
+            plan_files, motor_registry, destino_registry
         )
     return 1 if errors else 0
 
