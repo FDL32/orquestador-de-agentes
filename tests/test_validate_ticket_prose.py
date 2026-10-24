@@ -452,6 +452,44 @@ class TestDetectOversizedTicket:
         warnings = detect_oversized_ticket(clean_plan)
         assert len(warnings) == 0
 
+    def test_detects_many_phases_canonical_fase_format(self):
+        """DoD(a) WOT-2026-060r: el formato CANONICO `### Fase N: ...` (el de
+        skills/manager-create-work-plan/references/plan-template.md y de los
+        45 planes reales de Crear_Texto_LLM) debe detectarse igual que el
+        formato `## Fases` + `### N.`. Antes del fix, este dialecto daba
+        SIEMPRE `[]` sin aviso (falsa confianza sobre media regla).
+        """
+        phases = "\n".join([f"### Fase {i}: descripcion" for i in range(0, 7)])
+        content = f"""## Plan de Implementacion
+{phases}
+"""
+        warnings = detect_oversized_ticket(content)
+        assert len(warnings) >= 1
+        assert warnings[0]["rule_id"] == "TP-PROSE-09"
+
+    def test_canonical_fase_format_within_limit_no_warning(self):
+        """Control negativo: 3 fases en formato canonico no dispara (limite 5)."""
+        content = """## Plan de Implementacion
+### Fase 0: preparacion
+### Fase 1: implementacion
+### Fase 2: cierre
+"""
+        warnings = detect_oversized_ticket(content)
+        assert len(warnings) == 0
+
+    def test_structured_format_still_detected_after_fix(self):
+        """No-regresion: el dialecto `## Fases` + `### N.` que ya cubria
+        060r (commit d0b2029) sigue detectando correctamente -- el fix es
+        ADITIVO, nunca un swap entre dialectos.
+        """
+        phases = "\n".join([f"### {i}. descripcion" for i in range(1, 8)])
+        content = f"""## Fases
+{phases}
+"""
+        warnings = detect_oversized_ticket(content)
+        assert len(warnings) >= 1
+        assert warnings[0]["rule_id"] == "TP-PROSE-09"
+
 
 class TestDetectMissingArchitecturalDecision:
     """Tests para detect_missing_architectural_decision."""
