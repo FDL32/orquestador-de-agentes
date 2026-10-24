@@ -403,7 +403,9 @@ def _is_hit(
 
     Hit = the lesson's ``id`` appears at the start of some line as ``- <id>:``.
     For lessons without id: line ``- <topic>: <titular>`` with matching topic
-    and titular (expected 0 cases).  rc != 0 = failure, not hit.
+    and titular (expected 0 cases).  Any rc != 0 returns False here; the
+    caller (``_measure_hits``) classifies it BEFORE calling: rc 1 with
+    ``No observations found`` in stderr = MISS, any other rc != 0 = FALLO.
 
     Before: ``rc`` is the recall return code; ``stdout`` is its output.
     During: checks each line for pattern match.
@@ -781,13 +783,15 @@ def _generate_report(
 
     lines.append("")
 
-    # ---- Citas con fallos de superficie (Fuera del denominador de superficie) ----
+    # ---- Fallos: toda query con rc != 0 que no sea "sin resultados" ----
     if failures:
-        lines.append("## Fallos (citas cuya query de superficie fallo)")
+        lines.append("## Fallos (queries de superficie o fase con rc != 0)")
         lines.append("")
         lines.append(
-            "Estas citas se excluyen del denominador de superficie.  "
-            "Siguen contando en fase/union si sus queries de fase son validas."
+            "Formato: `<id>:<tipo>:<query>:rc=<n>`. Una cita sale del denominador "
+            "de superficie si su query de superficie falla, y del de fase solo si "
+            "fallan TODAS sus queries de fase; sale de la union solo si sale de "
+            "ambos."
         )
         lines.append("")
         lines.extend([f"- {f}" for f in sorted(failures)])
