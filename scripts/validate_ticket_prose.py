@@ -409,16 +409,30 @@ def detect_oversized_ticket(content: str) -> list[ProseWarning]:
                 )
             )
 
-    # Contar fases: un work_plan real declara FASES/TAREAS con H3 numerados
-    # (`### 1.`, `### 2.`) bajo `## Fases` o `## Tareas`, no con el literal
-    # "Fase N" que usaban los fixtures de test pero ningun plan real.
+    # Contar fases: DOS dialectos reales coexisten (WOT-2026-060r). (1) H3
+    # numerados (`### 1.`, `### 2.`) bajo `## Fases` o `## Tareas` (planes del
+    # workspace del motor, ej. 055o/086f). (2) el formato CANONICO
+    # `### Fase N: ...` de `skills/manager-create-work-plan/references/
+    # plan-template.md` y de los 45 planes reales del destino Crear_Texto_LLM
+    # (ej. CTL-039a/CTL-030a) -- vive bajo cualquier encabezado padre (tipico:
+    # `## Plan de Implementacion`), no solo `## Fases`/`## Tareas`. El fix
+    # original de 060r cubrio (1) y dejo caer (2) en silencio: aditivo, nunca
+    # un swap -- se toma el MAXIMO de los dos conteos, no la suma (un plan
+    # real usa un solo dialecto; sumar duplicaria sobre planes que mezclen
+    # vocabulario por accidente de prosa).
     phases_match = re.search(
         r"##\s*(?:Fases|Tareas)\s*\n(.*?)(?=\n##\s|\Z)", content, re.DOTALL
     )
     if phases_match:
-        phase_count = len(re.findall(r"(?m)^\s*###\s+\d+[:.\s]", phases_match.group(1)))
+        structured_phase_count = len(
+            re.findall(r"(?m)^\s*###\s+\d+[:.\s]", phases_match.group(1))
+        )
     else:
-        phase_count = 0
+        structured_phase_count = 0
+    canonical_phase_count = len(
+        re.findall(r"(?mi)^\s*###\s+Fase\s+\d+\s*[:.]", content)
+    )
+    phase_count = max(structured_phase_count, canonical_phase_count)
     if phase_count > 5:
         warnings.append(
             ProseWarning(
