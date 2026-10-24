@@ -412,7 +412,7 @@ def _is_hit(
     After: returns True if hit, False otherwise.
     """
     if rc != 0:
-        return False  # rc != 0 = failure, not a hit nor miss
+        return False  # no hit; the caller already classified this rc as MISS or FALLO
 
     for line in stdout.splitlines():
         stripped = line.strip()
@@ -518,7 +518,8 @@ def _measure_hits(  # noqa: C901
         is the full list; ``pool_by_id`` maps lesson IDs to entry dicts.
     During: runs recall with cache, evaluates hit per citation.
     After: returns hit counts, denominators, per-lesson aggregates, failure
-        list (surface queries that failed), and per-citation summary dict.
+        list (every superficie or fase query with rc != 0 that is not a
+        "No observations found" miss), and per-citation summary dict.
     """
     # Per-citation tracking (indexed by position in citations list).
     citation_data: dict[int, dict] = {}
