@@ -120,6 +120,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import datetime
 import json
 import os
 import re
@@ -135,6 +136,16 @@ import yaml
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = MOTOR_ROOT / "scripts" / "guard_wiring_policy.yaml"
 BASELINE_PATH = MOTOR_ROOT / "tests" / "fixtures" / "guard_wiring_wired_baseline.yaml"
+
+# WOT-2026-042i: deuda declarada (known_unwired con dueno-ticket, sin
+# BY-DESIGN) solo bloquea bajo --strict SI el guard nacio en o antes de esta
+# fecha -- la deuda HISTORICA queda grandfathered. Un guard NUEVO que nazca
+# DESPUES de esta fecha y llegue sin cablear y sin BY-DESIGN razonado bloquea
+# SIEMPRE (sin necesitar --strict): "declarar deuda" deja de ser la norma y
+# pasa a ser la excepcion. Fecha fija deliberada (NUNCA `date.today()`
+# recalculada en cada corrida -- eso dejaria la barrera inerte para siempre,
+# porque ningun guard puede nacer "despues de hoy" el mismo dia que corre).
+_WIRING_CUTOFF_DATE = datetime.date(2026, 10, 24)
 
 GUARD_PREFIXES = ("check_", "validate_", "guard_")
 GUARD_DIRS = ("scripts", ".agent/hooks", "skills", "tools", "bus", "runtime")
@@ -572,6 +583,44 @@ def _python_invocations(src: str) -> list[tuple[str, int]]:  # noqa: C901 - el n
 # -------------------------------------------------- config: does it run on its own
 def _git() -> str:
     return shutil.which("git") or "git"
+
+
+def _guard_birth_date(path: Path) -> datetime.date | None:
+    """Fecha del commit MAS ANTIGUO que anadio `path` (WOT-2026-042i).
+
+    `--follow --diff-filter=A` recorre renames; `git log` lista mas-reciente
+    primero, asi que la ultima linea de salida es el alta original. `None`
+    si el fichero no esta trackeado, git no esta disponible, o el comando
+    falla -- un `None` NUNCA bloquea (ver call-site: se trata como deuda
+    grandfathered, fail-open por diseno, igual que el resto de este modulo
+    ante ausencia de git).
+    """
+    try:
+        p = subprocess.run(  # noqa: S603
+            [
+                _git(),
+                "-C",
+                str(path.parent),
+                "log",
+                "--follow",
+                "--diff-filter=A",
+                "--format=%as",
+                "--",
+                path.name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if p.returncode != 0 or not p.stdout.strip():
+        return None
+    lines = p.stdout.strip().splitlines()
+    try:
+        return datetime.date.fromisoformat(lines[-1].strip())
+    except ValueError:
+        return None
 
 
 def _tracked(root: Path) -> list[str]:
@@ -1119,9 +1168,41 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
                     return 1
 
     debt = [g for g in declared if not str(known[g]).startswith(_BY_DESIGN)]
-    if args.strict and debt:
+
+    # WOT-2026-042i: entre la deuda (ticket-owned, no BY-DESIGN), separa la
+    # NACIDA DESPUES del corte (bloquea siempre) de la grandfathered (solo
+    # bajo --strict, comportamiento historico sin cambios).
+    guards_map = find_guards(root, policy["extra_guards"])
+    new_debt: list[tuple[str, datetime.date]] = []
+    old_debt: list[str] = []
+    for g in debt:
+        path = guards_map.get(g)
+        birth = _guard_birth_date(path) if path is not None else None
+        if birth is not None and birth > _WIRING_CUTOFF_DATE:
+            new_debt.append((g, birth))
+        else:
+            old_debt.append(g)
+
+    if new_debt:
         print(
-            f"\n[guard-wiring] --strict: {len(debt)} guard(s) of declared debt count as failure."
+            "\n[guard-wiring] ERROR: guard(s) born AFTER the wiring cutoff "
+            f"({_WIRING_CUTOFF_DATE.isoformat()}) declared as debt instead of "
+            "wired (WOT-2026-042i):"
+        )
+        for g, birth in new_debt:
+            print(f"    {g}  (born {birth.isoformat()}) -> {known[g]}")
+        print(
+            "\n  A guard born after the cutoff must arrive WIRED or with a\n"
+            "  reasoned 'BY-DESIGN:' owner -- declaring ticket-owned debt is no\n"
+            "  longer enough for NEW guards; 'declare it' stops being the norm\n"
+            "  and becomes the exception. Historical debt (born on/before the\n"
+            "  cutoff) stays grandfathered in guard_wiring_policy.yaml."
+        )
+        return 1
+
+    if args.strict and old_debt:
+        print(
+            f"\n[guard-wiring] --strict: {len(old_debt)} guard(s) of grandfathered debt count as failure."
         )
         return 1
 

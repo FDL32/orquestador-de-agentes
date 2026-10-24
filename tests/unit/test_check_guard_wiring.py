@@ -24,7 +24,9 @@ the boundary with the real tree).
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -88,6 +90,11 @@ EXPECTED_WIRED_REAL = {
     "check_audit_skips",
     "check_backlog_commits_landed",  # WOT-2026-024q: cableado via import estatico en agent_controller.py::_ticket_landed_by_archived_commit (retirado de known_unwired)
     "check_backlog_contract",
+    # WOT-2026-027e: cableado via import estatico en
+    # prepush_check.py::run_backlog_contract_check (closeout, WARN --
+    # fantasma/colgante en la celda "Depende de" es un hueco de registro,
+    # no motivo de bloquear un cierre).
+    "check_backlog_dependency_graph",
     # WOT-2026-054m: cableado via import estatico en
     # prepush_check.py::run_backlog_admission_check (closeout, BLOQUEANTE --
     # el gate nace bloqueante: sin deuda que amnistiar, rango real 0 commits).
@@ -781,3 +788,132 @@ def test_ticket_anywhere_matches_the_owner_grammar():
     assert cgw._TICKET_ANYWHERE.findall(f"| Alta | {owner} | prosa alrededor |") == [
         owner
     ]
+
+
+# ------------------------------------- cutoff de cableado (WOT-2026-042i)
+# "Declarar deuda" dejaba de caducar: un guard con dueno-ticket pasaba para
+# siempre con solo WARN. Un guard NUEVO (nacido DESPUES del corte) que llegue
+# sin cablear y sin BY-DESIGN debe BLOQUEAR siempre, sin necesitar --strict;
+# la deuda HISTORICA (nacida on/before el corte) sigue grandfathered.
+#
+# `_guard_birth_date` se mockea (dependency injection, no un repo git
+# sintetico): un test que dependiera del historial real de ESTE repo se
+# romperia con cada rebase/squash (leccion ya medida, ver prompt de despacho).
+def _cutoff_motor(tmp_path: Path, owner: str) -> Path:
+    motor = _motor(
+        tmp_path,
+        {},  # sin prepush/pre-commit: el guard nunca se cablea
+        guards=["check_new"],
+    )
+    policy_yaml = motor / "scripts" / "guard_wiring_policy.yaml"
+    policy_yaml.write_text(
+        f"known_unwired:\n  check_new: {owner!r}\n", encoding="utf-8"
+    )
+    baseline_yaml = motor / "baseline.yaml"
+    baseline_yaml.write_text("wired_baseline: {}\n", encoding="utf-8")
+    return motor
+
+
+def test_new_debt_after_cutoff_blocks_without_strict(tmp_path, monkeypatch):
+    motor = _cutoff_motor(tmp_path, "WOT-2026-999z")
+    monkeypatch.setattr(
+        cgw, "POLICY_PATH", motor / "scripts" / "guard_wiring_policy.yaml"
+    )
+    monkeypatch.setattr(cgw, "BASELINE_PATH", motor / "baseline.yaml")
+    monkeypatch.setattr(
+        cgw,
+        "_guard_birth_date",
+        lambda path: cgw._WIRING_CUTOFF_DATE + datetime.timedelta(days=1),
+    )
+    assert cgw.main(["--motor-root", str(motor)]) == 1, (
+        "un guard nacido DESPUES del corte, declarado como deuda ticket-owned "
+        "(no BY-DESIGN), debe bloquear SIN --strict"
+    )
+
+
+def test_old_debt_on_or_before_cutoff_only_blocks_under_strict(tmp_path, monkeypatch):
+    motor = _cutoff_motor(tmp_path, "WOT-2026-999z")
+    monkeypatch.setattr(
+        cgw, "POLICY_PATH", motor / "scripts" / "guard_wiring_policy.yaml"
+    )
+    monkeypatch.setattr(cgw, "BASELINE_PATH", motor / "baseline.yaml")
+    monkeypatch.setattr(cgw, "_guard_birth_date", lambda path: cgw._WIRING_CUTOFF_DATE)
+    assert cgw.main(["--motor-root", str(motor)]) == 0, (
+        "deuda nacida EN o ANTES del corte sigue grandfathered -- comportamiento "
+        "historico sin cambios"
+    )
+    assert cgw.main(["--motor-root", str(motor), "--strict"]) == 1, (
+        "--strict sigue fallando sobre deuda grandfathered, igual que antes de este ticket"
+    )
+
+
+def test_by_design_never_blocks_regardless_of_birth_date(tmp_path, monkeypatch):
+    motor = _cutoff_motor(tmp_path, "BY-DESIGN: circular por diseno")
+    monkeypatch.setattr(
+        cgw, "POLICY_PATH", motor / "scripts" / "guard_wiring_policy.yaml"
+    )
+    monkeypatch.setattr(cgw, "BASELINE_PATH", motor / "baseline.yaml")
+    monkeypatch.setattr(
+        cgw,
+        "_guard_birth_date",
+        lambda path: cgw._WIRING_CUTOFF_DATE + datetime.timedelta(days=365),
+    )
+    assert cgw.main(["--motor-root", str(motor)]) == 0, (
+        "BY-DESIGN es permanente: ni siquiera un guard recien nacido bloquea con "
+        "una razon BY-DESIGN valida"
+    )
+    assert cgw.main(["--motor-root", str(motor), "--strict"]) == 0, (
+        "--strict tampoco falla sobre BY-DESIGN -- nunca fue deuda"
+    )
+
+
+def test_unknown_birth_date_fails_open_as_grandfathered(tmp_path, monkeypatch):
+    """git ausente/fallido -> `_guard_birth_date` devuelve None -- fail-open, NUNCA
+    bloquea por un corte que no se pudo determinar (mismo principio que el resto
+    del modulo ante ausencia de git, ver `_tracked`)."""
+    motor = _cutoff_motor(tmp_path, "WOT-2026-999z")
+    monkeypatch.setattr(
+        cgw, "POLICY_PATH", motor / "scripts" / "guard_wiring_policy.yaml"
+    )
+    monkeypatch.setattr(cgw, "BASELINE_PATH", motor / "baseline.yaml")
+    monkeypatch.setattr(cgw, "_guard_birth_date", lambda path: None)
+    assert cgw.main(["--motor-root", str(motor)]) == 0
+
+
+def test_guard_birth_date_reads_real_git_history(tmp_path):
+    """Control positivo (no mockeado): un repo git sintetico real, UN commit que
+    anade el guard en una fecha fija -- `_guard_birth_date` debe leer ESA fecha
+    del historial real, no inventarla."""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    guard_path = repo / "scripts" / "check_new.py"
+    guard_path.write_text("# g\n", encoding="utf-8")
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "GIT_AUTHOR_DATE": "2026-01-15T00:00:00",
+        "GIT_COMMITTER_DATE": "2026-01-15T00:00:00",
+    }
+    full_env = {**os.environ, **env}
+    subprocess.run([cgw._git(), "init", "-q"], cwd=repo, check=True)
+    subprocess.run([cgw._git(), "add", "scripts/check_new.py"], cwd=repo, check=True)
+    subprocess.run(
+        [cgw._git(), "commit", "-q", "-m", "add guard"],
+        cwd=repo,
+        check=True,
+        env=full_env,
+    )
+    assert cgw._guard_birth_date(guard_path) == datetime.date(2026, 1, 15)
+
+
+def test_guard_birth_date_returns_none_for_untracked_file(tmp_path):
+    """Fichero que existe en disco pero nunca se trackeo -- `git log` no devuelve
+    nada -> None, nunca una excepcion ni una fecha inventada."""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    guard_path = repo / "scripts" / "check_untracked.py"
+    guard_path.write_text("# g\n", encoding="utf-8")
+    subprocess.run([cgw._git(), "init", "-q"], cwd=repo, check=True)
+    assert cgw._guard_birth_date(guard_path) is None
