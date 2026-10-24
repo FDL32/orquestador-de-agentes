@@ -371,6 +371,13 @@ El guard solo cubre los predicados que declara (`commits por delante`,
 `commits adelante`, `lineas`); no sustituye la revision del resto del
 contenido.
 
+Si el arranque se escribe en `<DESTINO_ROOT>/orchestrator_pipeline/arranques/`, es un
+artefacto OPERATIVO: resuelve todos los roles `<MOTOR_ROOT>`/`<DESTINO_ROOT>` a rutas
+concretas y corre `python <MOTOR_ROOT>/scripts/check_operational_artifact_paths.py
+--project-root <DESTINO_ROOT>` ANTES de commitearlo; con exit distinto de 0, resuelve los
+roles (no toques el baseline). El pre-push del destino lo vuelve a correr como barrera
+(WOT-2026-124b).
+
 ## Paso 7: el sello, si aplica
 
 Si la sesion siguiente es un vuelo autonomo, necesita
