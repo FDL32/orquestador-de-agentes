@@ -3780,6 +3780,71 @@ def run_dec_receipt_ticket_contracts_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_escalation_receipt_resolution_check(project_root: Path) -> CheckResult:
+    """Barrera: un RECIBO REEJECUTABLE con placeholder sin resolver es indeterminado (WOT-2026-054d).
+
+    MEDIDO 2026-08-10: un comando citado con `<DESTINO_ROOT>` en el RECIBO
+    REEJECUTABLE de una ficha de escalado se resolvio a dos ficheros DISTINTOS
+    en dos sesiones distintas, cada una obteniendo un resultado opuesto sin
+    equivocarse -- ninguna declaro a que resolvio el placeholder. Hermana de
+    arquitectura de `run_dec_receipt_check` (mismos buzones, mismo patron de
+    grandfathering declarado en el propio guard), cableada INMEDIATAMENTE
+    DESPUES de la barrera del recibo DEC porque auditan la MISMA superficie de
+    fichas (`*.tickets.md`).
+
+    A diferencia de `run_dec_receipt_check`, este guard no cruza repos (no
+    resuelve ningun registro de decisiones): solo lee el texto de las fichas
+    ya presentes en el destino, asi que no necesita `--motor-root` ni
+    `--destino-registry`.
+
+    Args:
+        project_root: Raiz del destino; de ella se derivan los dos buzones de
+            fichas conocidos (mismos que `run_dec_receipt_check`).
+
+    Returns:
+        CheckResult con el estado de la barrera de resolucion de placeholders.
+    """
+    motor_root = _MOTOR_ROOT
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        resolved_motor_root = resolve_motor_root(project_root)
+        if (
+            resolved_motor_root is not None
+            and (
+                resolved_motor_root
+                / "scripts"
+                / "check_escalation_receipt_resolution.py"
+            ).exists()
+        ):
+            motor_root = resolved_motor_root
+    except ImportError:
+        pass
+
+    cmd = [
+        sys.executable,
+        str(motor_root / "scripts" / "check_escalation_receipt_resolution.py"),
+    ]
+
+    for inbox in (
+        # Los MISMOS dos buzones que `run_dec_receipt_check` (WOT-2026-025k
+        # censo: dejar uno fuera deja fichas sin mirar con el guard en verde).
+        project_root / "orchestrator_pipeline" / "backlog_inbox",
+        project_root / ".agent" / "collaboration" / "backlog_inbox",
+    ):
+        if inbox.is_dir():
+            cmd += ["--inbox", str(inbox)]
+
+    from scripts.check_escalation_receipt_resolution import EXIT_EMPTY_UNIVERSE
+
+    return run_subprocess_check(
+        cmd=cmd,
+        name="Escalation Receipt Resolution Barrier (WOT-2026-054d)",
+        project_root=project_root,
+        skip_exit_codes=(EXIT_EMPTY_UNIVERSE,),
+    )
+
+
 def run_inbox_drainage_check(project_root: Path) -> CheckResult:
     """WOT-2026-042u: unico backlog_inbox canonico + drenaje descubierto desde codigo.
 
@@ -4646,6 +4711,13 @@ def run_preflight_check(
         # hay `ticket_contracts.md`. Import ESTATICO en el run_ -> check_guard_wiring
         # lo cuenta WIRED (patron canonico del modulo).
         results.append(run_dec_receipt_ticket_contracts_check(project_root))
+        # 6n-ter. Escalation Receipt Resolution Barrier (WOT-2026-054d). Misma
+        # superficie de fichas que 6n, auditando un defecto DISTINTO: un
+        # placeholder de raiz citado en el RECIBO REEJECUTABLE sin declarar a
+        # que ruta resolvio (dos sesiones lo reprodujeron con veredictos
+        # opuestos, ninguna se equivocaba). Fichas anteriores al cutoff del
+        # propio guard degradan a WARN, igual que 6n.
+        results.append(run_escalation_receipt_resolution_check(project_root))
         # 6o. Inbox Drainage Barrier (WOT-2026-042u). El DoD (b) de la ficha: el
         # drenaje procesa el canonico desde CODIGO y esta cableado a un camino que
         # corre solo. Import estatico en el run_ -> check_guard_wiring lo cuenta

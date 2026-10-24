@@ -831,6 +831,7 @@ def test_sibling_parity_is_wired_into_closeout(tmp_path, monkeypatch):
         "run_arranques_index_check",
         "run_dec_receipt_check",
         "run_dec_receipt_ticket_contracts_check",
+        "run_escalation_receipt_resolution_check",
         "run_inbox_drainage_check",
         "run_backlog_admission_check",
         "run_sibling_commit_parity_check",
@@ -1087,6 +1088,7 @@ def test_sibling_audit_is_wired_into_closeout(tmp_path, monkeypatch):
         "run_arranques_index_check",
         "run_dec_receipt_check",
         "run_dec_receipt_ticket_contracts_check",
+        "run_escalation_receipt_resolution_check",
         "run_inbox_drainage_check",
         "run_backlog_admission_check",
         "run_sibling_commit_parity_check",
@@ -1103,6 +1105,82 @@ def test_sibling_audit_is_wired_into_closeout(tmp_path, monkeypatch):
     monkeypatch.setattr(
         pc_module,
         "run_sibling_audit_check",
+        lambda *a, **k: (
+            called.__setitem__("base", called["base"] + 1)
+            or CheckResult(name="spy", passed=True, output="", is_blocking=False)
+        ),
+    )
+    pc_module.run_preflight_check(tmp_path, closeout_mode=False)
+    assert called["base"] == 0, "el preflight base no paga el gate de closeout"
+
+
+def test_escalation_receipt_resolution_is_wired_into_closeout(tmp_path, monkeypatch):
+    """CABLEADO: `run_preflight_check` invoca el gate SOLO en closeout_mode.
+
+    Mutation: retirar el `results.append(run_escalation_receipt_resolution_check(...))`
+    deja el spy sin llamar (norma, no barrera, WOT-2026-054d DoD (d)). Fija
+    ademas que el preflight BASE no lo paga.
+    """
+    from prepush_check import CheckResult
+
+    called = {"closeout": 0, "base": 0}
+
+    def _spy(root, *args, **kwargs):
+        called["closeout"] += 1
+        return CheckResult(name="spy", passed=True, output="", is_blocking=False)
+
+    ok = CheckResult(name="stub", passed=True, output="", is_blocking=True)
+    for fn in (
+        "run_delivery_hygiene_check",
+        "run_portable_memory_archive_check",
+        "run_ruff_check",
+        "run_ruff_format_check",
+        "run_agent_controller_validate",
+        "run_git_status_check",
+        "run_validate_all",
+        "run_backlog_contract_check",
+        "run_ghost_ticket_ids_check",
+        "run_contract_reconcile_check",
+        "run_handoff_state_sha_check",
+        "run_handoff_committed_check",
+        "run_destination_pii_check",
+        "run_closeout_reconciliation_check",
+        "run_landed_evidence_shape_check",
+        "run_backlog_live_landed_check",
+        "run_motor_destination_integration_check",
+        "run_contract_formation_check",
+        "run_workspace_contract_formation_check",
+        "run_batch_run_accounting_check",
+        "run_seal_staleness_check",
+        "run_distributable_planning_check",
+        "run_guard_wiring_orphan_check",
+        "run_prompt_wired_invocations_check",
+        "run_loop_execution_check",
+        "run_principal_freshness_check",
+        "run_agent_write_enforced_check",
+        "run_flight_plan_collision_check",
+        "run_launch_prompt_paths_check",
+        "run_builder_prompt_obligations_check",
+        "run_arranques_index_check",
+        "run_dec_receipt_check",
+        "run_dec_receipt_ticket_contracts_check",
+        "run_inbox_drainage_check",
+        "run_backlog_admission_check",
+        "run_sibling_commit_parity_check",
+        "run_sibling_audit_check",
+    ):
+        monkeypatch.setattr(pc_module, fn, lambda *a, **k: ok)
+    monkeypatch.setattr(pc_module, "run_escalation_receipt_resolution_check", _spy)
+
+    pc_module.run_preflight_check(tmp_path, closeout_mode=True)
+    assert called["closeout"] == 1, (
+        "el check existe pero el closeout no lo invoca -> es una NORMA, no "
+        "una barrera (WOT-2026-054d)"
+    )
+
+    monkeypatch.setattr(
+        pc_module,
+        "run_escalation_receipt_resolution_check",
         lambda *a, **k: (
             called.__setitem__("base", called["base"] + 1)
             or CheckResult(name="spy", passed=True, output="", is_blocking=False)
