@@ -1261,3 +1261,129 @@ def test_088g_d5_denominador_exacto_en_el_cli(
         "[dec-receipt] ticket_contracts: contratos_inspeccionados=1, "
         "citas_encontradas=2, citas_resueltas=1, citas_sin_resolver=1" in out
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-043a: planes de `flight_plans/queued/*.json` + descubrimiento de
+# buzones no wireados. DoD(c): mutation en las DOS direcciones de cada eje.
+# ---------------------------------------------------------------------------
+
+
+def test_043a_plan_sin_recibo_falla_nombrando_el_plan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Plan post-cutoff sin recibo -> ROJO, el nombre del plan aparece en la salida."""
+    motor = _fake_motor(tmp_path / "motor", [])
+    queued = tmp_path / "queued"
+    queued.mkdir()
+    (queued / "FP-20261001-sin-recibo.json").write_text(
+        '{"tickets": [{"id": "WOT-2026-999z"}]}\n', encoding="utf-8"
+    )
+
+    rc = cdr.main(["--motor-root", str(motor), "--flight-plans-queued", str(queued)])
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert "FP-20261001-sin-recibo.json" in out
+    assert "sin recibo DEC valido" in out
+
+
+def test_043a_plan_con_recibo_valido_pasa(tmp_path: Path) -> None:
+    """Control positivo: el MISMO plan, con `dec_receipt` valido -> VERDE."""
+    motor = _fake_motor(tmp_path / "motor", ["008B-001"])
+    queued = tmp_path / "queued"
+    queued.mkdir()
+    (queued / "FP-20261001-con-recibo.json").write_text(
+        '{"tickets": [{"id": "WOT-2026-999z"}], '
+        '"dec_receipt": "DEC-008B-001 (motor)"}\n',
+        encoding="utf-8",
+    )
+
+    rc = cdr.main(["--motor-root", str(motor), "--flight-plans-queued", str(queued)])
+
+    assert rc == 0
+
+
+def test_043a_plan_pre_cutoff_sin_recibo_es_warn_no_error(tmp_path: Path) -> None:
+    """Grandfathering reusado sin cambio: un plan ANTERIOR al cutoff no bloquea."""
+    motor = _fake_motor(tmp_path / "motor", [])
+    queued = tmp_path / "queued"
+    queued.mkdir()
+    (queued / "FP-20260726-viejo.json").write_text(
+        '{"tickets": [{"id": "WOT-2026-001a"}]}\n', encoding="utf-8"
+    )
+
+    rc = cdr.main(["--motor-root", str(motor), "--flight-plans-queued", str(queued)])
+
+    assert rc == 0
+
+
+def test_043a_find_undiscovered_inboxes_vacio_cuando_solo_hay_conocidos(
+    tmp_path: Path,
+) -> None:
+    """Control negativo: los DOS buzones conocidos presentes -> lista vacia."""
+    for rel in cdr.KNOWN_BACKLOG_INBOX_RELS:
+        (tmp_path / rel).mkdir(parents=True)
+
+    assert cdr.find_undiscovered_inboxes(tmp_path) == []
+
+
+def test_043a_find_undiscovered_inboxes_encuentra_un_tercero(tmp_path: Path) -> None:
+    """MUTATION: un `backlog_inbox` fuera de KNOWN_BACKLOG_INBOX_RELS SI se encuentra."""
+    sorpresa = tmp_path / "some" / "nested" / "backlog_inbox"
+    sorpresa.mkdir(parents=True)
+
+    found = cdr.find_undiscovered_inboxes(tmp_path)
+
+    assert found == [sorpresa]
+
+
+def test_043a_find_undiscovered_inboxes_no_desciende_dentro_de_un_buzon(
+    tmp_path: Path,
+) -> None:
+    """Un `backlog_inbox` anidado DENTRO de otro no produce doble hallazgo."""
+    outer = tmp_path / "zona" / "backlog_inbox"
+    (outer / "backlog_inbox").mkdir(parents=True)
+
+    found = cdr.find_undiscovered_inboxes(tmp_path)
+
+    assert found == [outer]
+
+
+def test_043a_project_root_falla_con_buzon_no_wireado_incluso_en_universo_vacio(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """MUTATION clave del DoD(c): buzon canonico presente pero NO cableado -> ROJO,
+    nunca el SKIP de universo vacio (ningun `--inbox`/`--ticket-contracts`/
+    `--flight-plans-queued` se paso)."""
+    motor = _fake_motor(tmp_path / "motor", [])
+    sorpresa = tmp_path / "destino" / "backlog_inbox"
+    sorpresa.mkdir(parents=True)
+
+    rc = cdr.main(
+        [
+            "--motor-root",
+            str(motor),
+            "--project-root",
+            str(tmp_path / "destino"),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert rc != cdr.EXIT_EMPTY_UNIVERSE
+    assert str(sorpresa) in out
+    assert "NO esta en KNOWN_BACKLOG_INBOX_RELS" in out
+
+
+def test_043a_project_root_con_solo_buzones_conocidos_sigue_universo_vacio(
+    tmp_path: Path,
+) -> None:
+    """Restaurar el buzon a uno conocido devuelve el SKIP de universo vacio."""
+    motor = _fake_motor(tmp_path / "motor", [])
+    destino = tmp_path / "destino"
+    (destino / ".agent" / "collaboration" / "backlog_inbox").mkdir(parents=True)
+
+    rc = cdr.main(["--motor-root", str(motor), "--project-root", str(destino)])
+
+    assert rc == cdr.EXIT_EMPTY_UNIVERSE

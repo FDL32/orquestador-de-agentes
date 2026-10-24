@@ -3701,6 +3701,13 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
         str(motor_root / "scripts" / "check_dec_receipt.py"),
         "--motor-root",
         str(motor_root),
+        # WOT-2026-043a: el guard se auto-audita contra KNOWN_BACKLOG_INBOX_RELS
+        # (su propia fuente de verdad) y falla si encuentra un `backlog_inbox`
+        # en disco que ninguno de los `--inbox` de abajo cubre -- un buzon no
+        # cubierto no puede dar verde, ni siquiera por rename o alta de un
+        # tercero que este llamante no sepa todavia.
+        "--project-root",
+        str(project_root),
     ]
 
     destino_registry = project_root / ".agent" / "planning" / "decisions.md"
@@ -3712,11 +3719,20 @@ def run_dec_receipt_check(project_root: Path) -> CheckResult:
         # = las 14 fichas del censo del contrato). El segundo vive bajo
         # `collaboration/`, no bajo `planning/`: pasar solo el primero habria
         # dejado 8 de 14 fichas SIN mirar, con el guard igualmente en verde.
+        # MISMA tupla que `check_dec_receipt.KNOWN_BACKLOG_INBOX_RELS`: si
+        # alguna vez diverge, el `--project-root` de arriba lo caza (WOT-2026-043a).
         project_root / "orchestrator_pipeline" / "backlog_inbox",
         project_root / ".agent" / "collaboration" / "backlog_inbox",
     ):
         if inbox.is_dir():
             cmd += ["--inbox", str(inbox)]
+
+    # WOT-2026-043a DoD(a): la clausula D5 pide recibo para "una ficha O UN
+    # PLAN" -- los planes de `flight_plans/queued/*.json` son la mitad del
+    # universo que, antes de esta ficha, ningun guard miraba.
+    queued_dir = project_root / "orchestrator_pipeline" / "flight_plans" / "queued"
+    if queued_dir.is_dir():
+        cmd += ["--flight-plans-queued", str(queued_dir)]
 
     from scripts.check_dec_receipt import EXIT_EMPTY_UNIVERSE
 
