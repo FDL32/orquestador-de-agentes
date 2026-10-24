@@ -215,6 +215,17 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # Guard: un prompt distribuido no declara normativo el planning del destino
+      # (WOT-2026-090p). always_run + pass_filenames:false: el denominador viene del
+      # MANIFEST (+ EXTRA_SCOPE), no del argv.
+      - id: check-prompt-load-bearing-refs
+        name: check prompt load-bearing refs (nada normativo apunta al planning del destino)
+        entry: uv run python scripts/check_prompt_load_bearing_refs.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # Guard: enforce MANIFEST.distribute frontier as a MECHANISM (WOT-2026-025i).
       # Every manifest entry must resolve to >=1 tracked file (no stale entries =
       # no holes in the frontier). Always_run + pass_filenames:false because the

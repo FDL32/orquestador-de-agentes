@@ -15,9 +15,10 @@ not: NO es el pipeline por ticket (prompts/orchestrator_pipeline.md ni prompts/o
 > Executor that consumes the DAG produced by `/backlog-triage`
 > (`prompts/backlog_triage.md`, schema `autonomous-batch-dag/v1`) and closes
 > the maximum number of tickets WITH GUARANTEES, stopping clean instead of
-> lowering barriers. Frozen design:
-> `design_autonomous_ticket_batch.md` (workspace planning), sections 1, 2, 4,
-> 5, 6, 7, 8, 9, 10, 11, 12, 15 are load-bearing for this prompt.
+> lowering barriers. Origin: frozen design
+> `design_autonomous_ticket_batch.md` (planning of the dogfooding destino).
+> Provenance, not normative: there is no need to read it to run this prompt,
+> which is self-sufficient.
 
 contract_id: cid-orchestrator-autonomous-ticket-batch-v1
 Skill canonica: skills/orchestrate-autonomous-ticket-batch/SKILL.md
