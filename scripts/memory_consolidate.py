@@ -673,11 +673,17 @@ def _regenerate_l2_l3(
     los tres restantes permanecen declarados con su dueno WOT-2026-042e):
 
     1. L2 tiene tope `MAX_L2_RULES` (30) y `_extract_rules_from_entries` corta
-       EN ORDEN DE LISTA. Si `recent` ya aporta 30 reglas, la union admite CERO
-       archivadas: el fix se ANULA en silencio justo cuando la memoria crece.
+       por RECENCIA DESCENDENTE (fix WOT-2026-058b, commit `158c5a6d`,
+       2026-10-10: antes cortaba EN ORDEN DE LISTA y expulsaba en silencio
+       reglas relevantes; ahora conserva las `max_rules` MAS NUEVAS). Si
+       `recent` ya aporta 30 reglas, la union con `archivable` sigue
+       admitiendo CERO archivadas (este punto es independiente del orden de
+       corte: el tope se llena con `recent` antes de mirar `archivable`).
        Desde el vuelo memoria v3, memory_rules.md publica Candidates y
        Expelled by cap (WOT-2026-058b, DoD (c)) y check_memory_health los
-       muestra junto a L2 30/30, asi que el corte deja de ser mudo.
+       muestra junto a L2 30/30. La POLITICA DE CORTE FINAL (recencia pura
+       vs. un criterio de importancia/cuota por dominio) sigue siendo una
+       decision de producto pendiente -- ver la fila viva de WOT-2026-058b.
     2. L3 tiene tope `MAX_L3_OBSERVATIONS_PROFILE` (10) y
        `generate_memory_profile_md` REORDENA por timestamp descendente antes de
        cortar, asi que una archivada solo aparece si hay MENOS de 10 recientes:
