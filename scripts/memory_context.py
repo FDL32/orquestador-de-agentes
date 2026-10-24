@@ -47,6 +47,12 @@ Usage:
     python scripts/memory_context.py --compact
         Contexto para el hook de pre-compact (archive capado por recencia + L3/L2).
 
+    python scripts/memory_context.py --usage-report --since <ISO-8601> [--window-days N]
+        Lee ``.agent/runtime/memory/recall_log.jsonl`` y emite un JSON a stdout
+        con conteos de llamadas reales (caller en REAL_USE_CALLERS), sesiones
+        distintas, dias distintos y un veredicto (hay uso real / uso insuficiente
+        / ventana abierta). Nunca escribe en el log.
+
 Nota: si el hook `SessionStart` esta cableado, el INDICE ya entra solo al abrir
 sesion. Lo que sigue haciendo falta a mano es la EXPANSION (`--recall`).
 """
@@ -229,6 +235,15 @@ _HEADLINES_BYTE_BUDGET = 2000
 #: Minimum budget for ``--headlines`` (max footer + one headline line).
 #: Below this the command must fail with rc 2, never print silently.
 _MIN_HEADLINES_BUDGET = 300
+
+#: WOT-2026-124g. Closed list of real-use callers; everything else is telemetry
+#: or validation noise.  The default ``--caller`` value is ``"agent"`` so that an
+#: untagged invocation (copied from a prompt or index) is already identified as
+#: real use.  ``"unknown"`` is never produced any more.
+REAL_USE_CALLERS = frozenset({"agent"})
+
+#: Recall log schema version (WOT-2026-124g).  v2 adds the ``session`` field.
+RECALL_LOG_VERSION = 2
 
 
 def _resolve_recall_budget(args: argparse.Namespace) -> int:
@@ -719,6 +734,185 @@ def _queries_from_work_plan(ticket_id: str) -> list[str]:
     return sorted(queries)[:8]
 
 
+def _session_context_sha256() -> str | None:
+    """Return the first 12 hex chars of sha256(CLAUDE_CODE_SESSION_ID), or None.
+
+    WOT-2026-124g. Only ``CLAUDE_CODE_SESSION_ID`` is verified (Claude Code,
+    2026-10-25); the raw value is NEVER written.  In other backends it stays
+    ``null`` (``None`` here, rendered as JSON null).
+
+    Before: ``CLAUDE_CODE_SESSION_ID`` may or may not exist in the environment.
+    During: pure computation, no I/O, never raises.
+    After: returns a 12-char hex string or ``None``.
+    """
+    import hashlib
+
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not sid:
+        return None
+    return hashlib.sha256(sid.encode("utf-8")).hexdigest()[:12]
+
+
+def _parse_iso_date(s: str) -> datetime | None:  # noqa: F821
+    """Try to parse an ISO-8601 date string; returns None on failure.
+
+    Returns an offset-aware datetime (UTC) so it can be compared with
+    ``now`` which is always UTC-aware.
+    """
+    from datetime import datetime as dt, timezone as tz
+
+    try:
+        parsed = dt.fromisoformat(s)
+    except (ValueError, TypeError):
+        parsed = None
+    if parsed is None:
+        # Try common ISO formats that fromisoformat may not handle in Python 3.10.
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+        ):
+            try:
+                parsed = dt.strptime(s, fmt)
+                break
+            except ValueError:
+                continue
+    if parsed is not None and parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz.utc)
+    return parsed
+
+
+def _usage_report(  # noqa: C901
+    root: Path,
+    since_str: str | None,
+    window_days: int,
+    *,
+    now: datetime | None = None,  # noqa: F821
+) -> int:
+    """Produce a usage report from the recall log (read-only).
+
+    WOT-2026-124g. Reads ``<raiz>/.agent/runtime/memory/recall_log.jsonl``,
+    counts lines matching criteria, and prints a JSON object to stdout.
+
+    Before: ``root`` is the project root; ``since_str`` is an ISO-8601 date
+        string (required); ``window_days`` is the window for verdict (default 30);
+        ``now`` can be injected for tests.
+    During: opens and scans the log file (read-only), counts by category,
+        computes the verdict, writes ONE JSON line to stdout.
+    After: returns 0 if the log is readable (even if empty/missing); returns 2
+        if ``since_str`` is not a valid date.  Never raises.
+    """
+    import json
+    from datetime import datetime as dt, timezone as tz
+
+    if not since_str:
+        print("--since is required with --usage-report", file=sys.stderr)
+        return 2
+
+    since = _parse_iso_date(since_str)
+    if since is None:
+        print(f"Error: invalid --since value: {since_str!r}", file=sys.stderr)
+        return 2
+
+    log_file = root / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+
+    if now is None:
+        now = dt.now(tz.utc)
+
+    llamadas_reales = 0
+    sesiones_distintas: set[str] = set()
+    dias_distintos: set[str] = set()
+    lineas_fuera_de_lista = 0
+    lineas_invalidas = 0
+    has_any_session = False  # True if any real-use line has a non-null session
+
+    if log_file.is_file():
+        for line in log_file.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                lineas_invalidas += 1
+                continue
+
+            v = rec.get("v")
+            if v not in (1, 2):
+                lineas_invalidas += 1
+                continue
+
+            ts_str = rec.get("timestamp")
+            if not ts_str:
+                lineas_invalidas += 1
+                continue
+
+            try:
+                ts = dt.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=tz.utc)
+            except ValueError:
+                lineas_invalidas += 1
+                continue
+
+            if ts < since:
+                continue
+
+            caller = rec.get("caller", "unknown")
+
+            if caller not in REAL_USE_CALLERS:
+                lineas_fuera_de_lista += 1
+                continue
+
+            # Real use line (caller in REAL_USE_CALLERS, v in {1, 2}, ts >= since)
+            llamadas_reales += 1
+
+            # Track session and day
+            session_val = rec.get("session")
+            if session_val is not None:
+                has_any_session = True
+                sesiones_distintas.add(session_val)
+            # Track day for every real-use line
+            day_key = ts.strftime("%Y-%m-%d")
+            dias_distintos.add(day_key)
+
+    # Compute verdict
+    verdict = ""
+    if llamadas_reales >= 30:
+        if len(sesiones_distintas) >= 3:
+            verdict = "hay uso real"
+        elif not has_any_session and len(dias_distintos) >= 3:
+            # No session in any real-use line, but >= 3 distinct days
+            verdict = "hay uso real"
+        else:
+            # Check if window has passed
+            delta = now - since
+            if delta.days >= window_days:
+                verdict = "uso insuficiente"
+            else:
+                verdict = "ventana abierta"
+    else:
+        delta = now - since
+        verdict = (
+            "uso insuficiente" if delta.days >= window_days else "ventana abierta"
+        )  # SIM108
+
+    result = {
+        "since": since_str,
+        "window_days": window_days,
+        "now": now.isoformat(),
+        "llamadas_reales": llamadas_reales,
+        "sesiones_distintas": len(sesiones_distintas),
+        "dias_distintos": len(dias_distintos),
+        "lineas_fuera_de_lista": lineas_fuera_de_lista,
+        "lineas_invalidas": lineas_invalidas,
+        "veredicto": verdict,
+    }
+
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
 def _write_recall_log(
     root: Path,
     caller: str,
@@ -728,17 +922,22 @@ def _write_recall_log(
 ) -> None:
     """Append a JSON line with telemetry for this recall execution.
 
-    WOT-2026-124f. UNA linea JSON por ejecucion de --recall (query/ticket/id/plain),
-    en modo append, en `<raiz>/.agent/runtime/memory/recall_log.jsonl`.
+    WOT-2026-124f / WOT-2026-124g. A JSON line per --recall execution
+    (query/ticket/id/plain), append-only, at ``<raiz>/.agent/runtime/memory/recall_log.jsonl``.
 
-    Before: ``root`` es la raiz del proyecto (AGENT_PROJECT_ROOT o _PROJECT_ROOT);
-        ``caller`` es el flag --caller (por defecto "unknown"); ``mode`` es
-        "query", "ticket", "id" o "plain"; ``query`` es el texto de --query,
-        el ID de --ticket, el id pedido, o cadena vacia en plain;
-        ``observations`` son los resultados DEVUELTOS (tras --limit).
-    During: crea el directorio si no existe; escribe UNA linea JSON con \n final;
-        nunca lanza, nunca modifica salida stdout ni exit code.
-    After: el fichero crece por append; un fallo se reporta por stderr.
+    Schema v2 (WOT-2026-124g): adds ``session`` (first 12 hex chars of
+    ``sha256(CLAUDE_CODE_SESSION_ID)``, or null).  The raw environment
+    variable value is NEVER written.  The ``v`` field is always
+    ``RECALL_LOG_VERSION`` (currently 2).
+
+    Before: ``root`` is the project root (AGENT_PROJECT_ROOT or _PROJECT_ROOT);
+        ``caller`` is the --caller flag (default "agent"); ``mode`` is
+        "query", "ticket", "id" or "plain"; ``query`` is the --query text,
+        the --ticket ID, the requested id, or empty string in plain;
+        ``observations`` are the returned results (after --limit).
+    During: creates the directory if needed; writes ONE JSON line with \n final;
+        never raises, never modifies stdout or exit code.
+    After: the file grows by append; a failure is reported to stderr.
     """
     import json
     from datetime import datetime, timezone
@@ -768,12 +967,13 @@ def _write_recall_log(
             results.append(list(dk))
 
     entry = {
-        "v": 1,
+        "v": RECALL_LOG_VERSION,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "caller": caller,
         "mode": mode,
         "query": query,
         "results": results,
+        "session": _session_context_sha256(),
     }
 
     try:
@@ -927,12 +1127,34 @@ def main() -> int:
     parser.add_argument(
         "--caller",
         type=str,
-        default="unknown",
+        default="agent",
         help=(
             "Identifier for the caller of this recall (e.g. session id, "
             "agent name). Written to the recall telemetry log. "
-            "Default: unknown."
+            "Default: agent."
         ),
+    )
+    parser.add_argument(
+        "--usage-report",
+        action="store_true",
+        help=(
+            "Print a usage report from the recall log (read-only). Requires "
+            "--since <ISO-8601 date>.  Mutually exclusive with other modes."
+        ),
+    )
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help=(
+            "Start date for --usage-report (ISO-8601).  Required with --usage-report."
+        ),
+    )
+    parser.add_argument(
+        "--window-days",
+        type=int,
+        default=30,
+        help=("Window in days for --usage-report verdict (default: 30)."),
     )
 
     args = parser.parse_args()
@@ -977,6 +1199,12 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
             print("Error: Use only one mode flag at a time", file=sys.stderr)
             return 1
         mode = "why"
+
+    if args.usage_report:
+        if mode:
+            print("Error: Use only one mode flag at a time", file=sys.stderr)
+            return 1
+        mode = "usage_report"
 
     # Default mode
     if not mode:
@@ -1173,6 +1401,13 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
             )
             return 1
         _print_why(matches)
+
+    elif mode == "usage_report":
+        return _usage_report(
+            Path(os.environ.get("AGENT_PROJECT_ROOT") or _PROJECT_ROOT),
+            args.since,
+            args.window_days,
+        )
 
     return 0
 

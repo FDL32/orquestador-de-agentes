@@ -330,6 +330,8 @@ def collect_memory_slugs(motor_root: Path, slugs: list[str]) -> list[dict]:
                 "--recall",
                 "--id",
                 slug,
+                "--caller",
+                "session_state_validate",
             ],
             cwd=motor_root,
             timeout=60,

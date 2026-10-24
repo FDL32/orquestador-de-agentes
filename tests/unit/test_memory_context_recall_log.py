@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for WOT-2026-124f: recall telemetry log (append-only JSONL).
+"""Tests for WOT-2026-124f/124g: recall telemetry log (append-only JSONL)
+and schema v2.
 
 Hermetic: uses ``AGENT_PROJECT_ROOT`` pointing to ``tmp_path`` via
 ``monkeypatch.setenv``, synthetic corpus, never the live archive.
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -62,7 +64,7 @@ def _build_args(
     query: str | None = None,
     ticket: str | None = None,
     obs_id: str | None = None,
-    caller: str = "unknown",
+    caller: str = "agent",
 ) -> argparse.Namespace:  # type: ignore[name-defined]
     """Build an argparse.Namespace mimicking parsed CLI args for recall mode."""
     parser = argparse.ArgumentParser()
@@ -75,29 +77,32 @@ def _build_args(
     parser.add_argument("--query", type=str, default=None)
     parser.add_argument("--ticket", type=str, default=None)
     parser.add_argument("--id", type=str, default=None, dest="obs_id")
-    parser.add_argument("--caller", type=str, default="unknown")
+    parser.add_argument("--caller", type=str, default="agent")
     parser.add_argument("--headlines", action="store_true")
     parser.add_argument("--limit", type=int, default=15)
     parser.add_argument("--budget", type=int, default=None)
+    parser.add_argument("--usage-report", action="store_true")
+    parser.add_argument("--since", type=str, default=None)
+    parser.add_argument("--window-days", type=int, default=30)
 
     if mode == "query":
         cmd = ["--recall", "--query", query or "test"]
-        if caller != "unknown":
+        if caller != "agent":
             cmd.extend(["--caller", caller])
         return parser.parse_args(cmd)
     elif mode == "ticket":
         cmd = ["--recall", "--ticket", ticket or "WOT-2026-124f"]
-        if caller != "unknown":
+        if caller != "agent":
             cmd.extend(["--caller", caller])
         return parser.parse_args(cmd)
     elif mode == "id":
         cmd = ["--recall", "--id", obs_id or "obs-fixture-id-0"]
-        if caller != "unknown":
+        if caller != "agent":
             cmd.extend(["--caller", caller])
         return parser.parse_args(cmd)
     else:  # plain
         cmd = ["--recall"]
-        if caller != "unknown":
+        if caller != "agent":
             cmd.extend(["--caller", caller])
         return parser.parse_args(cmd)
 
@@ -126,10 +131,10 @@ def _load_log_lines(log_file: Path) -> list[dict]:
     ],
 )
 def test_schema_per_mode(monkeypatch, tmp_path, mode, q):
-    """(i) Each mode writes a line matching the exact schema."""
+    """(i) Each mode writes a line matching the exact v2 schema."""
     import json
 
-    from scripts.memory_context import _run
+    from scripts.memory_context import RECALL_LOG_VERSION, _run
 
     # Each param gets a unique subdirectory to avoid cross-contamination.
     test_root = tmp_path / mode
@@ -160,9 +165,9 @@ def test_schema_per_mode(monkeypatch, tmp_path, mode, q):
 
     entry = lines[0]
     # Schema keys
-    assert entry["v"] == 1
+    assert entry["v"] == RECALL_LOG_VERSION
     assert isinstance(entry["timestamp"], str)
-    assert entry["caller"] == "unknown"
+    assert entry["caller"] == "agent"
     assert entry["mode"] == mode
 
     # Query field
@@ -339,12 +344,12 @@ def test_stdout_identical_with_without_log(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# (vi) --caller X appears in log; without flag, "unknown"
+# (vi) --caller X appears in log; without flag, "agent" (WOT-2026-124g)
 # ---------------------------------------------------------------------------
 
 
 def test_caller_flag_in_log(monkeypatch, tmp_path):
-    """(vi) --caller X is written to log; without flag, 'unknown'."""
+    """(vi) --caller X is written to log; without flag, 'agent'."""
     from scripts.memory_context import _run
 
     test_root = tmp_path / "caller"
@@ -362,14 +367,14 @@ def test_caller_flag_in_log(monkeypatch, tmp_path):
     assert len(lines) == 1
     assert lines[0]["caller"] == "claude-code-1"
 
-    # Without --caller (default "unknown")
+    # Without --caller (default "agent")
     with mock.patch("scripts.memory_context.recall_observations", return_value=obs):
         args2 = _build_args("query", query="test")
         _run(args2)
 
     lines2 = _load_log_lines(log_file)
     assert len(lines2) == 2
-    assert lines2[1]["caller"] == "unknown"
+    assert lines2[1]["caller"] == "agent"
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +396,60 @@ def test_gitignore_recognizes_log():
     )
     assert result.returncode == 0, (
         f"git check-ignore must recognize the log file, got rc={result.returncode}"
+    )
+
+
+def test_session_field_with_claude_code_session_id(monkeypatch, tmp_path):
+    """(v2) With CLAUDE_CODE_SESSION_ID=abc the log has session=sha256('abc')[:12],
+    and the raw value 'abc' does NOT appear in the file."""
+    import hashlib
+
+    from scripts.memory_context import _run
+
+    test_root = tmp_path / "session_with"
+    test_root.mkdir(exist_ok=True)
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(test_root))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "abc")
+    obs = _make_fixture(with_id=True)
+
+    with mock.patch("scripts.memory_context.recall_observations", return_value=obs):
+        args = _build_args("query", query="test")
+        _run(args)
+
+    log_file = test_root / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    lines = _load_log_lines(log_file)
+    assert len(lines) == 1
+    expected_session = hashlib.sha256(b"abc").hexdigest()[:12]
+    assert lines[0]["session"] == expected_session, (
+        f"session={lines[0]['session']!r} != expected {expected_session!r}"
+    )
+    # The raw value must NOT appear in the file
+    raw_content = log_file.read_text(encoding="utf-8")
+    assert "abc" not in raw_content, (
+        "Raw CLAUDE_CODE_SESSION_ID value must not appear in log file"
+    )
+
+
+def test_session_field_without_claude_code_session_id(monkeypatch, tmp_path):
+    """(v2) Without CLAUDE_CODE_SESSION_ID the log has session=null."""
+
+    from scripts.memory_context import _run
+
+    test_root = tmp_path / "session_without"
+    test_root.mkdir(exist_ok=True)
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(test_root))
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    obs = _make_fixture(with_id=True)
+
+    with mock.patch("scripts.memory_context.recall_observations", return_value=obs):
+        args = _build_args("query", query="test")
+        _run(args)
+
+    log_file = test_root / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    lines = _load_log_lines(log_file)
+    assert len(lines) == 1
+    assert lines[0]["session"] is None, (
+        f"Expected session=None, got {lines[0]['session']!r}"
     )
 
 
@@ -425,3 +484,99 @@ def test_recall_id_inexistent_writes_log_and_returns_rc1(monkeypatch, tmp_path):
     assert entry["mode"] == "id"
     assert entry["query"] == "obs-no-existe"
     assert entry["results"] == []
+
+
+# ---------------------------------------------------------------------------
+# (viii) Barrier: no .py in scripts/bus/hooks calls --recall without --caller
+# ---------------------------------------------------------------------------
+
+
+_RECALL_ARGV = re.compile(r"""["']--recall["']""")
+_CALLER_ARGV = re.compile(r"""["']--caller["']""")
+
+
+def _find_violators(root: Path) -> list[str]:
+    """.py files under scripts/, bus/, agent_system/ and .agent/hooks/ that pass
+    ``"--recall"`` as an argv literal but never ``"--caller"``.
+
+    Detects INVOCATIONS, not prose: a hint such as
+    ``python scripts/memory_context.py --recall --query <x>`` inside a longer
+    string is not a call and must not be flagged. Skips ``memory_context.py``
+    itself (the producer). A caller that forgets ``--caller`` would be logged
+    with the default ``agent`` and counted as real use (WOT-2026-124g).
+    """
+    violators: list[str] = []
+    for sub in ("scripts", "bus", "agent_system", ".agent/hooks"):
+        base = root / sub
+        if not base.is_dir():
+            continue
+        for fpath in sorted(base.rglob("*.py")):
+            if fpath.name == "memory_context.py":
+                continue
+            try:
+                text = fpath.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if _RECALL_ARGV.search(text) and not _CALLER_ARGV.search(text):
+                violators.append(fpath.relative_to(root).as_posix())
+    return violators
+
+
+def test_barrier_recall_without_caller():
+    """(viii) Barrier on the REAL motor tree: no programmatic --recall caller
+    without --caller."""
+    violators = _find_violators(MOTOR_ROOT)
+    assert violators == [], (
+        f"BARRIER FAILED: these files use --recall without --caller: {violators}"
+    )
+
+
+def test_barrier_positive_control(tmp_path):
+    """(viii) Positive control through ``_find_violators`` itself: an argv call
+    without --caller is flagged, the same call with --caller is not, and a prose
+    hint is not a call."""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "bad.py").write_text(
+        'args = [py, "scripts/memory_context.py", "--recall", "--id", slug]\n',
+        encoding="utf-8",
+    )
+    (scripts_dir / "good.py").write_text(
+        'args = [py, "scripts/memory_context.py", "--recall", "--caller", "x"]\n',
+        encoding="utf-8",
+    )
+    (scripts_dir / "hint.py").write_text(
+        'HINT = "python scripts/memory_context.py --recall --query <t>"\n',
+        encoding="utf-8",
+    )
+    assert _find_violators(tmp_path) == ["scripts/bad.py"]
+
+
+def test_collect_session_state_passes_barrier():
+    """(viii) collect_session_state.py passes the barrier (it has --caller)."""
+    csf = MOTOR_ROOT / "scripts" / "collect_session_state.py"
+    text = csf.read_text(encoding="utf-8", errors="replace")
+    assert "--recall" in text, "collect_session_state must use --recall"
+    assert "--caller" in text, (
+        "collect_session_state must use --caller alongside --recall"
+    )
+
+
+def test_real_parser_default_caller_is_agent(monkeypatch, tmp_path):
+    """WOT-2026-124g: the REAL CLI parser (``main()``), not a mirror, logs
+    ``caller == "agent"`` when ``--caller`` is omitted -- the inverted default is
+    what makes an untagged agent call count as real use."""
+    import json
+
+    from scripts import memory_context as mc
+
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        sys, "argv", ["memory_context.py", "--recall", "--query", "rotacion"]
+    )
+    obs = [{"id": "obs-x", "topic": "t", "signal": "s", "source": "test"}]
+    with mock.patch("scripts.memory_context.recall_observations", return_value=obs):
+        mc.main()
+    log_file = tmp_path / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    lines = [json.loads(x) for x in log_file.read_text(encoding="utf-8").splitlines()]
+    assert [ln["caller"] for ln in lines] == ["agent"]
