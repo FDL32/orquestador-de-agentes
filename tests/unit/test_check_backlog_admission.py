@@ -221,6 +221,70 @@ def test_alta_con_recibo_coherente_es_verde(tmp_path: Path) -> None:
     assert "recibos encontrados: 1 en mensajes de commit" in out
 
 
+def test_merge_commit_no_marca_sin_recibo_un_id_ya_admitido_en_el_otro_padre(
+    tmp_path: Path,
+) -> None:
+    """MERGE-AWARE (`_parent_row_ids`): el punto ciego real medido en el
+    merge `952328d64f84` ("Merge origin/main (...) into vuelo-sin-limite").
+
+    Reproduce la topologia exacta, incluido el detalle que la hace morder:
+    las DOS ramas anaden una fila CADA UNA en la MISMA zona del fichero
+    (final de tabla), asi que el merge no es un fast-forward trivial de un
+    solo lado -- produce un CONFLICTO real que, al resolverse conservando
+    ambas filas, deja un diff combinado (`git show` default `--cc`) con las
+    DOS filas en el MISMO hunk: la propia (nueva, con recibo propio) marcada
+    "+ " (anadida vs el OTRO padre) y la ajena (YA admitida en el otro
+    padre, con recibo SUYO en un commit anterior de esa rama) marcada " +"
+    (anadida vs el padre LOCAL). Sin conflicto real git omite el hunk del
+    lado trivial del `--cc` por defecto y el punto ciego nunca se activa --
+    medido aparte, no es el escenario que este test fija.
+
+    `_parent_row_ids` con `sha^` (SIEMPRE el primer padre, tambien en un
+    merge) solo ve los ids del padre local y clasifica el id ajeno como
+    "nuevo" -- sin recibo propio en el mensaje del MERGE (que es un mensaje
+    generico de `git merge`), sale SIN_RECIBO aunque el id ya tenga un
+    recibo coherente en un commit anterior, real, de la otra rama. La union
+    de TODOS los padres (el fix) lo reconoce como "ya existia en al menos
+    uno" y no lo audita como alta nueva del merge.
+    """
+    repo = init_repo(tmp_path)
+
+    surface = backlog_surface(repo)
+    recibo_remoto = build_recibo(repo, "WOT-2026-907a", row("WOT-2026-907a"), [surface])
+    commit_alta(
+        repo, row("WOT-2026-907a"), msg_with_recibo("alta remota", recibo_remoto)
+    )
+    git(repo, "push", "origin", "main")  # otra sesion ya lo admitio y empujo
+
+    git(repo, "checkout", "-b", "vuelo-local", "HEAD~1")  # diverge ANTES del alta
+    surface_local = backlog_surface(repo)
+    recibo_local = build_recibo(
+        repo, "WOT-2026-908b", row("WOT-2026-908b"), [surface_local]
+    )
+    commit_alta(repo, row("WOT-2026-908b"), msg_with_recibo("alta local", recibo_local))
+
+    try:
+        git(
+            repo, "merge", "--no-ff", "-m", "Merge origin/main into vuelo-local", "main"
+        )
+    except subprocess.CalledProcessError:
+        # Conflicto real esperado (las dos ramas anaden al final de la misma
+        # tabla): resuelve conservando AMBAS filas, orden determinista.
+        p = repo / BACKLOG_REL
+        p.write_text(
+            HEADER + row("WOT-2026-908b") + row("WOT-2026-907a"), encoding="utf-8"
+        )
+        git(repo, "add", BACKLOG_REL)
+        git(repo, "commit", "--no-edit")
+
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "SIN_RECIBO" not in out, out
+    assert "WOT-2026-907a" not in out, out
+    assert "WOT-2026-908b" in out
+    assert "RECIBO_COHERENTE" in out
+
+
 # Seccion DoD c: contraste del recibo, nunca confianza.
 
 
