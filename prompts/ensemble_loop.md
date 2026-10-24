@@ -136,6 +136,21 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
    (regla del repo "skill apunta, prompt gobierna") no falla por no copiar el texto completo -- basta con
    que NOMBRE el identificador y su fuente en el bundle.
 
+8. **Declaracion de alcance: las lentes de este bucle auditan CONFORMIDAD, no EFECTOS (WOT-2026-043n).**
+   Cada lente del repertorio (punto 7 incluido) mira hacia DENTRO del artefacto -- si es coherente con su
+   propio contrato -- nunca hacia FUERA -- que efectos crea en el mundo que ningun contrato cubre. Un
+   artefacto que ORDENA dispatch externo, push, borrado irreversible o un gasto desproporcionado de
+   contexto/tokens puede ser PERFECTAMENTE COHERENTE con su contrato (el contrato lo ordena), y por eso
+   ninguna auditoria de conformidad lo detecta -- es la clase de falso verde medida 2026-07-29 (el ejecutor,
+   no el bucle de 4 lentes, caso que el prompt de arranque de WOT-2026-042q ordenaba fan-out a 5 backends
+   externos sin declarar quien autorizaba la publicacion, y una lectura de 1.070 lineas de contratos antes de
+   una re-medicion que podia dejar el vuelo MOOT). Antes de enviar un bundle cuyo artefacto ORDENA acciones,
+   ejecuta `python scripts/check_high_impact_action_consent.py --artifact <bundle o artefacto auditado>`:
+   bloquea nombrando la categoria (`dispatch_externo`, `push`, `borrado_irreversible`,
+   `gasto_desproporcionado`) si el artefacto la ordena sin declarar quien autoriza (campo `Autorizacion:` o
+   `autorizado por <quien>` en el propio artefacto). Un artefacto que solo ordena acciones locales y
+   read-only pasa sin exigir nada.
+
 ### 3.4 Rondas de gobierno: nonce antes de la ronda
 
 Las fases de gobierno (`CONTRACT_AUDIT`, `MANAGER_REVIEW`, `CLOSE`) exigen nonce (WOT-2026-040i). Sin el,

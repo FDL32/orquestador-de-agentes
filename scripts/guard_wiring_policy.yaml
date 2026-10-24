@@ -227,6 +227,23 @@ known_unwired:
     a un cierre programatico del batch si el PREDICATE pasa a ejecutarse por
     codigo.
 
+  # WOT-2026-043n: verifica que un artefacto que ORDENA dispatch externo, push,
+  # borrado irreversible o un gasto desproporcionado de contexto/tokens declare
+  # quien autoriza. Su sitio de invocacion NATURAL es `prompts/ensemble_loop.md`
+  # Seccion 3.3 punto 8, ANTES de enviar el bundle de una ronda de bucle --
+  # evento discreto gobernado por quien prepara el bundle, no un commit (el
+  # artefacto auditado es tipicamente un prompt de arranque que ni siquiera se
+  # versiona). Analogo a check_contract_clause_coverage (WOT-2026-042y, misma
+  # familia, eje ortogonal): BY-DESIGN, invocacion manual en el punto de
+  # preparacion del bucle.
+  check_high_impact_action_consent: >-
+    BY-DESIGN: invocacion manual en `prompts/ensemble_loop.md` Seccion 3.3
+    punto 8, antes de enviar el bundle de una ronda de bucle -- evento
+    discreto gobernado por quien prepara el bundle, no un commit. El artefacto
+    auditado (tipicamente un prompt de arranque) normalmente ni siquiera se
+    versiona. Follow-up: cablearlo por codigo si el recolector del bucle deja
+    de ser un paso manual.
+
   # WOT-2026-094c: auditoria de higiene del archive de memoria portable
   # (scripts/check_archive_hygiene.py, solo lectura). Su veredicto depende de
   # una LINEA BASE FECHADA elegida por el operador (--profile/--baseline) y su
