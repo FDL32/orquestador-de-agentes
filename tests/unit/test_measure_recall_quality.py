@@ -20,17 +20,24 @@ sys.path.insert(0, str(MOTOR_ROOT))
 
 from scripts.measure_recall_quality import (  # noqa: E402
     _CITE_PATTERN,
+    _GIT_GREP_PATHS,
     _build_queries_for_lessons,
     _derive_fase_queries,
     _derive_surface_query,
     _extract_markdown_section,
     _filter_excluded_citations,
     _generate_report,
+    _git_grep_cites,
     _intersect_with_pool,
     _is_hit,
     _measure_hits,
     _recall_run,
 )
+
+
+# Module-level reference to subprocess.run for restoring mocks.
+
+_original_subprocess_run = subprocess.run
 
 
 # ---------------------------------------------------------------------------
@@ -866,18 +873,49 @@ class TestNonMarkdownSection:
             "# My Section\nSome text\n## Subsection\nMore\n",
             encoding="utf-8",
         )
-        # Need to pass a path relative to motor_root that resolves to md_file
-        # Since MOTOR_ROOT is fixed, use a .md file that actually exists
-        # Instead, just verify extension check works: pass a fake path
-        # that ends in .md but points to our temp file
-        # The function uses Path(motor_root) / filepath, so we can't
-        # easily test with tmp_path. Instead verify the behavior via
-        # _build_queries_for_lessons: a citation to a .py file with
-        # comment-looking content gets NO section (8 fase terms),
-        # while a .md file with heading gets the section.
-        # This is tested indirectly by the real recall integration.
-        # Direct unit test: verify the function body checks .md extension.
-        pass
+        # Line 2 is "Some text" - nearest header above is "# My Section"
+        section = _extract_markdown_section("test.md", 2, tmp_path)
+        assert section == "My Section"
+
+        # Line 4 is "More" - nearest header above is "## Subsection"
+        section_h2 = _extract_markdown_section("test.md", 4, tmp_path)
+        assert section_h2 == "Subsection"
+
+    def test_header_any_level(self, tmp_path: Path):
+        """Headers of any level (1-6) are recognised."""
+        md_file = tmp_path / "levels.md"
+        md_file.write_text(
+            "# L1\n# L1 again\n## L2\n### L3\n#### L4\n##### L5\n###### L6\n",
+            encoding="utf-8",
+        )
+        assert _extract_markdown_section("levels.md", 2, tmp_path) == "L1"
+        assert _extract_markdown_section("levels.md", 4, tmp_path) == "L2"
+        assert _extract_markdown_section("levels.md", 5, tmp_path) == "L3"
+        assert _extract_markdown_section("levels.md", 6, tmp_path) == "L4"
+        assert _extract_markdown_section("levels.md", 7, tmp_path) == "L5"
+        assert _extract_markdown_section("levels.md", 8, tmp_path) == "L6"
+
+    def test_header_not_in_code_fence(self, tmp_path: Path):
+        """A header line inside a code fence does NOT count as a heading."""
+        md_file = tmp_path / "fence.md"
+        md_file.write_text(
+            "# Real Header\nSome text\n```\n# Fake Header\n```\nAfter fence\n",
+            encoding="utf-8",
+        )
+        # Line 6 is "After fence" - the nearest header above it is "# Real Header" at line 1,
+        # NOT the "# Fake Header" at line 4 (which is inside a code fence).
+        section = _extract_markdown_section("fence.md", 6, tmp_path)
+        assert section == "Real Header"
+
+    def test_hashtag_no_space_is_not_header(self, tmp_path: Path):
+        """#hashtag without space after # is not a header."""
+        md_file = tmp_path / "hash.md"
+        md_file.write_text(
+            "#hashtag no space\n## also no space\n# Real Header\n",
+            encoding="utf-8",
+        )
+        section = _extract_markdown_section("hash.md", 4, tmp_path)
+        assert section == "Real Header"
 
     def test_non_md_extension_no_section(self):
         """A real .py file must return empty section (not use comments as headings)."""
@@ -886,6 +924,26 @@ class TestNonMarkdownSection:
             "scripts/measure_recall_quality.py", 40, MOTOR_ROOT
         )
         assert section == ""
+
+    def test_code_fence_before_heading_returns_heading_above_fence(
+        self, tmp_path: Path
+    ):
+        """Heading above a code fence that contains # is returned, not the # inside.
+
+        This tests the downward single-pass algorithm: scan from the top,
+        track code fences, and find the nearest heading above the citation line.
+        Old buggy code scanned UPWARD from the citation and would flip in_code_block
+        at the OPENING fence, treating everything above it as code.
+        """
+        md_file = tmp_path / "fence_heading.md"
+        md_file.write_text(
+            "## Sub\nSome text\n```\n# Fake Header\n```\nInside fence\n",
+            encoding="utf-8",
+        )
+        # Line 5 is "Inside fence" — nearest header above is "## Sub" at line 1,
+        # NOT the "# Fake Header" at line 4 (which is inside a code fence).
+        section = _extract_markdown_section("fence_heading.md", 5, tmp_path)
+        assert section == "Sub"
 
 
 class TestRc1Miss:
@@ -996,3 +1054,108 @@ class TestCitePattern:
         matches = _CITE_PATTERN.findall(line)
         assert len(matches) == 3
         assert set(matches) == {"obs-a-1", "obs-b-2", "obs-c-3"}
+
+
+# ---------------------------------------------------------------------------
+# Tests for git grep failure abort (WOT-2026-124e change 1)
+# ---------------------------------------------------------------------------
+
+
+class TestGitGrepFailureAbort:
+    """git grep rc >= 2 or exception -> RuntimeError raised."""
+
+    def test_rc2_raises_runtime_error(self, tmp_path: Path):
+        """git grep with rc 2 on any path causes RuntimeError."""
+
+        def _mock_run_fail(*args, **kwargs):
+            class _Result:
+                returncode = 2
+                stdout = ""
+                stderr = "error"
+
+            return _Result()
+
+        subprocess.run = _mock_run_fail
+        try:
+            try:
+                _git_grep_cites(tmp_path)
+                raise AssertionError("Expected RuntimeError")
+            except RuntimeError as e:
+                assert "git grep failed" in str(e)
+        finally:
+            subprocess.run = _original_subprocess_run
+
+    def test_rc1_and_rc2_mixed(self, tmp_path: Path):
+        """rc 1 on one path is OK, rc 2 on another raises."""
+        call_count = [0]
+
+        def _mock_run_mixed(*args, **kwargs):
+            call_count[0] += 1
+
+            class _Result:
+                returncode = 1 if call_count[0] == 1 else 2
+                stdout = ""
+                stderr = ""
+
+            return _Result()
+
+        subprocess.run = _mock_run_mixed
+        try:
+            try:
+                _git_grep_cites(tmp_path)
+                raise AssertionError("Expected RuntimeError")
+            except RuntimeError as e:
+                assert "git grep failed" in str(e)
+                assert "returncode 2" in str(e)
+        finally:
+            subprocess.run = _original_subprocess_run
+
+    def test_oserror_raises_runtime_error(self, tmp_path: Path):
+        """OSError from git grep -> RuntimeError."""
+
+        def _mock_run_oserror(*args, **kwargs):
+            raise OSError("device not ready")
+
+        subprocess.run = _mock_run_oserror
+        try:
+            try:
+                _git_grep_cites(tmp_path)
+                raise AssertionError("Expected RuntimeError")
+            except RuntimeError as e:
+                assert "git grep failed" in str(e)
+                assert "device not ready" in str(e)
+        finally:
+            subprocess.run = _original_subprocess_run
+
+
+class TestGitGrepSuccessWithMixedRc:
+    """rc 1 on some paths, rc 0 on others -> continue, collect."""
+
+    def test_rc1_then_rc0_collects(self, tmp_path: Path):
+        """rc 1 on first paths, rc 0 on remaining -> collect only from rc 0 paths."""
+        collected_paths = []
+
+        def _mock_run_mixed(*args, **kwargs):
+            path_arg = args[0] if args else kwargs.get("args", [])
+            path_str = path_arg[-1] if path_arg else ""
+            collected_paths.append(path_str)
+
+            # First 4 paths return rc 1 (no match), rest return rc 0 (match)
+            idx = len(collected_paths) - 1
+
+            class _Result:
+                returncode = 1 if idx < 4 else 0
+                stdout = "" if idx < 4 else f"{path_str}:1:obs-test-1"
+
+            return _Result()
+
+        subprocess.run = _mock_run_mixed
+        try:
+            results = _git_grep_cites(tmp_path)
+            # Should collect from the 5 rc=0 paths
+            assert len(results) == 5
+            assert all(r[1] == "obs-test-1" for r in results)
+            # All paths were tried
+            assert len(collected_paths) == len(_GIT_GREP_PATHS)
+        finally:
+            subprocess.run = _original_subprocess_run

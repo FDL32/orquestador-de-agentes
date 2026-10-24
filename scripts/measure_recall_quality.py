@@ -105,7 +105,8 @@ def _git_grep_cites(
 
     Before: ``motor_root`` is a valid git repository.
     During: runs git grep for each path; collects all obs- matches.
-    After: returns flat list of (file, id, line) tuples; does NOT raise.
+    After: returns flat list of (file, id, line) tuples; raises on git grep
+        failure (rc >= 2 or OS/subprocess error).
     """
     results: list[tuple[str, str, int]] = []
     pattern = _CITE_PATTERN.pattern
@@ -117,8 +118,14 @@ def _git_grep_cites(
                 text=True,
                 check=False,
             )
-            if out.returncode != 0:
+            if out.returncode == 1:
+                # rc 1: no matches in this path -> normal, skip it.
                 continue
+            if out.returncode != 0:
+                # rc >= 2: actual git failure -> abort.
+                raise RuntimeError(
+                    f"git grep failed for path '{path}' with returncode {out.returncode}"
+                )
             for raw_line in out.stdout.splitlines():
                 # Format: <path>:<line>:match or <path>:<line>:<match>
                 # git grep -o -n -- <path> produces: <path>:<linenum>:obs-xxx
@@ -138,8 +145,8 @@ def _git_grep_cites(
                     (filename, m.group(), line_num)
                     for m in _CITE_PATTERN.finditer(match_part)
                 )
-        except (OSError, subprocess.SubprocessError):
-            continue
+        except (OSError, subprocess.SubprocessError) as e:
+            raise RuntimeError(f"git grep failed for path '{path}': {e}") from e
     return results
 
 
@@ -288,16 +295,22 @@ def _derive_surface_query(filename: str) -> str | None:
 
 
 def _extract_markdown_section(filepath: str, line_number: int, motor_root: Path) -> str:
-    """Extract the nearest markdown heading (# ... #) above the given line.
+    """Extract the nearest markdown heading above the given line.
 
     "Seccion" = the markdown header closest above the citation line.
     Only .md files are considered markdown; non-markdown files return empty
     string (no section).
 
+    Recognizes headers of any level (``#`` through ``######``) matching
+    ``^#{1,6}\\s+\\S``.  Lines inside fenced code blocks (triple backticks)
+    are ignored for header matching.
+
     Before: ``filepath`` relative to motor root, ``line_number`` is 1-based.
-    During: checks extension is .md, reads file, finds nearest heading above
-        line_number.
-    After: returns the heading text (without #) or empty string.
+    During: checks extension is .md, reads file, scans lines from the top
+        downward tracking code fences, finds the nearest header above
+        line_number (outside any code block).
+    After: returns the heading text (without # markers and trailing spaces)
+        or empty string.
     """
     full_path = Path(motor_root) / filepath
     if full_path.suffix != ".md":
@@ -307,13 +320,19 @@ def _extract_markdown_section(filepath: str, line_number: int, motor_root: Path)
     except OSError:
         return ""
 
-    # Find nearest heading above line_number (1-based -> 0-based)
-    target = line_number - 1
-    for i in range(target - 1, -1, -1):
-        line = lines[i].strip()
-        if line.startswith("# "):
-            return line.lstrip("# ").strip()
-    return ""
+    heading_re = re.compile(r"^(#{1,6})\s+(\S.*)$")
+    in_code_block = False
+    current = ""
+    for raw_line in lines[: line_number - 1]:
+        if raw_line.strip().startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        m = heading_re.match(raw_line)
+        if m:
+            current = m.group(2).strip()
+    return current
 
 
 def _derive_fase_queries(section: str) -> list[str]:
@@ -674,7 +693,11 @@ def main() -> int:
     output_path = Path(args.out).resolve()
 
     # Step 1: git grep citations from motor repo
-    raw_citations = _git_grep_cites(motor_root)
+    try:
+        raw_citations = _git_grep_cites(motor_root)
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
     if not raw_citations:
         print(
             "ERROR: git grep found no citations. Aborting (fail-closed).",
