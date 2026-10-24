@@ -832,14 +832,26 @@ def _short_signal(text: str, limit: int = _INDEX_SIGNAL_CHARS) -> str:
     return cut.rstrip(" ,;:.-") + "..."
 
 
-def _index_line(obs: dict[str, Any]) -> str:
-    """One index bullet: ``- <id>: <signal>`` or a topic line with its query."""
+def index_line(obs: dict[str, Any]) -> str:
+    """One index bullet: ``- <id>: <signal>`` or a topic line with its query.
+
+    Before: ``obs`` is a single observation dict from the memory corpus.
+    During: pure formatting, no I/O. Calls ``_short_signal`` to truncate
+        the signal to ``_INDEX_SIGNAL_CHARS`` on a word boundary.
+    After: returns a formatted bullet string; if ``obs`` has an ``id``
+        field it starts with ``- {id}:``, otherwise ``- {topic}: {signal}
+        (--recall --query {topic})``. Never raises on well-formed dicts.
+    """
     signal = _short_signal(str(obs.get("signal") or ""))
     obs_id = obs.get("id")
     if obs_id:
         return f"- {obs_id}: {signal}"
     topic = str(obs.get("topic") or "general")
     return f"- {topic}: {signal} (--recall --query {topic})"
+
+
+# Alias for internal callers that still use the old private name.
+_index_line = index_line
 
 
 def _clip_block(text: str, limit: int, label: str) -> str:

@@ -28,6 +28,12 @@ Usage:
         literalmente cae a busqueda por terminos: no devuelve vacio.
         Declara lo que omite, por bytes (--budget) y por cardinalidad (--limit).
 
+    python scripts/memory_context.py --recall --query "<termino>" --headlines
+        Formato compacto: una linea por leccion con su titular (``_short_signal``).
+        Aplica a ``--query``, ``--ticket``, ``--id`` y al recall plano.
+        Mide el tope en BYTES UTF-8; el pie se reserva antes del bucle.
+        Presupuesto por defecto: 2000 bytes (24000 sin ``--headlines``).
+
     python scripts/memory_context.py --recall --id obs-<slug>
         Expande UNA leccion por su id exacto -- el que imprime --bootstrap.
         Fail-closed: un id inexistente sale con rc=1, nunca cae a recall plano.
@@ -195,6 +201,7 @@ from bus.memory_loader import (  # noqa: E402
     get_compact_context,
     get_memory_tier_status,
     get_session_index,
+    index_line,
     recall_observations,
 )
 from bus.portable_memory_archive import iter_archive_months  # noqa: E402
@@ -214,6 +221,31 @@ from bus.portable_memory_archive import iter_archive_months  # noqa: E402
 # bounded well under any arranque budget. The invariant is "bounded, whole, and
 # declared", not this figure -- `--budget` overrides it.
 _RECALL_BYTE_BUDGET = 24000
+
+#: Default byte budget for `--recall --headlines`.
+_HEADLINES_BYTE_BUDGET = 2000
+
+#: Minimum budget for ``--headlines`` (max footer + one headline line).
+#: Below this the command must fail with rc 2, never print silently.
+_MIN_HEADLINES_BUDGET = 300
+
+
+def _resolve_recall_budget(args: argparse.Namespace) -> int:
+    """Resolve the effective byte budget for recall output.
+
+    Priority: explicit ``--budget`` always wins.  Without explicit value,
+    ``--headlines`` defaults to ``_HEADLINES_BYTE_BUDGET`` (2000),
+    otherwise ``_RECALL_BYTE_BUDGET`` (24000).
+
+    Before: ``args`` from ``parser.parse_args()``; ``--budget`` may be None.
+    During: pure computation, no I/O.
+    After: returns the effective budget as a positive int.
+    """
+    if args.budget is not None:
+        return args.budget
+    if args.headlines:
+        return _HEADLINES_BYTE_BUDGET
+    return _RECALL_BYTE_BUDGET
 
 
 def _pool_for_multiword(query: str) -> list[dict]:
@@ -361,6 +393,117 @@ def _print_recall(observations: list[dict], budget: int) -> None:
             f"({used}/{budget} bytes): {shown}{more}]\n"
             f"Sube el tope con --budget N, o acota con --query."
         )
+
+
+def _print_headlines(
+    observations: list[dict], budget: int, *, limit_warning: str = ""
+) -> None:
+    """Print recalled lessons as headlines, one line each, within ``budget``.
+
+    Each line uses ``bus.memory_loader.index_line`` (headline/short signal).
+    The footer is reserved BEFORE the loop; lines are added until the first
+    one that would exceed the budget is dropped (break, no continue).
+    Cap measured in UTF-8 bytes.  All stdout output (headlines + limit warning
+    + footer) respects ``--budget``.
+
+    Before: ``observations`` is the already-filtered, already-limited list;
+        ``budget`` is a positive byte count; ``limit_warning`` is "" or a
+        precomputed warning line (may be printed if there are omitted entries).
+    During: computes the max footer size using the SAME truncation for both
+        reserve and print; reserves it plus the limit warning; iterates
+        observations using break (not continue) at the first line that won't fit.
+        Tracks actual bytes used (each print() adds \\n) and enforces budget.
+        Always emits the limit warning when reserved, regardless of omission.
+    After: every printed signal is COMPLETE. When entries were dropped,
+        a final line names how many and their topics.  Fails with rc=2 if
+        budget is below minimum.  Never raises (except SystemExit on rc=2).
+    """
+    # Build the WORST-CASE footer text topics (truncated to 40 chars).
+    # This is the ONLY place topics are truncated -- both the reserved size
+    # and the printed footer use this exact text.  Change 1 (BLOCKER).
+    max_footer_topics = ", ".join(obs.get("topic") or "general" for obs in observations)
+    if len(max_footer_topics) > 40:
+        max_footer_topics = max_footer_topics[:40] + "..."
+
+    # Build the max footer text (worst-case: ALL observations omitted).
+    # Change 2 (MAJOR): removed the false number "({15 * _RECALL_BYTE_BUDGET}
+    # sin --headlines)".  Format is now the canonical one.
+    # Account for the max ", +N mas" suffix (up to all observations except
+    # 5 shown + the one that broke the loop).
+    max_more = ""
+    if len(observations) > 5:
+        max_more = f", +{len(observations) - 5} mas"
+    max_footer_template = (
+        f"[{len(observations)} leccion(es) mas no mostradas: --budget {budget}. "
+        f"Sube --budget o acota --query. "
+        f"({max_footer_topics}{max_more})]\n"
+        f"Sube el tope con --budget N, o acota con --query."
+    )
+
+    # Reserve space for limit_warning (if any) + the full footer.
+    # The reserve includes the footer template (without trailing \n because
+    # print() adds it) and the limit_warning string as-is.  The +1 accounts
+    # for the trailing \n that print() adds to the footer.
+    reserve_text = (limit_warning or "") + max_footer_template
+    reserve_bytes = len(reserve_text.encode("utf-8")) + 1
+
+    # Compute the real minimum budget required: reserve + smallest headline
+    # line + its \n. If observations exist, we need room for at least one
+    # line. If no observations, we need at least reserve + footer \n.
+    if observations:
+        min_line_bytes = min(
+            len(index_line(obs).encode("utf-8")) + 1 for obs in observations
+        )
+        min_real = reserve_bytes + min_line_bytes
+    else:
+        min_real = reserve_bytes + 1
+
+    # If budget is too small, fail with rc=2 and stderr.
+    if budget < min_real:
+        print(
+            f"Error: budget {budget} is too small for --headlines output. "
+            f"Minimum required: {min_real} bytes.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    # Track actual bytes used in stdout output.
+    # Each print() adds \n (+1 byte), except limit_warning which is a
+    # pre-formatted string that already carries its own newline.
+    used = reserve_bytes
+    omitted: list[str] = []
+
+    # Headline loop -- break, not continue.
+    # Also count ALL remaining observations as omitted.
+    for obs_idx, obs in enumerate(observations):
+        headline = index_line(obs)
+        line_bytes = len(headline.encode("utf-8")) + 1  # print() adds \n
+        if used + line_bytes > budget:
+            omitted.extend(
+                str(r.get("topic") or "general") for r in observations[obs_idx:]
+            )
+            break
+        print(headline)
+        used += line_bytes
+
+    # Always emit the limit warning if reserved (pre-formatted string with \n).
+    if limit_warning:
+        sys.stdout.write(limit_warning)
+        used += len(limit_warning.encode("utf-8"))
+
+    # Print the omission footer only when there are omitted entries.
+    if omitted:
+        shown_topics = ", ".join(omitted[:5])
+        if len(shown_topics) > 40:
+            shown_topics = shown_topics[:40] + "..."
+        more = f", +{len(omitted) - 5} mas" if len(omitted) > 5 else ""
+        footer_text = (
+            f"[{len(omitted)} leccion(es) mas no mostradas: --budget {budget}. "
+            f"Sube --budget o acota --query. "
+            f"({shown_topics}{more})]\n"
+            f"Sube el tope con --budget N, o acota con --query."
+        )
+        print(footer_text)
 
 
 #: Campos de procedencia que el schema YA declara (WOT-2026-049j). NO se
@@ -696,10 +839,21 @@ def main() -> int:
     parser.add_argument(
         "--budget",
         type=int,
-        default=_RECALL_BYTE_BUDGET,
+        default=None,
         help=(
-            f"Byte budget for --recall output (default: {_RECALL_BYTE_BUDGET}). "
-            "Entries beyond it are omitted WHOLE and named, never truncated."
+            f"Byte budget for --recall output (default: {_RECALL_BYTE_BUDGET} "
+            f"without --headlines, 2000 with --headlines). Entries beyond it "
+            f"are omitted WHOLE and named, never truncated."
+        ),
+    )
+    parser.add_argument(
+        "--headlines",
+        action="store_true",
+        help=(
+            "Compact output: one line per lesson with its headline "
+            "(short signal). Same selection and order as full recall. "
+            "Budget cap measured in UTF-8 bytes; footer is reserved before "
+            "the loop. Default budget: 2000 bytes (24000 without --headlines)."
         ),
     )
 
@@ -807,7 +961,11 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
                     file=sys.stderr,
                 )
                 return 1
-            _print_recall(match, budget=args.budget)
+            effective_budget = _resolve_recall_budget(args)
+            if args.headlines:
+                _print_headlines(match, budget=effective_budget)
+            else:
+                _print_recall(match, budget=effective_budget)
             return 0
 
         if args.ticket:
@@ -844,19 +1002,26 @@ def _run(args: argparse.Namespace) -> int:  # noqa: C901
         # El recorte por CARDINALIDAD (`--limit`) tambien se declara: es el que
         # mas muerde (default 15 sobre un pool de cientos) y era el unico corte
         # que quedaba en silencio tras arreglar el de bytes (bucle L915).
+        # Change 4 (MAJOR): in headlines mode the warning is reserved in the
+        # footer budget; in plain mode it prints as before.
+        limit_warning = ""
         if len(observations) >= args.limit:
-            # `limit=0` NO significa "sin tope" en esta puerta: `recall_observations`
-            # hace `filtered[:limit]` y devuelve CERO. Medido en el bucle L915 --
-            # el mock del test implementaba la semantica que yo supuse y tapaba
-            # que la real es otra (mock drift). Se usa un tope alto explicito.
             total = len(recall_observations(query=args.query, limit=1_000_000))
             if total > len(observations):
-                print(
+                limit_warning = (
                     f"[{total - len(observations)} coincidencia(s) mas no "
                     f"mostradas: --limit {args.limit}. Sube --limit o acota "
                     "--query.]\n"
                 )
-        _print_recall(observations, budget=args.budget)
+                if not args.headlines:
+                    print(limit_warning)
+        effective_budget = _resolve_recall_budget(args)
+        if args.headlines:
+            _print_headlines(
+                observations, budget=effective_budget, limit_warning=limit_warning
+            )
+        else:
+            _print_recall(observations, budget=effective_budget)
 
     elif mode == "why":
         # Matchea por id EXACTO si parece uno (prefijo `obs-`), si no por
