@@ -768,6 +768,36 @@ def _collect_all(  # noqa: C901
     return tickets, warnings, raw_sink, divergences
 
 
+def _unresolved_scope_prefixes(tickets: list[dict]) -> dict[str, int]:
+    """Census, by prefix, the reconcile-state rows ``_scope_repo`` left as n/a.
+
+    WOT-2026-061g, via (C) del sobre: SOLO la mitad "declarado en coverage" --
+    el prefijo conocido sigue mandando (``_scope_repo`` ya lo resuelve a
+    motor/destino, esas filas NUNCA entran aqui). La otra mitad del sobre
+    (desconocido -> resolver via ``prefix_resolver``) queda explicitamente SIN
+    implementar: el propio ticket declara que el ancla de decision (la salida
+    dependeria de que destinos esten montados en esta maquina) es un contrato
+    del motor, no una resolucion autonoma del Builder.
+
+    Before: ``tickets`` is the list of per-ticket records built by
+        ``_collect_all`` (each has ``"repo"`` and ``"scope_slug"``).
+    During: skips every record whose ``"repo"`` is not ``"n/a"`` (already
+        resolved, not unresolved). For the rest, takes the first ``/``-segment
+        of ``scope_slug``, stripped and lowercased; an empty ``scope_slug``
+        counts under the empty-string key (a row with no scope declared at
+        all is a distinct, legitimate finding, not an error to hide).
+    After: returns a dict sorted by prefix, prefix -> row count. Never raises.
+    """
+    counts: dict[str, int] = {}
+    for ticket in tickets:
+        if ticket["repo"] != "n/a":
+            continue
+        scope_slug = ticket["scope_slug"]
+        prefix = scope_slug.split("/", 1)[0].strip().lower() if scope_slug else ""
+        counts[prefix] = counts.get(prefix, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Collect backlog-reconciliation git signals (collector, not judge)."
@@ -871,6 +901,7 @@ def main(argv: list[str] | None = None) -> int:
         "blocked_rows": blocked_count,
         "other_rows": other_count,
         "divergence_kinds": sorted({d["kind"] for d in divergences}),
+        "unresolved_scope_prefixes": _unresolved_scope_prefixes(tickets),
         "limitation": (
             "Short-form blocker IDs (e.g. '028a' instead of 'WOT-2026-028a') "
             "are not detected (bind_ticket_prefix/_TICKET_ID_IN_CELL_RE "

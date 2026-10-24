@@ -740,6 +740,99 @@ def test_046i_coverage_block_present(tmp_path, monkeypatch):
     assert cov["blocked_rows"] >= 1
 
 
+def test_061g_unresolved_scope_prefixes_censused_in_coverage(tmp_path, monkeypatch):
+    """WOT-2026-061g: coverage declares, by prefix, which n/a rows have no
+    scope vocabulary the collector understands (motor/destinos/destino).
+
+    Fixture's reconcile-state (pending/completed-partial) n/a rows: WOT-2026-900c
+    (infra/espanso) and WOT-2026-900d (system/host) -- one each. WOT-2026-900f
+    (system/sec) is 'blocked', not a reconcile-state row, so it must NOT count.
+    """
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    cov = findings["coverage"]
+    assert "unresolved_scope_prefixes" in cov
+    assert cov["unresolved_scope_prefixes"] == {"infra": 1, "system": 1}
+    # Known prefixes (motor/destinos) must never show up here: _scope_repo
+    # already resolved them, they are not "unresolved".
+    assert "motor" not in cov["unresolved_scope_prefixes"]
+    assert "destinos" not in cov["unresolved_scope_prefixes"]
+
+
+def test_061g_known_prefixes_never_counted_as_unresolved(tmp_path, monkeypatch):
+    """ANTI-FALSE-POSITIVE: an all-known-prefix backlog must census empty."""
+    motor = _fake_motor(tmp_path)
+    ws = _fake_workspace(tmp_path)
+    backlog = """# Backlog (cola viva)
+
+## Vista rapida
+
+| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |
+|-----------|--------|--------|-------|--------|------------|--------|--------------|
+| Baja | WOT-2026-901a | only known prefixes | motor/x | pending | - | s | - |
+| Baja | WOT-2026-901b | only known prefixes | destinos/y | pending | - | s | - |
+"""
+    (ws / ".agent" / "collaboration" / "backlog.md").write_text(
+        backlog, encoding="utf-8"
+    )
+    monkeypatch.setattr(br, "_run", _fake_run_factory(motor, ws))
+    out_dir = tmp_path / "out"
+    rc = br.main(
+        ["--motor-root", str(motor), "--project-root", str(ws), "--out", str(out_dir)]
+    )
+    assert rc == 0
+    findings = json.loads((out_dir / "findings.json").read_text(encoding="utf-8"))
+    assert findings["coverage"]["unresolved_scope_prefixes"] == {}
+
+
+def test_061g_unresolved_scope_prefixes_unit_counts_and_sorts():
+    """Direct unit test of ``_unresolved_scope_prefixes`` on synthetic records."""
+    tickets = [
+        {"repo": "n/a", "scope_slug": "infra/espanso"},
+        {"repo": "n/a", "scope_slug": "system/host"},
+        {"repo": "n/a", "scope_slug": "system/sec"},
+        {"repo": "motor", "scope_slug": "motor/skip-gates"},
+        {"repo": "destino", "scope_slug": "destinos/flatten"},
+        {"repo": "n/a", "scope_slug": ""},
+    ]
+    assert br._unresolved_scope_prefixes(tickets) == {
+        "": 1,
+        "infra": 1,
+        "system": 2,
+    }
+
+
+def test_061g_mutation_repo_filter_removed_pollutes_census():
+    """Mutation-verify: dropping the ``repo != "n/a"`` guard lets resolved
+    (motor/destinos) rows leak into the census under their own prefix (RED),
+    restoring it clears the leak again (GREEN)."""
+    tickets = [
+        {"repo": "n/a", "scope_slug": "infra/espanso"},
+        {"repo": "motor", "scope_slug": "motor/skip-gates"},
+    ]
+
+    def _unguarded(tickets):
+        counts: dict[str, int] = {}
+        for ticket in tickets:
+            scope_slug = ticket["scope_slug"]
+            prefix = scope_slug.split("/", 1)[0].strip().lower() if scope_slug else ""
+            counts[prefix] = counts.get(prefix, 0) + 1
+        return dict(sorted(counts.items()))
+
+    # RED: without the "repo != n/a" guard, "motor" leaks into the census.
+    assert "motor" in _unguarded(tickets)
+    # GREEN: the real, guarded function never lets a resolved repo leak in.
+    assert "motor" not in br._unresolved_scope_prefixes(tickets)
+    assert br._unresolved_scope_prefixes(tickets) == {"infra": 1}
+
+
 def test_046g_pending_row_with_live_blocker_not_flagged(tmp_path, monkeypatch):
     """ANTI-FALSE-POSITIVE: pending row whose blocker IS live must not be flagged."""
     motor = _fake_motor(tmp_path)
