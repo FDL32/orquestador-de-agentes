@@ -134,6 +134,23 @@ No es castigo: es que sin recibo el motor no puede distinguirlo de una opinion.
    version de Python, `sys.stdout.encoding` y locale si el fallo depende de ellos.
    Un recibo sin entorno no es reproducible por un tercero: el mismo comando da
    veredictos opuestos segun el shell (este repo lo tiene medido).
+   **Si el comando citado lleva un placeholder de raiz (`<MOTOR>`,
+   `<MOTOR_ROOT>`, `<destino>`, `<DESTINO_ROOT>`, `<destination_root>`,
+   `<workspace>`), declara TAMBIEN, en la misma seccion, a que ruta ABSOLUTA
+   resolvio ("Resuelto: <placeholder> = <ruta>") (WOT-2026-054d).** Un
+   placeholder sin resolucion declarada no es portable, es INDETERMINADO:
+   MEDIDO 2026-08-10, una ficha que citaba `<DESTINO_ROOT>` en su RECIBO
+   REEJECUTABLE la reprodujo la sesion del motor contra SU workspace
+   (0 hits, exit 1) y la sesion del destino Crear_Texto_LLM contra SU
+   backlog (2 hits) -- NINGUNA se equivocaba, median ficheros distintos sin
+   saberlo, y sostuvieron veredictos opuestos durante ~1 hora antes de que
+   alguien lo notara. Si dos lecturas del MISMO comando divergen, la
+   divergencia se registra como HALLAZGO en `PROCEDENCIA POR CLAIM` ANTES de
+   que ninguna concluya nada (regla "el conflicto entre probes ES el
+   hallazgo" de AGENTS.md) -- nunca se descarta la lectura incomoda ni se
+   promedian las dos. `scripts/check_escalation_receipt_resolution.py`
+   (cableado en `prepush_check.py` del cierre del motor) rechaza una ficha
+   cuyo RECIBO cite un placeholder de raiz sin esa declaracion.
 3. **`SUPERFICIE`** — `ruta:linea` del motor. Si no la localizas, dilo; una
    superficie mal atribuida cuesta mas que una ausente.
 4. **`PROCEDENCIA POR CLAIM`** — tabla que separa **medido / citado / relato**:
