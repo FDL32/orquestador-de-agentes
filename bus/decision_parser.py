@@ -36,6 +36,24 @@ _ARTIFACT_DECISIONS = {
 }
 
 
+def _warn_unrecognized_decision(ticket_id: str, decision_raw: str) -> None:
+    """Print a visible WARN for a non-empty decision value outside the enum.
+
+    WOT-2026-042b: a decision artifact that exists, matches the ticket and
+    is fresh but carries an unrecognized value (e.g. "APPROVED" instead of
+    "APPROVE") previously returned None identically to a missing file, with
+    no trace. Extracted to its own function to keep load_decision_artifact's
+    branching complexity under the ruff C901 threshold.
+    """
+    if decision_raw:
+        print(
+            f"[decision_parser] WARN: decision artifact for {ticket_id} has "
+            f"unrecognized decision value '{decision_raw}' (accepted: "
+            f"{sorted(_ARTIFACT_DECISIONS)}); falling back to transcript "
+            "parsing."
+        )
+
+
 def load_decision_artifact(
     reviews_dir: Path,
     ticket_id: str,
@@ -92,6 +110,7 @@ def load_decision_artifact(
     decision_raw = str(payload.get("decision", "")).strip().upper()
     decision = _ARTIFACT_DECISIONS.get(decision_raw)
     if decision is None:
+        _warn_unrecognized_decision(ticket_id, decision_raw)
         return None
     # WT-2026-047m: compare reviewed_commit_sha when expected_commit_sha is passed.
     if expected_commit_sha is not None:

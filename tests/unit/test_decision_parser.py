@@ -230,6 +230,32 @@ class TestLoadDecisionArtifact:
         )
         assert load_decision_artifact(tmp_path, "WT-2026-100") is None
 
+    def test_unrecognized_decision_prints_warn(self, tmp_path, capsys) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path,
+            "WOT-2026-042b",
+            {"ticket_id": "WOT-2026-042b", "decision": "APPROVED"},
+        )
+        result = load_decision_artifact(tmp_path, "WOT-2026-042b")
+        assert result is None
+        captured = capsys.readouterr()
+        assert "WARN" in captured.out
+        assert "APPROVED" in captured.out
+        assert "WOT-2026-042b" in captured.out
+
+    def test_empty_decision_no_warn(self, tmp_path, capsys) -> None:
+        from bus.decision_parser import load_decision_artifact
+
+        self._write_artifact(
+            tmp_path, "WT-2026-100", {"ticket_id": "WT-2026-100", "decision": ""}
+        )
+        result = load_decision_artifact(tmp_path, "WT-2026-100")
+        assert result is None
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.out
+
     def test_stale_artifact_returns_none(self, tmp_path) -> None:
         import time as time_mod
 
