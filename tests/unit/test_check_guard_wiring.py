@@ -148,6 +148,11 @@ EXPECTED_WIRED_REAL = {
     # restaurada la fila, exit 0. No bloqueante por decision declarada (un
     # fantasma es fallo de REGISTRO, no de codigo).
     "check_ghost_ticket_ids",
+    # WOT-2026-090p: cableado en .pre-commit-config.yaml (hook local
+    # `entry: uv run python scripts/check_prompt_load_bearing_refs.py`). No es
+    # falso-WIRED: el call-site es real y su test de mutacion propio
+    # (tests/unit/test_check_prompt_load_bearing_refs.py) muerde.
+    "check_prompt_load_bearing_refs",
     # WOT-2026-059f: retirado de `wired_via` en guard_wiring_policy.yaml (declaracion
     # manual stale); el AST de 1-hop lo alcanza por su cuenta via el call-site real
     # `install_agent_system.py:1421::from scripts.check_gitleaks_seed_divergence

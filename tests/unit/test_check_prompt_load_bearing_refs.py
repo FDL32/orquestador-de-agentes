@@ -28,6 +28,29 @@ def test_mutation_load_bearing_planning_ref_is_hit(tmp_path):
     assert hits[0][1] == 1
 
 
+def test_mutation_review2_codex_phrase_without_marker_is_hit(tmp_path):
+    p = _md(
+        tmp_path,
+        ".agent/planning/x.md es de obligado cumplimiento y constituye la "
+        "referencia canonica\n",
+    )
+    assert len(chk.find_violations([p])) == 1
+    q = _md(
+        tmp_path,
+        "See .agent/planning/x.md, the canonical reference for this prompt\n",
+        name="q.md",
+    )
+    assert len(chk.find_violations([q])) == 1
+
+
+def test_negative_control_new_markers_with_provenance_no_hit(tmp_path):
+    p = _md(
+        tmp_path,
+        ".agent/planning/x.md es la referencia canonica. Procedencia no normativa.\n",
+    )
+    assert chk.find_violations([p]) == []
+
+
 def test_negative_control_provenance_marker_no_hit(tmp_path):
     p = _md(
         tmp_path,

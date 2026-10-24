@@ -16,11 +16,20 @@ Un parrafo FALLA si a la vez:
      destino por contrato. Los artefactos de workspace (`STATE.md`, `work_plan.md`...)
      NO cuentan: existen en cada destino (medido: 15 falsos positivos al incluirlos).
   2. lleva un marcador normativo (load-bearing, normativ[oa], source_of_truth,
-     binding, must read). "obligatorio" NO es marcador: es prosa generica.
+     binding, must read, obligado cumplimiento, referencia canonica, canonical
+     reference). "obligatorio" NO es marcador: es prosa generica.
   3. NO lleva marcador de procedencia (procedencia, provenance, no normativ,
      not normative, "No hace falta leerlo").
 La correccion es degradar la cita a procedencia no normativa (patron en
 `prompts/doc_optimization.md`) o traer el contenido al motor.
+
+LIMITES DECLARADOS (Review 2; el guard solo cubre lo que declara, no se arregla aqui):
+  - La unidad es el PARRAFO: si el marcador normativo y la cita al planning caen en
+    parrafos distintos (separados por linea en blanco), el guard NO los une y escapa.
+  - El token de ruta es solo `.agent/planning/` o "workspace planning": una ruta
+    `planning/x.md` sin `.agent/` escapa.
+  - El vocabulario normativo es lexico (marcadores de arriba): un parrafo que declara
+    autoridad con otras palabras escapa.
 
 Denominador (misma tecnica que check_distribution_agnostic)
 -----------------------------------------------------------
@@ -62,7 +71,9 @@ _DEST_TOKEN_RX = re.compile(
 )
 _PLANNING_RX = re.compile(r"\.agent/planning/|workspace planning", re.I)
 _NORMATIVE_RX = re.compile(
-    r"load-bearing|normativ[oa]|source_of_truth|binding|must read", re.I
+    r"load-bearing|normativ[oa]|source_of_truth|binding|must read"
+    r"|obligado\s+cumplimiento|referencia\s+can[oó]nica|canonical\s+reference",
+    re.I,
 )
 _PROVENANCE_RX = re.compile(
     r"procedencia|provenance|no normativ|not normative|No hace falta leerlo", re.I
