@@ -377,6 +377,118 @@ def structurally_valid_rounds(
     return rounds
 
 
+# WOT-2026-044l: el join commit+nonce+backend_key (arriba) prueba EJECUCION,
+# no que la ronda auditara el bundle correcto -- un commit citado por bucles
+# sobre OTRA cosa (medido 2026-08-11: 17 citas, 0 legitimas) pasaba esa barrera
+# igual. Las dos funciones siguientes son ADITIVAS (diagnostico, no bloqueo):
+# el guard de independencia (`distinct_execution_backends`) y sus NON-GOALS
+# declarados ("no bloquear WOT-2026-044d con esto") no cambian.
+def bundle_sha256_groups(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> dict[str | None, list[dict]]:
+    """Agrupa las rondas ESTRUCTURALMENTE validas de `commit_sha` por `bundle_sha256`.
+
+    WOT-2026-044l (DoD b): el guard que COMPARA `bundle_sha256`. Una ronda
+    estructuralmente valida (nonce+commit+backend_key correctos) puede haber
+    auditado un bundle DISTINTO si el commit_sha fue citado por error -- o por
+    inercia -- desde OTRO bucle, sobre OTRO material. Agrupar por bundle_sha256
+    separa esas citas ajenas del grupo que de verdad comparte bundle.
+
+    Before: `scorecard_rows`/`emitted` son las filas ya leidas (`_read_scorecard`,
+        `read_emitted_nonces`).
+    During: reusa `structurally_valid_rounds` (MISMA pasada que el recuento de
+        independencia, para no divergir si alguien toca un solo filtro) y agrupa
+        por `row.get("bundle_sha256")`. Una fila sin el campo (legacy, o ronda
+        que fallo antes de leer el bundle) agrupa bajo la clave `None`.
+    After: mapa `bundle_sha256 -> [rows]`. El grupo con MAS filas es el
+        candidato a "bucle legitimo sobre este commit"; los demas son citas que
+        el join commit+nonce no puede distinguir por si solo.
+    """
+    rounds = structurally_valid_rounds(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    )
+    groups: dict[str | None, list[dict]] = {}
+    for row in rounds:
+        groups.setdefault(row.get("bundle_sha256"), []).append(row)
+    return groups
+
+
+def foreign_bundle_rounds(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> list[dict]:
+    """Rondas estructuralmente validas de `commit_sha` que NO comparten el
+    `bundle_sha256` mayoritario (WOT-2026-044l, DoD b/d).
+
+    Una ronda aqui es indistinguible de una auditoria legitima por
+    commit+nonce+backend_key, pero audito un CONTENIDO distinto -- la firma
+    medida del caso real: tres bucles sobre OTRA cosa que pasaron el mismo
+    `--commit-sha` por inercia, sin que nadie mirara el diff de ese commit.
+
+    Before: igual que `bundle_sha256_groups`.
+    During: el grupo con MAS filas se toma como el bundle legitimo (empate ->
+        el primero por orden de aparicion, estable); el resto se reporta.
+    After: lista de filas foraneas (vacia si todas comparten bundle, o si solo
+        hay un grupo con hash). Filas sin `bundle_sha256` (`None`) NUNCA se
+        reportan como foraneas: la AUSENCIA de dato no es evidencia de
+        contenido distinto (fail-closed hacia el silencio, no hacia la
+        acusacion).
+    """
+    groups = bundle_sha256_groups(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    )
+    populated = {k: v for k, v in groups.items() if k is not None}
+    if len(populated) <= 1:
+        return []
+    majority_hash = max(populated, key=lambda h: len(populated[h]))
+    return [row for h, rows in populated.items() if h != majority_hash for row in rows]
+
+
+# WOT-2026-044l DoD (f): criterio DECLARADO EN CONTRATO (prompts/ensemble_loop.md
+# Seccion 4) de que constituye "auditar" un commit -- distinto de "ejecutar una
+# ronda estructuralmente valida" (arriba). Es el criterio que el propio AUDITADO
+# eligio al reconstruir este ticket a mano; sin declararlo, un guard corregido
+# seguiria dependiendo de que cada orquestador acierte con la definicion.
+AUDIT_PHASES = frozenset({"CONTRACT_AUDIT", "MANAGER_REVIEW"})
+
+
+def auditing_rounds_for_commit(
+    scorecard_rows: list[dict],
+    *,
+    commit_sha: str,
+    commit_owner_ticket: str,
+) -> list[dict]:
+    """Rondas que cumplen la definicion contractual de "auditar" un commit.
+
+    Criterio (WOT-2026-044l DoD f): `ticket == dueno del commit` AND `phase in
+    {CONTRACT_AUDIT, MANAGER_REVIEW}` AND `output_chars > 0`.
+
+    Before: `scorecard_rows` ya leidas; `commit_owner_ticket` es el ticket DUENO
+        del commit (quien lo genero), no necesariamente el de la fila.
+    During: filtro puro de 3 condiciones sobre `event == "ronda"`. NO reusa
+        `structurally_valid_rounds` (ese filtro certifica EJECUCION -- nonce,
+        backend_key, commit -- no AUDITORIA del commit concreto; un bucle
+        legitimo sobre OTRO objeto pasa esa barrera igual).
+    After: lista de filas que cumplen el criterio; vacia si ninguna.
+    """
+    return [
+        row
+        for row in scorecard_rows
+        if row.get("event") == "ronda"
+        and row.get("commit_sha") == commit_sha
+        and row.get("ticket") == commit_owner_ticket
+        and str(row.get("phase") or "").upper().replace("-", "_") in AUDIT_PHASES
+        and (row.get("output_chars") or 0) > 0
+    ]
+
+
 def silent_rounds(
     scorecard_rows: list[dict],
     emitted: list[dict],

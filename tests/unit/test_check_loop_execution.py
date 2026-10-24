@@ -1237,6 +1237,149 @@ def test_structurally_valid_rounds_excludes_exploracion_task_type():
     assert verdict_gov["ok"] is True
 
 
+# ------------------------------------------------- WOT-2026-044l: bundle_sha256
+def test_bundle_sha256_groups_separates_foreign_citations():
+    """El caso real medido (17 citas de un commit, 0 legitimas): tres bucles
+    sobre OTRA cosa citaron el mismo commit por inercia. Agrupar por
+    bundle_sha256 separa el grupo legitimo (3 filas, mismo hash) de las 2
+    citas foraneas (hashes distintos entre si)."""
+    emitted = [_emitted()]
+    legitimo = [
+        {**_ronda(bk), "bundle_sha256": "hashA"} for bk in ("BA10", "BA11", "BA12")
+    ]
+    foraneas = [
+        {**_ronda("BA13"), "bundle_sha256": "hashB"},
+        {**_ronda("BA14"), "bundle_sha256": "hashC"},
+    ]
+    sc = [*legitimo, *foraneas]
+
+    groups = cle.bundle_sha256_groups(sc, emitted, commit_sha="abc")
+
+    assert {h: len(rows) for h, rows in groups.items()} == {
+        "hashA": 3,
+        "hashB": 1,
+        "hashC": 1,
+    }
+
+
+def test_foreign_bundle_rounds_reports_the_minority_hashes():
+    emitted = [_emitted()]
+    legitimo = [
+        {**_ronda(bk), "bundle_sha256": "hashA"} for bk in ("BA10", "BA11", "BA12")
+    ]
+    foraneas = [
+        {**_ronda("BA13"), "bundle_sha256": "hashB"},
+        {**_ronda("BA14"), "bundle_sha256": "hashC"},
+    ]
+    sc = [*legitimo, *foraneas]
+
+    foreign = cle.foreign_bundle_rounds(sc, emitted, commit_sha="abc")
+
+    assert {r["backend_key"] for r in foreign} == {"BA13", "BA14"}
+
+
+def test_foreign_bundle_rounds_empty_when_all_rounds_share_one_hash():
+    """ANTI-FALSO-POSITIVO: un bucle legitimo donde TODAS las lentes recibieron
+    el mismo bundle no reporta ninguna fila foranea."""
+    emitted = [_emitted()]
+    sc = [{**_ronda(bk), "bundle_sha256": "hashA"} for bk in ("BA10", "BA11", "BA12")]
+
+    assert cle.foreign_bundle_rounds(sc, emitted, commit_sha="abc") == []
+
+
+def test_foreign_bundle_rounds_ignores_rows_without_bundle_hash():
+    """Filas sin bundle_sha256 (legacy, o fallo antes de leer el bundle) NUNCA
+    se acusan de ser foraneas: ausencia de dato no es evidencia de contenido
+    distinto."""
+    emitted = [_emitted()]
+    sc = [
+        {**_ronda("BA10"), "bundle_sha256": "hashA"},
+        {**_ronda("BA11"), "bundle_sha256": "hashA"},
+        _ronda("BA12"),  # sin bundle_sha256 -> None
+    ]
+
+    assert cle.foreign_bundle_rounds(sc, emitted, commit_sha="abc") == []
+
+
+def test_mutation_altering_one_rounds_bundle_hash_flags_it_as_foreign():
+    """MUTATION (DoD d): alterar el bundle_sha256 de UNA fila (simulando que su
+    bundle fue distinto del resto) hace que `foreign_bundle_rounds` la detecte;
+    restaurar el hash original la vuelve a dejar fuera."""
+    emitted = [_emitted()]
+    sc = [{**_ronda(bk), "bundle_sha256": "hashA"} for bk in ("BA10", "BA11", "BA12")]
+
+    assert cle.foreign_bundle_rounds(sc, emitted, commit_sha="abc") == []
+
+    sc[0]["bundle_sha256"] = "hashA-tampered"
+    foreign = cle.foreign_bundle_rounds(sc, emitted, commit_sha="abc")
+    assert {r["backend_key"] for r in foreign} == {"BA10"}
+
+    sc[0]["bundle_sha256"] = "hashA"
+    assert cle.foreign_bundle_rounds(sc, emitted, commit_sha="abc") == []
+
+
+# ---------------------------------------- WOT-2026-044l DoD (f): "auditar" un commit
+def test_auditing_rounds_for_commit_matches_the_declared_criterion():
+    rounds = [
+        {
+            "event": "ronda",
+            "commit_sha": "abc",
+            "ticket": "WOT-TEST-044l",
+            "phase": "CONTRACT_AUDIT",
+            "output_chars": 500,
+        },
+        {
+            # fase de gobierno pero NO es MANAGER_REVIEW/CONTRACT_AUDIT
+            "event": "ronda",
+            "commit_sha": "abc",
+            "ticket": "WOT-TEST-044l",
+            "phase": "CLOSE",
+            "output_chars": 500,
+        },
+        {
+            # ticket distinto del dueno del commit -> no cuenta
+            "event": "ronda",
+            "commit_sha": "abc",
+            "ticket": "WOT-TEST-OTRO",
+            "phase": "manager-review",
+            "output_chars": 500,
+        },
+        {
+            # muda: output_chars == 0 -> no cuenta
+            "event": "ronda",
+            "commit_sha": "abc",
+            "ticket": "WOT-TEST-044l",
+            "phase": "manager-review",
+            "output_chars": 0,
+        },
+    ]
+
+    auditing = cle.auditing_rounds_for_commit(
+        rounds, commit_sha="abc", commit_owner_ticket="WOT-TEST-044l"
+    )
+
+    assert len(auditing) == 1
+    assert auditing[0]["phase"] == "CONTRACT_AUDIT"
+
+
+def test_auditing_rounds_for_commit_normalizes_phase_case_and_hyphens():
+    rounds = [
+        {
+            "event": "ronda",
+            "commit_sha": "abc",
+            "ticket": "WOT-TEST-044l",
+            "phase": "manager-review",
+            "output_chars": 10,
+        },
+    ]
+
+    auditing = cle.auditing_rounds_for_commit(
+        rounds, commit_sha="abc", commit_owner_ticket="WOT-TEST-044l"
+    )
+
+    assert len(auditing) == 1
+
+
 # ---------------------------------------------------------------------------
 # WOT-2026-086f: fabricated_nonce_rounds filtra scorecard por loop_id
 # ---------------------------------------------------------------------------

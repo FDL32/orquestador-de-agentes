@@ -262,6 +262,16 @@ SCORECARD_FIELDS = [
     # None = el perfil no declaro `channel` (no deberia ocurrir en produccion,
     # es AUSENCIA de dato, no un tercer valor). Al final, prefijo frozen.
     "channel",
+    # WOT-2026-044l: SHA-256 del contenido EXACTO enviado a la lente (el
+    # payload de `send_to_profile`), calculado por el DESPACHADOR, nunca por la
+    # lente. El scorecard probaba que hubo rondas con `backend_key` distintos y
+    # nonce emitido antes, pero NO que auditaran el mismo bundle: el receipt
+    # ata la ronda al COMMIT, no a lo que la lente realmente leyo, y un commit
+    # citado por bucles sobre OTRA cosa (medido 2026-08-11: 17 citas de un
+    # commit, 0 legitimas) quedaba indistinguible de una auditoria real. None =
+    # fila sin bundle registrado (legacy, o ronda que fallo antes de leer el
+    # contenido: usage-error, missing-nonce). Al final, prefijo frozen.
+    "bundle_sha256",
 ]
 
 ADJUDICATED_OUTCOMES = {
@@ -5370,6 +5380,19 @@ def receipt_canary(
     return measurement
 
 
+def bundle_sha256(content: str) -> str:
+    """SHA-256 hexdigest del contenido EXACTO que el despachador envia a la lente.
+
+    WOT-2026-044l. Se calcula SOLO desde `content` (la cadena que
+    `send_to_profile` recibe como `content` del mensaje `user`), nunca desde la
+    respuesta de la lente: es el despachador quien certifica QUE se envio, no
+    la lente quien lo declara. Dos bundles byte-identicos producen el mismo
+    hash; alterar un solo caracter del bundle entre la emision del nonce y el
+    despacho produce un hash DISTINTO (DoD d).
+    """
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 def _record_round(
     project_root: Path,
     *,
@@ -5391,6 +5414,7 @@ def _record_round(
     backend_key: str | None = None,
     commit_sha: str | None = None,
     challenge_nonce: str | None = None,
+    bundle_sha256_value: str | None = None,
 ) -> None:
     # WOT-2026-039c: `outcome_override` permite registrar una salida DESCARTADA
     # por el filtro de lente sin vaciar `reply` -- vaciarlo para forzar el
@@ -5475,6 +5499,11 @@ def _record_round(
             # dato, igual que `lens_scope` cuando la ronda no pasa por el
             # dispatcher.
             "sse_route": profile.get(_SSE_ROUTE_KEY),
+            # WOT-2026-044l: SHA-256 del bundle EXACTO enviado a la lente,
+            # calculado por el llamador (que tiene `content`) antes de invocar
+            # este registrador. None cuando la fila no llego a leer un bundle
+            # (usage-error, missing-nonce).
+            "bundle_sha256": bundle_sha256_value,
         },
     )
 
@@ -5629,6 +5658,9 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
     # Se registra y se RE-LANZA (igual que `_cmd_loop_round`): el caller (los
     # scripts de bucle) sigue viendo la excepcion y no puede confundir un
     # fallo con una respuesta valida; la fila es ADITIVA, no la sustituye.
+    # WOT-2026-044l: el hash se calcula UNA vez sobre el `content` que de verdad
+    # se envia (identico en las 3 ramas de abajo: exito, bloqueo, excepcion).
+    _bundle_sha = bundle_sha256(content)
     _t0 = time.perf_counter()
     try:
         reply = send_to_profile(
@@ -5660,6 +5692,7 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             backend_key=backend_key,
             commit_sha=commit_sha,
             challenge_nonce=challenge_nonce,
+            bundle_sha256_value=_bundle_sha,
         )
         raise
     except Exception as exc:
@@ -5688,6 +5721,7 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             backend_key=backend_key,
             commit_sha=commit_sha,
             challenge_nonce=challenge_nonce,
+            bundle_sha256_value=_bundle_sha,
         )
         if clase != "transport_failed":
             # WOT-2026-034a (Revisor N1): `clase != "transport_failed"` ya
@@ -5804,6 +5838,7 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
         backend_key=backend_key,
         commit_sha=commit_sha,
         challenge_nonce=challenge_nonce,
+        bundle_sha256_value=_bundle_sha,
     )
 
     _reply_stripped = reply.strip()
@@ -6121,6 +6156,7 @@ def run_pipeline(
             context_kind=context_kind,
             session_id=session_id,
             latency_ms=latency_ms,
+            bundle_sha256_value=bundle_sha256(content),
         )
         transcript.append({"ronda": 0, "rol": rol, "reply": reply})
 
@@ -6199,6 +6235,7 @@ def run_pipeline(
                 latency_ms=latency_ms,
                 failure_mode=discarded_reason,
                 outcome_override="no-aportacion" if discarded_reason else None,
+                bundle_sha256_value=bundle_sha256(content),
             )
             entry = {"ronda": ronda, "rol": rol, "reply": reply}
             if discarded_reason:
