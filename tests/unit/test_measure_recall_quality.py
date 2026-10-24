@@ -1445,6 +1445,28 @@ class TestSuperficieDenominator:
         assert denoms["union"] == 1
         assert len(failures) == 8
 
+    def test_detail_row_labels_fallo_not_miss(self, tmp_path: Path):
+        """Manager (MINOR codex r5): el detalle por cita marca FALLO, no MISS."""
+
+        def _all_fail(motor_root, query, destino_root, limit):
+            return (2, "", "boom")
+
+        citations = [_make_fake_citation("scripts/test.py", "obs-test-lesson-1", 10)]
+        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, lr, failures, cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _all_fail
+        )
+        out = tmp_path / "report.md"
+        _generate_report(hits, denoms, lr, cs, citations, [], 0, failures, "sha", out)
+
+        row = next(
+            ln
+            for ln in out.read_text(encoding="utf-8").splitlines()
+            if ln.startswith("| scripts/test.py:10 |")
+        )
+        assert row.endswith("| FALLO | FALLO | FALLO |"), row
+
     def test_citation_with_surface_query_counts_denominator(self):
         """Citation with at least one superficie query counts towards surface denominator."""
 

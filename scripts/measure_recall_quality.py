@@ -502,13 +502,13 @@ def _measure_hits(  # noqa: C901
     Query classification per citation:
     - rc == 0  -> evaluate ``_is_hit`` with the citation's obs-id.
     - rc == 1  with ``"No observations found"`` in stderr  -> MISS (not failure).
-    - rc == 1  with anything else in stderr  -> FAIL.
-    - rc != 0 and rc != 1  -> FAIL.
+    - rc == 1  with anything else in stderr  -> FALLO.
+    - rc != 0 and rc != 1  -> FALLO.
 
     Denominator rules (DoD c, WOT-2026-124e ronda 6):
     - superficie: every citation that has a surface query, EXCEPT those whose
-      surface query is a FAIL.  Failed surface queries appear in "Fallos".
-    - fase: every citation, EXCEPT those whose ALL phase queries are FAIL.
+      surface query is a FALLO.  Failed surface queries appear in "Fallos".
+    - fase: every citation, EXCEPT those whose ALL phase queries are FALLO.
       If at least one phase query is HIT, the citation counts as HIT and stays
       in the denominator even if other phase queries failed.
     - union: every citation except those whose surface type was excluded AND
@@ -556,7 +556,7 @@ def _measure_hits(  # noqa: C901
             continue
 
         if rc != 0:
-            # FAIL
+            # FALLO
             citation_data[idx]["phase_failures"].append(
                 f"{query_type}:{query} -> rc={rc}"
             )
@@ -613,6 +613,8 @@ def _measure_hits(  # noqa: C901
         ) > 0 and phase_failure_count == len(phase_queries_for_cit)
         surface_excluded = (not has_surface) or surface_failed
         phase_excluded = all_phase_failed
+        res["phase_all_failed"] = all_phase_failed
+        res["union_excluded"] = surface_excluded and phase_excluded
 
         # Union denominator: exclude only when both types excluded.
         if not (surface_excluded and phase_excluded):
@@ -675,6 +677,9 @@ def _measure_hits(  # noqa: C901
             "surface_hit": surface_hit,
             "fase_hit": fase_hit,
             "union_hit": surface_hit or fase_hit,
+            "surface_failed": res["surface_failure"],
+            "phase_failed": res.get("phase_all_failed", False),
+            "union_failed": res.get("union_excluded", False),
         }
 
     return hit_by_type, denominators, lesson_results, failures, citation_summary
@@ -729,8 +734,10 @@ def _generate_report(
     lines.append("## Hit@5 por tipo (unidad: cita no excluida)")
     lines.append("")
     lines.append(
-        "Denominador = citas no excluidas (DoD c), menos las citas cuyas queries "
-        "de ese tipo fallaron (listadas en Fallos)."
+        "Denominador = citas no excluidas (DoD c). Superficie: menos las citas "
+        "cuya query de superficie es FALLO. Fase: menos las citas cuyas queries "
+        "de fase son TODAS FALLO. Union: menos las citas excluidas de ambos tipos. "
+        "Los FALLO se listan en Fallos."
     )
     lines.append("")
     lines.append("| Tipo | Hits | Denominador | Hit rate |")
@@ -774,9 +781,21 @@ def _generate_report(
     )
     for idx in sorted_indices:
         s = citation_summary[idx]
-        surface = "HIT" if s["surface_hit"] else "MISS"
-        fase = "HIT" if s["fase_hit"] else "MISS"
-        union = "HIT" if s["union_hit"] else "MISS"
+        surface = (
+            "HIT"
+            if s["surface_hit"]
+            else ("FALLO" if s.get("surface_failed", False) else "MISS")
+        )
+        fase = (
+            "HIT"
+            if s["fase_hit"]
+            else ("FALLO" if s.get("phase_failed", False) else "MISS")
+        )
+        union = (
+            "HIT"
+            if s["union_hit"]
+            else ("FALLO" if s.get("union_failed", False) else "MISS")
+        )
         section = s["section"] or "-"
         lines.append(
             f"| {s['filename']}:{s['line']} | {s['obs_id']} | {section} | {surface} | {fase} | {union} |"
