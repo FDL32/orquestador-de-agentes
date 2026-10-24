@@ -547,6 +547,12 @@ class EventBus:
         Uses atomic write (os.replace) to prevent corruption.
 
         Returns dict with:
+            - ticket_id: the ticket just archived (WOT-2026-088f: callers that
+              fan out over multiple tickets, e.g. archive_event_bus.py
+              --all-terminal, need this to know WHICH archive file to
+              `git add -f` afterwards -- the dry-run branch already included
+              it, this real branch did not, making the real path a silent
+              no-op for any consumer that only recognized the dry-run shape)
             - archived_count: number of events moved in THIS call
             - archive_path: path to archive file
             - kept_count: number of events remaining in active bus
@@ -567,6 +573,7 @@ class EventBus:
 
         if not ticket_events:
             return {
+                "ticket_id": ticket_id,
                 "archived_count": 0,
                 "archive_path": None,
                 "kept_count": len(remaining_events),
@@ -603,6 +610,7 @@ class EventBus:
             raise
 
         return {
+            "ticket_id": ticket_id,
             "archived_count": len(ticket_events),
             "archive_path": str(archive_path),
             "kept_count": len(remaining_events),
