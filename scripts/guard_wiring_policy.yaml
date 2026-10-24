@@ -70,6 +70,19 @@ known_unwired:
   # bloqueante) sobre el CF triple del motor. El AST lo alcanza ahora -> wired.
   # Dejarlo aqui seria una declaracion STALE que el propio gate caza.
   validate_agent_config: WOT-2026-019o
+  validate_decision_schema: >-
+    BY-DESIGN: WOT-2026-050b. El DoD de la ficha pide el validador y su
+    esquema (campo `review_evidence_ref` obligatorio en decision_*.json), no
+    su cableado en un gate automatico -- verificado literalmente contra el
+    DoD escrito (a/b/c/d), ninguno menciona "camino que corre solo", a
+    diferencia de otras fichas de la misma familia (ej. WOT-2026-048v) que
+    SI lo piden explicito. Cablearlo hoy en prepush/closeout FALLARIA de
+    inmediato los 5 decision_*.json reales y tracked del destino (forma
+    historica sin el campo, confirmado en vivo al redactar el fix) sin
+    ningun plan de migracion/grandfather -- bloquear retroactivamente sin
+    decidir esa migracion es el mismo atajo que 042x evito explicitamente
+    (ver nota DoD-d de esa ficha). Decidir DONDE cablear y como grandfatherear
+    lo existente es trabajo de diseno separado, no de este DoD.
   # WOT-2026-024w DISPUSO los 9 huerfanos que el parser honesto de v2/v4 destapo:
   #   - 3 CABLEADOS a pre-commit always_run: check_ruff_hook_scope,
   #     check_skill_collisions, check_ticket_nomenclature (.pre-commit-config.yaml).
