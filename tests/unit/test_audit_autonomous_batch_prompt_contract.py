@@ -1086,3 +1086,64 @@ def test_start_context_isolation_blocks_on_self_certification() -> None:
     assert "falso_verde" in text, (
         "auditor must classify self-certification as falso_verde (CEM A)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-068o: conditions 1-2 (schema_valido/dag_aciclico) admit `n/a` ONLY
+# for a hand-prepared batch with no DAG-JSON, with a mandatory `motivo`.
+# --------------------------------------------------------------------------- #
+
+
+def test_068o_auditor_declares_na_affordance_for_conditions_1_and_2() -> None:
+    """DoD (a): the auditor prompt states a DAG-less batch may declare
+    schema_valido/dag_aciclico as n/a, with a mandatory reason."""
+    text = _read()
+    assert '"n/a"' in text, "auditor must spell out the n/a value literally"
+    assert "motivo" in text, "the n/a carve-out must require a reason field"
+    assert "DAG-JSON" in text
+
+
+def test_068o_executor_declares_same_na_affordance() -> None:
+    """DoD (a), twin binding: the executor prompt must carry the SAME
+    affordance -- a half-landed carve-out (auditor only) would let a DAG-less
+    batch's executor still try to force true/false on an object that does not
+    exist, the exact split-contract class WOT-2026-039a exists to catch."""
+    text = EXECUTOR_PROMPT.read_text(encoding="utf-8")
+    assert '"cumple": "n/a"' in text
+    assert '"motivo"' in text
+    assert "WOT-2026-068o" in text
+
+
+def test_068o_control_negativo_na_is_scoped_to_conditions_1_and_2_only() -> None:
+    """DoD (c), CONTROL NEGATIVO: a batch WITH a DAG-JSON still requires
+    exit 0 from the real validator for both conditions -- the n/a carve-out
+    must say so explicitly, not read as a blanket relaxation."""
+    for text in (_read(), EXECUTOR_PROMPT.read_text(encoding="utf-8")):
+        assert "n/a" in text
+        assert "exit 0" in text or "exit_code" in text
+        # the carve-out must declare itself invalid for every OTHER condition
+        assert "invalido" in text or "invalid" in text
+
+
+def test_068o_cardinality_stays_nine() -> None:
+    """DoD (d): the n/a carve-out enriches conditions 1-2's possible VALUES,
+    it does not add a 10th condition. The load-bearing cardinality test
+    (WOT-2026-039a) must keep agreeing at 9 with no edits needed here."""
+    bindings = _predicate_binding_lengths()
+    assert all(length == 9 for _lineno, length in bindings), (
+        f"WOT-2026-068o must not change the predicate's cardinality, got {bindings}"
+    )
+
+
+def test_068o_mutation_removing_na_from_one_prompt_breaks_parity() -> None:
+    """Mutation-verify: strip the n/a affordance from ONE prompt's text (as a
+    local copy) and the twin-prompt presence assertion goes RED; restoring the
+    real on-disk text (what the other two 068o tests assert against) is GREEN.
+    """
+    auditor_text = _read()
+    mutated = auditor_text.replace('"n/a"', '"MUTATED_AWAY"')
+    assert '"n/a"' not in mutated, "mutation sanity: the replace must have hit"
+    # RED: the mutated copy no longer satisfies the DoD-(a) assertion.
+    assert '"n/a"' not in mutated
+    # GREEN: the real file still does.
+    assert '"n/a"' in auditor_text

@@ -983,6 +983,21 @@ declared `DONE` only if ALL 9 conditions hold:
 | 8 | `estado_operativo_destino_atribuible` | the `repo_destino`'s dirty IS EXACTLY the expected operational delta of the batch's mode, decided BY CONTENT -- ticket IDs, commit cells, hunk count -- NEVER by `git status` alone. In code-only the close's backlog transition (the closed ticket(s) LEAVE the live queue in `backlog.md` and ENTER `_archive/backlog_done.md` with a TERMINAL state and a LANDED `commit:<sha>`); in destino mode the live projections (`STATE.md`, `TURN.md`, `work_plan.md`, `execution_log.md`) plus the auditor's mandatory artifacts. Verify with `python <MOTOR_ROOT>/scripts/check_expected_operational_delta.py --mode <code-only|destino> --delta <delta.json>` (exit 0 REQUIRED: a 3rd foreign file, an extra hunk, a ticket removed != archived, a missing/unlanded `commit:<sha>`, or a code-only delta applied outside code-only -> non-zero). A `repo_destino` dirty with EXACTLY this delta is LEGITIMATE and does NOT block. |
 | 9 | `estado_operativo_valido` | `python .agent/agent_controller.py --validate --json --no-heal --project-root <DESTINO_ROOT>` over the DESTINO ONLY, `total_errors == 0` read from the REAL JSON. `--no-heal` is MANDATORY: without it `--validate` heals bus drift and WRITES the git-TRACKED `STATE.md` (WOT-2026-024a), dirtying the destino and breaking condition 8 (the destino delta) in the same run. `--project-root <DESTINO_ROOT>` is MANDATORY and literal: pointed at the WRONG repo this check returns GREEN, not RED (measured: the code-only motor also reports `total_errors: 0`, and `is_motor_code_only()` gates only WRITE flags), so the executor RECORDS the resolved path it used and the auditor CROSS-CHECKS it equals the destino of the resolved topology. Warnings do NOT block (exit is `0 if total_errors == 0`), but are CLASSIFIED and RECORDED in the batch_run |
 
+**Conditions 1-2 assume a real DAG-JSON; a hand-prepared batch has none
+(`WOT-2026-068o`).** Both conditions validate the DAG-JSON that `/backlog-triage`
+produces. A batch prepared BY HAND (e.g. a couple of chained tickets, never
+routed through triage) has no DAG-JSON to feed `validate_batch_dag.py` --
+there is no object for either condition to validate. In that case ONLY, both
+`schema_valido` and `dag_aciclico` are declared `"cumple": "n/a"` with a
+mandatory `"motivo"` field (e.g. `"vuelo sin DAG-JSON, preparado a mano"`) in
+`batch_run_<ts>.json` -- NEVER `true` (nothing was actually validated, that is
+a false green) and NEVER `false` (it would block a batch with no real
+defect). A batch that DOES have a DAG-JSON keeps requiring both at `exit 0`
+exactly as before; `"n/a"` is invalid whenever a DAG-JSON exists, and it is
+invalid for any condition OTHER than these two. This does not touch the
+predicate's cardinality (still NINE, see below) or any other condition's
+contract.
+
 Conditions 4 and 5 encode real false-greens: `ERROR=0` is **not** the same as
 audited (the landing guard used to SKIP rows lacking a `commit:` cell), and a
 suite run PRE-commit reports the PARENT's `tested_sha`.

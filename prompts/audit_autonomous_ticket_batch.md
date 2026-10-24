@@ -235,6 +235,18 @@ Reproduce las 9 condiciones exactas:
    rechazo. Documenta el exit code y, si el validador lo reporta, el detalle
    del ciclo.
 
+   **Vuelo SIN DAG-JSON (WOT-2026-068o):** si el vuelo fue preparado a mano
+   (p.ej. un par de tickets encadenados, nunca paso por `/backlog-triage`) no
+   existe `dag.json` que darle a `validate_batch_dag.py` -- no hay objeto que
+   validar para NINGUNA de las dos condiciones. SOLO en ese caso, re-deriva
+   ambas como `"cumple": "n/a"` con `"motivo"` obligatorio (p.ej. `"vuelo sin
+   DAG-JSON, preparado a mano"`). NUNCA las marques `true` (no validaste nada,
+   es un falso verde) ni `false` (bloquearia un vuelo sin defecto real). Si el
+   vuelo SI tiene `dag.json`, ambas exigen el validador y su exit code como
+   arriba; `n/a` es invalido en ese caso, y es invalido para cualquier otra
+   condicion del PREDICATE -- esto no toca la cardinalidad (sigue en NUEVE) ni
+   el contrato de ninguna otra condicion.
+
 3. **`contabilidad_completa`** -- el universo de la contabilidad son los
    tickets listados en `groups[]` del DAG (WOT-2026-025q); cada ticket de ese
    universo termina en EXACTAMENTE UN estado de {`cerrado` |
@@ -680,8 +692,8 @@ B1 aplicado: <a:model=ID | b:fresh-context>. B3 (read-only): confirmado.
 ## 3. PREDICATE (9 condiciones, comando a comando)
 | # | Condicion | Comando | Exit/valor | Cumple |
 |---|---|---|---|---|
-| 1 | schema_valido | ... | ... | si/no |
-| 2 | dag_aciclico | ... | ... | si/no |
+| 1 | schema_valido | ... | ... | si/no/n/a (solo sin DAG-JSON, con motivo) |
+| 2 | dag_aciclico | ... | ... | si/no/n/a (solo sin DAG-JSON, con motivo) |
 | 3 | contabilidad_completa | ... | ... | si/no |
 | 4 | cierres_auditables | ... | ... | si/no |
 | 5 | suite_final_verde | ... | ... | si/no |
@@ -723,6 +735,7 @@ Ruta paralela:
   "predicate": {
     "schema_valido": {"command": "...", "exit_code": 0, "cumple": true},
     "dag_aciclico": {"command": "...", "exit_code": 0, "cumple": true},
+    "_comentario_vuelo_sin_dag": "si no hay dag.json (vuelo preparado a mano): schema_valido y dag_aciclico pasan a {\"command\": \"n/a\", \"exit_code\": null, \"cumple\": \"n/a\", \"motivo\": \"vuelo sin DAG-JSON, preparado a mano\"} -- solo estas dos condiciones, nunca las demas",
     "contabilidad_completa": {"tickets_total": 0, "cerrado": 0, "congelado": 0, "no_alcanzado": 0, "perdidos": 0, "cumple": true},
     "cierres_auditables": {"audited_before": 0, "audited_after": 0, "error_count": 0, "denominator_total": 0, "denominator_excluded_transfer": 0, "external_evidence_tickets": [], "transfer_closures_count": 0, "cumple": true},
     "suite_final_verde": {"tested_commit_sha": "...", "head": "...", "passed": 0, "failed": 0, "cumple": true},
