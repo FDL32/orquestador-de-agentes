@@ -83,6 +83,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -702,8 +703,85 @@ def _reject_unsupported_strays(strays: list[dict], project_root: Path) -> bool:
     return True
 
 
-def _preflight_conflicts(strays: list[dict], canon: Path) -> list[str]:
-    """Mensajes de bloqueo del lote (dups entre strays o colision con el canonico)."""
+def _is_tracked(project_root: Path, rel_posix: str) -> bool:
+    """True si `rel_posix` (relativo a `project_root`, separadores `/`) esta
+    trackeado por git AHI. `rc==0` de `ls-files --error-unmatch` es la unica
+    senal fiable -- un `ls-files` sin `--error-unmatch` sale rc=0 aunque no
+    encuentre nada (lista vacia), indistinguible de "no trackeado"."""
+    proc = subprocess.run(  # noqa: S603
+        ["git", "-C", str(project_root), "ls-files", "--error-unmatch", rel_posix],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _is_gitignored(project_root: Path, rel_posix: str) -> bool:
+    """True si `rel_posix` seria ignorado por git en `project_root`.
+
+    Siempre `-C <project_root>` explicito (nunca el cwd del proceso: `git
+    check-ignore` responde por el repo del cwd, no por el path que se le pasa)
+    y siempre sobre el FICHERO, nunca el directorio contenedor (un
+    `check-ignore` de directorio puede decir "ignorado" sin que CADA fichero
+    dentro lo este, por una negacion `!patron` -- la trampa medida en esta
+    misma base de codigo)."""
+    proc = subprocess.run(  # noqa: S603
+        ["git", "-C", str(project_root), "check-ignore", "-q", rel_posix],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _tracked_retraction_conflicts(
+    strays: list[dict], canon: Path, project_root: Path
+) -> list[str]:
+    """WOT-2026-069d: un stray TRACKEADO cuyo destino canonico esta GITIGNORADO.
+
+    MEDIDO 2026-09-13: `--move-strays` movio 3 fichas TRACKEADAS (5 trackeados
+    verificados en origen) a un `backlog_inbox/` GITIGNORADO (0 trackeados
+    verificado ahi), retirando 586 lineas de un repo publicado y chocando
+    BLOQUEANTE-VS-BLOQUEANTE con `Delivery Hygiene Check`. El criterio de
+    salida (sin cifra, ficha del ticket): el guard DECLARA el conflicto en vez
+    de recomendar el move a ciegas. La otra via del sobre (que el destino
+    des-ignore `backlog_inbox/` via DEC) es decision DEL DESTINO, fuera del
+    alcance de un fix de motor -- esta funcion solo implementa la deteccion.
+
+    Before: `strays` son los candidatos de `classify_inbox`; `canon` es el
+        buzon canonico resuelto; `project_root` es el destino auditado.
+    During: por cada stray, resuelve su ruta de origen Y de destino a POSIX
+        relativo a `project_root` y pregunta a git (nunca al .gitignore
+        parseado a mano: la fuente de verdad es el propio git) si el origen
+        esta trackeado y el destino esta ignorado.
+    After: un mensaje por conflicto (ambas condiciones a la vez), vacio si
+        ninguno. Nunca mueve ni modifica nada -- solo-lectura. Si `git` no es
+        invocable o `project_root` no es un repo, cada llamada devuelve False
+        (fail-open hacia "no hay conflicto detectado", nunca hacia abortar un
+        lote legitimo por un entorno sin git -- el preflight de colisiones de
+        arriba sigue aplicando igual).
+    """
+    msgs = []
+    for s in strays:
+        src_rel = Path(s["path"]).as_posix()
+        dst_rel = (canon / s["basename"]).relative_to(project_root).as_posix()
+        if _is_tracked(project_root, src_rel) and _is_gitignored(project_root, dst_rel):
+            msgs.append(
+                f"    {src_rel}: TRACKEADO hoy, su destino canonico ({dst_rel}) "
+                "esta GITIGNORADO en este destino -- moverlo RETIRARIA el "
+                "fichero del repo publicado (WOT-2026-069d). Resuelve por "
+                "contrato: o el destino des-ignora backlog_inbox/ via DEC, o "
+                "trata esta ficha a mano."
+            )
+    return msgs
+
+
+def _preflight_conflicts(
+    strays: list[dict], canon: Path, project_root: Path
+) -> list[str]:
+    """Mensajes de bloqueo del lote (dups, colision con el canonico, o
+    retraccion de trackeados hacia un canonico gitignorado -- WOT-2026-069d)."""
     basenames = [s["basename"] for s in strays]
     msgs = [
         f"    duplicado entre strays: {b}"
@@ -713,6 +791,7 @@ def _preflight_conflicts(strays: list[dict], canon: Path) -> list[str]:
         f"    colision con el canonico: {canon / b}"
         for b in sorted({b for b in basenames if (canon / b).exists()})
     ]
+    msgs += _tracked_retraction_conflicts(strays, canon, project_root)
     return msgs
 
 
@@ -728,7 +807,7 @@ def run_move_strays(project_root: Path) -> int:
     if _reject_unsupported_strays(strays, project_root):
         return 1
     canon = canonical_inbox(project_root)
-    conflicts = _preflight_conflicts(strays, canon)
+    conflicts = _preflight_conflicts(strays, canon, project_root)
     if conflicts:
         print(
             f"{_PREFIX} ERROR abort ATOMICO: lote rechazado ANTES de mover nada (nada movido a medias)."
