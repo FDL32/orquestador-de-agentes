@@ -9,7 +9,7 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 
 | Termino | Descripcion |
 |---------|-------------|
-| `repo_motor` | `orquestador_de_agentes/` — motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
+| `repo_motor` | `orquestador_de_agentes/` -- motor portable, fuente canonica del sistema. Tiene su propio repo git. No contiene estado operativo de tickets. |
 | `repo_destino` | El proyecto que usa el motor. Tiene su propio `.agent/` con estado operativo (tickets, memoria, config). Nunca comparte estado con otros destinos. |
 | `workspace_activo` | Raiz operativa con `.agent/` desde la que corre el ticket actual. En la topologia actual coincide con `repo_destino`. Se configura via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`. |
 | `entorno_multi_root` | IDE abierto con `repo_motor` + `repo_destino` a la vez (VS Code multi-folder workspace). No es un concepto de codigo: solo describe el entorno de desarrollo. |

@@ -1,4 +1,4 @@
-# Gobierno de triggers de skills — vocabulario cerrado y conflict_policy
+# Gobierno de triggers de skills -- vocabulario cerrado y conflict_policy
 
 > Modulo de referencia (`referencia-bajo-demanda`). Citado desde
 > `docs/registry/reference_keys.md` (letra `D`). Validado por

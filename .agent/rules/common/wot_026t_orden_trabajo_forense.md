@@ -1,4 +1,4 @@
-# WOT-2026-026t — Evidencia forense (casos completos)
+# WOT-2026-026t -- Evidencia forense (casos completos)
 
 > Modulo de referencia (`referencia-bajo-demanda`). Cada item es el caso forense COMPLETO y
 > VERBATIM de la regla de `AGENTS.md` seccion "Orden de trabajo: AGRUPA los commits..." que lo

@@ -1,4 +1,4 @@
-# WOT-2026-010e — Evidencia forense (caso completo): line endings mixtos
+# WOT-2026-010e -- Evidencia forense (caso completo): line endings mixtos
 
 > Modulo de referencia (`referencia-bajo-demanda`). Caso forense COMPLETO y VERBATIM de la
 > regla de `AGENTS.md` seccion "No MEZCLES vias de escritura en el mismo fichero" que lo cita

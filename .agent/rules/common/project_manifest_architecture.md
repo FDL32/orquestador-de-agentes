@@ -18,19 +18,19 @@ Los agentes deben leer el contrato primero cuando exista, priorizando rutas can�
 
 | Responsabilidad | `.agent` (Autoridad) | `.claude` (Integración) | No en ninguna capa |
 |-----------------|----------------------|-------------------------|-------------------|
-| Manifests del proyecto | ✅ `project_manifest.toml` | — | — |
-| Estado técnico del sistema | ✅ `.version_manifest.json` | — | — |
-| Runtime y hooks | ✅ `agent_controller.py`, hooks/ | — | — |
-| Reglas del sistema | ✅ `rules/` | — | — |
-| Estado de colaboración | ✅ `collaboration/` | — | — |
-| Settings Claude Code | — | ✅ `settings.json` | — |
-| Commands slash | — | ✅ `commands/` | — |
-| Agentes nativos | — | ✅ `agents/` | — |
-| Reglas de consumo | — | ✅ `rules/` | — |
-| Secretos | — | — | ✅ |
-| Rutas absolutas personales | — | — | ✅ |
-| Estado canónico del proyecto | ✅ | — | — |
-| Versionado técnico | ✅ | — | — |
+| Manifests del proyecto | ✅ `project_manifest.toml` | - | - |
+| Estado técnico del sistema | ✅ `.version_manifest.json` | - | - |
+| Runtime y hooks | ✅ `agent_controller.py`, hooks/ | - | - |
+| Reglas del sistema | ✅ `rules/` | - | - |
+| Estado de colaboración | ✅ `collaboration/` | - | - |
+| Settings Claude Code | - | ✅ `settings.json` | - |
+| Commands slash | - | ✅ `commands/` | - |
+| Agentes nativos | - | ✅ `agents/` | - |
+| Reglas de consumo | - | ✅ `rules/` | - |
+| Secretos | - | - | ✅ |
+| Rutas absolutas personales | - | - | ✅ |
+| Estado canónico del proyecto | ✅ | - | - |
+| Versionado técnico | ✅ | - | - |
 
 ## Regla de Autoridad
 
