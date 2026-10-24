@@ -1481,11 +1481,19 @@ def _own_row_deliverable_type(line: str, ticket_id: str) -> str | None:
     return max(known, key=lambda token: DEFAULT_MIN_DISTINCT_BACKENDS[token])
 
 
-def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> str:
-    """Resolve the ``deliverable_type`` declared for ``ticket_id`` in the backlog.
+def _resolve_deliverable_type_for_ticket_detailed(
+    project_root: Path, ticket_id: str
+) -> tuple[str, bool]:
+    """Resolve ``deliverable_type`` for ``ticket_id``, distinguishing declared from guessed.
 
-    WOT-2026-045a. `_resolve_tickets` only returns ticket IDs, not their
-    metadata, so the writer must go look the type up itself.
+    WOT-2026-048w: the un-detailed resolver collapsed "found a row with an
+    explicit ``deliverable_type:`` cell" and "no row found in THIS project_root
+    (normal for a ticket whose backlog lives in another destino), fell back to
+    the documented default" into the same bare string -- a consumer reading
+    `"code"` cannot tell a declared fact from a guess. Measured
+    (`scripts/session_closeout.py:715-718` pre-fix): any ticket without a row
+    under `project_root` silently got `"code"`, indistinguishable from a
+    ticket that genuinely declared `deliverable_type: code`.
 
     Before: ``project_root`` is the repo_destino; ``ticket_id`` is a resolved
         ticket string.
@@ -1496,10 +1504,12 @@ def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> 
         of 120b/120c, which cite "WOT-2026-120a" in prose, stamp 120a as
         `mixed` over its real archived `documentation` row (cierre del vuelo
         WOT-2026-120a, 2026-10-23).
-    After: Returns the strictest known type of the first own row that declares
-        one. Falls back to `"code"` (the strictest alongside `mixed`) when the
-        ticket has no own row in either file, its own rows carry no known
-        `deliverable_type:` token, or the files cannot be read. Never raises.
+    After: Returns ``(value, declared)``. ``declared=True`` means an own row
+        with a known `deliverable_type:` token was found; ``declared=False``
+        means the ticket has no own row in either file, its own rows carry no
+        known `deliverable_type:` token, or the files cannot be read -- and
+        ``value`` is the documented fallback `"code"` (the strictest alongside
+        `mixed`). Never raises.
     """
     for rel in (BACKLOG_REL, BACKLOG_ARCHIVE_REL):
         path = project_root / rel
@@ -1510,10 +1520,23 @@ def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> 
         for line in content.splitlines():
             dtype = _own_row_deliverable_type(line, ticket_id)
             if dtype is not None:
-                return dtype
+                return dtype, True
     # No own row found in either surface, or none declared a known type: fall
-    # back to "code" (documented default per contract WOT-2026-045a).
-    return "code"
+    # back to "code" (documented default per contract WOT-2026-045a), marked
+    # undeclared so the caller can distinguish a guess from a fact.
+    return "code", False
+
+
+def _resolve_deliverable_type_for_ticket(project_root: Path, ticket_id: str) -> str:
+    """Thin wrapper over ``_resolve_deliverable_type_for_ticket_detailed``.
+
+    Preserved byte-for-byte for existing callers that only want the value
+    (WOT-2026-048w: additive change, this wrapper's behavior is unchanged).
+    """
+    value, _declared = _resolve_deliverable_type_for_ticket_detailed(
+        project_root, ticket_id
+    )
+    return value
 
 
 # Trailers que DECLARAN la entrega de un ticket (git-trailer, `clave: valor` al
@@ -2284,9 +2307,19 @@ def _process_ticket_targets(
     if not shas:
         return _TicketTargetResult([], "PASS")
 
-    dtype = _resolve_deliverable_type_for_ticket(project_root, ticket_id)
+    dtype, declared = _resolve_deliverable_type_for_ticket_detailed(
+        project_root, ticket_id
+    )
+    # WOT-2026-048w: an undeclared (guessed) deliverable_type gets its own
+    # token so a consumer that reads it can tell a fact from a fallback;
+    # the declared (common) case keeps the line byte-identical to before.
+    undeclared_token = "" if declared else " declared=false"
     return _TicketTargetResult(
-        [f"{sha} {dtype} {LOOP_TARGETS_SOURCE_TOKEN}" for sha in shas], "PASS"
+        [
+            f"{sha} {dtype}{undeclared_token} {LOOP_TARGETS_SOURCE_TOKEN}"
+            for sha in shas
+        ],
+        "PASS",
     )
 
 

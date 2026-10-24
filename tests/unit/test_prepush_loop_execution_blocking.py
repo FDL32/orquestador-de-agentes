@@ -546,7 +546,7 @@ def test_parser_honors_source_token_and_keeps_old_format():
     sin prefijo conocido sigue siendo deliverable_type."""
     import scripts.prepush_check as pc
 
-    shas, dtypes, loops, sources = pc._parse_loop_execution_targets(
+    shas, dtypes, loops, sources, _declared = pc._parse_loop_execution_targets(
         "abc code loop=L1 source=session-close\n"
         "def docs\n"
         "ghi code source=otro\n"

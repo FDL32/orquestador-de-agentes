@@ -314,7 +314,9 @@ def test_deliverable_type_fallback_to_code_without_backlog_row(
 
     assert result.status == "PASS", result.detail
     content = (repo / TARGETS_REL).read_text(encoding="utf-8")
-    assert f"{sha} code" in content, content
+    # WOT-2026-048w: the fallback must be MARKED, not silent -- a guessed
+    # "code" is indistinguishable from a declared one without this token.
+    assert f"{sha} code declared=false" in content, content
 
 
 # ---------------------------------------------------------------------------
@@ -2036,7 +2038,9 @@ def test_writer_lines_carry_session_close_provenance(tmp_path: Path) -> None:
 
     assert result.status == "PASS", result.detail
     content = (repo / TARGETS_REL).read_text(encoding="utf-8")
-    assert f"{sha} code source=session-close" in content, content
+    # WOT-2026-048w: "WOT-2026-999f" has no backlog row under this tmp repo,
+    # so the type is the documented fallback, now marked `declared=false`.
+    assert f"{sha} code declared=false source=session-close" in content, content
     for line in content.splitlines():
         if line.strip():
             assert line.split()[1] in {"code", "documentation"}, line
