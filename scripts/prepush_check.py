@@ -2277,36 +2277,46 @@ def _first_prefixed_value(tokens: list[str], prefix: str) -> str | None:
     return None
 
 
+_KNOWN_TARGET_LINE_PREFIXES = ("loop=", "source=", "declared=")
+
+
 def _unprefixed_token(tokens: list[str]) -> str | None:
-    """Primer token SIN prefijo conocido (`loop=`/`source=`): el deliverable_type."""
+    """Primer token SIN prefijo conocido (`loop=`/`source=`/`declared=`): el deliverable_type."""
     for token in tokens:
-        if not token.startswith("loop=") and not token.startswith("source="):
+        if not token.startswith(_KNOWN_TARGET_LINE_PREFIXES):
             return token
     return None
 
 
 def _parse_loop_execution_targets(
     text: str,
-) -> tuple[list[str], dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[list[str], dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     """S1B item 2: parsea el fichero de targets (reparto de ciclomatica).
 
     Before: `text` es el contenido crudo de `loop_execution_targets.txt`.
-    During: una linea es `sha[ deliverable_type][ loop=<id>][ source=<v>]`;
+    During: una linea es
+        `sha[ deliverable_type][ loop=<id>][ source=<v>][ declared=<v>]`;
         `#` empieza comentario; lineas vacias se saltan. Los tokens
-        OPCIONALES `loop=<id>` y `source=<v>` se honran en cualquier
-        posicion tras el sha; el PRIMER token sin prefijo conocido sigue
-        siendo el deliverable_type (formato viejo `sha[ dtype]` intacto);
-        un token repetido se ignora (gana el primero). WOT-2026-058o:
+        OPCIONALES `loop=<id>`, `source=<v>` y `declared=<v>` se honran en
+        cualquier posicion tras el sha; el PRIMER token sin prefijo conocido
+        sigue siendo el deliverable_type (formato viejo `sha[ dtype]`
+        intacto); un token repetido se ignora (gana el primero). WOT-2026-058o:
         `source=session-close` marca la procedencia del escritor legitimo
         (`_step_write_loop_execution_targets`); un token sin `source=`
-        NUNCA es procedencia. Sin I/O.
+        NUNCA es procedencia. WOT-2026-048w: `declared=false` marca que el
+        deliverable_type es el fallback documentado (la fila del ticket no se
+        encontro bajo este project_root), no un valor citado desde una fila
+        real -- su AUSENCIA en la linea significa declarado (el caso comun no
+        cambia de forma). Sin I/O.
     After: (commit_shas, deliverable_type por commit, loop_id por commit,
-        source por commit).
+        source por commit, declared por commit -- valor crudo del token,
+        tipicamente ``"false"`` cuando presente; ausente del dict = declarado).
     """
     commit_shas: list[str] = []
     per_commit_dtype: dict[str, str] = {}
     per_commit_loop: dict[str, str] = {}
     per_commit_source: dict[str, str] = {}
+    per_commit_declared: dict[str, str] = {}
     for line in text.splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
@@ -2316,6 +2326,7 @@ def _parse_loop_execution_targets(
         dtype = _unprefixed_token(parts[1:])
         loop_id = _first_prefixed_value(parts[1:], "loop=")
         source = _first_prefixed_value(parts[1:], "source=")
+        declared = _first_prefixed_value(parts[1:], "declared=")
         commit_shas.append(sha)
         if dtype:
             per_commit_dtype[sha] = dtype
@@ -2323,7 +2334,15 @@ def _parse_loop_execution_targets(
             per_commit_loop[sha] = loop_id
         if source:
             per_commit_source[sha] = source
-    return commit_shas, per_commit_dtype, per_commit_loop, per_commit_source
+        if declared:
+            per_commit_declared[sha] = declared
+    return (
+        commit_shas,
+        per_commit_dtype,
+        per_commit_loop,
+        per_commit_source,
+        per_commit_declared,
+    )
 
 
 def _loop_accreditation_failures(
@@ -2449,9 +2468,13 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             skipped=True,
         )
     try:
-        commit_shas, per_commit_dtype, per_commit_loop, per_commit_source = (
-            _parse_loop_execution_targets(targets_file.read_text(encoding="utf-8"))
-        )
+        (
+            commit_shas,
+            per_commit_dtype,
+            per_commit_loop,
+            per_commit_source,
+            _per_commit_declared,
+        ) = _parse_loop_execution_targets(targets_file.read_text(encoding="utf-8"))
     except OSError as exc:
         return CheckResult(
             name=name,
