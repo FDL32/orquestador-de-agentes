@@ -338,6 +338,19 @@ EXPECTED_WIRED_REAL = {
     # line_budget. Nace sin deuda heredada (ambos prompts ya cumplen en el
     # mismo commit que introduce el campo).
     "check_prompt_line_budget",
+    # WOT-2026-054d: cableado via import ESTATICO en
+    # prepush_check.py::run_escalation_receipt_resolution_check (closeout) --
+    # `from scripts.check_escalation_receipt_resolution import
+    # EXIT_EMPTY_UNIVERSE` (linea 3861) deja el modulo alcanzable por el AST
+    # de 1-hop, y la propia funcion se invoca desde el recolector de gates
+    # del closeout (linea 4743). Hermana de `run_dec_receipt_check` (mismos
+    # dos buzones, mismo patron de grandfathering), audita que un placeholder
+    # REEJECUTABLE de una ficha de escalado se resolvio a UN SOLO fichero, no
+    # a dos distintos en sesiones distintas. Baseline actualizado 2026-10-24
+    # tras `test_real_repo_wired_set_is_exactly_expected` detectarlo como
+    # EXTRA -- el guard se cableo en el commit que lo introdujo y nadie
+    # actualizo este set despues.
+    "check_escalation_receipt_resolution",
 }
 
 

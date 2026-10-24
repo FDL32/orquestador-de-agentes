@@ -153,6 +153,7 @@ ALLOWLIST = {
     ".agent/motor_checkpoint.py",
     ".agent/planning/vuelo_sin_limite_20261023/WOT-2026-055i/builder_recibo_r1.md",
     ".agent/planning/vuelo_sin_limite_20261023/WOT-2026-055i/dispatch_builder_r1.md",
+    ".agent/rules/common/cem_v0_evidencia_forense.md",
     ".agent/rules/common/memory_hierarchy.md",
     ".agent/rules/common/sustainable_engineering.md",
     ".agent/runtime/events/README.md",
