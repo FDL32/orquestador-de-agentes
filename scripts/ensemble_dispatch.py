@@ -2516,12 +2516,17 @@ def _rotate_scorecard(path: Path) -> Path:
 
     El lock de escritura (`_locked_for_append`) es el que ya serializa los
     appends: nigun escritor puede interleave con la secuencia de rename. La
-    comprobacion de tamano se RE-HACE dentro del lock via `os.stat(path)` (NO
-    via el handle: un handle abierto ANTES de la rotacion de otro proceso
-    apuntaria al inode viejo ya renombrado y mediria el archivado). El handle
-    se abre via `_open_append_handle` (con `FILE_SHARE_DELETE` en Windows:
-    sin el flag en TODOS los handles abiertos sobre el nombre, el rename falla
-    con WinError 32 -- probe 1 del CG).
+    comprobacion de tamano y la revalidacion de inode se RE-HACEN dentro del
+    lock via `os.stat(path)` y `os.fstat(f.fileno()).st_ino` (NO via el
+    handle antes del lock: un handle abierto ANTES de la rotacion de otro
+    proceso apuntaria al inode viejo ya renombrado). El handle se abre via
+    `_open_append_handle` (con `FILE_SHARE_DELETE` en Windows: sin el flag en
+    TODOS los handles abiertos sobre el nombre, el rename falla con WinError 32
+    -- probe 1 del CG).
+
+    WOT-2026-124i (A2): tras tomar el lock se compara el inode del handle con
+    el del path ahora; si difieren, el handle es huerfano (otro proceso ya
+    rotó): se devuelve sin intentar la rotacion.
 
     El resumen L2 se genera DESPUES de soltar el lock y cerrar el handle
     (`_write_rotation_summary`), leyendo desde el ARCHIVADO: el byte-range lock
@@ -2530,6 +2535,12 @@ def _rotate_scorecard(path: Path) -> Path:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with _open_append_handle(path) as f, _locked_for_append(f):
+        try:
+            same_inode = os.fstat(f.fileno()).st_ino == os.stat(path).st_ino
+            if not same_inode:
+                return path  # WOT-2026-124i: handle huerfano, otro proceso ya roto
+        except OSError:
+            return path  # FileNotFoundError / PermissionError: rotacion en vuelo
         try:
             if path.stat().st_size <= SCORECARD_ROTATION_THRESHOLD_BYTES:
                 return path  # otro proceso acabo de rotar: nada que hacer
