@@ -1631,6 +1631,49 @@ Sin al menos una cifra por columna la balanza es sesgo de presente: el agente su
 
 > Detalle en [hacer_ahora_vs_aplazar_dos_reglas_durables](docs/protocol/hacer_ahora_vs_aplazar_dos_reglas_durables.md).
 
+### Claim causal vs hecho medido (WOT-2026-038k)
+
+Medido 2026-07-20 (3a ola, vuelo de gobierno): tres teorias causales distintas
+sobre un mismo fallo observado sobrevivieron varias pasadas de revision hasta
+que alguien las MIDIO. Dos ejemplos reales: "el push esta bloqueado por el
+clasificador" (heredado del prompt de arranque, propagado a 3 artefactos) se
+refuto con `git push --dry-run` + push real; "el clasificador gatea el egress
+de payload nan" se habia construido sobre 3 denegaciones reales pero NO fue
+reproducible al reintentar el MISMO bundle con el mismo fan-out de 8 lentes
+(8/8 por contenido).
+
+**Definicion operativa:**
+- **Hecho medido**: cita `command:` + salida/`exit_code:` reproducible. Es lo
+  que ya exige el gate 1 de la lista de arriba.
+- **Claim causal**: explica el PORQUE de un hecho medido. Es la parte NO
+  medida -- aunque se apoye en hechos reales, la inferencia que los conecta
+  no lo es.
+
+**Patron de fallo:** un claim causal se escribe como hecho en un artefacto
+durable (batch_run, parte de cierre, prompt de arranque de la sesion
+siguiente) y viaja sin marca de que es inferido. La sesion siguiente lo lee
+como premisa ya establecida y deja de cuestionarlo -- exactamente la
+"premisa heredada sin verificar" del parrafo de arriba, pero con un
+mecanismo de propagacion mas preciso: no es solo que aplazar tenga coste, es
+que una inferencia sin medir puede CRISTALIZAR en hecho por mera repeticion
+en texto.
+
+**Decision de diseno (DoD b de WOT-2026-038k): NORMA, no barrera cableada.**
+Se evaluo anadir un check automatico que exigiera marcar explicitamente los
+claims causales como `INFERIDO` en los artefactos de cierre, y se DESCARTO
+por riesgo declarado de burocracia: distinguir programaticamente "explica un
+mecanismo" de "narra un hecho" en prosa libre no tiene una señal sintactica
+fiable (ver `obs-grepping-for-a-word-is-not-checking-for-the-fact` en
+memoria -- un grep de palabras clave como "porque"/"causa" produciria ruido
+masivo). El eslabon fragil citado por el ticket (el mismo agente que escribe
+la causa es quien juzgaria si esta medida) tampoco lo resuelve un check
+local: requiere la misma pasada adversarial de Revisor fresh-context que ya
+exige el flujo Manager->Builder->Revisor para cualquier cierre de ticket no
+trivial -- la barrera YA EXISTE a nivel de proceso, no falta construir una
+nueva. Si una familia de claims-sin-medir concretos se repite de forma
+medible (no una vez), reabrir como DoD cableado con el patron exacto que lo
+justifique.
+
 ```
 
 ## .agent/rules/common/collaboration_live_surfaces.md
