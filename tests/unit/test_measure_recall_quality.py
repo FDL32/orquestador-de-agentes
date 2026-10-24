@@ -4,6 +4,12 @@
 Hermetic: uses temporary fixture data, never the live archive or live git repo.
 The recall function is injected (default = subprocess) except for one integration
 test that uses the real subprocess.
+
+Ronda 6 (WOT-2026-124e) changes:
+- Unit = citation, not lesson.
+- Recall cache by query text.
+- Surface FALLO removes citation from surface denominator.
+- Fase: all-phase-FALLO removes from fase denominator; at least one HIT -> HIT.
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ sys.path.insert(0, str(MOTOR_ROOT))
 from scripts.measure_recall_quality import (  # noqa: E402
     _CITE_PATTERN,
     _GIT_GREP_PATHS,
-    _build_queries_for_lessons,
+    _build_queries_for_citations,
     _derive_fase_queries,
     _derive_surface_query,
     _extract_markdown_section,
@@ -36,51 +42,12 @@ from scripts.measure_recall_quality import (  # noqa: E402
 
 
 # Module-level reference to subprocess.run for restoring mocks.
-
 _original_subprocess_run = subprocess.run
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-def _fake_recall(
-    motor_root: Path,
-    query: str,
-    destino_root: Path,
-    limit: int,
-) -> tuple[int, str, str]:
-    """Fake recall that returns predetermined responses based on query.
-
-    Usage in tests: set _FAKE_POOL before calling the function that uses recall.
-    """
-    # Default: hit for queries containing "hit", miss otherwise
-    if "hit" in query.lower():
-        return (0, "- obs-test-lesson-1: test rule (test)\n", "")
-    # No hit
-    return (0, "", "")
-
-
-#: Controlled fake pool for _fake_recall behavior.
-_fake_hit_queries: set[str] = set()
-_fake_rc_fail_queries: set[str] = set()
-
-
-def _controlled_recall(
-    motor_root: Path,
-    query: str,
-    destino_root: Path,
-    limit: int,
-) -> tuple[int, str, str]:
-    """Controlled recall: returns hit for queries in _fake_hit_queries,
-    rc=0 for queries in _fake_rc_fail_queries (which counts as failure, not hit).
-    """
-    if query in _fake_rc_fail_queries:
-        return (1, "", "")
-    if query in _fake_hit_queries:
-        return (0, "- obs-test-lesson-1: test rule (test)\n", "")
-    return (0, "", "")
 
 
 def _make_fake_citation(
@@ -107,6 +74,39 @@ def _make_fake_lesson(
     return entry
 
 
+#: Controlled fake recall: hit for queries in _fake_hit_queries,
+#: rc=1 for queries in _fake_rc_fail_queries, otherwise miss.
+_fake_hit_queries: set[str] = set()
+_fake_rc_fail_queries: set[str] = set()
+_fake_recall_call_count: dict[str, int] = {}
+#: The lesson ID that the recall should return as HIT.
+_fake_hit_obs_id: str = "obs-test-lesson-1"
+
+
+def _controlled_recall(
+    motor_root: Path,
+    query: str,
+    destino_root: Path,
+    limit: int,
+) -> tuple[int, str, str]:
+    """Controlled recall tracking call count for cache tests."""
+    _fake_recall_call_count[query] = _fake_recall_call_count.get(query, 0) + 1
+    if query in _fake_rc_fail_queries:
+        return (1, "", "")
+    if query in _fake_hit_queries:
+        return (0, f"- {_fake_hit_obs_id}: test rule (test)\n", "")
+    return (0, "", "")
+
+
+def _hit_recall_for(citation_obs_id: str):
+    """Return a recall function that hits the given citation obs_id for any query."""
+
+    def _inner(motor_root, query, destino_root, limit):
+        return (0, f"- {citation_obs_id}: test rule (test)\n", "")
+
+    return _inner
+
+
 # ---------------------------------------------------------------------------
 # (i) Derivacion de query de SUPERFICIE: stem normal, stem useless, root excluded
 # ---------------------------------------------------------------------------
@@ -128,8 +128,6 @@ class TestSurfaceQuery:
 
     def test_useless_stem_root_excluded(self):
         """If parent is root (empty name), the citation is excluded."""
-        # When the file is directly in the repo root like AGENTS.md,
-        # the parent name is empty string.
         assert _derive_surface_query("AGENTS.md") is None
 
     def test_useless_stem_parent_also_useless(self):
@@ -195,7 +193,6 @@ class TestFaseQuery:
 
     def test_section_extraction(self):
         """Can extract markdown heading from a file."""
-        # Use line 2 of AGENTS.md so the heading at line 1 is ABOVE it
         section = _extract_markdown_section("AGENTS.md", 2, MOTOR_ROOT)
         assert section == "AGENTS.md - Instrucciones transversales"
 
@@ -286,62 +283,246 @@ class TestHitMiss:
         assert result is False
 
 
-class TestMeasureHitsInjected:
-    """Tests for _measure_hits with injected recall function."""
+# ---------------------------------------------------------------------------
+# Ronda 6 tests: per-citation unit, cache, failure handling
+# ---------------------------------------------------------------------------
 
-    def test_basic_hit_measurement(self):
-        """Simple case: one lesson, one query that hits."""
-        global _fake_hit_queries
-        _fake_hit_queries = {"check_backlog_admission"}
 
-        queries = [
-            ("obs-test-lesson-1", "superficie", "check_backlog_admission", ""),
+class TestCitationUnitDenominator:
+    """DoD c: unit = non-excluded citation.
+
+    Two citations from the SAME lesson with different stems (one hits, one
+    misses) plus a citation from another lesson -> surface denominator 3,
+    hits 1; in the per-lesson table the first lesson is HIT.
+    """
+
+    def test_two_citations_same_lesson_different_stems(self):
+        """2 citations from same lesson, 1 hit + 1 miss + 1 from another lesson."""
+        global _fake_hit_queries, _fake_hit_obs_id
+        _fake_hit_queries = {"check_backlog"}
+        _fake_hit_obs_id = "obs-lesson-a"
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-lesson-a", 10),
+            _make_fake_citation("scripts/ensemble_dispatch.py", "obs-lesson-a", 20),
+            _make_fake_citation("scripts/test.py", "obs-lesson-b", 30),
         ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+        pool_by_id = {
+            "obs-lesson-a": {"topic": "test", "signal": "signal"},
+            "obs-lesson-b": {"topic": "test", "signal": "signal"},
+        }
 
-        hits, denoms, results, _failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, _lesson_res, _failures, _cit_sum = _measure_hits(
+            queries,
+            citations,
+            pool_by_id,
+            MOTOR_ROOT,
+            MOTOR_ROOT,
+            5,
+            _controlled_recall,
+        )
+
+        # Surface: 3 citations with surface query, 1 hit (check_backlog)
+        assert denoms["superficie"] == 3
+        assert hits["superficie"] == 1
+        # Union: all 3 citations are in union (none excluded)
+        assert denoms["union"] == 3
+        assert hits["union"] == 1
+
+    def test_per_lesson_aggregate_informative(self):
+        """Per-lesson table: lesson-a is HIT (one of its citations hit)."""
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-lesson-a", 10),
+            _make_fake_citation("scripts/ensemble_dispatch.py", "obs-lesson-a", 20),
+            _make_fake_citation("scripts/test.py", "obs-lesson-b", 30),
+        ]
+        pool_by_id = {
+            "obs-lesson-a": {"topic": "test", "signal": "signal"},
+            "obs-lesson-b": {"topic": "test", "signal": "signal"},
+        }
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        recall_fn = _hit_recall_for("obs-lesson-a")
+        _hits, _denoms, lesson_res, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, recall_fn
+        )
+
+        # lesson-a: one of its citations hit on surface -> HIT
+        assert lesson_res["obs-lesson-a"]["superficie_hit"] is True
+        # lesson-b: no citations hit
+        assert lesson_res["obs-lesson-b"]["superficie_hit"] is False
+
+
+class TestCache:
+    """Cache: two citations with same stem -> recall_fn called ONCE for that query."""
+
+    def test_same_stem_uses_cache(self):
+        """Two citations in same file share surface query -> cached."""
+        call_count: dict[str, int] = {}
+
+        def _counted_recall(motor_root, query, destino_root, limit):
+            call_count[query] = call_count.get(query, 0) + 1
+            return (0, "- obs-cit-1: test rule (test)\n", "")
+
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-cit-1", 10),
+            _make_fake_citation("scripts/check_backlog.py", "obs-cit-2", 20),
+        ]
+        pool_by_id = {
+            "obs-cit-1": {"topic": "test", "signal": "signal"},
+            "obs-cit-2": {"topic": "test", "signal": "signal"},
+        }
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        _hits, _denoms, _lr, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _counted_recall
+        )
+
+        # The surface query "check_backlog" should have been called exactly once
+        assert call_count.get("check_backlog", 0) == 1
+
+    def test_different_stems_called_separately(self):
+        """Two citations in different files -> separate calls for surface queries."""
+        call_count: dict[str, int] = {}
+
+        def _counted_recall(motor_root, query, destino_root, limit):
+            call_count[query] = call_count.get(query, 0) + 1
+            return (0, "- obs-cit-1: test rule (test)\n", "")
+
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-cit-1", 10),
+            _make_fake_citation("scripts/ensemble_dispatch.py", "obs-cit-2", 20),
+        ]
+        pool_by_id = {
+            "obs-cit-1": {"topic": "test", "signal": "signal"},
+            "obs-cit-2": {"topic": "test", "signal": "signal"},
+        }
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        _hits, _denoms, _lr, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _counted_recall
+        )
+
+        # "check_backlog" and "ensemble_dispatch" should each be called once
+        assert call_count.get("check_backlog", 0) == 1
+        assert call_count.get("ensemble_dispatch", 0) == 1
+
+
+class TestSurfaceFailure:
+    """A citation whose surface query is FALLO (rc 2) -> outside surface denominator,
+    present in Fallos, still counts in phase if its phase queries are valid.
+    """
+
+    def test_surface_fallo_removes_from_surface_denominator(self):
+        """Citation with surface FALLO -> not in surface denominator, in failures."""
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-fail-cit", 10),
+            _make_fake_citation("scripts/test.py", "obs-ok-cit", 20),
+        ]
+        pool_by_id = {
+            "obs-fail-cit": {"topic": "test", "signal": "signal"},
+            "obs-ok-cit": {"topic": "test", "signal": "signal"},
+        }
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+
+        # "fail-cit" recall: always FALLO (rc 2)
+        def _fail_recall(motor_root, query, destino_root, limit):
+            return (2, "", "git error")
+
+        # "ok-cit" recall: miss (rc 0, wrong obs_id)
+        def _ok_recall(motor_root, query, destino_root, limit):
+            return (0, "- obs-fake-cit: test rule (test)\n", "")
+
+        # We need a recall that behaves differently per citation.
+        # Since recall is called per query and both citations share surface queries...
+        # Actually: fail-cit surface = "check_backlog", ok-cit surface = "test"
+        # If "check_backlog" always FALLO and "test" always MISS, we get:
+        # fail-cit: surface FALLO -> excluded from surface denom
+        # ok-cit: surface MISS -> in surface denom
+        def _smart_recall(motor_root, query, destino_root, limit):
+            if query == "check_backlog":
+                return (2, "", "git error")  # FALLO for fail-cit surface
+            if query == "test":
+                return (
+                    0,
+                    "- obs-fake-cit: test rule (test)\n",
+                    "",
+                )  # MISS for ok-cit surface
+            return (0, "", "")  # Phase queries -> MISS
+
+        hits, denoms, _lr, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _smart_recall
+        )
+
+        # Surface: fail-cit excluded (FALLO), ok-cit counted but MISS -> 0 hits
+        assert hits["superficie"] == 0
+        assert denoms["superficie"] == 1  # only obs-ok-cit
+        # Union: both counted (phase not all-failed for fail-cit since ok recall is used)
+        assert denoms["union"] == 2
+        # Failures list
+        assert len(failures) == 1
+        assert "obs-fail-cit" in failures[0]
+        assert "rc=2" in failures[0]
+
+
+class TestPhasePartialFailure:
+    """Fase: a citation with 2 phase queries, one FALLO and one HIT -> HIT of phase
+    and inside the denominator.
+    """
+
+    def test_phase_one_fallo_one_hit(self):
+        """Citation with phase FALLO + phase HIT -> fase HIT and in denominator."""
+        recall_count = {"called": 0}
+
+        def _mixed_recall(motor_root, query, destino_root, limit):
+            recall_count["called"] += 1
+            if query == "suite":
+                return (2, "", "error")  # FALLO
+            if query == "commit":
+                return (0, "- obs-mixed-cit: test rule (test)\n", "")  # HIT
+            return (0, "", "")  # MISS
+
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-mixed-cit", 10),
+        ]
+        pool_by_id = {"obs-mixed-cit": {"topic": "test", "signal": "signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, _lr, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _mixed_recall
+        )
+
+        # Phase: HIT from "commit" query
+        assert hits["fase"] == 1
+        assert denoms["fase"] == 1  # not all phase queries failed
+        # Union: HIT (noqa: ERA001)
+        assert hits["union"] == 1
+        assert denoms["union"] == 1
+        # DoD c: todo rc != 0 se reporta aparte, tambien los de fase
+        assert failures == ["obs-mixed-cit:fase:suite:rc=2"]
+
+
+class TestRecallFormat:
+    """Recall injected ALWAYS in the real (rc, stdout, stderr) form."""
+
+    def test_recall_triple_form(self):
+        """Injected recall returns (rc, stdout, stderr) tuple."""
+
+        def _triple_recall(motor_root, query, destino_root, limit):
+            return (0, "- obs-triple-cit: test\n", "")
+
+        citations = [
+            _make_fake_citation("scripts/test.py", "obs-triple-cit", 10),
+        ]
+        pool_by_id = {"obs-triple-cit": {"topic": "test", "signal": "signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, _denoms, _lr, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _triple_recall
         )
 
         assert hits["superficie"] == 1
-        assert hits["union"] == 1
-        assert denoms["superficie"] == 1
-        assert denoms["union"] == 1
-        assert results["obs-test-lesson-1"]["superficie_hit"] is True
-
-    def test_miss_measurement(self):
-        """Query doesn't hit -> MISS."""
-        queries = [
-            ("obs-test-lesson-1", "superficie", "no_match_query", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
-
-        hits, denoms, results, _failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
-        )
-
-        assert hits["superficie"] == 0
-        assert denoms["superficie"] == 1
-        assert results["obs-test-lesson-1"]["superficie_hit"] is False
-
-    def test_rc_failure_not_counted_as_hit(self):
-        """rc != 0 from recall is reported as failure, not hit or miss."""
-        global _fake_rc_fail_queries
-        _fake_rc_fail_queries = {"bad_query"}
-        queries = [
-            ("obs-test-lesson-1", "superficie", "bad_query", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
-
-        hits, denoms, _results, failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
-        )
-
-        assert hits["superficie"] == 0
-        assert denoms["superficie"] == 1
-        assert len(failures) == 1
-        assert "bad_query" in failures[0]
-        assert "rc=1" in failures[0]
 
 
 # ---------------------------------------------------------------------------
@@ -352,15 +533,8 @@ class TestMeasureHitsInjected:
 class TestFailClosed:
     """Tests for fail-closed behavior."""
 
-    def test_no_citations_returns_one(self):
-        """Empty citations (simulated by empty git grep result) -> function returns 1."""
-        # _git_grep_cites with a non-existent path in a valid repo will find nothing.
-        # We test the integration in main() instead.
-        pass  # See integration test below
-
     def test_all_citations_excluded_returns_one(self):
         """All citations filtered out -> fail-closed."""
-        # Create citations that all have useless stems at root level
         citations = [
             ("AGENTS.md", "obs-x", 1),
             ("CLAUDE.md", "obs-y", 2),
@@ -377,7 +551,6 @@ class TestFailClosedIntegration:
 
     def test_empty_universe_rc_nonzero(self, tmp_path: Path):
         """Empty git grep universe -> main returns rc != 0 and --out doesn't exist."""
-        # Create a minimal fake git repo
         repo_dir = tmp_path / "fake_repo"
         repo_dir.mkdir()
         subprocess.run(["git", "init"], cwd=repo_dir, capture_output=True, check=True)
@@ -394,7 +567,6 @@ class TestFailClosedIntegration:
             check=True,
         )
 
-        # Create a minimal archive structure
         archive_dir = tmp_path / "destino" / ".agent" / "runtime" / "memory" / "archive"
         archive_dir.mkdir(parents=True)
         (archive_dir / "test.jsonl").write_text("", encoding="utf-8")
@@ -432,37 +604,84 @@ class TestDeterminism:
 
     def test_deterministic_output(self, tmp_path: Path):
         """Two runs on same data produce identical output except date line."""
-        # Use the _generate_report directly with fixed data
         hit_type1 = {"superficie": 2, "fase": 3, "union": 4}
         denoms1 = {"superficie": 5, "fase": 6, "union": 7}
         lessons1 = {
             "obs-a": {
                 "superficie_hit": True,
                 "fase_hit": True,
-                "rc_failures": [],
                 "section": "Test Section",
+                "has_superficie_query": True,
+                "cit_indices": [0],
             },
             "obs-b": {
                 "superficie_hit": False,
                 "fase_hit": False,
-                "rc_failures": ["rc=1"],
                 "section": "",
+                "has_superficie_query": False,
+                "cit_indices": [1],
+            },
+        }
+        citation_summary1 = {
+            0: {
+                "filename": "scripts/test.py",
+                "obs_id": "obs-a",
+                "line": 10,
+                "section": "Test Section",
+                "surface_hit": True,
+                "fase_hit": True,
+                "union_hit": True,
+            },
+            1: {
+                "filename": "scripts/check.py",
+                "obs_id": "obs-b",
+                "line": 20,
+                "section": "",
+                "surface_hit": False,
+                "fase_hit": False,
+                "union_hit": False,
             },
         }
         excluded1 = 2
         failures1 = ["obs-a:superficie:q1:rc=1"]
+        pool1 = [{"id": "obs-a"}, {"id": "obs-b"}]
+        citations1 = [
+            ("scripts/test.py", "obs-a", 10),
+            ("scripts/check.py", "obs-b", 20),
+        ]
         sha1 = "abc123def"
 
         out1 = tmp_path / "out1.md"
         out2 = tmp_path / "out2.md"
 
-        _generate_report(hit_type1, denoms1, lessons1, sha1, excluded1, failures1, out1)
-        _generate_report(hit_type1, denoms1, lessons1, sha1, excluded1, failures1, out2)
+        _generate_report(
+            hit_type1,
+            denoms1,
+            lessons1,
+            citation_summary1,
+            citations1,
+            pool1,
+            excluded1,
+            failures1,
+            sha1,
+            out1,
+        )
+        _generate_report(
+            hit_type1,
+            denoms1,
+            lessons1,
+            citation_summary1,
+            citations1,
+            pool1,
+            excluded1,
+            failures1,
+            sha1,
+            out2,
+        )
 
         content1 = out1.read_text()
         content2 = out2.read_text()
 
-        # Date lines will differ, so filter them out
         def strip_date(line: str) -> str:
             if line.startswith("- **Date:**"):
                 return ""
@@ -481,39 +700,84 @@ class TestDeterminism:
             "obs-z": {
                 "superficie_hit": True,
                 "fase_hit": False,
-                "rc_failures": [],
                 "section": "",
+                "has_superficie_query": True,
+                "cit_indices": [0],
             },
             "obs-a": {
                 "superficie_hit": False,
                 "fase_hit": False,
-                "rc_failures": [],
                 "section": "",
+                "has_superficie_query": False,
+                "cit_indices": [1],
             },
             "obs-m": {
                 "superficie_hit": True,
                 "fase_hit": False,
-                "rc_failures": [],
                 "section": "",
+                "has_superficie_query": True,
+                "cit_indices": [2],
             },
         }
-
+        citation_summary = {
+            0: {
+                "filename": "z.py",
+                "obs_id": "obs-z",
+                "line": 1,
+                "section": "",
+                "surface_hit": True,
+                "fase_hit": False,
+                "union_hit": True,
+            },
+            1: {
+                "filename": "a.py",
+                "obs_id": "obs-a",
+                "line": 2,
+                "section": "",
+                "surface_hit": False,
+                "fase_hit": False,
+                "union_hit": False,
+            },
+            2: {
+                "filename": "m.py",
+                "obs_id": "obs-m",
+                "line": 3,
+                "section": "",
+                "surface_hit": True,
+                "fase_hit": False,
+                "union_hit": True,
+            },
+        }
         out = tmp_path / "order_test.md"
-        _generate_report(hit_type, denoms, lessons, "abc123", 0, [], out)
+        _generate_report(
+            hit_type,
+            denoms,
+            lessons,
+            citation_summary,
+            [("z.py", "obs-z", 1), ("a.py", "obs-a", 2), ("m.py", "obs-m", 3)],
+            list(lessons.keys()),
+            0,
+            [],
+            "abc123",
+            out,
+        )
 
         content = out.read_text()
-        # Extract lesson IDs from table rows
-        id_order = []
-        in_table = False
+        # Extract citation rows from detail table (should be sorted by filename:line)
+        row_order = []
+        in_detail = False
         for line in content.splitlines():
-            if "| Leccion |" in line:
-                in_table = True
+            if "| Fichero:Linea |" in line:
+                in_detail = True
                 continue
-            if in_table and line.startswith("| obs-"):
-                lid = line.split("|")[1].strip()
-                id_order.append(lid)
+            if in_detail and line.startswith("| "):
+                fname = line.split("|")[1].strip()
+                row_order.append(fname)
+                if "Obs-id" in line or "Obt-id" in line:
+                    continue
 
-        assert id_order == sorted(id_order), f"Expected sorted order, got {id_order}"
+        # Should be sorted: a.py:2, m.py:3, z.py:1
+        assert row_order == sorted(row_order), f"Expected sorted order, got {row_order}"
 
 
 # ---------------------------------------------------------------------------
@@ -525,31 +789,26 @@ class TestIntegrationMiss:
     """Integration: real subprocess recall on empty archive -> MISS, not failure."""
 
     def test_real_subprocess_miss_via_measure_hits(self, tmp_path: Path):
-        """Real _recall_run with empty archive is classified as MISS (not failure).
-
-        Uses the actual _recall_run function (subprocess) against a tmp_path with
-        no memory, verifying the loop in _measure_hits handles it correctly.
-        """
-        # Create empty archive directory
+        """Real _recall_run with empty archive is classified as MISS (not failure)."""
         archive_dir = tmp_path / ".agent" / "runtime" / "memory" / "archive"
         archive_dir.mkdir(parents=True)
 
-        queries = [
-            ("obs-integration-miss", "superficie", "nonexistent_query_xyz", ""),
+        citations = [
+            _make_fake_citation("scripts/test.py", "obs-integration-miss", 10),
         ]
         pool_by_id = {
             "obs-integration-miss": {"topic": "test", "signal": "test signal"}
         }
 
-        hits, denoms, results, failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, tmp_path, 5, _recall_run
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, results, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, tmp_path, 5, _recall_run
         )
 
-        # Should be MISS (0 hits), not failure
         assert hits["superficie"] == 0
-        assert denoms["superficie"] == 1  # Has superficie query -> counts in denom
-        assert len(failures) == 0  # MISS, not failure
-        assert results["obs-integration-miss"]["rc_failures"] == []
+        assert denoms["superficie"] == 1
+        assert len(failures) == 0
+        assert results["obs-integration-miss"]["superficie_hit"] is False
 
 
 class TestIntegration:
@@ -558,11 +817,9 @@ class TestIntegration:
     def test_real_recall_produces_expected_hit(self, tmp_path: Path):
         """Real subprocess of memory_context.py --recall --headlines against
         a fixture produces at least one expected hit."""
-        # Create a minimal archive with a known lesson
         archive_dir = tmp_path / ".agent" / "runtime" / "memory" / "archive"
         archive_dir.mkdir(parents=True)
 
-        # Create a lesson that should match "test" query
         lesson = {
             "id": "obs-integration-test",
             "topic": "testing-integration",
@@ -575,14 +832,12 @@ class TestIntegration:
             json.dumps(lesson, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 
-        # Also create observations.jsonl (L1)
         l1_dir = tmp_path / ".agent" / "runtime" / "memory"
         l1_file = l1_dir / "observations.jsonl"
         l1_file.write_text(
             json.dumps(lesson, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 
-        # Run real recall
         import os
 
         full_env = os.environ.copy()
@@ -608,32 +863,29 @@ class TestIntegration:
             timeout=30,
         )
 
-        # The recall should find our lesson
         assert result.returncode == 0, f"Recall failed: {result.stderr}"
-        output = result.stdout
-        assert "obs-integration-test" in output, (
-            f"Expected lesson not found. Output: {output}"
+        assert "obs-integration-test" in result.stdout, (
+            f"Expected lesson not found. Output: {result.stdout}"
         )
 
 
 # ---------------------------------------------------------------------------
-# Additional: _build_queries_for_lessons (tests)  # noqa: ERA001
+# _build_queries_for_citations (tests)  # noqa: ERA001
 # ---------------------------------------------------------------------------
 
 
 class TestBuildQueries:
-    """Tests for _build_queries_for_lessons."""
+    """Tests for _build_queries_for_citations."""
 
-    def test_single_citation_surface_query(self):
+    def test_single_citation_surface_and_phase(self):
         """One citation -> one surface query + phase queries."""
         citations = [
             _make_fake_citation("scripts/check_backlog.py", "obs-test-1"),
         ]
         pool_by_id = {"obs-test-1": {"topic": "test", "signal": "test"}}
 
-        queries = _build_queries_for_lessons(citations, pool_by_id, MOTOR_ROOT)
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
 
-        # Should have surface query + fase queries (8 terms since no section)
         surface_queries = [q for q in queries if q[1] == "superficie"]
         fase_queries = [q for q in queries if q[1] == "fase"]
 
@@ -648,30 +900,26 @@ class TestBuildQueries:
         ]
         pool_by_id = {"obs-test-1": {"topic": "test", "signal": "test"}}
 
-        queries = _build_queries_for_lessons(citations, pool_by_id, MOTOR_ROOT)
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
 
         assert len(queries) == 0
 
     def test_section_drives_fase_terms(self):
         """Citation in a section with a fase term only queries that term."""
-        # Create a mock section that would be extracted
         citations = [
             _make_fake_citation("docs/CLAUDE.md", "obs-test-1", 20),
         ]
         pool_by_id = {"obs-test-1": {"topic": "test", "signal": "test"}}
 
-        queries = _build_queries_for_lessons(citations, pool_by_id, MOTOR_ROOT)
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
 
-        # CLAUDE.md stem is useless, so parent "docs" is used for surface
-        # The section for CLAUDE.md might be empty (no # heading before line 20)
-        # or whatever happens to be there. Check at least surface query exists.
         surface_queries = [q for q in queries if q[1] == "superficie"]
         assert len(surface_queries) == 1
         assert surface_queries[0][2] == "docs"
 
 
 # ---------------------------------------------------------------------------
-# Additional: _filter_excluded_citations (tests)  # noqa: ERA001
+# _filter_excluded_citations (tests)  # noqa: ERA001
 # ---------------------------------------------------------------------------
 
 
@@ -707,7 +955,7 @@ class TestFilterExcluded:
 
 
 # ---------------------------------------------------------------------------
-# Additional: _intersect_with_pool (tests)  # noqa: ERA001
+# _intersect_with_pool (tests)  # noqa: ERA001
 # ---------------------------------------------------------------------------
 
 
@@ -742,292 +990,7 @@ class TestIntersectPool:
 
 
 # ---------------------------------------------------------------------------
-# Additional: _CITE_PATTERN regex
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# New tests for 124e ROUND 2 changes
-# ---------------------------------------------------------------------------
-
-
-class TestUnionCalculationFix:
-    """Union must include fase hits (not just superficie)."""
-
-    def test_union_counts_fase_only_hit(self):
-        """Lesson with fase hit but no surface hit -> union=1."""
-        global _fake_hit_queries
-        _fake_hit_queries = {"suite"}
-        queries = [
-            ("obs-test-lesson-1", "fase", "suite", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
-
-        hits, denoms, results, _failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
-        )
-
-        assert hits["fase"] == 1
-        assert hits["union"] == 1
-        assert denoms["union"] == 1
-        assert results["obs-test-lesson-1"]["fase_hit"] is True
-        assert results["obs-test-lesson-1"]["superficie_hit"] is False
-
-    def test_union_counts_either_hit(self):
-        """Lesson with both surface and fase hits -> union=1."""
-        global _fake_hit_queries
-        _fake_hit_queries = {"hit", "suite"}
-        queries = [
-            ("obs-test-lesson-1", "superficie", "hit", ""),
-            ("obs-test-lesson-1", "fase", "suite", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
-
-        hits, denoms, _results, _failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
-        )
-
-        assert hits["superficie"] == 1
-        assert hits["fase"] == 1
-        assert hits["union"] == 1
-        assert denoms["union"] == 1
-
-    def test_union_never_less_than_max(self):
-        """Union >= max(superficie, fase) invariant."""
-        global _fake_hit_queries
-        _fake_hit_queries = {"q1", "suite", "hit"}
-        queries = [
-            ("obs-a", "superficie", "q1", ""),
-            ("obs-b", "fase", "suite", ""),
-            ("obs-c", "superficie", "hit", ""),
-            ("obs-c", "fase", "suite", ""),
-        ]
-        pool_by_id = {
-            "obs-a": {"topic": "test", "signal": "test"},
-            "obs-b": {"topic": "test", "signal": "test"},
-            "obs-c": {"topic": "test", "signal": "test"},
-        }
-
-        hits, _denoms, _results, _failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
-        )
-
-        assert hits["union"] >= max(hits["superficie"], hits["fase"])
-
-
-class TestSuperficieDenominator:
-    """D2: superficie denominator only counts lessons with superficie-type queries."""
-
-    def test_lesson_without_surface_query_not_in_denominator(self):
-        """Lesson with only fase queries does NOT count towards superficie denominator."""
-        global _fake_hit_queries
-        _fake_hit_queries = {"suite"}
-        queries = [
-            ("obs-test-lesson-1", "fase", "suite", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
-
-        _hits, denoms, _results, _failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
-        )
-
-        assert denoms["superficie"] == 0  # No superficie queries -> not counted
-        assert denoms["fase"] == 1  # Has fase query -> counted
-        assert denoms["union"] == 1  # union counts all lessons
-
-    def test_lesson_with_surface_query_counts_denominator(self):
-        """Lesson with at least one superficie query counts towards superficie denominator."""
-        global _fake_hit_queries
-        _fake_hit_queries = {"check_backlog_admission"}
-        queries = [
-            ("obs-test-lesson-1", "superficie", "check_backlog_admission", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
-
-        _hits, denoms, _results, _failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _controlled_recall
-        )
-
-        assert denoms["superficie"] == 1  # Has superficie query -> counted
-        assert denoms["fase"] == 1  # union counts all
-        assert denoms["union"] == 1
-
-
-class TestNonMarkdownSection:
-    """Non-markdown files must not use comments as sections."""
-
-    def test_python_file_no_section(self, tmp_path: Path):
-        """A .py file with a comment # 'heading' must NOT use it as section."""
-        py_file = tmp_path / "test_file.py"
-        py_file.write_text(
-            "# commit fix\n# suite check\n# this is a comment\nx = 1\n",
-            encoding="utf-8",
-        )
-        section = _extract_markdown_section("test_file.py", 1, MOTOR_ROOT)
-        assert section == ""
-
-    def test_md_file_gets_section(self, tmp_path: Path):
-        """A .md file with a heading # should extract the section."""
-        md_file = tmp_path / "test.md"
-        md_file.write_text(
-            "# My Section\nSome text\n## Subsection\nMore\n",
-            encoding="utf-8",
-        )
-        # Line 2 is "Some text" - nearest header above is "# My Section"
-        section = _extract_markdown_section("test.md", 2, tmp_path)
-        assert section == "My Section"
-
-        # Line 4 is "More" - nearest header above is "## Subsection"
-        section_h2 = _extract_markdown_section("test.md", 4, tmp_path)
-        assert section_h2 == "Subsection"
-
-    def test_header_any_level(self, tmp_path: Path):
-        """Headers of any level (1-6) are recognised."""
-        md_file = tmp_path / "levels.md"
-        md_file.write_text(
-            "# L1\n# L1 again\n## L2\n### L3\n#### L4\n##### L5\n###### L6\n",
-            encoding="utf-8",
-        )
-        assert _extract_markdown_section("levels.md", 2, tmp_path) == "L1"
-        assert _extract_markdown_section("levels.md", 4, tmp_path) == "L2"
-        assert _extract_markdown_section("levels.md", 5, tmp_path) == "L3"
-        assert _extract_markdown_section("levels.md", 6, tmp_path) == "L4"
-        assert _extract_markdown_section("levels.md", 7, tmp_path) == "L5"
-        assert _extract_markdown_section("levels.md", 8, tmp_path) == "L6"
-
-    def test_header_not_in_code_fence(self, tmp_path: Path):
-        """A header line inside a code fence does NOT count as a heading."""
-        md_file = tmp_path / "fence.md"
-        md_file.write_text(
-            "# Real Header\nSome text\n```\n# Fake Header\n```\nAfter fence\n",
-            encoding="utf-8",
-        )
-        # Line 6 is "After fence" - the nearest header above it is "# Real Header" at line 1,
-        # NOT the "# Fake Header" at line 4 (which is inside a code fence).
-        section = _extract_markdown_section("fence.md", 6, tmp_path)
-        assert section == "Real Header"
-
-    def test_hashtag_no_space_is_not_header(self, tmp_path: Path):
-        """#hashtag without space after # is not a header."""
-        md_file = tmp_path / "hash.md"
-        md_file.write_text(
-            "#hashtag no space\n## also no space\n# Real Header\n",
-            encoding="utf-8",
-        )
-        section = _extract_markdown_section("hash.md", 4, tmp_path)
-        assert section == "Real Header"
-
-    def test_non_md_extension_no_section(self):
-        """A real .py file must return empty section (not use comments as headings)."""
-        # Use an existing file that has # comments that look like headings
-        section = _extract_markdown_section(
-            "scripts/measure_recall_quality.py", 40, MOTOR_ROOT
-        )
-        assert section == ""
-
-    def test_code_fence_before_heading_returns_heading_above_fence(
-        self, tmp_path: Path
-    ):
-        """Heading above a code fence that contains # is returned, not the # inside.
-
-        This tests the downward single-pass algorithm: scan from the top,
-        track code fences, and find the nearest heading above the citation line.
-        Old buggy code scanned UPWARD from the citation and would flip in_code_block
-        at the OPENING fence, treating everything above it as code.
-        """
-        md_file = tmp_path / "fence_heading.md"
-        md_file.write_text(
-            "## Sub\nSome text\n```\n# Fake Header\n```\nInside fence\n",
-            encoding="utf-8",
-        )
-        # Line 5 is "Inside fence" — nearest header above is "## Sub" at line 1,
-        # NOT the "# Fake Header" at line 4 (which is inside a code fence).
-        section = _extract_markdown_section("fence_heading.md", 5, tmp_path)
-        assert section == "Sub"
-
-
-class TestRc1Miss:
-    """rc 1 with 'No observations found' = MISS, not failure."""
-
-    def test_rc1_no_observations_is_miss(self):
-        """rc=1 with 'No observations found' in stdout -> MISS, not failure."""
-        queries = [
-            ("obs-test-lesson-1", "superficie", "no_match", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test"}}
-
-        def _rc1_no_obs(motor_root, query, destino_root, limit):
-            return (1, "", "No observations found.")
-
-        hits, denoms, results, failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc1_no_obs
-        )
-
-        assert hits["superficie"] == 0
-        assert denoms["superficie"] == 1
-        assert results["obs-test-lesson-1"]["superficie_hit"] is False
-        assert len(failures) == 0  # NOT a failure
-        assert results["obs-test-lesson-1"]["rc_failures"] == []
-
-    def test_rc1_no_observations_in_stdout_not_miss(self):
-        """rc=1 with 'No observations found' in stdout (not stderr) -> FAIL."""
-        queries = [
-            ("obs-test-lesson-1", "superficie", "no_match", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test"}}
-
-        def _rc1_stdout(motor_root, query, destino_root, limit):
-            return (1, "No observations found.", "")
-
-        _hits, _denoms, results, failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc1_stdout
-        )
-
-        assert _hits["superficie"] == 0
-        assert len(failures) == 1  # Should be failure, not miss, when in stdout
-        assert results["obs-test-lesson-1"]["rc_failures"] == [
-            "superficie:no_match -> rc=1"
-        ]
-
-    def test_rc1_with_different_message_is_failure(self):
-        """rc=1 with a different stderr message -> FAIL, not miss."""
-        queries = [
-            ("obs-test-lesson-1", "superficie", "no_match", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test"}}
-
-        def _rc1_error(motor_root, query, destino_root, limit):
-            return (1, "", "timeout exceeded")
-
-        hits, denoms, _results, failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc1_error
-        )
-
-        assert hits["superficie"] == 0
-        assert denoms["superficie"] == 1
-        assert len(failures) == 1
-        assert "rc=1" in failures[0]
-
-    def test_rc127_is_failure(self):
-        """rc=127 (command not found) -> FAIL, not miss."""
-        queries = [
-            ("obs-test-lesson-1", "fase", "suite", ""),
-        ]
-        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test"}}
-
-        def _rc127(motor_root, query, destino_root, limit):
-            return (127, "", "exec format error")
-
-        hits, _denoms, _results, failures = _measure_hits(
-            queries, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc127
-        )
-
-        assert hits["fase"] == 0
-        assert len(failures) == 1
-
-
-# ---------------------------------------------------------------------------
-# Additional: _CITE_PATTERN regex
+# _CITE_PATTERN regex
 # ---------------------------------------------------------------------------
 
 
@@ -1042,11 +1005,9 @@ class TestCitePattern:
 
     def test_rejects_invalid_patterns(self):
         """Pattern requires at least one char after obs-."""
-        # obs- alone with nothing after should still match (regex allows *)
-        # but obs- followed by uppercase should not extend the match
         matches = _CITE_PATTERN.findall("obs-test obs-X obs123")
         assert "obs-test" in matches
-        assert "obs123" not in matches  # no "obs-" prefix
+        assert "obs123" not in matches
 
     def test_multiple_matches_in_line(self):
         """Multiple IDs in one line all matched."""
@@ -1057,7 +1018,7 @@ class TestCitePattern:
 
 
 # ---------------------------------------------------------------------------
-# Tests for git grep failure abort (WOT-2026-124e change 1)
+# git grep failure abort
 # ---------------------------------------------------------------------------
 
 
@@ -1139,8 +1100,6 @@ class TestGitGrepSuccessWithMixedRc:
             path_arg = args[0] if args else kwargs.get("args", [])
             path_str = path_arg[-1] if path_arg else ""
             collected_paths.append(path_str)
-
-            # First 4 paths return rc 1 (no match), rest return rc 0 (match)
             idx = len(collected_paths) - 1
 
             class _Result:
@@ -1152,10 +1111,435 @@ class TestGitGrepSuccessWithMixedRc:
         subprocess.run = _mock_run_mixed
         try:
             results = _git_grep_cites(tmp_path)
-            # Should collect from the 5 rc=0 paths
             assert len(results) == 5
             assert all(r[1] == "obs-test-1" for r in results)
-            # All paths were tried
             assert len(collected_paths) == len(_GIT_GREP_PATHS)
         finally:
             subprocess.run = _original_subprocess_run
+
+
+# ---------------------------------------------------------------------------
+# Non-markdown section, rc 1 miss, etc.
+# ---------------------------------------------------------------------------
+
+
+class TestNonMarkdownSection:
+    """Non-markdown files must not use comments as sections."""
+
+    def test_python_file_no_section(self, tmp_path: Path):
+        """A .py file with a comment # 'heading' must NOT use it as section."""
+        py_file = tmp_path / "test_file.py"
+        py_file.write_text(
+            "# commit fix\n# suite check\n# this is a comment\nx = 1\n",
+            encoding="utf-8",
+        )
+        section = _extract_markdown_section("test_file.py", 1, MOTOR_ROOT)
+        assert section == ""
+
+    def test_md_file_gets_section(self, tmp_path: Path):
+        """A .md file with a heading # should extract the section."""
+        md_file = tmp_path / "test.md"
+        md_file.write_text(
+            "# My Section\nSome text\n## Subsection\nMore\n",
+            encoding="utf-8",
+        )
+        section = _extract_markdown_section("test.md", 2, tmp_path)
+        assert section == "My Section"
+        section_h2 = _extract_markdown_section("test.md", 4, tmp_path)
+        assert section_h2 == "Subsection"
+
+    def test_header_any_level(self, tmp_path: Path):
+        """Headers of any level (1-6) are recognised."""
+        md_file = tmp_path / "levels.md"
+        md_file.write_text(
+            "# L1\n# L1 again\n## L2\n### L3\n#### L4\n##### L5\n###### L6\n",
+            encoding="utf-8",
+        )
+        assert _extract_markdown_section("levels.md", 2, tmp_path) == "L1"
+        assert _extract_markdown_section("levels.md", 4, tmp_path) == "L2"
+        assert _extract_markdown_section("levels.md", 5, tmp_path) == "L3"
+        assert _extract_markdown_section("levels.md", 6, tmp_path) == "L4"
+        assert _extract_markdown_section("levels.md", 7, tmp_path) == "L5"
+        assert _extract_markdown_section("levels.md", 8, tmp_path) == "L6"
+
+    def test_header_not_in_code_fence(self, tmp_path: Path):
+        """A header line inside a code fence does NOT count as a heading."""
+        md_file = tmp_path / "fence.md"
+        md_file.write_text(
+            "# Real Header\nSome text\n```\n# Fake Header\n```\nAfter fence\n",
+            encoding="utf-8",
+        )
+        section = _extract_markdown_section("fence.md", 6, tmp_path)
+        assert section == "Real Header"
+
+    def test_hashtag_no_space_is_not_header(self, tmp_path: Path):
+        """#hashtag without space after # is not a header."""
+        md_file = tmp_path / "hash.md"
+        md_file.write_text(
+            "#hashtag no space\n## also no space\n# Real Header\n",
+            encoding="utf-8",
+        )
+        section = _extract_markdown_section("hash.md", 4, tmp_path)
+        assert section == "Real Header"
+
+    def test_non_md_extension_no_section(self):
+        """A real .py file must return empty section."""
+        section = _extract_markdown_section(
+            "scripts/measure_recall_quality.py", 40, MOTOR_ROOT
+        )
+        assert section == ""
+
+    def test_code_fence_before_heading_returns_heading_above_fence(
+        self, tmp_path: Path
+    ):
+        """Heading above a code fence that contains # is returned."""
+        md_file = tmp_path / "fence_heading.md"
+        md_file.write_text(
+            "## Sub\nSome text\n```\n# Fake Header\n```\nInside fence\n",
+            encoding="utf-8",
+        )
+        section = _extract_markdown_section("fence_heading.md", 5, tmp_path)
+        assert section == "Sub"
+
+
+class TestRc1Miss:
+    """rc 1 with 'No observations found' = MISS, not failure."""
+
+    def test_rc1_no_observations_in_stderr_is_miss(self):
+        """rc=1 with 'No observations found' in stderr -> MISS, not failure."""
+        citations = [
+            _make_fake_citation("scripts/test.py", "obs-test-1", 10),
+        ]
+        pool_by_id = {"obs-test-1": {"topic": "test", "signal": "test"}}
+
+        def _rc1_no_obs(motor_root, query, destino_root, limit):
+            return (1, "", "No observations found.")
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, results, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc1_no_obs
+        )
+
+        assert hits["superficie"] == 0
+        assert denoms["superficie"] == 1
+        assert results["obs-test-1"]["superficie_hit"] is False
+        assert len(failures) == 0
+
+    def test_rc1_no_observations_in_stdout_is_fail(self):
+        """rc=1 with 'No observations found' in stdout (not stderr) -> FAIL."""
+        citations = [
+            _make_fake_citation("scripts/test.py", "obs-test-1", 10),
+        ]
+        pool_by_id = {"obs-test-1": {"topic": "test", "signal": "test"}}
+
+        def _rc1_stdout(motor_root, query, destino_root, limit):
+            return (1, "No observations found.", "")
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        _hits, _denoms, _lr, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc1_stdout
+        )
+
+        # 1 superficie + 8 fase (sin seccion), todas FALLO y todas reportadas
+        assert len(failures) == 9
+        assert "obs-test-1:superficie:test:rc=1" in failures
+
+    def test_rc1_with_different_message_is_failure(self):
+        """rc=1 with a different stderr message -> FAIL, not miss."""
+        citations = [
+            _make_fake_citation("scripts/test.py", "obs-test-1", 10),
+        ]
+        pool_by_id = {"obs-test-1": {"topic": "test", "signal": "test"}}
+
+        def _rc1_error(motor_root, query, destino_root, limit):
+            return (1, "", "timeout exceeded")
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, _denoms, _results, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc1_error
+        )
+
+        assert hits["superficie"] == 0
+        assert len(failures) == 9
+        assert all("rc=1" in f for f in failures)
+
+    def test_rc127_is_failure(self):
+        """rc=127 (command not found) -> FAIL, not miss."""
+        citations = [
+            _make_fake_citation("scripts/test.py", "obs-test-1", 10),
+        ]
+        pool_by_id = {"obs-test-1": {"topic": "test", "signal": "test"}}
+
+        def _rc127(motor_root, query, destino_root, limit):
+            return (127, "", "exec format error")
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, _denoms, _results, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _rc127
+        )
+
+        assert hits["fase"] == 0
+        assert len(failures) == 9
+        assert all(f.endswith(":rc=127") for f in failures)
+
+
+# ---------------------------------------------------------------------------
+# Union calculation
+# ---------------------------------------------------------------------------
+
+
+class TestUnionCalculation:
+    """Union must include fase hits (not just superficie)."""
+
+    def test_union_counts_fase_only_hit(self):
+        """Citation with fase hit but no surface hit -> union=1."""
+
+        def _fase_recall(motor_root, query, destino_root, limit):
+            if query == "suite":
+                return (0, "- obs-test-lesson-1: test rule (test)\n", "")
+            return (0, "", "")
+
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-test-lesson-1", 10),
+        ]
+        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, results, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _fase_recall
+        )
+
+        assert hits["fase"] == 1
+        assert hits["union"] == 1
+        assert denoms["union"] == 1
+        assert results["obs-test-lesson-1"]["fase_hit"] is True
+        assert results["obs-test-lesson-1"]["superficie_hit"] is False
+
+    def test_union_counts_either_hit(self):
+        """Citation with both surface and fase hits -> union=1."""
+
+        def _both_recall(motor_root, query, destino_root, limit):
+            if query == "check_backlog":
+                return (0, "- obs-test-lesson-1: test rule (test)\n", "")
+            if query == "suite":
+                return (0, "- obs-test-lesson-1: test rule (test)\n", "")
+            return (0, "", "")
+
+        citations = [
+            _make_fake_citation("scripts/check_backlog.py", "obs-test-lesson-1", 10),
+        ]
+        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, _lr, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _both_recall
+        )
+
+        assert hits["superficie"] == 1
+        assert hits["fase"] == 1
+        assert hits["union"] == 1
+        assert denoms["union"] == 1
+
+    def test_union_never_less_than_max(self):
+        """Union >= max(superficie, fase) invariant."""
+
+        def _multi_recall(motor_root, query, destino_root, limit):
+            if query == "check":
+                return (0, "- obs-a: test rule (test)\n", "")
+            if query == "suite":
+                return (0, "- obs-b: test rule (test)\n", "")
+            if query == "check_backlog":
+                return (0, "- obs-c: test rule (test)\n", "")
+            return (0, "", "")
+
+        citations = [
+            _make_fake_citation("scripts/check.py", "obs-a", 1),
+            _make_fake_citation("scripts/check.py", "obs-b", 2),
+            _make_fake_citation("scripts/check_backlog.py", "obs-c", 3),
+        ]
+        pool_by_id = {
+            "obs-a": {"topic": "test", "signal": "test"},
+            "obs-b": {"topic": "test", "signal": "test"},
+            "obs-c": {"topic": "test", "signal": "test"},
+        }
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, _denoms, _lr, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _multi_recall
+        )
+
+        assert hits["union"] >= max(hits["superficie"], hits["fase"])
+
+
+# ---------------------------------------------------------------------------
+# Superficie denominator
+# ---------------------------------------------------------------------------
+
+
+class TestSuperficieDenominator:
+    """D2: superficie denominator only counts citations with superficie queries."""
+
+    def test_citation_without_surface_query_not_in_denominator(self):
+        """Citation with only phase queries does NOT count towards surface denominator."""
+
+        def _fase_recall(motor_root, query, destino_root, limit):
+            if query == "suite":
+                return (0, "- obs-test-lesson-1: test rule (test)\n", "")
+            return (0, "", "")
+
+        citations = [
+            _make_fake_citation("scripts/test.py", "obs-test-lesson-1", 10),
+        ]
+        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        _hits, denoms, _lr, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _fase_recall
+        )
+
+        # "test" stem IS a valid surface query for scripts/test.py
+        # So superficie denom = 1 (has surface query, query is MISS not FALLO)
+        assert denoms["superficie"] == 1
+        assert denoms["fase"] == 1  # Phase hit from "suite"
+        assert denoms["union"] == 1
+
+    def test_phase_mix_of_miss_and_failure_stays_in_denominator(self):
+        """Manager (ronda 6): una FALLO entre MISS de fase NO saca la cita del denominador."""
+
+        def _mixed_recall(motor_root, query, destino_root, limit):
+            if query == "commit":
+                return (2, "", "boom")
+            return (1, "", "No observations found.")
+
+        citations = [_make_fake_citation("scripts/test.py", "obs-test-lesson-1", 10)]
+        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        assert sum(1 for q in queries if q[1] == "fase") == 8  # sin seccion -> 8
+        hits, denoms, _lr, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _mixed_recall
+        )
+
+        assert denoms["fase"] == 1
+        assert hits["fase"] == 0
+        assert failures == ["obs-test-lesson-1:fase:commit:rc=2"]
+
+    def test_phase_all_failed_leaves_denominator(self):
+        """Manager (ronda 6): solo si TODAS las queries de fase fallan sale del denominador."""
+
+        def _fase_fail_recall(motor_root, query, destino_root, limit):
+            if query == "test":  # superficie
+                return (1, "", "No observations found.")
+            return (2, "", "boom")
+
+        citations = [_make_fake_citation("scripts/test.py", "obs-test-lesson-1", 10)]
+        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        _hits, denoms, _lr, failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _fase_fail_recall
+        )
+
+        assert denoms["fase"] == 0
+        assert denoms["superficie"] == 1
+        assert denoms["union"] == 1
+        assert len(failures) == 8
+
+    def test_citation_with_surface_query_counts_denominator(self):
+        """Citation with at least one superficie query counts towards surface denominator."""
+
+        # Return hit ONLY for the specific surface query, miss for ALL phase queries
+        def _surf_recall(motor_root, query, destino_root, limit):
+            if query == "check_backlog_admission":
+                return (0, "- obs-test-lesson-1: test rule (test)\n", "")
+            return (0, "", "")
+
+        citations = [
+            _make_fake_citation(
+                "scripts/check_backlog_admission.py", "obs-test-lesson-1", 10
+            ),
+        ]
+        pool_by_id = {"obs-test-lesson-1": {"topic": "test", "signal": "test signal"}}
+
+        queries = _build_queries_for_citations(citations, pool_by_id, MOTOR_ROOT)
+        hits, denoms, _lr, _failures, _cs = _measure_hits(
+            queries, citations, pool_by_id, MOTOR_ROOT, MOTOR_ROOT, 5, _surf_recall
+        )
+
+        # Surface: 1 hit, counted in superficie denom
+        assert hits["superficie"] == 1
+        assert denoms["superficie"] == 1
+        # Fase: all phase queries are MISS (not FALLO) -> counted in fase denom
+        assert denoms["fase"] == 1
+        assert denoms["union"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Manager (ronda 6): el recuento de excluidas se hace sobre G (citadas Y en el
+# pool), no sobre todas las citas del grep (DoD b: "cita excluida y contada").
+# ---------------------------------------------------------------------------
+
+
+class TestExcludedCountedWithinG:
+    """Excluded citations are counted inside G, after intersecting with the pool."""
+
+    def test_excluded_count_ignores_ids_outside_pool(self, tmp_path: Path):
+        repo = tmp_path / "motor"
+        (repo / "docs").mkdir(parents=True)
+        for args in (
+            ["init"],
+            ["config", "user.email", "t@t.t"],
+            ["config", "user.name", "T"],
+        ):
+            subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
+        # AGENTS.md at root is a useless stem -> its citations are excluded.
+        (repo / "AGENTS.md").write_text(
+            "obs-in-pool-lesson y obs-not-in-pool-lesson\n", encoding="utf-8"
+        )
+        (repo / "docs" / "guia.md").write_text(
+            "# Guia\n\nobs-in-pool-lesson\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "fixture"],
+            cwd=repo,
+            capture_output=True,
+            check=True,
+        )
+        archive = tmp_path / "destino" / ".agent" / "runtime" / "memory" / "archive"
+        archive.mkdir(parents=True)
+        (archive / "observations.test.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": "obs-in-pool-lesson",
+                    "topic": "testing",
+                    "signal": "Una leccion de prueba lo bastante larga para el pool.",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        out = tmp_path / "report.md"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(MOTOR_ROOT / "scripts" / "measure_recall_quality.py"),
+                "--motor-root",
+                str(repo),
+                "--destino-root",
+                str(tmp_path / "destino"),
+                "--out",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+
+        assert result.returncode == 0, result.stderr
+        report = out.read_text(encoding="utf-8")
+        assert "**Citas de G (citadas y en el pool):** 2" in report
+        assert "**Citas de G excluidas:** 1" in report
+        assert "**Citas no excluidas (unidad):** 1" in report
+        assert "**Lecciones distintas en las citas no excluidas:** 1" in report

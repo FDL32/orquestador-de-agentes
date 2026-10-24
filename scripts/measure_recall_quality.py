@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Measure hit@5 quality of ``--recall --headlines`` on lessons promoted to norm (G).
 
-WOT-2026-124b (Etapa 1, B.2b).  Reads the motor repo, extracts citations from
-norm surfaces (prompts, AGENTS.md, CLAUDE.md, .agent/rules, skills, docs,
-CONSTITUTION.md, scripts, tests), intersects with the deduplicated lesson pool
-from both motor and destino archives, derives queries by fixed rules (SUPERFICIE
-stem and FASE vocabulary), and runs ``memory_context.py --recall --headlines
---limit 5`` for each query to measure hit@5.
+WOT-2026-124b (Etapa 1, B.2b), ronda 6 (WOT-2026-124e).  Unit = non-excluded
+citation (DoD c): each (filename, id, line) surviving exclusion and pool
+intersection.  Each citation has ONE surface query (file stem) and FASE queries
+(section vocabulary or all 8 terms if no section).  Recall is cached by query
+text.
 
 Usage:
     python scripts/measure_recall_quality.py \\
@@ -17,8 +16,9 @@ The script is deterministic: given the same corpus it produces byte-identical
 ``--out`` except for the date line.
 
 Before: ``motor_root`` and ``destino_root`` exist and are valid repos/roots.
-During: extracts citations, derives queries, runs recall, measures hits.
-After: writes ``--out`` markdown table with results; exits rc 0.
+During: extracts citations, derives queries, runs recall (cached), measures hits.
+After: writes ``--out`` markdown with primary table, secondary table, detail,
+    and failures list; exits rc 0.
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ def _git_grep_cites(
                     f"git grep failed for path '{path}' with returncode {out.returncode}"
                 )
             for raw_line in out.stdout.splitlines():
-                # Format: <path>:<line>:match or <path>:<line>:<match>
+                # Format: <path>:<line>:match
                 # git grep -o -n -- <path> produces: <path>:<linenum>:obs-xxx
                 colon_parts = raw_line.split(":")
                 if len(colon_parts) < 3:
@@ -151,23 +151,21 @@ def _git_grep_cites(
 
 
 def _dedup_key_id(entry: dict) -> str:
-    """Return the dedup_key for a lesson entry."""
-    try:
-        from bus.portable_memory_archive import dedup_key
+    """Return the dedup_key for a lesson entry (fuente comun del motor)."""
+    from bus.portable_memory_archive import dedup_key
 
-        return dedup_key(entry)
-    except ImportError:
-        return entry.get("id") or ""
+    return dedup_key(entry)
 
 
 def _is_lesson(entry: dict) -> bool:
-    """Check if an entry is a lesson (not template/telemetry)."""
-    try:
-        from bus.portable_memory_archive import is_lesson
+    """Check if an entry is a lesson (not template/telemetry).
 
-        return is_lesson(entry)
-    except ImportError:
-        return True
+    Sin fallback: si el import falla, la medicion debe romper en voz alta en
+    vez de tratar cualquier entrada como leccion (fail-closed).
+    """
+    from bus.portable_memory_archive import is_lesson
+
+    return is_lesson(entry)
 
 
 def _load_archive_ids(root: Path) -> list[dict]:
@@ -439,23 +437,24 @@ def _is_hit(
 # ---------------------------------------------------------------------------
 
 
-def _build_queries_for_lessons(
+def _build_queries_for_citations(
     citations: list[tuple[str, str, int]],
     pool_by_id: dict[str, dict],
     motor_root: Path,
-) -> list[tuple[str, str, str, str]]:
-    """Build all (lesson_id, query_type, query_value, section) tuples.
+) -> list[tuple[int, str, str, str]]:
+    """Build all (citation_idx, query_type, query_value, section) tuples.
 
     For each citation, derives a SUPERFICIE query and FASE queries.
-    Groups by lesson for reporting.
+    Returns queries indexed by citation position so results map back.
+    Citations with no valid surface query (useless stem at root) are excluded entirely.
 
     Before: citations are filtered and intersected with pool.
     During: applies surface and fase rules.
-    After: returns list of (lesson_id, query_type, query, section) tuples.
+    After: returns list of (citation_index, query_type, query, section) tuples.
     """
-    queries: list[tuple[str, str, str, str]] = []
+    queries: list[tuple[int, str, str, str]] = []
 
-    for filename, obs_id, line_num in citations:
+    for idx, (filename, obs_id, line_num) in enumerate(citations):
         lesson = pool_by_id.get(obs_id)
         if not lesson:
             continue
@@ -463,80 +462,126 @@ def _build_queries_for_lessons(
         # SUPERFICIE query
         surface_query = _derive_surface_query(filename)
         if surface_query is None:
+            # Useless stem at root -> exclude citation entirely
             continue
 
         section = _extract_markdown_section(filename, line_num, motor_root)
-        queries.append((obs_id, "superficie", surface_query, section))
+        queries.append((idx, "superficie", surface_query, section))
 
         # FASE queries
         fase_terms = _derive_fase_queries(section)
-        queries.extend((obs_id, "fase", term, section) for term in fase_terms)
+        queries.extend((idx, "fase", term, section) for term in fase_terms)
 
     return queries
 
 
 def _measure_hits(  # noqa: C901
-    queries: list[tuple[str, str, str, str]],
+    queries: list[tuple[int, str, str, str]],
+    citations: list[tuple[str, str, int]],
     pool_by_id: dict[str, dict],
     motor_root: Path,
     destino_root: Path,
     limit: int,
     recall_fn: Callable,
-) -> tuple[dict, dict, dict, list[str]]:
-    """Run recall for each query and measure hit@5.
+) -> tuple[dict, dict, dict, list[str], dict[int, dict]]:
+    """Run recall for each query and measure hit@5 (unit: non-excluded citation).
 
-    Returns (hit_by_type, denominators, lesson_results, failures).
+    Returns (hit_by_type, denominators, lesson_results, failures, citation_summary).
 
-    Before: queries list from _build_queries_for_lessons; pool_by_id maps
-        lesson IDs to their full entry dicts.
-    During: runs recall for each query, checks hit.
-    After: returns hit counts, denominators, failure list, and per-lesson results.
+    Unit = non-excluded citation: each (filename, id, line) surviving exclusion
+    and pool intersection.  Each citation has ONE surface query (its file stem)
+    and FASE queries (from its section heading, or all 8 vocab terms if no
+    section).
+
+    Recall is cached by query text: ``recall_fn`` is called ONCE per distinct
+    query string and the result is reused across citations that share the same
+    query (e.g. two citations in the same file share the surface query).
+
+    Query classification per citation:
+    - rc == 0  -> evaluate ``_is_hit`` with the citation's obs-id.
+    - rc == 1  with ``"No observations found"`` in stderr  -> MISS (not failure).
+    - rc == 1  with anything else in stderr  -> FAIL.
+    - rc != 0 and rc != 1  -> FAIL.
+
+    Denominator rules (DoD c, WOT-2026-124e ronda 6):
+    - superficie: every citation that has a surface query, EXCEPT those whose
+      surface query is a FAIL.  Failed surface queries appear in "Fallos".
+    - fase: every citation, EXCEPT those whose ALL phase queries are FAIL.
+      If at least one phase query is HIT, the citation counts as HIT and stays
+      in the denominator even if other phase queries failed.
+    - union: every citation except those whose surface type was excluded AND
+      whose phase type was excluded (i.e. no valid queries at all).
+
+    Before: queries list from ``_build_queries_for_citations``; ``citations``
+        is the full list; ``pool_by_id`` maps lesson IDs to entry dicts.
+    During: runs recall with cache, evaluates hit per citation.
+    After: returns hit counts, denominators, per-lesson aggregates, failure
+        list (surface queries that failed), and per-citation summary dict.
     """
-    # Per-lesson tracking
-    lesson_results: dict[str, dict] = {}
+    # Per-citation tracking (indexed by position in citations list).
+    citation_data: dict[int, dict] = {}
     failures: list[str] = []
 
-    for lesson_id, query_type, query, section in queries:
-        if lesson_id not in lesson_results:
-            lesson_results[lesson_id] = {
+    # Cache: query_text -> (rc, stdout, stderr)
+    recall_cache: dict[str, tuple[int, str, str]] = {}
+
+    for idx, query_type, query, section in queries:
+        # Initialise citation entry if not seen yet.
+        if idx not in citation_data:
+            citation_data[idx] = {
+                "filename": citations[idx][0],
+                "obs_id": citations[idx][1],
+                "line": citations[idx][2],
+                "section": section,
                 "superficie_hit": False,
                 "fase_hit": False,
-                "rc_failures": [],
-                "section": section,
+                "surface_failure": False,
+                "surface_failure_details": [],
+                "phase_failures": [],
                 "has_superficie_query": query_type == "superficie",
             }
         elif query_type == "superficie":
-            lesson_results[lesson_id]["has_superficie_query"] = True
+            citation_data[idx]["has_superficie_query"] = True
 
-        rc, stdout, stderr = recall_fn(motor_root, query, destino_root, limit)
+        # Use cached recall result if available, otherwise call and cache.
+        if query not in recall_cache:
+            recall_cache[query] = recall_fn(motor_root, query, destino_root, limit)
+        rc, stdout, stderr = recall_cache[query]
 
         if rc == 1 and "No observations found" in stderr:
             # rc 1 with "No observations found" in stderr = MISS, not a failure
             continue
 
         if rc != 0:
-            lesson_results[lesson_id]["rc_failures"].append(
+            # FAIL
+            citation_data[idx]["phase_failures"].append(
                 f"{query_type}:{query} -> rc={rc}"
             )
-            failures.append(f"{lesson_id}:{query_type}:{query}:rc={rc}")
+            if query_type == "superficie":
+                citation_data[idx]["surface_failure"] = True
+                citation_data[idx]["surface_failure_details"].append(query)
+            failures.append(f"{citations[idx][1]}:{query_type}:{query}:rc={rc}")
             continue
 
-        lesson_entry = pool_by_id.get(lesson_id, {})
+        # rc == 0 -> evaluate hit
+        citation = citations[idx]
+        obs_id = citation[1]
+        lesson_entry = pool_by_id.get(obs_id, {})
         hit = _is_hit(
             rc,
             stdout,
-            lesson_id,
+            obs_id,
             lesson_entry.get("topic", ""),
             lesson_entry.get("signal", ""),
         )
 
         if hit:
             if query_type == "superficie":
-                lesson_results[lesson_id]["superficie_hit"] = True
+                citation_data[idx]["superficie_hit"] = True
             else:
-                lesson_results[lesson_id]["fase_hit"] = True
+                citation_data[idx]["fase_hit"] = True
 
-    # Count hits and denominators
+    # Count hits and denominators per citation.
     hit_by_type: dict[str, int] = {
         "superficie": 0,
         "fase": 0,
@@ -548,8 +593,36 @@ def _measure_hits(  # noqa: C901
         "union": 0,
     }
 
-    for res in lesson_results.values():
-        denominators["union"] += 1
+    for idx, res in citation_data.items():
+        has_surface = res.get("has_superficie_query", False)
+        surface_failed = res.get("surface_failure", False)
+
+        # Phase queries for this citation
+        phase_queries_for_cit = [q for q in queries if q[0] == idx and q[1] == "fase"]
+        # All phase queries failed = EVERY phase query of this citation is a FALLO
+        # (one "fase:" failure entry per failed phase query). A mix of MISS and
+        # FALLO keeps the citation in the denominator.
+        phase_failure_count = sum(
+            1 for detail in res["phase_failures"] if detail.startswith("fase:")
+        )
+        all_phase_failed = len(
+            phase_queries_for_cit
+        ) > 0 and phase_failure_count == len(phase_queries_for_cit)
+        surface_excluded = (not has_surface) or surface_failed
+        phase_excluded = all_phase_failed
+
+        # Union denominator: exclude only when both types excluded.
+        if not (surface_excluded and phase_excluded):
+            denominators["union"] += 1
+
+        # Superficie denominator: exclude if no surface query or surface failed.
+        if has_surface and not surface_failed:
+            denominators["superficie"] += 1
+
+        # Fase denominator: exclude only if all phase queries failed.
+        if len(phase_queries_for_cit) > 0 and not all_phase_failed:
+            denominators["fase"] += 1
+
         surf_hit = res["superficie_hit"]
         fase_hit = res["fase_hit"]
         if surf_hit:
@@ -558,11 +631,50 @@ def _measure_hits(  # noqa: C901
             hit_by_type["fase"] += 1
         if surf_hit or fase_hit:
             hit_by_type["union"] += 1
-        if res.get("has_superficie_query"):
-            denominators["superficie"] += 1
-        denominators["fase"] += 1
 
-    return hit_by_type, denominators, lesson_results, failures
+    # Build per-lesson aggregate (informational, not the DoD criterion).
+    # Map: for each unique lesson_id, aggregate its citations' results.
+    lesson_results: dict[str, dict] = {}
+    # Collect unique obs_ids first
+    unique_obs_ids: list[str] = []
+    for res in citation_data.values():
+        oid = res["obs_id"]
+        if oid not in unique_obs_ids:
+            unique_obs_ids.append(oid)
+    # Aggregate per unique lesson_id
+    for obs_id in unique_obs_ids:
+        # Collect all citation indices for this lesson.
+        cit_indices = [i for i, r in citation_data.items() if r["obs_id"] == obs_id]
+        any_surface_hit = any(citation_data[i]["superficie_hit"] for i in cit_indices)
+        any_fase_hit = any(citation_data[i]["fase_hit"] for i in cit_indices)
+        has_surface = any(
+            citation_data[i].get("has_superficie_query", False) for i in cit_indices
+        )
+        section = citation_data[cit_indices[0]]["section"] if cit_indices else ""
+        lesson_results[obs_id] = {
+            "superficie_hit": any_surface_hit,
+            "fase_hit": any_fase_hit,
+            "section": section,
+            "has_superficie_query": has_surface,
+            "cit_indices": cit_indices,
+        }
+
+    # Build per-citation summary for report.
+    citation_summary: dict[int, dict] = {}
+    for idx, res in citation_data.items():
+        surface_hit = res["superficie_hit"]
+        fase_hit = res["fase_hit"]
+        citation_summary[idx] = {
+            "filename": res["filename"],
+            "obs_id": res["obs_id"],
+            "line": res["line"],
+            "section": res["section"],
+            "surface_hit": surface_hit,
+            "fase_hit": fase_hit,
+            "union_hit": surface_hit or fase_hit,
+        }
+
+    return hit_by_type, denominators, lesson_results, failures, citation_summary
 
 
 # ---------------------------------------------------------------------------
@@ -574,33 +686,48 @@ def _generate_report(
     hit_by_type: dict[str, int],
     denominators: dict[str, int],
     lesson_results: dict[str, dict],
-    motor_sha: str,
+    citation_summary: dict[int, dict],
+    citations: list[tuple[str, str, int]],
+    pool: list[dict],
     excluded_count: int,
     failures: list[str],
+    motor_sha: str,
     output_path: Path,
 ) -> None:
     """Generate the markdown report and write it to ``output_path``.
 
     Before: all measurement results are computed.
-    During: formats table with hit@5 by type, denominators, etc.
+    During: formats primary table (hit@5 by type, unit: citation), secondary
+        table (per-lesson aggregate, informational), per-citation detail, and
+        failures list.
     After: writes markdown file; does NOT raise.
     """
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    total_lessons_in_pool = len(pool)
 
     lines: list[str] = []
     lines.append(f"# Hit@5 recall quality report -- {now_utc}")
     lines.append("")
     lines.append(f"- **Motor SHA:** `{motor_sha}`")
     lines.append(f"- **Date:** {now_utc}")
+    distinct_lessons = len({oid for _fn, oid, _ln in citations})
+    lines.append(
+        f"- **Citas de G (citadas y en el pool):** {len(citations) + excluded_count}"
+    )
+    lines.append(f"- **Citas de G excluidas:** {excluded_count}")
+    lines.append(f"- **Citas no excluidas (unidad):** {len(citations)}")
+    lines.append(
+        f"- **Lecciones distintas en las citas no excluidas:** {distinct_lessons}"
+    )
+    lines.append(f"- **Total lecciones en pool:** {total_lessons_in_pool}")
     lines.append("")
 
-    # Hit@5 table
-    lines.append("## Hit@5 por tipo")
+    # ---- Primary table: Hit@5 por tipo (unidad: cita no excluida) ----
+    lines.append("## Hit@5 por tipo (unidad: cita no excluida)")
     lines.append("")
     lines.append(
-        "Denominadores: superficie = lecciones con al menos una cita no excluida; "
-        "fase = todas (las 'sin seccion' usan los 8 terminos); "
-        "union = todas."
+        "Denominador = citas no excluidas (DoD c), menos las citas cuyas queries "
+        "de ese tipo fallaron (listadas en Fallos)."
     )
     lines.append("")
     lines.append("| Tipo | Hits | Denominador | Hit rate |")
@@ -614,37 +741,67 @@ def _generate_report(
 
     lines.append("")
 
-    # Per-lesson detail
-    lines.append("## Detalle por leccion")
+    # ---- Secondary table: Agregado por leccion (informativo) ----
+    lines.append("## Agregado por leccion (informativo, no es el criterio del DoD)")
     lines.append("")
-    lines.append("| Leccion | Seccion | Superficie | Fase | RC fallos |")
-    lines.append("|---------|---------|------------|------|-----------|")
+    lines.append("Una leccion es HIT de un tipo si ALGUNA de sus citas es HIT.")
+    lines.append("")
+    lines.append("| Leccion | Seccion | Superficie | Fase |")
+    lines.append("|---------|---------|------------|------|")
 
     for lid in sorted(lesson_results.keys()):
         res = lesson_results[lid]
         section = res.get("section", "")
         surf = "HIT" if res["superficie_hit"] else "MISS"
         fase = "HIT" if res["fase_hit"] else "MISS"
-        rc_failures = "; ".join(res["rc_failures"]) if res["rc_failures"] else "-"
-        lines.append(f"| {lid} | {section or '-'} | {surf} | {fase} | {rc_failures} |")
+        lines.append(f"| {lid} | {section or '-'} | {surf} | {fase} |")
 
     lines.append("")
 
-    # Excluded citations
-    lines.append(f"Citas excluidas: {excluded_count}")
+    # ---- Per-citation detail ----
+    lines.append("## Detalle por cita")
+    lines.append("")
+    lines.append("| Fichero:Linea | ID | Seccion | Superficie | Fase | Union |")
+    lines.append("|---------------|----|---------|------------|------|-------|")
+
+    # Sort by (filename, line) for deterministic output.
+    sorted_indices = sorted(
+        citation_summary.keys(),
+        key=lambda i: (citation_summary[i]["filename"], citation_summary[i]["line"]),
+    )
+    for idx in sorted_indices:
+        s = citation_summary[idx]
+        surface = "HIT" if s["surface_hit"] else "MISS"
+        fase = "HIT" if s["fase_hit"] else "MISS"
+        union = "HIT" if s["union_hit"] else "MISS"
+        section = s["section"] or "-"
+        lines.append(
+            f"| {s['filename']}:{s['line']} | {s['obs_id']} | {section} | {surface} | {fase} | {union} |"
+        )
+
     lines.append("")
 
-    # Sin seccion group
+    # ---- Citas con fallos de superficie (Fuera del denominador de superficie) ----
+    if failures:
+        lines.append("## Fallos (citas cuya query de superficie fallo)")
+        lines.append("")
+        lines.append(
+            "Estas citas se excluyen del denominador de superficie.  "
+            "Siguen contando en fase/union si sus queries de fase son validas."
+        )
+        lines.append("")
+        lines.extend([f"- {f}" for f in sorted(failures)])
+        lines.append("")
+
+    # ---- Excluded citations ----
+    lines.append(f"Citas de G excluidas: {excluded_count}")
+    lines.append("")
+
+    # Sin seccion group (informational)
     sin_seccion = [lid for lid, res in lesson_results.items() if not res.get("section")]
     if sin_seccion:
         lines.append(f"Grupo 'sin seccion': {len(sin_seccion)} lecciones")
         lines.extend([f"- {lid}" for lid in sorted(sin_seccion)])
-        lines.append("")
-
-    # RC failures
-    if failures:
-        lines.append("Fallos rc != 0:")
-        lines.extend([f"- {f}" for f in sorted(failures)])
         lines.append("")
 
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -705,17 +862,6 @@ def main() -> int:
         )
         return 1
 
-    # Filter out self-citations and useless stems at root
-    citations, excluded_count = _filter_excluded_citations(
-        raw_citations, _EXCLUDED_SCRIPT_STEM
-    )
-    if not citations:
-        print(
-            "ERROR: all citations were excluded. Aborting (fail-closed).",
-            file=sys.stderr,
-        )
-        return 1
-
     # Step 2: load and deduplicate pool from both archives
     motor_entries = _load_archive_ids(motor_root)
     destino_entries = _load_archive_ids(destino_root)
@@ -731,17 +877,29 @@ def main() -> int:
 
     pool_by_id = {e.get("id"): e for e in pool if e.get("id")}
 
-    # Step 3: intersect citations with pool
-    citations = _intersect_with_pool(citations, pool)
-    if not citations:
+    # Step 3: intersect citations with pool -> universe G, BEFORE excluding,
+    # so the excluded count refers to G citations (DoD b: "excluida y contada").
+    g_citations = _intersect_with_pool(raw_citations, pool)
+    if not g_citations:
         print(
             "ERROR: no citations intersect with pool. Aborting (fail-closed).",
             file=sys.stderr,
         )
         return 1
 
-    # Step 4: derive queries
-    queries = _build_queries_for_lessons(citations, pool_by_id, motor_root)
+    # Filter out self-citations and useless stems at root
+    citations, excluded_count = _filter_excluded_citations(
+        g_citations, _EXCLUDED_SCRIPT_STEM
+    )
+    if not citations:
+        print(
+            "ERROR: all citations were excluded. Aborting (fail-closed).",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Step 4: derive queries (indexed by citation position)
+    queries = _build_queries_for_citations(citations, pool_by_id, motor_root)
     if not queries:
         print(
             "ERROR: no valid queries derived. Aborting (fail-closed).",
@@ -750,8 +908,16 @@ def main() -> int:
         return 1
 
     # Step 5: measure hit@5
-    hit_by_type, denominators, lesson_results, failures = _measure_hits(
-        queries, pool_by_id, motor_root, destino_root, args.limit, _recall_run
+    hit_by_type, denominators, lesson_results, failures, citation_summary = (
+        _measure_hits(
+            queries,
+            citations,
+            pool_by_id,
+            motor_root,
+            destino_root,
+            args.limit,
+            _recall_run,
+        )
     )
 
     # Step 6: get motor SHA
@@ -771,9 +937,12 @@ def main() -> int:
         hit_by_type,
         denominators,
         lesson_results,
-        motor_sha,
+        citation_summary,
+        citations,
+        pool,
         excluded_count,
         failures,
+        motor_sha,
         output_path,
     )
 
