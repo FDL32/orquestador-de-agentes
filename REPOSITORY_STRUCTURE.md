@@ -66,6 +66,18 @@ orquestador_de_agentes/
 - `tests/.../.agent.__pytest_hidden__/` is a testing mirror used by specific test scenarios.
 - Local editor settings, caches and runtime artifacts are intentionally excluded from the public contract.
 
+## Design vs. development sessions (destination projects)
+
+The motor ships `.agent/collaboration/` as a neutral seed. A destination project populates it at
+runtime with two parallel, non-colliding session types: a read-only `sesion_diseno` (triages the
+backlog, drafts flight plans into a queue, never touches code or `backlog.md`) and a
+`sesion_desarrollo` (implements, commits, and advances queued flight plans through execution).
+Neither this document nor the motor hardcodes the destination's queue paths, since the motor must
+remain publishable without any knowledge of a parent workspace (see "Public boundary" below). The
+full contract -- who writes which surface, and the no-collision guarantee between the two session
+types -- is canonical in `.agent/rules/common/vocabulario_canonico.md`; this section only points to
+it (no redeclaration, per the skill/prompt governance convention).
+
 ## Public boundary
 
 When this repository is published:
