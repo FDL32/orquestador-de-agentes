@@ -321,6 +321,7 @@ re-emitir el Paso 5 sin re-ejecutar los pasos intermedios. El `APPROVE`
 anterior queda invalidado: reescribe `decision_<ticket_id>.json` a
 `"decision": "CHANGES"` en el mismo turno en que detectas el fallo,
 para que no quede una aprobacion persistida mientras se corrige.
+El fallo de suite de esta formula es el que sobrevive a la clasificacion de ENTORNO que hace el Builder (QUICKSTART.md "Sellos largos"); un rojo de entorno no llega aqui.
 
 Ademas del veredicto en texto, escribe el decision artifact estructurado
 (canal primario del bridge; el transcript queda como fallback y evidencia).
@@ -380,7 +381,7 @@ lo saltes ni lo asumas implicito.
    aprobar.
 2. Con permiso obtenido, el rol BUILDER ejecuta la suite canonica (el
    Manager puede pedirsela; quien la corre y aporta la evidencia es el
-   Builder, igual que el resto de gates del ticket):
+   Builder, igual que el resto de gates del ticket; precondicion de ruta en QUICKSTART.md "Sellos largos"):
    ```
    python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all
    ```

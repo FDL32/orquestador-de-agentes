@@ -595,11 +595,30 @@ class TestRealPathSlug:
     """Verify slug derivation works for the real project path."""
 
     def test_motor_repo_slug(self):
-        """Motor repo path produces a deterministic slug."""
+        """Motor repo path produces a deterministic, separator-free slug.
+
+        Only path-neutral invariants: the old `len(slug) > 10` floor failed by
+        construction on a short checkout (`C:/w/oaf` -> 8 chars), which is the
+        documented remedy for Windows MAX_PATH (QUICKSTART "Sellos largos").
+        Exact casing and `.` handling are NOT pinned here: they are the subject
+        of a separate slug-vs-Claude-Code ticket.
+        """
         slug = derive_project_slug(_MOTOR_PROJECT_ROOT)
         assert isinstance(slug, str)
-        assert len(slug) > 10
-        assert "--" in slug or "-" in slug
+        assert slug
+        assert slug == derive_project_slug(_MOTOR_PROJECT_ROOT)
+        assert not any(sep in slug for sep in ("/", "\\", ":"))
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="drive-letter paths only resolve natively on Windows",
+    )
+    def test_short_checkout_path_slug(self):
+        """A short checkout (MAX_PATH remedy) still yields a valid slug."""
+        slug = derive_project_slug(Path("C:/w/x"))
+        assert slug
+        assert not any(sep in slug for sep in ("/", "\\", ":"))
+        assert slug.lower() == "c--w-x"
 
     @pytest.mark.skipif(
         sys.platform != "win32",

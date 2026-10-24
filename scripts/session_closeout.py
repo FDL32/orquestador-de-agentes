@@ -1426,6 +1426,61 @@ def _step_git_clean(project_root: Path, dry_run: bool) -> StepResult:
     )
 
 
+# Puntuacion y comillas que la prosa real del backlog pega a un valor de
+# `deliverable_type:` (`code,` x103, `documentation,` x19, `code;`, `code.`,
+# `documentation\``, ...): se quitan de los dos extremos antes de comparar.
+_DELIVERABLE_VALUE_STRIP = "`'\",.;:()*"
+
+
+def _own_row_deliverable_type(line: str, ticket_id: str) -> str | None:
+    """Strictest known ``deliverable_type`` of ``line`` if it is ``ticket_id``'s own row.
+
+    Before: ``line`` is one raw line of a backlog surface.
+    During: the line is an OWN row only if it is a table row whose raw cell 1
+        or cell 2 is exactly ``ticket_id`` (the two real layouts:
+        `| <ID> | ...` and `| <prioridad> | <ID> | ...`); a mention in the
+        prose of another ticket's row is not. Every `deliverable_type:` token
+        of the own row is cleaned of `_DELIVERABLE_VALUE_STRIP` and kept only
+        if it fullmatches a key of `check_loop_execution.
+        DEFAULT_MIN_DISTINCT_BACKENDS` (the barrier's own taxonomy). Only the
+        punctuation glued to a token is normalized, against that EXISTING
+        taxonomy: no new type is invented and an unknown value (`process`,
+        `banana`) is still ignored -- deciding taxonomy remains a DEC. Side
+        effect, declared: a dirty token (`documentation,`) used to miss the
+        taxonomy and fall to the strict fallback; it now counts as its type.
+        Scope differs from `_backlog_table_row_for_ticket` (WOT-2026-073d), which
+        compares only `cells[2]`: this helper accepts cell 1 or 2 because ~186
+        archived rows use the `| <ID> | ...` layout. Do not unify them without
+        covering both layouts.
+    After: returns the token with the highest minimum of distinct lenses (the
+        strictest; prose that cites a laxer type cannot relax the row), or
+        None if the line is not an own row or has no known token. Never raises:
+        an import failure of the taxonomy yields None (caller falls back to
+        `code`).
+    """
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    cells = stripped.split("|")
+    if not any(len(cells) > i and cells[i].strip() == ticket_id for i in (1, 2)):
+        return None
+    try:
+        from scripts.check_loop_execution import DEFAULT_MIN_DISTINCT_BACKENDS
+    except Exception:  # fail-closed: sin taxonomia, el llamador cae a code
+        return None
+    known = [
+        token
+        for token in (
+            raw.strip(_DELIVERABLE_VALUE_STRIP).lower()
+            for raw in DELIVERABLE_TYPE_RE.findall(line)
+        )
+        if token in DEFAULT_MIN_DISTINCT_BACKENDS
+    ]
+    if not known:
+        return None
+    return max(known, key=lambda token: DEFAULT_MIN_DISTINCT_BACKENDS[token])
+
+
 def _resolve_deliverable_type_for_ticket_detailed(
     project_root: Path, ticket_id: str
 ) -> tuple[str, bool]:
@@ -1440,35 +1495,37 @@ def _resolve_deliverable_type_for_ticket_detailed(
     under `project_root` silently got `"code"`, indistinguishable from a
     ticket that genuinely declared `deliverable_type: code`.
 
+    WOT-2026-120a (65c93646/0f348d16): matching by substring let the live rows
+    of 120b/120c, which cite "WOT-2026-120a" in prose, stamp 120a as `mixed`
+    over its real archived `documentation` row -- superseded here by
+    `_own_row_deliverable_type` (ID-cell match, never a substring of the line).
+
     Before: ``project_root`` is the repo_destino; ``ticket_id`` is a resolved
         ticket string.
-    During: Searches for a row containing ``ticket_id`` first in the live
-        backlog (`.agent/collaboration/backlog.md`), then in the archive
-        (`_archive/backlog_done.md`). Within the matching row, extracts the
-        literal ``deliverable_type: <value>`` cell text with
-        ``DELIVERABLE_TYPE_RE``. Values are NEVER normalized (e.g. `doc` or
-        `process` are emitted verbatim): deciding taxonomy is a DEC, not
-        Builder work.
-    After: Returns ``(value, declared)``. ``declared=True`` means a row with
-        an explicit ``deliverable_type:`` cell was found; ``declared=False``
-        means no row (or a row without the cell) was found and ``value`` is
-        the documented fallback `"code"` (the ticket's own declared type and
-        the strictest alongside `mixed`). Never raises.
+    During: Looks for the ticket's OWN row (`_own_row_deliverable_type`) first
+        in the live backlog (`.agent/collaboration/backlog.md`), then in the
+        archive (`_archive/backlog_done.md`). Values are only normalized of
+        glued punctuation against the existing taxonomy (see
+        `_own_row_deliverable_type`): deciding taxonomy is a DEC, not Builder
+        work.
+    After: Returns ``(value, declared)``. ``declared=True`` means an own row
+        with a known ``deliverable_type:`` token was found; ``declared=False``
+        means no own row (or none with a known token) was found and ``value``
+        is the documented fallback `"code"` (the ticket's own declared type
+        and the strictest alongside `mixed`). Never raises.
     """
     for rel in (BACKLOG_REL, BACKLOG_ARCHIVE_REL):
         path = project_root / rel
         try:
             content = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         for line in content.splitlines():
-            if ticket_id not in line:
-                continue
-            m = DELIVERABLE_TYPE_RE.search(line)
-            if m:
-                return m.group(1), True
-    # No row found in either surface, or the row lacked the cell: fall back
-    # to "code" (documented default per contract WOT-2026-045a), marked
+            dtype = _own_row_deliverable_type(line, ticket_id)
+            if dtype is not None:
+                return dtype, True
+    # No own row found in either surface, or none declared a known type: fall
+    # back to "code" (documented default per contract WOT-2026-045a), marked
     # undeclared so the caller can distinguish a guess from a fact.
     return "code", False
 

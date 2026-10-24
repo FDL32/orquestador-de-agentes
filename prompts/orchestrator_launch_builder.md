@@ -584,10 +584,10 @@ para la secuencia exacta.
 - **Cierre final** (unico paso que autoriza `--manager-approve`/commit de
   cierre real) exige, EN ESTE ORDEN, DESPUES de que el Manager apruebe (ver
   Manager Review Paso 5-bis) y el usuario de permiso explicito para cerrar:
-  1. suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all` con
+  1. suite canonica `python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all` (precondicion de ruta: QUICKSTART.md "Sellos largos") con
      `last-run.json` en `status=finished`, `exit_code=0`, `level=all`,
      `args_mode=default_discovery` y `tested_commit_sha == HEAD` (commit que se cierra);
-  2. si la suite falla: NO se cierra. El ticket vuelve a `CHANGES` y repite
+  2. si la suite falla (rojo que sobrevive a la clasificacion de ENTORNO del Builder, QUICKSTART.md "Sellos largos"): NO se cierra. El ticket vuelve a `CHANGES` y repite
      integramente los Pasos 1-5 de `manager_review.md` (no solo re-emitir el
      Paso 5, no un parche puntual): un fallo de suite tras el `APROBADO`
      del Paso 5 invalida esa aprobacion por completo, porque el Manager
@@ -627,7 +627,7 @@ Replay closeout-only (p.ej. reactivar un ticket cuya feature ya esta commiteada,
 sin tocar codigo productivo):
 
 ```powershell
-# 1) Suite canonica con el interprete del destino (lanzable desde el motor):
+# 1) Suite canonica con el interprete del destino, cwd dentro de QUICKSTART.md "Sellos largos":
 $env:AGENT_PROJECT_ROOT = "C:\ruta\repo_destino"
 python C:\ruta\repo_motor\scripts\run_pytest_safe.py --level all
 #    Verifica last-run.json: status=finished, exit_code=0, level=all,
@@ -744,7 +744,7 @@ cuando se cumplen, EN ESTE ORDEN, las dos condiciones previas:
    actos distintos del mismo actor Manager, y el segundo (pedir permiso) es
    quien inicia este paso -- ver `manager_review.md` Paso 5-bis punto 1.
 
-Con ambas condiciones cumplidas:
+Con ambas condiciones cumplidas, y la precondicion de ruta de QUICKSTART.md "Sellos largos" (suite y puerta de cierre desde el MISMO checkout):
 
 ```powershell
 python <MOTOR_ROOT>/scripts/run_pytest_safe.py --level all
@@ -756,7 +756,7 @@ que el Manager aprobo -- si hubo commits posteriores a la aprobacion, la
 suite corre sobre un commit distinto al aprobado y eso es un hallazgo, no un
 cierre valido).
 
-- Si la suite **falla**: NO cierres. Reporta el fallo al Manager como un
+- Si la suite **falla**: NO cierres; descarta primero rojo de ENTORNO (QUICKSTART.md "Sellos largos") y despues reporta al Manager el rojo que sobrevive como un
   blocker nuevo. La aprobacion anterior queda invalidada por completo: el
   ticket vuelve a `CHANGES` y el Manager repite integramente los Pasos 1-5
   de `manager_review.md` sobre el commit actual (Clasificacion, gates
