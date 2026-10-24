@@ -32,8 +32,8 @@ es wrapper operativo; si divergen, prevalece este prompt.
 
 **El agente que EJECUTO el batch NO PUEDE auditarlo.** Fresh-context es
 OBLIGATORIO. Un ejecutor que se auto-certifica es, por definicion,
-auto-reporte, y `prompts/audit_agent_output.md` (CEM v0, principio rector) lo
-prohibe explicitamente: "no aceptes auto-reportes como evidencia".
+auto-reporte, y el criterio de evidencia (CEM v0,
+`prompts/_shared/evidence_contract.md`) no lo admite como prueba.
 
 Este prompt hereda el patron de `prompts/audit_goal_completion.md` --
 **"checker AISLADO del orquestador-ejecutor"** -- y lo aplica al batch

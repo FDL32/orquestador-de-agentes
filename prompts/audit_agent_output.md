@@ -10,7 +10,7 @@
 
 ## Principio rector
 
-No aceptes auto-reportes como evidencia. Un output de agente solo es confiable si sus claims importantes se sostienen contra artefactos reales: diff, codigo, tests, exit code, bus, estado git, bytes o documentacion canonica.
+Un output de agente solo es confiable si sus claims importantes se sostienen contra artefactos reales. Criterio de evidencia (que cuenta, etiquetas): `prompts/_shared/evidence_contract.md`.
 
 ## Frontera del auditor
 

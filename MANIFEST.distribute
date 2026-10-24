@@ -58,6 +58,7 @@ prompts/orchestrator_session_bootstrap.md
 prompts/orchestrator_session_close_chat.md
 prompts/persona_system.md
 prompts/revisor_independent_review.md
+prompts/_shared/evidence_contract.md
 
 # =============================================================================
 # SKILLS (micro-habilidades reutilizables)

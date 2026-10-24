@@ -237,7 +237,7 @@ Etiqueta cada claim importante con una de estas marcas:
 
 ## Reglas no negociables
 
-- No trates auto-reportes como evidencia.
+- Criterio de evidencia: `prompts/_shared/evidence_contract.md`.
 - No dupliques logica de skills en prompts si basta con referenciarlas.
 - Si prompt y skill cubren el mismo proceso, la skill es la fuente canonica y
   el prompt debe actuar como wrapper contextual.

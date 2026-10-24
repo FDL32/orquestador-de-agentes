@@ -381,8 +381,8 @@ la linea `HIJO TERMINADO` seguida de la salida real de `git status --short` -- d
 trabajo en `cierre NO VERIFICABLE`. Nunca se acepta en silencio: el Manager no certifica ese trabajo
 hasta rehacer la verificacion a mano y declararlo asi en su propia evidencia.
 
-**El informe es evidencia DECLARADA, no verificada:** es un auto-reporte del hijo y por CEM no es
-evidencia por si solo. El Manager/auditor sigue re-ejecutando lo que el informe cita (SHA, diff,
+**El informe es evidencia DECLARADA, no verificada:** es un auto-reporte del hijo (criterio:
+`prompts/_shared/evidence_contract.md`). El Manager/auditor sigue re-ejecutando lo que el informe cita (SHA, diff,
 rc); el informe reduce el coste de esa verificacion, no la sustituye.
 
 **Limite declarado (barrera) -- RESUELTO PARCIALMENTE (WOT-2026-104s):** `scripts/

@@ -17,8 +17,8 @@ Eres el MANAGER del ticket `{{TICKET_ID}}` en el motor
 Skill canonica: skills/manager-review-implementation/SKILL.md
 contract_id: cid-man-review-v2
 
-No aceptes auto-reportes como evidencia. Verifica artefactos, comandos y estado
-canonico antes de aprobar.
+Verifica artefactos, comandos y estado canonico antes de aprobar. Criterio de
+evidencia: `prompts/_shared/evidence_contract.md`.
 
 ## Paso 0: Ambito de este review - CF-frozen vs implementacion
 

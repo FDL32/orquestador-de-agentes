@@ -10,6 +10,15 @@ A RE-DECLARATION is a text unit (paragraph or list item) that restates the
 criterion AND does not reference ``evidence_contract`` in that same unit. Titles
 and pointers ("hereda audit_agent_output.md: evidencia antes que relato, CEM v0")
 never match because they do not carry the long-form criterion phrases.
+
+DECLARED LIMIT (Review 2, same principle as ``check_document_self_contradiction``:
+it only covers the predicates it declares). The detector is LEXICAL. It covers the
+families in ``CRITERION_PATTERNS`` (literal "ningun auto-reporte ... evidencia;
+usa", probe-or-hypothesis, "auto-reporte ... como/no es/no vale como ...
+evidencia|prueba", "informe ... sustituye ... evidencia|prueba", "afirmaciones
+causales ... requieren ... prueba"). It does NOT cover arbitrary paraphrases: a
+restatement in words outside those families passes. Extending it is a new family
+plus its mutation test, not a promise of semantic coverage.
 """
 
 from __future__ import annotations
@@ -36,6 +45,20 @@ CRITERION_PATTERNS = (
     ),
     re.compile(r"precedida\s+de\s+un\s+probe"),
     re.compile(r"marcad[ao]\s+como\s+hipotesis"),
+    # Family one: a self-report framed as (not) evidence or proof.
+    re.compile(
+        r"auto-?report\w*[^.;]{0,60}\b(?:como|no\s+es|no\s+vale\s+como|sustituye\w*)\b"
+        r"[^.;]{0,30}\b(?:evidencia|prueba)"
+    ),
+    # Family two: an agent report said to replace the evidence.
+    re.compile(
+        r"\binforme\b[^.;]{0,40}\bsustituye\w*\b[^.;]{0,30}\b(?:evidencia|prueba)"
+    ),
+    # Family three: causal or state claims said to require proof.
+    re.compile(
+        r"afirmaciones?\s+(?:causal|historic|de\s+estado)\w*[^.;]{0,40}"
+        r"\b(?:requieren|exigen|necesitan)\b[^.;]{0,30}\b(?:prueba|probe|evidencia)"
+    ),
 )
 
 #: The label vocabulary is USED (not restated) by many audit surfaces, so it is not
@@ -195,6 +218,35 @@ def test_mutation_in_references_is_detected(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert len(find_redeclarations(tmp_path)) == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No aceptes auto-reportes como evidencia. Verifica artefactos y comandos.",
+        "Las afirmaciones causales requieren pruebas ejecutadas; las conjeturas deben "
+        "identificarse como tales.",
+        "Ningun informe de un agente sustituye la evidencia; verifica con diff o exit code.",
+        "El auto-reporte del agente no vale como prueba: usa diff, exit code o test.",
+    ],
+)
+def test_mutation_review2_paraphrase_families_are_detected(
+    tmp_path: Path, text: str
+) -> None:
+    """MUTATION (Review 2): paraphrases of the criterion without pointer are caught.
+
+    Before: ``tmp_path`` is an empty fixture repo.
+    During: writes one paraphrase as a prompt, with no ``evidence_contract`` pointer.
+    After: exactly one hit; the same text WITH the pointer yields zero (exempt).
+    """
+    prompt = tmp_path / "prompts" / "p.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(text + "\n", encoding="utf-8")
+    assert len(find_redeclarations(tmp_path)) == 1
+    prompt.write_text(
+        text + " Ver `prompts/_shared/evidence_contract.md`.\n", encoding="utf-8"
+    )
+    assert find_redeclarations(tmp_path) == []
 
 
 @pytest.mark.parametrize(

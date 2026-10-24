@@ -23,8 +23,10 @@ not: NO es la barrera de ejecucion (el Stop hook native_stop_hook.py) ni el cont
 ## Etiquetas de hallazgo
 
 Etiqueta cada hallazgo VERIFICADO / INFERIDO / NO VERIFICADO. Si algo es inferencia,
-etiquetalo como inferencia. Solo cuentan como evidencia diff, exit code, salida real
-de test, evento de bus, commit/SHA, bytes y git.
+etiquetalo como inferencia. Solo cuentan como evidencia diff, codigo, exit code, salida
+real de test, evento de bus, commit/SHA, bytes, estado git y documentacion canonica:
+un output de agente es confiable solo si sus claims importantes se sostienen contra
+esos artefactos reales.
 
 ## Vinculo con el Stop hook
 
@@ -39,6 +41,13 @@ DECISION fechada 2026-10-24: `skills/*/references/` queda DENTRO del universo es
 por `tests/unit/test_evidence_contract_single_source.py` (si aparece alli una
 re-declaracion del criterio, el test cae) pero FUERA de reescritura, porque el censo de
 WOT-2026-044v dio 0 re-declaraciones en esas rutas.
+
+LIMITE declarado (Review 2): el test es un detector LEXICAL. Cubre las familias que
+declara (auto-reporte como/no es/no vale como evidencia o prueba; informe que sustituye
+la evidencia; afirmaciones causales que requieren prueba; la formula literal de la
+Norma) y NO parafrasis arbitrarias: una re-declaracion en otras palabras pasa. Mismo
+principio que `check_document_self_contradiction`: solo cubre los predicados que
+declara.
 
 Universo escaneado: `AGENTS.md`, `CLAUDE.md`, `prompts/`, `skills/` (incluye
 `references/`) y `.agent/rules/`. Fuera de alcance: `.agent/hooks/native_stop_hook.py`,
