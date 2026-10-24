@@ -101,6 +101,26 @@ ignore-vuln = [
     # deuda PYSEC de arriba) ya NO se ignoran: origin/main (112613c1, 2026-10-21) subio
     # virtualenv a 21.14.7 via ventana por-paquete en uv.toml, resolviendolas de verdad
     # (no solo ignorandolas). Retiradas al fusionar ese commit, 2026-10-22.
+    # filelock >=4.0.0 (fix real en 4.2.1) -- deuda detectada en push del lote motor
+    # v6 de WOT-2026-120a, 2026-10-24, sin resolver: TODA la rama 4.x exige
+    # Python>=3.11 (verificado via metadata de PyPI y `uv pip install
+    # "filelock==4.2.1" --dry-run` -> "current Python version (3.10.19) does not
+    # satisfy Python>=3.11"), y este proyecto declara requires-python >=3.10.
+    # No hay backport con fix conocido en la rama 3.x a esta fecha. Alcance de uso
+    # confirmado (grep de virtualenv/util/lock.py): solo se usa la clase base
+    # FileLock, nunca ReadWriteLock/AsyncReadWriteLock/SoftFileLock (las clases que
+    # SI afectan estos 3 GHSA) -- no es alcanzable por la ruta transitiva real de
+    # este repo (via virtualenv/python-discovery, grupo dev, sin import directo).
+    # Explotacion exige ademas escritura local en el mismo directorio del lock
+    # (symlink/fichero lateral plantado); riesgo residual bajo para tooling de
+    # desarrollador en un solo equipo, no cero en todo entorno posible. Revisado
+    # en bucle DESIGN_REVIEW de 3 lentes (qwen3.6, gemma4: ADOPTAR; codex:
+    # ADOPTAR CON CAMBIOS), 2026-10-24. Retirar esta excepcion si el proyecto sube
+    # su piso a Python>=3.11, si aparece un fix retroactivo en la rama 3.x, o si
+    # virtualenv cambia su uso hacia alguna de las clases afectadas.
+    "GHSA-v4x8-3wr5-3wq8", # filelock >=4.2.1 -- ReadWriteLock/AsyncReadWriteLock (Linux, symlink), inalcanzable, ver nota arriba
+    "GHSA-9vhv-jxww-xfm5", # filelock >=4.2.1 -- ReadWriteLock/AsyncReadWriteLock (Windows, side files), inalcanzable, ver nota arriba
+    "GHSA-567q-5qvw-pf92", # filelock >=4.2.1 -- SoftFileLock (Windows, oplock), inalcanzable, ver nota arriba
 ]
 
 [tool.uv]
