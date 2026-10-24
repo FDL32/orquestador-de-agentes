@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
     from scripts.session_closeout import StepResult
 
 from bus.state_machine import is_terminal_state
+from bus.ticket_id import is_valid_ticket_id
 from scripts.delivery_hygiene_check import check_archive_rename_complete
 from scripts.manager_feedback_helpers import (
     extract_ticket_id_from_feedback as _canonical_extract_ticket_id_from_feedback,
@@ -382,14 +384,88 @@ def step_archive_execution_log(
         )
 
 
+def _archived_ticket_ids_from_stdout(stdout: str | None) -> list[str]:
+    """Parse archive_event_bus.py's JSON stdout for tickets it actually archived.
+
+    Before: `stdout` is the captured stdout of ``archive_event_bus.py``, a
+        JSON object with a top-level ``results`` list, each entry carrying
+        ``ticket_id`` and ``archived_count`` (see scripts/archive_event_bus.py
+        ``_archive_ticket``/``main``).
+    During: pure parsing, no I/O. Malformed/missing JSON degrades to [].
+        Revisor finding F2 (WOT-2026-088f): this is the boundary that decides
+        which ticket_id gets interpolated into a ``git add -f`` path, so it
+        validates the SHAPE with ``is_valid_ticket_id`` here rather than at
+        ``_git_add_force`` -- the producer (``EventBus.archive_ticket_events``)
+        already interpolates the id into the archive filename unsanitized, so
+        a malformed id would have broken earlier; this filter is this
+        consumer's own defense, not a claim that the producer is unsafe.
+    After: returns the ticket ids whose ``archived_count`` is truthy (> 0)
+        AND whose id matches the canonical ticket-id shape; a ticket present
+        in the bus with 0 events archived produced no new archive file, so it
+        is excluded.
+    """
+    if not stdout:
+        return []
+    try:
+        payload = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(results, list):
+        return []
+    return [
+        entry["ticket_id"]
+        for entry in results
+        if isinstance(entry, dict)
+        and entry.get("archived_count")
+        and isinstance(entry.get("ticket_id"), str)
+        and is_valid_ticket_id(entry["ticket_id"])
+    ]
+
+
+def _git_add_force(project_root: Path, rel_path: str) -> bool:
+    """``git add -f`` a single gitignored path. Returns True on success.
+
+    WOT-2026-088f: the terminal ticket's rotated archive lives under
+    ``.agent/runtime/events/archive/``, which ``.gitignore`` excludes on
+    purpose (it is runtime state, not source). But a CLOSED ticket's archived
+    events are the ONLY record of its BUILDER_EXIT/STATE_CHANGED once rotation
+    removes them from the live ``events.jsonl`` -- a fresh clone that never
+    had them locally fails ``agent_controller --validate`` with
+    ``INVARIANT: Missing BUILDER_EXIT/STATE_CHANGED``, as measured 2026-10-01
+    (run 36785718959) and fixed by hand 7 times before this. ``-f`` overrides
+    the ignore rule for exactly this one path, the same manual command every
+    prior incident used.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "add", "-f", rel_path],  # noqa: S607
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    return result.returncode == 0
+
+
 def step_archive_event_bus(
     project_root: Path,
     dry_run: bool,
     *,
     run_script_fn,
     step_result_cls: type[StepResult],
+    git_add_fn=_git_add_force,
 ) -> StepResult:
-    """Run archive_event_bus.py --all-terminal."""
+    """Run archive_event_bus.py --all-terminal, then version what it rotated.
+
+    WOT-2026-088f DoD(c): the archive of a CLOSED ticket's events is version
+    CONTROLLED, not excluded from the invariant -- matching the de-facto
+    practice already applied by hand to 7 prior archives (dcea6fb, 7190bad,
+    among them). ``git_add_fn`` is injectable so unit tests can assert which
+    paths were targeted without a real git subprocess per call.
+    """
     if dry_run:
         return step_result_cls(
             name="archive_event_bus",
@@ -404,10 +480,35 @@ def step_archive_event_bus(
             timeout=60,
         )
         if result.returncode == 0:
+            archived_ids = _archived_ticket_ids_from_stdout(
+                getattr(result, "stdout", None)
+            )
+            failed_to_add = [
+                ticket_id
+                for ticket_id in archived_ids
+                if not git_add_fn(
+                    project_root,
+                    f".agent/runtime/events/archive/events.{ticket_id}.jsonl",
+                )
+            ]
+            if failed_to_add:
+                return step_result_cls(
+                    name="archive_event_bus",
+                    status="WARN",
+                    detail=(
+                        "Event bus archived but 'git add -f' failed for: "
+                        + ", ".join(failed_to_add)
+                        + " -- a clean clone will fail agent_controller "
+                        "--validate for these tickets until added by hand"
+                    ),
+                )
+            detail = "Event bus terminal tickets archived"
+            if archived_ids:
+                detail += " and versioned (git add -f): " + ", ".join(archived_ids)
             return step_result_cls(
                 name="archive_event_bus",
                 status="PASS",
-                detail="Event bus terminal tickets archived",
+                detail=detail,
             )
         return step_result_cls(
             name="archive_event_bus",

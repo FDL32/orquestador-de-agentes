@@ -251,6 +251,7 @@ class TestArchiveTicketEvents:
         # Archive WP-001
         result = bus.archive_ticket_events("WP-001")
 
+        assert result["ticket_id"] == "WP-001"
         assert result["archived_count"] == 3
         assert result["kept_count"] == 1
         assert result["archive_path"] is not None
@@ -296,6 +297,7 @@ class TestArchiveTicketEvents:
 
         result = bus.archive_ticket_events("WP-999")
 
+        assert result["ticket_id"] == "WP-999"
         assert result["archived_count"] == 0
         assert result["archive_path"] is None
         assert "No events found" in result["message"]
