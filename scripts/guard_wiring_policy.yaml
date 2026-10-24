@@ -162,6 +162,22 @@ known_unwired:
     no un commit. Cablearlo en pre-commit correria sin proposito. Follow-up:
     cablearlo por codigo si se automatiza el Paso 2 completo.
 
+  # WOT-2026-042y: verifica que un artefacto que CITA un contrato (ruta bajo
+  # prompts/ o .agent/rules/) cubra sus identificadores normativos
+  # estructurales. Su sitio de invocacion NATURAL es `prompts/ensemble_loop.md`
+  # Seccion 3.3 punto 7, ANTES de enviar el bundle de una ronda de bucle --
+  # evento discreto gobernado por quien prepara el bundle, no un commit (el
+  # artefacto auditado es tipicamente un prompt de arranque que ni siquiera se
+  # versiona). Analogo a check_prompt_parity y check_builder_dispatch_prompt:
+  # BY-DESIGN, invocacion manual en el punto de preparacion del bucle.
+  check_contract_clause_coverage: >-
+    BY-DESIGN: invocacion manual en `prompts/ensemble_loop.md` Seccion 3.3
+    punto 7, antes de enviar el bundle de una ronda de bucle -- evento
+    discreto gobernado por quien prepara el bundle, no un commit. El artefacto
+    auditado (tipicamente un prompt de arranque) normalmente ni siquiera se
+    versiona. Follow-up: cablearlo por codigo si el recolector del bucle deja
+    de ser un paso manual.
+
   # WOT-2026-108b: guard que verifica que un prompt de arranque de Builder/
   # lente despachado via Kilo (`kilo run -f <prompt>.md`) instruya leer
   # AGENTS.md. Su sitio de invocacion NATURAL es el instante de despacho
