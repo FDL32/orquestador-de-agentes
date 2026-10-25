@@ -19,7 +19,8 @@ Before:
 During:
     - Parses the target with `ast` and walks every literal sequence (ast.List /
       ast.Tuple). A sequence whose string elements include "ruff" but NOT
-      "--no-fix" is a ruff invocation that can auto-fix under `fix = true`.
+      "--no-fix" is a ruff invocation that must stay read-only even if someone
+reintroduces a global auto-fix (defense-in-depth since WOT-2026-049f).
     - Declared scope limit (NON-GOAL of WOT-2026-047v): only LITERAL sequences
       are covered. An invocation assembled at runtime (variables, f-strings,
       subprocess.run with one string) is not detected.
