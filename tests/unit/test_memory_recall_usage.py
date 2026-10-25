@@ -272,25 +272,24 @@ def test_log_nonexistent_rc0_zeros(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_collect_session_state_validation_can_be_run_hermetically():
-    """(vii) The slug validation function in collect_session_state.py
-    is invocable hermetically against a temporary AGENT_PROJECT_ROOT.
+def test_collect_session_state_validation_can_be_run_hermetically(
+    tmp_path, monkeypatch
+):
+    """(vii) The REAL slug validation (``collect_memory_slugs``, real
+    subprocess) run against a temporary AGENT_PROJECT_ROOT writes its recall
+    log line with ``caller == 'session_state_validate'`` -- so it is never
+    counted as real agent use (codex review of fe25854b, MINOR 1)."""
+    from scripts.collect_session_state import collect_memory_slugs
 
-    It writes a line to the recall log with caller == 'session_state_validate'.
-    If this function is not invocable in a hermetic way, STOP and report.
-    """
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    out = collect_memory_slugs(MOTOR_ROOT, ["obs-124g-slug-que-no-existe"])
 
-    test_root = Path(__file__).resolve().parent.parent.parent
-
-    # The function calls _run which uses subprocess, so it's inherently
-    # system-dependent. But the key assertion is: does collect_session_state.py
-    # contain the --caller session_state_validate literal?
-    csf = test_root / "scripts" / "collect_session_state.py"
-    text = csf.read_text(encoding="utf-8", errors="replace")
-    assert "--caller" in text, "collect_session_state.py must pass --caller"
-    assert "session_state_validate" in text, (
-        "collect_session_state.py must pass 'session_state_validate' as --caller value"
-    )
+    assert [r["citable"] for r in out] == [False]
+    log_file = tmp_path / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    lines = [json.loads(x) for x in log_file.read_text(encoding="utf-8").splitlines()]
+    assert [(ln["caller"], ln["mode"]) for ln in lines] == [
+        ("session_state_validate", "id")
+    ]
 
 
 # ---------------------------------------------------------------------------
