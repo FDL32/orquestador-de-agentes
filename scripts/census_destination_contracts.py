@@ -57,14 +57,6 @@ _LINK_RE = Path(".agent") / "config" / "motor_destination_link.json"
 _CONTRACTS_RELPATH = Path(".agent") / "planning" / "ticket_contracts.md"
 _HEADER_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$", re.MULTILINE)
 
-# WOT-2026-026o ronda 2 (hallazgo Codex): retirar por ID solo NO basta -- un
-# contrato ESCRITO POR EL DESTINO con un id del seed se borraria (NON-GOAL).
-# La marca de origen del seed es su bloque `## MIGRACION DESDE repo_motor`
-# (DEC-024H-001): la seccion retirable debe citarlo.
-_ORIGIN_MARK_RE = re.compile(
-    r"repo_motor|MIGRACION\s+DESDE|DEC-024H-001", re.IGNORECASE
-)
-
 
 def _contract_ids_of(text: str) -> list[str]:
     """Ids de contratos presentes en un ticket_contracts.md (titulos `## `).
@@ -181,8 +173,11 @@ def _split_seed_sections(
         if cid is None or cid not in repair_ids:
             continue
         end = headers[i + 1][0] if i + 1 < len(headers) else len(text)
-        section = text[start:end]
-        if cid in origin_verified or _ORIGIN_MARK_RE.search(section):
+        # WOT-2026-026o ronda 3 (hallazgo Codex): SIN fallback de marca local.
+        # Un titulo que cite repo_motor NO es origen; solo la cadena contigua
+        # desde el bloque MIGRACION autoriza el retiro (el caso contrario se
+        # conserva y se nombra).
+        if cid in origin_verified:
             remove_spans.append((start, end))
             removed.append(cid)
         else:

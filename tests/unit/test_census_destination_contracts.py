@@ -206,6 +206,7 @@ def test_026o_r2_split_casa_contrato_header_y_eof_sin_salto(tmp_path: Path) -> N
     """Ronda 2 (hallazgo Codex): `## Contrato WOT-2026-023r` y EOF sin salto
     final tambien se retiran (deteccion y reparacion alineadas)."""
     text = (
+        "## MIGRACION DESDE repo_motor (WOT-2026-024h, DEC-024H-001)\n"
         "## Contrato WOT-2026-023r -- repo_motor\ncontenido r\n"
         "## Contrato WOT-2026-023s -- repo_motor\ncontenido s"
     )
@@ -213,4 +214,21 @@ def test_026o_r2_split_casa_contrato_header_y_eof_sin_salto(tmp_path: Path) -> N
     assert removed == ["WOT-2026-023r", "WOT-2026-023s"]
     assert kept == []
     assert "contenido r" not in new_text and "contenido s" not in new_text
-    assert new_text == ""
+    assert "MIGRACION" in new_text
+
+
+def test_026o_r3_sin_fallback_de_marca_local(tmp_path: Path) -> None:
+    """Ronda 3 (hallazgo Codex): un titulo que cite repo_motor NO es marca de
+    origen; sin el bloque MIGRACION contiguo, la seccion se CONSERVA."""
+    dest = _make_destino(
+        tmp_path,
+        "sin-bloque",
+        "## Contrato WOT-2026-023r -- repo_motor\ncontrato del destino\n",
+    )
+    backup_dir = tmp_path / "b"
+    code, removed, _err = cdc.repair_destination(dest, backup_dir)
+    assert code == 0
+    assert removed == []
+    assert "contrato del destino" in (
+        dest / ".agent" / "planning" / "ticket_contracts.md"
+    ).read_text(encoding="utf-8")
