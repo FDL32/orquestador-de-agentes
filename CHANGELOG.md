@@ -1,3 +1,22 @@
+# 2026-10-25 - WOT-2026-127f: sonda de expulsadas de L2 (`memory_consolidate.py --list-expelled`)
+
+### Added
+- `memory_consolidate.py --list-expelled [--json]`: lista, sin escribir nada (ni L2/L3, ni MEMORY.md,
+  ni archive, ni report), la cabecera publicada de `memory_rules.md` y la PROXIMA consolidacion
+  (total proyectado, candidatas, expulsadas por el tope en orden de recencia). Excluyente con
+  `--apply` (rc 2). Insumo para la politica de corte de WOT-2026-058b.
+- `_project_l2_input`: proyeccion de entrada de L2 como funcion pura compartida por
+  `_regenerate_l2_l3` y la sonda (sin dos recetas); `generate_memory_rules_md` con bytes identicos.
+
+### Fixed
+- `--since Nd` se interpreta de verdad (`type=_parse_since_days`): antes cualquier valor terminado en
+  `d` archivaba a 30 dias. Un `--since` invalido es error de uso (rc 2), sin traceback.
+  `--apply` archiva exactamente lo mismo que antes (`archivable` sin dedup).
+
+Medicion del Manager (snapshot 2026-10-25, destino memoria-opus55-20261024, no criterio): publicado
+77 candidatas / 47 expulsadas; proxima consolidacion 42 candidatas / 12 expulsadas, todas de
+2026-06-12..2026-06-20.
+
 # 2026-10-25 - WOT-2026-127d/127e: arranque en frio con destino pareado y salud de memoria honesta
 
 ### Added
