@@ -3635,8 +3635,14 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                 )
                 motor_set = {f.replace("\\", "/") for f in cp_files}
                 flt_set = {p.replace("\\", "/") for p in flt_motor_paths}
-                outside_flt = motor_set - flt_set
-                inside_flt = motor_set & flt_set
+                # WOT-2026-068t: a FLT bullet in DIRECTORY form (trailing '/')
+                # covers the files under it; only files not covered by any
+                # entry are outside. Prefix matching cannot widen past a
+                # sibling directory ('reports_extra/' does not match 'reports/').
+                outside_flt = {
+                    f for f in motor_set if not scope_gate.flt_scope_covers(f, flt_set)
+                }
+                inside_flt = motor_set - outside_flt
 
                 if inside_flt and not outside_flt:
                     # Full scope compliance: checkpoint files within FLT

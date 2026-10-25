@@ -131,6 +131,34 @@ def _normalize_raw_flt_path(path: str) -> str:
     return normalized
 
 
+def flt_scope_covers(changed_file: str, flt_entries: set[str] | list[str]) -> bool:
+    """Return True when ``changed_file`` is covered by the declared FLT scope.
+
+    WOT-2026-068t: the legitimate DIRECTORY form of a Files Likely Touched
+    bullet (trailing slash, e.g. ``reports/``) must cover the files under it
+    without forcing ``--scope-override`` on every close. Decision of the
+    trade-off the ficha demands (documented in its closure): HONOR what the
+    author declared -- an entry ending in ``/`` is a directory bullet whose
+    prefix covers the files beneath it; exact matches keep working; anything
+    else stays strict (no silent widening: a sibling directory such as
+    ``reports_extra/`` does NOT match ``reports/``). Non-directory entries
+    behave exactly as before. Raw-pipe splitting and normalization are the
+    caller's concern; this predicate is pure.
+    """
+    normalized_file = changed_file.replace("\\", "/")
+    if normalized_file.startswith("./"):
+        normalized_file = normalized_file[2:]
+    for entry in flt_entries:
+        normalized_entry = str(entry).replace("\\", "/")
+        if normalized_file == normalized_entry:
+            return True
+        if normalized_entry.endswith("/") and normalized_file.startswith(
+            normalized_entry
+        ):
+            return True
+    return False
+
+
 def read_delivery_authority(content: str, default: str = "repo_motor") -> str:
     """Read delivery_authority from markdown metadata or prose."""
     match = _DELIVERY_AUTHORITY_RE.search(content or "")

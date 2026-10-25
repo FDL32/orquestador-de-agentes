@@ -13,6 +13,7 @@ _AGENT_DIR = _PROJECT_ROOT / ".agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
+import scope_gate  # noqa: E402
 from agent_controller import (  # noqa: E402
     PROJECT_ROOT,
     _exclude_files,
@@ -651,3 +652,66 @@ class TestScopeGateHeadingEdgeCases:
         assert files == set(), (
             f"Expected empty set (Builder trailing content must not open), got: {files}"
         )
+
+
+class TestFltScopeCovers068t:
+    """WOT-2026-068t: la forma legitima DIRECTORIO de un bullet FLT cubre los
+    ficheros bajo el sin forzar --scope-override en cada cierre.
+
+    Decision del trade-off (documentada en el cierre de la ficha): honrar lo
+    declarado -- un bullet con '/' final es un directorio cuyo prefijo cubre
+    su contenido; sin slash final el comportamiento es el de siempre (match
+    exacto); nada se ensancha mas alla de la declaracion (un hermano
+    'reports_extra/' NO casa con 'reports/').
+    """
+
+    def test_directorio_declarado_cubre_su_contenido(self) -> None:
+        assert scope_gate.flt_scope_covers(
+            "orchestrator_pipeline/reports/x.md",
+            {"orchestrator_pipeline/reports/"},
+        )
+        assert scope_gate.flt_scope_covers("reports/a.md", {"reports/"})
+
+    def test_match_exacto_sigue_funcionando(self) -> None:
+        assert scope_gate.flt_scope_covers(
+            "scripts/check_publication_gate.py",
+            {"scripts/check_publication_gate.py"},
+        )
+
+    def test_hermano_del_directorio_no_casa(self) -> None:
+        assert not scope_gate.flt_scope_covers(
+            "orchestrator_pipeline/reports_extra/x.md",
+            {"orchestrator_pipeline/reports/"},
+        )
+
+    def test_fuera_del_directorio_sigue_fuera(self) -> None:
+        assert not scope_gate.flt_scope_covers("src/other.py", {"reports/"})
+        assert not scope_gate.flt_scope_covers(
+            "scripts/other.py", {"scripts/check_publication_gate.py"}
+        )
+
+    def test_barra_invertida_y_punto_slash_se_normalizan(self) -> None:
+        assert scope_gate.flt_scope_covers(
+            ".\\orchestrator_pipeline\\reports\\x.md",
+            {"orchestrator_pipeline/reports/"},
+        )
+        assert scope_gate.flt_scope_covers("./reports/a.md", {"reports/"})
+
+    def test_entry_sin_slash_final_no_es_directorio(self) -> None:
+        # Decision estrecha: solo el bullet con '/' final es directorio.
+        # Un 'reports' sin slash exige match exacto (no prefix), como antes.
+        assert not scope_gate.flt_scope_covers("reports/a.md", {"reports"})
+        assert scope_gate.flt_scope_covers("reports", {"reports"})
+
+    def test_mutation_prefix_match_retirado_deja_rojo(self) -> None:
+        """MUTATION: si el predicate volviera a match exacto, el caso del
+        incidente RDS-2026-004k (bullet directorio + fichero debajo) queda
+        fuera de scope y este test cae."""
+        original = scope_gate.flt_scope_covers
+        try:
+            scope_gate.flt_scope_covers = lambda f, entries: f in set(entries)
+            assert not scope_gate.flt_scope_covers("reports/a.md", {"reports/"}), (
+                "la mutacion (match exacto) deberia dejar el caso en rojo"
+            )
+        finally:
+            scope_gate.flt_scope_covers = original
