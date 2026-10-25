@@ -190,3 +190,25 @@ La revision del arranque de agentes en frio (hook UTF-8, memoria por cwd, par de
 
 Persiste exceso en AMBOS gates. La deuda sigue ABIERTA: **requiere decision del usuario para
 abrir WP** (via nombrada de PASO 5).
+
+## Recibo parcial (2026-10-25, auditoria final de memoria, plan P4)
+
+    ESTADO_FRESCO: raiz_motor=C:\Users\fdl\.t3\worktrees\orquestador_de_agentes\memoria-opus55-20261024, HEAD=1ea8c50c, dirty=0, verificado=2026-10-25
+    comando: python scripts/measure_agents_md_units.py
+    AGENTS.md bytes: 32036 (Codex gate 32768 B) -> ratio 0,98x, deficit 0
+    cierre Claude: 39390 chars, de ellos 5425 de 3 ficheros .claude/rules sin `paths:` (Claude gate 40000) -> ratio 0,98x, deficit 0
+
+Estado de las cuatro casillas del criterio binario:
+- casilla 1 (`wc -c AGENTS.md` <= 32768): **cumplida** con el recibo de arriba.
+- casilla 2 (cierre Claude <= 40000 chars): **cumplida** con el recibo de arriba (el medidor ya
+  suma `.claude/rules` autocargadas).
+- casilla 3 (cada traslado paso PASO 3 y PASO 4): **sin recibo** en este documento; no se marca.
+- casilla 4 (ruff + suite canonica verdes): la suite canonica `--level all` sobre 1ea8c50c dio
+  9693 passed / 0 failed, pero ese recibo es de la rama de sesion, no de cada traslado; no se
+  marca hasta que la casilla 3 tenga recibo.
+
+El follow-up sigue **ABIERTO** (2 de 4). Margen restante: 732 B (Codex) y 610 chars (Claude).
+La "deuda nueva declarada (barrera de alcance)" de arriba ya tiene ticket dueno:
+**WOT-2026-127g** (el gate bloqueante debe medir el mismo cierre que el medidor, incluidas las
+`.claude/rules` sin `paths:`); hasta que se cierre, una rule autocargada puede comerse ese
+margen sin que el gate de commit-msg lo pare.
