@@ -108,7 +108,10 @@ known_unwired:
     BY-DESIGN: gate de publicacion con checklist HUMANA (crear remoto privado,
     TOCTOU, verificacion final) -- su dominio es una decision humana de
     publicacion, no corre en un hook automatico. NO es deuda unwired. Follow-up
-    (fuera de 024w): separar el nucleo automatico de la checklist humana.
+    RESUELTO por DEC de WOT-2026-034d (runtime/reviews del destino): separacion
+    nucleo automatico (6 checks offline) / checklist humana ya existe dentro del
+    entrypoint unico; NO se cablea -- solo es aplicable al evento discreto de
+    publicacion.
   # Exencion DELIBERADA, no deuda: un hook automatico seria circular -- el propio
   # hook roto no puede invocar de forma fiable al check que detecta que esta roto.
   check_hook_interpreter: >-
