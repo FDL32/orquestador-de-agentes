@@ -1070,6 +1070,14 @@ class TestErrorTestIdsInSummary:
             def stdout(self):
                 return self
 
+            def readline(self):
+                # WOT-2026-070h: the runner drains via readline() now.
+                if self._idx >= len(self._stdout_lines):
+                    return ""
+                line = self._stdout_lines[self._idx]
+                self._idx += 1
+                return line
+
             def __iter__(self):
                 return self
 
@@ -1080,7 +1088,7 @@ class TestErrorTestIdsInSummary:
                 self._idx += 1
                 return line
 
-            def wait(self):
+            def wait(self, timeout=None):
                 return self.returncode
 
             def communicate(self, timeout=None):
@@ -1158,13 +1166,17 @@ class TestErrorTestIdsInSummary:
             def stdout(self):
                 return self
 
+            def readline(self):
+                # WOT-2026-070h: the runner drains via readline() now.
+                return ""
+
             def __iter__(self):
                 return self
 
             def __next__(self):
                 raise StopIteration
 
-            def wait(self):
+            def wait(self, timeout=None):
                 return self.returncode
 
             def communicate(self, timeout=None):
@@ -1225,6 +1237,19 @@ class TestErrorTestIdsInSummary:
             @property
             def stdout(self):
                 return self
+
+            _drain_lines = (
+                "1.23s call     tests/unit/test_a.py::test_one\n"
+                "4.56s call     tests/unit/test_b.py::test_two\n",
+            )
+            _drain_idx = 0
+
+            def readline(self):
+                # WOT-2026-070h: the runner drains via readline() now.
+                idx = getattr(self, "_drain_pos", 0)
+                line = self._drain_lines[idx] if idx < len(self._drain_lines) else ""
+                self._drain_pos = idx + 1
+                return line
 
             def communicate(self, timeout=None):
                 return (

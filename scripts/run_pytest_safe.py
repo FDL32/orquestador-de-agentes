@@ -22,11 +22,13 @@ import dataclasses
 import functools
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -991,6 +993,22 @@ def _reconcile_dead_run() -> None:
         return
 
     prev = read_json(LAST_RUN_JSON)
+    # WOT-2026-070h backfill: rows already marked `aborted` by an OLDER path
+    # lack the four forensic fields this reconciler writes (measured: 8 rows,
+    # 0 forensic, 3 repos). Backfill them in place so the forensic capture is
+    # not reserved to deaths this exact code path witnessed.
+    if prev.get("status") == "aborted" and "reconciled_reason" not in prev:
+        last_nodeid = None
+        try:
+            progress = read_json(RUNTIME_DIR.resolve() / "pytest-progress.json")
+            last_nodeid = progress.get("last_nodeid")
+        except Exception:
+            last_nodeid = None
+        prev["reconciled_at"] = iso_now()
+        prev["reconciled_reason"] = "backfill_070h_row_predates_forensic_fields"
+        prev["last_nodeid"] = last_nodeid
+        write_json(LAST_RUN_JSON, prev)
+        return
     if prev.get("status") != "started":
         return
     if prev.get("exit_code") is not None:
@@ -1017,6 +1035,16 @@ def _reconcile_dead_run() -> None:
     assumed_dead = not still_dead  # second probe says alive -> recycled
 
     # Build the aborted record
+    # WOT-2026-070h: attach the progress breadcrumbs (last nodeid seen and
+    # last non-empty output line, flushed live by stream_pytest) so the
+    # aborted record says WHERE the run died, not only THAT it died.
+    _progress_breadcrumbs: dict = {}
+    with contextlib.suppress(Exception):
+        _progress_data = read_json(RUNTIME_DIR.resolve() / "pytest-progress.json")
+        _progress_breadcrumbs = {
+            "last_nodeid": _progress_data.get("last_nodeid"),
+            "last_output_line": _progress_data.get("last_output_line"),
+        }
     aborted_record = {
         "started_at": prev.get("started_at"),
         "finished_at": iso_now(),
@@ -1036,6 +1064,7 @@ def _reconcile_dead_run() -> None:
         "reconciled_reason": "dead_pid" if not assumed_dead else "assumed_dead",
         "lock_pid": lock_pid,
         "assumed_dead": assumed_dead,
+        **_progress_breadcrumbs,
     }
 
     # Append to run_history (fail-open)
@@ -1645,24 +1674,102 @@ def stream_pytest(  # noqa: C901
     try:
         if process.stdout is None:
             raise RuntimeError("pytest subprocess did not expose stdout")
-        # WOT-2026-077a (Blocker 1): use process.communicate(timeout=...) to
-        # cover the ENTIRE process lifetime (stdout reading + wait) in a single
-        # call. The previous pattern (for line in process.stdout: ...;
-        # process.wait(timeout=...)) blocked indefinitely on the for-loop when
-        # pytest hung without producing new output -- the timeout never fired
-        # because the process never reached wait(). communicate() reads ALL
-        # output and waits for the process to terminate, both bounded by the
-        # same timeout.
+        # WOT-2026-070h: the previous communicate(timeout=...) buffered ALL
+        # output until process end, so an external kill lost the whole output
+        # (measured: 6 dead --level all runs, last-run.log untouched at 1372
+        # bytes). A reader thread + bounded queue gives BOTH the per-line
+        # persistence this invariant requires AND the timeout coverage
+        # WOT-2026-077a demands (queue.get with a deadline fires even when
+        # the child produces no output, which is exactly the hang that made
+        # the old for-loop pattern block forever).
         _max_runtime: int | float | None = None
         try:
             _max_runtime = float(os.environ.get("MAX_RUNTIME_SECONDS", "14400"))
         except (ValueError, TypeError):
             _max_runtime = 14400  # 4h default
         timed_out = False
-        try:
-            stdout_output, _ = process.communicate(timeout=_max_runtime)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        _progress_path = RUNTIME_DIR.resolve() / "pytest-progress.json"
+        _stream_state: dict = {
+            "last_nodeid": None,
+            "last_output_line": None,
+            "last_write": 0.0,
+        }
+
+        def _persist_progress() -> None:
+            """070h leg (b): last nodeid seen + timestamp, fail-open.
+
+            With default verbosity pytest emits no nodeids until the summary,
+            so the progress file also carries the last non-empty output line
+            (percentage marker, section header) -- the freshest breadcrumb a
+            killed run leaves about where it was.
+            """
+            with contextlib.suppress(OSError):
+                _progress_path.write_text(
+                    json.dumps(
+                        {
+                            "last_nodeid": _stream_state["last_nodeid"],
+                            "last_output_line": _stream_state["last_output_line"],
+                            "updated_at": iso_now(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+
+        def _persist_stream_line(line: str) -> None:
+            """070h leg (c): append one output line to last-run.log NOW.
+
+            Flushed per line: a hard kill leaves everything up to the kill
+            instant on disk instead of losing it with the process.
+            """
+            lines.append(line)
+            with (
+                contextlib.suppress(OSError),
+                open(str(LAST_RUN_LOG), "a", encoding="utf-8", errors="replace") as fh,
+            ):
+                fh.write(line + "\n")
+            if line.strip():
+                _stream_state["last_output_line"] = line[:300]
+            if "::" in line:
+                _stream_state["last_nodeid"] = line[:300]
+
+        with contextlib.suppress(OSError):
+            _progress_path.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            LAST_RUN_LOG.unlink()
+        _persist_progress()
+
+        _line_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _reader() -> None:
+            if process.stdout is None:
+                raise RuntimeError("pytest subprocess stdout lost")
+            try:
+                for raw in iter(process.stdout.readline, ""):
+                    _line_queue.put(raw.rstrip("\r\n"))
+            finally:
+                _line_queue.put(None)
+
+        threading.Thread(target=_reader, daemon=True).start()
+        _deadline = time.monotonic() + float(_max_runtime)
+        while True:
+            remaining = _deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                raw_line = _line_queue.get(timeout=remaining)
+            except queue.Empty:
+                timed_out = True
+                break
+            if raw_line is None:
+                break
+            _persist_stream_line(raw_line)
+            _now = time.monotonic()
+            if _now - _stream_state["last_write"] >= 2.0:
+                _stream_state["last_write"] = _now
+                _persist_progress()
+        if timed_out:
             process.terminate()
             try:
                 process.wait(timeout=10)
@@ -1670,33 +1777,27 @@ def stream_pytest(  # noqa: C901
                 process.kill()
                 process.wait(timeout=10)
             returncode = process.returncode
-            # Mark the run as "timeout" (not "aborted"): this distinguishes
-            # an internal exceedance of the configured time limit from an
-            # external process death.
-            # WOT-2026-077a (Blocker 1 follow-up): TimeoutExpired.output/
-            # .stdout come back None in practice (measured on Windows) even
-            # when the child wrote data before hanging -- the exception does
-            # not carry the buffered pipe content. Draining stdout with a
-            # second, short communicate() AFTER terminate()/kill() retrieves
-            # whatever was already buffered (the pipe is closing, so this
-            # call returns promptly instead of blocking again). Losing this
-            # is exactly the diagnostic (which test was running) this ticket
-            # exists to preserve.
-            try:
-                stdout_output, _ = process.communicate(timeout=5)
-            except (subprocess.TimeoutExpired, ValueError):
-                stdout_output = ""
+            # WOT-2026-077a follow-up (kept): drain whatever is left after
+            # terminate/kill -- a timeout still has whatever the drain
+            # recovers, and it must not be discarded.
+            _drain_deadline = time.monotonic() + 5.0
+            while time.monotonic() < _drain_deadline:
+                try:
+                    raw_line = _line_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                if raw_line is None:
+                    break
+                _persist_stream_line(raw_line)
         else:
-            # Normal completion (no TimeoutExpired): stdout contains ALL output.
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
             returncode = process.returncode
-
-        # Stream output and build lines list for failed/error parsing. Runs
-        # for BOTH branches: a timeout still has whatever the drain above
-        # recovered, and it must not be discarded (WOT-2026-077a follow-up).
-        stdout_output = stdout_output or ""
-        all_lines = stdout_output.splitlines()
-        lines.extend(all_lines)
-        for line in _cap_durations_table_echo(all_lines):
+        _persist_progress()
+        for line in _cap_durations_table_echo(lines):
             _print_console_safe(line)
     except KeyboardInterrupt:
         process.terminate()
@@ -1707,7 +1808,9 @@ def stream_pytest(  # noqa: C901
             process.wait(timeout=5)
         raise
     finally:
-        LAST_RUN_LOG.write_text("\n".join(lines), encoding="utf-8")
+        # 070h: the log is written incrementally per line (the finally-rewrite
+        # is what made external kills lose the output); nothing to redo here.
+        pass
 
     failed_ids: list[str] = []
     for line in lines:
@@ -2011,6 +2114,14 @@ def append_run_history(summary: dict) -> None:
             # Included so run_history.jsonl entries are self-contained:
             # every row allows diagnosing slow runs without measuring the machine.
             "environment_at_start": summary.get("environment_at_start"),
+            # WOT-2026-070h: forensic fields of aborted records. The old
+            # whitelist silently stripped them (8 aborted rows, 0 forensic).
+            "reconciled_at": summary.get("reconciled_at"),
+            "reconciled_reason": summary.get("reconciled_reason"),
+            "lock_pid": summary.get("lock_pid"),
+            "assumed_dead": summary.get("assumed_dead"),
+            "last_nodeid": summary.get("last_nodeid"),
+            "last_output_line": summary.get("last_output_line"),
             # WOT-2026-100m: the env fingerprint as its own top-level field so
             # a run_history row is attributable without mining the nested
             # environment_at_start dict. Falls back to the nested copy for
