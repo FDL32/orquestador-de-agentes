@@ -1143,7 +1143,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
     # archivado + aun sin cablear), nunca un conteo (WOT-2026-024t).
     dest_root, dest_err = _resolve_destino_root(args.project_root, args.workspace_root)
     if dest_root is None:
-        print(f"[guard-wiring] SKIP orphan-owner check: {dest_err}.")
+        # WOT-2026-070k: the SKIP is no longer silent. The orphan-owner check
+        # is the ONLY place where unwired-debt ownership is audited; skipping
+        # it quietly (stdout, rc=0) hid a real orphan through every close
+        # that invoked this guard without --project-root. The check stays
+        # skippable (motor-local audits have no destino to consult) but the
+        # skip is now a LOUD stderr line, and the canonical close prompt was
+        # updated to pass --project-root so the check actually runs there.
+        print(
+            f"[guard-wiring] WARN SKIP orphan-owner check: {dest_err}. "
+            "Pasa --project-root <repo_destino> para auditar la deuda "
+            "huerfana (WOT-2026-070k).",
+            file=sys.stderr,
+        )
     else:
         live, live_err = _live_owner_tickets(dest_root)
         if live is None:

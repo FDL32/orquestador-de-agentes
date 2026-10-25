@@ -69,7 +69,8 @@ _EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 # call-site and picks up a bogus one prints the same number).
 EXPECTED_WIRED_REAL = {
     "check_agent_write_enforced",  # WOT-2026-048h: cableado via import estatico en prepush_check.py::run_agent_write_enforced_check (closeout, WARN -- nace WARN porque la deuda claude/codex sin readonly_agent es PREEXISTENTE)
-    "check_agents_accessible",  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
+    "check_agents_accessible",
+    "check_dod_metric_freshness",  # WOT-2026-070k: cableado via run_dod_metric_freshness_check en prepush_check.py (closeout, WARN -- informe de cifras sin ancla; el modo fail-closed sigue standalone)  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
     # WOT-2026-026x: cableado via import ESTATICO en
     # prepush_check.py::run_collaboration_state_clean_check (closeout, BLOQUEANTE).
     # No es falso-WIRED: el call-site existe y el guard tiene mutaciones propias
@@ -769,9 +770,15 @@ def test_orphan_check_skips_explicitly_without_destino(tmp_path, monkeypatch, ca
     # SIN --strict a proposito: `--strict` falla por la deuda DECLARADA (regla
     # preexistente) y ese 1 enmascararia el veredicto que aqui se mide.
     assert cgw.main(["--motor-root", str(tmp_path)]) == 0
-    out = capsys.readouterr().out
-    assert "SKIP orphan-owner check" in out, "el skip se IMPRIME, no se calla"
-    assert "HUERFANA" not in out, "sin destino no se puede afirmar que un owner murio"
+    captured = capsys.readouterr()
+    # WOT-2026-070k: el SKIP ya no es silencioso -- va a STDERR con la
+    # instruccion de pasar --project-root; stdout queda limpio.
+    assert "SKIP orphan-owner check" in captured.err, (
+        "el skip es LOUD en stderr (070k), no se calla ni se mezcla con stdout"
+    )
+    assert "HUERFANA" not in captured.out, (
+        "sin destino no se puede afirmar que un owner murio"
+    )
 
 
 def test_orphan_check_skips_when_destino_has_no_backlog(tmp_path, monkeypatch, capsys):

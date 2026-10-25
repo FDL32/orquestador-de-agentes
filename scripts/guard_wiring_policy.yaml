@@ -143,8 +143,9 @@ known_unwired:
 
   # WOT-2026-034c: el detector nace STANDALONE por diseno del propio ticket --
   # cablearlo en prepush es NON-GOAL declarado y se pedira como follow-up propio.
-  # La deuda se declara aqui, con dueno, para que no entre como huerfano silencioso.
-  check_dod_metric_freshness: WOT-2026-034c
+  # WOT-2026-070k: el huerfano se resolvio CABLEANDO el guard (no via allowlist):
+  # run_dod_metric_freshness_check en prepush_check.py closeout (WARN informativo).
+  # El owner 034c (archivado) deja de ser dueno; el modo fail-closed sigue standalone.
 
   # WOT-2026-059n: cableado el 2026-10-07 en `prompts/session_hop.md` Paso 6-bis
   # ("audita el arranque contra si mismo antes de entregarlo") -- invocacion

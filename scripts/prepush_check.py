@@ -528,6 +528,70 @@ def run_validate_all(project_root: Path) -> CheckResult:
     )
 
 
+def run_dod_metric_freshness_check(project_root: Path) -> CheckResult:
+    """WOT-2026-070k: informe WARN de cifras sin ancla temporal (closeout).
+
+    `check_dod_metric_freshness` nacio standalone (WOT-2026-034c declaro el
+    cableado NON-GOAL de SU ticket) y murio huerfano: cero call-sites, owner
+    archivado, y el SKIP sin root del orphan-check lo escondia en cada cierre.
+    Se cablea AQUI en modo informe (no bloqueante): las violaciones vivas se
+    reportan con nombre; bloquear con 37 violaciones romperia cada cierre y
+    anclarlas es higiene con dueno propio, no de este gate. El modo
+    fail-closed sigue disponible invocando el script standalone.
+
+    Before: project_root apunta al repo_destino con backlog.md.
+    During: extrae la tabla viva con la MISMA funcion del contract
+        (check_backlog_contract._extract_active_table, sin re-implementar el
+        regex) y aplica find_violations real del guard.
+    After: CheckResult passed=True (WARN informativo) con el recuento; nunca
+        lanza.
+    """
+    name = "DOD Metric Freshness (closeout, WARN)"
+    backlog = project_root / ".agent" / "collaboration" / "backlog.md"
+    if not backlog.exists():
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"No backlog.md at {backlog} (skipped)",
+            is_blocking=False,
+            skipped=True,
+        )
+    try:
+        from scripts.check_backlog_contract import _extract_active_table
+        from scripts.check_dod_metric_freshness import find_violations
+    except ImportError:
+        from check_backlog_contract import (
+            _extract_active_table,  # type: ignore[no-redef]
+        )
+        from check_dod_metric_freshness import find_violations  # type: ignore[no-redef]
+    try:
+        content = backlog.read_text(encoding="utf-8-sig")
+        rows, _header = _extract_active_table(content)
+        violations = find_violations(rows)
+    except Exception as exc:
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=f"dod-metric informe no ejecutable: {type(exc).__name__}: {exc}",
+            is_blocking=False,
+            skipped=True,
+        )
+    output = f"dod-metric violaciones={len(violations)}"
+    if violations:
+        output += (
+            " -- cifras sin ancla temporal en la cola viva; "
+            "ejecuta el script standalone para el detalle por fila: "
+            + "; ".join(v.split(":")[0] for v in violations[:5])
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output=output,
+        is_blocking=False,
+        skipped=False,
+    )
+
+
 def run_backlog_contract_check(project_root: Path) -> CheckResult:
     """Gate bloqueante de cierre: la cola viva del backlog no tiene terminales.
 
@@ -4678,6 +4742,14 @@ def run_preflight_check(
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:
         results.append(run_backlog_contract_check(project_root))
+        # 6a-ter. DOD Metric Freshness (WOT-2026-070k; WARN, no bloqueante).
+        # El guard quedo HUERFANO (owner 034c archivado, cero call-sites en
+        # todo el repo) y el SKIP sin root del orphan-check lo mantuvo
+        # invisible en cada cierre. Se cablea AQUI en modo informe: el cierre
+        # VE las cifras sin ancla temporal; bloquear con 37 violaciones vivas
+        # romperia cada cierre y anclarlas es trabajo de higiene con dueno
+        # propio, no de este gate.
+        results.append(run_dod_metric_freshness_check(project_root))
         # 6a-bis. Ghost Ticket IDs (WOT-2026-053i; no bloqueante). Hueco INVERSO
         # al de arriba: aquel valida las FILAS que existen, este los ids CITADOS
         # en git para los que nunca se escribio fila.
