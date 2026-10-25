@@ -35,9 +35,12 @@ repos:
     hooks:
       # Hook scope enforced by the check-ruff-hook-scope hook below (WOT-2026-024w:
       # cableado real, ya no un comentario sin ejecutar).
-      # --no-fix es OBLIGATORIO: pyproject.toml declara `fix = true`, asi que
-      # `ruff check` REESCRIBE ficheros por configuracion aunque no se pase
-      # `--fix`. Medido 2026-08-05: `ruff check <f> --select RUF100` retiro 2
+      # --no-fix se MANTIENE explicito (defensa en profundidad desde 6eb78e1):
+      # desde WOT-2026-049f (2026-10-25) pyproject.toml ya NO declara
+      # `fix = true`, asi que `ruff check` es read-only de serie; el flag
+      # sigue ahi para que el hook siga siendo verificacion pura INCLUSO si
+      # alguien reintroduce el autofix global. Medido 2026-08-05: con
+      # `fix = true`, `ruff check <f> --select RUF100` retiro 2
       # `# noqa: S603` de un fichero del arbol sin que nadie pidiera un fix.
       # Un hook de verificacion que MUTA no es una verificacion.
       - id: ruff-check
