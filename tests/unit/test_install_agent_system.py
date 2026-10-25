@@ -1148,6 +1148,74 @@ def test_propagate_session_start_hook_replaces_stale_command(tmp_path):
     assert len(session_start) == 1
     assert session_start[0]["hooks"][0]["command"] == _canonical_session_start_command()
     assert session_start[0]["hooks"][0]["command"] != "echo STALE_COMMAND"
+    # The stale command must be REMOVED, not merely pushed behind the
+    # canonical one -- Claude Code would otherwise still run it.
+    assert len(session_start[0]["hooks"]) == 1
+
+
+def test_propagate_session_start_hook_migrates_old_fail_closed_literal(tmp_path):
+    """WOT-2026-058a Revisor finding (codex, P1): a destino installed
+    BEFORE this ticket carries the OLD fail-closed generator's literal in
+    its SessionStart entry. Re-sync must REPLACE it, never leave it
+    sitting alongside the new fail-open command -- otherwise the stale
+    rc=2 launcher still runs when the target is missing, defeating the
+    whole point of this ticket.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    agent_hooks_dir = str(
+        _Path(ias.__file__).resolve().parent.parent / ".agent" / "hooks"
+    )
+    if agent_hooks_dir not in _sys.path:
+        _sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    old_fail_closed = claude_guard_entry.canonical_command_for(
+        "session_start_hook.py", "agent_hooks"
+    )
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    pre_ticket = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": old_fail_closed}],
+                }
+            ]
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(pre_ticket, indent=2))
+
+    ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    session_start = settings["hooks"]["SessionStart"]
+    assert len(session_start) == 1
+    hooks = session_start[0]["hooks"]
+    assert len(hooks) == 1, (
+        "the old fail-closed literal must be REMOVED, not kept alongside "
+        "the new fail-open one"
+    )
+    assert hooks[0]["command"] == _canonical_session_start_command()
+    assert hooks[0]["command"] != old_fail_closed
+
+    # Behavioral proof: launch the RESULTING command with the target
+    # absent and confirm it degrades (rc=0), not the old rc=2.
+    import shlex
+    import subprocess
+
+    code = shlex.split(hooks[0]["command"])[-1]
+    result = subprocess.run(
+        [_sys.executable, "-c", code],
+        input=b"{}",
+        cwd=str(dest_root),
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
 
 
 def test_propagate_session_start_hook_idempotent_on_resync(tmp_path):
@@ -1219,6 +1287,7 @@ def test_propagate_session_start_hook_fixes_all_duplicate_gating_entries(tmp_pat
     assert len(session_start) == 2
     for entry in session_start:
         assert entry["hooks"][0]["command"] == _canonical_session_start_command()
+        assert len(entry["hooks"]) == 1, "stale literal left alongside canonical"
 
 
 # ---------------------------------------------------------------------------

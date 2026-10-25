@@ -1664,10 +1664,16 @@ def propagate_session_start_hook(
     if already_wired:
         action = "already-wired"
     elif session_start:
+        # WOT-2026-058a: REPLACE (not prepend-and-keep) every existing
+        # entry's hooks with exactly [canonical_hook]. A destino installed
+        # before this ticket carries the OLD fail-closed command here; the
+        # old prepend-and-filter-only-the-new-literal logic left that stale
+        # hook sitting right alongside the new fail-open one, so a missing
+        # target still ran the stale rc=2 launcher on re-sync (Revisor P1,
+        # codex, caught by behavioral review -- the existing tests only
+        # asserted hooks[0], never the list's full length).
         for entry in session_start:
-            entry["hooks"] = [canonical_hook] + [
-                h for h in entry.get("hooks", []) if h != canonical_hook
-            ]
+            entry["hooks"] = [canonical_hook]
         action = "updated"
     else:
         session_start.append({"matcher": "", "hooks": [canonical_hook]})
