@@ -80,6 +80,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from bus import memory_loader as ml  # noqa: E402
 from bus.portable_memory_archive import (  # noqa: E402
+    CorruptArchiveError,
     dedup_key,
     is_lesson,
     read_archive_observations,
@@ -107,7 +108,12 @@ Entry = dict[str, Any]
 
 
 def _ts(entry: Entry) -> datetime | None:
-    """UTC timestamp of ``entry`` or None if absent/unparseable (never raises)."""
+    """UTC timestamp of an archive entry.
+
+    Before: ``entry`` is a dict (any ``timestamp`` value).
+    During: parses ISO-8601 (``Z`` accepted); a naive value is taken as UTC.
+    After: aware UTC datetime, or None if absent/not text/unparseable. Never raises.
+    """
     raw = entry.get("timestamp")
     if not isinstance(raw, str) or not raw:
         return None
@@ -126,8 +132,12 @@ def build_union(motor_root: Path, project_root: Path) -> list[Entry]:
     Before: both roots exist; their archives may be empty.
     During: reads both archives; drops motor entries whose ``dedup_key`` the
         destination already has; tags ``_origin`` (``local`` / ``motor``).
-    After: shallow-copied entries; a corrupt archive raises (a measurement on a
-        partial corpus would be a false reading).
+    After: shallow-copied entries. DELIBERATE divergence from
+        `_read_portable_archive` (codex review of f969b620, MAJOR 1): the boot
+        index degrades a corrupt or unreadable archive to ``[]`` so a session
+        still starts; a MEASUREMENT on that partial corpus would be a false
+        reading of a pre-registered criterion, so here
+        ``CorruptArchiveError`` propagates and `main` turns it into rc 2.
     """
     active = read_archive_observations(project_root)
     motor = read_archive_observations(motor_root)
@@ -139,7 +149,13 @@ def build_union(motor_root: Path, project_root: Path) -> list[Entry]:
 
 
 def _vigent_lessons(union: list[Entry]) -> dict[str, Entry]:
-    """``id`` -> entry for vigent lessons with an interpretable timestamp."""
+    """Vigent lessons of a corpus, by id.
+
+    Before: ``union`` entries from `build_union` (or a time slice of it).
+    During: keeps entries with a text ``id``, `is_lesson`, status not
+        refuted/superseded and an interpretable timestamp.
+    After: ``id`` -> entry (later duplicates of an id win). Never raises.
+    """
     out: dict[str, Entry] = {}
     for e in union:
         eid = e.get("id")
@@ -155,7 +171,14 @@ def _vigent_lessons(union: list[Entry]) -> dict[str, Entry]:
 
 
 def citation_edges(vigent: dict[str, Entry]) -> list[tuple[datetime, str]]:
-    """(date of the citing lesson, cited id) for every CITA (see criterion)."""
+    """Every CITA of the criterion.
+
+    Before: ``vigent`` from `_vigent_lessons` (stale entries already out, so
+        citations made by or aimed at them never appear).
+    During: regex over each ``signal``; one edge per distinct cited id per
+        citing lesson; self-citations dropped.
+    After: list of (date of the citing lesson, cited id).
+    """
     return [
         (_ts(e), cited)
         for eid, e in vigent.items()
@@ -165,12 +188,22 @@ def citation_edges(vigent: dict[str, Entry]) -> list[tuple[datetime, str]]:
 
 
 def shown_ids(render: str) -> set[str]:
-    """Ids of the ``- <id>:`` lines of a render."""
+    """Shown lessons of a render.
+
+    Before: ``render`` is index text (HOY or O6b).
+    During: matches only the LEADING ``- <id>:`` of each line.
+    After: set of ids; ids quoted inside a signal or topic lines do not count.
+    """
     return set(_SHOWN_RE.findall(render))
 
 
 def _stable_ids(render: str) -> set[str]:
-    """Ids listed under the Estables heading of a HOY render."""
+    """Estables of HOY(t), step (1) of the criterion.
+
+    Before: ``render`` is a `format_memory_index` output.
+    During: collects the shown ids between ``## Estables`` and the next heading.
+    After: set of ids (empty when the render has no Estables section).
+    """
     out: set[str] = set()
     inside = False
     for line in render.splitlines():
@@ -187,7 +220,12 @@ def _origin(entry: Entry) -> str:
 
 
 def by_origin(ranked: list[Entry], n: int) -> list[Entry]:
-    """probe9 quota: half per origin, the remainder to the other; keeps order."""
+    """Origin quota of probe9 (``by_origin``).
+
+    Before: ``ranked`` is already in priority order; ``n >= 0``.
+    During: each origin gets up to ``n // 2``; what one cannot fill goes to the other.
+    After: at most ``n`` entries, motor block first, each block in ``ranked`` order.
+    """
     groups = {o: [e for e in ranked if _origin(e) == o] for o in ("motor", "destino")}
     take = {o: min(len(g), n // 2) for o, g in groups.items()}
     rest = n - sum(take.values())
@@ -204,7 +242,14 @@ def select_important(
     stable: set[str],
     t: datetime,
 ) -> list[Entry]:
-    """Importantes of O6b(t), step (2) of the criterion."""
+    """Importantes of O6b(t), step (2) of the criterion.
+
+    Before: ``corpus_t`` holds only entries older than ``t``; ``edges`` from
+        `citation_edges`; ``stable`` from `_stable_ids` of HOY(t).
+    During: vigent lessons older than ``t - 7d``, not stable, with >= 1 citation
+        before ``t``; ordered by (citations, timestamp) desc; one per topic.
+    After: at most ``O6B_IMPORTANT`` entries after the origin quota.
+    """
     past = Counter(cited for date, cited in edges if date < t)
     pool = [
         e
@@ -265,7 +310,14 @@ def render_o6b(corpus_t: list[Entry], important: list[Entry]) -> str:
 
 
 def measure(union: list[Entry], now: datetime) -> list[dict[str, Any]]:
-    """One row per evaluated cut (only cuts from ``O6B_START`` with a full window)."""
+    """Evaluate the cuts of the criterion.
+
+    Before: ``union`` from `build_union`; ``now`` aware UTC.
+    During: for ``t = O6B_START + 30k days`` while ``t + 30d <= now``: slices the
+        corpus, renders HOY and O6b with the real renderer, counts objective,
+        hits and fresh lessons. Pure (no I/O, no state left behind).
+    After: one row per evaluated cut (including cuts with objective 0).
+    """
     vigent = _vigent_lessons(union)
     edges = citation_edges(vigent)
     rows = []
@@ -303,7 +355,12 @@ def measure(union: list[Entry], now: datetime) -> list[dict[str, Any]]:
 
 
 def verdict(rows: list[dict[str, Any]]) -> tuple[str, list[str]]:
-    """Pre-registered decision over the measured rows: (veredicto, motivos)."""
+    """Pre-registered decision.
+
+    Before: ``rows`` from `measure`.
+    During: keeps valid cuts (objective >= 1); applies SUFICIENCIA, then (a), (b), (c).
+    After: (``INSUFICIENTE`` | ``NO CUMPLE`` | ``CUMPLE``, reasons); CUMPLE has none.
+    """
     valid = [r for r in rows if r["objetivo"] >= 1]
     total = sum(r["objetivo"] for r in valid)
     reasons = []
@@ -338,7 +395,15 @@ def verdict(rows: list[dict[str, Any]]) -> tuple[str, list[str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI: measure and print the rows and the verdict (rc 0), or rc 2 on bad input."""
+    """Command line entry point.
+
+    Before: ``argv`` as for argparse; the destination comes from
+        ``--project-root`` or ``AGENT_PROJECT_ROOT``.
+    During: validates roots and ``--now``, reads both archives, measures and
+        prints the rows and the verdict (text or ``--json``). Read-only.
+    After: rc 0 when it measured (the verdict is in the output); rc 2 on a
+        missing/invalid root, an invalid ``--now`` or a corrupt archive.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--motor-root", type=Path, default=_REPO_ROOT)
     parser.add_argument("--project-root", type=Path, default=None)
@@ -364,7 +429,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: --now no es ISO-8601: {args.now!r}", file=sys.stderr)
             return 2
         now = parsed
-    rows = measure(build_union(args.motor_root, project), now)
+    try:
+        union = build_union(args.motor_root, project)
+    except CorruptArchiveError as exc:
+        print(f"error: archive corrupto, no se mide: {exc}", file=sys.stderr)
+        return 2
+    rows = measure(union, now)
     result, reasons = verdict(rows)
     if args.json:
         print(

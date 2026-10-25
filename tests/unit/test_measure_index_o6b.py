@@ -262,3 +262,22 @@ def test_shown_ids_are_only_the_leading_id_of_index_lines():
         ]
     )
     assert m.shown_ids(render) == {"obs-aa"}
+
+
+def test_corrupt_archive_stops_the_measurement_with_rc2(tmp_path, capsys):
+    """Deliberate divergence from the boot loader (codex review of f969b620):
+    a corrupt archive is NOT degraded to empty -- the probe refuses to measure."""
+    motor = _archive(tmp_path / "motor", [_obs("obs-mm", OLD)])
+    dest = _archive(tmp_path / "dest", [_obs("obs-dd", OLD)])
+    bad = (
+        dest
+        / ".agent"
+        / "runtime"
+        / "memory"
+        / "archive"
+        / "observations.2026-09.jsonl"
+    )
+    bad.write_text("{no es json\n", encoding="utf-8")
+    rc = m.main(["--motor-root", str(motor), "--project-root", str(dest), "--json"])
+    assert rc == 2
+    assert "archive corrupto" in capsys.readouterr().err
