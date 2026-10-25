@@ -363,6 +363,38 @@ def _extract_active_table(content: str) -> tuple[list[str], str | None]:
     return rows, None
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-041u: splitter canonico de celdas que honra la barra vertical
+# escapada. DECISION DE PRODUCTO (documentada en el cierre de la ficha): el
+# render canonico de estas tablas es GitHub (GFM), donde una barra vertical
+# precedida de barra invertida es CONTENIDO de la celda, no delimitador; el
+# guard debe medir con la misma vara que el consumidor render (leccion
+# 'aplicate tu propia vara' del incidente 027s, cometido en la misma sesion
+# que lo citaba). Un pipe literal SIN escapar sigue siendo delimitador (no se
+# relaja el conteo): si sobran columnas, el error sugiere escaparlo.
+# ---------------------------------------------------------------------------
+
+_ESCAPED_PIPE_SENTINEL = "\x00"
+
+
+def _split_row_cells(line: str) -> list[str]:
+    """Return the cells of a markdown table row honoring escaped pipes (GFM).
+
+    Before: ``line`` is one table row (leading/trailing whitespace ok).
+    During: protects backslash-pipe sequences from the split with a sentinel,
+        splits on raw pipes, strips each cell and restores the escaped pipes
+        in the content.
+    After: cell list identical to the raw split for rows without escapes;
+        rows with escaped pipes keep them as cell content instead of counting
+        phantom columns. Never raises.
+    """
+    protected = line.replace("\\|", _ESCAPED_PIPE_SENTINEL)
+    return [
+        c.strip().replace(_ESCAPED_PIPE_SENTINEL, "\\|")
+        for c in protected.strip().strip("|").split("|")
+    ]
+
+
 def _orphan_fragments_in_table(content: str) -> list[str]:
     """WOT-2026-054b: detect orphan fragments inside the Vista rapida table region.
 
@@ -639,9 +671,14 @@ def validate_backlog(backlog_path: Path) -> list[str]:
     # destino LEA, 2026-08-02: rc=1 por haber cumplido el objetivo).
 
     for row in rows:
-        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        cells = _split_row_cells(row)
         if len(cells) != len(_TABLE_HEADER_COLS):
-            errors.append(f"row has {len(cells)} columns, expected 8: {row}")
+            errors.append(
+                f"row has {len(cells)} columns, expected 8: {row} "
+                "(un pipe literal en una celda es DELIMITADOR; si es contenido, "
+                "escapalo con barra invertida y este gate lo honra, "
+                "WOT-2026-041u)"
+            )
             continue
         # WOT-2026-055f: the header (Prioridad) cell is part of the row's
         # structural contract. A full-width row whose Prioridad is not a
@@ -701,7 +738,7 @@ def _check_ficha_pointers(content: str, rows: list[str]) -> list[str]:
             headers[m.group(1)] = headers.get(m.group(1), 0) + 1
 
     for row in rows:
-        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        cells = _split_row_cells(row)
         if len(cells) != len(_TABLE_HEADER_COLS):
             continue
         ticket_cell, desc = cells[1], cells[2]
@@ -844,7 +881,7 @@ def _ticket_has_row(ticket_id: str, path: Path) -> bool:
         stripped = line.strip()
         if not stripped.startswith("|"):
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        cells = _split_row_cells(stripped)
         head = cells[:2]  # ID is cell[0] (archive) or cell[1] (live backlog)
         if ticket_id in head:
             return True
@@ -1312,7 +1349,7 @@ def validate_archive_row_arity(root: Path) -> list[str]:
             layout = "closure"
         if tid is None:
             continue
-        n = len(stripped.strip("|").split("|"))
+        n = len(_split_row_cells(stripped))
         want_n = 4 if layout == "closure" else want
         # CTL-2026-026a cierre (2026-09-02): el archive del destino CTL usa un
         # schema de closure PROPIO de 5 celdas (`| Ticket | Estado | commit: |
@@ -1339,8 +1376,9 @@ def validate_archive_row_arity(root: Path) -> list[str]:
                 f"{tid}: archived {layout} row has {n} cells, expected {want_n} "
                 f"(WOT-2026-026z/054i). Almost certainly an unescaped '|' in the "
                 f"row text pushed its terminal 'commit:' cell out of the table. "
-                f"REMOVE the pipe from the cell text (do NOT escape it: the real "
-                f"consumer splits on the raw pipe)."
+                f"If the pipe is CONTENT, escape it with a backslash (honored by "
+                f"this gate and by GFM since WOT-2026-041u); otherwise REMOVE "
+                f"the pipe."
             )
     return errors
 
@@ -1477,7 +1515,7 @@ def _compact_closure_log_states(archive: Path) -> list[str]:
         # row has its id at index 2 and is handled by the caller.
         if len(raw) <= 2 or not _require(_TICKET_ROW_CELL_RE).match(raw[1].strip()):
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        cells = _split_row_cells(stripped)
         if len(cells) <= 1:
             continue
         state = cells[1].lower()
@@ -1521,7 +1559,7 @@ def validate_archive_states(root: Path) -> list[str]:
         tid = _row_ticket_id(stripped)
         if tid is None:
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        cells = _split_row_cells(stripped)
         # ARITY-INDEPENDIENTE (hallazgo del bucle L800, Codex): la primera version
         # hacia `continue` cuando la arity no era 8, heredando el scope de
         # validate_archive_row_arity. Eso dejaba INVISIBLES 9 filas MAS -- las
@@ -1802,7 +1840,7 @@ def validate_archive_landing_evidence(root: Path) -> list[str]:
         tid = _row_ticket_id(stripped)
         if tid is None:
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        cells = _split_row_cells(stripped)
         if len(cells) <= 4:
             continue  # sin celda de Estado que auditar
         state = _archive_row_state(cells)
@@ -1914,7 +1952,7 @@ def _read_archive_reactivations(archive: Path) -> dict[str, str]:
         tid = _row_ticket_id(stripped)
         if tid is None:
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        cells = _split_row_cells(stripped)
         if len(cells) <= 4:
             continue
         result[tid] = _archive_row_reactivation(cells)
@@ -2017,7 +2055,7 @@ def _terminal_ticket_states(archive: Path) -> dict[str, str]:
         raw = stripped.split("|")
         tid = _row_ticket_id(stripped)
         if tid is not None:
-            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            cells = _split_row_cells(stripped)
             if len(cells) <= 4:
                 continue
             state = _archive_row_state(cells)
@@ -2076,7 +2114,7 @@ def validate_live_dependencies(root: Path) -> list[str]:
         tid = _row_ticket_id(stripped)
         if tid is None:
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        cells = _split_row_cells(stripped)
         if len(cells) <= 5:
             continue
         raw = cells[5]
@@ -2173,7 +2211,7 @@ def _absorption_requests(
     """
     requests: list[tuple[str, str, str, str]] = []
     for row in live_rows:
-        cells = [c.strip() for c in row.strip("|").split("|")]
+        cells = _split_row_cells(row)
         tid = _row_ticket_id(row)
         if tid is None or len(cells) < 8:
             continue
@@ -2287,7 +2325,7 @@ def validate_absorption_inheritance(root: Path) -> list[str]:
             stripped = ln.strip()
             if not stripped.startswith("|"):
                 continue
-            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            cells = _split_row_cells(stripped)
             tid = _find_ticket_cell(cells)
             if tid is not None:
                 archive_rows.setdefault(tid, (cells, stripped))
@@ -2352,7 +2390,7 @@ def _read_archive_terminal_states(path: Path) -> dict[str, str]:
         stripped = line.strip()
         if not stripped.startswith("|"):
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        cells = _split_row_cells(stripped)
         tid = _find_ticket_cell(cells)
         if tid is None:
             continue
@@ -2489,7 +2527,7 @@ def validate_origin_confirmed(root: Path) -> list[str]:
 
     warnings: list[str] = []
     for row in rows:
-        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        cells = _split_row_cells(row)
         if len(cells) != len(_TABLE_HEADER_COLS):
             continue  # already reported by validate_backlog
         ticket = cells[1]

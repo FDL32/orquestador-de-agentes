@@ -3458,3 +3458,60 @@ class TestAbsorptionInheritance042l:
         )
         rc = cbc.main(["--project-root", str(tmp_path)])
         assert rc == 1
+
+
+class TestEscapedPipe041u:
+    """WOT-2026-041u: el guard honra la barra vertical escapada (GFM).
+
+    DECISION de producto documentada: el consumidor canonico (GitHub) trata
+    `\\|` como CONTENIDO de celda; el guard mide con la misma vara. Un pipe
+    literal sin escapar sigue siendo delimitador (no se relaja el conteo) y
+    el mensaje de error sugiere el escape como causa probable.
+    """
+
+    def test_fila_viva_con_pipe_escapado_pasa(self, tmp_path: Path) -> None:
+        row = (
+            "| Media | WOT-2026-0e1u | path_source: model\\|operator "
+            "deliverable_type: code | s | pending | - | x | - |\n"
+        )
+        root = _write_backlog(tmp_path, row)
+        assert (
+            cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md") == []
+        )
+
+    def test_fila_archivada_con_pipe_escapado_pasa(self, tmp_path: Path) -> None:
+        _write_backlog(tmp_path, _VALID_ROWS)
+        _write_archive(
+            tmp_path,
+            _ARCHIVE_HEADER
+            + "| Alta | WOT-2026-0e2u | ruta con model\\|operator dentro | s |"
+            " completed | - | x | commit:abc1234 |\n",
+        )
+        assert cbc.validate_archive_row_arity(tmp_path) == []
+
+    def test_pipe_literal_sin_escapar_sigue_siendo_delimitador(
+        self, tmp_path: Path
+    ) -> None:
+        row = (
+            "| Media | WOT-2026-0e3u | parte1 | parte2 deliverable_type: code |"
+            " s | pending | - | x | - |\n"
+        )
+        root = _write_backlog(tmp_path, row)
+        errs = cbc.validate_backlog(root / ".agent" / "collaboration" / "backlog.md")
+        assert any("9 columns" in e for e in errs), errs
+        assert any("escapalo" in e for e in errs), errs
+
+    def test_mensaje_archivado_sugiere_escape_como_causa(self, tmp_path: Path) -> None:
+        _write_backlog(tmp_path, _VALID_ROWS)
+        _write_archive(
+            tmp_path,
+            _ARCHIVE_HEADER + "| Alta | WOT-2026-0e4u | a | b | c | d | e | f | g |\n",
+        )
+        errs = cbc.validate_archive_row_arity(tmp_path)
+        assert any("escape it with a backslash" in e for e in errs), errs
+
+    def test_splitter_identico_al_raw_sin_escapes(self) -> None:
+        row = "| Alta | WOT-2026-0e5u | titulo | s | pending | - | x | - |"
+        assert cbc._split_row_cells(row) == [
+            c.strip() for c in row.strip().strip("|").split("|")
+        ]
