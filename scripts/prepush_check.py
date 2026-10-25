@@ -528,6 +528,47 @@ def run_validate_all(project_root: Path) -> CheckResult:
     )
 
 
+def _run_dod_metric_freshness_warn(project_root: Path) -> str:
+    """WOT-2026-059r: invoca check_dod_metric_freshness.main y degrada a WARN.
+
+    Before: `project_root` resuelto (destino en esta topologia).
+    During: importa el `main()` del guard (import local, patron del modulo) y
+        lo ejecuta con la MISMA ruta de produccion que el CLI
+        (`main(["--project-root", ...])`), capturando su stdout. Nunca
+        propaga excepciones ni SystemExit: cualquier fallo del guard se
+        degrada a linea WARN visible (nunca un verde mudo).
+    After: "" si el guard salio limpio (rc 0); lineas "  WARN: ..." con las
+        violaciones nombradas si rc 1; WARN de self-fail con su salida si
+        cualquier otro codigo o excepcion. Nunca bloquea por si solo
+        (decision DoD-d de WOT-2026-059r).
+    """
+    buf = io.StringIO()
+    try:
+        from check_dod_metric_freshness import main as _dod_metric_main
+
+        with contextlib.redirect_stdout(buf):
+            rc = _dod_metric_main(["--project-root", str(project_root)])
+    except SystemExit as exc:  # argparse y salidas tempranas del guard
+        rc = exc.code if isinstance(exc.code, int) else 2
+    except Exception as exc:
+        return (
+            "  WARN: [dod-metric] guard no ejecutable "
+            f"({exc!r}); degradado a WARN (decision WOT-2026-059r)"
+        )
+    out = [line for line in buf.getvalue().splitlines() if line.strip()]
+    if rc == 0:
+        return ""
+    if rc == 1:
+        return "\n".join(f"  WARN: {line}" for line in out)
+    return "\n".join(
+        [
+            f"  WARN: [dod-metric] self-fail (exit {rc}); WARN por decision "
+            "WOT-2026-059r, nunca un verde mudo"
+        ]
+        + [f"  WARN: {line}" for line in out]
+    )
+
+
 def run_backlog_contract_check(project_root: Path) -> CheckResult:
     """Gate bloqueante de cierre: la cola viva del backlog no tiene terminales.
 
@@ -657,11 +698,27 @@ def run_backlog_contract_check(project_root: Path) -> CheckResult:
         if not dep_graph_result.passed
         else ""
     )
+    # WOT-2026-059r: la invocacion del guard vive en _run_dod_metric_freshness_warn
+    # y se anade DESPUES, junto al resto de lineas WARN del output (ver abajo).
     output_parts = ["live queue contract holds", f"  {censo}"]
     if vol_lines:
         output_parts.append(vol_lines)
     if dep_graph_lines:
         output_parts.append(dep_graph_lines)
+    # WOT-2026-059r: guard de frescura de metricas DoD (el "guard U2",
+    # check_dod_metric_freshness) cableado AQUI como WARN no bloqueante.
+    # Decision DoD(d) con evidencia en vivo 2026-10-25: el guard detecta 8+
+    # violaciones vivas en el backlog del destino, todas previas a este ticket
+    # (filas de otras sesiones), asi que BLOQUEANTE romperia el cierre de
+    # inmediato sin migracion (precedente 042x/validate_decision_schema y el
+    # patron WARN de 073a). Ruta de migracion declarada: anclar las cifras
+    # vivas (MEDIDO/snapshot) y endurecer a bloqueante en un ticket futuro.
+    # Se llama al main() del guard (misma ruta que el CLI); rc 0 -> silencio,
+    # rc 1 -> violaciones nombradas como WARN, otro codigo -> self-fail
+    # visible. La invocacion vive en _run_dod_metric_freshness_warn.
+    dod_metric_lines = _run_dod_metric_freshness_warn(project_root)
+    if dod_metric_lines:
+        output_parts.append(dod_metric_lines)
     output = "\n".join(output_parts)
     return CheckResult(
         name=name,

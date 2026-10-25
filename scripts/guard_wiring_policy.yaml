@@ -140,9 +140,6 @@ known_unwired:
   check_prompt_bias: WOT-2026-038b
 
   # WOT-2026-034c: el detector nace STANDALONE por diseno del propio ticket --
-  # cablearlo en prepush es NON-GOAL declarado y se pedira como follow-up propio.
-  # La deuda se declara aqui, con dueno, para que no entre como huerfano silencioso.
-  check_dod_metric_freshness: WOT-2026-034c
 
   # WOT-2026-059n: cableado el 2026-10-07 en `prompts/session_hop.md` Paso 6-bis
   # ("audita el arranque contra si mismo antes de entregarlo") -- invocacion

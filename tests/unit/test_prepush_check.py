@@ -1409,3 +1409,143 @@ def test_103b_rc2_is_no_verificable_not_silent_pass(tmp_path):
     assert result.passed is False
     assert result.is_blocking is False
     assert "NO VERIFICABLE" in result.output
+
+
+# ------------------------------------------------------------------ WOT-2026-059r
+# El "guard U2" (check_dod_metric_freshness) cableado como WARN no bloqueante
+# en run_backlog_contract_check. Los tests usan el main() del guard parcheado
+# a nivel de modulo (el helper lo importa dentro de la llamada), asi que la
+# ruta de produccion -- import + invocacion + captura de stdout -- es la real.
+
+
+def _fake_guard_main(rc, lines):
+    def _main(argv):
+        for line in lines:
+            print(line)
+        return rc
+
+    return _main
+
+
+def test_059r_wiring_surfaces_violations_as_warn(tmp_path, monkeypatch):
+    """(a) La invocacion vive y sus violaciones salen nombradas como WARN."""
+    import check_dod_metric_freshness as guard_mod
+
+    monkeypatch.setattr(
+        guard_mod,
+        "main",
+        _fake_guard_main(
+            1,
+            [
+                "[dod-metric] live_rows=2 violations=1",
+                "[dod-metric]   VIOLATION: WOT-2026-999z: figure '3 filas' "
+                "has no temporal anchor",
+            ],
+        ),
+    )
+    result = pc_module._run_dod_metric_freshness_warn(tmp_path)
+    assert "WARN: [dod-metric] live_rows=2 violations=1" in result
+    assert "VIOLATION: WOT-2026-999z" in result
+
+
+def test_059r_wiring_silent_when_clean(tmp_path, monkeypatch):
+    """(c) Control negativo: guard limpio (rc 0) -> cero lineas, cero ruido."""
+    import check_dod_metric_freshness as guard_mod
+
+    monkeypatch.setattr(
+        guard_mod,
+        "main",
+        _fake_guard_main(0, ["[dod-metric] live_rows=5 violations=0"]),
+    )
+    assert pc_module._run_dod_metric_freshness_warn(tmp_path) == ""
+
+
+def test_059r_wiring_selffail_visible_never_fatal(tmp_path, monkeypatch):
+    """(c) Un self-fail del guard es WARN visible, nunca excepcion del huesped."""
+    import check_dod_metric_freshness as guard_mod
+
+    def _broken(argv):
+        raise RuntimeError("boom interno del guard")
+
+    monkeypatch.setattr(guard_mod, "main", _broken)
+    result = pc_module._run_dod_metric_freshness_warn(tmp_path)
+    assert "self-fail" in result or "no ejecutable" in result
+    assert "WARN" in result
+
+
+def test_059r_wired_into_run_backlog_contract_check_warn_not_blocking(
+    tmp_path, monkeypatch
+):
+    """(a)+(d) Integracion por el call-site real de run_backlog_contract_check.
+
+    MUTATION THAT THIS TEST KILLS: (i) desconectar la invocacion
+    (_run_dod_metric_freshness_warn o su llamada dentro de
+    run_backlog_contract_check) hace caer ESTE test y solo los de 059r;
+    (ii) endurecer la decision a BLOQUEANTE (passed=False con violaciones)
+    tambien lo hace caer. Es el contract-test del DoD (a) y de la decision
+    WARN del DoD (d).
+    """
+    import importlib
+
+    import check_dod_metric_freshness as guard_mod
+
+    backlog = tmp_path / ".agent" / "collaboration" / "backlog.md"
+    backlog.parent.mkdir(parents=True, exist_ok=True)
+    backlog.write_text(
+        "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de "
+        "| Origen | Reactivation |\n",
+        encoding="utf-8",
+    )
+
+    # Los validadores bloqueantes del huesped se neutralizan: este test mide
+    # SOLO el wiring de 059r, no el contrato de backlog (que tiene su suite).
+    for modname in ("scripts.check_backlog_contract", "check_backlog_contract"):
+        try:
+            mod = importlib.import_module(modname)
+        except ImportError:
+            continue
+        for fn in (
+            "validate_backlog",
+            "validate_live_archive_integrity",
+            "validate_archive_row_arity",
+            "validate_archive_states",
+            "validate_archive_landing_evidence",
+            "validate_archive_prose_preservation",
+            "validate_lost_ids",
+            "validate_archive_volume",
+        ):
+            if hasattr(mod, fn):
+                monkeypatch.setattr(mod, fn, lambda *a, **k: [])
+    for dep_modname in (
+        "scripts.check_backlog_dependency_graph",
+        "check_backlog_dependency_graph",
+    ):
+        try:
+            dep_mod = importlib.import_module(dep_modname)
+        except ImportError:
+            continue
+        if hasattr(dep_mod, "run_backlog_dependency_graph_check"):
+            monkeypatch.setattr(
+                dep_mod,
+                "run_backlog_dependency_graph_check",
+                lambda root: pc_module.CheckResult(
+                    name="stub", passed=True, output="", is_blocking=True
+                ),
+            )
+    monkeypatch.setattr(
+        guard_mod,
+        "main",
+        _fake_guard_main(
+            1,
+            [
+                "[dod-metric] live_rows=1 violations=1",
+                "[dod-metric]   VIOLATION: WOT-2026-999z: figure '3 filas'",
+            ],
+        ),
+    )
+
+    result = pc_module.run_backlog_contract_check(tmp_path)
+    # Decision WARN del DoD(d): con violaciones vivas el check SIGUE pasando.
+    assert result.passed is True
+    assert "[dod-metric]" in result.output
+    assert "VIOLATION: WOT-2026-999z" in result.output

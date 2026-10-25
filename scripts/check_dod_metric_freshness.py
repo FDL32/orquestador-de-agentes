@@ -22,10 +22,14 @@ During: parse the live "Vista rapida" table (delegated wholesale to
 After: exit 0 when every live figure is anchored or allowlisted; exit 1 with one
     named violation per offending row otherwise. No mutation, ever.
 
-WIRING: standalone by design. Cabling this into prepush is a declared NON-GOAL of
-    WOT-2026-034c and will be requested as its own follow-up ticket; this module
-    is CLI-only until then, and that debt is DECLARED here so the wiring audit can
-    see it rather than infer an orphan.
+WIRING: WARN en el closeout (WOT-2026-059r, 2026-10-25). El propio 034c declaro
+    el cableado como follow-up; 059r es ese follow-up. prepush_check.py invoca
+    este main() desde run_backlog_contract_check y degrada TODOS sus codigos a
+    WARN no bloqueante: 8+ violaciones vivas previas al cableado (filas de otras
+    sesiones) harian un gate bloqueante falso-rojo heredado (precedente 042x).
+    Ruta de migracion declarada: anclar las cifras vivas y endurecer a
+    bloqueante en un ticket futuro. Este modulo sigue siendo el dueno de su
+    logica; prepush_check nunca la re-implementa.
 """
 
 from __future__ import annotations
