@@ -249,6 +249,95 @@ class TestCanonicalCommand:
         assert cmd.startswith('python -c "')
 
 
+class TestCanonicalSessionStartCommand:
+    """WOT-2026-058a: the SessionStart launcher is fail-OPEN by design,
+    the ONLY exception to the fail-closed policy every other hook keeps.
+    """
+
+    def test_command_shape(self):
+        cmd = entry.canonical_session_start_command()
+        assert "session_start_hook.py" in cmd
+        assert cmd.startswith('python -c "')
+        # Must never carry the fail-closed vocabulary of the OTHER hooks.
+        assert "fail-closed" not in cmd
+        assert "HOOK INACTIVE" not in cmd
+
+    def _run(self, cmd: str, cwd: Path, payload: bytes = b"{}"):
+        import shlex
+        import subprocess
+        import sys
+
+        code = shlex.split(cmd)[-1]
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            input=payload,
+            cwd=str(cwd),
+            capture_output=True,
+            timeout=30,
+        )
+
+    def test_missing_target_degrades_to_zero_with_warning_payload(self, tmp_path: Path):
+        """RUNS the real command: target ABSENT -> rc=0, schema-compliant
+        warning JSON on stdout -- the behavioral core of WOT-2026-058a (the
+        session must open, never block, when memory/hooks are missing in a
+        new destino).
+        """
+        import json
+
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".agent" / "hooks").mkdir(parents=True)
+        cmd = entry.canonical_session_start_command()
+        result = self._run(cmd, tmp_path)
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        payload = json.loads(result.stdout.decode())
+        hso = payload["hookSpecificOutput"]
+        assert hso["hookEventName"] == "SessionStart"
+        assert "session_start_hook.py" in hso["additionalContext"]
+        assert "systemMessage" in payload
+
+    def test_present_target_delegates_and_forwards_returncode(self, tmp_path: Path):
+        """With the target PRESENT, the launcher must still delegate (not
+        ALWAYS take the fail-open branch) -- distinguishes a real cascade
+        from a stub that always prints the warning.
+        """
+        (tmp_path / ".claude").mkdir()
+        hooks = tmp_path / ".agent" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / "session_start_hook.py").write_text(
+            "import sys; sys.stdin.buffer.read(); sys.exit(0)\n",
+            encoding="utf-8",
+        )
+        cmd = entry.canonical_session_start_command()
+        result = self._run(cmd, tmp_path)
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        # The REAL hook ran (stub prints nothing), not the fallback warning.
+        assert result.stdout == b""
+
+    def test_resolves_via_motor_link_when_no_local_copy(self, tmp_path: Path):
+        """Same resolution cascade as every other hook: a destino without
+        its own copy still finds the motor's session_start_hook.py through
+        motor_destination_link.json.
+        """
+        import json
+
+        destino = tmp_path / "destino"
+        motor = tmp_path / "motor"
+        (destino / ".claude").mkdir(parents=True)
+        (motor / ".agent" / "hooks").mkdir(parents=True)
+        (motor / ".agent" / "hooks" / "session_start_hook.py").write_text(
+            "import sys; sys.stdin.buffer.read(); sys.exit(0)\n",
+            encoding="utf-8",
+        )
+        (destino / ".agent" / "config").mkdir(parents=True)
+        (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+            json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+        )
+        cmd = entry.canonical_session_start_command()
+        result = self._run(cmd, destino)
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert result.stdout == b""
+
+
 class TestFilePathAwareRootSelection:
     """WOT-2026-038c: entry.py must retarget guard invocation by file_path,
     not blindly trust cwd-derived repo_root, while staying fail-closed

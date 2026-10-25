@@ -274,22 +274,26 @@ def test_hook_anchors_memory_at_the_root_it_runs_in(tmp_path: Path) -> None:
     )
 
 
-def test_launcher_is_canonical_and_fails_red_when_absent() -> None:
-    """El LANZADOR falla ROJO si el hook no existe; el fail-open vive DENTRO.
+def test_launcher_is_the_dedicated_fail_open_generator_not_mute() -> None:
+    """El LANZADOR de SessionStart es fail-OPEN por diseno (WOT-2026-058a),
+    pero NUNCA mudo -- su aviso debe NOMBRAR la causa.
 
-    Leccion que costo una suite roja (2026-08-17). La primera version puso el
-    fail-open en el lanzador de `settings.json` (`sys.exit(0)` cuando el fichero
-    no existia) buscando "que el arranque nunca se bloquee". Confundia dos
-    fallos que exigen politicas OPUESTAS:
+    SUPERSEDE la version anterior de este test (que exigia `sys.exit(2)`
+    aqui): esa era la politica de TODOS los demas lanzadores de hooks, pero
+    una decision del usuario (2026-10-25) hizo a `SessionStart` la UNICA
+    excepcion -- un destino nuevo sin hooks copiados debe poder abrir sesion
+    igual, con un aviso visible en vez de un `rc=2` que bloquea el arranque
+    entero. La leccion original (no enmascarar silenciosamente un hook
+    ausente) sigue viva: este test prueba que el NUEVO lanzador fail-open
+    sigue siendo VISIBLE (nombra el fichero ausente), a diferencia de la
+    regresion que motivo la suite roja de 2026-08-17 (`sys.exit(0)` MUDO,
+    sin diagnostico). Evidencia de comportamiento por subprocess (ambas
+    ramas) vive en `tests/unit/test_claude_guard_entry.py::
+    TestCanonicalSessionStartCommand`.
 
-      - hook AUSENTE     -> instalacion rota   -> rc=2, como todos los demas
-      - memoria ILEGIBLE -> degradacion normal -> rc=0, resuelto DENTRO del script
-
-    Con el fail-open en el lanzador, una instalacion rota se veia igual que un
-    arranque sano. `check_claude_settings_portability` lo caza por eso: exige el
-    bootstrap canonico y prohibe el `exit 0` silencioso.
-
-    MUTACION ALCANZABLE: devolver el comando a `sys.exit(0)` -> cae el assert.
+    MUTACION ALCANZABLE: devolver el comando al generador fail-closed
+    generico (`canonical_command_for`) -> cae el primer assert; vaciar el
+    aviso a un `sys.exit(0)` mudo -> cae el segundo.
     """
     import importlib.util
 
@@ -304,12 +308,16 @@ def test_launcher_is_canonical_and_fails_red_when_absent() -> None:
     )
     command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
 
-    assert command == cge.canonical_command_for(
-        "session_start_hook.py", "agent_hooks"
-    ), "el lanzador de SessionStart no es el bootstrap canonico"
-    assert "sys.exit(2)" in command, (
-        "el lanzador sale con 0 cuando el hook no existe: una instalacion rota "
-        "queda indistinguible de un arranque sano"
+    assert command == cge.canonical_session_start_command(), (
+        "el lanzador de SessionStart no es el generador fail-open dedicado"
+    )
+    assert "session_start_hook.py" in command, (
+        "el aviso de fallo debe NOMBRAR el fichero ausente, nunca un "
+        "sys.exit(0) mudo indistinguible de un arranque sano"
+    )
+    assert "sys.exit(2)" not in command, (
+        "SessionStart ya no debe bloquear el arranque cuando el hook falta "
+        "(WOT-2026-058a); un sys.exit(2) aqui seria la politica antigua"
     )
 
 

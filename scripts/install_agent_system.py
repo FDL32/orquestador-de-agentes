@@ -1593,16 +1593,20 @@ def propagate_claude_guard_hook(
 def _canonical_session_start_command() -> str:
     """The exact SessionStart command that invokes session_start_hook.py.
 
-    Reuses the generic generator (``canonical_command_for``), the same one
-    the motor's own tracked ``.claude/settings.json`` already uses for its
-    ``SessionStart`` entry -- not a new bootstrap literal.
+    WOT-2026-058a: this is the dedicated fail-OPEN generator
+    (``canonical_session_start_command``), NOT the generic
+    ``canonical_command_for`` -- a user decision made SessionStart's
+    launcher degrade gracefully (warning additionalContext, exit 0) rather
+    than refuse to open the session when session_start_hook.py cannot be
+    resolved in a destino. Every other hook this installer propagates
+    (the write guard) stays fail-closed, unchanged.
     """
     agent_hooks_dir = str(Path(__file__).resolve().parent.parent / ".agent" / "hooks")
     if agent_hooks_dir not in sys.path:
         sys.path.insert(0, agent_hooks_dir)
     import claude_guard_entry
 
-    return claude_guard_entry.canonical_command_for("session_start_hook.py")
+    return claude_guard_entry.canonical_session_start_command()
 
 
 def propagate_session_start_hook(
@@ -1626,7 +1630,8 @@ def propagate_session_start_hook(
         pattern as ``propagate_claude_guard_hook``.
     After: destination_root/.claude/settings.json exists and its
         ``SessionStart`` hook is exactly
-        ``claude_guard_entry.canonical_command_for("session_start_hook.py")``.
+        ``claude_guard_entry.canonical_session_start_command()`` (fail-OPEN,
+        WOT-2026-058a).
         Returns True on success (or dry-run); False only if an existing
         settings.json could not be parsed as JSON (fail-safe: never
         overwrites a file it cannot read).

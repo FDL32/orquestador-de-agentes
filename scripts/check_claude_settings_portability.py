@@ -161,6 +161,13 @@ def check_command_is_canonical(settings: dict) -> list[str]:
 #: ``sys.exit(0)`` left the gate at rc=0 ("OK, portable, fail-closed") -- the
 #: mechanism existed, was wired, and did not look where the defect lived
 #: (AGENTS.md, "barrera del alcance").
+#:
+#: WOT-2026-058a exception: SessionStart is the ONLY event in this map
+#: whose expected command is NOT canonical_command_for(*target) -- see
+#: _FAIL_OPEN_EVENTS and check_all_hook_commands_are_canonical below.
+#: The target tuple here still names its script/parent (used for the
+#: diagnostic message), the comparison just routes to a different
+#: generator.
 _NON_GATING_TARGETS: dict[tuple[str, str], tuple[str, str]] = {
     ("PostToolUse", "Read|Grep|Glob|WebFetch"): (
         "native_post_tool_hook.py",
@@ -176,6 +183,14 @@ _NON_GATING_TARGETS: dict[tuple[str, str], tuple[str, str]] = {
     ("SubagentStop", ""): ("subagent_stop_hook.py", "agent_hooks"),
 }
 
+#: Events whose canonical launcher is FAIL-OPEN by design (WOT-2026-058a),
+#: never fail-closed. Today exactly one: SessionStart degrades to a
+#: warning additionalContext/systemMessage and exits 0 when its target
+#: is missing, instead of writing to stderr and exiting 2. This is a
+#: CLOSED set deliberately kept to one member -- adding an event here is
+#: a security-relevant decision, never a default.
+_FAIL_OPEN_EVENTS = frozenset({"SessionStart"})
+
 
 def check_all_hook_commands_are_canonical(settings: dict) -> list[str]:
     """Every hook command must be a canonical bootstrap, not a guessed path.
@@ -186,11 +201,18 @@ def check_all_hook_commands_are_canonical(settings: dict) -> list[str]:
     hook that resolves the motor by GUESSING a directory name and reports
     success when every guess misses.
 
+    WOT-2026-058a: SessionStart is special-cased to
+    claude_guard_entry.canonical_session_start_command() (fail-OPEN by
+    design, a user decision overriding the generic fail-closed policy for
+    THIS hook only) -- every other event still compares against
+    canonical_command_for(script, parent) (fail-CLOSED, unchanged).
+
     Before: the parsed tracked settings.
     During: for each known (event, matcher) pair, compares the command against
-    ``claude_guard_entry.canonical_command_for(script, parent)``. That function
-    is the SINGLE SOURCE of the literal -- duplicating the string here would
-    reintroduce exactly the drift this gate exists to prevent.
+    the generator appropriate for that event. Both generators live in
+    claude_guard_entry -- the SINGLE SOURCE of each literal -- duplicating
+    either string here would reintroduce exactly the drift this gate exists
+    to prevent.
     After: returns one violation per non-canonical or unknown command.
     """
     violations: list[str] = []
@@ -210,13 +232,25 @@ def check_all_hook_commands_are_canonical(settings: dict) -> list[str]:
                         "command is audited (unaudited hooks fail green)"
                     )
                     continue
-                expected = claude_guard_entry.canonical_command_for(*target)
+                if event in _FAIL_OPEN_EVENTS:
+                    expected = claude_guard_entry.canonical_session_start_command()
+                    note = (
+                        "it must resolve via the walk-up root then the motor "
+                        "link; by design (WOT-2026-058a) it degrades to a "
+                        "warning additionalContext/systemMessage and exits 0 "
+                        "when the target is missing, never fail-closed"
+                    )
+                else:
+                    expected = claude_guard_entry.canonical_command_for(*target)
+                    note = (
+                        "it must resolve via the walk-up root then the motor "
+                        "link, and exit non-zero with a diagnostic when its "
+                        "target is missing (never a silent exit 0)"
+                    )
                 if hook.get("command") != expected:
                     violations.append(
-                        f"{event} hook ({target[0]}) command is not the canonical "
-                        "bootstrap; it must resolve via the walk-up root then the "
-                        "motor link, and exit non-zero with a diagnostic when its "
-                        "target is missing (never a silent exit 0)"
+                        f"{event} hook ({target[0]}) command is not the "
+                        f"canonical bootstrap; {note}"
                     )
     return violations
 

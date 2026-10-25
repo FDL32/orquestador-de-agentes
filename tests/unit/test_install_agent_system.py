@@ -1071,7 +1071,7 @@ def _canonical_session_start_command() -> str:
         _sys.path.insert(0, agent_hooks_dir)
     import claude_guard_entry
 
-    return claude_guard_entry.canonical_command_for("session_start_hook.py")
+    return claude_guard_entry.canonical_session_start_command()
 
 
 def test_propagate_session_start_hook_creates_when_absent(tmp_path):

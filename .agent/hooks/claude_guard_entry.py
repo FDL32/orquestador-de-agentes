@@ -318,6 +318,51 @@ def canonical_hook_command() -> str:
     return 'python -c "' + boot + '"'
 
 
+def canonical_session_start_command() -> str:
+    """The exact command the ``SessionStart`` hook must use (fail-OPEN by design, WOT-2026-058a).
+
+    User decision 2026-10-25, OVERRIDING ``canonical_command_for``'s fail-closed policy for THIS
+    hook ONLY: ``SessionStart`` injects memory CONTEXT (a read concern, never a write), and a new
+    destino missing ``session_start_hook.py`` (and its motor link) is the exact "destino nuevo sin
+    hooks copiados" scenario the ticket names -- not a security failure that must block the whole
+    session from opening. ALL OTHER hook launchers (the write guard via ``canonical_hook_command``,
+    and every other event resolved by ``canonical_command_for`` -- ``PostToolUse``, ``PreCompact``,
+    ``Stop``, ``SubagentStop``) are UNCHANGED and remain fail-CLOSED; this is a dedicated function,
+    not a branch of the generic generator, precisely so a future hook cannot inherit fail-open by
+    accident via a shared code path.
+
+    Before: the tracked ``.claude/settings.json``'s ``SessionStart`` hook entry; no argv, stdin
+    carries the SessionStart payload (may be empty).
+    During: resolves ``session_start_hook.py`` via the SAME two-step cascade as every other hook
+    (repo-own copy first, then ``motor_root`` from ``motor_destination_link.json``). If found, runs
+    it and forwards its returncode (session_start_hook.py itself is ALSO fail-open internally and
+    always exits 0 -- this cascade only matters when the FILE itself cannot be located at all).
+    After: if the target is NOT found, instead of writing to stderr and exiting 2, prints a single
+    schema-compliant JSON payload (``hookSpecificOutput.additionalContext`` + root-level
+    ``systemMessage``, same shape ``session_start_hook.py`` itself emits) to stdout and exits 0 --
+    the session opens with a visible warning instead of refusing to start.
+    """
+    boot = (
+        "import sys,json,subprocess; from pathlib import Path; "
+        "r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) "
+        "if (p/'.claude').exists()),Path('.').resolve()); "
+        "e=r/'.agent'/'hooks'/'session_start_hook.py'; "
+        "l=r/'.agent'/'config'/'motor_destination_link.json'; "
+        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])"
+        "/'.agent'/'hooks'/'session_start_hook.py') if l.exists() else e); "
+        "sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),"
+        "cwd=str(r)).returncode) if e.exists() else "
+        "print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart',"
+        "'additionalContext':'Memoria del proyecto NO disponible en este arranque: "
+        "session_start_hook.py no encontrado en este destino (ni via motor_destination_link.json). "
+        "Sesion continua sin contexto automatico (fail-open deliberado, WOT-2026-058a). "
+        "Carga manual: python scripts/memory_context.py --bootstrap si el script existe.'},"
+        "'systemMessage':'SessionStart degradado: hook de memoria ausente en este destino; "
+        "la sesion continua sin memoria automatica (fail-open deliberado, WOT-2026-058a).'}))"
+    )
+    return 'python -c "' + boot + '"'
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     repo_root = resolve_repo_root(argv[0] if argv else None)

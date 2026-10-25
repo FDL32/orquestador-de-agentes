@@ -98,9 +98,10 @@ def _settings(command: str = _CANONICAL, matcher: str = "Write|Edit|MultiEdit") 
                     "hooks": [
                         {
                             "type": "command",
-                            "command": gate.claude_guard_entry.canonical_command_for(
-                                "session_start_hook.py", "agent_hooks"
-                            ),
+                            # WOT-2026-058a: SessionStart is the ONE fail-open
+                            # launcher; its canonical command is a DIFFERENT
+                            # generator than the other context hook below.
+                            "command": gate.claude_guard_entry.canonical_session_start_command(),
                         }
                     ],
                 }
@@ -800,6 +801,59 @@ class TestInvariantDGuardCoversAll:
             "native_post_tool_hook.py", "agent_hooks"
         )
         assert _motor_commands()["PostToolUse::Read|Grep|Glob|WebFetch"] == expected
+
+
+class TestSessionStartFailOpenException:
+    """WOT-2026-058a: SessionStart is the ONE event whose canonical launcher
+    is fail-OPEN, a user decision overriding the fail-closed policy every
+    other hook keeps. The gate must DISCRIMINATE this, not just accept
+    whatever SessionStart carries.
+    """
+
+    def test_session_start_is_the_only_fail_open_event(self):
+        assert frozenset({"SessionStart"}) == gate._FAIL_OPEN_EVENTS
+
+    def test_real_motor_session_start_uses_fail_open_generator(self):
+        """The tracked settings.json's SessionStart command must equal the
+        DEDICATED fail-open generator, never the generic fail-closed one.
+        """
+        expected = claude_guard_entry.canonical_session_start_command()
+        assert _motor_commands()["SessionStart::"] == expected
+        # And it must differ from the fail-closed generator -- a mutation
+        # that silently reverted to canonical_command_for would otherwise
+        # slip through unnoticed if both generators ever coincided.
+        fail_closed = claude_guard_entry.canonical_command_for(
+            "session_start_hook.py", "agent_hooks"
+        )
+        assert expected != fail_closed
+
+    def test_reverted_to_fail_closed_command_is_rejected(self):
+        """MUTATION: revert SessionStart to the OLD fail-closed command ->
+        violation. Proves the gate enforces the NEW fail-open command, not
+        merely tolerates it alongside the old one.
+        """
+        data = json.loads(_MOTOR_SETTINGS.read_text(encoding="utf-8"))
+        data["hooks"]["SessionStart"][0]["hooks"][0]["command"] = (
+            claude_guard_entry.canonical_command_for(
+                "session_start_hook.py", "agent_hooks"
+            )
+        )
+        violations = gate.check_all_hook_commands_are_canonical(data)
+        assert violations != []
+        assert any("SessionStart" in v for v in violations)
+
+    def test_write_guard_and_other_events_unaffected(self):
+        """Control: the write guard and every other non-SessionStart hook
+        in the real tracked settings keep their fail-CLOSED generator.
+        Without this control, the special-case branch could have swallowed
+        more than SessionStart and this would go undetected.
+        """
+        data = json.loads(_MOTOR_SETTINGS.read_text(encoding="utf-8"))
+        assert gate.check_all_hook_commands_are_canonical(data) == []
+        for event in data["hooks"]:
+            if event in ("PreToolUse", "SessionStart"):
+                continue
+            assert event not in gate._FAIL_OPEN_EVENTS
 
 
 # ===================================================== WOT-2026-057b

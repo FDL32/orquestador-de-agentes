@@ -52,6 +52,22 @@ comportamiento (2). La suite canonica lo caso. El fail-open sigue intacto donde
 corresponde -- dentro del script--, y el arranque nunca se bloquea por memoria
 ilegible.
 
+ACTUALIZACION (WOT-2026-058a, 2026-10-25): decision del usuario que SUPERSEDE
+el caso (1) de arriba, SOLO para este hook. El lanzador de `.claude/settings.json`
+para `SessionStart` (ahora `claude_guard_entry.canonical_session_start_command`,
+no `canonical_command_for`) TAMBIEN degrada con gracia cuando este fichero no
+se puede resolver -- escenario medido real: un destino nuevo con `settings.json`
+copiado pero sin los hooks copiados daba `rc=2` en CADA apertura de sesion.
+Esto NO es la misma regresion silenciosa que la suite caso: aquella version
+antigua hacia `sys.exit(0)` MUDO, indistinguible de un arranque sano; el nuevo
+lanzador fail-open imprime un `additionalContext`/`systemMessage` que NOMBRA la
+causa exacta (hook ausente, ni local ni via `motor_destination_link.json`), asi
+que el agente y el usuario SIGUEN viendo el aviso -- la diferencia entre
+"silencioso" y "visible" es lo que separa esta decision de la regresion
+original. `check_claude_settings_portability.py` codifica esta excepcion de
+forma CERRADA (`_FAIL_OPEN_EVENTS = frozenset({'SessionStart'})`): ningun otro
+evento (incluido el write guard de `PreToolUse`) hereda este comportamiento.
+
 Before: recibe el payload JSON de SessionStart por stdin (puede ir vacio).
 During: resuelve el project root; lee el campo `source` del payload (ya no
     elige puerta: diseno v6 usa el MISMO indice acotado, `get_session_index`,
