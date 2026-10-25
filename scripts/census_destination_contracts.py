@@ -57,6 +57,14 @@ _LINK_RE = Path(".agent") / "config" / "motor_destination_link.json"
 _CONTRACTS_RELPATH = Path(".agent") / "planning" / "ticket_contracts.md"
 _HEADER_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$", re.MULTILINE)
 
+# WOT-2026-026o ronda 2 (hallazgo Codex): retirar por ID solo NO basta -- un
+# contrato ESCRITO POR EL DESTINO con un id del seed se borraria (NON-GOAL).
+# La marca de origen del seed es su bloque `## MIGRACION DESDE repo_motor`
+# (DEC-024H-001): la seccion retirable debe citarlo.
+_ORIGIN_MARK_RE = re.compile(
+    r"repo_motor|MIGRACION\s+DESDE|DEC-024H-001", re.IGNORECASE
+)
+
 
 def _contract_ids_of(text: str) -> list[str]:
     """Ids de contratos presentes en un ticket_contracts.md (titulos `## `).
@@ -113,29 +121,78 @@ def census_destinations(workspaces_root: Path) -> list[dict[str, object]]:
     return results
 
 
+def _origin_verified_ids(
+    headers: list[tuple[int, str, str | None]],
+) -> set[str]:
+    """Ids con marca de origen demostrada: bloque contiguo al `## MIGRACION`.
+
+    Before: headers (posicion, titulo, id-o-None) en orden. During: busca el
+        primer header cuyo titulo cite MIGRACION y repo_motor (DEC-024H-001)
+        y propaga la marca SOLO por el bloque CONTIGUO de ids del seed que le
+        sigue; una seccion de otro id corta la cadena, asi que un contrato
+        del DESTINO con id de seed en otra parte NO hereda la marca.
+    After: conjunto de ids con origen demostrado.
+    """
+    origin_verified: set[str] = set()
+    for i, (_start, title, _cid) in enumerate(headers):
+        if "MIGRACION" not in title or "repo_motor" not in title:
+            continue
+        for _s2, _t2, following in headers[i + 1 :]:
+            if following is None or following not in SEED_CONTRACT_IDS:
+                break
+            origin_verified.add(following)
+        break
+    return origin_verified
+
+
 def _split_seed_sections(
     text: str, repair_ids: tuple[str, ...]
-) -> tuple[str, list[str]]:
-    """Recorta del texto las secciones `## <id>` de repair_ids.
+) -> tuple[str, list[str], list[str]]:
+    """Recorta del texto las secciones `## <id>` de repair_ids CON marca de origen.
 
     Before: text completo del ticket_contracts.md; repair_ids ids del seed
-        retirables (solo 023r/023s por defecto). During: localiza cada
-        encabezado `## <id>...` y borra desde el encabezado hasta el siguiente
-        encabezado `## ` (o EOF); NO toca el resto. After: (texto nuevo,
-        lista de ids retirados). Idempotente: sin secciones que casen,
-        devuelve (text, []).
+        retirables (solo 023r/023s por defecto). During: localiza TODOS los
+        encabezados `## ` por posicion (casa `## WOT-2026-XXX`, `## Contrato
+        WOT-2026-XXX` y cualquier variante cuyo primer token sea el id), corta
+        cada seccion hasta el siguiente encabezado o EOF (sin exigir salto
+        final) y retira SOLO las secciones cuyo id este en repair_ids Y cuyo
+        cuerpo/header lleve la marca de origen del seed (repo_motor /
+        MIGRACION / DEC-024H-001) -- un contrato del DESTINO con un id del
+        seed se CONSERVA y se reporta. After: (texto nuevo, ids retirados,
+        ids con id-de-seed conservados por falta de marca de origen).
+        Idempotente: sin secciones que casen, devuelve (text, [], []).
     """
+    headers: list[tuple[int, str, str | None]] = []
+    for match in _HEADER_RE.finditer(text):
+        title = match.group("title")
+        m = re.match(r"(?:Contrato\s+)?((?:WOT-2026-|T-)[0-9A-Za-z-]+)", title)
+        headers.append((match.start(), title, m.group(1) if m else None))
+
+    # WOT-2026-026o ronda 2: el marcador de origen del seed es el bloque
+    # `## MIGRACION DESDE repo_motor` (DEC-024H-001). Ver
+    # _origin_verified_ids: la marca se propaga SOLO por el bloque CONTIGUO
+    # de ids del seed que le sigue.
+    origin_verified = _origin_verified_ids(headers)
+
+    remove_spans: list[tuple[int, int]] = []
     removed: list[str] = []
-    new_text = text
-    for rid in repair_ids:
-        pattern = re.compile(
-            r"^##\s+" + re.escape(rid) + r"\b[^\n]*\n(?:(?!^## ).*\n?)*",
-            re.MULTILINE | re.IGNORECASE,
-        )
-        if pattern.search(new_text):
-            new_text = pattern.sub("", new_text)
-            removed.append(rid)
-    return new_text, removed
+    kept_no_origin: list[str] = []
+    for i, (start, _title, cid) in enumerate(headers):
+        if cid is None or cid not in repair_ids:
+            continue
+        end = headers[i + 1][0] if i + 1 < len(headers) else len(text)
+        section = text[start:end]
+        if cid in origin_verified or _ORIGIN_MARK_RE.search(section):
+            remove_spans.append((start, end))
+            removed.append(cid)
+        else:
+            kept_no_origin.append(cid)
+
+    if not remove_spans:
+        return text, [], kept_no_origin
+    for start, end in reversed(remove_spans):
+        text = text[:start] + text[end:]
+    return text, removed, kept_no_origin
 
 
 def repair_destination(
@@ -155,16 +212,27 @@ def repair_destination(
         return 1, [], "sin --backup-dir: fail-closed, sin backup no se toca nada"
     if not contracts_path.is_file():
         return 1, [], f"sin {contracts_path}"
-    text = contracts_path.read_text(encoding="utf-8", errors="replace")
-    sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    # WOT-2026-026o ronda 2 (hallazgo Codex): el sha del backup se calcula
+    # sobre los BYTES ORIGINALES (read_text normaliza CRLF y el hash dejaria
+    # de ser verificable contra el backup).
+    raw = contracts_path.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"{contracts_path.name}.{sha[:8]}.bak"
-    backup_path.write_bytes(contracts_path.read_bytes())
+    backup_path.write_bytes(raw)
 
-    new_text, removed = _split_seed_sections(text, REPAIR_DEFAULT_IDS)
+    text = raw.decode("utf-8", errors="replace")
+    new_text, removed, kept_no_origin = _split_seed_sections(text, REPAIR_DEFAULT_IDS)
+    if kept_no_origin:
+        # WOT-2026-026o ronda 2: id del seed SIN marca de origen = probable
+        # contrato del destino; se conserva y se nombra (nunca silencio).
+        print(
+            "[census-contracts] AVISO: secciones con id del seed CONSERVADAS "
+            f"por falta de marca de origen: {', '.join(kept_no_origin)}"
+        )
     if not removed:
         return 0, [], None  # idempotente: nada que retirar, sin reescritura
-    contracts_path.write_text(new_text, encoding="utf-8")
+    contracts_path.write_bytes(new_text.encode("utf-8"))
     return 0, removed, None
 
 

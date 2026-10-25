@@ -162,3 +162,55 @@ def test_026o_cli_census_json_and_table(tmp_path: Path, capsys) -> None:
     assert data[0]["destino"] == "d1"
     assert cdc.main(["--workspaces-root", str(tmp_path)]) == 0
     assert "d1" in capsys.readouterr().out
+
+
+def test_026o_r2_backup_sha_verifiable_con_crlf(tmp_path: Path) -> None:
+    """Ronda 2 (hallazgo Codex): el sha del nombre del backup debe ser el de
+    los BYTES originales; con CRLF, read_text normalizaba y el hash no
+    verificaba contra el fichero .bak."""
+    import hashlib
+
+    dest = _make_destino(
+        tmp_path,
+        "crlf",
+        SEED.replace("\n", "\r\n"),
+    )
+    backup_dir = tmp_path / "b"
+    code, _removed, err = cdc.repair_destination(dest, backup_dir)
+    assert (code, err) == (0, None)
+    backup = next(backup_dir.glob("ticket_contracts.md.*.bak"))
+    raw = backup.read_bytes()
+    expected = hashlib.sha256(raw).hexdigest()[:8]
+    assert expected in backup.name, "sha del backup no verificable (CRLF)"
+
+
+def test_026o_r2_destino_autor_con_id_de_seed_se_conserva(tmp_path: Path) -> None:
+    """Ronda 2 (hallazgo Codex): un contrato del DESTINO con un id del seed
+    pero SIN marca de origen se CONSERVA y se nombra (nunca borrado)."""
+    dest = _make_destino(
+        tmp_path,
+        "propio",
+        "## WOT-2026-023r\ncontrato que el DESTINO escribio con este id\n",
+    )
+    backup_dir = tmp_path / "b"
+    code, removed, _err = cdc.repair_destination(dest, backup_dir)
+    assert code == 0
+    assert removed == []  # nada retirado: falta la marca de origen
+    text = (dest / ".agent" / "planning" / "ticket_contracts.md").read_text(
+        encoding="utf-8"
+    )
+    assert "contrato que el DESTINO escribio" in text
+
+
+def test_026o_r2_split_casa_contrato_header_y_eof_sin_salto(tmp_path: Path) -> None:
+    """Ronda 2 (hallazgo Codex): `## Contrato WOT-2026-023r` y EOF sin salto
+    final tambien se retiran (deteccion y reparacion alineadas)."""
+    text = (
+        "## Contrato WOT-2026-023r -- repo_motor\ncontenido r\n"
+        "## Contrato WOT-2026-023s -- repo_motor\ncontenido s"
+    )
+    new_text, removed, kept = cdc._split_seed_sections(text, cdc.REPAIR_DEFAULT_IDS)
+    assert removed == ["WOT-2026-023r", "WOT-2026-023s"]
+    assert kept == []
+    assert "contenido r" not in new_text and "contenido s" not in new_text
+    assert new_text == ""
