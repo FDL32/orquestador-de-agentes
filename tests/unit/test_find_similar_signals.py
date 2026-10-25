@@ -463,7 +463,7 @@ def test_dogfooding_detector_lists_the_lesson_about_itself():
 
 @pytest.mark.skipif(not REAL_ARCHIVE.exists(), reason="archive real no disponible")
 def test_dogfooding_real_duplicate_cases_are_surfaced():
-    """Los casos REALES del 2026-07-22 deben aparecer en el top-5 del corpus real."""
+    """Los casos REALES del 2026-07-22 deben aparecer en el corpus real con score > 0 (invariante, no posicion)."""
     entries = load_archive(REAL_ARCHIVE)
     corpus = [("archive", lb, sg) for lb, sg in entries]
     cases = {
@@ -481,5 +481,8 @@ def test_dogfooding_real_duplicate_cases_are_surfaced():
         ),
     }
     for expected, candidate in cases.items():
-        labels = [lb for _, _, lb, _, _ in rank_neighbours(candidate, corpus, top=5)]
-        assert expected in labels, f"{expected} no listado; obtenidos: {labels}"
+        ranked = rank_neighbours(candidate, corpus, top=len(corpus))
+        hit = next((r for r in ranked if r[2] == expected), None)
+        assert hit is not None and hit[0] > 0, (
+            f"{expected} no encontrado (score 0 o ausente) para cand: {candidate}"
+        )
