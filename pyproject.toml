@@ -38,7 +38,18 @@ extend-exclude = [
 ]
 respect-gitignore = true
 force-exclude = true
-fix = true
+# WOT-2026-049f (decision ratificada por la orquestadora del vuelo 2026-10-25):
+# `fix = true` global RETIRADO. Una consulta `ruff check` que escribe el arbol
+# (medido: `--select RUF100` retiraba noqa legitimos de S603 porque el
+# subconjunto desactivaba la regla y el autofix implicito los daba de baja,
+# rompiendo el gate con 7 errores) viola la norma CEM de consultas read-only.
+# Ahora NINGUNA invocacion de ruff arregla sin --fix explicito. Endurecimiento
+# declarado de llamadores que heredaban el autofix: CI
+# .github/workflows/quality-gates.yml:40 (`uv run ruff check .`) y el gate del
+# Builder scripts/run_gates_dispatch.py:224-225 (que ademas MUTABA el arbol del
+# Builder): ambos pasan de "arregla y verde" a "reporta y rojo" ante violaciones
+# arreglables. Los hooks ya usaban --no-fix (6eb78e1) y ruff-format es un hook
+# separado confinado a pre-commit: sin cambio de comportamiento alli.
 
 [tool.ruff.format]
 docstring-code-format = true
