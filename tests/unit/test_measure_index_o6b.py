@@ -281,3 +281,21 @@ def test_corrupt_archive_stops_the_measurement_with_rc2(tmp_path, capsys):
     rc = m.main(["--motor-root", str(motor), "--project-root", str(dest), "--json"])
     assert rc == 2
     assert "archive corrupto" in capsys.readouterr().err
+
+
+def test_duplicate_ids_follow_the_newest_copy_like_the_renderer():
+    """Two copies of one id: the NEWEST decides (as `_dedup_newest` in the
+    renderer), whatever their order in the union -- a newer refuted copy makes
+    the lesson stale, a newer vigent copy carries the citation."""
+    old_v = _obs("obs-dup", OLD, "cita obs-tt")
+    new_refuted = _obs(
+        "obs-dup", OLD + timedelta(days=1), "cita obs-tt", status="refuted"
+    )
+    target = _obs("obs-tt", OLD)
+    for order in ([old_v, new_refuted, target], [new_refuted, old_v, target]):
+        assert "obs-dup" not in m._vigent_lessons(_union(order, []))
+    new_v = _obs("obs-dup", OLD + timedelta(days=2), "sin citas")
+    for order in ([new_v, old_v, target], [old_v, new_v, target]):
+        vigent = m._vigent_lessons(_union(order, []))
+        assert vigent["obs-dup"]["signal"] == "sin citas"
+        assert m.citation_edges(vigent) == []

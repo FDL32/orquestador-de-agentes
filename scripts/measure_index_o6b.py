@@ -152,22 +152,24 @@ def _vigent_lessons(union: list[Entry]) -> dict[str, Entry]:
     """Vigent lessons of a corpus, by id.
 
     Before: ``union`` entries from `build_union` (or a time slice of it).
-    During: keeps entries with a text ``id``, `is_lesson`, status not
-        refuted/superseded and an interpretable timestamp.
-    After: ``id`` -> entry (later duplicates of an id win). Never raises.
+    During: like the renderer (`_dedup_newest` then the stale split), first
+        keeps the NEWEST copy of each text ``id`` with an interpretable
+        timestamp, then drops it unless it is a lesson and not
+        refuted/superseded (codex review of 06b5e896, MINOR 1).
+    After: ``id`` -> entry. Never raises.
     """
-    out: dict[str, Entry] = {}
+    newest: dict[str, Entry] = {}
     for e in union:
-        eid = e.get("id")
-        if (
-            isinstance(eid, str)
-            and eid
-            and is_lesson(e)
-            and e.get("status") not in _STALE
-            and _ts(e) is not None
-        ):
-            out[eid] = e
-    return out
+        eid, ts = e.get("id"), _ts(e)
+        if not isinstance(eid, str) or not eid or ts is None:
+            continue
+        if eid not in newest or ts > _ts(newest[eid]):
+            newest[eid] = e
+    return {
+        eid: e
+        for eid, e in newest.items()
+        if is_lesson(e) and e.get("status") not in _STALE
+    }
 
 
 def citation_edges(vigent: dict[str, Entry]) -> list[tuple[datetime, str]]:
