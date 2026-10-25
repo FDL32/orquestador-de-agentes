@@ -1218,6 +1218,112 @@ def test_propagate_session_start_hook_migrates_old_fail_closed_literal(tmp_path)
     assert result.returncode == 0, result.stderr.decode(errors="replace")
 
 
+def test_propagate_session_start_hook_cleans_up_already_coexisting_stale(tmp_path):
+    """WOT-2026-058a Revisor finding (codex, ronda 2, P1): a destino that
+    was ALREADY re-synced once by the pre-fix (prepend-and-keep) logic
+    carries BOTH the new canonical command and the old fail-closed one in
+    the SAME entry's hooks list. The old already_wired check
+    (`canonical_hook in entry.hooks`) returned True for this exact shape
+    and SKIPPED cleanup forever -- a destino that hit this state once
+    before the fix never self-heals on any later re-sync.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    agent_hooks_dir = str(
+        _Path(ias.__file__).resolve().parent.parent / ".agent" / "hooks"
+    )
+    if agent_hooks_dir not in _sys.path:
+        _sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    old_fail_closed = claude_guard_entry.canonical_command_for(
+        "session_start_hook.py", "agent_hooks"
+    )
+    new_canonical = _canonical_session_start_command()
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    coexisting = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {"type": "command", "command": new_canonical},
+                        {"type": "command", "command": old_fail_closed},
+                    ],
+                }
+            ]
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(coexisting, indent=2))
+
+    ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    session_start = settings["hooks"]["SessionStart"]
+    assert len(session_start) == 1
+    hooks = session_start[0]["hooks"]
+    assert hooks == [{"type": "command", "command": new_canonical}], (
+        "the coexisting stale literal must be purged, not left alongside "
+        "the canonical command just because the canonical one is PRESENT"
+    )
+
+
+def test_propagate_session_start_hook_cleans_up_old_plus_new_separate_entries(
+    tmp_path: Path,
+):
+    """Sibling of the coexisting-in-one-entry case: the new command lives
+    in its OWN entry, separate from an old entry that still carries only
+    the stale fail-closed command. already_wired must not short-circuit
+    here either.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    agent_hooks_dir = str(
+        _Path(ias.__file__).resolve().parent.parent / ".agent" / "hooks"
+    )
+    if agent_hooks_dir not in _sys.path:
+        _sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    old_fail_closed = claude_guard_entry.canonical_command_for(
+        "session_start_hook.py", "agent_hooks"
+    )
+    new_canonical = _canonical_session_start_command()
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    separate_entries = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": new_canonical}],
+                },
+                {
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": old_fail_closed}],
+                },
+            ]
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(separate_entries, indent=2))
+
+    ias.propagate_session_start_hook(dest_root, dry_run=False)
+
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    session_start = settings["hooks"]["SessionStart"]
+    for entry in session_start:
+        assert entry["hooks"] == [{"type": "command", "command": new_canonical}], (
+            "every SessionStart entry must end up canonical-only; an old "
+            "sibling entry must not survive just because another entry "
+            "already carries the new command"
+        )
+
+
 def test_propagate_session_start_hook_idempotent_on_resync(tmp_path):
     """Re-running on an already-wired destino is a byte-identical no-op."""
     dest_root = tmp_path / "dest"

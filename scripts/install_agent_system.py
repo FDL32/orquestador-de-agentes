@@ -1657,8 +1657,16 @@ def propagate_session_start_hook(
     # SessionStart has no matcher to disambiguate entries by (unlike the
     # PreToolUse write guard, which keys on Write|Edit|MultiEdit): any entry
     # already present is treated as THE gating entry for this hook kind.
-    already_wired = any(
-        canonical_hook in entry.get("hooks", []) for entry in session_start
+    #
+    # WOT-2026-058a Revisor finding (codex, ronda 2, P1): checking only
+    # whether canonical_hook is PRESENT (``in``) let a stale literal
+    # survive FOREVER once BOTH the new and an old command coexisted in
+    # the same entry -- a real reachable state for any destino that was
+    # already re-synced once by the prior (pre-fix) prepend-and-keep
+    # logic. already_wired must require EVERY entry to contain EXACTLY
+    # [canonical_hook], never merely CONTAIN it.
+    already_wired = bool(session_start) and all(
+        entry.get("hooks") == [canonical_hook] for entry in session_start
     )
 
     if already_wired:
