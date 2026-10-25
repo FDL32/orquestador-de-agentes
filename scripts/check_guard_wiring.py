@@ -1162,11 +1162,11 @@ def _census_claude_settings(settings_path: Path, found: dict) -> None:
 
 
 def _census_workflows(motor_root: Path, found: dict) -> None:
-    """Fuente 3: .github/workflows/*.yml (pasos run:)."""
+    """Fuente 3: .github/workflows/*.yml y *.yaml (pasos run:)."""
     wf_dir = motor_root / ".github" / "workflows"
     if not wf_dir.is_dir():
         return
-    for wf in sorted(wf_dir.glob("*.yml")):
+    for wf in sorted(list(wf_dir.glob("*.yml")) + list(wf_dir.glob("*.yaml"))):
         try:
             data = yaml.safe_load(wf.read_text(encoding="utf-8", errors="replace"))
         except (OSError, yaml.YAMLError):
@@ -1195,7 +1195,13 @@ def _census_closeout(motor_root: Path, found: dict) -> None:
             text = src.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for match in _CLOSEOUT_STEM_RE.finditer(text):
+        # Ronda 3 (hallazgo Codex): los literales .py se censan SOLO en lineas
+        # de codigo -- una linea de COMENTARIO que menciona foo.py no es una
+        # invocacion.
+        code_lines = "\n".join(
+            line for line in text.splitlines() if not line.strip().startswith("#")
+        )
+        for match in _CLOSEOUT_STEM_RE.finditer(code_lines):
             stem = match.group(1)
             if stem in ("scripts",):
                 continue
@@ -1203,11 +1209,11 @@ def _census_closeout(motor_root: Path, found: dict) -> None:
                 found.setdefault(f"{stem}.py", []).append(
                     {"source": f"scripts/{src.name}", "stage": "closeout"}
                 )
-        for match in _CENSUS_SCRIPT_RE.finditer(text):
+        for match in _CENSUS_SCRIPT_RE.finditer(code_lines):
             found.setdefault(match.group(1), []).append(
                 {"source": f"scripts/{src.name}", "stage": "closeout"}
             )
-        for match in _CLOSEOUT_BARE_PY_RE.finditer(text):
+        for match in _CLOSEOUT_BARE_PY_RE.finditer(code_lines):
             candidate = f"scripts/{match.group(1)}"
             if (motor_root / candidate).is_file():
                 found.setdefault(candidate, []).append(
