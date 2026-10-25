@@ -1,3 +1,34 @@
+# 2026-10-25 - WOT-2026-127d/127e: arranque en frio con destino pareado y salud de memoria honesta
+
+### Added
+- `bus/paired_destination.py::resolve_paired_destination(root)` (127d): resolvedor
+  unico del destino pareado para el hook SessionStart y `memory_context.py
+  --bootstrap`. Primero `motor_workspace.txt` por NOMBRE (rechaza `/ \ : . ..`);
+  despues el fallback topologico de los worktrees T3
+  (`<repo>_workspace/<rama>`), aceptado solo si su `motor_destination_link.json`
+  apunta por samefile a la raiz. Nunca lanza.
+
+### Changed
+- `format_memory_index` / `get_session_index` (127d, cambio ADITIVO): linea `AVISO`
+  cuando la raiz activa es un motor y el destino aporta 0 lecciones.
+- `scripts/check_memory_health.py` (127e): desfase de `MEMORY.md` por contenido
+  (sello `Regenerated:` vs timestamp maximo de las entradas; mtime solo como
+  fallback declarado), `MEMORY.md` ausente explicito (dispara (b) solo en un
+  destino), claves del JSON por rol (`motor` / `motor-proyecto` / `destino`, motor
+  primero: es lo que pinta la linea de salud del hook) y eje informativo de
+  crecimiento sin disparo.
+- `scripts/validate_observations.py` (127e): sin `--file` y sin L1 -> `SKIP` rc 0.
+- `scripts/guard_wiring_policy.yaml` (127e): la frase de
+  `check_portable_memory_promotion` deja de afirmar una invocacion en el cierre
+  que no existe (BY-DESIGN de WOT-2026-059u intacto).
+
+### Proceso
+- Primer vuelo con la metodologia de turnos completa: Builder Kilo nan/qwen3.6,
+  Revisor independiente Kilo nan/glm5.3-flash, Manager con mutation-verify propio
+  en cada ronda y suite canonica solo al final. El Revisor cazo un BLOCKER real en
+  127e (la etiqueta `motor` no llegaba al hook) y un test no hermetico que habria
+  puesto roja la suite en los worktrees con L1 vivo.
+
 # 2026-10-22 - WOT-2026-114c: Fase 2 de la Palanca A -- mueve `## Vocabulario canonico` a modulo
 
 ### Changed
