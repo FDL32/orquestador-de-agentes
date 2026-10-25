@@ -113,7 +113,11 @@ def test_barrier_interpreter_existence_is_the_discriminant(tmp_path: Path) -> No
     disk flips PASS<->FAIL, proving the check is not cosmetic."""
     hooks_dir = tmp_path / ".git" / "hooks"
     interp = _existing_interpreter(tmp_path)
-    _write_hook(hooks_dir, "pre-commit", interp)
+    # WOT-2026-051c: los tres tipos gestionados instalados, para que el PASS
+    # lateral no se contamine con la deteccion nueva de declarado-ausente
+    # (el repo real declara commit-msg en default_install_hook_types).
+    for hook_type in chi.HOOK_TYPES:
+        _write_hook(hooks_dir, hook_type, interp)
 
     # PASS-with: interpreter exists.
     assert chi.main(["--hooks-dir", str(hooks_dir)]) == 0
@@ -267,3 +271,45 @@ def test_main_from_worktree_sees_installed_hooks_e2e(
     assert "pre-commit" in out and "pre-push" in out, (
         f"check did not SEE both hooks from the worktree common dir; out={out!r}"
     )
+
+
+def test_051c_declared_commit_msg_missing_is_red_and_fixable(tmp_path: Path) -> None:
+    """WOT-2026-051c DoD(b) -- par de exit-codes literal, no lectura de codigo.
+
+    El patron del clon viejo: el repo declara commit-msg en
+    default_install_hook_types, los otros hooks gestionados SI estan
+    instalados, y commit-msg no llego (nadie re-ejecuto `pre-commit
+    install` tras 046f). El check sale en ROJO citando el hook que falta;
+    instalado, sale en VERDE. Con --hooks-dir y sin config, la semantica
+    legacy no cambia (sin declaracion no hay ausencia que marcar).
+    """
+    repo_root = tmp_path / "repo"
+    hooks_dir = repo_root / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (repo_root / ".pre-commit-config.yaml").write_text(
+        "default_install_hook_types: [pre-commit, pre-push, commit-msg]\n",
+        encoding="utf-8",
+    )
+    interp = _existing_interpreter(tmp_path)
+    for hook_type in ("pre-commit", "pre-push"):
+        _write_hook(hooks_dir, hook_type, interp)
+
+    # RED: clon viejo -- commit-msg declarado y ausente.
+    assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 1
+
+    # GREEN: instalado, mismo interpreter.
+    _write_hook(hooks_dir, "commit-msg", interp)
+    assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 0
+
+
+def test_051c_unparseable_config_keeps_legacy_semantics(tmp_path: Path) -> None:
+    """WOT-2026-051c: config sin default_install_hook_types parseable -> sin
+    criterio nuevo; no se inventan declaraciones (jamas un falso rojo)."""
+    repo_root = tmp_path / "repo"
+    hooks_dir = repo_root / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (repo_root / ".pre-commit-config.yaml").write_text("repos: []\n", encoding="utf-8")
+    interp = _existing_interpreter(tmp_path)
+    for hook_type in chi.HOOK_TYPES:
+        _write_hook(hooks_dir, hook_type, interp)
+    assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 0

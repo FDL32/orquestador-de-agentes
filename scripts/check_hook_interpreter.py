@@ -28,13 +28,46 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # The two hook types pre-commit generates that embed INSTALL_PYTHON.
-HOOK_TYPES = ("pre-commit", "pre-push")
+HOOK_TYPES = ("pre-commit", "pre-push", "commit-msg")
 
 # Line 7 of a generated hook: INSTALL_PYTHON='...'  or  INSTALL_PYTHON="..."
 _INSTALL_PYTHON_RE = re.compile(
     r"""^\s*INSTALL_PYTHON=(?P<quote>['"])(?P<path>.*?)(?P=quote)\s*$""",
     re.MULTILINE,
 )
+
+# WOT-2026-051c: tipos declarados en `default_install_hook_types` del config.
+# Un clon VIEJO conserva sus hooks ya instalados y nunca recibe un tipo nuevo
+# (p.ej. commit-msg anadido por WOT-2026-046f): la declaracion existe en el
+# repo pero la instalacion local queda coja. Este regex lee la lista de la
+# linea simple `default_install_hook_types: [a, b, c]`; si el config no la
+# trae o no es parseable, el caller conserva la semantica legacy (solo
+# "ninguno instalado" falla), nunca inventa declaraciones.
+_DECLARED_HOOK_TYPES_RE = re.compile(
+    r"^\s*default_install_hook_types\s*:\s*\[(?P<list>[^\]]*)\]",
+    re.MULTILINE,
+)
+
+
+def _declared_hook_types(config_path: Path) -> tuple[str, ...] | None:
+    """Parse `default_install_hook_types` from the pre-commit config.
+
+    Before: `config_path` may or may not exist. During: read + regex de una
+        linea de lista simple (sin yaml; el repo no depende de pyyaml aqui).
+    After: tupla de tipos declarados, o None si el fichero no existe / la
+        linea no esta / la lista no parsea. None = sin criterio nuevo, el
+        caller cae a la semantica legacy (jamas un falso rojo).
+    """
+    try:
+        text = config_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _DECLARED_HOOK_TYPES_RE.search(text)
+    if not match:
+        return None
+    items = [i.strip().strip("'\"") for i in match.group("list").split(",")]
+    items = [i for i in items if i]
+    return tuple(items) if items else None
 
 
 @dataclass(frozen=True)
@@ -229,18 +262,39 @@ def main(argv: list[str] | None = None) -> int:
         # PASS was the fail-open the literal .git/hooks join produced in a
         # worktree.
         config_present = (repo_root / ".pre-commit-config.yaml").is_file()
+        declared: tuple[str, ...] | None = None
+        if config_present:
+            declared = _declared_hook_types(repo_root / ".pre-commit-config.yaml")
 
-        def _problem(statuses: list[HookStatus]) -> tuple[list[HookStatus], bool]:
-            """Return (stale hooks, declared-but-not-installed)."""
+        def _problem(
+            statuses: list[HookStatus],
+        ) -> tuple[list[HookStatus], bool, list[HookStatus]]:
+            """Return (stale hooks, none-installed, declared-missing).
+
+            WOT-2026-051c: `declared_missing` son los tipos GESTIONADOS
+            (HOOK_TYPES) que el config declara y este clon NO tiene, con los
+            demas presentes -- el patron exacto del clon viejo al que nunca
+            llega un hook nuevo. Si el config no parsea, la lista es vacia
+            (semantica legacy, nunca un falso rojo por incapacidad de leer).
+            """
             stale_ = [s for s in statuses if s.stale]
             present_ = [s for s in statuses if s.present]
             not_installed = config_present and not present_
-            return stale_, not_installed
+            missing: list[HookStatus] = []
+            if declared is not None:
+                declared_managed = {d for d in declared if d in HOOK_TYPES}
+                absent = declared_managed - {s.hook_type for s in present_}
+                missing = [
+                    HookStatus(h, present=False, interpreter=None, interpreter_ok=False)
+                    for h in HOOK_TYPES
+                    if h in absent
+                ]
+            return stale_, not_installed, missing
 
         statuses = check_all(hooks_dir)
-        stale, not_installed = _problem(statuses)
+        stale, not_installed, declared_missing = _problem(statuses)
 
-        if args.fix and (stale or not_installed):
+        if args.fix and (stale or not_installed or declared_missing):
             proc = _regenerate_hooks(repo_root)
             if proc.returncode != 0:
                 print(
@@ -251,10 +305,23 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             # Re-inspect to confirm the regeneration actually installed/fixed.
             statuses = check_all(hooks_dir)
-            stale, not_installed = _problem(statuses)
+            stale, not_installed, declared_missing = _problem(statuses)
 
         if stale:
             print(_actionable_message(repo_root, stale), file=sys.stderr)
+            return 1
+        if declared_missing:
+            # WOT-2026-051c: el clon viejo -- tipos declarados que este clon
+            # nunca recibio. Cita los que faltan y el camino de reparacion.
+            print(
+                "[check-hook-interpreter] FAIL: repo declara "
+                "default_install_hook_types pero este clon NO tiene "
+                "instalado: "
+                + ", ".join(s.hook_type for s in declared_missing)
+                + f" (hooks_dir={hooks_dir}).\n"
+                "  Fix: python scripts/check_hook_interpreter.py --fix",
+                file=sys.stderr,
+            )
             return 1
         if not_installed:
             print(
