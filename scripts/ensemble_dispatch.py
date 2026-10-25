@@ -2455,7 +2455,7 @@ def append_scorecard(project_root: Path, row: dict) -> Path:
     # crea un fichero que el `replace` posterior pisa -- el handle queda
     # huerfano (inode fuera del arbol) y la fila se escribe a un fichero que
     # nadie volvera a leer. Tras tomar el lock se compara el inode del handle
-    # con el del path AHORA (`st_ino` como comparacion PUNTUAL handle-vs-path,
+    # con el del path AHORA (`samestat`, st_dev + st_ino, como comparacion PUNTUAL handle-vs-path,
     # NO como identidad de lector D11: ahi sigue baneado); si difieren, el
     # handle es huerfano: cerrar y re-abrir sobre el activo actual.
     for _ in range(4):
@@ -2517,7 +2517,8 @@ def _rotate_scorecard(path: Path) -> Path:
     El lock de escritura (`_locked_for_append`) es el que ya serializa los
     appends: nigun escritor puede interleave con la secuencia de rename. La
     comprobacion de tamano y la revalidacion de inode se RE-HACEN dentro del
-    lock via `os.stat(path)` y `os.fstat(f.fileno()).st_ino` (NO via el
+    lock via `os.path.samestat(os.fstat(f.fileno()), os.stat(path))`, es decir
+    `st_dev` + `st_ino` (NO via el
     handle antes del lock: un handle abierto ANTES de la rotacion de otro
     proceso apuntaria al inode viejo ya renombrado). El handle se abre via
     `_open_append_handle` (con `FILE_SHARE_DELETE` en Windows: sin el flag en
