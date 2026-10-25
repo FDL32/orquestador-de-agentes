@@ -1,0 +1,833 @@
+Reading additional input from stdin...
+OpenAI Codex v0.163.0
+--------
+workdir: C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: low
+reasoning summaries: none
+session id: 01a17027-697e-73a0-a0bb-e39357c782a2
+--------
+user
+Te acabas de incorporar a este repositorio y todavia no conoces su estructura. Nadie te va a decir
+que ficheros abrir: explora el repositorio por tu cuenta (listar directorios, leer READMEs,
+grep, abrir ficheros de config, etc.) hasta que tengas evidencia suficiente.
+
+Para cada una de estas rutas, indica su proposito basandote EXCLUSIVAMENTE en lo que observes
+explorando el codigo/configuracion real (cita fichero:linea o evidencia concreta de directorio):
+
+- agent_system/ (en particular agent_system/templates/repomix.config.json)
+- scripts/
+- skills/
+- .agent/collaboration/
+- .agent/runtime/memory/
+- .agent/context/repomix.xml
+- .agent/council/
+- REPOSITORY_STRUCTURE.md
+
+Para cada ruta, clasifica tu respuesta como:
+- RECONSTRUIDO: proposito claro desde codigo/config, con cita de evidencia.
+- PARCIAL: proposito general claro pero falta un matiz operativo especifico -- indica
+  explicitamente cual matiz NO pudiste deducir.
+- NO DEDUCIBLE: no encontraste senal clara.
+
+Presta atencion especial a esta pregunta concreta sobre `.agent/collaboration/`: basandote solo en
+lo que puedas observar en el repositorio (sin que nadie te lo diga), puedes determinar que (a)
+esta carpeta en este arbol contiene solo "seeds" neutros de un motor reutilizable, (b) el estado
+operacional real de un proyecto vive en un directorio EXTERNO llamado convencionalmente
+"repo_destino", y (c) el enlace entre este repo y ese destino externo se resuelve via una
+variable de entorno o un fichero de enlace (busca si existe algo asi)? Responde explicitamente si
+cada uno de los 3 puntos (a, b, c) es deducible o no, y por que, con evidencia si la hay.
+
+Trabaja solo en modo lectura. Termina con una respuesta final estructurada por las 8 rutas mas la
+pregunta especifica sobre .agent/collaboration/.
+hook: SessionStart
+hook: SessionStart Completed
+hook: UserPromptSubmit
+hook: UserPromptSubmit Completed
+codex
+Voy a explorar el árbol y contrastar cada ruta con sus referencias en código y configuración, sin modificar archivos. Separaré lo que esté demostrado de lo que no pueda deducirse.
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Force; rg --files -g AGENTS.md -g '*README*' -g REPOSITORY_STRUCTURE.md -g '*repomix*' -g '*collaboration*' -g '*council*' -g '*memory*'" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 223ms:
+
+
+    Directorio: C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        25/10/2026      1:01                .agent
+d-----        25/10/2026      1:01                .claude-plugin
+d-----        25/10/2026      1:00                .github
+d-----        25/10/2026      1:01                .opencode
+d-----        25/10/2026      1:00                .refactor
+d-----        25/10/2026      1:00                .ruff_cache
+d-----        25/10/2026      1:00                .tmp
+d-----        25/10/2026      1:01                agent_system
+d-----        25/10/2026      1:01                bus
+d-----        25/10/2026      1:01                docs
+d-----        25/10/2026      1:00                prompts
+d-----        25/10/2026      1:01                runtime
+d-----        25/10/2026      1:01                scripts
+d-----        25/10/2026      1:01                skills
+d-----        25/10/2026      1:00                templates
+d-----        25/10/2026      1:01                tests
+-a----        25/10/2026      1:01            179 .agent_allowlist.json
+-a----        25/10/2026      1:01            207 .agent_denylist.json
+-a----        25/10/2026      1:00            190 .editorconfig
+-a----        25/10/2026      1:00            175 .gitattributes
+-a----        25/10/2026      1:00           7402 .gitignore
+-a----        25/10/2026      1:01           7582 .gitleaks.toml
+-a----        25/10/2026      1:01            943 .gitleaksignore
+-a----        25/10/2026      1:01          23133 .pre-commit-config.yaml
+-a----        25/10/2026      1:00           1533 AGENT_SECURITY.md
+-a----        25/10/2026      1:00         164095 CHANGELOG.md
+-a----        25/10/2026      1:00           4496 CLOSURE_MODEL.md
+-a----        25/10/2026      1:01          16624 CONSTITUTION.md
+-a----        25/10/2026      1:01           6591 CREDITS.md
+-a----        25/10/2026      1:01            947 DISTRIBUTION_GUIDE.md
+-a----        25/10/2026      1:00           4640 INTERACTION_MODES.md
+-a----        25/10/2026      1:01         122459 llms-full.txt
+-a----        25/10/2026      1:00           3380 llms.txt
+-a----        25/10/2026      1:01           7824 MANIFEST.distribute
+-a----        25/10/2026      1:00           6341 MANIFEST.workspace
+-a----        25/10/2026      1:01           1709 MANUAL_PUBLICATION_CHECKLIST.md
+-a----        25/10/2026      1:00          16348 plan_graph.md
+-a----        25/10/2026      1:01          10849 PROJECT.md
+-a----        25/10/2026      1:00           5187 pyproject.toml
+-a----        25/10/2026      1:00            615 pytest.ini
+-a----        25/10/2026      1:01          31147 QUICKSTART.md
+-a----        25/10/2026      1:01          14266 README.md
+-a----        25/10/2026      1:01           6259 RELEASE_CHECKLIST.md
+-a----        25/10/2026      1:01           3203 REPOSITORY_STRUCTURE.md
+-a----        25/10/2026      1:00           7605 repo_charter.md
+-a----        25/10/2026      1:00           1504 UPGRADE_CLEANUP_GUIDE.md
+-a----        25/10/2026      1:00           1150 UPGRADE_GUIDE.md
+-a----        25/10/2026      1:00         150359 uv.lock
+-a----        25/10/2026      1:00           2726 uv.toml
+-a----        25/10/2026      1:00            972 validate_template.ps1
+REPOSITORY_STRUCTURE.md
+README.md
+bus\portable_memory_archive.py
+bus\memory_loader.py
+agent_system\templates\repomix.config.json
+agent_system\refactor_kit\README.md
+prompts\_shared\memory_bootstrap.md
+prompts\memory_upload.md
+prompts\memory_optimization.md
+prompts\kilo_trio_dispatch\README.md
+scripts\archive_collaboration_artifacts.py
+tests\README.md
+tests\test_council_broker.py
+tests\test_claude_memory_mirror.py
+tests\test_archive_collaboration_artifacts.py
+tests\test_memory_context_status_root.py
+tests\test_memory_context_recall_budget.py
+tests\test_memory_context_why.py
+tests\02-security-collaboration.md
+tests\integration\test_memory_integration.py
+docs\registry\README.md
+tests\fixtures\entropy_corpus\README.md
+scripts\tools\README.md
+scripts\reconcile_portable_memory.py
+scripts\memory_context.py
+scripts\memory_consolidate.py
+scripts\memory_bootstrap_census.py
+docs\followups\wot-2026-108a-stale-collaboration-seed-followup.md
+scripts\closeout_steps\memory_health.py
+scripts\claude_memory_mirror.py
+scripts\check_portable_memory_promotion.py
+scripts\check_portable_memory_archive_schema.py
+scripts\check_memory_health.py
+scripts\check_collaboration_state_clean.py
+tests\unit\test_audit_agent_output_memory_destino.py
+tests\unit\test_archive_collaboration_artifacts.py
+tests\unit\test_check_collaboration_state_clean.py
+tests\unit\test_check_portable_memory_archive_schema.py
+tests\unit\test_check_memory_health.py
+tests\unit\test_check_portable_memory_promotion.py
+docs\contract_formation\README.md
+tests\unit\test_reconcile_portable_memory.py
+tests\unit\test_portable_memory_archive.py
+tests\unit\test_memory_session_index.py
+tests\unit\test_memory_loader_wing.py
+tests\unit\test_memory_health_step_contract.py
+tests\unit\test_memory_d1b_header.py
+tests\unit\test_memory_context_recall_log.py
+tests\unit\test_memory_context_headlines.py
+tests\unit\test_memory_consolidate_l2_lesson_filter.py
+tests\unit\test_memory_consolidate.py
+tests\unit\test_memory_bootstrap_census.py
+tests\unit\test_memory.py
+skills\README.md
+
+
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+
+[... omitido: tool calls intermedios de exploracion (lineas 175-2616), volcados de rg --files y rg de busqueda masiva sobre el arbol completo (incluye ruido de session logs ajenos al ticket), sin valor de cita adicional; disponible en el scratch dir original citado en el reporte ...]
+
+codex
+He encontrado código y documentación que separan el motor del proyecto destino y describen cómo resolver el enlace. Hay un matiz importante: en esta copia, `collaboration/` solo contiene un directorio `archive/` vacío y `repomix.xml` no existe. Estoy contrastando esas ausencias con los generadores y manifiestos.
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'repomix' scripts -g '*.py'; rg -n 'AGENT_PROJECT_ROOT|motor_destination_link|def resolve_project_root|destination_root' bus/paths.py scripts/install_agent_system.py; rg -n 'seed|collaboration|repomix' MANIFEST.workspace MANIFEST.distribute; rg -n '.' .agent/runtime/memory/MEMORY.md agent_system/__init__.py; rg -n 'memory_dir|observations.jsonl|MEMORY.md|memory_rules|memory_profile' bus/memory_loader.py scripts/memory_consolidate.py | Select-Object -First 45; rg -n 'CouncilBroker|should_human_gate' .agent scripts bus tests -g '*.py' -g '"'!runtime/**'"' | Select-Object -First 30; Get-ChildItem .agent/config -Force -Name; Test-Path .agent/context/repomix.xml; Test-Path .agent/config/motor_destination_link.json" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 282ms:
+scripts\install_agent_system.py:1369:def copy_repomix_config(
+scripts\install_agent_system.py:1375:    Copy repomix.config.json template to destination workspace root.
+scripts\install_agent_system.py:1377:    Before: template_root/agent_system/templates/repomix.config.json exists;
+scripts\install_agent_system.py:1379:    During: Copies the template to destination_root/repomix.config.json.
+scripts\install_agent_system.py:1381:    After: destination_root/repomix.config.json exists if template was found.
+scripts\install_agent_system.py:1391:    source = template_root / "agent_system" / "templates" / "repomix.config.json"
+scripts\install_agent_system.py:1392:    dest = destination_root / "repomix.config.json"
+scripts\install_agent_system.py:1395:        print(f"[WARN] repomix.config.json template not found at {source}")
+scripts\install_agent_system.py:1399:        print(f"[DRY-RUN] Would copy repomix.config.json to {dest}")
+scripts\install_agent_system.py:1403:    print(f"[INFO] Copied repomix.config.json to {dest}")
+scripts\install_agent_system.py:1942:    # Copy repomix.config.json to destination workspace root
+scripts\install_agent_system.py:1943:    copy_repomix_config(template_root, destination_root, dry_run=dry_run)
+scripts\install_agent_system.py:2087:    # Copy repomix.config.json to destination workspace root (idempotent)
+scripts\install_agent_system.py:2088:    copy_repomix_config(template_root, destination_root, dry_run=dry_run)
+rg: bus/paths.py: El sistema no puede encontrar el archivo especificado. (os error 2)
+scripts/install_agent_system.py:60:# ACTO SEGUIDO lo borro (`[PRUNED] config/motor_destination_link.json`), saliendo
+scripts/install_agent_system.py:73:# `r.parts[0]`, que para `config/motor_destination_link.json` es `config` -- no la
+scripts/install_agent_system.py:79:    {"config/motor_destination_link.json"}
+scripts/install_agent_system.py:217:    ".agent/config/motor_destination_link.json",
+scripts/install_agent_system.py:1053:def write_motor_destination_link(
+scripts/install_agent_system.py:1056:    destination_root: Path,
+scripts/install_agent_system.py:1068:    During: Creates/overwrites motor_destination_link.json with schema fields.
+scripts/install_agent_system.py:1077:    After: Link file exists with motor_root, destination_root, motor_version, ticket_prefix, etc.
+scripts/install_agent_system.py:1081:    - destination_root: absolute path to the destination workspace
+scripts/install_agent_system.py:1095:        destination_root: Path to the destination project root.
+scripts/install_agent_system.py:1097:        destination_id: Optional stable identifier; defaults to destination_root name.
+scripts/install_agent_system.py:1107:    link_file = config_dir / "motor_destination_link.json"
+scripts/install_agent_system.py:1110:        destination_id = destination_root.name
+scripts/install_agent_system.py:1117:        "destination_root": str(destination_root.resolve()),
+scripts/install_agent_system.py:1219:    destination_root: Path, prefix: str, dry_run: bool
+scripts/install_agent_system.py:1224:    Before: destination_root/PROJECT.md may or may not exist; prefix is a non-empty string.
+scripts/install_agent_system.py:1229:        destination_root: Project root directory.
+scripts/install_agent_system.py:1233:    project_md = destination_root / "PROJECT.md"
+scripts/install_agent_system.py:1371:    destination_root: Path,
+scripts/install_agent_system.py:1378:            destination_root is a valid path.
+scripts/install_agent_system.py:1379:    During: Copies the template to destination_root/repomix.config.json.
+scripts/install_agent_system.py:1381:    After: destination_root/repomix.config.json exists if template was found.
+scripts/install_agent_system.py:1385:        destination_root: Path to the destination project root.
+scripts/install_agent_system.py:1392:    dest = destination_root / "repomix.config.json"
+scripts/install_agent_system.py:1429:    destination_root: Path,
+scripts/install_agent_system.py:1433:    Copy the portable gitleaks seed to destination_root/.gitleaks.toml (no-clobber).
+scripts/install_agent_system.py:1436:            destination_root is a valid path.
+scripts/install_agent_system.py:1437:    During: If destination_root/.gitleaks.toml already exists, skips (no-clobber)
+scripts/install_agent_system.py:1440:    After: destination_root/.gitleaks.toml exists (seed or pre-existing custom),
+scripts/install_agent_system.py:1445:        destination_root: Path to the destination project root.
+scripts/install_agent_system.py:1452:    dest = destination_root / ".gitleaks.toml"
+scripts/install_agent_system.py:1492:    destination_root: Path,
+scripts/install_agent_system.py:1498:    Before: destination_root/.claude/settings.json may be absent, present
+scripts/install_agent_system.py:1506:        pattern as write_motor_destination_link, so a crash mid-write never
+scripts/install_agent_system.py:1508:    After: destination_root/.claude/settings.json exists and its
+scripts/install_agent_system.py:1517:    settings_path = destination_root / ".claude" / "settings.json"
+scripts/install_agent_system.py:1609:    destination_root: Path,
+scripts/install_agent_system.py:1618:    Before: destination_root/.claude/settings.json may be absent, present
+scripts/install_agent_system.py:1627:    After: destination_root/.claude/settings.json exists and its
+scripts/install_agent_system.py:1637:    settings_path = destination_root / ".claude" / "settings.json"
+scripts/install_agent_system.py:1702:    destination_root: Path,
+scripts/install_agent_system.py:1710:            destination_root is a valid path.
+scripts/install_agent_system.py:1714:    After: destination_root/PROJECT.md exists with template content.
+scripts/install_agent_system.py:1718:        destination_root: Path to the destination project root.
+scripts/install_agent_system.py:1727:    dest = destination_root / "PROJECT.md"
+scripts/install_agent_system.py:1911:    destination_root = project_agent.parent
+scripts/install_agent_system.py:1914:    write_motor_destination_link(
+scripts/install_agent_system.py:1917:        destination_root=destination_root,
+scripts/install_agent_system.py:1926:        template_root, destination_root, prefix=ticket_prefix, dry_run=dry_run
+scripts/install_agent_system.py:1931:        _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
+scripts/install_agent_system.py:1943:    copy_repomix_config(template_root, destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:1946:    copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:1950:    propagate_claude_guard_hook(destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:1956:    propagate_session_start_hook(destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:2048:    destination_root = project_agent.parent
+scripts/install_agent_system.py:2051:    write_motor_destination_link(
+scripts/install_agent_system.py:2054:        destination_root=destination_root,
+scripts/install_agent_system.py:2066:        and (project_agent / "config" / "motor_destination_link.json").is_file()
+scripts/install_agent_system.py:2071:        template_root, destination_root, prefix=ticket_prefix, dry_run=dry_run
+scripts/install_agent_system.py:2076:        _write_prefix_to_project_md(destination_root, ticket_prefix, dry_run=dry_run)
+scripts/install_agent_system.py:2088:    copy_repomix_config(template_root, destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:2091:    copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:2095:    propagate_claude_guard_hook(destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:2099:    propagate_session_start_hook(destination_root, dry_run=dry_run)
+scripts/install_agent_system.py:2161:        link_file = project_agent / "config" / "motor_destination_link.json"
+MANIFEST.distribute:33:scripts/archive_collaboration_artifacts.py
+MANIFEST.distribute:109:.agent/rules/common/collaboration_live_surfaces.md
+MANIFEST.distribute:129:# Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.
+MANIFEST.distribute:137:#   .agent/collaboration/PLAN_WP-*.md
+MANIFEST.distribute:138:#   .agent/collaboration/AUDIT_WP-*.md
+MANIFEST.distribute:139:#   .agent/collaboration/_archive/
+MANIFEST.distribute:140:#   .agent/collaboration/archive/
+MANIFEST.distribute:215:#   .agent/collaboration/.session_state.json
+MANIFEST.workspace:29:.agent/collaboration/work_plan.md
+MANIFEST.workspace:30:.agent/collaboration/TURN.md
+MANIFEST.workspace:31:.agent/collaboration/STATE.md
+MANIFEST.workspace:32:.agent/collaboration/execution_log.md
+MANIFEST.workspace:33:.agent/collaboration/backlog.md
+MANIFEST.workspace:34:.agent/collaboration/notifications.md
+MANIFEST.workspace:35:.agent/collaboration/review_queue.md
+MANIFEST.workspace:89:#   .agent/collaboration/PLAN_WP-*.md
+MANIFEST.workspace:90:#   .agent/collaboration/AUDIT_WP-*.md
+MANIFEST.workspace:91:#   .agent/collaboration/_archive/
+MANIFEST.workspace:92:#   .agent/collaboration/archive/
+MANIFEST.workspace:124:#   .agent/collaboration/.session_state.json
+.agent/runtime/memory/MEMORY.md:1:# MEMORY
+.agent/runtime/memory/MEMORY.md:2:
+.agent/runtime/memory/MEMORY.md:3:Regenerated: 2026-10-24T01:20:05.335133+00:00
+.agent/runtime/memory/MEMORY.md:4:
+.agent/runtime/memory/MEMORY.md:5:Total observations: 0
+.agent/runtime/memory/MEMORY.md:6:
+.agent/runtime/memory/MEMORY.md:7:
+.agent/runtime/memory/MEMORY.md:8:---
+.agent/runtime/memory/MEMORY.md:9:
+.agent/runtime/memory/MEMORY.md:10:## Archive Pointers
+.agent/runtime/memory/MEMORY.md:11:
+.agent/runtime/memory/MEMORY.md:12:Historical archives:
+.agent/runtime/memory/MEMORY.md:13:- `observations.2026-07.jsonl`
+.agent/runtime/memory/MEMORY.md:14:- `observations.2026-08.jsonl`
+.agent/runtime/memory/MEMORY.md:15:- `observations.2026-09.jsonl`
+.agent/runtime/memory/MEMORY.md:16:- `observations.2026-10.jsonl`
+.agent/runtime/memory/MEMORY.md:17:
+.agent/runtime/memory/MEMORY.md:18:Stats: kept=0, deduped=0, dropped=0, archived=1
+agent_system/__init__.py:1:"""
+agent_system/__init__.py:2:Agent System: Framework for multi-agent orchestration and code refactoring.
+agent_system/__init__.py:4:Provides:
+agent_system/__init__.py:5:- refactor-kit: Portable code refactoring toolkit
+agent_system/__init__.py:6:- Skills: Reusable AI capabilities
+agent_system/__init__.py:7:- Orchestration: Multi-agent coordination
+agent_system/__init__.py:8:"""
+bus/memory_loader.py:15:  2. BEST LOCAL TIER -- L3 profile (`memory_profile.md`), else L2 rules
+bus/memory_loader.py:16:     (`memory_rules.md`), else raw L1 (`observations.jsonl`).
+bus/memory_loader.py:175:def _get_memory_dir() -> Path:
+bus/memory_loader.py:186:    """Get path to observations.jsonl."""
+bus/memory_loader.py:187:    return _get_memory_dir() / "observations.jsonl"
+bus/memory_loader.py:191:    """Get path to memory_rules.md (L2)."""
+bus/memory_loader.py:192:    return _get_memory_dir() / "memory_rules.md"
+bus/memory_loader.py:196:    """Get path to memory_profile.md (L3)."""
+bus/memory_loader.py:197:    return _get_memory_dir() / "memory_profile.md"
+bus/memory_loader.py:219:    """Read the last N observations from observations.jsonl.
+bus/memory_loader.py:221:    Before: Requires observations.jsonl to exist (or returns empty list).
+bus/memory_loader.py:285:    Derived from ``_get_memory_dir()`` (``<root>/.agent/runtime/memory``) rather
+bus/memory_loader.py:292:    return _get_memory_dir().parent.parent.parent
+bus/memory_loader.py:1101:    Why this matters more than it looks: L2 (`memory_rules.md`) only declares
+bus/memory_loader.py:1188:    Before: Requires the full text of memory_rules.md.
+bus/memory_loader.py:1196:    """Filter memory_rules.md content to only include sections for a given domain.
+bus/memory_loader.py:1198:    Before: Requires the full text of memory_rules.md and a domain string.
+bus/memory_loader.py:1394:    `observations.jsonl` -- the gitignored buffer -- so the 174 lessons that
+scripts/memory_consolidate.py:2:"""Memory consolidate V1: dedupe + filter + archive observations.jsonl.
+scripts/memory_consolidate.py:43:OBS = MEMORY_DIR / "observations.jsonl"
+scripts/memory_consolidate.py:44:MEMORY_MD = MEMORY_DIR / "MEMORY.md"
+scripts/memory_consolidate.py:52:MEMORY_RULES_MD = MEMORY_DIR / "memory_rules.md"
+scripts/memory_consolidate.py:53:MEMORY_PROFILE_MD = MEMORY_DIR / "memory_profile.md"
+scripts/memory_consolidate.py:67:# lives untruncated in observations.jsonl / memory_rules.md body; these only
+scripts/memory_consolidate.py:83:    observations.jsonl.
+scripts/memory_consolidate.py:206:    """Generate MEMORY.md content from entries.
+scripts/memory_consolidate.py:272:            f"[MEMORY.md truncated at {MEMORY_MD_LINE_CAP} lines. "
+scripts/memory_consolidate.py:273:            "Full history available in observations.jsonl]",
+scripts/memory_consolidate.py:444:def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
+scripts/memory_consolidate.py:445:    """Generate memory_rules.md (L2) from consolidated entries.
+scripts/memory_consolidate.py:467:        "Rules derived deterministically from observations.jsonl. "
+scripts/memory_consolidate.py:565:def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
+scripts/memory_consolidate.py:566:    """Generate memory_profile.md (L3) from consolidated entries.
+scripts/memory_consolidate.py:651:    """Regenerate memory_rules.md (L2) and memory_profile.md (L3).
+scripts/memory_consolidate.py:698:       Desde el vuelo memoria v3, memory_rules.md publica Candidates y
+scripts/memory_consolidate.py:704:       `generate_memory_profile_md` REORDENA por timestamp descendente antes de
+scripts/memory_consolidate.py:707:    3. L1 (`MEMORY.md`, el indice que un HUMANO lee primero) NO pasa por aqui:
+scripts/memory_consolidate.py:734:    rules_md = generate_memory_rules_md(projected)
+scripts/memory_consolidate.py:739:    profile_md = generate_memory_profile_md(projected)
+scripts/memory_consolidate.py:773:        "1. **Read & parse**: Loaded entries from observations.jsonl",
+scripts/memory_consolidate.py:777:        "5. **Regenerate**: MEMORY.md regenerated from consolidated entries",
+scripts/memory_consolidate.py:778:        "6. **Generate L2**: memory_rules.md regenerated from rule-like entries",
+scripts/memory_consolidate.py:779:        "7. **Generate L3**: memory_profile.md regenerated as brief project profile",
+scripts/memory_consolidate.py:793:                f"- `observations.jsonl`: Replaced with {stats['kept']} entries",
+scripts/memory_consolidate.py:794:                "- `observations.jsonl.bak.*`: Backup created",
+tests\test_audit_rules.py:9:    should_human_gate,
+tests\test_audit_rules.py:56:        assert not should_human_gate(sample_report, DEFAULT_REPAIR_BUDGET)
+tests\test_audit_rules.py:61:        assert should_human_gate(sample_report, DEFAULT_REPAIR_BUDGET)
+tests\test_audit_rules.py:66:        assert should_human_gate(sample_report, DEFAULT_REPAIR_BUDGET)
+tests\test_audit_rules.py:71:        assert should_human_gate(sample_report, DEFAULT_REPAIR_BUDGET)
+tests\test_audit_rules.py:76:        assert should_human_gate(sample_report, DEFAULT_REPAIR_BUDGET)
+tests\test_council_broker.py:8:from council.council_broker import CouncilBroker
+tests\test_council_broker.py:23:    return CouncilBroker(
+tests\test_council_broker.py:29:class TestCouncilBrokerInitialization:
+.agent\council\council_broker.py:12:class CouncilBroker:
+.agent\council\audit_rules.py:20:def should_human_gate(report: Any, budget: RepairBudget) -> bool:
+agents.json
+hooks_config.json
+False
+False
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n --hidden 'repomix\\.xml|def resolve_project_root|AGENT_PROJECT_ROOT' bus runtime agent_system .agent -g '*.py' -g '*.ps1' -g '"'!**/runtime/**'"'; rg -n --hidden 'repomix\\.xml' docs prompts .agent/rules .agent/workflows agent_system .github; rg -n 'seed|SEED|work_plan.md|TURN.md' scripts/install_agent_system.py | Select-Object -First 35; rg -n 'motor_destination_link|AGENT_PROJECT_ROOT|def resolve' bus/*.py" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ exited 1 in 220ms:
+.agent\session_tracker.py:43:# AGENT_PROJECT_ROOT is set. This was the root cause of legacy writes to
+bus\supervisor.py:807:                "motor repo. This means AGENT_PROJECT_ROOT was not set or "
+bus\supervisor.py:812:                "  Fix: set AGENT_PROJECT_ROOT to the destination workspace "
+bus\memory_loader.py:298:    WOT-2026-057a. Deliberately does NOT consult ``AGENT_PROJECT_ROOT``, and
+bus\memory_loader.py:308:    ``AGENT_PROJECT_ROOT`` answers "where does the OPERATIONAL STATE live"; the
+bus\memory_loader.py:564:    warning when ``AGENT_PROJECT_ROOT`` is not set and the destination surface
+bus\memory_loader.py:590:    # Warn (not gate) when AGENT_PROJECT_ROOT is not set and the destination
+bus\memory_loader.py:599:        and not os.environ.get("AGENT_PROJECT_ROOT")
+bus\memory_loader.py:602:        # No motor-tagged entries and no AGENT_PROJECT_ROOT means the active
+bus\memory_loader.py:606:            "WARNING: AGENT_PROJECT_ROOT is not set and the destination "
+bus\memory_loader.py:608:            "unavailable. Set AGENT_PROJECT_ROOT to the active project "
+bus\memory_loader.py:671:    ``AGENT_PROJECT_ROOT`` is not set and the destination surface is absent
+.agent\hooks\session_start_hook.py:200:        # `AGENT_PROJECT_ROOT` al ancla, asi que un ancla basura deja al agente
+.agent\hooks\session_start_hook.py:514:        # arranque, que puede traer heredada una `AGENT_PROJECT_ROOT` de otra
+.agent\hooks\session_start_hook.py:527:        previous = os.environ.get("AGENT_PROJECT_ROOT")
+.agent\hooks\session_start_hook.py:528:        os.environ["AGENT_PROJECT_ROOT"] = str(anchor)
+.agent\hooks\session_start_hook.py:538:                os.environ.pop("AGENT_PROJECT_ROOT", None)
+.agent\hooks\session_start_hook.py:540:                os.environ["AGENT_PROJECT_ROOT"] = previous
+.agent\agent_controller.py:49:# Entry points set AGENT_PROJECT_ROOT env var after parsing --project-root
+.agent\agent_controller.py:7460:            os.environ["AGENT_PROJECT_ROOT"] = str(Path(project_root_value).resolve())
+.agent\agent_controller.py:7470:    # external workspace is configured (no AGENT_PROJECT_ROOT / --project-root).
+.agent\agent_controller.py:7494:            "        AGENT_PROJECT_ROOT environment variable to point to an\n"
+.agent\hooks\guard_paths.py:289:    Source 1: ``AGENT_PROJECT_ROOT`` env var (already-official orchestrator
+.agent\hooks\guard_paths.py:311:    their first write and could only proceed by abusing ``AGENT_PROJECT_ROOT``
+.agent\hooks\guard_paths.py:320:    env_value = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+rg: .agent/workflows: El sistema no puede encontrar el archivo especificado. (os error 2)
+155:# WOT-2026-024h / DEC-024H-001: the motor NO LONGER ships a seed here. It used to
+160:# with no seed present, copy_tree does not even create planning/). The destination
+228:    ".agent/collaboration/work_plan.md",
+230:    ".agent/collaboration/TURN.md",
+624:    # by the strict --sync. Retiring the seed made this filter MORE load-bearing, not
+1407:def _warn_gitleaks_seed_divergence(seed: Path, target: Path) -> None:
+1408:    """WARN -- never clobber -- when a destino is missing seed allowlist sections.
+1410:    Before: seed and target exist; the destino OWNS its .gitleaks.toml (the
+1414:    After: prints one WARN naming the absent seed sections, or stays silent when
+1421:        from scripts.check_gitleaks_seed_divergence import warn_on_seed_divergence
+1424:    warn_on_seed_divergence(seed, target)
+1433:    Copy the portable gitleaks seed to destination_root/.gitleaks.toml (no-clobber).
+1438:            to preserve a destino-customized config. Otherwise copies the seed.
+1440:    After: destination_root/.gitleaks.toml exists (seed or pre-existing custom),
+1455:        print(f"[WARN] gitleaks seed template not found at {source}")
+1460:        # WOT-2026-039k: the no-clobber opened a cascade gap -- seed additions
+1463:        _warn_gitleaks_seed_divergence(source, dest)
+1467:        print(f"[DRY-RUN] Would copy .gitleaks.toml seed to {dest}")
+1471:    print(f"[INFO] Copied .gitleaks.toml seed to {dest}")
+rg: bus/*.py: IO error for operation on bus/*.py: El nombre de archivo, el nombre de directorio o la sintaxis de la etiqueta del volumen no son correctos. (os error 123)
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n --hidden 'repomix' -g '"'!**/runtime/**'"' -g '"'!uv.lock'"' -g '"'!llms-full.txt'"' -g '"'!CHANGELOG.md'"' -g '"'!**/planning/**'"' -g '"'!**/memory/**'"' | Select-Object -First 65; rg -n 'def |AGENT_PROJECT_ROOT|motor_destination_link|destination_root|collaboration' runtime/paths.py; rg -n 'SKILL.md|host|fallback' scripts/discover_skills.py | Select-Object -First 18; rg -n '.' REPOSITORY_STRUCTURE.md | Select-Object -Last 26; Get-Content MANIFEST.distribute | Select-Object -Skip 122 -First 14" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 180ms:
+rg: runtime/paths.py: IO error for operation on runtime/paths.py: El sistema no puede encontrar el archivo especificado. (os error 2)
+17:    """Extract YAML frontmatter from SKILL.md.
+145:        skill_file = skill_dir / "SKILL.md"
+167:            # "who authored" (author, fallback role); role is "which pipeline role
+284:def _auto_host_skills_dir(bundle_root: Path) -> Path | None:
+285:    """Resolve the host .agent/skills dir for host-first precedence, if any."""
+297:    host_skills_dir: Path | None = None,
+301:    If host_skills_dir is provided (or auto-discovered under CWD/.agent/skills or bundle_root.parent/.agent/skills),
+302:    host-defined skills override homonymous bundle-defined skills (host-first precedence).
+308:    if host_skills_dir is None:
+309:        host_skills_dir = _auto_host_skills_dir(bundle_root)
+312:    host_skills = _scan_skills_dir(host_skills_dir, bundle_root)
+314:    host_triggers = set()
+315:    for skill in host_skills.values():
+316:        host_triggers.update(skill["triggers"])
+320:        remaining_triggers = [t for t in skill["triggers"] if t not in host_triggers]
+325:    merged_skills = {**filtered_bundle_skills, **host_skills}
+609:        skill_file = path / "SKILL.md"
+676:        skill_file = skill_dir / "SKILL.md"
+55:- `scripts/` contains reproducible utilities and launcher commands.
+56:- `skills/` contains reusable skill instructions.
+57:- `docs/` contains durable architectural reference documents (known failure patterns, bus audit reports). Read on demand when a ticket touches bus, state projections, or topology-aware code.
+58:- `prompts/` contains operator-facing prompts used during planning, launch, review and audits; not part of the default runtime context unless explicitly referenced.
+59:- `templates/` contains reusable startup templates.
+60:- `tests/` contains the validation suite for the repo.
+61:- The top-level Markdown files document how the repo works as a standalone project.
+63:## What is internal
+65:- `tests/sandbox/` is disposable test runtime and fixture space.
+66:- `tests/.../.agent.__pytest_hidden__/` is a testing mirror used by specific test scenarios.
+67:- Local editor settings, caches and runtime artifacts are intentionally excluded from the public contract.
+69:## Design vs. development sessions (destination projects)
+71:The motor ships `.agent/collaboration/` as a neutral seed. A destination project populates it at
+72:runtime with two parallel, non-colliding session types: a read-only `sesion_diseno` (triages the
+73:backlog, drafts flight plans into a queue, never touches code or `backlog.md`) and a
+74:`sesion_desarrollo` (implements, commits, and advances queued flight plans through execution).
+75:Neither this document nor the motor hardcodes the destination's queue paths, since the motor must
+76:remain publishable without any knowledge of a parent workspace (see "Public boundary" below). The
+77:full contract -- who writes which surface, and the no-collision guarantee between the two session
+78:types -- is canonical in `.agent/rules/common/vocabulario_canonico.md`; this section only points to
+79:it (no redeclaration, per the skill/prompt governance convention).
+81:## Public boundary
+83:When this repository is published:
+85:- All commands in the docs should work from the repository root.
+86:- No documentation should require a parent workspace path.
+87:- Any local-only metadata belongs outside the public contract.
+.agent/rules/common/session_artifacts.md
+.agent/rules/common/refactor_kit.md
+.agent/rules/common/skills_discovery.md
+.agent/rules/common/manager_builder_flow.md
+
+# Collaboration - proyecciones de runtime no versionadas (WOT-2026-025b)
+# Las 6 proyecciones de .agent/collaboration/ dejaron de trackearse.
+# El motor ya no distribuye estas superficies vivas (WOT-2026-020r, commit:5201482).
+
+# =============================================================================
+# EXPLICITAMENTE EXCLUIDO (documentacion para claridad)
+# =============================================================================
+#
+# Historial de tickets cerrados:
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem runtime -Name; rg -n 'resolve_project_root|from .*paths|from .*root' bus/memory_loader.py .agent/agent_controller.py; rg -n -uu 'repomix' .agent/rules prompts docs agent_system .github -g '"'!*.jsonl'"' -g '"'!*.lock'"' | Select-Object -First 45; rg -n -uu 'def resolve_project_root|AGENT_PROJECT_ROOT|motor_destination_link' runtime -g '*.py'" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 172ms:
+motor_link.py
+project_root.py
+status_bar_indicator.py
+ui_state_projector.py
+__init__.py
+bus/memory_loader.py:285:    Derived from ``_get_memory_dir()`` (``<root>/.agent/runtime/memory``) rather
+bus/memory_loader.py:351:    """Portable archive entries from the MOTOR **and** the active root.
+.agent/agent_controller.py:56:from runtime.project_root import (  # noqa: E402
+.agent/agent_controller.py:62:    resolve_project_root,
+.agent/agent_controller.py:136:    return resolve_project_root()
+.agent/agent_controller.py:358:    """Return changed files from the productive root for the given delivery_authority.
+.agent/agent_controller.py:1882:        from scripts.check_deliverables_exist import extract_paths_from_work_plan
+.agent/agent_controller.py:5967:    dest_root = resolve_project_root()
+.agent/agent_controller.py:6069:        state_path = resolve_project_root() / ".agent" / "collaboration" / "STATE.md"
+.agent/agent_controller.py:6141:    dest_root = resolve_project_root()
+.agent/agent_controller.py:6272:    dest_root = resolve_project_root()
+.agent/agent_controller.py:7461:            # Invalidate lru_cache on resolve_project_root: the cache may have
+.agent/agent_controller.py:7465:            from runtime.project_root import clear_cache as _clear_project_root_cache
+docs\followups\propuesta-segunda-pasada-arranque-agnostico-20261023.md:92:| b | `.session/repomix_local.xml`/`repomix_remote.xml` en "Rutas importantes": `.session/` no existe; solo los usa `skills/repo-compare/SKILL.md`, que ya los documenta | ~230 B |
+runtime\motor_link.py:2:Motor Link - Pure helper to resolve motor root/controller/script from motor_destination_link.json.
+runtime\motor_link.py:5:location from the workspace's motor_destination_link.json file. It is the single
+runtime\motor_link.py:10:During: Reads .agent/config/motor_destination_link.json from project_root,
+runtime\motor_link.py:22:    """Resolve motor root from workspace's motor_destination_link.json.
+runtime\motor_link.py:24:    Before: motor_destination_link.json must exist at
+runtime\motor_link.py:25:            project_root/.agent/config/motor_destination_link.json.
+runtime\motor_link.py:36:    link_path = project_root / ".agent" / "config" / "motor_destination_link.json"
+runtime\project_root.py:9:    1. AGENT_PROJECT_ROOT environment variable (set by entry points after parsing --project-root)
+runtime\project_root.py:34:    """AGENT_PROJECT_ROOT resolved to an unusable (likely mangled) value.
+runtime\project_root.py:53:    Before: ``raw`` is the stripped AGENT_PROJECT_ROOT value; ``resolved`` is
+runtime\project_root.py:83:def resolve_project_root() -> Path:
+runtime\project_root.py:87:    Before: Requires no state; reads os.environ["AGENT_PROJECT_ROOT"] if set.
+runtime\project_root.py:92:        1. AGENT_PROJECT_ROOT environment variable (if set and non-empty)
+runtime\project_root.py:100:        AGENT_PROJECT_ROOT environment variable immediately after parsing,
+runtime\project_root.py:106:    env_root = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+runtime\project_root.py:113:                "AGENT_PROJECT_ROOT is an absolute path that the active Python "
+runtime\project_root.py:117:                "slashes (e.g. C:/Users/.../project) or set AGENT_PROJECT_ROOT to "
+runtime\project_root.py:226:    repo directly without AGENT_PROJECT_ROOT / --project-root pointing to an
+runtime\project_root.py:231:    During: Checks AGENT_PROJECT_ROOT env var; falls back to checking whether
+runtime\project_root.py:238:    env_value = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+runtime\project_root.py:240:        # AGENT_PROJECT_ROOT set: only deactivates code-only mode when it
+runtime\project_root.py:243:        # AGENT_PROJECT_ROOT to the motor itself, defeating the guard and
+runtime\project_root.py:255:        # fail-closed: a non-existent AGENT_PROJECT_ROOT is treated as code-only
+runtime\project_root.py:257:    # No AGENT_PROJECT_ROOT: check if the resolved root IS the motor repo by
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$specs = @(@('"'runtime/project_root.py',83,160),@('runtime/motor_link.py',20,62),@('agent_system/templates/repomix.config.json',1,50),@('scripts/install_agent_system.py',1103,1128)); foreach("'$s in $specs){ Write-Output $s[0]; $i=0; Get-Content $s[0] | ForEach-Object { $i++; if($i -ge $s[1] -and $i -le $s[2]){ '"'{0}: {1}' -f "'$i,$_ } } }; rg -n -uu '"'repomix\\.xml' README.md QUICKSTART.md MANIFEST.workspace MANIFEST.distribute scripts agent_system .agent/context tests -g '*.py' -g '*.md' -g '*.json' -g '*.ps1'" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ exited 1 in 217ms:
+runtime/project_root.py
+83: def resolve_project_root() -> Path:
+84:     """
+85:     Resolve the project root path with proper precedence.
+86:
+87:     Before: Requires no state; reads os.environ["AGENT_PROJECT_ROOT"] if set.
+88:     During: Checks environment variable first, then falls back to derivation from __file__.
+89:     After: Returns absolute Path to project root, cached for subsequent calls.
+90:
+91:     Precedence:
+92:         1. AGENT_PROJECT_ROOT environment variable (if set and non-empty)
+93:         2. Derived from this module's location (runtime/project_root.py -> parent)
+94:
+95:     Returns:
+96:         Absolute Path to the project root directory.
+97:
+98:     Note:
+99:         Entry points that accept --project-root should export the value to
+100:         AGENT_PROJECT_ROOT environment variable immediately after parsing,
+101:         before importing any modules that depend on the project root.
+102:         This ensures a single channel of propagation (env var) rather than
+103:         parallel mechanisms.
+104:     """
+105:     # Check environment variable first (set by entry points after CLI parsing)
+106:     env_root = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+107:     if env_root:
+108:         resolved = Path(env_root).resolve()
+109:         # CTL-2026-007b: fail closed on a mangled absolute path rather than let
+110:         # it resolve into a spurious directory under the current working dir.
+111:         if _is_mangled_root(env_root, resolved):
+112:             raise ProjectRootError(
+113:                 "AGENT_PROJECT_ROOT is an absolute path that the active Python "
+114:                 f"flavour failed to parse as absolute: {env_root!r} resolved to "
+115:                 f"{str(resolved)!r}. This would create a spurious directory under "
+116:                 "the current working directory. Pass --project-root with forward "
+117:                 "slashes (e.g. C:/Users/.../project) or set AGENT_PROJECT_ROOT to "
+118:                 "a path valid for the running interpreter."
+119:             )
+120:         return resolved
+121:
+122:     # Fallback: derive from this module's location
+123:     # runtime/project_root.py -> runtime/ -> project root
+124:     return Path(__file__).resolve().parent.parent
+125:
+126:
+127: @lru_cache(maxsize=1)
+128: def get_agent_dir() -> Path:
+129:     """
+130:     Get the .agent/ directory path.
+131:
+132:     Before: Requires resolve_project_root() to be available.
+133:     During: Calls resolve_project_root() and appends ".agent".
+134:     After: Returns absolute Path to .agent/ directory, cached.
+135:
+136:     Returns:
+137:         Absolute Path to the .agent/ directory.
+138:     """
+139:     return resolve_project_root() / ".agent"
+140:
+141:
+142: @lru_cache(maxsize=1)
+143: def get_collab_dir() -> Path:
+144:     """
+145:     Get the .agent/collaboration/ directory path.
+146:
+147:     Before: Requires get_agent_dir() to be available.
+148:     During: Calls get_agent_dir() and appends "collaboration".
+149:     After: Returns absolute Path to .agent/collaboration/ directory, cached.
+150:
+151:     Returns:
+152:         Absolute Path to the .agent/collaboration/ directory.
+153:     """
+154:     return get_agent_dir() / "collaboration"
+155:
+156:
+157: @lru_cache(maxsize=1)
+158: def get_runtime_dir() -> Path:
+159:     """
+160:     Get the .agent/runtime/ directory path.
+runtime/motor_link.py
+20:
+21: def resolve_motor_root(project_root: Path) -> Path | None:
+22:     """Resolve motor root from workspace's motor_destination_link.json.
+23:
+24:     Before: motor_destination_link.json must exist at
+25:             project_root/.agent/config/motor_destination_link.json.
+26:     During: Reads JSON, extracts motor_root, verifies it exists on disk.
+27:     After: Returns absolute Path to the motor root, or None if link file is
+28:            missing, malformed, or the motor_root path does not exist.
+29:
+30:     Args:
+31:         project_root: Absolute path to the destination project root.
+32:
+33:     Returns:
+34:         Absolute Path to the motor root directory, or None.
+35:     """
+36:     link_path = project_root / ".agent" / "config" / "motor_destination_link.json"
+37:     if not link_path.exists():
+38:         return None
+39:     try:
+40:         # `utf-8-sig` tolera el BOM que deja PowerShell 5.1; con `utf-8`
+41:         # estricto el link se trataba como ausente (ronda 5, 2026-10-23).
+42:         data = json.loads(link_path.read_text(encoding="utf-8-sig"))
+43:         motor_root = data.get("motor_root")
+44:         if motor_root and Path(motor_root).exists():
+45:             return Path(motor_root).resolve()
+46:     except (json.JSONDecodeError, OSError):
+47:         pass
+48:     return None
+49:
+50:
+51: def resolve_motor_controller(project_root: Path) -> Path | None:
+52:     """Resolve agent_controller.py from external motor root.
+53:
+54:     Before: motor_root must be resolvable via resolve_motor_root().
+55:     During: Appends .agent/agent_controller.py to the motor root.
+56:     After: Returns absolute Path to agent_controller.py, or None if the
+57:            motor root is not resolvable or the file does not exist.
+58:
+59:     Args:
+60:         project_root: Absolute path to the destination project root.
+61:
+62:     Returns:
+agent_system/templates/repomix.config.json
+1: {
+2:   "output": {
+3:     "style": "xml",
+4:     "compress": true,
+5:     "fileSummary": true,
+6:     "directoryStructure": true,
+7:     "removeComments": false,
+8:     "showLineNumbers": false,
+9:     "copyToClipboard": false,
+10:     "includeEmptyDirectories": false
+11:   },
+12:   "include": [
+13:     "bus/**",
+14:     "runtime/**",
+15:     "scripts/**",
+16:     "agent_system/**",
+17:     "prompts/**",
+18:     "skills/**",
+19:     "docs/**",
+20:     "*.md",
+21:     "pyproject.toml",
+22:     "pytest.ini"
+23:   ],
+24:   "ignore": {
+25:     "useGitignore": true,
+26:     "customPatterns": [
+27:       "*.lock",
+28:       "*.sum",
+29:       "package-lock.json",
+30:       "uv.lock",
+31:       "node_modules/",
+32:       ".git/",
+33:       ".venv/",
+34:       "__pycache__/",
+35:       "*.pyc",
+36:       ".ruff_cache/",
+37:       ".cache/",
+38:       ".uv-cache/",
+39:       ".pytest_cache/",
+40:       ".tmp/",
+41:       ".tmp/**",
+42:       ".agent/runtime/",
+43:       ".agent/collaboration/_archive/",
+44:       ".agent/collaboration/archive/"
+45:     ]
+46:   }
+47: }
+scripts/install_agent_system.py
+1103:             Mirrors motor_version's "unknown" fallback when absent (additive,
+1104:             default None -- callers that don't pass it get "unknown", never a crash).
+1105:     """
+1106:     config_dir = project_agent / "config"
+1107:     link_file = config_dir / "motor_destination_link.json"
+1108:
+1109:     if destination_id is None:
+1110:         destination_id = destination_root.name
+1111:
+1112:     if ticket_prefix is None and not clear_ticket_prefix:
+1113:         ticket_prefix = _read_existing_ticket_prefix(link_file)
+1114:
+1115:     payload = {
+1116:         "motor_root": str(motor_root.resolve()),
+1117:         "destination_root": str(destination_root.resolve()),
+1118:         "motor_version": motor_version or "unknown",
+1119:         "motor_sha": motor_sha or "unknown",
+1120:         "destination_id": destination_id,
+1121:         "ticket_prefix": ticket_prefix,
+1122:         "created_at": datetime.now(timezone.utc).isoformat(),
+1123:         "manifest_version": MANIFEST_WORKSPACE_VERSION,
+1124:         # WOT-2026-053h: ruta del workspace de dogfooding del MOTOR, para que un
+1125:         # destino que escala (`prompts/escalate_to_motor.md`) sepa DONDE aterriza
+1126:         # su sobre sin adivinar. ADITIVO y puede ser None: un motor que no lo
+1127:         # declara deja el campo a null y el emisor cae a su fallback declarado --
+1128:         # nunca fabrica la ruta. Ver `read_motor_workspace_root`.
+
+hook: PostToolUse
+hook: PostToolUse Completed
+codex
+Exploración realizada **solo en lectura**. Distingo el contrato descrito por el repositorio del contenido que existe en esta copia.
+
+1. **`agent_system/` — RECONSTRUIDO.**
+   Agrupa componentes reutilizables de soporte: resolución de rutas, validación de manifiestos, plantillas y un kit de refactorización. Evidencia: directorios `scripts/`, `templates/`, `docs/` y `refactor_kit/`; `agent_system/scripts/project_paths.py:3` describe la resolución centralizada de rutas.
+
+   En particular, **`templates/repomix.config.json`** configura salida XML comprimida, con resumen y estructura del directorio (`:2`), selecciona código y documentación (`:12`) y excluye dependencias, cachés, runtime y archivos de colaboración (`:24`). El instalador copia esa plantilla a la raíz del destino como `repomix.config.json` (`scripts/install_agent_system.py:1369`, `:1391`). **No establece una ruta de salida `.agent/context/repomix.xml`.**
+
+2. **`scripts/` — RECONSTRUIDO.**
+   Contiene herramientas ejecutables de instalación, actualización, descubrimiento de skills, controles, auditoría y mantenimiento. No es solo una descripción documental: `install_agent_system.py:1053` implementa el enlace motor-destino; `discover_skills.py:297` combina catálogos; `memory_consolidate.py:2` define consolidación y archivado de observaciones; `check_collaboration_state_clean.py:88` comprueba infracciones de distribución y seguimiento.
+
+3. **`skills/` — RECONSTRUIDO.**
+   Catálogo de instrucciones reutilizables para Manager, Builder y tareas compartidas, organizado por carpetas con `SKILL.md` y referencias. Evidencia: `skills/README.md:1` y directorios como `builder-implement-from-plan/`, `manager-review-implementation/` y `_shared/`. El descubridor lee `SKILL.md` (`scripts/discover_skills.py:145`) y permite que las skills del proyecto sustituyan las homónimas del motor (`:301`, `:325`).
+
+4. **`.agent/collaboration/` — PARCIAL.**
+   Su función operacional es alojar planes, turno, estado, backlog, registro de ejecución y revisión: `MANIFEST.workspace:29` enumera esas superficies; `runtime/project_root.py:143` resuelve la carpeta dentro del proyecto activo.
+
+   **Contenido observado:** únicamente `archive/`, vacío. No encontré archivos de estado ni seeds en esta carpeta. El matiz que no puedo confirmar es que **esta copia contenga efectivamente seeds neutros**: `REPOSITORY_STRUCTURE.md:71` lo afirma, pero `MANIFEST.distribute:128` indica que esas superficies dejaron de distribuirse y el guard exige que no se reincorporen (`scripts/check_collaboration_state_clean.py:15`).
+
+5. **`.agent/runtime/memory/` — RECONSTRUIDO.**
+   Almacena memoria persistente y sus representaciones consolidadas: observaciones, índice, reglas, perfil y archivos históricos. `bus/memory_loader.py:15` describe la selección entre perfil L3, reglas L2 y observaciones L1; `scripts/memory_consolidate.py:444` y `:565` generan reglas y perfil.
+
+   En esta copia existen esos archivos; `observations.jsonl` está vacío y `MEMORY.md:5` declara cero observaciones, con referencias a archivos históricos desde `:10`. Esto no implica que toda la carpeta carezca de conocimiento: también contiene `memory_rules.md` y `memory_profile.md`.
+
+6. **`.agent/context/repomix.xml` — NO DEDUCIBLE.**
+   **No existe en el árbol inspeccionado**; `.agent/context/` contiene únicamente `project_map.md`. No encontré referencias a esa ruta en las búsquedas realizadas. La plantilla Repomix demuestra una configuración para producir XML, pero no vincula ese resultado con este nombre y ubicación. No puedo atribuirle un generador, consumidor ni ciclo de actualización concretos.
+
+7. **`.agent/council/` — RECONSTRUIDO.**
+   Implementa evaluación de resultados de auditoría y decisiones de revisión. `council_broker.py:57` sintetiza hallazgos y decide entre intervención humana, reparación o disponibilidad para revisión (`:81`). Persiste eventos y estado en el `runtime_dir` recibido (`:15`, `:35`, `:54`). `audit_rules.py:20` y `:40` definen condiciones de intervención humana y reintento. Es código del mecanismo; sus resultados no se guardan necesariamente en esta carpeta.
+
+8. **`REPOSITORY_STRUCTURE.md` — RECONSTRUIDO.**
+   Documenta la estructura pública autónoma y la frontera entre contenido público e interno (`:3`, `:53`, `:63`, `:81`). También describe sesiones de diseño y desarrollo (`:69`). **Es una descripción del contrato, no un inventario infalible:** su afirmación sobre seeds en `:71` no coincide con el contenido observado ni con la retirada documentada en `MANIFEST.distribute:128`.
+
+**Pregunta específica sobre `.agent/collaboration/`**
+
+- **(a) «Esta carpeta contiene solo seeds neutros»: no es deducible como hecho de esta copia.** Hay una afirmación documental explícita (`REPOSITORY_STRUCTURE.md:71`), pero no hay archivos seed presentes y el manifiesto declara retirada su distribución. Sí está demostrado el carácter reutilizable del motor (`README.md:7`).
+
+- **(b) «El estado real vive en un destino externo denominado convencionalmente `repo_destino`»: sí como arquitectura; no como ubicación concreta comprobada.** `README.md:3` y `:9` sitúan el estado en el proyecto operado; `.agent/README.md:15` denomina la topología `repo_motor/repo_destino`. El código construye colaboración bajo la raíz seleccionada (`runtime/project_root.py:139`, `:154`). **`repo_destino` es un papel convencional, no un nombre de carpeta obligatorio**; tampoco puedo identificar aquí un destino externo activo. Existe además fallback a la raíz del propio motor (`:124`).
+
+- **(c) «Existe resolución mediante variable o fichero de enlace»: sí, está implementada.** `runtime/project_root.py:106` lee `AGENT_PROJECT_ROOT`; `.agent/agent_controller.py:7460` la establece desde `--project-root`. El instalador prepara `.agent/config/motor_destination_link.json` con `motor_root` y `destination_root` (`scripts/install_agent_system.py:1106`, `:1115`), y `runtime/motor_link.py:36` lo lee para localizar el motor. **Ese fichero no está presente en esta copia** y está excluido por `.gitignore:113`. El mecanismo es verificable; un enlace local configurado no lo es.
+hook: Stop
+hook: Stop Completed
+tokens used
+50.027
+Exploración realizada **solo en lectura**. Distingo el contrato descrito por el repositorio del contenido que existe en esta copia.
+
+1. **`agent_system/` — RECONSTRUIDO.**
+   Agrupa componentes reutilizables de soporte: resolución de rutas, validación de manifiestos, plantillas y un kit de refactorización. Evidencia: directorios `scripts/`, `templates/`, `docs/` y `refactor_kit/`; `agent_system/scripts/project_paths.py:3` describe la resolución centralizada de rutas.
+
+   En particular, **`templates/repomix.config.json`** configura salida XML comprimida, con resumen y estructura del directorio (`:2`), selecciona código y documentación (`:12`) y excluye dependencias, cachés, runtime y archivos de colaboración (`:24`). El instalador copia esa plantilla a la raíz del destino como `repomix.config.json` (`scripts/install_agent_system.py:1369`, `:1391`). **No establece una ruta de salida `.agent/context/repomix.xml`.**
+
+2. **`scripts/` — RECONSTRUIDO.**
+   Contiene herramientas ejecutables de instalación, actualización, descubrimiento de skills, controles, auditoría y mantenimiento. No es solo una descripción documental: `install_agent_system.py:1053` implementa el enlace motor-destino; `discover_skills.py:297` combina catálogos; `memory_consolidate.py:2` define consolidación y archivado de observaciones; `check_collaboration_state_clean.py:88` comprueba infracciones de distribución y seguimiento.
+
+3. **`skills/` — RECONSTRUIDO.**
+   Catálogo de instrucciones reutilizables para Manager, Builder y tareas compartidas, organizado por carpetas con `SKILL.md` y referencias. Evidencia: `skills/README.md:1` y directorios como `builder-implement-from-plan/`, `manager-review-implementation/` y `_shared/`. El descubridor lee `SKILL.md` (`scripts/discover_skills.py:145`) y permite que las skills del proyecto sustituyan las homónimas del motor (`:301`, `:325`).
+
+4. **`.agent/collaboration/` — PARCIAL.**
+   Su función operacional es alojar planes, turno, estado, backlog, registro de ejecución y revisión: `MANIFEST.workspace:29` enumera esas superficies; `runtime/project_root.py:143` resuelve la carpeta dentro del proyecto activo.
+
+   **Contenido observado:** únicamente `archive/`, vacío. No encontré archivos de estado ni seeds en esta carpeta. El matiz que no puedo confirmar es que **esta copia contenga efectivamente seeds neutros**: `REPOSITORY_STRUCTURE.md:71` lo afirma, pero `MANIFEST.distribute:128` indica que esas superficies dejaron de distribuirse y el guard exige que no se reincorporen (`scripts/check_collaboration_state_clean.py:15`).
+
+5. **`.agent/runtime/memory/` — RECONSTRUIDO.**
+   Almacena memoria persistente y sus representaciones consolidadas: observaciones, índice, reglas, perfil y archivos históricos. `bus/memory_loader.py:15` describe la selección entre perfil L3, reglas L2 y observaciones L1; `scripts/memory_consolidate.py:444` y `:565` generan reglas y perfil.
+
+   En esta copia existen esos archivos; `observations.jsonl` está vacío y `MEMORY.md:5` declara cero observaciones, con referencias a archivos históricos desde `:10`. Esto no implica que toda la carpeta carezca de conocimiento: también contiene `memory_rules.md` y `memory_profile.md`.
+
+6. **`.agent/context/repomix.xml` — NO DEDUCIBLE.**
+   **No existe en el árbol inspeccionado**; `.agent/context/` contiene únicamente `project_map.md`. No encontré referencias a esa ruta en las búsquedas realizadas. La plantilla Repomix demuestra una configuración para producir XML, pero no vincula ese resultado con este nombre y ubicación. No puedo atribuirle un generador, consumidor ni ciclo de actualización concretos.
+
+7. **`.agent/council/` — RECONSTRUIDO.**
+   Implementa evaluación de resultados de auditoría y decisiones de revisión. `council_broker.py:57` sintetiza hallazgos y decide entre intervención humana, reparación o disponibilidad para revisión (`:81`). Persiste eventos y estado en el `runtime_dir` recibido (`:15`, `:35`, `:54`). `audit_rules.py:20` y `:40` definen condiciones de intervención humana y reintento. Es código del mecanismo; sus resultados no se guardan necesariamente en esta carpeta.
+
+8. **`REPOSITORY_STRUCTURE.md` — RECONSTRUIDO.**
+   Documenta la estructura pública autónoma y la frontera entre contenido público e interno (`:3`, `:53`, `:63`, `:81`). También describe sesiones de diseño y desarrollo (`:69`). **Es una descripción del contrato, no un inventario infalible:** su afirmación sobre seeds en `:71` no coincide con el contenido observado ni con la retirada documentada en `MANIFEST.distribute:128`.
+
+**Pregunta específica sobre `.agent/collaboration/`**
+
+- **(a) «Esta carpeta contiene solo seeds neutros»: no es deducible como hecho de esta copia.** Hay una afirmación documental explícita (`REPOSITORY_STRUCTURE.md:71`), pero no hay archivos seed presentes y el manifiesto declara retirada su distribución. Sí está demostrado el carácter reutilizable del motor (`README.md:7`).
+
+- **(b) «El estado real vive en un destino externo denominado convencionalmente `repo_destino`»: sí como arquitectura; no como ubicación concreta comprobada.** `README.md:3` y `:9` sitúan el estado en el proyecto operado; `.agent/README.md:15` denomina la topología `repo_motor/repo_destino`. El código construye colaboración bajo la raíz seleccionada (`runtime/project_root.py:139`, `:154`). **`repo_destino` es un papel convencional, no un nombre de carpeta obligatorio**; tampoco puedo identificar aquí un destino externo activo. Existe además fallback a la raíz del propio motor (`:124`).
+
+- **(c) «Existe resolución mediante variable o fichero de enlace»: sí, está implementada.** `runtime/project_root.py:106` lee `AGENT_PROJECT_ROOT`; `.agent/agent_controller.py:7460` la establece desde `--project-root`. El instalador prepara `.agent/config/motor_destination_link.json` con `motor_root` y `destination_root` (`scripts/install_agent_system.py:1106`, `:1115`), y `runtime/motor_link.py:36` lo lee para localizar el motor. **Ese fichero no está presente en esta copia** y está excluido por `.gitignore:113`. El mecanismo es verificable; un enlace local configurado no lo es.

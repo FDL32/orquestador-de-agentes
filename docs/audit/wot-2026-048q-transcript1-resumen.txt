@@ -1,0 +1,2044 @@
+Reading additional input from stdin...
+OpenAI Codex v0.163.0
+--------
+workdir: C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: low
+reasoning summaries: none
+session id: 01a17026-9e32-7da3-abff-3e62ebd42afa
+--------
+user
+Te acabas de incorporar a este repositorio Python y todavia no conoces su estructura. Nadie te va
+a decir que ficheros abrir: explora el repositorio por tu cuenta (listar directorios, leer
+pyproject.toml, grep, etc.) hasta que tengas evidencia suficiente para responder con precision.
+
+Responde, basandote UNICAMENTE en lo que encuentres en codigo/configuracion real del repositorio
+(cita fichero:linea exacto de cada afirmacion), estas preguntas:
+
+1. Que version de Python requiere este proyecto, y que modulos destacan para manejo de rutas y
+   tipado (si alguno)?
+2. Que gestor de paquetes se usa para anadir dependencias nuevas? Existe alguna senal explicita en
+   codigo/configuracion de que NO se deba usar un gestor alternativo directo (ej. pip) en su lugar?
+   Si la senal existe, cita donde la encontraste exactamente; si no la encuentras, dilo de forma
+   explicita (no inventes).
+3. Que herramientas se usan para testing y para calidad/lint?
+4. Que herramientas se usan para seguridad (deteccion de secretos y auditoria de dependencias)?
+
+Para cada una de las 4 respuestas, clasifica tu propia confianza como:
+- RECONSTRUIDO: lo deduces con confianza del codigo/config, con cita exacta.
+- NO DEDUCIBLE: no encontraste senal clara en codigo/config real (no en prosa/documentacion que
+  simplemente lo declare sin evidencia tecnica detras).
+
+Trabaja solo en modo lectura. Termina con una respuesta final estructurada por las 4 preguntas.
+hook: SessionStart
+hook: SessionStart Completed
+hook: UserPromptSubmit
+hook: UserPromptSubmit Completed
+codex
+Voy a explorar la estructura y contrastar la configuración con el código y la automatización, sin modificar archivos.
+hook: PreToolUse
+hook: PreToolUse Completed
+
+[... omitido: volcado completo de rg --files del arbol (lineas 44-8737), ruido de listado de paths sin valor de cita; disponible en el scratch dir original citado en el reporte ...]
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Force -Name; rg -n '"'^'"' pyproject.toml uv.toml pytest.ini .agent_denylist.json .agent_allowlist.json; if (Test-Path AGENTS.md) { Get-Content AGENTS.md }; rg --files .github -g '"'!*.md'"'" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 261ms:
+.agent
+.claude-plugin
+.github
+.opencode
+.refactor
+.ruff_cache
+.tmp
+agent_system
+bus
+docs
+prompts
+runtime
+scripts
+skills
+templates
+tests
+.agent_allowlist.json
+.agent_denylist.json
+.editorconfig
+.gitattributes
+.gitignore
+.gitleaks.toml
+.gitleaksignore
+.pre-commit-config.yaml
+AGENT_SECURITY.md
+CHANGELOG.md
+CLOSURE_MODEL.md
+CONSTITUTION.md
+CREDITS.md
+DISTRIBUTION_GUIDE.md
+INTERACTION_MODES.md
+llms-full.txt
+llms.txt
+MANIFEST.distribute
+MANIFEST.workspace
+MANUAL_PUBLICATION_CHECKLIST.md
+plan_graph.md
+PROJECT.md
+pyproject.toml
+pytest.ini
+QUICKSTART.md
+README.md
+RELEASE_CHECKLIST.md
+REPOSITORY_STRUCTURE.md
+repo_charter.md
+UPGRADE_CLEANUP_GUIDE.md
+UPGRADE_GUIDE.md
+uv.lock
+uv.toml
+validate_template.ps1
+pytest.ini:1:[pytest]
+pytest.ini:2:markers =
+pytest.ini:3:    integration: tests that require real filesystem and subprocess execution
+pytest.ini:4:    slow: tests that intentionally scan a larger tree or take longer than unit tests
+pytest.ini:5:    eval: regression tests for critical orchestration flows (isolated, opt-in)
+pytest.ini:6:
+pytest.ini:7:testpaths = tests
+pytest.ini:8:python_files = test_*.py
+pytest.ini:9:python_classes = Test*
+pytest.ini:10:python_functions = test_*
+pytest.ini:11:addopts = -p no:cacheprovider -rs
+pytest.ini:12:tmp_path_retention_policy = none
+pytest.ini:13:norecursedirs = .runtime .pytest_cache .ruff_cache __pycache__ .agent .tmp tests/sandbox tests/deprecated tests/debug
+pytest.ini:14:filterwarnings =
+pytest.ini:15:    error::pytest.PytestReturnNotNoneWarning
+uv.toml:1:cache-dir = '.agent/runtime/uv-cache'
+uv.toml:2:exclude-newer = '2026-05-16'
+uv.toml:3:# WOT-2026-058n: `exclude-newer` global (arriba) congela el indice al 2026-05-16, asi que
+uv.toml:4:# uv NO ve pip 26.1.2/26.2/26.2.1 (publicadas 05-31, 07-29 y 08-04) y respondia
+uv.toml:5:# "only pip<=26.1.1 is available" mientras PyPI si las servia. Eso dejaba PYSEC-2026-3721
+uv.toml:6:# sin fix posible y BLOQUEABA todo push (hook pip-audit, exit 1).
+uv.toml:7:# Corte POR-PAQUETE en vez de mover el global: sube solo pip (1 version) en lugar de
+uv.toml:8:# arrastrar 15 paquetes, que exigiria re-correr la suite sobre un entorno distinto.
+uv.toml:9:# certifi 2026.10.19 corrige GHSA-6q48-6c7w-9gw2; el cutoff global lo oculta,
+uv.toml:10:# asi que se abre una ventana por-paquete solo para certifi (mismo patron).
+uv.toml:11:# virtualenv 21.14.2/21.14.4/21.14.7 corrigen CVE-2026-113776/113732/113726/113725
+uv.toml:12:# (publicadas 2026-10-01 a 2026-10-12); el cutoff global las oculta igual que a pip
+uv.toml:13:# y certifi -- mismo patron, ventana por-paquete en vez de ignore-vuln (esas 4 CVEs
+uv.toml:14:# SI tienen fix real, a diferencia de PYSEC-2026-4011..4014 que siguen sin resolver).
+uv.toml:15:# distlib: virtualenv 21.14.7 exige distlib>=0.4.3,<1 (publicada 2026-06-12), que el
+uv.toml:16:# cutoff global tambien ocultaba -- sin esta ventana el resolver de virtualenv falla
+uv.toml:17:# con "Because only distlib<=0.4.0 is available". Misma ventana que virtualenv.
+uv.toml:18:# packaging: virtualenv 21.14.7 exige packaging>=26.3 (publicada 2026-08-04), tercera
+uv.toml:19:# dependencia en cadena bloqueada por el mismo cutoff. Confirmado via OSV
+uv.toml:20:# (api.osv.dev) que CVE-2026-113725 (la 4a de las 4 CVEs de virtualenv) SOLO se
+uv.toml:21:# corrige en 21.14.7 exacta -- no hay version intermedia que cubra las 4 sin esta
+uv.toml:22:# cadena completa (distlib + packaging + python-discovery).
+uv.toml:23:# python-discovery: virtualenv 21.14.7 exige python-discovery>=1.6.1 (publicada
+uv.toml:24:# 2026-09-18), cuarta dependencia en cadena bloqueada por el mismo cutoff.
+uv.toml:25:# typing-extensions: virtualenv 21.14.7 exige typing-extensions>=4.16 (publicada
+uv.toml:26:# 2026-07-02) en python<3.11, quinta dependencia en cadena.
+uv.toml:27:# virtualenv 21.14.9 corrige GHSA-c978-59m8-c77v, publicada fuera de la ventana
+uv.toml:28:# 2026-10-13 que 21.14.7 ya necesitaba -- WOT-2026-086f resurgio con un GHSA nuevo
+uv.toml:29:# apenas se subio a 21.14.7 (mismo patron de alias/CVE-nuevo-sobre-fix-reciente que
+uv.toml:30:# las 4 CVEs de arriba); revalidado 2026-10-22 con `uv pip install "virtualenv==
+uv.toml:31:# 21.14.9" --dry-run` bajo esta ventana extendida, 7 paquetes resueltos sin tocar
+uv.toml:32:# distlib/packaging/python-discovery/typing-extensions (sus propias ventanas siguen
+uv.toml:33:# sirviendo a 21.14.9 sin cambios).
+uv.toml:34:exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20', virtualenv = '2026-10-22', distlib = '2026-10-13', packaging = '2026-10-13', python-discovery = '2026-10-13', typing-extensions = '2026-10-13' }
+pyproject.toml:1:[project]
+pyproject.toml:2:name = "orquestacion-agentes"
+pyproject.toml:3:version = "9.17.1"
+pyproject.toml:4:description = "Multi-agent orchestration system with Manager/Builder architecture"
+pyproject.toml:5:requires-python = ">=3.10,<3.14"
+pyproject.toml:6:authors = [
+pyproject.toml:7:    { name = "Orquestacion Agentes Contributors" }
+pyproject.toml:8:]
+pyproject.toml:9:
+pyproject.toml:10:[dependency-groups]
+pyproject.toml:11:dev = [
+pyproject.toml:12:    "ruff==0.15.1",
+pyproject.toml:13:    "mypy==1.19.1",
+pyproject.toml:14:    "pre-commit==4.5.1",
+pyproject.toml:15:    "pytest==9.0.3",
+pyproject.toml:16:    "pytest-asyncio==1.3.0",
+pyproject.toml:17:    "pytest-cov==6.0",
+pyproject.toml:18:    "pip-audit==2.9.0",
+pyproject.toml:19:    "requests==2.33.1",
+pyproject.toml:20:    "pyyaml>=6.0",
+pyproject.toml:21:    "pygments>=2.20.0",
+pyproject.toml:22:    "rich>=15.0.0",
+pyproject.toml:23:    "pyparsing>=3.0",
+pyproject.toml:24:    "urllib3>=2.7.0",
+pyproject.toml:25:    "tomli>=2.4.1",
+pyproject.toml:26:    "vulture>=2.0",
+pyproject.toml:27:    "deadcode>=2.0",
+pyproject.toml:28:    "pytest-xdist>=3.6",
+pyproject.toml:29:]
+pyproject.toml:30:
+pyproject.toml:31:[tool.ruff]
+pyproject.toml:32:src = ["src"]
+pyproject.toml:33:target-version = "py310"
+pyproject.toml:34:extend-exclude = [
+pyproject.toml:35:    "tests/sandbox/",
+pyproject.toml:36:    "scripts/sandbox/",
+pyproject.toml:37:    ".codex/",
+pyproject.toml:38:]
+pyproject.toml:39:respect-gitignore = true
+pyproject.toml:40:force-exclude = true
+pyproject.toml:41:fix = true
+pyproject.toml:42:
+pyproject.toml:43:[tool.ruff.format]
+pyproject.toml:44:docstring-code-format = true
+pyproject.toml:45:
+pyproject.toml:46:[tool.ruff.lint]
+pyproject.toml:47:extend-select = [
+pyproject.toml:48:    "E",      # pycodestyle errors
+pyproject.toml:49:    "F",      # Pyflakes
+pyproject.toml:50:    "B",      # flake8-bugbear
+pyproject.toml:51:    "S",      # bandit (security)
+pyproject.toml:52:    "RUF",    # ruff-specific
+pyproject.toml:53:    "N",      # pep8-naming
+pyproject.toml:54:    "W",      # pycodestyle warnings
+pyproject.toml:55:    "I",      # isort
+pyproject.toml:56:    "PERF",   # performance
+pyproject.toml:57:    "UP",     # pyupgrade
+pyproject.toml:58:    "C90",    # cyclomatic complexity (McCabe)
+pyproject.toml:59:    "ERA",    # dead/commented code
+pyproject.toml:60:    "SIM",    # simplifications
+pyproject.toml:61:]
+pyproject.toml:62:ignore = ["E501"]  # line too long handled by formatter
+pyproject.toml:63:
+pyproject.toml:64:[tool.ruff.lint.isort]
+pyproject.toml:65:no-sections = false
+pyproject.toml:66:case-sensitive = true
+pyproject.toml:67:combine-as-imports = true
+pyproject.toml:68:lines-after-imports = 2
+pyproject.toml:69:
+pyproject.toml:70:[tool.ruff.lint.per-file-ignores]
+pyproject.toml:71:"tests/**/*.py" = ["S101", "S603", "S607", "S108", "SIM115"]
+pyproject.toml:72:"tests/test_pre_commit_hooks.py" = ["PERF203"]
+pyproject.toml:73:
+pyproject.toml:74:[tool.mypy]
+pyproject.toml:75:strict = true
+pyproject.toml:76:disallow_untyped_defs = true
+pyproject.toml:77:disallow_any_unimported = true
+pyproject.toml:78:no_implicit_optional = true
+pyproject.toml:79:python_version = "3.10"
+pyproject.toml:80:
+pyproject.toml:81:[tool.pytest.ini_options]
+pyproject.toml:82:testpaths = ["tests"]
+pyproject.toml:83:addopts = "--tb=short --cov=src --cov-report=term-missing"
+pyproject.toml:84:asyncio_mode = "auto"
+pyproject.toml:85:
+pyproject.toml:86:[tool.pip-audit]
+pyproject.toml:87:# Temporales: las versiones corregidas todavia no estan disponibles para el
+pyproject.toml:88:# resolver desde PyPI. Retira cada excepcion cuando uv pueda bloquear la
+pyproject.toml:89:# version indicada. Revalidado con `uv pip install "<pkg>==<fix>" --dry-run`
+pyproject.toml:90:# antes de anadir o mantener cada entrada (no basta con el registro de CVE).
+pyproject.toml:91:ignore-vuln = [
+pyproject.toml:92:    "GHSA-6v7p-g79w-8964", # msgpack >=1.2.1 -- revalidado 2026-09-30, sigue sin resolver
+pyproject.toml:93:    "GHSA-8988-9cw3-xx77", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver
+pyproject.toml:94:    "GHSA-vxq7-64xx-v4gw", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver
+pyproject.toml:95:    "GHSA-gh4c-6fx4-qh6g", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver (3er GHSA, mismo paquete/fix)
+pyproject.toml:96:    "PYSEC-2026-4011", # virtualenv >=21.7.12 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+pyproject.toml:97:    "PYSEC-2026-4012", # virtualenv >=21.7.11 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+pyproject.toml:98:    "PYSEC-2026-4013", # virtualenv >=21.7.13 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+pyproject.toml:99:    "PYSEC-2026-4014", # virtualenv >=21.7.12 (dev, via pre-commit) -- cierre WOT-2026-086f, 2026-09-30, sin resolver
+pyproject.toml:100:    # CVE-2026-113726/113776/113732/113725 (virtualenv, alias CVE nuevo de la misma
+pyproject.toml:101:    # deuda PYSEC de arriba) ya NO se ignoran: origin/main (112613c1, 2026-10-21) subio
+pyproject.toml:102:    # virtualenv a 21.14.7 via ventana por-paquete en uv.toml, resolviendolas de verdad
+pyproject.toml:103:    # (no solo ignorandolas). Retiradas al fusionar ese commit, 2026-10-22.
+pyproject.toml:104:    # filelock >=4.0.0 (fix real en 4.2.1) -- deuda detectada en push del lote motor
+pyproject.toml:105:    # v6 de WOT-2026-120a, 2026-10-24, sin resolver: TODA la rama 4.x exige
+pyproject.toml:106:    # Python>=3.11 (verificado via metadata de PyPI y `uv pip install
+pyproject.toml:107:    # "filelock==4.2.1" --dry-run` -> "current Python version (3.10.19) does not
+pyproject.toml:108:    # satisfy Python>=3.11"), y este proyecto declara requires-python >=3.10.
+pyproject.toml:109:    # No hay backport con fix conocido en la rama 3.x a esta fecha. Alcance de uso
+pyproject.toml:110:    # confirmado (grep de virtualenv/util/lock.py): solo se usa la clase base
+pyproject.toml:111:    # FileLock, nunca ReadWriteLock/AsyncReadWriteLock/SoftFileLock (las clases que
+pyproject.toml:112:    # SI afectan estos 3 GHSA) -- no es alcanzable por la ruta transitiva real de
+pyproject.toml:113:    # este repo (via virtualenv/python-discovery, grupo dev, sin import directo).
+pyproject.toml:114:    # Explotacion exige ademas escritura local en el mismo directorio del lock
+pyproject.toml:115:    # (symlink/fichero lateral plantado); riesgo residual bajo para tooling de
+pyproject.toml:116:    # desarrollador en un solo equipo, no cero en todo entorno posible. Revisado
+pyproject.toml:117:    # en bucle DESIGN_REVIEW de 3 lentes (qwen3.6, gemma4: ADOPTAR; codex:
+pyproject.toml:118:    # ADOPTAR CON CAMBIOS), 2026-10-24. Retirar esta excepcion si el proyecto sube
+pyproject.toml:119:    # su piso a Python>=3.11, si aparece un fix retroactivo en la rama 3.x, o si
+pyproject.toml:120:    # virtualenv cambia su uso hacia alguna de las clases afectadas.
+pyproject.toml:121:    "GHSA-v4x8-3wr5-3wq8", # filelock >=4.2.1 -- ReadWriteLock/AsyncReadWriteLock (Linux, symlink), inalcanzable, ver nota arriba
+pyproject.toml:122:    "GHSA-9vhv-jxww-xfm5", # filelock >=4.2.1 -- ReadWriteLock/AsyncReadWriteLock (Windows, side files), inalcanzable, ver nota arriba
+pyproject.toml:123:    "GHSA-567q-5qvw-pf92", # filelock >=4.2.1 -- SoftFileLock (Windows, oplock), inalcanzable, ver nota arriba
+pyproject.toml:124:]
+pyproject.toml:125:
+pyproject.toml:126:[tool.uv]
+.agent_allowlist.json:1:{
+.agent_allowlist.json:2:  "write_roots": [".", "src/", "tests/", ".agent/", "changelog/", "tools/", "scripts/"],
+.agent_allowlist.json:3:  "protected_paths": ["privada/", "data/sectors/", ".env", "agent_system/config/"]
+.agent_allowlist.json:4:}
+.agent_denylist.json:1:{
+.agent_denylist.json:2:  "blocked_patterns": ["^privada/.*", ".*/.env", "^data/sectors/.*", ".*/.git/.*", ".*secrets.*"],
+.agent_denylist.json:3:  "blocked_commands": ["rm -rf", "git push --force", "pip install --upgrade-all", "shred", "format"]
+.agent_denylist.json:4:}
+.github\workflows\security-audit.yml
+.github\workflows\quality-gates.yml
+.github\workflows\monthly-deps-bump.yml
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'uv add|pip install|pip3|\"pip\"|gitleaks|pip-audit|ruff|mypy|pytest|uv sync' .github .pre-commit-config.yaml scripts .opencode .agent -g '*.py' -g '*.json' -g '*.yaml' -g '*.yml' -g '*.toml' -g '*.sh' -g '*.ps1' -g '"'!runtime/**'"' -g '"'!**/runtime/**'"' -g '"'!**/archive/**'"' -g '"'!**/node_modules/**'"' -g '"'!**/uv-cache/**'"'" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 52ms:
+.pre-commit-config.yaml:36:      # Hook scope enforced by the check-ruff-hook-scope hook below (WOT-2026-024w:
+.pre-commit-config.yaml:39:      # `ruff check` REESCRIBE ficheros por configuracion aunque no se pase
+.pre-commit-config.yaml:40:      # `--fix`. Medido 2026-08-05: `ruff check <f> --select RUF100` retiro 2
+.pre-commit-config.yaml:43:      - id: ruff-check
+.pre-commit-config.yaml:44:        name: ruff check
+.pre-commit-config.yaml:45:        entry: uv run ruff check --no-fix
+.pre-commit-config.yaml:50:      # ruff-format es mutador: SOLO pre-commit
+.pre-commit-config.yaml:51:      - id: ruff-format
+.pre-commit-config.yaml:52:        name: ruff format
+.pre-commit-config.yaml:53:        entry: uv run ruff format
+.pre-commit-config.yaml:127:      - id: check-ruff-hook-scope
+.pre-commit-config.yaml:128:        name: check ruff hook scope (ruff hooks stay Python-only)
+.pre-commit-config.yaml:129:        entry: uv run python scripts/check_ruff_hook_scope.py
+.pre-commit-config.yaml:136:      # en pyproject.toml hace que un `ruff check` DESNUDO reescriba el arbol que
+.pre-commit-config.yaml:138:      # ESTATICO: falla si CUALQUIER lista literal de invocacion de ruff carece de
+.pre-commit-config.yaml:140:      - id: check-collector-ruff-nofix
+.pre-commit-config.yaml:141:        name: check collector ruff --no-fix (recolector read-only de verdad)
+.pre-commit-config.yaml:142:        entry: uv run python scripts/check_collector_ruff_nofix.py
+.pre-commit-config.yaml:433:      # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
+.pre-commit-config.yaml:434:      # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
+.pre-commit-config.yaml:436:      - id: pip-audit
+.pre-commit-config.yaml:437:        name: pip-audit (CVE Detection)
+.pre-commit-config.yaml:438:        entry: python scripts/pip_audit_project.py
+.pre-commit-config.yaml:440:        additional_dependencies: [pip-audit]
+.pre-commit-config.yaml:458:        entry: uv run vulture bus/ runtime/ scripts/ skills/ tools/ --min-confidence 80 --exclude whitelists,.agent,.cache,.claude,.codex,.opencode,.tmp,.uv-cache,.ruff_cache,tests
+.github\workflows\security-audit.yml:31:      run: uv sync --all-groups
+.github\workflows\security-audit.yml:37:      # WOT-2026-010x: replace gitleaks/gitleaks-action@v2 (license-gated) with the
+.github\workflows\security-audit.yml:38:      # OSS gitleaks CLI. No GITLEAKS_LICENSE, no GITHUB_TOKEN for this step, no JS
+.github\workflows\security-audit.yml:40:      # `gitleaks detect --exit-code 1` exits non-zero (and the step fails) on a leak.
+.github\workflows\security-audit.yml:44:        set -euo pipefail
+.github\workflows\security-audit.yml:45:        url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+.github\workflows\security-audit.yml:46:        curl -sSfL "$url" -o gitleaks.tar.gz
+.github\workflows\security-audit.yml:47:        tar -xzf gitleaks.tar.gz gitleaks
+.github\workflows\security-audit.yml:48:        ./gitleaks version
+.github\workflows\security-audit.yml:49:        ./gitleaks detect --source . --config agent_system/templates/gitleaks.config.toml --redact --exit-code 1 --log-opts="--all"
+.github\workflows\quality-gates.yml:34:      run: uv sync --all-groups
+.github\workflows\quality-gates.yml:37:      run: uv run ruff format --check .
+.github\workflows\quality-gates.yml:40:      run: uv run ruff check .
+.github\workflows\quality-gates.yml:45:      run: uv run python scripts/run_pytest_safe.py
+.github\workflows\quality-gates.yml:55:      run: uv run python scripts/run_pytest_safe.py --level unit --xdist-workers auto
+.github\workflows\monthly-deps-bump.yml:46:      run: uv sync --all-groups
+scripts\audit_manifest.py:26:    "ruff",
+scripts\audit_manifest.py:27:    "gitleaks",
+scripts\audit_manifest.py:28:    "pytest",
+scripts\audit_manifest.py:30:    "pip-audit",
+scripts\audit_manifest.py:32:    "mypy",
+scripts\audit_manifest.py:59:        "ruff": ["ruff", "--version"],
+scripts\audit_manifest.py:60:        "gitleaks": ["gitleaks", "version"],
+scripts\audit_manifest.py:61:        "pytest": ["pytest", "--version"],
+scripts\audit_manifest.py:63:        "pip-audit": ["pip-audit", "--version"],
+scripts\audit_manifest.py:65:        "mypy": ["mypy", "--version"],
+scripts\audit_manifest.py:76:        # Patrones comunes: "ruff 0.17.1", "pytest 8.x", etc.
+scripts\audit_manifest.py:108:            ("ruff", "ruff"),
+scripts\audit_manifest.py:131:        "ruff": [
+scripts\audit_manifest.py:132:            ["ruff", "check", "."],
+scripts\audit_manifest.py:133:            ["ruff", "format", "--check", "."],
+scripts\audit_manifest.py:135:        "gitleaks": [
+scripts\audit_manifest.py:136:            ["gitleaks", "detect", "--source", str(repo_path), "--no-banner"],
+scripts\audit_manifest.py:138:        "pytest": [
+scripts\audit_manifest.py:139:            ["pytest", "-q", "--tb=short"],
+scripts\audit_manifest.py:144:        "pip-audit": [
+scripts\audit_manifest.py:145:            ["pip-audit"],
+scripts\audit_manifest.py:150:        "mypy": [
+scripts\audit_manifest.py:151:            ["mypy", "."],
+.agent\session_tracker.py:206:    ignore_dirs = {".git", ".venv", "__pycache__", ".pytest_cache"}
+.agent\session_tracker.py:227:    ignore_dirs = {".git", ".venv", "__pycache__", ".pytest_cache"}
+.agent\scope_gate.py:412:    entries such as ``cache pytest`` or ``xdist/sharding`` that are not concrete
+scripts\archive_arranques.py:1:"""WOT-2026-067m: retencion de `orchestrator_pipeline/arranques/` por CITACION (DEC-067L-001).
+scripts\archive_arranques.py:44:  Before: `project_root` es un repo_destino con `orchestrator_pipeline/arranques/`
+scripts\archive_arranques.py:83:ARRANQUES_REL = Path("orchestrator_pipeline") / "arranques"
+scripts\archive_arranques.py:230:    vez que `orchestrator_pipeline/` aparece sin nada previamente tracked dentro) se
+scripts\archive_arranques.py:231:    colapsa en UNA linea `?? orchestrator_pipeline/` -- el basename resultante
+scripts\archive_arranques.py:232:    ("orchestrator_pipeline") nunca coincide con el de ningun arranque, y la guarda
+scripts\archive_arranques.py:429:        help="repo_destino cuyo orchestrator_pipeline/arranques/ se retiene.",
+scripts\check_agents_accessible.py:2:# ruff: noqa: S603
+scripts\check_agents_accessible.py:65:# `.agent/runtime/` instead of `<motor>/runtime/` (pytest-collection hazard
+scripts\census_dogfooding_narrative.py:237:    pytest capture (``io.StringIO``) has no ``.buffer`` (Codex MANAGER_REVIEW,
+scripts\builder_agent.py:62:    override the ``orchestrator_pipeline/flight_plans/`` tree (resolved from
+scripts\builder_agent.py:95:            "persistido bajo orchestrator_pipeline/flight_plans/ "
+scripts\builder_agent.py:103:            "arbol orchestrator_pipeline/flight_plans/ alcanzable desde el "
+scripts\builder_agent.py:149:            "persistido bajo orchestrator_pipeline/flight_plans/."
+scripts\builder_agent.py:236:            "scripts/run_pytest_safe.py",
+scripts\build_llms.py:179:            "- `python scripts/run_pytest_safe.py` — test suite for current scope.",
+scripts\build_llms.py:180:            "- `ruff check . && ruff format .` — lint + format.",
+scripts\build_llms.py:181:            "- `python scripts/pip_audit_project.py` — supply-chain audit from uv.lock.",
+.agent\hooks\session_start_hook.py:389:# actuar") y M5 ("exit code real, nunca $? tras un pipe"), hoy solo dentro
+.agent\hooks\session_start_hook.py:411:    "$? despues de un pipe (usa PIPESTATUS o evita el pipe): el `rc` tras "
+.agent\hooks\pre_compact_hook.py:346:    # WOT-2026-110a: evita bytes no-UTF-8 en la codepage del pipe (cp1252).
+scripts\check_arranque_material_paths.py:6:``orchestrator_pipeline/arranques/`` salian IGUAL por ``git status`` (``??`` los
+scripts\check_arranque_material_paths.py:15:* Un fichero gobernado en ``orchestrator_pipeline/arranques/`` (la ruta
+scripts\check_arranque_material_paths.py:20:* ``orchestrator_pipeline/reports/*`` tiene su PROPIA allowlist de prefijos
+scripts\check_arranque_material_paths.py:60:DECLARED_ROUTE = "orchestrator_pipeline/arranques"
+scripts\batch_destination_controller.py:213:        check_destino_publish_ready.py:_count_errors and orchestrator_pipeline.md
+scripts\batch_destination_controller.py:247:    reports = root / "orchestrator_pipeline/reports"
+scripts\batch_destination_controller.py:274:    reports = root / "orchestrator_pipeline/reports"
+scripts\batch_destination_controller.py:290:    reports = root / "orchestrator_pipeline/reports"
+scripts\batch_destination_controller.py:304:        root may hold `orchestrator_pipeline/reports/batch_run_*.json` written
+scripts\batch_destination_controller.py:313:    reports_dir = root / "orchestrator_pipeline/reports"
+scripts\backlog_triage_writer.py:25:de triaje vive en ``<destino>/orchestrator_pipeline/reports/`` -- lo fija
+scripts\backlog_triage_writer.py:29:``<project-root>/orchestrator_pipeline/reports/``; ``--out-dir`` lo
+scripts\backlog_triage_writer.py:70:REPORTS_SUBPATH = ("orchestrator_pipeline", "reports")
+scripts\backlog_triage_writer.py:213:            `<project-root>/orchestrator_pipeline/reports/`.
+scripts\backlog_triage_writer.py:255:            "(se deriva <project-root>/orchestrator_pipeline/reports/).",
+scripts\backlog_triage_writer.py:305:            "<project-root>/orchestrator_pipeline/reports/."
+.agent\motor_checkpoint.py:27:# ruff: noqa: S603,S607
+scripts\check_arranques_index.py:3:CONTRATO (DEC-067L-002). El historico NO CITADO de `orchestrator_pipeline/arranques/`
+scripts\check_arranques_index.py:21:  Before: `arranques_dir` es la carpeta `orchestrator_pipeline/arranques/` resoluble.
+scripts\check_arranques_index.py:113:    Before: `arranques_dir` es `orchestrator_pipeline/arranques/`.
+scripts\check_arranques_index.py:165:        help="repo_destino cuyo orchestrator_pipeline/arranques/_archive/ se audita.",
+scripts\check_arranques_index.py:174:    arranques = Path(args.project_root) / "orchestrator_pipeline" / "arranques"
+scripts\check_backlog_commits_landed.py:44:(audit_pipeline_codeonly.md treats that ERROR as blocking APROBADO -> every code-only
+scripts\check_backlog_commits_landed.py:477:    ``system|infra`` row working: a literal pipe inside a Titulo yields 9 cells, and
+scripts\backlog_reconcile.py:257:    p = repo / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+scripts\backlog_reconcile.py:535:    dec_dir = dest_root / "orchestrator_pipeline" / "decisions"
+scripts\check_audit_skips.py:7:seal (``.agent/runtime/pytest-safe/last-run.json``) recorded ``skipped``
+scripts\check_audit_skips.py:10:deletion turned into a fabricated finding. NON-GOAL: banning ``pytest.skip``
+scripts\check_audit_skips.py:15:- ``pytest.ini`` addopts carries ``-rs`` so the canonical run prints a short
+scripts\check_audit_skips.py:16:  summary of skipped tests WITH their reasons; ``run_pytest_safe.py`` captures
+scripts\check_audit_skips.py:17:  that stdout into ``.agent/runtime/pytest-safe/last-run.log``.
+scripts\check_audit_skips.py:39:    Before: ``project_root`` resolves the pytest-safe dir; a seal may or may
+scripts\check_audit_skips.py:60:PYTEST_SAFE_REL = Path(".agent") / "runtime" / "pytest-safe"
+scripts\check_audit_skips.py:83:        (``pytest.skip()`` without argument prints ``Skipped``) is flagged as
+scripts\check_audit_skips.py:110:    During: scans lines in reverse for pytest's final summary line (ends with
+scripts\check_audit_skips.py:209:                "(sin -rs el motivo no llega al log; verifica pytest.ini addopts)"
+scripts\check_audit_skips.py:241:    """Before: pytest-safe dir, seal counters. During: locates and validates
+scripts\check_audit_skips.py:266:    """Before: ``project_root`` is the workspace to guard; the pytest-safe dir
+scripts\check_builder_prompt_obligations.py:48:- DATO: celdas NO-primeras de una fila pipe (bus logs copiados como evidencia,
+scripts\check_builder_prompt_obligations.py:58:portadora escrita SOLO dentro del cuerpo de una fila pipe se reportaria ausente.
+scripts\check_builder_prompt_obligations.py:290:def _pipe_first_cell_span(line: str) -> tuple[int, int] | None:
+scripts\check_builder_prompt_obligations.py:291:    """Devuelve el span (inicio, fin) de la PRIMERA celda de una fila pipe.
+scripts\check_builder_prompt_obligations.py:296:    After: el span absoluto en `line`, o None si no es fila pipe.
+scripts\check_builder_prompt_obligations.py:333:    During: por cada ocurrencia -- (1) si la linea es fila pipe y la ocurrencia
+scripts\check_builder_prompt_obligations.py:343:    first_cell = _pipe_first_cell_span(line)
+scripts\check_backlog_admission.py:205:    Parte la fila en celdas (`_split_row_cells`, respeta pipes escapados) y
+scripts\check_commit_message_encoding.py:62:# Declared by CODEPOINT on purpose: written as literals, ruff flags them
+scripts\check_batch_run_accounting.py:134:    `<destino>/orchestrator_pipeline/flight_plans/`, so the report's own
+scripts\check_commit_worktree.py:19:ticket prefix) and lives in the code-only pipeline's preflight, which that
+.agent\config\agents.json:19:      "description": "Replica la proteccion actual como default; bloquea ejecucion piped desde red",
+.agent\config\agents.json:694:  "ensemble_pipelines": {
+scripts\check_backlog_contract.py:38:# ruff: noqa: S603,S607 - subprocess calls use trusted git binary with hardcoded commands
+scripts\check_backlog_contract.py:404:    first pipe, index 1 is the Prioridad column, index 2 is the Ticket column.
+scripts\check_backlog_contract.py:896:    the first pipe, index 1 is Prioridad). This is the SAME position 027t's
+scripts\check_backlog_contract.py:1132:# canonical 8-cell arity. A row broken by an UNESCAPED pipe in its text gains
+scripts\check_backlog_contract.py:1140:# The fix for a break is to REMOVE the pipe from the cell text, never to escape
+scripts\check_backlog_contract.py:1141:# it: the real consumer (check_backlog_commits_landed) splits on the RAW pipe.
+scripts\check_backlog_contract.py:1148:# unescaped pipe (15 at 9 cells, 2 at 10). All 20 non-8 rows are anchored here as
+scripts\check_backlog_contract.py:1163:    # 17 pipe-break rows: 15 at 9 cells, 2 at 10.
+scripts\check_backlog_contract.py:1195:    one whose unescaped pipe pushed the terminal ``commit:`` cell out of the
+scripts\check_backlog_contract.py:1274:    an unescaped pipe pushing the terminal commit: cell out of the table. The fix
+scripts\check_backlog_contract.py:1275:    is always to REMOVE the pipe (the real consumer splits on the raw pipe), never
+scripts\check_backlog_contract.py:1282:    DECLARED SCOPE, now closed (054i): a pipe break located BEFORE the Ticket cell
+scripts\check_backlog_contract.py:1342:                f"REMOVE the pipe from the cell text (do NOT escape it: the real "
+scripts\check_backlog_contract.py:1343:                f"consumer splits on the raw pipe)."
+scripts\check_backlog_contract.py:1363:# ROTAS por un pipe sin escapar (arity 9) o pertenecen a la seccion historica de 7
+scripts\check_backlog_contract.py:1415:    """Locate the Estado cell of an archived row, tolerating pipe-shifted rows.
+scripts\check_backlog_contract.py:1418:    but an unescaped pipe INSIDE the Titulo cell splits it in two and shifts every
+scripts\check_backlog_contract.py:1442:    # Scope-shaped cell at the Estado slot => the row is pipe-shifted, not mistyped.
+scripts\check_backlog_contract.py:1528:        # rotas por un pipe sin escapar (`014a/b/d/e/f/g/h/i`, arity 9) y una de
+scripts\check_backlog_contract.py:1535:        # pipe que rompe la fila aparece DESPUES, en el texto del titulo.
+scripts\check_backlog_contract.py:1744:    """Locate the Reactivation cell of an archived row, tolerating pipe-shifted rows.
+scripts\check_backlog_contract.py:1747:    contains a Scope-shaped slug (``/``), the row is pipe-shifted and
+scripts\check_backlog_contract.py:2047:        broken by an unescaped pipe. The dependency cell keeps index 5 across the
+scripts\check_backlog_contract.py:2048:        censused layouts because the extra pipe appears LATER, inside the title.
+scripts\check_contract_clause_coverage.py:110:    '|' suelta (p.ej. prosa citando un pipe) no cuenta.
+scripts\check_collector_ruff_nofix.py:1:"""Static guard: every literal ruff invocation in a target file carries --no-fix.
+scripts\check_collector_ruff_nofix.py:4:documented as read-only, but the repo sets `fix = true` in [tool.ruff], so a bare
+scripts\check_collector_ruff_nofix.py:5:`ruff check` invocation MUTATES the tree it audits and then reports GREEN
+scripts\check_collector_ruff_nofix.py:8:and fails for EVERY literal command list that contains "ruff" without "--no-fix"
+scripts\check_collector_ruff_nofix.py:19:      ast.Tuple). A sequence whose string elements include "ruff" but NOT
+scripts\check_collector_ruff_nofix.py:20:      "--no-fix" is a ruff invocation that can auto-fix under `fix = true`.
+scripts\check_collector_ruff_nofix.py:26:    - Exit 0: every literal ruff list in the target carries --no-fix.
+scripts\check_collector_ruff_nofix.py:27:    - Exit 1: at least one literal ruff list lacks --no-fix (line numbers are
+scripts\check_collector_ruff_nofix.py:53:def ruff_invocations_without_no_fix(source: str) -> list[int]:
+scripts\check_collector_ruff_nofix.py:54:    """Return line numbers of literal ruff lists that lack `--no-fix`.
+scripts\check_collector_ruff_nofix.py:56:    Per invocation: each literal sequence containing "ruff" as an element must
+scripts\check_collector_ruff_nofix.py:66:        if "ruff" in elements and "--no-fix" not in elements:
+scripts\check_collector_ruff_nofix.py:73:        description="Fail if a Python target invokes ruff without --no-fix."
+scripts\check_collector_ruff_nofix.py:86:        print(f"[ruff-nofix-guard] cannot read {target}: {exc}", file=sys.stderr)
+scripts\check_collector_ruff_nofix.py:89:        violations = ruff_invocations_without_no_fix(source)
+scripts\check_collector_ruff_nofix.py:91:        print(f"[ruff-nofix-guard] cannot parse {target}: {exc}", file=sys.stderr)
+scripts\check_collector_ruff_nofix.py:95:            f"[ruff-nofix-guard] GUARD FAIL: ruff invocation(s) without --no-fix "
+scripts\check_collector_ruff_nofix.py:101:        f"[ruff-nofix-guard] GUARD PASS: every literal ruff invocation in "
+scripts\check_contract_full_read.py:58:# `C:\Users\***REDACTED***\...` after post_tool_hook -> bus.redact pipeline).
+.agent\agents_config.py:74:#    (pipeline/capa/ensemble/actor), nunca un enum de codigo 1:1. SUPERVISOR
+.agent\agents_config.py:160:    Before: Se crea vacío al iniciar el pipeline.
+.agent\agents_config.py:474:        `ensemble_profiles` / `ensemble_pipelines` / `ensemble_private_roots`
+.agent\agents_config.py:484:        - cada pipeline referencia perfiles existentes (proposer/challenger),
+.agent\agents_config.py:494:    pipelines = config.get("ensemble_pipelines")
+.agent\agents_config.py:497:    if profiles is None and pipelines is None and private_roots is None:
+.agent\agents_config.py:521:    if pipelines is not None:
+.agent\agents_config.py:522:        if not isinstance(pipelines, dict):
+.agent\agents_config.py:524:                f"Invalid 'ensemble_pipelines' in {config_path}: must be an object"
+.agent\agents_config.py:526:        for pipe_name, pipe in pipelines.items():
+.agent\agents_config.py:527:            _validate_ensemble_pipeline(pipe_name, pipe, profiles or {})
+.agent\agents_config.py:646:def _validate_ensemble_pipeline(
+.agent\agents_config.py:647:    pipe_name: str, pipe: object, known_profiles: dict
+.agent\agents_config.py:649:    """Un pipeline de ensemble: roles hacia perfiles existentes, rubric, rondas."""
+.agent\agents_config.py:650:    if not isinstance(pipe, dict):
+.agent\agents_config.py:651:        raise AgentsConfigError(f"Ensemble pipeline '{pipe_name}': must be an object")
+.agent\agents_config.py:653:        ref = pipe.get(role_key)
+.agent\agents_config.py:656:                f"Ensemble pipeline '{pipe_name}': '{role_key}' must "
+.agent\agents_config.py:659:    if not isinstance(pipe.get("rubric"), str) or not pipe["rubric"]:
+.agent\agents_config.py:661:            f"Ensemble pipeline '{pipe_name}': 'rubric' (canonical "
+.agent\agents_config.py:664:    if "max_rounds" in pipe:
+.agent\agents_config.py:665:        rounds = pipe["max_rounds"]
+.agent\agents_config.py:668:                f"Ensemble pipeline '{pipe_name}': 'max_rounds' must "
+.agent\agents_config.py:1007:    During: Backfills ensemble_profiles = {}, ensemble_pipelines = {} y
+.agent\agents_config.py:1009:            VACIAS: los perfiles/pipelines reales son contenido del motor
+.agent\agents_config.py:1020:    new.setdefault("ensemble_pipelines", {})
+scripts\check_dec_receipt.py:106:    Path("orchestrator_pipeline") / "backlog_inbox",
+scripts\check_dec_receipt.py:120:        ".ruff_cache",
+.agent\agent_controller.py:1:# ruff: noqa: S603,S607
+.agent\agent_controller.py:1820:            "code": ("pytest", "ruff", "passed", "all checks passed"),
+.agent\agent_controller.py:1821:            "mixed": ("pytest", "ruff", "passed", "all checks passed"),
+.agent\agent_controller.py:2025:            "one line with 'pytest', 'ruff', 'passed', or 'All checks passed'"
+.agent\agent_controller.py:2371:def _read_pytest_safe_verdict() -> dict:
+.agent\agent_controller.py:2372:    """Read the canonical runner's stamp (`run_pytest_safe` last-run.json).
+.agent\agent_controller.py:2377:    a benign timeout). This reads the stamp that `scripts/run_pytest_safe.py`
+.agent\agent_controller.py:2390:    stamp_path = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+.agent\agent_controller.py:2477:        ruff = subprocess.run(
+.agent\agent_controller.py:2478:            ["uv", "run", "ruff", "check", *dirs_to_check],
+.agent\agent_controller.py:2483:        if ruff.returncode != 0:
+.agent\agent_controller.py:2492:        # WOT-2026-016c: NO re-run pytest here with a hard `timeout=120`. The
+.agent\agent_controller.py:2494:        # `subprocess.run(pytest, timeout=120)` ALWAYS times out and either
+.agent\agent_controller.py:2498:        # runner `scripts/run_pytest_safe.py`, which runs the full suite with no
+.agent\agent_controller.py:2503:        pytest_status = _read_pytest_safe_verdict()
+.agent\agent_controller.py:2504:        if pytest_status["verdict"] == "green":
+.agent\agent_controller.py:2505:            results["summary"].append("[OK] Pytest: suite verde (run_pytest_safe)")
+.agent\agent_controller.py:2506:        elif pytest_status["verdict"] == "red":
+.agent\agent_controller.py:2508:            results["summary"].append(f"[FAIL] Pytest: {pytest_status['detail']}")
+.agent\agent_controller.py:2511:                f"[WARN] Pytest: veredicto no concluyente ({pytest_status['detail']}); "
+.agent\agent_controller.py:2512:                "corre scripts/run_pytest_safe.py --level all sobre HEAD"
+.agent\agent_controller.py:5012:# pytest/ruff salvo que el plan toque codigo". Antes de este fix, solo
+.agent\agent_controller.py:5444:            "python scripts/run_pytest_safe.py --level all; then retry "
+.agent\completion_common.py:1:# ruff: noqa: S603
+.agent\completion_common.py:92:    safe_runner = project_root / "scripts" / "run_pytest_safe.py"
+.agent\completion_common.py:95:    return [sys.executable, "-m", "pytest", "tests", "-q"]
+.agent\completion_checker.py:1:# ruff: noqa
+scripts\check_distribution_boundary.py:95:    ("skills/audit-pipeline-codeonly/SKILL.md", "prompts/audit_pipeline_codeonly.md"),
+scripts\check_distribution_boundary.py:112:        "skills/orchestrate-pipeline-codeonly/SKILL.md",
+scripts\check_distribution_boundary.py:113:        "prompts/orchestrator_pipeline_codeonly.md",
+scripts\check_distribution_agnostic.py:112:    it, so we never special-case directories. shell=False, never $? after a pipe."""
+scripts\check_distribution_agnostic.py:184:    `resolve_username_needle` bajo el limite de ruff (C901), y hace la tabla de
+scripts\check_dod_metric_freshness.py:119:# separators that actually delimit one claim from the next are the cell pipe,
+scripts\check_cuspide_growth_and_drift.py:50:`prompts/orchestrator_pipeline.md:994-1019`:
+scripts\check_expected_operational_delta.py:101:AUDITOR_ARTIFACT_PREFIX = "orchestrator_pipeline/reports/audit_autonomous_batch_"
+scripts\check_flt_versionable.py:198:          ``orchestrator_pipeline/arranques/PROPUESTA_*.md`` bajo
+scripts\check_flt_versionable.py:199:          ``!orchestrator_pipeline/arranques/PROPUESTA_*.md`` (.gitignore:125
+scripts\check_gitleaks_seed_divergence.py:2:"""Detect divergence between the portable gitleaks seed and a target config.
+scripts\check_gitleaks_seed_divergence.py:4:WOT-2026-039k. The seed ``agent_system/templates/gitleaks.config.toml`` is
+scripts\check_gitleaks_seed_divergence.py:5:provisioned to destinos by ``install_agent_system.copy_gitleaks_config`` with a
+scripts\check_gitleaks_seed_divergence.py:6:NO-CLOBBER rule: a destino that already owns a ``.gitleaks.toml`` never receives
+scripts\check_gitleaks_seed_divergence.py:9:the motor root is already checked by ``check_publication_gate.check_gitleaks_config``;
+scripts\check_gitleaks_seed_divergence.py:17:    ``target`` is a candidate config (motor root, or a destino's ``.gitleaks.toml``)
+scripts\check_gitleaks_seed_divergence.py:53:SEED_PATH = MOTOR_ROOT / "agent_system" / "templates" / "gitleaks.config.toml"
+scripts\check_gitleaks_seed_divergence.py:54:MOTOR_ROOT_CONFIG = MOTOR_ROOT / ".gitleaks.toml"
+scripts\check_gitleaks_seed_divergence.py:62:    """Parse the ``[[allowlists]]`` blocks of a gitleaks config.
+scripts\check_gitleaks_seed_divergence.py:170:                "[WARN] .gitleaks.toml diverge del seed "
+scripts\check_gitleaks_seed_divergence.py:177:            "[WARN] .gitleaks.toml no es parseable (load error, NO divergencia): "
+scripts\check_gitleaks_seed_divergence.py:187:        "--seed", type=Path, default=SEED_PATH, help="portable gitleaks seed"
+scripts\check_gitleaks_seed_divergence.py:193:        help="config to inspect (default: motor root .gitleaks.toml)",
+scripts\check_gitleaks_seed_divergence.py:199:        help="destino root; inspects <destino>/.gitleaks.toml (seed<->destino pair)",
+scripts\check_gitleaks_seed_divergence.py:205:        target = Path(args.destino) / ".gitleaks.toml"
+scripts\check_gitleaks_seed_divergence.py:213:        print(f"[gitleaks-seed] LOAD ERROR (no es una deteccion): {report['detail']}")
+scripts\check_gitleaks_seed_divergence.py:215:        print(f"[gitleaks-seed] OK: {target} contiene todas las secciones del seed.")
+scripts\check_gitleaks_seed_divergence.py:218:            f"[gitleaks-seed] {report['cause']}: {target} diverge del seed "
+scripts\check_guard_wiring.py:208:    "pipx",
+scripts\check_guard_wiring.py:219:    "pytest",
+scripts\check_handoff_state_sha.py:134:    reports = root / "orchestrator_pipeline" / "reports"
+scripts\check_inbox_drainage.py:98:LEGACY_INBOX_REL = Path("orchestrator_pipeline") / "backlog_inbox"
+scripts\check_inbox_drainage.py:112:        ".pytest_cache",
+scripts\check_inbox_drainage.py:113:        ".ruff_cache",
+scripts\check_inbox_drainage.py:114:        ".mypy_cache",
+scripts\check_inbox_drainage.py:120:# Forma de id canonico de ticket (0.d de orchestrator_pipeline.md + validador del
+scripts\check_inbox_drainage.py:641:            f"{_PREFIX} INFO legacy buzon de fichas no-canonico 'orchestrator_pipeline/backlog_inbox/' con {len(report['legacy_inbox_files'])} archivo(s): "
+scripts\check_inbox_drainage.py:806:            "gobernado por '0.d' de orchestrator_pipeline.md y el validador del bus)."
+scripts\check_launch_prompt_paths.py:64:# `launch_builder_*.md` en `orchestrator_pipeline/reports/` quedaba FUERA del
+scripts\check_model_id_crystallization.py:12:garantice que ESE modelo ejecuto ESE cambio. `prompts/orchestrator_pipeline_codeonly.md:196`
+scripts\check_model_id_crystallization.py:149:                "OMITIR el trailer (orchestrator_pipeline_codeonly.md:196)."
+scripts\check_manager_role_for_suite.py:2:"""Gate: solo el Manager invoca `run_pytest_safe.py --level all` (WOT-2026-117a).
+scripts\check_manager_role_for_suite.py:47:`run_pytest_safe.py --level all` legitimamente en ambos (WOT-2026-058q). El
+scripts\check_manager_role_for_suite.py:53:invocar `run_pytest_safe.py --level all`, declara la variable de entorno
+scripts\check_manager_role_for_suite.py:58:`run_pytest_safe.py --level all` (sin pasar por `run_gates_dispatch.py`) NO
+scripts\check_loop_execution.py:148:        # normal y ruff los marca como ambiguos (RUF001).
+scripts\check_loop_execution.py:823:        pipes: un pipe re-codifica). Sin escrituras.
+scripts\check_portable_memory_archive_schema.py:7:      de los guards `always_run`: `check_guard_wiring.py`, `check_ruff_hook_scope.py`).
+scripts\check_operational_artifact_paths.py:14:``orchestrator_pipeline/reports/`` llevaban el rol crudo. La cifra de hoy es
+scripts\check_operational_artifact_paths.py:22:el destino: ``orchestrator_pipeline/reports/``, ``orchestrator_pipeline/
+scripts\check_operational_artifact_paths.py:23:arranques/`` y ``orchestrator_pipeline/flight_plans/`` -- las tres rutas que
+scripts\check_operational_artifact_paths.py:85:# el contrato ancla el censo a `orchestrator_pipeline/`, y ampliar el ambito
+scripts\check_operational_artifact_paths.py:88:    "orchestrator_pipeline/reports",
+scripts\check_operational_artifact_paths.py:89:    "orchestrator_pipeline/arranques",
+scripts\check_operational_artifact_paths.py:90:    "orchestrator_pipeline/flight_plans",
+scripts\check_motor_pristine.py:1:"""Detect unintended writes to repo_motor during destination pipelines.
+scripts\check_ruff_hook_scope.py:1:"""Script to verify that ruff pre-commit hooks remain Python-only to prevent drift."""
+scripts\check_ruff_hook_scope.py:81:    """Parse .pre-commit-config.yaml and verify ruff hooks are restricted to Python.
+scripts\check_ruff_hook_scope.py:91:    ruff_hooks = [h for h in hooks if h.get("id") in ("ruff-check", "ruff-format")]
+scripts\check_ruff_hook_scope.py:92:    if not ruff_hooks:
+scripts\check_ruff_hook_scope.py:95:            "No ruff pre-commit hooks (ruff-check/ruff-format) found in .pre-commit-config.yaml",
+scripts\check_ruff_hook_scope.py:98:    for hook in ruff_hooks:
+scripts\check_ruff_hook_scope.py:123:        f"Verified {len(ruff_hooks)} ruff hooks are correctly restricted to Python.",
+scripts\check_publication_gate.py:46:GITLEAKS_SEED = ROOT / "agent_system" / "templates" / "gitleaks.config.toml"
+scripts\check_publication_gate.py:145:def check_gitleaks_config(repo: Path) -> dict[str, Any]:
+scripts\check_publication_gate.py:146:    """Verify .gitleaks.toml in repo root matches the bundled seed.
+scripts\check_publication_gate.py:149:    During: Reads repo_root/.gitleaks.toml and the seed, compares byte-by-byte.
+scripts\check_publication_gate.py:153:    config_path = repo / ".gitleaks.toml"
+scripts\check_publication_gate.py:156:            "check": "gitleaks_config",
+scripts\check_publication_gate.py:166:            "check": "gitleaks_config",
+scripts\check_publication_gate.py:178:            "check": "gitleaks_config",
+scripts\check_publication_gate.py:188:        "check": "gitleaks_config",
+scripts\check_publication_gate.py:214:        check_gitleaks_config(repo),
+scripts\check_publication_gate.py:234:    gitleaks_cfg = next((c for c in checks if c["check"] == "gitleaks_config"), None)
+scripts\check_publication_gate.py:236:    if gitleaks_cfg and gitleaks_cfg["ok"]:
+scripts\check_publication_gate.py:238:            "path": gitleaks_cfg["evidence"]["config_path"],
+scripts\check_publication_gate.py:239:            "hash": gitleaks_cfg["evidence"]["config_hash"],
+scripts\check_publication_gate.py:248:        "gitleaks_config": config_info,
+scripts\check_publication_gate.py:258: 4. gitleaks: verificacion AUTOMATICA via check_publication_gate (D3, WOT-2026-068w).
+scripts\create_worktree_pair.py:12:    forward-slash paths, runs ``uv sync --frozen`` on the motor worktree,
+scripts\create_worktree_pair.py:185:            f"[WARN] uv sync returned {result.returncode}: {' '.join([*uv_bin, 'sync', '--frozen'])}"
+scripts\create_worktree_pair.py:344:    # Step 7: Run uv sync (if not dry-run)
+scripts\create_worktree_pair.py:350:                f"[WARN] uv sync falló con rc={uv_rc} (comando: "
+scripts\create_worktree_pair.py:358:            print("[INFO] uv sync completed successfully.")
+scripts\check_ticket_nomenclature.py:81:SKIP_PARTS = {"__pycache__", "sandbox", ".ruff_cache"}
+scripts\create_checkpoint.py:2:# ruff: noqa: S603, S607
+scripts\compress_canonical.py:43:    # Table rows with pipes
+scripts\check_suite_running.py:7:invalidaron 2 corridas completas de `run_pytest_safe.py --level all` (7 a
+scripts\check_suite_running.py:12:POR QUE NO HACIA FALTA CONSTRUIR UN LOCK NUEVO: `scripts/run_pytest_safe.py`
+scripts\check_suite_running.py:17:El lock existente evita 2 `pytest` simultaneos; este guard cierra el otro
+scripts\check_suite_running.py:44:    `pre-commit`. `scripts.run_pytest_safe` debe ser importable (mismo
+scripts\check_suite_running.py:46:During: lee `.agent/runtime/pytest-safe/pytest.lock` directamente y
+scripts\check_suite_running.py:47:    reutiliza `run_pytest_safe.is_pid_running()` para la verificacion de
+scripts\check_suite_running.py:52:    el modulo `run_pytest_safe` no importable.
+scripts\check_suite_running.py:63:LOCK_FILE = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe" / "pytest.lock"
+scripts\check_suite_running.py:67:    """Replica run_pytest_safe.get_lock_status() sobre nuestro propio LOCK_FILE.
+scripts\check_suite_running.py:69:    No importa ``run_pytest_safe`` ni muta sus atributos de modulo: ese
+scripts\check_suite_running.py:85:        from scripts.run_pytest_safe import is_pid_running
+scripts\check_suite_freshness.py:24:During: lee `.agent/runtime/pytest-safe/last-run.json` y compara su
+scripts\check_suite_freshness.py:40:LAST_RUN = PROJECT_ROOT / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+scripts\collect_system_health.py:10:    - Runs read-only deterministic checks (ruff on motor and destino, validate on
+scripts\collect_system_health.py:11:      both, discover-skills contract, motor-pristine snapshot, pytest-safe
+scripts\collect_system_health.py:148:    run_pytest_safe used to STAMP it. WOT-2026-069e: el espejo ya no es una cuarta
+scripts\collect_system_health.py:167:def _read_pytest_last_run(motor_root: Path) -> dict:
+scripts\collect_system_health.py:168:    """Read the canonical runner's last-run.json (real exit, not pipe).
+scripts\collect_system_health.py:172:    of gitignored projections (AUDIT_*/STRATEGY_*). The producer (run_pytest_safe.py)
+scripts\collect_system_health.py:177:    p = motor_root / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+scripts\collect_system_health.py:246:    "04_quality_gates.md": ("04 - Quality gates", "ruff/pytest-safe last-run/validate"),
+scripts\collect_system_health.py:420:    checks["ruff_motor"] = _run(["ruff", "check", "--no-fix", "."], motor_root)
+scripts\collect_system_health.py:488:    motor_last = _read_pytest_last_run(motor_root)
+scripts\collect_system_health.py:490:    dest_last = _read_pytest_last_run(dest_root) if dest_ok else None
+scripts\collect_system_health.py:496:    pytest_last = dest_last if delivery_is_dest else motor_last
+scripts\collect_system_health.py:500:    # by the last-run file location. run_pytest_safe stamps tested_commit_sha with the
+scripts\collect_system_health.py:521:        checks["ruff_destino"] = _run(["ruff", "check", "--no-fix", "."], dest_root)
+scripts\collect_system_health.py:575:            _emit(sev, "pytest_safe_last_run_missing")
+scripts\collect_system_health.py:585:                    _emit(sev, "pytest_safe_last_run_nonzero")
+scripts\collect_system_health.py:591:                    _emit(warnings, "pytest_safe_last_run_stateleak_only")
+scripts\collect_system_health.py:602:                    _emit(warnings, "pytest_safe_last_run_stale_nonzero")
+scripts\collect_system_health.py:606:                    _emit(sev, "pytest_safe_last_run_nonzero")
+scripts\collect_system_health.py:612:                _emit(warnings, "pytest_safe_last_run_stale")
+scripts\collect_system_health.py:679:        "pytest_safe_last_run": pytest_last,
+scripts\collect_system_health.py:704:        "Pasada A determinista. pytest-safe via last-run.json (exit real, no pipe). "
+scripts\collect_session_state.py:197:    El ``exit_code`` sale de ``subprocess.returncode``, NUNCA de ``$?`` tras un pipe:
+scripts\collect_session_state.py:269:    El campo se llama ``tested_commit_sha`` (lo escribe ``run_pytest_safe.py``), y
+scripts\collect_session_state.py:273:    path = motor_root / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+scripts\collect_session_state.py:352:    fp = project_root / "orchestrator_pipeline" / "flight_plans"
+scripts\collect_session_state.py:521:    out.append("### Gates (rc real, sin pipe)")
+scripts\cleanup_legacy.py:43:        ".ruff_cache",
+scripts\discover_skills.py:166:            # WOT-2026-008k: pipeline role exposed separately from owner. owner is
+scripts\discover_skills.py:167:            # "who authored" (author, fallback role); role is "which pipeline role
+scripts\discover_skills.py:228:    """Derive the pipeline role from frontmatter `role`, default 'shared'.
+scripts\discover_skills.py:231:    show which pipeline role owns a skill (e.g. auditor) independently of who
+scripts\discover_skills.py:374:# contract-validated audit skills (audit-git-publication, audit-pipeline,
+scripts\discover_skills.py:380:# orchestrate-pipeline) stop escaping this gate under role: shared despite
+scripts\discover_skills.py:486:# like `refactor-manager` (manager is the subject, not paired with a pipeline
+scripts\discover_skills.py:488:# pipeline action, so refactor-manager is left alone.
+scripts\discover_skills.py:531:    DEC-008D-001 central rule: when a name pairs a pipeline actor with a
+scripts\discover_skills.py:532:    pipeline ACTION, the actor goes first. `review_manager` (action_actor)
+scripts\discover_skills.py:534:    BOTH an actor token and a pipeline action token are present and the actor is
+scripts\discover_skills.py:535:    not first — so `refactor-manager` (no pipeline action) and `launch_builder`
+scripts\discover_skills.py:536:    (launch is not a pipeline action the actor performs) are left alone.
+scripts\discover_skills.py:545:    # Both an actor and a pipeline action are present: the actor must be first.
+scripts\discover_skills.py:551:        f"pipeline action (expected '{actor}{sep}...', got '{stem}')"
+scripts\discover_skills.py:923:# documents human-facing categories (pipeline/layer/ensemble/actor), and a
+scripts\discover_skills.py:1264:    """One markdown table cell: single line, pipes escaped, '-' when empty."""
+scripts\closeout_steps\archival.py:146:    Antes de este step, el archivado de `orchestrator_pipeline/arranques/`
+scripts\destination_context.py:39:        ".ruff_cache",
+scripts\destination_context.py:75:    "pytest.ini",
+scripts\destination_context.py:337:        # de paquete (valido bajo pytest, donde el rootdir esta en sys.path) y se
+scripts\classify_publication.py:69:    ".pytest_cache/**",
+scripts\classify_publication.py:70:    ".ruff_cache/**",
+scripts\classify_publication.py:72:    "orchestrator_pipeline/**",
+scripts\classify_publication.py:93:#   - derived from the portable gitleaks SEED (`[[allowlists]].regexes`), which
+scripts\classify_publication.py:101:    / "gitleaks.config.toml"
+scripts\classify_publication.py:124:    """Exact values the portable gitleaks seed suppresses BY VALUE.
+scripts\check_triage_outputs.py:34:# El JSON del triaje vive bajo `<workspace>/orchestrator_pipeline/reports/`.
+scripts\check_triage_outputs.py:35:_REPORTS_REL = Path("orchestrator_pipeline") / "reports"
+scripts\check_triage_outputs.py:319:        `<project_root>/orchestrator_pipeline/reports/`).
+scripts\check_triage_outputs.py:370:        help="Workspace cuyo orchestrator_pipeline/reports/ se audita.",
+scripts\encoding_guard.py:187:    "prompts/audit_pipeline.md",
+scripts\encoding_guard.py:188:    "prompts/audit_pipeline_codeonly.md",
+scripts\encoding_guard.py:201:    "prompts/orchestrator_pipeline.md",
+scripts\encoding_guard.py:215:    "scripts/check_ruff_hook_scope.py",
+scripts\encoding_guard.py:230:    "scripts/run_pytest_safe.py",
+scripts\encoding_guard.py:332:# inline-code bullets (e.g. ``- use `ruff` ``) never false-positive.
+scripts\encoding_guard.py:343:      escape literalization: ``- src/pipeline/`r`` and its same-mechanism
+scripts\closeout_steps\support.py:391:            "The following checks are recommended but not automated in this pipeline:",
+scripts\detect_version.py:28:            "required": [".agent/agent_controller.py", "scripts/run_pytest_safe.py"],
+scripts\dedupe_audit_findings.py:6:Dos herramientas distintas (p.ej. `ruff -S` y `semgrep`, o `vulture` y
+scripts\dedupe_audit_findings.py:118:    r"""Parte `s` por los `|` SIN escapar; `\|` es un pipe literal, `\x` se conserva.
+scripts\dedupe_audit_findings.py:121:    un pipe delimitador (2 celdas), no un pipe escapado. Mirar solo el caracter
+scripts\delivery_hygiene_check.py:55:        "ruff-format",
+scripts\delivery_hygiene_check.py:246:            "ruff-format",
+scripts\init_session_scratch.py:2:# ruff: noqa: S603, S607
+scripts\find_similar_signals.py:157:    """Parte una fila markdown en celdas respetando los pipes escapados (`\\|`)."""
+scripts\find_similar_signals.py:219:        # caer fuera de rango si la prosa de la ficha metio pipes extra, asi que se
+scripts\find_similar_signals.py:251:    ese caso el id queda EMBEBIDO en la prosa ("con pipe WOT-2026-003c"), no solo.
+scripts\guard_wiring_policy.yaml:98:  #   - 3 CABLEADOS a pre-commit always_run: check_ruff_hook_scope,
+scripts\guard_wiring_policy.yaml:320:  # check_gitleaks_seed_divergence: RETIRADO de wired_via (WOT-2026-059f,
+scripts\guard_wiring_policy.yaml:334:  # orchestrator_pipeline/flight_plans/**). El AST de 1-hop no puede deducir
+scripts\landed_commit_surface.py:1:# ruff: noqa: S603,S607
+scripts\launch_agent_terminals.ps1:826:    # No ejecuta gates pesadas (ruff/pytest) en el arranque.
+scripts\launch_agent_terminals.ps1:1215:Ejecuta ruff y pytest-safe sobre lo tocado.
+scripts\loop_hard_stop.py:1:"""Loop hard-stop guard for autonomous pipeline loops.
+scripts\loop_hard_stop.py:9:the CLOSE of each pipeline iteration. The caller accumulates the counters and
+scripts\loop_hard_stop.py:384:    If all three are True, the ticket can be re-submitted to the pipeline from
+scripts\manager_review_bridge.py:487:            "2. Record quality gate results (pytest/ruff/passed) in execution_log.md.\n"
+scripts\install_agent_system.py:181:IGNORED_NAMES = {"__pycache__", ".ruff_cache", ".tmp"}
+scripts\install_agent_system.py:1407:def _warn_gitleaks_seed_divergence(seed: Path, target: Path) -> None:
+scripts\install_agent_system.py:1410:    Before: seed and target exist; the destino OWNS its .gitleaks.toml (the
+scripts\install_agent_system.py:1421:        from scripts.check_gitleaks_seed_divergence import warn_on_seed_divergence
+scripts\install_agent_system.py:1427:def copy_gitleaks_config(
+scripts\install_agent_system.py:1433:    Copy the portable gitleaks seed to destination_root/.gitleaks.toml (no-clobber).
+scripts\install_agent_system.py:1435:    Before: template_root/agent_system/templates/gitleaks.config.toml may exist;
+scripts\install_agent_system.py:1437:    During: If destination_root/.gitleaks.toml already exists, skips (no-clobber)
+scripts\install_agent_system.py:1440:    After: destination_root/.gitleaks.toml exists (seed or pre-existing custom),
+scripts\install_agent_system.py:1451:    source = template_root / "agent_system" / "templates" / "gitleaks.config.toml"
+scripts\install_agent_system.py:1452:    dest = destination_root / ".gitleaks.toml"
+scripts\install_agent_system.py:1455:        print(f"[WARN] gitleaks seed template not found at {source}")
+scripts\install_agent_system.py:1459:        print(f"[SKIP] .gitleaks.toml ya existe (no-clobber): {dest}")
+scripts\install_agent_system.py:1463:        _warn_gitleaks_seed_divergence(source, dest)
+scripts\install_agent_system.py:1467:        print(f"[DRY-RUN] Would copy .gitleaks.toml seed to {dest}")
+scripts\install_agent_system.py:1471:    print(f"[INFO] Copied .gitleaks.toml seed to {dest}")
+scripts\install_agent_system.py:1945:    # Seed a portable .gitleaks.toml to the destination (no-clobber)
+scripts\install_agent_system.py:1946:    copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
+scripts\install_agent_system.py:2090:    # Seed a portable .gitleaks.toml to the destination (no-clobber, idempotent)
+scripts\install_agent_system.py:2091:    copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
+scripts\loop_run_log.py:2:Modulo stdlib-only para registro idempotente de iteraciones de pipeline.
+scripts\ensemble_dispatch.py:2:# ruff: noqa: S603
+scripts\ensemble_dispatch.py:6:    `ensemble_pipelines` y `ensemble_private_roots`, validados en capa UNICA
+scripts\ensemble_dispatch.py:12:    - `run`: ejecuta un pipeline; ROUND 0 = premise_check es INVARIANTE del
+scripts\ensemble_dispatch.py:15:      cerrado) en la ENTRADA de `run_pipeline`, antes de ROUND 0; invalido
+scripts\ensemble_dispatch.py:119:# AGENTS.md para la coleccion de pytest).
+scripts\ensemble_dispatch.py:371:# de las rondas que no pasan por el CLI (`run_pipeline` escribe la ronda 0
+scripts\ensemble_dispatch.py:957:# DESACTIVADA (retrocompatible: el pipeline de hoy sigue funcionando). Con
+scripts\ensemble_dispatch.py:1681:    node.exe que HEREDA los pipes; el timeout de subprocess.run mata solo al
+scripts\ensemble_dispatch.py:1683:    el EOF del pipe retenido por el descendiente superviviente. Sin kill de
+scripts\ensemble_dispatch.py:2024:        # anterior decia "pipe-inheritance hang" en TODO timeout, y ese texto fijo
+scripts\ensemble_dispatch.py:2036:            "corrida); (3) pipe-inheritance hang (medido 2026-07-16), que es UNA "
+scripts\ensemble_dispatch.py:2254:    # WOT-2026-042k: el canary observa AQUI, no solo en `run_pipeline`.
+scripts\ensemble_dispatch.py:2257:    # a `run_pipeline` vigilaba una ruta por la que no circula ningun bundle real
+scripts\ensemble_dispatch.py:5188:        corre en modo degradado -- un pipeline que declara el filtro y lo
+scripts\ensemble_dispatch.py:5323:       SIN secciones `## PROBE` no es rojo: es `n/a` (no todos los pipelines son
+scripts\ensemble_dispatch.py:5534:    WOT-2026-026q. `run_pipeline` es el runner de la CLI y registra SOLO sus
+scripts\ensemble_dispatch.py:5544:    `run_pipeline` ya registran via `_record_round`. Cablearlo en la primitiva
+scripts\ensemble_dispatch.py:6075:def run_pipeline(
+scripts\ensemble_dispatch.py:6076:    pipeline_name: str,
+scripts\ensemble_dispatch.py:6105:    pipe = config["ensemble_pipelines"][pipeline_name]
+scripts\ensemble_dispatch.py:6106:    rounds_cap = int(pipe.get("max_rounds", 2))
+scripts\ensemble_dispatch.py:6109:        ("proposer", pipe["proposer"]),
+scripts\ensemble_dispatch.py:6110:        ("challenger", pipe["challenger"]),
+scripts\ensemble_dispatch.py:6164:    # heredada (aditividad real: los pipelines que no la declaran no cambian).
+scripts\ensemble_dispatch.py:6168:    lens_filter_on = bool(pipe.get("lens_output_filter", False))
+scripts\ensemble_dispatch.py:6171:    rubric = pipe.get("rubric", "")
+scripts\ensemble_dispatch.py:6789:    # cualquier ruta entra al pipeline.
+scripts\ensemble_dispatch.py:6797:    transcript = run_pipeline(
+scripts\ensemble_dispatch.py:6798:        args.pipeline,
+scripts\ensemble_dispatch.py:7145:    subcomando es esa puerta -- nada mas. NO toca `run_pipeline`: su ronda 0 es
+scripts\ensemble_dispatch.py:7679:    La guarda `hasattr` NO es decorativa: bajo captura de pytest `sys.stdout` es
+scripts\ensemble_dispatch.py:7842:    p_run = sub.add_parser("run", help="ejecuta un pipeline")
+scripts\ensemble_dispatch.py:7843:    p_run.add_argument("--pipeline", required=True)
+scripts\memory_consolidate.py:748:    Before: `stats` contains the pipeline results; `dry_run` controls mode.
+scripts\memory_consolidate.py:812:def _run_pipeline(
+scripts\memory_consolidate.py:815:    """Run the consolidation pipeline and return (recent, stats, dropped, dedupe_count)."""
+scripts\memory_consolidate.py:872:    bajo el umbral de ruff C901; mismo comportamiento, sin cambio de logica.
+scripts\memory_consolidate.py:1009:    recent, stats, dropped, dedupe_count = _run_pipeline(args)
+scripts\memory_context.py:100:    puesta para el resto de la sesion de pytest, y el sintoma aparecia en
+scripts\memory_context.py:181:    pytest y ponia en rojo un fichero ajeno al ticket.
+scripts\memory_context.py:257:    (2026-08-17): `"pipe"` -> 16 hits, but `"suite verde head"` -> 0 and
+scripts\memory_context.py:336:    #     GANABA  capturing-rc-after-a-pipe...      comparte {head}              0.0333
+scripts\migrate_observations.py:615:    """Run the migration pipeline.
+scripts\orquestador.py:1:# ruff: noqa: S603
+scripts\mutation_cycle.py:100:        del comando real, no el de un pipe.
+scripts\override_registry.py:55:`prompts/orchestrator_pipeline.md:978-1005` (modelo de ESTILO -- gramatica
+scripts\operational_artifact_paths_baseline.json:2:  "orchestrator_pipeline/arranques/ARRANQUE_027u.md": 11,
+scripts\operational_artifact_paths_baseline.json:3:  "orchestrator_pipeline/arranques/ARRANQUE_062j.md": 14,
+scripts\operational_artifact_paths_baseline.json:4:  "orchestrator_pipeline/arranques/ARRANQUE_BUILDER_WOT-2026-066z.md": 9,
+scripts\operational_artifact_paths_baseline.json:5:  "orchestrator_pipeline/arranques/ARRANQUE_BUILDER_WOT-2026-066z_v2.md": 11,
+scripts\operational_artifact_paths_baseline.json:6:  "orchestrator_pipeline/arranques/ARRANQUE_CONTINUIDAD_RDS_20260930.md": 12,
+scripts\operational_artifact_paths_baseline.json:7:  "orchestrator_pipeline/arranques/ARRANQUE_FRIO_BATCH_CIERRE_20260812.md": 2,
+scripts\operational_artifact_paths_baseline.json:8:  "orchestrator_pipeline/arranques/ARRANQUE_RDS-2026-008r_builder.md": 4,
+scripts\operational_artifact_paths_baseline.json:9:  "orchestrator_pipeline/arranques/ARRANQUE_VUELO_G1_20260813.md": 7,
+scripts\operational_artifact_paths_baseline.json:10:  "orchestrator_pipeline/arranques/ARRANQUE_auditoria_hermana_047s_20260909.md": 8,
+scripts\operational_artifact_paths_baseline.json:11:  "orchestrator_pipeline/arranques/ARRANQUE_auditoria_linea_portable_memory_20261008.md": 7,
+scripts\operational_artifact_paths_baseline.json:12:  "orchestrator_pipeline/arranques/ARRANQUE_batch_20260907c.md": 13,
+scripts\operational_artifact_paths_baseline.json:13:  "orchestrator_pipeline/arranques/ARRANQUE_builder_WOT-2026-067u.md": 2,
+scripts\operational_artifact_paths_baseline.json:14:  "orchestrator_pipeline/arranques/ARRANQUE_censo_residuo_20260911a.md": 15,
+scripts\operational_artifact_paths_baseline.json:15:  "orchestrator_pipeline/arranques/ARRANQUE_cierre_sesion_2026-10-08.md": 1,
+scripts\operational_artifact_paths_baseline.json:16:  "orchestrator_pipeline/arranques/ARRANQUE_closeout_preflight.md": 20,
+scripts\operational_artifact_paths_baseline.json:17:  "orchestrator_pipeline/arranques/ARRANQUE_closeout_preflight_v2.md": 22,
+scripts\operational_artifact_paths_baseline.json:18:  "orchestrator_pipeline/arranques/ARRANQUE_closeout_preflight_v3.md": 6,
+scripts\operational_artifact_paths_baseline.json:19:  "orchestrator_pipeline/arranques/ARRANQUE_cont_20261001.md": 20,
+scripts\operational_artifact_paths_baseline.json:20:  "orchestrator_pipeline/arranques/ARRANQUE_continuacion_20260910.md": 8,
+scripts\operational_artifact_paths_baseline.json:21:  "orchestrator_pipeline/arranques/ARRANQUE_continuacion_20260928.md": 8,
+scripts\operational_artifact_paths_baseline.json:22:  "orchestrator_pipeline/arranques/ARRANQUE_continuidad_20260930_familia_086_v2.md": 3,
+scripts\operational_artifact_paths_baseline.json:23:  "orchestrator_pipeline/arranques/ARRANQUE_continuidad_post_104jhklm_20261019.md": 5,
+scripts\operational_artifact_paths_baseline.json:24:  "orchestrator_pipeline/arranques/ARRANQUE_continuidad_post_cg079a_20261002.md": 23,
+scripts\operational_artifact_paths_baseline.json:25:  "orchestrator_pipeline/arranques/ARRANQUE_continuidad_post_cierre_20261002.md": 7,
+scripts\operational_artifact_paths_baseline.json:26:  "orchestrator_pipeline/arranques/ARRANQUE_continuidad_post_commit_079a_20261002.md": 21,
+scripts\operational_artifact_paths_baseline.json:27:  "orchestrator_pipeline/arranques/ARRANQUE_continuidad_triaje_grupoA_20261015.md": 1,
+scripts\operational_artifact_paths_baseline.json:28:  "orchestrator_pipeline/arranques/ARRANQUE_continuidad_vuelo8_20261015.md": 20,
+scripts\operational_artifact_paths_baseline.json:29:  "orchestrator_pipeline/arranques/ARRANQUE_coordinadora.md": 14,
+scripts\operational_artifact_paths_baseline.json:30:  "orchestrator_pipeline/arranques/ARRANQUE_ctl-027e.md": 15,
+scripts\operational_artifact_paths_baseline.json:31:  "orchestrator_pipeline/arranques/ARRANQUE_ctl-027i.md": 13,
+scripts\operational_artifact_paths_baseline.json:32:  "orchestrator_pipeline/arranques/ARRANQUE_ctl-027j.md": 15,
+scripts\operational_artifact_paths_baseline.json:33:  "orchestrator_pipeline/arranques/ARRANQUE_ctl-027p.md": 15,
+scripts\operational_artifact_paths_baseline.json:34:  "orchestrator_pipeline/arranques/ARRANQUE_hop-027e.md": 16,
+scripts\operational_artifact_paths_baseline.json:35:  "orchestrator_pipeline/arranques/ARRANQUE_hop-027x.md": 11,
+scripts\operational_artifact_paths_baseline.json:36:  "orchestrator_pipeline/arranques/ARRANQUE_hop-028a.md": 10,
+scripts\operational_artifact_paths_baseline.json:37:  "orchestrator_pipeline/arranques/ARRANQUE_hop_027f.md": 1,
+scripts\operational_artifact_paths_baseline.json:38:  "orchestrator_pipeline/arranques/ARRANQUE_hop_070b.md": 7,
+scripts\operational_artifact_paths_baseline.json:39:  "orchestrator_pipeline/arranques/ARRANQUE_hop_20260909c.md": 13,
+scripts\operational_artifact_paths_baseline.json:40:  "orchestrator_pipeline/arranques/ARRANQUE_hop_20260910d.md": 12,
+scripts\operational_artifact_paths_baseline.json:41:  "orchestrator_pipeline/arranques/ARRANQUE_implementar_monitor_colisiones_20261008.md": 10,
+scripts\operational_artifact_paths_baseline.json:42:  "orchestrator_pipeline/arranques/ARRANQUE_post-cierre-0907.md": 17,
+scripts\operational_artifact_paths_baseline.json:43:  "orchestrator_pipeline/arranques/ARRANQUE_post_cierre_0919.md": 24,
+scripts\operational_artifact_paths_baseline.json:44:  "orchestrator_pipeline/arranques/ARRANQUE_post_docopt.md": 1,
+scripts\operational_artifact_paths_baseline.json:45:  "orchestrator_pipeline/arranques/ARRANQUE_session_hop_071a.md": 1,
+scripts\operational_artifact_paths_baseline.json:46:  "orchestrator_pipeline/arranques/ARRANQUE_triaje_20260911a.md": 16,
+scripts\operational_artifact_paths_baseline.json:47:  "orchestrator_pipeline/arranques/ARRANQUE_triaje_P2_20260911a.md": 14,
+scripts\operational_artifact_paths_baseline.json:48:  "orchestrator_pipeline/arranques/ARRANQUE_triaje_grupo_A_20261015.md": 15,
+scripts\operational_artifact_paths_baseline.json:49:  "orchestrator_pipeline/arranques/ARRANQUE_triaje_grupo_B_20261015.md": 15,
+scripts\operational_artifact_paths_baseline.json:50:  "orchestrator_pipeline/arranques/ARRANQUE_vuelo3_continuidad_20261014.md": 1,
+scripts\operational_artifact_paths_baseline.json:51:  "orchestrator_pipeline/arranques/ARRANQUE_vuelo_047s_20260909.md": 5,
+scripts\operational_artifact_paths_baseline.json:52:  "orchestrator_pipeline/arranques/ARRANQUE_vuelo_20260907d.md": 1,
+scripts\operational_artifact_paths_baseline.json:53:  "orchestrator_pipeline/arranques/ARRANQUE_vuelo_linea_portable_memory_consolidacion_20261009.md": 6,
+scripts\operational_artifact_paths_baseline.json:54:  "orchestrator_pipeline/arranques/ARRANQUE_vuelo_linea_portable_memory_continuacion_20261009.md": 22,
+scripts\operational_artifact_paths_baseline.json:55:  "orchestrator_pipeline/arranques/ARRANQUE_wot_2026_073d_builder_20261002.md": 19,
+scripts\operational_artifact_paths_baseline.json:56:  "orchestrator_pipeline/arranques/PROMPT_ARRANQUE_CTL-2026-013z.md": 13,
+scripts\operational_artifact_paths_baseline.json:57:  "orchestrator_pipeline/arranques/PROMPT_ARRANQUE_CTL-2026-025f.md": 20,
+scripts\operational_artifact_paths_baseline.json:58:  "orchestrator_pipeline/arranques/PROMPT_ARRANQUE_CTL-2026-025k.md": 11,
+scripts\operational_artifact_paths_baseline.json:59:  "orchestrator_pipeline/arranques/PROMPT_ARRANQUE_CTL-2026-025p.md": 13,
+scripts\operational_artifact_paths_baseline.json:60:  "orchestrator_pipeline/arranques/PROMPT_ARRANQUE_CTL-2026-026a.md": 14,
+scripts\operational_artifact_paths_baseline.json:61:  "orchestrator_pipeline/arranques/PROMPT_ARRANQUE_CTL-2026-027ab.md": 26,
+scripts\operational_artifact_paths_baseline.json:62:  "orchestrator_pipeline/arranques/PROMPT_BUILDER_CTL-2026-025d.md": 1,
+scripts\operational_artifact_paths_baseline.json:63:  "orchestrator_pipeline/arranques/PROMPT_BUILDER_CTL-2026-025d_v2.md": 9,
+scripts\operational_artifact_paths_baseline.json:64:  "orchestrator_pipeline/arranques/PROMPT_BUILDER_CTL-2026-027f.md": 3,
+scripts\operational_artifact_paths_baseline.json:65:  "orchestrator_pipeline/arranques/PROMPT_BUILDER_CTL-2026-028f.md": 11,
+scripts\operational_artifact_paths_baseline.json:66:  "orchestrator_pipeline/arranques/PROMPT_MANAGER_habilitar_025d.md": 1,
+scripts\operational_artifact_paths_baseline.json:67:  "orchestrator_pipeline/arranques/README.md": 3,
+scripts\operational_artifact_paths_baseline.json:68:  "orchestrator_pipeline/arranques/WORK_PLAN_CTL-2026-027y.md": 1,
+scripts\operational_artifact_paths_baseline.json:69:  "orchestrator_pipeline/arranques/WORK_PLAN_CTL-2026-028f.md": 1,
+scripts\operational_artifact_paths_baseline.json:70:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_053a_test.md": 1,
+scripts\operational_artifact_paths_baseline.json:71:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_20260913_tras_cierre_068q.md": 9,
+scripts\operational_artifact_paths_baseline.json:72:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_AUDITORIA_HERMANA_G1_20260813.md": 3,
+scripts\operational_artifact_paths_baseline.json:73:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_BUCLE_CONTRA_PROPUESTA_AUDITOR_20260812b.md": 2,
+scripts\operational_artifact_paths_baseline.json:74:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_BUILDER_WOT-2026-067e.md": 2,
+scripts\operational_artifact_paths_baseline.json:75:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_BUILDER_WOT-2026-068c.md": 27,
+scripts\operational_artifact_paths_baseline.json:76:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_CIERRE_ALTO1_20260812b.md": 6,
+scripts\operational_artifact_paths_baseline.json:77:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_CIERRE_ALTO1_FANOUT_CIEGO_20260812b.md": 6,
+scripts\operational_artifact_paths_baseline.json:78:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_CONTINUIDAD_068c.md": 13,
+scripts\operational_artifact_paths_baseline.json:79:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_CONTINUIDAD_20260927.md": 6,
+scripts\operational_artifact_paths_baseline.json:80:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_CORRECCION_TRIAJE_20260813.md": 1,
+scripts\operational_artifact_paths_baseline.json:81:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_DEVOLUCION_D6_20260813.md": 1,
+scripts\operational_artifact_paths_baseline.json:82:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_FANOUT_DIF_20260812b.md": 4,
+scripts\operational_artifact_paths_baseline.json:83:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_FP-20260824-052a.md": 5,
+scripts\operational_artifact_paths_baseline.json:84:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_FRIO_CONTINUACION_20260812b.md": 1,
+scripts\operational_artifact_paths_baseline.json:85:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_JUICIO_CIERRE_ALTO1_20260812b.md": 9,
+scripts\operational_artifact_paths_baseline.json:86:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_MANAGER_REVIEW_20260812b.md": 2,
+scripts\operational_artifact_paths_baseline.json:87:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_NUEVA_SESION_20260813.md": 6,
+scripts\operational_artifact_paths_baseline.json:88:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_RETRIAJE_20260813.md": 5,
+scripts\operational_artifact_paths_baseline.json:89:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_RETRIAJE_20260813b.md": 11,
+scripts\operational_artifact_paths_baseline.json:90:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_RETRIAJE_CIERRE72_20260813.md": 6,
+scripts\operational_artifact_paths_baseline.json:91:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_SESION_20260813_ARCHIVADO_Y_CIERRE.md": 6,
+scripts\operational_artifact_paths_baseline.json:92:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_TRIAGE_TICKETS_ANTIGUOS_20260927.md": 5,
+scripts\operational_artifact_paths_baseline.json:93:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_TRIAJE_20260824.md": 5,
+scripts\operational_artifact_paths_baseline.json:94:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_WOT-2026-055L_20260813.md": 4,
+scripts\operational_artifact_paths_baseline.json:95:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_WOT-2026-088b.md": 9,
+scripts\operational_artifact_paths_baseline.json:96:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_auditoria_FV-20260830-fresh-context.md": 1,
+scripts\operational_artifact_paths_baseline.json:97:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_auditoria_linea_portable_memory_20261008.md": 7,
+scripts\operational_artifact_paths_baseline.json:98:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_builder_062d.md": 1,
+scripts\operational_artifact_paths_baseline.json:99:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_builder_WOT-2026-073e.md": 8,
+scripts\operational_artifact_paths_baseline.json:100:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_builder_WOT-2026-086f_20260930.md": 5,
+scripts\operational_artifact_paths_baseline.json:101:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_buzon.md": 4,
+scripts\operational_artifact_paths_baseline.json:102:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_cierre_sesion_2026-10-08.md": 1,
+scripts\operational_artifact_paths_baseline.json:103:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_closeout_preflight.md": 20,
+scripts\operational_artifact_paths_baseline.json:104:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_closeout_preflight_v2.md": 22,
+scripts\operational_artifact_paths_baseline.json:105:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_closeout_preflight_v3.md": 6,
+scripts\operational_artifact_paths_baseline.json:106:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_cont_20261001.md": 20,
+scripts\operational_artifact_paths_baseline.json:107:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_continuacion_20260928b.md": 9,
+scripts\operational_artifact_paths_baseline.json:108:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_continuidad_086f_v2.md": 17,
+scripts\operational_artifact_paths_baseline.json:109:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_continuidad_post_cg079a_20261002.md": 23,
+scripts\operational_artifact_paths_baseline.json:110:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_continuidad_post_cierre_20261002.md": 7,
+scripts\operational_artifact_paths_baseline.json:111:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_continuidad_post_commit_079a_20261002.md": 21,
+scripts\operational_artifact_paths_baseline.json:112:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop-063a.md": 20,
+scripts\operational_artifact_paths_baseline.json:113:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop-20260908.md": 10,
+scripts\operational_artifact_paths_baseline.json:114:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop-20260908b.md": 9,
+scripts\operational_artifact_paths_baseline.json:115:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop-cierre063a.md": 23,
+scripts\operational_artifact_paths_baseline.json:116:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_073e_continuacion.md": 5,
+scripts\operational_artifact_paths_baseline.json:117:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_0903.md": 1,
+scripts\operational_artifact_paths_baseline.json:118:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_20260909b.md": 16,
+scripts\operational_artifact_paths_baseline.json:119:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_20260910e.md": 14,
+scripts\operational_artifact_paths_baseline.json:120:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_20260910f.md": 20,
+scripts\operational_artifact_paths_baseline.json:121:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_20260910g.md": 19,
+scripts\operational_artifact_paths_baseline.json:122:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_20260911a.md": 24,
+scripts\operational_artifact_paths_baseline.json:123:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_hop_20260911b.md": 16,
+scripts\operational_artifact_paths_baseline.json:124:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_lote_20260902.md": 5,
+scripts\operational_artifact_paths_baseline.json:125:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_memoria_20260910h.md": 13,
+scripts\operational_artifact_paths_baseline.json:126:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_vuelo_062d.md": 13,
+scripts\operational_artifact_paths_baseline.json:127:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_vuelo_linea_portable_memory_consolidacion_20261009.md": 6,
+scripts\operational_artifact_paths_baseline.json:128:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_vuelo_linea_portable_memory_continuacion_20261009.md": 22,
+scripts\operational_artifact_paths_baseline.json:129:  "orchestrator_pipeline/arranques/_archive/ARRANQUE_wot_2026_073d_builder_20261002.md": 19,
+scripts\operational_artifact_paths_baseline.json:130:  "orchestrator_pipeline/arranques/_archive/BUILDER_PROMPT_WOT-2026-025b.md": 6,
+scripts\operational_artifact_paths_baseline.json:131:  "orchestrator_pipeline/arranques/_archive/ENCARGO_COMMIT_SUITE_PUSH_20260813.md": 19,
+scripts\operational_artifact_paths_baseline.json:132:  "orchestrator_pipeline/arranques/_archive/ENCARGO_FANOUT_CONFORME_20260813.md": 8,
+scripts\operational_artifact_paths_baseline.json:133:  "orchestrator_pipeline/arranques/_archive/INCIDENT_20260908-ficha-inbox-borrada-con-rm.md": 3,
+scripts\operational_artifact_paths_baseline.json:134:  "orchestrator_pipeline/arranques/_archive/PROPUESTA_PUBLICACION_DESTINO_20260813.md": 1,
+scripts\operational_artifact_paths_baseline.json:135:  "orchestrator_pipeline/arranques/_archive/launch_builder_WOT-2026-055o.md": 1,
+scripts\operational_artifact_paths_baseline.json:136:  "orchestrator_pipeline/arranques/_archive/launch_builder_WOT-2026-084a.md": 2,
+scripts\operational_artifact_paths_baseline.json:137:  "orchestrator_pipeline/arranques/_archive/launch_builder_WOT-2026-084a_CHANGES.md": 1,
+scripts\operational_artifact_paths_baseline.json:138:  "orchestrator_pipeline/flight_plans/FP-20260805-limpieza-backlog.md": 1,
+scripts\operational_artifact_paths_baseline.json:139:  "orchestrator_pipeline/flight_plans/_retired/FP-20260902-036g-055q-055e-archivado.json": 2,
+scripts\operational_artifact_paths_baseline.json:140:  "orchestrator_pipeline/flight_plans/_retired/FP-20260902-036g-055q-055e-archivado.md": 2,
+scripts\operational_artifact_paths_baseline.json:141:  "orchestrator_pipeline/flight_plans/done/FP-20260822-G-CIERRE-GUARDS.json": 1,
+scripts\operational_artifact_paths_baseline.json:142:  "orchestrator_pipeline/flight_plans/done/FP-20260904-058v-launch-dag-guard.json": 3,
+scripts\operational_artifact_paths_baseline.json:143:  "orchestrator_pipeline/flight_plans/done/FP-20260904-p0-archivar-likely-done.json": 3,
+scripts\operational_artifact_paths_baseline.json:144:  "orchestrator_pipeline/flight_plans/queued/FP-20260902-046b-046c-ensemble.json": 2,
+scripts\operational_artifact_paths_baseline.json:145:  "orchestrator_pipeline/flight_plans/queued/FP-20260902-049g-054c-guards.json": 2,
+scripts\operational_artifact_paths_baseline.json:146:  "orchestrator_pipeline/flight_plans/queued/FP-20260902-054h-051d-portabilidad.json": 3,
+scripts\operational_artifact_paths_baseline.json:147:  "orchestrator_pipeline/flight_plans/queued/FP-20260902-054h-051d-portabilidad.md": 2,
+scripts\operational_artifact_paths_baseline.json:148:  "orchestrator_pipeline/flight_plans/queued/FP-20260902-055t-047i-suite.json": 3,
+scripts\operational_artifact_paths_baseline.json:149:  "orchestrator_pipeline/flight_plans/queued/FP-20260902-060t-060p-guards-de-forma.json": 3,
+scripts\operational_artifact_paths_baseline.json:150:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-068k-prefijo-gates-backlog.json": 2,
+scripts\operational_artifact_paths_baseline.json:151:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g1-suite-runner.json": 2,
+scripts\operational_artifact_paths_baseline.json:152:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g2-backlog-guards.json": 2,
+scripts\operational_artifact_paths_baseline.json:153:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g3-memoria-portable.json": 2,
+scripts\operational_artifact_paths_baseline.json:154:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g4-closeout-guards.json": 2,
+scripts\operational_artifact_paths_baseline.json:155:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g5-ensemble-scorecard.json": 2,
+scripts\operational_artifact_paths_baseline.json:156:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g6-batch-gobierno.json": 2,
+scripts\operational_artifact_paths_baseline.json:157:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g7-guards-clase.json": 2,
+scripts\operational_artifact_paths_baseline.json:158:  "orchestrator_pipeline/flight_plans/queued/FP-20260913-g8-doc-contrato.json": 2,
+scripts\operational_artifact_paths_baseline.json:159:  "orchestrator_pipeline/flight_plans/queued/FP-20260915-016r.json": 2,
+scripts\operational_artifact_paths_baseline.json:160:  "orchestrator_pipeline/flight_plans/queued/FP-20260915-025f.json": 2,
+scripts\operational_artifact_paths_baseline.json:161:  "orchestrator_pipeline/flight_plans/queued/FP-20260916-067p-067s.md": 2,
+scripts\operational_artifact_paths_baseline.json:162:  "orchestrator_pipeline/flight_plans/queued/FP-20260916-067z.md": 2,
+scripts\operational_artifact_paths_baseline.json:163:  "orchestrator_pipeline/flight_plans/queued/FP-20260928-triaje-a1.json": 7,
+scripts\operational_artifact_paths_baseline.json:164:  "orchestrator_pipeline/flight_plans/queued/FP-20260928-triaje-b1.json": 9,
+scripts\operational_artifact_paths_baseline.json:165:  "orchestrator_pipeline/flight_plans/queued/FP-20261003-089n-coordinacion-ensemble-dispatch.json": 2,
+scripts\operational_artifact_paths_baseline.json:166:  "orchestrator_pipeline/flight_plans/queued/FP-20261003-089n-coordinacion-ensemble-dispatch.md": 1,
+scripts\operational_artifact_paths_baseline.json:167:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-025t_FP-20260928-triaje-a1.md": 1,
+scripts\operational_artifact_paths_baseline.json:168:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-061f_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:169:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-066q_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:170:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-069c_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:171:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-071b_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:172:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-071c_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:173:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-074x_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:174:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-075g_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:175:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-079e_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:176:  "orchestrator_pipeline/reports/ARRANQUE_BUILDER_WOT-2026-080a_FP-20260928-triaje-b1.md": 1,
+scripts\operational_artifact_paths_baseline.json:177:  "orchestrator_pipeline/reports/ARRANQUE_cierre_089l_20261002.md": 1,
+scripts\operational_artifact_paths_baseline.json:178:  "orchestrator_pipeline/reports/ARRDOCS_adjudicacion_input.md": 1,
+scripts\operational_artifact_paths_baseline.json:179:  "orchestrator_pipeline/reports/CTL-2026-009h/reporte_correccion_ortografica.md": 4,
+scripts\operational_artifact_paths_baseline.json:180:  "orchestrator_pipeline/reports/DRAFT_WOT-2026-074a_orchestrator_destination_bootstrap_v2.md": 16,
+scripts\operational_artifact_paths_baseline.json:181:  "orchestrator_pipeline/reports/FP-20260928-triaje-b1.draft.json": 9,
+scripts\operational_artifact_paths_baseline.json:182:  "orchestrator_pipeline/reports/IMPL_adjudicacion_input.md": 2,
+scripts\operational_artifact_paths_baseline.json:183:  "orchestrator_pipeline/reports/LAUNCH_BUILDER_TEMPLATE_20260927.md": 5,
+scripts\operational_artifact_paths_baseline.json:184:  "orchestrator_pipeline/reports/PARADA_cierre_coordinadora_20261007.md": 3,
+scripts\operational_artifact_paths_baseline.json:185:  "orchestrator_pipeline/reports/PARADA_cierre_triage_closeout_20261008.md": 2,
+scripts\operational_artifact_paths_baseline.json:186:  "orchestrator_pipeline/reports/PARTE_DE_PARADA_20260923_mid-flight.md": 14,
+scripts\operational_artifact_paths_baseline.json:187:  "orchestrator_pipeline/reports/PARTE_PARADA_grupoB_triaje_20261015.md": 1,
+scripts\operational_artifact_paths_baseline.json:188:  "orchestrator_pipeline/reports/PARTE_cierre_vuelo6orc_20261016.md": 1,
+scripts\operational_artifact_paths_baseline.json:189:  "orchestrator_pipeline/reports/PARTE_parada_vuelo8_20261015.md": 2,
+scripts\operational_artifact_paths_baseline.json:190:  "orchestrator_pipeline/reports/PARTE_parada_vuelo8cont_20261015.md": 1,
+scripts\operational_artifact_paths_baseline.json:191:  "orchestrator_pipeline/reports/PCF_R1_BA05.txt": 2,
+scripts\operational_artifact_paths_baseline.json:192:  "orchestrator_pipeline/reports/PCF_R1_BA11.txt": 1,
+scripts\operational_artifact_paths_baseline.json:193:  "orchestrator_pipeline/reports/PLAN_EJECUCION_VIA_MIXTA.md": 1,
+scripts\operational_artifact_paths_baseline.json:194:  "orchestrator_pipeline/reports/PRF_BA12.txt": 1,
+scripts\operational_artifact_paths_baseline.json:195:  "orchestrator_pipeline/reports/PRF_adjudicacion_input.md": 31,
+scripts\operational_artifact_paths_baseline.json:196:  "orchestrator_pipeline/reports/PROMPT_ARRANQUE_CTL-2026-028g.md": 8,
+scripts\operational_artifact_paths_baseline.json:197:  "orchestrator_pipeline/reports/PROMPT_ARRANQUE_CTL-2026-028h.md": 4,
+scripts\operational_artifact_paths_baseline.json:198:  "orchestrator_pipeline/reports/PROPUESTA_20260907_deuda_residual_del_vuelo.md": 1,
+scripts\operational_artifact_paths_baseline.json:199:  "orchestrator_pipeline/reports/PROPUESTA_CTL-2026-027q.md": 1,
+scripts\operational_artifact_paths_baseline.json:200:  "orchestrator_pipeline/reports/PROPUESTA_MEMORIA_20260828.md": 1,
+scripts\operational_artifact_paths_baseline.json:201:  "orchestrator_pipeline/reports/PROPUESTA_MEMORIA_20260910.md": 1,
+scripts\operational_artifact_paths_baseline.json:202:  "orchestrator_pipeline/reports/PROPUESTA_MEMORIA_20260911.md": 2,
+scripts\operational_artifact_paths_baseline.json:203:  "orchestrator_pipeline/reports/PROPUESTA_arrancar_en_verde_20260902.md": 2,
+scripts\operational_artifact_paths_baseline.json:204:  "orchestrator_pipeline/reports/PROPUESTA_doc_optimization_PROJECT_20260919.md": 1,
+scripts\operational_artifact_paths_baseline.json:205:  "orchestrator_pipeline/reports/REC_adjudicacion_input.md": 5,
+scripts\operational_artifact_paths_baseline.json:206:  "orchestrator_pipeline/reports/TRIAJE_ANCIANOS_SESSION_PROMPT_20260927.md": 2,
+scripts\operational_artifact_paths_baseline.json:207:  "orchestrator_pipeline/reports/WOT-2026-058c-triaje-20260908/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:208:  "orchestrator_pipeline/reports/WOT-2026-058c-triaje-20260908/raw/grep_hits.txt": 1292,
+scripts\operational_artifact_paths_baseline.json:209:  "orchestrator_pipeline/reports/_bundle_esc4.md": 2,
+scripts\operational_artifact_paths_baseline.json:210:  "orchestrator_pipeline/reports/_bundle_prompt_location_L1015.md": 2,
+scripts\operational_artifact_paths_baseline.json:211:  "orchestrator_pipeline/reports/_bundle_r2f.md": 9,
+scripts\operational_artifact_paths_baseline.json:212:  "orchestrator_pipeline/reports/_c_audit.txt": 1,
+scripts\operational_artifact_paths_baseline.json:213:  "orchestrator_pipeline/reports/_fix_plan_fanout.py": 5,
+scripts\operational_artifact_paths_baseline.json:214:  "orchestrator_pipeline/reports/_gate_esc4.md": 2,
+scripts\operational_artifact_paths_baseline.json:215:  "orchestrator_pipeline/reports/_gate_r2f.md": 9,
+scripts\operational_artifact_paths_baseline.json:216:  "orchestrator_pipeline/reports/_gen_arranques.py": 1,
+scripts\operational_artifact_paths_baseline.json:217:  "orchestrator_pipeline/reports/_reconcile_ctl/findings.json": 2,
+scripts\operational_artifact_paths_baseline.json:218:  "orchestrator_pipeline/reports/_reconcile_ctl/raw/grep_hits.txt": 3,
+scripts\operational_artifact_paths_baseline.json:219:  "orchestrator_pipeline/reports/_reconcile_wot_01/findings.json": 5,
+scripts\operational_artifact_paths_baseline.json:220:  "orchestrator_pipeline/reports/_reconcile_wot_01/raw/grep_hits.txt": 1859,
+scripts\operational_artifact_paths_baseline.json:221:  "orchestrator_pipeline/reports/_stash/backlog_CHECKPOINT.md": 3,
+scripts\operational_artifact_paths_baseline.json:222:  "orchestrator_pipeline/reports/_stash/backlog_CHECKPOINT2.md": 3,
+scripts\operational_artifact_paths_baseline.json:223:  "orchestrator_pipeline/reports/_stash/backlog_CHECKPOINT3.md": 3,
+scripts\operational_artifact_paths_baseline.json:224:  "orchestrator_pipeline/reports/_stash/obs2026-08.CIERRE.jsonl": 1,
+scripts\operational_artifact_paths_baseline.json:225:  "orchestrator_pipeline/reports/_stash/obs2026-08_CHECKPOINT.jsonl": 1,
+scripts\operational_artifact_paths_baseline.json:226:  "orchestrator_pipeline/reports/_triage_grupos/grupo_D.json": 2,
+scripts\operational_artifact_paths_baseline.json:227:  "orchestrator_pipeline/reports/arranque_builder_F1_20260915.md": 1,
+scripts\operational_artifact_paths_baseline.json:228:  "orchestrator_pipeline/reports/arranque_triaje_diseno_20260913.md": 19,
+scripts\operational_artifact_paths_baseline.json:229:  "orchestrator_pipeline/reports/arranque_triaje_diseno_20260915.md": 19,
+scripts\operational_artifact_paths_baseline.json:230:  "orchestrator_pipeline/reports/arranque_vuelo_044b_20260913.md": 3,
+scripts\operational_artifact_paths_baseline.json:231:  "orchestrator_pipeline/reports/arranque_vuelo_g2_20260913.md": 5,
+scripts\operational_artifact_paths_baseline.json:232:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260729-1945.json": 3,
+scripts\operational_artifact_paths_baseline.json:233:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260729-1945.md": 3,
+scripts\operational_artifact_paths_baseline.json:234:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260808-1018.json": 5,
+scripts\operational_artifact_paths_baseline.json:235:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260808-1018.md": 1,
+scripts\operational_artifact_paths_baseline.json:236:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260808-1149.json": 2,
+scripts\operational_artifact_paths_baseline.json:237:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260810-0903.md": 1,
+scripts\operational_artifact_paths_baseline.json:238:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260907-2214.json": 1,
+scripts\operational_artifact_paths_baseline.json:239:  "orchestrator_pipeline/reports/audit_autonomous_batch_20260907-2214.md": 1,
+scripts\operational_artifact_paths_baseline.json:240:  "orchestrator_pipeline/reports/audit_autonomous_batch_FP-20260722e_20260723.json": 1,
+scripts\operational_artifact_paths_baseline.json:241:  "orchestrator_pipeline/reports/audit_autonomous_batch_FP-20260722e_20260723.md": 1,
+scripts\operational_artifact_paths_baseline.json:242:  "orchestrator_pipeline/reports/auditoria_linea_portable_memory_20261008-190116.json": 1,
+scripts\operational_artifact_paths_baseline.json:243:  "orchestrator_pipeline/reports/auditoria_linea_portable_memory_20261008-190116.md": 1,
+scripts\operational_artifact_paths_baseline.json:244:  "orchestrator_pipeline/reports/backlog_reconcile_20260814_01/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:245:  "orchestrator_pipeline/reports/backlog_reconcile_20260814_01/raw/grep_hits.txt": 700,
+scripts\operational_artifact_paths_baseline.json:246:  "orchestrator_pipeline/reports/backlog_triage_20260809-011108.json": 4,
+scripts\operational_artifact_paths_baseline.json:247:  "orchestrator_pipeline/reports/backlog_triage_20260809-011108.md": 1,
+scripts\operational_artifact_paths_baseline.json:248:  "orchestrator_pipeline/reports/backlog_triage_20260810-005248.json": 2,
+scripts\operational_artifact_paths_baseline.json:249:  "orchestrator_pipeline/reports/backlog_triage_20260810-005248.md": 1,
+scripts\operational_artifact_paths_baseline.json:250:  "orchestrator_pipeline/reports/backlog_triage_20260812-030040.md": 3,
+scripts\operational_artifact_paths_baseline.json:251:  "orchestrator_pipeline/reports/backlog_triage_20260813-124200.md": 3,
+scripts\operational_artifact_paths_baseline.json:252:  "orchestrator_pipeline/reports/backlog_triage_20260813-132400.md": 2,
+scripts\operational_artifact_paths_baseline.json:253:  "orchestrator_pipeline/reports/backlog_triage_20260814-165708.json": 4,
+scripts\operational_artifact_paths_baseline.json:254:  "orchestrator_pipeline/reports/backlog_triage_20260820-024142.json": 6,
+scripts\operational_artifact_paths_baseline.json:255:  "orchestrator_pipeline/reports/backlog_triage_20260822-0340.json": 4,
+scripts\operational_artifact_paths_baseline.json:256:  "orchestrator_pipeline/reports/backlog_triage_20260901-224854.json": 8,
+scripts\operational_artifact_paths_baseline.json:257:  "orchestrator_pipeline/reports/backlog_triage_20260901-224854.md": 3,
+scripts\operational_artifact_paths_baseline.json:258:  "orchestrator_pipeline/reports/backlog_triage_20260907-170500.json": 1,
+scripts\operational_artifact_paths_baseline.json:259:  "orchestrator_pipeline/reports/backlog_triage_20260907-170500.md": 1,
+scripts\operational_artifact_paths_baseline.json:260:  "orchestrator_pipeline/reports/backlog_triage_20260911-005500.json": 2,
+scripts\operational_artifact_paths_baseline.json:261:  "orchestrator_pipeline/reports/backlog_triage_20260914-202103.md": 1,
+scripts\operational_artifact_paths_baseline.json:262:  "orchestrator_pipeline/reports/backlog_triage_20260915-1556.json": 4,
+scripts\operational_artifact_paths_baseline.json:263:  "orchestrator_pipeline/reports/backlog_triage_20260928-185000.json": 7,
+scripts\operational_artifact_paths_baseline.json:264:  "orchestrator_pipeline/reports/backlog_triage_20261014-075240.md": 2,
+scripts\operational_artifact_paths_baseline.json:265:  "orchestrator_pipeline/reports/backlog_triage_20261014-085227.json": 1,
+scripts\operational_artifact_paths_baseline.json:266:  "orchestrator_pipeline/reports/backlog_triage_20261014-085227.md": 2,
+scripts\operational_artifact_paths_baseline.json:267:  "orchestrator_pipeline/reports/backlog_triage_20261014-085227_previo.json": 1,
+scripts\operational_artifact_paths_baseline.json:268:  "orchestrator_pipeline/reports/backlog_triage_output_post_p1.json": 6,
+scripts\operational_artifact_paths_baseline.json:269:  "orchestrator_pipeline/reports/batch_run_20260729_1930.json": 3,
+scripts\operational_artifact_paths_baseline.json:270:  "orchestrator_pipeline/reports/batch_run_20260808-1030.json": 2,
+scripts\operational_artifact_paths_baseline.json:271:  "orchestrator_pipeline/reports/batch_run_20260811-130246.json": 5,
+scripts\operational_artifact_paths_baseline.json:272:  "orchestrator_pipeline/reports/batch_run_20260813-1540.json": 1,
+scripts\operational_artifact_paths_baseline.json:273:  "orchestrator_pipeline/reports/batch_run_20260908-230708.json": 1,
+scripts\operational_artifact_paths_baseline.json:274:  "orchestrator_pipeline/reports/bucle_cierre_20260921/bundle_arranque.md.txt": 22,
+scripts\operational_artifact_paths_baseline.json:275:  "orchestrator_pipeline/reports/bucle_cierre_20260921/bundle_cierre.md.txt": 1,
+scripts\operational_artifact_paths_baseline.json:276:  "orchestrator_pipeline/reports/bundle_ARRANQUE_DESTINO_20260912.md": 1,
+scripts\operational_artifact_paths_baseline.json:277:  "orchestrator_pipeline/reports/bundle_CIERRE_20260913.md": 1,
+scripts\operational_artifact_paths_baseline.json:278:  "orchestrator_pipeline/reports/bundle_ESCALADOS_061a_027t_20260912.md": 2,
+scripts\operational_artifact_paths_baseline.json:279:  "orchestrator_pipeline/reports/bundle_IMPLEMENTACION_CIERRE_20260912.md": 2,
+scripts\operational_artifact_paths_baseline.json:280:  "orchestrator_pipeline/reports/bundle_L700-ESCALADO.md": 9,
+scripts\operational_artifact_paths_baseline.json:281:  "orchestrator_pipeline/reports/bundle_L700-ESCALADO_promptgate.md": 9,
+scripts\operational_artifact_paths_baseline.json:282:  "orchestrator_pipeline/reports/bundle_L700_arranque_triaje.md": 6,
+scripts\operational_artifact_paths_baseline.json:283:  "orchestrator_pipeline/reports/bundle_L720_068k_review.md": 4,
+scripts\operational_artifact_paths_baseline.json:284:  "orchestrator_pipeline/reports/bundle_L720_068k_review_light.md": 4,
+scripts\operational_artifact_paths_baseline.json:285:  "orchestrator_pipeline/reports/bundle_L720_r2_plan_b1.md": 9,
+scripts\operational_artifact_paths_baseline.json:286:  "orchestrator_pipeline/reports/bundle_L720_r2_plan_b1_dif.md": 9,
+scripts\operational_artifact_paths_baseline.json:287:  "orchestrator_pipeline/reports/bundle_L730_r1_triaje.md": 4,
+scripts\operational_artifact_paths_baseline.json:288:  "orchestrator_pipeline/reports/bundle_L730_r1_triaje_dif.md": 4,
+scripts\operational_artifact_paths_baseline.json:289:  "orchestrator_pipeline/reports/bundle_L750_serie1.md": 1,
+scripts\operational_artifact_paths_baseline.json:290:  "orchestrator_pipeline/reports/bundle_L750_serie1_dif.md": 1,
+scripts\operational_artifact_paths_baseline.json:291:  "orchestrator_pipeline/reports/bundle_L9610_B_dif.md": 3,
+scripts\operational_artifact_paths_baseline.json:292:  "orchestrator_pipeline/reports/bundle_PROMPT_CF_FRESCA_20260912.md": 9,
+scripts\operational_artifact_paths_baseline.json:293:  "orchestrator_pipeline/reports/bundle_PROMPT_REVIEW_FROZEN_20260912.md": 28,
+scripts\operational_artifact_paths_baseline.json:294:  "orchestrator_pipeline/reports/bundle_PROMPT_REVIEW_FROZEN_v2_20260912.md": 30,
+scripts\operational_artifact_paths_baseline.json:295:  "orchestrator_pipeline/reports/bundle_PROMPT_REVIEW_FROZEN_v3_20260912.md": 30,
+scripts\operational_artifact_paths_baseline.json:296:  "orchestrator_pipeline/reports/bundle_PROMPT_REVIEW_FROZEN_v4_20260912.md": 30,
+scripts\operational_artifact_paths_baseline.json:297:  "orchestrator_pipeline/reports/bundle_RDS-2026-006a_PROMPT_v1_20260915.md": 8,
+scripts\operational_artifact_paths_baseline.json:298:  "orchestrator_pipeline/reports/bundle_RDS-2026-006a_PROMPT_v2_20260915.md": 8,
+scripts\operational_artifact_paths_baseline.json:299:  "orchestrator_pipeline/reports/bundle_RDS-2026-006d_prompt_audit_20260916.md": 2,
+scripts\operational_artifact_paths_baseline.json:300:  "orchestrator_pipeline/reports/bundle_RECOMENDACION_MANAGER_20260912.md": 5,
+scripts\operational_artifact_paths_baseline.json:301:  "orchestrator_pipeline/reports/bundle_arranque_review_20260928.md": 5,
+scripts\operational_artifact_paths_baseline.json:302:  "orchestrator_pipeline/reports/bundle_l1000_arranque_v2.md": 1,
+scripts\operational_artifact_paths_baseline.json:303:  "orchestrator_pipeline/reports/bundle_l1050_ticket_prompt.md": 2,
+scripts\operational_artifact_paths_baseline.json:304:  "orchestrator_pipeline/reports/bundle_l1080_escalado.md": 6,
+scripts\operational_artifact_paths_baseline.json:305:  "orchestrator_pipeline/reports/bundle_l1120_r2.md": 1,
+scripts\operational_artifact_paths_baseline.json:306:  "orchestrator_pipeline/reports/bundle_l1120_r3.md": 1,
+scripts\operational_artifact_paths_baseline.json:307:  "orchestrator_pipeline/reports/bundle_l1140_plan.md": 1,
+scripts\operational_artifact_paths_baseline.json:308:  "orchestrator_pipeline/reports/bundle_l1140_r2.md": 1,
+scripts\operational_artifact_paths_baseline.json:309:  "orchestrator_pipeline/reports/bundle_l1140_r3.md": 1,
+scripts\operational_artifact_paths_baseline.json:310:  "orchestrator_pipeline/reports/bundle_l1150_027f.md": 4,
+scripts\operational_artifact_paths_baseline.json:311:  "orchestrator_pipeline/reports/bundle_l1160_paralelo.md": 4,
+scripts\operational_artifact_paths_baseline.json:312:  "orchestrator_pipeline/reports/bundle_l1160_r2.md": 4,
+scripts\operational_artifact_paths_baseline.json:313:  "orchestrator_pipeline/reports/bundle_l940_027r.md": 1,
+scripts\operational_artifact_paths_baseline.json:314:  "orchestrator_pipeline/reports/bundle_l940_027r_dif1.md": 1,
+scripts\operational_artifact_paths_baseline.json:315:  "orchestrator_pipeline/reports/bundle_l940_027r_dif2.md": 1,
+scripts\operational_artifact_paths_baseline.json:316:  "orchestrator_pipeline/reports/bundle_l940_027r_dif3.md": 1,
+scripts\operational_artifact_paths_baseline.json:317:  "orchestrator_pipeline/reports/bundle_l940_027r_dif4.md": 1,
+scripts\operational_artifact_paths_baseline.json:318:  "orchestrator_pipeline/reports/bundle_l990_arranque.md": 10,
+scripts\operational_artifact_paths_baseline.json:319:  "orchestrator_pipeline/reports/bundle_plan_vuelo1.md": 7,
+scripts\operational_artifact_paths_baseline.json:320:  "orchestrator_pipeline/reports/bundle_plan_vuelo1_dif.md": 6,
+scripts\operational_artifact_paths_baseline.json:321:  "orchestrator_pipeline/reports/bundle_ronda5_preflight.md": 7,
+scripts\operational_artifact_paths_baseline.json:322:  "orchestrator_pipeline/reports/bundle_ronda5_preflight_dif.md": 7,
+scripts\operational_artifact_paths_baseline.json:323:  "orchestrator_pipeline/reports/bundles/L700-cfaudit-068d-068c.md": 12,
+scripts\operational_artifact_paths_baseline.json:324:  "orchestrator_pipeline/reports/bundles/L700-ticketcontract-068d.md": 2,
+scripts\operational_artifact_paths_baseline.json:325:  "orchestrator_pipeline/reports/bundles/L800-bundle-plan-ajustes-20260913.md": 1,
+scripts\operational_artifact_paths_baseline.json:326:  "orchestrator_pipeline/reports/bundles/L800-bundle-planes-20260913.md": 12,
+scripts\operational_artifact_paths_baseline.json:327:  "orchestrator_pipeline/reports/bundles/L800-bundle-ticket-044b-20260913.md": 4,
+scripts\operational_artifact_paths_baseline.json:328:  "orchestrator_pipeline/reports/bundles/L800-bundle-triage-20260913.md": 1,
+scripts\operational_artifact_paths_baseline.json:329:  "orchestrator_pipeline/reports/close_full_audit_WOT-2026-086f_20261001.md": 1,
+scripts\operational_artifact_paths_baseline.json:330:  "orchestrator_pipeline/reports/draft_work_plan_WOT-2026-044b.md": 1,
+scripts\operational_artifact_paths_baseline.json:331:  "orchestrator_pipeline/reports/drafts_triaje_20260915-1556/FP-20260915-016r.json": 2,
+scripts\operational_artifact_paths_baseline.json:332:  "orchestrator_pipeline/reports/drafts_triaje_20260915-1556/FP-20260915-025f.json": 2,
+scripts\operational_artifact_paths_baseline.json:333:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/cf_T-022K-001_answers.md": 26,
+scripts\operational_artifact_paths_baseline.json:334:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/cf_T-024T-001_answers.md": 18,
+scripts\operational_artifact_paths_baseline.json:335:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/checkpoint_G-CLOSE-PROMPT_answers.md": 26,
+scripts\operational_artifact_paths_baseline.json:336:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/checkpoint_G-GATES-NUEVOS_recheck_answers.md": 3,
+scripts\operational_artifact_paths_baseline.json:337:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/consulta_estado_stale/codex_final_answers.md": 1,
+scripts\operational_artifact_paths_baseline.json:338:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/guard_wiring/codex_synth_audit_answers.md": 1,
+scripts\operational_artifact_paths_baseline.json:339:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/reaudit_T-026E-001.out": 2,
+scripts\operational_artifact_paths_baseline.json:340:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/redesign_027/codex_converge_v3_answers.md": 3,
+scripts\operational_artifact_paths_baseline.json:341:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/redesign_027/codex_dec_audit_answers.md": 2,
+scripts\operational_artifact_paths_baseline.json:342:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/redesign_027/codex_retriage_answers.md": 4,
+scripts\operational_artifact_paths_baseline.json:343:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/redesign_027/codex_synth1_answers.md": 29,
+scripts\operational_artifact_paths_baseline.json:344:  "orchestrator_pipeline/reports/flight_20260717/codex_qa/redesign_027/codex_synth2_answers.md": 3,
+scripts\operational_artifact_paths_baseline.json:345:  "orchestrator_pipeline/reports/gov_20260723_triage_nan/codex_triage_nan.txt": 4,
+scripts\operational_artifact_paths_baseline.json:346:  "orchestrator_pipeline/reports/gov_3a/bundle_L3700.md": 4,
+scripts\operational_artifact_paths_baseline.json:347:  "orchestrator_pipeline/reports/gov_3a/codex_LANZAR_prompt.txt": 3,
+scripts\operational_artifact_paths_baseline.json:348:  "orchestrator_pipeline/reports/gov_3a/fanout_driver.py": 2,
+scripts\operational_artifact_paths_baseline.json:349:  "orchestrator_pipeline/reports/gov_3a/job_INCORP.json": 1,
+scripts\operational_artifact_paths_baseline.json:350:  "orchestrator_pipeline/reports/gov_3a/job_L3700.json": 1,
+scripts\operational_artifact_paths_baseline.json:351:  "orchestrator_pipeline/reports/gov_3a/out_L3700.json": 1,
+scripts\operational_artifact_paths_baseline.json:352:  "orchestrator_pipeline/reports/gov_4a/codex_038l_review_prompt.txt": 2,
+scripts\operational_artifact_paths_baseline.json:353:  "orchestrator_pipeline/reports/gov_4a/codex_metareview_out.json": 1,
+scripts\operational_artifact_paths_baseline.json:354:  "orchestrator_pipeline/reports/gov_4a/fanout_runner.py": 1,
+scripts\operational_artifact_paths_baseline.json:355:  "orchestrator_pipeline/reports/gov_4a/nan_038l_review_bundle.md": 2,
+scripts\operational_artifact_paths_baseline.json:356:  "orchestrator_pipeline/reports/gov_FP-20260722e/SINTESIS_039a.md": 1,
+scripts\operational_artifact_paths_baseline.json:357:  "orchestrator_pipeline/reports/gov_FP-20260722e/bundle_039a.md": 3,
+scripts\operational_artifact_paths_baseline.json:358:  "orchestrator_pipeline/reports/gov_FP-20260722e/codex_039a.txt": 25,
+scripts\operational_artifact_paths_baseline.json:359:  "orchestrator_pipeline/reports/gov_FP-20260722e/codex_039a_ratificacion.txt": 44,
+scripts\operational_artifact_paths_baseline.json:360:  "orchestrator_pipeline/reports/gov_FP-20260722e/nan_039a_raw.json": 4,
+scripts\operational_artifact_paths_baseline.json:361:  "orchestrator_pipeline/reports/gov_cableado/bl_c4cd1ee.md": 1,
+scripts\operational_artifact_paths_baseline.json:362:  "orchestrator_pipeline/reports/gov_cableado/bl_fb4fd83.md": 1,
+scripts\operational_artifact_paths_baseline.json:363:  "orchestrator_pipeline/reports/gov_fp20260721c/decision_codex_faseA.txt": 1,
+scripts\operational_artifact_paths_baseline.json:364:  "orchestrator_pipeline/reports/informe_cierre_20261001.md": 2,
+scripts\operational_artifact_paths_baseline.json:365:  "orchestrator_pipeline/reports/launch_builder_016r_20260915.md": 3,
+scripts\operational_artifact_paths_baseline.json:366:  "orchestrator_pipeline/reports/launch_builder_WOT-2026-067w_20260916.md": 14,
+scripts\operational_artifact_paths_baseline.json:367:  "orchestrator_pipeline/reports/launch_builder_WOT-2026-067w_CHANGES_20260916.md": 18,
+scripts\operational_artifact_paths_baseline.json:368:  "orchestrator_pipeline/reports/launch_builder_WOT-2026-070a_20260916.md": 14,
+scripts\operational_artifact_paths_baseline.json:369:  "orchestrator_pipeline/reports/launch_builder_WOT-2026-070b_20260916.md": 13,
+scripts\operational_artifact_paths_baseline.json:370:  "orchestrator_pipeline/reports/launch_prompt_escalado_motor_20260831.md": 6,
+scripts\operational_artifact_paths_baseline.json:371:  "orchestrator_pipeline/reports/launch_prompt_triaje_paralelo_20260831.md": 19,
+scripts\operational_artifact_paths_baseline.json:372:  "orchestrator_pipeline/reports/loop_L701A_9b29789c.md": 10,
+scripts\operational_artifact_paths_baseline.json:373:  "orchestrator_pipeline/reports/loop_L701B_9b29789c.md": 1,
+scripts\operational_artifact_paths_baseline.json:374:  "orchestrator_pipeline/reports/loop_L720_r5_fanout-comun_BA22.md": 1,
+scripts\operational_artifact_paths_baseline.json:375:  "orchestrator_pipeline/reports/loop_L720_r5_fanout-dif_BA11.md": 2,
+scripts\operational_artifact_paths_baseline.json:376:  "orchestrator_pipeline/reports/loop_L9710/bundle_4ecf025875b5.md": 3,
+scripts\operational_artifact_paths_baseline.json:377:  "orchestrator_pipeline/reports/loop_L9710/bundle_d26123b3dca9.md": 1,
+scripts\operational_artifact_paths_baseline.json:378:  "orchestrator_pipeline/reports/loop_bundle_L700_5d19d5b7.md": 9,
+scripts\operational_artifact_paths_baseline.json:379:  "orchestrator_pipeline/reports/loop_bundle_L701_9b29789c.md": 11,
+scripts\operational_artifact_paths_baseline.json:380:  "orchestrator_pipeline/reports/loop_bundle_L702_ce104c3699934c290849e7bab5a8c77c.md": 4,
+scripts\operational_artifact_paths_baseline.json:381:  "orchestrator_pipeline/reports/loop_bundle_L706_afae6347628df7792a2b72376e730d15.md": 1,
+scripts\operational_artifact_paths_baseline.json:382:  "orchestrator_pipeline/reports/manager_changes_WOT-2026-067w_ronda2_20260916.md": 4,
+scripts\operational_artifact_paths_baseline.json:383:  "orchestrator_pipeline/reports/out_codex_l950.txt": 35,
+scripts\operational_artifact_paths_baseline.json:384:  "orchestrator_pipeline/reports/parte_parada_RDS-2026-011a_20261012.md": 3,
+scripts\operational_artifact_paths_baseline.json:385:  "orchestrator_pipeline/reports/parte_parada_midflight_20261001_061e.md": 3,
+scripts\operational_artifact_paths_baseline.json:386:  "orchestrator_pipeline/reports/plan_ajustes_20260913.md": 1,
+scripts\operational_artifact_paths_baseline.json:387:  "orchestrator_pipeline/reports/prompt_fichar_ticket_20260915.md": 1,
+scripts\operational_artifact_paths_baseline.json:388:  "orchestrator_pipeline/reports/receipts_L730_r1.md": 1,
+scripts\operational_artifact_paths_baseline.json:389:  "orchestrator_pipeline/reports/reconcile_20260725/findings.json": 2,
+scripts\operational_artifact_paths_baseline.json:390:  "orchestrator_pipeline/reports/reconcile_20260725/raw/grep_hits.txt": 61,
+scripts\operational_artifact_paths_baseline.json:391:  "orchestrator_pipeline/reports/reconcile_20260730/findings.json": 2,
+scripts\operational_artifact_paths_baseline.json:392:  "orchestrator_pipeline/reports/reconcile_20260730/raw/grep_hits.txt": 154,
+scripts\operational_artifact_paths_baseline.json:393:  "orchestrator_pipeline/reports/reconcile_20260803_01/findings.json": 2,
+scripts\operational_artifact_paths_baseline.json:394:  "orchestrator_pipeline/reports/reconcile_20260803_01/raw/grep_hits.txt": 286,
+scripts\operational_artifact_paths_baseline.json:395:  "orchestrator_pipeline/reports/reconcile_20260814/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:396:  "orchestrator_pipeline/reports/reconcile_20260814/raw/grep_hits.txt": 700,
+scripts\operational_artifact_paths_baseline.json:397:  "orchestrator_pipeline/reports/reconcile_20260825-012812/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:398:  "orchestrator_pipeline/reports/reconcile_20260825-012812/raw/grep_hits.txt": 803,
+scripts\operational_artifact_paths_baseline.json:399:  "orchestrator_pipeline/reports/reconcile_20260828_01/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:400:  "orchestrator_pipeline/reports/reconcile_20260828_01/raw/grep_hits.txt": 853,
+scripts\operational_artifact_paths_baseline.json:401:  "orchestrator_pipeline/reports/reconcile_20260831-0020/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:402:  "orchestrator_pipeline/reports/reconcile_20260831-0020/raw/grep_hits.txt": 855,
+scripts\operational_artifact_paths_baseline.json:403:  "orchestrator_pipeline/reports/reconcile_20260902/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:404:  "orchestrator_pipeline/reports/reconcile_20260902/raw/grep_hits.txt": 1100,
+scripts\operational_artifact_paths_baseline.json:405:  "orchestrator_pipeline/reports/reconcile_20260902b/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:406:  "orchestrator_pipeline/reports/reconcile_20260902b/raw/grep_hits.txt": 1100,
+scripts\operational_artifact_paths_baseline.json:407:  "orchestrator_pipeline/reports/reconcile_20260904b_01/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:408:  "orchestrator_pipeline/reports/reconcile_20260904b_01/raw/grep_hits.txt": 1222,
+scripts\operational_artifact_paths_baseline.json:409:  "orchestrator_pipeline/reports/reconcile_20260910-2400/findings.json": 2,
+scripts\operational_artifact_paths_baseline.json:410:  "orchestrator_pipeline/reports/reconcile_20260913/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:411:  "orchestrator_pipeline/reports/reconcile_20260913/raw/grep_hits.txt": 1405,
+scripts\operational_artifact_paths_baseline.json:412:  "orchestrator_pipeline/reports/reconcile_20260914/findings.json": 2,
+scripts\operational_artifact_paths_baseline.json:413:  "orchestrator_pipeline/reports/reconcile_20260914/raw/grep_hits.txt": 5,
+scripts\operational_artifact_paths_baseline.json:414:  "orchestrator_pipeline/reports/reconcile_20260928/findings.json": 5,
+scripts\operational_artifact_paths_baseline.json:415:  "orchestrator_pipeline/reports/reconcile_20260928/raw/grep_hits.txt": 1922,
+scripts\operational_artifact_paths_baseline.json:416:  "orchestrator_pipeline/reports/reconcile_20260928_takeoff_retry/findings.json": 5,
+scripts\operational_artifact_paths_baseline.json:417:  "orchestrator_pipeline/reports/reconcile_20260928_takeoff_retry/raw/grep_hits.txt": 1922,
+scripts\operational_artifact_paths_baseline.json:418:  "orchestrator_pipeline/reports/reconcile_S2_20260908/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:419:  "orchestrator_pipeline/reports/reconcile_S2_20260908/raw/grep_hits.txt": 1270,
+scripts\operational_artifact_paths_baseline.json:420:  "orchestrator_pipeline/reports/reconcile_S2_full/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:421:  "orchestrator_pipeline/reports/reconcile_S2_full/raw/grep_hits.txt": 1270,
+scripts\operational_artifact_paths_baseline.json:422:  "orchestrator_pipeline/reports/reconcile_ajuste_20260914b/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:423:  "orchestrator_pipeline/reports/reconcile_ajuste_20260914b/raw/grep_hits.txt": 1478,
+scripts\operational_artifact_paths_baseline.json:424:  "orchestrator_pipeline/reports/reconcile_preflight_triage_01/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:425:  "orchestrator_pipeline/reports/reconcile_preflight_triage_01/raw/grep_hits.txt": 810,
+scripts\operational_artifact_paths_baseline.json:426:  "orchestrator_pipeline/reports/reconcile_triage_20260822_02/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:427:  "orchestrator_pipeline/reports/reconcile_triage_20260822_02/raw/grep_hits.txt": 821,
+scripts\operational_artifact_paths_baseline.json:428:  "orchestrator_pipeline/reports/reconcile_triaje_20260915-1512_01/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:429:  "orchestrator_pipeline/reports/reconcile_triaje_20260915-1512_01/raw/grep_hits.txt": 1463,
+scripts\operational_artifact_paths_baseline.json:430:  "orchestrator_pipeline/reports/reconcile_triaje_20260915/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:431:  "orchestrator_pipeline/reports/reconcile_triaje_20260915/raw/grep_hits.txt": 1495,
+scripts\operational_artifact_paths_baseline.json:432:  "orchestrator_pipeline/reports/start_context_isolation.STALE-G1-20260810b.json": 3,
+scripts\operational_artifact_paths_baseline.json:433:  "orchestrator_pipeline/reports/start_context_isolation.STALE-G1G2-20260811.json": 3,
+scripts\operational_artifact_paths_baseline.json:434:  "orchestrator_pipeline/reports/start_context_isolation_WOT-2026-074x.json": 2,
+scripts\operational_artifact_paths_baseline.json:435:  "orchestrator_pipeline/reports/triaje_20260908_S2/findings.json": 4,
+scripts\operational_artifact_paths_baseline.json:436:  "orchestrator_pipeline/reports/triaje_20260908_S2/raw/grep_hits.txt": 1324,
+scripts\operational_artifact_paths_baseline.json:437:  "orchestrator_pipeline/reports/triaje_20260908_S2/rows.json": 3,
+scripts\operational_artifact_paths_baseline.json:438:  "orchestrator_pipeline/reports/triaje_20260913/reconcile/findings.json": 2,
+scripts\operational_artifact_paths_baseline.json:439:  "orchestrator_pipeline/reports/triaje_20260913/reconcile/raw/grep_hits.txt": 4
+scripts\pip_audit_policy.py:1:"""Policy deciding whether to run pip-audit based on the active dependency surface."""
+scripts\pip_audit_policy.py:46:def should_run_pip_audit(project_root: Path | None = None) -> tuple[bool, str]:
+scripts\pip_audit_policy.py:47:    """Decide if pip-audit should be run.
+scripts\pip_audit_project.py:2:"""Audit project dependencies from uv.lock via pip-audit.
+scripts\pip_audit_project.py:5:and runs pip-audit against that surface. Guarantees:
+scripts\pip_audit_project.py:10:Used by .pre-commit-config.yaml pip-audit hook (pre-push stage).
+scripts\pip_audit_project.py:29:    """Return pip-audit vulnerability IDs explicitly ignored by project policy."""
+scripts\pip_audit_project.py:35:    ignore_vuln = data.get("tool", {}).get("pip-audit", {}).get("ignore-vuln", [])
+scripts\pip_audit_project.py:46:        print("[pip-audit-project] ERROR: uv.lock not found", file=sys.stderr)
+scripts\pip_audit_project.py:51:        print("[pip-audit-project] ERROR: uv not found in PATH", file=sys.stderr)
+scripts\pip_audit_project.py:57:            mode="w", suffix=".txt", delete=False, prefix="pip_audit_reqs_"
+scripts\pip_audit_project.py:80:                f"[pip-audit-project] uv export failed:\n{export.stderr}",
+scripts\pip_audit_project.py:90:        print(f"[pip-audit-project] Auditing {len(lines)} packages from uv.lock")
+scripts\pip_audit_project.py:92:        audit_cmd = [sys.executable, "-m", "pip_audit", "-r", str(tmp_path)]
+scripts\prefix_resolver.py:372:    Satisfies ruff S607 (partial executable path) without a noqa: the
+scripts\preflight_flight.py:61:# Derive_session_state is in preflight_codeonly_pipeline; import it for reuse.
+scripts\preflight_flight.py:68:    from preflight_codeonly_pipeline import derive_session_state
+scripts\preflight_flight.py:268:    Call derive_session_state from preflight_codeonly_pipeline on the given
+scripts\preflight_flight.py:281:                "resolver": "verificar que preflight_codeonly_pipeline.py es accesible",
+scripts\preflight_flight.py:326:    """Check if a pipe-delimited line is a markdown table separator (all dashes).
+scripts\preflight_flight.py:344:    """Parse a single pipe-delimited table line into a row dict.
+scripts\preflight_flight.py:400:    During: splits by pipe-delimited rows; first header row gives keys.
+scripts\preflight_closeout.py:163:                "python scripts/run_pytest_safe.py --level all",
+scripts\preflight_codeonly_pipeline.py:2:# ruff: noqa: S603
+scripts\preflight_codeonly_pipeline.py:3:"""Preflight collector for the code-only motor pipeline (collector, NOT executor).
+scripts\preflight_codeonly_pipeline.py:5:Witness for `prompts/orchestrator_pipeline_codeonly.md` (Paso 0). Runs read-only
+scripts\preflight_codeonly_pipeline.py:23:      judges" contract -- it never gates the pipeline's verdict on a specific
+scripts\preflight_codeonly_pipeline.py:81:# motor repo at scripts/preflight_codeonly_pipeline.py, so its own parent IS the
+scripts\preflight_codeonly_pipeline.py:83:# invocations per prompts/orchestrator_pipeline_codeonly.md; --dev-root can point
+scripts\preflight_codeonly_pipeline.py:231:        exists ONLY for the code-only pipeline (Paso 0), so a destino-mode
+scripts\preflight_codeonly_pipeline.py:236:        the mode and `run_pytest_safe` ran against the workspace's EMPTY
+scripts\preflight_codeonly_pipeline.py:499:    `--dev-root` (the motor): a code-only pipeline run has no session of its own,
+scripts\preflight_codeonly_pipeline.py:610:        `require` -- this preflight never gates the pipeline's verdict on any
+scripts\preflight_codeonly_pipeline.py:686:    print(f"  PREFLIGHT code-only pipeline  ticket={findings['ticket']}")
+scripts\preflight_codeonly_pipeline.py:742:        description="Preflight collector for the code-only motor pipeline "
+scripts\pre_handoff_guard.py:2:# ruff: noqa: S603, S607, C901
+scripts\pre_handoff_guard.py:59:    ".agent/runtime/pytest-safe/last-run.json",
+scripts\pre_handoff_guard.py:450:        ``run_pytest_safe`` writes and the ``Z`` spelling that ``git`` emits
+scripts\pre_handoff_guard.py:609:    productive commit and its run_pytest_safe ``last-run.json`` in the destination
+scripts\pre_handoff_guard.py:681:# value means run_pytest_safe fell back to the degraded `unittest discover`
+scripts\pre_handoff_guard.py:682:# path (interpreter without pytest), whose telemetry cannot sustain the gate.
+scripts\pre_handoff_guard.py:683:_CANONICAL_SUITE_RUNNER = "pytest"
+scripts\pre_handoff_guard.py:686:# run_pytest_safe (forbidden surface, and nothing imports it today): the
+scripts\pre_handoff_guard.py:690:    "not pytest: its telemetry cannot sustain the handoff gate (parse_run_metrics "
+scripts\pre_handoff_guard.py:691:    "reports passed=null even when unittest approves). Install pytest in the "
+scripts\pre_handoff_guard.py:693:    "run_pytest_safe), then re-run: "
+scripts\pre_handoff_guard.py:694:    "python scripts/run_pytest_safe.py --level all"
+scripts\pre_handoff_guard.py:703:    During: reads the `runner` field written by run_pytest_safe. A MISSING
+scripts\pre_handoff_guard.py:706:            read this same artifact). Only an explicit non-pytest runner blocks.
+scripts\pre_handoff_guard.py:766:    """Require a fresh green run_pytest_safe before handoff (WOT-2026-010c).
+scripts\pre_handoff_guard.py:768:    Reads <motor>/.agent/runtime/pytest-safe/last-run.json (the canonical
+scripts\pre_handoff_guard.py:769:    artifact written by run_pytest_safe.py) and requires:
+scripts\pre_handoff_guard.py:784:    last_run = motor_root / ".agent" / "runtime" / "pytest-safe" / "last-run.json"
+scripts\pre_handoff_guard.py:799:            "python scripts/run_pytest_safe.py  "
+scripts\pre_handoff_guard.py:801:            "Log: .agent/runtime/pytest-safe/last-run.log"
+scripts\pre_handoff_guard.py:810:                "No last-run.json: run_pytest_safe has not run for this commit."
+scripts\pre_handoff_guard.py:829:                f"run_pytest_safe did not finish (status={status!r}); "
+scripts\pre_handoff_guard.py:839:        # suite failed without pytest reporting any individual FAILED test:
+scripts\pre_handoff_guard.py:856:                    "(.agent/runtime/pytest-safe/last-run.log), then re-run: "
+scripts\pre_handoff_guard.py:857:                    "python scripts/run_pytest_safe.py --level all"
+scripts\pre_handoff_guard.py:875:                    "Run: python scripts/run_pytest_safe.py --level all"
+scripts\pre_handoff_guard.py:997:                "canonical suite. Run: python scripts/run_pytest_safe.py --level all"
+scripts\pre_handoff_guard.py:1011:                "Run: python scripts/run_pytest_safe.py --level all"
+scripts\pre_handoff_guard.py:1357:    # evidence in the controller). Reads run_pytest_safe's last-run.json and
+scripts\prepush_check.py:12:      (2) uv run ruff check .
+scripts\prepush_check.py:13:      (3) uv run ruff format --check .
+scripts\prepush_check.py:62:    - **Solapamiento:** `ruff-check` ya corre entre los 9 hooks de la etapa
+scripts\prepush_check.py:124:# ruff: noqa: S603
+scripts\prepush_check.py:270:def _ruff_exclude_args() -> list[str]:
+scripts\prepush_check.py:274:    and should not be linted or formatted by ruff.
+scripts\prepush_check.py:282:def run_ruff_check(project_root: Path) -> CheckResult:
+scripts\prepush_check.py:283:    """Ejecuta ruff check en el proyecto.
+scripts\prepush_check.py:286:        project_root: Raiz del proyecto donde ejecutar ruff.
+scripts\prepush_check.py:289:        CheckResult con el estado del check de ruff.
+scripts\prepush_check.py:292:        cmd=["uv", "run", "--isolated", "ruff", "check", ".", *_ruff_exclude_args()],
+scripts\prepush_check.py:299:    """Devuelve el fichero donde el proyecto DECLINA `ruff format`, o None.
+scripts\prepush_check.py:309:    Por que NO se lee del fichero de config de ruff, aunque fuese el sitio
+scripts\prepush_check.py:311:    -- ruff valida el fichero entero y `[tool.motor]` (convenio de pyproject)
+scripts\prepush_check.py:313:    y `ruff check` sube de rc=0 a rc=2. Medido 2026-08-02 sobre ruff real.
+scripts\prepush_check.py:348:def run_ruff_format_check(project_root: Path) -> CheckResult:
+scripts\prepush_check.py:349:    """Ejecuta ruff format --check en el proyecto, salvo opt-out declarado.
+scripts\prepush_check.py:356:        Si existe la declaracion, NO se invoca ruff: se devuelve un SKIP que
+scripts\prepush_check.py:358:        `ruff format --check .` como siempre.
+scripts\prepush_check.py:365:    Contexto (LEA-2026-002k): un destino con `ruff format` declinado por
+scripts\prepush_check.py:375:                f"SKIP: el proyecto declina `ruff format` en {optout} "
+scripts\prepush_check.py:384:        cmd=["uv", "run", "--isolated", "ruff", "format", "--check", "."],
+scripts\prepush_check.py:1016:    destination's `orchestrator_pipeline/flight_plans/`; a report claiming
+scripts\prepush_check.py:1020:    (`orchestrator_pipeline/reports/batch_run_*.json`); it is not a contract
+scripts\prepush_check.py:1048:    reports_dir = project_root / "orchestrator_pipeline" / "reports"
+scripts\prepush_check.py:1056:    flight_plans_dir = project_root / "orchestrator_pipeline" / "flight_plans"
+scripts\prepush_check.py:1174:    reports_dir = project_root / "orchestrator_pipeline" / "reports"
+scripts\prepush_check.py:1315:    `orchestrator_pipeline/reports/audit_...json`) o relativa a `reports_dir`.
+scripts\prepush_check.py:1521:    reports_dir = project_root / "orchestrator_pipeline" / "reports"
+scripts\prepush_check.py:2606:    During: recorre orchestrator_pipeline/flight_plans/queued/*.json (read-only) y cruza
+scripts\prepush_check.py:2619:    queued_dir = project_root / "orchestrator_pipeline" / "flight_plans" / "queued"
+scripts\prepush_check.py:2732:    negativo o como dato (celda no-primeras de fila pipe) no transporta.
+scripts\prepush_check.py:2931:    arranques_dir = project_root / "orchestrator_pipeline" / "arranques"
+scripts\prepush_check.py:2980:    Por que AQUI. `orchestrator_pipeline/{reports,arranques,flight_plans}` viven en
+scripts\prepush_check.py:3014:    fuera de la ruta declarada `orchestrator_pipeline/arranques/` en la RAIZ del
+scripts\prepush_check.py:3033:    y `orchestrator_pipeline/reports/*` (Forbidden Surface con su propia
+scripts\prepush_check.py:3332:    nothing. The seal now records the motive (``-rs`` in ``pytest.ini`` addopts
+scripts\prepush_check.py:3342:    yet). NON-GOAL kept: ``pytest.skip`` itself is legitimate; only the
+scripts\prepush_check.py:3345:    Before: ``project_root`` holds ``.agent/runtime/pytest-safe/`` (maybe).
+scripts\prepush_check.py:3384:                ".agent/runtime/pytest-safe/skip-declarations.json (clases: "
+scripts\prepush_check.py:3724:        project_root / "orchestrator_pipeline" / "backlog_inbox",
+scripts\prepush_check.py:3733:    queued_dir = project_root / "orchestrator_pipeline" / "flight_plans" / "queued"
+scripts\prepush_check.py:3871:        project_root / "orchestrator_pipeline" / "backlog_inbox",
+scripts\prepush_check.py:4583:    results.append(run_ruff_check(project_root))
+scripts\prepush_check.py:4586:    results.append(run_ruff_format_check(project_root))
+scripts\prepush_check.py:4643:        # motivo con `-rs` en pytest.ini; el cierre OBLIGA a declararlos
+scripts\prepush_check.py:4733:        # y otro en orchestrator_pipeline/arranques/ salian IGUAL por git status
+scripts\prepush_check.py:4828:    `run_ruff_format_check` -- que sale con `passed=True` y lleva su
+scripts\prepush_check.py:4906:  2. Ruff Check via `uv run ruff` (linting de Python)
+scripts\prepush_check.py:4907:  3. Ruff Format Check via `uv run ruff` (formato de codigo)
+scripts\probe_session_lock_flaky.py:70:            "pytest",
+scripts\project_scanner.py:100:    ".pytest_cache",
+scripts\project_scanner.py:101:    ".ruff_cache",
+scripts\project_scanner.py:102:    ".mypy_cache",
+scripts\project_scanner.py:226:    ``.venv``) instead of descending into them. Pruning the volatile pytest
+scripts\project_scanner.py:393:    # WOT-2026-013d: robust walk (prunes the volatile pytest sandbox, tolerates
+scripts\project_scanner.py:480:    if "pytest" in content:
+scripts\project_scanner.py:481:        tools.append("pytest")
+scripts\project_scanner.py:482:    if "ruff" in content:
+scripts\project_scanner.py:483:        tools.append("ruff")
+scripts\project_scanner.py:484:    if "mypy" in content:
+scripts\project_scanner.py:485:        tools.append("mypy")
+scripts\project_scanner.py:668:    # WOT-2026-013d: robust walk (prunes the volatile pytest sandbox, tolerates
+scripts\purge_arranques_archive.py:1:"""WOT-2026-089p: purga por TTL de `orchestrator_pipeline/arranques/_archive/`.
+scripts\purge_arranques_archive.py:59:ARRANQUES_REL = Path("orchestrator_pipeline") / "arranques"
+scripts\reconcile_portable_memory.py:250:    Nunca leer `$?` tras un pipe: seria el exit del ultimo comando de la tuberia.
+scripts\reconcile_portable_memory.py:458:    umbral de ruff C901; mismo comportamiento, sin cambio de logica.
+scripts\reconcile_portable_memory.py:667:    umbral de ruff C901; mismo comportamiento, sin cambio de logica.
+scripts\remap_evidence_shas.py:104:    """Ejecuta git en BYTES (sin shell ni pipes): un pipe re-codifica el diff."""
+scripts\run_gates_dispatch.py:11:without reading work_plan.md or invoking run_pytest_safe -- previously
+scripts\run_gates_dispatch.py:201:    """Return True if the project has a local pytest suite to run.
+scripts\run_gates_dispatch.py:205:            ``test_*.py`` or ``*_test.py`` file (structural detection, no pytest
+scripts\run_gates_dispatch.py:222:    # 1. ruff check (linter)
+scripts\run_gates_dispatch.py:223:    print("[dispatch] Running ruff check .")
+scripts\run_gates_dispatch.py:224:    rc_ruff = subprocess.run(  # noqa: S603
+scripts\run_gates_dispatch.py:225:        [sys.executable, "-m", "ruff", "check", "."], cwd=authority_root
+scripts\run_gates_dispatch.py:227:    if rc_ruff != 0:
+scripts\run_gates_dispatch.py:228:        return rc_ruff
+scripts\run_gates_dispatch.py:230:    # 1b. ruff format --check (formatter): la CI quality-gates lo exige.
+scripts\run_gates_dispatch.py:231:    # ruff check (linter) y ruff format son cosas distintas; sin este paso
+scripts\run_gates_dispatch.py:233:    print("[dispatch] Running ruff format --check .")
+scripts\run_gates_dispatch.py:235:        [sys.executable, "-m", "ruff", "format", "--check", "."], cwd=authority_root
+scripts\run_gates_dispatch.py:238:        print("[dispatch] ruff format --check failed: ejecuta 'ruff format .'")
+scripts\run_gates_dispatch.py:241:    # 2. pytest-safe (skip auditably when the destino has no local tests)
+scripts\run_gates_dispatch.py:243:        print("[dispatch] Running pytest-safe")
+scripts\run_gates_dispatch.py:245:        # Sin el, `run_pytest_safe` cae a su default `unit` y sella
+scripts\run_gates_dispatch.py:256:        rc_pytest = run_motor_script(
+scripts\run_gates_dispatch.py:257:            "run_pytest_safe.py",
+scripts\run_gates_dispatch.py:263:        if rc_pytest != 0:
+scripts\run_gates_dispatch.py:264:            return rc_pytest
+scripts\run_gates_dispatch.py:268:            "skipping pytest-safe (destino sin tests locales). "
+scripts\run_gates_dispatch.py:272:    # 3. conditional pip-audit
+scripts\run_gates_dispatch.py:274:        from scripts.pip_audit_policy import should_run_pip_audit
+scripts\run_gates_dispatch.py:276:        run_audit, reason = should_run_pip_audit(PROJECT_ROOT)
+scripts\run_gates_dispatch.py:278:        run_audit, reason = True, "Fallback: could not import pip_audit_policy"
+scripts\run_gates_dispatch.py:281:        print(f"[dispatch] Running pip-audit wrapper ({reason})")
+scripts\run_gates_dispatch.py:283:            "pip_audit_project.py",
+scripts\run_gates_dispatch.py:289:        print(f"[dispatch] Skipping pip-audit ({reason})")
+scripts\run_gates_dispatch.py:317:            "Dispatch quality gates (ruff, pytest-safe, pip-audit, "
+scripts\run_gates_dispatch.py:341:        full gate run (including `run_pytest_safe`, which clobbers the
+scripts\run_codex_audit.py:8:      file (`--prompt-file`), or piped via stdin (default when neither flag
+scripts\run_codex_audit.py:41:      pipe-inheritance hang, 2026-07-16 smoke), and delivers the prompt via
+scripts\run_codex_audit.py:312:    `.cmd` shim on Windows spawns `node.exe`, which inherits the pipes; a
+scripts\run_codex_audit.py:447:            "(pipe-inheritance hang, see ensemble_dispatch.py 2026-07-16)"
+scripts\run_codex_audit.py:494:            "no prompt provided: use --prompt, --prompt-file, or pipe via stdin"
+scripts\scope_verification.py:5:y clasificacion de archivos usada por el pipeline de calidad.
+scripts\session_closeout.py:2:"""Session Closeout Orchestrator - unified session close pipeline.
+scripts\session_closeout.py:674:        # `scripts/` no esta en sys.path bajo pytest (el modulo solo inyecta
+scripts\session_closeout.py:2609:    ronda 0 `premise_check` de `run_pipeline` los dejan en None. Se acepta
+scripts\session_closeout.py:2824:        `cwd=<motor_root>` via `subprocess.run` (never `$?` after a pipe).
+scripts\session_closeout.py:2926:    """Run the full session closeout pipeline.
+scripts\session_closeout.py:3118:    During: Validates project_root exists, then runs closeout pipeline.
+scripts\session_closeout.py:3122:        description="Session Closeout Orchestrator - unified session close pipeline",
+scripts\setup_dev_worktree.ps1:24:         casos se ejecuta `uv sync` a continuacion, siempre, para que las
+scripts\setup_dev_worktree.ps1:26:         dependencias faltantes o desactualizadas (`uv sync` es idempotente
+scripts\setup_dev_worktree.ps1:312:    # condicional a que falte python.exe, pero `uv sync` se ejecuta SIEMPRE
+scripts\setup_dev_worktree.ps1:315:    # desincronizadas (p.ej. una corrida anterior de `uv sync` fallo o se
+scripts\setup_dev_worktree.ps1:316:    # interrumpio, o pyproject.toml/uv.lock cambiaron despues). `uv sync` es
+scripts\setup_dev_worktree.ps1:341:    if ($PSCmdlet.ShouldProcess($script:WorktreePath, 'uv sync')) {
+scripts\setup_dev_worktree.ps1:344:            & uv sync
+scripts\setup_dev_worktree.ps1:346:                throw "uv sync fallo con exit code $LASTEXITCODE"
+scripts\setup_dev_worktree.ps1:353:            Write-Host "[setup-dev-worktree] Dependencias del venv resincronizadas con uv sync."
+scripts\suite_regression_report.py:10:Before: ``scripts/run_pytest_safe.py`` (WOT-2026-021w) appends per-run telemetry
+scripts\suite_regression_report.py:11:to ``.agent/runtime/pytest-safe/run_history.jsonl`` (counts, ``duration_s``,
+scripts\suite_regression_report.py:42:# the project root) so this stays stdlib-only and never imports run_pytest_safe
+scripts\suite_regression_report.py:48:    / "pytest-safe"
+scripts\suite_regression_report.py:288:        help="Ruta a run_history.jsonl (default: .agent/runtime/pytest-safe/).",
+scripts\run_pytest_safe.py:2:"""Runner seguro para pytest en agent_system.
+scripts\run_pytest_safe.py:6:- evitar ejecuciones concurrentes de pytest
+scripts\run_pytest_safe.py:11:By default this runner executes pytest discovery over ``tests/``.
+scripts\run_pytest_safe.py:12:Pass explicit pytest args (for example ``-- tests/unit``) to narrow the scope.
+scripts\run_pytest_safe.py:97:RUNTIME_DIR = _LazyPath(lambda: AGENT_DIR.resolve() / "runtime" / "pytest-safe")
+scripts\run_pytest_safe.py:98:LOCK_FILE = _LazyPath(lambda: RUNTIME_DIR.resolve() / "pytest.lock")
+scripts\run_pytest_safe.py:146:    lambda: CROSS_WORKTREE_LOCK_DIR.resolve() / "pytest-canonical.lock"
+scripts\run_pytest_safe.py:150:# un fallo real de la suite (exit_code de pytest) o de un error de uso (2).
+scripts\run_pytest_safe.py:158:# already-gitignored RUNTIME_DIR (.gitignore .agent/runtime/pytest-safe/), so it
+scripts\run_pytest_safe.py:161:# and OMITS lock (pid/cwd), run_dir, command and pytest_args -- so even outside
+scripts\run_pytest_safe.py:165:# fail-open (a tracker failure never aborts a pytest run).
+scripts\run_pytest_safe.py:217:    `exit_code: 5` en pytest es "NINGUN TEST RECOLECTADO": el artefacto no describe
+scripts\run_pytest_safe.py:318:    """Explain that *interpreter* lacks pytest, and how to fix it.
+scripts\run_pytest_safe.py:322:    and hides the CAUSE (this interpreter has no pytest). An operator reads it
+scripts\run_pytest_safe.py:335:        f"[WARN] El interprete resuelto no tiene pytest: {interpreter}\n"
+scripts\run_pytest_safe.py:336:        f"       Causa: ese entorno esta INCOMPLETO (falta el paquete pytest),\n"
+scripts\run_pytest_safe.py:338:        f"       Remedio: instala pytest en ESE interprete, p.ej.\n"
+scripts\run_pytest_safe.py:339:        f"         uv add --dev pytest      (o)  {interpreter} -m pip install pytest\n"
+scripts\run_pytest_safe.py:355:    pipx all legitimately run from a different interpreter, and blocking them
+scripts\run_pytest_safe.py:371:        f"       Legitimo en CI/tox/uv run/pipx; por eso es WARN y no bloqueo.",
+scripts\run_pytest_safe.py:421:    # sys.executable. If the repo's OWN .venv has pytest, prefer it -- the
+scripts\run_pytest_safe.py:429:    if motor_venv is not None and probe_pytest(str(motor_venv)):
+scripts\run_pytest_safe.py:472:    reporting an active pytest. Windows now probes via ``tasklist`` (no psutil);
+scripts\run_pytest_safe.py:687:_PYTEST_PROC_RE = re.compile(r"-m\s+pytest\b|[\\/]pytest(?:\.exe)?[\"']?(?:\s|$)")
+scripts\run_pytest_safe.py:688:_RUNNER_PROC_RE = re.compile(r"run_pytest_safe\.py")
+scripts\run_pytest_safe.py:707:def _count_foreign_pytest(
+scripts\run_pytest_safe.py:710:    """Count pytest sessions that are NOT this runner. Pure.
+scripts\run_pytest_safe.py:713:    ``run_pytest_safe.py`` or ``-m pytest``. Excluded: this process, its
+scripts\run_pytest_safe.py:715:    same session (the runner and the pytest it spawned; the Windows venv
+scripts\run_pytest_safe.py:757:    path there is long enough that any real python/pytest cmdline overflows
+scripts\run_pytest_safe.py:758:    80 chars and loses the tail (where ``-m pytest`` lives), making every
+scripts\run_pytest_safe.py:770:            return None, ["foreign_pytest: powershell not found"]
+scripts\run_pytest_safe.py:775:            "Get-CimInstance Win32_Process -Filter \"Name like 'python%' or Name like 'pytest%'\" | "
+scripts\run_pytest_safe.py:782:            return None, ["foreign_pytest: ps not found"]
+scripts\run_pytest_safe.py:786:        return None, ["foreign_pytest: process listing failed"]
+scripts\run_pytest_safe.py:790:def _probe_foreign_pytest() -> tuple[dict[str, int] | None, list[str]]:
+scripts\run_pytest_safe.py:791:    """Count concurrent pytest sessions of OTHER runners. (counts, errors).
+scripts\run_pytest_safe.py:794:    (``_list_processes``) filtered by ``_count_foreign_pytest``. After: counts
+scripts\run_pytest_safe.py:801:    counts = _count_foreign_pytest(rows, os.getpid())
+scripts\run_pytest_safe.py:803:        errors.append("foreign_pytest: own pid missing from process table")
+scripts\run_pytest_safe.py:879:        cpu_load_pct, foreign_pytest, spawn_ms_mean, probe_cost_s, probe_errors,
+scripts\run_pytest_safe.py:880:        cwd_chars. ``cpu_load_pct`` and ``foreign_pytest`` are real since
+scripts\run_pytest_safe.py:904:        foreign_pytest, foreign_errors = _probe_foreign_pytest()
+scripts\run_pytest_safe.py:906:        foreign_pytest, foreign_errors = None, [f"foreign_pytest: {type(exc).__name__}"]
+scripts\run_pytest_safe.py:919:        # WOT-2026-109a: pytest sessions of OTHER runners alive at this moment.
+scripts\run_pytest_safe.py:920:        "foreign_pytest": foreign_pytest,
+scripts\run_pytest_safe.py:1039:            f"[pytest-safe] WARN: prefijo de cwd largo "
+scripts\run_pytest_safe.py:1068:            f"[pytest-safe] WARN: RAM libre baja ({ram_free:.0f} MB). "
+scripts\run_pytest_safe.py:1103:                f"Ya hay un pytest activo (pid={lock_pid}). "
+scripts\run_pytest_safe.py:1289:                "[run_pytest_safe] AVISO --force-parallel: "
+scripts\run_pytest_safe.py:1296:                "[run_pytest_safe] Esperando lock cross-worktree... "
+scripts\run_pytest_safe.py:1302:            f"[run_pytest_safe] FALLO CERRADO (exit {EX_TEMPFAIL}): "
+scripts\run_pytest_safe.py:1313:        if entry.name in {".pytest_tmp", "_pytest_tmp"} or entry.name.startswith(
+scripts\run_pytest_safe.py:1314:            "_pytest_tmp_"
+scripts\run_pytest_safe.py:1389:    print("Estado pytest-safe")
+scripts\run_pytest_safe.py:1425:    base = Path(tempfile.gettempdir()) / "pytest-safe"
+scripts\run_pytest_safe.py:1430:def probe_pytest(interpreter: str) -> bool:
+scripts\run_pytest_safe.py:1431:    """Return True if *interpreter* can import pytest.
+scripts\run_pytest_safe.py:1435:    .venv has no pytest is detected independently of the motor environment.
+scripts\run_pytest_safe.py:1438:    During: spawns <interpreter> -c "import pytest" with a 5-second
+scripts\run_pytest_safe.py:1440:    After: returns True if returncode == 0; False otherwise (no pytest,
+scripts\run_pytest_safe.py:1445:            [interpreter, "-c", "import pytest"],
+scripts\run_pytest_safe.py:1456:    pytest_args: list[str],
+scripts\run_pytest_safe.py:1466:    target interpreter has pytest; falls back to python -m unittest
+scripts\run_pytest_safe.py:1469:    Before: interpreter is the resolved test-interpreter string; pytest_args
+scripts\run_pytest_safe.py:1470:        and xdist_flags are the already-normalized pytest argument lists;
+scripts\run_pytest_safe.py:1472:        to pass to unittest discover -s; _probe overrides the pytest
+scripts\run_pytest_safe.py:1474:    During: calls probe_pytest(interpreter) unless _probe is supplied.
+scripts\run_pytest_safe.py:1475:        pytest branch: builds the command and injects --durations=0 so the
+scripts\run_pytest_safe.py:1476:            per-run last-run.log always carries pytest's FULL durations table
+scripts\run_pytest_safe.py:1482:            parser in stream_pytest. Reliable under --level all (serial);
+scripts\run_pytest_safe.py:1487:    After: returns (command, runner) where runner is "pytest" or "unittest".
+scripts\run_pytest_safe.py:1491:    has_pytest = probe_pytest(interpreter) if _probe is None else _probe
+scripts\run_pytest_safe.py:1493:    if has_pytest:
+scripts\run_pytest_safe.py:1494:        # --durations=0 goes BEFORE *pytest_args so an explicit user
+scripts\run_pytest_safe.py:1499:            "pytest",
+scripts\run_pytest_safe.py:1502:            *pytest_args,
+scripts\run_pytest_safe.py:1505:        return command, "pytest"
+scripts\run_pytest_safe.py:1533:def stream_pytest(  # noqa: C901
+scripts\run_pytest_safe.py:1536:    """Run pytest, stream output, and return (returncode, failed_test_ids,
+scripts\run_pytest_safe.py:1560:    # the pytest child spawns (e.g. a test decoding `tasklist`/PowerShell
+scripts\run_pytest_safe.py:1564:    # unconditionally for the pytest subprocess only. PYTHONIOENCODING is
+scripts\run_pytest_safe.py:1575:    # WOT-2026-T-A1 (VUELO6): activate pytest faulthandler watchdog so the
+scripts\run_pytest_safe.py:1576:    # pytest child process dumps a full thread traceback when it hangs
+scripts\run_pytest_safe.py:1583:    # invoking process does not cascade-kill the runner and pytest together.
+scripts\run_pytest_safe.py:1604:            raise RuntimeError("pytest subprocess did not expose stdout")
+scripts\run_pytest_safe.py:1609:        # pytest hung without producing new output -- the timeout never fired
+scripts\run_pytest_safe.py:1636:            # not carry the buffered pipe content. Draining stdout with a
+scripts\run_pytest_safe.py:1638:            # whatever was already buffered (the pipe is closing, so this
+scripts\run_pytest_safe.py:1691:def _parse_pytest_summary_line(log_text: str) -> dict:
+scripts\run_pytest_safe.py:1692:    """Extract counts + total duration from the pytest summary line.
+scripts\run_pytest_safe.py:1759:# pytest's own header: "==== slowest 25 durations ====" / "==== slowest durations ====".
+scripts\run_pytest_safe.py:1772:    appends the ORIGINAL lines to the log. Only pytest's exact header shape
+scripts\run_pytest_safe.py:1781:        "[pytest-safe] {n} fila(s) de durations omitidas en consola; "
+scripts\run_pytest_safe.py:1811:    """Rows pytest left out of the table (below its threshold); None if absent."""
+scripts\run_pytest_safe.py:1823:    figure is the time pytest attributed to it, fixtures included. Ties keep
+scripts\run_pytest_safe.py:1842:    Pure function over the captured pytest output text (last-run.log). pytest
+scripts\run_pytest_safe.py:1853:    under pytest's 5 ms threshold are hidden, so per-file sums are a lower
+scripts\run_pytest_safe.py:1861:    metrics = _parse_pytest_summary_line(log_text or "")
+scripts\run_pytest_safe.py:1933:    fail a pytest run. The caller does not depend on the return value.
+scripts\run_pytest_safe.py:1956:            # load / foreign pytest sessions AROUND the run. Without these a
+scripts\run_pytest_safe.py:1964:            "foreign_pytest_at_end": summary.get("foreign_pytest_at_end"),
+scripts\run_pytest_safe.py:2005:        or fail a pytest run (pattern WOT-2026-022e / append_run_history). It is
+scripts\run_pytest_safe.py:2032:        description="Runner seguro para pytest en agent_system."
+scripts\run_pytest_safe.py:2037:        help="Limpia temporales conocidos y termina sin ejecutar pytest.",
+scripts\run_pytest_safe.py:2072:        help="Muestra el comando final de pytest sin ejecutarlo.",
+scripts\run_pytest_safe.py:2098:            "WOT-2026-011e: opt-in local de paralelizacion con pytest-xdist. "
+scripts\run_pytest_safe.py:2105:        "pytest_args",
+scripts\run_pytest_safe.py:2107:        help="Argumentos extra para pytest. Usa -- para separarlos.",
+scripts\run_pytest_safe.py:2113:    """Resolve focal pytest args from the working-tree diff (WOT-2026-010l).
+scripts\run_pytest_safe.py:2116:    leading ``--`` by the caller via :func:`strip_pytest_separator` when needed).
+scripts\run_pytest_safe.py:2147:    raw_pytest_args: list[str], *, select_from_diff: bool
+scripts\run_pytest_safe.py:2149:    """Apply opt-in focal selection (WOT-2026-010l) to the raw pytest args.
+scripts\run_pytest_safe.py:2151:    Before: ``raw_pytest_args`` are the user's REMAINDER args. When
+scripts\run_pytest_safe.py:2155:    appended as explicit pytest args (so ``args_mode`` becomes ``explicit_args``
+scripts\run_pytest_safe.py:2161:        return raw_pytest_args, None
+scripts\run_pytest_safe.py:2163:    focal_extra, focal_reason = resolve_focal_args(raw_pytest_args)
+scripts\run_pytest_safe.py:2165:        base = strip_pytest_separator(raw_pytest_args)
+scripts\run_pytest_safe.py:2167:            "[pytest-safe] Focal selection (WOT-2026-010l): "
+scripts\run_pytest_safe.py:2173:    print(f"[pytest-safe] Focal selection fell open to full suite: {focal_reason}")
+scripts\run_pytest_safe.py:2174:    return raw_pytest_args, focal_reason
+scripts\run_pytest_safe.py:2183:def strip_pytest_separator(raw_args: list[str]) -> list[str]:
+scripts\run_pytest_safe.py:2190:def pytest_args_mode(raw_args: list[str]) -> str:
+scripts\run_pytest_safe.py:2191:    return EXPLICIT_ARGS_MODE if strip_pytest_separator(raw_args) else DEFAULT_ARGS_MODE
+scripts\run_pytest_safe.py:2202:        "[pytest-safe] Mode: default discovery "
+scripts\run_pytest_safe.py:2203:        f"({default_test_target()}, excluding deprecated/debug/sandbox via pytest.ini). "
+scripts\run_pytest_safe.py:2259:def normalize_pytest_args(raw_args: list[str], level: str) -> list[str]:
+scripts\run_pytest_safe.py:2260:    args = strip_pytest_separator(raw_args)
+scripts\run_pytest_safe.py:2273:_RUNTIME_SNAPSHOT_EXCLUDED_DIRS: frozenset[str] = frozenset({"pytest-safe"})
+scripts\run_pytest_safe.py:2291:    ``_RUNTIME_SNAPSHOT_EXCLUDED_DIRS`` (currently only "pytest-safe", which
+scripts\run_pytest_safe.py:2346:    skipped too (currently only "pytest-safe", which holds the runner's own
+scripts\run_pytest_safe.py:2374:    is in ``_RUNTIME_SNAPSHOT_EXCLUDED_DIRS`` (currently only "pytest-safe").
+scripts\run_pytest_safe.py:2438:            print("Consulta el estado con --status antes de relanzar pytest.")
+scripts\run_pytest_safe.py:2456:    raw_pytest_args, focal_reason = apply_focal_selection(
+scripts\run_pytest_safe.py:2457:        list(args.pytest_args), select_from_diff=args.select_from_diff
+scripts\run_pytest_safe.py:2460:    args_mode = pytest_args_mode(raw_pytest_args)
+scripts\run_pytest_safe.py:2461:    pytest_args = normalize_pytest_args(raw_pytest_args, args.level)
+scripts\run_pytest_safe.py:2470:    # the resolved interpreter has pytest; falls back to unittest discover when
+scripts\run_pytest_safe.py:2471:    # it does not. For interpreters that DO have pytest the command matches the
+scripts\run_pytest_safe.py:2476:        pytest_args,
+scripts\run_pytest_safe.py:2496:    # suite runs pytest with cwd=PROJECT_ROOT over the LIVE working tree for
+scripts\run_pytest_safe.py:2543:            "[pytest-safe] AVISO: no se pudo fotografiar el arbol antes de la "
+scripts\run_pytest_safe.py:2559:            f"[pytest-safe] delivery_authority={_da_value} ({_da_reason})",
+scripts\run_pytest_safe.py:2566:        f"[pytest-safe] {suite_eta_note(RUN_HISTORY_JSONL, args.level, args_mode)}",
+scripts\run_pytest_safe.py:2601:        "pytest_args": pytest_args,
+scripts\run_pytest_safe.py:2651:            print("Comando pytest:")
+scripts\run_pytest_safe.py:2657:        print(f"[pytest-safe] Proyecto: {PROJECT_ROOT}")
+scripts\run_pytest_safe.py:2658:        print(f"[pytest-safe] Lock: {LOCK_FILE}")
+scripts\run_pytest_safe.py:2659:        print(f"[pytest-safe] Temp: {run_dir}")
+scripts\run_pytest_safe.py:2661:        print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
+scripts\run_pytest_safe.py:2667:        exit_code, failed_ids, error_ids, timed_out = stream_pytest(command)
+scripts\run_pytest_safe.py:2668:        # WOT-2026-109a: load averaged over the pytest window and the foreign
+scripts\run_pytest_safe.py:2669:        # pytest sessions alive when it ended. Fail-open: telemetry only.
+scripts\run_pytest_safe.py:2673:        summary["foreign_pytest_at_end"] = None
+scripts\run_pytest_safe.py:2678:            summary["foreign_pytest_at_end"] = _probe_foreign_pytest()[0]
+scripts\run_pytest_safe.py:2689:        # WOT-2026-055j: un `exit_code: 5` (pytest: NINGUN TEST RECOLECTADO) no
+scripts\run_pytest_safe.py:2694:        # + top-slowest, parsed ONCE from the log stream_pytest just wrote. These
+scripts\run_pytest_safe.py:2706:            # passed count, the regex almost certainly stopped matching pytest's
+scripts\run_pytest_safe.py:2714:                    "the pytest summary-line regex may no longer match the output "
+scripts\run_pytest_safe.py:2718:                    "[pytest-safe] WARNING: telemetria vacia inesperada "
+scripts\run_pytest_safe.py:2720:                    "pytest pudo cambiar; revise _parse_pytest_summary_line.",
+scripts\run_pytest_safe.py:2741:                "[pytest-safe] STATE LEAK: la suite modifico archivos canonicos "
+scripts\run_pytest_safe.py:2763:                print(f"[pytest-safe] {exc}")
+scripts\run_pytest_safe.py:2775:        # ruff-format). Those hooks rewrite the tree between the stamp and the
+scripts\test_selection.py:7:proposed subset into explicit pytest args (``args_mode=explicit_args``), so
+scripts\test_selection.py:48:STRUCTURAL_FILES = {"pyproject.toml", "pytest.ini"}
+scripts\update_project_map.py:83:    ".pytest_cache",
+scripts\update_project_map.py:89:    ".mypy_cache",
+scripts\update_project_map.py:90:    ".ruff_cache",
+scripts\update_project_map.py:92:    "tmp_pytest_*",
+scripts\validate_agent_config.py:35:# `.agent/runtime/` instead of `<motor>/runtime/` (pytest-collection hazard
+scripts\validate_agent_config.py:50:    "blocked_commands": ["rm -rf", "git push --force", "pip install --upgrade-all"],
+scripts\validate_agent_config.py:139:        ensemble_profiles/pipelines/private_roots, credential-literal ban).
+scripts\tools\run_and_exit.py:2:"""Run a command WITHOUT a pipe and report its REAL exit code (WOT-2026-022p).
+scripts\tools\run_and_exit.py:6:    ``cmd | tail`` and reading ``$?`` returns the exit of the LAST pipeline
+scripts\tools\run_and_exit.py:7:    stage (``tail``), not of ``cmd``. A failing ``cmd`` whose output is piped
+scripts\tools\run_and_exit.py:8:    thus looks like exit 0 -- the "autoengano-por-pipe" that fabricated a false
+scripts\tools\run_and_exit.py:12:    Runs argv as a single process (no shell, no pipe), capturing stdout+stderr.
+scripts\tools\run_and_exit.py:68:        description="Run a command without a pipe and report its real exit code."
+scripts\validate_contract_formation.py:514:            "Seccion Impact Simulation ausente (obligatoria, pipeline seccion 7)",
+scripts\work_plan_authority.py:5:(``pre_handoff_guard``, ``run_pytest_safe``, ``delivery_hygiene_check``,
+scripts\validate_observations.py:319:    function's branch count under the ruff C901 threshold -- this group of
+scripts\validate_batch_dag.py:8:/orchestrate-pipeline) lo consuma.
+scripts\validate_batch_dag.py:990:    - Direct executable invocations like `ruff check ...`
+scripts\validate_batch_dag.py:994:    After: list of script module paths (e.g., "scripts/run_pytest_safe.py").
+scripts\worktree_audit_invariant.py:6:orchestrator's own closeout suite runs pytest with ``cwd=PROJECT_ROOT`` over the
+scripts\validate_ticket_prose.py:260:            for pattern in ["python", "pytest", "ruff", "```", "`"]
+scripts\validate_ticket_prose.py:268:                    suggestion="Cita comandos o tests literales: 'python script.py', 'pytest test_x.py -q'.",
+scripts\validate_ticket_prose.py:494:                    suggestion="Verifica que la dependencia este en pyproject.toml o agregala con 'uv add'.",
+scripts\validate_ticket_prose.py:670:    # NO es politica nueva: `preflight_codeonly_pipeline.classify_warnings` ya
+
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n --hidden '\\bpip\\b|uv add' . -g '*.json' -g '*.toml' -g '*.yaml' -g '*.yml' -g '*.py' -g '*.ps1' -g '*.sh' -g '"'!**/runtime/**'"' -g '"'!**/.tmp/**'"' -g '"'!**/.git/**'"' -g '"'!**/node_modules/**'"' -g '"'!uv.lock'"' -g '"'!**/tests/**'"' -g '"'!**/skills/**'"' -g '"'!**/docs/**'"' -g '"'!**/prompts/**'"'; rg -n '"'^'"' bus/utils.py .github/workflows/security-audit.yml scripts/pip_audit_project.py" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 65ms:
+.\uv.toml:4:# uv NO ve pip 26.1.2/26.2/26.2.1 (publicadas 05-31, 07-29 y 08-04) y respondia
+.\uv.toml:5:# "only pip<=26.1.1 is available" mientras PyPI si las servia. Eso dejaba PYSEC-2026-3721
+.\uv.toml:6:# sin fix posible y BLOQUEABA todo push (hook pip-audit, exit 1).
+.\uv.toml:7:# Corte POR-PAQUETE en vez de mover el global: sube solo pip (1 version) en lugar de
+.\uv.toml:12:# (publicadas 2026-10-01 a 2026-10-12); el cutoff global las oculta igual que a pip
+.\uv.toml:30:# las 4 CVEs de arriba); revalidado 2026-10-22 con `uv pip install "virtualenv==
+.\uv.toml:34:exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20', virtualenv = '2026-10-22', distlib = '2026-10-13', packaging = '2026-10-13', python-discovery = '2026-10-13', typing-extensions = '2026-10-13' }
+.\pyproject.toml:18:    "pip-audit==2.9.0",
+.\pyproject.toml:86:[tool.pip-audit]
+.\pyproject.toml:89:# version indicada. Revalidado con `uv pip install "<pkg>==<fix>" --dry-run`
+.\pyproject.toml:106:    # Python>=3.11 (verificado via metadata de PyPI y `uv pip install
+.\.pre-commit-config.yaml:433:      # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
+.\.pre-commit-config.yaml:434:      # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
+.\.pre-commit-config.yaml:436:      - id: pip-audit
+.\.pre-commit-config.yaml:437:        name: pip-audit (CVE Detection)
+.\.pre-commit-config.yaml:440:        additional_dependencies: [pip-audit]
+.\.agent_denylist.json:3:  "blocked_commands": ["rm -rf", "git push --force", "pip install --upgrade-all", "shred", "format"]
+.\scripts\audit_manifest.py:30:    "pip-audit",
+.\scripts\audit_manifest.py:63:        "pip-audit": ["pip-audit", "--version"],
+.\scripts\audit_manifest.py:144:        "pip-audit": [
+.\scripts\audit_manifest.py:145:            ["pip-audit"],
+.\scripts\pip_audit_policy.py:1:"""Policy deciding whether to run pip-audit based on the active dependency surface."""
+.\scripts\pip_audit_policy.py:47:    """Decide if pip-audit should be run.
+.\scripts\pip_audit_project.py:2:"""Audit project dependencies from uv.lock via pip-audit.
+.\scripts\pip_audit_project.py:5:and runs pip-audit against that surface. Guarantees:
+.\scripts\pip_audit_project.py:10:Used by .pre-commit-config.yaml pip-audit hook (pre-push stage).
+.\scripts\pip_audit_project.py:29:    """Return pip-audit vulnerability IDs explicitly ignored by project policy."""
+.\scripts\pip_audit_project.py:35:    ignore_vuln = data.get("tool", {}).get("pip-audit", {}).get("ignore-vuln", [])
+.\scripts\pip_audit_project.py:46:        print("[pip-audit-project] ERROR: uv.lock not found", file=sys.stderr)
+.\scripts\pip_audit_project.py:51:        print("[pip-audit-project] ERROR: uv not found in PATH", file=sys.stderr)
+.\scripts\pip_audit_project.py:80:                f"[pip-audit-project] uv export failed:\n{export.stderr}",
+.\scripts\pip_audit_project.py:90:        print(f"[pip-audit-project] Auditing {len(lines)} packages from uv.lock")
+.\scripts\run_gates_dispatch.py:272:    # 3. conditional pip-audit
+.\scripts\run_gates_dispatch.py:281:        print(f"[dispatch] Running pip-audit wrapper ({reason})")
+.\scripts\run_gates_dispatch.py:289:        print(f"[dispatch] Skipping pip-audit ({reason})")
+.\scripts\run_gates_dispatch.py:317:            "Dispatch quality gates (ruff, pytest-safe, pip-audit, "
+.\scripts\run_pytest_safe.py:339:        f"         uv add --dev pytest      (o)  {interpreter} -m pip install pytest\n"
+.\scripts\validate_agent_config.py:50:    "blocked_commands": ["rm -rf", "git push --force", "pip install --upgrade-all"],
+.\scripts\validate_ticket_prose.py:494:                    suggestion="Verifica que la dependencia este en pyproject.toml o agregala con 'uv add'.",
+scripts/pip_audit_project.py:1:#!/usr/bin/env python3
+scripts/pip_audit_project.py:2:"""Audit project dependencies from uv.lock via pip-audit.
+scripts/pip_audit_project.py:3:
+scripts/pip_audit_project.py:4:Exports all dependency groups from uv.lock to a temporary requirements.txt
+scripts/pip_audit_project.py:5:and runs pip-audit against that surface. Guarantees:
+scripts/pip_audit_project.py:6:- Only project dependencies are audited (not the system Python environment).
+scripts/pip_audit_project.py:7:- All dependency groups (dev, test, etc.) are included.
+scripts/pip_audit_project.py:8:- Results are reproducible from locked versions.
+scripts/pip_audit_project.py:9:
+scripts/pip_audit_project.py:10:Used by .pre-commit-config.yaml pip-audit hook (pre-push stage).
+scripts/pip_audit_project.py:11:"""
+scripts/pip_audit_project.py:12:
+scripts/pip_audit_project.py:13:from __future__ import annotations
+scripts/pip_audit_project.py:14:
+scripts/pip_audit_project.py:15:import shutil
+scripts/pip_audit_project.py:16:import subprocess
+scripts/pip_audit_project.py:17:import sys
+scripts/pip_audit_project.py:18:import tempfile
+scripts/pip_audit_project.py:19:from pathlib import Path
+scripts/pip_audit_project.py:20:
+scripts/pip_audit_project.py:21:
+scripts/pip_audit_project.py:22:try:
+scripts/pip_audit_project.py:23:    import tomllib
+scripts/pip_audit_project.py:24:except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+scripts/pip_audit_project.py:25:    import tomli as tomllib
+scripts/pip_audit_project.py:26:
+scripts/pip_audit_project.py:27:
+scripts/pip_audit_project.py:28:def _ignored_vulnerabilities(project_root: Path) -> list[str]:
+scripts/pip_audit_project.py:29:    """Return pip-audit vulnerability IDs explicitly ignored by project policy."""
+scripts/pip_audit_project.py:30:    pyproject = project_root / "pyproject.toml"
+scripts/pip_audit_project.py:31:    if not pyproject.exists():
+scripts/pip_audit_project.py:32:        return []
+scripts/pip_audit_project.py:33:
+scripts/pip_audit_project.py:34:    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+scripts/pip_audit_project.py:35:    ignore_vuln = data.get("tool", {}).get("pip-audit", {}).get("ignore-vuln", [])
+scripts/pip_audit_project.py:36:    if not isinstance(ignore_vuln, list):
+scripts/pip_audit_project.py:37:        return []
+scripts/pip_audit_project.py:38:    return [vuln for vuln in ignore_vuln if isinstance(vuln, str) and vuln.strip()]
+scripts/pip_audit_project.py:39:
+scripts/pip_audit_project.py:40:
+scripts/pip_audit_project.py:41:def main() -> int:
+scripts/pip_audit_project.py:42:    project_root = Path(__file__).resolve().parent.parent
+scripts/pip_audit_project.py:43:
+scripts/pip_audit_project.py:44:    lockfile = project_root / "uv.lock"
+scripts/pip_audit_project.py:45:    if not lockfile.exists():
+scripts/pip_audit_project.py:46:        print("[pip-audit-project] ERROR: uv.lock not found", file=sys.stderr)
+scripts/pip_audit_project.py:47:        return 1
+scripts/pip_audit_project.py:48:
+scripts/pip_audit_project.py:49:    uv_cmd = shutil.which("uv")
+scripts/pip_audit_project.py:50:    if uv_cmd is None:
+scripts/pip_audit_project.py:51:        print("[pip-audit-project] ERROR: uv not found in PATH", file=sys.stderr)
+scripts/pip_audit_project.py:52:        return 1
+scripts/pip_audit_project.py:53:
+scripts/pip_audit_project.py:54:    tmp_path: Path | None = None
+scripts/pip_audit_project.py:55:    try:
+scripts/pip_audit_project.py:56:        with tempfile.NamedTemporaryFile(
+scripts/pip_audit_project.py:57:            mode="w", suffix=".txt", delete=False, prefix="pip_audit_reqs_"
+scripts/pip_audit_project.py:58:        ) as tmp:
+scripts/pip_audit_project.py:59:            tmp_path = Path(tmp.name)
+scripts/pip_audit_project.py:60:
+scripts/pip_audit_project.py:61:        export = subprocess.run(  # noqa: S603
+scripts/pip_audit_project.py:62:            [
+scripts/pip_audit_project.py:63:                uv_cmd,
+scripts/pip_audit_project.py:64:                "export",
+scripts/pip_audit_project.py:65:                "--all-groups",
+scripts/pip_audit_project.py:66:                "--no-emit-project",
+scripts/pip_audit_project.py:67:                "--no-hashes",
+scripts/pip_audit_project.py:68:                "--locked",
+scripts/pip_audit_project.py:69:                "--format",
+scripts/pip_audit_project.py:70:                "requirements.txt",
+scripts/pip_audit_project.py:71:                "--output-file",
+scripts/pip_audit_project.py:72:                str(tmp_path),
+scripts/pip_audit_project.py:73:            ],
+scripts/pip_audit_project.py:74:            cwd=project_root,
+scripts/pip_audit_project.py:75:            capture_output=True,
+scripts/pip_audit_project.py:76:            text=True,
+scripts/pip_audit_project.py:77:        )
+scripts/pip_audit_project.py:78:        if export.returncode != 0:
+scripts/pip_audit_project.py:79:            print(
+scripts/pip_audit_project.py:80:                f"[pip-audit-project] uv export failed:\n{export.stderr}",
+scripts/pip_audit_project.py:81:                file=sys.stderr,
+scripts/pip_audit_project.py:82:            )
+scripts/pip_audit_project.py:83:            return export.returncode
+scripts/pip_audit_project.py:84:
+scripts/pip_audit_project.py:85:        lines = [
+scripts/pip_audit_project.py:86:            ln
+scripts/pip_audit_project.py:87:            for ln in tmp_path.read_text(encoding="utf-8").splitlines()
+scripts/pip_audit_project.py:88:            if ln and not ln.startswith("#")
+scripts/pip_audit_project.py:89:        ]
+scripts/pip_audit_project.py:90:        print(f"[pip-audit-project] Auditing {len(lines)} packages from uv.lock")
+scripts/pip_audit_project.py:91:
+scripts/pip_audit_project.py:92:        audit_cmd = [sys.executable, "-m", "pip_audit", "-r", str(tmp_path)]
+scripts/pip_audit_project.py:93:        for vuln_id in _ignored_vulnerabilities(project_root):
+scripts/pip_audit_project.py:94:            audit_cmd.extend(["--ignore-vuln", vuln_id])
+scripts/pip_audit_project.py:95:
+scripts/pip_audit_project.py:96:        audit = subprocess.run(  # noqa: S603
+scripts/pip_audit_project.py:97:            audit_cmd,
+scripts/pip_audit_project.py:98:            cwd=project_root,
+scripts/pip_audit_project.py:99:        )
+scripts/pip_audit_project.py:100:        return audit.returncode
+scripts/pip_audit_project.py:101:
+scripts/pip_audit_project.py:102:    finally:
+scripts/pip_audit_project.py:103:        if tmp_path is not None:
+scripts/pip_audit_project.py:104:            tmp_path.unlink(missing_ok=True)
+scripts/pip_audit_project.py:105:
+scripts/pip_audit_project.py:106:
+scripts/pip_audit_project.py:107:if __name__ == "__main__":
+scripts/pip_audit_project.py:108:    sys.exit(main())
+.github/workflows/security-audit.yml:1:name: Security Audit
+.github/workflows/security-audit.yml:2:
+.github/workflows/security-audit.yml:3:on:
+.github/workflows/security-audit.yml:4:  push:
+.github/workflows/security-audit.yml:5:    branches: [ "main" ]
+.github/workflows/security-audit.yml:6:  pull_request:
+.github/workflows/security-audit.yml:7:    branches: [ "main" ]
+.github/workflows/security-audit.yml:8:
+.github/workflows/security-audit.yml:9:jobs:
+.github/workflows/security-audit.yml:10:  security-audit:
+.github/workflows/security-audit.yml:11:    runs-on: ubuntu-latest
+.github/workflows/security-audit.yml:12:    env:
+.github/workflows/security-audit.yml:13:      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+.github/workflows/security-audit.yml:14:
+.github/workflows/security-audit.yml:15:    steps:
+.github/workflows/security-audit.yml:16:    - uses: actions/checkout@v5
+.github/workflows/security-audit.yml:17:      with:
+.github/workflows/security-audit.yml:18:        fetch-depth: 0
+.github/workflows/security-audit.yml:19:
+.github/workflows/security-audit.yml:20:    - name: Install uv
+.github/workflows/security-audit.yml:21:      uses: astral-sh/setup-uv@v7
+.github/workflows/security-audit.yml:22:      with:
+.github/workflows/security-audit.yml:23:        enable-cache: true
+.github/workflows/security-audit.yml:24:
+.github/workflows/security-audit.yml:25:    - name: Set up Python
+.github/workflows/security-audit.yml:26:      uses: actions/setup-python@v6
+.github/workflows/security-audit.yml:27:      with:
+.github/workflows/security-audit.yml:28:        python-version: "3.10"
+.github/workflows/security-audit.yml:29:
+.github/workflows/security-audit.yml:30:    - name: Install dependencies
+.github/workflows/security-audit.yml:31:      run: uv sync --all-groups
+.github/workflows/security-audit.yml:32:
+.github/workflows/security-audit.yml:33:    - name: Run pre-commit hooks (pre-push stage)
+.github/workflows/security-audit.yml:34:      run: uv run pre-commit run --all-files --hook-stage pre-push
+.github/workflows/security-audit.yml:35:
+.github/workflows/security-audit.yml:36:    - name: Run Gitleaks (OSS CLI)
+.github/workflows/security-audit.yml:37:      # WOT-2026-010x: replace gitleaks/gitleaks-action@v2 (license-gated) with the
+.github/workflows/security-audit.yml:38:      # OSS gitleaks CLI. No GITLEAKS_LICENSE, no GITHUB_TOKEN for this step, no JS
+.github/workflows/security-audit.yml:39:      # action runtime. Reuses the existing portable seed config; fail-closed:
+.github/workflows/security-audit.yml:40:      # `gitleaks detect --exit-code 1` exits non-zero (and the step fails) on a leak.
+.github/workflows/security-audit.yml:41:      env:
+.github/workflows/security-audit.yml:42:        GITLEAKS_VERSION: "8.30.1"
+.github/workflows/security-audit.yml:43:      run: |
+.github/workflows/security-audit.yml:44:        set -euo pipefail
+.github/workflows/security-audit.yml:45:        url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+.github/workflows/security-audit.yml:46:        curl -sSfL "$url" -o gitleaks.tar.gz
+.github/workflows/security-audit.yml:47:        tar -xzf gitleaks.tar.gz gitleaks
+.github/workflows/security-audit.yml:48:        ./gitleaks version
+.github/workflows/security-audit.yml:49:        ./gitleaks detect --source . --config agent_system/templates/gitleaks.config.toml --redact --exit-code 1 --log-opts="--all"
+bus/utils.py:1:"""Shared pure helpers for the event bus layer.
+bus/utils.py:2:
+bus/utils.py:3:These functions hold no state and do no I/O. They are the single source of
+bus/utils.py:4:truth for logic that would otherwise be duplicated across the bridge and the
+bus/utils.py:5:controller (e.g. counting review decisions).
+bus/utils.py:6:"""
+bus/utils.py:7:
+bus/utils.py:8:from __future__ import annotations
+bus/utils.py:9:
+bus/utils.py:10:from typing import Any
+bus/utils.py:11:
+bus/utils.py:12:
+bus/utils.py:13:def _event_field(event: Any, name: str) -> Any:
+bus/utils.py:14:    """Read a field from an EventRecord or a plain dict.
+bus/utils.py:15:
+bus/utils.py:16:    Before: event is an EventRecord-like object or a dict.
+bus/utils.py:17:    During: tries attribute access, then dict access.
+bus/utils.py:18:    After: returns the field value, or None if absent. Never raises.
+bus/utils.py:19:    """
+bus/utils.py:20:    value = getattr(event, name, None)
+bus/utils.py:21:    if value is None and isinstance(event, dict):
+bus/utils.py:22:        value = event.get(name)
+bus/utils.py:23:    return value
+bus/utils.py:24:
+bus/utils.py:25:
+bus/utils.py:26:def count_trailing_changes(events: list[Any]) -> int:
+bus/utils.py:27:    """Count the trailing run of REVIEW_DECISION->changes decisions.
+bus/utils.py:28:
+bus/utils.py:29:    Before: events is an ordered list (oldest first) of EventRecord objects
+bus/utils.py:30:        or dicts. It may be pre-filtered to REVIEW_DECISION events or not.
+bus/utils.py:31:    During: iterates from the newest event backwards, counting consecutive
+bus/utils.py:32:        ``changes`` decisions. Any other decision (approve, inspect) ends the
+bus/utils.py:33:        run; a REVIEW_DECISION with no ``decision`` payload is skipped without
+bus/utils.py:34:        breaking the run; non-REVIEW_DECISION events are ignored.
+bus/utils.py:35:    After: returns the length of the trailing ``changes`` run (0 if none).
+bus/utils.py:36:        Pure, never raises.
+bus/utils.py:37:
+bus/utils.py:38:    A history of changes -> approve -> changes -> changes returns 2, not 4:
+bus/utils.py:39:    the intermediate approve resets the run.
+bus/utils.py:40:    """
+bus/utils.py:41:    count = 0
+bus/utils.py:42:    for event in reversed(events):
+bus/utils.py:43:        if _event_field(event, "event_type") != "REVIEW_DECISION":
+bus/utils.py:44:            continue
+bus/utils.py:45:        payload = _event_field(event, "payload") or {}
+bus/utils.py:46:        decision = str(payload.get("decision", "")).lower()
+bus/utils.py:47:        if decision == "changes":
+bus/utils.py:48:            count += 1
+bus/utils.py:49:        elif decision:
+bus/utils.py:50:            # A non-empty, non-changes decision (approve/inspect) ends the run.
+bus/utils.py:51:            break
+bus/utils.py:52:        # decision == "" -> malformed payload, skip without breaking the run.
+bus/utils.py:53:    return count
+
+hook: PostToolUse
+hook: PostToolUse Completed
+codex
+La configuración confirma Python 3.10–3.13, uv y las herramientas de comprobación. Estoy contrastando la posible prohibición de pip: he encontrado un bloqueo específico de `pip install --upgrade-all`, pero también código que propone pip como alternativa para instalar pytest.
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n --hidden '\\bpip(3)?\\b|uv add' .opencode .github .agent skills templates agent_system runtime -g '*.json' -g '*.yaml' -g '*.yml' -g '*.toml' -g '*.py' -g '*.ps1' -g '*.sh' -g '"'!**/uv-cache/**'"' -g '"'!**/node_modules/**'"' -g '"'!**/archive/**'"' -g '"'!**/runtime/**'"'; rg -n '"'^'"' .github/workflows/monthly-deps-bump.yml; rg -n 'from pathlib|from typing' bus/event_bus.py; rg -n -A14 -B3 'id: pip-audit|id: vulture|id: deadcode|mypy' .pre-commit-config.yaml; rg -n -A12 -B6 'uv add --dev' scripts/run_pytest_safe.py" in C:\Users\fdl\AppData\Local\Temp\wot048q_probe_1792882839
+ succeeded in 192ms:
+1:name: Monthly Dependencies Bump
+2:
+3:on:
+4:  schedule:
+5:    - cron: '0 6 1 * *'  # 06:00 UTC on the 1st day of each month
+6:  workflow_dispatch:  # Allow manual triggering
+7:
+8:permissions:
+9:  contents: write
+10:  pull-requests: write
+11:
+12:jobs:
+13:  deps-bump:
+14:    runs-on: ubuntu-latest
+15:    env:
+16:      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+17:
+18:    steps:
+19:    - uses: actions/checkout@v5
+20:      with:
+21:        fetch-depth: 0
+22:
+23:    - name: Install uv
+24:      uses: astral-sh/setup-uv@v7
+25:      with:
+26:        enable-cache: true
+27:
+28:    - name: Set up Python
+29:      uses: actions/setup-python@v6
+30:      with:
+31:        python-version: "3.10"
+32:
+33:    - name: Get current date
+34:      id: date
+35:      run: echo "date=$(date -u +%Y-%m-%d)" >> $GITHUB_OUTPUT
+36:
+37:    - name: Update exclude-newer in uv.toml
+38:      run: |
+39:        sed -i "s/exclude-newer = '.*'/exclude-newer = '${{ steps.date.outputs.date }}'/" uv.toml
+40:        cat uv.toml
+41:
+42:    - name: Re-lock dependencies
+43:      run: uv lock --upgrade
+44:
+45:    - name: Sync all groups
+46:      run: uv sync --all-groups
+47:
+48:    - name: Validate with pre-commit (pre-push stage)
+49:      run: uv run pre-commit run --all-files --hook-stage pre-push
+50:
+51:    - name: Create branch
+52:      run: |
+53:        BRANCH_NAME="chore/deps-bump-${{ steps.date.outputs.date }}"
+54:        git config user.name "github-actions[bot]"
+55:        git config user.email "github-actions[bot]@users.noreply.github.com"
+56:        git checkout -b "$BRANCH_NAME"
+57:        git add uv.toml uv.lock
+58:        git commit -m "chore: bump exclude-newer to ${{ steps.date.outputs.date }}"
+59:        git push -u origin "$BRANCH_NAME"
+60:        echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+61:      id: create-branch
+62:
+63:    - name: Create PR
+64:      run: |
+65:        gh pr create \
+66:          --base main \
+67:          --head ${{ steps.create-branch.outputs.branch }} \
+68:          --title "chore: monthly dependencies bump (${{ steps.date.outputs.date }})" \
+69:          --body "Automated monthly dependencies bump.\n\n- Updated exclude-newer to ${{ steps.date.outputs.date }}\n- Re-locked dependencies with uv lock --upgrade\n- Validated with pre-commit pre-push hooks\n\nPlease review before merging."
+70:      env:
+71:        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+7:from pathlib import Path
+433-      # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
+434-      # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
+435-      # Garantia: audita la superficie real del proyecto, no el Python del sistema.
+436:      - id: pip-audit
+437-        name: pip-audit (CVE Detection)
+438-        entry: python scripts/pip_audit_project.py
+439-        language: python
+440-        additional_dependencies: [pip-audit]
+441-        pass_filenames: false
+442-        stages: [pre-push, manual]
+443-
+444-      # check-hook-interpreter: detecta INSTALL_PYTHON obsoleto en los hooks
+445-      # generados (repo movido, WOT-2026-016b). Stage manual: un hook automatico
+446-      # seria circular (el propio hook roto no puede invocar de forma fiable al
+447-      # check). Ejecutable por tooling de instalacion o bajo demanda.
+448-      - id: check-hook-interpreter
+449-        name: check hook interpreter (INSTALL_PYTHON stale path)
+450-        entry: uv run python scripts/check_hook_interpreter.py
+--
+453-        stages: [manual]
+454-
+455-      # vulture: verificacion no mutadora, solo manual
+456:      - id: vulture
+457-        name: vulture - dead code detection
+458-        entry: uv run vulture bus/ runtime/ scripts/ skills/ tools/ --min-confidence 80 --exclude whitelists,.agent,.cache,.claude,.codex,.opencode,.tmp,.uv-cache,.ruff_cache,tests
+459-        language: system
+460-        types: [python]
+461-        stages: [manual]
+333-    """
+334-    return (
+335-        f"[WARN] El interprete resuelto no tiene pytest: {interpreter}\n"
+336-        f"       Causa: ese entorno esta INCOMPLETO (falta el paquete pytest),\n"
+337-        f"       no que este repo carezca de tests.\n"
+338-        f"       Remedio: instala pytest en ESE interprete, p.ej.\n"
+339:        f"         uv add --dev pytest      (o)  {interpreter} -m pip install pytest\n"
+340-        f"       Se cae a 'unittest discover' como fallback degradado."
+341-    )
+342-
+343-
+344-def _warn_if_interpreter_is_not_root_venv(interpreter: str, root: Path) -> None:
+345-    """WARN when running the motor suite outside its own ``.venv``.
+346-
+347-    WOT-2026-041h (RAMA 2): ``resolve_test_interpreter`` prefers a venv only
+348-    ``if active != motor``; the motor case falls to ``sys.executable``, which
+349-    may be the SYSTEM python without the repo's deps. Measured cost: ~1h with
+350-    ``--level all`` returning "(no output)" and dying by timeout, leaving
+351-    ``last-run.json`` with ``exit_code: None`` + ``finished_at: None`` -- i.e.
+
+hook: PostToolUse
+hook: PostToolUse Completed
+codex
+1. **Python, rutas y tipado — RECONSTRUIDO**
+   - Requiere **Python `>=3.10,<3.14`**: `pyproject.toml:5`.
+   - Para rutas utiliza **`pathlib.Path`**, con operaciones reales de resolución y composición: `scripts/pip_audit_project.py:19`, `:42` y `:44`.
+   - Para tipado utiliza **`typing`**, por ejemplo `Any` en firmas y colecciones: `bus/utils.py:10`, `:13` y `:26`.
+
+2. **Gestor de dependencias — RECONSTRUIDO; prohibición general de pip — NO DEDUCIBLE**
+   - El gestor es **uv**: la automatización ejecuta `uv lock --upgrade` y `uv sync --all-groups` en `.github/workflows/monthly-deps-bump.yml:43` y `:46`. El código propone **`uv add --dev pytest`** para añadir esa dependencia: `scripts/run_pytest_safe.py:339`.
+   - **No encontré una prohibición general de usar pip directamente.** Existe un bloqueo específico de `pip install --upgrade-all` en `.agent_denylist.json:3`; no equivale a prohibir todo pip. Además, `scripts/run_pytest_safe.py:339` ofrece explícitamente `-m pip install pytest` como alternativa.
+
+3. **Testing y calidad/lint — RECONSTRUIDO**
+   - **pytest**, con dependencias **pytest-asyncio**, **pytest-cov** y **pytest-xdist**: `pyproject.toml:15–17` y `:28`. CI ejecuta el runner `run_pytest_safe.py`, también con paralelismo: `.github/workflows/quality-gates.yml:45` y `:55`.
+   - **Ruff** para formato y lint, ejecutado en CI: `.github/workflows/quality-gates.yml:37` y `:40`.
+   - **mypy** configurado en modo estricto: `pyproject.toml:74–79`.
+   - **pre-commit** ejecuta los hooks en CI: `.github/workflows/security-audit.yml:34`. **Vulture** tiene un hook manual para detectar código muerto: `.pre-commit-config.yaml:456–461`. **deadcode** también está declarado como dependencia de desarrollo: `pyproject.toml:27`.
+
+4. **Seguridad — RECONSTRUIDO**
+   - **Gitleaks** detecta secretos mediante una invocación efectiva de `gitleaks detect`, con configuración explícita, redacción y código de error ante hallazgos: `.github/workflows/security-audit.yml:49`.
+   - **pip-audit** audita dependencias mediante un hook: `.pre-commit-config.yaml:436–442`. Su wrapper exporta las dependencias bloqueadas con `uv export --all-groups --locked` y ejecuta `pip_audit -r`: `scripts/pip_audit_project.py:61–73` y `:92–99`.
+   - También están habilitadas las reglas de seguridad **`S` de Ruff**: `pyproject.toml:51`.
+
+Inspección realizada únicamente en modo lectura.
+hook: Stop
+hook: Stop Completed
+tokens used
+35.900
+1. **Python, rutas y tipado — RECONSTRUIDO**
+   - Requiere **Python `>=3.10,<3.14`**: `pyproject.toml:5`.
+   - Para rutas utiliza **`pathlib.Path`**, con operaciones reales de resolución y composición: `scripts/pip_audit_project.py:19`, `:42` y `:44`.
+   - Para tipado utiliza **`typing`**, por ejemplo `Any` en firmas y colecciones: `bus/utils.py:10`, `:13` y `:26`.
+
+2. **Gestor de dependencias — RECONSTRUIDO; prohibición general de pip — NO DEDUCIBLE**
+   - El gestor es **uv**: la automatización ejecuta `uv lock --upgrade` y `uv sync --all-groups` en `.github/workflows/monthly-deps-bump.yml:43` y `:46`. El código propone **`uv add --dev pytest`** para añadir esa dependencia: `scripts/run_pytest_safe.py:339`.
+   - **No encontré una prohibición general de usar pip directamente.** Existe un bloqueo específico de `pip install --upgrade-all` en `.agent_denylist.json:3`; no equivale a prohibir todo pip. Además, `scripts/run_pytest_safe.py:339` ofrece explícitamente `-m pip install pytest` como alternativa.
+
+3. **Testing y calidad/lint — RECONSTRUIDO**
+   - **pytest**, con dependencias **pytest-asyncio**, **pytest-cov** y **pytest-xdist**: `pyproject.toml:15–17` y `:28`. CI ejecuta el runner `run_pytest_safe.py`, también con paralelismo: `.github/workflows/quality-gates.yml:45` y `:55`.
+   - **Ruff** para formato y lint, ejecutado en CI: `.github/workflows/quality-gates.yml:37` y `:40`.
+   - **mypy** configurado en modo estricto: `pyproject.toml:74–79`.
+   - **pre-commit** ejecuta los hooks en CI: `.github/workflows/security-audit.yml:34`. **Vulture** tiene un hook manual para detectar código muerto: `.pre-commit-config.yaml:456–461`. **deadcode** también está declarado como dependencia de desarrollo: `pyproject.toml:27`.
+
+4. **Seguridad — RECONSTRUIDO**
+   - **Gitleaks** detecta secretos mediante una invocación efectiva de `gitleaks detect`, con configuración explícita, redacción y código de error ante hallazgos: `.github/workflows/security-audit.yml:49`.
+   - **pip-audit** audita dependencias mediante un hook: `.pre-commit-config.yaml:436–442`. Su wrapper exporta las dependencias bloqueadas con `uv export --all-groups --locked` y ejecuta `pip_audit -r`: `scripts/pip_audit_project.py:61–73` y `:92–99`.
+   - También están habilitadas las reglas de seguridad **`S` de Ruff**: `pyproject.toml:51`.
+
+Inspección realizada únicamente en modo lectura.
