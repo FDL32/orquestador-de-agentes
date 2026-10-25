@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 52 |
+| prompt | 53 |
 | reference | 41 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 49 |
-| **total** | **150** |
+| **total** | **151** |
 
 ## Entradas
 
@@ -50,6 +50,7 @@
 | prompt | `prompts/manager_orchestrator_loop_adapter_motor.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/manager_orchestrator_loop_backlog.md` | active | system | manager | model-invoked | — |
 | prompt | `prompts/manager_review.md` | active | system | manager | model-invoked | — |
+| prompt | `prompts/memory_curation.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/memory_optimization.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/memory_upload.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/orchestrator_autonomous_ticket_batch.md` | active | system | orchestrator | model-invoked | — |

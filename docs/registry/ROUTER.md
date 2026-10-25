@@ -4,7 +4,7 @@
 > Lee esto ANTES de abrir un prompt: dice cual abrir en tu fase y cual NO (columna `NO es`).
 > Fuente: frontmatter `role` / `cycle_phase` / `route_kind` + `PROMPT-SUMMARY` de cada prompt.
 > Regenera con `python scripts/discover_skills.py --generate-index`; `--check-index` detecta deriva.
-> Adoptados: 45 de 61. Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
+> Adoptados: 46 de 62. Los no adoptados aun NO aparecen aqui: si tu fase no esta, busca en `docs/registry/INDEX.md`.
 
 ## Ciclo por fase (abre UNO)
 
@@ -71,6 +71,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 | `prompts/audit_portability_legacy_surface.md` | auditor | - | Cuando se sospecha acumulacion de deuda/legacy en el motor y hace falta un censo antes de decidir que retirar o extraer. | NO edita, renombra ni parchea nada (solo lectura); NO es la auditoria estrategica completa (audit_complete_motor_destination.md, alcance mayor). | 169 |
 | `prompts/audit_post_change_system_health.md` | auditor | `system-health-audit` | Despues de cambios en el motor y/o en un repo_destino, para saber si el sistema sigue sano de extremo a extremo. | NO es la meta-auditoria de un pipeline cerrado (skills/audit-pipeline/SKILL.md), ni el listo-para-publicar de un repo (skills/audit-git-publication/SKILL.md), ni un snapshot rapido (skills/local-audit/SKILL.md); el reporte del recolector no es el veredicto. | 208 |
 | `prompts/doc_optimization.md` | orchestrator | `doc-optimization` | Cuando el cierre transitivo de lo siempre-cargado (CLAUDE.md, AGENTS.md y sus @imports) supera cualquiera de los DOS gates por backend declarados en PASO 1 (no un % unico arbitrario). | NO es para anadir contenido nuevo ni para recortar prompts por longitud; hermanos: suite_optimization.md (segundos de suite) y memory_optimization.md (memoria). | 313 |
+| `prompts/memory_curation.md` | orchestrator | - | Cuando el usuario invoca explicitamente el mecanismo via python scripts/curate_memory.py --help. Disparador manual, nunca programado. | NO es el ciclo de compactacion de Claude Code (pre_compact_hook.py). NO integra additionalContext de pre_compact_hook.py (bloqueado por WOT-2026-041y). | 143 |
 | `prompts/memory_optimization.md` | orchestrator | - | Cuando el disparador medible de salud de memoria (ver orchestrator_session_close_full_audit.md Bloque 4.0) dispara sobre MOTOR o DESTINO. | NO es memory_upload.md (gate de promocion de UNA leccion); NO es scripts/memory_consolidate.py (el mecanismo que este prompt puede decidir afinar). | 188 |
 | `prompts/repo_audit_multiagent.md` | auditor | `repo-audit` | Cuando el repo ha crecido y hace falta un censo repetible de codigo obsoleto/dead code, archivos legacy, vulnerabilidades de seguridad y malas practicas, antes de limpiar o refactorizar a escala. | NO ejecuta borrados ni cambios por su cuenta (Fase 5 es read-only; Fase 6 solo CONECTA con mecanismos de ejecucion ya existentes tras aprobacion humana); NO sustituye `audit_portability_legacy_surface.md` cuando el repo auditado ES el motor (ese prompt cubre naming/alias/stubs especificos del motor; este cubre dead-code+security+proceso de forma general, y dedupe con fingerprint compartido en Fase 3 si ambos aplican a la vez). | 713 |
 | `prompts/suite_optimization.md` | orchestrator | `suite-optimization` | Cuando la suite canonica es lenta y hay una corrida completa en run_history.jsonl de la que derivar el objetivo. | NO es una auditoria de calidad de tests (skills/test-audit/SKILL.md), NO activa xdist (familia 020p, sesion dedicada) y NO optimiza a ciegas desde la atribucion de pytest. | 158 |
@@ -84,7 +85,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 | `prompts/ensemble_loop.md` | transversal (11) | Procedimiento operativo para lanzar las lentes de un bucle de ensemble contra proveedores reales con ensemble_dispatch.py loop-round y verificar que la ronda cuenta. | 375 |
 | `prompts/manager_orchestrator_loop_adapter_motor.md` | AGENTS.md, builder_invocation_contract.md, manager_orchestrator_loop_backlog.md | Adaptador del MOTOR al nucleo portable manager_orchestrator_loop.md: traduce cada capacidad del nucleo a los comandos y ficheros REALES de este repositorio, fija los minimos por tipo de entrega y declara la diferencia de identidad (D2). | 174 |
 | `prompts/orchestrator_launch_builder.md` | transversal (11) | Contrato de ejecucion del Builder de un ticket: verifica identidad y paridad del contrato, preflight y topologia, implementa, testa, corre gates focales, commitea segun delivery_authority y emite el handoff canonico con informe al Manager. | 909 |
-| `prompts/persona_system.md` | transversal (8) | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 133 |
+| `prompts/persona_system.md` | transversal (9) | Define "Persona-Orquestador/Manager/Revisor/Builder" (numeracion ENTERA 0/1/2/3) como la traduccion de vocabulario de una UNICA sesion Claude Code que encarna en turnos sucesivos las capas del patron de 4 capas, y fija la condicion dura de independencia que ese vocabulario no puede relajar. | 133 |
 
 ## Por rol
 
@@ -97,6 +98,7 @@ Revisar una propuesta sin commit: `DESIGN_REVIEW` / `prompt-audit` o `exploracio
 - `prompts/escalate_to_motor.md` (F1-backlog)
 - `prompts/manager_orchestrator_loop.md` (F1-backlog, F2-contrato, F3-auditoria-contrato, F4-lanzamiento, F5-implementacion, F6-revision)
 - `prompts/manager_orchestrator_loop_adapter_motor.md` (modulo)
+- `prompts/memory_curation.md` (mantenimiento)
 - `prompts/memory_optimization.md` (mantenimiento)
 - `prompts/memory_upload.md` (F7-cierre-sesion)
 - `prompts/orchestrator_autonomous_ticket_batch.md` (F4-lanzamiento, F5-implementacion, F6-revision)
