@@ -379,16 +379,24 @@ def _extract_rules_from_entries(
             hierarchical grouping. Counts EVERY distinct signal that passes
             the filter (steps 1-3) as a candidate and keeps the first
             ``max_rules`` of them.
-    After: Returns {"rules": [...], "candidates": int, "truncated": bool}.
-           `rules` is the deduplicated, deterministically sorted list of rule
-           dicts with 'domain', 'signal', 'rule_id', 'source_ticket', 'wing';
-           `candidates` counts distinct signals before the cap; `truncated`
-           is True when the cap left at least one of them out.
+
+            Tracks the entries that passed all filters but were left out by
+            the cap as `expelled`, in the same recency order as the cap cut.
+    After: Returns {"rules": [...], "candidates": int, "truncated": bool,
+           "expelled": [...]}. `rules` is the deduplicated, deterministically
+           sorted list of rule dicts with 'domain', 'signal', 'rule_id',
+           'source_ticket', 'wing'; `candidates` counts distinct signals before
+           the cap; `truncated` is True when the cap left at least one of them
+           out; `expelled` is a list of dicts with 'id', 'topic', 'timestamp',
+           'source_ticket', 'signal' (recortado a 160 chars) for each candidate
+           that the cap left out, in recency order.
     """
     seen_signals: set[str] = set()
     seen_keys: set[tuple] = set()
     rules: list[dict[str, Any]] = []
+    expelled: list[dict[str, Any]] = []
     candidates = 0
+    cap_hits = False
 
     ordered_entries = sorted(
         entries,
@@ -428,6 +436,18 @@ def _extract_rules_from_entries(
                     "wing": _infer_wing(entry),
                 }
             )
+        else:
+            if not cap_hits:
+                cap_hits = True
+            expelled.append(
+                {
+                    "id": entry.get("id"),
+                    "topic": entry.get("topic", "general"),
+                    "timestamp": entry.get("timestamp", ""),
+                    "source_ticket": entry.get("source_ticket", "unknown"),
+                    "signal": _truncate_signal(signal, 160),
+                }
+            )
 
     # Sort deterministically by (domain, signal)
     rules.sort(key=lambda r: (r["domain"], r["signal"]))
@@ -438,6 +458,7 @@ def _extract_rules_from_entries(
         "rules": rules,
         "candidates": candidates,
         "truncated": candidates > len(rules),
+        "expelled": expelled,
     }
 
 
@@ -506,6 +527,40 @@ def generate_memory_rules_md(entries: list[dict[str, Any]]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _compute_inputs(
+    obs_path: Path, since_days: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Compute the three input lists for L2/L3 projection.
+
+    Before: ``obs_path`` is the observations.jsonl path; ``since_days`` is the
+        cutoff window (default 30).
+    During: Parses ``obs_path``, filters noise. ``recent`` comes from the
+        deduplicated path (``dedupe`` + ``split_by_age``), preserving the
+        24-hour dedup window for in-flight observations. ``archivable`` comes
+        directly from the noise-filtered list WITHOUT deduplication, matching
+        the pre-WOT-2026-127f ``--apply`` semantics:
+        ``split_by_age([e for e in parse_entries(obs_path) if not is_droppable_noise(e)],
+        since_days)[1]``. The dedup against the archive happens inside
+        ``_archive_new_entries`` via ``record_key``, so deduplicating here
+        would silently change what gets written to the archive (duplicate
+        entries within the dedupe window that should all be archived).
+    After: returns (recent, archivable, archived). ``recent`` is deduplicated
+        (via ``dedupe`` + ``split_by_age``); ``archivable`` is NOT deduplicated
+        by stable id (raw split from filtered list), matching the pre-ticket
+        ``--apply`` semantics where the full archivable list was passed to
+        ``_archive_new_entries``. ``archived`` is read from
+        ``read_archive_dir(ARCHIVE_DIR)``; the caller must ensure
+        ``ARCHIVE_DIR`` is set correctly.
+    """
+    entries = parse_entries(obs_path)
+    filtered = [e for e in entries if not is_droppable_noise(e)]
+    deduped, _ = dedupe(filtered)
+    recent, _ = split_by_age(deduped, since_days)
+    _, archivable = split_by_age(filtered, since_days)
+    archived = read_archive_dir(ARCHIVE_DIR)
+    return recent, archivable, archived
 
 
 def _family_summary_sections(entries: list[dict[str, Any]]) -> list[str]:
@@ -642,6 +697,43 @@ def generate_memory_profile_md(entries: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _project_l2_input(
+    recent: list[dict[str, Any]],
+    archivable: list[dict[str, Any]],
+    archived: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project the L2 input set: union with precedence.
+
+    Before: `recent`, `archivable`, and `archived` lists are available.
+    During: pure operation -- no I/O. Computes the union of the three sources
+        with precedence-by-entry: `recent` first, then `archivable`, then
+        `archived` (filtered by precedence). Deduplication uses `dedup_key` +
+        `generate_stable_id` on redacted entries to avoid false negatives from
+        redaction differences (same bug, different path).
+    After: returns a deduplicated list ready for L2/L3 projection. The order is
+        `recent` first, DELIBERATE: the caps below fill with recent entries
+        BEFORE admitting archived ones, so adding archived NEVER displaces a
+        recent one.
+    """
+    local = list(recent) + list(archivable or [])
+    if archived:
+        seen: set[tuple] = set()
+        for e in local:
+            red = _redact_entry(e)
+            seen.add(dedup_key(red))
+            seen.add(("id", generate_stable_id(red)))
+        projected: list[dict[str, Any]] = list(local)
+        for a in archived:
+            k = dedup_key(_redact_entry(a))
+            if k in seen:
+                continue
+            seen.add(k)
+            projected.append(a)
+    else:
+        projected = local
+    return projected
+
+
 def _regenerate_l2_l3(
     recent: list[dict[str, Any]],
     verbose: bool,
@@ -659,7 +751,7 @@ def _regenerate_l2_l3(
 
     WOT-2026-058b. Antes de esta resolucion, el limite #3 ("solo cubre las
     entradas que ESTA pasada procesa") era real: `_regenerate_l2_l3` construia
-    su proyeccion como `projected = list(recent) + list(archivable or [])`,
+    su proyeccion como `projected = _project_l2_input(recent, archivable or [], archived or [])`,
     NUNCA leyendo `archive/observations.*.jsonl` de pasadas anteriores.
     La solucion es leer el archive via `read_archive_dir` y hacer la union con
     precedencia por-entrada: la copia VIVA (recent/archivable de esta pasada)
@@ -672,16 +764,15 @@ def _regenerate_l2_l3(
         (None = sin union historica, para callers legacy).
     During:
         Las proyecciones se generan sobre la UNION de las tres fuentes con
-        precedencia por-entrada: `recent` primero, luego `archivable`, luego
-        `archived` (filtrada por precedencia). El orden es `recent` primero,
-        DELIBERADO: los topes de abajo se llenan con lo reciente ANTES de
-        admitir archivadas, de modo que sumar archivadas NUNCA desplaza a una
+        precedencia por-entrada via `_project_l2_input`. El orden es `recent`
+        primero, DELIBERADO: los topes de abajo se llenan con lo reciente ANTES
+        de admitir archivadas, de modo que sumar archivadas NUNCA desplaza a una
         reciente. Lo que SI expulsa lecciones nuevas es el TOPE, DENTRO de
         `recent` (punto 1 de la lista de abajo). La union con precedencia se
         calcula redactando ambos lados y usando `dedup_key` +
         `generate_stable_id` para evitar falsos negativos por diferencias de
         redaccion (mismo bug, otra via:
-        `scripts/memory_consolidate.py:826-831`).
+        `scripts/memory_consolidate.py:759-764`).
     After:
         Retorna None. No lanza.
 
@@ -714,22 +805,7 @@ def _regenerate_l2_l3(
     El limite #3 fue CORREGIDO por WOT-2026-058b, que hace llegar el archive
     de pasadas anteriores a L2/L3 via `read_archive_dir`.
     """
-    local = list(recent) + list(archivable or [])
-    if archived:
-        seen: set[tuple] = set()
-        for e in local:
-            red = _redact_entry(e)
-            seen.add(dedup_key(red))
-            seen.add(("id", generate_stable_id(red)))
-        projected: list[dict[str, Any]] = list(local)
-        for a in archived:
-            k = dedup_key(_redact_entry(a))
-            if k in seen:
-                continue
-            seen.add(k)
-            projected.append(a)
-    else:
-        projected = local
+    projected = _project_l2_input(recent, archivable or [], archived or [])
 
     rules_md = generate_memory_rules_md(projected)
     MEMORY_RULES_MD.write_text(rules_md, encoding="utf-8")
@@ -809,13 +885,46 @@ def write_report(stats: dict[str, Any], dry_run: bool = True) -> None:
     target.write_text("\n".join(report_lines), encoding="utf-8")
 
 
+def _parse_since_days(since: str) -> int:
+    """Parse ``--since`` argument to integer days.
+
+    Before: ``since`` is a string like ``"60d"`` or a bare number ``"30"``.
+    During: strips trailing ``d`` if present and parses as int; bare numeric
+        strings are parsed directly; any other form raises. Consumed by
+        argparse via ``type=_parse_since_days`` (registered on the ``--since``
+        argument).
+    After: returns the integer day count. Raises ``argparse.ArgumentTypeError``
+        on invalid input (produces rc 2, no traceback).
+    """
+    if since.endswith("d"):
+        try:
+            return int(since[:-1])
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"Invalid --since value: {since!r} (expected N or Nd, e.g. 60d)"
+            ) from None
+    try:
+        return int(since)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Invalid --since value: {since!r} (expected N or Nd, e.g. 60d)"
+        ) from None
+
+
 def _run_pipeline(
     args: argparse.Namespace,
 ) -> tuple[list[dict[str, Any]], dict[str, int], int, int]:
-    """Run the consolidation pipeline and return (recent, stats, dropped, dedupe_count)."""
-    since_days = 30
-    if args.since.endswith("d"):
-        since_days = int(args.since[:-1])
+    """Run the consolidation pipeline and return (recent, stats, dropped, dedupe_count).
+
+    Before: ``args`` is parsed; ``args.since`` is already an int (parsed by argparse via
+        ``type=_parse_since_days``).  Direct callers may pass a string (e.g. "30d")
+        instead.
+    During: same pipeline as before.
+    After: returns (recent, stats, dropped, dedupe_count).
+    """
+    since_days: int = (
+        args.since if isinstance(args.since, int) else _parse_since_days(args.since)
+    )
 
     if not OBS.exists():
         print(f"Error: {OBS} does not exist")
@@ -995,6 +1104,7 @@ def main() -> None:
     parser.add_argument(
         "--since",
         default="30d",
+        type=_parse_since_days,
         help="Archive entries older than N days (default: 30d)",
     )
     parser.add_argument(
@@ -1002,13 +1112,36 @@ def main() -> None:
         action="store_true",
         help="Print detailed output",
     )
+    parser.add_argument(
+        "--list-expelled",
+        action="store_true",
+        help="List candidates expelled by the L2 cap (read-only, excludes --apply)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format (for --list-expelled)",
+    )
     args = parser.parse_args()
 
+    # --list-expelled is mutually exclusive with --apply
+    if args.list_expelled and args.apply:
+        parser.error("--list-expelled is mutually exclusive with --apply")
+
+    since_days: int = args.since
     dry_run = not args.apply or args.dry_run
 
     recent, stats, dropped, dedupe_count = _run_pipeline(args)
 
     if not stats:
+        return
+
+    # --list-expelled: read-only, no writes (not even TMP_REPORT).
+    if args.list_expelled:
+        published = _read_published_header(MEMORY_RULES_MD)
+        recent_l, archivable_l, archived_l = _compute_inputs(OBS, since_days)
+        upcoming = _compute_upcoming(recent_l, archivable_l, archived_l)
+        print(_format_list_expelled(published, upcoming, args.json))
         return
 
     write_report(stats, dry_run=dry_run)
@@ -1024,11 +1157,120 @@ def main() -> None:
         print("Run with --apply to apply changes.")
         return
 
-    _, archivable = split_by_age(
-        [e for e in parse_entries(OBS) if not is_droppable_noise(e)],
-        30 if args.since.endswith("d") else int(args.since[:-1]),
-    )
+    _, archivable, _ = _compute_inputs(OBS, since_days)
     _apply_consolidation(recent, archivable, stats, args.verbose)
+
+
+def _read_published_header(path: Path) -> dict[str, int] | None:
+    """Read Total rules / Candidates / Expelled by cap from an existing memory_rules.md.
+
+    Before: `path` points to an existing memory_rules.md (or similar).
+    During: parses the header lines looking for "Total rules:", "Candidates:",
+        and "Expelled by cap:" lines.
+    After: returns a dict with those three keys and int values, or None if the
+        file does not exist or the header is absent.
+    """
+    if not path.exists():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8")
+        result: dict[str, int] = {}
+        for line in content.splitlines():
+            for label in ("Total rules", "Candidates", "Expelled by cap"):
+                if line.startswith(f"{label}: "):
+                    result[label] = int(line.split(": ", 1)[1])
+                    break
+        if result:
+            return result
+        return None
+    except (ValueError, IndexError):
+        return None
+
+
+def _format_list_expelled(
+    published: dict[str, int] | None,
+    upcoming: dict[str, Any],
+    as_json: bool,
+) -> str:
+    """Format the --list-expelled output.
+
+    Before: `published` is the header from the existing memory_rules.md (or
+        None), `upcoming` is the dict returned by _compute_upcoming (total,
+        candidates, expelled list).
+    During: formats as human-readable blocks or JSON object.
+    After: returns a formatted string.
+    """
+    if as_json:
+        published_section = {
+            "publicado": published,
+            "proxima_consolidacion": {
+                "total": upcoming["total"],
+                "candidates": upcoming["candidates"],
+                "expelled_by_cap": upcoming["expelled_count"],
+                "expelled": upcoming["expelled"],
+            },
+        }
+        return json.dumps(published_section, indent=2, ensure_ascii=False)
+
+    parts: list[str] = []
+
+    # Bloque publicado
+    parts.append("publicado:")
+    if published:
+        published_lines = [
+            f"  {key}: {published[key]}"
+            for key in ("Total rules", "Candidates", "Expelled by cap")
+            if key in published
+        ]
+        parts.extend(published_lines)
+    else:
+        parts.append("  publicado: ausente")
+    parts.append("")
+
+    # Bloque proxima consolidacion
+    parts.append("proxima consolidacion:")
+    parts.append(f"  total: {upcoming['total']}")
+    parts.append(f"  candidatas: {upcoming['candidates']}")
+    parts.append(f"  expulsadas: {upcoming['expelled_count']}")
+    parts.append("")
+
+    # Lista de expulsadas
+    if upcoming["expelled"]:
+        parts.append("expulsadas:")
+        expelled_lines = [
+            f"  {e['timestamp']} {e['id'] or ''} {e['topic']} {e['signal']}"
+            for e in upcoming["expelled"]
+        ]
+        parts.extend(expelled_lines)
+    else:
+        parts.append("expulsadas: ninguna")
+    parts.append("")
+
+    return "\n".join(parts)
+
+
+def _compute_upcoming(
+    recent: list[dict[str, Any]],
+    archivable: list[dict[str, Any]],
+    archived: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute upcoming consolidation results from the three input lists.
+
+    Before: the three lists (recent, archivable, archived).
+    During: unions them via _project_l2_input, then calls
+        _extract_rules_from_entries on the projection.
+    After: returns a dict with total (entries projected before lesson filter),
+        candidates (distinct signals passing lesson filter), expelled_count,
+        and expelled list.
+    """
+    projected = _project_l2_input(recent, archivable, archived)
+    extraction = _extract_rules_from_entries(projected)
+    return {
+        "total": len(projected),
+        "candidates": extraction["candidates"],
+        "expelled_count": extraction["candidates"] - len(extraction["rules"]),
+        "expelled": extraction["expelled"],
+    }
 
 
 if __name__ == "__main__":
