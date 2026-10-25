@@ -91,6 +91,8 @@ ADOPTED = (
     "repo_audit_multiagent.md",
     "agents_md_optimization_4layer_loop.md",
     "agents_md_intake_triage.md",
+    # WOT-2026-127a lo publico con route_kind sin darlo de alta aqui.
+    "memory_curation.md",
 )
 # Floor of the ratchet: the pilot of DEC-router-prompts-001 (6 files, one per kind).
 PILOT_FLOOR = frozenset(ADOPTED)

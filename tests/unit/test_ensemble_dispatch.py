@@ -10378,6 +10378,15 @@ def _registro_salidas_046c():
                 "sys.executable literal, no un CLI de backend"
             ),
         },
+        ("scripts/check_builder_cli_privacy_preflight.py", "main"): {
+            "mecanismo": "preflight_directo",
+            "motivo": (
+                "gate del CLI directo (WOT-2026-046k): NO envia nada; corre "
+                "privacy_preflight sobre el prompt que el despachador enviara "
+                "despues por kilo run / codex exec (sin spawn ni HTTP, "
+                "verificado por AST)"
+            ),
+        },
     }
 
 
