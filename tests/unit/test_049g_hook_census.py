@@ -158,7 +158,10 @@ def test_049g_r3_comment_mention_is_not_invocation(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     policy = {
-        "known_hooks": [],
+        # prepush_check registrado por clase (los 3 casos de la ficha viven en
+        # known_hooks del policy real); foo.py queda SIN registrar para probar
+        # que el comentario no lo hace invocado y que enforce lo cazaria.
+        "known_hooks": ["prepush_check"],
         "known_unwired": {},
         "extra_guards": {},
         "wired_via": {},
