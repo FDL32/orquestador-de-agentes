@@ -243,6 +243,48 @@ class TestMotorScopeOutsideFLT:
             "outside Files Likely Touched" in captured.out or "outside" in captured.out
         )
 
+    def test_motor_commit_outside_flt_remediation_in_payload(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Verify that the HANDOFF_BLOCKED event includes the remediation message."""
+        from unittest.mock import MagicMock
+
+        import agent_controller
+
+        motor, dest, wp, exec_log, plan_content = _setup_multi_repo(
+            tmp_path, motor_flt=[".agent/agent_controller.py"]
+        )
+        # Create checkpoint touching a file NOT in FLT
+        _create_checkpoint(motor, "src/outside.py", "WT-2026-232a")
+
+        _monkeypatch_mark_ready(
+            monkeypatch, agent_controller, motor, dest, wp, exec_log, plan_content
+        )
+
+        # Re-enable bus and mock it as requested
+        monkeypatch.setattr(agent_controller, "BUS_AVAILABLE", True)
+        mock_bus = MagicMock()
+        monkeypatch.setattr(agent_controller, "event_bus", mock_bus)
+
+        result = agent_controller._handle_mark_ready(
+            scope_override=None, json_output=True, force_mode=False
+        )
+        assert result == 1
+
+        # Check for HANDOFF_BLOCKED event in the bus
+        handoff_blocked_calls = [
+            call
+            for call in mock_bus.emit.call_args_list
+            if call.kwargs.get("event_type") == "HANDOFF_BLOCKED"
+        ]
+        assert len(handoff_blocked_calls) > 0, "No HANDOFF_BLOCKED event emitted"
+
+        payload = handoff_blocked_calls[0].kwargs["payload"]
+        assert "remediation" in payload, "Payload missing 'remediation' key"
+        assert "--scope-override" in payload["remediation"], (
+            f"Remediation message did not mention --scope-override: {payload['remediation']}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TP-03: no motor evidence -> blocks

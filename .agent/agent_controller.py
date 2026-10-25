@@ -3659,7 +3659,10 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
                         print('Use --scope-override "reason" to proceed.')
                         return _fail_closeout(
                             "checkpoint_scope_outside_flt",
-                            {"outside_flt": sorted(outside_flt)},
+                            {
+                                "outside_flt": sorted(outside_flt),
+                                "remediation": 'Use --scope-override "reason" to proceed.',
+                            },
                         )
                     _record_scope_override(scope_override, outside_flt)
                     checkpoint_scope_pass = True
