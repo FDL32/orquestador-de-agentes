@@ -1,11 +1,13 @@
 """Static guard: every literal ruff invocation in a target file carries --no-fix.
 
 WOT-2026-047v. The system-health collector (scripts/collect_system_health.py) is
-documented as read-only, but the repo sets `fix = true` in [tool.ruff], so a bare
-`ruff check` invocation MUTATES the tree it audits and then reports GREEN
+documented as read-only. HISTORICAL premise (WOT-2026-049f retired it on
+2026-10-25): the repo used to set `fix = true` in [tool.ruff], so a bare
+`ruff check` invocation MUTATED the tree it audited and then reported GREEN
 precisely because it fixed the findings (measured: rc=0 + file changed without
---no-fix; rc=1 + file untouched with --no-fix). This guard scans a Python target
-and fails for EVERY literal command list that contains "ruff" without "--no-fix"
+--no-fix; rc=1 + file untouched with --no-fix). The flag stays REQUIRED here as
+defense-in-depth: the guard fails for EVERY literal command list that contains
+"ruff" without "--no-fix"
 in that exact list. The check is per invocation, never by substring presence in
 the whole file: a missing flag in the SECOND invocation is a violation even when
 a first one carries the flag.
