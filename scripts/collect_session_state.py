@@ -308,7 +308,15 @@ def collect_gates(motor_root: Path, project_root: Path) -> list[dict]:
             cwd=motor_root,
         ),
         _run(
-            [py, str(motor_root / "scripts" / "check_guard_wiring.py")],
+            [
+                py,
+                str(motor_root / "scripts" / "check_guard_wiring.py"),
+                # WOT-2026-070k: con root el orphan-owner check corre de
+                # verdad; sin el, el guard SKIP-ea y la deuda huerfana es
+                # invisible en el snapshot de estado.
+                "--project-root",
+                str(project_root),
+            ],
             cwd=motor_root,
         ),
     ]
