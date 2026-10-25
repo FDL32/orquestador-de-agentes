@@ -411,7 +411,9 @@ class TestVerdictEnv:
         env = rps._collect_verdict_env()
         assert env["PYTHONUTF8"] == "1"
         assert env["PYTHONIOENCODING"] is None
-        assert set(env) == set(rps._VERDICT_ENV_VARS)
+        # WOT-2026-100m: core_longpaths_effective es clave DERIVADA (valor
+        # efectivo de git config), no una var de entorno del allowlist.
+        assert set(env) - {"core_longpaths_effective"} == set(rps._VERDICT_ENV_VARS)
         assert "must-not-appear" not in repr(env)
 
     def test_project_root_is_recorded_as_presence_never_as_a_path(

@@ -4152,3 +4152,112 @@ class TestCrossWorktreeCliWiring:
             # el marcador es SEPARADO: el lock ajeno sigue en disco, intacto,
             # incluso tras el release del finally de main() (ownership check).
             assert lock_file.read_bytes() == before
+
+
+class TestEnvFingerprint100m:
+    """WOT-2026-100m: el sello declara el entorno que decide veredictos.
+
+    Un rojo y un verde del mismo cwd solo son atribuibles si el sello registra
+    las variables de entorno que cambian el resultado (GIT_CONFIG_*, TEMP/TMP,
+    PYTEST_ADDOPTS) y el valor EFECTIVO de core.longpaths. El campo
+    `env_fingerprint` es de nivel superior en last-run.json Y run_history.jsonl.
+    """
+
+    def test_verdict_env_values_when_git_config_set(self, monkeypatch) -> None:
+        mod = load_runner_module()
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.longpaths")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+        monkeypatch.setenv("PYTEST_ADDOPTS", "-x -q")
+        monkeypatch.setenv("TEMP", "C:/temp_test")
+        monkeypatch.setenv("TMP", "C:/tmp_test")
+        snap = mod._collect_verdict_env()
+        assert snap["GIT_CONFIG_COUNT"] == "1"
+        # El valor pasa entero SOLO si la key dice core.longpaths (credencial).
+        assert snap["GIT_CONFIG_VALUE_0"] == "true"
+        assert snap["PYTEST_ADDOPTS"] == "-x -q"
+        assert snap["TEMP"] == "C:/temp_test"
+        assert snap["TMP"] == "C:/tmp_test"
+        # El efectivo SIEMPRE existe como clave (None si git no lo resuelve).
+        assert "core_longpaths_effective" in snap
+
+    def test_verdict_env_nulls_on_clean_environment(self, monkeypatch) -> None:
+        mod = load_runner_module()
+        for name in (
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+            "PYTEST_ADDOPTS",
+            "TEMP",
+            "TMP",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        snap = mod._collect_verdict_env()
+        for name in (
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+            "PYTEST_ADDOPTS",
+            "TEMP",
+            "TMP",
+        ):
+            assert snap[name] is None, name
+
+    def test_verdict_env_masks_value_0_when_key_is_not_longpaths(
+        self, monkeypatch
+    ) -> None:
+        mod = load_runner_module()
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.extraheader")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", "AUTHORIZATION: basic ***")
+        snap = mod._collect_verdict_env()
+        assert snap["GIT_CONFIG_VALUE_0"] == "<set>"
+
+    def test_run_history_record_carries_top_level_env_fingerprint(self) -> None:
+        mod = load_runner_module()
+        record = {
+            "level": "unit",
+            "status": "passed",
+            "environment_at_start": {"verdict_env": {"TEMP": "x"}},
+        }
+        entry = mod.append_run_history
+        # append_run_history es fail-open y escribe en disco; aqui probamos el
+        # contrato de campo via un record real redirigido por el fixture
+        # autouse de WOT-2026-022g.
+        entry(record)
+        rows = mod.RUN_HISTORY_JSONL.read_text(encoding="utf-8").splitlines()
+        assert rows, "run_history no recibio la fila"
+        parsed = json.loads(rows[-1])
+        assert parsed["env_fingerprint"] == {"TEMP": "x"}
+
+    def test_run_history_record_env_fingerprint_falls_back_to_nested(self) -> None:
+        mod = load_runner_module()
+        record = {
+            "level": "unit",
+            "status": "passed",
+            "environment_at_start": {"verdict_env": {"TMP": "y"}},
+        }
+        mod.append_run_history(record)
+        rows = mod.RUN_HISTORY_JSONL.read_text(encoding="utf-8").splitlines()
+        parsed = json.loads(rows[-1])
+        assert parsed["env_fingerprint"] == {"TMP": "y"}
+
+    def test_last_run_json_carries_top_level_env_fingerprint(self) -> None:
+        mod = load_runner_module()
+        # El sello started escribe env_fingerprint de nivel superior. Lo
+        # verificamos sobre el write real de main() via dry-run, que construye
+        # el summary completo y lo persiste sin ejecutar pytest (paths ya
+        # redirigidos al tmp por el fixture autouse de WOT-2026-022g).
+        with patch.object(
+            sys, "argv", ["run_pytest_safe.py", "--dry-run", "--level", "unit"]
+        ):
+            rc = mod.main()
+        assert rc == 0
+        summary = json.loads(
+            _RUN_HISTORY_REDIRECT["last_run_json"].read_text(encoding="utf-8")
+        )
+        fp = summary.get("env_fingerprint")
+        assert isinstance(fp, dict), (
+            "last-run.json sin env_fingerprint de nivel superior"
+        )
+        assert "core_longpaths_effective" in fp
+        assert "TEMP" in fp and "TMP" in fp

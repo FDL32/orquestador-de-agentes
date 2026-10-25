@@ -837,7 +837,43 @@ _VERDICT_ENV_VARS = (
     # Presence only (see _PRESENCE_ONLY_ENV_VARS): test_055t fails when it is
     # exported, and its value is a filesystem path.
     "AGENT_PROJECT_ROOT",
+    # WOT-2026-100m: Windows temp dirs change pytest tmp fixtures and cache
+    # behavior; they are paths but not credentials, so values are kept.
+    "TEMP",
+    "TMP",
+    # WOT-2026-100m: manual pytest addopts silently change what "the suite"
+    # ran; the fingerprint must declare them to keep a rojo/verde attributable.
+    "PYTEST_ADDOPTS",
 )
+
+
+def _effective_core_longpaths() -> str | None:
+    """WOT-2026-100m: effective ``git config --get core.longpaths`` (fail-open).
+
+    Before: nothing.
+    During: one subprocess call against PROJECT_ROOT with a 10 s timeout; any
+        OSError/SubprocessError or nonzero rc yields None (the config may not
+        be set anywhere, which IS the information).
+    After: the configured value as a string, or None. Never raises.
+    """
+    try:
+        git_exe = shutil.which("git")
+        if git_exe is None:
+            return None
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no user input
+            [git_exe, "config", "--get", "core.longpaths"],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
 _PRESENCE_ONLY_ENV_VARS = frozenset({"AGENT_PROJECT_ROOT"})
 
 
@@ -848,6 +884,12 @@ def _collect_verdict_env() -> dict[str, str | None]:
     value, so run_history never stores a filesystem path; GIT_CONFIG_VALUE_0
     is masked unless GIT_CONFIG_KEY_0 is ``core.longpaths`` (it may hold a
     credential).
+
+    WOT-2026-100m: the snapshot also carries ``core_longpaths_effective`` --
+    the value git actually resolves for ``core.longpaths`` (via one fail-open
+    subprocess), not just the GIT_CONFIG_* env vars that may set it. A rojo and
+    a verde of the same cwd become attributable only when BOTH sources are in
+    the sello.
     """
     snapshot: dict[str, str | None] = {}
     for name in _VERDICT_ENV_VARS:
@@ -863,6 +905,7 @@ def _collect_verdict_env() -> dict[str, str | None]:
         and snapshot.get("GIT_CONFIG_KEY_0") != "core.longpaths"
     ):
         snapshot["GIT_CONFIG_VALUE_0"] = "<set>"
+    snapshot["core_longpaths_effective"] = _effective_core_longpaths()
     return snapshot
 
 
@@ -1968,6 +2011,12 @@ def append_run_history(summary: dict) -> None:
             # Included so run_history.jsonl entries are self-contained:
             # every row allows diagnosing slow runs without measuring the machine.
             "environment_at_start": summary.get("environment_at_start"),
+            # WOT-2026-100m: the env fingerprint as its own top-level field so
+            # a run_history row is attributable without mining the nested
+            # environment_at_start dict. Falls back to the nested copy for
+            # records built before the field existed at the top level.
+            "env_fingerprint": summary.get("env_fingerprint")
+            or (summary.get("environment_at_start") or {}).get("verdict_env"),
         }
         line = json.dumps(record, ensure_ascii=False)
 
@@ -2636,6 +2685,11 @@ def main() -> int:  # noqa: C901
         # WOT-2026-014b: informative field; does not change gate contract.
         "runner": _runner,
         "status": "started",
+        # WOT-2026-100m: explicit env fingerprint at the TOP LEVEL of the sello
+        # (not only nested in environment_at_start), so the freshness gate and
+        # any auditor can attribute a rojo/verde to its environment without
+        # knowing where the nested copy lives.
+        "env_fingerprint": _collect_verdict_env(),
         # WOT-2026-062e (Pieza A): environment snapshot at run start.
         # Written with fsync so it persists even if the process is killed.
         "environment_at_start": _collect_environment(),
