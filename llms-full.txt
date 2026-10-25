@@ -292,10 +292,7 @@ sobrevivieron. Sintoma, causa medida y las dos creencias falsas que NO conviene 
 
 ## Archivado de colaboracion (WP-2026-100)
 
-- `scripts/archive_collaboration_artifacts.py` mueve `PLAN_WP-*.md` y `AUDIT_WP-*.md` cerrados a `.agent/collaboration/_archive/plan_audit/`.
-- El ticket activo conserva solo sus documentos vivos en `collaboration/`.
-- El archivador es idempotente: segunda ejecucion = no-op.
-- Usa `--dry-run` para previsualizar sin modificar, `--list-active` para ver archivos activos.
+Comandos e idempotencia: .agent/rules/common/collaboration_archivo.md. Regla de herencia al absorber fichas (042l): .agent/rules/common/backlog_fusion_herencia.md.
 
 ## Superficies vivas vs historicas en `.agent/collaboration/` (WP-2026-107)
 

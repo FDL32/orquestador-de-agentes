@@ -2143,6 +2143,167 @@ def validate_live_dependencies(root: Path) -> list[str]:
 _DETAIL_LIVE_STATES = frozenset(LIVE_STATES)
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-042l: regla de herencia al absorber fichas (fusion)
+# ---------------------------------------------------------------------------
+
+_ABSORB_MARKER_RE = re.compile(
+    r"\[ABSORBE:?\s*((?:WOT-[0-9]{4}-[0-9a-z]+)"
+    r"(?:\s*,\s*WOT-[0-9]{4}-[0-9a-z]+)*)\]",
+    re.IGNORECASE,
+)
+_PRIORITY_RANK = {"alta": 3, "media": 2, "baja": 1}
+
+
+def _row_priority(cells: list[str]) -> str | None:
+    """Return the priority of a Prioridad-led row (cell 0), or None."""
+    if len(cells) >= 8 and cells[0].strip().lower() in _PRIORITY_RANK:
+        return cells[0].strip().lower()
+    return None
+
+
+def _absorption_requests(
+    live_rows: list[str], live_ids: set[str]
+) -> list[tuple[str, str, str, str]]:
+    """Return (absorber_id, absorber_row, absorbed_id, absorber_priority)
+    declared by live 8-column rows.
+
+    Skips: compact rows (fuera del alcance declarado), self-absorption, and
+    absorbed ids still in the live queue (fusion not yet executed).
+    """
+    requests: list[tuple[str, str, str, str]] = []
+    for row in live_rows:
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        tid = _row_ticket_id(row)
+        if tid is None or len(cells) < 8:
+            continue
+        priority = cells[0].strip().lower()
+        for match in _ABSORB_MARKER_RE.finditer(row):
+            absorbed_ids = [a.strip() for a in match.group(1).split(",")]
+            requests.extend(
+                (tid, row, absorbed, priority)
+                for absorbed in absorbed_ids
+                if absorbed.lower() != tid.lower() and absorbed not in live_ids
+            )
+    return requests
+
+
+def _absorption_violations_for_id(
+    absorber: str,
+    absorber_row: str,
+    absorbed: str,
+    absorber_priority: str,
+    archive_rows: dict[str, tuple[list[str], str]],
+) -> list[str]:
+    """Return the 042l violations caused by absorbing ``absorbed`` into
+    ``absorber`` (priority max + reactivation union + trace)."""
+    entry = archive_rows.get(absorbed)
+    if entry is None:
+        return [
+            f"ABSORPTION_LOST_TRACE: la fila viva {absorber} declara "
+            f"[ABSORBE {absorbed}] pero {absorbed} no esta ni en la "
+            "cola viva ni en el archive: la ficha absorbida "
+            "desaparecio sin fila terminal (regla de herencia 042l)"
+        ]
+    cells_absorbed, _row_text = entry
+    violations: list[str] = []
+    prio_absorbed = _row_priority(cells_absorbed)
+    if (
+        prio_absorbed
+        and absorber_priority in _PRIORITY_RANK
+        and _PRIORITY_RANK[prio_absorbed] > _PRIORITY_RANK[absorber_priority]
+    ):
+        violations.append(
+            f"ABSORPTION_PRIORITY_DEGRADES: {absorber} ({absorber_priority}) "
+            f"absorbe a {absorbed} ({prio_absorbed}): la ficha "
+            "resultante debe tomar la prioridad MAXIMA del "
+            "conjunto (regla 042l)"
+        )
+    react_absorbed = _archive_row_reactivation(cells_absorbed)
+    if (
+        react_absorbed
+        and react_absorbed != "-"
+        and react_absorbed.lower() not in _VAGUE_REACTIVATION
+    ):
+        normalized = " ".join(react_absorbed.split()).lower()
+        if normalized not in " ".join(absorber_row.split()).lower():
+            violations.append(
+                f"ABSORPTION_REACTIVATION_LOST: {absorbed} aporta "
+                f"el criterio de salida '{react_absorbed}' y no "
+                f"aparece representado en la fila absorbente {absorber} "
+                "(la union de criterios es obligatoria; el campo "
+                "nativo Reactivation no se degrada a prosa) "
+                "(regla 042l)"
+            )
+    return violations
+
+
+def validate_absorption_inheritance(root: Path) -> list[str]:
+    """Return absorption-inheritance violations (empty == clean).
+
+    WOT-2026-042l: a live Prioridad-led row declaring ``[ABSORBE: <id>]``
+    inherits from every cited absorbed row: (i) the surviving row keeps the
+    MAXIMUM priority of the set -- an absorption that downgrades priority is a
+    silent degradation no gate caught until now; (ii) every non-empty
+    Reactivation of an absorbed row must be represented IN the surviving row
+    (the union of exit criteria; the native Reactivation field is never
+    degraded to prose of the body); (iii) an absorbed id found in NEITHER
+    surface is a lost trace (the absorbed ficha vanished without a terminal
+    row).
+
+    Scope declared: only Prioridad-led (8-column) live rows are audited; a
+    live row whose marker cites an id still in the live queue is skipped (the
+    absorption has not been executed yet). Historical fusions are not
+    rewritten (NON-GOAL of 042l).
+
+    Before: ``root`` is the project root (backlog + archive nearby).
+    During: scans live rows for the canonical marker, cross-references the
+        archive for each absorbed id, compares priorities and reactivation
+        preservation.
+    After: one violation string per broken inheritance rule found.
+    """
+    bound, _prefix_err = ensure_bound(root)
+    if not bound:
+        return []
+    collab = root / ".agent" / "collaboration"
+    backlog_path = collab / "backlog.md"
+    archive_path = collab / "_archive" / "backlog_done.md"
+    if not backlog_path.exists():
+        return []
+    try:
+        live_content = backlog_path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return []
+    live_rows = [
+        ln.strip() for ln in live_content.splitlines() if _is_ticket_row(ln.strip())
+    ]
+    archive_rows: dict[str, tuple[list[str], str]] = {}
+    if archive_path.exists():
+        try:
+            archive_content = archive_path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            archive_content = ""
+        for ln in archive_content.splitlines():
+            stripped = ln.strip()
+            if not stripped.startswith("|"):
+                continue
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            tid = _find_ticket_cell(cells)
+            if tid is not None:
+                archive_rows.setdefault(tid, (cells, stripped))
+    live_ids = {tid for r in live_rows if (tid := _row_ticket_id(r)) is not None}
+    violations: list[str] = []
+    for absorber, absorber_row, absorbed, priority in _absorption_requests(
+        live_rows, live_ids
+    ):
+        violations.extend(
+            _absorption_violations_for_id(
+                absorber, absorber_row, absorbed, priority, archive_rows
+            )
+        )
+    return violations
+
+
 def _extract_ficha_sections(content: str) -> list[tuple[str, list[str]]]:
     """Return list of (ticket_id, lines) for each ficha detail section.
 
@@ -2632,6 +2793,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     violations = violations + validate_archive_retired_prose_preservation(root)
     # WOT-2026-049c: una fila VIVA no puede depender de un ticket ya cerrado.
     violations = violations + validate_live_dependencies(root)
+    # WOT-2026-042l: herencia al absorber fichas (prioridad maxima + union de
+    # criterios de salida; traza de la absorbida).
+    violations = violations + validate_absorption_inheritance(root)
     # WOT-2026-059p: detail-section stale states after closure transfer (WARN).
     detail_warnings = validate_detail_section_states(root)
     for w in detail_warnings:

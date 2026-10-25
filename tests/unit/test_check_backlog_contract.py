@@ -3335,3 +3335,126 @@ def test_059s_baseline_shrink_must_transfer_to_retired_with_fidelity() -> None:
                 f"original ({original_prose!r})"
             )
     assert not errors, "; ".join(errors)
+
+
+class TestAbsorptionInheritance042l:
+    """WOT-2026-042l: herencia al absorber fichas (fusion).
+
+    (a) prioridad MAXIMA del conjunto: una fusion que baja prioridad cae;
+    (b)/(union) todo Reactivation no vacio de la absorbida queda representado
+    en la fila resultante; (c) absorbed id sin traza en ninguna superficie cae.
+    Fusion legitima que consolida a prioridad mayor sigue pasando (NON-GOAL).
+    """
+
+    @staticmethod
+    def _live(prio: str, tid: str, body: str, react: str = "-") -> str:
+        return (
+            f"| {prio} | {tid} | {body} deliverable_type: code | s | pending | - | x |"
+            f" {react} |\n"
+        )
+
+    @staticmethod
+    def _archived(prio: str, tid: str, react: str) -> str:
+        return (
+            f"| {prio} | {tid} | Titulo de la absorbida deliverable_type: code | s |"
+            f" completed | - | x | {react} |\n"
+        )
+
+    def test_fusion_legitima_pasa(self, tmp_path: Path) -> None:
+        _write_backlog(
+            tmp_path,
+            self._live(
+                "Media",
+                "WOT-2026-050b",
+                "Cluster [ABSORBE: WOT-2026-050a] criterio condition:umbral-300s",
+            ),
+        )
+        _write_archive(
+            tmp_path,
+            _ARCHIVE_HEADER
+            + self._archived("Baja", "WOT-2026-050a", "condition:umbral-300s"),
+        )
+        assert cbc.validate_absorption_inheritance(tmp_path) == []
+
+    def test_fusion_que_baja_prioridad_cae(self, tmp_path: Path) -> None:
+        _write_backlog(
+            tmp_path,
+            self._live(
+                "Baja",
+                "WOT-2026-050b",
+                "Cluster [ABSORBE: WOT-2026-050a] criterio condition:umbral-300s",
+            ),
+        )
+        _write_archive(
+            tmp_path,
+            _ARCHIVE_HEADER
+            + self._archived("Media", "WOT-2026-050a", "condition:umbral-300s"),
+        )
+        errs = cbc.validate_absorption_inheritance(tmp_path)
+        assert len(errs) == 1, errs
+        assert "ABSORPTION_PRIORITY_DEGRADES" in errs[0]
+        assert "WOT-2026-050a" in errs[0] and "WOT-2026-050b" in errs[0]
+
+    def test_reactivation_de_absorbida_perdido_cae(self, tmp_path: Path) -> None:
+        _write_backlog(
+            tmp_path,
+            self._live(
+                "Media",
+                "WOT-2026-050b",
+                "Cluster [ABSORBE: WOT-2026-050a]",
+            ),
+        )
+        _write_archive(
+            tmp_path,
+            _ARCHIVE_HEADER
+            + self._archived("Baja", "WOT-2026-050a", "condition:mediana-<300s"),
+        )
+        errs = cbc.validate_absorption_inheritance(tmp_path)
+        assert len(errs) == 1, errs
+        assert "ABSORPTION_REACTIVATION_LOST" in errs[0]
+
+    def test_absorbida_sin_traza_cae(self, tmp_path: Path) -> None:
+        _write_backlog(
+            tmp_path,
+            self._live(
+                "Media",
+                "WOT-2026-050b",
+                "Cluster [ABSORBE: WOT-2026-077x]",
+            ),
+        )
+        # ni backlog vivo (solo 050b) ni archive la mencionan
+        errs = cbc.validate_absorption_inheritance(tmp_path)
+        assert len(errs) == 1, errs
+        assert "ABSORPTION_LOST_TRACE" in errs[0]
+        assert "WOT-2026-077x" in errs[0]
+
+    def test_absorbida_aun_viva_se_salta(self, tmp_path: Path) -> None:
+        _write_backlog(
+            tmp_path,
+            self._live("Media", "WOT-2026-050b", "Cluster [ABSORBE: WOT-2026-050a]")
+            + self._live("Baja", "WOT-2026-050a", "Ficha original"),
+        )
+        assert cbc.validate_absorption_inheritance(tmp_path) == []
+
+    def test_gate_main_bloquea_fusion_que_degrada(self, tmp_path: Path) -> None:
+        cfg = tmp_path / ".agent" / "config"
+        cfg.mkdir(parents=True, exist_ok=True)
+        (cfg / "motor_destination_link.json").write_text(
+            json.dumps({"ticket_prefix": "WOT"}), encoding="utf-8"
+        )
+        cbc.unbind_ticket_patterns()
+        _write_backlog(
+            tmp_path,
+            self._live(
+                "Baja",
+                "WOT-2026-050b",
+                "Cluster [ABSORBE: WOT-2026-050a] criterio condition:umbral-300s",
+            ),
+        )
+        _write_archive(
+            tmp_path,
+            _ARCHIVE_HEADER
+            + self._archived("Media", "WOT-2026-050a", "condition:umbral-300s"),
+        )
+        rc = cbc.main(["--project-root", str(tmp_path)])
+        assert rc == 1
