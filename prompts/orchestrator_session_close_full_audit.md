@@ -378,6 +378,67 @@ Invariante de arbol de cierre (v3 P1 delta): antes de correr `prepush_check`/`--
    - NO asumas un warning "esperado" de `work_plan.md` ausente tras el cierre. Re-valida siempre contra la fuente viva: si `validate --json` da `0 errors`, documenta `0 errors`; si aparece una warning nueva, tratala como senal real del estado presente, no como folklore del cierre anterior.
    - `TURN.md` puede quedar en `ROL=MANAGER`, `ACCION=CREATE_PLAN`, `Plan ID: N/A` inmediatamente despues del cierre. Eso NO bloquea el cierre si `validate --json` sigue en `0 errors`. El siguiente bootstrap/arranque de ticket debe regenerarlo; no lo eleves a hallazgo si no rompe validacion.
 
+== BLOQUE 3.5-BIS: COORDINACION CROSS-SESION ANTES DE PUSH (WOT-2026-104d) ==
+Antes de que el humano ejecute el `git push` a `main` que cierra Bloque 3, esta
+sesion declara su intencion a cualquier otra sesion T3 activa -- hoy ese aviso
+era disciplina ad-hoc por `SendMessage` informal, no un paso del propio
+prompt. Este bloque lo hace explicito y deja su propio recibo citable en el
+informe de cierre. `ListAgents` no filtra por repo (lista todas las sesiones
+T3 visibles de la cuenta, sin importar en que worktree operen): no intentes
+filtrar tu por repo o superficie antes de contactar -- el mensaje del punto
+(b) ya lleva el detalle (SHA, ficheros, categorias de riesgo) para que cada
+sesion contactada decida ELLA si le afecta.
+
+3.5-bis.a `ListAgents` para enumerar las sesiones T3 activas ahora mismo. Si el
+    listado sale vacio, no hay nadie que coordinar: documenta "Bloque 3.5-bis:
+    ListAgents vacio, sigue sin coordinacion" y continua al push sin mas
+    tramite (NON-GOAL: esto no bloquea un push en solitario).
+
+3.5-bis.b Si `ListAgents` devuelve una o mas sesiones, `SendMessage` a cada una
+    declarando el contrato minimo (el mismo que especifico en vivo la sesion
+    hermana que origino este ticket, cierre WOT-2026-104a/103f/104b
+    2026-10-18):
+    1. El SHA local exacto que se va a pushear (`git rev-parse HEAD`, no solo
+       el nombre de la rama).
+    2. La lista de ficheros tocados contra el merge-base
+       (`git diff --name-only <merge-base>..HEAD`), senalando explicitamente
+       si alguno cae en una de estas dos categorias de riesgo (pueden chocar
+       en CONTENIDO aunque los ficheros sean disjuntos de los de la otra
+       sesion):
+       - superficies GENERADAS (`ROUTER.md`, `INDEX.md`, cualquier cosa
+         regenerada por un `--check-index`);
+       - superficies TRANSVERSALES de alto blast radius (`.pre-commit-config.yaml`,
+         `AGENTS.md`, `CLAUDE.md`, `conftest.py`, `uv.lock`).
+    3. Confirmacion de que esta sesion ya corrio su propio gate de
+       frescura/suite (Bloque 3) antes de pedir luz verde.
+    Pide confirmacion EXPLICITA de cada sesion contactada.
+
+3.5-bis.c Define un plazo de espera razonable antes de continuar (una ronda de
+    trabajo de esta sesion sobre otros pasos del cierre es suficiente; no
+    bloquees indefinidamente esperando una respuesta). Si al llegar el momento
+    de pushear no hay respuesta de alguna sesion contactada, o la respuesta no
+    es una confirmacion clara, trata ese caso como `NO VERIFICABLE` -- nunca
+    silencio = OK por defecto -- y declaralo explicitamente, por sesion, en el
+    informe de cierre.
+
+3.5-bis.d Si cualquier sesion contactada senala solapamiento real sobre las
+    categorias de riesgo del punto (2), DETENTE: no fuerces el push. Escala al
+    humano con el solapamiento citado (que sesion, que ficheros, que
+    categoria) para que decida como secuenciar ambos trabajos.
+
+MUTATION/CONTROL (recibo citable, no solo prosa): el informe de cierre debe
+nombrar, para este bloque, exactamente uno de estos CUATRO estados -- "sin
+sesiones activas (ListAgents vacio)", "coordinado (N sesiones confirmaron)",
+"NO VERIFICABLE (sesiones sin confirmar: <lista>)", o "DETENIDO (solapamiento
+real senalado por <sesion>: <ficheros/categoria>, push NO ejecutado, escalado
+al humano)". Un cierre que pushee sin que el informe mencione el Bloque
+3.5-bis en absoluto es un paso SALTADO SIN DECLARAR, detectable por una
+lectura del informe igual que el resto del Bloque 3.
+
+NON-GOALS: este bloque no implementa un lock distribuido real entre sesiones
+(infraestructura mayor, fuera de alcance); no bloquea el push si no hay ninguna
+sesion T3 activa que coordinar.
+
 == BLOQUE 4: PROMOCION DE MEMORIA (decision, no escritura ciega) ==
 
 4.0 OPTIMIZACION DEL SISTEMA DE MEMORIA (la MEDICION es automatica en cada
