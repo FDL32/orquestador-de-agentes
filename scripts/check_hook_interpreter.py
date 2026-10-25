@@ -180,12 +180,18 @@ def _default_hooks_dir(repo_root: Path) -> Path:
 
 
 def _regenerate_hooks(repo_root: Path) -> subprocess.CompletedProcess[str]:
-    """Regenerate hooks via `pre-commit install --overwrite` for both types.
+    """Regenerate hooks via `pre-commit install --overwrite` for ALL types.
 
     Before: pre-commit is importable in the current interpreter. During: run the
-    module with the running interpreter (never the broken PATH one). After:
-    return the completed process; caller inspects returncode.
+        module with the running interpreter (never the broken PATH one), pidiendo
+        UN --hook-type POR CADA tipo gestionado (WOT-2026-051c ronda 1, hallazgo
+        Codex: la lista fija pre-commit/pre-push dejaba commit-msg fuera, asi que
+        --fix no reparaba el caso que el detector nuevo identifica).
+    After: return the completed process; caller inspects returncode.
     """
+    hook_type_args: list[str] = []
+    for hook_type in HOOK_TYPES:
+        hook_type_args.extend(["--hook-type", hook_type])
     return subprocess.run(  # noqa: S603
         [
             sys.executable,
@@ -193,10 +199,7 @@ def _regenerate_hooks(repo_root: Path) -> subprocess.CompletedProcess[str]:
             "pre_commit",
             "install",
             "--overwrite",
-            "--hook-type",
-            "pre-commit",
-            "--hook-type",
-            "pre-push",
+            *hook_type_args,
         ],
         cwd=repo_root,
         check=False,
@@ -218,7 +221,7 @@ def _actionable_message(repo_root: Path, stale: list[HookStatus]) -> str:
     lines.append(
         "  Fix: regenerate the hooks with the repo venv interpreter, e.g.\n"
         "    <repo>\\.venv\\Scripts\\python.exe -m pre_commit install --overwrite "
-        "--hook-type pre-commit --hook-type pre-push"
+        + " ".join(f"--hook-type {h}" for h in HOOK_TYPES)
     )
     lines.append(
         f"  Or run this check with --fix: python scripts/check_hook_interpreter.py "

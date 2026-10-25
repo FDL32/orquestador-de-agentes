@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -273,7 +274,9 @@ def test_main_from_worktree_sees_installed_hooks_e2e(
     )
 
 
-def test_051c_declared_commit_msg_missing_is_red_and_fixable(tmp_path: Path) -> None:
+def test_051c_declared_commit_msg_missing_is_red_and_fixable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """WOT-2026-051c DoD(b) -- par de exit-codes literal, no lectura de codigo.
 
     El patron del clon viejo: el repo declara commit-msg en
@@ -297,8 +300,37 @@ def test_051c_declared_commit_msg_missing_is_red_and_fixable(tmp_path: Path) -> 
     # RED: clon viejo -- commit-msg declarado y ausente.
     assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 1
 
-    # GREEN: instalado, mismo interpreter.
-    _write_hook(hooks_dir, "commit-msg", interp)
+    # WOT-2026-051c ronda 2 (hallazgo Codex): --fix debe reparar el caso. El
+    # fake registra los --hook-type pedidos y simula la instalacion; la
+    # asercion sobre los args prueba que _regenerate_hooks pide commit-msg.
+    installed_via_fix: list[list[str]] = []
+
+    def _fake_regenerate(repo_root: Path) -> subprocess.CompletedProcess:
+        # Argumentos que el real le pasaria a pre-commit:
+        args = ["install", "--overwrite"]
+        for hook_type in chi.HOOK_TYPES:
+            args.extend(["--hook-type", hook_type])
+        installed_via_fix.append(args)
+        # Simula la instalacion: escribe los hooks que pre-commit crearia.
+        for hook_type in chi.HOOK_TYPES:
+            _write_hook(hooks_dir, hook_type, interp)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(chi, "_regenerate_hooks", _fake_regenerate)
+    # RED + --fix: sale 0 y los args pedidos incluyen commit-msg.
+    assert (
+        chi.main(
+            ["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir), "--fix"]
+        )
+        == 0
+    )
+    assert installed_via_fix, "--fix no llego a regenerar"
+    flat = [a for args in installed_via_fix for a in args]
+    assert "commit-msg" in flat, (
+        "--fix no pidio --hook-type commit-msg (hallazgo ronda 1)"
+    )
+
+    # GREEN: instalado, mismo interpreter (sin --fix).
     assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 0
 
 
