@@ -390,3 +390,12 @@ wired_via:
     _run([sys.executable, "scripts/check_motor_pristine.py", "--snapshot", ...])).
     Probe: grep -n "check_motor_pristine.py" scripts/collect_system_health.py
     -> :452; el recolector corre en cada system-health audit del cierre.
+
+# WOT-2026-049g: los 3 casos documentados de la ficha (barreras reales sin
+# prefijo), registrados POR CLASE en el registro known_hooks del censo de
+# hooks. Los otros 25 no-reconocidos del censo estan EN CONSULTA con la
+# orquestadora (activacion de rc 1 diferida).
+known_hooks:
+  - pip_audit_project
+  - claude_guard_entry
+  - prepush_check
