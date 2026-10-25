@@ -127,3 +127,59 @@ def test_049g_real_tree_three_cases_visible(tmp_path: Path) -> None:
     assert "closeout" in stages_pc
     assert "pre-push" not in stages_pc
     assert any("gates.py" in s for s in sources_pc)
+
+
+def test_049g_r3_comment_mention_is_not_invocation(tmp_path: Path) -> None:
+    """Ronda 3 (hallazgo Codex): un COMENTARIO que menciona foo.py no es una
+    invocacion; la linea de codigo real si se censada."""
+    config = (
+        "repos:\n"
+        "  - repo: local\n"
+        "    hooks:\n"
+        "      - id: real\n"
+        "        entry: python scripts/check_real.py\n"
+        "        language: system\n"
+        "        stages: [pre-commit]\n"
+    )
+    _make_motor(
+        tmp_path,
+        config,
+        {
+            "check_real.py": "x",
+            "foo.py": "x",
+            "prepush_check.py": "x",
+        },
+    )
+    # Comentario en un modulo de closeout que menciona foo.py: NO invoca.
+    closeout = tmp_path / "scripts" / "closeout_steps"
+    closeout.mkdir(parents=True, exist_ok=True)
+    (closeout / "gates.py").write_text(
+        "# comment mentions foo.py only\nfrom prepush_check import x\n",
+        encoding="utf-8",
+    )
+    policy = {
+        "known_hooks": [],
+        "known_unwired": {},
+        "extra_guards": {},
+        "wired_via": {},
+    }
+    census = cgw.census_hooks(tmp_path)
+    assert "scripts/foo.py" not in census
+    assert "scripts/check_real.py" in census
+    assert "prepush_check.py" in census
+    assert cgw.hook_census_report(tmp_path, policy, enforce=True) == 0
+
+
+def test_049g_r3_workflows_yaml_extension(tmp_path: Path) -> None:
+    """Ronda 3 (hallazgo Codex): los workflows .yaml tambien se censan."""
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True, exist_ok=True)
+    (wf / "ci.yaml").write_text(
+        "jobs:\n  a:\n    steps:\n      - run: python scripts/foo.py\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "foo.py").write_text("x", encoding="utf-8")
+    census = cgw.census_hooks(tmp_path)
+    assert "scripts/foo.py" in census
+    assert any("ci.yaml" in i["source"] for i in census["scripts/foo.py"])
