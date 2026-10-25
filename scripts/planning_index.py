@@ -126,17 +126,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     entries = build_index(planning_dir)
+    # WOT-2026-090h ronda 2 (hallazgo Codex): el formato PERSISTIDO respeta el
+    # formato de salida (--json persiste JSON, no una mezcla).
     if args.json:
-        print(json.dumps(entries, indent=1, ensure_ascii=True))
+        content = json.dumps(entries, indent=1, ensure_ascii=True)
+        print(content)
     else:
-        print(render_markdown(planning_dir, entries), end="")
+        content = render_markdown(planning_dir, entries)
+        print(content, end="")
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(render_markdown(planning_dir, entries), encoding="utf-8")
+        args.out.write_text(content, encoding="utf-8")
         print(
             f"[planning-index] indice persistido en {args.out} "
-            f"({len(entries)} ficheros) -- opt-in explicito del operador",
+            f"({len(entries)} ficheros, formato "
+            f"{'json' if args.json else 'markdown'}) -- opt-in explicito del operador",
             file=sys.stderr,
         )
     return 0

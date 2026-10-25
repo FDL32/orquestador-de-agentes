@@ -97,3 +97,17 @@ def test_026o_cli_persists_only_with_out(tmp_path: Path, capsys) -> None:
 def test_026o_cli_missing_planning_fails_closed(tmp_path: Path, capsys) -> None:
     assert pi.main(["--project-root", str(tmp_path)]) == 2
     assert "nunca un indice vacuo" in capsys.readouterr().err
+
+
+def test_090h_r2_json_out_persists_json(tmp_path: Path) -> None:
+    """Ronda 2 (hallazgo Codex): --json --out persiste JSON, no Markdown."""
+    import json as jsonlib
+
+    _make_planning(tmp_path, {"work_plan.md": "x"})
+    out_file = tmp_path / "indice.json"
+    assert (
+        pi.main(["--project-root", str(tmp_path), "--json", "--out", str(out_file)])
+        == 0
+    )
+    data = jsonlib.loads(out_file.read_text(encoding="utf-8"))
+    assert isinstance(data, list) and data[0]["file"] == "work_plan.md"
