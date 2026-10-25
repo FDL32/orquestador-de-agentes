@@ -75,15 +75,17 @@ def _remote_refs_from_stdin() -> list[str]:
 
 
 def _is_main_target(remote_refs: list[str], env: dict[str, str]) -> bool:
-    """True si alguna ref remota del push es main.
+    """True si alguna ref remota del push es main (ronda 1, hallazgo Codex).
 
-    Before: remote_refs del stdin y el entorno de pre-commit. During: refs
-        `refs/heads/main` o que terminan en `/main`; fallback
-        PRE_COMMIT_REMOTE_BRANCH cuando el stdin no trae nada. After: bool.
+    Before: remote_refs del stdin y el entorno de pre-commit. During:
+        IGUALDAD EXACTA con `refs/heads/main` (endswith('/main') tambien casaba
+        refs/heads/feature/main y refs/tags/main); el fallback
+        PRE_COMMIT_REMOTE_BRANCH SOLO aplica cuando el stdin NO trajo refs
+        (un fallback stale 'main' bloqueaba un push real a feature-x). After:
+        bool.
     """
-    for ref in remote_refs:
-        if ref == "refs/heads/main" or ref.endswith("/main"):
-            return True
+    if remote_refs:
+        return any(ref == "refs/heads/main" for ref in remote_refs)
     branch = env.get("PRE_COMMIT_REMOTE_BRANCH", "")
     return branch in ("main", "refs/heads/main", "origin/main")
 
@@ -151,6 +153,18 @@ def run(
             return 0
 
         tipo = str(declaration.get("tipo", ""))
+        # WOT-2026-040z ronda 2 (hallazgo Codex): una declaracion con tipo
+        # ausente o DESCONOCIDO no es autoridad (fail-closed); se exige
+        # redeclarar. VALID_TYPES existe para esto.
+        if tipo not in VALID_TYPES:
+            print(
+                "[push-authority] FAIL: declaracion INVALIDA "
+                f"(tipo={tipo!r}, valores validos: {', '.join(VALID_TYPES)}). "
+                "Redeclara: python scripts/destination_context.py --bootstrap "
+                "--project-root <raiz> --session-type desarrollo",
+                file=sys.stderr,
+            )
+            return 1
         if tipo != "diseno":
             print(
                 f"[push-authority] PASS: sesion declarada '{tipo}' pusha a main "

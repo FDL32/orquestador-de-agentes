@@ -132,3 +132,43 @@ def test_040z_bootstrap_declaration_writes_session_type(tmp_path: Path) -> None:
         ["--bootstrap", "--project-root", str(dest), "--session-type", "improvisado"]
     )
     assert rc == 1
+
+
+def test_040z_r2_feature_main_y_tags_main_no_son_main(tmp_path: Path) -> None:
+    """Ronda 2 (hallazgo Codex): endswith('/main') era falso positivo;
+    igualdad exacta con refs/heads/main."""
+    _declare(tmp_path, "desarrollo")
+    assert (
+        cpa.run(
+            tmp_path,
+            stdin_remote_refs=["refs/heads/feature/main", "refs/tags/main"],
+            env={},
+        )
+        == 0
+    )
+
+
+def test_040z_r2_fallback_stale_no_aplica_con_refs_en_stdin(
+    tmp_path: Path,
+) -> None:
+    """Ronda 2 (hallazgo Codex): si el stdin trae refs, PRE_COMMIT_REMOTE_BRANCH
+    stale no bloquea un push real a feature-x."""
+    _declare(tmp_path, "diseno")
+    rc = cpa.run(
+        tmp_path,
+        stdin_remote_refs=["refs/heads/feature-x"],
+        env={"PRE_COMMIT_REMOTE_BRANCH": "main"},
+    )
+    assert rc == 0
+
+
+def test_040z_r2_tipo_desconocido_o_ausente_bloquea(tmp_path: Path) -> None:
+    """Ronda 2 (hallazgo Codex): declaracion con tipo desconocido o ausente no
+    es autoridad (fail-closed): pide redeclarar."""
+    session_dir = tmp_path / ".agent" / "runtime" / "session"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    path = session_dir / "session_type.json"
+    path.write_text(json.dumps({"tipo": "improvisado"}), encoding="utf-8")
+    assert cpa.run(tmp_path, stdin_remote_refs=MAIN_REFS, env={}) == 1
+    path.write_text(json.dumps({"declared_at": "t"}), encoding="utf-8")
+    assert cpa.run(tmp_path, stdin_remote_refs=MAIN_REFS, env={}) == 1
