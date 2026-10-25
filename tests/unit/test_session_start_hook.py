@@ -404,6 +404,231 @@ def test_hook_from_the_motor_also_loads_its_dogfooding_workspace(
     )
 
 
+def test_m2_dogfooding_workspace_resolves_motor_root_in_clean_subprocess(
+    tmp_path: Path,
+) -> None:
+    """M2: el hook resuelve el destino pareado desde un subproceso limpio (sin PYTHONPATH).
+
+    Reproduce la topologia T3 dentro de ``tmp_path`` sin ``motor_workspace.txt``:
+    motor = ``tmp_path/wt/repo/rama`` (con ``.claude/``),
+    destino = ``tmp_path/wt/repo_workspace/rama`` con
+    ``.agent/config/motor_destination_link.json`` cuyo ``motor_root`` apunta al motor.
+
+    Se invoca con ``-I`` (modo isolated): ni ``PYTHONPATH`` ni ``cwd`` estan
+    en ``sys.path`` del hijo, asi que ``bus`` solo es importable si el hook
+    inserta la raiz del motor mediante ``_motor_root`` + ``sys.path.insert``.
+
+    Asserts: rc 0, ``CANARIO-DEL-MOTOR`` y ``CANARIO-DEL-DESTINO`` en el
+    ``additionalContext``.
+
+    MUTACION ALCANZABLE: cambiar ``(root)`` por ``(_motor_root(root))`` en
+    la llamada a ``resolve_paired_destination`` dentro de ``_dogfooding_workspace``
+    -> este test cae (el resolvedor recibe el motor errado).
+    """
+    import sys
+
+    motor = tmp_path / "wt" / "repo" / "rama"
+    destino = tmp_path / "wt" / "repo_workspace" / "rama"
+
+    # Estructura del motor
+    (motor / ".claude").mkdir(parents=True)
+    (motor / ".agent" / "config").mkdir(parents=True)
+    (motor / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+
+    # Estructura del destino (sin motor_workspace.txt en el motor)
+    (destino / ".claude").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps(
+            {
+                "motor_root": str(motor),
+                "destination_root": str(destino),
+                "destination_id": "rama",
+                "ticket_prefix": "WOT",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _entry(canary: str, topic: str) -> str:
+        return (
+            json.dumps(
+                {
+                    "id": f"obs-{topic}",
+                    "timestamp": "2026-07-28T00:00:00+00:00",
+                    "topic": topic,
+                    "signal": canary,
+                    "source": "test",
+                    "source_ticket": "WOT-2026-127d",
+                }
+            )
+            + "\n"
+        )
+
+    (
+        motor
+        / ".agent"
+        / "runtime"
+        / "memory"
+        / "archive"
+        / "observations.2026-07.jsonl"
+    ).write_text(_entry("CANARIO-DEL-MOTOR", "solo-motor"), encoding="utf-8")
+    (
+        destino
+        / ".agent"
+        / "runtime"
+        / "memory"
+        / "archive"
+        / "observations.2026-07.jsonl"
+    ).write_text(_entry("CANARIO-DEL-DESTINO", "solo-destino"), encoding="utf-8")
+
+    payload = json.dumps({"session_id": "t", "hook_event_name": "SessionStart"}).encode(
+        "utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", str(_HOOK)],
+        input=payload,
+        capture_output=True,
+        cwd=str(motor),
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
+    assert "CANARIO-DEL-MOTOR" in ctx, (
+        "el hook en subprocess limpio no vio la memoria del motor"
+    )
+    assert "CANARIO-DEL-DESTINO" in ctx, (
+        "el hook en subprocess limpio no vio la memoria del destino pareado"
+    )
+
+
+def test_hook_with_corrupt_paired_link_still_delivers_motor_memory(
+    tmp_path: Path,
+) -> None:
+    """N3: hook con link corrupto ([]) degrade a motor-only sin _LOAD_FAILED.
+
+    Topologia T3: motor = tmp_path/wt/repo/rama,
+    destino = tmp_path/wt/repo_workspace/rama con
+    .agent/config/motor_destination_link.json = []. Se invoca con ``-I``.
+
+    Asserts: rc 0, ``CANARIO-DEL-MOTOR`` in ctx, ``_LOAD_FAILED`` NOT in ctx.
+    """
+    import sys
+
+    motor = tmp_path / "wt" / "repo" / "rama"
+    destino = tmp_path / "wt" / "repo_workspace" / "rama"
+
+    (motor / ".claude").mkdir(parents=True)
+    (motor / ".agent" / "config").mkdir(parents=True)
+    (motor / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    (destino / ".claude").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        "[]\n",
+        encoding="utf-8",
+    )
+
+    (
+        motor
+        / ".agent"
+        / "runtime"
+        / "memory"
+        / "archive"
+        / "observations.2026-07.jsonl"
+    ).write_text(
+        json.dumps(
+            {
+                "id": "obs-motor",
+                "timestamp": "2026-07-28T00:00:00+00:00",
+                "topic": "solo-motor",
+                "signal": "CANARIO-DEL-MOTOR",
+                "source": "test",
+                "source_ticket": "WOT-2026-127d",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = json.dumps({"session_id": "t", "hook_event_name": "SessionStart"}).encode(
+        "utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", str(_HOOK)],
+        input=payload,
+        capture_output=True,
+        cwd=str(motor),
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
+    assert "CANARIO-DEL-MOTOR" in ctx, (
+        "con link corrupto, el hook debe entregar la memoria del motor"
+    )
+    assert "NO se pudo cargar" not in ctx, (
+        "no debe aparecer el literal de fallo de carga con link corrupto"
+    )
+
+
+def test_m2_dogfooding_workspace_imports_bus_in_isolated_process(
+    tmp_path: Path,
+) -> None:
+    """M2: _dogfooding_workspace isola la insercion de sys.path del motor.
+
+    El test anterior (test_m2_dogfooding_workspace_resolves_motor_root_in_clean_subprocess)
+    ejecuta el hook ENTERO: otras secciones (roles :327, _load_context :518, :571)
+    tambien insertan la raiz del motor en sys.path, asi que el test no aislaba
+    _dogfooding_workspace. Este test llama a _dogfooding_workspace de forma directa
+    via un subprocess limpio con -I (el cwd y el directorio del script NO estan
+    en sys.path), de modo que la unica forma de que bus se importe es que
+    _dogfooding_workspace haga la insercion.
+
+    MUTACION ALCANZABLE: borrar las dos lineas de sys.path.insert en
+    _dogfooding_workspace -> este test cae (ImportError -> devuelve None).
+    """
+    import sys
+
+    motor = tmp_path / "wt" / "repo" / "rama"
+    destino = tmp_path / "wt" / "repo_workspace" / "rama"
+
+    # Estructura del motor
+    (motor / ".claude").mkdir(parents=True)
+    (motor / ".agent" / "config").mkdir(parents=True)
+
+    # Estructura del destino con link al motor
+    (destino / ".claude").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(motor)}),
+        encoding="utf-8",
+    )
+
+    code = (
+        "import importlib.util, sys\n"
+        "from pathlib import Path\n"
+        "assert 'bus' not in sys.modules\n"
+        "spec = importlib.util.spec_from_file_location('h', sys.argv[1])\n"
+        "h = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(h)\n"
+        "print(h._dogfooding_workspace(Path(sys.argv[2])))\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(_HOOK), str(motor)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+    )
+
+    assert result.returncode == 0, result.stderr[:400]
+    assert Path(result.stdout.strip()).resolve() == destino.resolve(), (
+        "sin la insercion de sys.path de _dogfooding_workspace, bus no se importa "
+        "y se devuelve None; con la insercion, resolve_paired_destination devuelve el destino"
+    )
+
+
 def test_057b_dogfooding_workspace_rejects_paths_and_non_workspaces(
     tmp_path: Path,
 ) -> None:

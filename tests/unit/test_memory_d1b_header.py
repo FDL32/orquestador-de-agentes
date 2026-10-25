@@ -481,3 +481,139 @@ class TestMutationRemovingSurface:
 
         text = _format_archive_as_text(result)
         assert text == ""
+
+
+# =============================================================================
+# Tests: warning in get_session_index / format_memory_index (WOT-2026-127d)
+# =============================================================================
+
+
+class TestSessionIndexWarning:
+    def test_warning_when_motor_no_destino(self, tmp_path: Path) -> None:
+        """get_session_index con solo motor (sin destino) -> aviso presente."""
+        import bus.memory_loader as ml
+
+        motor = tmp_path / "motor"
+        motor_bus = motor / "bus"
+        motor_bus.mkdir(parents=True)
+        (motor_bus / "memory_loader.py").write_text("# mock", encoding="utf-8")
+        (motor / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+        _make_archive_month(
+            motor,
+            2026,
+            8,
+            [
+                {
+                    "id": "obs-m1",
+                    "topic": "t",
+                    "source_ticket": "W-001a",
+                    "signal": "s1",
+                    "timestamp": "2026-08-01T10:00:00Z",
+                    "domain": "testing",
+                },
+            ],
+        )
+
+        with (
+            patch("bus.memory_loader._get_repo_root", return_value=motor),
+            patch("bus.memory_loader._resolve_motor_root", return_value=None),
+        ):
+            index = ml.get_session_index(budget=5000)
+
+        assert "AVISO" in index
+        assert "NO esta cargada" in index
+        assert "motor" in index
+
+    def test_no_warning_with_paired_destino(self, tmp_path: Path) -> None:
+        """get_session_index con motor+destino pareado -> sin aviso."""
+        import bus.memory_loader as ml
+
+        motor = tmp_path / "motor"
+        motor_bus = motor / "bus"
+        motor_bus.mkdir(parents=True)
+        (motor_bus / "memory_loader.py").write_text("# mock", encoding="utf-8")
+        (motor / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+        _make_archive_month(
+            motor,
+            2026,
+            8,
+            [
+                {
+                    "id": "obs-m1",
+                    "topic": "motor",
+                    "source_ticket": "W-001a",
+                    "signal": "s1",
+                    "timestamp": "2026-08-01T10:00:00Z",
+                    "domain": "testing",
+                    "_origin": "motor",
+                },
+            ],
+        )
+
+        destino = tmp_path / "destino"
+        destino.mkdir(parents=True)
+        (destino / ".agent" / "runtime" / "memory" / "archive").mkdir(parents=True)
+        _make_archive_month(
+            destino,
+            2026,
+            8,
+            [
+                {
+                    "id": "obs-d1",
+                    "topic": "destino",
+                    "source_ticket": "W-002a",
+                    "signal": "s2",
+                    "timestamp": "2026-08-02T10:00:00Z",
+                    "domain": "testing",
+                    "_origin": "local",
+                },
+            ],
+        )
+
+        with (
+            patch("bus.memory_loader._get_repo_root", return_value=destino),
+            patch("bus.memory_loader._resolve_motor_root", return_value=motor),
+        ):
+            index = ml.get_session_index(budget=5000)
+
+        assert "AVISO" not in index
+        assert "destino" in index or "motor" in index
+
+    def test_no_warning_without_bus_memory_loader(self, tmp_path: Path) -> None:
+        """root = destino SIN bus/memory_loader.py y CERO lecciones -> sin aviso.
+
+        La condicion `(root / "bus" / "memory_loader.py").is_file()` filtra
+        el aviso cuando la raiz activa no es un motor (N4).
+        """
+        import bus.memory_loader as ml
+
+        destino = tmp_path / "destino"
+        destino.mkdir(parents=True)
+        (destino / ".agent" / "runtime" / "memory" / "archive").mkdir(
+            parents=True, exist_ok=True
+        )
+        _make_archive_month(
+            destino,
+            2026,
+            8,
+            [
+                {
+                    "id": "obs-x",
+                    "topic": "t",
+                    "source_ticket": "W-000a",
+                    "signal": "s1",
+                    "timestamp": "2026-08-01T10:00:00Z",
+                    "domain": "testing",
+                },
+            ],
+        )
+
+        with (
+            patch("bus.memory_loader._get_repo_root", return_value=destino),
+            patch("bus.memory_loader._resolve_motor_root", return_value=None),
+        ):
+            index = ml.get_session_index(budget=5000)
+
+        assert "AVISO" not in index, (
+            "sin bus/memory_loader.py en root, no se emite aviso"
+        )

@@ -172,58 +172,30 @@ def _resolve_root() -> Path:
 def _dogfooding_workspace(root: Path) -> Path | None:
     """Workspace de dogfooding declarado por el MOTOR, o ``None``.
 
-    WOT-2026-057b. Sin esto, abrir sesion EN EL MOTOR pierde la memoria del
-    destino: la asimetria INVERSA de D1. Medido 2026-08-17 en la ruta
-    productiva -- `cwd=destino` daba 342 lecciones y `cwd=motor` solo 207,
-    dejando fuera las 14 de TOPOLOGIA motor/destino, que son justo las que
-    explican donde vive cada cosa a quien programa el motor.
-
-    El mecanismo NO se inventa aqui: `.agent/config/motor_workspace.txt` existe
-    desde WOT-2026-053h y declara ese workspace como un NOMBRE resuelto contra
-    `parent(motor_root)` -- un nombre y no una ruta absoluta a proposito, porque
-    una ruta pinearia la maquina y rompe la portabilidad del motor. Se lee aqui
-    en vez de importar `install_agent_system.read_motor_workspace_root` porque
-    este hook no puede depender de `scripts/` (misma frontera que `bus/`), y
-    duplicar DIEZ lineas de lectura es mas barato que romperla.
+    WOT-2026-057b/127d. Delega la resolucion a ``bus.paired_destination`` para
+    unificar la logica del hook y el CLI; el resolvedor conserva la semantica
+    de ``motor_workspace.txt`` si existe, y añade el fallback topologico T3.
+    Justificacion forense completa en ``bus.paired_destination`` (motivo del
+    filtro de nombres: traversal ``'../..'`` y ``'C:/Windows'``; por que no
+    se importa de scripts/; por que se ancla a ``_motor_root``).
 
     Before: ``root`` es la raiz resuelta; el fichero puede faltar o traer basura.
-    During: lee la primera linea no vacia y no comentada. Sin red, sin
-        subprocess, nunca lanza.
+    During: pone en ``sys.path`` la raiz del MOTOR (``_motor_root(root)``) solo
+        para importar ``bus.paired_destination``; resuelve el par de ``root``.
+        Sin red, sin subprocess, nunca lanza.
     After: devuelve el directorio existente, o ``None`` -- que es un resultado
         NORMAL (un destino no declara workspace de dogfooding), no un error.
     """
     try:
-        decl = root / ".agent" / "config" / "motor_workspace.txt"
-        if not decl.is_file():
-            return None
-        name = next(
-            (
-                ln.strip()
-                for ln in decl.read_text(encoding="utf-8").splitlines()
-                if ln.strip() and not ln.lstrip().startswith("#")
-            ),
-            "",
-        )
-        # Es un NOMBRE de directorio hermano, nunca una ruta. Sin estas dos
-        # comprobaciones el unico predicado era `is_dir()`, y aceptaba de todo
-        # (medido en el bucle L917): `'../..'` por traversal, y `'C:/Windows'`
-        # porque en Windows `Path(a) / 'C:/x'` DESCARTA la izquierda -- o sea
-        # una ruta absoluta saltaba la resolucion contra `parent(motor_root)` y
-        # anclaba donde fuera. Escribir una ruta es el error de tipeo natural,
-        # porque el fichero pide un nombre y tiene que explicarlo en un comentario.
-        #
-        # El daño no seria silencioso a medias: `_load_context` ASIGNA
-        # `AGENT_PROJECT_ROOT` al ancla, asi que un ancla basura deja al agente
-        # arrancando sin memoria -- justo lo que este hook existe para evitar.
-        if not name or name in {".", ".."} or any(sep in name for sep in "/\\:"):
-            return None
-        candidate = root.parent / name
-        # `.agent/` es el marcador de workspace: un directorio cualquiera que
-        # exista no lo es.
-        if not candidate.is_dir() or not (candidate / ".agent").is_dir():
-            return None
-        return candidate
-    except (OSError, ValueError):
+        motor = _motor_root(root)
+        if str(motor) not in sys.path:
+            sys.path.insert(0, str(motor))
+        from bus.paired_destination import resolve_paired_destination
+
+        return resolve_paired_destination(root)
+    except ImportError:
+        return None
+    except OSError:
         return None
 
 

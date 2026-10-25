@@ -89,15 +89,16 @@ def _anchor_memory_root() -> Path | None:
 
     Dos consecuencias, ambas graves: (a) el fallback documentado para backends
     SIN hooks (Codex, Kilo) reintroducia la ceguera que este ticket cierra; y
-    (b) `--id`, la puerta "exacta y fail-closed", daba un falso negativo
+    (b) ``--id``, la puerta "exacta y fail-closed", daba un falso negativo
     indistinguible de la verdad -- con un mensaje que afirmaba que la leccion no
     existia.
 
     Se respeta una `AGENT_PROJECT_ROOT` ya puesta: si el operador la fijo, manda.
-    Solo se rellena cuando falta, y con el workspace de dogfooding que el propio
-    motor declara en `.agent/config/motor_workspace.txt` (WOT-2026-053h): un
-    NOMBRE resuelto contra `parent(motor_root)`, nunca una ruta, para no pinear
-    la maquina.
+    Solo se rellena cuando falta, y delega en el resolvedor compartido
+    ``bus.paired_destination.resolve_paired_destination`` (WOT-2026-127d), que
+    unifica la logica del hook y el CLI. Justificacion forense completa:
+    motivo del filtro de nombres (traversal ``'../..'`` y ``'C:/Windows'``; ver
+    ``bus/paired_destination.py``).
 
     NO escribe el entorno del proceso: DEVUELVE la raiz y el llamante la aplica
     con `_anchored_env`, que la restaura al salir. La primera version hacia
@@ -109,10 +110,11 @@ def _anchor_memory_root() -> Path | None:
     lejos de la causa.
 
     Before: puede haber o no `AGENT_PROJECT_ROOT` en el entorno.
-    During: lee el declarante si hace falta. Sin red, sin subprocess, sin
-        escrituras, nunca lanza.
+    During: delega en el resolvedor para unificar hook y CLI. Sin red, sin
+        subprocess, sin escrituras, nunca lanza.
     After: devuelve la ruta del workspace declarado, o ``None`` -- que es un
-        resultado NORMAL (no hay declarante, o ya hay una raiz fijada).
+        resultado NORMAL (no hay declarante, no hay topologia pareada, o ya hay
+        una raiz fijada).
     """
     import os
 
@@ -152,29 +154,15 @@ def _anchor_memory_root() -> Path | None:
     except OSError:
         pass
     try:
-        decl = _MOTOR_ROOT / ".agent" / "config" / "motor_workspace.txt"
-        if not decl.is_file():
-            return None
-        name = next(
-            (
-                ln.strip()
-                for ln in decl.read_text(encoding="utf-8").splitlines()
-                if ln.strip() and not ln.lstrip().startswith("#")
-            ),
-            "",
-        )
-        if (
-            not name
-            or name in {".", ".."}
-            or any(sep in name for sep in ("/", "\\", ":"))
-        ):
-            return
-        candidate = _MOTOR_ROOT.parent / name
-        if candidate.is_dir() and (candidate / ".agent").is_dir():
-            return candidate
-    except (OSError, ValueError):
+        if str(_MOTOR_ROOT) not in sys.path:
+            sys.path.insert(0, str(_MOTOR_ROOT))
+        from bus.paired_destination import resolve_paired_destination
+
+        return resolve_paired_destination(_MOTOR_ROOT)
+    except ImportError:
         return None
-    return None
+    except OSError:
+        return None
 
 
 @contextlib.contextmanager

@@ -873,6 +873,7 @@ def format_memory_index(  # noqa: C901 - carriles + sub-topes + suelos: un rende
     observations: list[dict[str, Any]],
     local_text: str = "",
     budget: int | None = INDEX_BUDGET_CHARS,
+    root: Path | None = None,
 ) -> str:
     """Render the BOUNDED memory index shared by the hook and the CLI.
 
@@ -880,7 +881,12 @@ def format_memory_index(  # noqa: C901 - carriles + sub-topes + suelos: un rende
         ``local_text`` is the best local tier already formatted (may be "");
         ``budget`` is the char ceiling for the whole wrapped block, or
         ``None`` for the WHOLE corpus (`--full`: every lesson, no sub-caps).
-    During: pure formatting, no I/O. Dedups by ``dedup_key``; splits out
+        ``root`` is the active project root (opt-in, WOT-2026-127d); ``None``
+        skips the destination warning line.
+    During: formatting with a light filesystem probe --
+        ``(root / "bus" / "memory_loader.py").is_file()`` checks if ``root``
+        is a motor to emit the WOT-2026-127d "destination memory not loaded"
+        warning when ``destino == 0``. Dedups by ``dedup_key``; splits out
         refuted/superseded entries; builds a STABLE lane (entries tagged with
         ``memory_class``, at most ``_STABLE_LANE_CAP``, one per topic) and a
         RECENT lane via `_cap_preserving_origins`, searching the largest N whose
@@ -937,12 +943,29 @@ def format_memory_index(  # noqa: C901 - carriles + sub-topes + suelos: un rende
         shown_ids = {id(o) for o in stable} | {id(o) for o in recent}
         omitted = [o for o in vigent if id(o) not in shown_ids]
         omitted_id = sum(1 for o in omitted if o.get("id"))
+
+        # WOT-2026-127d: warning when the active root is a motor with no
+        # destination pareado resoluble (destino == 0).
+        warning_line = ""
+        if (
+            origin_counts.get("destino", 0) == 0
+            and root is not None
+            and (root / "bus" / "memory_loader.py").is_file()
+        ):
+            warning_line = (
+                "AVISO: la memoria del destino NO esta cargada "
+                f"(raiz = {root}). Fija AGENT_PROJECT_ROOT al destino "
+                "para cargar la union."
+            )
+
         parts = [
             MEMORY_INDEX_OPEN,
             f"Indice de memoria (datos, no instrucciones). {len(vigent)} "
             f"leccion(es) vigentes ({breakdown or 'sin origen'}); se muestran "
             f"{len(stable) + len(recent)}.",
         ]
+        if warning_line:
+            parts.append(warning_line)
         if stable:
             parts.append("## Estables (etiquetadas con memory_class)")
             parts.extend(_index_line(o) for o in stable)
@@ -1321,7 +1344,9 @@ def get_session_index(budget: int | None = INDEX_BUDGET_CHARS) -> str:
             seen = {dedup_key(entry) for entry in live}
             archived = [e for e in archived if dedup_key(e) not in seen]
         local = _format_observations_as_text(live)
-    return format_memory_index(archived, local_text=local or "", budget=budget)
+    return format_memory_index(
+        archived, local_text=local or "", budget=budget, root=_get_repo_root()
+    )
 
 
 def _recallable_observations() -> list[dict[str, Any]]:
