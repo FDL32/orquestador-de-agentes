@@ -73,6 +73,12 @@ DESTRUCTIVO del estado de continuacion y no debe ejecutarse a mitad de vuelo:
     solo se dejan DRAFTs con evidencia (no se materializan tickets ni memoria todavia).
   - Emite un parte de parada (que quedo hecho, que sigue pendiente, punto exacto de
     retomada) en `orchestrator_pipeline/reports/`, NO un cierre.
+  - Pre-flight de retomada (WOT-2026-029e): responde las 2 preguntas canonicas del
+    Paso 0.25 de `prompts/orchestrator_autonomous_ticket_batch.md`
+    (q1-backend-liveness + q2-human-break-points) y registra las respuestas como
+    adjudicaciones fechadas en el parte de parada (forma:
+    `scripts/batch_preflight.py::validate_adjudications`). Al retomar,
+    re-adjudica con fecha nueva; no reutilices la respuesta del arranque.
 
   Regla dura: si hay un ticket `IN_PROGRESS` o un lote abierto, estas en mid-flight
   por definicion -> Bloques 1/2/2.5 SI, Bloque 3 NO. La seccion "Cuando NO usarlo"

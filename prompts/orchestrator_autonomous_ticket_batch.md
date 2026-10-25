@@ -192,6 +192,31 @@ liveness is re-verified anyway when the first ticket actually dispatches.
 
 ---
 
+## Paso 0.25: pre-flight de vuelo + prevision de puntos de rotura (WOT-2026-029e)
+
+Antes del primer ticket del lote (y en cada handoff mid-flight que retome un
+lote abierto), responde las DOS preguntas canonicas de esta seccion y registra
+las respuestas como ADJUDICACIONES FECHADAS en `batch_run_<ts>.json`
+(campo `pre_flight_adjudications`, forma validada por
+`scripts/batch_preflight.py::validate_adjudications`: respuesta no vacia +
+`adjudicated_at` ISO-8601 por pregunta). Una respuesta ausente o sin fecha es
+"no preguntado", no "verde".
+
+- **q1-backend-liveness**: liveness REAL de los backends vinculantes del
+  vuelo: Nivel 0 MAS round-trip de contenido (un ping sin respuesta
+  sustantiva no acredita liveness; compone con el Paso 0, que es el gate
+  duro, y con el enum de `check_agents_accessible.py`).
+- **q2-human-break-points**: prevision de puntos de rotura del DAG restante:
+  enumera las decisiones HUMANAS embebidas en los tickets que faltan
+  (requiere-humano, diseno-primero, umbrales sin calibrar) y el punto exacto
+  donde el lote tendra que parar a esperarlas.
+
+El handoff mid-flight (prompts/orchestrator_session_close_full_audit.md, modo
+"Mid-flight" de WOT-2026-029c) remite a estas mismas dos preguntas: al
+retomar, re-adjudica con fecha nueva; no reutilices la respuesta del arranque.
+
+---
+
 ## Paso 0.5: flight preflight census (WOT-2026-037c)
 
 Before consuming the DAG, run a READ-ONLY fail-closed census over four
