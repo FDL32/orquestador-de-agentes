@@ -8,6 +8,7 @@ barrera evita que la obligatoriedad reaparezca en silencio.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -32,6 +33,39 @@ def test_090g_no_mandatory_by_threshold_language() -> None:
     assert (
         "El Builder ejecuta graphify al inicio de la fase IMPLEMENT cuando el corpus es grande:"
         not in text
+    )
+
+
+# Ronda 2 (hallazgo Codex): la barrera debe ser el GREP GLOBAL del arbol, no
+# dos cadenas exactas. Regex del propio Revisor, LINE-BASED (sin DOTALL: el
+# SKILL.md dice "no obligatoria" y un cruce multi-linea daria falso positivo).
+_MANDATORY_NEAR_GRAPHIFY_RE = re.compile(
+    r"graphify.{0,100}(?:must|debe|obligatori)"
+    r"|(?:must|debe|obligatori).{0,100}graphify",
+    re.IGNORECASE,
+)
+
+
+def test_090g_no_mandatory_language_anywhere_in_tree() -> None:
+    """DoD(b)+(c): barrera GLOBAL -- ninguna LINEA que cite graphify en
+    AGENTS.md, prompts/, docs/ ni skills/ usa lenguaje obligatorio."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    targets: list[Path] = [repo_root / "AGENTS.md"]
+    for rel in ("prompts", "docs", "skills"):
+        base = repo_root / rel
+        if base.is_dir():
+            targets.extend(p for p in base.rglob("*.md"))
+    violations: list[str] = []
+    for path in targets:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if _MANDATORY_NEAR_GRAPHIFY_RE.search(line):
+                violations.append(f"{path.relative_to(repo_root)}:{i}")
+    assert not violations, (
+        "lenguaje obligatorio hacia graphify reaparecio en: " + ", ".join(violations)
     )
 
 
