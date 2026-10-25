@@ -78,9 +78,16 @@ Notas obligatorias:
   punteros de capa 2 (`MEMORY.md`, `memory_rules.md`/L2, `memory_profile.md`/L3) -- ANTES de actuar. Sin
   esa frase explicita, el Builder-nan trabaja a ciegas de las convenciones del repo con independencia de
   cuanto se reduzca `AGENTS.md`: no es un problema de tamano, es de ausencia total de carga automatica.
-  Antes de lanzar `kilo run -f <prompt>`, verifica el prompt con
-  `python scripts/check_builder_dispatch_prompt.py --require-memory-bootstrap <prompt>` (Seccion 1.6);
-  si bloquea, anade la instruccion antes de dispachar. Kilo tampoco tiene hook `SessionStart`: el
+Antes de lanzar `kilo run -f <prompt>`, verifica el prompt con
+   `python scripts/check_builder_dispatch_prompt.py --require-memory-bootstrap <prompt>` (Seccion 1.6);
+   si bloquea, anade la instruccion antes de dispachar.
+Antes de lanzar el CLI directo (`kilo run -f <prompt>`), verifica el contenido del prompt
+    con el guard (Seccion 1.8). `codex exec` lee el prompt por STDIN (nunca con una flag
+    `-f`), con el contenido entregado a `codex exec -` via pipe o redireccion; el mismo
+    guard aplica antes de lanzar `codex exec`.
+    `python scripts/check_builder_cli_privacy_preflight.py <prompt> --data-sensitivity <public|private>`
+    (Seccion 1.8); si bloquea, reduce el contenido sensible o declara
+    `--trusted-reason "<motivo>"`. Ni Kilo ni Codex tienen hook `SessionStart`: el
   prompt de un Builder/Revisor real DEBE llevar un paso 0 con
   `python scripts/memory_context.py --bootstrap` (el flag lo exige); una lente corta de ensemble no.
   Prueba de arranque en frio (2026-10-19, 3 backends, mismo fixture): Claude y `nan/qwen3.8-flash`
@@ -279,6 +286,52 @@ codigo que intercepte `kilo run` antes de ejecutarse (el mismo motivo declarado 
 Task tool nativo), porque el despacho de un Builder real es una invocacion manual de shell, no una
 llamada a traves de un script de este motor. Quien despacha es quien debe invocar el guard antes de
 lanzar; sin eso, el guard no se ejecuta solo.
+
+## 1.8. Preflight mecanico: privacidad del contenido del prompt (WOT-2026-046k)
+
+**Por que un guard y no solo la prosa de la Seccion 1:** la misma leccion que motiva
+`check_builder_dispatch_prompt.py` aplica aqui -- una norma que depende de que quien redacta
+el prompt se acuerde de escribir la frase es, por definicion de este repo, una NORMA, no
+una barrera. `scripts/check_builder_cli_privacy_preflight.py` lee el fichero de prompt ANTES
+de lanzar cualquier CLI directo de Builder/Revisor y bloquea (`exit 1`) si detecta contenido
+sensible (credenciales, tokens opacos de alta entropia, rutas a raices privadas) y la exencion
+no esta declarada POR RUTA/invocacion (via `--trusted-reason`). Reutiliza la MISMA
+`privacy_preflight` ya auditada de `ensemble_dispatch.py` (WOT-2026-046c).
+
+     python scripts/check_builder_cli_privacy_preflight.py <prompt> --data-sensitivity <public|private> [--trusted-reason "<motivo>"]
+
+Esta obligacion aplica a TODO CLI directo prescrito por este contrato:
+`kilo run` (Seccion 1) y `codex exec` son las dos vias de invocacion de
+Builder/Revisor directo que este contrato contempla. Si un CLI directo
+prescrito se ejecuta sin pasar por este guard, el prompt con contenido
+sensible se enviaria al backend sin la barrera `privacy_preflight` que
+`ensemble_dispatch.py` aplica de forma automatica.
+
+**Nota sobre `scripts/run_codex_audit.py`:** este wrapper YA aplica
+`privacy_preflight` internamente desde WOT-2026-046c, por lo que no
+necesita el guard de esta Seccion 1.8 (el guard es para cuando `codex
+exec`/`kilo run` se invocan MANUALMENTE desde shell, sin pasar por ese
+wrapper).
+
+Con `--trusted-reason "<motivo>"` declarado (motivo no vacio), se trata como
+`backend_cfg={"trusted": True}` y el guard pasa siempre (el motivo se imprime, nunca
+exencion silenciosa). Sin `--data-sensitivity` (ausente), se trata como `private`
+(fail-closed).
+
+**Limite declarado (mismo patron compartido que la Seccion 1.7 y 1.5, no se oculta):**
+este guard es una barrera de FORMA sobre el FICHERO de prompt: verifica que el contenido
+no dispare `privacy_preflight`, no sobre todo lo que el Builder vea en el repo durante su
+sesion real. Y es una barrera **invocada por convencion, no cableada automaticamente**: el
+mismo motivo estructural que `check_builder_dispatch_prompt.py` (Seccion 1.7) y la Seccion
+1.5 -- el despacho de un Builder real es una invocacion manual de shell, no una llamada a
+traves de un script de este motor que un hook pueda interceptar. Quien despacha es quien
+debe invocar el guard antes de lanzar cualquier CLI directo prescrito (Kilo o Codex); sin
+eso, el guard no se ejecuta solo.
+
+**Patron compartido (X-09):** invocacion manual antes de `kilo run` o `codex exec`, sin
+hook automatico, mismo limite estructural (despacho de shell no interceptable). Detalle
+del guard en `scripts/check_builder_cli_privacy_preflight.py`, politica en
+`scripts/guard_wiring_policy.yaml`.
 
 ## 2. Cuando el prompt de arranque de un Builder debe citar ESTE contrato
 

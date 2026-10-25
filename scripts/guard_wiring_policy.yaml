@@ -223,6 +223,28 @@ known_unwired:
     limite es estructural (ver Seccion 1.5 del mismo contrato para el caso
     analogo del Task tool nativo).
 
+  # WOT-2026-046k: guard que verifica que el contenido de un fichero de prompt
+  # pasado con cualquier CLI directo de Builder/Revisor no dispare la barrera
+  # de privacidad (`privacy_preflight` de `ensemble_dispatch.py`) ANTES de
+  # lanzar el CLI. Cubre `kilo run` y `codex exec` (las dos vias citadas por
+  # la fila de backlog de este ticket). Su sitio de invocacion NATURAL es el
+  # instante de despacho (`prompts/builder_invocation_contract.md` Seccion 1.8),
+  # que es una invocacion MANUAL de shell -- el despacho de un Builder real NO
+  # pasa por ningun script de este motor que un hook pueda interceptar (mismo
+  # motivo estructural que el guard hermano `check_builder_dispatch_prompt.py`).
+  # Reutiliza una barrera ya auditada (WOT-2026-046c), no inventa deteccion
+  # nueva. Identico motivo BY-DESIGN: invocacion manual en el punto de
+  # preparacion, no un hook automatico.
+  check_builder_cli_privacy_preflight: >-
+    BY-DESIGN: invocacion manual antes de `kilo run -f <prompt>.md` o
+    `codex exec -f <prompt>.md` (`prompts/builder_invocation_contract.md`
+    Seccion 1.8) -- el despacho de un Builder real es una invocacion de shell,
+    no una llamada a traves de un script de este motor que un hook pueda
+    interceptar. Cablearlo en pre-commit no tiene sentido: audita el contenido
+    de un prompt de arranque que normalmente ni siquiera se versiona.
+    Follow-up: ninguno declarado, el limite es estructural (mismo que
+    `check_builder_dispatch_prompt.py`).
+
   # WOT-2026-040a: validador de CONTENIDO del delta operativo esperado del batch
   # (PREDICATE v2, condicion 8 `estado_operativo_destino_atribuible`). Su
   # invocacion natural es la evaluacion del PREDICATE por el ejecutor o el
