@@ -45,11 +45,12 @@ known_unwired:
   # que lo importa. Dejarlo aqui seria una declaracion STALE.
   # WOT-2026-059u: esta entrada lleva el motivo BY-DESIGN en prosa, igual que sus
   # dos precedentes en este mismo fichero (check_hook_interpreter,
-  # check_publication_gate) -- el guard es READ-ONLY y por diseno corre en el
-  # CIERRE, no en la escritura.
+  # check_publication_gate) -- el guard es READ-ONLY y por diseno se ejecuta
+  # a mano (paso 5 de prompts/memory_upload.md), no en la escritura.
   check_portable_memory_promotion: >-
-    BY-DESIGN: guard READ-ONLY invocado en el CIERRE de sesion, no fail-closed
-    en escritura -- `append_observation()` (memory_helpers) lo usan hooks de
+    BY-DESIGN: guard READ-ONLY invocado a mano en el paso 5 de
+    `prompts/memory_upload.md`; ningun cierre de sesion ni closeout lo
+    ejecuta. `append_observation()` (memory_helpers) lo usan hooks de
     CADA tool-call, y un fail-closed ahi romperia el trabajo normal. Por eso
     solo puede detectar el fallo DESPUES de que ya ocurrio (incidente
     2026-08-13, Crear_Texto_LLM: exit 0 con el fallo ya consumado) -- no es un

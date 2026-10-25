@@ -104,6 +104,7 @@ def test_closeout_ignores_layer_warnings_with_the_real_measurer(tmp_path: Path) 
     """
     mem = tmp_path / ".agent" / "runtime" / "memory"
     mem.mkdir(parents=True)
+    (mem / "MEMORY.md").write_text("# MEMORY\n", encoding="utf-8")
     (mem / "observations.jsonl").write_text(
         json.dumps(
             {

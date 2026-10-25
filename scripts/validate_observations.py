@@ -582,6 +582,14 @@ def main() -> int:
             script_dir / ".agent" / "runtime" / "memory" / "observations.jsonl"
         )
 
+    # WOT-2026-127e: --strict sin --file y L1 ausente -> SKIP: no es error.
+    if not args.file and not observations_path.exists():
+        print(
+            f"SKIP: L1 no existe en {observations_path}; "
+            "sin --file no se puede validar (archivo opcional en motor code-only)"
+        )
+        return 0
+
     # Validate
     _success, errors = validate_file(observations_path, strict=args.strict)
 

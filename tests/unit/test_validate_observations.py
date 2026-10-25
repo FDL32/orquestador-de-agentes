@@ -975,3 +975,134 @@ def test_066r_success_path_unaffected(
 
     assert exit_code == 0
     assert "Validacion EXITOSA" in captured.out
+
+
+# =============================================================================
+# WOT-2026-127e: --strict bare sin --file y L1 ausente -> SKIP: rc 0
+# =============================================================================
+
+
+def test_127e_strict_bare_without_file_and_l1_absent_returns_0_with_skip(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--strict sin --file y L1 ausente -> "SKIP:" linea + rc 0.
+
+    Fija que en un motor code-only sin L1 el validador no falla (rc 0),
+    imprime una linea que empieza con "SKIP:" explicando que no hay L1,
+    y no produce el mensaje de "Validacion FALLIDA".
+
+    Aisla la variable que lee (__file__ -> default path) para que el
+    test sea hermetico: si el checkout REAL tiene .agent/runtime/memory/
+    observations.jsonl, la suite no cae espuria (WOT-2026-047f, medido
+    2026-08-02: 3 worktrees hermanos ya tenian el buffer vivo).
+    """
+    import sys as sys_module
+
+    import validate_observations
+    from validate_observations import main
+
+    # Aislar el default del lector: Path(__file__).parent.parent cae en
+    # tmp_path, asi que observations.jsonl esta ausente por construccion.
+    monkeypatch.setattr(
+        validate_observations,
+        "__file__",
+        str(tmp_path / "scripts" / "validate_observations.py"),
+    )
+    monkeypatch.setattr(
+        sys_module,
+        "argv",
+        ["validate_observations.py", "--strict"],
+    )
+
+    exit_code = main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, f"expected rc 0, got {exit_code}"
+    assert "SKIP:" in captured.out, f'expected "SKIP:" in stdout, got: {captured.out}'
+    assert "L1" in captured.out, "SKIP line should mention L1"
+
+
+def test_127e_strict_bare_with_l1_present_in_isolated_path_does_not_skip(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control negativo: con L1 PRESENTE en la ruta aislada, NO imprime SKIP.
+
+    Fija que el test no pasa por un artefacto de ruta: si el L1 existe
+    bajo el __file__ aislado, el validador continua y valida (no SKIP).
+    """
+    import sys as sys_module
+
+    import validate_observations
+    from validate_observations import main
+
+    monkeypatch.setattr(
+        validate_observations,
+        "__file__",
+        str(tmp_path / "scripts" / "validate_observations.py"),
+    )
+
+    # Crear L1 en la ruta aislada (tmp_path/.agent/runtime/memory/observations.jsonl)
+    mem_dir = tmp_path / ".agent" / "runtime" / "memory"
+    mem_dir.mkdir(parents=True)
+    (mem_dir / "observations.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-08-02T10:00:00+00:00",
+                "topic": "lesson",
+                "signal": "x",
+                "source": "manual",
+                "domain": "testing",
+                "confidence": 0.9,
+                "applies_to": "code",
+                "source_ticket": "WOT-2026-127e",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys_module,
+        "argv",
+        ["validate_observations.py", "--strict"],
+    )
+
+    exit_code = main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, f"expected rc 0, got {exit_code}"
+    assert "SKIP:" not in captured.out, (
+        "con L1 presente no debe imprimir SKIP, got: " + captured.out
+    )
+
+
+def test_127e_strict_with_nonexistent_file_still_errors(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--strict --file <inexistente> -> rc != 0 (el guard de --file no es SKIP).
+
+    Fija que el caso de SKIP solo aplica cuando se invoca BARE (sin --file)
+    y el L1 default esta ausente: si se pasa --file explicitamente y el
+    fichero no existe, sigue siendo error (rc != 0).
+    """
+    import sys as sys_module
+
+    from validate_observations import main
+
+    fake_path = tmp_path / "does_not_exist_observations.jsonl"
+
+    monkeypatch.setattr(
+        sys_module,
+        "argv",
+        ["validate_observations.py", "--strict", "--file", str(fake_path)],
+    )
+
+    exit_code = main()
+    captured = capsys.readouterr()
+
+    assert exit_code != 0, (
+        f"expected non-zero rc for --file with missing file, got {exit_code}"
+    )
+    assert "SKIP:" not in captured.out, (
+        "--file inexistente no debe producir SKIP, debe fallar"
+    )

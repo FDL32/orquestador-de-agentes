@@ -691,6 +691,7 @@ def test_089e_hook_shows_the_memory_health_of_both_roots(tmp_path: Path) -> None
     mem = destino / ".agent" / "runtime" / "memory"
     mem.mkdir(parents=True)
     (destino / ".claude").mkdir()
+    (mem / "MEMORY.md").write_text("# MEMORY\n", encoding="utf-8")
     noise = {
         "topic": "tool_usage",
         "signal": "Tool view_file called",
@@ -1326,3 +1327,53 @@ class TestSourceRouting:
         assert hook.main() == 0
         out = json.loads(capsys.readouterr().out)
         assert "SESSION-IDX" in _ctx(out)
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-127e R4-1: hook muestra "motor:" como clave cuando se corre en un
+# motor sin destino pareado (H-1, BLOCKER).
+# --------------------------------------------------------------------------- #
+
+
+def test_hook_health_line_labels_motor_when_no_paired_destination(tmp_path) -> None:
+    """R4-1: el hook etiquete "motor:" en Salud de la memoria al correr en un motor
+    sin destino pareado (H-1, BLOCKER).
+
+    Fija que la linea de salud empieza por `Salud de la memoria: motor:` y no
+    contiene `destino:` cuando el cwd es un motor (con bus/memory_loader.py y
+    .claude/) sin motor_destination_link.json. Mutation-verify: quitar la rama
+    `_is_motor(project_root)` en main() -> la clave vuelve a ser "destino"
+    (test ROJO).
+    """
+    motor = tmp_path / "motor_h1"
+    motor.mkdir()
+    (motor / ".claude").mkdir()
+    (motor / "bus").mkdir()
+    (motor / "bus" / "memory_loader.py").write_text("# x", encoding="utf-8")
+    mem = motor / ".agent" / "runtime" / "memory"
+    mem.mkdir(parents=True)
+    (mem / "observations.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "obs-x",
+                "topic": "t",
+                "signal": "s",
+                "source": "test",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run({"session_id": "t", "hook_event_name": "SessionStart"}, motor)
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")[:400]
+    ctx = _ctx(json.loads(result.stdout.decode("utf-8", "replace")))
+    line = next(ln for ln in ctx.splitlines() if ln.startswith("Salud de la memoria:"))
+    assert line.startswith("Salud de la memoria: motor:"), (
+        f"Con motor sin destino pareado, la linea debe empezar con 'Salud de la memoria: motor:', "
+        f"empieza con: {line[:60]}"
+    )
+    assert "destino:" not in line, (
+        f"Con motor sin destino pareado, no debe contener 'destino:', linea: {line}"
+    )

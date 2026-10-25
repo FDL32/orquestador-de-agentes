@@ -39,8 +39,9 @@ KNOBS (NO medidos)
 ------------------
 El propio Bloque 4.0 declara que 500 y 80 % son "KNOBS, no valores medidos optimos"; el
 umbral de 7 dias tampoco lo respalda ninguna medicion, y el 90 % de L2 es un porcentaje
-de `MAX_L2_RULES`. Se declaran UNA vez aqui y se etiquetan asi. El proxy de (b) es la
-fecha de modificacion de los ficheros (no la del contenido).
+de `MAX_L2_RULES`. Se declaran UNA vez aqui y se etiquetan asi. El metodo primario de (b)
+es el contenido (sello `Regenerated:` vs timestamp maximo de las entradas del archive);
+el mtime es solo fallback declarado (`metodo: "mtime"`).
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +61,16 @@ sys.path.insert(0, str(_SCRIPTS_DIR.parent))
 sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from memory_consolidate import MAX_L2_RULES, is_droppable_noise  # noqa: E402
+
+
+def _is_motor(root: Path) -> bool:
+    """Detectar si una raiz es un motor (bus/memory_loader.py o mismo path que motor).
+
+    Before: `root` es la raiz a verificar.
+    During: chequea existencia de `bus/memory_loader.py` (señal canonica de motor).
+    After: True si es motor, False si no.
+    """
+    return (root / "bus" / "memory_loader.py").is_file()
 
 
 # KNOBS a ojo (ver docstring); no son valores calibrados.
@@ -133,15 +145,114 @@ def _count_l2_rules(path: Path) -> dict[str, Any]:
     }
 
 
+_REGENERATED_RE = re.compile(
+    r"^Regenerated:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _max_archive_entry_timestamp(archive_dir: Path) -> datetime | None:
+    """Return the max `timestamp` field from all archive/observations.*.jsonl entries.
+
+    Before: `archive_dir` is the archive directory.
+    During: reads each line, parses JSON, extracts `timestamp` (ISO-8601),
+        converts Z to +00:00, naive -> UTC, and returns the maximum.
+    After: datetime (UTC) or None if no parseable timestamp found.
+    """
+    from datetime import datetime, timezone
+
+    max_ts: datetime | None = None
+    for f in archive_dir.glob("observations.*.jsonl"):
+        if not f.is_file():
+            continue
+        with f.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = entry.get("timestamp")
+                if not ts or not isinstance(ts, str):
+                    continue
+                try:
+                    entry_dt = ts.replace("Z", "+00:00")
+                    parsed = datetime.fromisoformat(entry_dt)
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    if max_ts is None or parsed > max_ts:
+                        max_ts = parsed
+                except (ValueError, TypeError):
+                    continue
+    return max_ts
+
+
 def _memory_md_staleness(mem: Path) -> dict[str, Any]:
-    """Dias que MEMORY.md va por detras del fichero de archive mas reciente (proxy: mtime)."""
+    """Dias que MEMORY.md va por detras del contenido del archive mas reciente.
+
+    Before: `mem` es `<raiz>/.agent/runtime/memory`; puede no existir MEMORY.md.
+    During: busca el sello "Regenerated: <iso>" en MEMORY.md; lo compara con el
+        timestamp maximo de las entradas JSON de `archive/observations.*.jsonl`
+        (campo `timestamp` de cada linea).
+        Sin sello o sin timestamp parseable -> fallback a mtime de fichero,
+        marca `"metodo": "mtime"`.
+        MEMORY.md ausente -> `"present": False`, `"stale_days": None`,
+        `"metodo": "ausente"`; el disparador (b) no dispara en raices motor,
+        pero dispara en un destino con detalle "MEMORY.md ausente".
+    After: dict con `present`, `archives`, `stale_days`, `metodo`; si `present`
+        es False, `stale_days` es None y `metodo` es "ausente".
+    """
+    from datetime import datetime, timezone
+
     memory_md = mem / "MEMORY.md"
-    archives = sorted((mem / "archive").glob("observations.*.jsonl"))
-    if not memory_md.is_file() or not archives:
+    if not memory_md.is_file():
+        archives = sorted((mem / "archive").glob("observations.*.jsonl"))
         return {
-            "present": memory_md.is_file(),
+            "present": False,
             "archives": len(archives),
+            "stale_days": None,
+            "metodo": "ausente",
+        }
+
+    archives = sorted((mem / "archive").glob("observations.*.jsonl"))
+
+    # Intentar leer sello Regenerated de contenido.
+    text = memory_md.read_text(encoding="utf-8", errors="replace")
+    reg_match = _REGENERATED_RE.search(text)
+    metodo = "contenido"
+
+    if reg_match and archives:
+        # Parsear el sello Regenerated como timestamp ISO-8601.
+        stamp_str = reg_match.group(1)
+        stamp = stamp_str.replace("Z", "+00:00")
+        try:
+            reg_dt = datetime.fromisoformat(stamp)
+            # Tomar el maximo timestamp de las ENTRADAS del archive,
+            # no el mtime de los ficheros (un checkout reinicia mtime).
+            newest_entry_time = _max_archive_entry_timestamp(mem / "archive")
+            if newest_entry_time is not None:
+                if reg_dt.tzinfo is None:
+                    reg_dt = reg_dt.replace(tzinfo=timezone.utc)
+                lag = (newest_entry_time - reg_dt).total_seconds()
+                stale_days = round(max(0.0, lag / _SECONDS_PER_DAY), 1)
+                return {
+                    "present": True,
+                    "archives": len(archives),
+                    "stale_days": stale_days,
+                    "metodo": metodo,
+                }
+        except (ValueError, TypeError):
+            pass  # fallback a mtime
+
+    # Fallback a mtime si no hay sello parseable o no hay archive.
+    if not archives:
+        return {
+            "present": True,
+            "archives": 0,
             "stale_days": 0.0,
+            "metodo": "mtime",
         }
     newest = max(a.stat().st_mtime for a in archives)
     lag = max(0.0, newest - memory_md.stat().st_mtime)
@@ -149,7 +260,78 @@ def _memory_md_staleness(mem: Path) -> dict[str, Any]:
         "present": True,
         "archives": len(archives),
         "stale_days": round(lag / _SECONDS_PER_DAY, 1),
+        "metodo": "mtime",
     }
+
+
+def _count_archive_rows(archive_dir: Path) -> int:
+    """Count non-empty lines across all archive/observations.*.jsonl files.
+
+    Before: `archive_dir` is the archive directory (`<root>/.agent/runtime/memory/archive`).
+    During: reads-only; counts non-empty lines from each JSONL file.
+    After: total count of non-empty lines, or 0 if no files exist.
+    """
+    total = 0
+    for f in archive_dir.glob("observations.*.jsonl"):
+        if f.is_file():
+            with f.open(encoding="utf-8", errors="replace") as handle:
+                total += sum(1 for line in handle if line.strip())
+    return total
+
+
+def _count_archive_bytes(archive_dir: Path) -> int:
+    """Total size in bytes of all archive/observations.*.jsonl files.
+
+    Before: `archive_dir` is the archive directory
+        (`<root>/.agent/runtime/memory/archive`).
+    During: reads-only; sums `.stat().st_size` from each file.
+    After: total byte count, or 0 if no files exist.
+    """
+    total = 0
+    for f in archive_dir.glob("observations.*.jsonl"):
+        if f.is_file():
+            total += f.stat().st_size
+    return total
+
+
+def _count_exact_dup_groups(archive_dir: Path) -> int:
+    """Cuenta grupos de lineas JSON identicas (sort_keys) que se repiten >= 2 veces.
+
+    Before: `archive_dir` es `<raiz>/.agent/runtime/memory/archive`.
+    During: lee cada linea, la normaliza con sort_keys, cuenta ocurrencias.
+    After: numero de grupos duplicados (solo los con >= 2 copias exactas).
+    """
+    counts: dict[str, int] = {}
+    for f in archive_dir.glob("observations.*.jsonl"):
+        if not f.is_file():
+            continue
+        with f.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    normalized = json.dumps(
+                        json.loads(stripped), sort_keys=True, ensure_ascii=False
+                    )
+                    counts[normalized] = counts.get(normalized, 0) + 1
+                except json.JSONDecodeError:
+                    continue
+    return sum(1 for c in counts.values() if c >= 2)
+
+
+def _count_recall_log_lines(root: Path) -> int:
+    """Lineas de .agent/runtime/memory/recall_log.jsonl, 0 si no existe.
+
+    Before: `root` es la raiz del workspace.
+    During: solo lectura del archivo de recall log si existe.
+    After: numero de lineas no vacias, o 0 si no existe.
+    """
+    log = root / ".agent" / "runtime" / "memory" / "recall_log.jsonl"
+    if not log.is_file():
+        return 0
+    with log.open(encoding="utf-8", errors="replace") as handle:
+        return sum(1 for line in handle if line.strip())
 
 
 def _measure_layers(mem: Path) -> dict[str, Any]:
@@ -250,6 +432,7 @@ def measure_root(root: Path, *, run_validate: bool = True) -> dict[str, Any]:
         published = "candidatas n/d"
     else:
         published = f"expulsadas {l2['expelled']} de {l2['candidates']} candidatas"
+    is_motor = _is_motor(root)
     triggers = [
         {
             "id": "a",
@@ -259,9 +442,17 @@ def measure_root(root: Path, *, run_validate: bool = True) -> dict[str, Any]:
         },
         {
             "id": "b",
-            "fired": stale["stale_days"] > MEMORY_STALE_DAYS,
-            "detail": f"MEMORY.md va {stale['stale_days']} dias por detras del archive"
-            f" (umbral {MEMORY_STALE_DAYS})",
+            "fired": (
+                stale["stale_days"] is not None
+                and stale["stale_days"] > MEMORY_STALE_DAYS
+            )
+            or (stale["stale_days"] is None and not is_motor),
+            "detail": (
+                f"MEMORY.md va {stale['stale_days']} dias por detras del archive"
+                if stale["stale_days"] is not None
+                else "MEMORY.md ausente"
+            )
+            + ("" if stale["stale_days"] is None else f" (umbral {MEMORY_STALE_DAYS})"),
         },
         {
             "id": "c",
@@ -276,6 +467,19 @@ def measure_root(root: Path, *, run_validate: bool = True) -> dict[str, Any]:
         },
     ]
     layers = _measure_layers(mem)
+    archive_dir = mem / "archive"
+    has_archives = archive_dir.is_dir() and any(
+        f.is_file() for f in archive_dir.glob("observations.*.jsonl")
+    )
+    growth: dict[str, Any] = {}
+    if has_archives:
+        growth = {
+            "archive_rows": _count_archive_rows(archive_dir),
+            "archive_bytes": _count_archive_bytes(archive_dir),
+            "archive_exact_dup_groups": _count_exact_dup_groups(archive_dir),
+            "recall_log_lines": _count_recall_log_lines(root),
+        }
+    is_motor = _is_motor(root)
     return {
         "root": str(root),
         "l1": {**l1, "noise_ratio": round(ratio, 4)},
@@ -285,12 +489,16 @@ def measure_root(root: Path, *, run_validate: bool = True) -> dict[str, Any]:
         "triggers": triggers,
         "layers": layers,
         "warnings": _layer_warnings(layers),
+        "growth": growth,
+        "is_motor": _is_motor(root),
     }
 
 
 def _format(measure: dict[str, Any], label: str) -> str:
     fired = [t for t in measure["triggers"] if t["fired"]]
-    lines = [f"[memory-health] {label}: {measure['root']}"]
+    is_motor = measure.get("is_motor", False)
+    root_label = "motor" if is_motor and label == "motor" else label
+    lines = [f"[memory-health] {root_label}: {measure['root']}"]
     l1 = measure["l1"]
     lines.append(
         f"  denominador: L1 parseadas={l1['parsed']} malformadas={l1['malformed']} "
@@ -299,6 +507,14 @@ def _format(measure: dict[str, Any], label: str) -> str:
     for trig in measure["triggers"]:
         mark = "DISPARA" if trig["fired"] else "ok"
         lines.append(f"  ({trig['id']}) {mark}: {trig['detail']}")
+    growth = measure.get("growth", {})
+    if growth:
+        lines.append(
+            f"  (e) info: archive_rows={growth.get('archive_rows', 0)}"
+            f" archive_bytes={growth.get('archive_bytes', 0)}"
+            f" exact_dup_groups={growth.get('archive_exact_dup_groups', 0)}"
+            f" recall_log_lines={growth.get('recall_log_lines', 0)}"
+        )
     lines.extend(f"  AVISO: {w}" for w in measure.get("warnings", []))
     lines.append(
         "  -> dispara: aplicar prompts/memory_optimization.md"
@@ -318,11 +534,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    roots = {"destino": Path(args.project_root).resolve()}
+    project_root = Path(args.project_root).resolve()
+    roots: dict[str, Path] = {}
+    # 1. Separate motor_root if provided and different (always first for R3)
     if args.motor_root:
-        motor = Path(args.motor_root).resolve()
-        if motor != roots["destino"]:
-            roots = {"motor": motor, **roots}
+        motor_root = Path(args.motor_root).resolve()
+        if motor_root != project_root:
+            roots["motor"] = motor_root
+    # 2. Label project_root based on whether it is a motor
+    if _is_motor(project_root):
+        if "motor" not in roots:
+            roots["motor"] = project_root
+        else:
+            roots["motor-proyecto"] = project_root
+    else:
+        roots["destino"] = project_root
     measures = {
         label: measure_root(root, run_validate=not args.skip_validate)
         for label, root in roots.items()
