@@ -543,10 +543,14 @@ def _run_dod_metric_freshness_warn(project_root: Path) -> str:
         (decision DoD-d de WOT-2026-059r).
     """
     buf = io.StringIO()
+    buf_err = io.StringIO()
     try:
         from check_dod_metric_freshness import main as _dod_metric_main
 
-        with contextlib.redirect_stdout(buf):
+        # WOT-2026-059r ronda 2 (hallazgo Codex): los self-fails del guard
+        # diagnostican por stderr (:309,317), no por stdout; sin capturar
+        # stderr el WARN de self-fail perdia la causa.
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf_err):
             rc = _dod_metric_main(["--project-root", str(project_root)])
     except SystemExit as exc:  # argparse y salidas tempranas del guard
         rc = exc.code if isinstance(exc.code, int) else 2
@@ -556,6 +560,7 @@ def _run_dod_metric_freshness_warn(project_root: Path) -> str:
             f"({exc!r}); degradado a WARN (decision WOT-2026-059r)"
         )
     out = [line for line in buf.getvalue().splitlines() if line.strip()]
+    err = [line for line in buf_err.getvalue().splitlines() if line.strip()]
     if rc == 0:
         return ""
     if rc == 1:
@@ -565,7 +570,7 @@ def _run_dod_metric_freshness_warn(project_root: Path) -> str:
             f"  WARN: [dod-metric] self-fail (exit {rc}); WARN por decision "
             "WOT-2026-059r, nunca un verde mudo"
         ]
-        + [f"  WARN: {line}" for line in out]
+        + [f"  WARN: {line}" for line in (out + err)]
     )
 
 

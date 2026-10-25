@@ -1549,3 +1549,21 @@ def test_059r_wired_into_run_backlog_contract_check_warn_not_blocking(
     assert result.passed is True
     assert "[dod-metric]" in result.output
     assert "VIOLATION: WOT-2026-999z" in result.output
+
+
+def test_059r_selffail_rc2_captures_stderr(tmp_path, monkeypatch):
+    """WOT-2026-059r ronda 2 (hallazgo Codex): self-fail rc=2 del guard
+    diagnostica por stderr; el WARN del helper debe citar la causa, no solo
+    el aviso generico."""
+    import sys
+
+    import check_dod_metric_freshness as guard_mod
+
+    def _selffail_via_stderr(argv):
+        print("[dod-metric] ERROR: backlog root unresolved (sin link)", file=sys.stderr)
+        return 2
+
+    monkeypatch.setattr(guard_mod, "main", _selffail_via_stderr)
+    result = pc_module._run_dod_metric_freshness_warn(tmp_path)
+    assert "self-fail (exit 2)" in result
+    assert "backlog root unresolved" in result
