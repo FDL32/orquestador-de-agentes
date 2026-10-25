@@ -16,9 +16,19 @@ tags: [core, system]
 
 Transforma un codebase en un grafo de conocimiento persistente. Permite explorar arquitectura y relaciones entre módulos sin leer archivos crudos en cada sesión. Reducción típica: **70x menos tokens** por consulta en corpus > 30 archivos.
 
+## Estado: OPCIONAL (WOT-2026-090g)
+
+Esta skill es **OPCIONAL**, no obligatoria. Razón de no-invocación declarada
+(WOT-2026-090g, 2026-10-25): los flujos canónicos del repo (bootstrap y
+pipeline) la referencian de forma CONDICIONAL ("si las dependencias lo hacen
+difícil") y el bootstrap declara como VIRTUD funcionar sin Repomix, Graphify
+ni Node; en este repo nunca se construyó ni consumió un grafo (sin
+`graphify-out/`). El umbral de abajo queda como CRITERIO DE CONVENIENCIA
+(cuando conviene), no como obligación del Builder.
+
 ## Cuándo activar
 
-El Builder DEBE activar esta skill antes de explorar el codebase cuando:
+El Builder PUEDE activar esta skill antes de explorar el codebase cuando:
 - El proyecto tiene **> 30 archivos** fuente, o
 - El corpus total supera **5.000 palabras**, o
 - Es la **segunda sesión** sobre el mismo proyecto
@@ -175,7 +185,7 @@ graphify-out/
 
 ## Integración con el flujo Manager → Builder
 
-El Builder ejecuta graphify al inicio de la fase IMPLEMENT cuando el corpus es grande:
+El Builder PUEDE ejecutar graphify al inicio de la fase IMPLEMENT cuando el corpus es grande y la exploración previa lo justifique (OPCIONAL, WOT-2026-090g):
 
 ```markdown
 ## Inicio de sesión Builder (proyecto grande)
