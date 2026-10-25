@@ -47,6 +47,23 @@ Medicion del Manager (snapshot 2026-10-25, destino memoria-opus55-20261024, no c
   en cada ronda y suite canonica solo al final. El Revisor cazo un BLOCKER real en
   127e (la etiqueta `motor` no llegaba al hook) y un test no hermetico que habria
   puesto roja la suite en los worktrees con L1 vivo.
+# 2026-10-25 - WOT-2026-049f: retira fix=true global de [tool.ruff] (ruff-consulta-que-escribe)
+
+### Changed
+- `pyproject.toml`: retirado `fix = true` de `[tool.ruff]` (decision ratificada por la
+  orquestadora del vuelo nocturno 20261024). Una CONSULTA `ruff check` ya no escribe el
+  arbol: `--select RUF100` retiraba `noqa` legitimos de S603 (el subconjunto desactivaba
+  la regla, el autofix implicito daba de baja el noqa) y rompia el gate con 7 errores;
+  medido con controles el 2026-08-06 y re-corroborado en HEAD el 2026-10-25 (3 arreglos
+  sin --fix). ENDURECIMIENTO DECLARADO de 2 llamadores que heredaban el autofix:
+  `.github/workflows/quality-gates.yml:40` (`uv run ruff check .`) y
+  `scripts/run_gates_dispatch.py:224-225` (`[sys.executable, "-m", "ruff", "check", "."]`,
+  que ademas MUTABA el arbol del Builder) pasan de "arregla y verde" a "reporta y rojo"
+  ante violaciones arreglables. Los hooks ya usaban `--no-fix` (6eb78e1) y `ruff-format`
+  es hook separado confinado a pre-commit: sin cambio alli. Skills/docs que citan
+  `ruff check .` (builder-run-quality-gates, test-driven-development, build_llms.py:180
+  `ruff check . && ruff format .`) siguen validos pero ya no autoarreglan. Evidencia de
+  cierre: probe original con arbol limpio + `ruff check . --no-fix` rc 0 + suite focal.
 
 # 2026-10-22 - WOT-2026-114c: Fase 2 de la Palanca A -- mueve `## Vocabulario canonico` a modulo
 
