@@ -35,6 +35,7 @@ extend-exclude = [
     "tests/sandbox/",
     "scripts/sandbox/",
     ".codex/",
+    ".agent/planning/",
 ]
 respect-gitignore = true
 force-exclude = true
