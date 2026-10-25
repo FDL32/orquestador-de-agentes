@@ -238,12 +238,23 @@ _AUTO_TRIGGERS = {
 def _load_policy(path: Path | None = None) -> dict:
     path = path or POLICY_PATH
     if not path.exists():
-        return {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
+        return {
+            "known_unwired": {},
+            "extra_guards": {},
+            "wired_via": {},
+            "known_hooks": [],
+        }
     data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
     return {
         "known_unwired": data.get("known_unwired") or {},
         "extra_guards": data.get("extra_guards") or {},
         "wired_via": data.get("wired_via") or {},
+        # WOT-2026-049g: registro POR CLASE de guards sin prefijo que son
+        # barreras reales (pip_audit_project, claude_guard_entry,
+        # prepush_check). Es el mecanismo, no un parche por caso: el
+        # fail-closed del censo de hooks hace visible al PROXIMO guard sin
+        # prefijo al nacer.
+        "known_hooks": data.get("known_hooks") or [],
     }
 
 
@@ -1053,6 +1064,241 @@ def _dewired(
     return bad
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-049g: CENSO DE BARRERAS POR INVOCADORES (denominador por clase).
+#
+# El censo por GUARD_PREFIXES cierra CASOS, no la CLASE: pip_audit_project,
+# claude_guard_entry y prepush_check son barreras vivas invisibles porque su
+# nombre no casa el prefijo. Este censo deriva el denominador de los
+# INVOCADORES (todo lo que un camino automatico ejecuta ES una barrera, con
+# su stage como metadato) y FALLA ante un ejecutable LOCAL de hook no
+# reconocido (ni prefijo, ni known_hooks del policy).
+#
+# RAICES Y PATRONES DEL CENSO (decision de la orquestadora 2026-10-25):
+#   - .pre-commit-config.yaml  -> SOLO bloques `repo: local`, parseado como
+#     YAML (nunca grep: prepush_check vive hoy en un COMENTARIO de este
+#     fichero); stage = stages del hook (default pre-commit).
+#   - .claude/settings.json    -> hooks de Claude Code; stage = claude-hook.
+#   - .github/workflows/*.yml  -> pasos `run:`; stage = CI.
+#   - scripts/closeout_steps/*.py + scripts/session_closeout.py
+#                              -> invocaciones de scripts; stage = closeout.
+#
+# FUERA del denominador POR DISENO: hooks de repos REMOTOS (pre-commit-hooks,
+# uv-pre-commit) -- no resuelven a ejecutables de ESTE repo.
+# ---------------------------------------------------------------------------
+
+_CENSUS_SCRIPT_RE = re.compile(r"((?:scripts|\.agent/hooks)/[\w.-]+\.py)")
+_CLOSEOUT_STEM_RE = re.compile(r"(?:from|import)\s+(?:scripts\.)?([\w_]+)")
+# WOT-2026-049g ronda 2: gates.py invoca prepush_check.py por SUBPROCESS
+# con nombre literal (no import): censar tambien literales .py que EXISTEN
+# en scripts/ (el filtro de existencia evita comentarios y cadenas varias).
+_CLOSEOUT_BARE_PY_RE = re.compile(r"([\w_]+\.py)")
+
+
+def _extract_script_from_entry(entry: str) -> str | None:
+    """Path de script de repo (scripts/... o .agent/hooks/...) dentro de entry.
+
+    Before: entry es el comando del hook (str). During: regex sobre la cadena.
+    After: la primera ruta encontrada, o None.
+    """
+    match = _CENSUS_SCRIPT_RE.search(entry or "")
+    return match.group(1) if match else None
+
+
+def _census_pre_commit(motor_root: Path, found: dict) -> None:
+    """Fuente 1: .pre-commit-config.yaml, SOLO bloques repo: local (via YAML)."""
+    pc_path = motor_root / ".pre-commit-config.yaml"
+    if not pc_path.is_file():
+        return
+    try:
+        data = yaml.safe_load(pc_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, yaml.YAMLError):
+        return
+    for repo in (data or {}).get("repos") or []:
+        if not isinstance(repo, dict) or repo.get("repo") != "local":
+            continue
+        for hook in repo.get("hooks") or []:
+            entry = hook.get("entry") or ""
+            if not isinstance(entry, str):
+                entry = " ".join(str(x) for x in entry)
+            script = _extract_script_from_entry(entry)
+            if script:
+                stages = hook.get("stages") or ["pre-commit"]
+                found.setdefault(script, []).append(
+                    {"source": "pre-commit-config.yaml", "stage": ",".join(stages)}
+                )
+
+
+def _census_claude_settings(settings_path: Path, found: dict) -> None:
+    """Fuente 2: .claude/settings.json (hooks de Claude Code).
+
+    Los commands construyen la ruta por CONCATENACION con comillas
+    (``e=r/'.agent'/'hooks'/'claude_guard_entry.py'``), que el regex de rutas
+    no casa: se extraen tokens `*.py` del command y se resuelven contra
+    .agent/hooks/ del mismo arbol (WOT-2026-049g ronda 2).
+    """
+    if not settings_path.is_file():
+        return
+    hooks_root = settings_path.parent.parent / ".agent" / "hooks"
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return
+    for value in (data or {}).get("hooks", {}).values():
+        for matcher in value or []:
+            for hook in matcher.get("hooks", []):
+                command = hook.get("command") or ""
+                script = _extract_script_from_entry(command)
+                if not script:
+                    for token_match in re.finditer(r"([\w-]+\.py)", command):
+                        candidate = hooks_root / token_match.group(1)
+                        if candidate.is_file():
+                            script = f".agent/hooks/{token_match.group(1)}"
+                            break
+                if script:
+                    found.setdefault(script, []).append(
+                        {"source": ".claude/settings.json", "stage": "claude-hook"}
+                    )
+
+
+def _census_workflows(motor_root: Path, found: dict) -> None:
+    """Fuente 3: .github/workflows/*.yml (pasos run:)."""
+    wf_dir = motor_root / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return
+    for wf in sorted(wf_dir.glob("*.yml")):
+        try:
+            data = yaml.safe_load(wf.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, yaml.YAMLError):
+            continue
+        for job in (data or {}).get("jobs", {}).values():
+            if not isinstance(job, dict):
+                continue
+            for step in job.get("steps", []):
+                script = _extract_script_from_entry(step.get("run") or "")
+                if script:
+                    found.setdefault(script, []).append(
+                        {"source": f".github/workflows/{wf.name}", "stage": "CI"}
+                    )
+
+
+def _census_closeout(motor_root: Path, found: dict) -> None:
+    """Fuente 4: scripts/closeout_steps/*.py + scripts/session_closeout.py."""
+    closeout_sources: list[Path] = list(
+        (motor_root / "scripts" / "closeout_steps").glob("*.py")
+    )
+    session_closeout = motor_root / "scripts" / "session_closeout.py"
+    if session_closeout.is_file():
+        closeout_sources.append(session_closeout)
+    for src in closeout_sources:
+        try:
+            text = src.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in _CLOSEOUT_STEM_RE.finditer(text):
+            stem = match.group(1)
+            if stem in ("scripts",):
+                continue
+            if (motor_root / "scripts" / f"{stem}.py").is_file():
+                found.setdefault(f"{stem}.py", []).append(
+                    {"source": f"scripts/{src.name}", "stage": "closeout"}
+                )
+        for match in _CENSUS_SCRIPT_RE.finditer(text):
+            found.setdefault(match.group(1), []).append(
+                {"source": f"scripts/{src.name}", "stage": "closeout"}
+            )
+        for match in _CLOSEOUT_BARE_PY_RE.finditer(text):
+            candidate = f"scripts/{match.group(1)}"
+            if (motor_root / candidate).is_file():
+                found.setdefault(candidate, []).append(
+                    {"source": f"scripts/{src.name}", "stage": "closeout"}
+                )
+
+
+def census_hooks(motor_root: Path, project_root: Path | None = None) -> dict:
+    """Inventario invocador->barrera con stage como metadato (read-only).
+
+    Before: motor_root (config/workflows/closeout); project_root OPCIONAL
+        (WOT-2026-049g ronda 2: claude_guard_entry vive SOLO en el
+        .claude/settings.json del DESTINO -- sin esto el caso 2 de la ficha
+        sigue invisible). During: 4+1 fuentes sin escritura. After:
+        {script_rel: [{source, stage}]} ordenado.
+    """
+    found: dict[str, list[dict[str, str]]] = {}
+
+    def _add(script: str, source: str, stage: str) -> None:
+        found.setdefault(script, []).append({"source": source, "stage": stage})
+
+    _census_pre_commit(motor_root, found)
+    _census_claude_settings(motor_root / ".claude" / "settings.json", found)
+    _census_workflows(motor_root, found)
+    _census_closeout(motor_root, found)
+    if project_root is not None:
+        _census_claude_settings(project_root / ".claude" / "settings.json", found)
+    return {k: found[k] for k in sorted(found)}
+
+
+def _classify_hook_script(
+    script: str, known_hooks: list[str]
+) -> tuple[str, str | None]:
+    """(clasificacion, razon) de un ejecutable del censo de hooks.
+
+    Before: script ruta relativa (scripts/... o .agent/hooks/...); known_hooks
+        registro POR CLASE del policy. During: prefijo o registro. After:
+        ("reconocido", via) o ("no-reconocido", None).
+    """
+    basename = Path(script).stem
+    for prefix in GUARD_PREFIXES:
+        if basename.startswith(prefix):
+            return "reconocido", f"prefijo {prefix}"
+    if basename in known_hooks:
+        return "reconocido", "known_hooks (registro por clase)"
+    return "no-reconocido", None
+
+
+def hook_census_report(
+    motor_root: Path,
+    policy: dict,
+    enforce: bool = False,
+    project_root: Path | None = None,
+) -> int:
+    """Informe del censo de hooks; con enforce, rc 1 si hay no-reconocidos.
+
+    Before: motor_root; policy con known_hooks; project_root opcional (para el
+        .claude/settings.json del destino). During: census_hooks +
+        clasificacion + impresion por guard (invocadores y stages). After:
+        rc 0 (informe, 0 no-reconocidos) o rc 1 (enforce y hay
+        no-reconocidos locales). Nunca escribe.
+    """
+    census = census_hooks(motor_root, project_root)
+    known_hooks = policy.get("known_hooks", [])
+    unrecognized: list[str] = []
+    print(
+        f"[hook-census] {len(census)} ejecutable(s) invocado(s) por caminos automaticos:"
+    )
+    for script, invokers in census.items():
+        cls, reason = _classify_hook_script(script, known_hooks)
+        stages = ", ".join(sorted({i["stage"] for i in invokers}))
+        sources = ", ".join(i["source"] for i in invokers)
+        if cls == "no-reconocido":
+            unrecognized.append(script)
+            print(f"  NO-RECONOCIDO {script} [{stages}] ({sources})")
+        else:
+            print(f"  ok {script} [{stages}] ({sources}) via {reason}")
+    if unrecognized:
+        print(
+            f"[hook-census] {len(unrecognized)} ejecutable(s) LOCAL(ES) no "
+            "reconocido(s): registra en known_hooks (si es barrera real por "
+            "clase) o renombra con prefijo. Ejecutable no censado = barrera "
+            "invisible para el auditor de barreras."
+        )
+        if enforce:
+            return 1
+    else:
+        print("[hook-census] 0 no-reconocidos: el denominador cubre la flota.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-check + des-cableado + declarados + stale
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--motor-root", default=str(MOTOR_ROOT))
@@ -1071,9 +1317,32 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
         default=None,
         help="workspace holding .agent/config/motor_destination_link.json (fallback)",
     )
+    ap.add_argument(
+        "--hook-census",
+        action="store_true",
+        help=(
+            "WOT-2026-049g: censo de barreras por INVOCADORES (informe con "
+            "stages; sin escritura)."
+        ),
+    )
+    ap.add_argument(
+        "--enforce",
+        action="store_true",
+        help="Con --hook-census: rc 1 si hay ejecutables locales no reconocidos.",
+    )
     args = ap.parse_args(argv)
     root = Path(args.motor_root).resolve()
     policy = _load_policy()
+
+    # WOT-2026-049g: modo censo de hooks (informe o enforce).
+    if getattr(args, "hook_census", False):
+        return hook_census_report(
+            root,
+            policy,
+            enforce=args.enforce,
+            project_root=Path(args.project_root) if args.project_root else None,
+        )
+
     known = policy["known_unwired"]
     wired_via = policy["wired_via"]
 
