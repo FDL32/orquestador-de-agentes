@@ -9714,10 +9714,16 @@ def test_concurrent_process_appends_during_rotation_lose_no_rows(
 def test_crash_before_rename_leaves_active_intact_and_sweeps_stale_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D4 paso a->b: corte antes del rename; la rotacion siguiente barre el residual."""
+    """D4 paso a->b: corte antes del rename; la rotacion siguiente barre el residual.
+
+    WOT-2026-124i: la rotacion ya no crea un temporal de activo antes del rename
+    (el activo nuevo se crea con O_EXCL despues); el residual se PLANTA, como el
+    que dejaria una version anterior o un resumen cortado, para seguir probando
+    el barrido."""
     monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
     path = _write_active(tmp_path, [_sc_row("2026-10-01T00:00:00Z")])
     ensemble_dir = path.parent
+    (ensemble_dir / "scorecard.rotate-999-1.tmp").write_bytes(b"")
 
     calls = {"n": 0}
     real_rename = os.rename
@@ -9735,11 +9741,11 @@ def test_crash_before_rename_leaves_active_intact_and_sweeps_stale_tmp(
     assert len(_rows(tmp_path)) == 1, "el activo quedo tocado por el corte"
     assert _archives(tmp_path) == []
     assert not list(ensemble_dir.glob("scorecard_summary.*.json"))
-    assert list(ensemble_dir.glob("scorecard.rotate-*.tmp")), (
-        "el temporal creado antes del rename debe existir para probar el barrido"
+    assert not list(ensemble_dir.glob("scorecard.rotate-*.tmp")), (
+        "el barrido corre bajo el lock ANTES del rename: el residual ya no esta"
     )
 
-    # la rotacion siguiente barre el temporal huerfano y completa
+    # la rotacion siguiente completa
     ed._rotate_scorecard(path)
     assert not list(ensemble_dir.glob("scorecard.rotate-*.tmp"))
     assert len(_archives(tmp_path)) == 1 and len(_rows(tmp_path)) == 0
@@ -9748,20 +9754,17 @@ def test_crash_before_rename_leaves_active_intact_and_sweeps_stale_tmp(
 def test_crash_after_rename_recovers_with_complete_archive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D4 paso b->c: corte tras el rename; archivado COMPLETO y self-heal."""
+    """D4 paso b->c: corte tras el rename; archivado COMPLETO y self-heal.
+
+    WOT-2026-124i: el paso que sigue al rename es la creacion exclusiva del
+    activo (`_create_active_if_absent`), no un `os.replace`: el corte cae ahi."""
     monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
     path = _write_active(tmp_path, [_sc_row("2026-10-01T00:05:00Z")])
 
-    calls = {"n": 0}
-    real_replace = os.replace
+    def cut_create(_path):
+        raise OSError("corte simulado tras el rename del viejo")
 
-    def flaky_replace(src, dst):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise OSError("corte simulado tras el rename del viejo")
-        return real_replace(src, dst)
-
-    monkeypatch.setattr(os, "replace", flaky_replace)
+    monkeypatch.setattr(ed, "_create_active_if_absent", cut_create)
     with pytest.raises(OSError):
         ed._rotate_scorecard(path)
 
@@ -9795,7 +9798,7 @@ def test_crash_during_summary_never_leaves_partial_l2(
 
     def flaky_replace(src, dst):
         calls["n"] += 1
-        if calls["n"] == 2:  # 1 = activo (ok), 2 = resumen (corte)
+        if calls["n"] == 1:  # el activo ya no usa replace (124i): 1 = resumen
             raise OSError("corte simulado durante el resumen L2")
         return real_replace(src, dst)
 

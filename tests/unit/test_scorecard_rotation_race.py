@@ -130,3 +130,37 @@ def test_fresh_rotation_still_rotates(
     assert archived != p
     assert archived.read_bytes() == b"A1\nA2\n"
     assert p.read_bytes() == b""
+
+
+def test_writer_arriving_while_active_is_absent_keeps_its_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writer window (codex review of 9624f249, MAJOR 2): right after the
+    rotation renames the active away, a writer recreates it and writes its row
+    (its inode check passes: the new file IS the path). The rotation must not
+    then clobber that file. Pre-fix, ``os.replace(tmp, path)`` replaced it and
+    the row vanished silently."""
+    p = tmp_path / ed.SCORECARD_REL
+    p.parent.mkdir(parents=True)
+    ed.append_scorecard(tmp_path, {"ts": "a", "ticket": "ROW-A"})
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
+    real_rename = os.rename
+    state = {"writer_ran": False}
+
+    def rename_hook(src, dst, *args, **kwargs):
+        result = real_rename(src, dst, *args, **kwargs)
+        if Path(src) == p and not state["writer_ran"]:
+            state["writer_ran"] = True
+            assert not p.exists(), "the window under test: active is absent"
+            monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 10**9)
+            ed.append_scorecard(tmp_path, {"ts": "w", "ticket": "ROW-W"})
+        return result
+
+    monkeypatch.setattr(os, "rename", rename_hook)
+
+    ed.append_scorecard(tmp_path, {"ts": "b", "ticket": "ROW-B"})  # rotates first
+
+    assert state["writer_ran"], "the rotation never reached the window"
+    text = b"\n".join(_all_rows(p))
+    for ticket in (b"ROW-A", b"ROW-B", b"ROW-W"):
+        assert ticket in text, ticket

@@ -2461,7 +2461,7 @@ def append_scorecard(project_root: Path, row: dict) -> Path:
     for _ in range(4):
         with _open_append_handle(path) as f, _locked_for_append(f):
             try:
-                same_inode = os.fstat(f.fileno()).st_ino == os.stat(path).st_ino
+                same_inode = os.path.samestat(os.fstat(f.fileno()), os.stat(path))
             except OSError:
                 # FileNotFoundError: la rotacion en vuelo aun no repuso el
                 # activo. PermissionError: colision transitoria del stat.
@@ -2536,7 +2536,7 @@ def _rotate_scorecard(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with _open_append_handle(path) as f, _locked_for_append(f):
         try:
-            same_inode = os.fstat(f.fileno()).st_ino == os.stat(path).st_ino
+            same_inode = os.path.samestat(os.fstat(f.fileno()), os.stat(path))
             if not same_inode:
                 return path  # WOT-2026-124i: handle huerfano, otro proceso ya roto
         except OSError:
@@ -2646,16 +2646,20 @@ def _scorecard_summary_payload(raw: bytes) -> dict:
 def _rotate_scorecard_locked(path: Path) -> Path:
     """Secuencia de rotacion con el lock YA tomado (D2, D4).
 
-    Orden (D4): el activo NUEVO (vacio) se crea en temporal ANTES del rename
-    del viejo. El resumen L2 NO vive aqui: se genera FUERA del lock por
-    `_write_rotation_summary` (probe 2b del CG: el byte-range lock sigue
-    anclado al fichero fisico via el handle aunque este renombrado, y leer el
-    archivado con el lock vivo falla igual que M2). Un corte simulado entre
-    cada par de pasos deja estado RECUPERABLE (nunca sin remedio):
-      - corte antes del rename: activo intacto; sin archivado ni resumen; el
-        temporal huerfano se barre al inicio de la siguiente rotacion;
-      - corte tras el rename y antes del replace: archivado COMPLETO y visible
-        (requisito simetrico de D11) y activo ausente -> el siguiente
+    Orden: rename del activo al archivado y despues creacion EXCLUSIVA del
+    activo nuevo vacio (WOT-2026-124i: antes era un temporal + `os.replace`,
+    que pisaba el activo que un escritor concurrente hubiera recreado en la
+    ventana; ver `_create_active_if_absent`). El resumen L2 NO vive aqui: se
+    genera FUERA del lock por `_write_rotation_summary` (probe 2b del CG: el
+    byte-range lock sigue anclado al fichero fisico via el handle aunque este
+    renombrado, y leer el archivado con el lock vivo falla igual que M2). Un
+    corte simulado entre cada par de pasos deja estado RECUPERABLE (nunca sin
+    remedio):
+      - corte antes del rename: activo intacto; sin archivado ni resumen; los
+        temporales `*.rotate-*.tmp` de versiones anteriores se barren al
+        inicio de la siguiente rotacion;
+      - corte tras el rename y antes de crear el activo: archivado COMPLETO y
+        visible (requisito simetrico de D11) y activo ausente -> el siguiente
         `append_scorecard` lo recrea vacio (self-heal);
       - corte durante el resumen: archivado y activo ya sanos; el resumen a
         medias queda en `*.tmp`, que no casa ni con la regex de archivados ni
@@ -2678,13 +2682,32 @@ def _rotate_scorecard_locked(path: Path) -> Path:
     for stale in path.parent.glob(f"{path.stem}.rotate-*.tmp"):
         with contextlib.suppress(OSError):
             stale.unlink()
-    new_active_tmp = path.with_name(
-        f"{path.stem}.rotate-{os.getpid()}-{time.time_ns()}.tmp"
-    )
-    new_active_tmp.write_bytes(b"")  # D4: activo nuevo (vacio) ANTES del rename
     _retry_fs_op(os.rename, path, archived)  # archivado COMPLETO y visible (D11)
-    _retry_fs_op(os.replace, new_active_tmp, path)  # activo vacio, atomico
+    # WOT-2026-124i: el activo nuevo se crea con creacion EXCLUSIVA, nunca con
+    # `os.replace`. Entre el rename y este punto el activo no existe, y un
+    # escritor que llegue ahi lo recrea (`OPEN_ALWAYS`/`"ab"`) y escribe su fila
+    # tras revalidar el inode: el `os.replace(tmp, path)` anterior pisaba ese
+    # fichero y la fila se perdia en silencio (reproducido de forma
+    # determinista; mecanismo del 115/120 de CI). Con `O_EXCL`, si el activo ya
+    # existe es el de ese escritor y se conserva tal cual.
+    _retry_fs_op(_create_active_if_absent, path)
     return archived
+
+
+def _create_active_if_absent(path: Path) -> None:
+    """Crea ``path`` vacio solo si no existe (WOT-2026-124i).
+
+    Before: ``path`` es el activo recien archivado por la rotacion.
+    During: ``os.open`` con ``O_CREAT | O_EXCL`` (atomico en POSIX y Windows).
+    After: ``path`` existe; si ya existia (lo recreo un escritor concurrente)
+        no se toca. ``PermissionError`` propaga para que `_retry_fs_op` reintente.
+    """
+    try:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+        fd = os.open(path, flags)
+    except FileExistsError:
+        return
+    os.close(fd)
 
 
 def _write_rotation_summary(archived: Path) -> Path:
