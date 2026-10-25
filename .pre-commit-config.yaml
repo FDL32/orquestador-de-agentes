@@ -151,6 +151,19 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-040z: autoridad de sesion en el camino de push. BARRERA real
+      # (el incidente 2026-07-25 fue un git push crudo: el gate de closeout NO
+      # lo habria parado). Bloquea push a main desde sesion DECLARADA 'diseno'
+      # sin escape (DESIGN_PUSH_REASON con motivo, que queda en
+      # design_push_log.jsonl) -- ver scripts/check_push_authority.py.
+      - id: check-push-authority
+        name: check push authority (sesion diseno no empuja a main)
+        entry: uv run python scripts/check_push_authority.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
       # WOT-2026-104b: cablea AGENTS.md 'Decision de proceso sin
       # instruccion exacta => BUSCA protocolo documentado antes de
       # suponer uno' (2026-10-14), autodeclarada 'NORMA, no barrera'

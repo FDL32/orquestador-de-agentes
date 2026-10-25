@@ -23,6 +23,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -943,6 +944,20 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MAX_BYTES,
         help=f"Maximum size of the map in bytes (default: {DEFAULT_MAX_BYTES})",
     )
+    parser.add_argument(
+        "--session-type",
+        type=str,
+        choices=None,
+        default=None,
+        help=(
+            "WOT-2026-040z: declara el tipo de sesion "
+            "(diseno|desarrollo|orquestacion) y escribe "
+            ".agent/runtime/session/session_type.json con rastro "
+            "(declared_at/declared_by). SIN este flag NO se escribe fichero y "
+            "el guard de push da WARN (sesiones legacy). EXPLICITO por "
+            "decision de diseno: el tipo nunca se adivina."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -975,6 +990,37 @@ def main(argv: list[str] | None = None) -> int:
 
     # Build the map
     content = build_map(project_root, max_bytes=args.max_bytes)
+
+    # WOT-2026-040z: declaracion EXPLICITA del tipo de sesion (decision de la
+    # orquestadora del vuelo 20261024). Solo se escribe con --session-type;
+    # redeclarar SOBREESCRIBE dejando nuevo rastro declared_at/declared_by.
+    if args.session_type is not None:
+        session_type = args.session_type.strip().lower()
+        if session_type not in ("diseno", "desarrollo", "orquestacion"):
+            print(
+                f"Error: --session-type invalido: {args.session_type!r} "
+                "(valores: diseno|desarrollo|orquestacion)",
+                file=sys.stderr,
+            )
+            return 1
+        session_dir = project_root / ".agent" / "runtime" / "session"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_file = session_dir / "session_type.json"
+        payload = {
+            "tipo": session_type,
+            "declared_at": datetime.now(timezone.utc).isoformat(),
+            "declared_by": (
+                "destination_context.py --bootstrap --session-type " + session_type
+            ),
+        }
+        session_file.write_text(
+            json.dumps(payload, ensure_ascii=True, indent=1) + "\n",
+            encoding="utf-8",
+        )
+        print(
+            f"[destination-context] session_type declarado: {session_type} "
+            f"-> {session_file}"
+        )
 
     # Write to .agent/context/destination_map.md
     context_dir = project_root / CONTEXT_DIR_REL

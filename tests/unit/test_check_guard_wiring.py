@@ -68,6 +68,12 @@ _EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 # The COUNT is not the invariant -- the SAME set is (a classifier that drops a real
 # call-site and picks up a bogus one prints the same number).
 EXPECTED_WIRED_REAL = {
+    # WOT-2026-040z: cableado via hook PROPIO en .pre-commit-config.yaml con
+    # stages: [pre-push] (la barrera real del incidente 2026-07-25: un git
+    # push crudo no pasa por prepush_check). Mutaciones propias en
+    # tests/unit/test_040z_push_authority.py (par diseno-bloquea/desarrollo-pasa,
+    # escape con rastro, legacy WARN).
+    "check_push_authority",
     # WOT-2026-059r: cableado via import local en
     # prepush_check.py::run_backlog_contract_check -> _run_dod_metric_freshness_warn
     # (closeout, WARN por decision DoD-d: 8+ violaciones vivas previas al
