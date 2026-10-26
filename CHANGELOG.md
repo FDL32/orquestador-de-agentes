@@ -1,3 +1,12 @@
+# 2026-10-26 - WOT-2026-129u: relevo de sesion-rol (t3_role_session_relief.md)
+
+### Added
+- `prompts/t3_role_session_relief.md`: protocolo operativo de relevo de sesion-rol hermana
+  (arbol A/B, tercer discriminador cupo 129d, umbral por ranura, progreso observable,
+  checkpoint continuo, preflight 129q, plantilla sucesor, verificacion alcanzable,
+  self-hop C14).
+- Puntero en `prompts/session_hop.md` Paso 5-bis.
+
 # 2026-10-26 - WOT-2026-129l: aviso de drift canonico de hooks hacia destinos en prepush (WARN)
 
 ### Added
