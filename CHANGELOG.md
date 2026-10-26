@@ -1,3 +1,18 @@
+# 2026-10-26 - WOT-2026-129l: aviso de drift canonico de hooks hacia destinos en prepush (WARN)
+
+### Added
+- `scripts/check_settings_canonical_drift.py`: guard que detecta cambios en los comandos
+  canonicos de hooks (`.agent/hooks/claude_guard_entry.py` o
+  `scripts/check_claude_settings_portability.py`) y emite un aviso NOMBRADO
+  `[settings-canonical-drift]` listando los destinos (`motor_destination_link.json`)
+  cuyo `.claude/settings.json` NO pasa el gate del motor NUEVO, con el comando
+  `python scripts/install_agent_system.py --sync --dest <destino>` para re-sincronizar.
+  Rc 0 siempre (es WARN); fail-visible: universo vacio, links ilegitimos y diff
+  indeterminado se DECLARAN explicitamente.
+- `run_settings_canonical_drift_check(project_root)` en `scripts/prepush_check.py`:
+  cableado tras `run_hook_delivery_check` (5-cuatro), FUERA del bloque `closeout_mode`
+  (corre en TODO push), con `is_blocking=False` y try/except amplio (R-A).
+
 # 2026-10-26 - WOT-2026-129b: `create_worktree_pair.py --base-ref` + gating de verificacion
 
 ### Added

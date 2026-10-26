@@ -932,6 +932,56 @@ def run_hook_delivery_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_settings_canonical_drift_check(project_root: Path) -> CheckResult:
+    """WOT-2026-129l: WARN si el diff de push altera comandos canonicos de hooks.
+
+    Deteccion en el motor: un diff que toca ``.agent/hooks/claude_guard_entry.py``
+    o ``scripts/check_claude_settings_portability.py`` produce un aviso NOMBRADO
+    que lista los destinos cuyo ``.claude/settings.json`` NO pasa el gate con
+    el motor NUEVO, con el comando de re-sincronizacion.
+
+    Before: ``project_root`` resoluble (checkout del motor). El modulo del guard
+        vive en ``scripts/check_settings_canonical_drift.py`` del motor.
+    During: import ESTATICO de ``scripts.check_settings_canonical_drift``. Se
+        invoca ``main()`` del modulo; su rc es siempre 0 (WARN, DoD 3). La
+        salida stdout se captura como output del CheckResult. try/except amplio:
+        CUALQUIER excepcion se convierte en CheckResult WARN con
+        ``is_blocking=False`` (R-A: nunca propaga excepcion, un raise abortaria
+        TODO el prepush y romperia el DoD 3).
+    After: ``passed=True`` si diff no toca trigger o todos los destinos estan
+        al dia; ``passed=False`` + ``is_blocking=False`` (WARN) si hay destinos
+        que fallan el gate. El nombre del guard aparece como
+        "Settings Canonical Drift Check (WOT-2026-129l, WARN)".
+
+    R-B: en topologia de worktrees el default (`parents[1].parent`) puede no
+        alcanzar el destino activo; el remedio es ``--destino-root`` o la env
+        ``AGENT_DESTINOS_ROOT``.
+    """
+    name = "Settings Canonical Drift Check (WOT-2026-129l, WARN)"
+
+    try:
+        from scripts.check_settings_canonical_drift import main as drift_main
+
+        drift_main(["--project-root", str(project_root.resolve())])
+        # stdout_result is always 0 (main always returns 0); captured output
+        # was already printed by the module.
+        output = "drift check completed (WOT-2026-129l, rc=0)"
+        return CheckResult(
+            name=name,
+            passed=True,
+            output=output,
+            is_blocking=False,
+        )
+    except Exception as exc:
+        # R-A: nunca propaga excepcion; convierte cualquier fallo en WARN.
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"WARN: settings canonical drift check error interno: {exc}",
+            is_blocking=False,
+        )
+
+
 def run_arranque_budget_check(project_root: Path) -> CheckResult:
     """WOT-2026-103b: cablea el guard de presupuesto de arranque (CTL-2026-041a)
     en el prepush del motor, para que corra en TODO push de TODO destino que lo
@@ -4674,6 +4724,12 @@ def run_preflight_check(
     # la memoria del hook SessionStart LLEGA al modelo, medido en el lado del
     # consumidor (transcripts). SKIP sin coste si no hay transcripts.
     results.append(run_hook_delivery_check(project_root))
+
+    # 5-cuatro. Settings Canonical Drift Check (WOT-2026-129l; WARN, corre en
+    # TODO push, no solo en cierre -- is_blocking=False siempre, skip sin coste
+    # si diff no toca triggers canonicos). FUERA de closeout_mode: corre en todo
+    # push para capturar la ventana de fallo (DoD 3).
+    results.append(run_settings_canonical_drift_check(project_root))
 
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:
