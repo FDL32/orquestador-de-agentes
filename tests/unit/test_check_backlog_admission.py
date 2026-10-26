@@ -384,6 +384,80 @@ def test_mencion_de_id_en_prosa_no_dispara(tmp_path: Path) -> None:
     assert "WOT-2026-923b" not in out
 
 
+def test_mencion_de_id_en_prosa_padre_no_cancela_alta_hijo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-070x (caso espejo de 077a): un ID mencionado en la PROSA de una
+    fila EXISTENTE (commit PADRE) no debe cancelar la deteccion de la alta REAL
+    de ese mismo ID en un commit HIJO posterior.
+
+    Antes del fix compartido (`_id_cells_of_row`, commit 034e16a), tanto
+    `row_line_ids` (lado hijo) como `_row_ids_of_content` (lado padre, via
+    `_parent_row_ids`) corrian el regex de ID sobre la fila ENTERA. Si el padre
+    mencionaba el ID en prosa, ese ID se colaba en `pids` y `nuevos = added_ids
+    - pids` restaba la alta real del hijo -> falso NEGATIVO.
+    """
+    repo = init_repo(tmp_path, backlog_extra=row("WOT-2026-923a", "titulo original"))
+
+    # Commit PADRE: edita la fila existente para mencionar un ID nuevo en prosa
+    # (celda Titulo, nunca la celda Ticket).
+    mentioning_row_text = (
+        "| Media | WOT-2026-923a | titulo EDITADO [se decidio AMPLIAR esta "
+        "fila en vez de dar de alta WOT-2026-924b, ver barrido de similitud] "
+        "deliverable_type: code | s | pending | - | test | - |\n"
+    )
+    (repo / BACKLOG_REL).write_text(HEADER + mentioning_row_text, encoding="utf-8")
+    git(repo, "add", BACKLOG_REL)
+    git(repo, "commit", "-m", "amplia 923a, menciona 924b en prosa")
+
+    # Commit HIJO: da de alta la fila REAL para ese mismo ID.
+    commit_alta(repo, row("WOT-2026-924b"), "alta real de 924b")
+
+    # 1. Comportamiento REAL (fix ya aplicado): la alta DEBE detectarse.
+    code, out = run_guard(repo)
+    assert "WOT-2026-924b" in out, f"La alta de 924b no fue detectada. Output: {out}"
+    assert code == 0 or "SIN_RECIBO" in out, f"El guard fallo inesperadamente: {out}"
+
+    # 2. MUTATION (control negativo): `run_guard` siempre lanza un subprocess
+    # nuevo, asi que un monkeypatch directo sobre `cba._row_ids_of_content` NO
+    # cruza la frontera del proceso. Para demostrar la mutacion, interceptamos
+    # `subprocess.run` y ejecutamos `cba.main()` EN PROCESO (con stdout/stderr
+    # redirigidos), donde el monkeypatch de `cba._row_ids_of_content` SI aplica.
+    original_run = subprocess.run
+
+    def fake_subprocess_run(args, **kwargs):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+
+        if not (len(args) >= 2 and args[0] == sys.executable and args[1] == str(GUARD)):
+            return original_run(args, **kwargs)
+        out_buf, err_buf = StringIO(), StringIO()
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            try:
+                exit_code = cba.main(args[2:])
+            except SystemExit as exc:
+                exit_code = exc.code if exc.code is not None else 0
+        return subprocess.CompletedProcess(
+            args, exit_code, stdout=out_buf.getvalue(), stderr=err_buf.getvalue()
+        )
+
+    def row_ids_sin_restriccion_de_celda(content: bytes) -> set[str]:
+        ids: set[str] = set()
+        for line in cba.norm_newlines(content).decode("utf-8", "replace").splitlines():
+            if line.lstrip().startswith("|"):
+                ids.update(cba.ID_RE.findall(line))
+        return ids
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(cba, "_row_ids_of_content", row_ids_sin_restriccion_de_celda)
+
+    _code_mut, out_mut = run_guard(repo)
+    assert "WOT-2026-924b" not in out_mut, (
+        f"La mutacion no discrimina: la alta se detecto IGUAL sin el fix. "
+        f"Output: {out_mut}"
+    )
+
+
 def test_alta_commiteada_con_staging_vacio_dispara(tmp_path: Path) -> None:
     """DoD (e): el staging NO es el rango: alta YA COMMITEADA con staging vacio
     dispara igual."""
