@@ -119,9 +119,63 @@ def test_case_b_expected_report_with_allowlist_passes(tmp_path: Path) -> None:
     assert "limpio" in result.message.lower() or result.passed, result.message
 
 
-# ---------------------------------------------------------------------------
-# Case (c): PRODUCTIVE file + closeout allowlist -> STILL FAILS
-# ---------------------------------------------------------------------------
+def test_case_new_runtime_artifacts_with_allowlist_passes(tmp_path: Path) -> None:
+    """(New) Test that the 4 new runtime artifacts (STATE.md, events.jsonl,
+    memory_profile.md, memory_rules.md) are also forgiven when using the
+    closeout allowlist.
+    """
+    repo = tmp_path / "repo_new"
+    _init_git_repo(repo)
+
+    # Dirty multiple new artifacts
+    new_artifacts = [
+        ".agent/runtime/memory/STATE.md",
+        ".agent/runtime/memory/events.jsonl",
+        ".agent/runtime/memory/memory_profile.md",
+        ".agent/runtime/memory/memory_rules.md",
+    ]
+    for rel in new_artifacts:
+        _commit_file(repo, rel, "initial")
+        _make_dirty(repo, rel, "updated by closeout")
+
+    result = dhc.check_git_tree_clean(repo, dhc.EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS)
+
+    assert result.passed is True, (
+        f"Expected PASS with new runtime artifacts in allowlist but got FAIL. "
+        f"msg={result.message}, details={result.details}"
+    )
+
+
+def test_mutation_new_artifacts_removing_one_causes_failure(tmp_path: Path) -> None:
+    """Mutation proof for new artifacts: if one of the new basenames is
+    missing from the allowlist, the check MUST fail.
+    """
+    repo = tmp_path / "repo_mut_new"
+    _init_git_repo(repo)
+
+    # Dirty a new artifact
+    target_rel = ".agent/runtime/memory/STATE.md"
+    _commit_file(repo, target_rel, "initial")
+    _make_dirty(repo, target_rel, "updated by closeout")
+
+    # Use a list that specifically excludes 'STATE.md'
+    incomplete_list = [
+        a for a in dhc.EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS if "STATE.md" not in a
+    ]
+
+    # Passing the incomplete list should result in FAIL because STATE.md is still dirty
+    result_no_filter = dhc.check_git_tree_clean(repo, incomplete_list)
+    assert result_no_filter.passed is False, (
+        "Mutation proof failed: expected FAIL when STATE.md is missing from allowlist"
+    )
+
+    # Re-verify that with the full list it PASSES
+    result_with_filter = dhc.check_git_tree_clean(
+        repo, dhc.EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS
+    )
+    assert result_with_filter.passed is True, (
+        "Should still PASS with the full EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS"
+    )
 
 
 def test_case_c_productive_file_with_allowlist_still_fails(tmp_path: Path) -> None:
