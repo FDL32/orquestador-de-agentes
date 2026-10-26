@@ -119,11 +119,6 @@ def test_case_b_expected_report_with_allowlist_passes(tmp_path: Path) -> None:
     assert "limpio" in result.message.lower() or result.passed, result.message
 
 
-# ---------------------------------------------------------------------------
-# Case (c): PRODUCTIVE file + closeout allowlist -> STILL FAILS
-# ---------------------------------------------------------------------------
-
-
 def test_case_new_runtime_artifacts_with_allowlist_passes(tmp_path: Path) -> None:
     """(New) Test that the 4 new runtime artifacts (STATE.md, events.jsonl,
     memory_profile.md, memory_rules.md) are also forgiven when using the
@@ -181,6 +176,11 @@ def test_mutation_new_artifacts_removing_one_causes_failure(tmp_path: Path) -> N
     assert result_with_filter.passed is True, (
         "Should still PASS with the full EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS"
     )
+
+
+# ---------------------------------------------------------------------------
+# Case (c): PRODUCTIVE file + closeout allowlist -> STILL FAILS
+# ---------------------------------------------------------------------------
 
 
 def test_case_c_productive_file_with_allowlist_still_fails(tmp_path: Path) -> None:
