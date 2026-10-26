@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -43,6 +44,52 @@ def is_git_repo(path: Path) -> bool:
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+
+def resolve_start_point(repo: Path, base_ref: str, dry_run: bool) -> str:
+    """Resolve ``base_ref`` as the start-point for a worktree.
+
+    Pre-conditions: ``repo`` is a valid git repo.
+    After: returns ``base_ref`` verbatim (git accepts ref names as start-point);
+        on failure raises ``ValueError`` with a clear message.
+    """
+    # Best-effort fetch (non-dry-run only)
+    fetch_ok = True
+    if not dry_run:
+        try:
+            subprocess.run(  # noqa: S603
+                ["git", "-C", str(repo), "fetch", "--quiet"],  # noqa: S607
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                capture_output=True,
+                timeout=30,
+                check=True,
+            )
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError):
+            fetch_ok = False
+
+    # Read-only verification (both modes): must resolve to a commit
+    try:
+        subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo), "rev-parse", "--verify", f"{base_ref}^{{commit}}"],  # noqa: S607
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        raise ValueError(
+            f"--base-ref '{base_ref}' no existe en {repo} "
+            f"(ni tras fetch). Verifica el remoto o pasa un --base-ref valido."
+        ) from None
+
+    # Warn if fetch failed but ref resolved locally (stale)
+    if not fetch_ok:
+        print(
+            f"[WARN] --base-ref '{base_ref}' resuelto sin poder actualizar "
+            f"{repo} via fetch; puede estar desactualizado.",
+            file=sys.stderr,
+        )
+
+    return base_ref
 
 
 def worktree_paths(
@@ -93,24 +140,34 @@ def classify_pair_state(motor_worktree: Path, destino_worktree: Path) -> str:
     return "partial"
 
 
-def git_worktree_add(repo: Path, worktree: Path, branch: str, dry_run: bool) -> None:
-    """``git -C repo worktree add -b <branch> <worktree>``. If the branch
-    already exists (git fails with 'already exists'), retries without ``-b``:
-    ``git -C repo worktree add <worktree> <branch>``. Propagates
-    ``CalledProcessError`` on any other failure."""
+def git_worktree_add(
+    repo: Path, worktree: Path, branch: str, start_point: str | None, dry_run: bool
+) -> None:
+    """``git -C repo worktree add -b <branch> <worktree> <start_point>``.
+    If the branch already exists (git fails with 'already exists'), retries
+    without ``-b``: ``git -C repo worktree add <worktree> <branch>`` (no
+    ``start_point`` on the retry path). Propagates ``CalledProcessError`` on
+    any other failure."""
     if dry_run:
-        print(f"[DRY-RUN] haria: git worktree add -b {branch} {worktree} (en {repo})")
+        msg = f"[DRY-RUN] haria: git worktree add -b {branch} {worktree}"
+        if start_point:
+            msg += f" {start_point}"
+        msg += f" (en {repo})"
+        print(msg)
         return
 
     # Try with -b first (create new branch)
+    cmd = ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree)]
+    if start_point:
+        cmd.append(start_point)
     result = subprocess.run(  # noqa: S603
-        ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(worktree)],  # noqa: S607
+        cmd,
         capture_output=True,
         text=True,
     )
 
     if result.returncode != 0 and "already exists" in (result.stderr or ""):
-        # Branch exists, retry without -b (use existing branch)
+        # Branch exists, retry without -b (use existing branch, no start_point)
         result = subprocess.run(  # noqa: S603
             ["git", "-C", str(repo), "worktree", "add", str(worktree), branch],  # noqa: S607
             capture_output=True,
@@ -206,7 +263,7 @@ def run_verify(destino_worktree: Path) -> int:
     return result.returncode
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     """Orchestrate: validate preconditions -> calculate paths -> classify state ->
     dispatch (absent: create all; complete: no-op; partial: diagnostic + exit 1)."""
     ap = argparse.ArgumentParser(
@@ -257,6 +314,11 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="Print actions without executing any real writes.",
     )
+    ap.add_argument(
+        "--base-ref",
+        default="origin/main",
+        help="Base reference to create the worktrees from (default: origin/main).",
+    )
 
     args = ap.parse_args(argv)
 
@@ -275,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         uv_bin_raw.split() if isinstance(uv_bin_raw, str) else [uv_bin_raw]
     )
     dry_run = args.dry_run
+    base_ref = args.base_ref
 
     # Step 1: Validate preconditions
     if not is_git_repo(motor_repo):
@@ -314,10 +377,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # state == "absent" — create the pair
-    # Step 4: Create motor worktree
+    # Step 5: Resolve base-ref for both repos (only in absent branch)
+    try:
+        motor_start_point = resolve_start_point(motor_repo, base_ref, dry_run)
+        destino_start_point = resolve_start_point(destino_repo, base_ref, dry_run)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        return 1
+
+    # Step 6: Create motor worktree
     print(f"[INFO] Creating motor worktree: {motor_worktree}")
     try:
-        git_worktree_add(motor_repo, motor_worktree, f"{owner}/{suffix}", dry_run)
+        git_worktree_add(
+            motor_repo, motor_worktree, f"{owner}/{suffix}", motor_start_point, dry_run
+        )
     except subprocess.CalledProcessError as exc:
         print(
             f"ERROR: No se pudo crear el worktree del motor: {exc.stderr or exc}".strip(),
@@ -325,10 +398,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    # Step 5: Create destino worktree
+    # Step 6: Create destino worktree
     print(f"[INFO] Creating destino worktree: {destino_worktree}")
     try:
-        git_worktree_add(destino_repo, destino_worktree, destino_branch, dry_run)
+        git_worktree_add(
+            destino_repo, destino_worktree, destino_branch, destino_start_point, dry_run
+        )
     except subprocess.CalledProcessError as exc:
         print(
             f"ERROR: No se pudo crear el worktree de destino: {exc.stderr or exc}".strip(),
@@ -336,12 +411,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    # Step 6: Write link
+    # Step 7: Write link
     write_link(destino_worktree, motor_worktree, dry_run)
 
     uv_sync_failed = False
 
-    # Step 7: Run uv sync (if not dry-run)
+    # Step 8: Run uv sync (if not dry-run)
     if uv_bin:
         uv_rc = run_uv_sync(motor_worktree, uv_bin, dry_run)
         if uv_rc != 0:
@@ -357,18 +432,38 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("[INFO] uv sync completed successfully.")
 
-    # Step 8: Verify (collector only, does not abort)
-    print("\n[INFO] Running verification (collect_session_state.py):")
-    run_verify(destino_worktree)
+    # Step 8: Verify
+    if dry_run:
+        print("\n[DRY-RUN] haria: verificacion con collect_session_state.py")
+        verify_rc = 0  # no real returncode to gate on
+    else:
+        print("\n[INFO] Running verification (collect_session_state.py):")
+        verify_rc = run_verify(destino_worktree)
 
     # Step 9: Summary
-    print(
-        f"\n[INFO] worktree pair creado:\n"
-        f"  Motor:      {motor_worktree}\n"
-        f"  Destino:    {destino_worktree}\n"
-        f"  Link:       {destino_worktree}/.agent/config/motor_destination_link.json"
-    )
-    return 1 if uv_sync_failed else 0
+    if dry_run:
+        print(
+            f"\n[DRY-RUN] se crearia el par:\n"
+            f"  Motor:      {motor_worktree}\n"
+            f"  Destino:    {destino_worktree}\n"
+            f"  Link:       {destino_worktree}/.agent/config/motor_destination_link.json"
+        )
+    elif verify_rc == 0:
+        print(
+            f"\n[INFO] worktree pair creado:\n"
+            f"  Motor:      {motor_worktree}\n"
+            f"  Destino:    {destino_worktree}\n"
+            f"  Link:       {destino_worktree}/.agent/config/motor_destination_link.json"
+        )
+    else:
+        print(
+            f"\n[ERROR] La verificacion del par (collect_session_state.py) "
+            f"fallo con rc={verify_rc}. Los worktrees se crearon pero no se "
+            f"consideran listos.",
+            file=sys.stderr,
+        )
+
+    return 1 if (uv_sync_failed or verify_rc != 0) else 0
 
 
 def _print_partial_diagnostic(
