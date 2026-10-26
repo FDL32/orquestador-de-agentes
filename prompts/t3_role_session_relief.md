@@ -133,10 +133,11 @@ no replicables), se aplica el umbral de **2+ fallos**.
 ### Reset del contador
 
 El contador de fallos por ranura se **resetea SOLO por progreso verificado** (C5, C12):
-- Commit nuevo en el worktree con evidencia de trabajo.
-- Archivo modificado en la ranura (creado, editado, renombrado).
-- Entrada en el journal con estado de ticket avanzado.
-- Senal de `t3_thread_send mode=restart` completada con EXIT.
+- Cualquier reset exige **>= 2 senales verificables del conjunto de la seccion 4**
+  (commits, ficheros, journal con estado avanzado, logs, PIDs).
+- La senal de `t3_thread_send mode=restart` completada con EXIT puede contar como
+  **maximo UNA** de esas >= 2 senales: es recuperacion, no progreso de trabajo;
+  no basta sola, no relaja la seccion 4 a 1 senal.
 
 El reset **NO se hace** por cerrar un ticket sin progreso medible (C12: la regla
 "sin cierre de ticket intermedio" se rompe en ranuras con cierres rapidos).
