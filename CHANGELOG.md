@@ -1,3 +1,18 @@
+# 2026-10-26 - WOT-2026-129b: `create_worktree_pair.py --base-ref` + gating de verificacion
+
+### Added
+- `--base-ref` (default `origin/main`) en `create_worktree_pair.py`: las ramas del par nacen del ref
+  pedido en vez del HEAD del checkout principal (que puede ir cientos de commits atrasado).
+  `resolve_start_point()` hace fetch best-effort (`GIT_TERMINAL_PROMPT=0`, timeout 30s) y verifica de
+  solo lectura que el ref resuelve; error claro si no, WARN si resuelve en stale tras fetch fallido.
+  Solo se resuelve dentro de la rama `state == "absent"` (un par ya `complete`/`partial` no depende de
+  `origin`).
+
+### Fixed
+- El sumario ya NO imprime "worktree pair creado" si `collect_session_state.py` (la verificacion) falla,
+  ni en `--dry-run` (que antes ejecutaba el verify real contra un worktree inexistente). El `rc` final
+  de `main()` ahora refleja `verify_rc != 0` ademas de `uv_sync_failed`.
+
 # 2026-10-25 - WOT-2026-127f: sonda de expulsadas de L2 (`memory_consolidate.py --list-expelled`)
 
 ### Added
