@@ -10,12 +10,12 @@
 
 | kind | total |
 |------|-------|
-| prompt | 53 |
+| prompt | 54 |
 | reference | 41 |
 | script-consumer | 5 |
 | shared | 3 |
 | skill | 49 |
-| **total** | **151** |
+| **total** | **152** |
 
 ## Entradas
 
@@ -74,6 +74,7 @@
 | prompt | `prompts/revisor_independent_review.md` | active | system | revisor | model-invoked | — |
 | prompt | `prompts/session_hop.md` | active | system | orchestrator | model-invoked | — |
 | prompt | `prompts/suite_optimization.md` | active | system | orchestrator | model-invoked | — |
+| prompt | `prompts/t3_role_session_relief.md` | active | system | shared | model-invoked | — |
 | reference | `skills/audit-pipeline/references/audit-checklist.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/code-rules.md` | active | system | shared | model-invoked | — |
 | reference | `skills/builder-implement-from-plan/references/log-format.md` | active | system | shared | model-invoked | — |

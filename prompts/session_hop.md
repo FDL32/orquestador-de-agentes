@@ -373,6 +373,7 @@ declara "no visible", nunca se omite en silencio.
   que nadie lo note.
 - **HEAD remotos ajenos ya publicados** desde que empezo la sesion (`git fetch` + `git log
   origin/<rama>`), porque fuerzan el Gate 2 de `.agent/rules/common/flight_push_policy.md`.
+- **Relevo de sesion-rol:** `prompts/t3_role_session_relief.md` (WOT-2026-129u). [sin verificar por bucle (WOT-2026-129u)]
 
 Protocolo completo de coordinacion: `.agent/rules/common/t3_ade_coordination.md`.
 
