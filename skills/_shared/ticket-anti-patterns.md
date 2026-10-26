@@ -167,6 +167,20 @@ Origen del anti-patron: WOT-2026-015e D4 (la correccion canonica fue anadir un t
 
 Evidencia origen: CI 6618177 fallo `tests/unit/test_closeout_lessons.py` (el `closeout_lessons.md` desindexado por 015c existia en local pero no en el clon limpio); fix b222bb1 (skip-si-ausente / hermeticidad). Cross-link: la nota CI/local de `scripts/preflight_closeout.py` (`ci_local_warning`) advierte de este mismo riesgo cuando hay runtime desindexado.
 
+## AP-D06 - Copia de patrón de autorización sin copia de su mitigación
+
+- **Descripcion:** Una función de autorización o guard se copia a una nueva superficie, pero la mitigación que la versión original ya tenía (por ejemplo, leer una variable de entorno, un flag o un caso especial) no se porta a la copia.
+- **Por que rompe al Builder:** Crea una asimetría de comportamiento entre dos guards que deberían ser equivalentes; un hueco condicional en el original se vuelve incondicional en la copia, comprometiendo la seguridad.
+- **Senal de deteccion:** Un diff que copia una función de autorización a otra superficie exige un diff de sus mitigaciones. Cuando se añade una función que deriva de otra ya existente, el auditor debe comparar también las ramas condicionales (env vars, flags, etc.) de ambas, no solo la lógica principal.
+
+❌ Ejemplo malo:
+> `guard_paths.py` valida la raíz usando `AGENT_PROJECT_ROOT`, pero la copia `claude_guard_entry.py` solo implementa la lógica de paths sin la comprobación de la env var, dejando la autorización incondicional respecto al root.
+
+✅ Ejemplo bueno:
+> `guard_paths.py` valida la raíz usando `AGENT_PROJECT_ROOT` y la copia `claude_guard_entry.py` también implementa la lectura y validación de dicha variable para mantener la misma mitigación.
+
+Origen del anti-patron: WOT-2026-038g
+
 ## Uso
 
 - Usa estas entradas como referencia al redactar el `## TP Check` del `AUDIT_WOT-XXXX.md`.
