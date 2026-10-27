@@ -1661,3 +1661,389 @@ class TestSummarizeLoopGroups:
         audit_commit_src = inspect.getsource(cle.audit_commit)
         assert "summarize_loop_groups" not in audit_src
         assert "summarize_loop_groups" not in audit_commit_src
+
+
+# =========================================================== WOT-2026-129y
+# Cobertura elegible declarada (agents.json::ensemble_registry.eligible_coverage),
+# politica declared/strict, override --min-distinct sin bypass, exencion de
+# 129d (DoD 5) y receipt reproducible (DoD 6). Nivel `audit()`: los fixtures
+# inyectan config y parchean la lectura del scorecard; `audit_commit` queda
+# intocado (los 82 tests previos siguen siendo la red de seguridad legacy).
+
+
+def _cov_config(
+    *,
+    keys=("BA03", "BA07"),
+    entry=None,
+    statuses=None,
+):
+    """Config-minima con ensemble_registry: backend_keys + eligible_coverage.
+
+    Before: claves BAxx; `entry` opcional sobreescribe la entrada por defecto
+        (declared min 2, excluded BA05, exempt WOT-2026-129d).
+    During: `statuses` permite marcar una clave como archivada (retirada).
+    After: dict config apto para `audit(config=...)` sin tocar el agents.json real.
+    """
+    statuses = statuses or {}
+    registry_keys = {
+        k: {
+            "backend": "kilo",
+            "model": f"model-{k}",
+            "backend_version": None,
+            "status": statuses.get(k, "active"),
+        }
+        for k in (*keys, "BA05", "BA02", "BA15")
+    }
+    default_entry = {
+        "backend_keys": list(keys),
+        "min_distinct": 2,
+        "policy": "declared",
+        "excluded_backend_keys": ["BA05"],
+        "exempt_tickets": ["WOT-2026-129d"],
+    }
+    return {
+        "ensemble_registry": {
+            "backend_keys": registry_keys,
+            "eligible_coverage": {
+                "MANAGER_REVIEW:repo_motor": (default_entry if entry is None else entry)
+            },
+        }
+    }
+
+
+def _audit_cov(monkeypatch, rows, emitted, **kwargs):
+    """`cle.audit` con scorecard/emitted parcheados y config inyectada.
+
+    Before: rows/emitted con la forma de `_ronda`/`_emitted`; kwargs llevan
+        dtype/phase/authority/config/min_distinct segun el caso.
+    During: parchea `_read_scorecard` y `read_emitted_nonces` (sin disco) y
+        fija phase+delivery_authority por DEFECTO para activar cobertura.
+    After: primer veredicto (un solo commit "abc").
+    """
+    monkeypatch.setattr(cle, "_read_scorecard", lambda root: (list(rows), "x"))
+    monkeypatch.setattr(cle, "read_emitted_nonces", lambda root: list(emitted))
+    kwargs.setdefault("phase", "MANAGER_REVIEW")
+    kwargs.setdefault("delivery_authority", "repo_motor")
+    verdicts = cle.audit(Path("dummy"), commit_shas=["abc"], **kwargs)
+    return verdicts[0]
+
+
+def _cov_rows(*backends, ticket="WOT-2026-129y", nonce="N1"):
+    """Rondas (una por backend) con ticket+phase del flujo real."""
+    return [
+        {**_ronda(bk, nonce=nonce), "ticket": ticket, "phase": "MANAGER_REVIEW"}
+        for bk in backends
+    ]
+
+
+# ------------------------------------------------------------------- CA1/CA2
+def test_coverage_declared_two_keys_pass_same_instance(monkeypatch):
+    """CA1: entrada declared min 2 + 2 claves elegibles en UNA instancia -> ok;
+    receipt con min_aplicado=2, origen=eligible_coverage y policy_min=4 visible."""
+    rows = _cov_rows("BA03", "BA07")
+    emitted = [_emitted()]
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        emitted,
+        deliverable_type="code",
+        config=_cov_config(),
+    )
+    assert v["ok"] is True
+    assert v["min_distinct"] == 2
+    assert v["min_aplicado"] == 2
+    assert v["min_origen"] == "eligible_coverage"
+    assert v["policy_min"] == 4
+    assert v["deliverable_type"] == "code"
+    assert v["eligible_declared"] == ["BA03", "BA07"]
+    assert v["eligible_effective"] == ["BA03", "BA07"]
+    assert v["coverage_key"] == "MANAGER_REVIEW:repo_motor"
+    receipt = cle._receipt_view(v)
+    assert receipt["nonces"] == ["N1"]
+    assert receipt["min_origen"] == "eligible_coverage"
+
+
+def test_coverage_strict_policy_unreachable_fails_explicitly(monkeypatch):
+    """CA2/DoD 2: policy=strict con 2 elegibles < policy 4 -> fallo EXPLICITO
+    nombrando fase, tipo, cobertura, elegibles y minimo, aunque las rondas
+    existan y pasen a nivel nonce."""
+    entry = {
+        "backend_keys": ["BA03", "BA07"],
+        "min_distinct": 2,
+        "policy": "strict",
+    }
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(entry=entry),
+    )
+    assert v["ok"] is False
+    err = v["coverage_error"]
+    assert err.startswith("contrato_inalcanzable")
+    for token in ("MANAGER_REVIEW", "code", "eligible_coverage", "4", "elegibles"):
+        assert token in err, f"falta {token!r} en el fallo explicito: {err}"
+    assert v["min_aplicado"] == 4
+    assert v["min_origen"] == "policy"
+
+
+# ------------------------------------------------------------------- CA3
+def test_four_eligible_keys_in_one_instance_pass(monkeypatch):
+    """CA3a: 4 claves elegibles en la MISMA instancia/nonce -> ok con distinct 4."""
+    entry = {
+        "backend_keys": ["BA03", "BA07", "BA02", "BA15"],
+        "min_distinct": 4,
+        "policy": "declared",
+    }
+    rows = _cov_rows("BA03", "BA07", "BA02", "BA15")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(entry=entry),
+    )
+    assert v["ok"] is True
+    assert v["distinct_backends"] == ["BA02", "BA03", "BA07", "BA15"]
+    assert v["min_aplicado"] == 4
+
+
+def test_rounds_split_across_nonces_never_unioned(monkeypatch):
+    """CA3b/DoD 2: 4 elegibles repartidos 2+2 en DOS nonces con min 4 -> cada
+    instancia se evalua sola (ok=False), la union NO cuenta."""
+    entry = {
+        "backend_keys": ["BA03", "BA07", "BA02", "BA15"],
+        "min_distinct": 4,
+        "policy": "declared",
+    }
+    rows = [
+        *_cov_rows("BA03", "BA07", nonce="N1"),
+        *_cov_rows("BA02", "BA15", nonce="N2"),
+    ]
+    emitted = [_emitted(nonce="N1"), _emitted(nonce="N2")]
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        emitted,
+        deliverable_type="code",
+        config=_cov_config(entry=entry),
+    )
+    assert v["ok"] is False
+    assert sorted(v["distinct_backends"]) == ["BA02", "BA03", "BA07", "BA15"]
+    assert all(not e["ok"] for e in v["per_nonce"])
+    assert [e["distinct"] for e in v["per_nonce"]] == [2, 2]
+
+
+# ------------------------------------------------------------------- CA4
+def test_excluded_key_round_not_counted(monkeypatch):
+    """CA4a: ronda de una clave en excluded_backend_keys -> no cuenta; 1<2 -> rojo."""
+    entry = {
+        # D2: excluded_backend_keys debe ser disjunto de backend_keys. BA07
+        # puede haber ejecutado una ronda, pero no forma parte de la cobertura.
+        "backend_keys": ["BA03", "BA02"],
+        "min_distinct": 2,
+        "policy": "declared",
+        "excluded_backend_keys": ["BA07"],
+    }
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(entry=entry),
+    )
+    assert v["ok"] is False
+    assert v["distinct_backends"] == ["BA03"]
+    assert v["eligible_effective"] == ["BA02", "BA03"]
+    reasons = {n["backend_key"]: n["reason"] for n in v["not_eligible_backends"]}
+    assert reasons.get("BA07") == "excluded"
+    receipt = cle._receipt_view(v)
+    assert any(item["backend_key"] == "BA07" for item in receipt["no_contadas"]), (
+        "el recibo debe nombrar la clave no contada (DoD 6)"
+    )
+
+
+def test_retired_key_not_counted(monkeypatch):
+    """CA4b: clave declarada con registry status != active (retirada) -> no cuenta."""
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(statuses={"BA07": "archived"}),
+    )
+    assert v["ok"] is False
+    assert v["eligible_effective"] == ["BA03"]
+    removed = {r["backend_key"]: r["reason"] for r in v["declared_removed"]}
+    assert removed.get("BA07") == "retired(status=archived)"
+
+
+# ------------------------------------------------------------------- CA5
+def test_exempt_ticket_129d_falls_back_to_strict_policy(monkeypatch):
+    """CA5/DoD 5: filas con ticket WOT-2026-129d -> la cobertura NO aplica
+    (exenta): min vuelve a policy 4 y 2 rondas quedan ok=False (sin
+    retro-autorizacion de 129d)."""
+    rows = _cov_rows("BA03", "BA07", ticket="WOT-2026-129d")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(),
+    )
+    assert v["exempt"] is True
+    assert v["ok"] is False
+    assert v["min_aplicado"] == 4
+    assert v["min_origen"] == "policy"
+    assert v["eligible_effective"] is None
+
+
+# ------------------------------------------------------------------- CA6
+def test_override_below_declared_min_rejected(monkeypatch):
+    """CA6i/D5: --min-distinct por debajo del minimo declarado -> RECHAZADO
+    (ok=False, reason override_below_declared_min); nunca invalida el derivado."""
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        min_distinct=1,
+        config=_cov_config(),
+    )
+    assert v["ok"] is False
+    assert v["coverage_error"].startswith("override_below_declared_min")
+    assert v["min_aplicado"] == 2
+    assert v["override"] == 1
+
+
+def test_override_above_declared_applied_and_recorded(monkeypatch):
+    """CA6ii/D5: override >= declarado se aplica (mas estricto) y queda en el
+    recibo con min_origen=cli-override (no silencioso)."""
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        min_distinct=3,
+        config=_cov_config(),
+    )
+    assert v["min_aplicado"] == 3
+    assert v["min_origen"] == "cli-override"
+    assert v["ok"] is False  # 2 claves reales < 3 exigidas por el override
+    assert cle._receipt_view(v)["override"] == 3
+
+
+def test_override_below_policy_without_coverage_flags_not_silent(monkeypatch):
+    """CA6iii/D5: SIN cobertura, override por debajo de policy -> se aplica pero
+    con override_below_policy=True en el receipt (el WARN de stderr es del CLI)."""
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        min_distinct=2,
+        config={"ensemble_registry": {"backend_keys": {}}},
+        phase=None,
+        delivery_authority=None,
+    )
+    assert v["min_aplicado"] == 2
+    assert v["min_origen"] == "cli-override"
+    assert v["override_below_policy"] is True
+    assert v["coverage_key"] is None
+
+
+def test_invalid_coverage_declaration_fails_closed(monkeypatch):
+    """D2: declaracion invalida (min_distinct fuera de rango) -> bloqueo
+    explicito invalid_coverage, jamas degradacion silenciosa a legacy."""
+    entry = {
+        "backend_keys": ["BA03", "BA07"],
+        "min_distinct": 99,
+        "policy": "declared",
+    }
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(entry=entry),
+    )
+    assert v["ok"] is False
+    assert v["coverage_error"].startswith("invalid_coverage")
+
+
+# ------------------------------------------------------------------- CA7/CA8
+def test_legacy_path_without_phase_authority_unchanged(monkeypatch):
+    """CA7: sin phase+authority el camino es legacy: policy 4 para code, sin
+    filtro de elegibilidad, coverage_key None."""
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(),
+        phase=None,
+        delivery_authority=None,
+    )
+    assert v["ok"] is False
+    assert v["min_distinct"] == 4
+    assert v["min_origen"] == "policy"
+    assert v["coverage_key"] is None
+    assert v["distinct_backends"] == ["BA03", "BA07"]
+
+
+def test_receipt_is_deterministic(monkeypatch):
+    """CA8/DoD 6: dos corridas identicas -> mismo recibo (JSON estable)."""
+    rows = _cov_rows("BA03", "BA07")
+    emitted = [_emitted()]
+    kwargs = {"deliverable_type": "code", "config": _cov_config()}
+    first = cle._receipt_view(_audit_cov(monkeypatch, rows, emitted, **kwargs))
+    second = cle._receipt_view(_audit_cov(monkeypatch, rows, emitted, **kwargs))
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+    for field in (
+        "ticket",
+        "commit_sha",
+        "loop_id",
+        "nonces",
+        "distinct_backends",
+        "eligible_declared",
+        "eligible_effective",
+        "no_contadas",
+        "deliverable_type",
+        "policy_min",
+        "min_aplicado",
+        "min_origen",
+        "coverage_key",
+        "override",
+        "ok",
+    ):
+        assert field in first, f"el recibo DoD 6 carece de {field!r}"
+
+
+def test_coverage_rejects_unknown_backend_key(monkeypatch):
+    """D2: clave elegible que NO existe en ensemble_registry.backend_keys ->
+    invalid_coverage (declaracion rota, fail-closed)."""
+    entry = {
+        "backend_keys": ["BA03", "BA999"],
+        "min_distinct": 2,
+        "policy": "declared",
+    }
+    rows = _cov_rows("BA03", "BA07")
+    v = _audit_cov(
+        monkeypatch,
+        rows,
+        [_emitted()],
+        deliverable_type="code",
+        config=_cov_config(entry=entry),
+    )
+    assert v["ok"] is False
+    assert v["coverage_error"].startswith("invalid_coverage")
+    assert "BA999" in v["coverage_error"]
