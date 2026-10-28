@@ -581,6 +581,22 @@ def test_parser_honors_declared_phase_and_delivery_authority():
     assert authorities == {"abc": "repo_motor"}
 
 
+def test_partial_coverage_metadata_does_not_attribute_declared_coverage(tmp_path):
+    """O1: one coverage token without its pair must fall back to strict legacy."""
+    root = _build_destination(
+        tmp_path,
+        targets=f"{COMMIT} code phase=MANAGER_REVIEW\n",
+        rounds=[_round_row("BA03"), _round_row("BA07")],
+        emitted=[_emitted_row()],
+    )
+
+    result = run_loop_execution_check(root)
+
+    assert result.passed is False, result.output
+    assert result.is_blocking is True, result.output
+    assert "2/4" in result.output, result.output
+
+
 def test_published_target_without_provenance_blocks_even_if_accredited(tmp_path):
     """WOT-2026-058o (d) MUTATION: un target a MANO (sin `source=session-close`)
     que cita un commit YA publicado en origin/main debe CAER por la rama de
