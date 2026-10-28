@@ -356,6 +356,15 @@ EXPECTED_WIRED_REAL = {
     # EXTRA -- el guard se cableo en el commit que lo introdujo y nadie
     # actualizo este set despues.
     "check_escalation_receipt_resolution",
+    # WOT-2026-129l: cableado via import ESTATICO en
+    # prepush_check.py::run_settings_canonical_drift_check (closeout, WARN --
+    # avisa si el diff de push altera comandos canonicos de hooks). NO es
+    # falso-WIRED: `from scripts.check_settings_canonical_drift import main
+    # as drift_main` (prepush_check.py:963) es el call-site real, invocado
+    # desde el recolector de gates del closeout (linea 4770). Mismo patron que
+    # check_escalation_receipt_resolution arriba -- el guard se cableo en el
+    # commit que lo introdujo y nadie actualizo este set despues.
+    "check_settings_canonical_drift",
 }
 
 

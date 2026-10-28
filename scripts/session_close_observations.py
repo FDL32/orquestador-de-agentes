@@ -467,7 +467,10 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
         content = work_plan_path.read_text(encoding="utf-8")
 
         # Extract ticket metadata
-        if f"ID:** {ticket_id}" in content or f"ID: {ticket_id}" in content:
+        belongs_to_ticket = (
+            f"ID:** {ticket_id}" in content or f"ID: {ticket_id}" in content
+        )
+        if belongs_to_ticket:
             # Extract deliverable_type if present
             deliverable_match = re.search(r"\*\*deliverable_type:\*\*\s*(\w+)", content)
             if not deliverable_match:
@@ -494,8 +497,12 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
                 }
             )
 
-        # Extract decisions from Decision Arquitectonica section
-        if "Decision Arquitectonica" in content:
+        # Extract decisions from Decision Arquitectonica section -- scoped to
+        # THIS ticket_id (work_plan.md is single-ticket per convention); sin
+        # el scope, cualquier work_plan.md con la seccion atribuia la senal a
+        # un ticket_id ajeno (incluso uno sintetico/inexistente) con solo que
+        # la cadena apareciera en el fichero.
+        if belongs_to_ticket and "Decision Arquitectonica" in content:
             candidates.append(
                 {
                     "timestamp": now.isoformat(),
