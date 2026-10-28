@@ -1,3 +1,32 @@
+# 2026-10-27 - WOT-2026-129y: cobertura elegible declarada para check_loop_execution
+
+### Added
+- `agents.json::ensemble_registry.eligible_coverage["MANAGER_REVIEW:repo_motor"]`: fuente unica
+  declarada (backend_keys `[BA03, BA07]`, `min_distinct: 2`, `policy: declared`, `excluded_backend_keys:
+  [BA05]`, `exempt_tickets: [WOT-2026-129d]`) que el gate consume sin plumbing nuevo ni lectura del
+  roster externo no versionado.
+- `check_loop_execution.py`: `load_eligible_coverage()` + `validate_coverage_entry()` (claves
+  presentes en `ensemble_registry.backend_keys`, `min_distinct` entero `>=2` y `<=len(backend_keys)`,
+  `policy` en el enum, sin solape `backend_keys`/`excluded_backend_keys`); `effective_eligible()` +
+  `apply_eligibility()`/`apply_eligible_reasons()` (filtra excluidas y claves con
+  `status != "active"`, listadas en el receipt con su razon); `_apply_declared_policy()` (min
+  aplicado = `min_distinct` declarado, sin reclasificar `deliverable_type`) y `_apply_strict_policy()`
+  (min = `min_distinct_for(deliverable_type)`, falla explicito ANTES de mirar rondas si
+  `len(elegibles) < minimo`); `_coverage_plan()` resuelve la politica por entrada y el override
+  `--min-distinct` (rechazado con `override_below_declared_min` si cae por debajo del minimo
+  declarado; sin cobertura, WARN `override_below_policy` no bloqueante); exencion
+  `exempt_tickets` (D6: WOT-2026-129d sigue evaluado en politica estricta, sin retro-autorizarse).
+  `audit()` mantiene su firma retrocompatible (`phase`, `delivery_authority`, `config` opcionales,
+  default `None` = comportamiento legacy byte-identico).
+- `_receipt_view()`: bloque `loop_exec_receipt` determinista con `eligible_declared`,
+  `eligible_effective`, `no_contadas` (`{key, reason}`), `deliverable_type`, `policy_min`,
+  `min_aplicado`, `min_origen` (`policy`|`eligible_coverage`|`cli-override`), `coverage_key` y
+  `override`.
+- `tests/unit/test_check_loop_execution.py`: cobertura positiva y negativa (2 claves vs minimo 4,
+  4 claves elegibles en una instancia, claves excluidas/retiradas, rondas repartidas entre nonces,
+  exencion de WOT-2026-129d, override por debajo del minimo declarado y override sin cobertura)
+  sin tocar la firma `audit_commit` existente.
+
 # 2026-10-26 - WOT-2026-129u: relevo de sesion-rol (t3_role_session_relief.md)
 
 ### Added
