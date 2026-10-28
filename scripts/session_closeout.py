@@ -139,6 +139,7 @@ WORK_PLAN_REL = Path(".agent") / "collaboration" / "work_plan.md"
 LOOP_EXECUTION_TARGETS_REL = (
     Path(".agent") / "collaboration" / "loop_execution_targets.txt"
 )
+LOOP_EXECUTION_PHASE = "MANAGER_REVIEW"
 
 # WOT-2026-058o: token de procedencia que el UNICO escritor legitimo del
 # fichero (`_step_write_loop_execution_targets`, via --session-close) estampa
@@ -2244,8 +2245,8 @@ def _process_ticket_targets(
     # la practica: un callable inyectado siempre es truthy) y deja sitio a la
     # rama nueva de WOT-2026-073d sin rebasar el umbral C901 de la funcion.
     read_authority_fn = read_authority_fn or _default_read_authority
-    declared = read_authority_fn(ticket_id)
-    if _excluded_no_own_surface(declared, project_root, ticket_id):
+    declared_authority = read_authority_fn(ticket_id)
+    if _excluded_no_own_surface(declared_authority, project_root, ticket_id):
         # WOT-2026-073d: sin fila ni contrato propio el campo no puede existir
         # estructuralmente -> exclusion WARN. Un ticket CON superficie que omite
         # el campo sigue por `_resolve_authoritative_repo` (FAIL D2 intacto).
@@ -2256,7 +2257,7 @@ def _process_ticket_targets(
             motor_root,
             extract_prefix_fn,
             resolve_prefix_fn,
-            declared_authority=declared,
+            declared_authority=declared_authority,
             project_root=project_root,
         )
     )
@@ -2316,7 +2317,8 @@ def _process_ticket_targets(
     undeclared_token = "" if declared else " declared=false"
     return _TicketTargetResult(
         [
-            f"{sha} {dtype}{undeclared_token} {LOOP_TARGETS_SOURCE_TOKEN}"
+            f"{sha} {dtype}{undeclared_token} phase={LOOP_EXECUTION_PHASE} "
+            f"delivery_authority={declared_authority} {LOOP_TARGETS_SOURCE_TOKEN}"
             for sha in shas
         ],
         "PASS",
