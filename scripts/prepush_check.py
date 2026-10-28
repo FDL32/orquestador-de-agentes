@@ -2401,7 +2401,13 @@ def _first_prefixed_value(tokens: list[str], prefix: str) -> str | None:
     return None
 
 
-_KNOWN_TARGET_LINE_PREFIXES = ("loop=", "source=", "declared=")
+_KNOWN_TARGET_LINE_PREFIXES = (
+    "loop=",
+    "source=",
+    "declared=",
+    "phase=",
+    "delivery_authority=",
+)
 
 
 def _unprefixed_token(tokens: list[str]) -> str | None:
@@ -2414,14 +2420,24 @@ def _unprefixed_token(tokens: list[str]) -> str | None:
 
 def _parse_loop_execution_targets(
     text: str,
-) -> tuple[list[str], dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[
+    list[str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+]:
     """S1B item 2: parsea el fichero de targets (reparto de ciclomatica).
 
     Before: `text` es el contenido crudo de `loop_execution_targets.txt`.
     During: una linea es
-        `sha[ deliverable_type][ loop=<id>][ source=<v>][ declared=<v>]`;
+        `sha[ deliverable_type][ loop=<id>][ source=<v>][ declared=<v>]`
+        `[ phase=<v>][ delivery_authority=<v>]`;
         `#` empieza comentario; lineas vacias se saltan. Los tokens
-        OPCIONALES `loop=<id>`, `source=<v>` y `declared=<v>` se honran en
+        OPCIONALES `loop=<id>`, `source=<v>`, `declared=<v>`, `phase=<v>` y
+        `delivery_authority=<v>` se honran en
         cualquier posicion tras el sha; el PRIMER token sin prefijo conocido
         sigue siendo el deliverable_type (formato viejo `sha[ dtype]`
         intacto); un token repetido se ignora (gana el primero). WOT-2026-058o:
@@ -2432,15 +2448,16 @@ def _parse_loop_execution_targets(
         encontro bajo este project_root), no un valor citado desde una fila
         real -- su AUSENCIA en la linea significa declarado (el caso comun no
         cambia de forma). Sin I/O.
-    After: (commit_shas, deliverable_type por commit, loop_id por commit,
-        source por commit, declared por commit -- valor crudo del token,
-        tipicamente ``"false"`` cuando presente; ausente del dict = declarado).
+    After: devuelve los datos por commit y, adicionalmente, phase y
+        delivery_authority; su ausencia conserva el camino legacy.
     """
     commit_shas: list[str] = []
     per_commit_dtype: dict[str, str] = {}
     per_commit_loop: dict[str, str] = {}
     per_commit_source: dict[str, str] = {}
     per_commit_declared: dict[str, str] = {}
+    per_commit_phase: dict[str, str] = {}
+    per_commit_authority: dict[str, str] = {}
     for line in text.splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
@@ -2451,6 +2468,8 @@ def _parse_loop_execution_targets(
         loop_id = _first_prefixed_value(parts[1:], "loop=")
         source = _first_prefixed_value(parts[1:], "source=")
         declared = _first_prefixed_value(parts[1:], "declared=")
+        phase = _first_prefixed_value(parts[1:], "phase=")
+        authority = _first_prefixed_value(parts[1:], "delivery_authority=")
         commit_shas.append(sha)
         if dtype:
             per_commit_dtype[sha] = dtype
@@ -2460,12 +2479,18 @@ def _parse_loop_execution_targets(
             per_commit_source[sha] = source
         if declared:
             per_commit_declared[sha] = declared
+        if phase:
+            per_commit_phase[sha] = phase
+        if authority:
+            per_commit_authority[sha] = authority
     return (
         commit_shas,
         per_commit_dtype,
         per_commit_loop,
         per_commit_source,
         per_commit_declared,
+        per_commit_phase,
+        per_commit_authority,
     )
 
 
@@ -2474,6 +2499,8 @@ def _loop_accreditation_failures(
     commit_shas: list[str],
     per_commit_dtype: dict[str, str],
     per_commit_loop: dict[str, str] | None = None,
+    per_commit_phase: dict[str, str] | None = None,
+    per_commit_authority: dict[str, str] | None = None,
 ) -> list[dict]:
     """WOT-2026-059b: veredictos de acreditacion por commit (reparto de ciclomatica).
 
@@ -2493,12 +2520,16 @@ def _loop_accreditation_failures(
         from check_loop_execution import audit as _loop_audit  # type: ignore[no-redef]
     failures: list[dict] = []
     loop_map = per_commit_loop or {}
+    phase_map = per_commit_phase or {}
+    authority_map = per_commit_authority or {}
     for sha in commit_shas:
         verdicts = _loop_audit(
             project_root,
             commit_shas=[sha],
             deliverable_type=per_commit_dtype.get(sha),
             loop_id=loop_map.get(sha),
+            phase=phase_map.get(sha),
+            delivery_authority=authority_map.get(sha),
         )
         failures.extend(v for v in verdicts if not v["ok"])
     return failures
@@ -2598,6 +2629,8 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
             per_commit_loop,
             per_commit_source,
             _per_commit_declared,
+            per_commit_phase,
+            per_commit_authority,
         ) = _parse_loop_execution_targets(targets_file.read_text(encoding="utf-8"))
     except OSError as exc:
         return CheckResult(
@@ -2667,7 +2700,12 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
         )
 
     failures = _loop_accreditation_failures(
-        project_root, commit_shas, per_commit_dtype, per_commit_loop
+        project_root,
+        commit_shas,
+        per_commit_dtype,
+        per_commit_loop,
+        per_commit_phase,
+        per_commit_authority,
     )
     if failures:
         detail = "\n".join(

@@ -589,6 +589,27 @@ def test_run_closeout_calls_writer_before_prepush(tmp_path: Path, monkeypatch) -
     assert exit_code == 1  # early-exit from the faked prepush FAIL
 
 
+def test_writer_stamps_loop_target_with_phase_and_delivery_authority(
+    tmp_path: Path,
+) -> None:
+    """O1: the session-close writer emits the metadata consumed by prepush."""
+    _init_git_repo(tmp_path)
+    _link_motor(tmp_path, tmp_path)
+    _declare_authority(tmp_path, "WOT-2026-045a", "repo_motor")
+    sha = _commit_file(tmp_path, "src/a.py", "x = 1", "WOT-2026-045a: fix")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        tmp_path, ["WOT-2026-045a"], None, False
+    )
+
+    assert result.status == "PASS"
+    line = (tmp_path / TARGETS_REL).read_text(encoding="utf-8").strip()
+    assert line.startswith(f"{sha} code ")
+    assert "phase=MANAGER_REVIEW" in line
+    assert "delivery_authority=repo_motor" in line
+    assert line.endswith("source=session-close")
+
+
 # ---------------------------------------------------------------------------
 # WOT-2026-048b: two-repo prefix-aware resolution
 # ---------------------------------------------------------------------------
@@ -1989,7 +2010,7 @@ def test_dry_run_predicts_warn_for_ticket_without_backlog_row(
 
 _058O_TS_EMIT = "2026-10-11T10:00:00+00:00"
 _058O_TS_ROUND = "2026-10-11T10:05:00+00:00"
-_058O_BACKENDS = ("BA10", "BA11", "BA12", "BA13")
+_058O_BACKENDS = ("BA03", "BA07")
 
 
 def _058o_emitted_row(commit: str) -> dict:
@@ -2040,7 +2061,10 @@ def test_writer_lines_carry_session_close_provenance(tmp_path: Path) -> None:
     content = (repo / TARGETS_REL).read_text(encoding="utf-8")
     # WOT-2026-048w: "WOT-2026-999f" has no backlog row under this tmp repo,
     # so the type is the documented fallback, now marked `declared=false`.
-    assert f"{sha} code declared=false source=session-close" in content, content
+    assert (
+        f"{sha} code declared=false phase=MANAGER_REVIEW "
+        "delivery_authority=repo_motor source=session-close" in content
+    ), content
     for line in content.splitlines():
         if line.strip():
             assert line.split()[1] in {"code", "documentation"}, line

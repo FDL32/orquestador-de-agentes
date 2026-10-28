@@ -76,3 +76,24 @@
   `.agent/collaboration/STATE.md`), ninguno fuera del FLT declarado.
 - Estado -> READY_FOR_REVIEW. NO se lanza MR-A desde este turno (es rol
   de OR-3); sin push, sin merge, sin suite canonica.
+
+## 2026-10-28 - O1: cableado de cobertura en prepush/closeout
+
+- F2 Red: tests nuevos reprodujeron la ausencia de `phase` y
+  `delivery_authority` en el parser de targets y en las lineas escritas por
+  `session_closeout`.
+- F3 Green: `session_closeout` ahora estampa
+  `phase=MANAGER_REVIEW delivery_authority=<declarada>`; `prepush_check`
+  parsea ambos tokens y los propaga por commit a `check_loop_execution.audit`.
+  El formato anterior sigue siendo valido: sin ambos tokens se conserva el
+  camino legacy.
+- Tests focales: `python -m pytest
+  tests/unit/test_prepush_loop_execution_blocking.py
+  tests/unit/test_session_closeout_loop_targets.py -q` -> `87 passed`, exit 0.
+- Gates focales tras formateo: ruff check exit 0; ruff format --check (`4
+  files already formatted`) exit 0; py_compile exit 0; check_guard_wiring
+  (`76 wired / 20 unwired`, `0 UNDECLARED`, `0 stale`) exit 0;
+  check_encoding_guard explícito sobre 4 ficheros (`denominador=4,
+  inspeccionados=4, hits=0, saltados=0`) exit 0.
+- Sin MR-A, merge, push ni suite canónica. Pendiente: revisión de OR-6 y
+  coordinación del siguiente paso.

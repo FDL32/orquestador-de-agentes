@@ -546,11 +546,13 @@ def test_parser_honors_source_token_and_keeps_old_format():
     sin prefijo conocido sigue siendo deliverable_type."""
     import scripts.prepush_check as pc
 
-    shas, dtypes, loops, sources, _declared = pc._parse_loop_execution_targets(
-        "abc code loop=L1 source=session-close\n"
-        "def docs\n"
-        "ghi code source=otro\n"
-        "jkl source=session-close loop=L2 documentation\n"
+    shas, dtypes, loops, sources, _declared, _phases, _authorities = (
+        pc._parse_loop_execution_targets(
+            "abc code loop=L1 source=session-close\n"
+            "def docs\n"
+            "ghi code source=otro\n"
+            "jkl source=session-close loop=L2 documentation\n"
+        )
     )
     assert shas == ["abc", "def", "ghi", "jkl"]
     assert dtypes == {
@@ -561,6 +563,22 @@ def test_parser_honors_source_token_and_keeps_old_format():
     }
     assert loops == {"abc": "L1", "jkl": "L2"}
     assert sources == {"abc": "session-close", "ghi": "otro", "jkl": "session-close"}
+
+
+def test_parser_honors_declared_phase_and_delivery_authority():
+    """O1: target metadata must reach the checker without guessing it."""
+    import scripts.prepush_check as pc
+
+    shas, _dtypes, _loops, _sources, _declared, phases, authorities = (
+        pc._parse_loop_execution_targets(
+            "abc code phase=MANAGER_REVIEW delivery_authority=repo_motor "
+            "source=session-close\n"
+        )
+    )
+
+    assert shas == ["abc"]
+    assert phases == {"abc": "MANAGER_REVIEW"}
+    assert authorities == {"abc": "repo_motor"}
 
 
 def test_published_target_without_provenance_blocks_even_if_accredited(tmp_path):
