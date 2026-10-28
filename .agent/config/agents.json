@@ -1130,7 +1130,24 @@
       "active",
       "deprecated",
       "archived"
-    ]
+    ],
+    "eligible_coverage": {
+      "MANAGER_REVIEW:repo_motor": {
+        "backend_keys": [
+          "BA03",
+          "BA07"
+        ],
+        "min_distinct": 2,
+        "policy": "declared",
+        "excluded_backend_keys": [
+          "BA05"
+        ],
+        "exempt_tickets": [
+          "WOT-2026-129d"
+        ],
+        "note": "WOT-2026-129y: cobertura elegible copiada de la verdad del roster del vuelo (session_types.implantacion.lenses.MANAGER_REVIEW=[BA03] + revisor_repo_motor_interino=BA07). BA05 excluida por WOT-2026-129r (no puede revisar repo_motor via loop-round). WOT-2026-129d exento: esta entrada NO re-adjudica su evidencia (DoD 5). Si el roster del vuelo declara nuevas claves para esta fase, este campo se actualiza por ticket (D1 del work_plan: fuente unica versionada; la deriva es fail-safe)."
+      }
+    }
   },
   "ensemble_private_roots": [],
   "ensemble_payload_allowlist": [],

@@ -86,6 +86,7 @@ Rechazos explicitos (fail-closed)
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -97,6 +98,7 @@ if str(MOTOR_ROOT / "scripts") not in sys.path:
 
 from ensemble_dispatch import (  # noqa: E402
     _read_scorecard,
+    load_motor_config,
     read_emitted_nonces,
     resolve_governed_commit_sha,
 )
@@ -129,6 +131,334 @@ def min_distinct_for(deliverable_type: str | None) -> int:
     return DEFAULT_MIN_DISTINCT_BACKENDS.get(
         deliverable_type.strip().lower(), FALLBACK_MIN_DISTINCT
     )
+
+
+# WOT-2026-129y: cobertura elegible DECLARADA (fuente unica, D1 del
+# work_plan). La fuente es `agents.json::ensemble_registry.eligible_coverage`,
+# campo versionado del motor, NO el roster del vuelo (externo no versionado;
+# ver D1 por el motivo completo). El roster sigue siendo la expectativa de
+# sesion; este gate no lo lee.
+COVERAGE_POLICIES = frozenset({"declared", "strict"})
+COVERAGE_SOURCE_LABEL = "agents.json::ensemble_registry.eligible_coverage"
+
+
+def _coverage_key(phase: str | None, delivery_authority: str | None) -> str | None:
+    """Clave ``"<PHASE>:<DELIVERY_AUTHORITY>"``; None => sin cobertura (legacy)."""
+    if not phase or not delivery_authority:
+        return None
+    return f"{phase}:{delivery_authority}"
+
+
+def _validate_coverage_keys(entry: dict, config: dict) -> str | None:
+    """Parte de claves de ``validate_coverage_entry`` (backend_keys + excluded).
+
+    Before: entry ya sabido que es dict.
+    During: valida tipo/contenido de ``backend_keys`` (strings no vacios, sin
+        duplicados, todas en ``ensemble_registry.backend_keys``) y la forma de
+        ``excluded_backend_keys`` sin solape.
+    After: reason ``invalid_coverage: ...`` o None.
+    """
+    backend_keys = entry.get("backend_keys")
+    if not isinstance(backend_keys, list) or not backend_keys:
+        return "invalid_coverage: backend_keys ausente o vacio"
+    if any(not isinstance(k, str) or not k.strip() for k in backend_keys):
+        return "invalid_coverage: backend_keys contiene valores que no son strings no vacios"
+    if len(set(backend_keys)) != len(backend_keys):
+        return "invalid_coverage: backend_keys con duplicados"
+    registry = (config.get("ensemble_registry") or {}).get("backend_keys") or {}
+    unknown = sorted(k for k in backend_keys if k not in registry)
+    if unknown:
+        return (
+            "invalid_coverage: claves ausentes de "
+            f"ensemble_registry.backend_keys: {unknown}"
+        )
+    excluded = entry.get("excluded_backend_keys") or []
+    if not isinstance(excluded, list) or any(not isinstance(k, str) for k in excluded):
+        return "invalid_coverage: excluded_backend_keys debe ser lista de strings"
+    both = sorted(set(backend_keys) & set(excluded))
+    if both:
+        return f"invalid_coverage: claves a la vez elegibles y excluidas: {both}"
+    return None
+
+
+def validate_coverage_entry(entry: object, config: dict) -> str | None:
+    """Valida la DECLARACION de una entrada de cobertura (D2, fail-closed).
+
+    Before: ``entry`` es el valor declarado en
+        ``ensemble_registry.eligible_coverage[key]``; ``config`` el motor
+        config cargado (para contrastar con ``ensemble_registry.backend_keys``).
+    During: valida las claves via ``_validate_coverage_keys`` y despues
+        ``policy`` en {declared, strict} (default strict), ``min_distinct``
+        entero en [2, len(backend_keys)] y ``exempt_tickets`` opcional de
+        strings.
+    After: None si la declaracion es valida; si no, un reason ``invalid_*``
+        que el veredicto publica (nunca se degrada a legacy en silencio).
+    """
+    if not isinstance(entry, dict):
+        return "invalid_coverage: la entrada no es un objeto JSON"
+    keys_reason = _validate_coverage_keys(entry, config)
+    if keys_reason is not None:
+        return keys_reason
+    policy = entry.get("policy", "strict")
+    if policy not in COVERAGE_POLICIES:
+        return f"invalid_coverage: policy {policy!r} fuera de declared|strict"
+    min_distinct = entry.get("min_distinct")
+    if isinstance(min_distinct, bool) or not isinstance(min_distinct, int):
+        return "invalid_coverage: min_distinct debe ser un entero"
+    backend_keys = entry.get("backend_keys") or []
+    if min_distinct < 2 or min_distinct > len(backend_keys):
+        return (
+            f"invalid_coverage: min_distinct {min_distinct} fuera de "
+            f"[2, {len(backend_keys)}]"
+        )
+    exempt = entry.get("exempt_tickets") or []
+    if not isinstance(exempt, list) or any(not isinstance(t, str) for t in exempt):
+        return "invalid_coverage: exempt_tickets debe ser lista de strings"
+    return None
+
+
+def load_eligible_coverage(
+    config: dict, phase: str | None, delivery_authority: str | None
+) -> tuple[dict | None, str | None, str | None]:
+    """Carga y valida la entrada de cobertura para (fase, delivery_authority).
+
+    Before: ``config`` ya cargado; phase/authority vienen del caller (CLI o
+        audit; sin AMBOS no hay cobertura -> camino legacy intacto).
+    During: busca ``ensemble_registry.eligible_coverage["<PHASE>:<AUTHORITY>"]``
+        y lo pasa por ``validate_coverage_entry``.
+    After: ``(entry, None, key)`` valida; ``(None, None, None)`` sin cobertura
+        declarada (legacy); ``(None, reason, key)`` declarada pero INVALIDA
+        (fail-closed: el veredicto publica el reason, no degrada).
+    """
+    key = _coverage_key(phase, delivery_authority)
+    if key is None:
+        return None, None, None
+    registry = config.get("ensemble_registry") or {}
+    coverage = registry.get("eligible_coverage")
+    if not isinstance(coverage, dict) or key not in coverage:
+        return None, None, None
+    entry = coverage[key]
+    reason = validate_coverage_entry(entry, config)
+    if reason is not None:
+        return None, reason, key
+    return entry, None, key  # type: ignore[return-value]
+
+
+def effective_eligible(
+    entry: dict, config: dict
+) -> tuple[set[str], list[dict[str, str]]]:
+    """Elegibles efectivos de una entrada VALIDA y las declaradas retiradas (D3).
+
+    Before: ``entry`` paso ``validate_coverage_entry`` (D2 garantiza
+        ``backend_keys`` disjuntas de ``excluded_backend_keys``).
+    During: elegible = cada ``backend_keys`` cuyo registry ``status`` sea
+        ``active``; una declaracion vencida (status deprecated/archived) NO
+        cuenta aunque siga en la lista. Las ``excluded_backend_keys`` son
+        disjuntas por validacion: su efecto es dar reason ``excluded`` a las
+        RONDAS de esas claves (ver ``apply_eligible_reasons``), no remover
+        declaradas.
+    After: ``(elegibles, removed)`` con ``removed`` =
+        ``[{backend_key, reason: retired(status=...)}]``.
+    """
+    registry = config["ensemble_registry"]["backend_keys"]
+    eligible: set[str] = set()
+    removed: list[dict[str, str]] = []
+    for key in entry["backend_keys"]:
+        status = (registry.get(key) or {}).get("status")
+        if status != "active":
+            removed.append({"backend_key": key, "reason": f"retired(status={status})"})
+            continue
+        eligible.add(key)
+    return eligible, removed
+
+
+def apply_eligible_reasons(
+    entry: dict, removed: list[dict[str, str]]
+) -> dict[str, str]:
+    """Mapa backend_key -> reason para rondas que NO cuentan (D3).
+
+    Before: entrada valida (disjuncion D2 ya garantizada) + ``removed`` de
+        ``effective_eligible``.
+    During: prioridad ``retired(status=...)`` (declarada vencida) sobre
+        ``excluded`` (declarada prohibida para esta clave, p. ej. BA05 por
+        WOT-2026-129r); lo demas cae a ``not_in_eligible_set`` en el caller.
+    After: dict lookup por clave.
+    """
+    reasons = {r["backend_key"]: r["reason"] for r in removed}
+    for key in entry.get("excluded_backend_keys") or []:
+        reasons.setdefault(key, "excluded")
+    return reasons
+
+
+def apply_eligibility(
+    verdict: dict, eligible: set[str], reason_map: dict[str, str]
+) -> dict:
+    """Filtra el veredicto a las claves ELEGIBLES (D3) sin tocar audit_commit.
+
+    Before: ``verdict`` recien devuelto por ``audit_commit`` con
+        ``min_distinct`` = minimo YA aplicado; ``eligible`` de
+        ``effective_eligible``; ``reason_map`` de ``apply_eligible_reasons``.
+    During: por cada instancia (nonce) separa backends elegibles de los que
+        corrieron pero no cuentan (reason: ``reason_map`` si la conoce, si no
+        ``not_in_eligible_set``); recalcula ``distinct`` e ``ok`` POR
+        INSTANCIA (C' intacto) y la union diagnosticable.
+    After: mismo dict mutado con ``distinct_backends`` filtrado,
+        ``not_eligible_backends``, ``declared_removed`` y ``ok`` recalculado.
+    """
+    seen: dict[str, str] = {}
+    for entry in verdict.get("per_nonce", []):
+        keep: list[str] = []
+        for bk in entry.get("backends", []):
+            if bk in eligible:
+                keep.append(bk)
+            else:
+                seen.setdefault(bk, reason_map.get(bk, "not_in_eligible_set"))
+        entry["ineligible"] = [
+            bk for bk in entry.get("backends", []) if bk not in eligible
+        ]
+        entry["backends"] = keep
+        entry["distinct"] = len(keep)
+        entry["ok"] = len(keep) >= verdict["min_distinct"]
+    verdict["distinct_backends"] = [
+        bk for bk in verdict.get("distinct_backends", []) if bk in eligible
+    ]
+    verdict["not_eligible_backends"] = [
+        {"backend_key": k, "reason": r} for k, r in sorted(seen.items())
+    ]
+    verdict["ok"] = any(entry.get("ok") for entry in verdict.get("per_nonce", []))
+    return verdict
+
+
+def _apply_declared_policy(
+    plan: dict,
+    entry: dict,
+    min_distinct: int | None,
+    coverage_key: str,
+    *,
+    phase: str | None,
+    delivery_authority: str | None,
+) -> None:
+    """policy=declared: minimo aplicado = el declarado, con piso 2 (DoD 3).
+
+    Before: plan/base ya inicializado; entry valida con policy declared.
+    During: sin override -> aplica el declarado (origen eligible_coverage);
+        override < declarado -> BLOQUEO (D5: no invalida el minimo derivado);
+        override >= declarado -> se aplica (mas estricto, origen cli-override).
+    After: plan mutado (applied_min, min_origen, block_reason).
+    """
+    declared_min = max(2, int(entry["min_distinct"]))
+    if min_distinct is None:
+        plan["applied_min"] = declared_min
+        plan["min_origen"] = "eligible_coverage"
+        return
+    if min_distinct < declared_min:
+        plan["applied_min"] = declared_min
+        plan["min_origen"] = "eligible_coverage"
+        plan["block_reason"] = (
+            f"override_below_declared_min: --min-distinct {min_distinct} < "
+            f"minimo declarado {declared_min} de {coverage_key} "
+            f"({COVERAGE_SOURCE_LABEL}); el override no puede invalidar el "
+            f"minimo derivado (fase={phase}, delivery_authority="
+            f"{delivery_authority}, WOT-2026-129y D5)"
+        )
+        return
+    plan["applied_min"] = min_distinct
+    plan["min_origen"] = "cli-override"
+
+
+def _apply_strict_policy(
+    plan: dict,
+    eligible: set[str],
+    min_distinct: int | None,
+    policy_min: int,
+    coverage_key: str,
+    *,
+    phase: str | None,
+    deliverable_type: str | None,
+) -> None:
+    """policy=strict: minimo = policy(deliverable); elegibles < policy -> DoD 2.
+
+    Before: plan/base inicializado; eligible ya calculado.
+    During: si la cobertura declarada tiene MENOS claves elegibles que las que
+        el contrato exige -> ``contrato_inalcanzable`` ANTES de mirar rondas
+        (fase, tipo, cobertura, elegibles y minimo nombrados; sin union de
+        nonces ni precedentes: la unica exencion es la lista declarada).
+    After: plan mutado (block_reason cuando el contrato es inalcanzable).
+    """
+    if len(eligible) < policy_min:
+        plan["block_reason"] = (
+            f"contrato_inalcanzable: fase={phase} "
+            f"tipo={deliverable_type or 'desconocido'} "
+            f"cobertura={COVERAGE_SOURCE_LABEL} clave={coverage_key} "
+            f"elegibles={sorted(eligible)} minimo_exigido={policy_min}; "
+            "el contrato exige mas claves que las elegibles (conteo por "
+            "nonce/instancia, sin union ni reutilizacion de precedentes)"
+        )
+
+
+def _coverage_plan(
+    *,
+    coverage_entry: dict | None,
+    coverage_reason: str | None,
+    coverage_key: str | None,
+    exempt: bool,
+    cfg: dict | None,
+    phase: str | None,
+    delivery_authority: str | None,
+    deliverable_type: str | None,
+    min_distinct: int | None,
+    policy_min: int,
+) -> dict:
+    """Resuelve el minimo a aplicar y el motivo de bloqueo de UN commit (D4-D6).
+
+    Before: cobertura ya cargada (o None), exempt ya calculado por ticket,
+        cfg cargado cuando hubo fase+authority.
+    During: orden: declaracion invalida -> bloqueo; sin cobertura o ticket
+        EXENTO -> plan legacy (policy/cli, piso absoluto 2, sin filtro);
+        policy declared -> minimo declarado con reglas de override (D5);
+        policy strict -> policy(deliverable) + DoD 2 si elegibles < policy.
+    After: dict {applied_min, min_origen, block_reason, eligible, removed,
+        override_below_policy}.
+    """
+    plan: dict = {
+        "applied_min": min_distinct if min_distinct is not None else policy_min,
+        "min_origen": "cli-override" if min_distinct is not None else "policy",
+        "block_reason": None,
+        "eligible": None,
+        "removed": [],
+        "override_below_policy": min_distinct is not None and min_distinct < policy_min,
+    }
+    if plan["applied_min"] < 2:
+        # Piso absoluto de independencia (D5): el override nunca baja de 2.
+        plan["applied_min"] = 2
+    if coverage_reason is not None:
+        plan["block_reason"] = coverage_reason
+        return plan
+    if coverage_entry is None or coverage_key is None or exempt or cfg is None:
+        return plan
+    eligible, removed = effective_eligible(coverage_entry, cfg)
+    plan["eligible"] = eligible
+    plan["removed"] = removed
+    if coverage_entry.get("policy", "strict") == "declared":
+        _apply_declared_policy(
+            plan,
+            coverage_entry,
+            min_distinct,
+            coverage_key,
+            phase=phase,
+            delivery_authority=delivery_authority,
+        )
+    else:
+        _apply_strict_policy(
+            plan,
+            eligible,
+            min_distinct,
+            policy_min,
+            coverage_key,
+            phase=phase,
+            deliverable_type=deliverable_type,
+        )
+    return plan
 
 
 # Marcador que `_record_round` escribe en `evidencia` cuando el backend no
@@ -757,30 +1087,152 @@ def audit(
     deliverable_type: str | None = None,
     min_distinct: int | None = None,
     loop_id: str | None = None,
+    phase: str | None = None,
+    delivery_authority: str | None = None,
+    config: dict | None = None,
 ) -> list[dict]:
     """Veredicto por cada commit del vuelo, leyendo scorecard + emitted del destino.
 
     Before: `project_root` es el destino-rol con `.agent/runtime/ensemble/`;
         `commit_shas` son los commits de ticket a verificar (entrada, NO descubierta
-        aqui). `min_distinct` gana sobre `deliverable_type` si se pasa.
-    During: lee scorecard y emitted_nonces (ambos estrictos-UTF8), y para cada
-        commit cuenta backend_key distintos con ronda valida.
-    After: devuelve la lista de veredictos por commit. NO imprime ni sale; el CLI
-        formatea. Sin efectos de escritura.
+        aqui). `min_distinct` gana sobre `deliverable_type` si se pasa, pero con
+        cobertura declarada NO puede bajar del minimo derivado (WOT-2026-129y D5).
+        `phase`+`delivery_authority` JUNTOS activan la cobertura elegible
+        declarada; sin ambos, el camino es byte-legacy (prepush/cierre no cambian).
+    During: lee scorecard y emitted_nonces (ambos estrictos-UTF8); por commit
+        resuelve el minimo (cobertura/declared/strict/exento, D4-D6), cuenta con
+        `audit_commit` y, si hay cobertura valida, filtra a las claves elegibles
+        (`apply_eligibility`). Cada veredicto lleva el receipt DoD 6
+        (min_aplicado/min_origen/eligible/tickets/override).
+    After: lista de veredictos por commit. NO imprime ni sale; el CLI formatea.
+        Sin efectos de escritura.
     """
-    n = min_distinct if min_distinct is not None else min_distinct_for(deliverable_type)
     scorecard_rows, _sha = _read_scorecard(project_root)
     emitted = read_emitted_nonces(project_root)
-    return [
-        audit_commit(
+    coverage_entry: dict | None = None
+    coverage_reason: str | None = None
+    coverage_key: str | None = None
+    cfg: dict | None = None
+    if phase is not None and delivery_authority is not None:
+        cfg = config if config is not None else load_motor_config()
+        coverage_entry, coverage_reason, coverage_key = load_eligible_coverage(
+            cfg, phase, delivery_authority
+        )
+    verdicts: list[dict] = []
+    for sha in commit_shas:
+        policy_min = min_distinct_for(deliverable_type)
+        rows_for_sha = [
+            r
+            for r in scorecard_rows
+            if isinstance(r, dict) and r.get("commit_sha") == sha
+        ]
+        tickets = sorted(
+            {
+                t
+                for t in (r.get("ticket") for r in rows_for_sha)
+                if isinstance(t, str) and t
+            }
+        )
+        exempt = bool(
+            coverage_entry
+            and (set(coverage_entry.get("exempt_tickets") or []) & set(tickets))
+        )
+        plan = _coverage_plan(
+            coverage_entry=coverage_entry,
+            coverage_reason=coverage_reason,
+            coverage_key=coverage_key,
+            exempt=exempt,
+            cfg=cfg,
+            phase=phase,
+            delivery_authority=delivery_authority,
+            deliverable_type=deliverable_type,
+            min_distinct=min_distinct,
+            policy_min=policy_min,
+        )
+        verdict = audit_commit(
             scorecard_rows,
             emitted,
             commit_sha=sha,
-            min_distinct=n,
+            min_distinct=plan["applied_min"],
             loop_id=loop_id,
         )
-        for sha in commit_shas
-    ]
+        if plan["eligible"] is not None:
+            reason_map = apply_eligible_reasons(coverage_entry or {}, plan["removed"])
+            apply_eligibility(verdict, plan["eligible"], reason_map)
+        if plan["block_reason"] is not None:
+            verdict["ok"] = False
+            verdict["coverage_error"] = plan["block_reason"]
+        verdict.update(
+            {
+                "loop_id": loop_id,
+                "deliverable_type": deliverable_type,
+                "policy_min": policy_min,
+                "min_aplicado": plan["applied_min"],
+                "min_origen": plan["min_origen"],
+                "coverage_key": coverage_key,
+                "coverage_source": COVERAGE_SOURCE_LABEL if coverage_key else None,
+                "eligible_declared": (
+                    sorted(coverage_entry["backend_keys"])
+                    if coverage_entry is not None
+                    else None
+                ),
+                "eligible_effective": (
+                    sorted(plan["eligible"]) if plan["eligible"] is not None else None
+                ),
+                "declared_removed": plan["removed"],
+                "tickets": tickets,
+                "exempt": exempt,
+                "override": min_distinct,
+                "override_below_policy": plan["override_below_policy"],
+                "phase": phase,
+                "delivery_authority": delivery_authority,
+            }
+        )
+        verdicts.append(verdict)
+    return verdicts
+
+
+def _receipt_view(v: dict) -> dict:
+    """Subconjunto determinista de un veredicto para el recibo DoD 6.
+
+    Before: veredicto de `audit()` ya enriquecido.
+    During: proyecta SOLO campos estables (sin dependencia de orden de claves
+        de los diagnosticos) para que dos corridas identicas impriman el mismo
+        recibo (test de determinismo).
+    After: dict con ticket, commit_sha, loop_id, nonces, distinct_backends,
+        elegibles declarada/efectiva, no_contadas (declaradas removidas +
+        rondas fuera de cobertura), deliverable_type, policy_min,
+        min_aplicado, min_origen, coverage_key, override y ok.
+    """
+    no_contadas: list[dict[str, str]] = []
+    seen_keys: set[str] = set()
+    for item in (
+        *(v.get("declared_removed") or []),
+        *(v.get("not_eligible_backends") or []),
+    ):
+        key = item.get("backend_key")
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        no_contadas.append(item)
+    return {
+        "ticket": v.get("tickets"),
+        "commit_sha": v.get("commit_sha"),
+        "loop_id": v.get("loop_id"),
+        "nonces": [e.get("nonce") for e in v.get("per_nonce", [])],
+        "distinct_backends": v.get("distinct_backends"),
+        "eligible_declared": v.get("eligible_declared"),
+        "eligible_effective": v.get("eligible_effective"),
+        "no_contadas": no_contadas,
+        "deliverable_type": v.get("deliverable_type"),
+        "policy_min": v.get("policy_min"),
+        "min_aplicado": v.get("min_aplicado"),
+        "min_origen": v.get("min_origen"),
+        "coverage_key": v.get("coverage_key"),
+        "override": v.get("override"),
+        "exempt": v.get("exempt"),
+        "ok": v.get("ok"),
+    }
 
 
 def resolve_input_commit_sha(project_root: Path, commit_sha: str) -> str:
@@ -920,6 +1372,22 @@ def _print_verdict(v: dict) -> None:
         f"{len(v['distinct_backends'])}/{v['min_distinct']} lentes distintas "
         f"{v['distinct_backends']}"
     )
+    # WOT-2026-129y: bloqueos de cobertura NOMBRADOS (DoD 2) antes de senales.
+    if v.get("coverage_error"):
+        print(f"[loop-exec]   COBERTURA {v.get('coverage_key')}: {v['coverage_error']}")
+    if v.get("exempt"):
+        print(
+            f"[loop-exec]   EXENTO: ticket {v.get('tickets')} en "
+            f"{v.get('coverage_key')} (exempt_tickets); se evalua con la "
+            f"politica estricta policy_min={v.get('policy_min')} "
+            "(WOT-2026-129y DoD 5)"
+        )
+    # WOT-2026-129y: rondas que corrieron fuera de la cobertura declarada.
+    for ne in v.get("not_eligible_backends") or []:
+        print(
+            f"[loop-exec]   NO-ELEGIBLE {ne['backend_key']}: {ne['reason']} "
+            "(ronda fuera de la cobertura elegible; no cuenta para N)"
+        )
     # WOT-2026-043q: nombrar a quien callo, en verde y en rojo.
     for s in v["silent_rounds"]:
         print(
@@ -974,9 +1442,27 @@ def main(argv: list[str] | None = None) -> int:
         "--min-distinct",
         type=int,
         default=None,
-        help="override del N minimo de backend_key distintos (gana sobre --deliverable-type)",
+        help=(
+            "override del N minimo (WOT-2026-129y D5): con cobertura "
+            "policy=declared NO puede bajar del minimo declarado (se rechaza); "
+            "por debajo de policy avisa por stderr y queda en el recibo"
+        ),
     )
     ap.add_argument("--loop-id", default=None)
+    ap.add_argument(
+        "--phase",
+        default="MANAGER_REVIEW",
+        help="fase para la clave de cobertura <PHASE>:<AUTHORITY> (default: MANAGER_REVIEW)",
+    )
+    ap.add_argument(
+        "--delivery-authority",
+        default=None,
+        help=(
+            "delivery_authority del ticket (p. ej. repo_motor); solo con este "
+            "flag (y su clave declarada) se aplica la cobertura elegible "
+            "WOT-2026-129y; sin el, camino legacy"
+        ),
+    )
     args = ap.parse_args(argv)
 
     if not args.commit_sha:
@@ -1005,10 +1491,23 @@ def main(argv: list[str] | None = None) -> int:
         deliverable_type=args.deliverable_type,
         min_distinct=args.min_distinct,
         loop_id=args.loop_id,
+        phase=args.phase,
+        delivery_authority=args.delivery_authority,
     )
     failures = [v for v in verdicts if not v["ok"]]
     for v in verdicts:
+        # WOT-2026-129y D5: un override por debajo de policy NO es silencioso.
+        if v.get("override_below_policy"):
+            print(
+                f"[loop-exec] WARN: --min-distinct {v.get('override')} por debajo "
+                f"de policy_min={v.get('policy_min')} (deliverable_type="
+                f"{v.get('deliverable_type')}): se aplica por mandato CLI y queda "
+                "registrado en el recibo; no lo uses para saltarte la politica.",
+                file=sys.stderr,
+            )
         _print_verdict(v)
+        # WOT-2026-129y DoD 6: recibo reproducible por commit (JSON determinista).
+        print(json.dumps({"loop_exec_receipt": _receipt_view(v)}, ensure_ascii=True))
         if v["orphan_nonces"] and v not in failures:
             failures.append(v)
     if failures:
