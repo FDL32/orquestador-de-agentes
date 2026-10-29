@@ -431,13 +431,13 @@ repos:
         stages: [pre-commit]
 
       # pip-audit: auditoria CVE desde uv.lock (todos los grupos).
-      # El wrapper exporta uv.lock a requirements.txt temporal y llama pip-audit -r.
-      # Garantia: audita la superficie real del proyecto, no el Python del sistema.
+      # El wrapper ejecuta pip-audit con el interprete de la .venv del proyecto
+      # (pip-audit fijado por uv.lock). El wrapper falla cerrado si el interprete
+      # no coincide con el piso de requires-python mientras el export lleva markers.
       - id: pip-audit
         name: pip-audit (CVE Detection)
-        entry: python scripts/pip_audit_project.py
-        language: python
-        additional_dependencies: [pip-audit]
+        entry: uv run --frozen python scripts/pip_audit_project.py
+        language: system
         pass_filenames: false
         stages: [pre-push, manual]
 
