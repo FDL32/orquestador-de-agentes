@@ -89,7 +89,10 @@ asyncio_mode = "auto"
 # version indicada. Revalidado con `uv pip install "<pkg>==<fix>" --dry-run`
 # antes de anadir o mantener cada entrada (no basta con el registro de CVE).
 ignore-vuln = [
-    "GHSA-6v7p-g79w-8964", # msgpack >=1.2.1 -- revalidado 2026-09-30, sigue sin resolver
+    # GHSA-6v7p-g79w-8964 (msgpack, "sigue sin resolver" desde 2026-09-30) RETIRADA
+    # 2026-10-29: la ventana exclude-newer-package de msgpack en uv.toml (anadida
+    # para GHSA-j586-36cw-2gc2) sube el paquete a 1.2.4, que tambien corrige esta
+    # (fix real 1.2.1) -- ya no aplica, confirmado con pip-audit tras `uv sync`.
     "GHSA-8988-9cw3-xx77", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver
     "GHSA-vxq7-64xx-v4gw", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver
     "GHSA-gh4c-6fx4-qh6g", # urllib3 >=2.8.0 -- WOT-2026-086f, 2026-09-30, sin resolver (3er GHSA, mismo paquete/fix)
@@ -101,26 +104,62 @@ ignore-vuln = [
     # deuda PYSEC de arriba) ya NO se ignoran: origin/main (112613c1, 2026-10-21) subio
     # virtualenv a 21.14.7 via ventana por-paquete en uv.toml, resolviendolas de verdad
     # (no solo ignorandolas). Retiradas al fusionar ese commit, 2026-10-22.
-    # filelock >=4.0.0 (fix real en 4.2.1) -- deuda detectada en push del lote motor
-    # v6 de WOT-2026-120a, 2026-10-24, sin resolver: TODA la rama 4.x exige
-    # Python>=3.11 (verificado via metadata de PyPI y `uv pip install
-    # "filelock==4.2.1" --dry-run` -> "current Python version (3.10.19) does not
-    # satisfy Python>=3.11"), y este proyecto declara requires-python >=3.10.
-    # No hay backport con fix conocido en la rama 3.x a esta fecha. Alcance de uso
-    # confirmado (grep de virtualenv/util/lock.py): solo se usa la clase base
-    # FileLock, nunca ReadWriteLock/AsyncReadWriteLock/SoftFileLock (las clases que
-    # SI afectan estos 3 GHSA) -- no es alcanzable por la ruta transitiva real de
-    # este repo (via virtualenv/python-discovery, grupo dev, sin import directo).
-    # Explotacion exige ademas escritura local en el mismo directorio del lock
-    # (symlink/fichero lateral plantado); riesgo residual bajo para tooling de
-    # desarrollador en un solo equipo, no cero en todo entorno posible. Revisado
-    # en bucle DESIGN_REVIEW de 3 lentes (qwen3.6, gemma4: ADOPTAR; codex:
+    # filelock, clase ReadWriteLock/AsyncReadWriteLock/SoftFileLock/StrictSoftFileLock/
+    # SoftReadWriteLock (fix real en 4.2.1) -- deuda detectada en push del lote motor
+    # v6 de WOT-2026-120a, 2026-10-24. TODA la rama 4.x >=4.1.1 exige Python>=3.11
+    # (verificado via metadata de PyPI y `uv pip install "filelock==4.2.1" --dry-run`
+    # -> "current Python version (3.10.19) does not satisfy Python>=3.11"), y este
+    # proyecto declara requires-python >=3.10. No hay backport con fix conocido en
+    # la rama 3.x/4.0.x/4.1.0 a esta fecha. Alcance de uso confirmado (grep de
+    # site-packages, 2026-10-29): la clase base `FileLock` se importa por DOS rutas
+    # -- virtualenv/util/lock.py (transitivo via grupo dev) Y
+    # cachecontrol/caches/file_cache.py (dependencia DIRECTA de pip-audit) -- pero
+    # NINGUNA de las dos importa ReadWriteLock, AsyncReadWriteLock, SoftFileLock,
+    # StrictSoftFileLock ni SoftReadWriteLock (las clases que SI afectan cada GHSA
+    # de este bloque, confirmado 1:1 por summary de OSV) -- no alcanzable por la
+    # ruta transitiva real de este repo. Explotacion exige ademas escritura local
+    # en el mismo directorio del lock (symlink/fichero lateral plantado); riesgo
+    # residual bajo para tooling de desarrollador, no cero en todo entorno posible.
+    # Revisado en bucle DESIGN_REVIEW de 3 lentes (qwen3.6, gemma4: ADOPTAR; codex:
     # ADOPTAR CON CAMBIOS), 2026-10-24. Retirar esta excepcion si el proyecto sube
-    # su piso a Python>=3.11, si aparece un fix retroactivo en la rama 3.x, o si
-    # virtualenv cambia su uso hacia alguna de las clases afectadas.
+    # su piso a Python>=3.11, si aparece un fix retroactivo en la rama 3.x/4.0.x/
+    # 4.1.x, si virtualenv/cachecontrol cambian su uso hacia alguna de las clases
+    # afectadas, O si se arregla el blind-spot activo del hook pip-audit (ver nota
+    # extensa en `uv.toml` junto a `exclude-newer-package`, bucle CHA-2 2026-10-29:
+    # el venv aislado del hook de pre-commit puede quedar en Python 3.12 en vez del
+    # 3.10 del proyecto, auditando silenciosamente la rama de marker equivocada).
     "GHSA-v4x8-3wr5-3wq8", # filelock >=4.2.1 -- ReadWriteLock/AsyncReadWriteLock (Linux, symlink), inalcanzable, ver nota arriba
     "GHSA-9vhv-jxww-xfm5", # filelock >=4.2.1 -- ReadWriteLock/AsyncReadWriteLock (Windows, side files), inalcanzable, ver nota arriba
     "GHSA-567q-5qvw-pf92", # filelock >=4.2.1 -- SoftFileLock (Windows, oplock), inalcanzable, ver nota arriba
+    "GHSA-rfpc-qcw5-3pc4", # filelock >=4.2.1 -- SoftFileLock/MarkerSoftFileLock/SoftFileLease, inalcanzable, ver nota arriba
+    "GHSA-cwqr-hh33-gh44", # filelock >=4.2.1 -- ReadWriteLock/AsyncReadWriteLock (PRAGMA journal_mode), inalcanzable, ver nota arriba
+    "GHSA-fq56-3cx3-fjxp", # filelock >=4.2.1 -- SoftFileLock/MarkerSoftFileLock/SoftFileLease (stale-lock break), inalcanzable, ver nota arriba
+    "GHSA-j8f7-rjxc-mr56", # filelock >=3.20.4,<4.0.9 -- ReadWriteLock/AsyncReadWriteLock (symlink en sqlite3.connect), inalcanzable, ver nota arriba. RECLASIFICADO 2026-10-29: se habia asumido base FileLock por narrativa de OR-6; OSV confirma la clase afectada, no lo es.
+    # 9 GHSA mas, introducidos en la propia rama 4.x (>=4.0.0/4.1.0/3.30.0/3.32.6,
+    # no heredados de 3.x) y descubiertos al subir filelock a 4.1.0 el 2026-10-29 --
+    # misma familia de clases que las 6 de arriba (SoftFileLock/StrictSoftFileLock/
+    # ReadWriteLock/SoftReadWriteLock), confirmados 1:1 por OSV, inalcanzables por
+    # el mismo motivo (ni virtualenv ni cachecontrol las importan).
+    "GHSA-2g95-wg33-c5x2", # filelock >=4.1.0,<4.2.1 -- SoftFileLock (inode reuse), inalcanzable, ver nota arriba
+    "GHSA-crv4-6mhj-j5jh", # filelock >=4.1.0,<4.2.1 -- SoftFileLock stale-break (symlink), inalcanzable, ver nota arriba
+    "GHSA-jqc4-5cvw-7w85", # filelock >=4.1.0,<4.2.1 -- ReadWriteLock hard-link directory delete, inalcanzable, ver nota arriba
+    "GHSA-m462-7rxw-wvpg", # filelock >=3.30.0,<4.2.1 -- StrictSoftFileLock symlink swap, inalcanzable, ver nota arriba
+    "GHSA-fj95-fr6c-h845", # filelock >=4.0.0,<4.2.1 -- SoftReadWriteLock named-pipe hang, inalcanzable, ver nota arriba
+    "GHSA-9c4x-gm8v-wgc4", # filelock >=3.30.0,<4.2.1 -- StrictSoftFileLock/SoftReadWriteLock directory adoption, inalcanzable, ver nota arriba
+    "GHSA-9j6q-wvj5-jgjg", # filelock >=3.32.6,<4.2.1 -- SoftFileLock symlink info-leak, inalcanzable, ver nota arriba
+    "GHSA-6627-m3xw-93mp", # filelock >=3.30.0,<4.2.1 -- StrictSoftFileLock claim dir sin lock mode, inalcanzable, ver nota arriba
+    "GHSA-wfhq-q4j2-c37m", # filelock >=4.1.0,<4.2.1 -- SoftReadWriteLock lock-tree swap, inalcanzable, ver nota arriba
+    # 2 GHSA de la clase BASE FileLock (SI alcanzable -- distinto del bloque de
+    # arriba), detectados en cierre vuelo-20261026b, 2026-10-29. Alcance de uso
+    # igual al bloque de arriba (virtualenv + cachecontrol, ruta por-usuario: cache-
+    # dir del worktree, appdata de virtualenv, cache de pip-audit -- no "mono-
+    # usuario" en sentido literal, esta maquina tiene ademas la cuenta
+    # `CodexSandboxOffline`, pero esas rutas no son escribibles por una cuenta
+    # distinta a la que corre el proceso). Confirmado por summary de OSV que SI
+    # afectan WindowsFileLock/UnixFileLock (los backends de la clase base, a
+    # diferencia de GHSA-j8f7 de arriba).
+    "GHSA-8mx5-7m5m-r77g", # filelock <4.2.1 -- WindowsFileLock ACL hereda del directorio (DACL laxa). Windows-only; este runner SI es win32 real, mitigado por la ruta por-usuario de arriba. Requiere 4.2.1 (Python>=3.11), ver nota del bloque de arriba.
+    "GHSA-69hj-f68j-2879", # filelock <4.2.1 -- UnixFileLock trunca/chmodea un fichero ajeno renombrado sobre la ruta del lock. Unix-only; esta workstation es win32, superficie real solo en CI/otros devs Mac/Linux. Requiere 4.2.1 (Python>=3.11), ver nota del bloque de arriba.
 ]
 
 [tool.uv]

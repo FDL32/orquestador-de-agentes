@@ -31,4 +31,40 @@ exclude-newer = '2026-05-16'
 # 21.14.9" --dry-run` bajo esta ventana extendida, 7 paquetes resueltos sin tocar
 # distlib/packaging/python-discovery/typing-extensions (sus propias ventanas siguen
 # sirviendo a 21.14.9 sin cambios).
-exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20', virtualenv = '2026-10-22', distlib = '2026-10-13', packaging = '2026-10-13', python-discovery = '2026-10-13', typing-extensions = '2026-10-13' }
+exclude-newer-package = { pip = '2026-08-21', certifi = '2026-10-20', virtualenv = '2026-10-22', distlib = '2026-10-13', packaging = '2026-10-13', python-discovery = '2026-10-13', typing-extensions = '2026-10-13', msgpack = '2026-10-29' }
+# msgpack: 1.2.4 (<=2026-10-29) corrige GHSA-6v7p-g79w-8964 (fix real 1.2.1, deuda
+# vieja "sigue sin resolver" desde 2026-09-30) Y GHSA-j586-36cw-2gc2 (fix 1.2.3,
+# detectado en cierre vuelo-20261026b, 2026-10-29) sin tocar el piso de Python
+# (ambas versiones exigen >=3.10, igual que el proyecto). Revalidado via PyPI JSON
+# (upload_time + requires_python) 2026-10-29.
+#
+# filelock NO lleva ventana aqui (mismo motivo que la version anterior de esta
+# nota, pero con el mecanismo correcto -- 2 correcciones en la misma sesion,
+# 2026-10-29, via bucle adversarial CHA-2):
+#
+# 1a vuelta: se reporto que subir filelock via ventana dejaba CIEGO el gate de
+# push (`scripts/pip_audit_project.py`) por un supuesto bug de deduplicacion
+# de `resolution-markers`. Repro de esa vuelta: FALSO -- se hizo con un
+# `python` suelto del PATH (sistema, 3.12.10), no con el interprete del
+# proyecto; bajo 3.10.19 real (`uv run --frozen python ...`) el gate SI ve
+# filelock==4.1.0 (`Found 9 known vulnerabilities`, exit 1). Refutado por
+# codex Sol gamsgo (CHA-2) y reproducido de forma independiente por OR-7.
+#
+# 2a vuelta (alvarovans/Claude Opus, mismo bucle CHA-2, tras la correccion de
+# arriba): el blind spot SI es real, por una causa DISTINTA, YA ACTIVA hoy,
+# sin relacion con esta ventana. El hook `pip-audit` en `.pre-commit-config.yaml`
+# es `language: python` SIN `default_language_version` -- pre-commit crea su
+# propio venv aislado para el hook con el Python que estaba activo cuando se
+# creo ese venv (confirmado en disco, 2026-10-29: de 5 repos `language: python`
+# cacheados en este checkout, 3 usan Python 3.12.10 y 2 usan 3.10.19 -- lo
+# decide el entorno de quien ejecuto `pre-commit install`/`run` primero, no
+# `requires-python` del proyecto). Bajo 3.12, pip-audit evalua los markers
+# `python_version` del export y SOLO audita la rama `>=3.11` -- cualquier
+# paquete con marker queda invisible, YA incluye `backports-asyncio-runner` y
+# `exceptiongroup` en el lock actual, sin que haya que tocar filelock para
+# disparalo. No adoptar la ventana de filelock mientras este blind spot este
+# activo: su fix no toca `uv.toml` sino `.pre-commit-config.yaml`
+# (`default_language_version: {python: python3.10}`, o apuntar el `entry` al
+# `.venv` del proyecto en vez de a `python` suelto). Prioridad alta para
+# triaje de backlog (sin WOT-id aun) -- afecta a TODO paquete marker-gated del
+# lock, no solo a filelock, y ya esta activo en produccion hoy.
