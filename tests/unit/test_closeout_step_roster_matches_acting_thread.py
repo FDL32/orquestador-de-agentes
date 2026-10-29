@@ -353,3 +353,28 @@ def test_run_closeout_roster_step_pass_appears_in_report(
     assert roster_call["invoked"] is True
     # exit code 0: roster PASS does not block; closeout continues
     assert exit_code == 0
+
+
+# --- Phase 2.4: Docstring tests ---
+
+
+def test_docstring_does_not_contain_old_dormant_phrase() -> None:
+    """Test 2.4 (b): docstring must NOT contain the old false phrase about guard
+    being dormant until FLIGHT_ROSTER_PATH is exported and --acting-thread is passed.
+    """
+    doc = step_roster_matches_acting_thread.__doc__
+    assert doc is not None
+    assert (
+        "the guard is dormant until FLIGHT_ROSTER_PATH is exported and --acting-thread is passed together"
+        not in doc
+    ), "Docstring must not contain the old false phrase about guard dormancy"
+
+
+def test_docstring_mentions_acting_thread_with_fail() -> None:
+    """Test 2.4 (c): docstring must mention --acting-thread together with FAIL
+    (two separate 'in' assertions, no regex).
+    """
+    doc = step_roster_matches_acting_thread.__doc__
+    assert doc is not None
+    assert "--acting-thread" in doc, "Docstring must mention --acting-thread"
+    assert "FAIL" in doc, "Docstring must mention FAIL"

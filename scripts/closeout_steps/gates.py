@@ -182,12 +182,15 @@ def step_roster_matches_acting_thread(
     """Run check_roster_matches_acting_thread.py as a blocking roster integrity gate.
 
     WOT-2026-136c: verifies that active_roles of the flight roster matches the
-    acting thread (whoever is closing the session). Fail-closed: no acting_thread
-    -> FAIL. Three exit codes: 0=PASS, 1=FAIL, 3=SKIP (no roster found).
+    acting thread (whoever is closing the session). Three possible outcomes
+    depending on roster availability and --acting-thread:
 
-    WOT-2026-136c: dry-run returns SKIP immediately without invoking the guard,
-    so dry-runs never block (the guard is dormant until FLIGHT_ROSTER_PATH is
-    exported and --acting-thread is passed together).
+    - No roster (neither FLIGHT_ROSTER_PATH nor --roster-path) -> SKIP, non-blocking.
+    - Roster present + --acting-thread provided -> PASS or FAIL, blocking.
+    - Roster present WITHOUT --acting-thread -> FAIL, blocking (fail-closed by identity).
+
+    WOT-2026-136c: dry_run=True returns SKIP immediately without invoking the guard,
+    so dry-runs never block, regardless of roster availability or --acting-thread.
     """
     if dry_run:
         return step_result_cls(

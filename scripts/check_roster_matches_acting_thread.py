@@ -134,8 +134,8 @@ def _find_latest_canonical_transition(
             transition detail, parses ts.
     After: returns the latest matching datetime, or None if no match found.
 
-    The transition_detail is expected to contain '-> PENDIENTE_ACK' for the
-    specific role (e.g., 'ACTIVO -> PENDIENTE_ACK para orquestador').
+    The transition_detail is expected to contain 'role=<role> ACTIVO -> PENDIENTE_ACK'
+    as produced by the flight roster writer (e.g., 'role=orquestador ACTIVO -> PENDIENTE_ACK').
     """
     if not changes_log.exists():
         return None
@@ -225,8 +225,8 @@ def check_pendiente_ack(
     session_code = role_entry.get("session_code", "")
 
     # Build the expected transition detail pattern
-    # The canonical line should have 'detail' containing '-> PENDIENTE_ACK para <role>'
-    transition_detail = f"-> PENDIENTE_ACK para {role}"
+    # The canonical line from the writer has 'detail' like 'role=<role> ACTIVO -> PENDIENTE_ACK'
+    transition_detail = f"role={re.escape(role)} ACTIVO -> PENDIENTE_ACK"
 
     dt = _find_latest_canonical_transition(changes_log, role, transition_detail)
 

@@ -447,6 +447,8 @@ metrica, contador de saltos.
 
 ## Referencias cruzadas
 
+- `prompts/orchestrator_session_close_chat.md`: procedimiento de reparacion de roster
+  desactualizado en el cierre de vuelo (comando atomico FLIGHT_ROSTER_PATH + --acting-thread).
 - `prompts/session_hop.md`: puente entre sesiones (solo lectura); este modulo apunta aqui
   como el hogar del relevo operativo. Puntero en Paso 5-bis.
 - WOT-2026-129q: codigo de instancia de relanzo (preflight, Seccion 6).

@@ -15,6 +15,9 @@ from pathlib import Path
 
 import pytest
 
+# Import the real roster writer for test 2.1 helper
+import scripts.flight_roster_writer as flight_roster_writer
+
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "wot_2026_136c"
@@ -117,6 +120,285 @@ def test_module_exists() -> None:
 # --- Test 1: N/A without roster path and without FLIGHT_ROSTER_PATH env var ---
 
 
+# --- Test 2.1: Helper function and new A0 tests (ROJO-first) ---
+
+
+def _write_roster_with_transition(
+    tmp_path: Path,
+    role: str = "orquestador",
+    start_estado: str = "ACTIVO",
+) -> dict:
+    """Build a minimal roster, call the real writer to transition to PENDIENTE_ACK,
+    and return the canonical line written to changes_log as a parsed dict.
+
+    Before: tmp_path is a pytest tmp_path fixture.
+    During: creates roster with active_roles.<role> (threadId, session_code, version),
+            calls write_role_estado(estado="PENDIENTE_ACK"), reads last line of changes_log.
+    After: returns the canonical line dict with keys: ts, by, change, detail, reason.
+    """
+    roster_p = tmp_path / "flight_roster.json"
+    changes_p = tmp_path / "roster_changes.jsonl"
+
+    roster_data = {
+        "active_roles": {
+            role: {
+                "threadId": f"mcp:{role}-thread-1",
+                "session_code": f"OR-{role}",
+                "version": 1,
+                "estado": start_estado,
+            }
+        }
+    }
+    _write_tmp_json(roster_p, roster_data)
+    # Empty changes_log
+    changes_p.write_text("", encoding="utf-8")
+
+    flight_roster_writer.write_role_estado(
+        roster_p,
+        role,
+        "PENDIENTE_ACK",
+        changes_log_path=changes_p,
+        actor="test",
+        reason="test",
+    )
+
+    # Read the last line written by the writer
+    lines = changes_p.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) >= 1, "Writer did not produce a changes_log line"
+    return json.loads(lines[-1])
+
+
+def _make_registry_with_activa(role: str, thread_id: str) -> dict:
+    """Create a session_registry with a single ACTIVA entry for the mapped role.
+
+    Maps roster role to registry role (orquestador->orquestadora, supervisor->supervisora).
+    """
+    from scripts.check_roster_matches_acting_thread import _ROSTER_TO_REGISTRY_ROLE
+
+    registry_role = _ROSTER_TO_REGISTRY_ROLE.get(role, role + "ora")
+    return {
+        "sessions": [
+            {
+                "code": f"OR-{role}",
+                "role": registry_role,
+                "slot": "s1",
+                "threadId": thread_id,
+                "started": "2026-10-29T10:00:00+00:00",
+                "status": "ACTIVA",
+            }
+        ]
+    }
+
+
+def test_2_1_i_pendiente_ack_real_line_recent(tmp_path: Path) -> None:
+    """Test 2.1 (i): roster PENDIENTE_ACK + real writer line (recent ts) -> guard should
+    NOT emit '(b) ... sin linea canonica verificable' and should PASS (exit 0).
+    Against CURRENT guard (which searches 'para <rol>'), this MUST FAIL (RED) because
+    the guard cannot find its expected pattern.
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:orquestador-thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    # Use the line EXACTLY as the writer produced it (with real ts)
+    changes_data_lines = [json.dumps(line_dict)]
+    registry_data = _make_registry_with_activa(
+        "orquestador", "mcp:orquestador-thread-1"
+    )
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:orquestador-thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # Correct behavior: rc=0, no "(b) ... sin linea canonica verificable"
+    assert rc == 0, (
+        f"Expected PASS (exit 0) - guard recognizes real writer line, got {rc}: {stdout}"
+    )
+    assert "(b)" not in stdout, (
+        f"Should NOT mention checkpoint (b) for valid writer line: {stdout}"
+    )
+
+
+def test_2_1_ii_pendiente_ack_real_line_old(tmp_path: Path) -> None:
+    """Test 2.1 (ii): same real writer line but ts > 15 min old -> guard should emit
+    '(b) PENDIENTE_ACK caducado' (NOT 'sin linea canonica'). Against CURRENT guard,
+    this MUST FAIL (RED) because guard emits 'sin linea' instead of 'caducado'.
+    """
+    old_ts = "2020-01-01T00:00:00+00:00"
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:orquestador-thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    # Rewrite ONLY the ts field
+    line_dict["ts"] = old_ts
+    changes_data_lines = [json.dumps(line_dict)]
+    registry_data = _make_registry_with_activa(
+        "orquestador", "mcp:orquestador-thread-1"
+    )
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:orquestador-thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # Correct behavior: should have "(b) caducado" and NOT "(b) ... sin linea canonica"
+    assert rc == 1, f"Expected FAIL (exit 1) with caducado, got {rc}: {stdout}"
+    assert "caducado" in stdout, f"Should mention 'caducado' for old ts, got: {stdout}"
+    assert "sin linea canonica verificable" not in stdout, (
+        f"Should NOT say 'sin linea canonica' when ts exists but is old: {stdout}"
+    )
+
+
+def test_2_1_iii_pendiente_ack_no_changes_line(tmp_path: Path) -> None:
+    """Test 2.1 (iii): roster PENDIENTE_ACK with NO changes_log line -> guard should give
+    '(b) ... sin linea canonica' (fail-closed). This is a control, should PASS (GREEN) now.
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:orquestador-thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    registry_data = _make_registry_with_activa(
+        "orquestador", "mcp:orquestador-thread-1"
+    )
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    # Empty changes_log
+    changes_p.write_text("", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:orquestador-thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # Should give "(b) ... sin linea canonica" -> FAIL (exit 1)
+    assert rc == 1, f"Expected FAIL (exit 1) for no changes line, got {rc}: {stdout}"
+    assert "(b)" in stdout, f"Should mention checkpoint (b): {stdout}"
+
+
+def test_2_1_iv_supervisor_real_line_recent(tmp_path: Path) -> None:
+    """Test 2.1 (iv): same as (i) but with role='supervisor'. Tests that guard iterates
+    active_roles keys, not just DEFAULT_ROLE. Should FAIL against current guard (RED).
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {"threadId": "mcp:orquestador-thread"},
+            "supervisor": {
+                "threadId": "mcp:supervisor-thread-1",
+                "estado": "PENDIENTE_ACK",
+            },
+        }
+    }
+    line_dict = _write_roster_with_transition(tmp_path, role="supervisor")
+    changes_data_lines = [json.dumps(line_dict)]
+    registry_data = {
+        "sessions": [
+            {
+                "code": "SV-TEST",
+                "role": "supervisora",  # mapped from "supervisor"
+                "slot": "s1",
+                "threadId": "mcp:supervisor-thread-1",
+                "started": "2026-10-29T10:00:00+00:00",
+                "status": "ACTIVA",
+            }
+        ]
+    }
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:orquestador-thread",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # Correct behavior: rc=0, no "(b) ... sin linea canonica" for the supervisor role
+    assert rc == 0, f"Expected PASS (exit 0) for supervisor, got {rc}: {stdout}"
+    assert "(b)" not in stdout, (
+        f"Should NOT mention checkpoint (b) for valid writer line: {stdout}"
+    )
+
+
+def test_2_1_v_write_conflict_not_transition(tmp_path: Path) -> None:
+    """Test 2.1 (v): a write_conflict line with 'role=orquestador intento=1 ...' format
+    should NOT count as a transition -> guard should give '(b) ... sin linea canonica'.
+    This is a control, should PASS (GREEN) now and after fix.
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:orquestador-thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    # write_conflict line with the real writer format
+    write_conflict_line = json.dumps(
+        {
+            "ts": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+            "by": "test",
+            "change": "write_conflict",
+            "detail": "role=orquestador intento=1 version_esperada=1 version_real=2",
+            "reason": "test",
+        }
+    )
+    registry_data = _make_registry_with_activa(
+        "orquestador", "mcp:orquestador-thread-1"
+    )
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text(write_conflict_line + "\n", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:orquestador-thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # write_conflict does NOT count as a transition -> 'sin linea canonica'
+    assert rc == 1, f"Expected FAIL (exit 1) for write_conflict, got {rc}: {stdout}"
+    assert "(b)" in stdout, f"Should mention checkpoint (b): {stdout}"
+
+
 def test_1_na_without_roster(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test 1: exit 3 when no roster path is provided (neither flag nor env)."""
     monkeypatch.delenv("FLIGHT_ROSTER_PATH", raising=False)
@@ -188,7 +470,6 @@ def test_3_checkpoint_a_identity_mismatch(tmp_path: Path) -> None:
 
 def test_4_checkpoint_b_expired_pendiente_ack(tmp_path: Path) -> None:
     """Test 4: checkpoint (b) - estado PENDIENTE_ACK with old timestamp."""
-    old_ts = "2020-01-01T00:00:00+00:00"
     roster_data = {
         "active_roles": {
             "orquestador": {
@@ -197,17 +478,11 @@ def test_4_checkpoint_b_expired_pendiente_ack(tmp_path: Path) -> None:
             }
         }
     }
-    changes_data_lines = [
-        json.dumps(
-            {
-                "ts": old_ts,
-                "by": "OR-5",
-                "change": "estado_transition",
-                "detail": "ACTIVO -> PENDIENTE_ACK para orquestador",
-                "reason": "test",
-            }
-        ),
-    ]
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    # Rewrite ONLY the ts field to old value
+    line_dict["ts"] = "2020-01-01T00:00:00+00:00"
+    # Leave detail/by/change/reason verbatim from the writer
+    changes_data_lines = [json.dumps(line_dict)]
     registry_data = {"sessions": []}
     roster_p = tmp_path / "roster.json"
     registry_p = tmp_path / "registry.json"
@@ -230,7 +505,6 @@ def test_4_checkpoint_b_expired_pendiente_ack(tmp_path: Path) -> None:
 
 def test_5_checkpoint_b_recent_pendiente_ack(tmp_path: Path) -> None:
     """Test 5: checkpoint (b) - estado PENDIENTE_ACK with recent timestamp -> no violation."""
-    recent_ts = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     roster_data = {
         "active_roles": {
             "orquestador": {
@@ -239,17 +513,11 @@ def test_5_checkpoint_b_recent_pendiente_ack(tmp_path: Path) -> None:
             }
         }
     }
-    changes_data_lines = [
-        json.dumps(
-            {
-                "ts": recent_ts,
-                "by": "OR-5",
-                "change": "estado_transition",
-                "detail": "ACTIVO -> PENDIENTE_ACK para orquestador",
-                "reason": "test",
-            }
-        ),
-    ]
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    # Rewrite ts to 1 min ago (to avoid flakiness)
+    line_dict["ts"] = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    # Leave detail/by/change/reason verbatim from the writer
+    changes_data_lines = [json.dumps(line_dict)]
     registry_data = {"sessions": []}
     roster_p = tmp_path / "roster.json"
     registry_p = tmp_path / "registry.json"
@@ -273,7 +541,6 @@ def test_5_checkpoint_b_recent_pendiente_ack(tmp_path: Path) -> None:
 
 def test_6_checkpoint_b_mixed_schemas(tmp_path: Path) -> None:
     """Test 6: checkpoint (b) - legacy and canonical lines in roster_changes.jsonl."""
-    old_ts = "2020-01-01T00:00:00+00:00"
     roster_data = {
         "active_roles": {
             "orquestador": {
@@ -282,6 +549,9 @@ def test_6_checkpoint_b_mixed_schemas(tmp_path: Path) -> None:
             }
         }
     }
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    # Rewrite ONLY the ts field of the canonical line to old value
+    line_dict["ts"] = "2020-01-01T00:00:00+00:00"
     changes_data_lines = [
         # Legacy schema (should be ignored)
         json.dumps(
@@ -292,16 +562,8 @@ def test_6_checkpoint_b_mixed_schemas(tmp_path: Path) -> None:
                 "motivo": "test legacy",
             }
         ),
-        # Canonical schema (should be used)
-        json.dumps(
-            {
-                "ts": old_ts,
-                "by": "OR-5",
-                "change": "estado_transition",
-                "detail": "ACTIVO -> PENDIENTE_ACK para orquestador",
-                "reason": "test",
-            }
-        ),
+        # Canonical schema (should be used) with old ts
+        json.dumps(line_dict),
     ]
     registry_data = {"sessions": []}
     roster_p = tmp_path / "roster.json"
@@ -333,17 +595,11 @@ def test_7_checkpoint_b_unparseable_ts(tmp_path: Path) -> None:
             }
         }
     }
-    changes_data_lines = [
-        json.dumps(
-            {
-                "ts": "ayer",
-                "by": "OR-5",
-                "change": "estado_transition",
-                "detail": "ACTIVO -> PENDIENTE_ACK para orquestador",
-                "reason": "test",
-            }
-        ),
-    ]
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    # Rewrite ONLY the ts field to unparseable value
+    line_dict["ts"] = "ayer"
+    # Leave detail/by/change/reason verbatim from the writer
+    changes_data_lines = [json.dumps(line_dict)]
     registry_data = {"sessions": []}
     roster_p = tmp_path / "roster.json"
     registry_p = tmp_path / "registry.json"

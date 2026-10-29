@@ -103,12 +103,94 @@ python .agent/agent_controller.py --session-close --dry-run --project-root <repo
 python .agent/agent_controller.py --session-close --project-root <repo_destino>
 ```
 
+## Cierre de vuelo con roster
+
+CUANDO EXISTE roster de vuelo (flight_roster.json + session_registry.json en
+`.agent/runtime/flight/<vuelo>/`), el cierre debe ejecutar el guard de
+integridad con PASS o FAIL (nunca SKIP). Sigue el procedimiento atomico
+siguiente; NO exportes `FLIGHT_ROSTER_PATH` por separado del `--acting-thread`
+en el perfil de la sesion — riesgo de contaminacion cruzada entre destinos
+(hallazgo M2 de BA07):
+
+- **Orden atomico:** la variable `FLIGHT_ROSTER_PATH` y `--acting-thread` van
+  en el MISMO comando, nunca exportados por separado.
+- **Bash:**
+  ```bash
+  FLIGHT_ROSTER_PATH=<ruta> python .agent/agent_controller.py --session-close --acting-thread <hilo> --project-root <repo_destino>
+  ```
+- **PowerShell:** asignar `$env:FLIGHT_ROSTER_PATH` en un bloque y limpiarla
+  en un `finally`:
+  ```powershell
+  try {
+      $env:FLIGHT_ROSTER_PATH = "<ruta>"
+      python .agent/agent_controller.py --session-close --acting-thread "<hilo>" --project-root <repo_destino>
+  } finally {
+      Remove-Item env:FLIGHT_ROSTER_PATH -ErrorAction SilentlyContinue
+  }
+  ```
+- **Quien cierra:** es el hilo (`threadId`) que el roster declara orquestador
+  ACTIVO en ese instante. Tras un relevo, cierra el sucesor (entrante), no el
+  saliente.
+- **Estado esperado:** `estado` del orquestador en `active_roles` debe ser
+  `"ACTIVO"`. Si está en `"PENDIENTE_ACK"`, ver el procedimiento de reparacion
+  abajo.
+
+### Procedimiento de reparacion de roster desactualizado
+
+Cada diagnostico del guard tiene su via de reparacion especifica. El cierre
+FALLA mientras el roster no concuerde; NO se evade quitando la variable
+(`FLIGHT_ROSTER_PATH`) — eso solo oculta el sintoma.
+
+- **`(a)` identidad no coincide** o **`(d)` roster atras del registry**
+  (incluido "ninguna entrada ACTIVA en registry"):
+  Edicion de identidad por `rules.who_edits` del roster (linea en
+  `roster_changes.jsonl` con hashes antes/despues y copia previa de la
+  entrada), NUNCA a mano sin esa linea.
+
+- **`(b) PENDIENTE_ACK colgado o sin linea canonica`:**
+  Hacer la transicion CON el escritor (`scripts/flight_roster_writer.py`)
+  segun el protocolo de relevo (`prompts/t3_role_session_relief.md`),
+  nunca editar el campo `estado` a mano.
+
+- **`(c) doble ACTIVA en el registry`:**
+  Corregir el `status` de la entrada sobrante del registry, con su linea
+  de cambio en `roster_changes.jsonl`.
+
+- **"no se pudo parsear el roster/registro", "rol ausente en active_roles",
+  "no es un mapping":**
+  Restaurar desde la copia previa mas reciente y reaplicar los cambios con
+  su linea de cambio.
+
+- **Orden cuando coinciden (a) y (b) a la vez:** primero la edicion de
+  identidad, DESPUES la transicion del escritor (el escritor nunca cambia
+  `threadId`).
+
+- La maquina de estados del relevo (plazo de 15 min, transiciones
+  ACTIVO/PENDIENTE_ACK/SALIENTE_MUERTO) se detalla en
+  `prompts/t3_role_session_relief.md` — no re-enuncies aqui (regla X-09).
+
 El pipeline orquesta en orden: prepush_check, local_audit, validacion de
 prosa de tickets, observaciones por ticket, consolidacion de memoria,
 limpieza de sesion del Builder, archivado de collaboration/, rotacion de
 review_queue.md, archivado de manager_feedback, archivado de execution_log
 y del bus, manifest check y git clean. El reporte queda en
 `.agent/runtime/` y debe revisarse antes de dar el cierre por bueno.
+
+Cuando exista roster de vuelo, anade el paso del roster a la lista de orden:
+1. prepush_check
+2. local_audit
+3. validacion de prosa de tickets
+4. observaciones por ticket
+5. consolidacion de memoria
+6. limpieza de sesion del Builder
+7. archivado de collaboration/
+8. rotacion de review_queue.md
+9. archivado de manager_feedback
+10. archivado de execution_log y del bus
+11. manifest check
+12. git clean
+13. roster_matches_acting_thread (solo cuando existe roster de vuelo, con
+    `FLIGHT_ROSTER_PATH` y `--acting-thread` en el mismo comando)
 
 Paso obligatorio post-cierre: tras el cierre real, reejecuta:
 
