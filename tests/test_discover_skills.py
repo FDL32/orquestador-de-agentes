@@ -572,9 +572,9 @@ class TestCheckContractIntegration:
             "Skill canonica: skills/manager-review-implementation/SKILL.md" in canonical
         )
         assert "contract_id: cid-man-review-v2" in canonical
-        # And the legacy stub still resolves (frontmatter declares the alias).
+        # WOT-2026-125b: legacy alias retired, field should be absent.
         fm, _ = parse_frontmatter(bundle / "prompts" / "manager_review.md")
-        assert fm.get("legacy_aliases") == ["review_manager"]
+        assert "legacy_aliases" not in fm
 
 
 class TestDeriveCyclePhase:
