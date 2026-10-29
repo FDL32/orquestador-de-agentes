@@ -60,6 +60,7 @@ from scripts.closeout_steps.gates import (  # noqa: E402
     step_local_audit as _step_local_audit_impl,
     step_manifest_check as _step_manifest_check_impl,
     step_prepush_check as _step_prepush_check_impl,
+    step_roster_matches_acting_thread as _step_roster_matches_acting_thread_impl,
     step_validate_ticket_prose as _step_validate_ticket_prose_impl,
 )
 from scripts.closeout_steps.memory_health import (  # noqa: E402
@@ -1103,6 +1104,29 @@ def _step_prepush_check(
         process_diagnostic_fn=_process_diagnostic,
         step_result_cls=StepResult,
         skip_gates=skip_gates,
+    )
+
+
+def _step_roster_matches_acting_thread(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    acting_thread: str | None = None,
+    roster_path: str | None = None,
+    registry_path: str | None = None,
+    changes_log: str | None = None,
+) -> StepResult:
+    """Run check_roster_matches_acting_thread.py as a roster integrity gate."""
+    return _step_roster_matches_acting_thread_impl(
+        project_root,
+        dry_run,
+        acting_thread=acting_thread or "",
+        roster_path=roster_path,
+        registry_path=registry_path,
+        changes_log=changes_log,
+        run_script_fn=_run_script,
+        process_diagnostic_fn=_process_diagnostic,
+        step_result_cls=StepResult,
     )
 
 
@@ -2918,12 +2942,17 @@ def _commit_targets_result_or_skip(
     return result
 
 
-def run_closeout(
+def run_closeout(  # noqa: C901 - already complex, new step adds to it
     project_root: Path,
     dry_run: bool = False,
     skip_slow: bool = False,
     explicit_tickets: list[str] | None = None,
     skip_gates: bool = False,
+    *,
+    acting_thread: str | None = None,
+    roster_path: str | None = None,
+    registry_path: str | None = None,
+    changes_log: str | None = None,
 ) -> int:
     """Run the full session closeout pipeline.
 
@@ -3007,6 +3036,19 @@ def run_closeout(
         # success path below prints the same to stdout): without this, a caller
         # like `agent_controller.py --session-close` sees exit 1 with NO console
         # output and cannot find where the failure detail was written.
+        report_path = _generate_report(report, project_root)
+        print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
+        return 1
+    roster = _step_roster_matches_acting_thread(
+        project_root,
+        dry_run,
+        acting_thread=acting_thread,
+        roster_path=roster_path,
+        registry_path=registry_path,
+        changes_log=changes_log,
+    )
+    report.steps.append(roster)
+    if roster.status == "FAIL":
         report_path = _generate_report(report, project_root)
         print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
         return 1
@@ -3162,6 +3204,30 @@ def main() -> int:
             "prepush failure does not abort the close (close over pre-existing debt)."
         ),
     )
+    parser.add_argument(
+        "--acting-thread",
+        type=str,
+        default=None,
+        help="WOT-2026-136c: threadId of the acting session (who is closing).",
+    )
+    parser.add_argument(
+        "--roster-path",
+        type=str,
+        default=None,
+        help="WOT-2026-136c: explicit path to flight_roster.json.",
+    )
+    parser.add_argument(
+        "--registry-path",
+        type=str,
+        default=None,
+        help="WOT-2026-136c: explicit path to session_registry.json.",
+    )
+    parser.add_argument(
+        "--changes-log",
+        type=str,
+        default=None,
+        help="WOT-2026-136c: explicit path to roster_changes.jsonl.",
+    )
 
     args = parser.parse_args()
 
@@ -3185,6 +3251,10 @@ def main() -> int:
         skip_slow=args.skip_slow,
         explicit_tickets=explicit_tickets,
         skip_gates=args.skip_gates,
+        acting_thread=args.acting_thread,
+        roster_path=args.roster_path,
+        registry_path=args.registry_path,
+        changes_log=args.changes_log,
     )
 
 

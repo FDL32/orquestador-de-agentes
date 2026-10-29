@@ -1,0 +1,295 @@
+{
+ "schema_version": 1,
+ "flight_id": "vuelo-20261026b",
+ "updated_at": "2026-10-28T16:47:58+01:00",
+ "updated_by": "OR-6, autorizado por SUPERVISOR-2 (relay del usuario) -- aplica PROPUESTA_vinculo_canonico_rol_orquestador_supervisor_20261028.md HEAD ef3a7423, verificada 3/3 APROBAR 11/11",
+ "active_roles": {
+  "_schema_note": "campos por Seccion 3.1 de la propuesta; version es control de concurrencia (releer antes de escribir); provider_snapshot NUNCA va aqui -- es linea append-only en roster_changes.jsonl (tipo provider_observed), ver Seccion 7.3",
+  "orquestador": {
+   "threadId": "mcp:51b55dcc-41d7-48d0-8e84-74f73a9e1b47",
+   "session_code": "OR-6",
+   "since": "2026-10-28T16:47:58+01:00",
+   "set_by": "OR-6 (autoaplicacion de este esquema, autorizado por SUPERVISOR-2/usuario)",
+   "predecessor_threadId": "mcp:bcdc7a3b-bf39-4f33-bbcd-099cf8d4bc29",
+   "version": 1,
+   "status": "active",
+   "approved_by": "SUPERVISOR-2 (relay de autorizacion del usuario, 2026-10-28)",
+   "nota_gap": "resuelto por SUPERVISOR-2, verificado contra t3_thread_list (titulo \"orquestadora- relevo OR-4 - vuelo-20261026b\", status failed, settled=true, 2026-10-28)"
+  },
+  "supervisor": {
+   "threadId": "mcp:b9014f3a-de86-4511-adc3-d0cfab82b44d",
+   "session_code": "SUPERVISOR-2",
+   "since": "2026-10-28T16:47:58+01:00",
+   "set_by": "OR-6 (autoaplicacion de este esquema, autorizado por SUPERVISOR-2/usuario)",
+   "predecessor_threadId": null,
+   "version": 1,
+   "status": "active",
+   "approved_by": "SUPERVISOR-2 (relay de autorizacion del usuario, 2026-10-28)"
+  }
+ },
+ "rules": {
+  "resolution": "sessions.<nombre>.<slot> pisa a session_types.<tipo>.<slot>; lo no declarado en la sesion se hereda del tipo",
+  "read_when": "cada sesion RE-LEE este fichero antes de cada despacho (Builder, Revisor, triador, verificador, lentes) y al empezar cada ticket; nunca lo cachea entre tickets",
+  "apply_at": "frontera de ticket o de despacho: un cambio NUNCA altera un despacho ya lanzado",
+  "host_change": "el modelo HOST de una sesion (orquestadora, Manager de implantacion, Manager de triaje) lo cambia la orquestadora con t3_thread_configure en una frontera de ticket, y lo anota aqui",
+  "who_edits": "solo la orquestadora o el usuario; cada cambio va como linea nueva a roster_changes.jsonl y se avisa por t3_thread_send a las sesiones afectadas",
+  "record": "cada despacho anota en su informe model_requested (de este fichero) y model_effective (lo que respondio el backend); si difieren, la ronda no cuenta",
+  "independence": [
+   "el Revisor/verificador nunca es de la familia del Builder/triador de la misma sesion",
+   "ninguna lente de una sesion es de la familia de su Builder, triador, Revisor o verificador",
+   "el backend_key del Revisor no cuenta ademas como lente en la misma sesion",
+   "Revisor nunca nan/glm5.3-flash (R8), aunque sea el default de agents.json role_models.REVISOR"
+  ],
+  "session_codes": "cada hilo de sesion tiene un codigo OR/IM/TR + contador global (nunca se reutiliza) en session_registry.json (misma carpeta que este fichero); lo asigna SOLO la orquestadora. Firma tus mensajes con tu codigo. Un relanzo deja el hilo viejo SETTLED (nunca borrado); no lo reabras, pidele a la orquestadora lo que necesites de el."
+ },
+ "session_types": {
+  "orquestadora": {
+   "host": {
+    "provider_instance": "claudeAgent",
+    "model": "claude-opus-5-5"
+   },
+   "lenses": {
+    "DESIGN_REVIEW": [
+     {
+      "profile": "challenger_codex",
+      "backend_key": "BA05"
+     },
+     {
+      "profile": "challenger_kilo_deepseek_flash",
+      "backend_key": "BA07"
+     },
+     {
+      "profile": "challenger_kilo_glm_flash",
+      "backend_key": "BA03"
+     },
+     {
+      "profile": "challenger_kilo_qwen_flash",
+      "backend_key": "BA02"
+     },
+     {
+      "profile": "challenger_gemini_gemini",
+      "backend_key": "BA110"
+     },
+     {
+      "profile": "challenger_mistral",
+      "backend_key": "BA150"
+     }
+    ],
+    "CLOSE": "igual que DESIGN_REVIEW"
+   }
+  },
+  "implantacion": {
+   "manager_host": {
+    "provider_instance": "opencode",
+    "model": "nan/mimo-v2.6-flash"
+   },
+   "builder": {
+    "channel": "kilo",
+    "model": "nan/qwen3.6"
+   },
+   "revisor": {
+    "channel": "loop-round",
+    "profile": "challenger_codex",
+    "backend_key": "BA05",
+    "model": "gpt-5.6-luna",
+    "note": "modo 3 (contrato con filesystem) solo si el bundle supera 15 KB",
+    "account": {
+     "codex_home": "C:/Users/fdl/.codex",
+     "status": "ACTIVA (cuenta por defecto del CLI)"
+    }
+   },
+   "lenses": {
+    "CONTRACT_AUDIT": [
+     {
+      "profile": "challenger_kilo_glm_flash",
+      "backend_key": "BA03"
+     },
+     {
+      "profile": "challenger_nan_qwen_flash",
+      "backend_key": "BA15"
+     }
+    ],
+    "MANAGER_REVIEW": [
+     {
+      "profile": "challenger_kilo_glm_flash",
+      "backend_key": "BA03"
+     }
+    ]
+   },
+   "revisor_repo_motor_interino": {
+    "channel": "loop-round",
+    "profile": "challenger_kilo_deepseek_flash",
+    "backend_key": "BA07",
+    "aplica": "tickets delivery_authority=repo_motor hasta que WOT-2026-129r este integrado",
+    "razon": "BA05/codex no puede leer repo_motor via loop-round (repo_scope destino forzado, --project-root motor = INVALID); BA10/deepseek es canal api sin repo_scope declarado, igual que BA150, asi que no depende de cwd",
+    "condicion": "bundle autocontenido <=15KB con el diff completo (o bundle del DELTA en una ronda de CHANGES); BA10 no cuenta como lente MANAGER_REVIEW en la misma ronda (la lente sigue siendo BA03); el framing NUNCA nombra a otras lentes ni les atribuye un veredicto",
+    "decidido": "2026-10-26T17:43:09+01:00 orquestadora-1",
+    "sustitucion_2026-10-26T20:20": "BA150/mistral RETIRADO como interino: en WOT-2026-129c fabrico un veredicto de BA03 bajo su propia firma ('APPROVE (BA150 + BA03)' con una seccion Conclusion BA03 escrita por el mismo) y afirmo algo falso sobre el codigo auditado (ver incidencias.md 2026-10-26 20:15). Sustituido por BA10/deepseek. No reactivar BA150 en este vuelo sin decision expresa del usuario.",
+    "sustitucion_2026-10-26T20:40": "BA10 (api nan deepseek) mudo 2/2 en el delta R2 de 129c (empty_content_despite_sentinel, chars=0). Designado BA07: mismo modelo deepseek-v4-flash por canal kilo agent; revisa el bundle autocontenido, el cwd no importa. Familia distinta de Builder (qwen) y de BA03 (glm). Un BA07 de fallback NO cuenta; solo cuenta despachado como interino designado."
+   }
+  },
+  "triaje": {
+   "manager_host": {
+    "provider_instance": "opencode",
+    "model": "nan/qwen3.6"
+   },
+   "triador": {
+    "channel": "kilo",
+    "model": "nan/gemma4"
+   },
+   "verificador": {
+    "channel": "loop-round",
+    "profile": "challenger_codex",
+    "backend_key": "BA05",
+    "model": "gpt-5.6-luna",
+    "account": {
+     "codex_home": "C:/Users/fdl/.codex-triaje",
+     "status": "PENDIENTE: requiere login del usuario en ese CODEX_HOME y el ticket G (ensemble_dispatch descarta CODEX_HOME). Hasta entonces usa la cuenta por defecto y lo anota en incidencias.md"
+    }
+   },
+   "lenses": {
+    "TRIAGE_AUDIT": [
+     {
+      "profile": "challenger_kilo_glm_flash",
+      "backend_key": "BA03"
+     },
+     {
+      "profile": "challenger_gemini_gemini",
+      "backend_key": "BA110"
+     }
+    ]
+   },
+   "write_scope": "reglas ACTUALES de sesion_diseno (sec. 15 de la propuesta): solo reports/, backlog_inbox/, queued/; backlog.md lo escribe solo la orquestadora"
+  }
+ },
+ "sessions": {
+  "orquestadora-1": {
+   "type": "orquestadora"
+  },
+  "implantacion-1": {
+   "type": "implantacion",
+   "manager_host": {
+    "provider_instance": "opencode",
+    "model": "nan/mimo-v2.6-flash"
+   }
+  },
+  "triaje-1": {
+   "type": "triaje",
+   "manager_host": {
+    "provider_instance": "opencode",
+    "model": "nan/qwen3.6"
+   },
+   "lenses": {
+    "TRIAGE_AUDIT": [
+     {
+      "profile": "challenger_kilo_glm_flash",
+      "backend_key": "BA03"
+     },
+     {
+      "profile": "challenger_mistral",
+      "backend_key": "BA150"
+     }
+    ]
+   }
+  }
+ },
+ "capacity": {
+  "kilo_qwen36_max_concurrent": 2,
+  "note": "el Builder de implantacion y el triador de triaje comparten este cupo de 2; desde 14:07 el host de triaje-1 es nan/qwen3.6 (opencode, sesion larga): implantacion-1 lanza como maximo 1 Builder qwen3.6 a la vez mientras triaje-1 este activa"
+ },
+ "excluded_lenses": {
+  "BA51": "challenger_openrouter_nemotron: inventa citas (3 de 3 rondas, 2026-10-26)",
+  "BA06": "challenger_opencode_glm_flash: sin lectura del motor (4 de 4, allowlist external_directory)"
+ },
+ "quota": {
+  "source": "powershell -NoProfile -File C:/Users/fdl/claude_tooling/accounts/cc-usage-monitor.ps1 -Json",
+  "check_every": "cada latido de la orquestadora y antes de autorizar un ticket nuevo",
+  "soft_freeze_block_pct": 92,
+  "hard_stop_block_pct": 97,
+  "action_soft": "FREEZE de tickets nuevos: las sesiones terminan el ticket en curso y paran",
+  "action_hard": "t3_thread_interrupt de implantacion y triaje; el ticket queda aparcado con su estado escrito",
+  "reserve_for_orquestadora": "la orquestadora para sus propios bucles en soft; conserva margen para cerrar e integrar"
+ },
+ "quarantine": {
+  "BA110": {
+   "scope": "session_types.implantacion.lenses.CONTRACT_AUDIT (unica fase donde BA110 era carga: ya fuera de triaje desde 14:07 por independencia de familia con el triador gemma4)",
+   "razon": "4 caidas en este vuelo (HTTP 503 high demand persistente + smoke modelo_ausente_en_models); bucle EXPL-ba110 (6 lentes, 5/6 respondieron): NO excluir permanente (BA06: 503 es señal clasica de saturacion transitoria, sin historial cross-vuelo que pruebe proveedor roto); si TTL/smoke de readmision",
+   "sustituto": "BA150 challenger_mistral (familia distinta de Builder qwen3.6 y Manager mimo; BA07 descartado como sustituto porque fallo HOY con 0 salida en un bundle de 23KB de esta misma fase)",
+   "ttl": "revisar al cierre de este vuelo; readmitir BA110 solo tras un smoke en verde, no por el mero paso del tiempo",
+   "decidido": "2026-10-26, bucle DESIGN_REVIEW EXPL-ba110 (BA05/BA06/BA07/BA09/BA150 respondieron, BA02 sin respuesta)"
+  }
+ },
+ "roster_fixes": [
+  {
+   "ts": "2026-10-26T22:57:10+01:00",
+   "actor": "orquestadora-1",
+   "motivo": "manager_host declarado (claudeAgent/claude-sonnet-5) no coincidia con el host real IM-1/TR-2; confirmado por usuario (manager mimo nan, builder qwen3.6, revisor codex, triador gemma4)",
+   "implantacion_antes": {
+    "provider_instance": "claudeAgent",
+    "model": "claude-sonnet-5"
+   },
+   "implantacion_ahora": {
+    "provider_instance": "opencode",
+    "model": "nan/mimo-v2.6-flash"
+   },
+   "triaje_antes": {
+    "provider_instance": "claudeAgent",
+    "model": "claude-sonnet-5"
+   },
+   "triaje_ahora": {
+    "provider_instance": "opencode",
+    "model": "nan/qwen3.6"
+   }
+  },
+  {
+   "ts": "2026-10-26T22:57:35+01:00",
+   "actor": "orquestadora-1",
+   "motivo": "BA150 retirado del vuelo (fabrico veredicto cruzado 2026-10-26 20:15); quedaba vivo en lenses.CONTRACT_AUDIT de implantacion pese a la retirada",
+   "antes": [
+    {
+     "profile": "challenger_kilo_glm_flash",
+     "backend_key": "BA03"
+    },
+    {
+     "profile": "challenger_nan_deepseek_flash",
+     "backend_key": "BA10"
+    }
+   ],
+   "ahora": [
+    {
+     "profile": "challenger_kilo_glm_flash",
+     "backend_key": "BA03"
+    },
+    {
+     "profile": "challenger_nan_deepseek_flash",
+     "backend_key": "BA10"
+    }
+   ]
+  },
+  {
+   "ts": "2026-10-26T23:16:13+01:00",
+   "actor": "orquestadora-1",
+   "motivo": "BA10 (nan deepseek api) retirado de CONTRACT_AUDIT: mudo 4/4 hoy (2/2 en delta de 129c, 2/2 en 129u, empty_content_despite_sentinel chars=0), patron sistematico, no transitorio. No es fabricacion (como BA150) sino fallo de transporte reproducible. No reactivar BA10 como lente activa en este vuelo sin evidencia de que el fallo se resolvio.",
+   "antes": [
+    {
+     "profile": "challenger_kilo_glm_flash",
+     "backend_key": "BA03"
+    },
+    {
+     "profile": "challenger_nan_qwen_flash",
+     "backend_key": "BA15"
+    }
+   ],
+   "ahora": [
+    {
+     "profile": "challenger_kilo_glm_flash",
+     "backend_key": "BA03"
+    },
+    {
+     "profile": "challenger_nan_qwen_flash",
+     "backend_key": "BA15"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "flight_id": "vuelo-corrected",
+  "updated_at": "2026-10-29T10:00:00+01:00",
+  "updated_by": "OR-7",
+  "active_roles": {
+    "_schema_note": "campos por Seccion 3.1 de la propuesta",
+    "orquestador": {
+      "threadId": "mcp:corrected-thread-001",
+      "session_code": "OR-7",
+      "since": "2026-10-29T10:00:00+01:00",
+      "set_by": "OR-7",
+      "predecessor_threadId": "mcp:old-thread",
+      "version": 1,
+      "status": "active",
+      "approved_by": "SUPERVISOR-2"
+    },
+    "supervisor": {
+      "threadId": "mcp:corrected-thread-002",
+      "session_code": "SUPERVISOR-2",
+      "since": "2026-10-29T10:00:00+01:00",
+      "set_by": "OR-7",
+      "predecessor_threadId": null,
+      "version": 1,
+      "status": "active",
+      "approved_by": "SUPERVISOR-2"
+    }
+  },
+  "rules": {},
+  "session_types": {},
+  "sessions": {},
+  "capacity": {}
+}

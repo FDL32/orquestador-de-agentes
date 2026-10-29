@@ -1,0 +1,26 @@
+{
+  "sessions": [
+    {
+      "code": "OR-7",
+      "role": "orquestadora",
+      "slot": "orquestadora-1",
+      "threadId": "mcp:corrected-thread-001",
+      "started": "2026-10-29T10:00:00+01:00",
+      "status": "ACTIVA",
+      "supersedes": "OR-6",
+      "nota": "sesion actual, sin problemas"
+    },
+    {
+      "code": "IM-1",
+      "role": "implantacion",
+      "slot": "implantacion-1",
+      "threadId": "mcp:implantation-thread",
+      "started": "2026-10-26T12:02:30+01:00",
+      "status": "ACTIVA",
+      "supersedes": null,
+      "nota": "sesion implantacion activa"
+    }
+  ],
+  "protocolo": {},
+  "hierarchical_active": true
+}

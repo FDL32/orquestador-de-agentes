@@ -1,0 +1,95 @@
+{
+  "sessions": [
+    {
+      "code": "OR-1",
+      "role": "orquestadora",
+      "slot": "orquestadora-1",
+      "threadId": "mcp:950a8a53-90d0-420e-b979-4861a2cc86d4",
+      "started": "2026-10-26T12:01:00+01:00",
+      "status": "HISTORICO (SOPORTE traspasada a OR-4)",
+      "supersedes": null,
+      "nota": "sesion inicial del vuelo, sin relanzar (solo rebase de modelo sonnet<->opus, mismo thread) | traspaso de rol SOPORTE a OR-4 el 2026-10-27, orden directa del usuario; OR-1 sigue existiendo como hilo de chat con el usuario, deja de hacer LATIDO/vigilancia operativa",
+      "started_nota": "corregido desde journal.jsonl/thread createdAt; el registro inicial (16:27:59 para las 3 primeras) era hora de ALTA EN EL REGISTRO, no hora real de arranque -- mismo patron de timestamp fabricado ya visto antes en este vuelo"
+    },
+    {
+      "code": "IM-1",
+      "role": "implantacion",
+      "slot": "implantacion-1",
+      "threadId": "mcp:3cf2d487-4adf-4e65-91db-6fd5fb4a3bf8",
+      "started": "2026-10-26T12:02:30+01:00",
+      "status": "ACTIVA",
+      "supersedes": null,
+      "nota": "sesion inicial, host cambiado a opencode/nan-mimo-v2.6-flash en frontera de ticket (mismo thread)",
+      "started_nota": "corregido desde journal.jsonl/thread createdAt; el registro inicial (16:27:59 para las 3 primeras) era hora de ALTA EN EL REGISTRO, no hora real de arranque -- mismo patron de timestamp fabricado ya visto antes en este vuelo"
+    },
+    {
+      "code": "TR-1",
+      "role": "triaje",
+      "slot": "triaje-1",
+      "threadId": "mcp:e53fb539-c220-4219-9233-3c7ffc7cbeb6",
+      "started": "2026-10-26T12:08:00+01:00",
+      "status": "SETTLED (ABANDONADA)",
+      "supersedes": null,
+      "nota": "sesion inicial, luego host cambiado a opencode/nan-qwen3.6; ABANDONADA por context length exceeded | context length exceeded qwen3.6 (230145 prompt tokens > 262144 limite) en run 15, 15:05-15:09",
+      "started_nota": "corregido desde journal.jsonl/thread createdAt; el registro inicial (16:27:59 para las 3 primeras) era hora de ALTA EN EL REGISTRO, no hora real de arranque -- mismo patron de timestamp fabricado ya visto antes en este vuelo"
+    },
+    {
+      "code": "TR-2",
+      "role": "triaje",
+      "slot": "triaje-1",
+      "threadId": "mcp:5ee15fa5-cc8d-4715-ba6c-2d24dd7bb386",
+      "started": "2026-10-26T16:25:43+01:00",
+      "status": "ACTIVA",
+      "supersedes": "TR-1",
+      "nota": "relanzo de TR-1 tras context length exceeded, briefing compacto",
+      "started_nota": "corregido desde journal.jsonl/thread createdAt; el registro inicial (16:27:59 para las 3 primeras) era hora de ALTA EN EL REGISTRO, no hora real de arranque -- mismo patron de timestamp fabricado ya visto antes en este vuelo"
+    },
+    {
+      "code": "OR-2",
+      "role": "orquestadora",
+      "slot": "orquestadora-2",
+      "threadId": "mcp:a1a50691-e811-4814-9911-b67c5b83b202",
+      "started": "2026-10-26T22:48:38+01:00",
+      "status": "SETTLED (ABANDONADA)",
+      "supersedes": null,
+      "nota": "backup/relevo Capa-0 con nan/deepseek-v4-flash (opencode), lanzada por orquestadora-1 porque brabander esta al 92% semanal (soft freeze); exige WOT-2026-129u en vivo | ABANDONADA 2026-10-27: status failed, context-handoff simetrico irreparable (ver incidencias.md)"
+    },
+    {
+      "code": "OR-3",
+      "role": "orquestadora",
+      "slot": "orquestadora-3",
+      "threadId": "mcp:da134e42-21c2-4ec7-ba74-468d6d7750ee",
+      "started": "2026-10-27T00:15:00+01:00",
+      "status": "SUPERSEDED",
+      "supersedes": "OR-2",
+      "nota": "relevo de OR-2 tras caida confirmada (context-handoff simetrico irreparable); backend Codex (gpt-5.6-luna) por orden directa del usuario; lanzada por OR-1"
+    },
+    {
+      "code": "OR-4",
+      "role": "orquestadora",
+      "slot": "diseno-vuelo-autonomo-20261027",
+      "threadId": "mcp:5a5bf9d5-fc7e-4e62-bf4d-aa6868293e5d",
+      "started": "2026-10-27T08:35:00+01:00",
+      "status": "ACTIVA",
+      "supersedes": "OR-1",
+      "nota": "nace como sesion de DISENO (propuesta de supervision integral), promovida a SOPORTE por orden directa del usuario tras entregar PROPUESTA_supervision_integral_vuelo_20261027.md; worktree C:/Users/fdl/.t3/worktrees/orquestador_de_agentes/diseno-vuelo-autonomo-20261027; diversificada a instanceId codex (cuenta por defecto) para no compartir cuenta con OR-3 (codex_e402540e/gamsgo), por su propio diseño de anti-fallo-correlacionado"
+    },
+    {
+      "code": "OR-3.1",
+      "role": "orquestadora",
+      "slot": "1",
+      "threadId": "mcp:911c9a51-8b1d-4d26-a602-e21bce1f6c9f",
+      "started": "2026-10-27T12:00:27+01:00",
+      "status": "ACTIVA",
+      "supersedes": "OR-3",
+      "launched_by": "OR-3",
+      "generation": 3,
+      "nota": "Relevo preventivo por riesgo de contexto; sucesora de OR-3; lanzada por OR-3; fuente de estado en artefactos escritos. | ACTIVACION del formato jerarquico (primer next con generacion >= 2, JER-1)"
+    }
+  ],
+  "protocolo": {
+    "settle": "al relanzar una ranura (p.ej. TR-1->TR-2), si el hilo viejo no tiene nada pendiente, la orquestadora lo settle con t3_thread_organize(action=settle). No se borra.",
+    "consulta_historica": "un hilo settled sigue existiendo y es consultable; si una sesion necesita algo de un hilo anterior (p.ej. TR-1), lo pide a la orquestadora en vez de reabrirlo ella misma."
+  },
+  "hierarchical_active": true
+}

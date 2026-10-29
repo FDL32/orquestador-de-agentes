@@ -7099,6 +7099,7 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
     force_mode: bool,
     json_output: bool,
     skip_gates: bool = False,
+    acting_thread: str | None = None,
 ) -> int:
     """Handle --session-close flag by delegating to scripts/session_closeout.py.
 
@@ -7171,6 +7172,8 @@ def _handle_session_close(  # noqa: C901 - delegation handler with flag building
         cmd.extend(["--ticket", ticket])
     if tickets:
         cmd.extend(["--tickets", tickets])
+    if acting_thread:
+        cmd.extend(["--acting-thread", acting_thread])
 
     try:
         result = subprocess.run(
@@ -7614,6 +7617,12 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
         if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
             session_tickets = sys.argv[idx + 1]
 
+    acting_thread: str | None = None
+    if "--acting-thread" in sys.argv:
+        idx = sys.argv.index("--acting-thread")
+        if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
+            acting_thread = sys.argv[idx + 1]
+
     # Check for --session-close
     if "--session-close" in sys.argv:
         session_dry_run = "--dry-run" in sys.argv
@@ -7625,6 +7634,7 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
             force_mode=force_mode,
             json_output=json_output,
             skip_gates=skip_gates,
+            acting_thread=acting_thread,
         )
 
     # Check for --validate via direct call (see FLAG_HANDLERS comment above)

@@ -167,6 +167,89 @@ def step_prepush_check(
         )
 
 
+def step_roster_matches_acting_thread(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    acting_thread: str,
+    roster_path: str | None,
+    registry_path: str | None,
+    changes_log: str | None,
+    run_script_fn,
+    process_diagnostic_fn,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Run check_roster_matches_acting_thread.py as a blocking roster integrity gate.
+
+    WOT-2026-136c: verifies that active_roles of the flight roster matches the
+    acting thread (whoever is closing the session). Fail-closed: no acting_thread
+    -> FAIL. Three exit codes: 0=PASS, 1=FAIL, 3=SKIP (no roster found).
+
+    WOT-2026-136c: dry-run returns SKIP immediately without invoking the guard,
+    so dry-runs never block (the guard is dormant until FLIGHT_ROSTER_PATH is
+    exported and --acting-thread is passed together).
+    """
+    if dry_run:
+        return step_result_cls(
+            name="roster_matches_acting_thread",
+            status="SKIP",
+            detail="Not run in dry-run mode: roster gate was not verified",
+            blocking=False,
+        )
+    try:
+        roster_args = []
+        if roster_path:
+            roster_args.extend(["--roster-path", roster_path])
+        if acting_thread:
+            roster_args.extend(["--acting-thread", acting_thread])
+        if registry_path:
+            roster_args.extend(["--registry-path", registry_path])
+        if changes_log:
+            roster_args.extend(["--changes-log", changes_log])
+        result = run_script_fn(
+            "check_roster_matches_acting_thread.py",
+            roster_args,
+            project_root,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            return step_result_cls(
+                name="roster_matches_acting_thread",
+                status="PASS",
+                detail="Roster and acting thread match",
+                blocking=True,
+            )
+        if result.returncode == 3:
+            return step_result_cls(
+                name="roster_matches_acting_thread",
+                status="SKIP",
+                detail="No roster found (N/A): guard not applicable to this closeout",
+                blocking=False,
+            )
+        # exit code 1 or any other code (including exceptions) -> FAIL, blocking
+        detail = process_diagnostic_fn(result)
+        return step_result_cls(
+            name="roster_matches_acting_thread",
+            status="FAIL",
+            detail=f"Roster integrity check failed (exit {result.returncode}): {detail}",
+            blocking=True,
+        )
+    except subprocess.TimeoutExpired:
+        return step_result_cls(
+            name="roster_matches_acting_thread",
+            status="FAIL",
+            detail="check_roster_matches_acting_thread.py timed out after 60s",
+            blocking=True,
+        )
+    except FileNotFoundError:
+        return step_result_cls(
+            name="roster_matches_acting_thread",
+            status="FAIL",
+            detail="check_roster_matches_acting_thread.py not found in scripts/",
+            blocking=True,
+        )
+
+
 def step_local_audit(
     project_root: Path,
     dry_run: bool,
