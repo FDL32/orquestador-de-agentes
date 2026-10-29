@@ -1,5 +1,4 @@
 ---
-legacy_aliases: [review_manager]
 role: manager
 cycle_phase: [F6-revision]
 route_kind: entry
