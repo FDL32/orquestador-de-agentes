@@ -218,6 +218,19 @@ Cada entrada de checkpoint incluye:
 - Ticket activo y su estado.
 - Senales de progreso verificadas (timestamps, SHAs, PIDs).
 - Fecha y hora del checkpoint.
+- DECISIONES (decision con su fuente -- `id` del mensaje T3 -- y las premisas
+  que la motivaron, nunca copiada sin fuente; cada decision marcada
+  `PENDIENTE` o `TOMADA`).
+- LATIDOS (cada tarea/job en background con el `threadId` al que queda atado).
+- OBREROS (cada sesion-rol obrera viva con `threadId`, ruta de sus informes,
+  su `max_silencio` configurado para la ranura y a quien reporta, `reporta_a`).
+- CADENA_CONSULTA (la cadena de consulta ordenada, padre inmediato primero,
+  cada eslabon con su `threadId` y la fuente que lo fija -- p.ej.
+  `flight_roster.json` o el mensaje de arranque que lo declaro).
+- AUTORIDAD (que decision esta delegada en esta sesion-rol frente a lo que
+  queda reservado a SUPERVISOR-2, con su fuente).
+- PROXIMO_PASO (la siguiente accion concreta, con el comando exacto que la
+  ejecuta o verifica).
 
 ### Prueba de lectura por el sucesor
 
@@ -245,7 +258,37 @@ vivo sin asentar" (C14 de PROPUESTA v3).
 1. Consultar estado del hilo viejo (129q).
 2. Si no es `SETTLED` ni `ABANDONADA`: esperar.
 3. Solo tras confirmacion, lanzar el sucesor.
-4. Nunca lanzar el sucesor si el viejo sigue `PENDING` o `RUNNING`.
+4. Nunca lanzar el sucesor si el viejo sigue `PENDING` o `RUNNING`, salvo la excepcion declarada en "Excepcion: relevo planificado o self-hop" (mas abajo en esta misma seccion).
+
+### Excepcion: relevo planificado o self-hop
+
+La regla dos-hilos-mismo-nombre no aplica a un relevo PLANIFICADO. El campo
+`active_roles.<rol>.estado` (valores `ACTIVO`, `PENDIENTE_ACK`,
+`SALIENTE_MUERTO`), escrito por el script escritor del roster
+(WOT-2026-136b, nunca a mano -- este modulo DECLARA el campo, no lo escribe,
+mismo patron que `rules.session_relief.*` de la seccion 3), registra el
+estado de la sesion saliente y permite las tres transiciones siguientes:
+
+- `ACTIVO -> PENDIENTE_ACK`: el saliente congela su actividad mientras el
+  entrante se autentica.
+- `PENDIENTE_ACK -> ACTIVO(entrante)` con ACK via el primer mensaje con
+  HEAD/hilos/latidos re-medidos de la seccion 7.
+- `PENDIENTE_ACK -> SALIENTE_MUERTO` sin ACK en 15 minutos -- umbral NUEVO
+  de este modulo -- o sin `>= 2` senales de progreso VERIFICADAS de la
+  seccion 4 dentro de ese mismo plazo (misma vara que la seccion 4 exige
+  para progreso verificado, nunca "senales ausentes" como criterio
+  independiente: en `PENDIENTE_ACK` el saliente esta congelado por diseno y
+  sus senales de actividad se vuelven ausentes de forma esperada, asi que un
+  criterio de ausencia por si solo disparase `SALIENTE_MUERTO` casi de
+  inmediato y se saltaria los 15 minutos).
+
+El congelamiento del saliente dura mientras `estado = PENDIENTE_ACK`. La
+decision de completar desde el checkpoint de un `SALIENTE_MUERTO` la toma
+SUPERVISOR-2 (nunca el entrante), exigiendo al menos 2 senales de progreso
+(Seccion 4) verificadas. "SUPERVISOR-2" designa siempre al relay del usuario,
+nunca a una orquestadora degradada a supervisora (vision del usuario,
+PROPUESTA v7 Sec. 1 -- este modulo no redefine esa vision, solo nombra al
+actor con precision).
 
 ---
 
@@ -371,7 +414,36 @@ WOT-2026-129q (dos hilos con el mismo nombre de ranura, uno vivo sin asentar).
 Solo se relanza una sesion si cumple una condicion de Clase A o B que requiera accion.
 Las sesiones sanas se entregan por referencia, no se relanza.
 
+### Releer tras compactar
+
+Mecanismo: `t3_thread_read` paginado sobre el propio hilo desde `afterPosition`
+igual a la ultima posicion leida antes de compactar (o los ultimos 20 items si
+se desconoce) mas el checkpoint mas reciente. Desempate: gana el hilo salvo
+que el checkpoint se declare expresamente autoritativo para ese campo.
+
 ---
+
+## 10. Cadena de ancestros (consulta escalonada)
+
+Tricotomia:
+- **VIVO:** `t3_thread_read` normal.
+- **SETTLED pero legible:** `t3_thread_read` paginado.
+- **DESBORDADO:** no se relee, se marca "NO VERIFICABLE" y se salta al
+  siguiente nivel.
+
+Plazo de 10 minutos (umbral NUEVO de este modulo) antes de saltar de nivel.
+
+Registro `ancestor_unavailable` en `roster_changes.jsonl` -- declarado SOLO
+como PROTOCOLO (el nombre del evento), sin prescribir el formato exacto de
+esa linea ni implicar que este ticket escriba ese fichero: el esquema y el
+escritor de `roster_changes.jsonl` son de WOT-2026-136b. (sin reintento en
+caliente)
+
+Escalada a SUPERVISOR-2 y despues al usuario si cada nivel de la cadena queda
+"no_disponible"/"NO VERIFICABLE" (caso de agotamiento total).
+
+DIFERIDO en esta seccion: desafio con nonce, cuaderno de consultas con
+metrica, contador de saltos.
 
 ## Referencias cruzadas
 

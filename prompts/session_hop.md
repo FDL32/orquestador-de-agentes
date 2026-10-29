@@ -374,6 +374,14 @@ declara "no visible", nunca se omite en silencio.
 - **HEAD remotos ajenos ya publicados** desde que empezo la sesion (`git fetch` + `git log
   origin/<rama>`), porque fuerzan el Gate 2 de `.agent/rules/common/flight_push_policy.md`.
 - **Relevo de sesion-rol:** `prompts/t3_role_session_relief.md` (WOT-2026-129u). [sin verificar por bucle (WOT-2026-129u)]
+- **DECISIONES / LATIDOS / OBREROS, con CONTENIDO real:** el bloque de Salida
+  debe llevar el dato RELLENO de estos tres campos, no solo sus nombres
+  (decisiones con su fuente y premisas, latidos con el hilo al que quedan
+  atados, obreros con su `max_silencio` y a quien reportan); el ESQUEMA
+  completo de cada campo (que cuenta como fuente, que es `reporta_a`) vive
+  en `prompts/t3_role_session_relief.md` seccion 5 -- hogar normativo de
+  esta lista -- y este bullet remite ahi para la definicion, sin reproducir
+  la prosa explicativa completa de esa seccion (X-09).
 
 Protocolo completo de coordinacion: `.agent/rules/common/t3_ade_coordination.md`.
 
@@ -388,8 +396,12 @@ que no debe ejecutar y las superficies que colisionan con otra sesion en curso.
 (Origen: `WOT-2026-059n`, bucle adversarial Codex BA05, 2026-10-07 -- caso real
 `arranque_borrador_v1.md` afirmando "52" y "51" commits por delante del mismo
 estado git en secciones distintas. Guard determinista:
-`scripts/check_document_self_contradiction.py`, declarado `known_unwired` hasta
-que este paso lo cablease -- ver `scripts/guard_wiring_policy.yaml`.)
+`scripts/check_document_self_contradiction.py`, la invocacion manual de
+este mismo paso ES la que `scripts/guard_wiring_policy.yaml` (linea 156) ya
+declaraba `BY-DESIGN` para ese guard desde WOT-2026-059n -- lo que este
+commit corrige es el comentario DESFASADO de este prompt (citaba una
+etiqueta de deuda de cableado retirada hace tiempo), no una deuda sin
+resolver.)
 
 Antes de entregar el bloque de Salida (o de escribirlo a
 `orchestrator_pipeline/arranques/`), corre:
@@ -443,14 +455,16 @@ Un unico bloque markdown pegable como PRIMER mensaje de la sesion nueva, con:
 1. Contratos que gobiernan (ruta absoluta + lineas)
 2. Topologia resuelta y **medida**, con su comando de re-medicion
 3. Estado `[snapshot <fecha>]`, cada dato con `command:` + `exit_code:`, sin SHAs:
-   los del linaje (Paso 2) van aparte, en una seccion "Ancla de linaje" (ver Paso 5)
+   los del linaje (Paso 2) van aparte, en una seccion OBLIGATORIA "Ancla de linaje"
+   (ver Paso 5) que SI lleva el HEAD medido mas reciente y su comando de re-medicion
 4. Slugs de memoria **verificados `rc=0`** + STOP CONDITION
 5. Puente de memoria del cierre anterior (`closeout_lessons.md`): contenido
    transportado con su procedencia, o su ausencia declarada explicitamente
 6. Avisos medidos que apliquen
 7. **Lo que NO hacer**
 8. Sello, si aplica
-9. Coordinacion T3 (Paso 5-bis), si hay sesiones paralelas; si no, "sin sesiones paralelas"
+9. Coordinacion T3 (Paso 5-bis): DECISIONES, LATIDOS y OBREROS con contenido real, nunca solo los nombres; si hay sesiones paralelas; si no, "sin sesiones paralelas"
+10. Cadena de consulta, autoridad y proximo paso: CADENA_CONSULTA, AUTORIDAD y PROXIMO_PASO con contenido real, nunca solo los nombres; esquema completo en `prompts/t3_role_session_relief.md` seccion 5.
 
 Portador, segun topologia (una sola ruta por modo):
 
