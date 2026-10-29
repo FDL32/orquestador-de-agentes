@@ -151,7 +151,7 @@ Clean which residues? [all/comma-list/none]: 1,3
 **Desde v9.4.1+**, el script `install_agent_system.py` reemplaza el viejo `sync_agent_core.py`.
 
 - **Nuevo:** `orquestador_de_agentes/scripts/install_agent_system.py` (mantenido, portable)
-- **Legacy:** `orquestador_de_agentes/scripts/sync_agent_core.py` (deprecado, mantiene compatibilidad)
+- **Eliminado:** `orquestador_de_agentes/scripts/sync_agent_core.py` fue eliminado por completo en WT-2026-187 y ya no existe; `install_agent_system.py` es la unica via vigente.
 
 ---
 
