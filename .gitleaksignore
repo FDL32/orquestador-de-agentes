@@ -11,3 +11,36 @@ tests/test_redact.py:jwt:43
 # en MODEL_FAMILY_MAP y en su grupo de fallback. Es un nombre de modelo, no una credencial.
 bd0147d58cb8da6bdba7c0af10092dc30e1f4803:scripts/ensemble_dispatch.py:generic-api-key:346
 bd0147d58cb8da6bdba7c0af10092dc30e1f4803:scripts/ensemble_dispatch.py:generic-api-key:377
+
+# WOT-2026-041n / CO-15 2026-10-30: corpus de 45 identificadores opacos (SHAs, loop_id, batch_id) marcados por generic-api-key por entropia; NO son credenciales (solo prefijos y clase revisados, sin imprimir valores). Solo existe en la rama sin integrar origin/FDL32/nocturno-alvarovans-20261024-b1 (commit e5ceccde), no en main. Huella por commit: si la rama se integra por squash/rebase hay que re-huellar o por valor.
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:10
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:11
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:12
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:13
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:14
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:15
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:17
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:18
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:19
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:20
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:21
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:23
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:25
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:27
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:28
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:30
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:31
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:32
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:33
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:34
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:35
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:36
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:37
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:38
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:39
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:40
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:41
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:42
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:43
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:44
+e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:9
