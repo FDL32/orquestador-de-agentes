@@ -1454,6 +1454,354 @@ def test_dod_136h_protocolo_condiciones_el_comprobador_muerde():
     assert set(CONDICIONES_CLAUSULA) <= set(por_clausula)
 
 
+# ---------------------------------------------------------------------------
+# WOT-2026-136l: indice de campos del bloque `quota` del roster.
+# ---------------------------------------------------------------------------
+# Los ocho nombres numericos de la politica se construyen aqui por FRAGMENTOS en una tupla
+# PROPIA: este fichero entra en el censo del DoD 2 como cualquier otro. No se lee ni se
+# reutiliza la tupla `CAMPOS_POLITICA_CUENTA` de arriba. Riesgo conocido: las dos pueden
+# divergir; lo cubren el test del indice (un fragmento distinto cambia las claves
+# esperadas y cae) y el propio censo.
+NUMERICOS_QUOTA: dict[str, str] = {
+    alias: "_".join(partes)
+    for alias, partes in (
+        ("soft", ("soft", "freeze", "block", "pct")),
+        ("hard", ("hard", "stop", "block", "pct")),
+        ("enter", ("enter", "when", "block", "pct", "le")),
+        ("requires", ("enter", "requires", "consecutive", "valid", "readings")),
+        ("harbor", ("harbor", "block", "pct", "max")),
+        ("leave", ("leave", "when", "block", "pct", "ge")),
+        ("dwell", ("min", "dwell", "min")),
+        ("moves", ("max", "moves", "per", "tick")),
+    )
+}
+# Las dos claves hijas de `provider_map` son un nombre de cuenta y de proveedor (N5): el
+# protocolo NO las escribe y las cubre la fila de su padre. Exencion por CLAVE EXACTA, sin
+# comodin: una tercera clave hija no queda exenta.
+EXENTAS_POR_CLAVE: tuple[str, ...] = (
+    "quota.account_policy.provider_map.claudeAgent",
+    "quota.account_policy.provider_map.claudeAgent_alvarovans",
+)
+ENCABEZADO_INDICE = "Indice de campos de quota"
+ENCABEZADOS_AMBITO_INDICE: dict[str, str] = {
+    "Valores vigentes": "Valores vigentes a 2026-10-30 en el roster",
+    "Alcance": "Alcance",
+    "Cuando se mira cada umbral": "Cuando se mira cada umbral",
+    "Precedencia ante discrepancia": "Precedencia ante discrepancia",
+    "Estado de las fuentes": "Estado de las fuentes",
+}
+EtiquetaFragmento = tuple[str, str]
+FilaIndice = tuple[str, str, tuple[EtiquetaFragmento, ...]]
+
+
+def _indice_quota(num: dict[str, str]) -> list[FilaIndice]:
+    """Before: `num` mapea el alias de cada numerico al nombre de campo del roster.
+
+    During: arma la especificacion del indice: (clave completa, texto de la celda
+    "Donde se desarrolla", destinos). Cada destino es (ambito, fragmento) y el fragmento
+    se busca en ESE ambito del protocolo, nunca en el documento entero.
+    After: la lista ordenada de las 31 filas del protocolo; las dos exentas no figuran.
+    """
+    pol = "quota.account_policy."
+    valores = "Valores vigentes"
+    return [
+        (
+            "quota.source",
+            "No transcrito",
+            (("No transcrito", "`source`, que es el comando del monitor"),),
+        ),
+        (
+            "quota.check_every",
+            "Cuando se mira cada umbral",
+            (("Cuando se mira cada umbral", "`quota.check_every` (roster)"),),
+        ),
+        (f"quota.{num['soft']}", valores, ((valores, f"`quota.{num['soft']}`"),)),
+        (f"quota.{num['hard']}", valores, ((valores, f"`quota.{num['hard']}`"),)),
+        ("quota.action_soft", "P1", (("P1", "`quota.action_soft`"),)),
+        ("quota.action_hard", "P1", (("P1", "`quota.action_hard`"),)),
+        (
+            "quota.reserve_for_orquestadora",
+            "P1",
+            (("P1", "`quota.reserve_for_orquestadora`"),),
+        ),
+        (
+            "quota.account_policy",
+            "Estado de las fuentes",
+            (("Estado de las fuentes", "`quota.account_policy` (el dato vivo"),),
+        ),
+        (
+            pol + "scope",
+            "Alcance; No transcrito (nota de esquema)",
+            (
+                (
+                    "Alcance",
+                    "Se mueven solo los hilos que gobierna la coordinadora: implantacion y triaje",
+                ),
+                ("No transcrito", "`quota.account_policy.scope`"),
+            ),
+        ),
+        (
+            pol + "provider_map",
+            "Seccion 5 (contrato); sus claves hijas: exenta (padre)",
+            (("Seccion 5 (contrato)", "`quota.account_policy.provider_map`"),),
+        ),
+        (
+            pol + "provider_map_status",
+            "No transcrito",
+            (("No transcrito", f"`{pol}provider_map_status`"),),
+        ),
+        (
+            pol + "preferred_account",
+            "Seccion 5 (contrato)",
+            (("Seccion 5 (contrato)", f"`{pol}preferred_account`"),),
+        ),
+        (
+            pol + "harbor_account",
+            "Seccion 5 (contrato)",
+            (("Seccion 5 (contrato)", f"`{pol}harbor_account`"),),
+        ),
+        (
+            pol + "block_pct_definition",
+            "Cuando se mira cada umbral",
+            (("Cuando se mira cada umbral", f"`{pol}block_pct_definition`"),),
+        ),
+        (pol + num["enter"], valores, ((valores, f"`{pol}{num['enter']}`"),)),
+        (pol + num["requires"], valores, ((valores, f"`{pol}{num['requires']}`"),)),
+        (pol + num["harbor"], valores, ((valores, f"`{pol}{num['harbor']}`"),)),
+        (pol + num["leave"], valores, ((valores, f"`{pol}{num['leave']}`"),)),
+        (pol + num["dwell"], valores, ((valores, f"`{pol}{num['dwell']}`"),)),
+        (pol + "min_dwell_applies_to", "P2", (("P2", f"`{pol}min_dwell_applies_to`"),)),
+        (
+            pol + "after_leave_wait_until_reset",
+            "P3",
+            (("P3", f"`{pol}after_leave_wait_until_reset`"),),
+        ),
+        (pol + "stale_fail_closed", "P5", (("P5", f"`{pol}stale_fail_closed`"),)),
+        (pol + num["moves"], valores, ((valores, f"`{pol}{num['moves']}`"),)),
+        (pol + "move_order", "P4", (("P4", f"`{pol}move_order`"),)),
+        (pol + "apply_at", "P8", (("P8", f"`{pol}apply_at`"),)),
+        (
+            pol + "supersedes_cc_watch",
+            "No transcrito",
+            (("No transcrito", f"`{pol}supersedes_cc_watch`"),),
+        ),
+        (
+            pol + "coordinator_policy_ref",
+            "Alcance",
+            (("Alcance", f"`{pol}coordinator_policy_ref`"),),
+        ),
+        (
+            pol + "numbers_source",
+            "Precedencia ante discrepancia",
+            (("Precedencia ante discrepancia", f"`{pol}numbers_source`"),),
+        ),
+        (pol + "version", "No transcrito", (("No transcrito", "`version`"),)),
+        (pol + "updated_at", "No transcrito", (("No transcrito", "`updated_at`"),)),
+        (pol + "updated_by", "No transcrito", (("No transcrito", "`updated_by`"),)),
+    ]
+
+
+def _ambito_indice(texto: str, etiqueta: str) -> str:
+    """Before: `texto` es el protocolo; `etiqueta` es un ambito del indice.
+
+    During: extrae SOLO ese ambito (clausula P<n>, intro de la seccion 5, el parrafo "No
+    transcrito" o la subseccion nombrada) y colapsa el espacio. El indice es su propia
+    subseccion, asi que ningun ambito lo contiene y el indice no se satisface a si mismo.
+    After: el texto del ambito; "" si no existe (el fragmento no se encontrara). Una
+    etiqueta desconocida lanza KeyError.
+    """
+    if re.fullmatch(r"P[1-8]", etiqueta):
+        return _clausulas_de_la_regla(texto).get(etiqueta[1], "")
+    if etiqueta == "Seccion 5 (contrato)":
+        seccion = _extract_section(texto, "5. Regla de cuenta (contrato)")
+        return _normalizar(seccion.split("\n### ", 1)[0])
+    if etiqueta == "No transcrito":
+        estado = _extract_section(texto, "Estado de las fuentes")
+        parrafos = [p for p in estado.split("\n\n") if p.startswith("**No transcrito")]
+        return _normalizar(parrafos[0]) if parrafos else ""
+    return _normalizar(_extract_section(texto, ENCABEZADOS_AMBITO_INDICE[etiqueta]))
+
+
+def _filas_indice_quota(texto: str) -> tuple[list[tuple[str, str]], int]:
+    """Before: `texto` es el protocolo. During: parsea la subseccion del indice; una fila
+    es `| `ruta completa` | donde |` (la ruta entre comillas invertidas, nunca por
+    subcadena). After: (filas parseadas, lineas que empiezan por "| `"); si difieren hay
+    una fila malformada."""
+    seccion = _extract_section(texto, ENCABEZADO_INDICE)
+    lineas = [
+        ln.strip() for ln in seccion.splitlines() if ln.lstrip().startswith("| `")
+    ]
+    filas: list[tuple[str, str]] = []
+    for linea in lineas:
+        m = re.fullmatch(r"\|\s*`([^`]+)`\s*\|\s*(.+?)\s*\|", linea)
+        if m:
+            filas.append((m.group(1), m.group(2)))
+    return filas, len(lineas)
+
+
+def _discrepancias_indice(texto: str, indice: list[FilaIndice]) -> list[str]:
+    """Before: `indice` es la especificacion; `texto` el protocolo.
+
+    During: (1) compara la lista EXACTA de filas (clave y celda) con la del protocolo;
+    (2) para cada destino busca su fragmento en su ambito; (3) comprueba las exentas: el
+    padre figura con "exenta (padre)", sigue nombrado y ni la clave ni su nombre aparecen.
+    After: la lista de discrepancias legibles; vacia si el protocolo cumple el indice.
+    """
+    problemas: list[str] = []
+    filas, n_lineas = _filas_indice_quota(texto)
+    esperado = [(clave, donde) for clave, donde, _ in indice]
+    if n_lineas != len(filas):
+        problemas.append(f"filas malformadas en el indice: {n_lineas - len(filas)}")
+    if filas != esperado:
+        problemas.append(
+            "filas del indice distintas de las fijadas: "
+            f"faltan={[f for f in esperado if f not in filas]} "
+            f"sobran={[f for f in filas if f not in esperado]} "
+            f"conteo={len(filas)}/{len(esperado)}"
+        )
+    for clave, _donde, destinos in indice:
+        for etiqueta, fragmento in destinos:
+            if fragmento not in _ambito_indice(texto, etiqueta):
+                problemas.append(f"{clave}: {fragmento!r} ausente de {etiqueta!r}")
+    cuerpo_filas = dict(filas)
+    for clave in EXENTAS_POR_CLAVE:
+        padre = clave.rsplit(".", 1)[0]
+        if "exenta (padre)" not in cuerpo_filas.get(padre, ""):
+            problemas.append(
+                f"{clave}: la fila de su padre {padre} no dice 'exenta (padre)'"
+            )
+        if clave in texto or clave.rsplit(".", 1)[1] in texto:
+            problemas.append(f"{clave}: el protocolo escribe el nombre de una exenta")
+    return problemas
+
+
+def test_dod_136h_protocolo_indice_de_campos_de_quota():
+    """WOT-2026-136l DoD 1-3: el indice fija las 33 claves de `quota` y donde se desarrolla.
+
+    Before: el protocolo tiene la subseccion "Indice de campos de quota". During: itera
+    la especificacion (sin un `if` por campo) y busca cada ruta completa entre comillas
+    invertidas en su ambito; los seis nombres antes ausentes estan junto a su regla.
+    After: falla nombrando la clave y el ambito; 31 filas + 2 exentas por clave exacta = 33.
+    """
+    texto = PROTOCOL_PATH.read_text(encoding="utf-8")
+    indice = _indice_quota(NUMERICOS_QUOTA)
+    assert _extract_section(texto, ENCABEZADO_INDICE), (
+        "Control positivo: falta el indice."
+    )
+    assert len(indice) == 31 and len(EXENTAS_POR_CLAVE) == 2, (
+        len(indice),
+        EXENTAS_POR_CLAVE,
+    )
+    assert len({c for c, _, _ in indice}) == 31, (
+        "claves duplicadas en la especificacion."
+    )
+    assert all("*" not in c for c in EXENTAS_POR_CLAVE), (
+        "la exencion no admite comodin."
+    )
+    assert _discrepancias_indice(texto, indice) == []
+
+
+def test_dod_136h_protocolo_indice_el_comprobador_muerde():
+    """Control positivo del indice: cada clase de fragmento, al quitarla, pone rojo.
+
+    Before: el protocolo real no tiene discrepancias. During: aplica sobre el texto una
+    mutacion por clase (cada uno de los seis nombres, una fila terminal, el padre, las
+    exentas, un numerico, una fila ajena) y una tupla numerica alterada. After: cada
+    mutacion produce discrepancias; el borrado es lo que cambia el resultado.
+    """
+    texto = PROTOCOL_PATH.read_text(encoding="utf-8")
+    indice = _indice_quota(NUMERICOS_QUOTA)
+    assert _discrepancias_indice(texto, indice) == []
+    cabeza, marca, cola = texto.partition(f"### {ENCABEZADO_INDICE}")
+    assert marca, "Control positivo: falta el indice."
+
+    seis = (
+        "provider_map_status",
+        "min_dwell_applies_to",
+        "after_leave_wait_until_reset",
+        "stale_fail_closed",
+        "apply_at",
+        "coordinator_policy_ref",
+    )
+    for nombre in seis:
+        clave = f"quota.account_policy.{nombre}"
+        assert f"`{clave}`" in cabeza, f"el nombre {nombre} no esta junto a su regla."
+        mutada = cabeza.replace(f"`{clave}`", "`campo`") + marca + cola
+        assert _discrepancias_indice(mutada, indice), f"quitar {nombre} no pone rojo."
+
+    def con_fila_quitada(clave: str) -> str:
+        lineas = [
+            ln
+            for ln in cola.splitlines(keepends=True)
+            if not ln.startswith(f"| `{clave}` |")
+        ]
+        assert len(lineas) == len(cola.splitlines(keepends=True)) - 1, clave
+        return cabeza + marca + "".join(lineas)
+
+    # Una fila terminal y el padre (nodo intermedio) quitados de la tabla.
+    for clave in (
+        "quota.check_every",
+        "quota.account_policy",
+        "quota.account_policy.apply_at",
+    ):
+        assert _discrepancias_indice(con_fila_quitada(clave), indice), clave
+    # Una fila sobrante y una fila duplicada.
+    sobrante = (
+        cabeza
+        + marca
+        + cola.replace(
+            "| `quota.source` |", "| `quota.extra` | P1 |\n| `quota.source` |", 1
+        )
+    )
+    assert _discrepancias_indice(sobrante, indice)
+    duplicada = (
+        cabeza
+        + marca
+        + cola.replace(
+            "| `quota.source` |",
+            "| `quota.source` | No transcrito |\n| `quota.source` |",
+            1,
+        )
+    )
+    assert _discrepancias_indice(duplicada, indice)
+    # La celda "Donde" de una fila cambia: la lista exacta cae.
+    cambiada = (
+        cabeza
+        + marca
+        + cola.replace(
+            "| `quota.action_soft` | P1 |", "| `quota.action_soft` | P2 |", 1
+        )
+    )
+    assert _discrepancias_indice(cambiada, indice)
+    # Exentas: el padre pierde "exenta (padre)", o el protocolo escribe una exenta.
+    sin_exencion = (
+        cabeza + marca + cola.replace("; sus claves hijas: exenta (padre)", "", 1)
+    )
+    assert _discrepancias_indice(sin_exencion, indice)
+    for clave in EXENTAS_POR_CLAVE:
+        escrita = texto + f"\n`{clave}`\n"
+        assert _discrepancias_indice(escrita, indice), clave
+    # El padre deja de estar nombrado en la intro de la seccion 5.
+    sin_padre = (
+        cabeza.replace("`quota.account_policy.provider_map`", "`campo`") + marca + cola
+    )
+    assert sin_padre != texto and _discrepancias_indice(sin_padre, indice)
+    # Un numerico: quitar su fila de "Valores vigentes" (su ambito) pone rojo ese ambito.
+    sin_valor = (
+        cabeza.replace(
+            f"`quota.account_policy.{NUMERICOS_QUOTA['leave']}`", "`campo`", 1
+        )
+        + marca
+        + cola
+    )
+    assert _discrepancias_indice(sin_valor, indice)
+    # La tupla numerica propia: un fragmento distinto cambia las claves esperadas y cae.
+    alterada = dict(
+        NUMERICOS_QUOTA, moves=NUMERICOS_QUOTA["moves"].replace("tick", "tock")
+    )
+    assert _discrepancias_indice(texto, _indice_quota(alterada))
+
+
 def test_dod_136h_protocolo_envios_entre_sesiones():
     """DoD 136h: seccion 6 fija mcp:, modos, un intento, codigos de salida."""
     text = PROTOCOL_PATH.read_text(encoding="utf-8")

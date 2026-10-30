@@ -121,7 +121,8 @@ Las clausulas P1 a P8 se aplican en este orden de precedencia.
   - Umbral hard, `REGLA_CUENTA_vigente.md` P1: "interrupt de implantadores, precede
     a todo".
 - **P2 VOLVER:** hilo en preferida y preferida.block_pct >= 90 y
-  refugio.block_pct < 90 -> mover a refugio AHORA (el dwell NO aplica a salir).
+  refugio.block_pct < 90 -> mover a refugio AHORA (el dwell NO aplica a salir) (roster
+  `quota.account_policy.min_dwell_applies_to`).
   Si ambas >= 90: no mover, FREEZE soft y avisar a la supervisora directa de la
   coordinadora (cadena de supervision del roster).
 - **P3 IR (entrar en preferida), TODAS a la vez:** preferida.block_pct (maximo de
@@ -130,12 +131,14 @@ Las clausulas P1 a P8 se aplican en este orden de precedencia.
   alivia) <= 60 en DOS lecturas consecutivas validas (stale=false, no nulas; 2 min entre
   ellas o la del tick anterior del ledger); refugio.block_pct <= 80; no ambas >= 90;
   hilo no running (hueco natural); ningun movimiento de ese hilo en los ultimos 45 min;
-  no haber hecho VOLVER desde el ultimo reset de la cuenta preferida.
+  no haber hecho VOLVER desde el ultimo reset de la cuenta preferida (roster
+  `quota.account_policy.after_leave_wait_until_reset`).
 - **P4 Banda 61..89:** no mover. Sin historial de ritmo: un solo hilo de cebo y esperar
   2 ticks antes de mover otro. Maximo 1 movimiento por tick. Orden de movimiento (roster
   `quota.account_policy.move_order`): implantacion y despues triaje.
 - **P5 Fail-closed:** monitor stale, nulo o con error; proveedor no mapeado; hilo
-  fuera de alcance -> no mover y anotar. Nunca inventar valores.
+  fuera de alcance -> no mover y anotar (roster `quota.account_policy.stale_fail_closed`).
+  Nunca inventar valores.
 - **P6 Registro y aviso en cada movimiento:** ledger, una linea en `roster_changes.jsonl`
   (by/change/detail/reason) y aviso por `t3_thread_send` (mode=queue, prefijo `mcp:`)
   al hilo movido. `t3_thread_configure` aplica en el PROXIMO turno.
@@ -145,7 +148,7 @@ Las clausulas P1 a P8 se aplican en este orden de precedencia.
   avisar al usuario.
 - **P8 Frontera:** el cambio de host del Manager no altera un despacho ya
   lanzado; se acepta fuera de frontera de ticket SOLO con el hilo no running; nunca
-  durante un turno de verificacion de commit.
+  durante un turno de verificacion de commit (roster `quota.account_policy.apply_at`).
 
 ### Cuando se mira cada umbral
 
@@ -174,7 +177,9 @@ Las clausulas P1 a P8 se aplican en este orden de precedencia.
   supervisora tiene cupo. Verificacion P7 con dos lecturas. Si la supervisora directa
   no puede ejecutarlo, VOLVER es MANUAL del usuario y se avisa por el buzon de la
   supervisora. La coordinadora no se mueve a si misma.
-- P3 IR sobre la coordinadora: no se automatiza; la mueve el usuario.
+- P3 IR sobre la coordinadora: no se automatiza; la mueve el usuario (roster
+  `quota.account_policy.coordinator_policy_ref`: politica de la coordinadora, este punto
+  y el anterior).
 
 ### Estado de las fuentes
 
@@ -186,7 +191,8 @@ politica de movimiento); este ticket no edita el roster ni retira
 
 **No transcrito (sigue en la fuente, por seccion):** el objetivo de la regla (estar en
 la cuenta preferida siempre que tenga cupo y usar la de refugio cuando no lo tenga), la
-nota de que el mapa cuenta-proveedor es una inferencia por comportamiento no verificada
+nota de que el mapa cuenta-proveedor (`quota.account_policy.provider_map_status`) es una
+inferencia por comportamiento no verificada
 por la configuracion oficial (seccion "Cuentas y proveedores"), "Lo que esta regla NO
 decide" y el latido de reset con su invariante de latidos (seccion "Latido de reset" y
 la enmienda de la coordinadora). Tampoco se transcribe la frase de procedencia de P1
@@ -208,6 +214,51 @@ concretas: el protocolo no las nombra y las sustituye por "NUNCA sesiones superv
 asentadas" y por la descripcion de la fuente; (5) en P6 la fuente nombra el fichero del
 ledger: el protocolo no lo transcribe, porque la ruta del ledger va siempre por argumento
 (seccion 6).
+
+### Indice de campos de quota
+
+Cada clave del bloque `quota` del roster, con su ruta completa entre comillas invertidas,
+y donde se desarrolla en este protocolo. `No transcrito` remite a la declaracion de
+"Estado de las fuentes". `exenta (padre)`: las dos claves hijas de
+`quota.account_policy.provider_map` son un nombre de cuenta y de proveedor (N5), asi que
+no se escriben aqui y las cubre la fila de su padre. El indice es una fotografia a
+2026-10-30 de las claves, no de sus valores: el dato vivo sigue siendo el roster, y ningun
+codigo ni prompt lo lee de aqui (un chequeo de deriva contra el roster vivo queda fuera de
+este ticket).
+
+| Clave de `quota` (ruta completa) | Donde se desarrolla |
+|---|---|
+| `quota.source` | No transcrito |
+| `quota.check_every` | Cuando se mira cada umbral |
+| `quota.soft_freeze_block_pct` | Valores vigentes |
+| `quota.hard_stop_block_pct` | Valores vigentes |
+| `quota.action_soft` | P1 |
+| `quota.action_hard` | P1 |
+| `quota.reserve_for_orquestadora` | P1 |
+| `quota.account_policy` | Estado de las fuentes |
+| `quota.account_policy.scope` | Alcance; No transcrito (nota de esquema) |
+| `quota.account_policy.provider_map` | Seccion 5 (contrato); sus claves hijas: exenta (padre) |
+| `quota.account_policy.provider_map_status` | No transcrito |
+| `quota.account_policy.preferred_account` | Seccion 5 (contrato) |
+| `quota.account_policy.harbor_account` | Seccion 5 (contrato) |
+| `quota.account_policy.block_pct_definition` | Cuando se mira cada umbral |
+| `quota.account_policy.enter_when_block_pct_le` | Valores vigentes |
+| `quota.account_policy.enter_requires_consecutive_valid_readings` | Valores vigentes |
+| `quota.account_policy.harbor_block_pct_max` | Valores vigentes |
+| `quota.account_policy.leave_when_block_pct_ge` | Valores vigentes |
+| `quota.account_policy.min_dwell_min` | Valores vigentes |
+| `quota.account_policy.min_dwell_applies_to` | P2 |
+| `quota.account_policy.after_leave_wait_until_reset` | P3 |
+| `quota.account_policy.stale_fail_closed` | P5 |
+| `quota.account_policy.max_moves_per_tick` | Valores vigentes |
+| `quota.account_policy.move_order` | P4 |
+| `quota.account_policy.apply_at` | P8 |
+| `quota.account_policy.supersedes_cc_watch` | No transcrito |
+| `quota.account_policy.coordinator_policy_ref` | Alcance |
+| `quota.account_policy.numbers_source` | Precedencia ante discrepancia |
+| `quota.account_policy.version` | No transcrito |
+| `quota.account_policy.updated_at` | No transcrito |
+| `quota.account_policy.updated_by` | No transcrito |
 
 ### Precedencia ante discrepancia
 
