@@ -385,6 +385,16 @@ declara "no visible", nunca se omite en silencio.
 
 Protocolo completo de coordinacion: `.agent/rules/common/t3_ade_coordination.md`.
 
+## Paso 5-ter: cerrar y asentar al relevar
+
+Al arrancar, el sucesor:
+- Comprueba la cadena de supervision del relevo en los datos del roster
+  (supervisor, cascada de contexto, excepcion explicita).
+- Cierra las coordinadoras anteriores segun la lista de comprobacion de la
+  seccion 11 del prompt de relevo.
+- Remite a la seccion 11 de `prompts/t3_role_session_relief.md` sin
+  repetir sus criterios (X-09: una sola casa normativa).
+
 ## Paso 6: escribe LO QUE NO HACER
 
 Es la seccion que mas evita incidentes. Deriva del rol de la sesion siguiente: si es de
@@ -465,6 +475,7 @@ Un unico bloque markdown pegable como PRIMER mensaje de la sesion nueva, con:
 8. Sello, si aplica
 9. Coordinacion T3 (Paso 5-bis): DECISIONES, LATIDOS y OBREROS con contenido real, nunca solo los nombres; si hay sesiones paralelas; si no, "sin sesiones paralelas"
 10. Cadena de consulta, autoridad y proximo paso: CADENA_CONSULTA, AUTORIDAD y PROXIMO_PASO con contenido real, nunca solo los nombres; esquema completo en `prompts/t3_role_session_relief.md` seccion 5.
+11. Cadena de supervision del relevo: comprobar la cadena de supervision del relevo en el roster y el cierre de las coordinadoras anteriores segun `Paso 5-ter`.
 
 Portador, segun topologia (una sola ruta por modo):
 

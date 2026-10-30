@@ -14,7 +14,7 @@ de 129a (aparcado). NON-GOAL: integridad de lentes (129v/129w), nonce/blowout de
 
 > **Modo:** Este modulo es el hogar operativo del relevo de sesion-rol. `session_hop.md`
 > sigue solo-lectura y solo recibe un puntero (D2 de work_plan 129u). El roster se escribe
-> por separado (OR-1 es el unico escritor).
+> por separado (el escritor canonico, segun `rules.who_edits`, es el unico escritor).
 
 contract_id: cid-t3-role-session-relief-v1
 source_ticket: WOT-2026-129u
@@ -33,7 +33,7 @@ en un vuelo T3 multi-sesion. El modulo vive AQUI (D1 del work_plan).
   C1-C14, citados en las secciones correspondientes.
 - Fuentes que cita la propuesta: `incidencias.md` (rutas del vuelo), WOT-2026-129q (codigo de
   instancia de relanzo), WOT-2026-129d (cupo/latido).
-- Roster: campo declarado por este modulo, escrito por OR-1.
+- Roster: campo declarado por este modulo, escrito por el escritor canonico segun `rules.who_edits`.
 
 **NON-GOAL:** Integridad de lente (Clase C) remite a WOT-2026-129w/129v. Nunca dependencia operativa
 de 129a (aparcado, C1) ni de 129f (solo glosario/puntero).
@@ -206,6 +206,8 @@ del vuelo (C13).
 
 ### Cadencia
 
+- **Antes de cada operacion multipaso:** se escribe una entrada de checkpoint con el campo
+  `OPERACION_EN_CURSO`.
 - **Al cambio de estado de ticket:** cada transicion de estado (IN_PROGRESS -> COMPLETED, etc.)
   escribe una entrada de checkpoint.
 - **Al ceder la ranura:** cuando una sesion termina o cede su ranura, escribe un checkpoint
@@ -227,10 +229,16 @@ Cada entrada de checkpoint incluye:
 - CADENA_CONSULTA (la cadena de consulta ordenada, padre inmediato primero,
   cada eslabon con su `threadId` y la fuente que lo fija -- p.ej.
   `flight_roster.json` o el mensaje de arranque que lo declaro).
-- AUTORIDAD (que decision esta delegada en esta sesion-rol frente a lo que
-  queda reservado a SUPERVISOR-2, con su fuente).
+- AUTORIDAD (que decision esta delegada en esta sesion-rol; quien es el titular de cada decision lo fija la seccion 11).
 - PROXIMO_PASO (la siguiente accion concreta, con el comando exacto que la
   ejecuta o verifica).
+- OPERACION_EN_CURSO (antes de cada operacion multipaso, se escribe el campo
+  con estos siete subcampos, en este orden: `operacion`, `mensaje_id`,
+  `destinatario`, `SHA pedido`, `estado`, `siguiente accion segura`,
+  `ultima posicion leida`).
+- **Marca de autoritativo:** el campo `OPERACION_EN_CURSO` prevalece sobre la
+  memoria del agente tras compactar. Tras compactar, toda verificacion sin
+  salida en fichero se rehace.
 
 ### Prueba de lectura por el sucesor
 
@@ -284,11 +292,8 @@ estado de la sesion saliente y permite las tres transiciones siguientes:
 
 El congelamiento del saliente dura mientras `estado = PENDIENTE_ACK`. La
 decision de completar desde el checkpoint de un `SALIENTE_MUERTO` la toma
-SUPERVISOR-2 (nunca el entrante), exigiendo al menos 2 senales de progreso
-(Seccion 4) verificadas. "SUPERVISOR-2" designa siempre al relay del usuario,
-nunca a una orquestadora degradada a supervisora (vision del usuario,
-PROPUESTA v7 Sec. 1 -- este modulo no redefine esa vision, solo nombra al
-actor con precision).
+el actor autorizado segun la regla de la seccion 11 (nunca el entrante),
+exigiendo al menos 2 senales de progreso (Seccion 4) verificadas.
 
 ---
 
@@ -421,6 +426,32 @@ igual a la ultima posicion leida antes de compactar (o los ultimos 20 items si
 se desconoce) mas el checkpoint mas reciente. Desempate: gana el hilo salvo
 que el checkpoint se declare expresamente autoritativo para ese campo.
 
+### Ventana de no-relevo (relevo planificado)
+
+No se releva (relevo planificado o self-hop) en ninguna de estas tres
+condiciones, todas declarativas y verificables por el sucesor sin script nuevo:
+- **Builder vivo:** el proceso del Builder responde por su PID o su log crece.
+- **CONTRACT_AUDIT abierto:** una ronda lanzada sin veredicto escrito.
+- **Aviso de listo para integrar sin merge:** el ultimo mensaje de tipo
+  "LISTO_PARA_INTEGRAR" a la coordinadora sin merge posterior registrado.
+
+Un relevo forzado por fallo (Clase A, no planificado) no espera a la ventana:
+el sucesor hereda el campo de operacion en curso.
+
+Si el vuelo define otra fuente para alguna condicion, cambia solo esa redaccion.
+
+### Alarma de contexto (sintoma)
+
+La alarma de contexto es un SINTOMA para preparar el relevo, no una regla de
+trabajo. Senales:
+- **Aviso a 350k de contexto:** senal para preparar el relevo.
+- **Aviso fuerte a 390-400k de contexto:** senal de alerta maxima.
+- **Segunda compactacion dentro de un bloque (intervalo entre dos merges integrados):**
+  obliga a registrar continuar o relevar con motivo, y a relevar en el primer hito.
+
+Estos umbrales son una estimacion del vuelo, no medida ni umbral duro.
+El rango medido de compactacion que cita el informe de adjudicacion del vuelo es 457 587-472 887 tokens; este prompt no archiva medicion propia.
+
 ---
 
 ## 10. Cadena de ancestros (consulta escalonada)
@@ -439,11 +470,69 @@ esa linea ni implicar que este ticket escriba ese fichero: el esquema y el
 escritor de `roster_changes.jsonl` son de WOT-2026-136b. (sin reintento en
 caliente)
 
-Escalada a SUPERVISOR-2 y despues al usuario si cada nivel de la cadena queda
-"no_disponible"/"NO VERIFICABLE" (caso de agotamiento total).
+Escalada al supervisor de la coordinadora y despues al usuario si cada nivel de
+la cadena queda "no_disponible"/"NO VERIFICABLE" (caso de agotamiento total).
 
 DIFERIDO en esta seccion: desafio con nonce, cuaderno de consultas con
 metrica, contador de saltos.
+
+## 11. Autoridad, supervision y relevo de la coordinadora
+
+### Precondicion mecanica
+
+La autoridad de la coordinadora (merge, suite, admision de tickets con recibo,
+elegir backends dentro del roster) solo se ejerce con evidencia de terceros:
+(a) dictamen del Revisor ligado al SHA, (b) gates re-ejecutados por quien
+decide, (c) FLT comprobado contra el diff; el autoinforme de quien implemento
+no cuenta como evidencia.
+
+### Tabla de funciones
+
+| Actor | Funciones | Condicion |
+|---|---|---|
+| Supervisor | Vigila con su latido; no tiene autoridad propia | - |
+| Coordinadora | Merge a la rama del vuelo, ordenar la suite, admitir tickets con recibo, elegir backends dentro del roster | Solo con la precondicion mecanica (subseccion anterior) |
+| Usuario | Push, retirada de backends, tocar el bloque de autoridad | Autoridad fijada en los datos |
+| Manager del ticket | Relanza al Builder segun `prompts/builder_invocation_contract.md` (un solo Builder vivo, vida del proceso por PID o por crecimiento del log) | Ya vigente, sin regla nueva |
+| Consulta de contexto | Remite a la seccion 10 (cadena de ancestros) sin redeclararla | - |
+
+### Regla de supervision estructural
+
+La coordinadora N esta supervisada por la coordinadora N-1, que vigila con su
+latido y no tiene autoridad propia. La coordinadora N-1 no hereda autoridad de N,
+solo vigilancia.
+
+### Cierre al relevar
+
+Al relevar una coordinadora, las coordinadoras anteriores pasan a este estado:
+- **Inmediatamente anterior:** pasa a ser supervisora (vigila con latido, sin autoridad).
+- **Las demas:** pasan a la cascada de contexto (asentadas, consultables, sin
+  autoridad ni vigilancia).
+
+Lista de comprobacion del traspaso:
+1. `supervisor := saliente` (la coordinadora saliente pasa a supervisora de la entrante).
+2. Asentar al supervisor anterior (deja de vigilar; ya no tiene autoridad ni vigilancia).
+3. Anadir al supervisor anterior a la cascada de contexto.
+4. Escribir la excepcion explicita si la hay.
+
+### Decision sobre un `SALIENTE_MUERTO`
+
+La decision sobre un `SALIENTE_MUERTO` sube al USUARIO (titular de la autoridad
+fijada en los datos: push, retirada de backends, bloque de autoridad). La
+supervisora del saliente la escala. El entrante NUNCA se auto-ratifica.
+
+### Resolucion de la coordinadora por un implantador (excepcion de identidad)
+
+Un implantador puede resolver el codigo de `orquestador_activo` a su entrada de
+sesion y a su `threadId`. El registro la respalda cuando esa entrada esta
+activa (estado `ACTIVA`) y su `threadId` difiere del del lanzamiento; entonces
+el implantador trata como coordinadora a la del registro y lo declara al
+presentarse. La excepcion cae cuando `orquestador_activo` se retire del registro.
+
+### Fuente de la cadena
+
+La fuente de la cadena de supervision es el roster (supervisor mas cascada de
+contexto y excepcion explicita). El registro solo como consistencia.
 
 ## Referencias cruzadas
 
@@ -452,7 +541,7 @@ metrica, contador de saltos.
 - `prompts/session_hop.md`: puente entre sesiones (solo lectura); este modulo apunta aqui
   como el hogar del relevo operativo. Puntero en Paso 5-bis.
 - WOT-2026-129q: codigo de instancia de relanzo (preflight, Seccion 6).
-- WOT-2026-129d: latido de cupo (tercer discriminador, Seccion 10).
+- WOT-2026-129d: latido de cupo (tercer discriminador, Seccion 2.5).
 - WOT-2026-129v: detector de cuelgue del latido (emisor opcional, Seccion 4).
 - WOT-2026-129w: integridad de lente (Clase C, NON-GOAL, Seccion 2).
 - WOT-2026-129f: glosario y punteros (NON-GOAL operativo; 129f recibe solo glosario/puntero).
@@ -472,5 +561,6 @@ Cualquier trabajo sobre ellos pertenece a otros tickets:
 - **Nonce/blowout de ensemble_loop:** fuera del alcance de 129u.
 - **VUELO-NNN:** fuera del alcance de 129u.
 - **Dependencia de 129a:** 129a esta aparcado (C1). Este modulo NO depende de 129a.
-- **Escritura del roster:** el campo `rules.session_relief.*` se escribe por OR-1 en el roster.
+- **Escritura del roster:** el campo `rules.session_relief.*` se escribe por
+  el escritor canonico segun `rules.who_edits` en el roster.
   Este modulo lo declara, no lo escribe.
