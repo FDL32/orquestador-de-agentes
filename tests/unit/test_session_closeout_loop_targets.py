@@ -2593,3 +2593,162 @@ def test_merge_commit_without_paths_still_delivers(tmp_path: Path) -> None:
     assert merge_sha in content, (
         f"merge commit {merge_sha} should enter targets (empty-set => INCLUIR); got: {content!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-143a: UN objetivo por TICKET (su ultimo commit), no uno por commit
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _target_lines(repo: Path) -> list[str]:
+    path = repo / TARGETS_REL
+    if not path.exists():
+        return []
+    return [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def test_143a_three_commit_ticket_emits_one_line_the_tip(tmp_path: Path) -> None:
+    """DoD (1)/M1: un ticket con 3 commits declara UN objetivo, el ULTIMO.
+
+    MUTATION M1: volver a `for sha in shas` (una linea por commit) deja 3 lineas
+    y este test CAE. Hasta 143a ningun test tenia un ticket de mas de un commit.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
+    first = _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999a: paso 1")
+    second = _commit_file(repo, "src/b.py", "x = 2", "WOT-2026-999a: paso 2")
+    third = _commit_file(repo, "src/c.py", "x = 3", "WOT-2026-999a: paso 3")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    lines = _target_lines(repo)
+    assert len(lines) == 1, lines
+    assert lines[0].split()[0] == third
+    assert first not in "\n".join(lines) and second not in "\n".join(lines)
+    assert "3 commit(s)" in result.detail, result.detail
+
+
+def test_143a_merge_tip_is_skipped_for_the_last_non_merge(tmp_path: Path) -> None:
+    """Condicion 1: el tip es el ultimo NO-merge aunque un merge que cita el
+    ticket este en cabeza (caso real: 129y/129l del vuelo-20261026b)."""
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
+    base = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999a: paso 1")
+    _git(repo, "checkout", "-q", "-b", "feat")
+    last = _commit_file(repo, "src/b.py", "x = 2", "WOT-2026-999a: paso 2")
+    _git(repo, "checkout", "-q", base)
+    _git(repo, "merge", "--no-ff", "-m", "Merge WOT-2026-999a: feat", "feat")
+    merge_sha = _git(repo, "rev-parse", "HEAD")
+    assert merge_sha != last
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "PASS", result.detail
+    lines = _target_lines(repo)
+    assert [ln.split()[0] for ln in lines] == [last], lines
+
+
+def test_143a_divergent_commits_fail_blocking_not_linear(tmp_path: Path) -> None:
+    """DoD (5)/M4: sin maximal unico el estado final NO es un commit -> el
+    escritor FALLA bloqueante y no escribe objetivo.
+
+    MUTATION M4: quitar la comprobacion de ancestria (tomar el primero) hace
+    que el ticket pase con un tip arbitrario y este test CAE.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999a", "repo_motor")
+    base = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "left")
+    _commit_file(repo, "src/l.py", "l = 1", "WOT-2026-999a: rama izquierda")
+    _git(repo, "checkout", "-q", base)
+    _git(repo, "checkout", "-q", "-b", "right")
+    _commit_file(repo, "src/r.py", "r = 1", "WOT-2026-999a: rama derecha")
+    _git(repo, "checkout", "-q", base)
+    _git(repo, "merge", "--no-ff", "-m", "integra left", "left")
+    _git(repo, "merge", "--no-ff", "-m", "integra right", "right")
+
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999a"], None, False
+    )
+
+    assert result.status == "FAIL", result.detail
+    assert result.blocking is True
+    assert "FAIL_TARGETS_NOT_LINEAR" in result.detail
+    assert "WOT-2026-999a" in result.detail
+    assert not (repo / TARGETS_REL).exists()
+
+
+def _two_commit_ticket_with_rounds(tmp_path: Path, looped: str) -> tuple[Path, str]:
+    """Repo con un ticket de 2 commits y un bucle completo SOLO sobre `looped`."""
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _link_motor(repo, repo)
+    _declare_authority(repo, "WOT-2026-999b", "repo_motor")
+    first = _commit_file(repo, "src/a.py", "x = 1", "WOT-2026-999b: paso 1")
+    last = _commit_file(repo, "src/b.py", "x = 2", "WOT-2026-999b: paso 2")
+    result = session_closeout._step_write_loop_execution_targets(
+        repo, ["WOT-2026-999b"], None, False
+    )
+    assert result.status == "PASS", result.detail
+    sha = first if looped == "first" else last
+    ensemble = repo / ".agent" / "runtime" / "ensemble"
+    ensemble.mkdir(parents=True, exist_ok=True)
+    (ensemble / "scorecard.jsonl").write_text(
+        "".join(json.dumps(_058o_round_row(bk, sha)) + "\n" for bk in _058O_BACKENDS),
+        encoding="utf-8",
+    )
+    (ensemble / "emitted_nonces.jsonl").write_text(
+        json.dumps(_058o_emitted_row(sha)) + "\n", encoding="utf-8"
+    )
+    return repo, last
+
+
+def test_143a_multi_commit_ticket_without_loop_on_the_last_fails(
+    tmp_path: Path,
+) -> None:
+    """DoD (5): el ticket integra varios commits y el bucle corrio sobre el
+    PRIMERO, no sobre el ultimo -> la barrera BLOQUEA (el objetivo es el ultimo)."""
+    from scripts.prepush_check import run_loop_execution_check
+
+    repo, last = _two_commit_ticket_with_rounds(tmp_path, looped="first")
+    assert [ln.split()[0] for ln in _target_lines(repo)] == [last]
+
+    verdict = run_loop_execution_check(repo)
+
+    assert verdict.passed is False, verdict.output
+    assert verdict.is_blocking is True, verdict.output
+    assert last in verdict.output
+
+
+def test_143a_multi_commit_ticket_with_loop_on_the_last_passes(
+    tmp_path: Path,
+) -> None:
+    """Control positivo del anterior: el MISMO ticket con el bucle sobre el
+    ultimo commit pasa (la barrera no rechaza por tener varios commits)."""
+    from scripts.prepush_check import run_loop_execution_check
+
+    repo, last = _two_commit_ticket_with_rounds(tmp_path, looped="last")
+
+    verdict = run_loop_execution_check(repo)
+
+    assert verdict.passed is True, verdict.output
+    assert "1 commit(s)" in verdict.output
+    assert last in verdict.output

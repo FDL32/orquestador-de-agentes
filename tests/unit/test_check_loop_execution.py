@@ -2047,3 +2047,82 @@ def test_coverage_rejects_unknown_backend_key(monkeypatch):
     assert v["ok"] is False
     assert v["coverage_error"].startswith("invalid_coverage")
     assert "BA999" in v["coverage_error"]
+
+
+# ----------------------------------------------- WOT-2026-143a: deuda historica
+_DEBT_SHA = "d" * 40
+_DEBT_FICHA = "WOT-2026-143b"
+
+
+def _audit_sha(monkeypatch, sha, rows=(), emitted=(), dtype="mixed"):
+    """`cle.audit` de UN sha con scorecard/emitted parcheados (sin disco)."""
+    monkeypatch.setattr(cle, "_read_scorecard", lambda root: (list(rows), "x"))
+    monkeypatch.setattr(cle, "read_emitted_nonces", lambda root: list(emitted))
+    return cle.audit(Path("dummy"), commit_shas=[sha], deliverable_type=dtype)[0]
+
+
+def test_declared_debt_sha_under_minimum_is_waived_and_named(monkeypatch, capsys):
+    """DoD (4): SHA40 declarado + 0 rondas -> ok, con la ficha NOMBRADA."""
+    monkeypatch.setitem(cle.HISTORIC_LOOP_DEBT, _DEBT_SHA, _DEBT_FICHA)
+    v = _audit_sha(monkeypatch, _DEBT_SHA)
+    assert v["ok"] is True
+    assert v["debt"] == _DEBT_FICHA
+    assert v["debt_waived"] is True
+    assert cle._receipt_view(v)["debt"] == _DEBT_FICHA
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    assert "DEUDA HISTORICA" in out
+    assert _DEBT_FICHA in out
+
+
+def test_control_positive_same_sha_not_declared_fails(monkeypatch):
+    """Control positivo: SIN la entrada, el mismo sha bajo el minimo FALLA."""
+    assert _DEBT_SHA not in cle.HISTORIC_LOOP_DEBT
+    v = _audit_sha(monkeypatch, _DEBT_SHA)
+    assert v["ok"] is False
+    assert v["debt"] is None
+    assert v["debt_waived"] is False
+
+
+def test_undeclared_sha_sharing_the_prefix_of_a_declared_one_still_fails(
+    monkeypatch,
+):
+    """DoD (4)/M3: la deuda es por IGUALDAD de SHA40, no por prefijo ni patron."""
+    monkeypatch.setitem(cle.HISTORIC_LOOP_DEBT, _DEBT_SHA, _DEBT_FICHA)
+    sibling = "d" * 39 + "e"
+    assert sibling.startswith(_DEBT_SHA[:39])
+    v = _audit_sha(monkeypatch, sibling)
+    assert v["ok"] is False
+    assert v["debt"] is None
+    # un sha abreviado del declarado tampoco casa
+    short = _audit_sha(monkeypatch, _DEBT_SHA[:12])
+    assert short["ok"] is False
+
+
+def test_debt_never_changes_a_passing_verdict(monkeypatch):
+    """La deuda solo levanta FALLOS: un sha declarado que YA pasa no se marca."""
+    monkeypatch.setitem(cle.HISTORIC_LOOP_DEBT, _DEBT_SHA, _DEBT_FICHA)
+    rows = [
+        _ronda(bk, nonce="N1", commit=_DEBT_SHA)
+        for bk in ("BA03", "BA07", "BA05", "BA02")
+    ]
+    v = _audit_sha(monkeypatch, _DEBT_SHA, rows, [_emitted(commit=_DEBT_SHA)])
+    assert v["ok"] is True
+    assert v["debt_waived"] is False
+
+
+def test_historic_debt_table_is_exact_sha40_with_declared_exit_ficha():
+    """El contenido VIGENTE: 15 SHA40 en minuscula, todos con la ficha de salida,
+    sin duplicados y sin los 4 tips que ya pasan su bucle."""
+    assert len(cle.HISTORIC_LOOP_DEBT) == 15
+    for sha, ficha in cle.HISTORIC_LOOP_DEBT.items():
+        assert len(sha) == 40 and sha == sha.lower(), sha
+        int(sha, 16)
+        assert ficha == "WOT-2026-143b", (sha, ficha)
+    passing_tips = {
+        "1236f3d72a1ac56c2550480dd1f7b0eaa66f148e",  # 136h
+        "8387e9dbb515c9f72088d8ee7a505e8b275eafd7",  # 136l
+        "0112ca887f560f98a294bf24fc81eeb3af80d5a4",  # 136m
+        "6974d86c6d0aeedf2e32f3f99f1b1e3777c1190d",  # 142a
+    }
+    assert not passing_tips & set(cle.HISTORIC_LOOP_DEBT)

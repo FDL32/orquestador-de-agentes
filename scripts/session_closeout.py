@@ -57,6 +57,7 @@ from scripts.closeout_steps.archival import (  # noqa: E402
     step_rotate_kilo_logs as _step_rotate_kilo_logs_fn,
 )
 from scripts.closeout_steps.gates import (  # noqa: E402
+    step_integration_receipts as _step_integration_receipts_impl,
     step_local_audit as _step_local_audit_impl,
     step_manifest_check as _step_manifest_check_impl,
     step_prepush_check as _step_prepush_check_impl,
@@ -1131,6 +1132,16 @@ def _step_roster_matches_acting_thread(
     )
 
 
+def _step_integration_receipts(project_root: Path, dry_run: bool) -> StepResult:
+    """Require an integration receipt per loop target that is not declared debt (143a)."""
+    return _step_integration_receipts_impl(
+        project_root,
+        dry_run,
+        targets_path=project_root / LOOP_EXECUTION_TARGETS_REL,
+        step_result_cls=StepResult,
+    )
+
+
 def _step_quota_index_drift(
     project_root: Path,
     dry_run: bool,
@@ -1749,6 +1760,62 @@ def _git_log_shas_for_ticket(
     return shas, ""
 
 
+def _git_stdout(root: Path, args: list[str]) -> tuple[int, str]:
+    """`git -C root <args>` -> (rc, stdout); rc=-1 si git no se pudo ejecutar."""
+    try:
+        proc = subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), *args],  # noqa: S607
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return -1, ""
+    return proc.returncode, proc.stdout
+
+
+def _ticket_tip_sha(root: Path, shas: list[str]) -> tuple[str | None, str]:
+    """El ULTIMO commit de un ticket: el unico objetivo del bucle (WOT-2026-143a).
+
+    Opcion B del usuario (2026-10-30): el bucle de >=N lentes se exige por
+    TICKET sobre su estado final, no por commit. B solo es cierta si el estado
+    final del ticket es UN commit que contiene a los demas (H98), asi que el tip
+    se elige por ANCESTRIA y no por el orden de `git log` (que no es topologico).
+
+    Before: `shas` no vacio, los commits que ENTREGAN el ticket en `root`.
+    During: descarta los merges (mas de un padre) salvo que TODOS lo sean (un
+        ticket entregado solo por un merge conserva el merge, WOT-2026-090w); el
+        tip es el candidato del que son ancestros TODOS los demas
+        (`git merge-base --is-ancestor`, 1 llamada por par).
+    After: `(sha, "")`; o `(None, FAIL_TARGETS_NOT_LINEAR ...)` si no hay un
+        maximal unico (ramas divergentes) o git no pudo comprobarlo
+        (fail-closed: nunca se elige un tip a ciegas).
+    """
+    rc, out = _git_stdout(root, ["rev-list", "--no-walk", "--parents", *shas])
+    if rc != 0:
+        return None, f"FAIL_TARGETS_NOT_LINEAR: git rev-list rc={rc} sobre {shas}"
+    merges = {ln.split()[0] for ln in out.splitlines() if len(ln.split()) > 2}
+    candidates = [s for s in shas if s not in merges] or list(shas)
+    if len(candidates) == 1:
+        return candidates[0], ""
+    for cand in candidates:
+        rcs = [
+            _git_stdout(root, ["merge-base", "--is-ancestor", other, cand])[0]
+            for other in candidates
+            if other != cand
+        ]
+        if any(r not in (0, 1) for r in rcs):
+            return None, f"FAIL_TARGETS_NOT_LINEAR: no se pudo comprobar {candidates}"
+        if all(r == 0 for r in rcs):
+            return cand, ""
+    return None, (
+        "FAIL_TARGETS_NOT_LINEAR: el estado final del ticket NO es un commit "
+        f"unico (sin maximal entre {candidates}); squash antes del bucle (H98)"
+    )
+
+
 # WOT-2026-066i (D1): el `delivery_authority` DECLARADO se lee con la MISMA
 # gramatica del parser existente `_read_delivery_authority`
 # (.agent/agent_controller.py:1295), que acepta `delivery_authority: <valor>` y
@@ -2350,6 +2417,29 @@ def _process_ticket_targets(
     if not shas:
         return _TicketTargetResult([], "PASS")
 
+    return _ticket_tip_target(
+        ticket_id, project_root, authoritative_root, declared_authority, shas
+    )
+
+
+def _ticket_tip_target(
+    ticket_id: str,
+    project_root: Path,
+    authoritative_root: Path,
+    declared_authority: str | None,
+    shas: list[str],
+) -> _TicketTargetResult:
+    """UN objetivo por TICKET, el de su ultimo commit (WOT-2026-143a).
+
+    El bucle se exige sobre el estado final del ticket, no por commit. Sin
+    maximal unico el escritor FALLA bloqueante: B solo funciona si el estado
+    final es un commit (`_ticket_tip_sha`).
+    """
+    tip, tip_error = _ticket_tip_sha(authoritative_root, shas)
+    if tip is None:
+        return _TicketTargetResult(
+            [], "FAIL", f"{ticket_id}: {tip_error}", blocking=True
+        )
     dtype, declared = _resolve_deliverable_type_for_ticket_detailed(
         project_root, ticket_id
     )
@@ -2359,11 +2449,11 @@ def _process_ticket_targets(
     undeclared_token = "" if declared else " declared=false"
     return _TicketTargetResult(
         [
-            f"{sha} {dtype}{undeclared_token} phase={LOOP_EXECUTION_PHASE} "
+            f"{tip} {dtype}{undeclared_token} phase={LOOP_EXECUTION_PHASE} "
             f"delivery_authority={declared_authority} {LOOP_TARGETS_SOURCE_TOKEN}"
-            for sha in shas
         ],
         "PASS",
+        f"{ticket_id}: tip {tip[:12]} de {len(shas)} commit(s) que lo entregan",
     )
 
 
@@ -2866,8 +2956,9 @@ def _step_write_loop_execution_targets(
         runs `git log --format=%H --grep=<ticket_id> --fixed-strings` (plus
         `--since=<window_start ISO>` when the window is known) with
         `cwd=<motor_root>` via `subprocess.run` (never `$?` after a pipe).
-        Every matching commit produces one line, unbounded, in git's own
-        order. Resolves `deliverable_type` per ticket via
+        Each ticket produces ONE line, the one of its LAST commit
+        (WOT-2026-143a: `_ticket_tip_sha`; no maximal unico => FAIL bloqueante).
+        Resolves `deliverable_type` per ticket via
         `_resolve_deliverable_type_for_ticket`. If `motor_root` cannot be
         resolved (`runtime.motor_link` unavailable or no link), the step is a
         no-op SKIP: git log has no root to run against.
@@ -2875,7 +2966,7 @@ def _step_write_loop_execution_targets(
         mode" and the file is left untouched (created, deleted, or absent --
         whatever state it was already in). Otherwise: if at least one commit
         line was produced, writes the whole file (never appends) with one
-        `<sha> <deliverable_type> source=session-close` line per commit
+        `<sha> <deliverable_type> source=session-close` line per TICKET
         (WOT-2026-058o: procedencia del escritor legitimo estampada en la
         propia linea), commits it, and returns PASS. If zero
         tickets or zero matching commits exist, deletes the file if present
@@ -2918,6 +3009,8 @@ def _step_write_loop_execution_targets(
             detail_parts.append(res.detail)
             continue
         lines.extend(res.lines)
+        if res.detail:
+            detail_parts.append(res.detail)
 
     result = _finalize_targets_result(
         name,
@@ -3067,6 +3160,14 @@ def run_closeout(  # noqa: C901 - already complex, new step adds to it
     )
     report.steps.append(roster)
     if roster.status == "FAIL":
+        report_path = _generate_report(report, project_root)
+        print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
+        return 1
+    # WOT-2026-143a: every non-debt loop target needs the receipt the integration
+    # wrapper leaves; skipping the wrapper is caught here (barrier by absence).
+    integration = _step_integration_receipts(project_root, dry_run)
+    report.steps.append(integration)
+    if integration.status == "FAIL":
         report_path = _generate_report(report, project_root)
         print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
         return 1

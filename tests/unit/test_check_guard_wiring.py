@@ -965,3 +965,53 @@ def test_guard_birth_date_returns_none_for_untracked_file(tmp_path):
     guard_path.write_text("# g\n", encoding="utf-8")
     subprocess.run([cgw._git(), "init", "-q"], cwd=repo, check=True)
     assert cgw._guard_birth_date(guard_path) is None
+
+
+# ------------------------------------------------------- WOT-2026-143a: recibo de integracion
+# `scripts/flight/integrate_ticket.py` NO lleva prefijo check_/validate_/guard_ (GUARD_PREFIXES),
+# asi que no esta en el denominador de `find_guards` y no entra en EXPECTED_WIRED_REAL; declararlo
+# exigiria `scripts/guard_wiring_policy.yaml::extra_guards` (fuera del alcance de 143a). Su
+# cableado es el paso de cierre `integration_receipts` invocado desde `run_closeout`, y lo fijan
+# estos dos tests (AST del fuente real + su des-cableado en una copia).
+_CLOSEOUT_STEP = "_step_integration_receipts"
+
+
+def _names_called_in(src: str, func: str) -> set[str]:
+    """Nombres invocados (`f(...)`) dentro de la funcion de nivel superior `func`."""
+    import ast
+
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.FunctionDef) and node.name == func:
+            return {
+                c.func.id
+                for c in ast.walk(node)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+            }
+    raise AssertionError(f"{func} ya no existe en el fuente analizado")
+
+
+def test_integration_receipts_step_is_wired_from_run_closeout():
+    """POSITIVO en el repo real: `run_closeout` invoca el paso, el paso delega en
+    `gates.step_integration_receipts`, y ese lee los recibos del wrapper. Si alguien retira
+    la llamada, saltarse el wrapper deja de cazarse en el cierre (la barrera es por AUSENCIA)."""
+    closeout = (_ROOT / "scripts" / "session_closeout.py").read_text(encoding="utf-8")
+    assert _CLOSEOUT_STEP in _names_called_in(closeout, "run_closeout")
+    assert "_step_integration_receipts_impl" in _names_called_in(
+        closeout, _CLOSEOUT_STEP
+    )
+    gates_src = (_ROOT / "scripts" / "closeout_steps" / "gates.py").read_text(
+        encoding="utf-8"
+    )
+    assert "verify_receipts" in _names_called_in(gates_src, "step_integration_receipts")
+    assert (_ROOT / "scripts" / "flight" / "integrate_ticket.py").is_file()
+
+
+def test_integration_receipts_dewiring_is_caught():
+    """MUTATION M2, EJECUTADA sobre una COPIA del fuente (nunca el arbol real): retirar la
+    llamada del paso en `run_closeout` -> el detector AST deja de verla."""
+    closeout = (_ROOT / "scripts" / "session_closeout.py").read_text(encoding="utf-8")
+    call = f"{_CLOSEOUT_STEP}(project_root, dry_run)"
+    assert call in closeout, "la llamada cambio de forma: actualiza este test"
+    assert _CLOSEOUT_STEP in _names_called_in(closeout, "run_closeout")  # control +
+    muted = closeout.replace(call, "(project_root, dry_run)")
+    assert _CLOSEOUT_STEP not in _names_called_in(muted, "run_closeout")

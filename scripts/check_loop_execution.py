@@ -133,6 +133,44 @@ def min_distinct_for(deliverable_type: str | None) -> int:
     )
 
 
+# WOT-2026-143a (opcion B del usuario, 2026-10-30): el bucle se exige por TICKET
+# sobre su ultimo commit (el escritor de objetivos emite solo ese). Estos 15 SHA
+# son el ultimo commit de tickets del vuelo vuelo-20261026b que se integraron SIN
+# bucle de >=N lentes: DEUDA HISTORICA declarada por SHA40 EXACTO (igualdad, nunca
+# prefijo ni patron) con su ficha como criterio de salida (el valor). Un SHA que no
+# este aqui y quede bajo el minimo sigue FALLANDO. Una entrada sale de aqui cuando
+# su ficha la salda con un bucle real; reescribir historia invalida la entrada
+# (remapear con scripts/remap_evidence_shas.py).
+HISTORIC_LOOP_DEBT: dict[str, str] = {
+    "10f1f2f69612445bcc1dbdcc403423844a01d126": "WOT-2026-143b",  # 125b
+    "43f973f22c97ead0f725a91e2ec50c4d77659c05": "WOT-2026-143b",  # 125c
+    "6e8d0e5c1a2049ba72e42874de65f9ba8912af25": "WOT-2026-143b",  # 129b
+    "8c30c2c02131103fede8ef9347b9b91826a21663": "WOT-2026-143b",  # 129l
+    "4979505062ff26f64ea70771510a69c2a1ce5460": "WOT-2026-143b",  # 129u
+    "484f5bb1285c3c638ba0e5292bb93996320555d8": "WOT-2026-143b",  # 129y
+    "024306127b2d8fa41d6c17e907a7130c95f565ae": "WOT-2026-143b",  # 131a
+    "4760368e37c57d7e000f4a8309eeb3caece4d511": "WOT-2026-143b",  # 136a
+    "c16cdb505ddb6013d40f9fce3be35f6974771731": "WOT-2026-143b",  # 136b
+    "2785da27ada9e6c2db7b3b91753947cfb198c07c": "WOT-2026-143b",  # 136c
+    "00a01d848ee2805ef0d9030395cef6f09ca55e45": "WOT-2026-143b",  # 136d
+    "749e8eb8c16704006c7552fa8f484f36745afabb": "WOT-2026-143b",  # 136e
+    "63ddd2a0484897cbe30e57f7c1c41f432452e1e8": "WOT-2026-143b",  # 136f
+    "83cd618c378579a0d91fd901ab7137617193db6a": "WOT-2026-143b",  # 136g
+    "bb9cb51890c6d3756f50010d50a7d280b93b2bc9": "WOT-2026-143b",  # 136j
+}
+
+
+def historic_debt_ficha(commit_sha: str) -> str | None:
+    """Ficha de salida si `commit_sha` es deuda historica DECLARADA, si no None.
+
+    Before: `commit_sha` es el sha tal cual lo declara el objetivo.
+    During: igualdad EXACTA contra `HISTORIC_LOOP_DEBT` (un sha abreviado o con
+        el mismo prefijo NO casa: fail-closed).
+    After: el valor (ficha) o None. Sin I/O.
+    """
+    return HISTORIC_LOOP_DEBT.get(commit_sha)
+
+
 # WOT-2026-129y: cobertura elegible DECLARADA (fuente unica, D1 del
 # work_plan). La fuente es `agents.json::ensemble_registry.eligible_coverage`,
 # campo versionado del motor, NO el roster del vuelo (externo no versionado;
@@ -1188,6 +1226,13 @@ def audit(
                 "delivery_authority": delivery_authority,
             }
         )
+        # WOT-2026-143a: deuda historica declarada por SHA40 exacto. Solo levanta
+        # un FALLO (nunca altera un OK) y queda NOMBRADA en el veredicto.
+        debt = historic_debt_ficha(sha)
+        verdict["debt"] = debt
+        verdict["debt_waived"] = debt is not None and not verdict["ok"]
+        if verdict["debt_waived"]:
+            verdict["ok"] = True
         verdicts.append(verdict)
     return verdicts
 
@@ -1231,6 +1276,7 @@ def _receipt_view(v: dict) -> dict:
         "coverage_key": v.get("coverage_key"),
         "override": v.get("override"),
         "exempt": v.get("exempt"),
+        "debt": v.get("debt"),
         "ok": v.get("ok"),
     }
 
@@ -1387,6 +1433,12 @@ def _print_verdict(v: dict) -> None:
         print(
             f"[loop-exec]   NO-ELEGIBLE {ne['backend_key']}: {ne['reason']} "
             "(ronda fuera de la cobertura elegible; no cuenta para N)"
+        )
+    # WOT-2026-143a: deuda historica declarada (SHA40 exacto), nunca silenciosa.
+    if v.get("debt_waived"):
+        print(
+            f"[loop-exec]   DEUDA HISTORICA {v['commit_sha']}: bajo el minimo, "
+            f"declarada en HISTORIC_LOOP_DEBT; criterio de salida {v['debt']}"
         )
     # WOT-2026-043q: nombrar a quien callo, en verde y en rojo.
     for s in v["silent_rounds"]:

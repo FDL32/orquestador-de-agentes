@@ -330,6 +330,84 @@ def step_quota_index_drift(
     )
 
 
+def step_integration_receipts(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    targets_path: Path,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Require an integration receipt for every loop target that is not declared debt.
+
+    WOT-2026-143a: the loop is demanded per TICKET on its last commit, and a ``git merge
+    --ff-only`` fires no hook that could authorize it, so the only integration path is
+    ``scripts/flight/integrate_ticket.py`` (audit, ff, receipt). This step is the barrier by
+    ABSENCE: skipping the wrapper leaves a target without receipt and the closeout fails here.
+    The receipt is operational, not cryptographic.
+
+    - dry_run=True -> SKIP (the targets file may be stale, nothing was verified).
+    - no targets file, or no target line -> SKIP, non-blocking (nothing to demand).
+    - targets file unreadable -> FAIL, blocking (never read as "no targets").
+    - every target in ``HISTORIC_LOOP_DEBT`` is exempt (named in the detail); every other
+      target needs a valid receipt and its tip still an ancestor of the motor HEAD.
+    - a missing/invalid receipt -> FAIL, blocking, naming each sha and the command.
+    """
+    name = "integration_receipts"
+    if dry_run:
+        return step_result_cls(
+            name=name,
+            status="SKIP",
+            detail="Not run in dry-run mode: integration receipts were not verified",
+            blocking=False,
+        )
+    if not targets_path.exists():
+        return step_result_cls(
+            name=name,
+            status="SKIP",
+            detail=f"No {targets_path.name}: no loop target to demand a receipt for",
+            blocking=False,
+        )
+    try:
+        text = targets_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail=f"{targets_path} exists but cannot be read ({exc})",
+            blocking=True,
+        )
+    try:
+        from scripts.flight.integrate_ticket import verify_receipts
+    except ImportError:
+        from flight.integrate_ticket import verify_receipts  # type: ignore[no-redef]
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        motor_root = resolve_motor_root(project_root)
+    except ImportError:
+        motor_root = None
+    problems, notes = verify_receipts(project_root, text, motor_root)
+    if problems:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail=(
+                f"{len(problems)} target(s) sin recibo de integracion valido: "
+                + "; ".join(problems)
+                + ". Integra con python scripts/flight/integrate_ticket.py --ticket <ID> "
+                "--candidate <ref> --project-root <destino> (o --attest si ya esta integrado)"
+            ),
+            blocking=True,
+        )
+    return step_result_cls(
+        name=name,
+        status="PASS",
+        detail="Every non-debt loop target has an integration receipt"
+        + (f" ({'; '.join(notes)})" if notes else ""),
+        blocking=True,
+    )
+
+
 def step_local_audit(
     project_root: Path,
     dry_run: bool,

@@ -85,3 +85,14 @@ superficie es un único fichero y no hay vecina adyacente".]
 El campo `deliverable_type` declara la naturaleza del entregable principal del WP.
 V1 acepta: `code` (código fuente), `documentation` (docs/markdown), `research` (análisis/reportes), `analysis` (estudios técnicos), `mixed` (combinación).
 Valor recomendado por defecto: `code`. WP-089 introducirá dispatch automático de gates según este campo.
+
+## Notas sobre el bucle de gobierno (WOT-2026-143a)
+
+El bucle de lentes adversariales se exige por TICKET sobre su estado final, no por commit: el
+objetivo es el último commit que entrega el ticket, y ese estado final debe ser UN commit que
+contiene a los demás (si el ticket diverge en ramas, el cierre falla: aplástalo antes del bucle).
+El mínimo de lentes distintas depende del `deliverable_type` y lo decide
+`scripts/check_loop_execution.py::min_distinct_for`; este template no repite esa cifra (X-09):
+cítala siempre desde esa función, no de memoria. Un ticket integrado en la rama del vuelo pasa
+por `scripts/flight/integrate_ticket.py`, que audita ese último commit y deja el recibo que el
+cierre exige.
