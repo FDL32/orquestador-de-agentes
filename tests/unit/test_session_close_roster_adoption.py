@@ -64,7 +64,7 @@ def hermetic_project_root(tmp_path_factory):
     return root
 
 
-def _write_fixture_roster(root: Path, *, estado_matches: bool) -> Path:
+def _write_fixture_roster(root: Path) -> Path:
     fixture_dir = root / "fixture_roster"
     fixture_dir.mkdir(exist_ok=True)
     roster = {
@@ -125,7 +125,7 @@ def _roster_step_status(report_text: str) -> str | None:
 
 
 def test_roster_step_pass_when_acting_thread_matches(hermetic_project_root):
-    roster_path = _write_fixture_roster(hermetic_project_root, estado_matches=True)
+    roster_path = _write_fixture_roster(hermetic_project_root)
     result, elapsed, report = _run_session_close(
         hermetic_project_root, roster_path, "test-thread-1"
     )
@@ -135,7 +135,7 @@ def test_roster_step_pass_when_acting_thread_matches(hermetic_project_root):
 
 
 def test_roster_step_fail_when_acting_thread_mismatches(hermetic_project_root):
-    roster_path = _write_fixture_roster(hermetic_project_root, estado_matches=True)
+    roster_path = _write_fixture_roster(hermetic_project_root)
     result, _elapsed, report = _run_session_close(
         hermetic_project_root, roster_path, "otro-hilo-distinto"
     )
@@ -152,7 +152,7 @@ def test_roster_step_skip_without_flight_roster_path(hermetic_project_root):
 
 
 def test_roster_step_fail_without_acting_thread(hermetic_project_root):
-    roster_path = _write_fixture_roster(hermetic_project_root, estado_matches=True)
+    roster_path = _write_fixture_roster(hermetic_project_root)
     result, _elapsed, report = _run_session_close(
         hermetic_project_root, roster_path, None
     )

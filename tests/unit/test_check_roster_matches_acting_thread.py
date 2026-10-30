@@ -1194,3 +1194,319 @@ def test_21_active_roles_absent_or_null(tmp_path: Path) -> None:
     assert "rol 'orquestador' ausente en active_roles" in stdout, (
         f"Must report identity-not-verifiable when active_roles is not a dict: {stdout}"
     )
+
+
+# --- WOT-2026-136e: M7, M8, M10, N1, DoD(4) tests ---
+
+
+def test_22_m7_threshold_under_900s(tmp_path: Path) -> None:
+    """M7: ts 899s before now -> elapsed_secs ~899, no (b) violation (within 900s threshold).
+
+    This is a COVERAGE test: the code logic at line 249 is correct, but without this test
+    a mutation of the threshold (900->850) would not be detected by existing tests.
+    """
+    now = datetime.now(timezone.utc)
+    ts_899s = (now - timedelta(seconds=899)).isoformat()
+
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    line_dict["ts"] = ts_899s
+    changes_data_lines = [json.dumps(line_dict)]
+    registry_data = _make_registry_with_activa("orquestador", "mcp:thread-1")
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 0, f"Expected PASS (exit 0) for 899s elapsed, got {rc}: {stdout}"
+    assert "caducado" not in stdout, (
+        f"Should NOT mention 'caducado' for 899s elapsed: {stdout}"
+    )
+
+
+def test_23_m7_threshold_over_900s(tmp_path: Path) -> None:
+    """M7: ts 901s before now -> elapsed_secs ~901, (b) violation "caducado".
+
+    This is a COVERAGE test: the code logic at line 249 is correct, but without this test
+    a mutation of the threshold (900->850) would not be detected by existing tests.
+    """
+    now = datetime.now(timezone.utc)
+    ts_901s = (now - timedelta(seconds=901)).isoformat()
+
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    line_dict["ts"] = ts_901s
+    changes_data_lines = [json.dumps(line_dict)]
+    registry_data = _make_registry_with_activa("orquestador", "mcp:thread-1")
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected FAIL (exit 1) for 901s elapsed, got {rc}: {stdout}"
+    assert "caducado" in stdout, f"Should mention 'caducado' for 901s elapsed: {stdout}"
+
+
+def test_24_m8_naive_timestamp_within_threshold(tmp_path: Path) -> None:
+    """M8: naive ts ~30s ago, no tzinfo -> code normalizes to UTC, no violation, no TypeError.
+
+    This is a COVERAGE test: the naive normalization branch (lines 243-246) exists but is
+    not covered by any test with a dynamically generated naive timestamp.
+    """
+    now = datetime.now(timezone.utc)
+    naive_ts = (now - timedelta(seconds=30)).replace(tzinfo=None).isoformat()
+
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    line_dict = _write_roster_with_transition(tmp_path, role="orquestador")
+    line_dict["ts"] = naive_ts
+    changes_data_lines = [json.dumps(line_dict)]
+    registry_data = _make_registry_with_activa("orquestador", "mcp:thread-1")
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, stderr = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 0, (
+        f"Expected PASS (exit 0) for naive 30s ago, got {rc}: {stdout}\n{stderr}"
+    )
+    assert "TypeError" not in stderr, f"Should not raise TypeError: {stderr}"
+    assert "caducado" not in stdout, (
+        f"Should NOT mention 'caducado' for 30s naive: {stdout}"
+    )
+
+
+def test_25_m10_pass_with_omission_note(tmp_path: Path) -> None:
+    """M10: scenario where checkpoint (d) generates 'ninguna entrada ACTIVA en registry' note.
+
+    This is a COVERAGE test: the code at lines 304-308 generates this note but no existing
+    test asserts that the note appears in stdout when the result is GLOBAL PASS.
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:thread-1",
+            }
+        }
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # GLOBAL PASS: no violations from any checkpoint
+    assert rc == 0, f"Expected PASS (exit 0), got {rc}: {stdout}"
+    # But the note about no ACTIVA entries should appear in stdout
+    assert "ninguna entrada ACTIVA en registry" in stdout, (
+        f"Should mention 'ninguna entrada ACTIVA en registry' note: {stdout}"
+    )
+
+
+def test_26_n1_mixed_naive_aware_changes_log(tmp_path: Path) -> None:
+    """N1: changes-log with 2 old canonical lines (naive+aware) for same role ->
+    rc=1 with '(b) ... caducado', NEVER a TypeError traceback.
+
+    Against CURRENT code (without fix), this test MUST FAIL (RED) because the comparison
+    between naive and aware datetimes at line 169 raises TypeError.
+    """
+    now = datetime.now(timezone.utc)
+    old_naive = (now - timedelta(hours=2)).replace(tzinfo=None)
+    old_aware = now - timedelta(hours=2)
+
+    changes_data_lines = [
+        json.dumps(
+            {
+                "ts": old_naive.isoformat(),
+                "by": "test",
+                "change": "estado_transition",
+                "detail": "role=orquestador ACTIVO -> PENDIENTE_ACK",
+                "reason": "test",
+            }
+        ),
+        json.dumps(
+            {
+                "ts": old_aware.isoformat(),
+                "by": "test",
+                "change": "estado_transition",
+                "detail": "role=orquestador ACTIVO -> PENDIENTE_ACK",
+                "reason": "test",
+            }
+        ),
+    ]
+
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:thread-1",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+    registry_data = _make_registry_with_activa("orquestador", "mcp:thread-1")
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, stderr = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:thread-1",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # After fix: rc=1 with "(b) caducado", no TypeError in stderr
+    assert rc == 1, (
+        f"Expected FAIL (exit 1) with old mixed ts, got {rc}: {stdout}\n{stderr}"
+    )
+    assert "TypeError" not in stderr, f"Should not raise TypeError: {stderr}"
+    assert "caducado" in stdout, (
+        f"Should mention 'caducado' for old mixed ts, got: {stdout}"
+    )
+
+
+def test_26_n2_mixed_naive_aware_find_latest_activa(tmp_path: Path) -> None:
+    """N1 variant: call _find_latest_activa directly with sessions that have mixed
+    naive+aware started timestamps for the same role -> no TypeError.
+
+    Against CURRENT code, this test MUST FAIL (RED) because max() comparison between
+    naive and aware datetimes raises TypeError.
+    """
+    from scripts.check_roster_matches_acting_thread import _find_latest_activa
+
+    now = datetime.now(timezone.utc)
+    old_naive = (now - timedelta(minutes=30)).replace(tzinfo=None)
+    older_aware = now - timedelta(hours=2)
+
+    sessions = [
+        {
+            "role": "orquestadora",
+            "started": old_naive.isoformat(),  # naive
+            "status": "ACTIVA",
+        },
+        {
+            "role": "orquestadora",
+            "started": older_aware.isoformat(),  # aware, older
+            "status": "ACTIVA",
+        },
+    ]
+
+    result = _find_latest_activa(sessions, "orquestadora")
+    assert result is not None, (
+        f"_find_latest_activa should return the latest entry, not None: {result}"
+    )
+    assert result.get("status") == "ACTIVA"
+
+
+def test_27_dod4_special_char_role(tmp_path: Path) -> None:
+    """DoD(4): role with regex special char (e.g., 'orq.estador') -> guard recognizes
+    the transition line without emitting '(b) ... sin linea canonica'.
+
+    Against CURRENT code, this test MUST FAIL (RED) because re.escape('orq.estador')
+    produces 'orq\\.estador' which doesn't match the literal 'orq.estador' in the detail.
+    """
+    roster_data = {
+        "active_roles": {
+            "orq.estador": {
+                "threadId": "mcp:thread-special",
+                "estado": "PENDIENTE_ACK",
+            }
+        }
+    }
+
+    # Build a changes-log line manually with the real writer pattern
+    now = datetime.now(timezone.utc)
+    line_dict = {
+        "ts": now.isoformat(),
+        "by": "test",
+        "change": "estado_transition",
+        "detail": "role=orq.estador ACTIVO -> PENDIENTE_ACK",
+        "reason": "test",
+    }
+    changes_data_lines = [json.dumps(line_dict)]
+
+    registry_data = {
+        "sessions": [
+            {
+                "code": "IM-1",
+                "role": "implantacion",
+                "slot": "s1",
+                "threadId": "mcp:special-thread",
+                "started": now.isoformat(),
+                "status": "ACTIVA",
+            }
+        ]
+    }
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    changes_p.write_text("\n".join(changes_data_lines) + "\n", encoding="utf-8")
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:thread-special",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+        role="orq.estador",
+    )
+    # After fix: rc=0, no "(b) ... sin linea canonica"
+    assert rc == 0, f"Expected PASS (exit 0) for special char role, got {rc}: {stdout}"
+    assert "sin linea canonica" not in stdout, (
+        f"Should NOT mention 'sin linea canonica' for special char role: {stdout}"
+    )

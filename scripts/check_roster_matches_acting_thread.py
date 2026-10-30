@@ -52,6 +52,20 @@ _RE_ACTIVA_PREFIX: re.Pattern[str] = re.compile(r"^ACTIVA(\s|$)")
 # --- Private helpers ---
 
 
+def _to_utc_aware(dt: datetime) -> datetime:
+    """Convert a datetime to UTC-aware.
+
+    Naive datetimes are treated as UTC. Aware datetimes are converted to UTC.
+
+    Before: dt is a datetime (naive or aware).
+    During: if tzinfo is None, replaces with UTC; otherwise converts via astimezone.
+    After: returns a timezone-aware datetime in UTC.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _parse_ts(ts: str) -> datetime | None:
     """Parse timestamp string, normalizing trailing 'Z' to '+00:00'.
 
@@ -94,7 +108,10 @@ def _find_latest_activa(sessions: list[dict], role: str) -> dict | None:
         return None
 
     def _sort_key(entry: dict) -> datetime | None:
-        return _parse_ts(entry.get("started", ""))
+        raw = _parse_ts(entry.get("started", ""))
+        if raw is not None:
+            return _to_utc_aware(raw)
+        return None
 
     # Filter out entries that couldn't be parsed (keep parseable ones)
     parseable = [(e, _sort_key(e)) for e in candidates]
@@ -166,8 +183,9 @@ def _find_latest_canonical_transition(
             # Unparseable ts in canonical line -> fail-closed (return it, caller decides)
             return dt  # type: ignore[return-value]
 
-        if latest is None or dt > latest:
-            latest = dt
+        dt_aware = _to_utc_aware(dt)
+        if latest is None or dt_aware > _to_utc_aware(latest):
+            latest = dt_aware
 
     return latest
 
@@ -226,7 +244,7 @@ def check_pendiente_ack(
 
     # Build the expected transition detail pattern
     # The canonical line from the writer has 'detail' like 'role=<role> ACTIVO -> PENDIENTE_ACK'
-    transition_detail = f"role={re.escape(role)} ACTIVO -> PENDIENTE_ACK"
+    transition_detail = f"role={role} ACTIVO -> PENDIENTE_ACK"
 
     dt = _find_latest_canonical_transition(changes_log, role, transition_detail)
 
@@ -240,10 +258,7 @@ def check_pendiente_ack(
     # Check if ts is older than 15 minutes
     now = datetime.now(timezone.utc)
     # Normalize dt to UTC for comparison (naive timestamps treated as UTC)
-    if dt.tzinfo is None:
-        dt_utc = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt_utc = dt.astimezone(timezone.utc)
+    dt_utc = _to_utc_aware(dt)
     elapsed = now - dt_utc
     elapsed_secs = elapsed.total_seconds()
     if elapsed_secs > 900:
