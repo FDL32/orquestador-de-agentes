@@ -689,6 +689,26 @@
       "data_sensitivity": "public",
       "backend_key": "BA252",
       "repo_scope": "destino"
+    },
+    "challenger_claude_opus_cli": {
+      "backend": "claude",
+      "channel": "agent",
+      "model": "opus",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA253",
+      "repo_scope": "destino"
+    },
+    "challenger_codex_sol_cli": {
+      "backend": "codex",
+      "channel": "agent",
+      "model": "gpt-6.1-sol",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA254",
+      "repo_scope": "destino"
     }
   },
   "ensemble_pipelines": {
@@ -1011,6 +1031,18 @@
       "BA252": {
         "backend": "claude",
         "model": "sonnet",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA253": {
+        "backend": "claude",
+        "model": "opus",
+        "backend_version": null,
+        "status": "active"
+      },
+      "BA254": {
+        "backend": "codex",
+        "model": "gpt-6.1-sol",
         "backend_version": null,
         "status": "active"
       }

@@ -79,6 +79,8 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA250 | anthropic_api | claude-haiku-5-5 | active |
 | BA251 | anthropic_api | claude-sonnet-5-5 | active |
 | BA252 | claude | sonnet | active |
+| BA253 | claude | opus | active |
+| BA254 | codex | gpt-6.1-sol | active |
 | BA30 | groq_api | qwen/qwen3.8-27b | active |
 | BA31 | groq_api | openai/gpt-oss-120b | active |
 | BA50 | openrouter_api | cohere/north-mini-code:free | active |

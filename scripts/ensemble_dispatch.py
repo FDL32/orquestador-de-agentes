@@ -557,6 +557,9 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("codex", None): "codex",
     ("claude", None): "claude",
     ("claude", "sonnet"): "claude",
+    # WOT-2026-142a: nuevas lentes CLI, misma familia que sus gemelos.
+    ("claude", "opus"): "claude",
+    ("codex", "gpt-6.1-sol"): "codex",
     # codex tiene filas HISTORICAS del scorecard (anteriores a la convencion
     # model=None) con el modelo real anotado -- verificado sobre el scorecard
     # real 2026-09-26: 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-luna',
