@@ -365,6 +365,16 @@ EXPECTED_WIRED_REAL = {
     # check_escalation_receipt_resolution arriba -- el guard se cableo en el
     # commit que lo introdujo y nadie actualizo este set despues.
     "check_settings_canonical_drift",
+    # WOT-2026-136d(A): cableado via import ESTATICO en
+    # scripts/closeout_steps/gates.py::step_roster_matches_acting_thread,
+    # invocado desde session_closeout.py::_step_roster_matches_acting_thread
+    # (closeout de agent_controller.py --session-close, bloqueante con FLIGHT_ROSTER_PATH
+    # exportado). Mismo patron que check_escalation_receipt_resolution y
+    # check_settings_canonical_drift arriba -- el guard se cableo en el commit que
+    # lo introdujo (00a01d84) y nadie actualizo este set despues; detectado como
+    # EXTRA por test_real_repo_wired_set_is_exactly_expected y corregido en
+    # WOT-2026-136j.
+    "check_roster_matches_acting_thread",
 }
 
 
