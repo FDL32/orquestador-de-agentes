@@ -49,6 +49,78 @@ def _run(dest: Path, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
+def _seeded_subject() -> str:
+    """Asunto sembrado: lleva TODOS los terminos de `FORBIDDEN_VERDICTS`.
+
+    Se calcula desde la lista viva para que anadir un termino no deje el control
+    positivo sin sembrar. Solo ASCII sin comillas ni barras: aparece IDENTICO en
+    markdown y en JSON, y `str.replace` lo quita sin depender del escapado.
+    """
+    from scripts.collect_session_state import FORBIDDEN_VERDICTS
+
+    return "WOT-2026-143d asunto sembrado " + " ".join(FORBIDDEN_VERDICTS)
+
+
+def _git_repo(root: Path, subject: str | None = None) -> Path:
+    """Repo git PROPIO con `origin/main` fijado en el commit base.
+
+    Con `subject`, deja ademas UN commit sin publicar (`origin/main..HEAD`) con ese
+    asunto: es lo que `collect_repo` vuelca en `unpushed` y `receipts`.
+
+    Hace falta tambien para el destino: el `tmp_path` de la corrida vive DENTRO del
+    worktree, asi que `git -C <destino>` sin repo propio resuelve al repo del motor
+    y filtra SU log. Aislar solo el motor no basta.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("init", "-q")
+    git("commit", "--allow-empty", "-q", "--no-verify", "-m", "base")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    if subject:
+        git("commit", "--allow-empty", "-q", "--no-verify", "-m", subject)
+    return root
+
+
+def _mk_seeded_pair(tmp_path: Path, name: str) -> tuple[Path, Path]:
+    """(motor, destino) sinteticos, cada uno con el asunto sembrado sin publicar."""
+    subject = _seeded_subject()
+    motor = _git_repo(tmp_path / f"{name}_motor", subject)
+    dest = _mkdest(_git_repo(tmp_path / f"{name}_dest", subject))
+    return motor, dest
+
+
+def _verdicts_in(blob: str) -> list[str]:
+    """Terminos de `FORBIDDEN_VERDICTS` presentes en `blob` (sin distinguir caso)."""
+    from scripts.collect_session_state import FORBIDDEN_VERDICTS
+
+    upper = blob.upper()
+    return [v for v in FORBIDDEN_VERDICTS if v.upper() in upper]
+
+
+def _scrub_seed(blob: str) -> str:
+    """Quita SOLO la cadena exacta del asunto sembrado; el resto sigue escaneado."""
+    return blob.replace(_seeded_subject(), "")
+
+
 def test_las_cuatro_piezas_existen(tmp_path):
     """D1+D5: sin el command, `/session-hop` no seria invocable como sus vecinos."""
     for piece in (SCRIPT, PROMPT, SKILL, COMMAND):
@@ -62,9 +134,10 @@ def test_recolector_no_emite_veredictos(tmp_path):
     Si el recolector empezara a clasificar, se convertiria en el juez que audita su
     propia recoleccion -- falso verde estructural.
     """
-    from scripts.collect_session_state import FORBIDDEN_VERDICTS
-
-    dest = _mkdest(tmp_path / "d1")
+    # Motor y destino SINTETICOS con un commit sin publicar cuyo asunto lleva todos
+    # los terminos: el log del repo real (que cambia con cada commit) ya no decide
+    # el resultado. El asunto sembrado es el unico texto que se descuenta.
+    motor, dest = _mk_seeded_pair(tmp_path, "d1")
 
     # LAS DOS RAMAS DE SALIDA, y el orden importa: markdown es el DEFECTO -- la que
     # un agente lee de verdad. La primera version de este test solo cubria `--json`
@@ -72,15 +145,44 @@ def test_recolector_no_emite_veredictos(tmp_path):
     # `render_markdown` y el test siguio verde). Un test que no ALCANZA la rama que
     # muta no clasifica nada: es el falso verde que el propio contrato persigue.
     for extra in ([], ["--json"]):
-        proc = _run(dest, *extra)
+        proc = _run(dest, "--motor-root", str(motor), *extra)
         assert proc.returncode == 0, proc.stderr
 
-        blob = proc.stdout.upper()
         rama = "json" if extra else "markdown"
-        for verdict in FORBIDDEN_VERDICTS:
-            assert verdict.upper() not in blob, (
-                f"veredicto filtrado en la salida ({rama}): {verdict}"
-            )
+        leaked = _verdicts_in(_scrub_seed(proc.stdout))
+        assert not leaked, f"veredicto filtrado en la salida ({rama}): {leaked}"
+
+
+def test_143d_el_escaneo_ve_el_asunto_sembrado_y_sigue_detectando(tmp_path):
+    """Control positivo de `test_recolector_no_emite_veredictos` (WOT-2026-143d).
+
+    El defecto original: el escaneo leia el log REAL del motor, y un asunto de commit
+    legitimo con la palabra `BLOQUEANTE` lo ponia rojo sin que el recolector juzgara.
+    Quitar solo el asunto exacto tiene el riesgo inverso -- un escaneo que ya no
+    puede ver nada --, asi que se demuestran las tres cosas a la vez:
+
+    1. la salida CRUDA contiene cada termino (el escaneo antiguo seria rojo),
+    2. con el asunto sembrado quitado no queda NINGUNO,
+    3. un veredicto anadido DESPUES sigue detectandose.
+    """
+    from scripts.collect_session_state import FORBIDDEN_VERDICTS
+
+    motor, dest = _mk_seeded_pair(tmp_path, "d143")
+    proc = _run(dest, "--motor-root", str(motor), "--json")
+    assert proc.returncode == 0, proc.stderr
+
+    # el recolector VIO el commit sembrado en ambos repos (no es un no-op por fixture)
+    repos = {r["role"]: r for r in json.loads(proc.stdout)["repos"]}
+    for role in ("repo_motor", "repo_destino"):
+        assert repos[role]["unpushed_count"] == 1, repos[role]
+
+    # (1) cruda: cada termino de la lista cerrada llega a la salida
+    assert _verdicts_in(proc.stdout) == list(FORBIDDEN_VERDICTS)
+    # (2) con el scrub exacto no queda ninguno
+    scrubbed = _scrub_seed(proc.stdout)
+    assert _verdicts_in(scrubbed) == []
+    # (3) el scrub no ciega el escaneo: un veredicto inyectado sigue saltando
+    assert _verdicts_in(scrubbed + "\nVEREDICTO: APROBADO\n") == ["APROBADO"]
 
 
 def test_contrato_de_fallo_arbol_no_sano_sigue_rc0(tmp_path):
@@ -370,18 +472,18 @@ def test_085a_control_negativo_backend_sano_no_se_declara(tmp_path):
 
 def test_085a_lista_de_veredictos_cerrada_sigue_pasando(tmp_path):
     """La seccion nueva NO declara veredictos: la lista cerrada sigue pasando."""
-    from scripts.collect_session_state import FORBIDDEN_VERDICTS
-
-    dest = _mkdest(tmp_path / "d_veredictos")
+    # Mismo aislamiento que `test_recolector_no_emite_veredictos`: motor y destino
+    # sinteticos con el asunto sembrado. El enlace sigue apuntando al motor real
+    # para que la seccion de cuarentena corra el codigo de verdad.
+    motor, dest = _mk_seeded_pair(tmp_path, "d_veredictos")
     _mk_link(dest)
     _mk_events(dest, [_quota_event()])
 
     for extra in ([], ["--json"]):
-        proc = _run(dest, *extra)
+        proc = _run(dest, "--motor-root", str(motor), *extra)
         assert proc.returncode == 0, proc.stderr
-        blob = proc.stdout.upper()
-        for verdict in FORBIDDEN_VERDICTS:
-            assert verdict.upper() not in blob, f"veredicto filtrado: {verdict}"
+        leaked = _verdicts_in(_scrub_seed(proc.stdout))
+        assert not leaked, f"veredicto filtrado: {leaked}"
 
 
 def test_slugs_de_memoria_se_verifican_antes_de_citarse(tmp_path):
