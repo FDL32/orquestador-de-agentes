@@ -10,10 +10,10 @@ nada verifica que el roster y el registry estan sincronizados.
 Antes: ``--roster-path`` o ``FLIGHT_ROSTER_PATH`` resuelven un roster de
 vuelo; ``--acting-thread`` dice quién actua; ``--registry-path`` el registro.
 During: lee el roster, el registro y (para la comprobacion b) los cambios;
-       ejecuta las 4 comprobaciones (a)-(d); solo lectura, no muta nada.
+       ejecuta las 6 comprobaciones (a)-(f); solo lectura, no muta nada.
 After:  exit 0 = PASS (sin violaciones); exit 1 = FAIL (violacion encontrada);
         exit 3 = N/A (no hay roster que comprobar). Cada violacion se nombra
-        con su checkpoint (a)-(d) y se imprime por stdout.
+        con su checkpoint (a)-(f) y se imprime por stdout.
 
 Contrato de estados (3, nunca texto):
   0 -> PASS: roster y acting_thread presentes y sin violaciones.
@@ -35,9 +35,11 @@ from pathlib import Path
 # Mapa canonico entre nombres de rol del roster y los de session_registry.json.
 # Fuente unica de nombres: un renombrado futuro (p.ej. "orquestador"->"coordinador")
 # solo requiere editar esta linea.
+# WOT-2026-136f: "supervisor" eliminado del mapeo canonico porque su threadId
+# se valida mediante check_identity_e y el helper supervisor_esperado, no via
+# session_registry.json (el supervisor no tiene entrada ACTIVA en el registry).
 _ROSTER_TO_REGISTRY_ROLE: dict[str, str] = {
     "orquestador": "orquestadora",
-    "supervisor": "supervisora",
 }
 
 # DEFAULT_ROLE se deriva del propio mapa (la primera clave), nunca un literal.
@@ -228,7 +230,7 @@ def check_pendiente_ack(
     During: checks estado=='PENDIENTE_ACK', looks for canonical transition lines.
     After: returns list of violation strings (empty if clean).
 
-    Extension NO literal del DoD (ACEPTADA por OR-8): si NO hay ninguna linea
+    Extension NO literal del DoD (aceptada): si NO hay ninguna linea
     canonica que explique el estado, se trata tambien como violacion.
     """
     role_entry = active_roles.get(role)
@@ -339,7 +341,7 @@ def check_roster_outdated(
 # --- Main ---
 
 
-def find_violations(
+def find_violations(  # noqa: C901
     roster_path: Path,
     acting_thread: str,
     registry_path: Path,
@@ -401,7 +403,228 @@ def find_violations(
     violations.extend(d_violations)
     notes.extend(d_notes)
 
+    # (e) Supervisor identity (WOT-2026-136f)
+    if isinstance(active_roles, dict):
+        violations.extend(check_identity_e(active_roles, roster, acting_thread))
+
+    # (f) Cascada integrity: orquestador and supervisor not in cascada (WOT-2026-136f)
+    if isinstance(active_roles, dict):
+        violations.extend(check_cascada_f(active_roles, roster))
+
     return violations, notes
+
+
+# --- Supervisor helpers (WOT-2026-136f) ---
+
+
+def supervisor_esperado(roster: dict) -> str:
+    """Determinar el threadId esperado del supervisor desde el predecesor.
+
+    Before: roster es el diccionario completo del flight_roster.json.
+    During: si hay excepcion_supervisor vigente (coordinadora_threadId ==
+            orquestador.threadId), retorna el supervisor_threadId de la
+            excepcion. Si no, retorna el predecessor del orquestador.
+    After: threadId esperado como str, o "indeterminado" si no puede derivarse.
+    """
+    ar = roster.get("active_roles")
+    if not isinstance(ar, dict):
+        return "indeterminado"
+    orq = ar.get("orquestador")
+    if not isinstance(orq, dict):
+        return "indeterminado"
+    orq_thread = orq.get("threadId", "")
+
+    # Check for active exception_supervisor (coordinadora = orquestador activo).
+    exc = roster.get("excepcion_supervisor")
+    if isinstance(exc, dict):
+        exc_coord = exc.get("coordinadora_threadId", "")
+        exc_sup = exc.get("supervisor_threadId", "")
+        if exc_coord == orq_thread and exc_sup:
+            return exc_sup
+
+    pred = orq.get("predecessor_threadId", "")
+    if not isinstance(pred, str):
+        return "indeterminado"
+    if not pred or not pred.startswith("mcp:"):
+        return "indeterminado"
+    return pred
+
+
+def check_identity_e(  # noqa: C901
+    active_roles: dict, roster: dict, acting_thread: str
+) -> list[str]:
+    """Checkpoint (e): supervisor identity matches expected.
+
+    Validates that the supervisor in active_roles matches what is expected
+    from the orquestador's predecessor. If the supervisor is the same as the
+    orquestador, it is a violation (closed failure).
+
+    Before: active_roles and roster from the roster dict.
+    During: checks that supervisor.threadId matches supervisor_esperado()
+            or that no exception_supervisor is recorded.
+    After: list of violation strings (empty if clean).
+    """
+    ar = active_roles
+    if not isinstance(ar, dict):
+        return []  # Other checks will catch this
+
+    sup = ar.get("supervisor")
+    if sup is None:
+        return []  # No supervisor field -> nothing to validate
+
+    if not isinstance(sup, dict):
+        return [
+            "(e) active_roles.supervisor no es un mapping: "
+            "identidad de supervisor no verificable"
+        ]
+
+    sup_thread = sup.get("threadId", "")
+    if not isinstance(sup_thread, str):
+        return ["(e) supervisor.threadId no es una cadena"]
+
+    orq = ar.get("orquestador")
+    if not isinstance(orq, dict):
+        return ["(e) active_roles.orquestador no es un mapping"]
+
+    orq_thread = orq.get("threadId", "")
+
+    # Closed failure: supervisor == orquestador
+    if sup_thread == orq_thread:
+        return [
+            f"(e) supervisor == orquestador activo: '{sup_thread}' "
+            f"no puede ser el supervisor"
+        ]
+
+    # Shape of excepcion_supervisor: always VIOLATION when malformed, even if
+    # the supervisor matches the predecessor and even if the expected one is
+    # indeterminate. The check goes BEFORE taking the expected.
+    if "excepcion_supervisor" in roster:
+        exc = roster["excepcion_supervisor"]
+        if not isinstance(exc, dict):
+            return [
+                "(e) excepcion_supervisor presente pero no es un mapping: "
+                "valor no mapeable en el roster"
+            ]
+        # Well-formedness: all four fields must be present and non-empty strings.
+        exc_fields = ("coordinadora_threadId", "supervisor_threadId", "motivo", "desde")
+        for field in exc_fields:
+            val = exc.get(field)
+            if not isinstance(val, str) or not val:
+                return [
+                    "(e) excepcion_supervisor mal formada: "
+                    "los cuatro campos (coordinadora_threadId, supervisor_threadId, "
+                    "motivo, desde) deben ser strings no vacios"
+                ]
+
+    expected = supervisor_esperado(roster)
+    if expected == "indeterminado":
+        return []  # Cannot determine expected supervisor
+
+    # Exception mode: validate exception is well-formed and the supervisor
+    # matches the supervisor_threadId of the exception.
+    exc = roster.get("excepcion_supervisor")
+    if isinstance(exc, dict):
+        # The exception is well-formed here (checked before the expected).
+        # The supervisor must match
+        # supervisor_threadId of the exception (which supervisor_esperado
+        # already validated against the active coordinadora).
+        if expected != "indeterminado" and sup_thread == expected:
+            return []  # Exception is valid and supervisor matches.
+        # Exception exists but supervisor does not match the expected one.
+        exc_sup = exc.get("supervisor_threadId", "")
+        return [
+            f"(e) excepcion vigente: el supervisor esperado es "
+            f"'{exc_sup}', no '{sup_thread}'"
+        ]
+
+    # Normal mode: supervisor must match expected predecessor.
+    if sup_thread != expected:
+        return [
+            f"(e) supervisor '{sup_thread}' no coincide con el esperado "
+            f"'{expected}' (predecesor del orquestador)"
+        ]
+
+    return []
+
+
+def check_cascada_f(  # noqa: C901
+    active_roles: dict,
+    roster: dict,
+) -> list[str]:
+    """Checkpoint (f): orquestador and active supervisor not in their own cascada.
+
+    Validates that both the orquestador's threadId and the active supervisor's
+    threadId do not appear in the cascada de contexto list at first level
+    of the roster. If either does, the supervisor chain is broken.
+
+    Before: active_roles from the roster dict; roster is the full roster dict.
+    During: checks that orquestador.threadId and supervisor.threadId are not
+        in cascada entries, validates cascada is a list, and each element
+        is a mapping with a threadId.
+    After: list of violation strings (empty if clean).
+    """
+    ar = active_roles
+    if not isinstance(ar, dict):
+        return []
+
+    # Read cascada from first level of roster (not nested under orquestador).
+    cascada = roster.get("cadena_contexto") if isinstance(roster, dict) else None
+    if cascada is None:
+        return []  # No cascada to check
+
+    if not isinstance(cascada, list):
+        orq = ar.get("orquestador")
+        orq_thread = orq.get("threadId", "") if isinstance(orq, dict) else "?"
+        return [
+            f"(f) orquestador '{orq_thread}': cadena_contexto no es lista "
+            f"(no se puede verificar integridad de cascada)"
+        ]
+
+    for entry in cascada:
+        if not isinstance(entry, dict):
+            orq = ar.get("orquestador")
+            orq_thread = orq.get("threadId", "") if isinstance(orq, dict) else "?"
+            return [
+                f"(f) orquestador '{orq_thread}': elemento de cadena "
+                f"no es un mapping (no se puede verificar threadId)"
+            ]
+        if "threadId" not in entry:
+            orq = ar.get("orquestador")
+            orq_thread = orq.get("threadId", "") if isinstance(orq, dict) else "?"
+            return [
+                f"(f) orquestador '{orq_thread}': elemento de cadena "
+                f"sin threadId (cadena incompleta)"
+            ]
+
+    violations: list[str] = []
+
+    # Check that orquestador is not in its own cascada.
+    orq = ar.get("orquestador")
+    if isinstance(orq, dict):
+        orq_thread = orq.get("threadId", "")
+        if isinstance(orq_thread, str):
+            for entry in cascada:
+                if isinstance(entry, dict) and entry.get("threadId") == orq_thread:
+                    violations.append(
+                        f"(f) orquestador '{orq_thread}' ya figura en su "
+                        f"propia cadena de contexto"
+                    )
+                    break
+
+    # Check that the active supervisor is not in the cascada.
+    sup = ar.get("supervisor")
+    if isinstance(sup, dict):
+        sup_thread = sup.get("threadId", "")
+        if isinstance(sup_thread, str):
+            for entry in cascada:
+                if isinstance(entry, dict) and entry.get("threadId") == sup_thread:
+                    violations.append(
+                        f"(f) supervisor '{sup_thread}' ya figura en la "
+                        f"cadena de contexto"
+                    )
+                    break
+
+    return violations
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

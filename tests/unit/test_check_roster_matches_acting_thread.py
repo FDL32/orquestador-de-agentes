@@ -791,11 +791,9 @@ def test_8_ter_checkpoint_c_second_singleton(tmp_path: Path) -> None:
         registry_path=str(registry_p),
         changes_log=str(changes_p),
     )
-    assert rc == 1, (
-        f"Expected FAIL (exit 1) for dual ACTIVA supervisora, got {rc}: {stdout}"
-    )
-    assert "(c)" in stdout or "supervisora" in stdout.lower(), (
-        f"Violation should mention checkpoint (c) or supervisora: {stdout}"
+    # supervisor no longer in registry role map (WOT-2026-136f) -> PASS
+    assert rc == 0, (
+        f"Expected PASS (supervisor no longer in registry map), got {rc}: {stdout}"
     )
 
 
@@ -1005,19 +1003,61 @@ def test_13_integration_fail_pre_or7() -> None:
     assert "(d) roster desactualizado" in stdout, f"pre_or7 must mention (d): {stdout}"
 
 
+def _make_corrected_fixture_copy(tmp_path: Path, fixture_dir: Path) -> Path:
+    """Build a copy of the CORRECTED roster on tmp_path with the supervisor's
+    threadId matching the orquestador's predecessor_threadId, so that check (e)
+    passes.  The original fixture is NEVER modified.
+
+    Returns the path to the copied roster.  Also copies the registry and
+    changes_log so the test can run the guard against the tmp_path copies.
+    """
+    import copy
+
+    roster_raw = json.loads(
+        (fixture_dir / "flight_roster.json").read_text(encoding="utf-8")
+    )
+    roster_data = copy.deepcopy(roster_raw)
+    pred = roster_data["active_roles"]["orquestador"].get("predecessor_threadId", "")
+    if pred:
+        roster_data["active_roles"]["supervisor"]["threadId"] = pred
+
+    roster_p = tmp_path / "flight_roster.json"
+    roster_p.write_text(
+        json.dumps(roster_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    # Also copy registry and changes_log so the guard sees real data.
+    for name in ("session_registry.json", "roster_changes.jsonl"):
+        src = fixture_dir / name
+        dst = tmp_path / name
+        if src.exists():
+            dst.write_bytes(src.read_bytes())
+        else:
+            _write_tmp_json(dst, {"sessions": []} if name.endswith(".json") else {})
+
+    return roster_p
+
+
 # --- Test 14: Integration PASS - corrected fixture ---
 
 
-def test_14_integration_pass_corrected() -> None:
-    """Test 14: integration PASS against corrected fixture."""
+def test_14_integration_pass_corrected(tmp_path: Path) -> None:
+    """Test 14: integration PASS against a corrected-copy fixture.
+
+    The original CORRECTED fixture has supervisor.threadId != orquestador
+    predecessor_threadId, so check (e) would give VIOLATION.  We build a
+    tmp_path copy where the supervisor is set to the predecessor, per the
+    rotation invariant.  The original fixture is NOT touched.
+    """
+    roster_p = _make_corrected_fixture_copy(tmp_path, CORRECTED)
     rc, stdout, stderr = _run_guard(
-        roster_path=str(CORRECTED / "flight_roster.json"),
+        roster_path=str(roster_p),
         acting_thread="mcp:corrected-thread-001",
-        registry_path=str(CORRECTED / "session_registry.json"),
-        changes_log=str(CORRECTED / "roster_changes.jsonl"),
+        registry_path=str(tmp_path / "session_registry.json"),
+        changes_log=str(tmp_path / "roster_changes.jsonl"),
     )
     assert rc == 0, (
-        f"Expected PASS (exit 0) for corrected, got {rc}: {stdout}\n{stderr}"
+        f"Expected PASS (exit 0) for corrected copy, got {rc}: {stdout}\n{stderr}"
     )
 
 
@@ -1091,29 +1131,36 @@ def test_17_no_hardcoded_session_ids() -> None:
 
 
 def test_18_authority_blocks_do_not_affect_result(tmp_path: Path) -> None:
-    """Test 18: modifying authority/cadena_consulta blocks should not change guard verdict."""
-    # Base: corrected fixture without authority blocks
+    """Test 18: modifying authority/cadena_consulta blocks should not change guard verdict.
+
+    Uses the same tmp_path corrected-copy fixture as test_14 via the shared
+    helper, ensuring a consistent base rc (must be 0) before adding authority.
+    """
+    roster_p = _make_corrected_fixture_copy(tmp_path, CORRECTED)
+
+    # Base: corrected copy without authority blocks
     rc_base, _, _ = _run_guard(
-        roster_path=str(CORRECTED / "flight_roster.json"),
+        roster_path=str(roster_p),
         acting_thread="mcp:corrected-thread-001",
-        registry_path=str(CORRECTED / "session_registry.json"),
-        changes_log=str(CORRECTED / "roster_changes.jsonl"),
+        registry_path=str(tmp_path / "session_registry.json"),
+        changes_log=str(tmp_path / "roster_changes.jsonl"),
     )
+    assert rc_base == 0, f"Base corrected copy must pass (rc 0), got {rc_base}"
 
     # With authority block added
     registry_data = {
         "sessions": [
             {
-                "code": "OR-7",
+                "code": "orq-previo",
                 "role": "orquestadora",
                 "slot": "orquestadora-1",
                 "threadId": "mcp:corrected-thread-001",
                 "started": "2026-10-29T10:00:00+01:00",
                 "status": "ACTIVA",
-                "supersedes": "OR-6",
+                "supersedes": "co-antigua",
                 "autoridad": {
-                    "quien_decisione": "SUPERVISOR-2",
-                    "cadena_consulta": ["IM-1"],
+                    "quien_decisione": "autoridad-titular",
+                    "cadena_consulta": ["sup-nuevo"],
                 },
             }
         ]
@@ -1122,10 +1169,10 @@ def test_18_authority_blocks_do_not_affect_result(tmp_path: Path) -> None:
     _write_tmp_json(registry_p, registry_data)
 
     rc_with_auth, _, _ = _run_guard(
-        roster_path=str(CORRECTED / "flight_roster.json"),
+        roster_path=str(roster_p),
         acting_thread="mcp:corrected-thread-001",
         registry_path=str(registry_p),
-        changes_log=str(CORRECTED / "roster_changes.jsonl"),
+        changes_log=str(tmp_path / "roster_changes.jsonl"),
     )
 
     assert rc_base == rc_with_auth, (
@@ -1193,6 +1240,773 @@ def test_21_active_roles_absent_or_null(tmp_path: Path) -> None:
     assert rc == 1, f"Expected FAIL (exit 1), got {rc}: {stdout}"
     assert "rol 'orquestador' ausente en active_roles" in stdout, (
         f"Must report identity-not-verifiable when active_roles is not a dict: {stdout}"
+    )
+
+
+# --- WOT-2026-136f: checks (e), (f), supervisor_esperado, zero-literals ---
+
+
+def test_136f_e_supervisor_eq_orquestador_violation(tmp_path: Path) -> None:
+    """(e): supervisor == orquestador activo -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-7",
+                "predecessor_threadId": "mcp:CO-6",
+                "version": 3,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = orquestador
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-7",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(e)" in stdout
+
+
+def test_136f_e_supervisor_eq_predecessor_pass(tmp_path: Path) -> None:
+    """(e): supervisor = predecessor del orquestador -> rc 0."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 0, f"Expected PASS, got {rc}: {stdout}"
+
+
+def test_136f_e_supervisor_ne_predecessor_violation(tmp_path: Path) -> None:
+    """(e): supervisor != predecessor (cabeza vieja del roster real) -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OLD-HEAD",  # != predecessor
+                "session_code": "OLD",
+                "version": 3,
+                "status": "active",
+            },
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(e)" in stdout
+
+
+def test_136f_e_exception_vigente_pass(tmp_path: Path) -> None:
+    """(e): supervisor = supervisor_threadId de excepcion vigente -> rc 0."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:EXCEPTION-SUP",
+                "session_code": "EXC",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "mcp:OR-8",  # = orquestador activo -> vigente
+            "supervisor_threadId": "mcp:EXCEPTION-SUP",
+            "motivo": "supervisor efectivo",
+            "desde": "2026-10-01T00:00:00+00:00",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 0, f"Expected PASS with active exception, got {rc}: {stdout}"
+
+
+def test_136f_e_exception_caducada_violation(tmp_path: Path) -> None:
+    """(e): excepcion caducada (coordinadora cambió) -> VIOLATION si supervisor != nuevo predecesor."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-9",  # nuevo orquestador
+                "predecessor_threadId": "mcp:OR-8",
+                "version": 5,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "EXCEPTION-SUP",
+                "session_code": "EXC",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "mcp:OR-8",  # != orquestador activo -> caducada
+            "supervisor_threadId": "EXCEPTION-SUP",
+            "motivo": "old exception",
+            "desde": "2026-01-01",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-9",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected FAIL with expired exception, got {rc}: {stdout}"
+    assert "(e)" in stdout
+
+
+def test_136f_e_exception_malformed_violation(tmp_path: Path) -> None:
+    """(e): excepcion mal formada (campo vacio) -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "SOME-SUP",
+                "session_code": "S",
+                "version": 1,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "",  # vacio -> mal formada
+            "supervisor_threadId": "SOME-SUP",
+            "motivo": "test",
+            "desde": "2026-01-01",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(e)" in stdout
+
+
+def test_136f_e_no_predecessor_no_exception_note(tmp_path: Path) -> None:
+    """(e): sin predecessor ni excepcion -> nota, no VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-7",
+                # sin predecessor_threadId
+                "version": 3,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "SUPER-1",
+                "session_code": "S1",
+                "version": 1,
+                "status": "active",
+            },
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-7",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # Nota, no VIOLATION -> rc=0
+    assert rc == 0, f"Expected PASS (note only), got {rc}: {stdout}"
+
+
+def test_136f_e_roster_sin_supervisor_note(tmp_path: Path) -> None:
+    """(e): roster sin supervisor -> nota, no VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-7",
+                "predecessor_threadId": "mcp:CO-6",
+                "version": 3,
+                "status": "active",
+            },
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-7",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    # Nota (sin supervisor), no VIOLATION
+    assert rc == 0, f"Expected PASS (note), got {rc}: {stdout}"
+
+
+def test_136f_e_active_roles_supervisor_not_mapping(tmp_path: Path) -> None:
+    """(e): active_roles.supervisor no es mapping -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {"threadId": "mcp:OR-7", "version": 1, "status": "active"},
+            "supervisor": "not-a-mapping",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-7",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(e)" in stdout
+
+
+def test_136f_f_cadena_no_es_lista(tmp_path: Path) -> None:
+    """(f): cadena_contexto no es lista -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": "not-a-list",
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(f)" in stdout
+
+
+def test_136f_f_elemento_sin_threadid(tmp_path: Path) -> None:
+    """(f): elemento de cadena sin threadId -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": [
+            {"session_code": "BAD", "hasta": "2026-01-01"}  # no threadId
+        ],
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(f)" in stdout
+
+
+def test_136f_f_supervisor_en_cadena(tmp_path: Path) -> None:
+    """(f): supervisor activo figura en cadena_contexto -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": [
+            {
+                "threadId": "mcp:OR-7",
+                "session_code": "OR7",
+                "hasta": "2026-01-01",
+            },
+            {
+                "threadId": "mcp:OR-8",
+                "session_code": "OR8",
+                "hasta": "2026-01-02",
+            },
+        ],
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(f)" in stdout
+
+
+def test_136f_f_orquestador_en_cadena(tmp_path: Path) -> None:
+    """(f): orquestador activo figura en cadena_contexto -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OLD-SUP",
+                "session_code": "OLD",
+                "version": 3,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": [
+            {
+                "threadId": "mcp:OR-8",
+                "session_code": "OR8",
+                "hasta": "2026-01-01",
+            }
+        ],
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(f)" in stdout
+
+
+def test_136f_e_supervisor_with_role_builder(tmp_path: Path) -> None:
+    """(e)/(f): check_e/f leen siempre de active_roles['orquestador'], no del rol pasado."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "WRONG-SUP",  # != expected for orquestador
+                "session_code": "WRONG",
+                "version": 1,
+                "status": "active",
+            },
+            "builder": {"threadId": "mcp:builder-thread"},
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:builder-thread",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+        role="builder",  # pasamos builder, pero (e) lee de orquestador
+    )
+    # (e) debe leer de active_roles['orquestador'] y detectar VIOLATION
+    assert rc == 1
+    assert "(e)" in stdout
+
+
+def test_136f_f_cadena_valida_sin_violacion(tmp_path: Path) -> None:
+    """(f): cadena_contexto valida (sin supervisor ni orquestador) -> rc 0."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = predecessor -> (e) pasa
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": [
+            {"threadId": "OLD-SUP", "session_code": "OLD", "hasta": "2026-01-01"}
+            # neither supervisor (OR-7) nor orquestador (OR-8)
+        ],
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 0, f"Expected PASS with clean chain, got {rc}: {stdout}"
+
+
+def test_136f_helper_supervisor_esperado(tmp_path: Path) -> None:
+    """Test helper supervisor_esperado: returns expected threadId from predecessor or exception."""
+    from scripts.check_roster_matches_acting_thread import supervisor_esperado
+
+    # With predecessor: returns predecessor_threadId
+    roster_with_pred = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+            },
+        },
+    }
+    result = supervisor_esperado(roster_with_pred)
+    assert result == "mcp:OR-7"
+
+    # With active exception: returns exception.supervisor_threadId
+    roster_with_exc = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "mcp:OR-8",
+            "supervisor_threadId": "EXCEPTION-SUP",
+            "motivo": "test",
+            "desde": "2026-01-01",
+        },
+    }
+    result = supervisor_esperado(roster_with_exc)
+    assert result == "EXCEPTION-SUP"
+
+    # No predecessor, no exception: returns "indeterminado"
+    roster_no_pred = {
+        "active_roles": {
+            "orquestador": {"threadId": "mcp:OR-7"},
+        },
+    }
+    result = supervisor_esperado(roster_no_pred)
+    assert result == "indeterminado"
+
+
+def test_136f_e2_excepcion_missing_fields(tmp_path: Path) -> None:
+    """(e): excepcion_supervisor sin todos los campos -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "SOME-SUP",
+                "session_code": "S",
+                "version": 1,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "motivo": "incomplete",
+            # missing coordinadora_threadId, supervisor_threadId, desde
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(e)" in stdout
+
+
+def test_136f_f_cadena_elemento_no_mapping(tmp_path: Path) -> None:
+    """(f): elemento de cadena no es mapping -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": ["not-a-dict"],
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1
+    assert "(f)" in stdout
+
+
+def test_136f_chain_consistency_note(tmp_path: Path) -> None:
+    """Registro con cadena divergente -> nota, no VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "rules": {},
+    }
+    registry_data = {
+        "cadena_consulta": {
+            "desde_orquestador": [
+                {"pos": 0, "threadId": "DIFFERENT-HEAD"}
+            ]  # diverges from roster supervisor
+        }
+    }
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 0, f"Expected PASS with note only, got {rc}: {stdout}"
+    assert "Notas declarativas" in stdout
+
+
+def test_136f_zero_literals_guard() -> None:
+    """DoD 4: guard source has zero session IDs."""
+    import re
+
+    guard_path = _SCRIPTS_DIR / "check_roster_matches_acting_thread.py"
+    content = guard_path.read_text(encoding="utf-8")
+
+    session_re = re.compile(r"\b(SUPERVISOR|OR|CO|IM|TR)-[0-9]+(\.[0-9]+)?\b")
+    matches = session_re.findall(content)
+    assert len(matches) == 0, (
+        f"Guard source must not contain session IDs, found {len(matches)}: {matches}"
     )
 
 
@@ -1482,7 +2296,7 @@ def test_27_dod4_special_char_role(tmp_path: Path) -> None:
     registry_data = {
         "sessions": [
             {
-                "code": "IM-1",
+                "code": "mcp:IM-1",
                 "role": "implantacion",
                 "slot": "s1",
                 "threadId": "mcp:special-thread",
@@ -1508,5 +2322,607 @@ def test_27_dod4_special_char_role(tmp_path: Path) -> None:
     # After fix: rc=0, no "(b) ... sin linea canonica"
     assert rc == 0, f"Expected PASS (exit 0) for special char role, got {rc}: {stdout}"
     assert "sin linea canonica" not in stdout, (
-        f"Should NOT mention 'sin linea canonica' for special char role: {stdout}"
+        f"Should NOT mention 'sin linea canonica' when ts exists: {stdout}"
     )
+
+
+# --- R2/R3: Manager-mandated tests for third pass ---
+
+
+def test_r2_exception_vigente_supervisor_wrong(tmp_path: Path) -> None:
+    """R2: supervisor distinto del supervisor_threadId de excepcion vigente -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "WRONG-SUP",  # != EXCEPTION-SUP
+                "session_code": "WRG",
+                "version": 1,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "mcp:OR-8",  # vigente
+            "supervisor_threadId": "EXCEPTION-SUP",
+            "motivo": "test",
+            "desde": "2026-01-01",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected VIOLATION with wrong supervisor, got {rc}: {stdout}"
+    assert "(e)" in stdout
+
+
+def test_r2_exception_caducada_supervisor_wrong(tmp_path: Path) -> None:
+    """R2: excepcion caducada + supervisor != nuevo predecesor -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-9",  # nuevo orquestador
+                "predecessor_threadId": "mcp:OR-8",  # nuevo predecesor
+                "version": 5,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "OLD-SUP",  # != mcp:OR-8 (nuevo predecesor)
+                "session_code": "OLD",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "mcp:OR-8",  # != mcp:OR-9 -> caducada
+            "supervisor_threadId": "OLD-SUP",
+            "motivo": "old",
+            "desde": "2026-01-01",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-9",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected VIOLATION with expired exception, got {rc}: {stdout}"
+    assert "(e)" in stdout
+
+
+def test_r2_exception_vacia_kave_violation(tmp_path: Path) -> None:
+    """R2: excepcion con campo vacio -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "SOME-SUP",
+                "session_code": "S",
+                "version": 1,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "mcp:OR-8",
+            "supervisor_threadId": "",  # vacio -> mal formada
+            "motivo": "test",
+            "desde": "2026-01-01",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected VIOLATION for empty field, got {rc}: {stdout}"
+    assert "(e)" in stdout
+
+
+def test_r2_non_mapping_excepcion_violation(tmp_path: Path) -> None:
+    """R2/T5: excepcion_supervisor no es mapping -> VIOLATION (even with correct supervisor).
+
+    Strengthened for T5: the supervisor IS the correct predecessor, so the
+    violation is caused by the non-mapping excepcion rule (checked before
+    supervisor_esperado), NOT by supervisor != expected.
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = correct predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": "not-a-mapping",
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected VIOLATION for non-mapping exception, got {rc}: {stdout}"
+    assert "(e)" in stdout
+
+
+def test_r2_role_builder_with_wrong_supervisor(tmp_path: Path) -> None:
+    """R2: invocacion con --role builder sobre roster con supervisor erroneo -> VIOLATION."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "WRONG-SUP",  # != expected
+                "session_code": "WRG",
+                "version": 1,
+                "status": "active",
+            },
+            "builder": {"threadId": "mcp:builder-thread"},
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:builder-thread",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+        role="builder",
+    )
+    assert rc == 1, f"Expected VIOLATION with --role builder, got {rc}: {stdout}"
+    assert "(e)" in stdout
+
+
+def test_r3_supervisor_active_in_cascada(tmp_path: Path) -> None:
+    """R3: supervisor activo figura en cascada -> VIOLATION (check (f))."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:SUPERVISOR-ACTIVE",
+                "session_code": "SUPER",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": [
+            {
+                "threadId": "mcp:SUPERVISOR-ACTIVE",  # = supervisor activo
+                "session_code": "SUP",
+                "hasta": "2026-01-01",
+            }
+        ],
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected VIOLATION, got {rc}: {stdout}"
+    assert "(f)" in stdout
+
+
+# --- T4: Guard own rule (supervisor == orquestador) ---
+
+
+def test_t4_guard_own_rule_supervisor_eq_orquestador_same_threadid(tmp_path: Path):
+    """T4: roster where predecessor_threadId, threadId, and supervisor.threadId are the SAME mcp: value.
+
+    In this scenario, supervisor_esperado returns "indeterminado" (no predecessor distinct from current),
+    so check_identity_e must still detect supervisor == orquestador via its OWN rule (e) and return
+    VIOLATION with the specific text '(e) supervisor == orquestador'.
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:UNIQUE-ID",
+                "predecessor_threadId": "mcp:UNIQUE-ID",  # = orquestador threadId
+                "version": 3,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:UNIQUE-ID",  # = orquestador threadId = predecessor
+                "session_code": "UNIQUE",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:UNIQUE-ID",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, f"Expected VIOLATION, got {rc}: {stdout}"
+    assert "(e)" in stdout, f"Must contain (e) marker: {stdout}"
+    assert "supervisor == orquestador" in stdout, (
+        f"Must contain the own rule text '(e) supervisor == orquestador': {stdout}"
+    )
+
+
+# --- T5: Non-mapping excepcion_supervisor always triggers VIOLATION ---
+
+
+def test_t5_excepcion_supervisor_string_violation(tmp_path: Path):
+    """T5: excepcion_supervisor present as string -> VIOLATION even with correct supervisor.
+
+    The key for T5: the supervisor IS the correct predecessor, and the expected
+    would be the predecessor, but a non-mapping excepcion_supervisor must still
+    trigger VIOLATION (the check goes BEFORE taking the expected).
+    """
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = correct predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": "not-a-mapping",  # string -> must trigger VIOLATION
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, (
+        f"Expected VIOLATION for string excepcion_supervisor, got {rc}: {stdout}"
+    )
+    assert "(e)" in stdout
+
+
+def test_t5_excepcion_supervisor_null_violation(tmp_path: Path):
+    """T5: excepcion_supervisor present as JSON null -> VIOLATION even with correct supervisor."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = correct predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": None,  # null -> must trigger VIOLATION
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, (
+        f"Expected VIOLATION for null excepcion_supervisor, got {rc}: {stdout}"
+    )
+    assert "(e)" in stdout
+
+
+def test_t5_excepcion_supervisor_list_violation(tmp_path: Path):
+    """T5: excepcion_supervisor present as list -> VIOLATION even with correct supervisor."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = correct predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": ["not-a-dict"],  # list -> must trigger VIOLATION
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, (
+        f"Expected VIOLATION for list excepcion_supervisor, got {rc}: {stdout}"
+    )
+    assert "(e)" in stdout
+
+
+def test_t5_excepcion_supervisor_number_violation(tmp_path: Path):
+    """T5: excepcion_supervisor present as number -> VIOLATION even with correct supervisor."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = correct predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": 42,  # number -> must trigger VIOLATION
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 1, (
+        f"Expected VIOLATION for number excepcion_supervisor, got {rc}: {stdout}"
+    )
+    assert "(e)" in stdout
+
+
+def test_t5_excepcion_supervisor_correct_no_issue(tmp_path: Path):
+    """T5: excepcion_supervisor IS a mapping and well-formed + correct supervisor -> no violation."""
+    roster_data = {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:OR-8",
+                "predecessor_threadId": "mcp:OR-7",
+                "version": 4,
+                "status": "active",
+            },
+            "supervisor": {
+                "threadId": "mcp:OR-7",  # = correct predecessor
+                "session_code": "OR7",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {
+            "coordinadora_threadId": "mcp:OR-8",
+            "supervisor_threadId": "mcp:OR-7",
+            "motivo": "valid reason",
+            "desde": "2026-01-01",
+        },
+        "rules": {},
+    }
+    registry_data = {"sessions": []}
+    roster_p = tmp_path / "roster.json"
+    registry_p = tmp_path / "registry.json"
+    changes_p = tmp_path / "changes.jsonl"
+    _write_tmp_json(roster_p, roster_data)
+    _write_tmp_json(registry_p, registry_data)
+    _write_tmp_json(changes_p, {})
+
+    rc, stdout, _ = _run_guard(
+        roster_path=str(roster_p),
+        acting_thread="mcp:OR-8",
+        registry_path=str(registry_p),
+        changes_log=str(changes_p),
+    )
+    assert rc == 0, f"Expected PASS with valid mapping excepcion, got {rc}: {stdout}"
+
+
+def _roster_excepcion_mal_formada(con_predecesor: bool) -> dict:
+    """Build a roster whose excepcion_supervisor is a mapping without its fields.
+
+    Before: none. During: builds an inline roster (no shared fixture) where
+    the supervisor equals the orchestrator predecessor, so only the shape of
+    the exception can make the guard fail. After: returns the roster dict;
+    without predecessor the expected supervisor is indeterminate.
+    """
+    orq = {
+        "threadId": "mcp:orq-actual",
+        "version": 4,
+        "status": "active",
+    }
+    if con_predecesor:
+        orq["predecessor_threadId"] = "mcp:sup-previo"
+    return {
+        "active_roles": {
+            "orquestador": orq,
+            "supervisor": {
+                "threadId": "mcp:sup-previo",
+                "session_code": "sp",
+                "version": 2,
+                "status": "active",
+            },
+        },
+        "excepcion_supervisor": {"motivo": "x"},
+        "rules": {},
+    }
+
+
+def test_a1_excepcion_mal_formada_con_esperado_indeterminado_es_violation():
+    """M-A: a malformed mapping exception is a VIOLATION even if expected is indeterminate.
+
+    Before: orchestrator without predecessor and exception lacking its fields.
+    During: calls check_identity_e directly (the expected supervisor cannot be
+    resolved, which used to short-circuit the shape check).
+    After: the result is non-empty and names the malformed exception.
+    """
+    from scripts.check_roster_matches_acting_thread import check_identity_e
+
+    roster = _roster_excepcion_mal_formada(con_predecesor=False)
+    out = check_identity_e(roster["active_roles"], roster, "mcp:orq-actual")
+    assert out, "guard returned no violation for a malformed exception"
+    assert any("mal formada" in v for v in out), out
+
+
+def test_a2_excepcion_mal_formada_con_predecesor_sigue_siendo_violation():
+    """Control for M-A: with a predecessor the malformed exception was already caught."""
+    from scripts.check_roster_matches_acting_thread import check_identity_e
+
+    roster = _roster_excepcion_mal_formada(con_predecesor=True)
+    out = check_identity_e(roster["active_roles"], roster, "mcp:orq-actual")
+    assert any("mal formada" in v for v in out), out
+
+
+def _active_roles_for_cascada() -> dict:
+    """Return an active_roles mapping whose threadIds are distinct and neutral."""
+    return {
+        "orquestador": {"threadId": "mcp:orq-actual", "version": 4, "status": "active"},
+        "supervisor": {"threadId": "mcp:sup-previo", "version": 2, "status": "active"},
+    }
+
+
+def test_f_cadena_null_es_ausente_sin_violacion():
+    """(f): cadena_contexto null is treated as absent (no violation, no crash).
+
+    Contract fixed with the writer: the writer treats null as absent too, so the
+    guard and the writer agree on this shape.
+    """
+    from scripts.check_roster_matches_acting_thread import check_cascada_f
+
+    roster = {"active_roles": _active_roles_for_cascada(), "cadena_contexto": None}
+    assert check_cascada_f(roster["active_roles"], roster) == []
+
+
+@pytest.mark.parametrize("bad", [{"a": 1}, 5, "corrupta"])
+def test_f_cadena_no_lista_es_violation_directa(bad):
+    """(f): a present cadena_contexto that is not a list (dict/int/str) is a VIOLATION."""
+    from scripts.check_roster_matches_acting_thread import check_cascada_f
+
+    roster = {"active_roles": _active_roles_for_cascada(), "cadena_contexto": bad}
+    out = check_cascada_f(roster["active_roles"], roster)
+    assert out
+    assert any("no es lista" in v for v in out), out

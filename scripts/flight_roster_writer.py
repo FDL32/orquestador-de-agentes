@@ -49,6 +49,27 @@ from pathlib import Path
 from typing import Any
 
 
+# --- Dual import support for guard helper ---
+# Insert motor root so `from scripts.x import` works when run as script.
+# Then try scripts. prefix first, fall back to direct import.
+_MOTOR_ROOT = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT))
+
+_supervisor_esperado = None
+try:
+    from scripts.check_roster_matches_acting_thread import (
+        supervisor_esperado as _supervisor_esperado,
+    )
+except ImportError:
+    try:
+        from check_roster_matches_acting_thread import (
+            supervisor_esperado as _supervisor_esperado,  # type: ignore[no-redef]
+        )
+    except ImportError:
+        _supervisor_esperado = None
+
+
 # --- Constants ---
 
 ESTADOS_VALIDOS = {"ACTIVO", "PENDIENTE_ACK", "SALIENTE_MUERTO"}
@@ -101,17 +122,54 @@ class RosterRoundTripError(Exception):
     """New roster data does not survive a JSON round-trip identically."""
 
 
+class RosterInvalidSupervisor(Exception):  # noqa: N818
+    """Supervisor identity or transition validation failed."""
+
+
+class RosterMalformed(Exception):  # noqa: N818
+    """Roster file is unreadable or its shape is invalid (fail closed)."""
+
+
 # --- Private helpers ---
 
 
 def _read_roster(path: Path | str) -> dict[str, Any]:
     """Read and parse roster JSON.
 
-    Before: path points to a valid JSON file.
+    Before: path points to a valid JSON file whose top level is a mapping.
     During: reads the file with utf-8 encoding and parses JSON.
-    After: returns the top-level dict.
+    After: returns the top-level dict.  Raises RosterMalformed when the file
+        cannot be read, is not valid JSON/UTF-8, or its top level is not a mapping.
     """
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RosterMalformed(f"roster ilegible: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RosterMalformed("el nivel superior del roster no es un mapping")
+    return data
+
+
+def _role_entry(state: dict[str, Any], role: str) -> dict[str, Any]:
+    """Return active_roles[role] after checking the shape it relies on.
+
+    Before: state is a roster mapping; role is the requested role name.
+    During: checks that active_roles and the role entry are mappings and that
+        the role entry carries an int version.  No I/O.
+    After: returns the role entry.  Raises RosterUnknownField for an unknown
+        role and RosterMalformed for any shape problem.
+    """
+    ar = state.get("active_roles")
+    if not isinstance(ar, dict):
+        raise RosterMalformed("active_roles no es un mapping")
+    if role not in ar or role == "_schema_note":
+        raise RosterUnknownField(f"rol desconocido: {role}")
+    entry = ar[role]
+    if not isinstance(entry, dict):
+        raise RosterMalformed(f"active_roles.{role} no es un mapping")
+    if not isinstance(entry.get("version"), int):
+        raise RosterMalformed(f"active_roles.{role}.version debe ser int")
+    return entry
 
 
 def _assert_roundtrip_identical(data: Any) -> None:
@@ -310,11 +368,8 @@ def write_role_estado(
 
     current: dict[str, Any] = _read_roster(roster_path)
 
-    # Validate role exists in active_roles.
-    if role not in current["active_roles"] or role == "_schema_note":
-        raise RosterUnknownField(f"rol desconocido: {role}")
-
-    old_estado: str | None = current["active_roles"][role].get("estado")
+    # Validate role exists in active_roles and the shape it relies on.
+    old_estado: str | None = _role_entry(current, role).get("estado")
 
     # Validate old_estado is present and recognized (fail-closed).
     _validate_old_estado(old_estado)
@@ -329,10 +384,11 @@ def write_role_estado(
         if attempt == 1:
             current = _read_roster(roster_path)
 
-        seen_version = current["active_roles"][role]["version"]
+        current_entry = _role_entry(current, role)
+        seen_version = current_entry["version"]
 
         # Validate transition against the state read in this attempt.
-        current_old = current["active_roles"][role].get("estado")
+        current_old = current_entry.get("estado")
 
         # Validate old_estado is present and recognized (fail-closed),
         # even on the retry re-read.
@@ -355,7 +411,8 @@ def write_role_estado(
 
         # CAS: re-read immediately before writing.
         fresh = _read_roster(roster_path)
-        if fresh["active_roles"][role]["version"] != seen_version:
+        fresh_version = _role_entry(fresh, role)["version"]
+        if fresh_version != seen_version:
             _append_change_line(
                 changes_log_path,
                 by=actor,
@@ -363,7 +420,7 @@ def write_role_estado(
                 detail=(
                     f"role={role} intento={attempt} "
                     f"version_esperada={seen_version} "
-                    f"version_real={fresh['active_roles'][role]['version']}"
+                    f"version_real={fresh_version}"
                 ),
                 reason=reason,
             )
@@ -371,7 +428,7 @@ def write_role_estado(
                 raise RosterWriteConflict(
                     f"conflicto de escritura para {role} "
                     f"(intento {attempt}: version_esperada={seen_version}, "
-                    f"version_real={fresh['active_roles'][role]['version']})"
+                    f"version_real={fresh_version})"
                 )
             if attempt == 0:
                 continue
@@ -392,6 +449,337 @@ def write_role_estado(
     raise RosterWriteConflict(f"conflicto de escritura para {role} tras {2} intentos")
 
 
+def _validate_supervisor_fields(entry: dict[str, Any]) -> None:
+    """Raise RosterInvalidSupervisor if required supervisor fields are missing or wrong type.
+
+    Before: `entry` is a dict representing one active_roles supervisor item.
+    During: checks presence and type of threadId (str), session_code (str), version (int).
+    After: raises RosterInvalidSupervisor if any field is missing or wrong type.
+    """
+    for key in ("threadId", "session_code"):
+        val = entry.get(key)
+        if not isinstance(val, str) or not val:
+            raise RosterInvalidSupervisor(
+                f"campo requerido '{key}' debe ser string no vacio, got {val!r}"
+            )
+    version = entry.get("version")
+    if not isinstance(version, int):
+        raise RosterInvalidSupervisor(
+            f"campo requerido 'version' debe ser int, got {version!r}"
+        )
+
+
+def _validate_rotation(  # noqa: C901
+    state: dict[str, Any],
+    supervisor_thread_id: str,
+    supervisor_session_code: str,
+    excepcion: str | None,
+) -> bool:
+    """Validate a supervisor rotation against one roster state (closed failures).
+
+    Before: `state` is a roster dict freshly read from disk; `excepcion` is
+        already normalized (None when empty).
+    During: checks that active_roles, supervisor and orquestador are mappings and
+        the supervisor field types.  Then, if the requested supervisor is already
+        the active one, returns at once (the no-op wins over every rule below,
+        even over corrupt data).  Otherwise checks supervisor != orquestador,
+        cadena_contexto shape, orquestador and requested supervisor absent from
+        it, mcp: prefix, non-empty session_code, orquestador version int, and
+        the rule predecessor-xor-excepcion.  No I/O.
+    After: returns True for the no-op (nothing is written); returns False when
+        the rotation is valid; raises RosterInvalidSupervisor on any closed failure.
+    """
+    ar = state.get("active_roles")
+    if not isinstance(ar, dict):
+        raise RosterInvalidSupervisor("active_roles no es un mapping")
+
+    sup = ar.get("supervisor")
+    if not isinstance(sup, dict):
+        raise RosterInvalidSupervisor("active_roles.supervisor no es un mapping")
+
+    orq = ar.get("orquestador")
+    if not isinstance(orq, dict):
+        raise RosterInvalidSupervisor("active_roles.orquestador no es un mapping")
+
+    _validate_supervisor_fields(sup)
+
+    # No-op WINS (plan DoD 2): the requested supervisor is already the active one,
+    # so nothing is written even if the rest of the data is corrupt.  The checks
+    # below guard a rotation; they do not apply to an idempotent call.
+    if supervisor_thread_id == sup.get("threadId", ""):
+        return True
+
+    orq_thread = orq.get("threadId")
+    if supervisor_thread_id == orq_thread:
+        raise RosterInvalidSupervisor(
+            "el nuevo supervisor no puede ser el orquestador activo"
+        )
+
+    # cadena_contexto: null is the same as absent; anything else must be a list
+    # of mappings that carry a threadId (the guard rejects the same shapes).
+    cascada = state.get("cadena_contexto")
+    if cascada is None:
+        cascada = []
+    if not isinstance(cascada, list):
+        raise RosterInvalidSupervisor("cadena_contexto presente pero no es una lista")
+    for entry in cascada:
+        if not isinstance(entry, dict) or not isinstance(entry.get("threadId"), str):
+            raise RosterInvalidSupervisor(
+                "cadena_contexto contiene un elemento que no es un mapping con threadId"
+            )
+        if entry["threadId"] == orq_thread:
+            raise RosterInvalidSupervisor(
+                "el orquestador activo ya figura en la cascada de contexto"
+            )
+
+    if not supervisor_thread_id.startswith("mcp:"):
+        raise RosterInvalidSupervisor(
+            "el threadId del supervisor debe tener prefijo mcp:"
+        )
+
+    if not supervisor_session_code:
+        raise RosterInvalidSupervisor(
+            "el session_code del supervisor no puede estar vacio"
+        )
+
+    if not isinstance(orq.get("version"), int):
+        raise RosterInvalidSupervisor("version del orquestador debe ser int")
+
+    # Supervisor is the predecessor, or an explicit excepcion is provided.
+    is_predecessor = supervisor_thread_id == orq.get("predecessor_threadId")
+    if excepcion is not None:
+        if is_predecessor:
+            raise RosterInvalidSupervisor(
+                "no se puede pasar excepcion cuando el supervisor "
+                "es el predecesor del orquestador"
+            )
+    elif not is_predecessor:
+        raise RosterInvalidSupervisor(
+            "el supervisor debe ser el predecesor del orquestador "
+            "o proporcionar excepcion con motivo"
+        )
+
+    for entry in cascada:
+        if entry["threadId"] == supervisor_thread_id:
+            raise RosterInvalidSupervisor(
+                "el threadId del supervisor ya figura en la cascada de contexto"
+            )
+
+    return False
+
+
+def write_supervisor(  # noqa: C901
+    roster_path: Path | str,
+    supervisor_thread_id: str,
+    supervisor_session_code: str,
+    *,
+    changes_log_path: Path | str,
+    actor: str,
+    reason: str,
+    excepcion: str | None = None,
+    ts: str | None = None,
+) -> dict[str, Any]:
+    """Rotate supervisor to a new identity, moving old supervisor to cascada.
+
+    Before: roster_path points to a valid JSON roster file.  The roster must
+        have active_roles.supervisor and active_roles.orquestador as mappings,
+        with the required fields (threadId, session_code, version for supervisor;
+        predecessor_threadId for orquestador).  If ts is not None, raises
+        ValueError immediately (before reading anything).
+
+    During: normalizes excepcion (empty/whitespace -> absent).  Validates the
+        rotation with _validate_rotation (mappings, field types, supervisor !=
+        orquestador, orquestador and supervisor absent from cadena_contexto,
+        mcp: prefix, non-empty session_code, predecessor-or-excepcion rule),
+        first on the initial read and again on EVERY CAS attempt over the
+        freshly read state about to be written.  If the requested supervisor
+        is already the active one, returns the state unchanged (no-op).
+        Builds the new roster:
+        updates supervisor with new identity, increments version, sets
+        predecessor_threadId to old supervisor, adds old supervisor to
+        cadena_contexto at the head (deduplicated by threadId).  If excepcion
+        is provided, writes excepcion_supervisor; otherwise removes it.
+        Writes atomically with CAS retry (same pattern as write_role_estado).
+        Before writing, checks consistency via supervisor_esperado helper.
+
+    After: returns the new roster dict.  The roster file reflects the rotated
+        supervisor with incremented version and new cascada head.  One canonical
+        log line (supervisor_rotation) is appended.  Raises RosterWriteConflict
+        on CAS mismatch.  Raises RosterInvalidSupervisor for validation failures.
+    """
+    if ts is not None:
+        raise ValueError(
+            "ts por argumento no es valido; el ts se estampa siempre con el reloj"
+        )
+
+    current: dict[str, Any] = _read_roster(roster_path)
+
+    # Normalize excepcion: empty/whitespace -> absent.
+    if excepcion is not None:
+        excepcion = excepcion.strip()
+        if not excepcion:
+            excepcion = None
+
+    # Fail fast on the first read; the same validation reruns on every CAS
+    # attempt over the freshly read state (see the loop below).
+    if _validate_rotation(
+        current, supervisor_thread_id, supervisor_session_code, excepcion
+    ):
+        return current
+
+    # CAS retry loop (same pattern as write_role_estado).
+    for attempt in (0, 1):
+        if attempt == 1:
+            current = _read_roster(roster_path)
+
+        ar = current.get("active_roles")
+        if not isinstance(ar, dict):
+            raise RosterInvalidSupervisor(
+                "active_roles no es un mapping (re-lectura CAS)"
+            )
+
+        sup = ar.get("supervisor")
+        if not isinstance(sup, dict):
+            raise RosterInvalidSupervisor(
+                "active_roles.supervisor no es un mapping (re-lectura CAS)"
+            )
+
+        orq = ar.get("orquestador")
+        if not isinstance(orq, dict):
+            raise RosterInvalidSupervisor(
+                "active_roles.orquestador no es un mapping (re-lectura CAS)"
+            )
+
+        # Re-validate required fields after re-read.
+        if "threadId" not in sup or "session_code" not in sup or "version" not in sup:
+            raise RosterInvalidSupervisor(
+                "missing required fields in active_roles.supervisor (re-lectura CAS)"
+            )
+
+        # Use the CAS-fresh supervisor data for old_thread.
+        old_thread = sup.get("threadId", "")
+        seen_version = sup.get("version", 0)
+
+        # CAS: re-read immediately before writing.
+        fresh = _read_roster(roster_path)
+        fresh_ar = fresh.get("active_roles")
+        if not isinstance(fresh_ar, dict):
+            raise RosterInvalidSupervisor(
+                "active_roles no es un mapping (CAS pre-write)"
+            )
+        fresh_sup = fresh_ar.get("supervisor")
+        if not isinstance(fresh_sup, dict):
+            raise RosterInvalidSupervisor(
+                "active_roles.supervisor no es un mapping (CAS pre-write)"
+            )
+        if fresh_sup.get("version") != seen_version:
+            _append_change_line(
+                changes_log_path,
+                by=actor,
+                change="write_conflict",
+                detail=(
+                    f"supervisor intento={attempt} "
+                    f"version_esperada={seen_version} "
+                    f"version_real={fresh_sup['version']}"
+                ),
+                reason=reason,
+            )
+            if attempt == 1:
+                raise RosterWriteConflict(
+                    f"conflicto de escritura para supervisor "
+                    f"(intento {attempt}: version_esperada={seen_version}, "
+                    f"version_real={fresh_sup['version']})"
+                )
+            if attempt == 0:
+                continue
+
+        # Re-validate the DoD 2 closed failures over the state about to be
+        # written (a concurrent writer may have changed it without bumping the
+        # supervisor version).
+        if _validate_rotation(
+            fresh, supervisor_thread_id, supervisor_session_code, excepcion
+        ):
+            return fresh
+
+        # Build new roster.
+        new_roster = copy.deepcopy(fresh)
+        # Re-read supervisor from CAS-fresh data.
+        sup = fresh["active_roles"]["supervisor"]
+        old_thread = sup.get("threadId", "")
+
+        # Update supervisor entry.
+        new_roster["active_roles"]["supervisor"] = {
+            "threadId": supervisor_thread_id,
+            "session_code": supervisor_session_code,
+            "since": _now_iso(),
+            "set_by": actor,
+            "predecessor_threadId": old_thread,
+            "version": seen_version + 1,
+            "status": "active",
+        }
+
+        # Update cascada at first level: insert old supervisor at head, deduplicated.
+        cascada = [
+            e
+            for e in (new_roster.get("cadena_contexto") or [])
+            if e.get("threadId") != old_thread
+        ]
+        cascada.insert(
+            0,
+            {
+                "threadId": old_thread,
+                "session_code": sup.get("session_code", ""),
+                "hasta": _now_iso(),
+                "cerrado_por": reason,
+            },
+        )
+        new_roster["cadena_contexto"] = cascada
+
+        # Handle excepcion_supervisor.
+        if excepcion is not None:
+            new_roster["excepcion_supervisor"] = {
+                "coordinadora_threadId": orq.get("threadId", ""),
+                "supervisor_threadId": supervisor_thread_id,
+                "motivo": excepcion,
+                "desde": _now_iso(),
+            }
+        else:
+            new_roster.pop("excepcion_supervisor", None)
+
+        # Consistency check: supervisor matches expected via guard helper.
+        if _supervisor_esperado is None:
+            raise RosterInvalidSupervisor(
+                "no se pudo importar el helper del guard "
+                "(check_roster_matches_acting_thread.supervisor_esperado): "
+                "el escritor no puede verificar coherencia"
+            )
+
+        expected = _supervisor_esperado(new_roster)
+        if expected != "indeterminado" and expected != supervisor_thread_id:
+            raise RosterInvalidSupervisor(
+                f"coheridad escritor-guard: el supervisor esperado es "
+                f"'{expected}', no '{supervisor_thread_id}'"
+            )
+
+        # Write atomically.
+        _atomic_write_json(roster_path, new_roster)
+
+        _append_change_line(
+            changes_log_path,
+            by=actor,
+            change="supervisor_rotation",
+            detail=(
+                f"supervisor_anterior={old_thread} "
+                f"supervisor_nuevo={supervisor_thread_id} "
+                f"excepcion={'si' if excepcion else 'no'}"
+            ),
+            reason=reason,
+        )
+        return new_roster
+
+    raise RosterWriteConflict("conflicto de escritura para supervisor tras 2 intentos")
+
+
 def seed_authority_and_rules(
     roster_path: Path | str,
     *,
@@ -399,40 +787,35 @@ def seed_authority_and_rules(
     changes_log_path: Path | str,
     reason: str,
 ) -> dict[str, Any]:
-    """Idempotently seed authority and session_relief blocks in the roster.
+    """Seed session_relief block idempotently, only if authority is present.
 
     Before: roster_path points to an existing JSON roster file.
 
-    During: if both "autoridad" and "rules.session_relief" are already
-        present, returns the roster unchanged (idempotency).  Otherwise,
-        adds the authority object with 5 decision authorities + nota,
-        and the session_relief dict with three slots (triaje, orquestadora,
-        implantacion).  Does NOT touch active_roles, sessions, or
-        roster_fixes.  Writes atomically only if there was a real change.
+    During: if "autoridad" is absent, raises RosterUnknownField immediately
+        (the authority block is user-provided, never seeded by the writer).
+        If "autoridad" is present but "rules.session_relief" is absent,
+        seeds only session_relief.  If both are present, returns unchanged.
 
     After: returns the (possibly updated) roster dict.  If a change was
-        made, a "schema_seed" line is appended to the changes log.
+        made, a "schema_seed" line is appended mentioning only session_relief.
+        Raises RosterUnknownField if authority is absent.
     """
     current: dict[str, Any] = _read_roster(roster_path)
 
-    # Idempotency gate: both blocks present -> no-op.
-    if "autoridad" in current and "session_relief" in current.get("rules", {}):
+    # Authority must be present: the block is user-provided.
+    if "autoridad" not in current:
+        raise RosterUnknownField(
+            "el bloque autoridad no se siembra automaticamente; "
+            "es del usuario y debe proporcionarse"
+        )
+
+    # Idempotency gate: session_relief present -> no-op.
+    if "session_relief" in current.get("rules", {}):
         return current
 
     new_roster = copy.deepcopy(current)
 
-    # Add authority block (6 fields, exact literal from session_registry.json).
-    if "autoridad" not in new_roster:
-        new_roster["autoridad"] = {
-            "merge": "SUPERVISOR-2",
-            "push": "SUPERVISOR-2",
-            "suite_canonica": "SUPERVISOR-2",
-            "admision_ticket_nuevo": "SUPERVISOR-2",
-            "backends_retirados": "SUPERVISOR-2",
-            "nota": "la autoridad no se hereda por posicion en la cadena; fuente: roster active_roles.supervisor",
-        }
-
-    # Add session_relief block.
+    # Add session_relief block only.
     if "session_relief" not in new_roster.get("rules", {}):
         if "rules" not in new_roster:
             new_roster["rules"] = {}
@@ -457,7 +840,7 @@ def seed_authority_and_rules(
         changes_log_path,
         by=actor,
         change="schema_seed",
-        detail="autoridad y session_relief incorporados",
+        detail="session_relief incorporado",
         reason=reason,
     )
     return new_roster
@@ -467,50 +850,152 @@ def seed_authority_and_rules(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the CLI argument parser (flat flags, no subcommands)."""
+    """Build the CLI argument parser (flat flags, no subcommands).
+
+    All flags are optional; validation of presence/combinations is done
+    in cmd_main, so that conflicts and validation errors return exit code 3
+    (not argparse's default 2).
+    """
     parser = argparse.ArgumentParser(
-        description="Atomic flight roster writer (WOT-2026-136b)."
+        description="Atomic flight roster writer (WOT-2026-136b/136f)."
     )
-    parser.add_argument("--roster", required=True, help="Path to flight_roster.json")
-    parser.add_argument("--role", required=True, help="Role name in active_roles")
+    parser.add_argument("--roster", default=None, help="Path to flight_roster.json")
+    parser.add_argument("--role", default=None, help="Role name in active_roles")
     parser.add_argument(
         "--estado",
-        required=True,
+        default=None,
         help="New estado (ACTIVO, PENDIENTE_ACK, SALIENTE_MUERTO)",
     )
     parser.add_argument(
         "--changes-log",
-        required=True,
+        default=None,
         help="Path to roster_changes.jsonl",
     )
     parser.add_argument(
         "--actor",
-        required=True,
+        default=None,
         help="Actor name (who made the change)",
     )
     parser.add_argument(
         "--reason",
-        required=True,
+        default=None,
         help="Reason for the change",
+    )
+    # Rotation flags (WOT-2026-136f).
+    parser.add_argument(
+        "--supervisor-thread",
+        default=None,
+        help="threadId of the new supervisor (rotation mode)",
+    )
+    parser.add_argument(
+        "--supervisor-code",
+        default=None,
+        help="session_code of the new supervisor (rotation mode)",
+    )
+    parser.add_argument(
+        "--excepcion",
+        default=None,
+        help="Exception reason (rotation mode, optional)",
     )
     return parser
 
 
+def _validate_flags(args: argparse.Namespace) -> str | None:
+    """Validate flag presence and combinations.
+
+    Before: args is a parsed argparse.Namespace.
+    During: checks that either (role+estado) or (supervisor_thread+supervisor_code)
+        is provided, never both.  Checks that all base flags are present.
+        Checks that supervisor_thread and supervisor_code are both present
+        when rotation is selected.
+    After: returns None if valid, or an error string if invalid.
+    """
+    has_role = args.role is not None
+    has_estado = args.estado is not None
+    has_sup_thread = args.supervisor_thread is not None
+    has_sup_code = args.supervisor_code is not None
+
+    # Base flags must always be present.
+    base_flags_missing = [
+        name
+        for name, val in [
+            ("--roster", args.roster),
+            ("--actor", args.actor),
+            ("--reason", args.reason),
+        ]
+        if val is None
+    ]
+    if base_flags_missing:
+        return f"faltan flags base: {', '.join(base_flags_missing)}"
+
+    if args.changes_log is None:
+        return "faltan flags base: --changes-log"
+
+    # Determine mode: role-based or rotation.
+    has_role_mode = has_role and has_estado
+    has_rotation_mode = has_sup_thread or has_sup_code
+
+    # The modes are exclusive even with a partial flag of either side.
+    if (has_role or has_estado) and has_rotation_mode:
+        return "no se pueden mezclar modos: role/estado y supervisor-thread/supervisor-code son excluyentes"
+
+    # --excepcion belongs to the rotation mode only.
+    if args.excepcion is not None and not has_rotation_mode:
+        return "--excepcion solo es valido en modo rotacion (--supervisor-thread/--supervisor-code)"
+
+    if has_role_mode:
+        # Role mode: estado must be provided.
+        if not has_estado:
+            return "con --role se requiere --estado"
+        return None
+
+    if has_rotation_mode:
+        # Rotation mode: both supervisor flags required.
+        if not (has_sup_thread and has_sup_code):
+            return "con --supervisor-thread se requiere --supervisor-code"
+        return None
+
+    return (
+        "se requiere un modo: --role/--estado o --supervisor-thread/--supervisor-code"
+    )
+
+
 def cmd_main(args: argparse.Namespace) -> int:
-    """CLI entry point: calls write_role_estado, maps exceptions to exit codes."""
+    """CLI entry point: validates flags, calls write_role_estado or write_supervisor."""
+    # Validate flag combinations.
+    err = _validate_flags(args)
+    if err is not None:
+        print(err, file=sys.stderr)
+        return 3
+
     try:
-        write_role_estado(
-            Path(args.roster),
-            args.role,
-            args.estado,
-            changes_log_path=Path(args.changes_log),
-            actor=args.actor,
-            reason=args.reason,
-        )
+        roster_path = Path(args.roster)
+
+        if args.supervisor_thread is not None:
+            # Rotation mode (WOT-2026-136f).
+            write_supervisor(
+                roster_path,
+                args.supervisor_thread,
+                args.supervisor_code,
+                changes_log_path=Path(args.changes_log),
+                actor=args.actor,
+                reason=args.reason,
+                excepcion=args.excepcion,
+            )
+        else:
+            # Role mode (WOT-2026-136b).
+            write_role_estado(
+                roster_path,
+                args.role,
+                args.estado,
+                changes_log_path=Path(args.changes_log),
+                actor=args.actor,
+                reason=args.reason,
+            )
         return 0
     except RosterWriteConflict as exc:
         print(
-            f"{exc}\nESCALAR A SUPERVISOR-2: {exc}",
+            f"{exc}\nconflicto de escritura: {exc}",
             file=sys.stderr,
         )
         return 2
@@ -518,6 +1003,8 @@ def cmd_main(args: argparse.Namespace) -> int:
         RosterInvalidTransition,
         RosterUnknownField,
         RosterRoundTripError,
+        RosterInvalidSupervisor,
+        RosterMalformed,
     ) as exc:
         print(str(exc), file=sys.stderr)
         return 3
