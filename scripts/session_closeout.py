@@ -60,6 +60,7 @@ from scripts.closeout_steps.gates import (  # noqa: E402
     step_local_audit as _step_local_audit_impl,
     step_manifest_check as _step_manifest_check_impl,
     step_prepush_check as _step_prepush_check_impl,
+    step_quota_index_drift as _step_quota_index_drift_impl,
     step_roster_matches_acting_thread as _step_roster_matches_acting_thread_impl,
     step_validate_ticket_prose as _step_validate_ticket_prose_impl,
 )
@@ -1124,6 +1125,23 @@ def _step_roster_matches_acting_thread(
         roster_path=roster_path,
         registry_path=registry_path,
         changes_log=changes_log,
+        run_script_fn=_run_script,
+        process_diagnostic_fn=_process_diagnostic,
+        step_result_cls=StepResult,
+    )
+
+
+def _step_quota_index_drift(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    roster_path: str | None = None,
+) -> StepResult:
+    """Run flight/check_quota_index_drift.py as a read-only, non-blocking check."""
+    return _step_quota_index_drift_impl(
+        project_root,
+        dry_run,
+        roster_path=roster_path,
         run_script_fn=_run_script,
         process_diagnostic_fn=_process_diagnostic,
         step_result_cls=StepResult,
@@ -3052,6 +3070,10 @@ def run_closeout(  # noqa: C901 - already complex, new step adds to it
         report_path = _generate_report(report, project_root)
         print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
         return 1
+    # WOT-2026-136m: read-only drift check of the quota field index; never blocks.
+    report.steps.append(
+        _step_quota_index_drift(project_root, dry_run, roster_path=roster_path)
+    )
     report.steps.append(_step_local_audit(project_root, dry_run))
     report.steps.append(_step_validate_ticket_prose(project_root, dry_run))
     events = _read_events(project_root)

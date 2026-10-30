@@ -223,8 +223,9 @@ y donde se desarrolla en este protocolo. `No transcrito` remite a la declaracion
 `quota.account_policy.provider_map` son un nombre de cuenta y de proveedor (N5), asi que
 no se escriben aqui y las cubre la fila de su padre. El indice es una fotografia a
 2026-10-30 de las claves, no de sus valores: el dato vivo sigue siendo el roster, y ningun
-codigo ni prompt lo lee de aqui (un chequeo de deriva contra el roster vivo queda fuera de
-este ticket).
+prompt lo lee de aqui. Solo un chequeo de solo lectura,
+`scripts/flight/check_quota_index_drift.py`, compara estas claves con el roster vivo en el
+cierre de sesion y AVISA de la deriva; no corrige ni el indice ni el roster.
 
 | Clave de `quota` (ruta completa) | Donde se desarrolla |
 |---|---|

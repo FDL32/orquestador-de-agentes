@@ -253,6 +253,83 @@ def step_roster_matches_acting_thread(
         )
 
 
+def step_quota_index_drift(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    roster_path: str | None,
+    run_script_fn,
+    process_diagnostic_fn,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Run flight/check_quota_index_drift.py as a read-only, NEVER blocking check.
+
+    WOT-2026-136m: compares the `quota` field index of the supervision protocol with
+    the `quota` block of the live flight roster. The first stdout line of the script is
+    the contract; this step never maps anything to FAIL and is never blocking, because
+    a stale documentation index (or a defect of the check itself) is not a closeout
+    failure:
+
+    - dry_run=True -> SKIP, declaring the drift was not verified.
+    - rc 0 and first line `OK ...` -> PASS.
+    - rc 0 and first line `AVISO ...` -> WARN with the drifted keys in the detail.
+    - rc 2 (`NO VERIFICABLE ...`), timeout, script missing, rc 1/3/other -> NOT_VERIFIED
+      with the reason in the detail (the script never emits rc 3 by contract).
+
+    The roster is passed with --roster-path only when the closeout received one;
+    otherwise the child inherits FLIGHT_ROSTER_PATH from the environment.
+    """
+    name = "quota_index_drift"
+    if dry_run:
+        return step_result_cls(
+            name=name,
+            status="SKIP",
+            detail="Not run in dry-run mode: quota index drift was not verified",
+            blocking=False,
+        )
+    roster_args = ["--roster-path", roster_path] if roster_path else []
+    try:
+        result = run_script_fn(
+            "flight/check_quota_index_drift.py",
+            roster_args,
+            project_root,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return step_result_cls(
+            name=name,
+            status="NOT_VERIFIED",
+            detail="check_quota_index_drift.py timed out after 30s",
+            blocking=False,
+        )
+    except FileNotFoundError:
+        return step_result_cls(
+            name=name,
+            status="NOT_VERIFIED",
+            detail="flight/check_quota_index_drift.py not found in scripts/",
+            blocking=False,
+        )
+    first_line = (result.stdout or "").strip().split("\n", 1)[0]
+    if result.returncode == 0 and first_line.startswith("OK"):
+        return step_result_cls(
+            name=name, status="PASS", detail=first_line, blocking=False
+        )
+    if result.returncode == 0 and first_line.startswith("AVISO"):
+        return step_result_cls(
+            name=name,
+            status="WARN",
+            detail=(result.stdout or "").strip(),
+            blocking=False,
+        )
+    return step_result_cls(
+        name=name,
+        status="NOT_VERIFIED",
+        detail=f"quota index drift not verified (exit {result.returncode}): "
+        f"{process_diagnostic_fn(result)}",
+        blocking=False,
+    )
+
+
 def step_local_audit(
     project_root: Path,
     dry_run: bool,

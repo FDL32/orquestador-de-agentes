@@ -375,6 +375,12 @@ EXPECTED_WIRED_REAL = {
     # EXTRA por test_real_repo_wired_set_is_exactly_expected y corregido en
     # WOT-2026-136j.
     "check_roster_matches_acting_thread",
+    # WOT-2026-136m: cableado via el literal "flight/check_quota_index_drift.py" en
+    # scripts/closeout_steps/gates.py::step_quota_index_drift, invocado desde
+    # session_closeout.py::_step_quota_index_drift (paso de closeout de solo lectura,
+    # NO bloqueante: PASS/WARN/NOT_VERIFIED, omitido en dry-run). Vive en scripts/flight/:
+    # find_guards lo descubre por rglob y _path_tokens_in reduce la subruta al basename.
+    "check_quota_index_drift",
 }
 
 
