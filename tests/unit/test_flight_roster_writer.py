@@ -2933,7 +2933,8 @@ class TestGuardImportFailClosedSubprocess:
         """Copy the named scripts into an isolated tree and run the writer CLI.
 
         Before: tmp_path available, the scripts exist in the real tree.
-        During: copies only `files` to tmp_path/iso/scripts and runs the copy
+        During: creates the subdirectory (mkdir(parents=True)), copies all
+        named files plus `flight/thread_id.py` to iso/scripts, and runs the copy
         as a subprocess with a foreign cwd, so no real module can be resolved.
         After: returns (CompletedProcess, roster_path, roster_bytes_before).
         """
@@ -2946,6 +2947,12 @@ class TestGuardImportFailClosedSubprocess:
         iso.mkdir(parents=True)
         for name in files:
             shutil.copy(scripts_dir / name, iso / name)
+        # WOT-2026-136h (N1a): always copy flight/thread_id.py to the isolated tree.
+        thread_id_src = scripts_dir / "flight" / "thread_id.py"
+        if thread_id_src.exists():
+            flight_dir = iso / "flight"
+            flight_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(thread_id_src, flight_dir / "thread_id.py")
         roster_p, changes_p = _write_rotation_files(tmp_path, _rotation_roster())
         before = roster_p.read_bytes()
         proc = subprocess.run(

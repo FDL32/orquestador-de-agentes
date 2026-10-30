@@ -426,7 +426,7 @@ igual a la ultima posicion leida antes de compactar (o los ultimos 20 items si
 se desconoce) mas el checkpoint mas reciente. Desempate: gana el hilo salvo
 que el checkpoint se declare expresamente autoritativo para ese campo.
 
-### Ventana de no-relevo (relevo planificado)
+### Ventana de no-relevo (relevo planificado o self-hop)
 
 No se releva (relevo planificado o self-hop) en ninguna de estas tres
 condiciones, todas declarativas y verificables por el sucesor sin script nuevo:
@@ -437,8 +437,6 @@ condiciones, todas declarativas y verificables por el sucesor sin script nuevo:
 
 Un relevo forzado por fallo (Clase A, no planificado) no espera a la ventana:
 el sucesor hereda el campo de operacion en curso.
-
-Si el vuelo define otra fuente para alguna condicion, cambia solo esa redaccion.
 
 ### Alarma de contexto (sintoma)
 
@@ -536,6 +534,7 @@ contexto y excepcion explicita). El registro solo como consistencia.
 
 ## Referencias cruzadas
 
+- `docs/protocol/flight_supervision.md` secciones 5 a 7: regla de cuenta, envios entre sesiones y ledger.
 - `prompts/orchestrator_session_close_chat.md`: procedimiento de reparacion de roster
   desactualizado en el cierre de vuelo (comando atomico FLIGHT_ROSTER_PATH + --acting-thread).
 - `prompts/session_hop.md`: puente entre sesiones (solo lectura); este modulo apunta aqui

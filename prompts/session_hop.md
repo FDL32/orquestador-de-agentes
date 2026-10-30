@@ -394,6 +394,7 @@ Al arrancar, el sucesor:
   seccion 11 del prompt de relevo.
 - Remite a la seccion 11 de `prompts/t3_role_session_relief.md` sin
   repetir sus criterios (X-09: una sola casa normativa).
+- `docs/protocol/flight_supervision.md` secciones 5 a 7: regla de cuenta, envios entre sesiones y ledger.
 
 ## Paso 6: escribe LO QUE NO HACER
 

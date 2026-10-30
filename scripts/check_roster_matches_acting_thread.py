@@ -25,11 +25,37 @@ Contrato de estados (3, nunca texto):
 from __future__ import annotations
 
 import argparse
+
+# --- Shared module for mcp: prefix validation (WOT-2026-136h) ---
+# Import thread_id by path so the AST of import-statement matching reaches it.
+# Registers the module in sys.modules before exec_module and always removes it after.
+import importlib.util
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+_THREAD_ID_PATH = Path(__file__).resolve().parent / "flight" / "thread_id.py"
+_thread_id_module: object | None = None
+_thread_id_load_error: Exception | None = None
+try:
+    _thread_id_spec = importlib.util.spec_from_file_location(
+        "thread_id", _THREAD_ID_PATH
+    )
+    _thread_id_candidate = importlib.util.module_from_spec(_thread_id_spec)
+    sys.modules["thread_id"] = _thread_id_candidate
+    _thread_id_spec.loader.exec_module(_thread_id_candidate)
+    if not callable(getattr(_thread_id_candidate, "has_mcp_prefix", None)):
+        raise ImportError("thread_id.py no define has_mcp_prefix")
+    # Published only after a COMPLETE load: a failed load leaves it None.
+    _thread_id_module = _thread_id_candidate
+except Exception as _exc:  # any load failure must fail closed, never a Traceback
+    _thread_id_load_error = _exc
+finally:
+    sys.modules.pop("thread_id", None)
 
 
 # Mapa canonico entre nombres de rol del roster y los de session_registry.json.
@@ -445,8 +471,16 @@ def supervisor_esperado(roster: dict) -> str:
     pred = orq.get("predecessor_threadId", "")
     if not isinstance(pred, str):
         return "indeterminado"
-    if not pred or not pred.startswith("mcp:"):
+    if not pred:
         return "indeterminado"
+    # Guard against module load error: if the module is missing,
+    # we cannot verify the prefix, so return indeterminado.
+    if _thread_id_module is not None:
+        try:
+            if not _thread_id_module.has_mcp_prefix(pred):
+                return "indeterminado"
+        except (AttributeError, Exception):
+            return "indeterminado"
     return pred
 
 
@@ -723,6 +757,15 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "[roster-check] FAIL: --acting-thread no suministrado "
             "(fail-cerrado por identidad, DoD 4). Uso: --acting-thread <threadId>"
+        )
+        return 1
+
+    # --- Verificar modulo compartido antes de validar roster ---
+    if _thread_id_load_error is not None:
+        print(
+            "[roster-check] FAIL: scripts/flight/thread_id.py "
+            "ausente o ilegible (no se puede validar el prefijo mcp:) "
+            "- falta scripts/flight/thread_id.py"
         )
         return 1
 

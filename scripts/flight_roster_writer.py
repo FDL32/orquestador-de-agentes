@@ -40,6 +40,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import copy
+
+# --- Shared module for mcp: prefix validation (WOT-2026-136h) ---
+# Import thread_id by path so the AST of import-statement matching reaches it.
+# Registers the module in sys.modules before exec_module and always removes it after.
+import importlib.util
 import json
 import os
 import sys
@@ -47,6 +52,26 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+_THREAD_ID_PATH = Path(__file__).resolve().parent / "flight" / "thread_id.py"
+_thread_id_module: object | None = None
+_thread_id_load_error: Exception | None = None
+try:
+    _thread_id_spec = importlib.util.spec_from_file_location(
+        "thread_id", _THREAD_ID_PATH
+    )
+    _thread_id_candidate = importlib.util.module_from_spec(_thread_id_spec)
+    sys.modules["thread_id"] = _thread_id_candidate
+    _thread_id_spec.loader.exec_module(_thread_id_candidate)
+    if not callable(getattr(_thread_id_candidate, "has_mcp_prefix", None)):
+        raise ImportError("thread_id.py no define has_mcp_prefix")
+    # Published only after a COMPLETE load: a failed load leaves it None.
+    _thread_id_module = _thread_id_candidate
+except Exception as _exc:  # any load failure must fail closed, never a Traceback
+    _thread_id_load_error = _exc
+finally:
+    sys.modules.pop("thread_id", None)
 
 
 # --- Dual import support for guard helper ---
@@ -532,7 +557,17 @@ def _validate_rotation(  # noqa: C901
                 "el orquestador activo ya figura en la cascada de contexto"
             )
 
-    if not supervisor_thread_id.startswith("mcp:"):
+    # Load the shared function; if it fails, we handle it appropriately.
+    has_mcp_prefix = None
+    if _thread_id_module is not None:
+        has_mcp_prefix = _thread_id_module.has_mcp_prefix
+    elif _thread_id_load_error is not None:
+        raise RosterInvalidSupervisor(
+            "no se pudo cargar el modulo compartido (thread_id.py): "
+            + str(_thread_id_load_error)
+        )
+
+    if has_mcp_prefix and not has_mcp_prefix(supervisor_thread_id):
         raise RosterInvalidSupervisor(
             "el threadId del supervisor debe tener prefijo mcp:"
         )

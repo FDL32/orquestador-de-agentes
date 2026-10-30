@@ -322,6 +322,13 @@ known_unwired:
     trabajo delegado en la sesion), no un hook automatico sobre cada commit. Mismo
     patron que check_triage_outputs/check_builder_dispatch_prompt: los prompts no
     son superficie para el AST, asi que no hay camino que corra solo que lo cablee.
+  validate_ledger: >-
+    BY-DESIGN: WOT-2026-136h. El DoD de la ficha pide el validador del ledger
+    (scripts/flight/validate_ledger.py) y su esquema de clasificacion legacy,
+    no su cableado en un gate automatico -- el validador es READ-ONLY, clasifica
+    por conjunto de claves, y su salida (rc 0 incluso con legacy) es informativa.
+    No tiene ninguna superficie que corra sola (pre-commit, CI, cierre) sobre
+    el ledger; lo ejecuta quien valida el ledger de forma puntual.
 
 extra_guards:
   # Barreras REALES sin prefijo de guard. v3 no podia ni verlas ni contarlas.
