@@ -305,13 +305,104 @@ def test_missing_not_destination_fails_router_gate(tmp_path: Path) -> None:
                     "route_kind": "entry",
                 },
                 "X",
-            ).replace("not: no es X", "not: prompts/missing.md"),
+            ).replace("not: no es X", "not: prompts/missing.md prompts/missing.md"),
         },
     )
 
     errors = router_metadata_errors(root)
 
-    assert any("prompts/missing.md" in error for error in errors)
+    assert errors == ["x.md: not destination missing: prompts/missing.md"]
+
+
+def test_bare_missing_not_destination_fails_router_gate(tmp_path: Path) -> None:
+    """A missing bare Markdown destination must fail the same gate."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace("not: no es X", "not: missing_bare.md"),
+        },
+    )
+
+    errors = router_metadata_errors(root)
+
+    assert errors == ["x.md: not destination missing: missing_bare.md"]
+
+
+def test_bare_not_destinations_resolve_in_prompts_and_skills(tmp_path: Path) -> None:
+    """Bare Markdown names resolve in both router destination roots."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace("not: no es X", "not: prompt_dest.md skill_dest.md"),
+        },
+    )
+    (root / "prompts" / "prompt_dest.md").write_text("# Prompt\n", encoding="utf-8")
+    (root / "skills" / "skill_dest.md").write_text("# Skill\n", encoding="utf-8")
+
+    assert router_metadata_errors(root) == []
+
+
+def test_work_plan_not_destination_is_exempt_without_duplicate_diagnostic(
+    tmp_path: Path,
+) -> None:
+    """Dynamic work-plan and bare code mentions stay outside router checks."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace(
+                "not: no es X",
+                "not: work_plan.md work_plan.md validate_contract_formation.py",
+            ),
+        },
+    )
+
+    assert router_metadata_errors(root) == []
+
+
+def test_slash_not_destination_resolves_from_root_and_rejects_escape(
+    tmp_path: Path,
+) -> None:
+    """Slash paths resolve from both roots and reject paths outside root."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace("not: no es X", "not: _shared/existing.md ../outside.md"),
+            "_shared/existing.md": "# Shared\n",
+        },
+    )
+    (root.parent / "outside.md").write_text("# Outside\n", encoding="utf-8")
+
+    errors = router_metadata_errors(root)
+
+    assert errors == ["x.md: not destination missing: ../outside.md"]
 
 
 def test_check_index_runs_not_destination_gate(

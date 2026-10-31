@@ -996,20 +996,27 @@ def _not_destination_paths(reference: str, root: Path) -> list[Path]:
 
     Before: ``reference`` is a file-like token from an adopted prompt summary
             and ``root`` is the motor bundle root.
-    During: resolves explicit ``prompts/``, ``skills/`` and ``.claude/`` paths,
-            then resolves bare Markdown names against prompt and skill roots;
-            code and the dynamic ``work_plan.md`` operational-artifact mention
-            remain prose, not router destinations.
+    During: resolves every slash-containing reference relative to ``root`` and
+            ``root/prompts``; bare Markdown names resolve against prompt and
+            skill roots. Candidates outside ``root`` are rejected. Bare
+            ``.py/.sh/.json/.toml`` tokens and the dynamic ``work_plan.md``
+            operational-artifact mention remain prose, not router destinations.
     After: returns existing candidate paths; an empty list means the token is
            not a resolvable router destination.
     """
     normalized = reference.replace("\\", "/")
+    root_resolved = root.resolve()
     candidates: list[Path] = []
-    if normalized.startswith(("prompts/", "skills/", ".claude/")):
-        candidates.append(root / normalized)
+    if "/" in normalized:
+        candidates.extend((root / normalized, root / "prompts" / normalized))
     elif normalized.endswith(".md"):
         candidates.extend((root / "prompts" / normalized, root / "skills" / normalized))
-    return [path for path in candidates if path.is_file()]
+    paths: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_relative_to(root_resolved) and resolved.is_file():
+            paths.append(resolved)
+    return paths
 
 
 def not_destination_errors(root: Path) -> list[str]:
@@ -1031,14 +1038,15 @@ def not_destination_errors(root: Path) -> list[str]:
         if not fm.get("route_kind"):
             continue
         destination_text = prompt_summary(body).get("not", "")
+        seen: set[str] = set()
         for reference in _NOT_DESTINATION_PATTERN.findall(destination_text):
+            reference = reference.replace("\\", "/")
+            if reference in seen:
+                continue
+            seen.add(reference)
             if _not_destination_paths(reference, root):
                 continue
-            if reference.startswith(("prompts/", "skills/", ".claude/")) or (
-                reference.endswith(".md")
-                and "/" not in reference
-                and reference != "work_plan.md"
-            ):
+            if reference.endswith(".md") and reference != "work_plan.md":
                 errors.append(f"{rel}: not destination missing: {reference}")
     return errors
 
