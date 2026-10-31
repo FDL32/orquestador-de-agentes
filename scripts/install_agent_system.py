@@ -1817,6 +1817,7 @@ def sync_memory_rules(
         )
         return
 
+    _require_no_link_in_chain(project_agent, Path("runtime/memory/memory_rules.md"))
     dest_rules.parent.mkdir(parents=True, exist_ok=True)
     dest_rules.write_text(merged, encoding="utf-8")
     print(f"[INFO] Synced portable memory rules to {dest_rules}")
@@ -2242,8 +2243,8 @@ def copy_knowledge_docs(
         if dry_run:
             print(f"[DRY-RUN] Would copy glossary.md to {dest_glossary}")
         else:
-            dest_glossary.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_glossary, dest_glossary)
+            # `_atomic_copy` sustituye un enlace colgante en vez de seguirlo.
+            _atomic_copy(source_glossary, dest_glossary)
             print(f"[INFO] Created {dest_glossary} from template")
 
     # 2. Copy microagents
@@ -2257,8 +2258,10 @@ def copy_knowledge_docs(
                 if dry_run:
                     print(f"[DRY-RUN] Would copy microagent {doc.name} to {dest_doc}")
                 else:
-                    dest_microagents.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(doc, dest_doc)
+                    _require_no_link_in_chain(
+                        project_agent, Path("microagents") / doc.name
+                    )
+                    _atomic_copy(doc, dest_doc)
                     print(f"[INFO] Created {dest_doc} from template")
 
 
@@ -2330,6 +2333,7 @@ def _ensure_system_health_audits_dir(
     if dry_run:
         print(f"[DRY-RUN] Would create audits directory: {audits_dir}")
         return
+    _require_no_link_in_chain(project_agent, Path("audits/system_health"))
     audits_dir.mkdir(parents=True, exist_ok=True)
     print(f"[INFO] Ensured system-health audits directory: {audits_dir}")
 
@@ -2618,8 +2622,9 @@ def _collect_write_targets(
             their file whenever they run (flag False): the motor link, ``.gitignore``,
             ``.claude/settings.json``, ``memory_rules.md`` (motor ships one),
             ``repomix.config.json`` (motor ships the template) and ``PROJECT.md``
-            (only with a ticket prefix). Create-only-if-absent steps are left out: they
-            skip an existing path.
+            (only with a ticket prefix). Create-only-if-absent steps (glossary.md,
+            microagents, audits/system_health) are listed only while their path is
+            absent, i.e. exactly when the step would write.
     After: ``[(relative path, is_plan_entry)]``.
     """
     agent_name = project_agent.name
@@ -2636,8 +2641,25 @@ def _collect_write_targets(
     if (template_agent / "runtime" / "memory" / "memory_rules.md").exists():
         aux.append(Path(agent_name) / "runtime" / "memory" / "memory_rules.md")
     template_root = template_agent.parent
-    if (template_root / "agent_system" / "templates" / "repomix.config.json").exists():
+    templates = template_root / "agent_system" / "templates"
+    if (templates / "repomix.config.json").exists():
         aux.append(Path("repomix.config.json"))
+    # WOT-2026-148a ronda 2: los pasos "crear si falta" tambien escriben (un enlace
+    # colgante cuenta como ausente y `shutil.copy2` lo sigue): entran en el conjunto
+    # exactamente cuando el paso escribiria.
+    agent_rel = Path(agent_name)
+    if (templates / "glossary.md").exists() and not (
+        project_agent / "glossary.md"
+    ).exists():
+        aux.append(agent_rel / "glossary.md")
+    if (templates / "microagents").exists():
+        aux.extend(
+            agent_rel / "microagents" / doc.name
+            for doc in sorted((templates / "microagents").glob("*.md"))
+            if not (project_agent / "microagents" / doc.name).exists()
+        )
+    if not (project_agent / "audits" / "system_health").exists():
+        aux.append(agent_rel / "audits" / "system_health")
     if ticket_prefix:
         aux.append(Path("PROJECT.md"))
     return targets + [(rel, False) for rel in aux]
@@ -2674,12 +2696,12 @@ def _one_target_problems(
         if not ancestor.is_dir():
             found[ancestor] = f"P4: {name} existe y no es un directorio"
         elif depth >= first_link_depth and is_link_like(ancestor):
-            if is_plan:
+            if is_plan or under_agent:
                 found[ancestor] = (
                     f"P4: {name} es un symlink o junction "
                     "(el sync escribiria a traves de el)"
                 )
-            elif not is_plan and _escapes_boundary(ancestor, boundary):
+            elif _escapes_boundary(ancestor, boundary):
                 found[ancestor] = (
                     f"P4: {name} es un symlink o junction roto o que sale del destino"
                 )
@@ -2697,15 +2719,15 @@ def _write_target_problems(
     Before: ``plan`` holds the COPY / UPDATE / FLIP entries to be written.
     During: read-only, over ``_collect_write_targets``. An existing target that is a
             directory (plain or a link/junction to one) fails; so does an existing
-            ancestor that is not a directory. Plan targets also fail through a
-            symlink/junction ancestor inside ``config/``/``context/`` (any case).
-            Auxiliary targets fail when the target or an ancestor below the destination
-            (for ``.agent/`` paths: below ``.agent/`` itself, which MAY be a junction)
-            is a link that dangles or resolves outside that boundary.
-            WOT-2026-148a (policy H4, fail-closed): a plan write fails through ANY
-            symlink/junction ancestor below ``.agent/`` (internal or external, any
-            directory, not only ``config/``/``context/``), and so does a PRUNE entry
-            (it would delete through the link); a residue that IS the link is fine.
+            ancestor that is not a directory. Auxiliary targets outside ``.agent/``
+            fail when the target or an ancestor below the destination is a link that
+            dangles or resolves outside it.
+            WOT-2026-148a (policy H4, fail-closed): every write target UNDER ``.agent/``
+            (plan entries and the auxiliary steps: motor link, memory_rules.md,
+            glossary.md, microagents, audits) fails through ANY symlink/junction
+            ancestor below ``.agent/`` (internal or external, any directory; ``.agent/``
+            itself MAY be a junction), and so does a PRUNE entry (it would delete
+            through the link); a residue that IS the link is fine.
     After: one message per distinct offending path; ``[]`` when every write can land.
     """
     dest_root = project_agent.parent

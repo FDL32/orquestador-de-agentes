@@ -3518,7 +3518,12 @@ def _make_link_148a(kind: str, link: Path, target: Path) -> None:
 
 
 def _linked_rules_148a(
-    tmp_path: Path, kind: str, *, copies: bool
+    tmp_path: Path,
+    kind: str,
+    *,
+    copies: bool,
+    residue: bool = True,
+    nested: bool = False,
 ) -> tuple[Path, Path, Path]:
     """Motor shipping ``rules/keep.md`` + destination whose ``.agent/rules`` is a
     ``kind`` link to an outside directory holding ``extra.txt`` (a residue the walk may
@@ -3526,11 +3531,18 @@ def _linked_rules_148a(
 
     ``copies`` lists ``rules/`` in the manifest, so the plan UPDATEs ``rules/keep.md``
     through the link; without it ``rules/`` is only a source-side name and the sole
-    destructive path through the link is the prune.
+    destructive path through the link is the prune. ``residue=False`` leaves no
+    ``extra.txt`` outside, so there is nothing to prune and the copy guard alone stands
+    between the sync and the external file. ``nested`` makes the motor ship only
+    ``rules/sub/f.md`` (a child DIRECTORY the copy must create).
     """
     motor = _motor_140a(tmp_path)
     (motor / "rules").mkdir()
-    (motor / "rules" / "keep.md").write_text("from motor\n", encoding="utf-8")
+    if nested:
+        (motor / "rules" / "sub").mkdir()
+        (motor / "rules" / "sub" / "f.md").write_text("from motor\n", encoding="utf-8")
+    else:
+        (motor / "rules" / "keep.md").write_text("from motor\n", encoding="utf-8")
     if copies:
         manifest = motor.parent / "MANIFEST.workspace"
         manifest.write_text(
@@ -3539,7 +3551,8 @@ def _linked_rules_148a(
     dest = _dest_140a(tmp_path, "U")
     outside = tmp_path / "outside_148a"
     outside.mkdir()
-    (outside / "extra.txt").write_text("precious\n", encoding="utf-8")
+    if residue:
+        (outside / "extra.txt").write_text("precious\n", encoding="utf-8")
     (outside / "keep.md").write_text("precious too\n", encoding="utf-8")
     _make_link_148a(kind, dest / ".agent" / "rules", outside)
     return motor, dest, outside
@@ -3581,10 +3594,15 @@ def test_148a_h1_copy_through_a_link_outside_config_context_is_refused_at_prefli
     preflight only judged those two). Destination and external directory stay
     byte-identical. Before the fix the copy overwrote the external ``keep.md``.
 
+    No residue is left outside (``residue=False``): the prune cannot refuse this on its
+    own, so only the copy-side check stands between the sync and the external file.
+
     Mutation-to-prove: restore the ``config``/``context``-only condition in
     ``_one_target_problems`` and the external file is rewritten (rc=0).
     """
-    motor, dest, outside = _linked_rules_148a(tmp_path, kind, copies=True)
+    motor, dest, outside = _linked_rules_148a(
+        tmp_path, kind, copies=True, residue=False
+    )
     before_dest, before_out = _tree_140a(dest), _tree_140a(outside)
 
     rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
@@ -3655,8 +3673,9 @@ def test_148a_h4_an_internal_link_on_a_write_path_is_refused_by_declared_policy(
 ):
     """H4 (declared policy, fail-closed): a symlink/junction whose real path stays
     INSIDE ``.agent/`` itself is refused too, under ``context/`` (a 140a class dir) and
-    under any other ``.agent/`` directory. There is no exception for internal links
-    on plan writes; auxiliary targets outside ``.agent/`` keep their own boundary
+    under any other ``.agent/`` directory. The ``context`` case was ALREADY refused by
+    140a (protected class dir): it stays as a regression control and only ``rules``
+    proves the 148a policy. There is no exception for internal links on plan writes; auxiliary targets outside ``.agent/`` keep their own boundary
     rule (see the b7 control above).
 
     Mutation-to-prove: accept a plan-entry link whose ``_escapes_boundary`` is False
@@ -3683,3 +3702,120 @@ def test_148a_h4_an_internal_link_on_a_write_path_is_refused_by_declared_policy(
     assert rc == 1, out
     assert f"[PREFLIGHT] FAIL P4: .agent/{where} es un symlink o junction" in out
     assert _tree_140a(dest) == before
+
+
+def test_148a_h1_copy_refuses_before_creating_a_directory_through_a_link(
+    tmp_path,
+):
+    """H1: ``_copy_allowlisted_dir`` creates child DIRECTORIES too. With ``rules`` a
+    link and the motor shipping only ``rules/sub/f.md``, the copy must refuse before
+    ``mkdir`` creates ``sub`` outside the destination (the empty directory is not a
+    file, so it is asserted on its own).
+
+    Mutation-to-prove: take ``_require_no_link_in_chain(dest_root, child_rel)`` out of
+    the directory branch of ``_copy_allowlisted_dir`` and ``outside/sub`` appears.
+    """
+    motor, dest, outside = _linked_rules_148a(
+        tmp_path, "symlink", copies=True, residue=False, nested=True
+    )
+    # `rules/sub` is the first child the walk meets: the file check never gets a turn.
+    with pytest.raises(OSError, match="symlink o junction"):
+        ias.copy_tree(
+            motor, dest / ".agent", allowlist=ias.read_manifest_allowlist(motor.parent)
+        )
+
+    assert not (outside / "sub").exists()
+    assert not (outside / "sub" / "f.md").exists()
+
+
+_AUX_CASES_148A = ["microagents", "glossary", "memory", "audits"]
+
+
+def _aux_case_148a(tmp_path: Path, case: str, kind: str):
+    """Motor with the templates the non-plan steps copy + a destination where ONE path
+    those steps write is a link. Returns ``(motor, dest, watched)``: ``watched`` is the
+    directory that must stay empty (it is the link target, or holds the dangling one).
+    """
+    motor = _motor_140a(tmp_path)
+    templates = motor.parent / "agent_system" / "templates"
+    (templates / "microagents").mkdir(parents=True)
+    (templates / "glossary.md").write_text("glossary\\n", encoding="utf-8")
+    (templates / "microagents" / "m.md").write_text("micro\\n", encoding="utf-8")
+    memory = motor / "runtime" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "memory_rules.md").write_text("rules\\n", encoding="utf-8")
+    dest = _dest_140a(tmp_path, "U")
+    agent = dest / ".agent"
+    watched = tmp_path / "outside_aux_148a"
+    watched.mkdir()
+    if case == "glossary":
+        if not _make_file_link_140a(agent / "glossary.md", watched / "not_there.md"):
+            pytest.skip("cannot create a file symlink here")
+    elif case == "memory":
+        # an INTERNAL link (target inside .agent/): policy B refuses it too
+        watched = agent / "real_memory_148a"
+        watched.mkdir()
+        _make_link_148a(kind, agent / "runtime" / "memory", watched)
+    else:
+        _make_link_148a(kind, agent / case, watched)
+    return motor, dest, watched
+
+
+@pytest.mark.parametrize("kind", _LINK_KINDS_148A)
+@pytest.mark.parametrize("case", _AUX_CASES_148A)
+def test_148a_h1_auxiliary_steps_do_not_write_through_a_link(
+    tmp_path, capsys, case, kind
+):
+    """H1 (BA07 F1): the steps outside the plan -- microagents, glossary.md,
+    runtime/memory/memory_rules.md and audits/system_health -- are P4 write targets.
+    A link on their path stops the sync at preflight (rc=1, destination and watched
+    directory byte-identical); before, each wrote through it with rc=0: microagents ->
+    ``m.md`` outside, a DANGLING ``glossary.md`` symlink -> ``copy2`` created the file
+    it points at, an internal ``runtime/memory`` junction -> ``memory_rules.md`` went
+    through it (contradicting H4-B), ``audits`` -> ``system_health`` created outside.
+
+    Mutation-to-prove: take the matching entry out of ``_collect_write_targets`` (or
+    restore the ``is_plan``-only link condition for ``memory``) and its case is rc=0.
+    """
+    if case == "glossary" and kind == "junction":
+        pytest.skip("glossary.md is a file: only the symlink variant exists")
+    motor, dest, watched = _aux_case_148a(tmp_path, case, kind)
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert sorted(p.name for p in watched.iterdir()) == [], out
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P4" in out
+    assert _tree_140a(dest) == before
+
+
+@pytest.mark.parametrize("kind", _LINK_KINDS_148A)
+@pytest.mark.parametrize("case", _AUX_CASES_148A)
+def test_148a_h1_auxiliary_steps_refuse_again_at_the_point_of_use(tmp_path, case, kind):
+    """H1, second layer for the auxiliary steps: called WITHOUT the preflight, none of
+    ``copy_knowledge_docs`` / ``sync_memory_rules`` / ``_ensure_system_health_audits_dir``
+    leaves anything in the watched directory (they raise ``OSError``, or -- the
+    dangling ``glossary.md`` symlink -- replace the link instead of following it).
+
+    Mutation-to-prove: put ``shutil.copy2`` back in ``copy_knowledge_docs`` or drop the
+    ``_require_no_link_in_chain`` call of the matching step and its case fails.
+    """
+    if case == "glossary" and kind == "junction":
+        pytest.skip("glossary.md is a file: only the symlink variant exists")
+    motor, dest, watched = _aux_case_148a(tmp_path, case, kind)
+    agent = dest / ".agent"
+    step = {
+        "microagents": lambda: ias.copy_knowledge_docs(motor.parent, agent),
+        "glossary": lambda: ias.copy_knowledge_docs(motor.parent, agent),
+        "memory": lambda: ias.sync_memory_rules(motor, agent),
+        "audits": lambda: ias._ensure_system_health_audits_dir(agent),
+    }[case]
+
+    refused: list[OSError] = []
+    try:
+        step()
+    except OSError as exc:
+        refused.append(exc)  # refusing is fine; what matters is the watched dir
+
+    assert sorted(p.name for p in watched.iterdir()) == []
