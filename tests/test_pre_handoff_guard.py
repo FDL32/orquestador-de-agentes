@@ -2847,3 +2847,156 @@ def test_archive_surface_reappears_when_excuse_removed() -> None:
         finally:
             guard.LIVE_SURFACES_REL.clear()
             guard.LIVE_SURFACES_REL.update(original)
+
+
+# =============================================================================
+# WOT-2026-098a: the M3 checkpoint is looked up where the deliverable lands
+# (delivery_authority), not always in project_root.
+# =============================================================================
+
+
+class TestCheckpointResolvesDeliveryAuthorityWOT2026098a:
+    """``run_guard`` must resolve the tag root via ``resolve_delivery_root``.
+
+    Topology: ``project_root`` is the destination, ``motor_root`` the engine.
+    ``--pre-handoff`` creates ``checkpoint/review-<ticket>`` in the repo that
+    ``delivery_authority`` names; the guard used to look for it in
+    ``project_root`` always, so a ``repo_motor`` ticket reported
+    ``missing_checkpoint`` right after a successful ``--pre-handoff``.
+    """
+
+    TICKET = "WOT-2026-098a"
+
+    @staticmethod
+    def _import_guard():
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import pre_handoff_guard
+
+        return pre_handoff_guard
+
+    def _repos(self, tmp_path: Path, authority: str) -> tuple[Path, Path]:
+        """Return (destino, motor): both git repos, no tag in either yet.
+
+        The destination carries the active work_plan declaring *authority*;
+        the motor holds a commit naming the ticket. Every other barrier is
+        out of play (``defer_suite_check``) so only the tag root can bite.
+        """
+        destino = tmp_path / "destino"
+        init_git_repo(destino)
+        collab = destino / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "work_plan.md").write_text(
+            "# Work Plan\n\n## Metadata\n"
+            f"- **delivery_authority:** {authority}\n"
+            "- **deliverable_type:** documentation\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "add", "."], cwd=destino, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", f"{self.TICKET}: plan"],
+            cwd=destino,
+            check=True,
+            capture_output=True,
+        )
+        motor = tmp_path / "motor"
+        init_git_repo(motor)
+        commit_ticket_marker(motor, self.TICKET)
+        return destino, motor
+
+    def _guard(self, destino: Path, motor: Path | None) -> dict:
+        return self._import_guard().run_guard(
+            destino, self.TICKET, motor_root=motor, defer_suite_check=True
+        )
+
+    def test_repo_motor_tag_only_in_motor_is_found(self, tmp_path: Path) -> None:
+        """DoD (b): repo_motor + tag only in motor -> missing_checkpoint False."""
+        destino, motor = self._repos(tmp_path, "repo_motor")
+        create_checkpoint_tag(motor, f"checkpoint/review-{self.TICKET}")
+
+        result = self._guard(destino, motor)
+
+        assert result["missing_checkpoint"] is False
+        assert result["checkpoint_misaligned"] is False
+        assert result["checkpoint_tag"] == f"checkpoint/review-{self.TICKET}"
+
+    def test_repo_motor_tag_only_in_destino_is_not_consulted(
+        self, tmp_path: Path
+    ) -> None:
+        """A mirror tag in the destino must not satisfy a repo_motor ticket."""
+        destino, motor = self._repos(tmp_path, "repo_motor")
+        create_checkpoint_tag(destino, f"checkpoint/review-{self.TICKET}")
+
+        result = self._guard(destino, motor)
+
+        assert result["missing_checkpoint"] is True
+        assert result["valid"] is False
+
+    def test_repo_destino_control_negative_still_uses_project_root(
+        self, tmp_path: Path
+    ) -> None:
+        """DoD (d): repo_destino -> tag in destino found, tag only in motor not."""
+        destino, motor = self._repos(tmp_path, "repo_destino")
+        create_checkpoint_tag(destino, f"checkpoint/review-{self.TICKET}")
+        assert self._guard(destino, motor)["missing_checkpoint"] is False
+
+        destino2, motor2 = self._repos(tmp_path / "second", "repo_destino")
+        create_checkpoint_tag(motor2, f"checkpoint/review-{self.TICKET}")
+        assert self._guard(destino2, motor2)["missing_checkpoint"] is True
+
+    def test_repo_motor_without_tag_anywhere_still_blocks(self, tmp_path: Path) -> None:
+        """The fix must not turn the gate into a no-op: absent tag -> missing."""
+        destino, motor = self._repos(tmp_path, "repo_motor")
+
+        result = self._guard(destino, motor)
+
+        assert result["missing_checkpoint"] is True
+        assert result["valid"] is False
+
+    def test_repo_motor_misaligned_tag_in_motor_is_judged_against_motor(
+        self, tmp_path: Path
+    ) -> None:
+        """Alignment is evaluated in the resolved root, not only existence."""
+        destino, motor = self._repos(tmp_path, "repo_motor")
+        create_checkpoint_tag(motor, f"checkpoint/review-{self.TICKET}")
+        (motor / "notes.md").write_text("foreign\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=motor, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "unrelated work"],
+            cwd=motor,
+            check=True,
+            capture_output=True,
+        )
+        # tag sits on the ticket commit? no: it sits on HEAD~1 = ticket commit.
+        # Re-point it to the initial commit, whose subject does not name it.
+        first = subprocess.run(
+            ["git", "rev-list", "--max-parents=0", "HEAD"],
+            cwd=motor,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "tag", "-d", f"checkpoint/review-{self.TICKET}"],
+            cwd=motor,
+            check=True,
+            capture_output=True,
+        )
+        create_checkpoint_tag_at(motor, f"checkpoint/review-{self.TICKET}", first)
+
+        result = self._guard(destino, motor)
+
+        assert result["missing_checkpoint"] is False
+        assert result["checkpoint_misaligned"] is True
+
+    def test_repo_motor_without_motor_root_falls_back_to_project_root(
+        self, tmp_path: Path
+    ) -> None:
+        """Standalone: motor_root None -> project_root (resolve_delivery_root)."""
+        destino, _ = self._repos(tmp_path, "repo_motor")
+        create_checkpoint_tag(destino, f"checkpoint/review-{self.TICKET}")
+
+        result = self._guard(destino, None)
+
+        assert result["missing_checkpoint"] is False

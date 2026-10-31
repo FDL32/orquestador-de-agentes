@@ -1310,8 +1310,17 @@ def run_guard(
     apply_stash_rule(result, _stash_entries_for_roots(project_root, motor_root))
 
     # 1. Verificar checkpoint M3 alignment
+    # WOT-2026-098a: el tag lo crea --pre-handoff en el repo que dice
+    # delivery_authority (_try_motor_tag); se busca y se juzga ahi, la misma
+    # resolucion que usan la suite y commit_visible. Antes buscaba SIEMPRE en
+    # project_root: un ticket repo_motor daba missing_checkpoint tras un
+    # --pre-handoff correcto.
+    _da, _da_reason = resolve_delivery_authority_from_active_plan(project_root)
+    _delivery_root = resolve_delivery_root(
+        project_root=project_root, motor_root=motor_root, delivery_authority=_da
+    )
     missing_checkpoint, checkpoint_misaligned = check_checkpoint_alignment(
-        project_root, ticket_id
+        _delivery_root, ticket_id
     )
     if missing_checkpoint:
         result["valid"] = False
@@ -1363,12 +1372,9 @@ def run_guard(
     # resolucion (metadata_field / no_field_in_metadata / no_metadata_section /
     # work_plan_unreadable): un consumidor distingue "la Metadata lo dijo" de
     # "caimos al default".
-    _da, _da_reason = resolve_delivery_authority_from_active_plan(project_root)
+    # (_da y _delivery_root se resuelven arriba, en el paso 1, WOT-2026-098a.)
     result["delivery_authority"] = _da
     result["delivery_authority_reason"] = _da_reason
-    _delivery_root = resolve_delivery_root(
-        project_root=project_root, motor_root=motor_root, delivery_authority=_da
-    )
     if defer_suite_check:
         # WOT-2026-079d: la suite se verifica en --manager-approve (Cierre
         # final tras aprobacion, WOT-2026-039m), no aqui. Declarado, no
