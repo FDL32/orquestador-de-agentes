@@ -349,6 +349,81 @@ def test_legacy_parser_requires_exact_decision_and_successful_approve(
     assert result == expected
 
 
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [
+        ("DECISION: CHANGES", ReviewDecision.CHANGES),
+        ("DECISION: APPROVE", ReviewDecision.APPROVE),
+    ],
+)
+def test_legacy_cycle_uses_verdict_after_literal_prompt_and_packet_echo(
+    monkeypatch, tmp_path, verdict, expected
+):
+    """WOT-2026-123a R3: the final verdict wins over literal prompt/packet echo."""
+    bridge, _, legacy_manager_exe = _make_bridge(tmp_path)
+    supervisor = DummySupervisor()
+    literal_prompt = (
+        "If you APPROVE, end with EXACTLY one line:\n"
+        "DECISION: APPROVE\n\n"
+        "If you request changes, you MUST emit this exact structure "
+        "(headings included) before the final line:\n\n"
+        "## SUMMARY\n"
+        "<one line: why the ticket is not approved>\n\n"
+        "## BLOCKERS\n"
+        "- <file:line> <what is wrong> -> <what the Builder must do>\n\n"
+        "## SUGGESTIONS\n"
+        "- <non-blocking improvement, or 'none'>\n\n"
+        "DECISION: CHANGES\n\n"
+        "If you cannot decide and need human intervention, end with EXACTLY:\n"
+        "DECISION: INSPECT\n"
+    )
+    packet_echo = "\n".join(
+        ["DECISION: APPROVE", "DECISION: CHANGES", "DECISION: INSPECT"]
+    )
+    stdout = f"{literal_prompt}\n{packet_echo}\n{verdict}\n"
+
+    monkeypatch.setattr(
+        bridge,
+        "_run_legacy_manager_review",
+        lambda **kwargs: (stdout, "", 0),
+    )
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
+
+    result = bridge.run_manager_review_cycle(
+        ticket_id="WOT-2026-123a",
+        supervisor=supervisor,
+        manager_executable=legacy_manager_exe,
+        timeout_seconds=5,
+    )
+
+    assert result.decision == expected
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        (
+            "DECISION: APPROVE\nDECISION: CHANGES",
+            ReviewDecision.CHANGES,
+        ),
+        (
+            "DECISION: CHANGES\nDECISION: APPROVE",
+            ReviewDecision.APPROVE,
+        ),
+    ],
+)
+def test_legacy_parser_last_contradictory_marker_wins(tmp_path, stdout, expected):
+    """WOT-2026-123a R3: parser must not use the first marker."""
+    bridge, _, _ = _make_bridge(tmp_path)
+
+    result = bridge._parse_legacy_manager_decision(stdout, "", 0)
+
+    assert result == expected
+
+
 def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
     """Test review cycle emits CHANGES and ends the cycle immediately (WP-2026-106).
 
