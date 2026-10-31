@@ -872,6 +872,37 @@ def _require_no_link_in_chain(base: Path, rel: Path) -> None:
         )
 
 
+def _require_no_link_at(base: Path, target: Path, rel: Path | None = None) -> None:
+    """Refuse (``OSError``) when ``target`` (and any ancestor above ``base``) is a
+    symlink or junction.
+
+    Before: ``base`` is the destination ``.agent/``; ``target`` is the resolved
+            absolute path about to be written; ``rel`` is the ``.agent/``-relative
+            path used in the error message.
+    During: checks ``is_link_like`` on ``target`` and on every ancestor of ``target``
+            that is BELOW ``base`` (the chain). ``link_in_chain`` covers the chain but
+            not the target itself; this function covers both in one call.
+    After: returns None when clean; raises ``OSError`` naming the offending link when
+           found. Nothing is written.
+    """
+    if rel is None:
+        rel = (
+            target.relative_to(base)
+            if target.is_absolute() and base in target.parents
+            else Path(target.name)
+        )
+    _require_no_link_in_chain(base, rel)
+    if target.is_absolute() or target.is_relative_to(base):
+        check_path = target if target.is_absolute() else (base / target)
+    else:
+        check_path = target
+    if is_link_like(check_path):
+        raise OSError(
+            f"{check_path} es un symlink o junction: no se escribe a traves de "
+            f"el ({rel.as_posix()})"
+        )
+
+
 def _remove_link(path: Path) -> None:
     """Remove the symlink / junction ``path`` itself, never what it points at.
 
@@ -1817,7 +1848,8 @@ def sync_memory_rules(
         )
         return
 
-    _require_no_link_in_chain(project_agent, Path("runtime/memory/memory_rules.md"))
+    _rel_mem = Path("runtime/memory/memory_rules.md")
+    _require_no_link_at(project_agent, dest_rules, rel=_rel_mem)
     dest_rules.parent.mkdir(parents=True, exist_ok=True)
     dest_rules.write_text(merged, encoding="utf-8")
     print(f"[INFO] Synced portable memory rules to {dest_rules}")
@@ -1924,6 +1956,7 @@ def copy_gitleaks_config(
         print(f"[DRY-RUN] Would copy .gitleaks.toml seed to {dest}")
         return True
 
+    _require_no_link_at(destination_root, dest, rel=Path(".gitleaks.toml"))
     shutil.copy2(source, dest)
     print(f"[INFO] Copied .gitleaks.toml seed to {dest}")
     return True
@@ -2220,6 +2253,7 @@ def copy_project_template(
     if prefix:
         content = content.replace("Ticket prefix: XXX", f"Ticket prefix: {prefix}")
 
+    _require_no_link_at(destination_root, dest, rel=Path("PROJECT.md"))
     dest.write_text(content, encoding="utf-8")
     print(f"[INFO] Created {dest} from PROJECT_TEMPLATE.md")
     if prefix:
@@ -2294,7 +2328,8 @@ def copy_destination_bootstrap(
     _ensure_system_health_audits_dir(project_agent, dry_run=dry_run)
 
     # 2. Deposit destination_context.json only if not exists
-    config_file = project_agent / "config" / "destination_context.json"
+    _rel_config_ctx = Path("config/destination_context.json")
+    config_file = project_agent / _rel_config_ctx
     if config_file.exists():
         print(f"[SKIP] {config_file} already exists — not overwriting")
         return
@@ -2303,6 +2338,7 @@ def copy_destination_bootstrap(
         print(f"[DRY-RUN] Would create default {config_file}")
         return
 
+    _require_no_link_at(project_agent, config_file, rel=_rel_config_ctx)
     payload = {
         "version": "1",
         "max_bytes": 204800,
@@ -2644,6 +2680,15 @@ def _collect_write_targets(
     templates = template_root / "agent_system" / "templates"
     if (templates / "repomix.config.json").exists():
         aux.append(Path("repomix.config.json"))
+    destination_root = project_agent.parent
+    if (templates / "gitleaks.config.toml").exists() and not (
+        destination_root / ".gitleaks.toml"
+    ).exists():
+        aux.append(Path(".gitleaks.toml"))
+    if (templates / "PROJECT_TEMPLATE.md").exists() and not (
+        destination_root / "PROJECT.md"
+    ).exists():
+        aux.append(Path("PROJECT.md"))
     # WOT-2026-148a ronda 2: los pasos "crear si falta" tambien escriben (un enlace
     # colgante cuenta como ausente y `shutil.copy2` lo sigue): entran en el conjunto
     # exactamente cuando el paso escribiria.
@@ -2660,6 +2705,8 @@ def _collect_write_targets(
         )
     if not (project_agent / "audits" / "system_health").exists():
         aux.append(agent_rel / "audits" / "system_health")
+    if not (project_agent / "config" / "destination_context.json").exists():
+        aux.append(agent_rel / "config" / "destination_context.json")
     if ticket_prefix:
         aux.append(Path("PROJECT.md"))
     return targets + [(rel, False) for rel in aux]

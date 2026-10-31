@@ -291,6 +291,39 @@ def test_sync_memory_rules_idempotent(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+# WOT-2026-148a: sync_memory_rules refuses a dangling link as the target
+
+
+def test_148a_sync_memory_rules_refuses_dangling_link(tmp_path):
+    """(c) .agent/runtime/memory/memory_rules.md itself is a symlink ->
+    the write_text must be refused before overwriting the target (e.g. agents.json).
+    Before the fix write_text followed the link and wrote memory rules into
+    the external file."""
+    template_agent = tmp_path / "template" / ".agent"
+    src_mem = template_agent / "runtime" / "memory"
+    src_mem.mkdir(parents=True)
+    (src_mem / "memory_rules.md").write_text(ENGINE_BLOCK, encoding="utf-8")
+
+    project_agent = tmp_path / "dest" / ".agent"
+    project_agent.mkdir(parents=True)
+    dest_mem = project_agent / "runtime" / "memory"
+    dest_mem.mkdir(parents=True)
+
+    # memory_rules.md is a symlink pointing outside .agent/
+    outside = tmp_path / "outside_mem"
+    outside.mkdir()
+    (outside / "agents.json").write_text("{}", encoding="utf-8")
+    link = dest_mem / "memory_rules.md"
+    _make_file_link_140a(link, outside / "agents.json")
+    before = _tree_140a(outside)
+
+    with pytest.raises(OSError, match="symlink o junction"):
+        sync_memory_rules(template_agent, project_agent)
+
+    assert _tree_140a(outside) == before
+
+
+# ---------------------------------------------------------------------------
 def _write_template(tmp_path: Path, content: str | None = None) -> Path:
     """Helper: create a PROJECT_TEMPLATE.md in a templates/ dir under tmp_path."""
     template_dir = tmp_path / "agent_system" / "templates"
@@ -298,7 +331,7 @@ def _write_template(tmp_path: Path, content: str | None = None) -> Path:
     tpl = template_dir / "PROJECT_TEMPLATE.md"
     if content is None:
         content = (
-            "# PROJECT.md — Project Manifest\n"
+            "# PROJECT.md - Project Manifest\n"
             "Ticket prefix: XXX\n"
             "\n"
             "## Stack\n"
@@ -309,7 +342,7 @@ def _write_template(tmp_path: Path, content: str | None = None) -> Path:
 
 
 TEMPLATE_WITH_PREFIX = (
-    "# PROJECT.md — Project Manifest\nTicket prefix: XXX\n\n## Stack\n- Python\n"
+    "# PROJECT.md - Project Manifest\nTicket prefix: XXX\n\n## Stack\n- Python\n"
 )
 
 
@@ -389,6 +422,30 @@ def test_copy_project_template_missing_template(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "WARN" in out
     assert "PROJECT_TEMPLATE.md not found" in out
+
+
+# WOT-2026-148a: copy_project_template refuses a dangling link as target
+
+
+def test_148a_copy_project_template_refuses_dangling_link(tmp_path):
+    """PROJECT.md itself is a dangling symlink -> the write must be refused.
+    Before the fix write_text followed it and wrote the template content to
+    the external target."""
+    _write_template(tmp_path, TEMPLATE_WITH_PREFIX)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    outside = tmp_path / "outside_proj"
+    outside.mkdir()
+    link = dest / "PROJECT.md"
+    _make_file_link_140a(link, outside / "keep.txt")
+    before = _tree_140a(outside)
+
+    with pytest.raises(OSError, match="symlink o junction"):
+        copy_project_template(
+            template_root=tmp_path, destination_root=dest, prefix="NEW"
+        )
+
+    assert _tree_140a(outside) == before
 
 
 # ---------------------------------------------------------------------------
@@ -568,7 +625,7 @@ def test_prune_residues_fails_safe_when_git_tracked_status_unknown(
 
 
 # ---------------------------------------------------------------------------
-# copy_tree — recursive allowlist
+# copy_tree - recursive allowlist
 # ---------------------------------------------------------------------------
 
 
@@ -713,6 +770,30 @@ def test_copy_destination_bootstrap_idempotent(tmp_path, capsys):
     copy_destination_bootstrap(project_agent)
     content_second = config_file.read_text(encoding="utf-8")
     assert content_first == content_second
+
+
+# WOT-2026-148a: copy_destination_bootstrap refuses a dangling link in config/
+
+_CONFIG_CTX_REL = Path("config/destination_context.json")
+
+
+def test_148a_copy_destination_bootstrap_refuses_dangling_link(tmp_path):
+    """(a) .agent/config/destination_context.json itself is a dangling symlink ->
+    the write must be refused. Before the fix copy2/write_text followed it and
+    created the file outside .agent/."""
+    project_agent = tmp_path / ".agent"
+    project_agent.mkdir(parents=True)
+    (project_agent / "config").mkdir()
+    outside = tmp_path / "outside_ctx"
+    outside.mkdir()
+    link = project_agent / "config" / "destination_context.json"
+    _make_file_link_140a(link, outside / "keep.txt")
+    before = _tree_140a(outside)
+
+    with pytest.raises(OSError, match="symlink o junction"):
+        copy_destination_bootstrap(project_agent)
+
+    assert _tree_140a(outside) == before
 
 
 # ---------------------------------------------------------------------------
@@ -886,6 +967,29 @@ def test_copy_gitleaks_config_silent_when_destino_carries_all_sections(
 
     out = capsys.readouterr().out
     assert "[WARN]" not in out
+
+
+# WOT-2026-148a: copy_gitleaks_config refuses a dangling link at root level
+
+
+def test_148a_copy_gitleaks_config_refuses_dangling_link(tmp_path):
+    """(b) destination_root/.gitleaks.toml itself is a dangling symlink ->
+    the copy2 must be refused before writing outside. Before the fix copy2
+    followed it and wrote the seed to the external target."""
+    template_root = tmp_path / "motor"
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    _make_gitleaks_template(template_root, "title = 'seed'\n")
+    outside = tmp_path / "outside_gl"
+    outside.mkdir()
+    link = dest_root / ".gitleaks.toml"
+    _make_file_link_140a(link, outside / "keep.txt")
+    before = _tree_140a(outside)
+
+    with pytest.raises(OSError, match="symlink o junction"):
+        copy_gitleaks_config(template_root, dest_root, dry_run=False)
+
+    assert _tree_140a(outside) == before
 
 
 # ---------------------------------------------------------------------------
@@ -3819,3 +3923,71 @@ def test_148a_h1_auxiliary_steps_refuse_again_at_the_point_of_use(tmp_path, case
         refused.append(exc)  # refusing is fine; what matters is the watched dir
 
     assert sorted(p.name for p in watched.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "destination_context",
+        "gitleaks",
+        "project",
+        "memory_rules",
+    ],
+)
+def test_148a_h1_auxiliary_final_link_is_p4_preflight_before_any_mutation(
+    tmp_path, capsys, case
+):
+    """A dangling final auxiliary target is a P4 write target, not an absence.
+
+    The complete sync must reject the target before it mutates the destination or
+    the external sentinel.  This is the mutation control for the second-round P4
+    entries: removing the matching ``aux.append`` from ``_collect_write_targets``
+    makes the selected case proceed to its point-of-use guard (or write path), so
+    the preflight assertion turns red.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    outside = tmp_path / "outside_final_aux_148a"
+    outside.mkdir()
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("untouched\n", encoding="utf-8")
+
+    if case == "destination_context":
+        link = dest / ".agent" / "config" / "destination_context.json"
+        target = outside / "destination_context.json"
+    elif case == "gitleaks":
+        template = motor.parent / "agent_system" / "templates"
+        template.mkdir(parents=True, exist_ok=True)
+        (template / "gitleaks.config.toml").write_text(
+            "title = 'seed'\n", encoding="utf-8"
+        )
+        link = dest / ".gitleaks.toml"
+        target = outside / ".gitleaks.toml"
+    elif case == "project":
+        template = motor.parent / "agent_system" / "templates"
+        template.mkdir(parents=True, exist_ok=True)
+        (template / "PROJECT_TEMPLATE.md").write_text(
+            TEMPLATE_WITH_PREFIX, encoding="utf-8"
+        )
+        link = dest / "PROJECT.md"
+        target = outside / "PROJECT.md"
+    else:
+        source = motor / "runtime" / "memory"
+        source.mkdir(parents=True)
+        (source / "memory_rules.md").write_text("rules\n", encoding="utf-8")
+        link = dest / ".agent" / "runtime" / "memory" / "memory_rules.md"
+        target = outside / "memory_rules.md"
+
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if not _make_file_link_140a(link, target):
+        pytest.skip("cannot create a file symlink here")
+
+    before_dest = _tree_140a(dest)
+    before_outside = _tree_140a(outside)
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P4" in out
+    assert _tree_140a(dest) == before_dest
+    assert _tree_140a(outside) == before_outside
+    assert sentinel.read_text(encoding="utf-8") == "untouched\n"
