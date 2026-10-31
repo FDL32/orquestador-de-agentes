@@ -2714,6 +2714,10 @@ def _create_active_if_absent(path: Path) -> None:
     os.close(fd)
 
 
+# WOT-2026-147a: intentos del resumen L2 si otra rotacion barre su temporal.
+_SCORECARD_SUMMARY_ATTEMPTS = 4
+
+
 def _write_rotation_summary(archived: Path) -> Path:
     """Resumen L2 del tramo (D6), FUERA del lock (probe 2b del CG).
 
@@ -2727,19 +2731,32 @@ def _write_rotation_summary(archived: Path) -> Path:
     medias con su nombre definitivo.
     """
     summary = archived.with_name(_scorecard_summary_name(archived.name))
-    summary_tmp = archived.with_name(
-        f"scorecard.rotate-{os.getpid()}-{time.time_ns()}-summary.tmp"
-    )
-    summary_tmp.write_text(
+    text = (
         json.dumps(
             _scorecard_summary_payload(_read_scorecard_source_bytes(archived)),
             ensure_ascii=False,
         )
-        + "\n",
-        encoding="utf-8",
+        + "\n"
     )
-    _retry_fs_op(os.replace, summary_tmp, summary)
-    return summary
+    # WOT-2026-147a: esta funcion corre FUERA del lock, y la rotacion de OTRO
+    # hilo/proceso barre bajo su lock todo `scorecard.rotate-*.tmp`, tambien el
+    # temporal vivo de este resumen: entre el `write_text` y el `os.replace` el
+    # temporal puede desaparecer (`FileNotFoundError`). Cada intento reescribe un
+    # temporal NUEVO desde el mismo texto; solo el ultimo fallo propaga.
+    attempt = 0
+    while True:
+        summary_tmp = archived.with_name(
+            f"scorecard.rotate-{os.getpid()}-{time.time_ns()}-summary.tmp"
+        )
+        summary_tmp.write_text(text, encoding="utf-8")
+        try:
+            _retry_fs_op(os.replace, summary_tmp, summary)
+        except FileNotFoundError:
+            attempt += 1
+            if attempt >= _SCORECARD_SUMMARY_ATTEMPTS:
+                raise
+        else:
+            return summary
 
 
 def _scorecard_archive_sort_key(path: Path) -> tuple[str, int]:

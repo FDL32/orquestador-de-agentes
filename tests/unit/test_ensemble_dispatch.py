@@ -9821,6 +9821,41 @@ def test_crash_during_summary_never_leaves_partial_l2(
     assert len(list(path.parent.glob("scorecard_summary.*.json"))) == 1
 
 
+def test_summary_survives_tmp_sweep_by_concurrent_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-147a: otra rotacion barre el temporal VIVO del resumen L2.
+
+    El resumen se escribe fuera del lock; la rotacion de otro hilo barre bajo su
+    lock todo `scorecard.rotate-*.tmp`. Se inyecta el orden: justo antes del
+    `os.replace` del primer resumen corre una segunda rotacion completa. Sin el
+    arreglo el `os.replace` levanta FileNotFoundError (el fallo intermitente de
+    CI Linux); con el, el resumen se reescribe y no se pierde ninguna fila."""
+    monkeypatch.setattr(ed, "SCORECARD_ROTATION_THRESHOLD_BYTES", 1)
+    path = _write_active(tmp_path, [_sc_row("2026-10-01T00:00:00Z")])
+    real_retry = ed._retry_fs_op
+    fired = {"n": 0}
+
+    def inject(op, /, *args):
+        is_summary = op is os.replace and str(args[0]).endswith("-summary.tmp")
+        if is_summary and fired["n"] == 0:
+            fired["n"] += 1
+            _write_active(tmp_path, [_sc_row("2026-10-01T00:00:01Z")])
+            ed._rotate_scorecard(path)
+        return real_retry(op, *args)
+
+    monkeypatch.setattr(ed, "_retry_fs_op", inject)
+    ed._rotate_scorecard(path)
+
+    assert fired["n"] == 1, "la inyeccion no se ejecuto: el test no ejercita la carrera"
+    archived = sum(len(_archive_ts_lines(a)) for a in _archives(tmp_path))
+    assert archived == 2 and len(_archives(tmp_path)) == 2
+    assert len(list(path.parent.glob("scorecard_summary.*.json"))) == 2, (
+        "cada archivado lleva su resumen hermano"
+    )
+    assert not list(path.parent.glob("scorecard.rotate-*.tmp"))
+
+
 # ---- WOT-2026-079a: D5, lectura unificada
 def test_unified_reading_orders_by_real_ts_not_file_names(tmp_path: Path) -> None:
     """D5 (mutacion): nombres alfabetico 1001<1002<activo, ts en OTRO orden."""
