@@ -4502,8 +4502,10 @@ def smoke_profile(
     reasoning_only = isinstance(reply, str) and reply.startswith(_REASONING_ONLY_MARKER)
     cleaned = reply[len(_REASONING_ONLY_MARKER) :] if reasoning_only else (reply or "")
     # El modelo que SI responde via deliberacion (reasoning sin content) esta
-    # disponible: cuenta como vivo (DEC-086H-001 Decision 1).
-    alive = True if reasoning_only else (nonce in cleaned)
+    # disponible: cuenta como vivo (DEC-086H-001 Decision 1), salvo que la
+    # respuesta sea un fallo de transporte (WOT-2026-089g).
+    alive = _probe_alive(reply, nonce, reasoning_only=reasoning_only)
+    reasoning_only = reasoning_only and alive
     if project_root is not None:
         record_exploration_result(
             project_root,
@@ -4511,7 +4513,7 @@ def smoke_profile(
             config=config,
             outcome="alive" if alive else "failed",
             latency_ms=round((time.perf_counter() - _t0) * 1000),
-            failure_mode=None if alive else "smoke_nonce_ausente",
+            failure_mode=None if alive else _probe_failure_mode(reply, "smoke"),
         )
     return _smoke_result(
         profile_name,
@@ -4521,6 +4523,45 @@ def smoke_profile(
         probe=probe,
         reasoning_only=reasoning_only,
     )
+
+
+def _is_transport_failed_reply(reply: str | None) -> bool:
+    """True si `reply` es un fallo de transporte del canal `agent` (WOT-2026-089g).
+
+    `_transport_agent` DEVUELVE (no lanza) `_TRANSPORT_FAILED_PREFIX` + el eco
+    del prompt ante rc != 0, y el eco lleva el nonce. Se mira el prefijo antes
+    y despues de quitar el marcador de razonador.
+    """
+    return _without_reasoning_marker(reply).startswith(_TRANSPORT_FAILED_PREFIX)
+
+
+def _without_reasoning_marker(reply: str | None) -> str:
+    """`reply` sin el marcador de razonador inicial (si lo lleva)."""
+    text = reply or ""
+    if text.startswith(_REASONING_ONLY_MARKER):
+        return text[len(_REASONING_ONLY_MARKER) :]
+    return text
+
+
+def _probe_alive(
+    reply: str | None, nonce: str, *, reasoning_only: bool = False
+) -> bool:
+    """Veredicto UNICO de `smoke_profile` y `preflight_profile` (WOT-2026-089g).
+
+    Un fallo de transporte NUNCA es vivo, tampoco en la rama razonador. Si no,
+    vivo = el nonce aparece LITERAL (o respuesta solo-razonador, que el smoke
+    cuenta como disponible: DEC-086H-001 Decision 1).
+    """
+    if _is_transport_failed_reply(reply):
+        return False
+    return reasoning_only or nonce in _without_reasoning_marker(reply)
+
+
+def _probe_failure_mode(reply: str | None, kind: str) -> str:
+    """`failure_mode` del scorecard de una sonda muerta: causa, no solo ausencia."""
+    if _is_transport_failed_reply(reply):
+        return "transport_failed"
+    return f"{kind}_nonce_ausente"
 
 
 def _config_with_backend_override(
@@ -4824,7 +4865,7 @@ def preflight_profile(
             "detail": f"{type(exc).__name__}: {exc}",
             "failure_class": _classify_transport_failure(exc),
         }
-    alive = nonce in (reply or "")
+    alive = _probe_alive(reply, nonce)
     if project_root is not None:
         record_exploration_result(
             project_root,
@@ -4832,7 +4873,7 @@ def preflight_profile(
             config=config,
             outcome="alive" if alive else "failed",
             latency_ms=round((time.perf_counter() - _t0) * 1000),
-            failure_mode=None if alive else "preflight_nonce_ausente",
+            failure_mode=None if alive else _probe_failure_mode(reply, "preflight"),
         )
     return {
         "profile": profile_name,

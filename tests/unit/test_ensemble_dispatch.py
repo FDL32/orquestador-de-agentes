@@ -4037,6 +4037,97 @@ def test_preflight_profile_con_content_sample_trunca_y_usa_fragmento(monkeypatch
 
 
 # --------------------------------------------------------------------------- #
+# WOT-2026-089g: una sonda NO da alive=True a un fallo de transporte del canal
+# `agent` aunque el eco del prompt lleve el nonce.
+# --------------------------------------------------------------------------- #
+
+
+def _transport_failed_echo(nonce: str) -> str:
+    """Forma real de `_transport_agent` ante rc != 0: prefijo + eco del prompt."""
+    return f"{ed._TRANSPORT_FAILED_PREFIX}rc=1\nReply with exactly: {nonce}"
+
+
+def test_smoke_089g_transport_failed_con_eco_no_esta_vivo(tmp_path):
+    result = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=[_transport_failed_echo("PONG-019o")]),
+        project_root=tmp_path,
+    )
+    assert result["alive"] is False
+    row = next(r for r in _rows(tmp_path) if r["task_type"] == "exploracion")
+    assert row["outcome"] == "failed"
+    assert row["failure_mode"] == "transport_failed"
+
+
+@pytest.mark.parametrize("marker_first", [True, False])
+def test_smoke_089g_transport_failed_en_razonador_no_esta_vivo(marker_first):
+    failed = _transport_failed_echo("PONG-019o")
+    reply = (
+        ed._REASONING_ONLY_MARKER + failed
+        if marker_first
+        else failed + ed._REASONING_ONLY_MARKER
+    )
+    result = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=[reply]),
+        probe=True,
+    )
+    assert result["alive"] is False
+    assert result["class"] != ed._SMOKE_CLASS_OK_REASONER
+
+
+def test_preflight_089g_transport_failed_con_eco_no_esta_vivo(tmp_path):
+    result = ed.preflight_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=[_transport_failed_echo("PREFLIGHT-OK")]),
+        project_root=tmp_path,
+    )
+    assert result["alive"] is False
+    row = next(r for r in _rows(tmp_path) if r["task_type"] == "exploracion")
+    assert row["outcome"] == "failed"
+    assert row["failure_mode"] == "transport_failed"
+
+
+def test_preflight_089g_transport_failed_con_muestra_no_esta_vivo():
+    result = ed.preflight_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=[_transport_failed_echo("PREFLIGHT-OK")]),
+        content_sample="fragmento de prueba",
+    )
+    assert result["alive"] is False
+
+
+def test_sondas_089g_controles_positivos_siguen_vivos():
+    """Control positivo: el arreglo no mata el camino sano. Respuesta limpia
+    del canal nuevo y respuesta razonadora del canal api siguen vivas."""
+    smoke_ok = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=["PONG-019o"]),
+        probe=True,
+    )
+    assert smoke_ok["alive"] is True and smoke_ok["class"] == ed._SMOKE_CLASS_OK
+    smoke_api = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=[ed._REASONING_ONLY_MARKER + "pensando"]),
+        probe=True,
+    )
+    assert smoke_api["alive"] is True
+    assert smoke_api["class"] == ed._SMOKE_CLASS_OK_REASONER
+    pre = ed.preflight_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=["resumen. PREFLIGHT-OK"]),
+    )
+    assert pre["alive"] is True
+
+
+# --------------------------------------------------------------------------- #
 # WOT-2026-055o: clave hacia adelante de adjudicate + trafico exploratorio
 # --------------------------------------------------------------------------- #
 
