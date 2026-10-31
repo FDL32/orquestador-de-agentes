@@ -578,6 +578,17 @@ def test_dod_cross_ticket_oldest_trailer_beats_newer_subject(tmp_path):
     assert "Delivers-Ticket" in detail
 
 
+def test_dod_cross_ticket_subject_tab_does_not_break_trailer_parse(tmp_path):
+    """A tab in the subject does not hide the final Delivers-Ticket trailer."""
+    work, original = _cross_ticket_squashed(
+        tmp_path,
+        "landing\twith tab\n\nDelivers-Ticket: WOT-2026-0TGT",
+    )
+    verdict, detail = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.OK_BY_SUBJECT
+    assert "Delivers-Ticket" in detail
+
+
 # --------------------------------------------------------------------------- #
 # WOT-2026-023q -- a SHA that never left the machine must NOT be blessed by a
 # SIBLING commit's subject. CAPA 3 is a convention about the ID; "the object is

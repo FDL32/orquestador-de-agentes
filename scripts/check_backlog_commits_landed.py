@@ -807,51 +807,19 @@ def _find_first_subject_sha(ticket_id: str, ref: str, repo: Path) -> str | None:
     return None
 
 
-def _delivers_ticket_values(sha: str, repo: Path) -> list[str]:
-    """Read exact Delivers-Ticket values from a commit's final trailer block.
-
-    Before: ``sha`` must identify a commit available in ``repo``.
-    During: read only the commit message and delegate trailer-block parsing to Git;
-        quoted body text is therefore not treated as attribution metadata.
-    After: return case-sensitive trailer values in order, or an empty list when
-        trailers are missing, malformed, or unreadable. Never raises.
-    """
-    message = _run(["git", "show", "--format=%B", "--no-patch", sha], repo)
-    if message["exit_code"] != 0:
-        return []
-    try:
-        parsed = subprocess.run(
-            ["git", "interpret-trailers", "--parse"],  # noqa: S607
-            cwd=str(repo),
-            input=message["stdout"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    values: list[str] = []
-    for line in parsed.stdout.splitlines():
-        key, separator, value = line.partition(":")
-        if separator and key.strip().casefold() == "delivers-ticket":
-            values.append(value.strip())
-    return values
-
-
 def _find_first_capa3_match(
     ticket_id: str, ref: str, repo: Path
 ) -> tuple[str, str] | None:
     """Return the oldest CAPA 3 subject/trailer match for ``ticket_id``.
 
     Before: ``ref`` must resolve in ``repo`` and ``ticket_id`` is an exact ID.
-    During: scan commits reachable from ``ref`` oldest-first. A subject hit and a
-        case-insensitive trailer-name hit are tested on each commit; the first
-        matching commit wins. ``Delivers-Ticket`` values remain case-sensitive.
-        Only this CAPA 3 candidate search reads the trailer; classification below
-        applies the existing cited-object and code-commit checks.
+    During: one ``git log`` scans commits reachable from ``ref`` oldest-first and
+        asks Git to parse final ``Delivers-Ticket`` trailers. A subject hit and a
+        case-insensitive trailer-name hit are tested per record; the first matching
+        commit wins. Last-delimiter field extraction preserves subjects containing tabs;
+        trailer values remain case-sensitive. Quoted body text is excluded by Git's
+        final-trailer parser. Classification below applies the existing cited-object
+        and code-commit checks.
         This is deliberately forward-only: it does not retro-accredit the historic
         ``c344854`` case, and trailer emission/adoption remains the unresolved
         WOT-2026-069b responsibility.
@@ -859,7 +827,13 @@ def _find_first_capa3_match(
         longer IDs never match; command and parsing failures return ``None``.
     """
     res = _run(
-        ["git", "log", ref, "--reverse", "--format=%H%x09%s"],
+        [
+            "git",
+            "log",
+            ref,
+            "--reverse",
+            "--format=%H%x09%s%x09%(trailers:key=Delivers-Ticket,valueonly,separator=%x1f)",
+        ],
         repo,
     )
     if res["exit_code"] != 0 or not res["stdout"]:
@@ -869,17 +843,18 @@ def _find_first_capa3_match(
     )
     trailer_exact = re.compile(rf"(?<![\w-]){re.escape(ticket_id)}(?![\w-])")
     for line in res["stdout"].splitlines():
-        sha, _, subject = line.partition("\t")
-        sha = sha.strip()
-        subject = subject.strip()
+        first_tab = line.find("\t")
+        last_tab = line.rfind("\t")
+        if first_tab <= 0 or last_tab <= first_tab:
+            continue
+        sha = line[:first_tab].strip()
+        subject = line[first_tab + 1 : last_tab].strip()
+        trailer_values = line[last_tab + 1 :].split("\x1f")
         if _REVERT_RE.match(subject):
             continue
         if subject_exact.search(subject):
             return sha, "subject"
-        if any(
-            trailer_exact.fullmatch(value)
-            for value in _delivers_ticket_values(sha, repo)
-        ):
+        if any(trailer_exact.fullmatch(value.strip()) for value in trailer_values):
             return sha, "Delivers-Ticket"
     return None
 
