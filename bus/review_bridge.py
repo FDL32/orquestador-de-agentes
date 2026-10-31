@@ -1986,24 +1986,26 @@ class ReviewBridge:
 
         Before: Requires the captured legacy Manager stdout/stderr and its
                 transport exit code.
-        During: Scans line-anchored decision markers in output order, so an
-                echoed prompt phrase cannot match as a substring and the last
-                actual verdict wins; preserves the historical ``APPROVE: ...``
-                fallback and the ``--uncommitted`` diagnostic.
+        During: Scans exact, line-anchored DECISION markers in output order,
+                so prompt prose and legacy bare words cannot match; the last
+                actual verdict wins and APPROVE still requires exit_code 0.
         After: Returns APPROVE, CHANGES, or INSPECT without performing I/O or
                changing bus state; unrecognized output degrades to INSPECT.
         """
         marker_pattern = re.compile(
-            r"^\s*(?:DECISION:\s*)?(APPROVE|CHANGES|INSPECT)(?::|\s*$)",
+            r"^\s*DECISION:\s*(APPROVE|CHANGES|INSPECT)\s*$",
             re.IGNORECASE | re.MULTILINE,
         )
         matches = marker_pattern.findall(stdout or "")
         if matches:
-            return {
+            decision = {
                 "APPROVE": ReviewDecision.APPROVE,
                 "CHANGES": ReviewDecision.CHANGES,
                 "INSPECT": ReviewDecision.INSPECT,
             }[matches[-1].upper()]
+            if decision == ReviewDecision.APPROVE and exit_code != 0:
+                return ReviewDecision.INSPECT
+            return decision
         if "--uncommitted" in (stderr or ""):
             return ReviewDecision.INSPECT
         return ReviewDecision.INSPECT

@@ -262,7 +262,7 @@ def test_manager_review_cycle_approves(monkeypatch, tmp_path):
         return __import__("subprocess").CompletedProcess(
             cmd,
             0,
-            stdout="APPROVE: no findings. Ready for closeout.",
+            stdout="DECISION: APPROVE",
             stderr="",
         )
 
@@ -322,6 +322,31 @@ def test_legacy_review_ignores_echoed_prompt_decision(monkeypatch, tmp_path):
         event.event_type == "REVIEW_DECISION"
         for event in event_bus.read_events(ticket_id="WOT-2026-123a")
     )
+
+
+@pytest.mark.parametrize(
+    ("stdout", "exit_code", "expected"),
+    [
+        ("Approve: looks ok", 0, ReviewDecision.INSPECT),
+        ("changes", 0, ReviewDecision.INSPECT),
+        (
+            "DECISION: APPROVE o DECISION: CHANGES.",
+            0,
+            ReviewDecision.INSPECT,
+        ),
+        ("DECISION: APPROVE", 1, ReviewDecision.INSPECT),
+        ("DECISION: CHANGES", 1, ReviewDecision.CHANGES),
+    ],
+)
+def test_legacy_parser_requires_exact_decision_and_successful_approve(
+    tmp_path, stdout, exit_code, expected
+):
+    """WOT-2026-123a R2: legacy parsing is exact and rc-aware for APPROVE."""
+    bridge, _, _ = _make_bridge(tmp_path)
+
+    result = bridge._parse_legacy_manager_decision(stdout, "", exit_code)
+
+    assert result == expected
 
 
 def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
@@ -1418,7 +1443,7 @@ class TestOpencodeReviewRoute:
             *, ticket_id, manager_executable, timeout_seconds
         ):
             captured["ticket_id"] = ticket_id
-            return "APPROVE", "", 0
+            return "DECISION: APPROVE", "", 0
 
         monkeypatch.setattr(
             bridge, "_run_legacy_manager_review", fake_legacy_manager_review
