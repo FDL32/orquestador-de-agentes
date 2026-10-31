@@ -72,6 +72,14 @@ def _commit(work, fname, body, msg):
     return _sha(work)
 
 
+def _commit_with_message(work, fname, body, message):
+    """Create a code commit with an exact multi-line commit message."""
+    (work / fname).write_text(body, encoding="utf-8")
+    _g(["add", fname], work)
+    _g(["commit", "-q", "-m", message], work)
+    return _sha(work)
+
+
 def _make_repo(tmp_path):
     """A repo with a real ``origin/main`` remote-tracking ref.
 
@@ -446,6 +454,128 @@ def test_mut_squash_needs_capa3(tmp_path):
         gl.classify("WOT-2026-0XXX", original, "origin/main", work, patch_ids)[0]
         == gl.ERROR
     )
+
+
+def _cross_ticket_squashed(tmp_path, landing_message):
+    """Return a real code SHA whose squash landing uses a supplied message."""
+    _origin, work = _make_repo(tmp_path)
+    _g(["checkout", "-q", "-b", "feat"], work)
+    original = _commit(work, "cross.py", "cross ticket\n", "WOT-2026-0SIB: sibling")
+    _g(["checkout", "-q", "main"], work)
+    _g(["merge", "-q", "--squash", "feat"], work)
+    _commit_with_message(work, "landing.py", "landing\n", landing_message)
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    return work, original
+
+
+def _delivers_message(ticket_id):
+    return f"landing sibling\n\nDelivers-Ticket: {ticket_id}"
+
+
+def test_dod_cross_ticket_delivers_ticket_trailer_credits_target(tmp_path):
+    """A code landing with Delivers-Ticket explicitly credits the target ticket."""
+    work, original = _cross_ticket_squashed(
+        tmp_path, _delivers_message("WOT-2026-0TGT")
+    )
+    verdict, detail = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.OK_BY_SUBJECT
+    assert "Delivers-Ticket" in detail
+
+
+def test_dod_cross_ticket_without_trailer_stays_error(tmp_path):
+    """A sibling-ID landing without the explicit trailer remains a lost close."""
+    work, original = _cross_ticket_squashed(tmp_path, "landing sibling")
+    verdict, detail = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.ERROR
+    assert "Delivers-Ticket" in detail
+
+
+def test_dod_cross_ticket_wrong_trailer_does_not_credit(tmp_path):
+    """A trailer naming another ticket cannot credit the audited target."""
+    work, original = _cross_ticket_squashed(
+        tmp_path, _delivers_message("WOT-2026-0OTHER")
+    )
+    verdict, _ = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.ERROR
+
+
+def test_dod_cross_ticket_quoted_trailer_does_not_credit(tmp_path):
+    """A quoted body line is not the final trailer block."""
+    work, original = _cross_ticket_squashed(
+        tmp_path,
+        "landing sibling\n\n> Delivers-Ticket: WOT-2026-0TGT",
+    )
+    verdict, _ = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.ERROR
+
+
+def test_dod_cross_ticket_invalid_id_format_does_not_credit(tmp_path):
+    """A trailer value in another ID format is not an exact WOT ticket."""
+    work, original = _cross_ticket_squashed(
+        tmp_path, _delivers_message("CTL-2026-0TGT")
+    )
+    verdict, _ = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.ERROR
+
+
+def test_dod_cross_ticket_trailer_landing_must_be_code(tmp_path):
+    """A matching trailer on a memory-only landing cannot credit code work."""
+    _origin, work = _make_repo(tmp_path)
+    _g(["checkout", "-q", "-b", "feat"], work)
+    original = _commit(work, "cross.py", "cross ticket\n", "WOT-2026-0SIB: sibling")
+    _g(["checkout", "-q", "main"], work)
+    (work / ".agent" / "runtime" / "memory").mkdir(parents=True)
+    _commit_with_message(
+        work,
+        ".agent/runtime/memory/landing.json",
+        "memory landing\n",
+        _delivers_message("WOT-2026-0TGT"),
+    )
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    verdict, _ = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.ERROR
+
+
+def test_dod_cross_ticket_oldest_subject_or_trailer_wins(tmp_path):
+    """CAPA 3 chooses the oldest matching subject/trailer deterministically."""
+    _origin, work = _make_repo(tmp_path)
+    _g(["checkout", "-q", "-b", "feat"], work)
+    original = _commit(work, "cross.py", "cross ticket\n", "WOT-2026-0SIB: sibling")
+    _g(["checkout", "-q", "main"], work)
+    _commit(work, "subject.py", "subject\n", "WOT-2026-0TGT: oldest subject")
+    _commit_with_message(
+        work,
+        "trailer.py",
+        "trailer\n",
+        _delivers_message("WOT-2026-0TGT"),
+    )
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    verdict, detail = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.OK_BY_SUBJECT
+    assert "subject" in detail
+
+
+def test_dod_cross_ticket_oldest_trailer_beats_newer_subject(tmp_path):
+    """An older trailer wins over a newer subject, with trailer-name case tolerance."""
+    _origin, work = _make_repo(tmp_path)
+    _g(["checkout", "-q", "-b", "feat"], work)
+    original = _commit(work, "cross.py", "cross ticket\n", "WOT-2026-0SIB: sibling")
+    _g(["checkout", "-q", "main"], work)
+    _commit_with_message(
+        work,
+        "trailer.py",
+        "trailer\n",
+        "landing sibling\n\ndElIvErS-tIcKeT: WOT-2026-0TGT",
+    )
+    _commit(work, "subject.py", "subject\n", "WOT-2026-0TGT: newer subject")
+    _g(["push", "-q", "origin", "main"], work)
+    _g(["fetch", "-q", "origin"], work)
+    verdict, detail = _classify(work, "WOT-2026-0TGT", original)
+    assert verdict == gl.OK_BY_SUBJECT
+    assert "Delivers-Ticket" in detail
 
 
 # --------------------------------------------------------------------------- #

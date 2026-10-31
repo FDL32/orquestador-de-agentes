@@ -807,6 +807,83 @@ def _find_first_subject_sha(ticket_id: str, ref: str, repo: Path) -> str | None:
     return None
 
 
+def _delivers_ticket_values(sha: str, repo: Path) -> list[str]:
+    """Read exact Delivers-Ticket values from a commit's final trailer block.
+
+    Before: ``sha`` must identify a commit available in ``repo``.
+    During: read only the commit message and delegate trailer-block parsing to Git;
+        quoted body text is therefore not treated as attribution metadata.
+    After: return case-sensitive trailer values in order, or an empty list when
+        trailers are missing, malformed, or unreadable. Never raises.
+    """
+    message = _run(["git", "show", "--format=%B", "--no-patch", sha], repo)
+    if message["exit_code"] != 0:
+        return []
+    try:
+        parsed = subprocess.run(
+            ["git", "interpret-trailers", "--parse"],  # noqa: S607
+            cwd=str(repo),
+            input=message["stdout"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    values: list[str] = []
+    for line in parsed.stdout.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key.strip().casefold() == "delivers-ticket":
+            values.append(value.strip())
+    return values
+
+
+def _find_first_capa3_match(
+    ticket_id: str, ref: str, repo: Path
+) -> tuple[str, str] | None:
+    """Return the oldest CAPA 3 subject/trailer match for ``ticket_id``.
+
+    Before: ``ref`` must resolve in ``repo`` and ``ticket_id`` is an exact ID.
+    During: scan commits reachable from ``ref`` oldest-first. A subject hit and a
+        case-insensitive trailer-name hit are tested on each commit; the first
+        matching commit wins. ``Delivers-Ticket`` values remain case-sensitive.
+        Only this CAPA 3 candidate search reads the trailer; classification below
+        applies the existing cited-object and code-commit checks.
+        This is deliberately forward-only: it does not retro-accredit the historic
+        ``c344854`` case, and trailer emission/adoption remains the unresolved
+        WOT-2026-069b responsibility.
+    After: return ``(sha, "subject"|"Delivers-Ticket")`` or ``None``. Reverts and
+        longer IDs never match; command and parsing failures return ``None``.
+    """
+    res = _run(
+        ["git", "log", ref, "--reverse", "--format=%H%x09%s"],
+        repo,
+    )
+    if res["exit_code"] != 0 or not res["stdout"]:
+        return None
+    subject_exact = re.compile(
+        rf"(?<![\w-]){re.escape(ticket_id)}(?![\w-])", re.IGNORECASE
+    )
+    trailer_exact = re.compile(rf"(?<![\w-]){re.escape(ticket_id)}(?![\w-])")
+    for line in res["stdout"].splitlines():
+        sha, _, subject = line.partition("\t")
+        sha = sha.strip()
+        subject = subject.strip()
+        if _REVERT_RE.match(subject):
+            continue
+        if subject_exact.search(subject):
+            return sha, "subject"
+        if any(
+            trailer_exact.fullmatch(value)
+            for value in _delivers_ticket_values(sha, repo)
+        ):
+            return sha, "Delivers-Ticket"
+    return None
+
+
 def _landed_by_subject(ticket_id: str, ref: str, repo: Path) -> bool:
     """CAPA 3: an EXACT-ID, non-Revert commit subject reachable from ref mentions ID.
 
@@ -966,13 +1043,13 @@ def classify(
                 "committed and reachable from the local branch, but not in "
                 f"{ref} -- pending the session's grouped push (not a lost close)",
             )
-    # WOT-2026-044b/DoD-b: the subject ID must land in a CODE commit reachable from
-    # ref, not just any commit (memory-only commits must NOT credit a
-    # ``deliverable_type: code`` row).  _find_first_subject_sha returns the SHA of
-    # the FIRST matching commit in ref; if that commit is code we credit, otherwise
-    # we fall through (no OK_BY_SUBJECT).
-    landed_sha = _find_first_subject_sha(ticket_id, ref, repo)
-    if landed_sha is not None:  # noqa: SIM102
+    # WOT-2026-044b/DoD-b: the subject/trailer ID must land in a CODE commit
+    # reachable from ref, not just any commit. CAPA 3 chooses the oldest matching
+    # subject or Delivers-Ticket trailer deterministically; CAPA 1/2/PENDING above
+    # retain precedence.
+    capa3_match = _find_first_capa3_match(ticket_id, ref, repo)
+    if capa3_match is not None:
+        landed_sha, match_kind = capa3_match
         # WOT-2026-044b: before crediting a CAPA 3 subject hit, verify that
         # the SHA of the LANDED commit (not the cited SHA) is a real git object
         # (ghost SHAs are NOT creditable) AND is a code commit.  For non-HEAD-
@@ -980,11 +1057,21 @@ def classify(
         if _has_object(sha, repo) and _is_code_commit(landed_sha, repo):
             return (
                 OK_BY_SUBJECT,
-                "ticket-ID in an origin/main subject (CAPA 3, squash/cherry-pick)",
+                (
+                    "ticket-ID in a Delivers-Ticket trailer "
+                    "(CAPA 3, squash/cherry-pick)"
+                    if match_kind == "Delivers-Ticket"
+                    else "ticket-ID in an origin/main subject "
+                    "(CAPA 3, squash/cherry-pick)"
+                ),
             )
         # SHA is a ghost (no git object): do not credit, fall through.
     if _has_object(sha, repo):
-        return ERROR, "object exists but landed by no layer -- LOST CLOSE (fail-closed)"
+        return (
+            ERROR,
+            "object exists but landed by no layer -- LOST CLOSE (fail-closed); "
+            "CAPA 3 requires a subject hit or Delivers-Ticket trailer",
+        )
     # WOT-2026-048u: check the other repo before emitting the WARN. If the sha
     # exists in the other repo of the topology, the commit landed there -- not a
     # typo or history-rewrite.
