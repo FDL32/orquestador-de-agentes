@@ -440,16 +440,28 @@ def _scan_external_references(
 
 
 def _exclusive_write(path: Path, data: bytes) -> None:
-    """Crea `path` en modo EXCLUSIVO; si ya existe, `FileExistsError`."""
+    """Crea `path` en modo EXCLUSIVO; si ya existe, `FileExistsError`.
+
+    Si la escritura falla, el fichero residual se borra para no dejar
+    artefactos parciales en disco.
+    """
     fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(data)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def _write_bytes(path: Path, data: bytes) -> None:
     """Escritura binaria simple; seam unico para inyectar fallos de I/O."""
-    with open(path, "wb") as handle:
-        handle.write(data)
+    try:
+        with open(path, "wb") as handle:
+            handle.write(data)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def _replace_file(path: Path, data: bytes) -> None:
@@ -548,20 +560,57 @@ def _rollback(
     copies: dict[Path, Path],
     created_copies: list[Path],
     sentinel: Path,
-) -> None:
-    """Rollback de un apply abortado: restaura, borra sentinela y limpia copias.
+) -> bool:
+    """Rollback de un apply abortado: restaura, limpia copias y decide sobre sentinela.
 
     Un fallo al restaurar NO propaga (se reporta): ese fichero CONSERVA su copia
     como red de recuperacion manual. El resto de copias creadas en esta
     ejecucion se borran (D8: un apply abortado no deja artefactos huerfanos).
+
+    Devuelve True si TODO se restauro correctamente y el sentinela se borro;
+    False si algun restore fallo -- el sentinela se CONSERVA para que un
+    --apply posterior detecte las copias residuales y exija restauracion MANUAL.
     """
     failed: set[Path] = set()
     for path in reversed(replaced):
         if not _restore_or_report(path, copies[path]):
             failed.add(path)
-    _remove_sentinel(sentinel)
     keep = {copies[path] for path in failed}
     _cleanup_copies([copy for copy in created_copies if copy not in keep])
+    if failed:
+        return False
+    _remove_sentinel(sentinel)
+    return True
+
+
+def _report_apply_abort(
+    replaced: list[Path],
+    copies: dict[Path, Path],
+    created_copies: list[Path],
+    sentinel: Path,
+    error: BaseException,
+) -> None:
+    """Gestiona el fallo de reemplazo y deja constancia del rollback.
+
+    Before: `replaced`, `copies`, `created_copies` y `sentinel` describen el
+        apply parcial, y `error` es la causa capturada por el llamador.
+    During: ejecuta el rollback y emite una advertencia adicional si un
+        restore falla, conservando entonces el sentinela para restauracion
+        manual.
+    After: no propaga la excepcion; el stderr informa del resultado observable
+        y de que no se escribieron cambios adicionales.
+    """
+    if not _rollback(replaced, copies, created_copies, sentinel):
+        print(
+            "[remap] WARN: restore fallido; sentinela conservado: un "
+            "--apply posterior se negara hasta restauracion manual.",
+            file=sys.stderr,
+        )
+    print(
+        f"[remap] ABORTADO: {error}. Restaurado lo ya reemplazado; no se "
+        "escribio nada mas.",
+        file=sys.stderr,
+    )
 
 
 def _apply_changes(
@@ -598,6 +647,8 @@ def _apply_changes(
         copy = remap_dir / f"{path.name}.pre-remap.{stamp}"
         try:
             _exclusive_write(copy, originals[path])
+            created_copies.append(copy)
+            copies[path] = copy
         except FileExistsError:
             _cleanup_copies(created_copies)
             print(
@@ -606,14 +657,13 @@ def _apply_changes(
             )
             return EXIT_USAGE
         except OSError as exc:
+            copy.unlink(missing_ok=True)
             _cleanup_copies(created_copies)
             print(
                 f"[remap] ERROR: no pude crear la copia {copy}: {exc}",
                 file=sys.stderr,
             )
             return EXIT_USAGE
-        created_copies.append(copy)
-        copies[path] = copy
     sentinel = remap_dir / f"remap_{stamp}.inprogress.json"
     try:
         _write_bytes(
@@ -631,7 +681,7 @@ def _apply_changes(
                 indent=2,
             ).encode("utf-8"),
         )
-    except OSError as exc:
+    except (OSError, TypeError, ValueError) as exc:
         _cleanup_copies(created_copies)
         print(
             f"[remap] ERROR: no pude escribir el sentinela {sentinel}: {exc}",
@@ -645,19 +695,21 @@ def _apply_changes(
             _replace_file(path, data)
             replaced.append(path)
     except (_ConcurrentWriteError, OSError) as exc:
-        _rollback(replaced, copies, created_copies, sentinel)
-        print(
-            f"[remap] ABORTADO: {exc}. Restaurado lo ya reemplazado; no se "
-            f"escribio nada mas.",
-            file=sys.stderr,
-        )
+        _report_apply_abort(replaced, copies, created_copies, sentinel, exc)
         return EXIT_USAGE
     report_path = remap_dir / f"remap_{stamp}.json"
     try:
-        _write_bytes(
-            report_path,
-            json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
+        report_data = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        _rollback(replaced, copies, created_copies, sentinel)
+        print(
+            f"[remap] ERROR: no pude serializar el informe: {exc}; todo "
+            f"restaurado (apply abortado sin efecto).",
+            file=sys.stderr,
         )
+        return EXIT_USAGE
+    try:
+        _write_bytes(report_path, report_data)
     except OSError as exc:
         _rollback(replaced, copies, created_copies, sentinel)
         print(

@@ -949,14 +949,18 @@ def test_fallo_al_escribir_el_sentinela_limpia_copias_y_sale_2(
     sc_path = _evidence_dir(repo) / "scorecard.jsonl"
     non_path = _evidence_dir(repo) / "emitted_nonces.jsonl"
     before = (sc_path.read_bytes(), non_path.read_bytes())
-    real = remap._write_bytes
+    real_open = open
 
-    def flaky(path, data):
-        if path.name.endswith(".inprogress.json"):
+    def flaky_open(path, mode="r", *args, **kwargs):
+        real_path = str(path) if isinstance(path, Path) else path
+        if real_path.endswith(".inprogress.json"):
+            handle = real_open(path, mode, *args, **kwargs)
+            handle.write(b"partial")
+            handle.close()
             raise OSError("sentinela simulado")
-        return real(path, data)
+        return real_open(path, mode, *args, **kwargs)
 
-    monkeypatch.setattr(remap, "_write_bytes", flaky)
+    monkeypatch.setattr(remap, "open", flaky_open, raising=False)
     rc = remap.main(_apply_args(repo, old, new))
     assert rc == 2
     assert (sc_path.read_bytes(), non_path.read_bytes()) == before
@@ -987,8 +991,9 @@ def test_fallo_en_la_copia_enesima_limpia_las_anteriores(tmp_path, capsys, monke
 def test_fallo_de_restore_en_rollback_sale_2_y_conserva_su_copia(
     tmp_path, capsys, monkeypatch
 ):
-    """Blocker 4: un fallo dentro del propio rollback no propaga; exit 2, sentinela
-    borrado y la copia del fichero no restaurado se CONSERVA como red manual."""
+    """Blocker 4 (WOT-2026-089a): un fallo dentro del propio rollback no propaga;
+    exit 2, sentinela CONSERVADO (porque restore fallo), y la copia del fichero
+    no restaurado se conserva como red manual."""
     repo, old, new = _pair_fixture(tmp_path)
     monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
     calls = {"n": 0}
@@ -1008,7 +1013,9 @@ def test_fallo_de_restore_en_rollback_sale_2_y_conserva_su_copia(
     remap_dir = _evidence_dir(repo) / "remap"
     assert (remap_dir / f"scorecard.jsonl.pre-remap.{_STAMP}").exists()
     assert not (remap_dir / f"emitted_nonces.jsonl.pre-remap.{_STAMP}").exists()
-    assert not list(remap_dir.glob("*.inprogress.json"))
+    assert list(remap_dir.glob("*.inprogress.json")), (
+        "el sentinela se conserva tras restore fallido"
+    )
 
 
 def test_metadata_differs_no_descarta_lineas_del_mensaje_que_empiezan_por_tree(
@@ -1044,3 +1051,170 @@ def test_metadata_differs_no_descarta_lineas_del_mensaje_que_empiezan_por_tree(
     assert old != new
     assert _tree_of(repo, old) == _tree_of(repo, new)
     assert remap._metadata_differs(repo, old, new) is True
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-089a: fault injection after partial open/write
+# ---------------------------------------------------------------------------
+
+
+def test_a_restore_fallido_conserva_sentinela(tmp_path, capsys, monkeypatch):
+    """Caso (a): cuando el rollback no logra restaurar, el sentinela se
+    CONSERVA para que un --apply posterior detecte el estado residual."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    remap_dir = _evidence_dir(repo) / "remap"
+    sentinel = remap_dir / f"remap_{_STAMP}.inprogress.json"
+    calls = {"n": 0}
+    real_replace = remap._replace_file
+
+    def flaky_replace(path, data):
+        calls["n"] += 1
+        if calls["n"] in (2, 3):
+            raise OSError("fallo simulado en restore")
+        return real_replace(path, data)
+
+    monkeypatch.setattr(remap, "_replace_file", flaky_replace)
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    assert sentinel.exists(), "el sentinela debe permanecer tras restore fallido"
+    err = capsys.readouterr().err
+    assert "WARN" in err and "restore fallido" in err
+
+
+def test_a_ignora_segundo_apply_con_sentinela_conservado(tmp_path, capsys, monkeypatch):
+    """Caso (a) follow-up: un --apply posterior no pasa cuando el
+    sentinela conservado sigue en remap/."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    remap_dir = _evidence_dir(repo) / "remap"
+    remap_dir.mkdir(parents=True, exist_ok=True)
+    (remap_dir / f"remap_{_STAMP}.inprogress.json").write_text(
+        json.dumps({"timestamp": _STAMP, "ficheros": []}),
+        encoding="utf-8",
+    )
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "RESTAURACION MANUAL" in err or "NO restaura sola" in err
+
+
+def test_b1_no_sentinela_inprogress_residual_post_rollback(tmp_path, monkeypatch):
+    """Caso (b1): tras un fallo en el sentinela, cleanup borrado y no queda
+    *.inprogress residual."""
+    repo, old, new = _pair_fixture(tmp_path)
+    real_open = open
+
+    def flaky_open(path, mode="r", *args, **kwargs):
+        real_path = str(path) if isinstance(path, Path) else path
+        if real_path.endswith(".inprogress.json"):
+            handle = real_open(path, mode, *args, **kwargs)
+            handle.write(b"partial")
+            handle.close()
+            raise OSError("fallo sentinela")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(remap, "open", flaky_open, raising=False)
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    assert not list((_evidence_dir(repo) / "remap").glob("*.inprogress.json"))
+
+
+def test_b2_no_informe_parcial_residual_post_rollback(tmp_path, monkeypatch):
+    """Caso (b2): tras fallo de serializacion, no queda remap_<ts>.json
+    parcial y se restauran ambos ficheros."""
+    repo, old, new = _pair_fixture(tmp_path)
+    sc_path = _evidence_dir(repo) / "scorecard.jsonl"
+    non_path = _evidence_dir(repo) / "emitted_nonces.jsonl"
+    before = (sc_path.read_bytes(), non_path.read_bytes())
+    remap_dir = _evidence_dir(repo) / "remap"
+    real_open = open
+
+    def flaky_open(path, mode="r", *args, **kwargs):
+        real_path = str(path) if isinstance(path, Path) else path
+        if (
+            "remap_" in real_path
+            and real_path.endswith(".json")
+            and not real_path.endswith(".inprogress.json")
+        ):
+            handle = real_open(path, mode, *args, **kwargs)
+            handle.write(b"partial")
+            handle.close()
+            raise OSError("fallo informe")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(remap, "open", flaky_open, raising=False)
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    assert (sc_path.read_bytes(), non_path.read_bytes()) == before
+    assert not list(remap_dir.glob("remap_*.json"))
+
+
+def test_b3_no_copia_parcial_residual_por_fallo_en_exclusive_write(
+    tmp_path, monkeypatch
+):
+    """Caso (b3): si _exclusive_write deja un *.pre-remap en disco pero
+    el fallo ocurre ANTES de append a created_copies, no queda copia
+    residual tras cleanup."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    remap_dir = _evidence_dir(repo) / "remap"
+    remap_dir.mkdir(parents=True)
+    calls = {"n": 0}
+    real_fdopen = remap.os.fdopen
+
+    class PartialHandle:
+        def __init__(self, handle, fail):
+            self.handle = handle
+            self.fail = fail
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *exc_info):
+            return self.handle.__exit__(*exc_info)
+
+        def write(self, data):
+            if self.fail:
+                self.handle.write(data[: max(1, len(data) // 2)])
+                raise OSError("fallo tras escritura de copia")
+            return self.handle.write(data)
+
+    def flaky_fdopen(fd, mode, *args, **kwargs):
+        calls["n"] += 1
+        return PartialHandle(real_fdopen(fd, mode, *args, **kwargs), calls["n"] == 2)
+
+    monkeypatch.setattr(remap.os, "fdopen", flaky_fdopen)
+    rc = remap.main(_apply_args(repo, old, new))
+    assert rc == 2
+    assert _remap_copies(repo) == []
+
+
+def test_c_typeerror_capturado_no_escapa_traceback(tmp_path, monkeypatch, capsys):
+    """Caso (c): TypeError de json.dumps(report) se captura como error
+    operativo; rc 2, rollback de ambos ficheros, sin traceback."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    sc_path = _evidence_dir(repo) / "scorecard.jsonl"
+    non_path = _evidence_dir(repo) / "emitted_nonces.jsonl"
+    before = (sc_path.read_bytes(), non_path.read_bytes())
+    original_dumps = json.dumps
+    report_written = {"value": None}
+
+    def flaky_dumps(obj, **kwargs):
+        result = original_dumps(obj, **kwargs)
+        if result is not None and "filas_remapeadas" in result:
+            report_written["value"] = result
+            raise TypeError("dato no serializable simulado")
+        return result
+
+    json.dumps = flaky_dumps
+    try:
+        rc = remap.main(_apply_args(repo, old, new))
+    finally:
+        json.dumps = original_dumps
+
+    assert rc == 2
+    assert (sc_path.read_bytes(), non_path.read_bytes()) == before
+    assert not list((_evidence_dir(repo) / "remap").glob("*.inprogress.json"))
