@@ -1978,6 +1978,36 @@ class ReviewBridge:
         """Delegate to bus.decision_parser.parse_opencode_decision (WT-2026-255a)."""
         return parse_opencode_decision(stdout)
 
+    @staticmethod
+    def _parse_legacy_manager_decision(
+        stdout: str, stderr: str, exit_code: int
+    ) -> ReviewDecision:
+        """Parse the legacy Manager verdict without trusting echoed prompt prose.
+
+        Before: Requires the captured legacy Manager stdout/stderr and its
+                transport exit code.
+        During: Scans line-anchored decision markers in output order, so an
+                echoed prompt phrase cannot match as a substring and the last
+                actual verdict wins; preserves the historical ``APPROVE: ...``
+                fallback and the ``--uncommitted`` diagnostic.
+        After: Returns APPROVE, CHANGES, or INSPECT without performing I/O or
+               changing bus state; unrecognized output degrades to INSPECT.
+        """
+        marker_pattern = re.compile(
+            r"^\s*(?:DECISION:\s*)?(APPROVE|CHANGES|INSPECT)(?::|\s*$)",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        matches = marker_pattern.findall(stdout or "")
+        if matches:
+            return {
+                "APPROVE": ReviewDecision.APPROVE,
+                "CHANGES": ReviewDecision.CHANGES,
+                "INSPECT": ReviewDecision.INSPECT,
+            }[matches[-1].upper()]
+        if "--uncommitted" in (stderr or ""):
+            return ReviewDecision.INSPECT
+        return ReviewDecision.INSPECT
+
     def run_manager_review_cycle(  # noqa: C901
         self,
         *,
@@ -2243,15 +2273,9 @@ class ReviewBridge:
                 )
                 if transport_ok:
                     parse_method = "legacy_manager"
-                    # Legacy Manager parser
-                    if "CHANGES" in stdout.upper():
-                        decision = ReviewDecision.CHANGES
-                    elif "APPROVE" in stdout.upper() and exit_code == 0:
-                        decision = ReviewDecision.APPROVE
-                    elif "--uncommitted" in stderr:
-                        decision = ReviewDecision.INSPECT
-                    else:
-                        decision = ReviewDecision.INSPECT
+                    decision = self._parse_legacy_manager_decision(
+                        stdout, stderr, exit_code
+                    )
                 else:
                     decision = ReviewDecision.TRANSPORT_FAILED
                     parse_method = "transport_failed"

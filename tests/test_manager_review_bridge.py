@@ -287,10 +287,47 @@ def test_manager_review_cycle_approves(monkeypatch, tmp_path):
     assert any(event.event_type == "REVIEW_DECISION" for event in events)
 
 
+def test_legacy_review_ignores_echoed_prompt_decision(monkeypatch, tmp_path):
+    """WOT-2026-123a: the legacy parser uses the model verdict, not prompt echo."""
+    bridge, event_bus, legacy_manager_exe = _make_bridge(tmp_path)
+    supervisor = DummySupervisor()
+    echoed_prompt = (
+        "Review instructions echo: DECISION: CHANGES\n"
+        "## SUMMARY\nLooks good\n"
+        "## BLOCKERS\n- none\n"
+        "## SUGGESTIONS\n- none\n"
+        "DECISION: APPROVE\n"
+    )
+
+    monkeypatch.setattr(
+        bridge,
+        "_run_legacy_manager_review",
+        lambda **kwargs: (echoed_prompt, "", 0),
+    )
+    monkeypatch.setattr(
+        bridge.state_ingest, "_latest_state", lambda _: "READY_FOR_REVIEW"
+    )
+    monkeypatch.setattr(bridge, "_get_manager_backend", lambda: "legacy_manager")
+
+    result = bridge.run_manager_review_cycle(
+        ticket_id="WOT-2026-123a",
+        supervisor=supervisor,
+        manager_executable=legacy_manager_exe,
+        timeout_seconds=5,
+    )
+
+    assert result.decision == ReviewDecision.APPROVE
+    assert supervisor.transitions[-1][1] == "READY_TO_CLOSE"
+    assert any(
+        event.event_type == "REVIEW_DECISION"
+        for event in event_bus.read_events(ticket_id="WOT-2026-123a")
+    )
+
+
 def test_manager_review_cycle_requests_changes(monkeypatch, tmp_path):
     """Test review cycle emits CHANGES and ends the cycle immediately (WP-2026-106).
 
-    WP-2026-106: CHANGES breaks the inner loop immediately — no retry within
+    WP-2026-106: CHANGES breaks the inner loop immediately - no retry within
     the same cycle. The Builder is requeued for a new cycle via agent_controller.
     Multiple-cycle CHANGES→APPROVE behavior is covered by
     test_review_cycle_approves_before_threshold.
@@ -2945,7 +2982,7 @@ def test_tick_does_not_call_reconcile_state(tmp_path, monkeypatch):
 
     supervisor = _make_supervisor(tmp_path)
 
-    # Spy on reconcile_state — count calls
+    # Spy on reconcile_state - count calls
     reconcile_calls = 0
     original_reconcile = supervisor.reconcile_state
 
@@ -3065,7 +3102,7 @@ def test_tick_detects_ready_for_review_without_reconcile(tmp_path, monkeypatch):
         ),
     )
 
-    # Spy on reconcile_state — raise if called (it must not be)
+    # Spy on reconcile_state - raise if called (it must not be)
     monkeypatch.setattr(
         supervisor,
         "reconcile_state",
@@ -3151,7 +3188,7 @@ def test_tick_no_concurrent_state_error(tmp_path, monkeypatch):
         )
     except ConcurrentStateError:
         pytest.fail(
-            "_tick() raised ConcurrentStateError — reconcile_state should not be called"
+            "_tick() raised ConcurrentStateError - reconcile_state should not be called"
         )
 
     assert result is True
@@ -3913,7 +3950,7 @@ def test_tick_empty_diff_returns_packaging_changes(tmp_path, monkeypatch):
     # Mock check_review_packet_diff_empty to return True (empty diff)
     monkeypatch.setattr(review, "check_review_packet_diff_empty", lambda tid: True)
 
-    # Spy on run_manager_review_cycle — MUST NOT be called
+    # Spy on run_manager_review_cycle - MUST NOT be called
     review_cycle_called = False
 
     def fail_if_called(**kw):
