@@ -1079,22 +1079,27 @@ def test_a_restore_fallido_conserva_sentinela(tmp_path, capsys, monkeypatch):
     assert rc == 2
     assert sentinel.exists(), "el sentinela debe permanecer tras restore fallido"
     err = capsys.readouterr().err
-    assert "WARN" in err and "restore fallido" in err
+    assert "WARN" in err and "rollback incompleto" in err
 
 
 def test_a_ignora_segundo_apply_con_sentinela_conservado(tmp_path, capsys, monkeypatch):
-    """Caso (a) follow-up: un --apply posterior no pasa cuando el
-    sentinela conservado sigue en remap/."""
+    """Caso (a) follow-up: un --apply posterior no pasa tras un restore real
+    fallido que conserva el sentinela."""
     repo, old, new = _pair_fixture(tmp_path)
     monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
-    remap_dir = _evidence_dir(repo) / "remap"
-    remap_dir.mkdir(parents=True, exist_ok=True)
-    (remap_dir / f"remap_{_STAMP}.inprogress.json").write_text(
-        json.dumps({"timestamp": _STAMP, "ficheros": []}),
-        encoding="utf-8",
-    )
-    rc = remap.main(_apply_args(repo, old, new))
-    assert rc == 2
+    calls = {"n": 0}
+    real_replace = remap._replace_file
+
+    def flaky_replace(path, data):
+        calls["n"] += 1
+        if calls["n"] in (2, 3):
+            raise OSError("restore simulado")
+        return real_replace(path, data)
+
+    monkeypatch.setattr(remap, "_replace_file", flaky_replace)
+    assert remap.main(_apply_args(repo, old, new)) == 2
+    monkeypatch.setattr(remap, "_replace_file", real_replace)
+    assert remap.main(_apply_args(repo, old, new)) == 2
     err = capsys.readouterr().err
     assert "RESTAURACION MANUAL" in err or "NO restaura sola" in err
 
@@ -1115,6 +1120,7 @@ def test_b1_no_sentinela_inprogress_residual_post_rollback(tmp_path, monkeypatch
         return real_open(path, mode, *args, **kwargs)
 
     monkeypatch.setattr(remap, "open", flaky_open, raising=False)
+    assert remap.open is flaky_open
     rc = remap.main(_apply_args(repo, old, new))
     assert rc == 2
     assert not list((_evidence_dir(repo) / "remap").glob("*.inprogress.json"))
@@ -1144,6 +1150,7 @@ def test_b2_no_informe_parcial_residual_post_rollback(tmp_path, monkeypatch):
         return real_open(path, mode, *args, **kwargs)
 
     monkeypatch.setattr(remap, "open", flaky_open, raising=False)
+    assert remap.open is flaky_open
     rc = remap.main(_apply_args(repo, old, new))
     assert rc == 2
     assert (sc_path.read_bytes(), non_path.read_bytes()) == before
@@ -1218,3 +1225,106 @@ def test_c_typeerror_capturado_no_escapa_traceback(tmp_path, monkeypatch, capsys
     assert rc == 2
     assert (sc_path.read_bytes(), non_path.read_bytes()) == before
     assert not list((_evidence_dir(repo) / "remap").glob("*.inprogress.json"))
+
+
+@pytest.mark.parametrize("failure", ["serialization", "report_write"])
+def test_rollback_fallido_en_informe_no_miente_sobre_restauracion(
+    tmp_path, monkeypatch, capsys, failure
+):
+    """Ronda 2 M-1: si falla el informe y el restore también, el stderr no
+    afirma que todo fue restaurado y conserva el aviso del sentinela."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+
+    def failing_restore(path, copy):
+        raise OSError("restore simulado")
+
+    monkeypatch.setattr(remap, "_restore", failing_restore)
+    if failure == "serialization":
+        real_dumps = json.dumps
+
+        def flaky_dumps(obj, **kwargs):
+            if isinstance(obj, dict) and "denominador" in obj:
+                raise TypeError("serializacion simulada")
+            return real_dumps(obj, **kwargs)
+
+        monkeypatch.setattr(remap.json, "dumps", flaky_dumps)
+    else:
+        real_write = remap._write_bytes
+
+        def flaky_write(path, data):
+            if path.name.endswith(".json") and not path.name.endswith(
+                ".inprogress.json"
+            ):
+                raise OSError("escritura de informe simulada")
+            return real_write(path, data)
+
+        monkeypatch.setattr(remap, "_write_bytes", flaky_write)
+
+    assert remap.main(_apply_args(repo, old, new)) == 2
+    err = capsys.readouterr().err
+    assert "WARN: rollback incompleto" in err
+    assert "todo restaurado (apply abortado sin efecto)" not in err
+    assert "sentinela conservado" in err
+
+
+def test_fdopen_fallido_y_unlink_fallido_no_escapa(tmp_path, monkeypatch, capsys):
+    """Ronda 2 M-2: un fallo de fdopen y otro de limpieza devuelven rc 2
+    sin propagar una traza ni enmascarar el error operativo."""
+    repo, old, new = _pair_fixture(tmp_path)
+    real_close = remap.os.close
+    real_unlink = Path.unlink
+    closed = []
+
+    def failing_fdopen(*args, **kwargs):
+        raise OSError("fdopen simulado")
+
+    def failing_unlink(path, *args, **kwargs):
+        if path.name.endswith(".pre-remap.20200101T000000000000Z"):
+            raise PermissionError("unlink simulado")
+        return real_unlink(path, *args, **kwargs)
+
+    def tracking_close(fd):
+        closed.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    monkeypatch.setattr(remap.os, "fdopen", failing_fdopen)
+    monkeypatch.setattr(remap.os, "close", tracking_close)
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    assert remap.os.fdopen is failing_fdopen
+    assert remap.main(_apply_args(repo, old, new)) == 2
+    err = capsys.readouterr().err
+    assert closed
+    assert "fdopen simulado" in err
+    assert "WARN: no pude borrar" in err
+
+
+def test_unlink_sentinela_fallido_no_miente_ni_desbloquea_apply(
+    tmp_path, monkeypatch, capsys
+):
+    """Ronda 2 H1: si no puede borrarse el sentinela, el rollback es
+    incompleto, el mensaje es veraz y el siguiente apply sigue bloqueado."""
+    repo, old, new = _pair_fixture(tmp_path)
+    monkeypatch.setattr(remap, "_utc_stamp", lambda: _STAMP)
+    real_unlink = Path.unlink
+
+    def failing_unlink(path, *args, **kwargs):
+        if path.name.endswith(".inprogress.json"):
+            raise PermissionError("sentinela bloqueado")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    real_dumps = json.dumps
+
+    def failing_dumps(obj, **kwargs):
+        if isinstance(obj, dict) and "denominador" in obj:
+            raise TypeError("serializacion simulada")
+        return real_dumps(obj, **kwargs)
+
+    monkeypatch.setattr(remap.json, "dumps", failing_dumps)
+    assert remap.main(_apply_args(repo, old, new)) == 2
+    err = capsys.readouterr().err
+    assert "WARN: no pude borrar el sentinela" in err
+    assert "todo restaurado (apply abortado sin efecto)" not in err
+    assert "rollback incompleto" in err
