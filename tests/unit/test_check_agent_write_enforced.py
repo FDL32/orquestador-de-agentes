@@ -987,6 +987,87 @@ class TestPermissiveWritePermissions:
         assert _permissive_write_permissions([]) == []
 
 
+class TestEffectiveActionIsLastMatchByOrder:
+    """WOT-2026-125a: `_effective_action` resuelve por ORDEN (last-match-wins),
+    NO por especificidad -- y eso es lo CORRECTO, no un supuesto a corregir.
+
+    Fuente: documentacion de opencode (https://opencode.ai/docs/permissions):
+    "Rules are evaluated by pattern match, with the last matching rule
+    winning." y "A common pattern is to put the catch-all "*" rule first, and
+    more specific rules after it." La doc NO menciona especificidad y NO
+    garantiza que `"*"` preceda a las especificas; garantiza que gana la ULTIMA
+    que matchea.
+
+    Por eso cambiar a specificity-wins seria una REGRESION: con
+    `[edit deny, * allow]` opencode resuelve `allow` (la `*` posterior gana) y
+    un resolvedor por especificidad diria `deny` -- un FALSO VERDE del gate
+    sobre un agente realmente permisivo. Estos tests fijan la semantica
+    documentada contra la funcion REAL.
+
+    NO VERIFICADA: la semantica del binario `opencode` 1.18.35 (solo se
+    contrasto la doc y el formato de `agent list`; no hay fuente del binario ni
+    prueba de ejecucion real con un agente de orden invertido).
+    """
+
+    def test_generic_after_specific_wins_the_inverted_order_case(self):
+        """Caso de la fila: `edit: deny` ANTES de `*: allow` => allow (la
+        ultima que matchea gana). Mata un resolvedor specificity-wins (diria
+        deny) y uno que ignore `*` (diria deny)."""
+        from scripts.check_agent_write_enforced import _effective_action
+
+        rules = [
+            {"permission": "edit", "action": "deny", "pattern": "*"},
+            {"permission": "*", "action": "allow", "pattern": "*"},
+        ]
+        assert _effective_action(rules, "edit") == "allow"
+
+    def test_specific_after_generic_wins_the_documented_common_order(self):
+        """Orden comun documentado: `*: allow` primero, `edit: deny` despues =>
+        deny. Mata un resolvedor first-match-wins (diria allow)."""
+        from scripts.check_agent_write_enforced import _effective_action
+
+        rules = [
+            {"permission": "*", "action": "allow", "pattern": "*"},
+            {"permission": "edit", "action": "deny", "pattern": "*"},
+        ]
+        assert _effective_action(rules, "edit") == "deny"
+
+    def test_wildcard_alone_decides_and_no_match_is_none(self):
+        """Un solo match: `*` sola decide (mata 'ignorar `*`'); sin ningun
+        match la ausencia de dato es None, no un default inventado."""
+        from scripts.check_agent_write_enforced import _effective_action
+
+        assert (
+            _effective_action([{"permission": "*", "action": "allow"}], "edit")
+            == "allow"
+        )
+        assert (
+            _effective_action([{"permission": "edit", "action": "deny"}], "edit")
+            == "deny"
+        )
+        assert (
+            _effective_action([{"permission": "read", "action": "deny"}], "edit")
+            is None
+        )
+
+    def test_inverted_order_agent_is_reported_permissive_end_to_end(self):
+        """El mismo orden invertido, visto desde el gate: el agente se reporta
+        permisivo en los 4 permisos de escritura (no se silencia por una
+        especifica ANTERIOR a la generica)."""
+        from scripts.check_agent_write_enforced import _permissive_write_permissions
+
+        rules = [
+            {"permission": "edit", "action": "deny", "pattern": "*"},
+            {"permission": "*", "action": "allow", "pattern": "*"},
+        ]
+        assert _permissive_write_permissions(rules) == [
+            "bash",
+            "edit",
+            "task",
+            "todowrite",
+        ]
+
+
 class TestPermissiveAgentDetection:
     """WOT-2026-059j: ROJO-a-VERDE -- un readonly_agent declarado y EXISTENTE
     pero con permisos de escritura REALMENTE abiertos debe ser detectado.
