@@ -23,12 +23,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import filecmp
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -192,6 +196,54 @@ INSTALLER_BOOTSTRAP_PATHS: frozenset[str] = frozenset(
         "context/destination_map.md",
     }
 )
+
+# WOT-2026-140a: politica explicita POR RUTA para la configuracion del destino.
+# Medido 2026-10-31 sobre destinos sinteticos aislados: `--sync` pisaba
+# `config/agents.json` y `config/hooks_config.json` en TODOS los estados git
+# (versionado, ignorado, sin versionar, sin .git) y podaba `context/project-map.json`,
+# `config/destination_profile.json`, `config/agents.local.json` y
+# `config/hooks_config.local.json` cuando no estaban versionados; si el motor tenia
+# un `project-map.json` propio, lo copiaba ENCIMA del del destino. El dry-run solo
+# contaba los ficheros copiados, no los nombraba.
+#
+# Tres politicas de COPIA (rutas relativas a `.agent/`):
+#   NOCLOBBER  -> se deposita solo si el destino no lo tiene (patron de
+#                 `destination_context.json` y `PROJECT.md`); la deriva respecto al
+#                 motor se AVISA, nunca se fusiona.
+#   ONLY       -> proyeccion o fichero propio del destino: el instalador NUNCA lo
+#                 copia, ni en `--install` ni en `--sync`, aunque el motor lo tenga.
+#   BACKUP     -> sigue siendo del motor (se actualiza) pero el original se guarda
+#                 antes de pisarlo.
+# Y una regla de CLASE para la PODA: ningun residuo bajo `config/` ni `context/` se
+# poda (las exactas serian whack-a-mole: aparecieron `*.local.json` y los `.bak` de
+# `agents_config.py --migrate`). `INSTALLER_BOOTSTRAP_PATHS` y
+# `INSTALLER_RUNTIME_WRITTEN_PATHS` siguen vigentes (siguen exentos en silencio).
+DESTINATION_NOCLOBBER_FILES: frozenset[str] = frozenset({"config/agents.json"})
+DESTINATION_ONLY_FILES: frozenset[str] = frozenset(
+    {
+        "context/project-map.json",
+        "config/destination_profile.json",
+        "config/agents.local.json",
+        "config/hooks_config.local.json",
+    }
+)
+BACKUP_ON_UPDATE_FILES: frozenset[str] = frozenset({"config/hooks_config.json"})
+PRUNE_PROTECTED_DIRS: tuple[str, ...] = ("config", "context")
+
+# Backups de lo que el sync reemplaza. Viven bajo `runtime/` (LOCAL_DIRS: el sync no
+# lo copia ni lo poda; el instalador lo mantiene en .gitignore del destino).
+SYNC_BACKUP_REL = Path("runtime") / "sync_backups"
+SYNC_BACKUP_KEEP = 10
+_BACKUP_STAMP_RE = re.compile(r"^(\d{8}T\d{6}Z)(?:-(\d+))?$")
+_REPARSE_POINT_ATTR = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: symlink Y junction (NTFS)
+# Marcador fijo en el plan: la hora real solo existe al ejecutar, y el dry-run y el
+# real deben imprimir el MISMO bloque `[PLAN]`.
+PLAN_BACKUP_PLACEHOLDER = "runtime/sync_backups/<ts>"
+
+# Claves que no cuentan como divergencia de `agents.json`: `active_profile` lo voltea
+# el propio instalador a `host-project`; las otras dos son metadatos de migracion.
+_AGENTS_DIVERGENCE_IGNORED_KEYS = frozenset({"active_profile", "_migrations", "_note"})
+_PLAN_NAME_CAP = 8
 
 VERSION_MANIFEST_NAME = ".version_manifest.json"
 HOOKS_CONFIG_REL = Path("config") / "hooks_config.json"
@@ -584,7 +636,28 @@ def compact_paths(paths: Iterable[Path]) -> list[Path]:
     return compacted
 
 
-def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
+def _expand_to_files(base: Path, rels: Iterable[Path]) -> list[Path]:
+    """Expand directory entries of ``rels`` (relative to ``base``) into their files.
+
+    Before: ``base`` is a directory; ``rels`` are paths relative to it (may be absent).
+    During: read-only walk; a directory contributes every file beneath it, a file or a
+            missing path contributes itself.
+    After: sorted, de-duplicated list of relative paths (files, or the path itself
+           when it is neither a directory nor a file on disk).
+    """
+    out: set[Path] = set()
+    for rel in rels:
+        target = base / rel
+        if target.is_dir() and not target.is_symlink():
+            out.update(p.relative_to(base) for p in target.rglob("*") if p.is_file())
+        else:
+            out.add(rel)
+    return sorted(out)
+
+
+def detect_destination_residues(
+    source: Path, dest: Path, protected_out: list[Path] | None = None
+) -> list[Path]:
     """
     Detect entries in dest that do not exist in source (potential residues).
 
@@ -596,8 +669,12 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
             before computing the diff. LOCAL_DIRS paths are never synced;
             INSTALLER_MANAGED_PATHS were deposited once and belong to the
             destination; DESTINATION_OWNED_DIRS hold content the destination
-            produced and the motor does not ship.
-    After: Returns sorted, compacted list of residue relative paths.
+            produced and the motor does not ship. WOT-2026-140a: residues under
+            PRUNE_PROTECTED_DIRS (``config/``, ``context/``) are dropped BEFORE
+            compaction (so no collapsed ancestor can drag them back in); when
+            ``protected_out`` is given they are appended to it, expanded to files.
+    After: Returns sorted, compacted list of residue relative paths (never one
+           under PRUNE_PROTECTED_DIRS).
     """
     source_entries = set(iter_canonical_entries(source, include_ignored=False))
     dest_entries = set(iter_canonical_entries(dest, include_ignored=True))
@@ -628,6 +705,18 @@ def detect_destination_residues(source: Path, dest: Path) -> list[Path]:
     residues = {r for r in residues if not is_destination_owned(r)}
     # Also exclude bootstrap-specific paths (full path matching, not just r.parts[0])
     residues = {r for r in residues if r.as_posix() not in INSTALLER_BOOTSTRAP_PATHS}
+    # WOT-2026-140a: la configuracion y el contexto del destino NO se podan, sea cual
+    # sea el fichero (clase, no lista): `project-map.json`, `destination_profile.json`,
+    # `*.local.json` y los `.bak` de la migracion eran todos victimas medidas. Va ANTES
+    # de `compact_paths`: filtrar despues dejaria que un ancestro colapsado (`config`,
+    # `context`) arrastrase de nuevo lo protegido (la trampa de 053f, abajo).
+    # Sin distinguir mayusculas: NTFS (y APFS) resuelven `Config` y `config` al mismo
+    # directorio, asi que un residuo bajo `.agent/Config/` es de la clase igualmente.
+    protected_dirs = {d.lower() for d in PRUNE_PROTECTED_DIRS}
+    class_protected = {r for r in residues if r.parts[0].lower() in protected_dirs}
+    residues = residues - class_protected
+    if protected_out is not None:
+        protected_out.extend(_expand_to_files(dest, class_protected))
     compacted = compact_paths(residues)
     # WOT-2026-053f (segunda mitad del defecto, y la mas peligrosa): `compact_paths`
     # COLAPSA hijos en su ancestro, asi que si todos los hermanos de `config/` son
@@ -677,84 +766,353 @@ def ensure_parent_dirs(path: Path, dry_run: bool) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _atomic_copy(src: Path, dst: Path) -> None:
+    """Copy ``src`` over ``dst`` through a sibling temp file and ``os.replace``.
+
+    Before: ``src`` is a readable file; ``dst``'s parent may not exist yet.
+    During: creates the parent, copies (metadata included) to ``<dst>.sync-tmp`` and
+            swaps it in, so a crash never leaves ``dst`` half-written. A leftover
+            temp file is removed on failure.
+    After: ``dst`` holds ``src``'s bytes; raises ``OSError`` if the swap fails.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".sync-tmp")
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def classify_copy(child_rel: Path, src: Path, dst: Path) -> tuple[str, str]:
+    """Decide what copying ``src`` to ``dst`` means (WOT-2026-140a): the one place
+    where the per-path policy lives, shared by the plan and by the real copy.
+
+    Before: ``child_rel`` is relative to the ``.agent/`` root (same convention as
+            ``is_preserved``); ``src`` exists; ``dst`` may or may not.
+    During: read-only. DESTINATION_ONLY_FILES are never copied; a present
+            NOCLOBBER / destination-owned file is protected; an absent one is a COPY;
+            byte-identical is SAME; anything else is an UPDATE (announcing its backup
+            for BACKUP_ON_UPDATE_FILES).
+    After: returns ``(action, reason)`` with action in COPY / UPDATE / SAME / PROTECT.
+    """
+    rel = child_rel.as_posix()
+    if rel in DESTINATION_ONLY_FILES:
+        return "PROTECT", "destination-only: nunca se copia"
+    present = dst.exists() or dst.is_symlink()
+    if present and rel in DESTINATION_NOCLOBBER_FILES:
+        return "PROTECT", "no-clobber: propiedad del destino"
+    if present and is_destination_owned(child_rel):
+        return "PROTECT", "destination-owned: no-clobber"
+    if not present:
+        return "COPY", "el destino no lo tiene"
+    try:
+        if dst.is_file() and filecmp.cmp(src, dst, shallow=False):
+            return "SAME", "identico"
+    except OSError:
+        pass
+    if rel in BACKUP_ON_UPDATE_FILES:
+        return "UPDATE", f"difiere; backup -> {PLAN_BACKUP_PLACEHOLDER}/{rel}"
+    return "UPDATE", "difiere"
+
+
+def is_link_like(path: Path) -> bool:
+    """True when ``path`` is a symlink or an NTFS junction (any reparse point).
+
+    Before: ``path`` may or may not exist.
+    During: ``Path.is_symlink`` is False for a junction, so the Windows reparse-point
+            attribute is read from ``os.lstat`` as well (no Python 3.12-only API).
+    After: False for a missing path or an unreadable one (the caller's own check of
+           existence/type then decides); never raises.
+    """
+    try:
+        if path.is_symlink():
+            return True
+        return bool(
+            getattr(os.lstat(path), "st_file_attributes", 0) & _REPARSE_POINT_ATTR
+        )
+    except OSError:
+        return False
+
+
+def remove_backup_dir(root: Path, candidate: Path) -> bool:
+    """Delete ``candidate`` only when it is a real backup stamp directly under ``root``.
+
+    Before: ``root`` is ``<.agent>/runtime/sync_backups``; ``candidate`` is any path.
+    During: refuses (returns False, deletes nothing) unless ``root`` and ``candidate``
+            are not links (symlink OR junction), ``candidate`` is a directory named
+            like a backup stamp, and its RESOLVED parent is the resolved ``root`` (so
+            a link or junction that points outside is never followed). Then removes
+            the tree.
+    After: True when removed; False when refused or on ``OSError`` (which is reported).
+    """
+    try:
+        if is_link_like(root) or is_link_like(candidate) or not candidate.is_dir():
+            return False
+        if not _BACKUP_STAMP_RE.match(candidate.name):
+            return False
+        if candidate.resolve(strict=True).parent != root.resolve(strict=True):
+            return False
+        shutil.rmtree(candidate)
+    except OSError as exc:
+        print(f"[WARN] backup retention could not remove {candidate}: {exc}")
+        return False
+    return True
+
+
+def _stamp_sort_key(name: str) -> tuple[str, int]:
+    """Chronological key for a backup stamp name (``20260101T000000Z`` / ``...-N``).
+
+    Before: ``name`` matches ``_BACKUP_STAMP_RE``.
+    During: splits the UTC second from the numeric collision suffix (none = 1).
+    After: ``(second, suffix)``; a lexicographic sort would put ``-10`` before ``-2``.
+    """
+    match = _BACKUP_STAMP_RE.match(name)
+    if match is None:
+        return (name, 0)
+    return (match.group(1), int(match.group(2) or 1))
+
+
+class SyncBackup:
+    """Backups of the destination files a sync replaces (WOT-2026-140a).
+
+    Before: ``project_agent`` is the destination ``.agent/``; nothing is created until
+            the first ``save``.
+    During: ``save`` copies the CURRENT destination file to
+            ``runtime/sync_backups/<UTC stamp>/<rel>`` (atomic; one stamp directory per
+            sync, suffixed ``-N`` if the second is taken). ``apply_retention`` keeps the
+            newest SYNC_BACKUP_KEEP stamps and deletes older ones only through
+            ``remove_backup_dir``.
+    After: the original bytes survive under ``runtime/``, which the sync neither copies
+           nor prunes; ``saved`` lists every backup written by this run.
+    """
+
+    def __init__(self, project_agent: Path) -> None:
+        """Remember where the backups go; touch nothing.
+
+        Before: ``project_agent`` is the destination ``.agent/`` (it may not exist).
+        During: only derives ``root`` = ``<.agent>/runtime/sync_backups``.
+        After: ``stamp_dir`` is None and ``saved`` is empty until the first ``save``.
+        """
+        self.root = project_agent / SYNC_BACKUP_REL
+        self.stamp_dir: Path | None = None
+        self.saved: list[Path] = []
+
+    def chain_problem(self) -> str | None:
+        """Say why the backup location cannot be trusted, or None when it can.
+
+        Before: none; works on a missing chain too.
+        During: read-only. ``runtime`` and ``runtime/sync_backups`` must each be a real
+                directory when they exist -- not a file, symlink or junction, which
+                would send the backups (and the retention deletes) somewhere else.
+        After: a human-readable reason, or None (a missing chain is fine: it is created).
+        """
+        for path, rel in (
+            (self.root.parent, SYNC_BACKUP_REL.parent.as_posix()),
+            (self.root, SYNC_BACKUP_REL.as_posix()),
+        ):
+            if (path.exists() or path.is_symlink()) and (
+                is_link_like(path) or not path.is_dir()
+            ):
+                return f"{rel} existe y no es un directorio real (archivo, symlink o junction)"
+        return None
+
+    def _ensure_stamp_dir(self) -> Path:
+        """Create (once) this run's stamp directory and return it.
+
+        Before: ``chain_problem`` is None (the preflight checks it).
+        During: stamp = UTC second; a taken name gets ``-2``, ``-3``... appended.
+        After: the directory exists and is cached in ``stamp_dir``; raises ``OSError``
+               if the chain is untrustworthy or the directory cannot be created.
+        """
+        if self.stamp_dir is None:
+            problem = self.chain_problem()
+            if problem is not None:
+                raise OSError(f"backup location refused: {problem}")
+            base = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            candidate = self.root / base
+            attempt = 1
+            while candidate.exists():
+                attempt += 1
+                candidate = self.root / f"{base}-{attempt}"
+            candidate.mkdir(parents=True)
+            self.stamp_dir = candidate
+        return self.stamp_dir
+
+    def save(self, rel: Path, current: Path) -> Path:
+        """Copy the destination's CURRENT ``current`` to ``<stamp>/<rel>``.
+
+        Before: ``current`` is an existing destination file; ``rel`` is ``.agent/``-relative.
+        During: atomic copy (temp file + ``os.replace``) into this run's stamp directory.
+        After: returns the backup path, also appended to ``saved`` and printed as
+               ``[BACKUP]``; raises ``OSError`` if it cannot be written.
+        """
+        target = self._ensure_stamp_dir() / rel
+        _atomic_copy(current, target)
+        self.saved.append(target)
+        print(f"[BACKUP] {rel.as_posix()} -> {target}")
+        return target
+
+    def apply_retention(self, keep: int = SYNC_BACKUP_KEEP) -> list[Path]:
+        """Keep the newest ``keep`` stamp directories and delete the older ones.
+
+        Before: none; a missing or untrustworthy chain makes it a no-op.
+        During: orders stamps by (UTC second, numeric ``-N`` suffix) so ``-10`` sorts
+                after ``-2``; only names matching the stamp pattern are candidates and
+                each goes through ``remove_backup_dir`` (resolved-parent containment).
+        After: returns the removed paths; foreign entries are never touched.
+        """
+        removed: list[Path] = []
+        if self.chain_problem() is not None or not self.root.is_dir():
+            return removed
+        stamps = sorted(
+            (p.name for p in self.root.iterdir() if _BACKUP_STAMP_RE.match(p.name)),
+            key=_stamp_sort_key,
+        )
+        removed.extend(
+            self.root / name
+            for name in stamps[: max(len(stamps) - keep, 0)]
+            if remove_backup_dir(self.root, self.root / name)
+        )
+        if removed:
+            print(f"[BACKUP] retention: removed {len(removed)} old backup set(s)")
+        return removed
+
+
+def _copy_one_file(
+    src: Path,
+    rel: Path,
+    dst: Path,
+    dry_run: bool,
+    plan: list[tuple[str, str, str]] | None,
+    quiet: bool,
+    backup: SyncBackup | None,
+) -> list[Path]:
+    """Apply ``classify_copy`` to one file: record it in ``plan`` and, unless dry-run,
+    do it.
+
+    Before: ``src`` is a file under the template; ``rel`` is its ``.agent/``-relative path.
+    During: PROTECT and SAME touch nothing; COPY/UPDATE write ``dst`` atomically (an
+            UPDATE of a BACKUP_ON_UPDATE_FILES file saves the original first). ``quiet``
+            silences the [SKIP] lines (used by the read-only planning pass).
+    After: returns ``[rel]`` when a write happened (or would, in dry-run), else ``[]``.
+    """
+    action, reason = classify_copy(rel, src, dst)
+    if plan is not None:
+        plan.append((action, rel.as_posix(), reason))
+    if action == "PROTECT":
+        if not quiet:
+            if reason.startswith("destination-only"):
+                print(f"[SKIP] Destination-only path never copied: {rel.as_posix()}")
+            else:
+                print(
+                    f"[SKIP] Destination-owned path already exists (no-clobber): "
+                    f"{rel.as_posix()}"
+                )
+        return []
+    if action == "SAME":
+        return []
+    if dry_run:
+        return [rel]
+    if (
+        action == "UPDATE"
+        and backup is not None
+        and rel.as_posix() in BACKUP_ON_UPDATE_FILES
+    ):
+        backup.save(rel, dst)
+    _atomic_copy(src, dst)
+    return [rel]
+
+
 def _copy_allowlisted_dir(
     source_dir: Path,
     dest_dir: Path,
     source_root: Path,
     dest_root: Path,
-    allowlist: set[str],
+    allowlist: set[str] | None,
     dry_run: bool,
+    plan: list[tuple[str, str, str]] | None = None,
+    quiet: bool = False,
+    backup: SyncBackup | None = None,
 ) -> list[Path]:
     """Recursively copy files from source_dir checking each child against allowlist.
 
     Before: source_dir exists and passes the first-level allowlist check.
-            dest_dir parent directories exist.
+            dest_dir parent directories exist. ``allowlist`` None = legacy copy-all.
     During: Walks all children of source_dir. For each, verifies against allowlist
             via is_in_allowlist(). Skips preserved/ignored paths and non-allowlisted
-            children with a [SKIP] message. Creates parent dirs as needed.
-    After: Returns list of all relative paths whose files were copied.
+            children with a [SKIP] message. Every file goes through ``_copy_one_file``
+            (WOT-2026-140a: per-path policy, atomic write, backup of what is replaced).
+    After: Returns list of all relative paths whose files were (or, in dry-run, would
+           be) written. Protected and byte-identical files are not in the list.
     """
     copied: list[Path] = []
     for disk_path in source_dir.rglob("*"):
         child_rel = disk_path.relative_to(source_root)
         if is_preserved(child_rel) or is_ignored(child_rel):
             continue
-        if not is_in_allowlist(child_rel, allowlist):
-            if dry_run:
-                print(f"[DRY-RUN] Would skip unauthorized path: {child_rel.as_posix()}")
-            else:
-                print(
-                    f"[SKIP] Unauthorized path outside allowlist: {child_rel.as_posix()}"
-                )
+        if allowlist is not None and not is_in_allowlist(child_rel, allowlist):
+            if not quiet:
+                if dry_run:
+                    print(
+                        f"[DRY-RUN] Would skip unauthorized path: {child_rel.as_posix()}"
+                    )
+                else:
+                    print(
+                        f"[SKIP] Unauthorized path outside allowlist: {child_rel.as_posix()}"
+                    )
             continue
         if disk_path.is_dir():
             if not dry_run:
                 (dest_root / child_rel).mkdir(parents=True, exist_ok=True)
             continue
-        # It is a file (and is allowlisted)
-        dst_child = dest_root / child_rel
-        # WOT-2026-024d: deposit destination-owned content when missing, never
-        # clobber it.
-        # NOTE on --dry-run: this helper is unreachable when dry_run is True --
-        # copy_tree returns at its is_dir() branch (`copied.append(rel); continue`)
-        # before calling us, so a dry-run reports at DIRECTORY granularity and can
-        # never announce this per-file skip. No dry_run branch here: it would be
-        # dead code. Consequence (declared, not hidden): `--dry-run` says
-        # "planning would be copied/updated" without revealing which files are
-        # actually preserved. Follow-up: WOT-2026-025g.
-        if is_destination_owned(child_rel) and dst_child.exists():
-            print(
-                f"[SKIP] Destination-owned path already exists (no-clobber): "
-                f"{child_rel.as_posix()}"
+        copied.extend(
+            _copy_one_file(
+                disk_path,
+                child_rel,
+                dest_root / child_rel,
+                dry_run,
+                plan,
+                quiet,
+                backup,
             )
-            continue
-        if dry_run:
-            copied.append(child_rel)
-            continue
-        dst_child.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(disk_path, dst_child)
-        copied.append(child_rel)
+        )
     return copied
 
 
 def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handling
-    source: Path, dest: Path, dry_run: bool = False, allowlist: set[str] | None = None
+    source: Path,
+    dest: Path,
+    dry_run: bool = False,
+    allowlist: set[str] | None = None,
+    plan: list[tuple[str, str, str]] | None = None,
+    quiet: bool = False,
+    backup: SyncBackup | None = None,
 ) -> list[Path]:
     """
     Copy tree from source to dest, respecting allowlist if provided.
 
     Before: source directory exists; allowlist may be None (copy all non-ignored).
     During: Iterates source items, skips preserved/ignored paths, checks allowlist.
-            When allowlist is provided, directories are walked recursively to verify
-            each child individually against the allowlist. Non-allowlisted children
-            are skipped with a [SKIP] message (no RuntimeError raised).
-    After: Returns list of copied relative paths.
+            Directories are walked recursively and each file goes through
+            ``classify_copy`` (WOT-2026-140a): DESTINATION_ONLY_FILES are never
+            copied, NOCLOBBER / destination-owned files that exist are kept, identical
+            files are left alone, the rest is written atomically. Non-allowlisted
+            children are skipped with a [SKIP] message (no RuntimeError raised).
+            ``plan`` receives one ``(action, rel, reason)`` per file seen; ``quiet``
+            silences the per-file messages (read-only planning pass); ``backup`` saves
+            the original of every BACKUP_ON_UPDATE_FILES file before replacing it.
+    After: Returns list of relative paths written (or that would be, in dry-run).
 
     Args:
         source: Source directory root.
         dest: Destination directory root.
         dry_run: If True, simulate without modifying filesystem.
         allowlist: Set of allowed paths from MANIFEST.workspace, or None for legacy behavior.
+        plan: Optional out-list of ``(action, rel, reason)`` entries.
+        quiet: Suppress [SKIP] / [DRY-RUN] per-path messages.
+        backup: Optional SyncBackup used for BACKUP_ON_UPDATE_FILES updates.
 
     Returns:
         List of relative paths that were copied.
@@ -770,48 +1128,40 @@ def copy_tree(  # noqa: C901 - allowlist-aware sync needs explicit branch handli
 
         # Check allowlist if provided
         if allowlist is not None and not is_in_allowlist(rel, allowlist):
-            if dry_run:
-                print(f"[DRY-RUN] Would skip unauthorized path: {rel.as_posix()}")
-            else:
-                print(f"[SKIP] Unauthorized path outside allowlist: {rel.as_posix()}")
+            if not quiet:
+                if dry_run:
+                    print(f"[DRY-RUN] Would skip unauthorized path: {rel.as_posix()}")
+                else:
+                    print(
+                        f"[SKIP] Unauthorized path outside allowlist: {rel.as_posix()}"
+                    )
             continue
 
         dst_item = dest / item.name
 
         if item.is_dir():
-            if allowlist is not None:
-                # Recursive per-file allowlist validation
-                if not dry_run and dst_item.exists() and dst_item.is_file():
-                    dst_item.unlink()
-                children = _copy_allowlisted_dir(
-                    item, dst_item, source, dest, allowlist, dry_run
-                )
-                copied.extend(children)
-            elif dry_run:
-                copied.append(rel)
-                continue
-            else:
-                if dst_item.exists() and dst_item.is_file():
-                    dst_item.unlink()
-                shutil.copytree(
+            if not dry_run and dst_item.exists() and dst_item.is_file():
+                dst_item.unlink()
+            copied.extend(
+                _copy_allowlisted_dir(
                     item,
                     dst_item,
-                    dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns(*IGNORED_NAMES),
+                    source,
+                    dest,
+                    allowlist,
+                    dry_run,
+                    plan,
+                    quiet,
+                    backup,
                 )
-                copied.append(rel)
+            )
             continue
 
-        if dry_run:
-            copied.append(rel)
-            continue
-
-        if dst_item.exists() and dst_item.is_dir():
-            shutil.rmtree(dst_item)
-
-        ensure_parent_dirs(dst_item.parent, dry_run=False)
-        shutil.copy2(item, dst_item)
-        copied.append(rel)
+        if not dry_run:
+            if dst_item.exists() and dst_item.is_dir():
+                shutil.rmtree(dst_item)
+            ensure_parent_dirs(dst_item.parent, dry_run=False)
+        copied.extend(_copy_one_file(item, rel, dst_item, dry_run, plan, quiet, backup))
 
     return copied
 
@@ -900,7 +1250,10 @@ def _git_tracked_relpaths(repo_root: Path) -> set[str] | None:
 
 
 def _filter_git_tracked_residues(
-    repo_root: Path, agent_dir: Path, residues: list[Path]
+    repo_root: Path,
+    agent_dir: Path,
+    residues: list[Path],
+    plan: list[tuple[str, str, str]] | None = None,
 ) -> list[Path]:
     """Return only the residues that are safe to prune (not git-tracked).
 
@@ -909,6 +1262,10 @@ def _filter_git_tracked_residues(
     protects destino-keep deliverables (e.g. .agent/docs/) that the manifest does
     not list. Fail-safe: if tracked status cannot be determined, nothing is
     pruned. Prints an auditable line per protected path.
+
+    WOT-2026-140a: when ``plan`` is given, each protected path is recorded as
+    ``PROTECT`` and an undeterminable git status as a ``NOTE`` (PRUNE=0), so the
+    dry-run plan shows the fail-safe instead of only printing a warning.
     """
     tracked = _git_tracked_relpaths(repo_root)
     if tracked is None:
@@ -916,6 +1273,8 @@ def _filter_git_tracked_residues(
             "[WARN] cannot determine git-tracked status (git unavailable); "
             "skipping residue prune for safety (WOT-2026-003d fail-safe)"
         )
+        if plan is not None:
+            plan.append(("NOTE", "-", "git no determinable: PRUNE=0 (fail-safe)"))
         return []
     safe: list[Path] = []
     for rel in residues:
@@ -927,6 +1286,8 @@ def _filter_git_tracked_residues(
             print(
                 f"[SKIP] residue is git-tracked (destino-keep), not pruning: {repo_rel}"
             )
+            if plan is not None:
+                plan.append(("PROTECT", rel.as_posix(), "git-tracked residue"))
         else:
             safe.append(rel)
     return safe
@@ -953,9 +1314,35 @@ def prune_residues(
     return _prune_selected_residues(dest, selected, dry_run)
 
 
+def _hooks_payload_problem(payload: object) -> str | None:
+    """Return why ``payload`` is not a valid hooks_config.json, or None if it is.
+
+    Before: ``payload`` is whatever ``json.loads`` produced (or None).
+    During: pure check; a dict with ``version`` (str) and ``enabled`` (bool).
+    After: None when valid, else the text that follows ``hooks_config.json `` in the
+           [ERROR] line (identical to the messages the installer always printed).
+    """
+    if not payload or not isinstance(payload, dict):
+        return "is not a valid dict"
+    for field_name, expected_type in (("version", str), ("enabled", bool)):
+        if field_name not in payload:
+            return f"missing required field: {field_name}"
+        if not isinstance(payload[field_name], expected_type):
+            return (
+                f"field '{field_name}' has type {type(payload[field_name]).__name__}, "
+                f"expected {expected_type.__name__}"
+            )
+    return None
+
+
 def ensure_hooks_config_integrity(agent_dir: Path, dry_run: bool = False) -> bool:
     """
     Validate hooks_config.json structural and semantic integrity.
+
+    Before: ``agent_dir`` is the destination ``.agent/``; the file may be missing.
+    During: read-only; prints the reason when a check fails.
+    After: True when valid (or, in dry-run, when it simply does not exist yet); False
+           otherwise. Never writes.
 
     Checks:
     - File exists and is valid JSON
@@ -971,40 +1358,27 @@ def ensure_hooks_config_integrity(agent_dir: Path, dry_run: bool = False) -> boo
         print(f"[DRY-RUN] hooks_config.json would be created at {hooks_config}")
         return True
 
-    # Check 1: Valid JSON and dict
-    if not payload or not isinstance(payload, dict):
-        print("[ERROR] hooks_config.json is not a valid dict")
+    problem = _hooks_payload_problem(payload)
+    if problem is not None:
+        print(f"[ERROR] hooks_config.json {problem}")
         return False
-
-    # Check 2: Required fields exist with correct types
-    required_fields = {
-        "version": str,
-        "enabled": bool,
-    }
-
-    for field_name, expected_type in required_fields.items():
-        if field_name not in payload:
-            print(f"[ERROR] hooks_config.json missing required field: {field_name}")
-            return False
-
-        value = payload[field_name]
-        if not isinstance(value, expected_type):
-            print(
-                f"[ERROR] hooks_config.json field '{field_name}' "
-                f"has type {type(value).__name__}, expected {expected_type.__name__}"
-            )
-            return False
 
     # All checks passed
     return True
 
 
-def flip_profile_in_destination(project_agent: Path, dry_run: bool = False) -> None:
+def flip_profile_in_destination(
+    project_agent: Path,
+    dry_run: bool = False,
+    backup: SyncBackup | None = None,
+) -> None:
     """
     Ensure the active_profile in agents.json is set to 'host-project' at destination.
 
     Before: The template has 'active_profile': 'engine-dev'.
     During: If CWD is the destination project, we update it to 'host-project' to flip profile.
+            WOT-2026-140a: when ``backup`` is given (a sync over an agents.json the
+            destination already owned) the original is saved before it is rewritten.
     After: Destination project has the host-project profile.
     """
     config_file = project_agent / "config" / "agents.json"
@@ -1019,11 +1393,19 @@ def flip_profile_in_destination(project_agent: Path, dry_run: bool = False) -> N
                     "[DRY-RUN] Would flip active_profile in agents.json to 'host-project'"
                 )
                 return
+            if backup is not None:
+                backup.save(Path("config") / "agents.json", config_file)
             payload["active_profile"] = "host-project"
-            config_file.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
+            tmp = config_file.with_name(config_file.name + ".sync-tmp")
+            try:
+                tmp.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                os.replace(tmp, config_file)
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                raise
             print("[INFO] Flipped destination active_profile to 'host-project'")
     except Exception as e:
         print(f"[WARN] Failed to flip active_profile in {config_file}: {e}")
@@ -1878,6 +2260,389 @@ def _ensure_system_health_audits_dir(
     print(f"[INFO] Ensured system-health audits directory: {audits_dir}")
 
 
+@dataclass
+class SyncPlan:
+    """What a sync will do, computed read-only BEFORE the first write (WOT-2026-140a).
+
+    ``entries`` are ``(action, rel, reason)`` with action in COPY / UPDATE / SAME /
+    PROTECT / PRUNE / FLIP / NOTE and ``rel`` relative to ``.agent/``; ``warnings`` are the
+    ready-to-print [WARN]/[HINT] lines; ``safe_residues`` are the residues the real
+    run will prune (git-tracked ones already removed).
+    """
+
+    entries: list[tuple[str, str, str]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    safe_residues: list[Path] = field(default_factory=list)
+
+
+def _short_names(names: Iterable[str], cap: int = _PLAN_NAME_CAP) -> str:
+    """Format names for a one-line warning.
+
+    Before: ``names`` is any iterable of strings.
+    During: sorts them and keeps at most ``cap``.
+    After: comma-joined, with ``(+N)`` for the omitted remainder; ``-`` when empty.
+    """
+    items = sorted(names)
+    if not items:
+        return "-"
+    shown = ",".join(items[:cap])
+    return shown + (f" (+{len(items) - cap})" if len(items) > cap else "")
+
+
+def _load_json_object(path: Path) -> tuple[dict | None, str | None]:
+    """Read ``path`` as a JSON object without raising.
+
+    Before: ``path`` may be missing, unreadable or malformed.
+    During: one read plus ``json.loads``.
+    After: ``(dict, None)`` on success, ``(None, reason)`` otherwise (unreadable, not
+           JSON, or a root that is not an object).
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, str(exc)
+    if not isinstance(data, dict):
+        return None, "la raiz no es un objeto JSON"
+    return data, None
+
+
+def _agents_divergence_lines(
+    src: Path, dst: Path, motor_root: Path, dest_root: Path
+) -> list[str]:
+    """Report how a protected ``agents.json`` differs from the motor's, without merging.
+
+    Before: ``dst`` exists and was protected (no-clobber); ``src`` is the motor's file.
+    During: read-only. Compares top-level keys, ignoring ``active_profile`` (the
+            installer flips it), ``_migrations`` and ``_note``.
+    After: ``[]`` when nothing beyond those keys differs; else one fixed-format [WARN]
+           line (sorted names, at most 8 each) plus the [HINT] with the adoption command.
+           An unreadable destination file yields a single [WARN] and stays protected.
+    """
+    dst_data, err = _load_json_object(dst)
+    if dst_data is None:
+        return [f"[WARN] config/agents.json: PROTEGIDO pero ilegible como JSON: {err}"]
+    src_data, _ = _load_json_object(src)
+    if src_data is None:
+        return []
+    ignored = _AGENTS_DIVERGENCE_IGNORED_KEYS
+    keys_dst, keys_src = set(dst_data) - ignored, set(src_data) - ignored
+    only_motor, only_dest = keys_src - keys_dst, keys_dst - keys_src
+    differing = {k for k in keys_src & keys_dst if src_data[k] != dst_data[k]}
+    sv_dst = dst_data.get("schema_version", "?")
+    sv_src = src_data.get("schema_version", "?")
+    if not (only_motor or only_dest or differing or sv_dst != sv_src):
+        return []
+    sha_dst = hashlib.sha256(dst.read_bytes()).hexdigest()[:12]
+    sha_src = hashlib.sha256(src.read_bytes()).hexdigest()[:12]
+    return [
+        "[WARN] config/agents.json: PROTEGIDO (propiedad del destino, no se sobrescribe)"
+        f" | schema_version destino={sv_dst} motor={sv_src}"
+        f" | claves solo en motor: {_short_names(only_motor)}"
+        f" | claves solo en destino: {_short_names(only_dest)}"
+        f" | claves distintas: {_short_names(differing)}"
+        f" | sha256[:12] destino={sha_dst} motor={sha_src}",
+        "[HINT] para adoptar el catalogo del motor, revisa el diff y ejecuta: "
+        f"AGENT_PROJECT_ROOT={dest_root.as_posix()} python "
+        f"{motor_root.as_posix()}/.agent/agents_config.py --migrate --dry-run",
+    ]
+
+
+def _hooks_replacement_warning(rel: str, src: Path, dst: Path) -> str | None:
+    """Warn when replacing ``dst`` would drop content beyond the motor's stub.
+
+    Before: the plan has an UPDATE for ``rel``; ``src`` is the motor's file.
+    During: read-only; compares the top-level keys of both JSON objects.
+    After: a [WARN] naming the keys that will be lost and the backup location, or None
+           when the destination has nothing beyond the motor's keys.
+    """
+    where = f"backup -> {PLAN_BACKUP_PLACEHOLDER}/{rel}"
+    dst_data, err = _load_json_object(dst)
+    if dst_data is None:
+        return f"[WARN] {rel}: el fichero que se reemplaza no es JSON legible ({err}); {where}"
+    src_data, _ = _load_json_object(src)
+    extra = set(dst_data) - set(src_data or {})
+    if not extra:
+        return None
+    return (
+        f"[WARN] {rel}: el reemplazo pierde claves del destino fuera del stub del "
+        f"motor: {_short_names(extra)}; {where}"
+    )
+
+
+def _planned_flip(
+    template_agent: Path, project_agent: Path, entries: list[tuple[str, str, str]]
+) -> tuple[str, str, str] | None:
+    """Announce the ``engine-dev`` -> ``host-project`` rewrite of ``config/agents.json``.
+
+    Before: ``entries`` already holds the COPY/UPDATE/SAME/PROTECT decisions.
+    During: read-only. The file that will exist after the copy is the motor's when the
+            plan COPIES it, otherwise the destination's own; if its ``active_profile``
+            is ``engine-dev`` the real run flips it (saving a backup first when the
+            destination already owned the file).
+    After: a ``("FLIP", rel, reason)`` entry, or None when nothing will be rewritten.
+    """
+    rel = "config/agents.json"
+    copied = any(a == "COPY" and r == rel for a, r, _ in entries)
+    source = (template_agent if copied else project_agent) / rel
+    payload, _err = _load_json_object(source)
+    if payload is None or payload.get("active_profile") != "engine-dev":
+        return None
+    backup = "" if copied else f"; backup -> {PLAN_BACKUP_PLACEHOLDER}/{rel}"
+    return ("FLIP", rel, f"active_profile engine-dev -> host-project{backup}")
+
+
+def build_sync_plan(
+    template_agent: Path,
+    project_agent: Path,
+    allowlist: set[str] | None,
+    residues: list[Path],
+    protected_residues: list[Path],
+) -> SyncPlan:
+    """Compute the whole sync plan without writing anything (WOT-2026-140a).
+
+    Before: ``residues`` / ``protected_residues`` come from
+            ``detect_destination_residues``; ``project_agent`` exists.
+    During: a quiet dry-run pass of ``copy_tree`` yields the COPY/UPDATE/SAME/PROTECT
+            entries (the SAME classifier the real pass uses); class-protected residues
+            become PROTECT; the git-tracked filter turns tracked residues into PROTECT
+            and the rest into PRUNE; warnings are derived from the entries.
+    After: returns the sorted ``SyncPlan``. Raises ``OSError`` only if the tree cannot
+           be read (the caller reports it as preflight P6).
+    """
+    plan = SyncPlan()
+    copy_tree(
+        template_agent,
+        project_agent,
+        dry_run=True,
+        allowlist=allowlist,
+        plan=plan.entries,
+        quiet=True,
+    )
+    for rel in protected_residues:
+        plan.entries.append(
+            ("PROTECT", rel.as_posix(), "class config/context: residuo no podado")
+        )
+    if residues:
+        plan.safe_residues = _filter_git_tracked_residues(
+            project_agent.parent, project_agent, residues, plan=plan.entries
+        )
+    for rel in plan.safe_residues:
+        plan.entries.append(("PRUNE", rel.as_posix(), "residuo sin seguimiento git"))
+    flip = _planned_flip(template_agent, project_agent, plan.entries)
+    if flip is not None:
+        plan.entries.append(flip)
+    plan.entries.sort(key=lambda entry: (entry[0], entry[1]))
+    motor_root, dest_root = template_agent.parent, project_agent.parent
+    for action, rel, _reason in plan.entries:
+        if action == "UPDATE" and rel in BACKUP_ON_UPDATE_FILES:
+            warning = _hooks_replacement_warning(
+                rel, template_agent / rel, project_agent / rel
+            )
+            if warning:
+                plan.warnings.append(warning)
+        elif action == "PROTECT" and rel in DESTINATION_NOCLOBBER_FILES:
+            plan.warnings.extend(
+                _agents_divergence_lines(
+                    template_agent / rel, project_agent / rel, motor_root, dest_root
+                )
+            )
+    return plan
+
+
+def print_sync_plan(plan: SyncPlan) -> None:
+    """Print the plan in the fixed ``[PLAN]`` format (same text in dry-run and real).
+
+    Before: ``plan`` is sorted by ``(action, rel)``.
+    During: one line per non-SAME entry, then the summary counts, then the warnings.
+    After: stdout holds a deterministic block; nothing is written to disk.
+    """
+    names = ("COPY", "UPDATE", "PROTECT", "PRUNE", "SAME", "FLIP")
+    counts = dict.fromkeys(names, 0)
+    for action, rel, reason in plan.entries:
+        if action in counts:
+            counts[action] += 1
+        if action != "SAME":
+            print(f"[PLAN] {action:<7} {rel}  ({reason})")
+    print("[PLAN] summary: " + " ".join(f"{n}={counts[n]}" for n in names))
+    for line in plan.warnings:
+        print(line)
+
+
+def run_sync_preflight(
+    template_agent: Path,
+    project_agent: Path,
+    plan: SyncPlan,
+    ticket_prefix: str | None = None,
+) -> list[str]:
+    """Check, read-only, that the sync can finish without leaving a half-done destination.
+
+    Before: ``plan`` was computed by ``build_sync_plan``.
+    During: P2 the ``hooks_config.json`` that will exist after the plan (the motor's if
+            it will be copied/updated, the destination's otherwise) is a valid dict;
+            P4 ``.agent/`` is writable, no planned write lands on a type conflict or a
+            link (``_write_target_problems``), and, when a backup is planned,
+            ``runtime`` and ``runtime/sync_backups`` are real directories. (P1, P3 and
+            P5 are non-blocking: they surface as [WARN]/[NOTE] lines; P6, an
+            unreadable tree, is raised by ``build_sync_plan``.)
+    After: returns the list of failure messages (empty = go). Writes nothing.
+    """
+    failures: list[str] = []
+    hooks_rel = HOOKS_CONFIG_REL.as_posix()
+    action = next((a for a, rel, _ in plan.entries if rel == hooks_rel), None)
+    from_motor = action in ("COPY", "UPDATE")
+    hooks_file = (template_agent if from_motor else project_agent) / HOOKS_CONFIG_REL
+    side = "origen" if from_motor else "destino"
+    if not hooks_file.is_file():
+        failures.append(
+            f"P2: no habra hooks_config.json valido tras el plan (falta en {side})"
+        )
+    else:
+        payload, err = _load_json_object(hooks_file)
+        problem = (
+            f"no se puede leer: {err}"
+            if payload is None
+            else _hooks_payload_problem(payload)
+        )
+        if problem is not None:
+            failures.append(f"P2: hooks_config.json de {side} {problem}")
+    if not os.access(project_agent, os.W_OK):
+        failures.append(f"P4: {project_agent} no es escribible")
+    failures.extend(
+        _write_target_problems(template_agent, project_agent, plan, ticket_prefix)
+    )
+    if any(PLAN_BACKUP_PLACEHOLDER in reason for _a, _r, reason in plan.entries):
+        problem = SyncBackup(project_agent).chain_problem()
+        if problem is not None:
+            failures.append(f"P4: {problem}")
+    return failures
+
+
+def _escapes_boundary(path: Path, boundary: Path) -> bool:
+    """True when the link at ``path`` is broken or resolves outside ``boundary``.
+
+    Before: ``path`` is a symlink / junction (or any existing path).
+    During: ``resolve(strict=True)``; a dangling or looping link cannot be resolved.
+    After: True for an unresolvable path or one not under ``boundary.resolve()``.
+    """
+    try:
+        resolved = path.resolve(strict=True)
+        return not resolved.is_relative_to(boundary.resolve())
+    except OSError:
+        return True
+
+
+def _collect_write_targets(
+    template_agent: Path,
+    project_agent: Path,
+    plan: SyncPlan,
+    ticket_prefix: str | None,
+) -> list[tuple[Path, bool]]:
+    """List every destination file the sync (re)writes, relative to the destination root.
+
+    Before: ``plan`` holds the COPY / UPDATE / FLIP entries to be written.
+    During: read-only. Plan entries (flag True) plus the auxiliary steps that rewrite
+            their file whenever they run (flag False): the motor link, ``.gitignore``,
+            ``.claude/settings.json``, ``memory_rules.md`` (motor ships one),
+            ``repomix.config.json`` (motor ships the template) and ``PROJECT.md``
+            (only with a ticket prefix). Create-only-if-absent steps are left out: they
+            skip an existing path.
+    After: ``[(relative path, is_plan_entry)]``.
+    """
+    agent_name = project_agent.name
+    targets = [
+        (Path(agent_name) / rel, True)
+        for action, rel, _reason in plan.entries
+        if action in ("COPY", "UPDATE", "FLIP")
+    ]
+    aux = [
+        Path(agent_name) / "config" / "motor_destination_link.json",
+        Path(".gitignore"),
+        Path(".claude") / "settings.json",
+    ]
+    if (template_agent / "runtime" / "memory" / "memory_rules.md").exists():
+        aux.append(Path(agent_name) / "runtime" / "memory" / "memory_rules.md")
+    template_root = template_agent.parent
+    if (template_root / "agent_system" / "templates" / "repomix.config.json").exists():
+        aux.append(Path("repomix.config.json"))
+    if ticket_prefix:
+        aux.append(Path("PROJECT.md"))
+    return targets + [(rel, False) for rel in aux]
+
+
+def _one_target_problems(
+    dest_root: Path, project_agent: Path, rel_path: Path, is_plan: bool
+) -> dict[Path, str]:
+    """P4 findings for one write target (see ``_write_target_problems``).
+
+    Before: ``rel_path`` is relative to ``dest_root``; ``is_plan`` says it is a plan entry.
+    During: read-only checks of the target and of each existing ancestor.
+    After: ``{offending path: message}``; empty when the write can land.
+    """
+    protected_dirs = {d.lower() for d in PRUNE_PROTECTED_DIRS}
+    parts = rel_path.parts
+    under_agent = parts[0] == project_agent.name
+    boundary = project_agent if under_agent else dest_root
+    # `.agent/` itself may be a junction on purpose: links are judged below it.
+    first_link_depth = 2 if under_agent else 1
+    found: dict[Path, str] = {}
+    target = dest_root / rel_path
+    shown = rel_path.as_posix()
+    if target.is_dir():
+        found[target] = f"P4: {shown} es un directorio y se esperaba un fichero"
+    elif not is_plan and is_link_like(target) and _escapes_boundary(target, boundary):
+        found[target] = (
+            f"P4: {shown} es un symlink o junction roto o que sale del destino"
+        )
+    for depth in range(1, len(parts)):
+        ancestor = dest_root.joinpath(*parts[:depth])
+        if not (ancestor.exists() or ancestor.is_symlink()):
+            break
+        name = "/".join(parts[:depth])
+        if not ancestor.is_dir():
+            found[ancestor] = f"P4: {name} existe y no es un directorio"
+        elif depth >= first_link_depth and is_link_like(ancestor):
+            if is_plan and parts[1].lower() in protected_dirs:
+                found[ancestor] = (
+                    f"P4: {name} es un symlink o junction "
+                    "(el sync escribiria a traves de el)"
+                )
+            elif not is_plan and _escapes_boundary(ancestor, boundary):
+                found[ancestor] = (
+                    f"P4: {name} es un symlink o junction roto o que sale del destino"
+                )
+    return found
+
+
+def _write_target_problems(
+    template_agent: Path,
+    project_agent: Path,
+    plan: SyncPlan,
+    ticket_prefix: str | None = None,
+) -> list[str]:
+    """Find destination paths the sync's writes cannot safely land on (P4).
+
+    Before: ``plan`` holds the COPY / UPDATE / FLIP entries to be written.
+    During: read-only, over ``_collect_write_targets``. An existing target that is a
+            directory (plain or a link/junction to one) fails; so does an existing
+            ancestor that is not a directory. Plan targets also fail through a
+            symlink/junction ancestor inside ``config/``/``context/`` (any case).
+            Auxiliary targets fail when the target or an ancestor below the destination
+            (for ``.agent/`` paths: below ``.agent/`` itself, which MAY be a junction)
+            is a link that dangles or resolves outside that boundary.
+    After: one message per distinct offending path; ``[]`` when every write can land.
+    """
+    dest_root = project_agent.parent
+    problems: dict[Path, str] = {}
+    for rel_path, is_plan in _collect_write_targets(
+        template_agent, project_agent, plan, ticket_prefix
+    ):
+        for path, message in _one_target_problems(
+            dest_root, project_agent, rel_path, is_plan
+        ).items():
+            problems.setdefault(path, message)
+    return [problems[path] for path in sorted(problems, key=str)]
+
+
 def install_agent_system(
     template_agent: Path,
     project_agent: Path,
@@ -2009,24 +2774,26 @@ def sync_agent_system(  # noqa: C901
     auto_yes: bool = False,
     untrack_existing: bool = False,
 ) -> int:
+    """Sync the destination ``.agent/`` from the motor without clobbering its config.
+
+    Before: ``project_agent`` exists (else rc=1); ``template_agent`` is the motor's
+            ``.agent/``; git state of the destination is irrelevant.
+    During: version prints -> residues -> read-only PLAN (``[PLAN]`` block, identical
+            in dry-run and real) -> PREFLIGHT (rc=1 and zero writes on failure, also
+            in dry-run) -> copy per the per-path policy (backups under
+            ``runtime/sync_backups``) -> profile flip -> link/template/bootstrap steps
+            -> hooks integrity -> backup retention -> host-setup hook -> prune (the
+            last destructive step) -> link postcondition.
+    After: 0 on success (dry-run: 0 and nothing written); 1 when the plan or preflight
+           fails, hooks integrity fails, the host-setup hook returns non-zero (that rc
+           is propagated), or the motor link vanished. On every early return before
+           the copy the destination is byte-identical to what it was.
+    """
     print("[SYNC] Agent System from orquestador_de_agentes/")
 
     if not project_agent.exists():
         print("[ERROR] Project .agent/ not found. Run --install first.")
         return 1
-
-    # WOT-2026-016p: existing destinations get the projection guard on sync.
-    # WOT-2026-020t: pass motor_root so collaboration is gitignored only in
-    # destinations, never in the motor itself.
-    ensure_destination_projections_ignored(
-        project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
-    )
-    # WOT-2026-020t: un-tracking is OPT-IN ONLY (hard barrier). This call-site
-    # runs unattended, so it must never untrack without the explicit flag.
-    if untrack_existing:
-        untrack_ignored_projections(
-            project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
-        )
 
     manifest_version = get_manifest_version(template_agent)
     if manifest_version:
@@ -2049,7 +2816,10 @@ def sync_agent_system(  # noqa: C901
     else:
         print("[WARN] MANIFEST.workspace not found, using legacy copy-all behavior")
 
-    residues = detect_destination_residues(template_agent, project_agent)
+    protected_residues: list[Path] = []
+    residues = detect_destination_residues(
+        template_agent, project_agent, protected_out=protected_residues
+    )
     if residues:
         print(f"[WARN] Destination residues detected: {len(residues)}")
         for rel in residues:
@@ -2057,10 +2827,57 @@ def sync_agent_system(  # noqa: C901
     else:
         print("[OK] No destination residues detected.")
 
-    copied = copy_tree(
-        template_agent, project_agent, dry_run=dry_run, allowlist=allowlist
+    # WOT-2026-140a: PLAN + PREFLIGHT, both read-only and BEFORE the first write.
+    # Medido 2026-10-31: con un hooks_config.json invalido en el motor, el sync
+    # anterior copiaba, podaba y SOLO ENTONCES salia con rc=1 (y el dry-run daba
+    # rc=0). El mismo bloque `[PLAN]` se imprime en dry-run y en real; el real lo
+    # ejecuta despues, y la poda va la ULTIMA de las operaciones destructivas.
+    try:
+        plan = build_sync_plan(
+            template_agent, project_agent, allowlist, residues, protected_residues
+        )
+    except OSError as exc:
+        print(f"[PREFLIGHT] FAIL P6: no se pudo calcular el plan: {exc}")
+        print("[PREFLIGHT] sync abortado: no se ha modificado nada.")
+        return 1
+    print_sync_plan(plan)
+    failures = run_sync_preflight(template_agent, project_agent, plan, ticket_prefix)
+    if failures:
+        for failure in failures:
+            print(f"[PREFLIGHT] FAIL {failure}")
+        print("[PREFLIGHT] sync abortado: no se ha modificado nada.")
+        return 1
+    print("[PREFLIGHT] OK")
+
+    # WOT-2026-016p: existing destinations get the projection guard on sync.
+    # WOT-2026-020t: pass motor_root so collaboration is gitignored only in
+    # destinations, never in the motor itself.
+    ensure_destination_projections_ignored(
+        project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
     )
-    flip_profile_in_destination(project_agent, dry_run=dry_run)
+    # WOT-2026-020t: un-tracking is OPT-IN ONLY (hard barrier). This call-site
+    # runs unattended, so it must never untrack without the explicit flag.
+    if untrack_existing:
+        untrack_ignored_projections(
+            project_agent.parent, dry_run=dry_run, motor_root=template_agent.parent
+        )
+
+    backup = None if dry_run else SyncBackup(project_agent)
+    agents_json_preexisting = (project_agent / "config" / "agents.json").exists()
+    copied = copy_tree(
+        template_agent,
+        project_agent,
+        dry_run=dry_run,
+        allowlist=allowlist,
+        backup=backup,
+    )
+    # El flip solo respalda un agents.json que el destino YA tenia: si acaba de
+    # depositarse la semilla no hay nada que perder.
+    flip_profile_in_destination(
+        project_agent,
+        dry_run=dry_run,
+        backup=backup if agents_json_preexisting else None,
+    )
 
     # Write motor-destination link file (idempotent update)
     motor_version = get_manifest_version(template_agent)
@@ -2119,22 +2936,25 @@ def sync_agent_system(  # noqa: C901
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
-    # Policy: "no drift" — remove residues by default (strict mode)
-    # --prune overrides to ask interactively
-    # These flags are now mutually exclusive; default to strict if neither specified
-    pruned: list[Path] = []
-    if prune:
-        # Interactive mode: ask user which residues to remove
-        pruned = prune_residues(
-            project_agent, residues, dry_run=dry_run, interactive=True
-        )
-    else:
-        # Strict mode (default): remove all residues automatically
-        pruned = prune_residues(
-            project_agent, residues, dry_run=dry_run, interactive=False
-        )
+    # WOT-2026-140a: la integridad se exige ANTES de la poda (el preflight ya la
+    # garantiza para el fichero que quedara; esto es la postcondicion barata). La
+    # poda es la ULTIMA operacion destructiva de verdad: va despues de la retencion
+    # de backups y del host-setup (que puede abortar con rc != 0), de modo que un
+    # fallo de cualquiera de los dos ya no deja la poda hecha.
+    if not dry_run and not integrity_ok:
+        print("[ERROR] Hooks config integrity check failed. Sync aborted.")
+        return 1
+
+    if backup is not None and backup.saved:
+        backup.apply_retention()
+
+    # Policy: "no drift" -- remove the planned residues (strict, default). --prune
+    # asks interactively which of the planned candidates to remove. The git-tracked
+    # filter already ran while planning (it only ever prunes untracked residues).
+    selected = plan.safe_residues
 
     if dry_run:
+        pruned = _prune_selected_residues(project_agent, selected, dry_run)
         # Count actual files (copied now contains per-file paths after 025g)
         file_count = len(copied)
         print(f"\n[DRY-RUN] Sync plan: {file_count} files would be copied/updated.")
@@ -2146,11 +2966,6 @@ def sync_agent_system(  # noqa: C901
             print("[DRY-RUN] Residues selected for cleanup: 0")
         return 0
 
-    # Validate hooks config integrity (critical for "no drift" policy)
-    if not integrity_ok:
-        print("[ERROR] Hooks config integrity check failed. Sync aborted.")
-        return 1
-
     print("[OK] Hooks config integrity verified.")
 
     # Invoke host setup hook if present
@@ -2160,6 +2975,10 @@ def sync_agent_system(  # noqa: C901
     if rc != 0:
         print("[sync] Host setup failed; aborting sync.", file=sys.stderr)
         return rc
+
+    if selected and prune:
+        selected = _select_residues_interactive(selected)
+    _prune_selected_residues(project_agent, selected, dry_run)
 
     # WOT-2026-053f: POSTCONDICION. Un `[SUCCESS]` sobre un destino HUERFANO es la
     # peor clase de recibo: rc=0 mientras el destino pierde su unica via de resolver

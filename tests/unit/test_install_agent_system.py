@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 import scripts.install_agent_system as ias
 from scripts.install_agent_system import (
     TEMPLATE_ROOT,
@@ -2234,3 +2238,1223 @@ def test_link_populates_workspace_root_when_declaration_exists(tmp_path):
         f"el generador no rellenó el campo: esperaba {expected}, "
         f"got {data.get('motor_workspace_root')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-140a: `--sync` no pisa ni poda la configuracion del destino.
+#
+# Medido 2026-10-31 sobre destinos sinteticos aislados (nunca un destino real):
+# `agents.json` y `hooks_config.json` se pisaban en TODOS los estados git y el
+# dry-run solo los contaba; `project-map.json`, `destination_profile.json`,
+# `*.local.json` y los `.bak` de la migracion se podaban si no estaban versionados;
+# un motor con `project-map.json` propio lo copiaba encima del del destino; y con un
+# hooks_config invalido en el motor el sync copiaba y podaba y SOLO DESPUES salia
+# con rc=1. Estados del destino: T versionado, I ignorado, U sin versionar, N sin .git.
+# ---------------------------------------------------------------------------
+
+_MOTOR_AGENTS_140A = {
+    "schema_version": "1.4",
+    "active_profile": "engine-dev",
+    "backends": {"motor": {}},
+    "ensemble_profiles": {"p": 1},
+    "role_mapping": {"builder": {"backend": "motor"}},
+}
+_MOTOR_HOOKS_140A = {"version": "1.0", "enabled": True}
+_MANIFEST_140A = "\n".join(
+    [
+        ".agent/.version_manifest.json",
+        ".agent/config/hooks_config.json",
+        ".agent/config/agents.json",
+        ".agent/config/motor_destination_link.json",
+        ".agent/config/destination_context.json",
+        ".agent/context/project-map.json",
+        ".agent/context/destination_map.md",
+        ".agent/planning/",
+        "",
+    ]
+)
+_PLAN_BACKUP_140A = "runtime/sync_backups/<ts>"
+_BAK_NAME_140A = "config/agents.json.bak.20260101T000000Z"
+
+
+def _jdump(obj: object) -> str:
+    return json.dumps(obj, indent=2) + "\n"
+
+
+def _motor_140a(
+    tmp_path: Path,
+    *,
+    hooks: object = None,
+    agents: object = None,
+    with_map: bool = False,
+    with_profile: bool = False,
+    with_context_dir: bool = True,
+) -> Path:
+    """Synthetic motor with the REAL manifest entries; returns its ``.agent`` dir."""
+    root = tmp_path / "motor"
+    agent = root / ".agent"
+    (agent / "config").mkdir(parents=True)
+    (agent / "agent_controller.py").write_text("# stub\n", encoding="utf-8")
+    (agent / ".version_manifest.json").write_text(
+        '{"version": "9.9"}\n', encoding="utf-8"
+    )
+    (agent / "config" / "agents.json").write_text(
+        _jdump(agents or _MOTOR_AGENTS_140A), encoding="utf-8"
+    )
+    (agent / "config" / "hooks_config.json").write_text(
+        _jdump(hooks or _MOTOR_HOOKS_140A), encoding="utf-8"
+    )
+    if with_map or with_context_dir:
+        (agent / "context").mkdir()
+        (agent / "context" / "destination_map.md").write_text(
+            "# map\n", encoding="utf-8"
+        )
+    if with_map:
+        (agent / "context" / "project-map.json").write_text(
+            json.dumps({"MARK": "MOTOR_MAP"}), encoding="utf-8"
+        )
+    if with_profile:
+        (agent / "config" / "destination_profile.json").write_text(
+            json.dumps({"MARK": "MOTOR_PROFILE"}), encoding="utf-8"
+        )
+    (root / "MANIFEST.workspace").write_text(_MANIFEST_140A, encoding="utf-8")
+    return agent
+
+
+def _dest_files_140a() -> dict[str, str]:
+    return {
+        "config/agents.json": _jdump(
+            {
+                "schema_version": "1.4",
+                "active_profile": "host-project",
+                "content_role_mapping": {"MARK": "DEST"},
+                "role_mapping": {"builder": {"backend": "dest"}},
+            }
+        ),
+        "config/hooks_config.json": _jdump(_MOTOR_HOOKS_140A),
+        "context/project-map.json": json.dumps({"MARK": "DEST_MAP"}),
+        "config/destination_profile.json": json.dumps({"MARK": "DEST_PROFILE"}),
+        "config/agents.local.json": json.dumps({"role_mapping": {"revisor": {}}}),
+        "config/hooks_config.local.json": json.dumps({"MARK": "LOCAL_HOOKS"}),
+        _BAK_NAME_140A: "{}\n",
+    }
+
+
+def _git_140a(root: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _dest_140a(
+    tmp_path: Path,
+    state: str,
+    *,
+    files: dict[str, str] | None = None,
+    name: str = "dest",
+    extra: dict[str, str] | None = None,
+) -> Path:
+    """Destination repo; ``state`` applies to every file in ``files`` (+ ``extra``).
+
+    T = committed, I = gitignored, U = untracked, N = no ``.git`` at all.
+    """
+    root = tmp_path / name
+    agent = root / ".agent"
+    agent.mkdir(parents=True)
+    contents = dict(_dest_files_140a() if files is None else files)
+    contents.update(extra or {})
+    for rel, text in contents.items():
+        target = agent / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    (root / "README.md").write_text("keep tracked\n", encoding="utf-8")
+    if state != "N":
+        ignored = [f".agent/{rel}" for rel in contents] if state == "I" else []
+        (root / ".gitignore").write_text(
+            "".join(f"{line}\n" for line in ignored), encoding="utf-8"
+        )
+        _git_140a(root, "init", "-q", "-b", "main")
+        _git_140a(root, "add", ".gitignore", "README.md")
+        if state == "T":
+            _git_140a(root, "add", "-f", ".agent")
+        _git_140a(root, "commit", "-q", "-m", "fixture")
+    return root
+
+
+def _tree_140a(root: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        if ".git" in rel.parts or not path.is_file():
+            continue
+        out[rel.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return out
+
+
+def _sync_140a(motor_agent: Path, dest: Path, capsys, **kwargs) -> tuple[int, str]:
+    rc = ias.sync_agent_system(motor_agent, dest / ".agent", **kwargs)
+    return rc, capsys.readouterr().out
+
+
+def _plan_lines_140a(out: str) -> list[str]:
+    return [ln for ln in out.splitlines() if ln.startswith("[PLAN]")]
+
+
+@pytest.mark.parametrize("state", ["T", "I", "U", "N"])
+def test_140a_t1_existing_agents_json_survives_sync_byte_for_byte(
+    tmp_path, capsys, state
+):
+    """T1 (DoD 1): an agents.json the destination already has is never overwritten,
+    whatever its git state (the old sync overwrote it in all four).
+
+    C4: the fixture's ``active_profile`` is ALREADY ``host-project`` so the flip has
+    nothing to rewrite and the comparison is byte for byte. The flip itself is T3.
+    Mutation-to-prove: drop ``config/agents.json`` from DESTINATION_NOCLOBBER_FILES
+    (or make the no-clobber depend on git tracking) and this goes red.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, state)
+    target = dest / ".agent" / "config" / "agents.json"
+    before = target.read_bytes()
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert target.read_bytes() == before
+    assert "[PLAN] PROTECT config/agents.json" in out
+
+
+def test_140a_t2_missing_agents_json_is_deposited_and_flipped(tmp_path, capsys):
+    """T2 (DoD 5): "new" means absent at planning time, so a destination without
+    agents.json still receives the motor's seed (flipped to host-project).
+
+    Mutation-to-prove: a no-clobber with no "absent" branch leaves it missing.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(
+        tmp_path, "U", files={"config/hooks_config.json": _jdump(_MOTOR_HOOKS_140A)}
+    )
+    target = dest / ".agent" / "config" / "agents.json"
+    assert not target.exists()
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    seeded = json.loads(target.read_text(encoding="utf-8"))
+    assert seeded["active_profile"] == "host-project"
+    assert seeded["backends"] == _MOTOR_AGENTS_140A["backends"]
+    assert "[PLAN] COPY    config/agents.json" in out
+    assert not (dest / ".agent" / "runtime" / "sync_backups").exists()
+
+
+def test_140a_t3_flip_changes_only_active_profile_and_backs_up_first(tmp_path, capsys):
+    """T3 (DoD 4): the profile flip is still applied to a destination-owned
+    agents.json that says ``engine-dev``, rewrites ONLY that key, and saves the
+    original first.
+
+    C4: this is the test that covers the flip; T1 uses ``host-project`` fixtures.
+    Mutation-to-prove: a flip that rewrites the file from the motor's copy drops
+    ``content_role_mapping`` and goes red; one without the backup fails the last assert.
+    """
+    motor = _motor_140a(tmp_path)
+    original = {
+        "schema_version": "1.4",
+        "active_profile": "engine-dev",
+        "content_role_mapping": {"MARK": "DEST"},
+        "llm_fallback": {"MARK": "DEST"},
+    }
+    dest = _dest_140a(
+        tmp_path,
+        "U",
+        files={
+            "config/agents.json": _jdump(original),
+            "config/hooks_config.json": _jdump(_MOTOR_HOOKS_140A),
+        },
+    )
+    target = dest / ".agent" / "config" / "agents.json"
+    original_bytes = target.read_bytes()
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert (
+        "[PLAN] FLIP    config/agents.json  (active_profile engine-dev -> host-project; "
+        f"backup -> {_PLAN_BACKUP_140A}/config/agents.json)"
+    ) in out
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        **original,
+        "active_profile": "host-project",
+    }
+    backups = list(
+        (dest / ".agent" / "runtime" / "sync_backups").glob("*/config/agents.json")
+    )
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("state", ["I", "U", "N"])
+@pytest.mark.parametrize("dest_has_map", [True, False])
+def test_140a_t4_project_map_is_never_pruned_nor_copied(
+    tmp_path, capsys, state, dest_has_map
+):
+    """T4 (DoD 2): the destination's project-map.json survives in every non-tracked
+    state, and a map the MOTOR happens to have is never copied over it (or into a
+    destination that has none: it is the destination's own projection).
+
+    Mutation-to-prove: take ``context/project-map.json`` out of DESTINATION_ONLY_FILES
+    and the motor's map overwrites / appears; drop the PRUNE_PROTECTED_DIRS filter and
+    the destination's map is pruned.
+    """
+    motor = _motor_140a(tmp_path, with_map=True)
+    files = _dest_files_140a()
+    if not dest_has_map:
+        del files["context/project-map.json"]
+    dest = _dest_140a(tmp_path, state, files=files)
+    target = dest / ".agent" / "context" / "project-map.json"
+    before = target.read_bytes() if dest_has_map else None
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert "MOTOR_MAP" not in (
+        target.read_text(encoding="utf-8") if target.exists() else ""
+    )
+    if dest_has_map:
+        assert target.read_bytes() == before
+    else:
+        assert not target.exists()
+    assert (
+        "[PLAN] PROTECT context/project-map.json  (destination-only: nunca se copia)"
+        in out
+    )
+
+
+@pytest.mark.parametrize("state", ["I", "U", "N"])
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "config/destination_profile.json",
+        "config/agents.local.json",
+        "config/hooks_config.local.json",
+        _BAK_NAME_140A,
+        "config/anything_else.json",
+        "context/notes.md",
+    ],
+)
+def test_140a_t5_whole_config_and_context_class_survives_prune(
+    tmp_path, capsys, state, rel
+):
+    """T5 (DoD 2): the prune protects the CLASS ``config/`` + ``context/``, not a list
+    of names: the profile, the documented local overrides, the migration's ``.bak``
+    and any file nobody thought of survive, and the plan names them as PROTECT.
+
+    Mutation-to-prove: remove ``config``/``context`` from PRUNE_PROTECTED_DIRS and
+    every parametrization goes red (they are pruned).
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, state, extra={rel: "keep me\n"})
+    target = dest / ".agent" / rel
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert target.read_text(encoding="utf-8") == "keep me\n"
+    assert f"[PLAN] PROTECT {rel}" in out
+
+
+@pytest.mark.parametrize("state", ["U", "N"])
+def test_140a_t6_control_unknown_residue_outside_the_class_is_still_pruned(
+    tmp_path, capsys, state
+):
+    """T6 (control for T5): the class protection must not turn the prune off. A
+    residue outside ``config/``/``context/`` is still removed (also with no ``.git``)
+    while a file inside the class survives in the SAME run.
+
+    Mutation-to-prove: widen PRUNE_PROTECTED_DIRS to cover the whole ``.agent/`` and
+    the first assert goes red.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(
+        tmp_path, state, extra={"stale_tool.py": "x\n", "rules/old.md": "y\n"}
+    )
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert not (dest / ".agent" / "stale_tool.py").exists()
+    assert not (dest / ".agent" / "rules").exists()
+    assert (dest / ".agent" / "config" / "destination_profile.json").exists()
+    assert "[PLAN] PRUNE   stale_tool.py" in out
+
+
+def test_140a_t7_ancestor_directory_missing_in_the_source_does_not_drag_protected(
+    tmp_path,
+):
+    """T7: when the motor ships NO ``context/`` at all, the directory itself is a
+    residue and ``compact_paths`` would collapse everything under it into ONE entry
+    (the 053f trap). The class filter runs before compaction, so neither the
+    directory nor the file is a prune candidate, and the file is reported protected.
+
+    Mutation-to-prove: delete the class filter (or move it after ``compact_paths``)
+    and ``context`` shows up in the residues.
+    """
+    motor = _motor_140a(tmp_path, with_context_dir=False)
+    dest = _dest_140a(tmp_path, "U")
+    assert not (motor / "context").exists()
+    protected: list[Path] = []
+
+    residues = ias.detect_destination_residues(
+        motor, dest / ".agent", protected_out=protected
+    )
+
+    assert not [r for r in residues if r.parts[0] in ("config", "context")]
+    assert Path("context/project-map.json") in protected
+    assert Path("config/destination_profile.json") in protected
+
+
+@pytest.mark.parametrize("mode", ["git_not_on_path", "ls_files_fails"])
+def test_140a_t8_git_not_determinable_prunes_nothing_and_the_plan_says_so(
+    tmp_path, capsys, monkeypatch, mode
+):
+    """T8: git missing from PATH, or ``git ls-files`` failing on a corrupt index, is
+    the WOT-2026-003d fail-safe: nothing is pruned, the protected files are intact,
+    and (new) the plan carries a NOTE instead of only a warning line.
+
+    Mutation-to-prove: let a failing git status fall through to "prune everything"
+    and ``stale_tool.py`` disappears.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U", extra={"stale_tool.py": "x\n"})
+    before = _tree_140a(dest / ".agent")
+    if mode == "git_not_on_path":
+        monkeypatch.setattr(ias.shutil, "which", lambda *_a, **_k: None)
+    else:
+        (dest / ".git" / "index").write_bytes(b"garbage, not a git index")
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert "cannot determine git-tracked status" in out
+    assert "[PLAN] NOTE" in out
+    assert "PRUNE=0" in out
+    after = _tree_140a(dest / ".agent")
+    for rel in before:
+        if rel.startswith(("config/", "context/")) or rel == "stale_tool.py":
+            assert after[rel] == before[rel], rel
+
+
+def test_140a_t9_dry_run_lists_every_action_by_name_and_touches_nothing(
+    tmp_path, capsys
+):
+    """T9: the dry-run names each COPY / UPDATE / PROTECT / PRUNE in the fixed
+    format (it used to print only a count) and leaves every byte of the destination
+    as it was. The expected lines are literal on purpose: the format is a contract.
+
+    Mutation-to-prove: go back to printing only the counter and the literals vanish.
+    """
+    rich_hooks = {**_MOTOR_HOOKS_140A, "hooks": {"stop": {"mode": "strict"}}}
+    motor = _motor_140a(tmp_path, with_context_dir=False)
+    dest = _dest_140a(
+        tmp_path,
+        "U",
+        files={
+            "config/agents.json": _jdump(
+                {**_MOTOR_AGENTS_140A, "active_profile": "host-project", "x": 1}
+            ),
+            "config/hooks_config.json": _jdump(rich_hooks),
+            "context/project-map.json": json.dumps({"MARK": "DEST_MAP"}),
+        },
+        extra={"stale_tool.py": "x\n"},
+    )
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=True)
+
+    assert rc == 0, out
+    assert _plan_lines_140a(out) == [
+        "[PLAN] COPY    .version_manifest.json  (el destino no lo tiene)",
+        "[PLAN] PROTECT config/agents.json  (no-clobber: propiedad del destino)",
+        "[PLAN] PROTECT context/project-map.json  "
+        "(class config/context: residuo no podado)",
+        "[PLAN] PRUNE   stale_tool.py  (residuo sin seguimiento git)",
+        "[PLAN] UPDATE  config/hooks_config.json  "
+        "(difiere; backup -> runtime/sync_backups/<ts>/config/hooks_config.json)",
+        "[PLAN] summary: COPY=1 UPDATE=1 PROTECT=2 PRUNE=1 SAME=0 FLIP=0",
+    ]
+    assert _tree_140a(dest) == before
+
+
+def _cli_sync_140a(motor_agent: Path, dest: Path, *extra: str) -> tuple[int, str]:
+    """Run the REAL entry point (``python scripts/install_agent_system.py``) against a
+    synthetic motor and a tmp destination: the production path, not an imported call."""
+    env = dict(os.environ)
+    env.pop("AGENT_PROJECT_ROOT", None)
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(Path(ias.__file__).resolve()),
+            "--sync",
+            "--yes",
+            "--source",
+            str(motor_agent.parent),
+            "--dest",
+            str(dest),
+            *extra,
+        ],
+        cwd=str(dest.parent),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+_AUX_PREFIXES_140A = (
+    "config/motor_destination_link.json",
+    "config/destination_context.json",
+    "audits/",
+    "runtime/",
+)
+
+
+def test_140a_t10_dry_run_plan_equals_real_plan_and_real_effect_equals_plan(tmp_path):
+    """T10 (DoD 3), PRODUCTION PATH: through the real CLI, the ``[PLAN]`` block of the
+    dry-run is identical to the real run on a twin fixture, and what the real run
+    changes under ``.agent/`` is EXACTLY the COPY + UPDATE + PRUNE set of that plan
+    (apart from the files the auxiliary steps write: link, bootstrap context, runtime).
+    The fixture's agents.json says ``engine-dev``, so the profile FLIP is announced and
+    its effect (the only change to that file) is part of the same equality.
+
+    Mutation-to-prove: make the real pass ignore PROTECT (or write something the plan
+    does not list) and the second assert goes red; change the plan classifier only
+    and the first one does.
+    """
+    motor = _motor_140a(tmp_path, with_map=True)
+    rich = _jdump({**_MOTOR_HOOKS_140A, "hooks": {"stop": {"mode": "strict"}}})
+    extra = {"stale_tool.py": "x\n"}
+    files = _dest_files_140a()
+    files["config/hooks_config.json"] = rich
+    files["config/agents.json"] = _jdump(
+        {**json.loads(files["config/agents.json"]), "active_profile": "engine-dev"}
+    )
+    dry_dest = _dest_140a(tmp_path, "U", files=files, name="dry", extra=extra)
+    real_dest = _dest_140a(tmp_path, "U", files=files, name="real", extra=extra)
+    before = _tree_140a(real_dest / ".agent")
+    dry_before = _tree_140a(dry_dest)
+
+    rc_dry, out_dry = _cli_sync_140a(motor, dry_dest, "--dry-run")
+    rc_real, out_real = _cli_sync_140a(motor, real_dest)
+
+    assert (rc_dry, rc_real) == (0, 0), (out_dry, out_real)
+    plan_dry, plan_real = _plan_lines_140a(out_dry), _plan_lines_140a(out_real)
+    assert plan_dry == plan_real
+    assert any(
+        ln.startswith("[PLAN] UPDATE  config/hooks_config.json") for ln in plan_real
+    )
+    assert any(ln.startswith("[PLAN] FLIP    config/agents.json") for ln in plan_real)
+    planned = {
+        ln.split()[2]
+        for ln in plan_real
+        if ln.split()[1] in ("COPY", "UPDATE", "PRUNE", "FLIP")
+    }
+    after = _tree_140a(real_dest / ".agent")
+    changed = {
+        rel
+        for rel in set(before) | set(after)
+        if before.get(rel) != after.get(rel) and not rel.startswith(_AUX_PREFIXES_140A)
+    }
+    assert changed == planned
+    assert _tree_140a(dry_dest) == dry_before
+    map_text = (real_dest / ".agent/context/project-map.json").read_text(
+        encoding="utf-8"
+    )
+    assert "MOTOR_MAP" not in map_text
+
+
+def test_140a_t11_invalid_hooks_in_the_source_aborts_before_touching_anything(
+    tmp_path, capsys
+):
+    """T11 (MAJOR 4): a motor hooks_config.json that fails the integrity check makes
+    the sync stop at PREFLIGHT with rc=1 and a destination that is byte-identical
+    (before: it copied, pruned and only then exited 1). The dry-run predicts it too.
+    Control: with a valid hooks file the same kind of destination syncs (rc 0).
+
+    Mutation-to-prove: remove the preflight call and the destination is modified
+    (agents/hooks overwritten, residue pruned) while rc=1 still comes back.
+    """
+    bad_motor = _motor_140a(tmp_path, hooks={"enabled": True})
+    dest = _dest_140a(tmp_path, "U", extra={"stale_tool.py": "x\n"})
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(bad_motor, dest, capsys)
+    rc_dry, out_dry = _sync_140a(bad_motor, dest, capsys, dry_run=True)
+
+    assert rc == 1 and rc_dry == 1
+    assert "[PREFLIGHT] FAIL P2" in out and "missing required field: version" in out
+    assert "[PREFLIGHT] FAIL P2" in out_dry
+    assert _tree_140a(dest) == before
+    assert not (dest / ".claude").exists()
+    assert not (dest / ".agent" / "runtime" / "sync_backups").exists()
+
+    good_motor = _motor_140a(tmp_path / "good")
+    twin = _dest_140a(tmp_path, "U", name="twin", extra={"stale_tool.py": "x\n"})
+    rc_ok, out_ok = _sync_140a(good_motor, twin, capsys)
+    assert rc_ok == 0, out_ok
+
+
+def test_140a_t12_hooks_update_is_backed_up_and_warns_only_when_content_is_lost(
+    tmp_path, capsys
+):
+    """T12 (condition 2): replacing hooks_config.json saves the original under
+    ``runtime/sync_backups/<ts>/``; a destination file with keys beyond the motor
+    stub (the Unificar_recibos case) also gets a one-line [WARN] naming them and the
+    backup path; an identical file gets neither UPDATE nor backup; a file that only
+    differs in bytes (no extra keys) is updated without the WARN.
+
+    Mutation-to-prove: skip ``backup.save`` and the first backup assert fails; drop
+    the WARN and the literal is missing.
+    """
+    motor = _motor_140a(tmp_path)
+
+    rich = {**_MOTOR_HOOKS_140A, "hooks": {"stop": {"mode": "strict"}}, "logging": {}}
+    d_rich = _dest_140a(
+        tmp_path, "U", name="rich", extra={"config/hooks_config.json": _jdump(rich)}
+    )
+    original = (d_rich / ".agent/config/hooks_config.json").read_bytes()
+    rc, out = _sync_140a(motor, d_rich, capsys)
+    assert rc == 0, out
+    replaced = (d_rich / ".agent/config/hooks_config.json").read_text(encoding="utf-8")
+    assert replaced == _jdump(_MOTOR_HOOKS_140A)
+    saved = list(
+        (d_rich / ".agent/runtime/sync_backups").glob("*/config/hooks_config.json")
+    )
+    assert len(saved) == 1 and saved[0].read_bytes() == original
+    assert (
+        "[WARN] config/hooks_config.json: el reemplazo pierde claves del destino fuera "
+        "del stub del motor: hooks,logging; backup -> "
+        "runtime/sync_backups/<ts>/config/hooks_config.json"
+    ) in out
+
+    d_same = _dest_140a(tmp_path, "U", name="same")
+    rc, out = _sync_140a(motor, d_same, capsys)
+    assert rc == 0, out
+    assert "config/hooks_config.json" not in "".join(_plan_lines_140a(out))
+    assert not (d_same / ".agent/runtime/sync_backups").exists()
+
+    # Same keys, different bytes (a trailing blank line), whatever the platform's
+    # newline convention made of the motor's own file.
+    d_bytes = _dest_140a(tmp_path, "U", name="bytes")
+    motor_bytes = (motor / "config/hooks_config.json").read_bytes()
+    (d_bytes / ".agent/config/hooks_config.json").write_bytes(motor_bytes + b"\n")
+    rc, out = _sync_140a(motor, d_bytes, capsys)
+    assert rc == 0, out
+    assert "[PLAN] UPDATE  config/hooks_config.json" in out
+    assert "[WARN] config/hooks_config.json" not in out
+    assert len(list((d_bytes / ".agent/runtime/sync_backups").glob("*/config/*"))) == 1
+
+
+def test_140a_t12b_backup_retention_keeps_ten_and_only_touches_its_own_stamps(
+    tmp_path, capsys
+):
+    """T12/C3: with 12 old backup sets plus a foreign directory already under
+    ``runtime/sync_backups``, a sync that makes a new backup leaves the newest 10
+    stamps and never touches the foreign directory.
+
+    Mutation-to-prove: no retention -> 13 stamps; retention without the stamp-name
+    check -> the foreign ``notes`` directory is deleted.
+    """
+    motor = _motor_140a(tmp_path)
+    rich = _jdump({**_MOTOR_HOOKS_140A, "extra": 1})
+    dest = _dest_140a(tmp_path, "U", extra={"config/hooks_config.json": rich})
+    root = dest / ".agent" / "runtime" / "sync_backups"
+    for n in range(1, 13):
+        stamp = root / f"20250101T0000{n:02d}Z"
+        stamp.mkdir(parents=True)
+        (stamp / "marker.txt").write_text("old", encoding="utf-8")
+    (root / "notes").mkdir()
+    (root / "notes" / "keep.txt").write_text("mine", encoding="utf-8")
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    stamps = sorted(
+        p.name for p in root.iterdir() if ias._BACKUP_STAMP_RE.match(p.name)
+    )
+    assert len(stamps) == 10
+    assert stamps[0] == "20250101T000004Z"  # 13 stamps - 10 kept = the 3 oldest gone
+    assert (root / "notes" / "keep.txt").read_text(encoding="utf-8") == "mine"
+
+
+def _make_dir_link_140a(link: Path, target: Path) -> bool:
+    """Create ``link`` -> ``target`` as a symlink, or a junction on Windows."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt":
+        proc = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            check=False,
+        )
+        return proc.returncode == 0
+    return False
+
+
+def test_140a_c3_retention_refuses_a_candidate_outside_the_backup_root(tmp_path):
+    """C3: ``remove_backup_dir`` deletes only a stamp directory that resolves to a
+    direct child of the backup root. A stamp-named directory OUTSIDE the root, a
+    non-stamp name, and a plain file are all refused and left in place.
+
+    Mutation-to-prove: drop the resolved-parent containment check and the outside
+    directory is deleted (first assert).
+    """
+    root = tmp_path / "agent" / "runtime" / "sync_backups"
+    root.mkdir(parents=True)
+    outside = tmp_path / "20250101T000000Z"
+    outside.mkdir()
+    (outside / "precious.txt").write_text("x", encoding="utf-8")
+    foreign = root / "notes"
+    foreign.mkdir()
+    afile = root / "20250102T000000Z"
+    afile.write_text("not a directory", encoding="utf-8")
+
+    assert ias.remove_backup_dir(root, outside) is False
+    assert (outside / "precious.txt").exists()
+    assert ias.remove_backup_dir(root, foreign) is False and foreign.exists()
+    assert ias.remove_backup_dir(root, afile) is False and afile.exists()
+
+    inside = root / "20250103T000000Z"
+    inside.mkdir()
+    assert ias.remove_backup_dir(root, inside) is True
+    assert not inside.exists()
+
+
+def test_140a_c3_retention_never_follows_a_link_out_of_the_backup_root(tmp_path):
+    """C3: a stamp-named link (symlink or junction) inside the backup root that
+    points OUTSIDE it is never followed: ``apply_retention`` leaves the target's
+    contents alone even when it is asked to keep zero stamps.
+
+    Mutation-to-prove: delete the symlink / resolved-parent checks and the outside
+    file is gone.
+    """
+    agent = tmp_path / "agent"
+    root = agent / "runtime" / "sync_backups"
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "precious.txt").write_text("x", encoding="utf-8")
+    link = root / "20250101T000000Z"
+    if not _make_dir_link_140a(link, outside):
+        pytest.skip("cannot create a directory symlink or junction here")
+    real = root / "20250102T000000Z"
+    real.mkdir()
+    (real / "marker.txt").write_text("old", encoding="utf-8")
+
+    removed = ias.SyncBackup(agent).apply_retention(keep=0)
+
+    assert (outside / "precious.txt").read_text(encoding="utf-8") == "x"
+    assert real not in [p for p in root.iterdir()]  # the real stamp was removed
+    assert removed == [real]
+
+
+def test_140a_t13_divergence_warning_is_fixed_format_sorted_and_never_merges(
+    tmp_path, capsys
+):
+    """T13: a protected agents.json that differs from the motor gets ONE fixed-format
+    [WARN] (schema_version, keys only in the motor / only in the destination /
+    different, both sha256[:12]) plus the [HINT] with the adoption command; the file
+    stays byte-identical. An unreadable file is still protected and says so; one that
+    only differs in ``active_profile`` / ``_migrations`` / ``_note`` stays silent.
+
+    Mutation-to-prove: drop the warning and the literal is missing; let it merge and
+    the bytes assert fails.
+    """
+    motor = _motor_140a(tmp_path)
+    stale = {
+        "schema_version": "1.2",
+        "active_profile": "host-project",
+        "content_role_mapping": {"a": 1},
+        "backends": {"old": {}},
+    }
+    dest = _dest_140a(tmp_path, "U", extra={"config/agents.json": _jdump(stale)})
+    target = dest / ".agent/config/agents.json"
+    before = target.read_bytes()
+    sha_dest = hashlib.sha256(before).hexdigest()[:12]
+    sha_motor = hashlib.sha256((motor / "config/agents.json").read_bytes()).hexdigest()[
+        :12
+    ]
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert target.read_bytes() == before
+    assert (
+        "[WARN] config/agents.json: PROTEGIDO (propiedad del destino, no se sobrescribe)"
+        " | schema_version destino=1.2 motor=1.4"
+        " | claves solo en motor: ensemble_profiles,role_mapping"
+        " | claves solo en destino: content_role_mapping"
+        " | claves distintas: backends,schema_version"
+        f" | sha256[:12] destino={sha_dest} motor={sha_motor}"
+    ) in out
+    hint = next(ln for ln in out.splitlines() if ln.startswith("[HINT]"))
+    assert f"AGENT_PROJECT_ROOT={dest.as_posix()}" in hint
+    assert "agents_config.py --migrate --dry-run" in hint
+    assert "--project-root" not in hint
+
+    # More than 8 names: capped, sorted, with the remainder counted.
+    wide = {**_MOTOR_AGENTS_140A, **{f"k{n:02d}": n for n in range(10)}}
+    motor_wide = _motor_140a(tmp_path / "wide", agents=wide)
+    dest_wide = _dest_140a(
+        tmp_path,
+        "U",
+        name="wide",
+        extra={"config/agents.json": _jdump(_MOTOR_AGENTS_140A)},
+    )
+    rc, out = _sync_140a(motor_wide, dest_wide, capsys)
+    assert rc == 0, out
+    assert "claves solo en motor: k00,k01,k02,k03,k04,k05,k06,k07 (+2)" in out
+
+    # Unreadable destination file: protected, and the warning says why.
+    dest_bad = _dest_140a(
+        tmp_path, "U", name="bad", extra={"config/agents.json": "{not json"}
+    )
+    rc, out = _sync_140a(motor, dest_bad, capsys)
+    assert rc == 0, out
+    assert (dest_bad / ".agent/config/agents.json").read_text(
+        encoding="utf-8"
+    ) == "{not json"
+    assert "[WARN] config/agents.json: PROTEGIDO pero ilegible como JSON:" in out
+
+    # Only the ignored keys differ: no warning at all.
+    quiet = {**_MOTOR_AGENTS_140A, "active_profile": "host-project", "_note": "mine"}
+    dest_quiet = _dest_140a(
+        tmp_path, "U", name="quiet", extra={"config/agents.json": _jdump(quiet)}
+    )
+    rc, out = _sync_140a(motor, dest_quiet, capsys)
+    assert rc == 0, out
+    assert "[WARN] config/agents.json" not in out and "[HINT]" not in out
+
+
+def test_140a_t14_fresh_install_deposits_the_seed_but_not_the_destination_files(
+    tmp_path,
+):
+    """T14 (DoD 5 + condition 4): a fresh ``--install`` still receives agents.json
+    (flipped to host-project) and hooks_config.json, but NEVER the motor's
+    project-map.json or destination_profile.json, and makes no backup noise.
+
+    Mutation-to-prove: take either file out of DESTINATION_ONLY_FILES and it is
+    deposited; make the no-clobber refuse an absent target and agents.json is missing.
+    """
+    motor = _motor_140a(tmp_path, with_map=True, with_profile=True)
+    for name in ("agents.local.json", "hooks_config.local.json"):
+        (motor / "config" / name).write_text("{}", encoding="utf-8")
+    # The real manifest does not allowlist these three today; a FUTURE one might, and
+    # the never-copy policy must hold on its own (otherwise the mutation test is vacuous).
+    extra_entries = [
+        ".agent/config/destination_profile.json",
+        ".agent/config/agents.local.json",
+        ".agent/config/hooks_config.local.json",
+    ]
+    (motor.parent / "MANIFEST.workspace").write_text(
+        "\n".join([_MANIFEST_140A, *extra_entries, ""]), encoding="utf-8"
+    )
+    fresh_agent = tmp_path / "fresh" / ".agent"
+
+    rc = ias.install_agent_system(motor, fresh_agent)
+
+    assert rc == 0
+    seeded = json.loads(
+        (fresh_agent / "config/agents.json").read_text(encoding="utf-8")
+    )
+    assert seeded["active_profile"] == "host-project"
+    assert (fresh_agent / "config/hooks_config.json").is_file()
+    assert not (fresh_agent / "context/project-map.json").exists()
+    assert not (fresh_agent / "config/destination_profile.json").exists()
+    assert not (fresh_agent / "config/agents.local.json").exists()
+    assert not (fresh_agent / "config/hooks_config.local.json").exists()
+    assert not (fresh_agent / "runtime/sync_backups").exists()
+
+
+def test_140a_t15_the_real_manifest_still_allowlists_the_protected_files():
+    """T15: the premise behind T1/T4. If ``config/agents.json`` or
+    ``context/project-map.json`` ever left MANIFEST.workspace, those tests would pass
+    vacuously (nothing would be copied, so nothing could be clobbered).
+    """
+    allowlist = ias.read_manifest_allowlist(ias.TEMPLATE_ROOT)
+
+    assert ".agent/config/agents.json" in allowlist
+    assert ".agent/config/hooks_config.json" in allowlist
+    assert ".agent/context/project-map.json" in allowlist
+    for rel in ias.DESTINATION_NOCLOBBER_FILES | ias.DESTINATION_ONLY_FILES:
+        assert rel.split("/", 1)[0] in ias.PRUNE_PROTECTED_DIRS, rel
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-140a, ronda de revision independiente (Codex): enlaces/junctions en la
+# cadena de backups, mayusculas en la clase protegida, conflictos de tipo, orden de la
+# poda, orden numerico de los sellos y limpieza del temporal del flip.
+# ---------------------------------------------------------------------------
+
+
+def _backup_planning_dest_140a(tmp_path: Path, name: str = "dest") -> Path:
+    """Destination whose hooks_config.json differs from the motor's, so the plan
+    contains a BACKUP_ON_UPDATE write and the backup chain matters."""
+    rich = _jdump({**_MOTOR_HOOKS_140A, "extra": 1})
+    return _dest_140a(
+        tmp_path, "U", name=name, extra={"config/hooks_config.json": rich}
+    )
+
+
+def _junction_to_outside_140a(link: Path, tmp_path: Path) -> Path:
+    """``link`` -> a directory OUTSIDE the destination holding stamp-named dirs with
+    precious files. Skips the test where neither symlinks nor junctions can be made."""
+    outside = tmp_path / "outside_backups"
+    for stamp in ("20250101T000000Z", "20250102T000000Z"):
+        (outside / stamp).mkdir(parents=True)
+        (outside / stamp / "precious.txt").write_text("keep", encoding="utf-8")
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if not _make_dir_link_140a(link, outside):
+        pytest.skip("cannot create a directory symlink or junction here")
+    return outside
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_140a_b1_junctioned_backup_root_is_refused_by_the_preflight(
+    tmp_path, capsys, dry_run
+):
+    """Codex BLOCKER 1: ``runtime/sync_backups`` as a junction/symlink to a directory
+    outside the destination (which holds stamp-named directories) must stop the sync at
+    PREFLIGHT, real or dry-run, with the destination and the external directory
+    byte-identical. ``Path.is_symlink`` is False for a junction, and the resolved-parent
+    containment check passes when the ROOT itself is the link, so retention would have
+    deleted the external stamps.
+
+    Mutation-to-prove: make ``SyncBackup.chain_problem`` return None (or drop the
+    ``is_link_like`` test) and the sync proceeds, rc=0.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _backup_planning_dest_140a(tmp_path)
+    outside = _junction_to_outside_140a(
+        dest / ".agent" / "runtime" / "sync_backups", tmp_path
+    )
+    before_dest, before_out = _tree_140a(dest), _tree_140a(outside)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert rc == 1, out
+    assert (
+        "[PREFLIGHT] FAIL P4: runtime/sync_backups existe y no es un directorio real"
+        in out
+    )
+    assert _tree_140a(outside) == before_out
+    assert _tree_140a(dest) == before_dest
+
+
+def test_140a_c3_retention_refuses_a_junctioned_backup_root(tmp_path):
+    """Codex BLOCKER 1, second layer: even called directly, retention and
+    ``remove_backup_dir`` do nothing when the ROOT is a link, because every stamp then
+    "resolves to a child of the (resolved) root" and the containment test alone passes.
+
+    Mutation-to-prove: take ``is_link_like(root)`` out of ``remove_backup_dir`` and
+    the direct call deletes the external stamp.
+    """
+    agent = tmp_path / "agent"
+    root = agent / "runtime" / "sync_backups"
+    outside = _junction_to_outside_140a(root, tmp_path)
+
+    assert ias.remove_backup_dir(root, root / "20250101T000000Z") is False
+    assert ias.SyncBackup(agent).chain_problem() is not None
+    assert ias.SyncBackup(agent).apply_retention(keep=0) == []
+    assert (outside / "20250101T000000Z" / "precious.txt").is_file()
+    assert (outside / "20250102T000000Z" / "precious.txt").is_file()
+
+
+def test_140a_b2_class_protection_ignores_the_case_of_the_directory(tmp_path):
+    """Codex BLOCKER 2: NTFS resolves ``Config`` and ``config`` to the same directory,
+    so a destination file under ``.agent/Config/`` or ``.agent/Context/`` is part of
+    the class. Checked at the residue level (where the prune list is decided) and
+    through a real sync.
+
+    Mutation-to-prove: compare ``r.parts[0]`` without ``.lower()`` and both files are
+    pruned.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(
+        tmp_path,
+        "U",
+        files={
+            "Config/private.local.json": "keep\n",
+            "Context/notes.md": "keep\n",
+            "stale_tool.py": "x\n",
+        },
+    )
+    protected: list[Path] = []
+    residues = ias.detect_destination_residues(
+        motor, dest / ".agent", protected_out=protected
+    )
+    assert Path("Config/private.local.json") in protected
+    assert Path("Context/notes.md") in protected
+    assert not [r for r in residues if r.parts[0].lower() in ("config", "context")]
+
+    rc = ias.sync_agent_system(motor, dest / ".agent")
+
+    assert rc == 0
+    assert (dest / ".agent" / "Config" / "private.local.json").read_text(
+        encoding="utf-8"
+    ) == "keep\n"
+    assert (dest / ".agent" / "Context" / "notes.md").read_text(
+        encoding="utf-8"
+    ) == "keep\n"
+    assert not (dest / ".agent" / "stale_tool.py").exists()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "config_is_a_file",
+        "target_is_a_directory",
+        "target_is_a_junction",
+        "context_is_a_link",
+        "link_file_is_a_directory",
+        "gitignore_is_a_directory",
+    ],
+)
+def test_140a_b3_type_conflicts_and_links_on_a_write_path_stop_at_preflight(
+    tmp_path, capsys, kind, dry_run
+):
+    """Codex MAJOR 3: a planned write that would land on a file where a directory is
+    expected, on a directory where a file is expected (a plain one OR a symlink/junction
+    standing exactly on the target), through a symlink/junction in ``config/`` /
+    ``context/``, or on a file the auxiliary steps always write (the motor link, the
+    destination ``.gitignore``) fails PREFLIGHT P4 (rc=1) with nothing modified.
+    Before, the copy raised half-way (Codex round 2 probed PermissionError after
+    ``.version_manifest.json``, hooks and ``.gitignore`` had already changed).
+
+    Mutation-to-prove: make ``_write_target_problems`` return ``[]`` and every case
+    leaves preflight (rc != 1 or a modified tree); drop the ``is_link_like`` exclusion
+    on the target and only the junction-on-target case would have been missed before.
+    """
+    motor = _motor_140a(tmp_path)
+    outside_files: dict[str, str] = {}
+    if kind == "config_is_a_file":
+        dest = _dest_140a(tmp_path, "U", files={"config": "i am a file\n"})
+    elif kind == "target_is_a_directory":
+        dest = _dest_140a(
+            tmp_path, "U", files={"config/hooks_config.json/inner.txt": "x\n"}
+        )
+    elif kind == "link_file_is_a_directory":
+        dest = _dest_140a(
+            tmp_path, "U", files={"config/motor_destination_link.json/inner.txt": "x"}
+        )
+    elif kind == "gitignore_is_a_directory":
+        dest = _dest_140a(tmp_path, "N")
+        (dest / ".gitignore").mkdir()
+        (dest / ".gitignore" / "inner.txt").write_text("x", encoding="utf-8")
+    else:
+        files = _dest_files_140a()
+        link_rel = (
+            "context" if kind == "context_is_a_link" else "config/hooks_config.json"
+        )
+        if kind == "target_is_a_junction":
+            del files["config/hooks_config.json"]
+        dest = _dest_140a(tmp_path, "U", files=files)
+        outside = tmp_path / "outside_ctx"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("keep", encoding="utf-8")
+        link = dest / ".agent" / link_rel
+        if kind == "context_is_a_link":
+            shutil.rmtree(link)
+        if not _make_dir_link_140a(link, outside):
+            pytest.skip("cannot create a directory symlink or junction here")
+        outside_files = _tree_140a(outside)
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P4" in out
+    assert _tree_140a(dest) == before
+    if outside_files:
+        assert _tree_140a(tmp_path / "outside_ctx") == outside_files
+
+
+def _make_file_link_140a(link: Path, target: Path) -> bool:
+    """Create ``link`` -> ``target`` as a FILE symlink (may need a privilege on Windows)."""
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        return False
+    return True
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "gitignore_symlink_out",
+        "claude_junction_out",
+        "link_file_dangling",
+        "project_md_is_a_directory",
+        "repomix_is_a_directory",
+    ],
+)
+def test_140a_b7_auxiliary_targets_fail_at_preflight_not_half_way(
+    tmp_path, capsys, kind, dry_run
+):
+    """Codex round 3: the files the auxiliary steps (re)write -- ``.gitignore``,
+    ``.claude/settings.json``, the motor link, ``PROJECT.md`` (when a ticket prefix is
+    given) and ``repomix.config.json`` -- are part of the P4 write set. A symlink or
+    junction that leaves the destination (or dangles), or a directory standing on the
+    file, stops the sync at preflight with rc=1, the destination byte-identical and the
+    external target untouched. Probed before the fix: the external file was rewritten,
+    ``settings.json`` was created outside the destination, or the sync died half-way
+    with ``PermissionError`` / ``FileNotFoundError`` after ``.version_manifest.json``.
+
+    Mutation-to-prove: take the matching target out of ``_collect_write_targets`` (or
+    the link-escape test out of ``_one_target_problems``) and its variant is no longer
+    refused.
+    """
+    motor = _motor_140a(tmp_path)
+    kwargs: dict[str, object] = {}
+    outside = tmp_path / "outside_aux"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep", encoding="utf-8")
+    dest = _dest_140a(tmp_path, "N")
+    if kind == "gitignore_symlink_out":
+        if not _make_file_link_140a(dest / ".gitignore", outside / "keep.txt"):
+            pytest.skip("cannot create a file symlink here")
+    elif kind == "claude_junction_out":
+        if not _make_dir_link_140a(dest / ".claude", outside):
+            pytest.skip("cannot create a directory symlink or junction here")
+    elif kind == "link_file_dangling":
+        (dest / ".agent" / "config").mkdir(exist_ok=True)
+        if not _make_file_link_140a(
+            dest / ".agent" / "config" / "motor_destination_link.json",
+            tmp_path / "does_not_exist.json",
+        ):
+            pytest.skip("cannot create a file symlink here")
+    elif kind == "project_md_is_a_directory":
+        (dest / "PROJECT.md").mkdir()
+        (dest / "PROJECT.md" / "inner.txt").write_text("x", encoding="utf-8")
+        kwargs["ticket_prefix"] = "WOT"
+    else:
+        templates = motor.parent / "agent_system" / "templates"
+        templates.mkdir(parents=True)
+        (templates / "repomix.config.json").write_text("{}", encoding="utf-8")
+        (dest / "repomix.config.json").mkdir()
+        (dest / "repomix.config.json" / "inner.txt").write_text("x", encoding="utf-8")
+    before, before_out = _tree_140a(dest), _tree_140a(outside)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run, **kwargs)
+
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P4" in out
+    assert _tree_140a(dest) == before
+    assert _tree_140a(outside) == before_out
+
+
+def test_140a_b7_control_a_junction_that_stays_inside_the_destination_is_allowed(
+    tmp_path, capsys
+):
+    """Control for b7: refusing every link would block legitimate setups. A ``.claude``
+    junction that points at a directory INSIDE the destination is not refused.
+
+    Mutation-to-prove: make ``_escapes_boundary`` return True and this goes red.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "N")
+    real = dest / "claude_real"
+    real.mkdir()
+    if not _make_dir_link_140a(dest / ".claude", real):
+        pytest.skip("cannot create a directory symlink or junction here")
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert "[PREFLIGHT] OK" in out
+
+
+def test_140a_b4_prune_is_the_last_destructive_step(tmp_path, capsys, monkeypatch):
+    """Codex MAJOR 5: a host-setup hook that fails (rc != 0) aborts the sync, so the
+    prune must not have happened yet. Control: with a hook that succeeds the same
+    residue IS pruned.
+
+    Mutation-to-prove: move the prune back before the host-setup call and the residue
+    disappears in the failing run.
+    """
+    motor = _motor_140a(tmp_path)
+    failing = _dest_140a(tmp_path, "U", name="failing", extra={"stale_tool.py": "x\n"})
+    monkeypatch.setattr(ias, "_maybe_invoke_host_setup", lambda *a, **k: 7)
+
+    rc, out = _sync_140a(motor, failing, capsys)
+
+    assert rc == 7, out
+    assert (failing / ".agent" / "stale_tool.py").exists()
+
+    monkeypatch.setattr(ias, "_maybe_invoke_host_setup", lambda *a, **k: 0)
+    ok = _dest_140a(tmp_path, "U", name="ok", extra={"stale_tool.py": "x\n"})
+    rc, out = _sync_140a(motor, ok, capsys)
+    assert rc == 0, out
+    assert not (ok / ".agent" / "stale_tool.py").exists()
+
+
+def test_140a_b5_retention_orders_collision_suffixes_numerically(tmp_path):
+    """Codex MINOR: stamps taken in the same UTC second get ``-2``, ``-3``... and
+    ``-10`` is newer than ``-9``. A plain string sort puts ``-9`` last, so retention
+    would delete the newest backup set and keep an older one.
+
+    Mutation-to-prove: sort by name instead of ``_stamp_sort_key`` and ``-9`` survives.
+    """
+    agent = tmp_path / "agent"
+    root = agent / "runtime" / "sync_backups"
+    names = [
+        "20250101T000000Z",
+        "20250101T000000Z-2",
+        "20250101T000000Z-9",
+        "20250101T000000Z-10",
+    ]
+    for name in [*names, "20241231T235959Z"]:
+        (root / name).mkdir(parents=True)
+
+    removed = ias.SyncBackup(agent).apply_retention(keep=1)
+
+    assert sorted(p.name for p in root.iterdir()) == ["20250101T000000Z-10"]
+    assert len(removed) == 4
+
+
+def test_140a_b6_a_failed_flip_leaves_no_temp_file_and_the_original_intact(
+    tmp_path, capsys, monkeypatch
+):
+    """Codex MINOR: if the atomic swap of the flipped agents.json fails, the
+    ``.sync-tmp`` sibling is removed and the destination file keeps its bytes.
+
+    Mutation-to-prove: drop the ``tmp.unlink`` in the flip's except branch and the
+    temp file stays behind.
+    """
+    agent = tmp_path / "agent"
+    (agent / "config").mkdir(parents=True)
+    target = agent / "config" / "agents.json"
+    target.write_text(
+        _jdump({"active_profile": "engine-dev", "k": 1}), encoding="utf-8"
+    )
+    before = target.read_bytes()
+
+    def boom(*_a, **_k):
+        raise OSError("disk says no")
+
+    monkeypatch.setattr(ias.os, "replace", boom)
+
+    ias.flip_profile_in_destination(agent)
+
+    assert "Failed to flip active_profile" in capsys.readouterr().out
+    assert target.read_bytes() == before
+    assert not (agent / "config" / "agents.json.sync-tmp").exists()
