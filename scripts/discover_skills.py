@@ -963,6 +963,9 @@ PROMPT_SUMMARY_MARKER = "<!-- PROMPT-SUMMARY"
 PROMPT_SUMMARY_SCAN_LINES = 12
 _SUMMARY_KEYS = ("what", "when", "not")
 _MAX_LISTED_CITERS = 5
+_NOT_DESTINATION_PATTERN = re.compile(
+    r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*[.](?:md|py|json|toml|sh)"
+)
 
 
 def prompt_summary(body: str) -> dict[str, str]:
@@ -986,6 +989,58 @@ def prompt_summary(body: str) -> dict[str, str]:
         if sep and key.strip() in _SUMMARY_KEYS:
             summary[key.strip()] = value.strip()
     return summary
+
+
+def _not_destination_paths(reference: str, root: Path) -> list[Path]:
+    """Return candidate router destinations for one ``not:`` reference.
+
+    Before: ``reference`` is a file-like token from an adopted prompt summary
+            and ``root`` is the motor bundle root.
+    During: resolves explicit ``prompts/``, ``skills/`` and ``.claude/`` paths,
+            then resolves bare Markdown names against prompt and skill roots;
+            code and the dynamic ``work_plan.md`` operational-artifact mention
+            remain prose, not router destinations.
+    After: returns existing candidate paths; an empty list means the token is
+           not a resolvable router destination.
+    """
+    normalized = reference.replace("\\", "/")
+    candidates: list[Path] = []
+    if normalized.startswith(("prompts/", "skills/", ".claude/")):
+        candidates.append(root / normalized)
+    elif normalized.endswith(".md"):
+        candidates.extend((root / "prompts" / normalized, root / "skills" / normalized))
+    return [path for path in candidates if path.is_file()]
+
+
+def not_destination_errors(root: Path) -> list[str]:
+    """Validate navigational destinations named by adopted prompt summaries.
+
+    Before: ``root`` contains the portable motor bundle and its ``prompts/``
+            tree; routed prompts have already been selected by frontmatter.
+    During: reads each routed prompt through ``read_prompt_parts``, extracts
+            file-like tokens from its ``not:`` summary value, and checks router
+            destinations through ``_not_destination_paths``.
+    After: returns one diagnostic per missing prompt/skill/command destination;
+           non-router code or operational-artifact mentions are ignored and an
+           empty list means the navigational references are resolvable.
+    """
+    errors: list[str] = []
+    for path in _prompt_files(root):
+        rel = path.relative_to(root / "prompts").as_posix()
+        fm, _error, body, _offset = read_prompt_parts(path)
+        if not fm.get("route_kind"):
+            continue
+        destination_text = prompt_summary(body).get("not", "")
+        for reference in _NOT_DESTINATION_PATTERN.findall(destination_text):
+            if _not_destination_paths(reference, root):
+                continue
+            if reference.startswith(("prompts/", "skills/", ".claude/")) or (
+                reference.endswith(".md")
+                and "/" not in reference
+                and reference != "work_plan.md"
+            ):
+                errors.append(f"{rel}: not destination missing: {reference}")
+    return errors
 
 
 def validate_route_metadata(name: str, fm: dict[str, Any]) -> list[str]:
@@ -1257,6 +1312,7 @@ def router_metadata_errors(bundle_root: Path | None = None) -> list[str]:
             errors.append(
                 f"{rel}: modulo sin ninguna cita en prompts/ ni AGENTS.md (T9)"
             )
+    errors += not_destination_errors(root)
     return errors
 
 

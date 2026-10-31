@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
+import scripts.discover_skills as discover_skills
 from scripts.discover_skills import (
     CYCLE_PHASES,
     EXTERNAL_ALLOWLIST,
@@ -290,6 +291,59 @@ class TestModuleCitations:
         )
         root = _seed(tmp_path, {"a.md": text, "_shared/m.md": "# m\n"})
         assert module_citations(root / "prompts" / "_shared" / "m.md", root) == ["a.md"]
+
+
+def test_missing_not_destination_fails_router_gate(tmp_path: Path) -> None:
+    """A routed prompt cannot point ``not:`` at a missing destination."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace("not: no es X", "not: prompts/missing.md"),
+        },
+    )
+
+    errors = router_metadata_errors(root)
+
+    assert any("prompts/missing.md" in error for error in errors)
+
+
+def test_check_index_runs_not_destination_gate(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The public ``--check-index`` path must report a missing destination."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace("not: no es X", "not: prompts/missing.md"),
+        },
+    )
+    monkeypatch.setattr(discover_skills, "_get_bundle_root", lambda: root)
+    monkeypatch.setattr(discover_skills, "check_index_stale", lambda: (False, ""))
+    monkeypatch.setattr(discover_skills, "check_router_stale", lambda: (False, ""))
+    monkeypatch.setattr(discover_skills, "_deployed_stub_names", lambda root: [])
+    monkeypatch.setattr(
+        discover_skills.sys, "argv", ["discover_skills.py", "--check-index"]
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        discover_skills._check_index_cli()
+
+    assert raised.value.code == 1
+    assert "not destination missing: prompts/missing.md" in capsys.readouterr().err
 
 
 class TestEmptyCyclePhaseList:
