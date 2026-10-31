@@ -7,6 +7,8 @@ estados publicables con stubs de validate y STATE.md reales en tmp_path.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -311,3 +313,45 @@ def test_mutation_zero_warnings_to_nonzero_fails(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     assert "0/0" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Case 7: bootstrap de sys.path sin PYTHONPATH ni cwd del motor (WOT-2026-149a)
+# ---------------------------------------------------------------------------
+
+
+def test_link_resolution_works_from_foreign_cwd_without_pythonpath(tmp_path):
+    """Sin --motor-root, el script resuelve `runtime` desde un cwd ajeno.
+
+    Control positivo con subprocess real (cwd ajeno, PYTHONPATH vacio): antes
+    del bootstrap de sys.path moria con ModuleNotFoundError y rc 1, que el gate
+    lee como "BLOQUEADO"; con el bootstrap llega a validate y sale con rc 3
+    porque el motor del link no tiene agent_controller.py.
+    """
+    project = _make_project(tmp_path / "proj", "COMPLETED")
+    motor = tmp_path / "motor"
+    motor.mkdir()
+    foreign_cwd = tmp_path / "cwd"
+    foreign_cwd.mkdir()
+    config = project / ".agent" / "config"
+    config.mkdir(parents=True)
+    (config / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(cdr.__file__).resolve()),
+            "--project-root",
+            str(project),
+        ],
+        cwd=foreign_cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "ModuleNotFoundError" not in result.stderr
+    assert result.returncode == 3
+    assert "agent_controller.py not found" in result.stderr

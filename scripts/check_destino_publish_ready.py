@@ -41,6 +41,12 @@ import sys
 from pathlib import Path
 
 
+# Bootstrap: motor root must be on sys.path so `runtime.*` imports resolve
+# even when this script runs with cwd outside the motor (WOT-2026-149a).
+_MOTOR_ROOT = Path(__file__).resolve().parent.parent
+if str(_MOTOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MOTOR_ROOT))
+
 _NOT_PUBLISHABLE_STATUSES = {"APPROVED"}
 # WOT-2026-013n: honest non-success terminals (SUPERSEDED, BLOCKED_FINAL) are
 # publishable like COMPLETED — a ticket closed honestly does not block publish.
