@@ -836,6 +836,56 @@ def is_link_like(path: Path) -> bool:
         return False
 
 
+def link_in_chain(base: Path, rel: Path) -> Path | None:
+    """First symlink / junction on the way from ``base`` down to ``rel`` (WOT-2026-148a).
+
+    Before: ``base`` is the destination ``.agent/`` (it may itself be a link on
+            purpose: only components BELOW it are judged); ``rel`` is relative to it.
+    During: read-only, one ``lstat`` per ANCESTOR of ``rel`` (the last component is not
+            judged: a file link there is replaced, not followed, and a residue that is
+            itself a link is removed as a link). Stops at the first missing component.
+    After: the offending path, or None when every ancestor is a real directory.
+    """
+    parts = rel.parts[:-1]
+    for depth in range(1, len(parts) + 1):
+        candidate = base.joinpath(*parts[:depth])
+        if not os.path.lexists(candidate):
+            return None
+        if is_link_like(candidate):
+            return candidate
+    return None
+
+
+def _require_no_link_in_chain(base: Path, rel: Path) -> None:
+    """Refuse (``OSError``) to write under ``base`` through a link ancestor of ``rel``.
+
+    Before: ``base`` is the destination ``.agent/``; ``rel`` is the path about to be
+            written, relative to it.
+    During: ``link_in_chain``; defence in depth behind preflight P4.
+    After: returns None when the path is reachable without crossing a link; raises
+           ``OSError`` naming the link otherwise (nothing was written).
+    """
+    bad = link_in_chain(base, rel)
+    if bad is not None:
+        raise OSError(
+            f"{bad} es un symlink o junction: no se escribe a traves de el ({rel.as_posix()})"
+        )
+
+
+def _remove_link(path: Path) -> None:
+    """Remove the symlink / junction ``path`` itself, never what it points at.
+
+    Before: ``path`` is link-like (``is_link_like``).
+    During: ``os.unlink`` (file links, POSIX and Windows directory symlinks); where it
+            refuses (an NTFS junction) ``os.rmdir`` drops only the reparse point.
+    After: the link is gone and its target is untouched; ``OSError`` if neither works.
+    """
+    try:
+        os.unlink(path)
+    except OSError:
+        os.rmdir(path)
+
+
 def remove_backup_dir(root: Path, candidate: Path) -> bool:
     """Delete ``candidate`` only when it is a real backup stamp directly under ``root``.
 
@@ -1015,6 +1065,10 @@ def _copy_one_file(
         return []
     if dry_run:
         return [rel]
+    base = dst
+    for _ in rel.parts:
+        base = base.parent
+    _require_no_link_in_chain(base, rel)
     if (
         action == "UPDATE"
         and backup is not None
@@ -1065,6 +1119,7 @@ def _copy_allowlisted_dir(
             continue
         if disk_path.is_dir():
             if not dry_run:
+                _require_no_link_in_chain(dest_root, child_rel)
                 (dest_root / child_rel).mkdir(parents=True, exist_ok=True)
             continue
         copied.extend(
@@ -1201,18 +1256,37 @@ def _select_residues_interactive(residues: list[Path]) -> list[Path]:
 def _prune_selected_residues(
     dest: Path, selected: list[Path], dry_run: bool
 ) -> list[Path]:
-    """Prune the selected residues."""
+    """Prune the selected residues, never through a symlink or junction (WOT-2026-148a).
+
+    Before: ``dest`` is the destination ``.agent/``; ``selected`` are residues relative
+            to it (the plan already refused links at preflight P4).
+    During: a residue with a link ANCESTOR is skipped with a [REFUSED] line (deleting
+            it would delete a file elsewhere); a residue that IS a link is removed as
+            a link (``_remove_link``); a real directory goes through ``shutil.rmtree``
+            and any other path through ``unlink``.
+    After: returns the residues removed (or, in dry-run, that would be); refused ones
+           are not in the list and nothing outside the destination was touched.
+    """
     removed: list[Path] = []
     for rel in selected:
         target = dest / rel
+        bad = link_in_chain(dest, rel)
+        if bad is not None:
+            print(
+                f"[REFUSED] prune through a symlink or junction "
+                f"({bad.relative_to(dest).as_posix()}): {rel.as_posix()}"
+            )
+            continue
         if dry_run:
             print(f"[DRY-RUN] Would prune: {rel.as_posix()}")
             removed.append(rel)
             continue
 
-        if target.is_dir() and not target.is_symlink():
+        if is_link_like(target):
+            _remove_link(target)
+        elif target.is_dir():
             shutil.rmtree(target)
-        elif target.exists() or target.is_symlink():
+        elif target.exists():
             target.unlink()
         removed.append(rel)
         print(f"[PRUNED] {rel.as_posix()}")
@@ -2578,7 +2652,6 @@ def _one_target_problems(
     During: read-only checks of the target and of each existing ancestor.
     After: ``{offending path: message}``; empty when the write can land.
     """
-    protected_dirs = {d.lower() for d in PRUNE_PROTECTED_DIRS}
     parts = rel_path.parts
     under_agent = parts[0] == project_agent.name
     boundary = project_agent if under_agent else dest_root
@@ -2601,7 +2674,7 @@ def _one_target_problems(
         if not ancestor.is_dir():
             found[ancestor] = f"P4: {name} existe y no es un directorio"
         elif depth >= first_link_depth and is_link_like(ancestor):
-            if is_plan and parts[1].lower() in protected_dirs:
+            if is_plan:
                 found[ancestor] = (
                     f"P4: {name} es un symlink o junction "
                     "(el sync escribiria a traves de el)"
@@ -2629,6 +2702,10 @@ def _write_target_problems(
             Auxiliary targets fail when the target or an ancestor below the destination
             (for ``.agent/`` paths: below ``.agent/`` itself, which MAY be a junction)
             is a link that dangles or resolves outside that boundary.
+            WOT-2026-148a (policy H4, fail-closed): a plan write fails through ANY
+            symlink/junction ancestor below ``.agent/`` (internal or external, any
+            directory, not only ``config/``/``context/``), and so does a PRUNE entry
+            (it would delete through the link); a residue that IS the link is fine.
     After: one message per distinct offending path; ``[]`` when every write can land.
     """
     dest_root = project_agent.parent
@@ -2640,6 +2717,15 @@ def _write_target_problems(
             dest_root, project_agent, rel_path, is_plan
         ).items():
             problems.setdefault(path, message)
+    for action, rel, _reason in plan.entries:
+        bad = link_in_chain(project_agent, Path(rel)) if action == "PRUNE" else None
+        if bad is not None:
+            name = bad.relative_to(dest_root).as_posix()
+            problems.setdefault(
+                bad,
+                f"P4: {name} es un symlink o junction "
+                "(el sync borraria a traves de el)",
+            )
     return [problems[path] for path in sorted(problems, key=str)]
 
 

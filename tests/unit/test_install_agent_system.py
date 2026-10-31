@@ -2937,13 +2937,22 @@ def test_140a_c3_retention_refuses_a_candidate_outside_the_backup_root(tmp_path)
     assert not inside.exists()
 
 
-def test_140a_c3_retention_never_follows_a_link_out_of_the_backup_root(tmp_path):
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_140a_c3_retention_never_follows_a_link_out_of_the_backup_root(
+    tmp_path, monkeypatch, kind
+):
     """C3: a stamp-named link (symlink or junction) inside the backup root that
     points OUTSIDE it is never followed: ``apply_retention`` leaves the target's
     contents alone even when it is asked to keep zero stamps.
 
-    Mutation-to-prove: delete the symlink / resolved-parent checks and the outside
-    file is gone.
+    WOT-2026-148a (H3): the outside file alone proved nothing -- ``shutil.rmtree``
+    itself refuses a link (``OSError``, swallowed by ``remove_backup_dir``), so the
+    file survived even with the guards deleted. ``rmtree`` is now spied: the link must
+    never even REACH it, only the real stamp does.
+
+    Mutation-to-prove: delete the ``is_link_like(candidate)`` / resolved-parent checks
+    in ``remove_backup_dir`` and ``calls`` contains the link (the outside file still
+    survives; that is exactly why it is not the assertion).
     """
     agent = tmp_path / "agent"
     root = agent / "runtime" / "sync_backups"
@@ -2952,14 +2961,22 @@ def test_140a_c3_retention_never_follows_a_link_out_of_the_backup_root(tmp_path)
     outside.mkdir()
     (outside / "precious.txt").write_text("x", encoding="utf-8")
     link = root / "20250101T000000Z"
-    if not _make_dir_link_140a(link, outside):
-        pytest.skip("cannot create a directory symlink or junction here")
+    _make_link_148a(kind, link, outside)
     real = root / "20250102T000000Z"
     real.mkdir()
     (real / "marker.txt").write_text("old", encoding="utf-8")
+    calls: list[Path] = []
+    real_rmtree = shutil.rmtree
+
+    def spy(path, *args, **kwargs):
+        calls.append(Path(path))
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", spy)
 
     removed = ias.SyncBackup(agent).apply_retention(keep=0)
 
+    assert calls == [real]
     assert (outside / "precious.txt").read_text(encoding="utf-8") == "x"
     assert real not in [p for p in root.iterdir()]  # the real stamp was removed
     assert removed == [real]
@@ -3458,3 +3475,211 @@ def test_140a_b6_a_failed_flip_leaves_no_temp_file_and_the_original_intact(
     assert "Failed to flip active_profile" in capsys.readouterr().out
     assert target.read_bytes() == before
     assert not (agent / "config" / "agents.json.sync-tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-148a: el --sync no poda ni copia a traves de una junction o un enlace
+# simbolico. Medido (junction real, `mklink /J`, Python 3.10/3.11/3.12): con
+# `.agent/rules` -> un directorio EXTERNO, el prune borraba `rules/extra.txt` fuera del
+# destino y la copia sobrescribia/borraba ficheros externos, con rc=0. SEGURIDAD DE LA
+# PRUEBA: todo vive bajo `tmp_path`; el objetivo del enlace es OTRO directorio de
+# `tmp_path` con ficheros centinela cuyo hash se compara antes y despues.
+# Politica H4 (fail-closed, decidida por la coordinadora): cualquier ancestro enlace
+# (interno o externo) entre `.agent/` y el objetivo de una entrada del plan se rechaza.
+# ---------------------------------------------------------------------------
+
+_LINK_KINDS_148A = ["symlink", "junction"]
+
+
+def _make_link_148a(kind: str, link: Path, target: Path) -> None:
+    """Create ``link`` -> ``target`` as a REAL symlink or a REAL NTFS junction.
+
+    Unlike ``_make_dir_link_140a`` (symlink if it can, else junction) the kind is fixed
+    by the caller, so the junction case is exercised even where symlinks are allowed.
+    Skips where the kind cannot be made.
+    """
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "symlink":
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("cannot create a directory symlink here")
+        return
+    if os.name != "nt":
+        pytest.skip("junctions exist only on Windows")
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.skip("cannot create a junction here")
+    assert ias.is_link_like(link) and not link.is_symlink()
+
+
+def _linked_rules_148a(
+    tmp_path: Path, kind: str, *, copies: bool
+) -> tuple[Path, Path, Path]:
+    """Motor shipping ``rules/keep.md`` + destination whose ``.agent/rules`` is a
+    ``kind`` link to an outside directory holding ``extra.txt`` (a residue the walk may
+    reach through the link) and ``keep.md`` (a file the motor also ships).
+
+    ``copies`` lists ``rules/`` in the manifest, so the plan UPDATEs ``rules/keep.md``
+    through the link; without it ``rules/`` is only a source-side name and the sole
+    destructive path through the link is the prune.
+    """
+    motor = _motor_140a(tmp_path)
+    (motor / "rules").mkdir()
+    (motor / "rules" / "keep.md").write_text("from motor\n", encoding="utf-8")
+    if copies:
+        manifest = motor.parent / "MANIFEST.workspace"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8") + ".agent/rules/\n", encoding="utf-8"
+        )
+    dest = _dest_140a(tmp_path, "U")
+    outside = tmp_path / "outside_148a"
+    outside.mkdir()
+    (outside / "extra.txt").write_text("precious\n", encoding="utf-8")
+    (outside / "keep.md").write_text("precious too\n", encoding="utf-8")
+    _make_link_148a(kind, dest / ".agent" / "rules", outside)
+    return motor, dest, outside
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_148a_h1_prune_through_a_junction_is_refused_at_preflight(
+    tmp_path, capsys, dry_run
+):
+    """H1/H2: a residue the walk reaches THROUGH a junction (``rules/extra.txt`` with
+    ``.agent/rules`` -> outside) is a PRUNE entry whose real location is outside the
+    destination. The sync stops at PREFLIGHT P4 (rc=1, real or dry-run) with the
+    destination and the external directory byte-identical. Before the fix the prune
+    deleted ``extra.txt`` outside the destination with rc=0.
+
+    Mutation-to-prove: drop the PRUNE loop from ``_write_target_problems`` AND the
+    chain check from ``_prune_selected_residues`` and the external file is gone.
+    """
+    motor, dest, outside = _linked_rules_148a(tmp_path, "junction", copies=False)
+    before_dest, before_out = _tree_140a(dest), _tree_140a(outside)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert _tree_140a(outside) == before_out, out
+    assert rc == 1, out
+    assert "[PLAN] PRUNE" in out and "rules/extra.txt" in out
+    assert "[PREFLIGHT] FAIL P4: .agent/rules es un symlink o junction" in out
+    assert "borraria" in out
+    assert _tree_140a(dest) == before_dest
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("kind", _LINK_KINDS_148A)
+def test_148a_h1_copy_through_a_link_outside_config_context_is_refused_at_preflight(
+    tmp_path, capsys, kind, dry_run
+):
+    """H1/H2: a planned COPY/UPDATE whose ancestor is a symlink or junction stops at
+    PREFLIGHT P4 even when the link is NOT under ``config/`` / ``context/`` (the 140a
+    preflight only judged those two). Destination and external directory stay
+    byte-identical. Before the fix the copy overwrote the external ``keep.md``.
+
+    Mutation-to-prove: restore the ``config``/``context``-only condition in
+    ``_one_target_problems`` and the external file is rewritten (rc=0).
+    """
+    motor, dest, outside = _linked_rules_148a(tmp_path, kind, copies=True)
+    before_dest, before_out = _tree_140a(dest), _tree_140a(outside)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert _tree_140a(outside) == before_out, out
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P4: .agent/rules es un symlink o junction" in out
+    assert _tree_140a(dest) == before_dest
+
+
+@pytest.mark.parametrize("kind", _LINK_KINDS_148A)
+def test_148a_h1_prune_and_copy_refuse_again_at_the_point_of_use(tmp_path, kind):
+    """H1, second layer (defence in depth): called WITHOUT the preflight, the prune
+    skips a residue reached through a link (nothing deleted, nothing reported removed)
+    and the copy raises ``OSError`` before writing through it.
+
+    Mutation-to-prove: take the chain check out of ``_prune_selected_residues`` (or of
+    ``_copy_one_file``) and the matching assert goes red (external file deleted /
+    rewritten, no ``OSError``).
+    """
+    motor, dest, outside = _linked_rules_148a(tmp_path, kind, copies=True)
+    agent = dest / ".agent"
+    before_out = _tree_140a(outside)
+
+    removed = ias._prune_selected_residues(agent, [Path("rules/extra.txt")], False)
+
+    assert removed == []
+    assert _tree_140a(outside) == before_out
+    with pytest.raises(OSError, match="symlink o junction"):
+        ias.copy_tree(motor, agent, allowlist=ias.read_manifest_allowlist(motor.parent))
+    assert _tree_140a(outside) == before_out
+
+
+@pytest.mark.parametrize("kind", _LINK_KINDS_148A)
+def test_148a_h1_a_residue_that_is_a_link_is_removed_as_a_link_only(
+    tmp_path, capsys, kind
+):
+    """H1: when the residue IS the link (``.agent/rules`` is not in the motor) the
+    prune removes the link itself and never what it points at. Before the fix a
+    junction made ``shutil.rmtree`` raise ``OSError`` half-way through the sync.
+
+    Mutation-to-prove: route link residues back to ``shutil.rmtree`` / ``unlink`` and
+    the junction case raises; delete the ``is_link_like`` branch and the sync crashes
+    or the external directory is touched.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    outside = tmp_path / "outside_148a"
+    outside.mkdir()
+    (outside / "extra.txt").write_text("precious\n", encoding="utf-8")
+    link = dest / ".agent" / "rules"
+    _make_link_148a(kind, link, outside)
+    before_out = _tree_140a(outside)
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert "[PRUNED] rules" in out
+    assert not os.path.lexists(link)
+    assert _tree_140a(outside) == before_out
+    assert (outside / "extra.txt").read_text(encoding="utf-8") == "precious\n"
+
+
+@pytest.mark.parametrize("where", ["context", "rules"])
+@pytest.mark.parametrize("kind", _LINK_KINDS_148A)
+def test_148a_h4_an_internal_link_on_a_write_path_is_refused_by_declared_policy(
+    tmp_path, capsys, kind, where
+):
+    """H4 (declared policy, fail-closed): a symlink/junction whose real path stays
+    INSIDE ``.agent/`` itself is refused too, under ``context/`` (a 140a class dir) and
+    under any other ``.agent/`` directory. There is no exception for internal links
+    on plan writes; auxiliary targets outside ``.agent/`` keep their own boundary
+    rule (see the b7 control above).
+
+    Mutation-to-prove: accept a plan-entry link whose ``_escapes_boundary`` is False
+    (the target is inside ``.agent/``, so it is not escaping) and the sync no longer
+    stops at preflight P4.
+    """
+    motor, dest, _outside = _linked_rules_148a(tmp_path, "symlink", copies=True)
+    real = dest / ".agent" / "real_dir_inside_agent"
+    real.mkdir()
+    (real / "keep.md").write_text("inside\n", encoding="utf-8")
+    link = dest / ".agent" / where
+    if ias.is_link_like(link):
+        try:
+            os.unlink(link)
+        except OSError:
+            os.rmdir(link)
+    elif link.exists():
+        shutil.rmtree(link)
+    _make_link_148a(kind, link, real)
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 1, out
+    assert f"[PREFLIGHT] FAIL P4: .agent/{where} es un symlink o junction" in out
+    assert _tree_140a(dest) == before
