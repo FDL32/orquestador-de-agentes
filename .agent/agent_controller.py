@@ -3590,11 +3590,29 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
     # WP-2026-167: Pre-handoff guard - verify tree hygiene and M3 checkpoint
     guard_result = _run_pre_handoff_guard(plan_id, json_output)
     if not guard_result["valid"]:
+        # WOT-2026-091g: un checkpoint M3 desalineado no debe fallar en silencio
+        # con --json (el guard solo imprime sin --json). Solo esta causa imprime
+        # su JSON; las demas causas de esta rama conservan su salida.
+        checkpoint_misaligned = guard_result.get("checkpoint_misaligned", False)
+        if json_output and checkpoint_misaligned:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "reason": "pre_handoff_guard_failed",
+                        "checkpoint_misaligned": True,
+                        "checkpoint_tag": guard_result.get("checkpoint_tag"),
+                        "plan_id": plan_id,
+                    },
+                    indent=2,
+                )
+            )
         return _fail_closeout(
             "pre_handoff_guard_failed",
             {
                 "dirty_tree": guard_result.get("dirty_tree", False),
                 "missing_checkpoint": guard_result.get("missing_checkpoint", False),
+                "checkpoint_misaligned": checkpoint_misaligned,
                 "dirty_files": guard_result.get("dirty_files", []),
                 "scope_discrepancy": guard_result.get("scope_discrepancy", []),
                 # WOT-2026-010c: propagate the structured canonical-suite diag
