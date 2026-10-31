@@ -9836,24 +9836,66 @@ def test_summary_survives_tmp_sweep_by_concurrent_rotation(
     real_retry = ed._retry_fs_op
     fired = {"n": 0}
 
+    swept: dict[str, bool] = {}
+
     def inject(op, /, *args):
         is_summary = op is os.replace and str(args[0]).endswith("-summary.tmp")
         if is_summary and fired["n"] == 0:
             fired["n"] += 1
+            live_tmp = Path(args[0])
+            swept["before"] = live_tmp.exists()
             _write_active(tmp_path, [_sc_row("2026-10-01T00:00:01Z")])
             ed._rotate_scorecard(path)
+            swept["after"] = live_tmp.exists()
         return real_retry(op, *args)
 
     monkeypatch.setattr(ed, "_retry_fs_op", inject)
     ed._rotate_scorecard(path)
 
     assert fired["n"] == 1, "la inyeccion no se ejecuto: el test no ejercita la carrera"
+    assert swept == {"before": True, "after": False}, (
+        "la 2a rotacion debe BARRER de verdad el temporal vivo del 1er resumen"
+    )
     archived = sum(len(_archive_ts_lines(a)) for a in _archives(tmp_path))
     assert archived == 2 and len(_archives(tmp_path)) == 2
     assert len(list(path.parent.glob("scorecard_summary.*.json"))) == 2, (
         "cada archivado lleva su resumen hermano"
     )
     assert not list(path.parent.glob("scorecard.rotate-*.tmp"))
+
+
+def test_summary_gives_up_after_exhausting_attempts_when_tmp_keeps_vanishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WOT-2026-147a: si el temporal desaparece en TODOS los intentos, propaga.
+
+    Camino de agotamiento de `_write_rotation_summary`: en cada intento otra
+    rotacion barre el temporal nuevo antes del `os.replace` real, que levanta
+    FileNotFoundError. Tras 4 intentos el ultimo fallo se propaga: ni bucle
+    infinito ni un resumen con nombre definitivo."""
+    ensemble_dir = (tmp_path / ed.SCORECARD_REL).parent
+    ensemble_dir.mkdir(parents=True, exist_ok=True)
+    archived = ensemble_dir / "scorecard.20261002-120000.jsonl"
+    archived.write_text(
+        json.dumps(_sc_row("2026-10-01T00:00:00Z")) + "\n", encoding="utf-8"
+    )
+    real_retry = ed._retry_fs_op
+    attempts = {"n": 0}
+
+    def always_swept(op, /, *args):
+        if op is os.replace and str(args[0]).endswith("-summary.tmp"):
+            attempts["n"] += 1
+            Path(args[0]).unlink()
+        return real_retry(op, *args)
+
+    monkeypatch.setattr(ed, "_retry_fs_op", always_swept)
+    with pytest.raises(FileNotFoundError):
+        ed._write_rotation_summary(archived)
+
+    assert attempts["n"] == 4, "debe agotar exactamente los 4 intentos declarados"
+    assert not list(ensemble_dir.glob("scorecard_summary.*.json")), (
+        "agotados los intentos no queda ningun resumen con nombre definitivo"
+    )
 
 
 # ---- WOT-2026-079a: D5, lectura unificada
