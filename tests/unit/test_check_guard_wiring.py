@@ -444,8 +444,9 @@ def test_044w_dispositions_in_real_policy():
     # (4) aplazamiento != diseno: sigue siendo deuda, con el dueno VIVO de seguimiento
     closure_owner = known["check_closure_adversarial_pass"]
     assert closure_owner == "WOT-2026-121a"
-    # (5) NO se toca ni se reclasifica: deuda con su dueno historico
-    assert known["check_dod_metric_freshness"] == "WOT-2026-034c"
+    # (5) 044w lo dejo como deuda de 034c; WOT-2026-070k (aterrizado despues) lo cablea:
+    # ya no es deuda declarada (su entrada de policy se retiro).
+    assert "check_dod_metric_freshness" not in known
 
 
 def test_validate_agent_config_wired_from_precommit_and_dewiring_is_caught(tmp_path):
