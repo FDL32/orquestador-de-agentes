@@ -347,9 +347,10 @@ def test_bare_not_destinations_resolve_in_prompts_and_skills(tmp_path: Path) -> 
                     "route_kind": "entry",
                 },
                 "X",
-            ).replace("not: no es X", "not: prompt_dest.md skill_dest.md"),
+            ).replace("not: no es X", "not: root_dest.md prompt_dest.md skill_dest.md"),
         },
     )
+    (root / "root_dest.md").write_text("# Root\n", encoding="utf-8")
     (root / "prompts" / "prompt_dest.md").write_text("# Prompt\n", encoding="utf-8")
     (root / "skills" / "skill_dest.md").write_text("# Skill\n", encoding="utf-8")
 
@@ -376,8 +377,53 @@ def test_work_plan_not_destination_is_exempt_without_duplicate_diagnostic(
             ),
         },
     )
+    (root / "scripts").mkdir()
+    (root / "scripts" / "validate_contract_formation.py").write_text(
+        "# Script\n", encoding="utf-8"
+    )
 
     assert router_metadata_errors(root) == []
+
+
+def test_missing_bare_script_destination_fails_router_gate(tmp_path: Path) -> None:
+    """A deleted bare script cited by ``not:`` must become an error."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace("not: no es X", "not: missing_script.py"),
+        },
+    )
+
+    errors = router_metadata_errors(root)
+
+    assert errors == ["x.md: not destination missing: missing_script.py"]
+
+
+def test_uppercase_destination_extension_is_validated(tmp_path: Path) -> None:
+    """Uppercase extensions are parsed and resolved like lowercase ones."""
+    root = _seed(
+        tmp_path,
+        {
+            "x.md": _prompt(
+                {
+                    "role": "manager",
+                    "cycle_phase": "[F1-backlog]",
+                    "route_kind": "entry",
+                },
+                "X",
+            ).replace("not: no es X", "not: existing.MD missing.PY"),
+        },
+    )
+    (root / "prompts" / "existing.MD").write_text("# Existing\n", encoding="utf-8")
+
+    assert router_metadata_errors(root) == ["x.md: not destination missing: missing.PY"]
 
 
 def test_slash_not_destination_resolves_from_root_and_rejects_escape(

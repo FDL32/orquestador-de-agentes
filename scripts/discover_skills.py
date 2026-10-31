@@ -964,8 +964,12 @@ PROMPT_SUMMARY_SCAN_LINES = 12
 _SUMMARY_KEYS = ("what", "when", "not")
 _MAX_LISTED_CITERS = 5
 _NOT_DESTINATION_PATTERN = re.compile(
-    r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*[.](?:md|py|json|toml|sh)"
+    r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*[.](?:md|py|json|toml|sh)",
+    re.IGNORECASE,
 )
+# Dynamic operational state is absent from the portable motor seed by design.
+_NOT_DESTINATION_EXEMPTIONS = frozenset({"work_plan.md"})
+_NOT_DESTINATION_EXTENSIONS = (".md", ".py", ".sh", ".json", ".toml")
 
 
 def prompt_summary(body: str) -> dict[str, str]:
@@ -997,10 +1001,10 @@ def _not_destination_paths(reference: str, root: Path) -> list[Path]:
     Before: ``reference`` is a file-like token from an adopted prompt summary
             and ``root`` is the motor bundle root.
     During: resolves every slash-containing reference relative to ``root`` and
-            ``root/prompts``; bare Markdown names resolve against prompt and
-            skill roots. Candidates outside ``root`` are rejected. Bare
-            ``.py/.sh/.json/.toml`` tokens and the dynamic ``work_plan.md``
-            operational-artifact mention remain prose, not router destinations.
+            ``root/prompts``; bare file names resolve against prompt, skill,
+            script and hook roots. Candidates outside ``root`` are rejected.
+            ``not:`` continuation lines and destinations without a recognized
+            extension remain outside this contract.
     After: returns existing candidate paths; an empty list means the token is
            not a resolvable router destination.
     """
@@ -1009,8 +1013,16 @@ def _not_destination_paths(reference: str, root: Path) -> list[Path]:
     candidates: list[Path] = []
     if "/" in normalized:
         candidates.extend((root / normalized, root / "prompts" / normalized))
-    elif normalized.endswith(".md"):
-        candidates.extend((root / "prompts" / normalized, root / "skills" / normalized))
+    elif normalized.casefold().endswith(_NOT_DESTINATION_EXTENSIONS):
+        candidates.extend(
+            (
+                root / normalized,
+                root / "prompts" / normalized,
+                root / "skills" / normalized,
+                root / "scripts" / normalized,
+                root / ".agent" / "hooks" / normalized,
+            )
+        )
     paths: list[Path] = []
     for candidate in candidates:
         resolved = candidate.resolve()
@@ -1027,9 +1039,10 @@ def not_destination_errors(root: Path) -> list[str]:
     During: reads each routed prompt through ``read_prompt_parts``, extracts
             file-like tokens from its ``not:`` summary value, and checks router
             destinations through ``_not_destination_paths``.
-    After: returns one diagnostic per missing prompt/skill/command destination;
-           non-router code or operational-artifact mentions are ignored and an
-           empty list means the navigational references are resolvable.
+    After: returns one diagnostic per missing destination, except for the
+           named dynamic allowlist; continuation lines and extensionless
+           mentions are intentionally ignored, and an empty list means the
+           remaining references are resolvable.
     """
     errors: list[str] = []
     for path in _prompt_files(root):
@@ -1046,7 +1059,7 @@ def not_destination_errors(root: Path) -> list[str]:
             seen.add(reference)
             if _not_destination_paths(reference, root):
                 continue
-            if reference.endswith(".md") and reference != "work_plan.md":
+            if reference.casefold() not in _NOT_DESTINATION_EXEMPTIONS:
                 errors.append(f"{rel}: not destination missing: {reference}")
     return errors
 
