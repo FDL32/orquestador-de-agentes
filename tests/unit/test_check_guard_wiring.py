@@ -282,6 +282,7 @@ EXPECTED_WIRED_REAL = {
     "check_seal_staleness",
     "check_skill_collisions",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "check_ticket_nomenclature",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
+    "validate_agent_config",  # WOT-2026-044w: cableado en .pre-commit-config.yaml (hook validate-agent-config, always_run)
     # WOT-2026-026t DoD-(c): cableado en .pre-commit-config.yaml (always_run,
     # stages: [pre-commit]). WIRED verificado a mano ademas del parseo: el hook
     # `check-stale-operational-note` invoca el script en cada commit, y su
@@ -406,6 +407,66 @@ def test_real_repo_audit_is_clean():
         text=True,
     )
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+# --------------------------------------------------- WOT-2026-044w (policy real)
+_POLICY_REAL = cgw._load_policy()
+_BY_DESIGN_REAL = {
+    g: str(o)
+    for g, o in _POLICY_REAL["known_unwired"].items()
+    if str(o).startswith(cgw._BY_DESIGN)
+}
+
+
+@pytest.mark.parametrize("guard", sorted(_BY_DESIGN_REAL))
+def test_real_by_design_entries_carry_a_reasoned_motive(guard):
+    """Control negativo/forma: un BY-DESIGN reducido al prefijo (o a una frase hueca)
+    pasa `_bad_owners` y deja de exigir cableado sin decir por que. Ningun BY-DESIGN
+    de la policy REAL puede ser un prefijo desnudo."""
+    motive = _BY_DESIGN_REAL[guard][len(cgw._BY_DESIGN) :].strip()
+    assert len(motive) >= 80, f"{guard}: BY-DESIGN sin motivo razonado: {motive!r}"
+
+
+def test_044w_dispositions_in_real_policy():
+    """Disposicion de los 5 guards ticket-owned (WOT-2026-044w): cada rama del DoD
+    tiene su aserto; revertir cualquiera de las 5 entradas pone este test rojo."""
+    known = _POLICY_REAL["known_unwired"]
+    # (1) cableado: ya no se declara como deuda ni como via
+    assert "validate_agent_config" not in known
+    assert "validate_agent_config" not in _POLICY_REAL["wired_via"]
+    # (2) BY-DESIGN por naturaleza, con la admision de que nadie lo cita
+    assert str(known["check_archive_hygiene"]).startswith(cgw._BY_DESIGN)
+    assert "NINGUN prompt" in known["check_archive_hygiene"]
+    # (3) la formula de la ficha: unwired EN FRONTERA, nunca "sin cablear" a secas
+    assert str(known["check_prompt_bias"]).startswith(cgw._BY_DESIGN)
+    assert "unwired en frontera" in known["check_prompt_bias"]
+    # (4) aplazamiento != diseno: sigue siendo deuda, con el dueno VIVO de seguimiento
+    closure_owner = known["check_closure_adversarial_pass"]
+    assert closure_owner == "WOT-2026-121a"
+    # (5) NO se toca ni se reclasifica: deuda con su dueno historico
+    assert known["check_dod_metric_freshness"] == "WOT-2026-034c"
+
+
+def test_validate_agent_config_wired_from_precommit_and_dewiring_is_caught(tmp_path):
+    """POSITIVO en el repo real: el hook pre-commit es la arista de
+    validate_agent_config. MUTACION en un motor sintetico: la misma config con el
+    hook sin su script -> la arista desaparece (el guard volveria a UNWIRED)."""
+    real = _ROOT / ".pre-commit-config.yaml"
+    edges = cgw.wiring_edges(_ROOT)
+    assert ".pre-commit-config.yaml" in edges.get("validate_agent_config", set()), (
+        "validate_agent_config debe cablearse desde .pre-commit-config.yaml"
+    )
+    src = real.read_text(encoding="utf-8")
+    literal = "scripts/validate_agent_config.py"
+    assert literal in src, "el literal del hook ya no esta (test caducado)"
+    motor = _motor(
+        tmp_path,
+        {".pre-commit-config.yaml": src.replace(literal, "scripts/OTRO_NO_GUARD.py")},
+        guards=["validate_agent_config"],
+    )
+    assert not cgw.wiring_edges(motor, _EMPTY_POLICY).get("validate_agent_config"), (
+        "des-cableado NO detectado: el guard sigue con arista tras quitar el hook"
+    )
 
 
 # ----------------------------------------------------------------- T-DEWIRING

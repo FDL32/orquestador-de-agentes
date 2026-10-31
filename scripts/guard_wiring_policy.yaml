@@ -14,18 +14,34 @@
 #                   fichero:linea + probe reproducible; una entrada cuyo destino
 #                   ya no existe es STALE y FALLA.
 
+# CENSO DE CABLEADO (WOT-2026-044w), snapshot 2026-10-31 medido con
+#   python scripts/check_guard_wiring.py --motor-root <motor> --project-root <workspace>
+# ANTES: 78 wired / 21 unwired (21 declared, 0 UNDECLARED, 3 via); --strict rc 1
+#   por 5 guards de deuda ticket-owned. Tras 044w el denominador vigente es el
+#   que imprime el comando de arriba, no esta cifra (es evidencia fechada).
+# Deuda ticket-owned que 044w deja DECLARADA a proposito (no se reclasifica):
+#   - check_dod_metric_freshness -> WOT-2026-034c. Dueno ARCHIVADO (huerfana
+#     conocida; el chequeo 026v no la ve porque raspa IDs en prosa del backlog,
+#     hallazgo aparte). Cablearlo hoy pondria rojo prepush/closeout: medido
+#     2026-10-31 sobre el backlog vivo del workspace, 259 filas vivas,
+#     `check_dod_metric_freshness.py --project-root <workspace>` -> rc 1 con 42
+#     VIOLATIONS. NON-GOAL declarado de 034c; sin decidir esos 42, no se cablea.
+#   - check_closure_adversarial_pass -> WOT-2026-121a (ver su entrada).
+
 known_unwired:
-  # WOT-2026-027j: invocacion manual desde el Bloque 2.6 de
+  # WOT-2026-027j: invocacion desde el Bloque 2.6 de
   # prompts/orchestrator_session_close_full_audit.md (pasada adversarial
-  # bloqueante sobre el informe de cierre y la propuesta de memoria). Es
-  # DELIBERADO, no deuda huerfana: el ticket evaluo anadir wiring a
-  # agent_controller.py/session_closeout.py para crear un call-site mutable y
-  # lo DESCARTO (decision del orquestador del vuelo 2026-10-24, scope creep
-  # sobre un ticket que nacio como exigencia de PROMPT, no de codigo) -- ver
-  # DoD(c) declarado como gap en el cierre completed-partial de esta fila.
-  # Si algun dia se decide cablearlo (ticket de seguimiento), esta entrada se
-  # retira entonces, igual que sus precedentes (check_backlog_commits_landed).
-  check_closure_adversarial_pass: WOT-2026-027j
+  # bloqueante sobre el informe de cierre y la propuesta de memoria). 027j
+  # evaluo anadir wiring a agent_controller.py/session_closeout.py y lo DESCARTO
+  # (decision del orquestador del vuelo 2026-10-24, scope creep sobre un ticket
+  # que nacio como exigencia de PROMPT) -- DoD(c) quedo como gap declarado en su
+  # cierre completed-partial. Eso es un APLAZAMIENTO, no un diseno: sigue siendo
+  # DEUDA (no BY-DESIGN) y su dueno vivo es el follow-up WOT-2026-121a (044w,
+  # re-dueno desde 027j, cerrado). CONDICION DE SALIDA: 121a decide y entrega un
+  # call-site que corra solo (con convencion de ruta del sidecar) y entonces esta
+  # entrada se retira, o 121a se cierra declarando que no se cablea y la entrada
+  # pasa a BY-DESIGN con ese motivo.
+  check_closure_adversarial_pass: WOT-2026-121a
   # Citados en prompts, ejecutados por nadie. El orquestador corrio estos A MANO
   # el 2026-07-14 como barreras obligatorias -- funcionaron porque alguien se acordo.
   # check_backlog_commits_landed: RETIRADO (WOT-2026-024q) -- ahora cableado via
@@ -81,7 +97,10 @@ known_unwired:
   # import estatico en prepush_check.py::run_contract_formation_check (closeout,
   # bloqueante) sobre el CF triple del motor. El AST lo alcanza ahora -> wired.
   # Dejarlo aqui seria una declaracion STALE que el propio gate caza.
-  validate_agent_config: WOT-2026-019o
+  # validate_agent_config: RETIRADO (WOT-2026-044w) -- ahora cableado como hook
+  # pre-commit `validate-agent-config` (always_run, stages: [pre-commit]) en
+  # .pre-commit-config.yaml. Su dueno original WOT-2026-019o esta archivado
+  # (completed, 9d07fdb). Dejarlo aqui seria una declaracion STALE.
   validate_decision_schema: >-
     BY-DESIGN: WOT-2026-050b. El DoD de la ficha pide el validador y su
     esquema (campo `review_evidence_ref` obligatorio en decision_*.json), no
@@ -130,14 +149,23 @@ known_unwired:
   # review bridge), que vive en `bus/` -- FORBIDDEN SURFACE del contrato frozen
   # T-026K-001 (FLT acotada a los 3 scripts + 2 tests; bus/ prohibido). El
   # MECANISMO se entrega aqui; su invocacion desde el loop es follow-up declarado.
-  # RE-DECLARADO 2026-07-22 (su dueno original WOT-2026-026k quedo archivado con
-  # el guard aun unwired -- huerfano cazado por el orphan-owner check): el dueno
-  # VIVO es WOT-2026-038b, que ya posee el cableado del bundle-guard hermano
-  # (check_bundle_receipts) en el mismo arranque del bucle. Nota de estado real:
-  # build_extraction_prompt.py (WOT-2026-027q, commit 76b761b) ya lo importa y lo
-  # ejecuta en sus gates, pero ese generador aun no tiene invocador de frontera
-  # propio -- cablear ambos es el mismo trabajo de 038b.
-  check_prompt_bias: WOT-2026-038b
+  # WOT-2026-044w: RE-CLASIFICADO de deuda (dueno 038b, cerrado completed-partial
+  # sin cablear este guard) a BY-DESIGN, formula exacta: UNWIRED EN FRONTERA, no
+  # "sin cablear" a secas. Estado medido 2026-10-31: su unico consumidor de codigo
+  # es scripts/build_extraction_prompt.py (WOT-2026-027q), que lo importa y lo
+  # ejecuta como gate de entrada y de salida; ese generador es un CLI de uso
+  # manual y ningun camino que corra solo lo invoca (git grep: solo su test y
+  # esta policy), asi que el guard no entra en la frontera derivada.
+  check_prompt_bias: >-
+    BY-DESIGN: unwired en frontera. Es un gate de TEXTO de un prompt de review,
+    consumido por `scripts/build_extraction_prompt.py` (gate de entrada y de
+    salida del generador), que es un CLI invocado a mano al preparar un prompt de
+    extraccion -- evento discreto de preparacion, no un commit ni un proceso que
+    corra solo, y el prompt auditado normalmente ni siquiera se versiona. Mismo
+    patron BY-DESIGN que check_prompt_parity y check_contract_clause_coverage.
+    Follow-up declarado, no oculto: cablearlo al arranque del bucle de review
+    (ensemble_dispatch / review bridge) exige decidir que se hace con un prompt
+    sesgado (bloquear o avisar), decision de politica fuera de 044w.
 
   # WOT-2026-034c: el detector nace STANDALONE por diseno del propio ticket --
   # cablearlo en prepush es NON-GOAL declarado y se pedira como follow-up propio.
@@ -286,8 +314,18 @@ known_unwired:
   # incluidos commits ajenos, hasta decision humana -- el mismo limite
   # estructural que check_portable_memory_promotion (deteccion post-hoc, no
   # barrera de escritura). Invocacion manual/per-auditoria, como los demas
-  # BY-DESIGN de este bloque. Dueno: WOT-2026-094c.
-  check_archive_hygiene: WOT-2026-094c
+  # BY-DESIGN de este bloque. WOT-2026-044w: pasa de deuda (dueno 094c, archivado
+  # completed) a BY-DESIGN por su NATURALEZA, no por aplazamiento.
+  check_archive_hygiene: >-
+    BY-DESIGN: WOT-2026-094c. Su veredicto depende de una baseline FECHADA que
+    elige el operador (`--profile` / `--baseline`) y la limpieza de duplicados
+    esta propuesta, no aplicada: cablearlo fail-closed en pre-commit bloquearia
+    todos los commits en cuanto aparezca duplicacion nueva, incluidos los ajenos,
+    hasta una decision humana, y es deteccion post-hoc (mismo limite estructural
+    que check_portable_memory_promotion). Invocacion manual por quien audita la
+    higiene del archive. HOY NINGUN prompt, skill ni AGENTS.md lo cita (medido
+    2026-10-31): esta declaracion lo marca BY-DESIGN, no lo adopta; citarlo
+    tampoco seria cablearlo.
 
   # OPT-10 (repo_audit_multiagent v2.4): check post-auditoria ejecutado MANUALMENTE
   # despues de cerrar una auditoria, no un hook automatico. Su uso es "python
