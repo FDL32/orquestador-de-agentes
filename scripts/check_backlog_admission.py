@@ -32,19 +32,28 @@ During (Proceso y Recursos):
       vecinos con forma. Los bytes se NORMALIZAN CRLF->LF antes de hashear
       (evita divergencia blob vs working tree por autocrlf).
     - Emite SOLO veredictos MECANICOS: SIN_RECIBO / RECIBO_INCOHERENTE /
-      ALTA_CONCURRENTE (falla) y RECIBO_COHERENTE (pasa). NUNCA etiquetas
+      ALTA_CONCURRENTE / ID_EN_OTRA_RAMA (falla) y RECIBO_COHERENTE (pasa). NUNCA etiquetas
       semanticas: `DUPLICADO_DE`/`ABSORBE_A`/`VINCULADA_A` viajan como
       PROPUESTA del autor del recibo y su resolucion es humana.
     - Altas concurrentes (regla determinista, sin heuristicas): la segunda
       alta FALLA con ALTA_CONCURRENTE si reintroduce un id ya anadido por una
       alta anterior del rango, o si su corpus no re-deriva en su revision
       padre y una alta ANTERIOR toco una superficie declarada en su recibo.
+    - Unicidad del id ENTRE ramas (WOT-2026-127b): cada id de ALTA se busca
+      como FILA (celdas de ticket, nunca id suelto) en backlog y archive de
+      todas las refs `refs/heads` y `refs/remotes` distintas de HEAD y de la
+      rama propia (su upstream y su espejo remoto), sin red. Misma fila ->
+      misma alta; fila distinta -> `ID_EN_OTRA_RAMA` (falla) salvo que el id
+      ya existiera en el ancestro comun (mismo linaje: la ref contiene la alta
+      o solo cambio de estado). Fail-open con AVISO si no se pueden leer las
+      refs. LIMIT: no ve ramas sin publicar de otra maquina u otro clon.
     - `--revalidate` re-ejecuta el contraste contra el corpus ACTUAL (working
       tree): mismo sha -> 0; distinto -> 1 con instruccion de re-barrido.
 
 After (Post-condiciones y Errores):
     - exit 0 = RECIBO_COHERENTE (incluye 0 altas en el rango); exit 1 = fallo
-      mecanico (SIN_RECIBO / RECIBO_INCOHERENTE / ALTA_CONCURRENTE); exit 2 =
+      mecanico (SIN_RECIBO / RECIBO_INCOHERENTE / ALTA_CONCURRENTE /
+      ID_EN_OTRA_RAMA); exit 2 =
       medicion fallida (git/IO; mensaje con marcador, NUNCA veredicto).
     - El informe publica sus denominadores: rango, commits, superficies
       escaneadas, filas anadidas vistas, ids extraidos, altas detectadas,
@@ -121,7 +130,8 @@ VER_WARN_GRANDFATHERED = "WARN_GRANDFATHERED"
 VER_INCOHERENTE = "RECIBO_INCOHERENTE"
 VER_CONCURRENTE = "ALTA_CONCURRENTE"
 VER_COHERENTE = "RECIBO_COHERENTE"
-FAIL_VERDICTS = (VER_SIN_RECIBO, VER_INCOHERENTE, VER_CONCURRENTE)
+VER_OTRA_RAMA = "ID_EN_OTRA_RAMA"
+FAIL_VERDICTS = (VER_SIN_RECIBO, VER_INCOHERENTE, VER_CONCURRENTE, VER_OTRA_RAMA)
 SEMI_FAIL_VERDICTS = (VER_WARN_GRANDFATHERED,)
 SEMANTIC_TIPOS = {"DUPLICADO_DE", "ABSORBE_A", "VINCULADA_A"}
 VALID_PROPUESTA_TIPOS = SEMANTIC_TIPOS | {"NUEVA"}
@@ -880,6 +890,336 @@ def _is_ancestor(repo: Path, maybe_ancestor: str, commit: str) -> bool:
         return False
 
 
+def _git_batch(repo: Path, args: list[str], stdin: bytes) -> bytes:
+    """`git <args>` con `stdin`; MeasurementError si falla (proceso unico)."""
+    proc = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), *args],  # noqa: S607
+        input=stdin,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise MeasurementError(
+            f"git {' '.join(args)} rc={proc.returncode}: "
+            f"{(proc.stderr or b'').decode('utf-8', 'replace').strip()[:200]}"
+        )
+    return proc.stdout
+
+
+def _own_branch_refs(repo: Path) -> set[str]:
+    """Refs de la rama PROPIA: la local, su upstream y su espejo en cada remoto.
+
+    Una rama propia amendada y re-publicada deja en `origin/<rama>` la fila
+    VIEJA de la misma alta: no es una colision con "otra" rama.
+    """
+    proc = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), "symbolic-ref", "-q", "--short", "HEAD"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch = proc.stdout.strip()
+    if proc.returncode != 0 or not branch:
+        return set()
+    own = {f"refs/heads/{branch}"}
+    try:
+        upstream = git(
+            repo, "for-each-ref", "--format=%(upstream)", f"refs/heads/{branch}"
+        ).strip()
+    except MeasurementError:
+        upstream = ""
+    if upstream:
+        own.add(upstream)
+    return own | {
+        ref for ref in _all_refnames(repo) if _is_remote_mirror_of(ref, branch)
+    }
+
+
+def _all_refnames(repo: Path) -> list[str]:
+    out = git(repo, "for-each-ref", "--format=%(refname)", "refs/remotes")
+    return [ln for ln in out.splitlines() if ln.strip()]
+
+
+def _is_remote_mirror_of(ref: str, branch: str) -> bool:
+    """`refs/remotes/<remoto>/<branch>` (el remoto no lleva barras)."""
+    parts = ref.split("/", 3)
+    return len(parts) == 4 and parts[1] == "remotes" and parts[3] == branch
+
+
+REF_RESOLUTION_HINT = (
+    "Salida: este veredicto NO tiene override (--recibo-file y "
+    "--grandfather-cutoff-sha no lo relajan, por diseno). Si es una colision "
+    "real, cede la alta MAS RECIENTE: renumera tu alta a un id libre y "
+    "regenera su recibo. Si es la MISMA alta (rebasada o cherry-pick y con la "
+    "fila editada alli), alinea la fila con la de esa ref o integra esa rama "
+    "(merge) para que el id quede en su ancestro comun."
+)
+
+
+class _RefIndex:
+    """Unicidad del id de alta entre las refs locales y remotas del repo.
+
+    Before: `repo` es el repo del alta; sin red (las refs remotas pueden estar
+        caducas: se declara en el informe).
+    During: construccion PEREZOSA (0 altas -> 0 git). Un `for-each-ref`, un
+        `cat-file --batch-check` por (tip, superficie), y `cat-file --batch`
+        solo de los blobs UNICOS que contienen algun id buscado.
+    After: `report` anade un veredicto por cada alta cuyo id tiene OTRA fila en
+        una ref divergente (sin el id en el ancestro comun). Cualquier fallo de medicion se vuelve
+        un AVISO en `warnings` (fail-open): este guard nunca bloquea una alta
+        valida por no poder leer refs.
+    """
+
+    def __init__(self, repo: Path, surfaces: list[str], head: str) -> None:
+        self.repo = repo
+        self.surfaces = surfaces
+        self.head = head
+        self.warnings: list[str] = []
+        self.n_refs = 0
+        self.n_tips = 0
+        self.n_blobs_read = 0
+        self.n_unreadable = 0
+        self.n_filas_con_id = 0
+        self.n_colisiones = 0
+        self.touched = False
+        self._tips: dict[str, list[str]] = {}
+        self._tip_blobs: dict[str, list[str]] = {}
+        self._ids_at: dict[str, set[str]] = {}
+        self._merge_bases: dict[tuple[str, str], str] = {}
+        self._altas: list[tuple[str, str, dict[str, str]]] = []
+        self._rows: dict[str, dict[str, set[str]]] | None = None
+
+    def _load(self) -> None:
+        try:
+            head_sha = git(self.repo, "rev-parse", self.head or "HEAD").strip()
+            own = _own_branch_refs(self.repo)
+            out = git(
+                self.repo,
+                "for-each-ref",
+                "--format=%(refname) %(objectname) %(symref)",
+                "refs/heads",
+                "refs/remotes",
+            )
+            for line in out.splitlines():
+                parts = line.split(" ")
+                if len(parts) < 2 or (len(parts) > 2 and parts[2]):
+                    continue
+                if parts[0] in own or parts[1] == head_sha:
+                    continue
+                self.n_refs += 1
+                self._tips.setdefault(parts[1], []).append(parts[0])
+            self.n_tips = len(self._tips)
+            self._tip_blobs = self._blobs_per_tip()
+        except (MeasurementError, OSError) as exc:
+            self._tips, self._tip_blobs = {}, {}
+            self.warnings.append(
+                f"unicidad del id entre refs NO verificada ({exc}); "
+                "alta no bloqueada por esto"
+            )
+
+    def _blobs_per_tip(self) -> dict[str, list[str]]:
+        tips = list(self._tips)
+        specs = [f"{tip}:{path}" for tip in tips for path in self.surfaces]
+        if not specs:
+            return {}
+        raw = _git_batch(
+            self.repo,
+            ["cat-file", "--batch-check"],
+            ("\n".join(specs) + "\n").encode("utf-8"),
+        ).decode("utf-8", "replace")
+        answers = raw.splitlines()
+        if len(answers) != len(specs):
+            raise MeasurementError("cat-file --batch-check devolvio filas de menos")
+        per_tip: dict[str, list[str]] = {tip: [] for tip in tips}
+        for spec, answer in zip(specs, answers, strict=True):
+            fields = answer.split()
+            if len(fields) == 3 and fields[1] == "blob":
+                per_tip[spec.split(":", 1)[0]].append(fields[0])
+            elif not answer.endswith(" missing"):
+                self.n_unreadable += 1
+        return per_tip
+
+    def _read_blobs(self, blobs: set[str]) -> dict[str, bytes]:
+        if not blobs:
+            return {}
+        data = _git_batch(
+            self.repo,
+            ["cat-file", "--batch"],
+            ("\n".join(sorted(blobs)) + "\n").encode("utf-8"),
+        )
+        found: dict[str, bytes] = {}
+        pos = 0
+        while pos < len(data):
+            end = data.index(b"\n", pos)
+            header = data[pos:end].split()
+            if len(header) != 3 or header[1] != b"blob":
+                pos = end + 1
+                continue
+            size = int(header[2])
+            found[header[0].decode("ascii")] = data[end + 1 : end + 1 + size]
+            pos = end + 1 + size + 1
+        self.n_blobs_read += len(found)
+        return found
+
+    def defer(self, sha: str, subject: str, candidates: dict[str, str]) -> None:
+        """Registra las altas de un commit; el barrido de refs es UNO, al final.
+
+        `candidates` = {id: sha256 de su fila anadida}. Diferirlo evita releer
+        los blobs de todas las refs por cada commit con altas (medido en el
+        workspace real: ~3 MB de backlog por tip).
+        """
+        self.touched = True
+        self._altas.append((sha, subject, candidates))
+
+    def report(self, lines: list[str], findings: list[dict]) -> None:
+        """Contrasta las altas diferidas con las refs y anade lineas/hallazgos."""
+        if not self._altas:
+            return
+        self._load()
+        if not self._tip_blobs:
+            return
+        try:
+            for sha, subject, candidates in self._altas:
+                _report_ref_collisions(
+                    sha, subject, self._collisions(sha, candidates), lines, findings
+                )
+        except (MeasurementError, OSError, ValueError) as exc:
+            self.warnings.append(
+                f"unicidad del id entre refs NO verificada ({exc}); "
+                "alta no bloqueada por esto"
+            )
+
+    def _rows_of_blobs(self) -> dict[str, dict[str, set[str]]]:
+        """{blob: {id: {sha256 de cada fila con ese id}}} para los ids de TODAS las altas."""
+        ids = {cid for _s, _j, cands in self._altas for cid in cands}
+        if self._rows is not None:
+            return self._rows
+        needed = {blob for blobs in self._tip_blobs.values() for blob in blobs}
+        contents = self._read_blobs(needed)
+        text_pat = re.compile("|".join(re.escape(i) for i in sorted(ids)))
+        byte_pat = re.compile(text_pat.pattern.encode("utf-8"))
+        rows_of_blob: dict[str, dict[str, set[str]]] = {}
+        for blob, content in contents.items():
+            rows: dict[str, set[str]] = {}
+            if byte_pat.search(content):
+                text = norm_newlines(content).decode("utf-8", "replace")
+                for line in text.splitlines():
+                    if not line.lstrip().startswith("|") or not text_pat.search(line):
+                        continue
+                    for cid in _id_cells_of_row(line) & ids:
+                        rows.setdefault(cid, set()).add(_sha(line.encode("utf-8")))
+            rows_of_blob[blob] = rows
+        self._rows = rows_of_blob
+        return rows_of_blob
+
+    def _collisions(
+        self, sha: str, candidates: dict[str, str]
+    ) -> dict[str, list[tuple[list[str], str]]]:
+        """{id: [(refs, tip)]} de ids con OTRA fila en una ref divergente.
+
+        Misma fila en la ref -> misma alta (no colision). Fila distinta: solo
+        es colision si el id NO existia en el ancestro comun de la alta y de
+        esa ref (`_id_en_ancestro_comun`): si ya existia, ambas comparten
+        linaje (la ref contiene la alta, o es historia previa) y la fila solo
+        evoluciono.
+        """
+        rows_of_blob = self._rows_of_blobs()
+        found: dict[str, list[tuple[list[str], str]]] = {}
+        for tip, blobs in self._tip_blobs.items():
+            for cid in sorted(candidates):
+                hashes: set[str] = set()
+                for blob in blobs:
+                    hashes |= rows_of_blob.get(blob, {}).get(cid, set())
+                if not hashes:
+                    continue
+                self.n_filas_con_id += 1
+                if candidates[cid] in hashes or self._id_en_ancestro_comun(
+                    sha, tip, cid
+                ):
+                    continue
+                found.setdefault(cid, []).append((sorted(self._tips[tip]), tip))
+                self.n_colisiones += 1
+        return found
+
+    def _id_en_ancestro_comun(self, sha: str, tip: str, cid: str) -> bool:
+        """True si `cid` ya tenia fila en merge-base(sha, tip) (mismo linaje).
+
+        Cubre en una sola regla: la ref que CONTIENE la alta (merge-base = el
+        propio alta), la ref que es historia previa del alta, y el ticket que
+        solo cambio de estado o de superficie en una de las ramas. Una
+        colision real exige que las ramas divergieran ANTES de que alguna
+        diera de alta el id. Sin ancestro comun (historias sin relacion) el
+        id no pudo preceder a la divergencia: no se exime.
+        """
+        if (sha, tip) not in self._merge_bases:
+            proc = subprocess.run(  # noqa: S603
+                ["git", "-C", str(self.repo), "merge-base", sha, tip],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self._merge_bases[(sha, tip)] = (
+                proc.stdout.strip() if proc.returncode == 0 else ""
+            )
+        base = self._merge_bases[(sha, tip)]
+        if not base:
+            return False
+        if base not in self._ids_at:
+            ids: set[str] = set()
+            for surface in self.surfaces:
+                content = rev_content(self.repo, base, surface)
+                if content is not None:
+                    ids |= _row_ids_of_content(content)
+            self._ids_at[base] = ids
+        return cid in self._ids_at[base]
+
+    def summary_lines(self) -> list[str]:
+        """Denominador publicado (DoD 3) y avisos; vacio si no hubo altas."""
+        if not self.touched:
+            return ["unicidad de id entre refs: no aplica (0 altas)"]
+        lines = [
+            f"unicidad de id entre refs: refs barridas {self.n_refs} "
+            f"(tips distintos {self.n_tips}, blobs leidos {self.n_blobs_read}, "
+            f"superficies ilegibles {self.n_unreadable}); filas con el id en "
+            f"otras refs {self.n_filas_con_id}; colisiones {self.n_colisiones}; "
+            "sin fetch (las refs remotas pueden estar caducas)"
+        ]
+        if self.n_refs == 0:
+            lines.append("AVISO: sin refs hermanas que contrastar")
+        lines.extend(f"AVISO: {w}" for w in dict.fromkeys(self.warnings))
+        return lines
+
+
+def _report_ref_collisions(
+    sha: str,
+    subject: str,
+    colisiones: dict[str, list[tuple[list[str], str]]],
+    lines: list[str],
+    findings: list[dict],
+) -> None:
+    """Una linea y un hallazgo por id en colision (VER_OTRA_RAMA, falla)."""
+    for cid in sorted(colisiones):
+        motivos = [
+            f"el id {cid} ya tiene OTRA fila en {', '.join(refs)} (tip {tip[:12]}) "
+            f"y el id no existia en el ancestro comun con el alta {sha[:12]} "
+            "(las ramas divergieron antes de que alguna lo diera de alta)"
+            for refs, tip in colisiones[cid]
+        ]
+        lines.append(
+            f"ALTA {cid} en {sha[:12]} '{subject}' -> VEREDICTO: {VER_OTRA_RAMA}"
+        )
+        lines.extend(f"  - {m}" for m in motivos)
+        lines.append(f"  {REF_RESOLUTION_HINT}")
+        findings.append(
+            {
+                "commit": sha[:12],
+                "candidato_id": cid,
+                "veredicto": VER_OTRA_RAMA,
+                "motivos": [*motivos, REF_RESOLUTION_HINT],
+            }
+        )
+
+
 def _audit_commit(
     repo: Path,
     sha: str,
@@ -889,6 +1229,7 @@ def _audit_commit(
     lines: list[str],
     findings: list[dict],
     cutoff_sha: str | None = None,
+    ref_index: _RefIndex | None = None,
 ) -> tuple[int, int, int]:
     """Audita UN commit: (filas_anadidas, ids_extraidos, recibos_de_mensaje).
 
@@ -933,6 +1274,16 @@ def _audit_commit(
     findings.extend(
         _recibos_huerfanos(sha, subject, msg_recibos, nuevos, pids, findings)
     )
+    if ref_index is not None and nuevos:
+        candidates = {
+            raw_id: _sha(
+                next(r for r in added if raw_id in row_line_ids(r))
+                .rstrip("\r\n")
+                .encode("utf-8")
+            )
+            for raw_id in nuevos
+        }
+        ref_index.defer(sha, subject, candidates)
     return len(added), len(added_ids), n_recibos_msg
 
 
@@ -974,6 +1325,7 @@ def audit_range(
         if isinstance(cid, str):
             recibo_files[cid] = recibo
 
+    ref_index = _RefIndex(repo, surfaces, head)
     for sha in commits:
         rows_n, ids_n, recibos_n = _audit_commit(
             repo,
@@ -984,6 +1336,7 @@ def audit_range(
             lines,
             findings,
             cutoff_sha=cutoff_sha,
+            ref_index=ref_index,
         )
         n_added_rows += rows_n
         n_ids += ids_n
@@ -1003,6 +1356,9 @@ def audit_range(
         f"recibos encontrados: {n_recibos_msg} en mensajes de commit "
         f"+ {n_recibos_file} via --recibo-file",
     )
+    ref_index.report(lines, findings)
+    for offset, summary in enumerate(ref_index.summary_lines()):
+        lines.insert(4 + offset, summary)
     fails = [f for f in findings if f.get("veredicto") in FAIL_VERDICTS]
     grandfathered = [
         f for f in findings if f.get("veredicto") == VER_WARN_GRANDFATHERED

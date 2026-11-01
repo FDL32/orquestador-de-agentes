@@ -1238,3 +1238,336 @@ def test_todo_call_site_de_audit_closeout_pasa_extra_recibos() -> None:
     assert len(sites) >= 2, sites
     sin_via = [where for where, pasa in sites if not pasa]
     assert not sin_via, f"llamadas a _audit_closeout sin extra_recibos: {sin_via}"
+
+
+# Seccion WOT-2026-127b: unicidad del id de alta ENTRE las refs del repo.
+# Repos git REALES en tmp_path, sin mocks de git (D8); solo los fallos de
+# medicion se simulan, para fijar el fail-open.
+
+
+def _alta_en_rama(
+    repo: Path, rama: str, cid: str, titulo: str, desde: str = "main"
+) -> str:
+    """Crea `rama` desde `desde` y da de alta `cid` con recibo coherente."""
+    git(repo, "checkout", "-b", rama, desde)
+    recibo = build_recibo(repo, cid, row(cid, titulo), [backlog_surface(repo)])
+    return commit_alta(
+        repo, row(cid, titulo), msg_with_recibo(f"alta {cid} {titulo}", recibo)
+    )
+
+
+def _vuelve_a_main(repo: Path) -> None:
+    git(repo, "checkout", "main")
+
+
+def test_127b_veredicto_nuevo_es_de_fallo() -> None:
+    """ID_EN_OTRA_RAMA pertenece a los veredictos que hacen fallar al guard."""
+    assert cba.VER_OTRA_RAMA == "ID_EN_OTRA_RAMA"
+    assert cba.VER_OTRA_RAMA in cba.FAIL_VERDICTS
+
+
+def test_127b_mismo_id_fila_distinta_en_otra_rama_local_falla(tmp_path: Path) -> None:
+    """ROJO del Paso 0 (R1): dos sesiones dan de alta el MISMO id con filas
+    distintas; la primera ya es ref local visible cuando llega la segunda."""
+    repo = init_repo(tmp_path)
+    tip = _alta_en_rama(repo, "memoria-opus", "WOT-2026-126a", "lectura tolerante")
+    _vuelve_a_main(repo)
+    _alta_en_rama(repo, "nocturno", "WOT-2026-126a", "proceso huerfano")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "VEREDICTO: ID_EN_OTRA_RAMA" in out
+    assert "refs/heads/memoria-opus" in out
+    assert f"tip {tip[:12]}" in out
+    assert "colisiones 1" in out
+    assert "NO tiene override" in out  # la salida del falso positivo se explica
+    assert "VEREDICTO GLOBAL: FALLO" in out
+
+
+def test_127b_mismo_id_fila_distinta_en_ref_remota_falla(tmp_path: Path) -> None:
+    """R2: la hermana solo existe como `refs/remotes/origin/otra`."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "otra", "WOT-2026-126a", "fila de la otra sesion")
+    git(repo, "push", "origin", "otra")
+    _vuelve_a_main(repo)
+    git(repo, "branch", "-D", "otra")
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi fila distinta")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "refs/remotes/origin/otra" in out
+    assert "ID_EN_OTRA_RAMA" in out
+
+
+def test_127b_la_otra_ref_lo_tiene_en_el_archive_falla(tmp_path: Path) -> None:
+    """El barrido cubre las DOS superficies: cola viva y archive."""
+    repo = init_repo(tmp_path)
+    git(repo, "checkout", "-b", "cerrada")
+    archive = repo / ARCHIVE_REL
+    archive.write_text(
+        archive.read_text(encoding="utf-8") + row("WOT-2026-126a", "ya cerrada"),
+        encoding="utf-8",
+    )
+    git(repo, "add", ARCHIVE_REL)
+    git(repo, "commit", "-m", "cierra 126a")
+    _vuelve_a_main(repo)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "alta nueva del mismo id")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "refs/heads/cerrada" in out
+    assert "ID_EN_OTRA_RAMA" in out
+
+
+def test_127b_colision_sin_recibo_tambien_se_nombra(tmp_path: Path) -> None:
+    """La colision no depende del recibo: una alta SIN_RECIBO tambien la lleva."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "memoria-opus", "WOT-2026-126a", "primera")
+    _vuelve_a_main(repo)
+    git(repo, "checkout", "-b", "nocturno")
+    commit_alta(repo, row("WOT-2026-126a", "segunda"), "alta sin recibo")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "VEREDICTO: SIN_RECIBO" in out
+    assert "VEREDICTO: ID_EN_OTRA_RAMA" in out
+
+
+def test_127b_rama_que_contiene_la_alta_no_es_colision(tmp_path: Path) -> None:
+    """(a) La MISMA alta vista por una rama que la contiene (descendiente)."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi alta")
+    git(repo, "checkout", "-b", "hermana")
+    (repo / "README.md").write_text("# otro\n", encoding="utf-8")
+    git(repo, "commit", "-am", "trabajo posterior de la hermana")
+    git(repo, "checkout", "mia")
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "ID_EN_OTRA_RAMA" not in out
+    assert "filas con el id en otras refs 1" in out
+    assert "colisiones 0" in out
+
+
+def test_127b_fila_editada_en_rama_que_contiene_la_alta_no_es_colision(
+    tmp_path: Path,
+) -> None:
+    """(a) La hermana descendiente cambio el ESTADO de la fila despues: sigue
+    siendo la misma alta (el commit del alta es ancestro de su tip)."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi alta")
+    git(repo, "checkout", "-b", "hermana")
+    p = repo / BACKLOG_REL
+    p.write_text(
+        p.read_text(encoding="utf-8").replace("| pending |", "| done |"),
+        encoding="utf-8",
+    )
+    git(repo, "commit", "-am", "cierra 126a")
+    git(repo, "checkout", "mia")
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "filas con el id en otras refs 1" in out
+    assert "colisiones 0" in out
+
+
+def test_127b_misma_fila_cherry_pick_en_otra_rama_no_es_colision(
+    tmp_path: Path,
+) -> None:
+    """(a) Alta cherry-picked: otro SHA, fila identica -> misma alta."""
+    repo = init_repo(tmp_path)
+    sha = _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi alta")
+    git(repo, "checkout", "-b", "copia", "main")
+    (repo / "README.md").write_text("# otro\n", encoding="utf-8")
+    git(repo, "commit", "-am", "base distinta: el cherry-pick no repite el SHA")
+    git(repo, "cherry-pick", sha)
+    git(repo, "checkout", "mia")
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "filas con el id en otras refs 1" in out
+    assert "colisiones 0" in out
+
+
+def test_127b_rama_propia_amendada_y_republicada_no_es_colision(
+    tmp_path: Path,
+) -> None:
+    """(a) `origin/<mi-rama>` conserva la fila VIEJA de MI alta tras un amend:
+    es la rama propia, no otra."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "titulo viejo")
+    git(repo, "push", "origin", "mia")
+    git(repo, "reset", "--hard", "main")
+    recibo = build_recibo(
+        repo,
+        "WOT-2026-126a",
+        row("WOT-2026-126a", "titulo nuevo"),
+        [backlog_surface(repo)],
+    )
+    commit_alta(
+        repo,
+        row("WOT-2026-126a", "titulo nuevo"),
+        msg_with_recibo("alta amendada", recibo),
+    )
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "ID_EN_OTRA_RAMA" not in out
+
+
+def test_127b_mismo_espejo_con_otro_nombre_de_rama_si_es_colision(
+    tmp_path: Path,
+) -> None:
+    """Control de la exclusion de rama propia: es por NOMBRE de rama. La misma
+    historia en una rama con otro nombre ve `origin/mia` como ajena."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "titulo viejo")
+    git(repo, "push", "origin", "mia")
+    _vuelve_a_main(repo)
+    _alta_en_rama(repo, "otra-sesion", "WOT-2026-126a", "titulo nuevo")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "refs/remotes/origin/mia" in out
+
+
+def test_127b_id_solo_mencionado_en_prosa_de_otra_ref_no_es_colision(
+    tmp_path: Path,
+) -> None:
+    """(d) Forma de fila, no id suelto: una mencion en la celda Titulo de OTRA
+    ficha de otra rama no es una alta de ese id."""
+    repo = init_repo(tmp_path)
+    git(repo, "checkout", "-b", "prosa")
+    commit_alta(
+        repo,
+        row("WOT-2026-777z", "se decidio no dar de alta WOT-2026-126a"),
+        "menciona 126a en prosa",
+    )
+    _vuelve_a_main(repo)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi alta")
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "filas con el id en otras refs 0" in out
+
+
+def test_127b_sin_refs_hermanas_utiles_pasa(tmp_path: Path) -> None:
+    """Fail-open: solo `main` como ref ajena y sin el id -> alta valida pasa."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi alta")
+    code, out = run_guard(repo)
+    assert code == 0, out
+    assert "refs barridas 2 (tips distintos 1" in out  # main y origin/main
+    assert "colisiones 0" in out
+
+
+def test_127b_repo_sin_ninguna_ref_hermana_declara_el_aviso(tmp_path: Path) -> None:
+    """Denominador 0: aviso explicito y rc 0 (ni verde mudo ni bloqueo)."""
+    repo = init_repo(tmp_path)
+    recibo = build_recibo(
+        repo, "WOT-2026-126a", row("WOT-2026-126a"), [backlog_surface(repo)]
+    )
+    commit_alta(repo, row("WOT-2026-126a"), msg_with_recibo("alta en main", recibo))
+    git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+    code, out = run_guard(repo, "--base", "HEAD~1", "--head", "HEAD")
+    assert code == 0, out
+    assert "refs barridas 0" in out
+    assert "AVISO: sin refs hermanas que contrastar" in out
+
+
+@pytest.mark.parametrize("fallo", ["for-each-ref", "cat-file"])
+def test_127b_fallo_de_medicion_de_refs_es_fail_open_con_aviso(
+    tmp_path: Path, monkeypatch, fallo: str
+) -> None:
+    """Un git roto al leer refs NO bloquea ni da rc 2: avisa y sigue."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "memoria-opus", "WOT-2026-126a", "primera")
+    _vuelve_a_main(repo)
+    _alta_en_rama(repo, "nocturno", "WOT-2026-126a", "segunda")
+    base = git(repo, "merge-base", "origin/main", "HEAD").strip()
+    head = git(repo, "rev-parse", "HEAD").strip()
+    real_git, real_batch = cba.git, cba._git_batch
+
+    def git_roto(r: Path, *args: str) -> str:
+        if fallo == "for-each-ref" and "for-each-ref" in args:
+            raise cba.MeasurementError("for-each-ref simulado roto")
+        return real_git(r, *args)
+
+    def batch_roto(r: Path, args: list[str], stdin: bytes) -> bytes:
+        if fallo == "cat-file":
+            raise cba.MeasurementError("cat-file simulado roto")
+        return real_batch(r, args, stdin)
+
+    monkeypatch.setattr(cba, "git", git_roto)
+    monkeypatch.setattr(cba, "_git_batch", batch_roto)
+    code, lines, findings = cba.audit_range(
+        repo, base, head, [BACKLOG_REL, ARCHIVE_REL]
+    )
+    out = "\n".join(lines)
+    assert code == 0, out
+    assert "NO verificada" in out
+    assert "simulado roto" in out
+    assert all(f["veredicto"] != "ID_EN_OTRA_RAMA" for f in findings)
+
+
+def test_127b_json_publica_veredicto_ref_y_commit(tmp_path: Path) -> None:
+    """--json: el hallazgo nombra veredicto, ref y commit; el denominador va
+    en `lines`."""
+    repo = init_repo(tmp_path)
+    tip = _alta_en_rama(repo, "memoria-opus", "WOT-2026-126a", "primera")
+    _vuelve_a_main(repo)
+    _alta_en_rama(repo, "nocturno", "WOT-2026-126a", "segunda")
+    code, out = run_guard(repo, "--json")
+    assert code == 1, out
+    report = json.loads(out)
+    hallazgo = next(
+        f for f in report["findings"] if f["veredicto"] == "ID_EN_OTRA_RAMA"
+    )
+    assert hallazgo["candidato_id"] == "WOT-2026-126a"
+    motivos = " ".join(hallazgo["motivos"])
+    assert "refs/heads/memoria-opus" in motivos
+    assert tip[:12] in motivos
+    assert any(ln.startswith("unicidad de id entre refs:") for ln in report["lines"])
+
+
+def test_127b_la_concurrencia_real_intra_rama_sigue_marcandose(tmp_path: Path) -> None:
+    """Control: el fix NO afloja ALTA_CONCURRENTE (reintroduccion de un id ya
+    anadido con recibo por una alta anterior del rango), sin tocar refs."""
+    repo = init_repo(tmp_path)
+    git(repo, "checkout", "-b", "mia")
+    surface = backlog_surface(repo)
+    recibo1 = build_recibo(repo, "WOT-2026-923a", row("WOT-2026-923a"), [dict(surface)])
+    commit_alta(repo, row("WOT-2026-923a"), msg_with_recibo("alta 923a", recibo1))
+    (repo / BACKLOG_REL).write_text(HEADER, encoding="utf-8")
+    git(repo, "add", BACKLOG_REL)
+    git(repo, "commit", "-m", "retira 923a")
+    recibo2 = build_recibo(repo, "WOT-2026-923a", row("WOT-2026-923a"), [surface])
+    commit_alta(repo, row("WOT-2026-923a"), msg_with_recibo("re-alta 923a", recibo2))
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "VEREDICTO: ALTA_CONCURRENTE" in out
+    assert "ID_EN_OTRA_RAMA" not in out
+
+
+def test_127b_ticket_previo_que_cambia_de_superficie_no_es_colision(
+    tmp_path: Path,
+) -> None:
+    """Medido en el workspace real (WOT-2026-068s, rango de 150 commits): una
+    rama vieja conserva la fila ABIERTA de un ticket que mi rama movio al
+    archive. El id ya existia en el ancestro comun: es el mismo ticket, no una
+    colision entre dos altas."""
+    repo = init_repo(tmp_path, backlog_extra=row("WOT-2026-068s", "abierta"))
+    git(repo, "checkout", "-b", "vieja", "main")
+    (repo / "README.md").write_text("# otro\n", encoding="utf-8")
+    git(repo, "commit", "-am", "trabajo de la rama vieja")
+    git(repo, "checkout", "-b", "mia", "main")
+    (repo / BACKLOG_REL).write_text(HEADER, encoding="utf-8")
+    git(repo, "add", BACKLOG_REL)
+    git(repo, "commit", "-m", "saca 068s de la cola viva")
+    recibo = build_recibo(
+        repo,
+        "WOT-2026-068s",
+        row("WOT-2026-068s", "cerrada"),
+        [backlog_surface(repo)],
+    )
+    archive = repo / ARCHIVE_REL
+    archive.write_text(
+        archive.read_text(encoding="utf-8") + row("WOT-2026-068s", "cerrada"),
+        encoding="utf-8",
+    )
+    git(repo, "add", ARCHIVE_REL)
+    git(repo, "commit", "-m", msg_with_recibo("068s al archive", recibo))
+    _code, out = run_guard(repo)
+    assert "filas con el id en otras refs 2" in out  # main y la rama vieja
+    assert "colisiones 0" in out
+    assert "ID_EN_OTRA_RAMA" not in out
