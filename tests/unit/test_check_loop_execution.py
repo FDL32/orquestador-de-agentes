@@ -3062,3 +3062,75 @@ def test_entry_without_reserve_matches_the_pre_152t_verdict_receipt_and_output(
     assert v == golden["verdict"]
     assert receipt == golden["receipt"]
     assert printed == golden["printed"]
+
+
+# ---------------------------------------------------------------- ronda 3 (152t)
+def test_retired_primary_hanging_does_not_activate_a_reserve(monkeypatch):
+    """MAJOR de BA254: BA07 RETIRADA (status deprecated) con N timeouts NO
+    sustituye ni agota nada: sin entrada en `by_nonce`, sin sustitucion, y la
+    reserva que respondio SIGUE inelegible."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA07"), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows, statuses={"BA07": "deprecated"})
+    assert v["reserve_substitutions"] == []
+    assert v["reserve_exhausted"] == []
+    assert v["ok"] is False
+    assert v["distinct_backends"] == ["BA03"]
+    assert _rs_not_eligible(v) == {"BA254": "reserve_not_activated"}
+    assert v["declared_removed"] == [
+        {"backend_key": "BA07", "reason": "retired(status=deprecated)"}
+    ]
+    config = _cov_config(
+        keys=("BA03", "BA07", "BA254", "BA11"),
+        entry=_rs_entry(),
+        statuses={"BA07": "deprecated"},
+    )
+    activation = cle.reserve_activation(
+        rows, [_emitted()], _rs_entry(), config, commit_sha="abc"
+    )
+    assert activation["by_nonce"] == {}
+    assert activation["substitutions"] == []
+    assert activation["exhausted"] == []
+
+
+def test_timeouts_field_reports_the_real_count_above_n(monkeypatch):
+    """Con 3 filas y N=2 el registro dice `timeouts == 3` (no N) tanto en la
+    sustitucion como en el agotamiento."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=3), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows)
+    assert [s["timeouts"] for s in v["reserve_substitutions"]] == [3]
+    assert len(v["reserve_substitutions"][0]["evidence_ts"]) == 3
+    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=3)]
+    v = _rs_audit(monkeypatch, rows, statuses={"BA254": "deprecated"})
+    assert [(x["backend_key"], x["timeouts"]) for x in v["reserve_exhausted"]] == [
+        ("BA07", 3)
+    ]
+
+
+def test_timestamp_tie_between_hung_primaries_is_broken_by_key(monkeypatch):
+    """Empate de primer ts: desempata la CLAVE, no el orden declarado. Con
+    backend_keys [BA07, BA03] y una reserva, la sustituida es BA03."""
+    entry = _rs_entry(backend_keys=["BA07", "BA03"])
+    rows = [*_rs_hang("BA07", start=10), *_rs_hang("BA03", start=10)]
+    rows.append(_rs_row("BA254", sec=40))
+    v = _rs_audit(monkeypatch, rows, entry=entry)
+    assert _rs_pairs(v) == [("BA03", "BA254")]
+    assert [x["backend_key"] for x in v["reserve_exhausted"]] == ["BA07"]
+
+
+def test_retired_reserve_between_two_active_ones_is_skipped(monkeypatch):
+    """Reservas [BA254, BA11, BA02] con BA11 retirada: dos primarias colgadas se
+    sirven con BA254 y BA02 (la tercera ocupa el sitio) y BA11 cae con motivo
+    `retired(...)`."""
+    entry = _rs_entry(reserve_backend_keys=["BA254", "BA11", "BA02"])
+    rows = [
+        *_rs_hang("BA03", start=10),
+        *_rs_hang("BA07", start=20),
+        _rs_row("BA254", sec=40),
+        _rs_row("BA11", sec=41),
+        _rs_row("BA02", sec=42),
+    ]
+    v = _rs_audit(monkeypatch, rows, entry=entry, statuses={"BA11": "deprecated"})
+    assert _rs_pairs(v) == [("BA03", "BA254"), ("BA07", "BA02")]
+    assert v["reserve_exhausted"] == []
+    assert _rs_not_eligible(v) == {"BA11": "retired(status=deprecated)"}
+    assert v["ok"] is True

@@ -1135,9 +1135,11 @@ def _hang_counts_by_nonce(
 ) -> dict[str, dict[str, list[str]]]:
     """nonce -> backend_key -> ``ts`` de sus filas de colgado (orden de aparicion).
 
-    Solo cuentan rondas ESTRUCTURALMENTE validas (``structurally_valid_rounds``:
-    nonce emitido antes, commit casa, no exploratoria, no emisor): un timeout
-    fabricado o sin traza de cierre no activa ninguna reserva.
+    Solo cuentan las rondas que pasan ``structurally_valid_rounds``: ``event`` es
+    ``ronda``, no exploratoria, ``commit_sha`` casa, con ``backend_key`` y
+    ``challenge_nonce`` no vacios, la clave no es la del emisor del nonce y el
+    nonce fue emitido para ese commit ANTES de la ronda. No garantiza nada mas
+    (no valida el contenido ni el origen de la fila).
     """
     counts: dict[str, dict[str, list[str]]] = {}
     for row in structurally_valid_rounds(
@@ -1228,6 +1230,14 @@ def reserve_activation(
         contando). Fail-closed sin reserva libre: la colgada queda en
         ``exhausted`` NOMBRADA y el recuento N sigue decidiendo ``ok``; jamas se
         da por cubierto lo que no llega a ``min_distinct``. Sin escritura.
+        Solo las primarias ``active`` (las que ``effective_eligible`` deja
+        elegibles) activan reserva: una primaria retirada colgada no sustituye
+        ni agota nada.
+    LIMITES conocidos: (1) una RESERVA que se cuelga sin que ninguna primaria se
+        cuelgue no deja entrada en el registro (solo aparece como ``silent_round``
+        en el veredicto); (2) el orden por (primer ts, clave) compara el TEXTO ISO
+        de ``ts`` del scorecard (formato unico, UTC): un ``ts`` en otro formato
+        ordenaria mal.
     """
     n = int(entry["reserve_after_timeouts"])
     registry = (config.get("ensemble_registry") or {}).get("backend_keys") or {}
@@ -1236,7 +1246,14 @@ def reserve_activation(
         for k in entry["reserve_backend_keys"]
         if (registry.get(k) or {}).get("status") == "active"
     ]
-    primary = list(entry["backend_keys"])
+    # Primarias EFECTIVAS: las mismas que ``effective_eligible`` deja elegibles
+    # (status ``active``, en orden declarado). Una primaria RETIRADA que se cuelga
+    # no sustituye ni agota nada: ya no cuenta como elegible.
+    primary = [
+        k
+        for k in entry["backend_keys"]
+        if (registry.get(k) or {}).get("status") == "active"
+    ]
     by_nonce: dict[str, set[str]] = {}
     substitutions: list[dict] = []
     exhausted: list[dict] = []
