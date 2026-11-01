@@ -27,7 +27,8 @@ LIMITES DECLARADOS (no los absorbe este fichero)
 - Si muere el SUPERVISOR, el hijo queda huerfano (lo cierra un Job Object: 152s-3).
 - Un nieto DESACOPLADO (el hijo muere y el nieto se reparenta) sobrevive a
   `taskkill /T`: ver `test_probe_detached_grandchild_survives_taskkill_tree`.
-- El timeout INTERNO (`timeout_s`) sigue registrandose como `unexpected:` (152s-2).
+- (cerrado en 152s-2) El timeout INTERNO (`timeout_s`) deja ahora una fila `timeout:` y
+  sale con rc 5: ver los tests `test_internal_*` del final de este fichero.
 
 Los tests del arbol usan procesos REALES y son solo-Windows (taskkill). Son
 hermeticos: watchdog de 3 s, limpieza en `finally` por PID registrado (nunca por
@@ -54,6 +55,7 @@ _SCRIPTS_DIR = _MOTOR_ROOT / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import check_loop_execution as cle  # noqa: E402
 import ensemble_dispatch as ed  # noqa: E402
 
 
@@ -241,7 +243,15 @@ def test_watchdog_kills_child_and_grandchild_and_leaves_rc_and_timeout_row(
         # kill CONFIRMADO: la fila puede afirmar `matado` y no lleva la salvedad
         assert "matado" in row["failure_mode"]
         assert "NO confirmado" not in row["failure_mode"]
-        assert "NO confirmado" not in capsys.readouterr().err
+        # `poll()` solo confirma la RAIZ del hijo: la fila y el stderr no pueden decir
+        # que el ARBOL entero murio (un nieto desacoplado puede seguir vivo)
+        assert "confirmado por poll()" in row["failure_mode"]
+        assert "descendientes no verificados" in row["failure_mode"]
+        assert "arbol de procesos" not in row["failure_mode"]
+        err = capsys.readouterr().err
+        assert "NO confirmado" not in err
+        assert "descendientes no verificados" in err
+        assert "arbol del hijo" not in err
     finally:
         _cleanup(pids)
 
@@ -718,3 +728,166 @@ def test_namespace_without_watchdog_attribute_is_treated_as_off():
     assert ed._watchdog_requested(SimpleNamespace()) is False
     assert ed._watchdog_requested(SimpleNamespace(watchdog_s=None)) is False
     assert ed._watchdog_requested(SimpleNamespace(watchdog_s=3.0)) is True
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-152s-2: el timeout INTERNO del backend (`timeout_s`) tambien deja una
+# fila `timeout:` y el rc 5, sin afirmar una muerte que nadie confirmo
+# --------------------------------------------------------------------------- #
+
+
+def _internal_timeout_config(timeout_s: int = 1) -> dict:
+    """Backend `agent` SINTETICO que no termina; `timeout_s` corto inyectado."""
+    return {
+        "schema_version": "1.3",
+        "backends": {
+            "hangtest": {
+                "executable": sys.executable,
+                "args": ["-c", "import time; time.sleep(120)"],
+                "timeout_s": timeout_s,
+                "discovery": {"method": "path_only"},
+            }
+        },
+        "ensemble_profiles": {
+            "p_hang": {
+                "backend": "hangtest",
+                "channel": "agent",
+                "data_sensitivity": "public",
+                "write": False,
+            }
+        },
+        "ensemble_pipelines": {},
+        "ensemble_private_roots": [],
+    }
+
+
+def _hang_argv(tmp_path: Path) -> list[str]:
+    return ["p_hang" if a == "p_chal" else a for a in _argv(tmp_path)]
+
+
+def test_internal_backend_timeout_leaves_timeout_row_and_rc5(
+    tmp_path, monkeypatch, capsys
+):
+    """Backend REAL que no termina (proceso hijo de prueba) y `timeout_s` de 1 s:
+    `loop-round` sale con rc 5 (no 2), deja UNA fila `timeout:` distinguible de
+    `muda` y de `transporte`, conserva el literal que greppea la guia y no
+    afirma `matado`. Mutaciones: M1 (sin la rama `timeout`: fila `unexpected:`),
+    M2 (sin prefijo `timeout:`), M3 (`_cmd_loop_round` no atrapa: rc 2),
+    M4 (RuntimeError plano en vez de BackendTimeoutError), M5 (el mensaje vuelve
+    a `arbol de procesos matado`), M6 (la fila pierde `RuntimeError: backend CLI
+    sin respuesta tras`)."""
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _internal_timeout_config())
+    rc = ed.main(_hang_argv(tmp_path))
+    err = capsys.readouterr().err
+
+    assert rc == ed.EXIT_WATCHDOG_TIMEOUT == 5
+    assert rc not in (0, 1, 2, ed.EXIT_NO_CONTRIBUTION, ed.EXIT_INVALID_INPUT)
+    rows = _rows(tmp_path)
+    assert len(rows) == 1, f"UNA fila, hay {len(rows)}"
+    row = rows[0]
+    mode = row["failure_mode"]
+    assert mode.startswith("timeout: RuntimeError: backend CLI sin respuesta tras 1s")
+    assert not mode.startswith("unexpected")
+    assert "muerte NO verificada" in mode
+    assert row["outcome"] == "no-aportacion" and row["output_chars"] == 0
+    assert "[TIMEOUT]" in err and "[ERROR]" not in err
+    assert not re.search(r"arbol[^\n]*matado", mode + err), (mode, err)
+
+    muda = {**row, "failure_mode": None}
+    transporte = {**row, "failure_mode": "transport_failed: rc=1; unknown"}
+    assert cle.is_hang_row(row) and not cle.is_hang_row(muda)
+    assert not cle.is_hang_row(transporte)
+    assert len({cle.diagnose_silence(x) for x in (row, muda, transporte)}) == 3
+
+
+def test_internal_timeout_still_raises_runtimeerror_for_python_callers(tmp_path):
+    """ADITIVO: quien llama a `run_loop_round` desde Python sigue recibiendo un
+    `RuntimeError` (ahora `BackendTimeoutError`, su subclase) y la fila queda
+    escrita. Mutacion M10 (tragar la excepcion) -> rojo."""
+    with pytest.raises(RuntimeError) as excinfo:
+        ed.run_loop_round(
+            "p_hang",
+            "material publico",
+            config=_internal_timeout_config(),
+            project_root=tmp_path,
+            ticket="WOT-2026-152s",
+            task_type="prose",
+            rol="challenger",
+            phase="DESIGN_REVIEW",
+            loop_id="L152S2",
+            backend_key="BKH",
+            sensitivity="public",
+            ronda=1,
+        )
+    assert isinstance(excinfo.value, ed.BackendTimeoutError)
+    rows = _rows(tmp_path)
+    assert [r["failure_mode"].split(":")[0] for r in rows] == ["timeout"]
+
+
+def test_other_runtimeerror_keeps_unexpected_row_and_rc2(tmp_path, monkeypatch, capsys):
+    """CONTROL NEGATIVO: un `RuntimeError` que NO es el timeout interno sigue
+    siendo `unexpected:` con `[ERROR]` y rc 2 (aditividad). Mutacion M11 (atrapar
+    todo `RuntimeError` como timeout) -> rojo."""
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("fallo inesperado de prueba")
+
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    monkeypatch.setattr(ed, "send_to_profile", _boom)
+    rc = ed.main(_argv(tmp_path))
+
+    assert rc == 2
+    assert "[ERROR]" in capsys.readouterr().err
+    rows = _rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["failure_mode"].startswith(
+        "unexpected: RuntimeError: fallo inesperado"
+    )
+
+
+def test_transport_agent_timeout_says_it_tried_and_never_claims_death(monkeypatch):
+    """El mensaje de `_transport_agent` ya no afirma `matado`: solo `poll()`
+    confirmaria la raiz y nadie verifica los descendientes. Conserva
+    `arbol de procesos` (test historico) y `backend CLI sin respuesta tras`
+    (guia y marcador de check_loop_execution)."""
+    killed: list[int] = []
+
+    class _HangingPopen:
+        pid = 424242
+
+        def __init__(self, *a, **k):
+            pass
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout)
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _HangingPopen)
+    monkeypatch.setattr(ed, "_kill_process_tree", lambda pid: killed.append(pid))
+
+    with pytest.raises(ed.BackendTimeoutError) as excinfo:
+        ed._transport_agent(
+            {"backend": "fake"},
+            {"executable": "fake-cli", "args": []},
+            [{"role": "user", "content": "x"}],
+            timeout=7,
+        )
+    message = str(excinfo.value)
+    assert killed == [424242]
+    assert isinstance(excinfo.value, RuntimeError)
+    assert message.startswith("backend CLI sin respuesta tras 7s")
+    assert "arbol de procesos" in message and "NO verificada" in message
+    assert "matado" not in message
+
+
+def test_no_emitter_source_claims_a_killed_tree():
+    """Barrido estatico DONDE se escribe el texto: ninguna linea de los dos
+    modulos junta `arbol` y `matado` (el texto de la fila, del stderr, del
+    RuntimeError ni del diagnostico). Mutacion: reponer `arbol de procesos
+    matado` en cualquiera de los dos -> rojo. Control positivo: la frase si
+    aparece en una cadena de ejemplo."""
+    pattern = re.compile(r"arbol[^\n]*matado")
+    assert pattern.search("backend CLI sin respuesta tras 1s; arbol de procesos matado")
+    for name in ("ensemble_dispatch.py", "check_loop_execution.py"):
+        source = (_SCRIPTS_DIR / name).read_text(encoding="utf-8")
+        hits = [ln for ln in source.splitlines() if pattern.search(ln)]
+        assert hits == [], (name, hits)

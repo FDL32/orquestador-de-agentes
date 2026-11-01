@@ -1106,6 +1106,21 @@ class TransportError(RuntimeError):
         self.body = body
 
 
+class BackendTimeoutError(RuntimeError):
+    """El CLI de un backend `agent` no respondio dentro de su `timeout_s` interno.
+
+    Before: se levanta SOLO desde `_transport_agent` tras `subprocess.TimeoutExpired`
+        y despues de INTENTAR matar el arbol de procesos del hijo.
+    During: es un `RuntimeError` (WOT-2026-152s-2): todo `except RuntimeError` y todo
+        caller Python que ya lo capturaba sigue funcionando igual. La subclase solo
+        deja que `run_loop_round` y `_cmd_loop_round` lo distingan de un fallo
+        inesperado cualquiera.
+    After: `run_loop_round` lo registra como fila `timeout:` (no `unexpected:`) y
+        `_cmd_loop_round` sale con `EXIT_WATCHDOG_TIMEOUT`. El mensaje NO afirma
+        que el arbol haya muerto: aqui no hay `poll()` que lo confirme.
+    """
+
+
 def _redact_secret(text: str, secret: str | None) -> str:
     """Sustituye la clave por REDACTED_MARKER. Sin clave, devuelve el texto tal cual."""
     if not secret:
@@ -1735,7 +1750,9 @@ EXIT_INVALID_INPUT = 4
 
 # WOT-2026-152s-1: codigo de salida de `loop-round --watchdog-s N` cuando el
 # limite POR INVOCACION vencio y se intento matar el arbol del hijo (la fila dice
-# si el kill se confirmo). Distinto de 3
+# si el kill se confirmo). WOT-2026-152s-2: tambien lo devuelve `loop-round` cuando
+# vence el `timeout_s` INTERNO del backend (`BackendTimeoutError`): misma
+# significacion ("la lente no respondio a tiempo") y misma accion. Distinto de 3
 # (`[NO-APORTA]`: la ronda corrio y devolvio vacio o transporte fallido) y de 2
 # (`[ERROR]`): "la lente no respondio a tiempo" no es "respondio mal". Medido
 # 2026-11-01: ningun consumidor del repo ni de los .sh de las coordinadoras
@@ -2128,8 +2145,12 @@ def _transport_agent(
         # trabajando y solo era lento (p90=236s contra un techo de 300s). Un
         # diagnostico inventado viaja a los informes y cuesta mas que el fallo.
         # Se enumeran las causas POSIBLES y se dice cual verificar primero.
-        raise RuntimeError(
-            f"backend CLI sin respuesta tras {timeout}s; arbol de procesos matado. "
+        # WOT-2026-152s-2: el mensaje dice "se intento", no "matado": aqui no hay
+        # `poll()` ni espera que confirme la muerte de la raiz, y los descendientes
+        # nunca se verifican (misma clase de defecto que edb5b77f en el watchdog).
+        raise BackendTimeoutError(
+            f"backend CLI sin respuesta tras {timeout}s; se intento matar el arbol de "
+            "procesos (taskkill /T /F), muerte NO verificada. "
             "CAUSA NO DETERMINADA -- comprueba en este orden: (1) latencia normal "
             "del backend por encima del techo (mira `latency_ms` de sus rondas OK "
             "en scorecard.jsonl y sube `timeout_s` de ese backend en agents.json "
@@ -5899,11 +5920,23 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
         raise
     except Exception as exc:
         latency_ms = round((time.perf_counter() - _t0) * 1000)
-        clase = (
-            "transport_failed"
-            if isinstance(exc, (TransportError, OSError))
-            else "unexpected"
-        )
+        # WOT-2026-152s-2: el timeout INTERNO del backend deja una fila `timeout:`
+        # (distinguible de `unexpected:` y de `transport_failed:`), no `unexpected:`.
+        # El tipo se escribe `RuntimeError` -la superclase, lo que el scorecard
+        # guardaba hasta hoy- para que el literal `RuntimeError: backend CLI sin
+        # respuesta tras` que greppea prompts/ensemble_loop.md siga hallando tambien
+        # las filas nuevas. "timeout" NO es "transport_failed": la rama de abajo
+        # (GLM close / re-lanzar) se comporta exactamente igual que con `unexpected`.
+        if isinstance(exc, BackendTimeoutError):
+            clase = "timeout"
+            exc_type_name = "RuntimeError"
+        else:
+            clase = (
+                "transport_failed"
+                if isinstance(exc, (TransportError, OSError))
+                else "unexpected"
+            )
+            exc_type_name = type(exc).__name__
         _record_round(
             project_root,
             ticket=ticket,
@@ -5915,7 +5948,7 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             reply="",
             input_bytes=len(content.encode("utf-8")),
             context_kind=context_kind,
-            failure_mode=f"{clase}: {type(exc).__name__}: {exc}"[:300],
+            failure_mode=f"{clase}: {exc_type_name}: {exc}"[:300],
             session_id=session_id,
             latency_ms=latency_ms,
             phase=phase,
@@ -7499,7 +7532,8 @@ def _record_watchdog_timeout(
             f"timeout: watchdog de {watchdog_s:g}s vencido sin respuesta de la "
             "lente; "
             + (
-                f"arbol de procesos del hijo (pid {child_pid}) matado"
+                f"hijo (pid {child_pid}) matado, confirmado por poll(); "
+                "descendientes no verificados"
                 if kill_confirmed
                 else f"kill NO confirmado; el hijo (pid {child_pid}) puede seguir vivo"
             )
@@ -7528,8 +7562,10 @@ def _supervise_loop_round(args, config) -> int:
     After: rc del hijo tal cual si termino a tiempo; `EXIT_WATCHDOG_TIMEOUT` si
         vencio. Una interrupcion (Ctrl-C) mata tambien el arbol del hijo antes
         de propagarse. La fila y el stderr dicen `matado` SOLO si `poll()` confirma
-        la muerte del hijo tras `WATCHDOG_KILL_CONFIRM_S`; si no, dicen `kill NO
-        confirmado` (un hijo superviviente que luego escriba su propia fila queda
+        la muerte de la RAIZ del hijo tras `WATCHDOG_KILL_CONFIRM_S` (y lo
+        acotan con `descendientes no verificados`: `poll()` no ve a un nieto
+        desacoplado); si no, dicen
+        `kill NO confirmado` (un hijo superviviente que luego escriba su propia fila queda
         como duplicado: LIMITE declarado, no se arregla aqui).
 
     LIMITES (declarados): si el SUPERVISOR muere, el hijo queda huerfano (Job
@@ -7573,7 +7609,8 @@ def _supervise_loop_round(args, config) -> int:
     print(
         f"[TIMEOUT] loop-round no respondio en {watchdog_s:g}s (--watchdog-s); "
         + (
-            f"arbol del hijo {proc.pid} matado; "
+            f"hijo {proc.pid} matado, confirmado por poll(); "
+            "descendientes no verificados; "
             if kill_confirmed
             else f"kill NO confirmado; el hijo (pid {proc.pid}) puede seguir vivo; "
         )
@@ -7588,7 +7625,7 @@ def _supervise_loop_round(args, config) -> int:
     return EXIT_WATCHDOG_TIMEOUT
 
 
-def _cmd_loop_round(args, config) -> int:
+def _cmd_loop_round(args, config) -> int:  # noqa: C901 - WOT-2026-152s-2 anade el except del timeout interno a una funcion ya en el umbral (10)
     """UNA ronda de un bucle de GOBIERNO por CLI (WOT-2026-043z).
 
     `run_loop_round` existia y propagaba los 4 campos que lee la barrera
@@ -7750,24 +7787,39 @@ def _cmd_loop_round(args, config) -> int:
     # wrapper solo necesita propagar; `main` sigue mapeando la excepcion a su
     # exit code exactamente igual que antes (esta funcion no atrapa nada, la
     # excepcion sube intacta).
-    reply = run_loop_round(
-        args.profile,
-        content,
-        config=config,
-        project_root=project_root,
-        ticket=args.ticket,
-        task_type=args.task_type,
-        rol=args.rol,
-        phase=args.phase,
-        loop_id=args.loop_id,
-        backend_key=args.backend_key,
-        sensitivity=args.data_sensitivity,
-        ronda=args.ronda,
-        context_kind=args.context_kind,
-        session_id=args.session_id,
-        commit_sha=args.commit_sha,
-        challenge_nonce=args.challenge_nonce,
-    )
+    # WOT-2026-152s-2: el timeout INTERNO del backend (`timeout_s`) sale ahora con el
+    # MISMO codigo que el watchdog por invocacion. Before: `run_loop_round` ya
+    # escribio la fila `timeout:` antes de re-lanzar. During: se atrapa SOLO
+    # `BackendTimeoutError` (un `RuntimeError` inesperado sigue subiendo a `main`
+    # como `[ERROR]`/2) y SOLO en este subcomando (`run`/`smoke`/Python directo no
+    # cambian). After: stderr `[TIMEOUT]` y `EXIT_WATCHDOG_TIMEOUT`; la fila no se
+    # duplica porque aqui no se vuelve a registrar nada.
+    try:
+        reply = run_loop_round(
+            args.profile,
+            content,
+            config=config,
+            project_root=project_root,
+            ticket=args.ticket,
+            task_type=args.task_type,
+            rol=args.rol,
+            phase=args.phase,
+            loop_id=args.loop_id,
+            backend_key=args.backend_key,
+            sensitivity=args.data_sensitivity,
+            ronda=args.ronda,
+            context_kind=args.context_kind,
+            session_id=args.session_id,
+            commit_sha=args.commit_sha,
+            challenge_nonce=args.challenge_nonce,
+        )
+    except BackendTimeoutError as exc:
+        print(
+            f"[TIMEOUT] loop-round: el backend no respondio dentro de su timeout_s "
+            f"interno; fila `timeout:` registrada en scorecard.jsonl. {exc}",
+            file=sys.stderr,
+        )
+        return EXIT_WATCHDOG_TIMEOUT
     print(reply)
     # WOT-2026-086d: el canal `agent` devuelve su fallo como TEXTO y una
     # respuesta vacia tampoco aporta. Con `return 0` el lanzador daba la lente
@@ -8326,7 +8378,9 @@ def main(argv: list[str] | None = None) -> int:
             "4 [INVALID] la invocacion estaba mal (ValueError; WOT-2026-046d); "
             "5 [TIMEOUT] vencio --watchdog-s: se intenta matar el arbol del hijo "
             "y se registra el timeout (confirmacion del kill y dedupe segun las "
-            "condiciones documentadas en la fila `timeout:`) (WOT-2026-152s-1)."
+            "condiciones documentadas en la fila `timeout:`) (WOT-2026-152s-1), "
+            "o vencio el timeout_s interno del backend (fila `timeout:`; "
+            "WOT-2026-152s-2)."
         ),
     )
     p_loop.add_argument("--profile", required=True)

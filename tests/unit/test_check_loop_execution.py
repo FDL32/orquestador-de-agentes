@@ -2140,7 +2140,7 @@ def _timeout_round(backend, **kw):
     row = _muda(backend, **kw)
     row["failure_mode"] = (
         "timeout: watchdog de 600s vencido sin respuesta de la lente; "
-        "arbol de procesos del hijo (pid 4242) matado"
+        "hijo (pid 4242) matado, confirmado por poll(); descendientes no verificados"
     )
     return row
 
@@ -3520,3 +3520,135 @@ def test_ts_ordering_is_textual_and_blind_spots_declare_it():
     utc_b = _m3_row("BA07", "ok", 1, ts="2026-11-01T10:00:00+00:00")
     entry = _m3_by(cle.lens_reliability([utc_b, utc_a], window=1), "BA07")
     assert (entry["timeouts"], entry["ok"]) == (0, 1)
+
+
+# =========================================================== WOT-2026-152s-2
+# `failure_mode` se lee UNA vez (strip + no-str), el texto fijo del diagnostico de un
+# `timeout:` no afirma ninguna muerte, y la forma nueva del timeout interno cuenta
+# UNA vez como colgado. Filas con la redaccion REAL de cada emisor.
+
+_S2_CONFIRMED = (
+    "timeout: watchdog de 600s vencido sin respuesta de la lente; "
+    "hijo (pid 4242) matado, confirmado por poll(); descendientes no verificados"
+)
+_S2_UNCONFIRMED = (
+    "timeout: watchdog de 600s vencido sin respuesta de la lente; "
+    "kill NO confirmado; el hijo (pid 4242) puede seguir vivo"
+)
+# Forma NUEVA del timeout interno (la que escribe `run_loop_round` desde 152s-2).
+_S2_INTERNAL_NEW = (
+    "timeout: RuntimeError: backend CLI sin respuesta tras 900s; se intento matar "
+    "el arbol de procesos (taskkill /T /F), muerte NO verificada. CAUSA NO DETERMINADA"
+)
+
+
+def test_padded_timeout_mode_gets_one_reading_in_diagnosis_and_label(capsys):
+    """La MISMA fila no puede leerse de dos formas: con espacios alrededor del
+    prefijo `timeout:` el diagnostico, `is_hang_row` y la etiqueta del informe
+    coinciden con los de la fila limpia. Mutaciones: quitar el strip de la
+    etiqueta de `_print_verdict` (sale MUDA) o el de `diagnose_silence` (cae al
+    texto de adjudicacion) -> rojo."""
+    clean = _timeout_round("BA07")
+    padded = _timeout_round("BA07")
+    padded["failure_mode"] = "  " + clean["failure_mode"] + " \t"
+
+    assert cle.diagnose_silence(padded) == cle.diagnose_silence(clean)
+    assert "NO respondio dentro del limite" in cle.diagnose_silence(padded)
+    assert cle.is_hang_row(padded) and cle.is_hang_row(clean)
+    v = cle.audit_commit(
+        [_ronda("BA10"), padded], [_emitted()], commit_sha="abc", min_distinct=2
+    )
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    assert "TIMEOUT BA07" in out
+    assert "MUDA BA07" not in out
+
+
+@pytest.mark.parametrize("bad", [123, ["timeout:"], {"a": 1}, 4.5])
+def test_corrupt_failure_mode_rows_never_raise_in_the_gate_path(bad, capsys):
+    """Una fila CORRUPTA (`failure_mode` entero, lista, dict, float) no tumba el
+    gate: `diagnose_silence`, `is_hang_row`, el recuento, el informe y M3 la leen
+    como no-textual. Antes `diagnose_silence` e `is_hang_row` lanzaban
+    AttributeError. Mutacion: el helper deja de tolerar no-str -> rojo."""
+    row = _muda("BA11")
+    row["failure_mode"] = bad
+
+    assert "no textual" in cle.diagnose_silence(row)
+    assert cle.is_hang_row(row) is False
+    assert cle._reliability_category(row) == "otras"
+    v = cle.audit_commit(
+        [_ronda("BA10"), row], [_emitted()], commit_sha="abc", min_distinct=2
+    )
+    assert [s["backend_key"] for s in v["silent_rounds"]] == ["BA11"]
+    cle._print_verdict(v)
+    assert "MUDA BA11" in capsys.readouterr().out
+    report = cle.lens_reliability([row])
+    assert report["by_backend"]["BA11"]["otras"] == 1
+
+
+@pytest.mark.parametrize("mode", [_S2_CONFIRMED, _S2_UNCONFIRMED])
+def test_timeout_fixed_text_never_asserts_a_kill_for_any_failure_mode(mode, capsys):
+    """BA254 (ronda 3 de 152s-1): el test anterior solo excluia `fue matado`, asi
+    que `arbol matado` en el texto FIJO pasaba. Aqui el texto fijo (lo anterior a
+    `Detalle:`) no contiene NINGUNA forma de `matad...`, ni en el diagnostico ni en
+    la linea impresa, con la fila confirmada y con la no confirmada; la
+    confirmacion solo viaja en el Detalle copiado de la fila. Mutacion: anadir
+    `arbol matado` al texto fijo -> rojo."""
+    row = _timeout_round("BA07")
+    row["failure_mode"] = mode
+
+    diagnosis = cle.diagnose_silence(row)
+    fixed, sep, detail = diagnosis.partition("Detalle:")
+    assert sep == "Detalle:" and detail.strip() == mode
+    assert "NO respondio dentro del limite" in fixed
+    assert "matad" not in fixed.lower()
+
+    v = cle.audit_commit(
+        [_ronda("BA10"), row], [_emitted()], commit_sha="abc", min_distinct=2
+    )
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if "TIMEOUT BA07" in ln)
+    printed_fixed, _sep, printed_detail = line.partition("Detalle:")
+    assert "matad" not in printed_fixed.lower()
+    assert mode in printed_detail
+
+
+def test_new_internal_timeout_form_counts_once_and_the_old_form_still_counts(
+    monkeypatch,
+):
+    """Sin DOBLE conteo: la fila `timeout: RuntimeError: backend CLI sin respuesta
+    tras ...` casa a la vez el prefijo `timeout:` y el marcador interno, y cuenta
+    UNA vez (un colgado solo no alcanza N=2 y no activa la reserva). La forma
+    historica `unexpected: RuntimeError: ...` sigue contando como hoy, y una de cada
+    forma suman 2. Mutacion: sumar prefijo y marcador por separado -> rojo."""
+    for mode in (_S2_INTERNAL_NEW, _RS_INTERNAL_MODE):
+        rows = [
+            _rs_row("BA03"),
+            *_rs_hang("BA07", times=1, mode=mode),
+            _rs_row("BA254", sec=30),
+        ]
+        v = _rs_audit(monkeypatch, rows)
+        assert v["ok"] is False, mode
+        assert v["reserve_substitutions"] == [], mode
+        assert _rs_not_eligible(v) == {"BA254": "reserve_not_activated"}, mode
+
+    mixed = [
+        _rs_row("BA03"),
+        _rs_row("BA07", hang=_S2_INTERNAL_NEW, answered=False, sec=10),
+        _rs_row("BA07", hang=_RS_INTERNAL_MODE, answered=False, sec=11),
+        _rs_row("BA254", sec=30),
+    ]
+    v = _rs_audit(monkeypatch, mixed)
+    assert v["ok"] is True
+    assert v["reserve_substitutions"][0]["timeouts"] == 2
+
+    solo = [_rs_row("BA07", hang=_S2_INTERNAL_NEW, answered=False)]
+    entry = cle.lens_reliability(solo)["by_backend"]["BA07"]
+    assert (entry["timeouts"], entry["mudas"], entry["otras"], entry["ok"]) == (
+        1,
+        0,
+        0,
+        0,
+    )
+    assert cle.diagnose_silence(solo[0]).startswith("la lente NO respondio")

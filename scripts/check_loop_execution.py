@@ -573,12 +573,14 @@ TIMEOUT_FAILURE_PREFIX = "timeout:"
 
 # WOT-2026-152t: segunda forma de "lente colgada" que HOY deja el scorecard: el
 # timeout INTERNO del backend (`RuntimeError: backend CLI sin respuesta tras
-# <N>s; arbol de procesos matado`, `ensemble_dispatch.py`). Medido 2026-11-01: 30
+# <N>s; ...`, `ensemble_dispatch.py`, redaccion de antes de 152s-2). Medido 2026-11-01: 30
 # filas reales con esta forma y 0 con `timeout:` en el scorecard del workspace.
 # Constante PROPIA (este modulo no importa el texto de `ensemble_dispatch`); un
 # test-contrato lee el literal del fuente del emisor para que una deriva del
-# mensaje ponga rojo. 152s-2 puede unificar ambas formas: la cuenta ya acepta las
-# dos.
+# mensaje ponga rojo. WOT-2026-152s-2: desde ese ticket el timeout interno escribe
+# `timeout: RuntimeError: backend CLI sin respuesta tras ...` (el marcador sigue
+# dentro) y `is_hang_row` cuenta UNA vez cada fila; las 30 filas historicas
+# `unexpected: RuntimeError: ...` no se reclasifican y siguen contando como hoy.
 INTERNAL_TIMEOUT_MARKER = "backend CLI sin respuesta tras"
 
 # Invisibles Unicode que `str.strip()` NO elimina y que, solos, no son una
@@ -665,6 +667,22 @@ def is_substantive(row: dict) -> bool:
     return bool(visible) or not evidencia.strip()
 
 
+def _failure_mode_text(row: dict) -> str:
+    """`failure_mode` de la fila como texto recortado; "" si falta o no es texto.
+
+    Before: ``row`` es una fila del scorecard (posiblemente CORRUPTA).
+    During: UNICA lectura de ``failure_mode`` que comparten ``diagnose_silence``,
+        ``is_hang_row``, ``_reliability_category`` y la etiqueta TIMEOUT/MUDA de
+        ``_print_verdict`` (WOT-2026-152s-2): antes cada una recortaba (o no) por su
+        cuenta y la misma fila ``" timeout: ..."`` salia diagnosticada como
+        watchdog y rotulada MUDA. Un valor no-str (entero, lista, dict) no se puede
+        leer como texto: cuenta como ausente en vez de lanzar en la ruta del gate.
+    After: ``str`` sin espacios en los extremos; sin I/O.
+    """
+    raw = row.get("failure_mode")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
 def diagnose_silence(row: dict) -> str:
     """Por que callo esta ronda, y donde NO hay que buscar.
 
@@ -689,7 +707,16 @@ def diagnose_silence(row: dict) -> str:
     ese caso se observa en la AUSENCIA de fila, cosa del recuento de lentes
     (`min_distinct`), no de este diagnostico.
     """
-    failure_mode = (row.get("failure_mode") or "").strip()
+    raw_mode = row.get("failure_mode")
+    if raw_mode and not isinstance(raw_mode, str):
+        # fila CORRUPTA (failure_mode entero, lista, dict...): no hay texto que
+        # diagnosticar y NO debe tumbar el gate; se dice tal cual en vez de inventar
+        # una causa (ni "vacia" ni "adjudicacion").
+        return (
+            f"fila con failure_mode no textual ({type(raw_mode).__name__}): "
+            "no se puede diagnosticar"
+        )
+    failure_mode = _failure_mode_text(row)
     # WOT-2026-152s-1: `timeout:` lo escribe el watchdog de `loop-round`
     # (`--watchdog-s`) cuando la lente NO respondio dentro del limite y se INTENTO
     # matar su arbol de procesos. No es una lente muda (no devolvio vacio: no
@@ -1127,7 +1154,7 @@ def is_hang_row(row: dict) -> bool:
         transporte, una ronda muda o un rechazo del preflight NO son colgado.
     After: bool. Sin I/O.
     """
-    mode = (row.get("failure_mode") or "").strip()
+    mode = _failure_mode_text(row)
     return mode.startswith(TIMEOUT_FAILURE_PREFIX) or INTERNAL_TIMEOUT_MARKER in mode
 
 
@@ -1393,7 +1420,7 @@ def _reliability_category(row: dict) -> str:
         return "otras"
     if is_hang_row(row):
         return "timeouts"
-    mode = (row.get("failure_mode") or "").strip()
+    mode = _failure_mode_text(row)
     if mode.startswith("transport_failed"):
         return "transporte"
     if mode:
@@ -1964,7 +1991,7 @@ def _print_verdict(v: dict) -> None:
     for s in v["silent_rounds"]:
         kind = (
             "TIMEOUT"
-            if str(s.get("failure_mode") or "").startswith(TIMEOUT_FAILURE_PREFIX)
+            if _failure_mode_text(s).startswith(TIMEOUT_FAILURE_PREFIX)
             else "MUDA"
         )
         print(
