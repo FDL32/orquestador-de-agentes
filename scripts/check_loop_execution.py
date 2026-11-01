@@ -1152,6 +1152,20 @@ def _hang_counts_by_nonce(
     return counts
 
 
+def _effective_primaries(entry: dict, config: dict) -> list[str]:
+    """Primarias EFECTIVAS de una entrada VALIDA: las que ``effective_eligible``
+    deja elegibles, en orden declarado.
+
+    Before: ``entry`` paso ``validate_coverage_entry``; ``config`` es el motor config.
+    During: deriva de ``effective_eligible`` (UNICA fuente de la regla de estado):
+        una primaria RETIRADA (status != active) no es efectiva, de modo que si
+        se cuelga no sustituye ni agota nada.
+    After: lista de ``backend_key`` en el orden de ``entry["backend_keys"]``.
+    """
+    eligible, _removed = effective_eligible(entry, config)
+    return [k for k in entry["backend_keys"] if k in eligible]
+
+
 def _activate_reserves_for_nonce(
     hangs: dict[str, list[str]],
     primary: list[str],
@@ -1246,14 +1260,7 @@ def reserve_activation(
         for k in entry["reserve_backend_keys"]
         if (registry.get(k) or {}).get("status") == "active"
     ]
-    # Primarias EFECTIVAS: las mismas que ``effective_eligible`` deja elegibles
-    # (status ``active``, en orden declarado). Una primaria RETIRADA que se cuelga
-    # no sustituye ni agota nada: ya no cuenta como elegible.
-    primary = [
-        k
-        for k in entry["backend_keys"]
-        if (registry.get(k) or {}).get("status") == "active"
-    ]
+    primary = _effective_primaries(entry, config)
     by_nonce: dict[str, set[str]] = {}
     substitutions: list[dict] = []
     exhausted: list[dict] = []
@@ -1338,6 +1345,144 @@ def _stamp_reserve(verdict: dict, entry: dict, reserve: dict) -> None:
     }
     verdict["reserve_substitutions"] = reserve["substitutions"]
     verdict["reserve_exhausted"] = reserve["exhausted"]
+
+
+LENS_RELIABILITY_BLIND_SPOTS = (
+    "H145: solo se ve la raiz de scorecard leida; el scorecard esta fragmentado "
+    "por raiz de invocacion (otras raices y sandboxes no cuentan)",
+    "un lanzamiento que no termina SIN --watchdog-s (o sin timeout interno) no "
+    "escribe fila: no entra en rondas ni en timeouts",
+    "ventana temporal sobre las ultimas rondas de cada backend_key: DESCRIPTIVA, "
+    "no reproducible al auditar mas tarde; NUNCA decide el gate ni ok",
+    "las rondas exploratorias (task_type=exploracion) y las filas sin backend_key "
+    "valido (no str o vacio) quedan fuera del denominador (ver denominator)",
+    "ORDEN-TS: el orden por `ts` compara el TEXTO ISO y ASUME ts normalizado UTC "
+    "(+00:00) como los escribe el motor; con offsets mezclados la ventana puede "
+    "invertirse (no se parsean fechas)",
+    "H148: is_substantive acepta hoy un stream de eventos SIN parte text (p. ej. "
+    "la fila real de BA03, nonce eb8b902d, output_chars 778): `ok` SOBRESTIMA y "
+    "`mudas` SUBESTIMA mientras H148 siga abierta; lens_reliability NO reclasifica "
+    "(no toca is_substantive)",
+)
+
+# Categorias de `lens_reliability`, EXCLUYENTES y exhaustivas, en este orden.
+LENS_RELIABILITY_CATEGORIES = ("ok", "mudas", "timeouts", "transporte", "otras")
+
+
+def _reliability_category(row: dict) -> str:
+    """Categoria de UNA ronda para M3 (ver ``lens_reliability``).
+
+    Before: ``row`` es una fila ``ronda`` del scorecard.
+    During: un ``failure_mode`` no-str y no vacio (fila corrupta) es ``otras`` sin
+        lanzar; despues ``timeouts`` (``is_hang_row``, ambas formas) > ``transporte``
+        (``failure_mode`` que empieza por ``transport_failed``) > ``otras`` (cualquier
+        otro ``failure_mode``: usage-error, preflight, missing-nonce...) > ``ok``
+        (``is_substantive``) > ``mudas`` (sin ``failure_mode`` y no sustantiva).
+    After: una de ``LENS_RELIABILITY_CATEGORIES``. Sin I/O; no cambia ``is_substantive``.
+    """
+    raw_mode = row.get("failure_mode")
+    if raw_mode and not isinstance(raw_mode, str):
+        # fila CORRUPTA (failure_mode entero, lista...): no se puede clasificar
+        # por su texto y no debe tumbar el informe; cuenta como `otras`.
+        return "otras"
+    if is_hang_row(row):
+        return "timeouts"
+    mode = (row.get("failure_mode") or "").strip()
+    if mode.startswith("transport_failed"):
+        return "transporte"
+    if mode:
+        return "otras"
+    return "ok" if is_substantive(row) else "mudas"
+
+
+def _valid_backend_key(row: dict) -> bool:
+    """True sii ``backend_key`` es un str no vacio (ni solo blancos).
+
+    Una fila con ``backend_key`` lista, dict, int, bool... (corrupta) NO puede ser
+    clave de un dict ni ordenarse junto a strs: se excluye del conteo por lente y
+    se cuenta en ``excluded_without_backend_key`` en vez de lanzar.
+    """
+    key = row.get("backend_key")
+    return isinstance(key, str) and bool(key.strip())
+
+
+def lens_reliability(rows: list[dict], *, window: int = 5) -> dict:
+    """M3 (WOT-2026-152t-2): fiabilidad de cada lente sobre sus ultimas rondas.
+
+    Before: ``rows`` son filas del scorecard (``_read_scorecard``); ``window`` es
+        un entero >= 1 (si no, ``ValueError``).
+    During: toma solo ``event == "ronda"`` con ``backend_key`` VALIDO (str no
+        vacio; si no, cuenta en ``excluded_without_backend_key``, nunca lanza) y SIN
+        ``task_type == "exploracion"`` (el mismo criterio del gate), ordena por
+        (``ts``, orden de aparicion) y, por CADA ``backend_key``, se queda con sus
+        ultimas ``window`` rondas. Clasifica cada una con
+        ``_reliability_category`` (``ok``, ``mudas``, ``timeouts``, ``transporte``,
+        ``otras``). El DENOMINADOR queda declarado: filas leidas, rondas contadas,
+        las excluidas por exploracion o sin ``backend_key`` valido y, por lente,
+        ``rondas`` (en ventana) y ``rondas_totales`` (antes de la ventana).
+    After: ``{"window", "denominator", "by_backend", "blind_spots"}``. Es una
+        medicion DESCRIPTIVA y PURA: no escribe, no muta ``rows`` y NUNCA decide
+        el gate ni ``ok`` (la ventana temporal no es reproducible). Una lente que
+        cuelga sin watchdog no deja fila y no aparece (``blind_spots``).
+    """
+    if isinstance(window, bool) or not isinstance(window, int) or window < 1:
+        raise ValueError(f"window debe ser un entero >= 1 (recibido {window!r})")
+    rondas = [
+        (str(r.get("ts") or ""), i, r)
+        for i, r in enumerate(rows)
+        if isinstance(r, dict) and r.get("event") == "ronda"
+    ]
+    exploration = sum(1 for _ts, _i, r in rondas if r.get("task_type") == "exploracion")
+    no_key = sum(
+        1
+        for _ts, _i, r in rondas
+        if r.get("task_type") != "exploracion" and not _valid_backend_key(r)
+    )
+    per_key: dict[str, list[dict]] = {}
+    for _ts, _i, r in sorted(rondas, key=lambda t: (t[0], t[1])):
+        if r.get("task_type") == "exploracion" or not _valid_backend_key(r):
+            continue
+        per_key.setdefault(r["backend_key"], []).append(r)
+    by_backend: dict[str, dict[str, int]] = {}
+    for key in sorted(per_key):
+        recent = per_key[key][-window:]
+        entry = {cat: 0 for cat in LENS_RELIABILITY_CATEGORIES}
+        for r in recent:
+            entry[_reliability_category(r)] += 1
+        entry["rondas"] = len(recent)
+        entry["rondas_totales"] = len(per_key[key])
+        by_backend[key] = entry
+    return {
+        "window": window,
+        "denominator": {
+            "rows_read": len(rows),
+            "ronda_rows": len(rondas),
+            "excluded_exploracion": exploration,
+            "excluded_without_backend_key": no_key,
+            "counted": sum(len(v) for v in per_key.values()),
+            "backend_keys": len(per_key),
+        },
+        "by_backend": by_backend,
+        "blind_spots": list(LENS_RELIABILITY_BLIND_SPOTS),
+    }
+
+
+def _run_lens_reliability(project_root: Path, window: int) -> int:
+    """Flag ``--lens-reliability``: imprime M3 en SOLO LECTURA y sale 0.
+
+    Before: ``project_root`` es la raiz de scorecard a leer (H145: solo esa).
+    During: ``_read_scorecard`` + ``lens_reliability``; no llama a ``audit`` ni
+        decide ningun veredicto.
+    After: una linea JSON ``{"lens_reliability": ...}`` determinista; rc 0, o rc 1
+        con un ERROR si ``window`` no es valido.
+    """
+    try:
+        report = lens_reliability(_read_scorecard(project_root)[0], window=window)
+    except ValueError as exc:
+        print(f"[loop-exec] ERROR: {exc}")
+        return 1
+    print(json.dumps({"lens_reliability": report}, ensure_ascii=True, sort_keys=True))
+    return 0
 
 
 def audit_commit(
@@ -1889,8 +2034,27 @@ def main(argv: list[str] | None = None) -> int:
             "WOT-2026-129y; sin el, camino legacy"
         ),
     )
+    ap.add_argument(
+        "--lens-reliability",
+        action="store_true",
+        help=(
+            "M3 (WOT-2026-152t-2): imprime la fiabilidad de cada lente sobre sus "
+            "ultimas rondas del scorecard leido y sale 0. SOLO LECTURA: no audita "
+            "commits ni decide ningun veredicto"
+        ),
+    )
+    ap.add_argument(
+        "--lens-window",
+        type=int,
+        default=5,
+        help="rondas por lente que mira --lens-reliability (default: 5)",
+    )
     args = ap.parse_args(argv)
 
+    if args.lens_reliability:
+        return _run_lens_reliability(
+            Path(args.project_root).resolve(), args.lens_window
+        )
     if not args.commit_sha:
         print("[loop-exec] SKIP: no --commit-sha dado (nada que verificar).")
         return 0

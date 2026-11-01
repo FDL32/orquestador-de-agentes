@@ -3134,3 +3134,369 @@ def test_retired_reserve_between_two_active_ones_is_skipped(monkeypatch):
     assert v["reserve_exhausted"] == []
     assert _rs_not_eligible(v) == {"BA11": "retired(status=deprecated)"}
     assert v["ok"] is True
+
+
+# ---------------------------------------------------------------- 152t-2 (M3)
+# `lens_reliability`: fiabilidad DESCRIPTIVA de cada lente sobre sus ultimas rondas
+# (lanzamientos sin fin incluidos cuando dejan fila). Nunca decide el gate.
+
+
+def _m3_row(backend, kind, idx, **over):
+    """Fila `ronda` del formato real; `kind` fija la categoria esperada."""
+    spec = {
+        "ok": {},
+        "muda": {"answered": False},
+        "wd": {"hang": _RS_WATCHDOG_MODE, "answered": False},
+        "int": {"hang": _RS_INTERNAL_MODE, "answered": False},
+        "transport": {
+            "hang": "transport_failed: TransportError: HTTP 402",
+            "answered": False,
+        },
+        "otra": {"hang": "usage-error", "answered": False},
+    }[kind]
+    row = _rs_row(backend, **spec)
+    row["ts"] = f"2026-07-24T11:{idx // 60:02d}:{idx % 60:02d}+00:00"
+    row.update(over)
+    return row
+
+
+def _m3_by(report, backend):
+    return report["by_backend"][backend]
+
+
+def test_lens_reliability_splits_each_round_into_exactly_one_category():
+    """ok / mudas / timeouts (las DOS formas) / transporte / otras, excluyentes."""
+    rows = [
+        _m3_row("BA07", k, i)
+        for i, k in enumerate(["ok", "muda", "wd", "int", "transport", "otra"])
+    ]
+    entry = _m3_by(cle.lens_reliability(rows, window=6), "BA07")
+    assert entry == {
+        "ok": 1,
+        "mudas": 1,
+        "timeouts": 2,
+        "transporte": 1,
+        "otras": 1,
+        "rondas": 6,
+        "rondas_totales": 6,
+    }
+    assert sum(entry[c] for c in cle.LENS_RELIABILITY_CATEGORIES) == entry["rondas"]
+
+
+def test_lens_reliability_window_keeps_the_latest_rounds_by_timestamp():
+    """Ventana = las ULTIMAS `window` rondas por `ts`, aunque las filas lleguen
+    desordenadas; `rondas_totales` conserva el denominador previo a la ventana."""
+    rows = [_m3_row("BA07", "wd", i) for i in range(3)]
+    rows += [_m3_row("BA07", "ok", i) for i in range(3, 8)]
+    shuffled = [rows[i] for i in (7, 0, 5, 2, 6, 1, 4, 3)]
+    report = cle.lens_reliability(shuffled, window=5)
+    assert _m3_by(report, "BA07") == {
+        "ok": 5,
+        "mudas": 0,
+        "timeouts": 0,
+        "transporte": 0,
+        "otras": 0,
+        "rondas": 5,
+        "rondas_totales": 8,
+    }
+    wide = cle.lens_reliability(shuffled, window=8)
+    assert _m3_by(wide, "BA07")["timeouts"] == 3
+
+
+def test_lens_reliability_window_is_per_backend_not_global():
+    """Una lente muy activa no expulsa a otra: BA07 con 2 rondas sigue viendo las
+    2 aunque BA03 tenga 10 posteriores."""
+    rows = [_m3_row("BA07", "wd", i) for i in range(2)]
+    rows += [_m3_row("BA03", "ok", i) for i in range(10, 20)]
+    report = cle.lens_reliability(rows, window=5)
+    assert _m3_by(report, "BA07")["rondas"] == 2
+    assert _m3_by(report, "BA07")["timeouts"] == 2
+    assert _m3_by(report, "BA03")["rondas"] == 5
+    assert _m3_by(report, "BA03")["rondas_totales"] == 10
+
+
+def test_lens_reliability_declares_the_denominator():
+    """El denominador cuenta lo leido y lo EXCLUIDO (exploracion, sin backend_key,
+    eventos que no son `ronda`)."""
+    rows = [
+        _m3_row("BA07", "ok", 0),
+        _m3_row("BA07", "wd", 1),
+        _m3_row("BA03", "ok", 2, task_type="exploracion"),
+        _m3_row(None, "ok", 3),
+        {"event": "adjudicacion", "ts": "2026-07-24T11:00:04+00:00"},
+        {"event": "supersede", "ts": "2026-07-24T11:00:05+00:00"},
+    ]
+    report = cle.lens_reliability(rows)
+    assert report["denominator"] == {
+        "rows_read": 6,
+        "ronda_rows": 4,
+        "excluded_exploracion": 1,
+        "excluded_without_backend_key": 1,
+        "counted": 2,
+        "backend_keys": 1,
+    }
+    assert sorted(report["by_backend"]) == ["BA07"]
+
+
+def test_a_hang_is_a_timeout_and_never_a_mute_round():
+    """Una ronda colgada tampoco es `muda` ni `ok`: una sola categoria."""
+    report = cle.lens_reliability([_m3_row("BA07", "wd", 0)])
+    entry = _m3_by(report, "BA07")
+    assert (entry["timeouts"], entry["mudas"], entry["ok"]) == (1, 0, 0)
+    mute = _m3_by(cle.lens_reliability([_m3_row("BA07", "muda", 0)]), "BA07")
+    assert (mute["mudas"], mute["timeouts"], mute["ok"]) == (1, 0, 0)
+
+
+def test_lens_reliability_declares_its_blind_spots():
+    blind = cle.lens_reliability([])["blind_spots"]
+    assert blind == list(cle.LENS_RELIABILITY_BLIND_SPOTS)
+    joined = " ".join(blind)
+    for needle in ("H145", "--watchdog-s", "NUNCA decide el gate", "exploracion"):
+        assert needle in joined, needle
+    assert cle.lens_reliability([])["by_backend"] == {}
+
+
+@pytest.mark.parametrize("window", [0, -1, True, "5", 2.5, None])
+def test_lens_reliability_rejects_an_invalid_window(window):
+    with pytest.raises(ValueError, match="window"):
+        cle.lens_reliability([], window=window)
+
+
+def test_lens_reliability_is_pure():
+    rows = [_m3_row("BA07", k, i) for i, k in enumerate(["wd", "ok", "muda"])]
+    before = json.dumps(rows, sort_keys=True)
+    first = cle.lens_reliability(rows)
+    assert json.dumps(rows, sort_keys=True) == before
+    assert first == cle.lens_reliability(rows)
+    json.dumps(first)
+
+
+def test_lens_reliability_is_not_wired_into_the_gate():
+    """ADITIVIDAD: ni `audit` ni `audit_commit` ni el recibo ni la impresion del
+    veredicto consultan M3: no puede cambiar `ok`."""
+    import inspect
+
+    for fn in (cle.audit, cle.audit_commit, cle._receipt_view, cle._print_verdict):
+        assert "lens_reliability" not in inspect.getsource(fn), fn.__name__
+
+
+def _m3_root(tmp_path, rows):
+    ens = tmp_path / ".agent" / "runtime" / "ensemble"
+    ens.mkdir(parents=True)
+    lines = [json.dumps(r, ensure_ascii=True) for r in rows]
+    (ens / "scorecard.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_cli_lens_reliability_prints_json_and_never_decides_the_gate(tmp_path, capsys):
+    """Con TODAS las lentes colgadas el flag sigue saliendo 0 y no imprime ningun
+    veredicto OK/FAIL, aunque se le pase un --commit-sha (solo lectura)."""
+    rows = [_m3_row("BA07", "wd", i) for i in range(3)]
+    root = _m3_root(tmp_path, rows)
+    rc = cle.main(
+        ["--project-root", str(root), "--lens-reliability", "--commit-sha", "abc"]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[loop-exec] OK" not in out and "[loop-exec] FAIL" not in out
+    assert "loop_exec_receipt" not in out
+    payload = json.loads(out.strip().splitlines()[-1])["lens_reliability"]
+    assert payload["window"] == 5
+    assert payload["by_backend"]["BA07"]["timeouts"] == 3
+
+
+def test_cli_lens_window_is_honoured_and_validated(tmp_path, capsys):
+    rows = [_m3_row("BA07", "ok", i) for i in range(4)]
+    root = _m3_root(tmp_path, rows)
+    assert (
+        cle.main(
+            ["--project-root", str(root), "--lens-reliability", "--lens-window", "2"]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out.strip())["lens_reliability"]
+    assert payload["by_backend"]["BA07"]["rondas"] == 2
+    assert payload["by_backend"]["BA07"]["rondas_totales"] == 4
+    rc = cle.main(
+        ["--project-root", str(root), "--lens-reliability", "--lens-window", "0"]
+    )
+    assert rc == 1
+    assert "ERROR" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "statuses",
+    [
+        {},
+        {"BA07": "deprecated"},
+        {"BA03": "archived"},
+        {"BA03": "archived", "BA07": "deprecated"},
+    ],
+)
+def test_effective_primaries_equal_effective_eligible_in_declared_order(statuses):
+    """ANCLA (MINOR 1 de BA03, ronda 3): las primarias que activan reserva SON las
+    que `effective_eligible` deja elegibles, en el orden declarado de
+    `backend_keys` (aqui deliberadamente [BA07, BA03])."""
+    entry = _rs_entry(backend_keys=["BA07", "BA03"])
+    config = _cov_config(
+        keys=("BA03", "BA07", "BA254", "BA11"), entry=entry, statuses=statuses
+    )
+    eligible, _removed = cle.effective_eligible(entry, config)
+    primaries = cle._effective_primaries(entry, config)
+    assert set(primaries) == eligible
+    assert primaries == [k for k in entry["backend_keys"] if k in eligible]
+
+
+_H148_EVENT_STREAM = (
+    '{"type":"step_start","timestamp":1793486759170,"part":{"type":"step-start"}}\n'
+    '{"type":"step_finish","timestamp":1793486759900,"part":{"type":"step-finish"}}'
+)
+
+
+def test_lens_reliability_does_not_reclassify_the_h148_event_stream(monkeypatch):
+    """H148: `is_substantive` acepta hoy un stream de eventos sin parte `text`
+    (fila real de BA03, nonce eb8b902d, output_chars 778). M3 NO lo reclasifica:
+    `ok` sigue a `is_substantive`, que es lo que `blind_spots` declara."""
+    row = _m3_row("BA03", "ok", 0, output_chars=778)
+    row["evidencia"] = _H148_EVENT_STREAM
+    assert cle.is_substantive(row) is True  # el defecto abierto, tal cual hoy
+    entry = _m3_by(cle.lens_reliability([row]), "BA03")
+    assert (entry["ok"], entry["mudas"]) == (1, 0)
+    spots = cle.lens_reliability([row])["blind_spots"]
+    assert [b for b in spots if b.startswith("H148:")], "falta el blind_spot H148"
+    blind = " ".join(spots)
+    for needle in ("H148", "SOBRESTIMA", "SUBESTIMA", "NO reclasifica"):
+        assert needle in blind, needle
+    # delega en is_substantive: si H148 se arregla alli, M3 lo hereda sin tocarse
+    monkeypatch.setattr(cle, "is_substantive", lambda _row: False)
+    entry = _m3_by(cle.lens_reliability([row]), "BA03")
+    assert (entry["ok"], entry["mudas"]) == (0, 1)
+
+
+# Fila REAL de BA03 (scorecard de sandbox co15_sbx_140a, ts 2026-11-01T17:49:10Z,
+# nonce eb8b902d): `evidencia` es el stream crudo step_start/step_finish SIN parte
+# `text` del modelo y aun asi `output_chars` es 778. Copia literal de los campos
+# relevantes (sin secretos). Documenta H148 tal como esta HOY.
+_H148_REAL_ROW = {
+    "ts": "2026-11-01T17:49:10.087636+00:00",
+    "event": "ronda",
+    "ticket": "WOT-2026-152t",
+    "rol": "challenger",
+    "task_type": "code-review",
+    "outcome": None,
+    "evidencia": '{"type":"step_start","timestamp":1793555145501,"sessionID":"ses_e67c89b51ffeyMqesa0Ce6l4Nu","part":{"id":"prt_19837a315001dI6Yai2sv30MlC","sessionID":"ses_e67c89b51ffeyMqesa0Ce6l4Nu","messageID":"msg_198377a21001vWjnRz6ejdJZhe","type":"step-start","snapshot":"e5467425f906f1f92acf1e4b31ba0ef9f88fac8d"}}\n{"type":"step_finish","timestamp":1793555345139,"sessionID":"ses_e67c89b51ffeyMqesa0Ce6l4Nu","part":{"id":"prt_1983aaeea001FlyT5KuCNd996A","sessionID":"ses_e67c89b51ffeyMqesa0Ce6l4Nu","messageID":',
+    "failure_mode": None,
+    "phase": "MANAGER_REVIEW",
+    "loop_id": "UNI-4",
+    "backend_key": "BA03",
+    "commit_sha": "c6a46a6177ab26ab8a7a7d24389b79b84c3e5714",
+    "challenge_nonce": "eb8b902d0bff6e4a38e95ba5d06076e8",
+    "output_chars": 778,
+    "channel": "agent",
+}
+
+
+def test_h148_real_row_falls_into_ok_today_and_blind_spots_say_so():
+    """H148 ABIERTA: `is_substantive` da True a la fila real y M3 la cuenta `ok`.
+    Este test FIJA el limite: no se reclasifica aqui. Cuando H148 se arregle en
+    `is_substantive` este test cambiara de forma CONSCIENTE (la fila pasara a
+    `mudas`); hasta entonces `blind_spots` lo declara."""
+    row = dict(_H148_REAL_ROW)
+    assert '"type":"text"' not in row["evidencia"]
+    assert row["output_chars"] == 778
+    assert cle.is_substantive(row) is True
+    assert cle._reliability_category(row) == "ok"
+    report = cle.lens_reliability([row])
+    entry = _m3_by(report, "BA03")
+    assert (entry["ok"], entry["mudas"], entry["rondas"]) == (1, 0, 1)
+    assert [b for b in report["blind_spots"] if b.startswith("H148:")]
+
+
+@pytest.mark.parametrize("bad", [1, 3.5, True, ["x"], {"a": 1}])
+def test_a_non_string_failure_mode_is_other_and_never_raises(bad):
+    """Fila corrupta: `failure_mode` no-str y no vacio => `otras`, sin lanzar."""
+    row = _m3_row("BA07", "ok", 0, failure_mode=bad)
+    assert cle._reliability_category(row) == "otras"
+    entry = _m3_by(cle.lens_reliability([row, _m3_row("BA07", "ok", 1)]), "BA07")
+    assert (entry["otras"], entry["ok"], entry["rondas"]) == (1, 1, 2)
+
+
+@pytest.mark.parametrize("empty", [0, "", [], None])
+def test_a_falsy_failure_mode_counts_as_absent(empty):
+    """Un `failure_mode` vacio/falsy equivale a ausente: la ronda sigue su regla."""
+    row = _m3_row("BA07", "ok", 0, failure_mode=empty)
+    assert cle._reliability_category(row) == "ok"
+
+
+_M3_BAD_KEYS = [["BA07"], {"k": "BA07"}, 7, True, 3.5, "", "   "]
+
+
+@pytest.mark.parametrize("bad", _M3_BAD_KEYS, ids=repr)
+def test_a_non_string_or_empty_backend_key_is_excluded_and_never_raises(bad):
+    """Fila corrupta (backend_key lista/dict/int/bool/float/vacio): se EXCLUYE del
+    conteo por lente y se cuenta en `excluded_without_backend_key`; las demas
+    lentes siguen contando."""
+    rows = [
+        _m3_row("BA07", "ok", 0),
+        _m3_row("BA03", "wd", 1),
+        _m3_row(bad, "ok", 2),
+    ]
+    report = cle.lens_reliability(rows)
+    assert sorted(report["by_backend"]) == ["BA03", "BA07"]
+    assert report["denominator"]["excluded_without_backend_key"] == 1
+    assert report["denominator"]["counted"] == 2
+    assert report["denominator"]["ronda_rows"] == 3
+    assert _m3_by(report, "BA03")["timeouts"] == 1
+
+
+def test_mixed_str_and_int_backend_keys_do_not_break_the_ordering():
+    """str e int mezclados en el mismo scorecard: `sorted` no lanza y el resto de
+    lentes sigue contando."""
+    rows = [
+        _m3_row("BA07", "ok", 0),
+        _m3_row(5, "ok", 1),
+        _m3_row("BA03", "ok", 2),
+        _m3_row(None, "ok", 3),
+        _m3_row(["BA03"], "ok", 4),
+    ]
+    report = cle.lens_reliability(rows)
+    assert list(report["by_backend"]) == ["BA03", "BA07"]
+    assert report["denominator"]["excluded_without_backend_key"] == 3
+    assert report["denominator"]["counted"] == 2
+
+
+def test_cli_lens_reliability_survives_corrupt_backend_keys(tmp_path, capsys):
+    rows = [
+        _m3_row("BA07", "wd", 0),
+        _m3_row(["BA07"], "ok", 1),
+        _m3_row({"k": 1}, "ok", 2),
+        _m3_row(9, "ok", 3),
+        _m3_row(True, "ok", 4),
+    ]
+    root = _m3_root(tmp_path, rows)
+    assert cle.main(["--project-root", str(root), "--lens-reliability"]) == 0
+    payload = json.loads(capsys.readouterr().out.strip())["lens_reliability"]
+    assert list(payload["by_backend"]) == ["BA07"]
+    assert payload["denominator"]["excluded_without_backend_key"] == 4
+    assert payload["by_backend"]["BA07"]["timeouts"] == 1
+
+
+def test_ts_ordering_is_textual_and_blind_spots_declare_it():
+    """LIMITE fijado: el orden por `ts` compara el TEXTO ISO. Con offsets mezclados
+    la ventana puede invertirse: 11:00+02:00 (= 09:00Z, ANTERIOR) gana a
+    10:00+00:00 por ser mayor como texto. No se parsean fechas; `blind_spots` lo
+    declara con etiqueta propia (ORDEN-TS)."""
+    earlier_real = _m3_row("BA07", "wd", 0, ts="2026-11-01T11:00:00+02:00")
+    later_real = _m3_row("BA07", "ok", 1, ts="2026-11-01T10:00:00+00:00")
+    report = cle.lens_reliability([later_real, earlier_real], window=1)
+    entry = _m3_by(report, "BA07")
+    assert (entry["timeouts"], entry["ok"]) == (1, 0), "conserva la mayor como texto"
+    spots = [b for b in report["blind_spots"] if b.startswith("ORDEN-TS:")]
+    assert len(spots) == 1
+    for needle in ("TEXTO ISO", "UTC", "+00:00", "invertirse"):
+        assert needle in spots[0], needle
+    # con ts normalizados UTC el orden textual coincide con el real
+    utc_a = _m3_row("BA07", "wd", 0, ts="2026-11-01T09:00:00+00:00")
+    utc_b = _m3_row("BA07", "ok", 1, ts="2026-11-01T10:00:00+00:00")
+    entry = _m3_by(cle.lens_reliability([utc_b, utc_a], window=1), "BA07")
+    assert (entry["timeouts"], entry["ok"]) == (0, 1)
