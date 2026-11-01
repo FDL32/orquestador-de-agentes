@@ -962,12 +962,19 @@ class _RefIndex:
     Before: `repo` es el repo del alta; sin red (las refs remotas pueden estar
         caducas: se declara en el informe).
     During: construccion PEREZOSA (0 altas -> 0 git). Un `for-each-ref`, un
-        `cat-file --batch-check` por (tip, superficie), y `cat-file --batch`
-        solo de los blobs UNICOS que contienen algun id buscado.
+        `cat-file --batch-check` por (tip, superficie), y UN `cat-file --batch`
+        que lee TODOS los blobs unicos (deduplicados por sha) de esas
+        superficies; el filtro por los ids buscados se aplica DESPUES, sobre
+        el contenido ya leido.
     After: `report` anade un veredicto por cada alta cuyo id tiene OTRA fila en
-        una ref divergente (sin el id en el ancestro comun). Cualquier fallo de medicion se vuelve
-        un AVISO en `warnings` (fail-open): este guard nunca bloquea una alta
-        valida por no poder leer refs.
+        una ref divergente (sin el id en el ancestro comun). Cualquier fallo
+        de medicion se vuelve un AVISO en `warnings` (fail-open): este guard
+        nunca bloquea una alta valida por no poder leer refs.
+
+    LIMITE declarado: la rama propia se excluye por NOMBRE de rama (la local,
+    su upstream y `refs/remotes/*/<rama>`); una alta propia re-publicada bajo
+    otro nombre de rama se ve como ajena. Tampoco ve ramas sin publicar de
+    otra maquina u otro clon.
     """
 
     def __init__(self, repo: Path, surfaces: list[str], head: str) -> None:
@@ -979,7 +986,8 @@ class _RefIndex:
         self.n_tips = 0
         self.n_blobs_read = 0
         self.n_unreadable = 0
-        self.n_filas_con_id = 0
+        self.n_pares_con_fila = 0
+        self.n_filas_leidas = 0
         self.n_colisiones = 0
         self.touched = False
         self._tips: dict[str, list[str]] = {}
@@ -1117,7 +1125,8 @@ class _RefIndex:
     ) -> dict[str, list[tuple[list[str], str]]]:
         """{id: [(refs, tip)]} de ids con OTRA fila en una ref divergente.
 
-        Misma fila en la ref -> misma alta (no colision). Fila distinta: solo
+        Todas las filas del id en la ref son la candidata -> misma alta (no
+        colision). Alguna fila distinta: solo
         es colision si el id NO existia en el ancestro comun de la alta y de
         esa ref (`_id_en_ancestro_comun`): si ya existia, ambas comparten
         linaje (la ref contiene la alta, o es historia previa) y la fila solo
@@ -1132,8 +1141,12 @@ class _RefIndex:
                     hashes |= rows_of_blob.get(blob, {}).get(cid, set())
                 if not hashes:
                     continue
-                self.n_filas_con_id += 1
-                if candidates[cid] in hashes or self._id_en_ancestro_comun(
+                self.n_pares_con_fila += 1
+                self.n_filas_leidas += len(hashes)
+                # Exime solo si TODAS las filas del id en el tip son la
+                # candidata: una fila identica no cubre a otra distinta de la
+                # misma ref (p.ej. identica en backlog, distinta en archive).
+                if hashes <= {candidates[cid]} or self._id_en_ancestro_comun(
                     sha, tip, cid
                 ):
                     continue
@@ -1180,8 +1193,9 @@ class _RefIndex:
         lines = [
             f"unicidad de id entre refs: refs barridas {self.n_refs} "
             f"(tips distintos {self.n_tips}, blobs leidos {self.n_blobs_read}, "
-            f"superficies ilegibles {self.n_unreadable}); filas con el id en "
-            f"otras refs {self.n_filas_con_id}; colisiones {self.n_colisiones}; "
+            f"superficies ilegibles {self.n_unreadable}); pares (tip,id) con "
+            f"fila en otras refs {self.n_pares_con_fila} (filas distintas "
+            f"leidas {self.n_filas_leidas}); colisiones {self.n_colisiones}; "
             "sin fetch (las refs remotas pueden estar caducas)"
         ]
         if self.n_refs == 0:

@@ -1340,7 +1340,7 @@ def test_127b_rama_que_contiene_la_alta_no_es_colision(tmp_path: Path) -> None:
     code, out = run_guard(repo)
     assert code == 0, out
     assert "ID_EN_OTRA_RAMA" not in out
-    assert "filas con el id en otras refs 1" in out
+    assert "pares (tip,id) con fila en otras refs 1" in out
     assert "colisiones 0" in out
 
 
@@ -1361,7 +1361,7 @@ def test_127b_fila_editada_en_rama_que_contiene_la_alta_no_es_colision(
     git(repo, "checkout", "mia")
     code, out = run_guard(repo)
     assert code == 0, out
-    assert "filas con el id en otras refs 1" in out
+    assert "pares (tip,id) con fila en otras refs 1" in out
     assert "colisiones 0" in out
 
 
@@ -1378,7 +1378,7 @@ def test_127b_misma_fila_cherry_pick_en_otra_rama_no_es_colision(
     git(repo, "checkout", "mia")
     code, out = run_guard(repo)
     assert code == 0, out
-    assert "filas con el id en otras refs 1" in out
+    assert "pares (tip,id) con fila en otras refs 1" in out
     assert "colisiones 0" in out
 
 
@@ -1438,7 +1438,7 @@ def test_127b_id_solo_mencionado_en_prosa_de_otra_ref_no_es_colision(
     _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi alta")
     code, out = run_guard(repo)
     assert code == 0, out
-    assert "filas con el id en otras refs 0" in out
+    assert "pares (tip,id) con fila en otras refs 0" in out
 
 
 def test_127b_sin_refs_hermanas_utiles_pasa(tmp_path: Path) -> None:
@@ -1568,6 +1568,31 @@ def test_127b_ticket_previo_que_cambia_de_superficie_no_es_colision(
     git(repo, "add", ARCHIVE_REL)
     git(repo, "commit", "-m", msg_with_recibo("068s al archive", recibo))
     _code, out = run_guard(repo)
-    assert "filas con el id en otras refs 2" in out  # main y la rama vieja
+    assert "pares (tip,id) con fila en otras refs 2" in out  # main y la rama vieja
     assert "colisiones 0" in out
     assert "ID_EN_OTRA_RAMA" not in out
+
+
+def test_127b_fila_identica_en_backlog_no_exime_otra_distinta_en_el_archive(
+    tmp_path: Path,
+) -> None:
+    """Ronda 2 (F-A): una misma ref con la fila IDENTICA en backlog y otra
+    DISTINTA del mismo id en el archive sigue siendo una colision; la igualdad
+    de UNA fila no puede eximir al tip entero."""
+    repo = init_repo(tmp_path)
+    _alta_en_rama(repo, "mia", "WOT-2026-126a", "mi alta")
+    git(repo, "checkout", "-b", "hermana", "main")
+    commit_alta(repo, row("WOT-2026-126a", "mi alta"), "copia identica en backlog")
+    archive = repo / ARCHIVE_REL
+    archive.write_text(
+        archive.read_text(encoding="utf-8") + row("WOT-2026-126a", "otra distinta"),
+        encoding="utf-8",
+    )
+    git(repo, "add", ARCHIVE_REL)
+    git(repo, "commit", "-m", "fila distinta del mismo id en el archive")
+    git(repo, "checkout", "mia")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert "VEREDICTO: ID_EN_OTRA_RAMA" in out
+    assert "refs/heads/hermana" in out
+    assert "(filas distintas leidas 2)" in out  # la identica y la distinta
