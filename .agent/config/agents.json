@@ -1167,7 +1167,8 @@
       "MANAGER_REVIEW:repo_motor": {
         "backend_keys": [
           "BA03",
-          "BA07"
+          "BA07",
+          "BA254"
         ],
         "min_distinct": 2,
         "policy": "declared",
@@ -1177,7 +1178,7 @@
         "exempt_tickets": [
           "WOT-2026-129d"
         ],
-        "note": "WOT-2026-129y: cobertura elegible copiada de la verdad del roster del vuelo (session_types.implantacion.lenses.MANAGER_REVIEW=[BA03] + revisor_repo_motor_interino=BA07). BA05 excluida por WOT-2026-129r (no puede revisar repo_motor via loop-round). WOT-2026-129d exento: esta entrada NO re-adjudica su evidencia (DoD 5). Si el roster del vuelo declara nuevas claves para esta fase, este campo se actualiza por ticket (D1 del work_plan: fuente unica versionada; la deriva es fail-safe)."
+        "note": "WOT-2026-129y: cobertura elegible copiada de la verdad del roster del vuelo (session_types.implantacion.lenses.MANAGER_REVIEW=[BA03] + revisor_repo_motor_interino=BA07). BA05 excluida por WOT-2026-129r (no puede revisar repo_motor via loop-round). WOT-2026-129d exento: esta entrada NO re-adjudica su evidencia (DoD 5). 2026-11-01 CO-17 (orden del usuario, H130/H131): BA254 (Codex gpt-6.1-sol, challenger_codex_sol_cli) se anade como TERCERA elegible por sustitucion de facto de BA07, que da timeouts/colgados repetidos; min_distinct sigue en 2, asi que BA07 pasa a ser opcional. Si el roster del vuelo declara nuevas claves para esta fase, este campo se actualiza por ticket (D1 del work_plan: fuente unica versionada; la deriva es fail-safe)."
       }
     }
   },
