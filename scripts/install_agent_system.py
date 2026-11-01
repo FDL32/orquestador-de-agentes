@@ -1574,7 +1574,7 @@ def _read_existing_ticket_prefix(link_file: Path) -> str | None:
         raise MotorLinkUnreadableError(
             f"{link_file} ilegible ({result.reason}): ticket_prefix no recuperable"
         )
-    if result.data is None:
+    if result.state != "OK":
         return None
     existing = result.data.get("ticket_prefix")
     return existing if isinstance(existing, str) and existing else None

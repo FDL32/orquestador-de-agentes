@@ -64,7 +64,7 @@ def read_motor_link(link_path: Path) -> MotorLinkRead:
         return MotorLinkRead(LINK_UNREADABLE, reason=f"decode: {exc}")
     try:
         data = json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         return MotorLinkRead(LINK_UNREADABLE, reason=f"json: {exc}")
     if not isinstance(data, dict):
         return MotorLinkRead(

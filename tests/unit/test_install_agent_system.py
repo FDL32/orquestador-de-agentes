@@ -4034,7 +4034,8 @@ def test_126a1_sync_without_prefix_keeps_the_prefix_of_a_bom_link(
     printed the null payload).
 
     Mutation-to-prove: M1 -- read the link with `utf-8` again inside the helper and
-    this goes red (`None != 'FDL'`).
+    this goes red at `assert rc == 0` (the BOM link is UNREADABLE, so the sync stops
+    at preflight P7 with rc 1).
     """
     motor = _motor_140a(tmp_path)
     dest = _dest_140a(tmp_path, "U")
@@ -4082,6 +4083,34 @@ def test_126a1_sync_without_prefix_fails_on_an_unreadable_link_and_writes_nothin
     assert "motor_destination_link.json" in out
     assert cause in out
     assert "--prefix" in out
+    assert link.read_bytes() == raw
+    assert _tree_140a(dest) == before
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("closing", [b"", b"]" * 5000])
+def test_126a1_sync_fails_cleanly_on_a_deeply_nested_link(
+    tmp_path, capsys, closing, dry_run
+):
+    """Round 2: `json.loads` raises RecursionError (not ValueError) on thousands of
+    nested brackets, open or closed. The sync must answer like for any other
+    unreadable link -- rc 1, P7 naming `json`, destination byte-identical -- not die
+    with a traceback.
+
+    Mutation-to-prove: drop RecursionError from the helper's except and the sync
+    raises instead of returning 1.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    raw = b"[" * 5000 + closing
+    link = _link_126a(dest, raw)
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P7" in out
+    assert "json" in out
     assert link.read_bytes() == raw
     assert _tree_140a(dest) == before
 

@@ -235,6 +235,24 @@ def test_read_motor_link_unreadable_names_the_cause(
     assert result.reason.startswith(cause)
 
 
+@pytest.mark.parametrize("closing", [b"", b"]" * 5000])
+def test_read_motor_link_deep_nesting_is_unreadable_not_a_recursion_error(
+    fake_project_root: Path, closing: bytes
+):
+    """Round 2: `json.loads` raises RecursionError (not ValueError) on thousands of
+    nested brackets; the helper promises to never raise.
+
+    Mutation-to-prove: drop RecursionError from the except in `read_motor_link` and
+    both cases raise.
+    """
+    raw = b"[" * 5000 + closing
+    result = read_motor_link(_link_with_bytes(fake_project_root, raw))
+    assert result.state == LINK_UNREADABLE
+    assert result.data is None
+    assert result.reason is not None
+    assert result.reason.startswith("json")
+
+
 def test_read_motor_link_directory_is_unreadable_not_a_crash(fake_project_root: Path):
     link = fake_project_root / ".agent" / "config" / "motor_destination_link.json"
     link.mkdir()
