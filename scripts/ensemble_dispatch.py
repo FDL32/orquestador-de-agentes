@@ -1733,6 +1733,20 @@ EXIT_NO_CONTRIBUTION = 3
 # prefijo, y el codigo lo refuerza.
 EXIT_INVALID_INPUT = 4
 
+# WOT-2026-152s-1: codigo de salida de `loop-round --watchdog-s N` cuando el
+# limite POR INVOCACION vencio y el arbol del hijo fue matado. Distinto de 3
+# (`[NO-APORTA]`: la ronda corrio y devolvio vacio o transporte fallido) y de 2
+# (`[ERROR]`): "la lente no respondio a tiempo" no es "respondio mal". Medido
+# 2026-11-01: ningun consumidor del repo ni de los .sh de las coordinadoras
+# interpreta un rc concreto de loop-round mas alla de 0 / != 0 (solo lo anotan).
+EXIT_WATCHDOG_TIMEOUT = 5
+
+# WOT-2026-152s-1: marcador de entorno que el supervisor pone al HIJO. Con el, un
+# `--watchdog-s` que llegue al hijo NO vuelve a supervisar (un watchdog que
+# relanza otro watchdog seria una fork-bomb). El supervisor ademas retira la
+# bandera del argv del hijo: son dos barreras independientes.
+WATCHDOG_CHILD_ENV = "ENSEMBLE_LOOP_ROUND_WATCHDOG_CHILD"
+
 
 def _stderr_tail(stderr_text: str | None) -> str:
     """Ultimos `_AGENT_STDERR_TAIL_CHARS` de stderr, redactados; '' si no hay.
@@ -7232,6 +7246,238 @@ def _warn_phase_typo(phase: str | None) -> None:
         )
 
 
+def _positive_seconds(raw: str) -> float:
+    """Tipo argparse de `--watchdog-s`: un numero finito y > 0.
+
+    Un limite de 0 (o negativo) mataria la ronda al nacer y se leeria como un
+    fallo de la lente; `nan` e `inf` no son limites. Rechazar aqui deja el error
+    en el borde del CLI (exit 2 de argparse), antes de lanzar ningun proceso.
+    """
+    try:
+        value = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"no es un numero: {raw!r}") from None
+    if not 0 < value < float("inf"):
+        raise argparse.ArgumentTypeError(f"debe ser un numero finito > 0: {raw!r}")
+    return value
+
+
+def _watchdog_requested(args) -> bool:
+    """True si el caller pidio `--watchdog-s`. Un Namespace SIN el atributo (los
+    callers Python que arman el suyo) cuenta como apagado: ausente == apagado."""
+    return getattr(args, "watchdog_s", None) is not None
+
+
+def _watchdog_kill(pid: int) -> bool:
+    """Mata el ARBOL de `pid` salvo que sea el PID propio, el del padre o invalido.
+
+    Before: `pid` es el de un hijo que ESTE proceso lanzo (nunca un patron ni un
+        PID leido de fuera).
+    During: rechaza `pid <= 0`, `os.getpid()` y `os.getppid()` ANTES de tocar
+        nada (el patron de un `pkill` sin partir ya mato dos shells de
+        coordinadora); si pasa, delega en `_kill_process_tree` (taskkill /T /F).
+    After: False si lo rechazo (no se mato nada); True si intento el kill. Un
+        fallo de taskkill NO sube: avisa por stderr, porque el caller debe poder
+        seguir y dejar su fila `timeout:` aunque el kill falle.
+    """
+    if pid <= 0 or pid in (os.getpid(), os.getppid()):
+        return False
+    try:
+        _kill_process_tree(pid)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(
+            f"[ensemble-dispatch] WARN: no pude confirmar el kill del arbol de "
+            f"{pid}: {type(exc).__name__}: {exc}. Comprueba con tasklist.",
+            file=sys.stderr,
+        )
+    return True
+
+
+def _watchdog_child_argv(args) -> list[str]:
+    """Comando del HIJO: este mismo script y `loop-round` con las MISMAS opciones.
+
+    Solo omite `--watchdog-s` (el hijo corre la ronda normal) y las opcionales
+    ausentes (None). Se arma desde `args`, no desde `sys.argv`, para que un
+    caller Python con su propio Namespace obtenga el mismo comando.
+    """
+    cmd = [sys.executable, str(Path(__file__).resolve()), "loop-round"]
+    for flag, value in (
+        ("--profile", args.profile),
+        ("--content-file", args.content_file),
+        ("--ticket", args.ticket),
+        ("--task-type", args.task_type),
+        ("--rol", args.rol),
+        ("--phase", args.phase),
+        ("--loop-id", args.loop_id),
+        ("--backend-key", args.backend_key),
+        ("--data-sensitivity", args.data_sensitivity),
+        ("--ronda", args.ronda),
+        ("--context-kind", args.context_kind),
+        ("--commit-sha", args.commit_sha),
+        ("--challenge-nonce", args.challenge_nonce),
+        ("--session-id", args.session_id),
+        ("--project-root", args.project_root),
+    ):
+        if value is not None:
+            cmd += [flag, str(value)]
+    return cmd
+
+
+def _count_round_rows(project_root: Path, args) -> int | None:
+    """Filas `ronda` de ESTA lente (ticket + ronda + backend_key) en el scorecard.
+
+    None si no se pudo leer (rotacion concurrente, linea ilegible): el caller
+    decide en fail-OPEN hacia registrar, porque un duplicado es un defecto menor
+    y una ronda sin rastro es el que cierra este ticket.
+    """
+    try:
+        return sum(
+            1
+            for row in read_scorecard_unified(project_root)
+            if row.get("event") == "ronda"
+            and row.get("ticket") == args.ticket
+            and row.get("ronda") == args.ronda
+            and row.get("backend_key") == args.backend_key
+        )
+    except FileNotFoundError:
+        return 0
+    except (OSError, ValueError, ScorecardRotationRaceError):
+        return None
+
+
+def _record_watchdog_timeout(
+    args,
+    config: dict,
+    project_root: Path,
+    *,
+    watchdog_s: float,
+    child_pid: int,
+    elapsed_ms: int,
+    rows_before: int | None,
+) -> bool:
+    """Escribe UNA fila `timeout:` salvo que el hijo ya haya escrito la suya.
+
+    Before: el hijo ya fue matado; `rows_before` es el recuento de filas de esta
+        lente tomado ANTES de lanzarlo (None = no se pudo leer).
+    During: si desde el arranque del hijo hay MAS filas de (ticket, ronda,
+        backend_key), el hijo registro su ronda y no se duplica (dos filas de la
+        misma ronda inflan el recuento de lentes). Si no, `_record_round` con
+        `failure_mode="timeout: ..."` y `outcome=no-aportacion`.
+    After: True si escribio fila. Sin perfil resoluble no hay fila posible
+        (`_record_round` exige el dict del perfil): avisa y devuelve False.
+    """
+    rows_after = _count_round_rows(project_root, args)
+    if rows_before is not None and rows_after is not None and rows_after > rows_before:
+        return False
+    profile = (config.get("ensemble_profiles") or {}).get(args.profile)
+    if profile is None:
+        print(
+            f"[ensemble-dispatch] WARN: perfil '{args.profile}' no resoluble; "
+            "no puedo registrar la fila `timeout:`.",
+            file=sys.stderr,
+        )
+        return False
+    session_id = args.session_id or resolve_default_session_id(project_root)
+    commit_sha = None
+    challenge_nonce = None
+    if args.commit_sha:
+        try:
+            commit_sha = _validated_motor_sha(project_root, args.commit_sha)
+            challenge_nonce = args.challenge_nonce
+        except ValueError:
+            commit_sha = None  # sha ilegible: la fila va sin traza de cierre
+    try:
+        input_bytes = Path(args.content_file).stat().st_size
+    except OSError:
+        input_bytes = 0
+    _record_round(
+        project_root,
+        ticket=args.ticket,
+        task_type=args.task_type,
+        rol=args.rol,
+        profile=profile,
+        backend_version=None,
+        ronda=args.ronda,
+        reply="",
+        input_bytes=input_bytes,
+        context_kind=args.context_kind,
+        failure_mode=(
+            f"timeout: watchdog de {watchdog_s:g}s vencido sin respuesta de la "
+            f"lente; arbol de procesos del hijo (pid {child_pid}) matado"
+        ),
+        session_id=session_id,
+        latency_ms=elapsed_ms,
+        phase=args.phase,
+        loop_id=args.loop_id,
+        backend_key=args.backend_key,
+        commit_sha=commit_sha,
+        challenge_nonce=challenge_nonce,
+    )
+    return True
+
+
+def _supervise_loop_round(args, config) -> int:
+    """`loop-round --watchdog-s N`: corre la ronda como HIJO bajo un limite duro.
+
+    Before: `args.watchdog_s` es un float > 0 (validado por argparse); el
+        proceso NO esta ya bajo `WATCHDOG_CHILD_ENV`.
+    During: relanza este script con las mismas opciones menos `--watchdog-s`; el
+        hijo hereda stdin/stdout/stderr (el flujo pasa tal cual y no hay pipes
+        que un descendiente pueda retener) y recibe `WATCHDOG_CHILD_ENV=1`. Espera
+        `watchdog_s`. Si vence: `_watchdog_kill` (taskkill /T /F sobre el hijo;
+        el supervisor y su padre quedan fuera), fila `timeout:` deduplicada.
+    After: rc del hijo tal cual si termino a tiempo; `EXIT_WATCHDOG_TIMEOUT` si
+        vencio. Una interrupcion (Ctrl-C) mata tambien el arbol del hijo antes
+        de propagarse.
+
+    LIMITES (declarados): si el SUPERVISOR muere, el hijo queda huerfano (Job
+    Object: 152s-3); un nieto DESACOPLADO sobrevive a `taskkill /T`.
+    """
+    watchdog_s = args.watchdog_s
+    project_root = _resolve_project_root(args.project_root)
+    rows_before = _count_round_rows(project_root, args)
+    env = {**os.environ, WATCHDOG_CHILD_ENV: "1"}
+    started = time.monotonic()
+    proc = subprocess.Popen(_watchdog_child_argv(args), env=env)
+    try:
+        return proc.wait(timeout=watchdog_s)
+    except subprocess.TimeoutExpired:
+        pass
+    except BaseException:
+        _watchdog_kill(proc.pid)
+        raise
+    _watchdog_kill(proc.pid)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        print(
+            f"[ensemble-dispatch] WARN: el hijo {proc.pid} no confirmo su muerte "
+            "en 10 s tras el kill del arbol.",
+            file=sys.stderr,
+        )
+    wrote = _record_watchdog_timeout(
+        args,
+        config,
+        project_root,
+        watchdog_s=watchdog_s,
+        child_pid=proc.pid,
+        elapsed_ms=round((time.monotonic() - started) * 1000),
+        rows_before=rows_before,
+    )
+    print(
+        f"[TIMEOUT] loop-round no respondio en {watchdog_s:g}s (--watchdog-s); "
+        f"arbol del hijo {proc.pid} matado; "
+        + (
+            "fila `timeout:` registrada en scorecard.jsonl"
+            if wrote
+            else "sin fila nueva (el hijo ya habia registrado la suya, o el "
+            "perfil no es resoluble)"
+        ),
+        file=sys.stderr,
+    )
+    return EXIT_WATCHDOG_TIMEOUT
+
+
 def _cmd_loop_round(args, config) -> int:
     """UNA ronda de un bucle de GOBIERNO por CLI (WOT-2026-043z).
 
@@ -7254,6 +7500,11 @@ def _cmd_loop_round(args, config) -> int:
         chat, nivel 0) y retorna 0. Propaga `DispatchBlockedError` /
         `ValueError` a `main`, que los mapea a exit != 0.
     """
+    # WOT-2026-152s-1: `--watchdog-s N` ejecuta la ronda como HIJO bajo un limite
+    # duro (ver `_supervise_loop_round`). ADITIVO: sin la bandera -- o dentro del
+    # hijo, que lleva `WATCHDOG_CHILD_ENV` -- esta funcion sigue exactamente igual.
+    if _watchdog_requested(args) and not os.environ.get(WATCHDOG_CHILD_ENV):
+        return _supervise_loop_round(args, config)
     project_root = _resolve_project_root(args.project_root)
     # WOT-2026-040g: el default del session_id se fija en el BORDE del handler
     # para que TODA fila de este camino de gobierno -- no solo la ronda, tambien
@@ -7962,7 +8213,9 @@ def main(argv: list[str] | None = None) -> int:
             "Salida: 0 la ronda aporto; 1 [BLOCKED] (rechazada antes de llamar); "
             "2 [ERROR]; 3 [NO-APORTA] la ronda corrio y se registro pero el "
             "transporte fallo o la respuesta vino vacia (WOT-2026-086d); "
-            "4 [INVALID] la invocacion estaba mal (ValueError; WOT-2026-046d)."
+            "4 [INVALID] la invocacion estaba mal (ValueError; WOT-2026-046d); "
+            "5 [TIMEOUT] vencio --watchdog-s y se mato el arbol del hijo "
+            "(WOT-2026-152s-1)."
         ),
     )
     p_loop.add_argument("--profile", required=True)
@@ -8009,6 +8262,15 @@ def main(argv: list[str] | None = None) -> int:
         "(WOT-2026-066t)",
     )
     p_loop.add_argument("--session-id", default=None)
+    p_loop.add_argument(
+        "--watchdog-s",
+        type=_positive_seconds,
+        default=None,
+        help="limite DURO por invocacion en segundos (WOT-2026-152s-1). Por "
+        "defecto no hay (solo el timeout_s del backend). Con el, la ronda corre "
+        "como proceso hijo; si vence se mata su arbol de procesos, se escribe "
+        "UNA fila `timeout:` en scorecard.jsonl y sale con 5",
+    )
     p_loop.add_argument("--project-root", required=True)
 
     p_adj = sub.add_parser("adjudicate", help="adjudicar outcome de una ronda")

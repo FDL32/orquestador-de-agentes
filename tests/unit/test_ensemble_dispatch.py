@@ -10547,6 +10547,13 @@ def _registro_salidas_046c():
                 "sys.executable literal, no un CLI de backend"
             ),
         },
+        ("scripts/ensemble_dispatch.py", "_supervise_loop_round"): {
+            "mecanismo": "runner_local_exenta",
+            "motivo": (
+                "relanza este mismo loop-round como hijo; la salida a backend "
+                f"ocurre en el hijo, tras {_CAMINO_PERFIL_046c}/privacy_preflight"
+            ),
+        },
         ("scripts/check_builder_cli_privacy_preflight.py", "main"): {
             "mecanismo": "preflight_directo",
             "motivo": (

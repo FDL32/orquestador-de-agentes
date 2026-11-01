@@ -2126,3 +2126,69 @@ def test_historic_debt_table_is_exact_sha40_with_declared_exit_ficha():
         "6974d86c6d0aeedf2e32f3f99f1b1e3777c1190d",  # 142a
     }
     assert not passing_tips & set(cle.HISTORIC_LOOP_DEBT)
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-152s-1: el timeout del watchdog es DISTINGUIBLE de muda y transporte
+# --------------------------------------------------------------------------- #
+
+
+def _timeout_round(backend, **kw):
+    """Ronda con la forma EXACTA que escribe `_record_watchdog_timeout`:
+    `_record_round(reply="")` => outcome no-aportacion, 0 chars, y el
+    `failure_mode` propio `timeout: ...`."""
+    row = _muda(backend, **kw)
+    row["failure_mode"] = (
+        "timeout: watchdog de 600s vencido sin respuesta de la lente; "
+        "arbol de procesos del hijo (pid 4242) matado"
+    )
+    return row
+
+
+def test_diagnose_silence_distinguishes_timeout_from_muda_and_transport():
+    """Las TRES clases de silencio dan tres diagnosticos distintos. Mutacion M5
+    (quitar la rama `timeout:`) -> el timeout cae en el texto generico de
+    'respuesta descartada por la adjudicacion' y deja de nombrarse."""
+    timeout = cle.diagnose_silence(_timeout_round("BA07"))
+    muda = cle.diagnose_silence(_muda("BA07"))
+    transporte_row = _muda("BA07")
+    transporte_row["failure_mode"] = "transport_failed: rc=1; unknown"
+    transporte = cle.diagnose_silence(transporte_row)
+
+    assert len({timeout, muda, transporte}) == 3
+    assert "NO respondio dentro del limite" in timeout
+    assert "VACIA" not in timeout and "adjudicacion" not in timeout
+    assert "VACIA" in muda
+    assert "adjudicacion" in transporte
+    assert "NO respondio dentro del limite" not in muda + transporte
+    assert "pid 4242" in timeout, "el detalle del failure_mode debe conservarse"
+
+
+def test_timeout_round_is_silent_and_reported_with_its_own_label(capsys):
+    """Un `timeout:` NO cuenta como lente que aporta (no es sustantiva) y sale
+    nombrado como TIMEOUT -no como MUDA- en el informe del gate."""
+    emitted = [_emitted()]
+    sc = [_ronda("BA10"), _timeout_round("BA07")]
+
+    assert cle.is_substantive(_timeout_round("BA07")) is False
+    v = cle.audit_commit(sc, emitted, commit_sha="abc", min_distinct=2)
+
+    assert [s["backend_key"] for s in v["silent_rounds"]] == ["BA07"]
+    assert v["silent_rounds"][0]["failure_mode"].startswith(cle.TIMEOUT_FAILURE_PREFIX)
+    assert v["ok"] is False, "1 lente + 1 timeout no alcanza N=2"
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    assert "TIMEOUT BA07" in out
+    assert "MUDA BA07" not in out
+
+
+def test_muda_round_keeps_the_muda_label(capsys):
+    """CONTROL: una ronda muda SIN `timeout:` sigue saliendo como MUDA."""
+    emitted = [_emitted()]
+    v = cle.audit_commit(
+        [_ronda("BA10"), _muda("BA11")], emitted, commit_sha="abc", min_distinct=2
+    )
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    assert "MUDA BA11" in out
+    assert "TIMEOUT BA11" not in out

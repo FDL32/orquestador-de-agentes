@@ -505,6 +505,13 @@ def _coverage_plan(
 # senal equivalente en filas antiguas.
 EMPTY_EVIDENCIA_MARKER = "(respuesta vacia)"
 
+# Prefijo de `failure_mode` que escribe el watchdog de `loop-round`
+# (WOT-2026-152s-1, `ensemble_dispatch._record_watchdog_timeout`): distingue el
+# timeout de una ronda muda (sin failure_mode) y de un fallo de transporte
+# (`transport_failed:`). Es una constante PROPIA y no un import de
+# `ensemble_dispatch`: este modulo no depende de el para leer el scorecard.
+TIMEOUT_FAILURE_PREFIX = "timeout:"
+
 # Invisibles Unicode que `str.strip()` NO elimina y que, solos, no son una
 # aportacion: zero-width space/non-joiner/joiner, BOM/zero-width no-break y el
 # espacio ideografico. No es un umbral de longitud (ver `is_substantive`): es la
@@ -609,6 +616,17 @@ def diagnose_silence(row: dict) -> str:
     (`min_distinct`), no de este diagnostico.
     """
     failure_mode = (row.get("failure_mode") or "").strip()
+    # WOT-2026-152s-1: `timeout:` lo escribe el watchdog de `loop-round`
+    # (`--watchdog-s`) cuando la lente NO respondio dentro del limite y se mato su
+    # arbol de procesos. No es una lente muda (no devolvio vacio: no devolvio
+    # NADA) ni un fallo de transporte (el backend no rechazo ni cayo): la accion
+    # es distinta -- subir el limite o reservar otra lente, no revisar el bundle.
+    if failure_mode.startswith(TIMEOUT_FAILURE_PREFIX):
+        return (
+            "la lente NO respondio dentro del limite (watchdog de la invocacion) "
+            "y su arbol de procesos fue matado: no es una respuesta vacia ni un "
+            f"fallo de transporte. Detalle: {failure_mode}"
+        )
     if failure_mode:
         # La adjudicacion (o el registrador, tras WOT-2026-046h) ya clasifico
         # esta ronda; su etiqueta manda sobre cualquier inferencia nuestra.
@@ -1442,8 +1460,13 @@ def _print_verdict(v: dict) -> None:
         )
     # WOT-2026-043q: nombrar a quien callo, en verde y en rojo.
     for s in v["silent_rounds"]:
+        kind = (
+            "TIMEOUT"
+            if str(s.get("failure_mode") or "").startswith(TIMEOUT_FAILURE_PREFIX)
+            else "MUDA"
+        )
         print(
-            f"[loop-exec]   MUDA {s['backend_key']}: {s['diagnosis']} "
+            f"[loop-exec]   {kind} {s['backend_key']}: {s['diagnosis']} "
             f"(output_chars={s['output_chars']})"
         )
     # C' (DEC-bucle-doc-001): las corridas que no llegan a N se NOMBRAN,
