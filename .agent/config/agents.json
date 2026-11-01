@@ -728,179 +728,302 @@
         "backend": "claude",
         "model": null,
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Anthropic",
+        "family": "claude",
+        "tier": "full",
+        "generation": 1
       },
       "BA02": {
         "backend": "kilo",
         "model": "nan/qwen3.8-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "flash",
+        "generation": 1
       },
       "BA03": {
         "backend": "kilo",
         "model": "nan/glm5.3-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
       },
       "BA04": {
         "backend": "kilo",
         "model": "nan/mimo-v2.6-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Xiaomi",
+        "family": "mimo",
+        "tier": "flash",
+        "generation": 1
       },
       "BA05": {
         "backend": "codex",
         "model": "gpt-5.6-luna",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "OpenAI",
+        "family": "codex",
+        "tier": "full",
+        "generation": 1,
+        "variant": "luna"
       },
       "BA07": {
         "backend": "kilo",
         "model": "nan/deepseek-v4-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 1
       },
       "BA08": {
         "backend": "kilo",
         "model": "nan/qwen3.6",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "full",
+        "generation": 1
       },
       "BA09": {
         "backend": "kilo",
         "model": "nan/gemma4",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Google",
+        "family": "gemma",
+        "tier": "full",
+        "generation": 1
       },
       "BA10": {
         "backend": "nan_api",
         "model": "deepseek-v4-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 1
       },
       "BA11": {
         "backend": "nan_api",
         "model": "qwen3.6",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "full",
+        "generation": 1
       },
       "BA12": {
         "backend": "nan_api",
         "model": "mimo-v2.5",
         "backend_version": null,
         "status": "archived",
-        "archived_reason": "evidencia local de fallo: 1x HTTP 402 (2026-09-28), 3x HTTP 401 (2026-09-29). 'Retirado por el proveedor' NO verificable en modo read-only sin credenciales -- declarado como evidencia local, no como hecho externo confirmado."
+        "archived_reason": "evidencia local de fallo: 1x HTTP 402 (2026-09-28), 3x HTTP 401 (2026-09-29). 'Retirado por el proveedor' NO verificable en modo read-only sin credenciales -- declarado como evidencia local, no como hecho externo confirmado.",
+        "lab": "Xiaomi",
+        "family": "mimo",
+        "tier": "full",
+        "generation": 1
       },
       "BA13": {
         "backend": "nan_api",
         "model": "gemma4",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Google",
+        "family": "gemma",
+        "tier": "full",
+        "generation": 1
       },
       "BA06": {
         "backend": "opencode",
         "model": "opencode-go/glm-5.3-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
       },
       "BA14": {
         "backend": "nan_api",
         "model": "deepseek-v4-flash-0731",
         "backend_version": null,
-        "status": "deprecated"
+        "status": "deprecated",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 1,
+        "variant": "0731"
       },
       "BA15": {
         "backend": "nan_api",
         "model": "qwen3.8-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "flash",
+        "generation": 1
       },
       "BA16": {
         "backend": "nan_api",
         "model": "glm5.3-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
       },
       "BA17": {
         "backend": "nvidia_api",
         "model": "z-ai/glm-5.3",
         "backend_version": null,
         "status": "deprecated",
-        "note": "reasignado a BA20 (renumeracion 2026-09-28, familia nvidia pasa a la decena 20)"
+        "note": "reasignado a BA20 (renumeracion 2026-09-28, familia nvidia pasa a la decena 20)",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "full",
+        "generation": 1
       },
       "BA18": {
         "backend": "nvidia_api",
         "model": "z-ai/glm-5.3-flash",
         "backend_version": null,
         "status": "deprecated",
-        "note": "reasignado a BA21 (renumeracion 2026-09-28, familia nvidia pasa a la decena 20)"
+        "note": "reasignado a BA21 (renumeracion 2026-09-28, familia nvidia pasa a la decena 20)",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
       },
       "BA19": {
         "backend": "nvidia_api",
         "model": "deepseek-ai/deepseek-v4.1-flash",
         "backend_version": null,
         "status": "deprecated",
-        "note": "reasignado a BA22 (renumeracion 2026-09-28, familia nvidia pasa a la decena 20)"
+        "note": "reasignado a BA22 (renumeracion 2026-09-28, familia nvidia pasa a la decena 20)",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 2
       },
       "BA20": {
         "backend": "nvidia_api",
         "model": "z-ai/glm-5.3",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "full",
+        "generation": 1
       },
       "BA21": {
         "backend": "nvidia_api",
         "model": "z-ai/glm-5.3-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
       },
       "BA22": {
         "backend": "nvidia_api",
         "model": "deepseek-ai/deepseek-v4.1-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 2
       },
       "BA23": {
         "backend": "nvidia_api",
         "model": "moonshotai/kimi-k3",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Moonshot",
+        "family": "kimi",
+        "tier": "full",
+        "generation": 1
       },
       "BA24": {
         "backend": "nvidia_api",
         "model": "nvidia/nemotron-3-super-120b-a12b",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "NVIDIA",
+        "family": "nemotron",
+        "tier": "full",
+        "generation": 1,
+        "variant": "super-120b"
       },
       "BA25": {
         "backend": "nan_api",
         "model": "mimo-v2.6-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Xiaomi",
+        "family": "mimo",
+        "tier": "flash",
+        "generation": 1
       },
       "BA30": {
         "backend": "groq_api",
         "model": "qwen/qwen3.8-27b",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "full",
+        "generation": 2,
+        "variant": "27b"
       },
       "BA31": {
         "backend": "groq_api",
         "model": "openai/gpt-oss-120b",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "OpenAI",
+        "family": "gptoss",
+        "tier": "full",
+        "generation": 1,
+        "variant": "120b"
       },
       "BA50": {
         "backend": "openrouter_api",
         "model": "cohere/north-mini-code:free",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Cohere",
+        "family": "northcode",
+        "tier": "flash",
+        "generation": 1,
+        "variant": "code"
       },
       "BA51": {
         "backend": "openrouter_api",
         "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "NVIDIA",
+        "family": "nemotron",
+        "tier": "full",
+        "generation": 1,
+        "variant": "ultra-550b"
       },
       "BA52": {
         "backend": "openrouter_api",
@@ -912,139 +1035,241 @@
         "backend": "aihubmix_api",
         "model": "coding-glm-5.1-free",
         "backend_version": null,
-        "status": "archived"
+        "status": "archived",
+        "lab": "Zhipu",
+        "family": "codingglm",
+        "tier": "full",
+        "generation": 1
       },
       "BA71": {
         "backend": "aihubmix_api",
         "model": "xiaomi-mimo-v2.5-free",
         "backend_version": null,
-        "status": "archived"
+        "status": "archived",
+        "lab": "Xiaomi",
+        "family": "mimo",
+        "tier": "full",
+        "generation": 1
       },
       "BA72": {
         "backend": "aihubmix_api",
         "model": "coding-minimax-m2.7-free",
         "backend_version": null,
-        "status": "archived"
+        "status": "archived",
+        "lab": "MiniMax",
+        "family": "minimax",
+        "tier": "full",
+        "generation": 1
       },
       "BA90": {
         "backend": "tokenharbor_api",
         "model": "qwen3.8-flash:free",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "flash",
+        "generation": 1
       },
       "BA91": {
         "backend": "tokenharbor_api",
         "model": "deepseek-v4.1-flash:free",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 2
       },
       "BA92": {
         "backend": "tokenharbor_api",
         "model": "mimo-v2.6-flash:free",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Xiaomi",
+        "family": "mimo",
+        "tier": "flash",
+        "generation": 1
       },
       "BA110": {
         "backend": "gemini_api",
         "model": "gemini-3.8-flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Google",
+        "family": "gemini",
+        "tier": "flash",
+        "generation": 1
       },
       "BA130": {
         "backend": "cohere_api",
         "model": "command-a-plus-05-2026",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Cohere",
+        "family": "command",
+        "tier": "full",
+        "generation": 1
       },
       "BA131": {
         "backend": "cohere_api",
         "model": "north-mini-code-1-0",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Cohere",
+        "family": "northcode",
+        "tier": "flash",
+        "generation": 1,
+        "variant": "code"
       },
       "BA150": {
         "backend": "mistral_api",
         "model": "mistral-large-2512",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Mistral AI",
+        "family": "mistral",
+        "tier": "full",
+        "generation": 1,
+        "variant": "large"
       },
       "BA151": {
         "backend": "mistral_api",
         "model": "codestral-2508",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Mistral AI",
+        "family": "codestral",
+        "tier": "full",
+        "generation": 1,
+        "variant": "code"
       },
       "BA170": {
         "backend": "llm7_api",
         "model": "DeepSeek-V4-Flash-0731",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 1,
+        "variant": "0731"
       },
       "BA171": {
         "backend": "llm7_api",
         "model": "GLM-5.3-Flash",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
       },
       "BA172": {
         "backend": "llm7_api",
         "model": "minimax-m2.7",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "MiniMax",
+        "family": "minimax",
+        "tier": "full",
+        "generation": 1
       },
       "BA173": {
         "backend": "llm7_api",
         "model": "mistral-Nemo-Instruct-2407",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Mistral AI",
+        "family": "nemo",
+        "tier": "full",
+        "generation": 1,
+        "variant": "nemo-instruct"
       },
       "BA174": {
         "backend": "llm7_api",
         "model": "codestral-latest",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Mistral AI",
+        "family": "codestral",
+        "tier": "full",
+        "generation": 1,
+        "variant": "code"
       },
       "BA190": {
         "backend": "kiosapi_api",
         "model": "deepseek-v4.1-flash-free",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 2
       },
       "BA191": {
         "backend": "kiosapi_api",
         "model": "glm-5.3-flash-free",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
       },
       "BA250": {
         "backend": "anthropic_api",
         "model": "claude-haiku-5-5",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Anthropic",
+        "family": "claude",
+        "tier": "flash",
+        "generation": 1
       },
       "BA251": {
         "backend": "anthropic_api",
         "model": "claude-sonnet-5-5",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Anthropic",
+        "family": "claude",
+        "tier": "full",
+        "generation": 1,
+        "variant": "sonnet-5-5"
       },
       "BA252": {
         "backend": "claude",
         "model": "sonnet",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Anthropic",
+        "family": "claude",
+        "tier": "full",
+        "generation": 1,
+        "variant": "sonnet"
       },
       "BA253": {
         "backend": "claude",
         "model": "opus",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "Anthropic",
+        "family": "claude",
+        "tier": "full",
+        "generation": 1,
+        "variant": "opus"
       },
       "BA254": {
         "backend": "codex",
         "model": "gpt-6.1-sol",
         "backend_version": null,
-        "status": "active"
+        "status": "active",
+        "lab": "OpenAI",
+        "family": "codex",
+        "tier": "full",
+        "generation": 2,
+        "variant": "sol"
       }
     },
     "loop_shapes": {
@@ -1163,6 +1388,37 @@
       "deprecated",
       "archived"
     ],
+    "classification": {
+      "schema_version": "1",
+      "_note": "Esquema congelado (WOT-2026-089h-1). Dependientes lo citan como 'classification schema v<N> @ <SHA del commit>'. Un cambio incompatible exige schema_version nueva. Validador: scripts/check_ensemble_registry_classification.py",
+      "required_fields": [
+        "lab",
+        "family",
+        "tier",
+        "generation"
+      ],
+      "tiers": [
+        "full",
+        "flash"
+      ],
+      "required_for_status": [
+        "active"
+      ],
+      "labs": [
+        "Alibaba",
+        "Anthropic",
+        "Cohere",
+        "DeepSeek",
+        "Google",
+        "MiniMax",
+        "Mistral AI",
+        "Moonshot",
+        "NVIDIA",
+        "OpenAI",
+        "Xiaomi",
+        "Zhipu"
+      ]
+    },
     "eligible_coverage": {
       "MANAGER_REVIEW:repo_motor": {
         "backend_keys": [

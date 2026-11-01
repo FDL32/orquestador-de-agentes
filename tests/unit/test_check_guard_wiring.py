@@ -284,6 +284,10 @@ EXPECTED_WIRED_REAL = {
     "check_skill_collisions",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "check_ticket_nomenclature",  # WOT-2026-024w: cableado en .pre-commit-config.yaml (always_run)
     "validate_agent_config",  # WOT-2026-044w: cableado en .pre-commit-config.yaml (hook validate-agent-config, always_run)
+    # WOT-2026-089h-1: cableado via import estatico en validate_agent_config.py
+    # (hook pre-commit validate-agent-config, always_run); su test fija que main()
+    # sale 1 ante un endpoint active sin clasificar.
+    "check_ensemble_registry_classification",
     # WOT-2026-026t DoD-(c): cableado en .pre-commit-config.yaml (always_run,
     # stages: [pre-commit]). WIRED verificado a mano ademas del parseo: el hook
     # `check-stale-operational-note` invoca el script en cada commit, y su

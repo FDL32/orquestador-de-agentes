@@ -28,6 +28,11 @@ try:
 except ImportError:
     from scripts.discover_skills import discover_skills, extract_frontmatter
 
+try:
+    from check_ensemble_registry_classification import lint_config_file
+except ImportError:
+    from scripts.check_ensemble_registry_classification import lint_config_file
+
 # Motor-explicit root (M9): the repo that owns THIS script, never the env.
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
 _AGENT_DIR = MOTOR_ROOT / ".agent"
@@ -148,6 +153,19 @@ def validate_motor_agents_config() -> str | None:
     return None
 
 
+def validate_ensemble_registry_classification() -> list[str]:
+    """Gate de clasificacion de endpoints del registro del MOTOR (WOT-2026-089h-1).
+
+    Before: MOTOR_ROOT/.agent/config/agents.json existe (misma resolucion
+        motor-explicita que `validate_motor_agents_config`).
+    During: delega en `check_ensemble_registry_classification.lint_config_file`,
+        que es la UNICA capa del esquema (lab/family/tier/generation); aqui no
+        se redeclara ninguna regla. Solo lectura.
+    After: lista de hallazgos (vacia = coherente); el llamador imprime y sale 1.
+    """
+    return lint_config_file(MOTOR_ROOT / ".agent" / "config" / "agents.json")
+
+
 def main() -> int:
     # 1. Load configurations (always succeeds due to defaults)
     load_allowlist()
@@ -171,6 +189,14 @@ def main() -> int:
     agents_error = validate_motor_agents_config()
     if agents_error:
         print(f"Validation FAILED: agents.json invalid: {agents_error}")
+        return 1
+
+    # 5. Validate the endpoint classification of the motor's registry
+    classification_errors = validate_ensemble_registry_classification()
+    if classification_errors:
+        print("Validation FAILED: ensemble_registry classification:")
+        for err in classification_errors:
+            print(f"  - {err}")
         return 1
 
     print("Configuration valid — all checks passed.")
