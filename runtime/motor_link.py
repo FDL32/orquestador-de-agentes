@@ -16,6 +16,61 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import NamedTuple
+
+
+LINK_OK = "OK"
+LINK_MISSING = "MISSING"
+LINK_UNREADABLE = "UNREADABLE"
+
+
+class MotorLinkRead(NamedTuple):
+    """Outcome of ``read_motor_link``: ``state`` is one of the three ``LINK_*`` values.
+
+    ``data`` is the parsed object only for ``LINK_OK``. ``reason`` is set only for
+    ``LINK_UNREADABLE`` and starts with the cause: ``decode``, ``json``,
+    ``not-a-dict`` or ``io``.
+    """
+
+    state: str
+    data: dict | None = None
+    reason: str | None = None
+
+
+def read_motor_link(link_path: Path) -> MotorLinkRead:
+    """Read a motor_destination_link.json once, tolerating the PowerShell BOM.
+
+    WOT-2026-126a-1: the single reader that tells "no link" apart from "a link I
+    cannot read". Callers that would otherwise treat both as "no prefix" (and write
+    null over the second) must branch on ``state``.
+
+    Before: ``link_path`` is the full path of the link file; it may not exist.
+    During: one ``read_bytes`` and a ``utf-8-sig`` decode (BOM tolerated, the
+            incident of 2026-10-23) and ``json.loads``. Writes nothing.
+    After: ``LINK_MISSING`` when the file does not exist; ``LINK_OK`` with the dict;
+           ``LINK_UNREADABLE`` with the cause for a decode error, invalid JSON, a
+           JSON root that is not an object, or an OS error other than "not found"
+           (a directory, a permission problem). Never raises.
+    """
+    try:
+        raw = link_path.read_bytes()
+    except FileNotFoundError:
+        return MotorLinkRead(LINK_MISSING)
+    except OSError as exc:
+        return MotorLinkRead(LINK_UNREADABLE, reason=f"io: {exc}")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return MotorLinkRead(LINK_UNREADABLE, reason=f"decode: {exc}")
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        return MotorLinkRead(LINK_UNREADABLE, reason=f"json: {exc}")
+    if not isinstance(data, dict):
+        return MotorLinkRead(
+            LINK_UNREADABLE, reason=f"not-a-dict: {type(data).__name__}"
+        )
+    return MotorLinkRead(LINK_OK, data=data)
 
 
 def resolve_motor_root(project_root: Path) -> Path | None:

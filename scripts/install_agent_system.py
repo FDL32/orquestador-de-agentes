@@ -1516,24 +1516,67 @@ def flip_profile_in_destination(
         print(f"[WARN] Failed to flip active_profile in {config_file}: {e}")
 
 
+class MotorLinkUnreadableError(Exception):
+    """The existing motor_destination_link.json cannot be read, so its prefix is unknown."""
+
+
+def _read_motor_link(link_file: Path):
+    """``runtime.motor_link.read_motor_link`` loaded by path from this motor.
+
+    Loaded from ``TEMPLATE_ROOT`` (the motor this script belongs to), not through
+    ``sys.path``: a ``runtime`` module already imported from somewhere else must not
+    answer for the link reader. A motor without the helper fails loudly (ImportError):
+    degrading to "no prefix" is the bug this reader exists to prevent.
+    """
+    import importlib.util
+
+    module_path = TEMPLATE_ROOT / "runtime" / "motor_link.py"
+    spec = importlib.util.spec_from_file_location("_motor_link_126a", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.read_motor_link(link_file)
+
+
+def _link_prefix_problem(link_file: Path, ticket_prefix: str | None) -> str | None:
+    """Message when a sync without ``--prefix`` would have to overwrite an unreadable link.
+
+    Before: ``link_file`` is the destination's motor_destination_link.json (may not exist).
+    During: reads it once (BOM tolerated). Writes nothing.
+    After: None when a ``--prefix`` was given, the link is missing, or it is readable;
+           otherwise the P7 message naming the cause and the two ways out.
+    """
+    if ticket_prefix is not None:
+        return None
+    result = _read_motor_link(link_file)
+    if result.state != "UNREADABLE":
+        return None
+    return (
+        f"P7: motor_destination_link.json ilegible en {link_file} ({result.reason}): "
+        "no se puede conservar su ticket_prefix y el sync no escribira "
+        "ticket_prefix: null por no poder leerlo; repara el fichero o pasa "
+        "--prefix <PREFIJO>"
+    )
+
+
 def _read_existing_ticket_prefix(link_file: Path) -> str | None:
     """Return the ticket_prefix already declared in link_file, or None.
 
-    Before: link_file may or may not exist; if it does, it may be malformed.
-    During: reads the JSON and pulls ticket_prefix. Any failure (missing file,
-            bad JSON, unexpected shape) degrades to None -- this is a
-            best-effort preservation, never a hard failure of the install.
-    After: returns the existing prefix string, or None.
+    Before: link_file may or may not exist; if it does, it may be unreadable.
+    During: one tolerant read (UTF-8 BOM accepted) through ``read_motor_link``.
+    After: the existing prefix string; None when the link is missing or declares no
+           prefix. Raises ``MotorLinkUnreadableError`` (cause in the message) when
+           the link exists but cannot be read: "unknown" is not "no prefix".
     """
-    if not link_file.exists():
+    result = _read_motor_link(link_file)
+    if result.state == "UNREADABLE":
+        raise MotorLinkUnreadableError(
+            f"{link_file} ilegible ({result.reason}): ticket_prefix no recuperable"
+        )
+    if result.data is None:
         return None
-    try:
-        data = json.loads(link_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    existing = data.get("ticket_prefix")
+    existing = result.data.get("ticket_prefix")
     return existing if isinstance(existing, str) and existing else None
 
 
@@ -2595,7 +2638,9 @@ def run_sync_preflight(
             it will be copied/updated, the destination's otherwise) is a valid dict;
             P4 ``.agent/`` is writable, no planned write lands on a type conflict or a
             link (``_write_target_problems``), and, when a backup is planned,
-            ``runtime`` and ``runtime/sync_backups`` are real directories. (P1, P3 and
+            ``runtime`` and ``runtime/sync_backups`` are real directories; P7 (126a-1)
+            without ``--prefix`` the motor link, if it exists, is readable (an
+            unreadable one would lose its ticket_prefix). (P1, P3 and
             P5 are non-blocking: they surface as [WARN]/[NOTE] lines; P6, an
             unreadable tree, is raised by ``build_sync_plan``.)
     After: returns the list of failure messages (empty = go). Writes nothing.
@@ -2628,6 +2673,11 @@ def run_sync_preflight(
         problem = SyncBackup(project_agent).chain_problem()
         if problem is not None:
             failures.append(f"P4: {problem}")
+    link_problem = _link_prefix_problem(
+        project_agent / "config" / "motor_destination_link.json", ticket_prefix
+    )
+    if link_problem is not None:
+        failures.append(link_problem)
     return failures
 
 

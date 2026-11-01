@@ -1705,12 +1705,16 @@ def test_clear_ticket_prefix_nulls_it_explicitly(tmp_path):
     assert _read_prefix(link) is None
 
 
-def test_malformed_existing_link_degrades_to_none(tmp_path):
-    """Preservation is best-effort: a corrupt link must not crash the install."""
+def test_malformed_existing_link_no_longer_degrades_to_null(tmp_path):
+    """WOT-2026-126a-1 replaces the 023i "degrades to None" contract: a link that
+    cannot be read is NOT "no prefix" -- writing `ticket_prefix: null` over it is the
+    silent data loss this ticket closes. Without an explicit prefix the writer refuses
+    and the unreadable file keeps its bytes."""
     link = _write_link(tmp_path, prefix="WOT")
     link.write_text("{ not json", encoding="utf-8")
-    link = _write_link(tmp_path, prefix=None)
-    assert _read_prefix(link) is None
+    with pytest.raises(ias.MotorLinkUnreadableError, match="json"):
+        _write_link(tmp_path, prefix=None)
+    assert link.read_text(encoding="utf-8") == "{ not json"
 
 
 # ---------------------------------------------------------------------------
@@ -3991,3 +3995,143 @@ def test_148a_h1_auxiliary_final_link_is_p4_preflight_before_any_mutation(
     assert _tree_140a(dest) == before_dest
     assert _tree_140a(outside) == before_outside
     assert sentinel.read_text(encoding="utf-8") == "untouched\n"
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-126a-1: el --sync sin --prefix no borra el ticket_prefix de un link con BOM,
+# ni de ninguno que no pueda leer. Medido en 2026-11-01: link con BOM + prefijo FDL +
+# `--sync --dry-run` => `"ticket_prefix": null`. Todo fixture bajo `tmp_path`; los dos
+# links reales de la ficha NO se tocan.
+# ---------------------------------------------------------------------------
+
+_BOM_126A = b"\xef\xbb\xbf"
+_LINK_REL_126A = Path(".agent") / "config" / "motor_destination_link.json"
+
+
+def _link_126a(dest: Path, raw: bytes) -> Path:
+    link = dest / _LINK_REL_126A
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_bytes(raw)
+    return link
+
+
+def _prefixed_payload_126a() -> bytes:
+    return json.dumps(
+        {"motor_root": "x", "destination_id": "dest", "ticket_prefix": "FDL"}
+    ).encode("utf-8")
+
+
+def _prefix_on_disk_126a(link: Path) -> object:
+    return json.loads(link.read_text(encoding="utf-8"))["ticket_prefix"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_126a1_sync_without_prefix_keeps_the_prefix_of_a_bom_link(
+    tmp_path, capsys, dry_run
+):
+    """DoD (5): the real sync over a link with BOM keeps `FDL`. Before the fix the
+    strict reader called the BOM a decode failure and the sync wrote null (dry-run
+    printed the null payload).
+
+    Mutation-to-prove: M1 -- read the link with `utf-8` again inside the helper and
+    this goes red (`None != 'FDL'`).
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    link = _link_126a(dest, _BOM_126A + _prefixed_payload_126a())
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert rc == 0, out
+    if dry_run:
+        assert '"ticket_prefix": "FDL"' in out
+        assert link.read_bytes().startswith(_BOM_126A)
+    else:
+        assert _prefix_on_disk_126a(link) == "FDL"
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    ("raw", "cause"),
+    [
+        (b'{"motor_root": "C:\\x", "ticket_prefix": "FDL"}', "json"),
+        (b"{ not json", "json"),
+        (b'{"ticket_prefix": "\xff\xfe"}', "decode"),
+        (b'["ticket_prefix"]', "not-a-dict"),
+    ],
+)
+def test_126a1_sync_without_prefix_fails_on_an_unreadable_link_and_writes_nothing(
+    tmp_path, capsys, raw, cause, dry_run
+):
+    """DoD (3): UNREADABLE (bad escape, bad JSON, bad bytes, not a dict) + no
+    `--prefix` => rc 1, the message names the file and the cause, the destination is
+    byte-identical (preflight, before any copy) and no `ticket_prefix: null` exists.
+
+    Mutations: M2 -- drop the UNREADABLE branch (treat as "no prefix") and rc is 0 with
+    the link rewritten; M5 -- write null on UNREADABLE and the link bytes change.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    link = _link_126a(dest, raw)
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P7" in out
+    assert "motor_destination_link.json" in out
+    assert cause in out
+    assert "--prefix" in out
+    assert link.read_bytes() == raw
+    assert _tree_140a(dest) == before
+
+
+def test_126a1_explicit_prefix_repairs_an_unreadable_link(tmp_path, capsys):
+    """With an explicit `--prefix` the unreadable link is REPAIRED, not refused: the
+    caller states the one field that cannot be recovered, nothing readable is lost
+    (every other field is regenerated from the motor on each sync anyway), and the
+    alternative -- refusing -- would leave no way to fix a broken link from the CLI.
+
+    Mutation-to-prove: make P7 ignore `ticket_prefix` and this is rc 1.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    link = _link_126a(dest, b"{ not json")
+
+    rc, out = _sync_140a(motor, dest, capsys, ticket_prefix="XXX")
+
+    assert rc == 0, out
+    assert _prefix_on_disk_126a(link) == "XXX"
+
+
+def test_126a1_missing_link_in_a_new_destination_is_still_created(tmp_path, capsys):
+    """Control (M4): MISSING is not UNREADABLE. A destination with no link yet gets one
+    from a sync without `--prefix`, with a null prefix.
+
+    Mutation-to-prove: M4 -- treat MISSING as UNREADABLE and rc becomes 1.
+    """
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    assert not (dest / _LINK_REL_126A).exists()
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 0, out
+    assert _prefix_on_disk_126a(dest / _LINK_REL_126A) is None
+
+
+def test_126a1_writer_refuses_null_on_unreadable_but_honours_clear(tmp_path):
+    """The writer itself (the layer under both entry points): UNREADABLE + no prefix
+    raises; `clear_ticket_prefix=True` is the explicit way to null and still works.
+
+    Mutation-to-prove: M3 -- let a non-dict count as OK (data={}) and the first raise
+    disappears.
+    """
+    link = _write_link(tmp_path, prefix="WOT")
+    link.write_bytes(b'["not", "a", "dict"]')
+    with pytest.raises(ias.MotorLinkUnreadableError, match="not-a-dict"):
+        _write_link(tmp_path, prefix=None)
+    assert link.read_bytes() == b'["not", "a", "dict"]'
+
+    link = _write_link(tmp_path, prefix=None, clear_ticket_prefix=True)
+    assert _prefix_on_disk_126a(link) is None

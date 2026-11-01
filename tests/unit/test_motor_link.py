@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 from runtime.motor_link import (
+    LINK_MISSING,
+    LINK_OK,
+    LINK_UNREADABLE,
+    read_motor_link,
     resolve_motor_controller,
     resolve_motor_root,
     resolve_motor_script,
@@ -171,3 +175,83 @@ def test_resolve_motor_root_returns_resolved_path(
     assert result != raw_path, (
         "resolve_motor_root must call .resolve(): returned the raw non-canonical path"
     )
+
+
+# WOT-2026-126a-1: single tolerant reader of the link, three stable states
+
+_BOM = b"\xef\xbb\xbf"
+_PAYLOAD = {"motor_root": "M", "ticket_prefix": "FDL"}
+
+
+def _link_with_bytes(project_root: Path, raw: bytes) -> Path:
+    link_path = project_root / ".agent" / "config" / "motor_destination_link.json"
+    link_path.write_bytes(raw)
+    return link_path
+
+
+def test_read_motor_link_ok_without_bom(fake_project_root: Path):
+    link = _link_with_bytes(fake_project_root, json.dumps(_PAYLOAD).encode("utf-8"))
+    result = read_motor_link(link)
+    assert result.state == LINK_OK
+    assert result.data == _PAYLOAD
+    assert result.reason is None
+
+
+def test_read_motor_link_ok_with_bom(fake_project_root: Path):
+    """The incident: PowerShell 5.1 leaves a BOM; the strict reader called it broken."""
+    link = _link_with_bytes(
+        fake_project_root, _BOM + json.dumps(_PAYLOAD).encode("utf-8")
+    )
+    result = read_motor_link(link)
+    assert result.state == LINK_OK
+    assert result.data == _PAYLOAD
+
+
+def test_read_motor_link_missing(fake_project_root: Path):
+    link = fake_project_root / ".agent" / "config" / "motor_destination_link.json"
+    result = read_motor_link(link)
+    assert result.state == LINK_MISSING
+    assert result.data is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "cause"),
+    [
+        (b'{"motor_root": "C:\\x", "ticket_prefix": "FDL"}', "json"),
+        (b"{ not json", "json"),
+        (b"", "json"),
+        (b'{"ticket_prefix": "\xff\xfe"}', "decode"),
+        (b'["motor_root"]', "not-a-dict"),
+        (b"null", "not-a-dict"),
+    ],
+)
+def test_read_motor_link_unreadable_names_the_cause(
+    fake_project_root: Path, raw: bytes, cause: str
+):
+    result = read_motor_link(_link_with_bytes(fake_project_root, raw))
+    assert result.state == LINK_UNREADABLE
+    assert result.data is None
+    assert result.reason is not None
+    assert result.reason.startswith(cause)
+
+
+def test_read_motor_link_directory_is_unreadable_not_a_crash(fake_project_root: Path):
+    link = fake_project_root / ".agent" / "config" / "motor_destination_link.json"
+    link.mkdir()
+    result = read_motor_link(link)
+    assert result.state == LINK_UNREADABLE
+    assert result.reason is not None
+    assert result.reason.startswith("io")
+
+
+def test_resolve_motor_root_keeps_its_tolerant_contract(
+    fake_project_root: Path, fake_motor_root: Path
+):
+    """126a-1 adds a reader; it does not change resolve_motor_root (BOM ok, broken None)."""
+    link = _link_with_bytes(
+        fake_project_root,
+        _BOM + json.dumps({"motor_root": str(fake_motor_root)}).encode("utf-8"),
+    )
+    assert resolve_motor_root(fake_project_root) == fake_motor_root.resolve()
+    link.write_bytes(b"{ not json")
+    assert resolve_motor_root(fake_project_root) is None
