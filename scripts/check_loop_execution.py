@@ -617,15 +617,19 @@ def diagnose_silence(row: dict) -> str:
     """
     failure_mode = (row.get("failure_mode") or "").strip()
     # WOT-2026-152s-1: `timeout:` lo escribe el watchdog de `loop-round`
-    # (`--watchdog-s`) cuando la lente NO respondio dentro del limite y se mato su
-    # arbol de procesos. No es una lente muda (no devolvio vacio: no devolvio
-    # NADA) ni un fallo de transporte (el backend no rechazo ni cayo): la accion
-    # es distinta -- subir el limite o reservar otra lente, no revisar el bundle.
+    # (`--watchdog-s`) cuando la lente NO respondio dentro del limite y se INTENTO
+    # matar su arbol de procesos. No es una lente muda (no devolvio vacio: no
+    # devolvio NADA) ni un fallo de transporte (el backend no rechazo ni cayo): la
+    # accion es distinta -- subir el limite o reservar otra lente, no revisar el
+    # bundle. El texto NO afirma la muerte del arbol: la fila puede decir `kill NO
+    # confirmado; ... puede seguir vivo`, y esa confirmacion (o su ausencia) viaja
+    # en el Detalle, copiado del failure_mode.
     if failure_mode.startswith(TIMEOUT_FAILURE_PREFIX):
         return (
-            "la lente NO respondio dentro del limite (watchdog de la invocacion) "
-            "y su arbol de procesos fue matado: no es una respuesta vacia ni un "
-            f"fallo de transporte. Detalle: {failure_mode}"
+            "la lente NO respondio dentro del limite del watchdog de la invocacion; "
+            "se intento matar su arbol de procesos y la fila dice si el kill se "
+            "confirmo: no es una respuesta vacia ni un fallo de transporte. "
+            f"Detalle: {failure_mode}"
         )
     if failure_mode:
         # La adjudicacion (o el registrador, tras WOT-2026-046h) ya clasifico

@@ -11,12 +11,15 @@ termina y lanza un nieto)
    excepcion inesperada, indistinguible de una lente muda o de un fallo de
    transporte.
 
-QUE HACE `--watchdog-s N` (aditivo: sin la bandera no cambia ni un byte)
+QUE HACE `--watchdog-s N` (aditivo en el CAMINO DE EJECUCION: sin la bandera no
+cambian stdout, stderr, rc ni filas -- golden de 5 escenarios. Cambian el texto
+de `--help` y la lectura de filas preexistentes con prefijo `timeout:`, que CO-19
+midio en 0 de 7976 filas de 4 raices)
 ------------------------------------------------------------------------
 El proceso que recibe la bandera NO ejecuta la ronda: relanza el mismo comando
 como HIJO y espera N s. Si el hijo termina antes, su stdout/stderr/rc pasan tal
-cual. Si vence, mata el ARBOL del hijo (taskkill /T /F; el supervisor y su padre
-quedan fuera por construccion), escribe UNA fila `timeout:` y sale con
+cual. Si vence, INTENTA matar el ARBOL del hijo (taskkill /T /F; el supervisor y su
+padre quedan fuera por construccion), escribe UNA fila `timeout:` y sale con
 `EXIT_WATCHDOG_TIMEOUT` (5).
 
 LIMITES DECLARADOS (no los absorbe este fichero)

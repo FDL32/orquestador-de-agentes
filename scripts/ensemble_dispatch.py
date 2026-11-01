@@ -1734,7 +1734,8 @@ EXIT_NO_CONTRIBUTION = 3
 EXIT_INVALID_INPUT = 4
 
 # WOT-2026-152s-1: codigo de salida de `loop-round --watchdog-s N` cuando el
-# limite POR INVOCACION vencio y el arbol del hijo fue matado. Distinto de 3
+# limite POR INVOCACION vencio y se intento matar el arbol del hijo (la fila dice
+# si el kill se confirmo). Distinto de 3
 # (`[NO-APORTA]`: la ronda corrio y devolvio vacio o transporte fallido) y de 2
 # (`[ERROR]`): "la lente no respondio a tiempo" no es "respondio mal". Medido
 # 2026-11-01: ningun consumidor del repo ni de los .sh de las coordinadoras
@@ -8237,8 +8238,9 @@ def main(argv: list[str] | None = None) -> int:
             "2 [ERROR]; 3 [NO-APORTA] la ronda corrio y se registro pero el "
             "transporte fallo o la respuesta vino vacia (WOT-2026-086d); "
             "4 [INVALID] la invocacion estaba mal (ValueError; WOT-2026-046d); "
-            "5 [TIMEOUT] vencio --watchdog-s y se mato el arbol del hijo "
-            "(WOT-2026-152s-1)."
+            "5 [TIMEOUT] vencio --watchdog-s: se intenta matar el arbol del hijo "
+            "y se registra el timeout (confirmacion del kill y dedupe segun las "
+            "condiciones documentadas en la fila `timeout:`) (WOT-2026-152s-1)."
         ),
     )
     p_loop.add_argument("--profile", required=True)
@@ -8291,8 +8293,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="limite DURO por invocacion en segundos (WOT-2026-152s-1). Por "
         "defecto no hay (solo el timeout_s del backend). Con el, la ronda corre "
-        "como proceso hijo; si vence se mata su arbol de procesos, se escribe "
-        "UNA fila `timeout:` en scorecard.jsonl y sale con 5",
+        "como proceso hijo; si vence se intenta matar su arbol de procesos y se "
+        "registra el timeout en scorecard.jsonl (una fila `timeout:`; la "
+        "confirmacion del kill y el dedupe, segun las condiciones documentadas) "
+        "y sale con 5",
     )
     p_loop.add_argument("--project-root", required=True)
 

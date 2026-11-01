@@ -2214,3 +2214,40 @@ def test_timeout_prefix_in_the_middle_of_a_transport_failure_is_not_a_timeout(ca
     out = capsys.readouterr().out
     assert "MUDA BA11" in out
     assert "TIMEOUT BA11" not in out
+
+
+def test_timeout_diagnosis_does_not_assert_the_kill_it_cannot_know(capsys):
+    """El diagnostico de un `timeout:` NO afirma por su cuenta que el arbol fue
+    matado: la fila puede decir `kill NO confirmado; ... puede seguir vivo` y el
+    informe no puede decir lo contrario. La confirmacion viaja en el `Detalle`
+    (copiado del failure_mode). Mutacion M22 (reponer 'fue matado' fijo) -> rojo."""
+    sin_confirmar = _timeout_round("BA07")
+    sin_confirmar["failure_mode"] = (
+        "timeout: watchdog de 600s vencido sin respuesta de la lente; "
+        "kill NO confirmado; el hijo (pid 4242) puede seguir vivo"
+    )
+    diagnosis = cle.diagnose_silence(sin_confirmar)
+    assert "fue matado" not in diagnosis
+    assert "kill NO confirmado" in diagnosis, "el Detalle debe conservar la salvedad"
+    assert "NO respondio dentro del limite" in diagnosis
+
+    v = cle.audit_commit(
+        [_ronda("BA10"), sin_confirmar], [_emitted()], commit_sha="abc", min_distinct=2
+    )
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    assert "TIMEOUT BA07" in out
+    assert "fue matado" not in out
+    assert "kill NO confirmado" in out
+
+
+def test_timeout_diagnosis_shows_a_confirmed_kill_only_through_the_row_detail():
+    """CONTROL POSITIVO: con una fila `timeout: ... matado` el `Detalle` sigue
+    mostrando 'matado' (viene de la fila, que SI lo confirmo), pero el texto fijo
+    del diagnostico no lo afirma."""
+    confirmada = _timeout_round("BA07")  # failure_mode: "... (pid 4242) matado"
+    diagnosis = cle.diagnose_silence(confirmada)
+
+    assert "(pid 4242) matado" in diagnosis
+    assert "fue matado" not in diagnosis
+    assert "kill NO confirmado" not in diagnosis
