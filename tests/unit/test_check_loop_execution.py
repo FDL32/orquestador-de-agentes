@@ -2283,6 +2283,267 @@ _RS_REAL_ENTRY = {
 }
 
 
+# Literales CAPTURADOS de la version 87f79a85 (pre-152t) con la entrada real
+# copiada arriba: veredicto, recibo y salida impresa de dos escenarios.
+_LEGACY_GOLDEN = {
+    "hung_one_below_min": {
+        "printed": "[loop-exec] FAIL abc: 1/2 lentes distintas ['BA03']\n"
+        "[loop-exec]   TIMEOUT BA07: la lente NO respondio dentro "
+        "del limite del watchdog de la invocacion; se intento matar "
+        "su arbol de procesos y la fila dice si el kill se "
+        "confirmo: no es una respuesta vacia ni un fallo de "
+        "transporte. Detalle: timeout: watchdog de 1500s vencido "
+        "sin respuesta de la lente; arbol de procesos del hijo (pid "
+        "4242) matado (output_chars=0)\n"
+        "[loop-exec]   NONCE N1...: 1/2 lentes distintas ['BA03'] "
+        "(esa corrida no llega a N)\n",
+        "receipt": {
+            "commit_sha": "abc",
+            "coverage_key": "MANAGER_REVIEW:repo_motor",
+            "debt": None,
+            "deliverable_type": "code",
+            "distinct_backends": ["BA03"],
+            "eligible_declared": ["BA03", "BA07", "BA254"],
+            "eligible_effective": ["BA03", "BA07", "BA254"],
+            "exempt": False,
+            "loop_id": None,
+            "min_aplicado": 2,
+            "min_origen": "eligible_coverage",
+            "no_contadas": [],
+            "nonces": ["N1"],
+            "ok": False,
+            "override": None,
+            "policy_min": 4,
+            "ticket": ["WOT-2026-152t"],
+        },
+        "verdict": {
+            "commit_sha": "abc",
+            "coverage_key": "MANAGER_REVIEW:repo_motor",
+            "coverage_source": "agents.json::ensemble_registry.eligible_coverage",
+            "debt": None,
+            "debt_waived": False,
+            "declared_removed": [],
+            "deliverable_type": "code",
+            "delivery_authority": "repo_motor",
+            "distinct_backends": ["BA03"],
+            "eligible_declared": ["BA03", "BA07", "BA254"],
+            "eligible_effective": ["BA03", "BA07", "BA254"],
+            "exempt": False,
+            "fabricated_rounds": [],
+            "loop_id": None,
+            "min_aplicado": 2,
+            "min_distinct": 2,
+            "min_origen": "eligible_coverage",
+            "not_eligible_backends": [],
+            "ok": False,
+            "orphan_nonces": [],
+            "override": None,
+            "override_below_policy": False,
+            "per_nonce": [
+                {
+                    "backends": ["BA03"],
+                    "distinct": 1,
+                    "ineligible": [],
+                    "nonce": "N1",
+                    "ok": False,
+                }
+            ],
+            "phase": "MANAGER_REVIEW",
+            "policy_min": 4,
+            "silent_rounds": [
+                {
+                    "backend_key": "BA07",
+                    "diagnosis": "la lente NO respondio "
+                    "dentro del limite del "
+                    "watchdog de la "
+                    "invocacion; se intento "
+                    "matar su arbol de "
+                    "procesos y la fila dice "
+                    "si el kill se confirmo: "
+                    "no es una respuesta vacia "
+                    "ni un fallo de "
+                    "transporte. Detalle: "
+                    "timeout: watchdog de "
+                    "1500s vencido sin "
+                    "respuesta de la lente; "
+                    "arbol de procesos del "
+                    "hijo (pid 4242) matado",
+                    "failure_mode": "timeout: watchdog de "
+                    "1500s vencido sin "
+                    "respuesta de la lente; "
+                    "arbol de procesos del "
+                    "hijo (pid 4242) matado",
+                    "outcome": "no-aportacion",
+                    "output_chars": 0,
+                }
+            ],
+            "tickets": ["WOT-2026-152t"],
+        },
+    },
+    "hung_two_and_reserve_answers": {
+        "printed": "[loop-exec] OK abc: 2/2 lentes distintas "
+        "['BA03', 'BA254']\n"
+        "[loop-exec]   TIMEOUT BA07: la lente NO "
+        "respondio dentro del limite del watchdog de la "
+        "invocacion; se intento matar su arbol de "
+        "procesos y la fila dice si el kill se confirmo: "
+        "no es una respuesta vacia ni un fallo de "
+        "transporte. Detalle: timeout: watchdog de 1500s "
+        "vencido sin respuesta de la lente; arbol de "
+        "procesos del hijo (pid 4242) matado "
+        "(output_chars=0)\n"
+        "[loop-exec]   TIMEOUT BA07: la lente NO "
+        "respondio dentro del limite del watchdog de la "
+        "invocacion; se intento matar su arbol de "
+        "procesos y la fila dice si el kill se confirmo: "
+        "no es una respuesta vacia ni un fallo de "
+        "transporte. Detalle: timeout: watchdog de 1500s "
+        "vencido sin respuesta de la lente; arbol de "
+        "procesos del hijo (pid 4242) matado "
+        "(output_chars=0)\n",
+        "receipt": {
+            "commit_sha": "abc",
+            "coverage_key": "MANAGER_REVIEW:repo_motor",
+            "debt": None,
+            "deliverable_type": "code",
+            "distinct_backends": ["BA03", "BA254"],
+            "eligible_declared": ["BA03", "BA07", "BA254"],
+            "eligible_effective": ["BA03", "BA07", "BA254"],
+            "exempt": False,
+            "loop_id": None,
+            "min_aplicado": 2,
+            "min_origen": "eligible_coverage",
+            "no_contadas": [],
+            "nonces": ["N1"],
+            "ok": True,
+            "override": None,
+            "policy_min": 4,
+            "ticket": ["WOT-2026-152t"],
+        },
+        "verdict": {
+            "commit_sha": "abc",
+            "coverage_key": "MANAGER_REVIEW:repo_motor",
+            "coverage_source": "agents.json::ensemble_registry.eligible_coverage",
+            "debt": None,
+            "debt_waived": False,
+            "declared_removed": [],
+            "deliverable_type": "code",
+            "delivery_authority": "repo_motor",
+            "distinct_backends": ["BA03", "BA254"],
+            "eligible_declared": ["BA03", "BA07", "BA254"],
+            "eligible_effective": ["BA03", "BA07", "BA254"],
+            "exempt": False,
+            "fabricated_rounds": [],
+            "loop_id": None,
+            "min_aplicado": 2,
+            "min_distinct": 2,
+            "min_origen": "eligible_coverage",
+            "not_eligible_backends": [],
+            "ok": True,
+            "orphan_nonces": [],
+            "override": None,
+            "override_below_policy": False,
+            "per_nonce": [
+                {
+                    "backends": ["BA03", "BA254"],
+                    "distinct": 2,
+                    "ineligible": [],
+                    "nonce": "N1",
+                    "ok": True,
+                }
+            ],
+            "phase": "MANAGER_REVIEW",
+            "policy_min": 4,
+            "silent_rounds": [
+                {
+                    "backend_key": "BA07",
+                    "diagnosis": "la lente NO "
+                    "respondio "
+                    "dentro del "
+                    "limite del "
+                    "watchdog de la "
+                    "invocacion; se "
+                    "intento matar "
+                    "su arbol de "
+                    "procesos y la "
+                    "fila dice si el "
+                    "kill se "
+                    "confirmo: no es "
+                    "una respuesta "
+                    "vacia ni un "
+                    "fallo de "
+                    "transporte. "
+                    "Detalle: "
+                    "timeout: "
+                    "watchdog de "
+                    "1500s vencido "
+                    "sin respuesta "
+                    "de la lente; "
+                    "arbol de "
+                    "procesos del "
+                    "hijo (pid 4242) "
+                    "matado",
+                    "failure_mode": "timeout: "
+                    "watchdog de "
+                    "1500s "
+                    "vencido sin "
+                    "respuesta de "
+                    "la lente; "
+                    "arbol de "
+                    "procesos del "
+                    "hijo (pid "
+                    "4242) matado",
+                    "outcome": "no-aportacion",
+                    "output_chars": 0,
+                },
+                {
+                    "backend_key": "BA07",
+                    "diagnosis": "la lente NO "
+                    "respondio "
+                    "dentro del "
+                    "limite del "
+                    "watchdog de la "
+                    "invocacion; se "
+                    "intento matar "
+                    "su arbol de "
+                    "procesos y la "
+                    "fila dice si el "
+                    "kill se "
+                    "confirmo: no es "
+                    "una respuesta "
+                    "vacia ni un "
+                    "fallo de "
+                    "transporte. "
+                    "Detalle: "
+                    "timeout: "
+                    "watchdog de "
+                    "1500s vencido "
+                    "sin respuesta "
+                    "de la lente; "
+                    "arbol de "
+                    "procesos del "
+                    "hijo (pid 4242) "
+                    "matado",
+                    "failure_mode": "timeout: "
+                    "watchdog de "
+                    "1500s "
+                    "vencido sin "
+                    "respuesta de "
+                    "la lente; "
+                    "arbol de "
+                    "procesos del "
+                    "hijo (pid "
+                    "4242) matado",
+                    "outcome": "no-aportacion",
+                    "output_chars": 0,
+                },
+            ],
+            "tickets": ["WOT-2026-152t"],
+        },
+    },
+}
+
+
 def _rs_row(backend, *, hang=None, answered=True, nonce="N1", sec=5, commit="abc"):
     """Fila `ronda` con TODOS los campos de `SCORECARD_FIELDS` (formato real).
 
@@ -2572,62 +2833,14 @@ def test_an_excluded_lens_hanging_does_not_activate_a_reserve(monkeypatch):
 )
 def test_invalid_reserve_declaration_fails_closed(monkeypatch, patch):
     """Una reserva mal declarada BLOQUEA con `invalid_coverage`, nunca se ignora
-    ni se degrada a la lista estatica."""
+    ni se degrada a la lista estatica. Aqui None = clave AUSENTE (la otra queda
+    presente); el valor null PRESENTE se prueba aparte."""
     entry = _rs_entry(**patch)
     entry = {k: v for k, v in entry.items() if v is not None}
     rows = [_rs_row("BA03"), _rs_row("BA07", sec=6)]
     v = _rs_audit(monkeypatch, rows, entry=entry)
     assert v["ok"] is False
     assert v["coverage_error"].startswith("invalid_coverage")
-
-
-def test_entry_without_reserve_is_byte_identical_to_the_legacy_verdict(monkeypatch):
-    """ADITIVIDAD con una COPIA LITERAL de la entrada real de agents.json
-    (2026-11-01, no lee el agents.json vivo): una lente colgada no activa nada,
-    el veredicto no gana ninguna clave de reserva y el recibo conserva el
-    conjunto de claves de antes."""
-    entry = json.loads(json.dumps(_RS_REAL_ENTRY))
-    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=3), _rs_row("BA254", sec=30)]
-    v = _rs_audit(
-        monkeypatch,
-        rows,
-        entry=entry,
-        keys=tuple(entry["backend_keys"]),
-    )
-    assert v["ok"] is True
-    assert v["distinct_backends"] == ["BA03", "BA254"]
-    assert not [k for k in v if k.startswith("reserve")]
-    receipt = cle._receipt_view(v)
-    assert sorted(receipt) == sorted(
-        [
-            "ticket",
-            "commit_sha",
-            "loop_id",
-            "nonces",
-            "distinct_backends",
-            "eligible_declared",
-            "eligible_effective",
-            "no_contadas",
-            "deliverable_type",
-            "policy_min",
-            "min_aplicado",
-            "min_origen",
-            "coverage_key",
-            "override",
-            "exempt",
-            "debt",
-            "ok",
-        ]
-    )
-    assert receipt["eligible_declared"] == ["BA03", "BA07", "BA254"]
-
-
-def test_entry_without_reserve_prints_no_reserve_line(monkeypatch, capsys):
-    entry = json.loads(json.dumps(_RS_REAL_ENTRY))
-    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=3)]
-    v = _rs_audit(monkeypatch, rows, entry=entry, keys=tuple(entry["backend_keys"]))
-    cle._print_verdict(v)
-    assert "RESERVA" not in capsys.readouterr().out
 
 
 def test_live_agents_json_coverage_validates_with_the_new_validator():
@@ -2686,3 +2899,166 @@ def test_timeouts_logged_before_the_nonce_was_issued_do_not_activate(monkeypatch
     assert v["ok"] is False
     assert v["reserve_substitutions"] == []
     assert _rs_not_eligible(v) == {"BA254": "reserve_not_activated"}
+
+
+# ---------------------------------------------------------------- ronda 2 (152t)
+def _rs_pairs(v):
+    return [
+        (s["replaced_backend_key"], s["reserve_backend_key"])
+        for s in v["reserve_substitutions"]
+    ]
+
+
+def test_reserve_hanging_earlier_than_the_primary_keeps_the_causal_pairing(
+    monkeypatch,
+):
+    """MAJOR de BA254: la reserva BA254 se cuelga ANTES (ts 10-11) que la
+    primaria BA07 (ts 20-21). El emparejamiento se fija al activar: BA07 -> BA254
+    y despues BA254 -> BA11, no BA254 -> BA254 ni BA07 -> BA11."""
+    entry = _rs_entry(reserve_backend_keys=["BA254", "BA11"])
+    rows = [
+        _rs_row("BA03"),
+        *_rs_hang("BA254", start=10),
+        *_rs_hang("BA07", start=20),
+        _rs_row("BA11", sec=40),
+    ]
+    v = _rs_audit(monkeypatch, rows, entry=entry)
+    assert _rs_pairs(v) == [("BA07", "BA254"), ("BA254", "BA11")]
+    assert v["reserve_exhausted"] == []
+    assert v["ok"] is True
+
+
+def test_reserve_hanging_earlier_with_a_single_reserve_exhausts_the_reserve(
+    monkeypatch,
+):
+    """Misma situacion con UNA reserva: BA07 -> BA254 y lo agotado es BA254 (la
+    reserva colgada), no la primaria BA07."""
+    rows = [
+        _rs_row("BA03"),
+        *_rs_hang("BA254", start=10),
+        *_rs_hang("BA07", start=20),
+    ]
+    v = _rs_audit(monkeypatch, rows)
+    assert _rs_pairs(v) == [("BA07", "BA254")]
+    assert [x["backend_key"] for x in v["reserve_exhausted"]] == ["BA254"]
+    assert v["ok"] is False
+
+
+def test_two_hung_primaries_with_fewer_reserves_are_served_by_first_timestamp(
+    monkeypatch,
+):
+    """Dos primarias colgadas y UNA reserva: la reserva ocupa el sitio de la que
+    se colgo antes (BA07, ts 10), aunque BA03 sea menor por clave; BA03 queda
+    agotada. Mata ordenar por clave en vez de (primer ts, clave)."""
+    rows = [
+        *_rs_hang("BA03", start=20),
+        *_rs_hang("BA07", start=10),
+        _rs_row("BA254", sec=40),
+    ]
+    v = _rs_audit(monkeypatch, rows)
+    assert _rs_pairs(v) == [("BA07", "BA254")]
+    assert [x["backend_key"] for x in v["reserve_exhausted"]] == ["BA03"]
+
+
+def test_a_transport_failure_that_mentions_timeout_is_not_a_hang(monkeypatch):
+    """Un fallo de TRANSPORTE cuyo texto contiene la palabra `timeout` NO es una
+    lente colgada: no activa reserva. Mata `'timeout' in mode`."""
+    mode = "transport_failed: HTTP 408 request timeout (TPM 8000)"
+    assert not cle.is_hang_row(_rs_row("BA07", hang=mode, answered=False))
+    rows = [
+        _rs_row("BA03"),
+        *_rs_hang("BA07", mode=mode),
+        _rs_row("BA254", sec=30),
+    ]
+    v = _rs_audit(monkeypatch, rows)
+    assert v["reserve_substitutions"] == []
+    assert v["ok"] is False
+    assert _rs_not_eligible(v) == {"BA254": "reserve_not_activated"}
+
+
+def test_a_reserve_activated_in_one_instance_stays_ineligible_in_another(
+    monkeypatch,
+):
+    """BA254 se activa en N1 (BA07 colgado alli) pero en N2 nadie se colgo: su
+    ronda de N2 NO cuenta y N2 no llega a N. Mata filtrar reservas entre nonces."""
+    emitted = [_emitted("N1"), _emitted("N2", ts="2026-07-24T10:01:00+00:00")]
+    rows = [
+        _rs_row("BA03", nonce="N1"),
+        *_rs_hang("BA07", nonce="N1"),
+        _rs_row("BA254", nonce="N1", sec=30),
+        _rs_row("BA03", nonce="N2", sec=31),
+        _rs_row("BA254", nonce="N2", sec=32),
+    ]
+    v = _rs_audit(monkeypatch, rows, emitted=emitted)
+    by_nonce = {e["nonce"]: e for e in v["per_nonce"]}
+    assert by_nonce["N1"]["ok"] is True
+    assert by_nonce["N2"]["ok"] is False
+    assert by_nonce["N2"]["backends"] == ["BA03"]
+    assert by_nonce["N2"]["ineligible"] == ["BA254"]
+    assert [s["nonce"] for s in v["reserve_substitutions"]] == ["N1"]
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"reserve_after_timeouts": None},
+        {"reserve_backend_keys": None},
+        {"reserve_backend_keys": None, "reserve_after_timeouts": None},
+        {"reserve_after_timeouts": cle},
+        {"reserve_backend_keys": cle},
+    ],
+)
+def test_reserve_fields_present_but_null_or_absent_are_declared_and_invalid(
+    monkeypatch, patch
+):
+    """Un campo PRESENTE con valor null es DECLARADO e invalido (no se descarta
+    como si faltara): bloquea con `invalid_coverage`. `cle` marca AUSENTE (se
+    borra la clave): con la otra presente tambien es invalido. Ambos null NO
+    apaga el mecanismo."""
+    entry = _rs_entry()
+    for key, value in patch.items():
+        if value is cle:
+            del entry[key]
+        else:
+            entry[key] = value
+    v = _rs_audit(monkeypatch, [_rs_row("BA03"), _rs_row("BA07", sec=6)], entry=entry)
+    assert v["ok"] is False
+    assert v["coverage_error"].startswith("invalid_coverage")
+
+
+def test_declares_reserve_by_key_presence():
+    assert cle._declares_reserve({"reserve_backend_keys": None}) is True
+    assert cle._declares_reserve({"reserve_backend_keys": ["BA254"]}) is True
+    assert cle._declares_reserve({"backend_keys": ["BA03"]}) is False
+    assert cle._declares_reserve(None) is False
+
+
+def _rs_legacy_capture(monkeypatch, name, capsys):
+    entry = json.loads(json.dumps(_RS_REAL_ENTRY))
+    rows = {
+        "hung_two_and_reserve_answers": [
+            _rs_row("BA03"),
+            *_rs_hang("BA07", times=2),
+            _rs_row("BA254", sec=30),
+        ],
+        "hung_one_below_min": [_rs_row("BA03"), *_rs_hang("BA07", times=1)],
+    }[name]
+    v = _rs_audit(monkeypatch, rows, entry=entry, keys=tuple(entry["backend_keys"]))
+    capsys.readouterr()
+    cle._print_verdict(v)
+    return v, cle._receipt_view(v), capsys.readouterr().out
+
+
+@pytest.mark.parametrize("name", sorted(_LEGACY_GOLDEN))
+def test_entry_without_reserve_matches_the_pre_152t_verdict_receipt_and_output(
+    monkeypatch, capsys, name
+):
+    """ADITIVIDAD COMPLETA: veredicto + recibo + salida impresa con la entrada
+    real (copia literal) son IGUALES a los literales capturados de la version
+    87f79a85 (`git show 87f79a85:scripts/check_loop_execution.py` en una copia
+    temporal, fuera del repo)."""
+    v, receipt, printed = _rs_legacy_capture(monkeypatch, name, capsys)
+    golden = _LEGACY_GOLDEN[name]
+    assert v == golden["verdict"]
+    assert receipt == golden["receipt"]
+    assert printed == golden["printed"]

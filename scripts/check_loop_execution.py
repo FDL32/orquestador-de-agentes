@@ -260,19 +260,21 @@ def _validate_reserve_fields(entry: dict, config: dict) -> str | None:
 
     Before: ``entry`` es un dict que ya paso ``_validate_coverage_keys`` (sus
         ``backend_keys`` y ``excluded_backend_keys`` son validas).
-    During: sin ``reserve_backend_keys`` ni ``reserve_after_timeouts`` no hay
-        nada que validar (mecanismo APAGADO, camino legacy). Con cualquiera de
-        los dos exige AMBOS: lista no vacia, sin duplicados, de claves de
+    During: sin las claves ``reserve_backend_keys`` ni ``reserve_after_timeouts``
+        no hay nada que validar (mecanismo APAGADO, camino legacy). Con la
+        PRESENCIA de cualquiera de las dos (aunque valga null) exige AMBOS: lista no vacia, sin duplicados, de claves de
         ``ensemble_registry.backend_keys`` y disjunta de ``backend_keys`` y de
         ``excluded_backend_keys``; y ``reserve_after_timeouts`` entero >= 1
         (el N de la politica es DECLARADO, nunca un default implicito).
     After: reason ``invalid_coverage: ...`` o None. Una entrada con reserva
         invalida bloquea el veredicto (fail-closed), nunca se ignora.
     """
+    if "reserve_backend_keys" not in entry and "reserve_after_timeouts" not in entry:
+        return None
+    # Un campo PRESENTE con valor null cuenta como DECLARADO (e invalido): solo la
+    # AUSENCIA de ambas claves apaga el mecanismo.
     keys = entry.get("reserve_backend_keys")
     n = entry.get("reserve_after_timeouts")
-    if keys is None and n is None:
-        return None
     if not isinstance(keys, list) or not keys:
         return "invalid_coverage: reserve_backend_keys ausente o vacio"
     if any(not isinstance(k, str) or not k.strip() for k in keys):
@@ -1153,27 +1155,39 @@ def _activate_reserves_for_nonce(
     primary: list[str],
     reserves: list[str],
     n: int,
-) -> tuple[list[str], list[str]]:
-    """Reservas activadas y claves colgadas de UNA instancia (ver reserve_activation).
+) -> tuple[list[str], list[tuple[str, str]], list[str]]:
+    """Reservas activadas, pares (sustituida, reserva) y colgadas sin reserva.
 
     Before: ``hangs`` clave -> ts de sus filas de colgado en el nonce; ``reserves``
         ya filtradas a las ``active`` y en orden declarado.
     During: una clave esta COLGADA si acumula >= ``n`` filas; solo cuentan las
-        primarias y las reservas ya activadas. Se activa la siguiente reserva
-        mientras haya mas colgadas que reservas activadas (una colgada activada
-        tambien puede colgarse y pide otra).
-    After: ``(activadas, colgadas)``; colgadas ordenadas por (primer ts, clave).
+        primarias y las reservas ya activadas. Cada activacion se EMPAREJA EN ESE
+        MOMENTO con la primera colgada aun no sustituida, por (primer ts,
+        clave): la relacion causal queda fijada al activar y no se recalcula
+        despues. Una reserva activada que tambien se cuelga entra al conjunto de
+        colgadas pendientes y pide la siguiente (aunque sus ts sean anteriores a
+        los de la primaria que sustituyo).
+    After: ``(activadas, pares, agotadas)``; ``agotadas`` = colgadas aun sin
+        sustituir cuando ya no quedan reservas libres, por (primer ts, clave).
     """
     activated: list[str] = []
+    pairs: list[tuple[str, str]] = []
+    substituted: set[str] = set()
     while True:
-        pool = [*primary, *activated]
-        hung = sorted(
-            (k for k in pool if len(hangs.get(k, [])) >= n),
+        pending = sorted(
+            (
+                k
+                for k in [*primary, *activated]
+                if len(hangs.get(k, [])) >= n and k not in substituted
+            ),
             key=lambda k: (min(hangs[k]), k),
         )
-        if len(activated) >= len(hung) or len(activated) >= len(reserves):
-            return activated, hung
-        activated.append(reserves[len(activated)])
+        if not pending or len(activated) >= len(reserves):
+            return activated, pairs, pending
+        reserve = reserves[len(activated)]
+        activated.append(reserve)
+        pairs.append((pending[0], reserve))
+        substituted.add(pending[0])
 
 
 def reserve_activation(
@@ -1199,8 +1213,10 @@ def reserve_activation(
     During: por instancia (``challenge_nonce`` estructuralmente valido) cuenta
         las filas de colgado de cada clave (``is_hang_row``: ``timeout:`` del
         watchdog O timeout interno de 900 s). Una clave elegible (o reserva ya
-        activada) con >= N filas esta colgada; la k-esima colgada, por orden
-        de (primer ts, clave), la sustituye la k-esima reserva ``active``.
+        activada) con >= N filas esta colgada; cada reserva ``active`` (en
+        orden declarado) se empareja al ACTIVARSE con la primera colgada aun no
+        sustituida, por (primer ts, clave); una reserva que tambien se cuelga
+        pide la siguiente.
         Ventana = la INSTANCIA, no el commit ni el BA entero: el veredicto debe
         ser reproducible (una ventana "ultimas rondas del BA" cambia al
         auditar el mismo commit mas tarde).
@@ -1229,21 +1245,23 @@ def reserve_activation(
     )
     for nonce in sorted(counts):
         hangs = counts[nonce]
-        activated, hung = _activate_reserves_for_nonce(hangs, primary, reserves, n)
+        activated, pairs, unserved = _activate_reserves_for_nonce(
+            hangs, primary, reserves, n
+        )
         if activated:
             by_nonce[nonce] = set(activated)
-        for key, reserve in zip(hung, activated, strict=False):
-            substitutions.append(
-                {
-                    "nonce": nonce,
-                    "replaced_backend_key": key,
-                    "reserve_backend_key": reserve,
-                    "timeouts": len(hangs[key]),
-                    "n": n,
-                    "window": "nonce",
-                    "evidence_ts": sorted(hangs[key]),
-                }
-            )
+        substitutions.extend(
+            {
+                "nonce": nonce,
+                "replaced_backend_key": key,
+                "reserve_backend_key": reserve,
+                "timeouts": len(hangs[key]),
+                "n": n,
+                "window": "nonce",
+                "evidence_ts": sorted(hangs[key]),
+            }
+            for key, reserve in pairs
+        )
         exhausted.extend(
             {
                 "nonce": nonce,
@@ -1255,7 +1273,7 @@ def reserve_activation(
                     "retirada): la cobertura NO se da por cubierta"
                 ),
             }
-            for key in hung[len(activated) :]
+            for key in unserved
         )
     return {
         "by_nonce": by_nonce,
@@ -1284,7 +1302,7 @@ def _reserve_reason_map(entry: dict, config: dict) -> dict[str, str]:
 
 def _declares_reserve(entry: dict | None) -> bool:
     """True sii la entrada VALIDA declara politica de reserva (mecanismo encendido)."""
-    return bool(entry) and entry.get("reserve_backend_keys") is not None
+    return bool(entry) and "reserve_backend_keys" in entry
 
 
 def _stamp_reserve(verdict: dict, entry: dict, reserve: dict) -> None:
