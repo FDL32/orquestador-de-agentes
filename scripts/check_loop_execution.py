@@ -645,6 +645,11 @@ def is_substantive(row: dict) -> bool:
     if row.get("outcome") == "no-aportacion":
         return False
     evidencia = row.get("evidencia") or ""
+    if not isinstance(evidencia, str):
+        # WOT-2026-152x: fila CORRUPTA (evidencia entera, lista, dict...): no se
+        # puede leer como texto; se trata como ausente (fail-OPEN, igual que una
+        # fila legacy) en vez de lanzar en la ruta del gate.
+        evidencia = ""
     if evidencia.strip() == EMPTY_EVIDENCIA_MARKER:
         return False
     # Respuesta INVISIBLE: `_record_round` mide sobre `text.strip()`, que deja
@@ -1359,10 +1364,11 @@ LENS_RELIABILITY_BLIND_SPOTS = (
     "ORDEN-TS: el orden por `ts` compara el TEXTO ISO y ASUME ts normalizado UTC "
     "(+00:00) como los escribe el motor; con offsets mezclados la ventana puede "
     "invertirse (no se parsean fechas)",
-    "H148: is_substantive acepta hoy un stream de eventos SIN parte text (p. ej. "
-    "la fila real de BA03, nonce eb8b902d, output_chars 778): `ok` SOBRESTIMA y "
-    "`mudas` SUBESTIMA mientras H148 siga abierta; lens_reliability NO reclasifica "
-    "(no toca is_substantive)",
+    "H148: arreglada hacia adelante (WOT-2026-152x): `_record_round` registra muda "
+    "(output_chars 0 + no-aportacion) un stream de eventos SIN texto del modelo; las "
+    "filas historicas ya registradas (p. ej. BA03, nonce eb8b902d, output_chars 778) "
+    "siguen contando `ok`: `ok` SOBRESTIMA y `mudas` SUBESTIMA en esas filas; "
+    "lens_reliability NO las reclasifica (no toca is_substantive)",
 )
 
 # Categorias de `lens_reliability`, EXCLUYENTES y exhaustivas, en este orden.

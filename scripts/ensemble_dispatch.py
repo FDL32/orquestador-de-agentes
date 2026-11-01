@@ -1793,6 +1793,84 @@ def _strip_leading_shell_noise(text: str) -> str:
     return "\n".join(lines)
 
 
+# WOT-2026-152x (H148): tipos de evento de CICLO DE VIDA del stream de
+# kilo/opencode (`--format json`), el UNICO protocolo observado. Evidencia: el
+# stream real de la ronda muda de BA03 (nonce eb8b902d, 778 B) eran exactamente
+# dos lineas, `{"type":"step_start",...,"part":{"type":"step-start",...}}` y
+# `{"type":"step_finish",...,"part":{"type":"step-finish",...}}`. Conjunto
+# CERRADO a proposito: una respuesta JSON legitima de cualquier canal (p. ej. un
+# veredicto `{"type":"review",...}`) o un evento `error`/`tool_use`/`reasoning`
+# /`text` NO es "stream mudo" (un falso "muda" bloquea el gate).
+_LIFECYCLE_EVENT_TYPES = frozenset(
+    {"step_start", "step-start", "step_finish", "step-finish"}
+)
+
+
+def _json_has_nonempty_text(root: object) -> bool:
+    """True si algun valor bajo la clave `text`, a cualquier profundidad, es un str no vacio.
+
+    Before: `root` es el resultado de `json.loads` (dict/list/escalar).
+    During: puro; recorrido ITERATIVO (sin recursion) de dicts y listas.
+    After: bool; un `text` no-str o en blanco no cuenta. No lanza.
+    """
+    pending: list = [root]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "text" and isinstance(value, str) and value.strip():
+                    return True
+                pending.append(value)
+        elif isinstance(node, list):
+            pending.extend(node)
+    return False
+
+
+def _event_stream_has_no_model_text(raw: str) -> bool:
+    """True sii `raw` es un stream NDJSON de eventos SIN ningun texto del modelo.
+
+    WOT-2026-152x (H148). `kilo --format json` devuelve la respuesta como stream
+    de eventos (step_start / text / step_finish ...) y `_record_round` media ese
+    stream CRUDO: una ronda que solo emitio step_start+step_finish (778 B, sin
+    parte `text`) quedaba con output_chars 778 y contaba como lente que aporta.
+
+    Before: `raw` es el texto de respuesta ya saneado (`str`); cualquier otro
+        tipo o vacio devuelve False.
+    During: puro, sin I/O. Parsea cada linea no vacia con `json.loads`. Es
+        stream mudo SOLO si TODA linea es un objeto JSON cuyo `type` de nivel
+        superior es un str del conjunto CERRADO `_LIFECYCLE_EVENT_TYPES` (eventos
+        de ciclo de vida de kilo/opencode) Y NINGUN evento contiene, a CUALQUIER
+        profundidad, un string no vacio (tras strip) bajo la clave `text`
+        (superset de `part.type == "text"`). Sin umbral de longitud.
+    After: bool. FAIL-OPEN: cualquier otro `type` (review, error, tool_use,
+        reasoning, text, desconocido, no-str), una linea que no es un objeto
+        JSON, texto libre, stream truncado a medias, JSON demasiado anidado o
+        stream vacio devuelven False y el registrador conserva el
+        comportamiento anterior. Un falso "muda" bloquea el gate; un falso
+        "sustantiva" es el defecto previo. LIMITES declarados: un stream de
+        solo error/tool_use/reasoning no se detecta mudo, y uno con un `text`
+        no vacio cuenta como CON texto.
+    """
+    if not isinstance(raw, str):
+        return False
+    lines = [line for line in raw.splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except (ValueError, RecursionError):
+            return False
+        if not isinstance(event, dict):
+            return False
+        event_type = event.get("type")
+        if not isinstance(event_type, str) or event_type not in _LIFECYCLE_EVENT_TYPES:
+            return False
+        if _json_has_nonempty_text(event):
+            return False
+    return True
+
+
 def _agent_failure_detail(text: str) -> str:
     """Cola de evidencia de un fallo del canal `agent`, anclada a la causa.
 
@@ -5545,6 +5623,14 @@ def _record_round(
     # la capa del CLI, no clasifica el transporte. Prefijos: `_SHELL_NOISE_PREFIXES`.
     _raw_chars = len(text)  # output_chars mide el texto CRUDO (DoD 2, contract)
     text = _strip_leading_shell_noise(text)
+    # WOT-2026-152x (H148): un stream de eventos SIN texto del modelo (kilo
+    # `--format json` con solo step_start/step_finish) no es una intervencion: se
+    # registra muda (output_chars 0 + no-aportacion) igual que una respuesta
+    # vacia. La evidencia conserva el stream crudo (text[:500]); failure_mode
+    # queda intacto. Fail-open: ver `_event_stream_has_no_model_text`.
+    if _event_stream_has_no_model_text(text):
+        _raw_chars = 0
+        outcome_override = outcome_override or "no-aportacion"
     # WOT-2026-048g: un transporte que fallo (rc != 0) NO es una intervencion.
     # Se deriva AQUI, en el registrador, y no solo en el bucle `run`, porque
     # `run_loop_round` -- la ruta que usa el gobierno por chat -- no pasa por el

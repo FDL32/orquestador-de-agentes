@@ -3354,20 +3354,28 @@ _H148_EVENT_STREAM = (
 
 
 def test_lens_reliability_does_not_reclassify_the_h148_event_stream(monkeypatch):
-    """H148: `is_substantive` acepta hoy un stream de eventos sin parte `text`
-    (fila real de BA03, nonce eb8b902d, output_chars 778). M3 NO lo reclasifica:
-    `ok` sigue a `is_substantive`, que es lo que `blind_spots` declara."""
+    """H148 (WOT-2026-152x): el registrador ya escribe NUEVAS rondas sin texto como
+    mudas, pero una fila HISTORICA con el stream sin parte `text` (fila real de
+    BA03, nonce eb8b902d, output_chars 778) NO se reclasifica: `is_substantive`
+    no parsea la evidencia y M3 sigue a `is_substantive`, que es lo que
+    `blind_spots` declara."""
     row = _m3_row("BA03", "ok", 0, output_chars=778)
     row["evidencia"] = _H148_EVENT_STREAM
-    assert cle.is_substantive(row) is True  # el defecto abierto, tal cual hoy
+    assert cle.is_substantive(row) is True  # historica: sigue contando `ok`
     entry = _m3_by(cle.lens_reliability([row]), "BA03")
     assert (entry["ok"], entry["mudas"]) == (1, 0)
     spots = cle.lens_reliability([row])["blind_spots"]
     assert [b for b in spots if b.startswith("H148:")], "falta el blind_spot H148"
     blind = " ".join(spots)
-    for needle in ("H148", "SOBRESTIMA", "SUBESTIMA", "NO reclasifica"):
+    for needle in (
+        "H148",
+        "arreglada hacia adelante",
+        "SOBRESTIMA",
+        "SUBESTIMA",
+        "NO las reclasifica",
+    ):
         assert needle in blind, needle
-    # delega en is_substantive: si H148 se arregla alli, M3 lo hereda sin tocarse
+    # delega en is_substantive: lo que is_substantive decida, M3 lo hereda sin tocarse
     monkeypatch.setattr(cle, "is_substantive", lambda _row: False)
     entry = _m3_by(cle.lens_reliability([row]), "BA03")
     assert (entry["ok"], entry["mudas"]) == (0, 1)
@@ -3396,11 +3404,11 @@ _H148_REAL_ROW = {
 }
 
 
-def test_h148_real_row_falls_into_ok_today_and_blind_spots_say_so():
-    """H148 ABIERTA: `is_substantive` da True a la fila real y M3 la cuenta `ok`.
-    Este test FIJA el limite: no se reclasifica aqui. Cuando H148 se arregle en
-    `is_substantive` este test cambiara de forma CONSCIENTE (la fila pasara a
-    `mudas`); hasta entonces `blind_spots` lo declara."""
+def test_h148_real_row_historical_stays_ok_and_blind_spots_say_so():
+    """H148 arreglada HACIA ADELANTE (WOT-2026-152x): la FILA HISTORICA real sigue
+    contando `ok` (NON-GOAL: no se reclasifica el historico) y `blind_spots` lo
+    declara. Las filas NUEVAS sin texto nacen mudas del registrador (ver
+    `test_ensemble_dispatch_152x.py`)."""
     row = dict(_H148_REAL_ROW)
     assert '"type":"text"' not in row["evidencia"]
     assert row["output_chars"] == 778
@@ -3410,6 +3418,18 @@ def test_h148_real_row_falls_into_ok_today_and_blind_spots_say_so():
     entry = _m3_by(report, "BA03")
     assert (entry["ok"], entry["mudas"], entry["rondas"]) == (1, 0, 1)
     assert [b for b in report["blind_spots"] if b.startswith("H148:")]
+
+
+@pytest.mark.parametrize("bad", [7, 3.5, True, ["x"], {"a": 1}])
+def test_is_substantive_never_raises_on_a_non_string_evidencia(bad):
+    """Fila corrupta (WOT-2026-152x): `evidencia` no-str se trata como ausente
+    (fail-OPEN, igual que una fila legacy) y no lanza; las otras senales de
+    silencio siguen mordiendo."""
+    row = {"event": "ronda", "evidencia": bad}
+    assert cle.is_substantive(row) is True
+    assert cle.is_substantive({**row, "output_chars": 0}) is False
+    assert cle.is_substantive({**row, "outcome": "no-aportacion"}) is False
+    assert cle._reliability_category({**row, "backend_key": "BA03"}) == "ok"
 
 
 @pytest.mark.parametrize("bad", [1, 3.5, True, ["x"], {"a": 1}])
