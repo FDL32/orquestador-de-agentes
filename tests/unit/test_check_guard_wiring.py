@@ -761,12 +761,24 @@ def test_audit_and_wiring_edges_reuse_passed_evidence(tmp_path):
 # La declaracion acota la deuda solo mientras su dueno siga VIVO. Owner archivado
 # + guard AUN sin cablear = la declaracion paso de ACOTAR la deuda a ESCONDERLA.
 # El criterio es el INVARIANTE, nunca el conteo (WOT-2026-024t).
+_VISTA_HEADER = (
+    "# Backlog\n\n## Vista rapida\n\n"
+    "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+    "|---|---|---|---|---|---|---|---|\n"
+)
+
+
 def _destino(tmp_path: Path, live_rows: str, name: str = "destino") -> Path:
-    """repo_destino minimo con la cola VIVA que decide si un owner sigue vivo."""
+    """repo_destino minimo con la cola VIVA que decide si un owner sigue vivo.
+
+    WOT-2026-151a: la cola viva se lee por la tabla '## Vista rapida' (celda
+    propia de cada fila de 8 celdas), no raspando menciones: `live_rows` son
+    filas de esa tabla y aqui se les antepone la cabecera real.
+    """
     dest = tmp_path / name
     (dest / ".agent" / "collaboration").mkdir(parents=True, exist_ok=True)
     (dest / ".agent" / "collaboration" / "backlog.md").write_text(
-        live_rows, encoding="utf-8"
+        _VISTA_HEADER + live_rows, encoding="utf-8"
     )
     return dest
 
@@ -823,7 +835,10 @@ def test_orphan_owner_fails_only_under_strict(tmp_path, monkeypatch):
     monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
     monkeypatch.setattr(cgw, "BASELINE_PATH", baseline_yaml)
     monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
-    dest = _destino(tmp_path, "| Alta | WOT-2026-019o | el dueno NO esta aqui |\n")
+    dest = _destino(
+        tmp_path,
+        "| Alta | WOT-2026-019o | el dueno NO esta aqui | s | pending | - | t | - |\n",
+    )
     argv = ["--motor-root", str(tmp_path), "--project-root", str(dest)]
 
     assert cgw.main(argv) == 0, (
@@ -895,6 +910,96 @@ def test_orphan_check_skips_when_destino_has_no_backlog(tmp_path, monkeypatch, c
     out = capsys.readouterr().out
     assert "SKIP orphan-owner check" in out
     assert "HUERFANA" not in out, "backlog ausente != 'todos los owners archivados'"
+
+
+def _orphan_motor(tmp_path, monkeypatch, owner, *, with_guard_file=True):
+    """Motor minimo con UN guard sin cablear (`check_new`) y deuda declarada."""
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    if with_guard_file:
+        (tmp_path / "scripts" / "check_new.py").write_text("# g\n", encoding="utf-8")
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      []\n", encoding="utf-8"
+    )
+    policy_yaml = tmp_path / "scripts" / "guard_wiring_policy.yaml"
+    policy_yaml.write_text(f"known_unwired:\n  check_new: {owner}\n", encoding="utf-8")
+    baseline_yaml = tmp_path / "baseline.yaml"
+    baseline_yaml.write_text("wired_baseline: {}\n", encoding="utf-8")
+    monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
+    monkeypatch.setattr(cgw, "BASELINE_PATH", baseline_yaml)
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+
+_VIVA = "| Alta | WOT-2026-111a | fila viva | s | pending | - | t | - |\n"
+_VIVA_CITA = (
+    "| Alta | WOT-2026-111a | cita a WOT-2026-999z | s | pending | WOT-2026-999z "
+    "| t | - |\n"
+)
+
+
+def test_live_owner_counts_own_row_not_prose_mention(tmp_path):
+    """WOT-2026-151a (a)(b): vivo = celda PROPIA de la tabla, no una mencion en prosa."""
+    dest = _destino(tmp_path, _VIVA_CITA)
+    live, err = cgw._live_owner_tickets(dest)
+    assert err is None
+    assert live == {"WOT-2026-111a"}, "un ID solo citado en prosa NO es una fila viva"
+
+
+def test_orphan_by_prose_only_owner_warns_then_fails_strict(
+    tmp_path, monkeypatch, capsys
+):
+    """(a) E2E por el CLI: dueno archivado que una fila viva cita -> huerfano.
+
+    Normal -> WARN nombrado y rc 0; `--strict` -> rc 1.
+    """
+    _orphan_motor(tmp_path, monkeypatch, "WOT-2026-999z")
+    dest = _destino(tmp_path, _VIVA_CITA)
+    argv = ["--motor-root", str(tmp_path), "--project-root", str(dest)]
+    assert cgw.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "HUERFANA" in out and "check_new -> WOT-2026-999z" in out
+    assert cgw.main([*argv, "--strict"]) == 1
+
+
+def test_owner_with_own_live_row_is_not_orphan(tmp_path, monkeypatch, capsys):
+    """(b) el dueno con fila propia en la tabla no sale huerfano."""
+    _orphan_motor(tmp_path, monkeypatch, "WOT-2026-111a")
+    dest = _destino(tmp_path, _VIVA_CITA)
+    assert cgw.main(["--motor-root", str(tmp_path), "--project-root", str(dest)]) == 0
+    assert "HUERFANA" not in capsys.readouterr().out
+
+
+def test_ticket_owned_entry_without_findable_guard_is_not_judged(
+    tmp_path, monkeypatch, capsys
+):
+    """(d) LIMITE DECLARADO (WOT-2026-151a): una entrada ticket-owned cuyo guard no
+    esta en el arbol del motor (p.ej. `check_pii_tracked`, que vive en el destino)
+    no entra en `declared` y el motor NO la juzga huerfana: no puede saber si el
+    guard sigue sin cablear. Su cobertura es otra ficha."""
+    _orphan_motor(tmp_path, monkeypatch, "WOT-2026-999z", with_guard_file=False)
+    dest = _destino(tmp_path, _VIVA)
+    assert cgw.main(["--motor-root", str(tmp_path), "--project-root", str(dest)]) == 0
+    assert "HUERFANA" not in capsys.readouterr().out
+
+
+def test_live_owner_without_vista_rapida_skips(tmp_path):
+    """Backlog sin tabla 'Vista rapida' -> SKIP nombrado, no 'todos archivados'."""
+    dest = tmp_path / "d"
+    (dest / ".agent" / "collaboration").mkdir(parents=True)
+    (dest / ".agent" / "collaboration" / "backlog.md").write_text(
+        "| Alta | WOT-2026-111a | sin cabecera |\n", encoding="utf-8"
+    )
+    live, err = cgw._live_owner_tickets(dest)
+    assert live is None and "Vista rapida" in err
+
+
+def test_live_owner_row_with_extra_cell_is_dropped_known_limit(tmp_path):
+    """LIMITE DECLARADO: una fila con 9 celdas (un '|' dentro de una celda) no es
+    una fila bien formada y su ID NO cuenta como vivo (WARN huerfano, nunca
+    bloqueante; el contrato de backlog rechaza esa fila por otro lado)."""
+    fila9 = "| Alta | WOT-2026-111a | a | b | c | d | e | f | g |\n"
+    dest = _destino(tmp_path, _VIVA.replace("111a", "222b") + fila9)
+    live, err = cgw._live_owner_tickets(dest)
+    assert err is None and live == {"WOT-2026-222b"}
 
 
 def test_ticket_anywhere_matches_the_owner_grammar():

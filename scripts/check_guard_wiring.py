@@ -970,42 +970,40 @@ def _resolve_destino_root(
 
 
 def _live_owner_tickets(dest_root: Path) -> tuple[set[str] | None, str | None]:
-    """Ticket IDs present in the DESTINO's LIVE backlog queue.
+    """Ticket IDs que tienen FILA PROPIA en la cola VIVA del DESTINO.
 
-    Before: ``dest_root`` is a resolved repo_destino.
-    During: reads ``.agent/collaboration/backlog.md`` and scrapes every canonical
-    ticket ID. Only the LIVE queue counts -- an ID that survives solely in
-    ``_archive/backlog_done.md`` is precisely the archived owner we hunt.
+    Before: ``dest_root`` is a resolved repo_destino whose
+    ``.agent/collaboration/backlog.md`` carries the '## Vista rapida' table.
+    During: delega en ``check_backlog_debt_ownership._strict_live_ticket_ids``
+    (WOT-2026-151a; el extractor se reutiliza, no se escribe un tercero): vivo =
+    la celda PROPIA (columna Ticket) de cada fila de 8 celdas de esa tabla. Un ID
+    que solo aparece CITADO en la prosa de otra fila (o solo en
+    ``_archive/backlog_done.md``) NO cuenta: es justo el dueno archivado que
+    buscamos, y raspar menciones lo hacia pasar por vivo (H127; 635 IDs raspados
+    frente a 256 filas reales). Import perezoso porque ese modulo importa
+    ``_TICKET``/``_BY_DESIGN``/``_resolve_destino_root`` de ESTE: uno de nivel de
+    modulo seria circular.
     After: ``(set, None)``, or ``(None, reason)`` when the backlog is absent,
-    unreadable or unparseable, so the caller SKIPS instead of inventing orphans.
+    unreadable, not UTF-8, has no 'Vista rapida' table or no canonical ticket, so
+    the caller SKIPS instead of inventing orphans. La lectura es ESTRICTA a
+    proposito: con ``errors="replace"`` un backlog no-UTF8 devolvia mojibake, un
+    conjunto vacio indistinguible de "todos los owners estan archivados", y el
+    cierre acusaba de huerfana a TODA la deuda (medido: 6 huerfanos falsos frente
+    a los 3 reales). Esa razon vive ahora en el extractor delegado. Una fila con
+    un numero de celdas distinto de 8 (p.ej. un ``|`` dentro de una celda) no
+    cuenta como viva: LIMITE conocido, solo WARN.
 
-    La lectura es ESTRICTA a proposito. Con ``errors="replace"`` un backlog no-UTF8
-    (UTF-16, ANSI de Windows...) no lanzaba: devolvia mojibake, el scraper no
-    encontraba NINGUN ticket, y ese conjunto vacio es indistinguible de "todos los
-    owners estan archivados" -- el SKIP que este contrato promete se volvia
-    INALCANZABLE y el cierre acusaba de huerfana a TODA la deuda declarada,
-    incluidos owners literalmente presentes y VIVOS en el fichero. Medido: 6
-    huerfanos falsos frente a los 3 reales. Es la misma enfermedad que el ticket
-    cierra: medir con una vara mas floja que la que se predica.
+    Limite (WOT-2026-151a (d)): solo se juzgan los guards que ``audit`` encuentra
+    en el motor; una entrada ticket-owned cuyo guard vive en el destino (p.ej.
+    ``check_pii_tracked``) no entra en ``declared`` y no se evalua aqui.
     """
-    backlog = dest_root / ".agent" / "collaboration" / "backlog.md"
     try:
-        content = backlog.read_bytes().decode("utf-8-sig")
-    except OSError as exc:
-        return None, f"cannot read {backlog}: {exc}"
-    except UnicodeDecodeError as exc:
-        return None, f"{backlog} is not valid UTF-8 ({exc.reason}); refusing to guess"
-    live = set(_TICKET_ANYWHERE.findall(content))
-    if not live:
-        # Una cola viva SIN UN SOLO ticket no sostiene la conclusion "todos
-        # archivados": es mucho mas probable un backlog truncado, a medio escribir
-        # o en otro formato. Fail-safe hacia el SKIP nombrado, nunca hacia acusar
-        # de huerfana a toda la deuda declarada.
-        return (
-            None,
-            f"{backlog} names no ticket at all; refusing to read that as 'all archived'",
+        from scripts.check_backlog_debt_ownership import _strict_live_ticket_ids
+    except ImportError:  # pragma: no cover - script ejecutado sin el paquete
+        from check_backlog_debt_ownership import (  # type: ignore[no-redef]
+            _strict_live_ticket_ids,
         )
-    return live, None
+    return _strict_live_ticket_ids(dest_root)
 
 
 def _orphan_owners(

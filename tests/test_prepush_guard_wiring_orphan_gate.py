@@ -117,7 +117,9 @@ def test_backlog_without_any_ticket_skips(tmp_path: Path):
 
     result = run_guard_wiring_orphan_check(tmp_path)
     assert result.passed, result.output
-    assert "names no ticket at all" in result.output
+    # WOT-2026-151a: el extractor estricto delegado nombra el mismo SKIP con su
+    # propia frase; el contrato (SKIP nombrado, nunca huerfanos) no cambia.
+    assert "no canonical ticket id" in result.output
 
 
 @pytest.mark.parametrize("owner_kind", ["by-design", "ticket-vivo"])
