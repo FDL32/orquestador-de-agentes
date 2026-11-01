@@ -2251,3 +2251,438 @@ def test_timeout_diagnosis_shows_a_confirmed_kill_only_through_the_row_detail():
     assert "(pid 4242) matado" in diagnosis
     assert "fue matado" not in diagnosis
     assert "kill NO confirmado" not in diagnosis
+
+
+# =========================================================== WOT-2026-152t
+# Politica de RESERVA de lentes (H131): cuando una lente se cuelga N veces en una
+# instancia, la siguiente reserva declarada ocupa su sitio, con registro derivado
+# (veredicto + linea + recibo) y fail-closed sin reserva libre. Fixtures con filas
+# del formato REAL del scorecard (`SCORECARD_FIELDS`, los `failure_mode` que
+# escriben el watchdog de 152s-1 y el timeout interno de 900 s). Snapshot fechado
+# 2026-11-01: N=2 es una propuesta con n pequeno, no una tasa medida.
+
+_RS_WATCHDOG_MODE = (
+    "timeout: watchdog de 1500s vencido sin respuesta de la lente; "
+    "arbol de procesos del hijo (pid 4242) matado"
+)
+# Forma del timeout INTERNO tal como la dejo el scorecard real (30 filas el
+# 2026-11-01; recortada tras la primera frase).
+_RS_INTERNAL_MODE = (
+    "unexpected: RuntimeError: backend CLI sin respuesta tras 900s; arbol de "
+    "procesos matado. CAUSA NO DETERMINADA -- comprueba en este orden"
+)
+# COPIA LITERAL de la entrada real de agents.json (2026-11-01): fija la
+# aditividad sin leer el agents.json vivo.
+_RS_REAL_ENTRY = {
+    "backend_keys": ["BA03", "BA07", "BA254"],
+    "min_distinct": 2,
+    "policy": "declared",
+    "excluded_backend_keys": ["BA05"],
+    "exempt_tickets": ["WOT-2026-129d"],
+    "note": "WOT-2026-129y: cobertura elegible copiada de la verdad del roster del vuelo (session_types.implantacion.lenses.MANAGER_REVIEW=[BA03] + revisor_repo_motor_interino=BA07). BA05 excluida por WOT-2026-129r (no puede revisar repo_motor via loop-round). WOT-2026-129d exento: esta entrada NO re-adjudica su evidencia (DoD 5). 2026-11-01 CO-17 (orden del usuario, H130/H131): BA254 (Codex gpt-6.1-sol, challenger_codex_sol_cli) se anade como TERCERA elegible por sustitucion de facto de BA07, que da timeouts/colgados repetidos; min_distinct sigue en 2, asi que BA07 pasa a ser opcional. Si el roster del vuelo declara nuevas claves para esta fase, este campo se actualiza por ticket (D1 del work_plan: fuente unica versionada; la deriva es fail-safe).",
+}
+
+
+def _rs_row(backend, *, hang=None, answered=True, nonce="N1", sec=5, commit="abc"):
+    """Fila `ronda` con TODOS los campos de `SCORECARD_FIELDS` (formato real).
+
+    Before: `hang` es el `failure_mode` de colgado o None; `answered` decide si la
+        ronda aporto contenido.
+    After: dict listo para `audit()`; ts posterior a la emision del nonce.
+    """
+    row = {k: None for k in ed.SCORECARD_FIELDS}
+    row.update(
+        ts=f"2026-07-24T10:05:{sec:02d}+00:00",
+        event="ronda",
+        ticket="WOT-2026-152t",
+        rol="challenger",
+        task_type="code-review",
+        backend="kilo",
+        model="x",
+        ronda=1,
+        outcome=None if answered else "no-aportacion",
+        evidencia="hallazgo" if answered else "(respuesta vacia)",
+        input_bytes=100,
+        context_kind="diff",
+        failure_mode=hang,
+        latency_ms=1000,
+        phase="MANAGER_REVIEW",
+        loop_id="UNI-X",
+        backend_key=backend,
+        commit_sha=commit,
+        challenge_nonce=nonce,
+        output_chars=50 if answered else 0,
+    )
+    return row
+
+
+def _rs_hang(backend, *, times=2, nonce="N1", mode=_RS_WATCHDOG_MODE, start=10):
+    return [
+        _rs_row(backend, hang=mode, answered=False, nonce=nonce, sec=start + i)
+        for i in range(times)
+    ]
+
+
+def _rs_entry(**over):
+    entry = {
+        "backend_keys": ["BA03", "BA07"],
+        "min_distinct": 2,
+        "policy": "declared",
+        "excluded_backend_keys": ["BA05"],
+        "reserve_backend_keys": ["BA254"],
+        "reserve_after_timeouts": 2,
+    }
+    entry.update(over)
+    return entry
+
+
+def _rs_audit(monkeypatch, rows, *, entry=None, statuses=None, emitted=None, keys=None):
+    config = _cov_config(
+        keys=keys or ("BA03", "BA07", "BA254", "BA11"),
+        entry=entry or _rs_entry(),
+        statuses=statuses,
+    )
+    return _audit_cov(
+        monkeypatch,
+        rows,
+        emitted or [_emitted()],
+        deliverable_type="code",
+        config=config,
+    )
+
+
+def _rs_not_eligible(v):
+    return {x["backend_key"]: x["reason"] for x in v["not_eligible_backends"]}
+
+
+def test_hung_lens_is_replaced_by_reserve_and_the_swap_is_recorded(monkeypatch):
+    """ROJO->VERDE del Paso 0: BA07 se cuelga N=2 veces, BA254 (reserva) responde.
+    Antes el campo de reserva se ignoraba y el veredicto era FAIL sin registro."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA07"), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows)
+    assert v["ok"] is True
+    assert v["distinct_backends"] == ["BA03", "BA254"]
+    assert v["not_eligible_backends"] == []
+    assert v["reserve_policy"] == {
+        "reserve_backend_keys": ["BA254"],
+        "reserve_after_timeouts": 2,
+        "window": "nonce",
+    }
+    assert v["reserve_substitutions"] == [
+        {
+            "nonce": "N1",
+            "replaced_backend_key": "BA07",
+            "reserve_backend_key": "BA254",
+            "timeouts": 2,
+            "n": 2,
+            "window": "nonce",
+            "evidence_ts": [
+                "2026-07-24T10:05:10+00:00",
+                "2026-07-24T10:05:11+00:00",
+            ],
+        }
+    ]
+    assert v["reserve_exhausted"] == []
+
+
+def test_reserve_does_not_count_below_n_timeouts(monkeypatch):
+    """N-1 timeouts NO activan la reserva: la ronda de BA254 no cuenta y el
+    bucle no llega a N (una lente lenta no es una lente sustituida)."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=1), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows)
+    assert v["ok"] is False
+    assert v["distinct_backends"] == ["BA03"]
+    assert _rs_not_eligible(v) == {"BA254": "reserve_not_activated"}
+    assert v["reserve_substitutions"] == []
+    assert v["reserve_exhausted"] == []
+
+
+def test_n_is_declared_per_entry_not_hardcoded(monkeypatch):
+    """N=3: dos timeouts no bastan; tres si. Mata un N cableado a 2."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=2), _rs_row("BA254", sec=30)]
+    entry = _rs_entry(reserve_after_timeouts=3)
+    assert _rs_audit(monkeypatch, rows, entry=entry)["ok"] is False
+    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=3), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows, entry=entry)
+    assert v["ok"] is True
+    assert v["reserve_substitutions"][0]["timeouts"] == 3
+
+
+def test_window_is_the_instance_not_the_commit(monkeypatch):
+    """Un timeout en cada de DOS instancias (nonces) NO suma N=2: la ventana es
+    la instancia. Mata contar por commit."""
+    emitted = [_emitted("N1"), _emitted("N2", ts="2026-07-24T10:01:00+00:00")]
+    rows = [
+        _rs_row("BA03", nonce="N1"),
+        *_rs_hang("BA07", times=1, nonce="N1"),
+        *_rs_hang("BA07", times=1, nonce="N2"),
+        _rs_row("BA254", nonce="N1", sec=30),
+    ]
+    v = _rs_audit(monkeypatch, rows, emitted=emitted)
+    assert v["ok"] is False
+    assert v["reserve_substitutions"] == []
+
+
+def test_internal_900s_timeout_form_counts_too(monkeypatch):
+    """La forma que HOY deja el scorecard (timeout interno) activa la reserva."""
+    rows = [
+        _rs_row("BA03"),
+        *_rs_hang("BA07", mode=_RS_INTERNAL_MODE),
+        _rs_row("BA254", sec=30),
+    ]
+    v = _rs_audit(monkeypatch, rows)
+    assert v["ok"] is True
+    assert v["reserve_substitutions"][0]["replaced_backend_key"] == "BA07"
+
+
+def test_fabricated_timeouts_do_not_activate_a_reserve(monkeypatch):
+    """Dos filas `timeout:` con un nonce NO emitido no son evidencia: no activan."""
+    rows = [
+        _rs_row("BA03"),
+        *_rs_hang("BA07", nonce="NX"),
+        _rs_row("BA254", sec=30),
+    ]
+    v = _rs_audit(monkeypatch, rows)
+    assert v["ok"] is False
+    assert v["reserve_substitutions"] == []
+    assert _rs_not_eligible(v) == {"BA254": "reserve_not_activated"}
+
+
+def test_one_hung_lens_activates_only_one_reserve_in_order(monkeypatch):
+    """Dos reservas, UNA colgada: entra solo la primera declarada; la segunda
+    queda `reserve_not_activated`. Mata activar todas a la vez."""
+    entry = _rs_entry(reserve_backend_keys=["BA254", "BA11"])
+    rows = [
+        _rs_row("BA03"),
+        *_rs_hang("BA07"),
+        _rs_row("BA254", sec=30),
+        _rs_row("BA11", sec=31),
+    ]
+    v = _rs_audit(monkeypatch, rows, entry=entry)
+    assert v["ok"] is True
+    assert v["distinct_backends"] == ["BA03", "BA254"]
+    assert _rs_not_eligible(v) == {"BA11": "reserve_not_activated"}
+    assert [s["reserve_backend_key"] for s in v["reserve_substitutions"]] == ["BA254"]
+
+
+def test_a_hung_reserve_pulls_the_next_one(monkeypatch):
+    """La reserva activada tambien puede colgarse: pide la siguiente (cadena)."""
+    entry = _rs_entry(reserve_backend_keys=["BA254", "BA11"])
+    rows = [
+        _rs_row("BA03"),
+        *_rs_hang("BA07"),
+        *_rs_hang("BA254", start=20),
+        _rs_row("BA11", sec=40),
+    ]
+    v = _rs_audit(monkeypatch, rows, entry=entry)
+    assert v["ok"] is True
+    assert [
+        (s["replaced_backend_key"], s["reserve_backend_key"])
+        for s in v["reserve_substitutions"]
+    ] == [("BA07", "BA254"), ("BA254", "BA11")]
+    assert v["reserve_exhausted"] == []
+
+
+def test_swap_is_registered_in_printed_line_and_receipt(monkeypatch, capsys):
+    """Registro DERIVADO: veredicto + linea impresa + recibo, y el recibo es
+    determinista (dos corridas, mismo JSON)."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA07"), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows)
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    assert "RESERVA BA07 -> BA254: 2 timeouts (N=2, ventana=nonce" in out
+    receipt = cle._receipt_view(v)
+    assert receipt["reserve_substitutions"] == v["reserve_substitutions"]
+    assert receipt["reserve_policy"]["reserve_after_timeouts"] == 2
+    assert receipt["reserve_exhausted"] == []
+    again = cle._receipt_view(_rs_audit(monkeypatch, rows))
+    assert json.dumps(receipt, sort_keys=True) == json.dumps(again, sort_keys=True)
+
+
+def test_no_reserve_left_is_named_and_does_not_cover(monkeypatch, capsys):
+    """FAIL-CLOSED: la reserva esta retirada, BA07 colgado -> NO cubierto,
+    `reserve_exhausted` lo nombra y la ronda de la reserva retirada no cuenta."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA07"), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows, statuses={"BA254": "deprecated"})
+    assert v["ok"] is False
+    assert v["reserve_substitutions"] == []
+    assert [(x["backend_key"], x["timeouts"]) for x in v["reserve_exhausted"]] == [
+        ("BA07", 2)
+    ]
+    assert _rs_not_eligible(v) == {"BA254": "retired(status=deprecated)"}
+    cle._print_verdict(v)
+    assert "RESERVA-AGOTADA BA07" in capsys.readouterr().out
+
+
+def test_exhausted_reserve_does_not_invent_a_failure_when_n_is_reached(monkeypatch):
+    """Q6: colgar no debe BLOQUEAR (es el punto de H131). Con tres primarias,
+    una colgada sin reserva y las otras dos respondiendo, `ok` sigue True y el
+    agotamiento queda NOMBRADO."""
+    entry = _rs_entry(backend_keys=["BA03", "BA07", "BA11"])
+    rows = [_rs_row("BA03"), _rs_row("BA11", sec=6), *_rs_hang("BA07")]
+    v = _rs_audit(monkeypatch, rows, entry=entry, statuses={"BA254": "deprecated"})
+    assert v["ok"] is True
+    assert [x["backend_key"] for x in v["reserve_exhausted"]] == ["BA07"]
+
+
+def test_hung_lens_that_later_answers_still_counts(monkeypatch):
+    """La sustitucion solo AMPLIA: BA03 se cuelga 2 veces y a la 3a responde
+    (caso real 140a). Sigue contando junto a BA07 aunque BA254 no corriera."""
+    rows = [
+        *_rs_hang("BA03"),
+        _rs_row("BA03", sec=40),
+        _rs_row("BA07", sec=41),
+    ]
+    v = _rs_audit(monkeypatch, rows)
+    assert v["ok"] is True
+    assert v["distinct_backends"] == ["BA03", "BA07"]
+    assert [s["replaced_backend_key"] for s in v["reserve_substitutions"]] == ["BA03"]
+
+
+def test_retired_reserve_never_counts_even_if_a_primary_hangs(monkeypatch):
+    rows = [_rs_row("BA03"), *_rs_hang("BA07"), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows, statuses={"BA254": "archived"})
+    assert v["ok"] is False
+    assert "BA254" not in v["distinct_backends"]
+
+
+def test_an_excluded_lens_hanging_does_not_activate_a_reserve(monkeypatch):
+    """BA05 (excluida) colgada NO es una primaria: no activa reserva."""
+    rows = [_rs_row("BA03"), *_rs_hang("BA05"), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows)
+    assert v["reserve_substitutions"] == []
+    assert v["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"reserve_after_timeouts": None},
+        {"reserve_after_timeouts": 0},
+        {"reserve_after_timeouts": True},
+        {"reserve_after_timeouts": "2"},
+        {"reserve_backend_keys": None},
+        {"reserve_backend_keys": []},
+        {"reserve_backend_keys": ["BA254", "BA254"]},
+        {"reserve_backend_keys": ["BA254", ""]},
+        {"reserve_backend_keys": ["BA999"]},
+        {"reserve_backend_keys": ["BA03"]},
+        {"reserve_backend_keys": ["BA05"]},
+    ],
+)
+def test_invalid_reserve_declaration_fails_closed(monkeypatch, patch):
+    """Una reserva mal declarada BLOQUEA con `invalid_coverage`, nunca se ignora
+    ni se degrada a la lista estatica."""
+    entry = _rs_entry(**patch)
+    entry = {k: v for k, v in entry.items() if v is not None}
+    rows = [_rs_row("BA03"), _rs_row("BA07", sec=6)]
+    v = _rs_audit(monkeypatch, rows, entry=entry)
+    assert v["ok"] is False
+    assert v["coverage_error"].startswith("invalid_coverage")
+
+
+def test_entry_without_reserve_is_byte_identical_to_the_legacy_verdict(monkeypatch):
+    """ADITIVIDAD con una COPIA LITERAL de la entrada real de agents.json
+    (2026-11-01, no lee el agents.json vivo): una lente colgada no activa nada,
+    el veredicto no gana ninguna clave de reserva y el recibo conserva el
+    conjunto de claves de antes."""
+    entry = json.loads(json.dumps(_RS_REAL_ENTRY))
+    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=3), _rs_row("BA254", sec=30)]
+    v = _rs_audit(
+        monkeypatch,
+        rows,
+        entry=entry,
+        keys=tuple(entry["backend_keys"]),
+    )
+    assert v["ok"] is True
+    assert v["distinct_backends"] == ["BA03", "BA254"]
+    assert not [k for k in v if k.startswith("reserve")]
+    receipt = cle._receipt_view(v)
+    assert sorted(receipt) == sorted(
+        [
+            "ticket",
+            "commit_sha",
+            "loop_id",
+            "nonces",
+            "distinct_backends",
+            "eligible_declared",
+            "eligible_effective",
+            "no_contadas",
+            "deliverable_type",
+            "policy_min",
+            "min_aplicado",
+            "min_origen",
+            "coverage_key",
+            "override",
+            "exempt",
+            "debt",
+            "ok",
+        ]
+    )
+    assert receipt["eligible_declared"] == ["BA03", "BA07", "BA254"]
+
+
+def test_entry_without_reserve_prints_no_reserve_line(monkeypatch, capsys):
+    entry = json.loads(json.dumps(_RS_REAL_ENTRY))
+    rows = [_rs_row("BA03"), *_rs_hang("BA07", times=3)]
+    v = _rs_audit(monkeypatch, rows, entry=entry, keys=tuple(entry["backend_keys"]))
+    cle._print_verdict(v)
+    assert "RESERVA" not in capsys.readouterr().out
+
+
+def test_live_agents_json_coverage_validates_with_the_new_validator():
+    """El agents.json VIVO sigue siendo valido con el validador nuevo (los campos
+    de reserva son opcionales). Separado de la copia literal de arriba."""
+    config = ed.load_motor_config()
+    coverage = config["ensemble_registry"]["eligible_coverage"]
+    assert coverage, "agents.json sin eligible_coverage"
+    for key, entry in coverage.items():
+        assert cle.validate_coverage_entry(entry, config) is None, key
+
+
+def test_exempt_ticket_never_gets_reserve_fields(monkeypatch):
+    """Un ticket EXENTO se evalua con la politica estricta legacy: sin filtro de
+    elegibilidad, y por tanto sin registro de reserva."""
+    entry = _rs_entry(exempt_tickets=["WOT-2026-152t"])
+    rows = [_rs_row("BA03"), *_rs_hang("BA07"), _rs_row("BA254", sec=30)]
+    v = _rs_audit(monkeypatch, rows, entry=entry)
+    assert v["exempt"] is True
+    assert "reserve_substitutions" not in v
+
+
+def test_is_hang_row_counts_only_the_two_timeout_forms():
+    assert cle.is_hang_row(_rs_row("BA07", hang=_RS_WATCHDOG_MODE, answered=False))
+    assert cle.is_hang_row(_rs_row("BA07", hang=_RS_INTERNAL_MODE, answered=False))
+    for mode in (
+        None,
+        "",
+        "transport_failed: TransportError",
+        "privacy_preflight_blocked: privacy_preflight BLOQUEA el envio",
+        "missing-nonce",
+    ):
+        assert not cle.is_hang_row(_rs_row("BA07", hang=mode, answered=False)), mode
+
+
+def test_timeout_markers_match_the_literals_the_emitters_write():
+    """Contrato con el EMISOR (lectura del texto fuente, sin importar su valor):
+    si `ensemble_dispatch.py` cambia el mensaje del timeout interno o el prefijo
+    del watchdog, la cuenta de colgados dejaria de ver las filas reales."""
+    source = (SCRIPTS_DIR / "ensemble_dispatch.py").read_text(encoding="utf-8")
+    assert f'f"{cle.INTERNAL_TIMEOUT_MARKER} {{timeout}}s' in source
+    assert f'f"{cle.TIMEOUT_FAILURE_PREFIX} watchdog de' in source
+
+
+def test_timeouts_logged_before_the_nonce_was_issued_do_not_activate(monkeypatch):
+    """Una fila de colgado ANTERIOR a la emision del nonce no es una ronda de esa
+    instancia (sin ceremonia previa): no activa la reserva, aunque BA03 y BA254
+    si sean validas en el mismo nonce."""
+    emitted = [_emitted(ts="2026-07-24T10:05:20+00:00")]
+    rows = [
+        *_rs_hang("BA07", start=10),
+        _rs_row("BA03", sec=25),
+        _rs_row("BA254", sec=30),
+    ]
+    v = _rs_audit(monkeypatch, rows, emitted=emitted)
+    assert v["ok"] is False
+    assert v["reserve_substitutions"] == []
+    assert _rs_not_eligible(v) == {"BA254": "reserve_not_activated"}

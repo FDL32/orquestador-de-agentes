@@ -252,6 +252,54 @@ def validate_coverage_entry(entry: object, config: dict) -> str | None:
     exempt = entry.get("exempt_tickets") or []
     if not isinstance(exempt, list) or any(not isinstance(t, str) for t in exempt):
         return "invalid_coverage: exempt_tickets debe ser lista de strings"
+    return _validate_reserve_fields(entry, config)
+
+
+def _validate_reserve_fields(entry: dict, config: dict) -> str | None:
+    """Valida los campos OPCIONALES de reserva de una entrada (WOT-2026-152t).
+
+    Before: ``entry`` es un dict que ya paso ``_validate_coverage_keys`` (sus
+        ``backend_keys`` y ``excluded_backend_keys`` son validas).
+    During: sin ``reserve_backend_keys`` ni ``reserve_after_timeouts`` no hay
+        nada que validar (mecanismo APAGADO, camino legacy). Con cualquiera de
+        los dos exige AMBOS: lista no vacia, sin duplicados, de claves de
+        ``ensemble_registry.backend_keys`` y disjunta de ``backend_keys`` y de
+        ``excluded_backend_keys``; y ``reserve_after_timeouts`` entero >= 1
+        (el N de la politica es DECLARADO, nunca un default implicito).
+    After: reason ``invalid_coverage: ...`` o None. Una entrada con reserva
+        invalida bloquea el veredicto (fail-closed), nunca se ignora.
+    """
+    keys = entry.get("reserve_backend_keys")
+    n = entry.get("reserve_after_timeouts")
+    if keys is None and n is None:
+        return None
+    if not isinstance(keys, list) or not keys:
+        return "invalid_coverage: reserve_backend_keys ausente o vacio"
+    if any(not isinstance(k, str) or not k.strip() for k in keys):
+        return "invalid_coverage: reserve_backend_keys contiene valores que no son strings no vacios"
+    if len(set(keys)) != len(keys):
+        return "invalid_coverage: reserve_backend_keys con duplicados"
+    registry = (config.get("ensemble_registry") or {}).get("backend_keys") or {}
+    unknown = sorted(k for k in keys if k not in registry)
+    if unknown:
+        return (
+            "invalid_coverage: reserve_backend_keys ausentes de "
+            f"ensemble_registry.backend_keys: {unknown}"
+        )
+    taken = set(entry.get("backend_keys") or []) | set(
+        entry.get("excluded_backend_keys") or []
+    )
+    clash = sorted(set(keys) & taken)
+    if clash:
+        return (
+            "invalid_coverage: reserve_backend_keys ya son elegibles o estan "
+            f"excluidas: {clash}"
+        )
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        return (
+            "invalid_coverage: reserve_after_timeouts debe ser un entero >= 1 "
+            "(obligatorio con reserva)"
+        )
     return None
 
 
@@ -329,7 +377,10 @@ def apply_eligible_reasons(
 
 
 def apply_eligibility(
-    verdict: dict, eligible: set[str], reason_map: dict[str, str]
+    verdict: dict,
+    eligible: set[str],
+    reason_map: dict[str, str],
+    extra_by_nonce: dict[str, set[str]] | None = None,
 ) -> dict:
     """Filtra el veredicto a las claves ELEGIBLES (D3) sin tocar audit_commit.
 
@@ -339,26 +390,32 @@ def apply_eligibility(
     During: por cada instancia (nonce) separa backends elegibles de los que
         corrieron pero no cuentan (reason: ``reason_map`` si la conoce, si no
         ``not_in_eligible_set``); recalcula ``distinct`` e ``ok`` POR
-        INSTANCIA (C' intacto) y la union diagnosticable.
+        INSTANCIA (C' intacto) y la union diagnosticable. WOT-2026-152t:
+        ``extra_by_nonce`` (opcional, de ``reserve_activation``) AMPLIA el
+        conjunto elegible de ESA instancia con las reservas activadas; None o
+        sin entrada para el nonce = comportamiento anterior byte a byte.
     After: mismo dict mutado con ``distinct_backends`` filtrado,
         ``not_eligible_backends``, ``declared_removed`` y ``ok`` recalculado.
     """
     seen: dict[str, str] = {}
+    extra = extra_by_nonce or {}
     for entry in verdict.get("per_nonce", []):
+        allowed = eligible | extra.get(entry.get("nonce"), set())
         keep: list[str] = []
         for bk in entry.get("backends", []):
-            if bk in eligible:
+            if bk in allowed:
                 keep.append(bk)
             else:
                 seen.setdefault(bk, reason_map.get(bk, "not_in_eligible_set"))
         entry["ineligible"] = [
-            bk for bk in entry.get("backends", []) if bk not in eligible
+            bk for bk in entry.get("backends", []) if bk not in allowed
         ]
         entry["backends"] = keep
         entry["distinct"] = len(keep)
         entry["ok"] = len(keep) >= verdict["min_distinct"]
+    allowed_any = eligible.union(*extra.values()) if extra else eligible
     verdict["distinct_backends"] = [
-        bk for bk in verdict.get("distinct_backends", []) if bk in eligible
+        bk for bk in verdict.get("distinct_backends", []) if bk in allowed_any
     ]
     verdict["not_eligible_backends"] = [
         {"backend_key": k, "reason": r} for k, r in sorted(seen.items())
@@ -511,6 +568,16 @@ EMPTY_EVIDENCIA_MARKER = "(respuesta vacia)"
 # (`transport_failed:`). Es una constante PROPIA y no un import de
 # `ensemble_dispatch`: este modulo no depende de el para leer el scorecard.
 TIMEOUT_FAILURE_PREFIX = "timeout:"
+
+# WOT-2026-152t: segunda forma de "lente colgada" que HOY deja el scorecard: el
+# timeout INTERNO del backend (`RuntimeError: backend CLI sin respuesta tras
+# <N>s; arbol de procesos matado`, `ensemble_dispatch.py`). Medido 2026-11-01: 30
+# filas reales con esta forma y 0 con `timeout:` en el scorecard del workspace.
+# Constante PROPIA (este modulo no importa el texto de `ensemble_dispatch`); un
+# test-contrato lee el literal del fuente del emisor para que una deriva del
+# mensaje ponga rojo. 152s-2 puede unificar ambas formas: la cuenta ya acepta las
+# dos.
+INTERNAL_TIMEOUT_MARKER = "backend CLI sin respuesta tras"
 
 # Invisibles Unicode que `str.strip()` NO elimina y que, solos, no son una
 # aportacion: zero-width space/non-joiner/joiner, BOM/zero-width no-break y el
@@ -1042,6 +1109,202 @@ def fabricated_nonce_rounds(
     return fabricated
 
 
+def is_hang_row(row: dict) -> bool:
+    """True sii la ronda dice que la lente NO respondio dentro de su limite.
+
+    Before: ``row`` es una fila del scorecard.
+    During: cuenta las DOS formas de timeout que deja el scorecard: la del
+        watchdog de ``loop-round`` (``failure_mode`` que EMPIEZA por
+        ``timeout:``, WOT-2026-152s-1) y la del timeout interno del backend
+        (``failure_mode`` que CONTIENE ``INTERNAL_TIMEOUT_MARKER``). Un fallo de
+        transporte, una ronda muda o un rechazo del preflight NO son colgado.
+    After: bool. Sin I/O.
+    """
+    mode = (row.get("failure_mode") or "").strip()
+    return mode.startswith(TIMEOUT_FAILURE_PREFIX) or INTERNAL_TIMEOUT_MARKER in mode
+
+
+def _hang_counts_by_nonce(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None,
+) -> dict[str, dict[str, list[str]]]:
+    """nonce -> backend_key -> ``ts`` de sus filas de colgado (orden de aparicion).
+
+    Solo cuentan rondas ESTRUCTURALMENTE validas (``structurally_valid_rounds``:
+    nonce emitido antes, commit casa, no exploratoria, no emisor): un timeout
+    fabricado o sin traza de cierre no activa ninguna reserva.
+    """
+    counts: dict[str, dict[str, list[str]]] = {}
+    for row in structurally_valid_rounds(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    ):
+        if is_hang_row(row):
+            counts.setdefault(row["challenge_nonce"], {}).setdefault(
+                row["backend_key"], []
+            ).append(str(row.get("ts") or ""))
+    return counts
+
+
+def _activate_reserves_for_nonce(
+    hangs: dict[str, list[str]],
+    primary: list[str],
+    reserves: list[str],
+    n: int,
+) -> tuple[list[str], list[str]]:
+    """Reservas activadas y claves colgadas de UNA instancia (ver reserve_activation).
+
+    Before: ``hangs`` clave -> ts de sus filas de colgado en el nonce; ``reserves``
+        ya filtradas a las ``active`` y en orden declarado.
+    During: una clave esta COLGADA si acumula >= ``n`` filas; solo cuentan las
+        primarias y las reservas ya activadas. Se activa la siguiente reserva
+        mientras haya mas colgadas que reservas activadas (una colgada activada
+        tambien puede colgarse y pide otra).
+    After: ``(activadas, colgadas)``; colgadas ordenadas por (primer ts, clave).
+    """
+    activated: list[str] = []
+    while True:
+        pool = [*primary, *activated]
+        hung = sorted(
+            (k for k in pool if len(hangs.get(k, [])) >= n),
+            key=lambda k: (min(hangs[k]), k),
+        )
+        if len(activated) >= len(hung) or len(activated) >= len(reserves):
+            return activated, hung
+        activated.append(reserves[len(activated)])
+
+
+def reserve_activation(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    entry: dict,
+    config: dict,
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> dict:
+    """POLITICA DE RESERVA DE LENTES (WOT-2026-152t, H131): cuando una lente se
+    cuelga N veces en una instancia, la siguiente reserva declarada ocupa su sitio.
+
+    Politica (snapshot fechado 2026-11-01, N=2 es propuesta con n pequeno, no
+    tasa medida): por entrada de ``eligible_coverage`` se declaran
+    ``reserve_backend_keys`` (ORDENADAS) y ``reserve_after_timeouts`` (N,
+    obligatorio con reserva). Sin esos campos el mecanismo esta APAGADO.
+
+    Before: ``entry`` es una entrada VALIDA (``validate_coverage_entry``) que
+        declara reserva; ``scorecard_rows``/``emitted`` ya leidos; ``config`` es
+        el motor config (estado ``active`` de cada reserva).
+    During: por instancia (``challenge_nonce`` estructuralmente valido) cuenta
+        las filas de colgado de cada clave (``is_hang_row``: ``timeout:`` del
+        watchdog O timeout interno de 900 s). Una clave elegible (o reserva ya
+        activada) con >= N filas esta colgada; la k-esima colgada, por orden
+        de (primer ts, clave), la sustituye la k-esima reserva ``active``.
+        Ventana = la INSTANCIA, no el commit ni el BA entero: el veredicto debe
+        ser reproducible (una ventana "ultimas rondas del BA" cambia al
+        auditar el mismo commit mas tarde).
+    After: dict ``{"by_nonce": nonce -> {reservas activadas},
+        "substitutions": [{nonce, replaced_backend_key, reserve_backend_key,
+        timeouts, n, window, evidence_ts}], "exhausted": [{nonce, backend_key,
+        timeouts, n, reason}]}``. SOLO AMPLIA el conjunto elegible: nunca quita
+        una lente que responde (una que colgo N veces y luego contesto sigue
+        contando). Fail-closed sin reserva libre: la colgada queda en
+        ``exhausted`` NOMBRADA y el recuento N sigue decidiendo ``ok``; jamas se
+        da por cubierto lo que no llega a ``min_distinct``. Sin escritura.
+    """
+    n = int(entry["reserve_after_timeouts"])
+    registry = (config.get("ensemble_registry") or {}).get("backend_keys") or {}
+    reserves = [
+        k
+        for k in entry["reserve_backend_keys"]
+        if (registry.get(k) or {}).get("status") == "active"
+    ]
+    primary = list(entry["backend_keys"])
+    by_nonce: dict[str, set[str]] = {}
+    substitutions: list[dict] = []
+    exhausted: list[dict] = []
+    counts = _hang_counts_by_nonce(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    )
+    for nonce in sorted(counts):
+        hangs = counts[nonce]
+        activated, hung = _activate_reserves_for_nonce(hangs, primary, reserves, n)
+        if activated:
+            by_nonce[nonce] = set(activated)
+        for key, reserve in zip(hung, activated, strict=False):
+            substitutions.append(
+                {
+                    "nonce": nonce,
+                    "replaced_backend_key": key,
+                    "reserve_backend_key": reserve,
+                    "timeouts": len(hangs[key]),
+                    "n": n,
+                    "window": "nonce",
+                    "evidence_ts": sorted(hangs[key]),
+                }
+            )
+        exhausted.extend(
+            {
+                "nonce": nonce,
+                "backend_key": key,
+                "timeouts": len(hangs[key]),
+                "n": n,
+                "reason": (
+                    "sin lente de reserva elegible (no declarada, agotada o "
+                    "retirada): la cobertura NO se da por cubierta"
+                ),
+            }
+            for key in hung[len(activated) :]
+        )
+    return {
+        "by_nonce": by_nonce,
+        "substitutions": substitutions,
+        "exhausted": exhausted,
+    }
+
+
+def _reserve_reason_map(entry: dict, config: dict) -> dict[str, str]:
+    """backend_key de reserva -> motivo por el que su ronda NO cuenta (aun).
+
+    ``retired(status=...)`` si la reserva no esta ``active``; si no
+    ``reserve_not_activated`` (existe pero ninguna colgada la activo).
+    """
+    registry = (config.get("ensemble_registry") or {}).get("backend_keys") or {}
+    reasons: dict[str, str] = {}
+    for key in entry.get("reserve_backend_keys") or []:
+        status = (registry.get(key) or {}).get("status")
+        reasons[key] = (
+            "reserve_not_activated"
+            if status == "active"
+            else f"retired(status={status})"
+        )
+    return reasons
+
+
+def _declares_reserve(entry: dict | None) -> bool:
+    """True sii la entrada VALIDA declara politica de reserva (mecanismo encendido)."""
+    return bool(entry) and entry.get("reserve_backend_keys") is not None
+
+
+def _stamp_reserve(verdict: dict, entry: dict, reserve: dict) -> None:
+    """Registra la politica y sus efectos en el veredicto (registro DERIVADO).
+
+    Before: ``reserve`` viene de ``reserve_activation``; ``entry`` declara reserva.
+    During: copia al veredicto la politica declarada y las sustituciones/
+        agotamientos; no decide ``ok`` (lo decide el recuento N).
+    After: ``verdict`` con ``reserve_policy``, ``reserve_substitutions`` y
+        ``reserve_exhausted``. Las claves SOLO existen si la entrada declara reserva.
+    """
+    verdict["reserve_policy"] = {
+        "reserve_backend_keys": list(entry["reserve_backend_keys"]),
+        "reserve_after_timeouts": entry["reserve_after_timeouts"],
+        "window": "nonce",
+    }
+    verdict["reserve_substitutions"] = reserve["substitutions"]
+    verdict["reserve_exhausted"] = reserve["exhausted"]
+
+
 def audit_commit(
     scorecard_rows: list[dict],
     emitted: list[dict],
@@ -1218,7 +1481,25 @@ def audit(
         )
         if plan["eligible"] is not None:
             reason_map = apply_eligible_reasons(coverage_entry or {}, plan["removed"])
-            apply_eligibility(verdict, plan["eligible"], reason_map)
+            reserve = None
+            if _declares_reserve(coverage_entry):
+                reserve = reserve_activation(
+                    scorecard_rows,
+                    emitted,
+                    coverage_entry,
+                    cfg,
+                    commit_sha=sha,
+                    loop_id=loop_id,
+                )
+                reason_map = {**_reserve_reason_map(coverage_entry, cfg), **reason_map}
+            apply_eligibility(
+                verdict,
+                plan["eligible"],
+                reason_map,
+                reserve["by_nonce"] if reserve else None,
+            )
+            if reserve is not None:
+                _stamp_reserve(verdict, coverage_entry, reserve)
         if plan["block_reason"] is not None:
             verdict["ok"] = False
             verdict["coverage_error"] = plan["block_reason"]
@@ -1282,7 +1563,7 @@ def _receipt_view(v: dict) -> dict:
             continue
         seen_keys.add(key)
         no_contadas.append(item)
-    return {
+    receipt = {
         "ticket": v.get("tickets"),
         "commit_sha": v.get("commit_sha"),
         "loop_id": v.get("loop_id"),
@@ -1301,6 +1582,13 @@ def _receipt_view(v: dict) -> dict:
         "debt": v.get("debt"),
         "ok": v.get("ok"),
     }
+    if v.get("reserve_policy") is not None:
+        # WOT-2026-152t: SOLO con reserva declarada (aditivo: sin ella el recibo
+        # es byte-identico al anterior).
+        receipt["reserve_policy"] = v["reserve_policy"]
+        receipt["reserve_substitutions"] = v.get("reserve_substitutions")
+        receipt["reserve_exhausted"] = v.get("reserve_exhausted")
+    return receipt
 
 
 def resolve_input_commit_sha(project_root: Path, commit_sha: str) -> str:
@@ -1427,6 +1715,29 @@ def _print_remap_hint(project_root: Path, affected: list[dict]) -> None:
         )
 
 
+def _print_reserve(v: dict) -> None:
+    """WOT-2026-152t: nombra la sustitucion de una lente colgada por su reserva
+    (registro derivado del scorecard) y el agotamiento de la reserva.
+
+    Before: ``v`` es un veredicto de ``audit``; sin reserva declarada no tiene las
+        claves y no se imprime nada (salida byte-identica a la anterior).
+    During/After: una linea ``RESERVA`` por sustitucion y una ``RESERVA-AGOTADA``
+        por colgada sin reserva libre. Solo imprime.
+    """
+    for sub in v.get("reserve_substitutions") or []:
+        print(
+            f"[loop-exec]   RESERVA {sub['replaced_backend_key']} -> "
+            f"{sub['reserve_backend_key']}: {sub['timeouts']} timeouts "
+            f"(N={sub['n']}, ventana={sub['window']}, nonce "
+            f"{str(sub['nonce'])[:12]}...)"
+        )
+    for ex in v.get("reserve_exhausted") or []:
+        print(
+            f"[loop-exec]   RESERVA-AGOTADA {ex['backend_key']}: {ex['timeouts']} "
+            f"timeouts (N={ex['n']}, nonce {str(ex['nonce'])[:12]}...): {ex['reason']}"
+        )
+
+
 def _print_verdict(v: dict) -> None:
     """Imprime UN veredicto por-commit y sus senales, todas NOMBRADAS.
 
@@ -1456,6 +1767,7 @@ def _print_verdict(v: dict) -> None:
             f"[loop-exec]   NO-ELEGIBLE {ne['backend_key']}: {ne['reason']} "
             "(ronda fuera de la cobertura elegible; no cuenta para N)"
         )
+    _print_reserve(v)
     # WOT-2026-143a: deuda historica declarada (SHA40 exacto), nunca silenciosa.
     if v.get("debt_waived"):
         print(
