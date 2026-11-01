@@ -2192,3 +2192,25 @@ def test_muda_round_keeps_the_muda_label(capsys):
     out = capsys.readouterr().out
     assert "MUDA BA11" in out
     assert "TIMEOUT BA11" not in out
+
+
+def test_timeout_prefix_in_the_middle_of_a_transport_failure_is_not_a_timeout(capsys):
+    """Solo el PREFIJO `timeout:` marca el timeout del watchdog. Un fallo de
+    TRANSPORTE cuyo texto (escrito por el proveedor) contiene `timeout:` en
+    MEDIO no es un timeout del watchdog: ni se diagnostica ni se etiqueta como
+    tal. Mutaciones M19 (`in` en vez de `startswith` en diagnose_silence) y M19b
+    (lo mismo en la etiqueta del informe) -> rojo."""
+    row = _muda("BA11")
+    row["failure_mode"] = "transport_failed: rc=1; el proveedor dijo timeout: reintenta"
+
+    diagnosis = cle.diagnose_silence(row)
+
+    assert "NO respondio dentro del limite" not in diagnosis
+    assert "adjudicacion" in diagnosis
+    v = cle.audit_commit(
+        [_ronda("BA10"), row], [_emitted()], commit_sha="abc", min_distinct=2
+    )
+    cle._print_verdict(v)
+    out = capsys.readouterr().out
+    assert "MUDA BA11" in out
+    assert "TIMEOUT BA11" not in out

@@ -1747,6 +1747,11 @@ EXIT_WATCHDOG_TIMEOUT = 5
 # bandera del argv del hijo: son dos barreras independientes.
 WATCHDOG_CHILD_ENV = "ENSEMBLE_LOOP_ROUND_WATCHDOG_CHILD"
 
+# WOT-2026-152s-1 (ronda 2): segundos que el supervisor espera, tras el kill, a que
+# el hijo confirme su muerte. Pasado ese plazo la fila y el stderr dicen
+# `kill NO confirmado`: afirmar `matado` con el hijo vivo seria una fila falsa.
+WATCHDOG_KILL_CONFIRM_S = 10
+
 
 def _stderr_tail(stderr_text: str | None) -> str:
     """Ultimos `_AGENT_STDERR_TAIL_CHARS` de stderr, redactados; '' si no hay.
@@ -7354,11 +7359,13 @@ def _record_watchdog_timeout(
     child_pid: int,
     elapsed_ms: int,
     rows_before: int | None,
+    kill_confirmed: bool,
 ) -> bool:
     """Escribe UNA fila `timeout:` salvo que el hijo ya haya escrito la suya.
 
-    Before: el hijo ya fue matado; `rows_before` es el recuento de filas de esta
-        lente tomado ANTES de lanzarlo (None = no se pudo leer).
+    Before: se intento matar al hijo; `kill_confirmed` dice si su muerte quedo
+        confirmada (`proc.poll()` tras la espera); `rows_before` es el recuento de
+        filas de esta lente tomado ANTES de lanzarlo (None = no se pudo leer).
     During: si desde el arranque del hijo hay MAS filas de (ticket, ronda,
         backend_key), el hijo registro su ronda y no se duplica (dos filas de la
         misma ronda inflan el recuento de lentes). Si no, `_record_round` con
@@ -7403,7 +7410,12 @@ def _record_watchdog_timeout(
         context_kind=args.context_kind,
         failure_mode=(
             f"timeout: watchdog de {watchdog_s:g}s vencido sin respuesta de la "
-            f"lente; arbol de procesos del hijo (pid {child_pid}) matado"
+            "lente; "
+            + (
+                f"arbol de procesos del hijo (pid {child_pid}) matado"
+                if kill_confirmed
+                else f"kill NO confirmado; el hijo (pid {child_pid}) puede seguir vivo"
+            )
         ),
         session_id=session_id,
         latency_ms=elapsed_ms,
@@ -7428,7 +7440,10 @@ def _supervise_loop_round(args, config) -> int:
         el supervisor y su padre quedan fuera), fila `timeout:` deduplicada.
     After: rc del hijo tal cual si termino a tiempo; `EXIT_WATCHDOG_TIMEOUT` si
         vencio. Una interrupcion (Ctrl-C) mata tambien el arbol del hijo antes
-        de propagarse.
+        de propagarse. La fila y el stderr dicen `matado` SOLO si `poll()` confirma
+        la muerte del hijo tras `WATCHDOG_KILL_CONFIRM_S`; si no, dicen `kill NO
+        confirmado` (un hijo superviviente que luego escriba su propia fila queda
+        como duplicado: LIMITE declarado, no se arregla aqui).
 
     LIMITES (declarados): si el SUPERVISOR muere, el hijo queda huerfano (Job
     Object: 152s-3); un nieto DESACOPLADO sobrevive a `taskkill /T`.
@@ -7447,12 +7462,15 @@ def _supervise_loop_round(args, config) -> int:
         _watchdog_kill(proc.pid)
         raise
     _watchdog_kill(proc.pid)
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=WATCHDOG_KILL_CONFIRM_S)
+    # La muerte se CONFIRMA con `poll()`, no se presupone por haber lanzado el
+    # kill: `_watchdog_kill` devuelve True aunque taskkill falle.
+    kill_confirmed = proc.poll() is not None
+    if not kill_confirmed:
         print(
             f"[ensemble-dispatch] WARN: el hijo {proc.pid} no confirmo su muerte "
-            "en 10 s tras el kill del arbol.",
+            f"en {WATCHDOG_KILL_CONFIRM_S:g} s tras el kill del arbol.",
             file=sys.stderr,
         )
     wrote = _record_watchdog_timeout(
@@ -7463,10 +7481,15 @@ def _supervise_loop_round(args, config) -> int:
         child_pid=proc.pid,
         elapsed_ms=round((time.monotonic() - started) * 1000),
         rows_before=rows_before,
+        kill_confirmed=kill_confirmed,
     )
     print(
         f"[TIMEOUT] loop-round no respondio en {watchdog_s:g}s (--watchdog-s); "
-        f"arbol del hijo {proc.pid} matado; "
+        + (
+            f"arbol del hijo {proc.pid} matado; "
+            if kill_confirmed
+            else f"kill NO confirmado; el hijo (pid {proc.pid}) puede seguir vivo; "
+        )
         + (
             "fila `timeout:` registrada en scorecard.jsonl"
             if wrote

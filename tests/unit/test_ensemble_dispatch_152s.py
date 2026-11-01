@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -195,7 +196,7 @@ def _cleanup(pids: list[int]) -> None:
 
 @_ONLY_WINDOWS
 def test_watchdog_kills_child_and_grandchild_and_leaves_rc_and_timeout_row(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ):
     """Hijo + nieto REALES que no terminan: a los 3 s ambos mueren, el rc es 5,
     queda UNA fila `timeout:` y el PID propio y el del padre siguen vivos.
@@ -234,6 +235,10 @@ def test_watchdog_kills_child_and_grandchild_and_leaves_rc_and_timeout_row(
         assert row["ronda"] == 1
         assert row["failure_mode"].startswith("timeout:"), row["failure_mode"]
         assert "3" in row["failure_mode"], "la fila debe decir el limite que vencio"
+        # kill CONFIRMADO: la fila puede afirmar `matado` y no lleva la salvedad
+        assert "matado" in row["failure_mode"]
+        assert "NO confirmado" not in row["failure_mode"]
+        assert "NO confirmado" not in capsys.readouterr().err
     finally:
         _cleanup(pids)
 
@@ -383,7 +388,7 @@ def test_child_that_finishes_in_time_passes_through_rc_and_streams(
     assert _rows(tmp_path) == [], "el supervisor no escribe fila si el hijo termino"
 
 
-@pytest.mark.parametrize("bad", ["0", "-5", "abc"])
+@pytest.mark.parametrize("bad", ["0", "-5", "abc", "nan", "inf", "-inf"])
 def test_invalid_watchdog_value_is_rejected_by_argparse_before_any_child(
     tmp_path, monkeypatch, capsys, bad
 ):
@@ -530,6 +535,178 @@ def test_child_marker_does_not_skip_privacy_preflight(tmp_path, monkeypatch, cap
 
     assert ed.main(argv) == 0  # control positivo: public si sale
     assert sent == ["salio-a-backend"]
+
+
+# --------------------------------------------------------------------------- #
+# Ronda 2 (WOT-2026-152s): la fila y el stderr NO afirman `matado` sin confirmarlo
+# --------------------------------------------------------------------------- #
+
+
+def _raises_oserror(_pid):
+    raise OSError("taskkill no disponible")
+
+
+@_ONLY_WINDOWS
+@pytest.mark.parametrize(
+    "fake_kill",
+    [lambda _pid: None, _raises_oserror],
+    ids=["kill_no_op", "kill_lanza_oserror"],
+)
+def test_unconfirmed_kill_is_not_reported_as_killed(
+    tmp_path, monkeypatch, capsys, fake_kill
+):
+    """Si el kill NO se confirma (el hijo REAL sigue vivo tras la espera), la fila
+    `timeout:` y el stderr lo dicen: `kill NO confirmado; el hijo (pid N) puede
+    seguir vivo`. Una fila que afirma `matado` con el hijo vivo es una fila falsa
+    en una ficha cuyo defecto es 'un proceso sobrevive'. Mantiene el prefijo
+    `timeout:` y el rc 5. Mutacion M16 (afirmar siempre `matado`) -> rojo."""
+    pidfile = _patch_sleeper_child(monkeypatch, tmp_path, write_row=False)
+    real_kill = ed._kill_process_tree
+    monkeypatch.setattr(ed, "_kill_process_tree", fake_kill)
+    monkeypatch.setattr(ed, "WATCHDOG_KILL_CONFIRM_S", 0.5)
+    pids: list[int] = []
+    try:
+        rc = ed.main(_argv(tmp_path, "--watchdog-s", "2"))
+        pids = _read_pids(pidfile)
+        assert rc == ed.EXIT_WATCHDOG_TIMEOUT
+        assert pids and _alive(pids[0]), "premisa: el hijo REAL sigue vivo"
+
+        failure_mode = _rows(tmp_path)[-1]["failure_mode"]
+        assert failure_mode.startswith("timeout:")
+        assert "kill NO confirmado" in failure_mode
+        # el pid de la fila es el del Popen del supervisor (en un venv de Windows el
+        # `python.exe` es un lanzador: no coincide con el pid que anota el script)
+        assert re.search(r"\(pid \d+\) puede seguir vivo", failure_mode)
+        assert "puede seguir vivo" in failure_mode
+        assert "matado" not in failure_mode
+        err = capsys.readouterr().err
+        assert "kill NO confirmado" in err and "puede seguir vivo" in err
+        assert "matado;" not in err
+    finally:
+        for pid in pids:
+            real_kill(pid)
+
+
+# --------------------------------------------------------------------------- #
+# Ronda 2: el dedupe es FAIL-OPEN hacia registrar (decision medida, no accidente)
+# --------------------------------------------------------------------------- #
+
+
+@_ONLY_WINDOWS
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [(None, None), (0, None), (None, 1)],
+    ids=["ambos_ilegibles", "despues_ilegible", "antes_ilegible"],
+)
+def test_dedupe_fails_open_to_recording_when_the_scorecard_is_unreadable(
+    tmp_path, monkeypatch, before, after
+):
+    """Si el recuento de filas no se puede leer (rotacion concurrente, linea
+    ilegible) el supervisor ESCRIBE la fila `timeout:` igualmente: un duplicado es
+    un defecto menor y una ronda sin rastro es el que este ticket cierra. Decision
+    deliberada y documentada en `_count_round_rows`; este test la fija.
+    Mutacion M17 (fail-closed: no escribir si no se puede comparar) -> rojo."""
+    pidfile = _patch_sleeper_child(monkeypatch, tmp_path, write_row=False)
+    counts = iter([before, after])
+    monkeypatch.setattr(ed, "_count_round_rows", lambda *_a, **_k: next(counts))
+    pids: list[int] = []
+    try:
+        assert ed.main(_argv(tmp_path, "--watchdog-s", "2")) == ed.EXIT_WATCHDOG_TIMEOUT
+        pids = _read_pids(pidfile)
+        rows = _rows(tmp_path)
+        assert len(rows) == 1 and rows[0]["failure_mode"].startswith("timeout:")
+    finally:
+        _cleanup(pids)
+
+
+@_ONLY_WINDOWS
+def test_dedupe_still_skips_when_both_counts_are_readable_and_grew(
+    tmp_path, monkeypatch
+):
+    """CONTROL POSITIVO del fail-open: con AMBOS recuentos legibles y mas filas
+    despues (0 -> 1) el supervisor NO escribe: el hijo ya registro su ronda."""
+    pidfile = _patch_sleeper_child(monkeypatch, tmp_path, write_row=False)
+    counts = iter([0, 1])
+    monkeypatch.setattr(ed, "_count_round_rows", lambda *_a, **_k: next(counts))
+    pids: list[int] = []
+    try:
+        assert ed.main(_argv(tmp_path, "--watchdog-s", "2")) == ed.EXIT_WATCHDOG_TIMEOUT
+        pids = _read_pids(pidfile)
+        assert _rows(tmp_path) == []
+    finally:
+        _cleanup(pids)
+
+
+# --------------------------------------------------------------------------- #
+# Ronda 2 (adenda CO-19): huecos de test cerrados, cada uno con su mutacion
+# --------------------------------------------------------------------------- #
+
+
+def test_child_argv_forwards_commit_sha_and_challenge_nonce(tmp_path, monkeypatch):
+    """El hijo recibe `--commit-sha` y `--challenge-nonce` CON sus valores. Sin
+    ellos la ronda supervisada pierde su traza de cierre y `check_loop_execution`
+    no la acredita, y nadie lo veria. Mutacion M17 (el argv los pierde) -> rojo."""
+    captured: dict = {}
+
+    def _spy(args, config):
+        captured["args"] = args
+        return 0
+
+    monkeypatch.setattr(ed, "_supervise_loop_round", _spy)
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    nonce = "NONCE-152S-A"
+    argv = _argv(
+        tmp_path,
+        "--watchdog-s",
+        "7",
+        "--commit-sha",
+        sha,
+        "--challenge-nonce",
+        nonce,
+    )
+    assert ed.main(argv) == 0
+
+    cmd = ed._watchdog_child_argv(captured["args"])
+
+    flags = {cmd[i]: cmd[i + 1] for i in range(3, len(cmd), 2)}
+    assert flags["--commit-sha"] == sha
+    assert flags["--challenge-nonce"] == nonce
+
+
+@_ONLY_WINDOWS
+def test_stale_row_of_the_same_key_does_not_suppress_the_timeout_row(
+    tmp_path, monkeypatch
+):
+    """El dedupe mira filas NUEVAS desde el arranque del hijo, no cualquier fila de
+    la misma clave: una fila ANTIGUA (ticket/ronda/backend_key) no puede suprimir la
+    fila `timeout:` de esta ejecucion. Mutacion M18 (`rows_after > 0` en vez de
+    `rows_after > rows_before`) -> la fila `timeout:` desaparece."""
+    pidfile = _patch_sleeper_child(monkeypatch, tmp_path, write_row=False)
+    scorecard = tmp_path / ed.SCORECARD_REL
+    scorecard.parent.mkdir(parents=True, exist_ok=True)
+    scorecard.write_text(
+        json.dumps(
+            {
+                "event": "ronda",
+                "ticket": "WOT-2026-152s",
+                "ronda": 1,
+                "backend_key": "BKA",
+                "failure_mode": "fila-antigua",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    pids: list[int] = []
+    try:
+        assert ed.main(_argv(tmp_path, "--watchdog-s", "2")) == ed.EXIT_WATCHDOG_TIMEOUT
+        pids = _read_pids(pidfile)
+        modes = [r["failure_mode"] for r in _rows(tmp_path)]
+        assert len(modes) == 2 and modes[0] == "fila-antigua", modes
+        assert modes[1].startswith("timeout:"), modes
+    finally:
+        _cleanup(pids)
 
 
 def test_namespace_without_watchdog_attribute_is_treated_as_off():
