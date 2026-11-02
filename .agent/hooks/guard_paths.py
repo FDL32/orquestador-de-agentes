@@ -84,6 +84,34 @@ def _read_json(path: Path) -> dict[str, object]:
     return {}
 
 
+def _read_link_value(link: Path, key: str) -> str | None:
+    """Read one string field of a ``motor_destination_link.json`` (WOT-2026-152c).
+
+    Before: ``link`` is the full path of the link file (it may be absent, a
+    directory, empty, truncated, BOM-prefixed or hold any JSON). This hook
+    resolves the motor THROUGH the link, so it cannot import
+    ``runtime.motor_link.read_motor_link`` (chicken-and-egg: a failed import
+    here would be fail-open or a crash): this is a stdlib-only copy kept
+    identical to the one in ``claude_guard_entry.py`` (a test compares both
+    and ``read_motor_link``).
+    During: one ``read_bytes`` and a ``utf-8-sig`` decode (the PowerShell 5.1
+    BOM is tolerated) and ``json.loads``. Writes nothing.
+    After: the value of ``key`` when the file holds a JSON object whose
+    ``key`` is a non-empty string; ``None`` for EVERYTHING else (OS error,
+    undecodable bytes, invalid or too deeply nested JSON, a root that is not
+    an object, a missing, non-string or empty value). ``None`` means "do not
+    widen the authorized roots" -- fail-closed, never raises.
+    """
+    try:
+        data = json.loads(link.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def _tool_paths(tool_call: dict[str, object]) -> list[str]:
     """Extract file paths from a tool call."""
     paths = []
@@ -128,11 +156,8 @@ def _resolve_destino_from_target(path_obj: Path, repo_root: Path) -> Path | None
         link = ancestor / ".agent" / "config" / "motor_destination_link.json"
         if not link.exists():
             continue
-        try:
-            motor_root_value = json.loads(link.read_text(encoding="utf-8"))[
-                "motor_root"
-            ]
-        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+        motor_root_value = _read_link_value(link, "motor_root")
+        if motor_root_value is None:
             return None
         try:
             linked_motor = Path(motor_root_value).resolve()
@@ -328,13 +353,8 @@ def _resolve_extra_root(repo_root: Path, path_obj: Path | None = None) -> Path |
         return None
 
     link = repo_root / ".agent" / "config" / "motor_destination_link.json"
-    try:
-        destination_root = json.loads(link.read_text(encoding="utf-8"))[
-            "destination_root"
-        ]
-    except (json.JSONDecodeError, OSError, KeyError, TypeError):
-        destination_root = None
-    if isinstance(destination_root, str) and destination_root.strip():
+    destination_root = _read_link_value(link, "destination_root")
+    if destination_root is not None:
         try:
             candidate = Path(destination_root).resolve()
         except (OSError, ValueError):

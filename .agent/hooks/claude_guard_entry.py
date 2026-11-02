@@ -43,6 +43,34 @@ def resolve_repo_root(start: str | None = None) -> Path:
     return base
 
 
+def _read_link_value(link: Path, key: str) -> str | None:
+    """Read one string field of a ``motor_destination_link.json`` (WOT-2026-152c).
+
+    Before: ``link`` is the full path of the link file (it may be absent, a
+    directory, empty, truncated, BOM-prefixed or hold any JSON). This entry
+    resolves the motor THROUGH the link, so it cannot import
+    ``runtime.motor_link.read_motor_link`` (chicken-and-egg: a failed import
+    here would be fail-open or a crash): this is a stdlib-only copy kept
+    identical to the one in ``guard_paths.py`` (a test compares both and
+    ``read_motor_link``).
+    During: one ``read_bytes`` and a ``utf-8-sig`` decode (the PowerShell 5.1
+    BOM is tolerated) and ``json.loads``. Writes nothing.
+    After: the value of ``key`` when the file holds a JSON object whose
+    ``key`` is a non-empty string; ``None`` for EVERYTHING else (OS error,
+    undecodable bytes, invalid or too deeply nested JSON, a root that is not
+    an object, a missing, non-string or empty value). ``None`` means "do not
+    widen the authorized roots" -- fail-closed, never raises.
+    """
+    try:
+        data = json.loads(link.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def resolve_guard_paths(repo_root: Path) -> Path | None:
     """Locate the canonical guard_paths.py: repo-own first, then motor via link.
 
@@ -54,12 +82,10 @@ def resolve_guard_paths(repo_root: Path) -> Path | None:
         return own
     link = repo_root / ".agent" / "config" / "motor_destination_link.json"
     if link.exists():
-        try:
-            motor_root = Path(
-                json.loads(link.read_text(encoding="utf-8"))["motor_root"]
-            )
-        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+        motor_root_value = _read_link_value(link, "motor_root")
+        if motor_root_value is None:
             return None
+        motor_root = Path(motor_root_value)
         cand = motor_root / ".agent" / "hooks" / "guard_paths.py"
         if cand.exists():
             return cand
@@ -83,12 +109,10 @@ def resolve_guard_channel_identity(repo_root: Path) -> Path | None:
         return own
     link = repo_root / ".agent" / "config" / "motor_destination_link.json"
     if link.exists():
-        try:
-            motor_root = Path(
-                json.loads(link.read_text(encoding="utf-8"))["motor_root"]
-            )
-        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+        motor_root_value = _read_link_value(link, "motor_root")
+        if motor_root_value is None:
             return None
+        motor_root = Path(motor_root_value)
         cand = motor_root / ".agent" / "hooks" / "guard_channel_identity.py"
         if cand.exists():
             return cand
@@ -142,9 +166,8 @@ def _linked_root(repo_root: Path) -> Path | None:
     link = repo_root / ".agent" / "config" / "motor_destination_link.json"
     if not link.exists():
         return None
-    try:
-        motor_root_value = json.loads(link.read_text(encoding="utf-8"))["motor_root"]
-    except (json.JSONDecodeError, OSError, KeyError, TypeError):
+    motor_root_value = _read_link_value(link, "motor_root")
+    if motor_root_value is None:
         return None
     try:
         return Path(motor_root_value).resolve()
@@ -167,11 +190,8 @@ def _destino_linked_to_motor(path_obj: Path, motor_root: Path) -> Path | None:
         link = ancestor / ".agent" / "config" / "motor_destination_link.json"
         if not link.exists():
             continue
-        try:
-            linked_motor_value = json.loads(link.read_text(encoding="utf-8"))[
-                "motor_root"
-            ]
-        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+        linked_motor_value = _read_link_value(link, "motor_root")
+        if linked_motor_value is None:
             return None
         try:
             linked_motor = Path(linked_motor_value).resolve()
@@ -284,7 +304,7 @@ def canonical_command_for(script: str, parent: str = "agent_hooks") -> str:
         "if (p/'.claude').exists()),Path('.').resolve()); "
         f"e=r/{segments}/'{script}'; "
         "l=r/'.agent'/'config'/'motor_destination_link.json'; "
-        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])"
+        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])"
         f"/{segments}/'{script}') if l.exists() else e); "
         "sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),"
         "cwd=str(r)).returncode) if e.exists() else "
@@ -308,7 +328,7 @@ def canonical_hook_command() -> str:
         "if (p/'.claude').exists()),Path('.').resolve()); "
         "e=r/'.agent'/'hooks'/'claude_guard_entry.py'; "
         "l=r/'.agent'/'config'/'motor_destination_link.json'; "
-        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])"
+        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])"
         "/'.agent'/'hooks'/'claude_guard_entry.py') if l.exists() else e); "
         "sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),"
         "cwd=str(r)).returncode) if e.exists() else "
@@ -348,7 +368,7 @@ def canonical_session_start_command() -> str:
         "if (p/'.claude').exists()),Path('.').resolve()); "
         "e=r/'.agent'/'hooks'/'session_start_hook.py'; "
         "l=r/'.agent'/'config'/'motor_destination_link.json'; "
-        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8'))['motor_root'])"
+        "e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])"
         "/'.agent'/'hooks'/'session_start_hook.py') if l.exists() else e); "
         "sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),"
         "cwd=str(r)).returncode) if e.exists() else "
