@@ -194,9 +194,16 @@ def _target_line(
     from scripts import session_closeout as sc
 
     try:
-        from scripts.prefix_resolver import extract_prefix, resolve_prefix
+        from scripts.prefix_resolver import (
+            extract_prefix,
+            resolve_prefix,
+            resolve_prefix_known,
+        )
     except ImportError:
-        extract_prefix = resolve_prefix = None  # type: ignore[assignment]
+        extract_prefix = resolve_prefix = resolve_prefix_known = None  # type: ignore[assignment]
+    resolve_prefix = sc._known_prefix_adapter(
+        resolve_prefix_known, resolve_prefix, project_root
+    )
     res = sc._process_ticket_targets(
         ticket, project_root, motor_root, extract_prefix, resolve_prefix, [since]
     )

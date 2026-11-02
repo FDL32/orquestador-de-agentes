@@ -2189,6 +2189,33 @@ def _resolve_trivial_topology(
     return motor_root, None, False, "", ""
 
 
+def _resolution_cause(resolve_prefix_fn, prefix) -> str:
+    """Suffix naming WHY the prefix did not resolve (WOT-2026-126b, DoD 4).
+
+    Before: ``resolve_prefix_fn`` is the callback that just failed for ``prefix``.
+        If it is the ``_known_prefix_adapter`` it carries ``last_resolution`` and
+        ``last_prefix``; any other callable (a test fake, the plain resolver) does
+        not.
+    During: reads those two attributes with ``getattr`` (no signature change) and
+        only trusts ``last_resolution`` when ``last_prefix == prefix``, so a stale
+        result from an earlier ticket is never attributed to this one.
+        ``prefix_resolver.describe_reason`` words it (it also names the local
+        override when that is the legitimate way out).
+    After: ``" [causa de la resolucion: <reason>]"`` or ``""`` when the callback
+        offers no cause. Never raises.
+    """
+    resolution = getattr(resolve_prefix_fn, "last_resolution", None)
+    if resolution is None or getattr(resolve_prefix_fn, "last_prefix", None) != prefix:
+        return ""
+    try:
+        from scripts.prefix_resolver import describe_reason
+
+        cause = describe_reason(resolution, prefix)
+    except Exception:
+        cause = str(getattr(resolution, "reason", ""))
+    return f" [causa de la resolucion: {cause}]" if cause else ""
+
+
 def _resolve_authoritative_repo(
     ticket_id: str,
     motor_root: Path,
@@ -2249,9 +2276,11 @@ def _resolve_authoritative_repo(
         return motor_root, other, False, "", ""
     if declared_authority == "repo_destino":
         dest = None
+        prefix = None
         if extract_prefix_fn is not None and resolve_prefix_fn is not None:
             try:
-                dest = resolve_prefix_fn(extract_prefix_fn(ticket_id), motor_root)
+                prefix = extract_prefix_fn(ticket_id)
+                dest = resolve_prefix_fn(prefix, motor_root)
             except Exception:
                 dest = None
         if dest is None:
@@ -2264,7 +2293,7 @@ def _resolve_authoritative_repo(
                     f"FAIL_TARGETS_MISSING: {ticket_id} declara "
                     "delivery_authority repo_destino pero su prefijo no "
                     "resuelve a ninguna raiz destino; no se adivina la raiz "
-                    "(WOT-2026-066i D2)"
+                    "(WOT-2026-066i D2)" + _resolution_cause(resolve_prefix_fn, prefix)
                 ),
             )
         return dest, (motor_root if dest != motor_root else None), False, "", ""
@@ -2457,6 +2486,65 @@ def _ticket_tip_target(
     )
 
 
+def _known_prefix_adapter(
+    resolve_prefix_known, resolve_prefix, known_destination: Path
+):
+    """`resolve_prefix_fn` adapter that resolves the KNOWN destination first.
+
+    WOT-2026-126b. Before: ``resolve_prefix_known`` / ``resolve_prefix`` are
+        ``prefix_resolver``'s functions (None when the import failed);
+        ``known_destination`` is the session ``project_root``.
+    During: wraps them as ``(prefix, motor_root) -> Optional[Path]``, so the
+        three call sites (`_read_declared_delivery_authority`,
+        `_resolve_authoritative_repo` x2) keep their signature and the test
+        callbacks (which patch ``prefix_resolver.resolve_prefix``) stay valid.
+        The known destination is tried first; if it does not match, the plain
+        ``resolve_prefix`` answers (it is itself fail-closed in a T3 layout, so
+        a failed known step never turns into a sibling scan there).
+    The callback signature stays ``Optional[Path]`` (DoD 3), so the CAUSE of a
+        failed resolution travels beside the return value, on the adapter:
+        ``last_resolution`` (final ``Resolution``), ``last_known_resolution`` (the
+        full answer of ``resolve_prefix_known`` with the known destination --
+        override, known match and, where meaningful, scan -- not just the known
+        step) and ``last_prefix`` (the prefix they
+        belong to). ``_resolution_cause`` reads them to put the cause in the
+        FAIL detail of ``_resolve_authoritative_repo`` (DoD 4). PROVENANCE
+        (WOT-2026-126b M3): when the known step fails and the plain
+        ``resolve_prefix`` fallback ANSWERS, ``last_resolution`` is
+        ``Resolution(found, "map")`` -- the plain resolver reports no reason, so
+        the exact provenance of that answer (scan of a scannable layout, a
+        patched seam) is not recoverable -- while ``last_known_resolution`` keeps
+        why the known-destination resolver did not match. When the fallback also fails,
+        ``last_resolution`` is the known step's Resolution. The three attributes
+        are cleared BEFORE each call, so a call that raises leaves no cause behind
+        (a stale one of an earlier call for the same prefix would be misattributed).
+    After: the adapter, or None when either function is None.
+    """
+    if resolve_prefix_known is None or resolve_prefix is None:
+        return None
+
+    def _resolve(prefix, motor_root):
+        _resolve.last_resolution = None
+        _resolve.last_known_resolution = None
+        _resolve.last_prefix = None
+        resolution = resolve_prefix_known(prefix, motor_root, known_destination)
+        known_step = resolution
+        found = resolution.path
+        if found is None:
+            found = resolve_prefix(prefix, motor_root)
+            if found is not None:
+                resolution = type(resolution)(found, "map")
+        _resolve.last_known_resolution = known_step
+        _resolve.last_resolution = resolution
+        _resolve.last_prefix = prefix
+        return found
+
+    _resolve.last_resolution = None
+    _resolve.last_known_resolution = None
+    _resolve.last_prefix = None
+    return _resolve
+
+
 @dataclass
 class _WriterSetup:
     motor_root: Path
@@ -2491,10 +2579,17 @@ def _resolve_writer_setup(
         )
 
     try:
-        from scripts.prefix_resolver import extract_prefix, resolve_prefix
+        from scripts.prefix_resolver import (
+            extract_prefix,
+            resolve_prefix,
+            resolve_prefix_known,
+        )
     except ImportError:
         extract_prefix = None  # type: ignore[assignment]
-        resolve_prefix = None  # type: ignore[assignment]
+        resolve_prefix = resolve_prefix_known = None  # type: ignore[assignment]
+    resolve_prefix = _known_prefix_adapter(
+        resolve_prefix_known, resolve_prefix, project_root
+    )
 
     since_args: list[str] = []
     window_detail = "no window filter (None: this flight's window is open)"

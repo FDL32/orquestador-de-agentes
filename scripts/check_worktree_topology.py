@@ -295,13 +295,13 @@ def _check_wot_topology(
             toplevel doesn't match that _dev entry -> exit 1 with the exact
             instruction to use _dev. If no _dev entry exists at all -> exit
             1 with the "create _dev" message (never auto-created here).
-            Verification B runs ONLY if A returned exit 0: resolves the
-            expected workspace via prefix_resolver.resolve_prefix(WOT), the
-            same mechanism every other prefix uses. If WOT does not resolve
-            (no link declares ticket_prefix "WOT", or more than one does and
-            it is ambiguous) -> exit 2, "cannot determine" (NOT exit 1,
-            which means "the workspace is the wrong one"); if project_root
-            does not match the resolved destination -> exit 1.
+            Verification B runs ONLY if A returned exit 0 (via
+            _verify_wot_workspace): reads the ticket_prefix of the KNOWN
+            project_root with prefix_resolver.resolve_prefix_for_destination
+            (WOT-2026-097; it does not scan or guess among candidates). If
+            project_root's link is missing/unreadable/without prefix -> exit
+            2, "cannot determine" (NOT exit 1, which means "the workspace is
+            the wrong one"); if it declares a prefix other than WOT -> exit 1.
     After: returns (exit_code, message).
     """
     cwd_common = _git_common_dir(cwd)
@@ -513,16 +513,20 @@ def _check_destination_topology(
     requirement for destinations).
 
     Before: prefix is a resolved ticket prefix (e.g. "CTL", "EXF").
-    During: resolves prefix via prefix_resolver.resolve_prefix. If it
-            cannot be resolved -> exit 2. If cwd != resolved -> exit 1.
+    During: resolves prefix via prefix_resolver.resolve_prefix_known with the
+            known destination (cwd, which callers pass as project_root)
+            (WOT-2026-126b). If it cannot be resolved -> exit 2 naming the
+            reason. If cwd != resolved -> exit 1.
             Once cwd matches the resolved destination, it must also pass
             _check_destination_is_linked_worktree (WOT-2026-104h): the
             destination's primary checkout -> exit 1; undeterminable -> 2.
     After: returns (exit_code, message).
     """
-    resolved = prefix_resolver.resolve_prefix(prefix, motor_root)
+    resolution = prefix_resolver.resolve_prefix_known(prefix, motor_root, cwd)
+    resolved = resolution.path
     if resolved is None:
-        return (2, f"prefijo desconocido: {prefix}")
+        reason = prefix_resolver.describe_reason(resolution, prefix)
+        return (2, f"prefijo desconocido: {prefix} (razon: {reason})")
     if cwd.resolve() != resolved.resolve():
         return (1, f"Ticket {prefix} necesita el workspace {resolved}, no {cwd}.")
     linked_issue = _check_destination_is_linked_worktree(cwd)
@@ -658,9 +662,15 @@ def check_topology(
     if prefix is not None:
         return _check_destination_topology(prefix, project_root, motor_root)
     # Project name (no ticket prefix): resolve like prefix_resolver.guard does.
-    resolved = prefix_resolver.resolve_by_project_name(ticket_or_project, motor_root)
+    resolution = prefix_resolver.resolve_prefix_known(
+        ticket_or_project, motor_root, project_root, by_name=True
+    )
+    resolved = resolution.path
     if resolved is None:
-        return (2, f"prefijo desconocido: {ticket_or_project}")
+        return (
+            2,
+            f"prefijo desconocido: {ticket_or_project} (razon: {resolution.reason})",
+        )
     if project_root.resolve() != resolved.resolve():
         return (
             1,

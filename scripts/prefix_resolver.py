@@ -18,7 +18,7 @@ purely from the links that already exist on disk. A local overrides file
 search tree; a .example template is versioned.
 
 CLI:
-    python scripts/prefix_resolver.py --resolve <PREFIX> [--motor-root <PATH>]
+    python scripts/prefix_resolver.py --resolve <PREFIX> [--motor-root <PATH>] [--project-root <PATH>]
     python scripts/prefix_resolver.py --verify [--motor-root <PATH>]
     python scripts/prefix_resolver.py --guard <TICKET_OR_PROJECT> [--motor-root <PATH>]
 
@@ -40,6 +40,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import NamedTuple
 
 
 LINK_REL = Path(".agent") / "config" / "motor_destination_link.json"
@@ -199,44 +200,270 @@ def load_overrides(motor_root: Path | None = None) -> dict[str, Path]:
     return {k: Path(v) for k, v in overrides.items() if isinstance(v, str)}
 
 
-def resolve_prefix(prefix: str | None, motor_root: Path) -> Path | None:
-    """Resolve a ticket prefix to a destination_root.
+class Resolution(NamedTuple):
+    """Result of ``resolve_prefix_known`` (WOT-2026-126b): ``path`` is the
+    destination_root or None, ``reason`` always names the cause."""
 
-    Before: prefix is a short uppercase string (e.g. EXF, WOT); motor_root
-            is the motor repository root.
-    During: checks local overrides first, then scans parent(motor_root) for
-            links. WOT has NO special case (WOT-2026-023i): it is declared as
-            a ticket_prefix on the workspace link like any other destination,
-            and resolves through the same scan. Returns None if prefix is
-            None, not found, or ambiguous (duplicate).
-    After: returns the destination_root Path, or None.
+    path: Path | None
+    reason: str
+
+
+_GIT_OK, _GIT_NOT_A_REPO, _GIT_UNKNOWN = "ok", "not-a-repo", "unknown"
+
+# Variables that make git answer for ANOTHER repository than the one at ``-C <path>``.
+# An inherited one turns "which repo is this motor?" into "which repo does the
+# environment say", so two unrelated paths read as the same repo (fail-open).
+# GIT_CEILING_DIRECTORIES / GIT_DISCOVERY_ACROSS_FILESYSTEM only RESTRICT discovery
+# (never substitute the repo) and are kept: tests and CI rely on them.
+_GIT_REPO_SUBSTITUTING_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+)
+
+
+def _git_env() -> dict[str, str]:
+    """Environment for a repo-identity probe: inherited, minus the variables that
+    substitute the repository, plus ``LC_ALL=C`` (stable git wording)."""
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_REPO_SUBSTITUTING_ENV}
+    env["LC_ALL"] = "C"
+    return env
+
+
+def _git_probe(path: Path) -> tuple[tuple[Path, Path] | None, str]:
+    """Ask git for ``(git_dir, git_common_dir)`` of ``path``, THREE-state.
+
+    Before: ``path`` is a directory that may or may not be inside a git repo.
+    During: ONE ``git rev-parse --path-format=absolute --git-dir
+            --git-common-dir`` (check=False, LC_ALL=C so the "not a git
+            repository" wording is stable; same flag rationale as
+            ``_git_common_dir``). git_dir != git_common_dir identifies a LINKED
+            worktree. A path that does not exist is "not a repo".
+            The environment is sanitized (``_git_env``): an inherited GIT_DIR & co.
+            must not make git answer for another repository.
+    After: ``(dirs, "ok")``; ``(None, "not-a-repo")`` only when git itself said
+           so with its discovery-failure wording (or the path does not exist); ``(None, "unknown")`` for EVERYTHING
+           else (git missing from PATH, OS error, any other git failure such as
+           a broken repo or dubious ownership, unexpected output). "unknown"
+           means "cannot tell": callers must not read it as "not a repo".
+           Never raises.
     """
-    if prefix is None:
-        return None
-    overrides = load_overrides(motor_root)
-    if prefix in overrides:
-        return overrides[prefix]
-    mapping = scan_links(motor_root.parent)
-    dests = mapping.get(prefix)
-    if not dests:
-        return None
-    if len(dests) > 1:
-        return None
-    return dests[0]
+    if not Path(path).exists():
+        return None, _GIT_NOT_A_REPO
+    git = _git_executable()
+    if git is None:
+        return None, _GIT_UNKNOWN
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                git,
+                "-C",
+                str(path),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-dir",
+                "--git-common-dir",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_env(),
+        )
+        lines = result.stdout.strip().splitlines()
+        if result.returncode == 0 and len(lines) == 2:
+            return (Path(lines[0]).resolve(), Path(lines[1]).resolve()), _GIT_OK
+    except (OSError, RuntimeError, ValueError):
+        return None, _GIT_UNKNOWN
+    # Only git's discovery failure counts ("... (or any of the parent
+    # directories): .git"). A dangling worktree pointer says "not a git
+    # repository: <gitdir>" WITHOUT that tail: it is a broken repo, not a non-repo.
+    stderr = result.stderr.lower()
+    if result.returncode != 0 and "not a git repository (or any of" in stderr:
+        return None, _GIT_NOT_A_REPO
+    return None, _GIT_UNKNOWN
 
 
-def resolve_by_project_name(name: str, motor_root: Path) -> Path | None:
-    """Resolve by destination_id (project directory name).
+def _git_dirs(path: Path) -> tuple[Path, Path] | None:
+    """``(git_dir, git_common_dir)`` for ``path`` or None (any non-"ok" probe)."""
+    return _git_probe(path)[0]
 
-    Before: name is a project name (not a ticket ID).
-    During: scans links, matches destination_id field. Links are read through
-            ``_read_link`` (WOT-2026-152a): BOM tolerated; an unreadable link is
-            skipped, as before (the fail-closed redesign is WOT-2026-126b).
-    After: returns the destination_root Path, or None.
+
+def _same_path(a: Path, b: Path) -> bool:
+    """Path equality after ``resolve`` and ``normcase`` (Windows drive/case)."""
+    try:
+        return os.path.normcase(str(a.resolve())) == os.path.normcase(str(b.resolve()))
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _marker_present(path: Path) -> bool:
+    """Is there ANYTHING at ``path`` (a ``.git`` marker), without following links?
+
+    Before: ``path`` is ``<dir>/.git``. During: one ``os.lstat``. After: True if
+    something is there (file, dir, dangling link/junction); False ONLY when it is
+    effectively absent (FileNotFoundError / NotADirectoryError). Any other OSError
+    (PermissionError, path too long, ...) is re-raised: "cannot tell" must not
+    read as "absent" (``os.path.lexists`` would swallow it); the caller turns it
+    into a fail-closed answer.
     """
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return True
+
+
+def _parent_scan_is_meaningful(motor_root: Path) -> bool:
+    """Is scanning ``parent(motor_root)`` for destination links meaningful?
+
+    WOT-2026-126b. Declared interpretation of DoD (4) ("never return the
+    canonical destination from a linked worktree"): it applies to linked
+    worktrees whose parent is NOT the parent of the main checkout (T3 layouts,
+    ``.claude/worktrees``), where the siblings are unrelated worktrees and
+    fossil links, not destinations. The canonical ``_dev`` pair (linked worktree
+    that is a SIBLING of the main checkout) keeps scanning exactly as before.
+
+    Before: ``motor_root`` is the motor root (may not exist / be a git repo).
+    During: one ``_git_probe``. git said "not a repo" (or the path does not
+            exist) AND the motor root carries no ``.git`` marker => True (a real
+            non-git motor scans as before; a ``.git`` marker that git cannot use,
+            e.g. a pruned worktree, goes to ``_layout_without_git`` instead). Not linked
+            => True. Linked: True only if the main checkout
+            (``git_common_dir.parent``, a ``.git`` dir) shares its parent with
+            ``motor_root``; a bare/odd common dir is fail-closed (False).
+            If git CANNOT tell (missing, broken, odd output) the layout is read
+            from the ``.git`` marker without running git
+            (``_layout_without_git``); never "cannot tell" => True.
+    After: bool; any OS-level error while deciding => False (fail-closed).
+    """
+    try:
+        dirs, status = _git_probe(motor_root)
+        if status == _GIT_NOT_A_REPO and not _marker_present(Path(motor_root) / ".git"):
+            return True
+        if dirs is None:
+            return _layout_without_git(motor_root)
+        git_dir, common_dir = dirs
+        if git_dir == common_dir:
+            return True
+        if common_dir.name != ".git":
+            return False
+        return _same_path(motor_root.resolve().parent, common_dir.parent.parent)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _layout_without_git(motor_root: Path) -> bool:
+    """Scannability when git cannot answer, read from the ``.git`` marker only.
+
+    Before: ``_git_probe`` returned "unknown" for ``motor_root``.
+    During: filesystem reads, no git. ``.git`` DIRECTORY at the motor root =
+            main checkout => True. ``.git`` FILE ``gitdir: <...>/worktrees/<n>``
+            = linked worktree: True only if the main checkout it points at
+            (``<common>/..`` with ``<common>`` named ``.git``) shares the motor's
+            parent (the ``_dev`` pair); any other gitdir shape (submodule,
+            unparsable, bare) => False. A marker that is neither (a dangling
+            symlink/junction) => False. No marker at the root: a ``.git`` in an
+            ancestor (up to ``GIT_CEILING_DIRECTORIES``, as git does) means the
+            motor sits INSIDE some repo we cannot read => False; no ``.git``
+            anywhere => a genuinely non-git motor => True.
+    After: bool. May raise OSError/RuntimeError/ValueError (the caller,
+           ``_parent_scan_is_meaningful``, turns that into False).
+    """
+    root = Path(motor_root).resolve()
+    marker = root / ".git"
+    if marker.is_dir():
+        return True
+    if marker.is_file():
+        first = marker.read_text(encoding="utf-8", errors="replace").splitlines()[:1]
+        if not first or not first[0].startswith("gitdir:"):
+            return False
+        gitdir = Path(first[0][len("gitdir:") :].strip())
+        if not gitdir.is_absolute():
+            gitdir = root / gitdir
+        gitdir = gitdir.resolve()
+        common = gitdir.parent.parent
+        if gitdir.parent.name != "worktrees" or common.name != ".git":
+            return False
+        return _same_path(root.parent, common.parent.parent)
+    if _marker_present(marker):
+        return False  # a marker that is neither dir nor file (dangling link/junction)
+    ceilings = {
+        os.path.normcase(str(Path(c).resolve()))
+        for c in os.environ.get("GIT_CEILING_DIRECTORIES", "").split(os.pathsep)
+        if c
+    }
+    for ancestor in root.parents:
+        if os.path.normcase(str(ancestor)) in ceilings:
+            break
+        if _marker_present(ancestor / ".git"):
+            return False
+    return True
+
+
+def _match_known(
+    key: str, known_destination: Path, by_name: bool
+) -> tuple[Path | None, str]:
+    """Check that ``known_destination`` IS the destination for ``key``.
+
+    Before: ``key`` is a prefix (or a project name when ``by_name``);
+            ``known_destination`` is the destination the caller already knows.
+    During: reads ``known/LINK_REL`` through ``_read_link`` (BOM tolerated,
+            never raises). Accepts ONLY if the link's prefix (or
+            destination_id / directory name) matches AND its absolute
+            ``destination_root`` resolves to ``known_destination`` itself
+            (a link copied from another destination fails the second test).
+    After: ``(known_destination, "known")`` or ``(None, reason)`` with reason in
+           known_link_missing / known_link_unreadable / known_link_no_prefix /
+           known_prefix_mismatch / known_root_mismatch.
+    """
+    data, why = _read_link(known_destination / LINK_REL)
+    if data is None:
+        return (
+            None,
+            "known_link_missing" if why == "missing" else "known_link_unreadable",
+        )
+    if by_name:
+        name_ok = data.get("destination_id") == key or known_destination.name == key
+        if not name_ok:
+            return None, "known_prefix_mismatch"
+    else:
+        declared = data.get("ticket_prefix")
+        if not isinstance(declared, str) or not declared.strip():
+            return None, "known_link_no_prefix"
+        if declared != key:
+            return None, "known_prefix_mismatch"
+    root = data.get("destination_root")
+    if (
+        not isinstance(root, str)
+        or not root.strip()
+        or not Path(root).is_absolute()
+        or not _same_path(Path(root), known_destination)
+    ):
+        return None, "known_root_mismatch"
+    return known_destination, "known"
+
+
+def _scan_lookup(key: str, motor_root: Path, by_name: bool) -> Resolution:
+    """The historical scan of ``parent(motor_root)`` (unchanged semantics).
+
+    Prefix: unique link wins, duplicates are ``ambiguous``. Project name: first
+    link whose destination_id / directory name matches (as before).
+    """
+    if not by_name:
+        dests = scan_links(motor_root.parent).get(key)
+        if not dests:
+            return Resolution(None, "unknown")
+        if len(dests) > 1:
+            return Resolution(None, "ambiguous")
+        return Resolution(dests[0], "map")
     search_root = motor_root.parent
     if not search_root.exists():
-        return None
+        return Resolution(None, "unknown")
     for child in sorted(search_root.iterdir()):
         link_path = child / LINK_REL
         if not link_path.exists():
@@ -244,11 +471,141 @@ def resolve_by_project_name(name: str, motor_root: Path) -> Path | None:
         data, _reason = _read_link(link_path)
         if data is None:
             continue
-        if data.get("destination_id") == name or child.name == name:
+        if data.get("destination_id") == key or child.name == key:
             dest = data.get("destination_root")
             if dest:
-                return Path(dest)
-    return None
+                return Resolution(Path(dest), "map")
+    return Resolution(None, "unknown")
+
+
+def _scan_or_unknown(key: str, motor_root: Path, by_name: bool) -> Resolution:
+    """``_scan_lookup`` that turns an unlistable scan root (OSError, e.g.
+    PermissionError) into ``Resolution(None, "unknown")`` instead of raising."""
+    try:
+        return _scan_lookup(key, motor_root, by_name)
+    except OSError:
+        return Resolution(None, "unknown")
+
+
+_OVERRIDE_HINT_REASONS = ("known_prefix_mismatch", "linked_worktree_no_known")
+
+
+def describe_reason(resolution: Resolution, prefix: str | None) -> str:
+    """Text for the failure message of a ``Resolution`` (WOT-2026-126b).
+
+    Before: ``resolution`` came from ``resolve_prefix_known``; ``prefix`` is the
+        ticket prefix that was asked for, or None for a project-name lookup.
+    During: pure string building.
+    After: the reason; for a prefix that the known destination does not own
+        (``known_prefix_mismatch``) or that a T3 layout cannot scan
+        (``linked_worktree_no_known``) it also names the legitimate way to
+        reach another prefix's destination: a local override (the only path
+        that is declared by the user instead of guessed from siblings).
+    """
+    if prefix is not None and resolution.reason in _OVERRIDE_HINT_REASONS:
+        return (
+            f"{resolution.reason}; declara un override local para {prefix} "
+            f"({LOCAL_OVERRIDES.name})"
+        )
+    return resolution.reason
+
+
+# Known-link defects: the known destination itself is broken or lies, so they
+# are reported ahead of ``ambiguous`` (they are the actionable cause).
+_KNOWN_DEFECTS = (
+    "known_root_mismatch",
+    "known_link_unreadable",
+    "known_link_no_prefix",
+)
+
+
+def resolve_prefix_known(
+    prefix_or_project: str | None,
+    motor_root: Path,
+    known_destination: Path | None = None,
+    *,
+    by_name: bool = False,
+) -> Resolution:
+    """Resolve a prefix (or project name) to a destination_root, KNOWN FIRST.
+
+    WOT-2026-126b. Before: ``prefix_or_project`` is a ticket prefix, or a project
+        name when ``by_name``; ``motor_root`` is the motor root;
+        ``known_destination`` is the destination the caller already knows
+        (cwd / project_root) or None.
+    During: (1) local overrides (prefixes only, as before); (2) the KNOWN
+        destination: accepted only if its own link matches the prefix/name AND
+        its ``destination_root`` resolves to ``known_destination`` (see
+        ``_match_known``); (3) otherwise the historical scan of
+        ``parent(motor_root)``, but ONLY where that scan is meaningful
+        (``_parent_scan_is_meaningful``: never for a linked worktree outside
+        the main checkout's parent, i.e. T3 layouts); there a failed known step
+        stays failed (fail-closed) and with no known the cause is
+        ``linked_worktree_no_known``. In meaningful layouts a failed known step
+        falls through to the scan, exactly as before this ticket. If the layout
+        cannot be established (git missing/broken AND the ``.git`` marker not
+        readable) the scan is NOT run (fail-closed). Reads only.
+    After: ``Resolution(path, reason)``; reason in known / map / override /
+        known_link_missing / known_link_unreadable / known_link_no_prefix /
+        known_prefix_mismatch / known_root_mismatch / linked_worktree_no_known /
+        ambiguous / unknown. ``path`` is None for every failing reason.
+        PRECEDENCE of the reason when nothing resolves (documented, tested):
+        a known-link DEFECT (root_mismatch / unreadable / no_prefix) > ``ambiguous``
+        > the soft known reasons (missing / prefix_mismatch) > ``unknown``.
+        ``unknown`` also covers a scan root that cannot be listed (OSError,
+        e.g. PermissionError): the scan is skipped, never raised. Does not
+        raise on OS errors of the scan/layout/path comparison; the helpers it
+        calls (``load_overrides``, ``_read_link``) already never raise.
+    """
+    if not prefix_or_project:
+        return Resolution(None, "unknown")
+    if not by_name:
+        overrides = load_overrides(motor_root)
+        if prefix_or_project in overrides:
+            return Resolution(overrides[prefix_or_project], "override")
+    known_reason: str | None = None
+    if known_destination is not None:
+        path, known_reason = _match_known(
+            prefix_or_project, Path(known_destination), by_name
+        )
+        if path is not None:
+            return Resolution(path, "known")
+    if not _parent_scan_is_meaningful(motor_root):
+        return Resolution(None, known_reason or "linked_worktree_no_known")
+    scanned = _scan_or_unknown(prefix_or_project, motor_root, by_name)
+    if scanned.path is not None:
+        return scanned
+    if known_reason in _KNOWN_DEFECTS:
+        return Resolution(None, known_reason)
+    if scanned.reason == "ambiguous":
+        return scanned
+    return Resolution(None, known_reason or scanned.reason)
+
+
+def resolve_prefix(prefix: str | None, motor_root: Path) -> Path | None:
+    """Resolve a ticket prefix to a destination_root (no known destination).
+
+    Before: prefix is a short uppercase string (e.g. EXF, WOT); motor_root
+            is the motor repository root.
+    During: ``resolve_prefix_known`` with no known destination: overrides, then
+            the scan of parent(motor_root) where meaningful (WOT-2026-126b:
+            not for a T3-style linked worktree). WOT has NO special case
+            (WOT-2026-023i). Returns None if prefix is None, not found, or
+            ambiguous (duplicate).
+    After: returns the destination_root Path, or None.
+    """
+    return resolve_prefix_known(prefix, motor_root).path
+
+
+def resolve_by_project_name(name: str, motor_root: Path) -> Path | None:
+    """Resolve by destination_id (project directory name).
+
+    Before: name is a project name (not a ticket ID).
+    During: ``resolve_prefix_known(..., by_name=True)`` with no known
+            destination: scans links, matches destination_id (BOM tolerated,
+            unreadable links skipped), where the scan is meaningful.
+    After: returns the destination_root Path, or None.
+    """
+    return resolve_prefix_known(name, motor_root, by_name=True).path
 
 
 def resolve_prefix_for_destination(destination_root: Path) -> str | None:
@@ -447,6 +804,7 @@ def _git_common_dir(path: Path) -> Path | None:
             capture_output=True,
             text=True,
             check=False,
+            env=_git_env(),
         )
     except FileNotFoundError:
         return None
@@ -510,12 +868,16 @@ def guard(ticket_or_project: str, cwd: Path, motor_root: Path) -> int:
             return 1
         return 0
     if prefix is not None:
-        resolved = resolve_prefix(prefix, motor_root)
+        resolution = resolve_prefix_known(prefix, motor_root, cwd)
     else:
-        resolved = resolve_by_project_name(ticket_or_project, motor_root)
+        resolution = resolve_prefix_known(
+            ticket_or_project, motor_root, cwd, by_name=True
+        )
+    resolved = resolution.path
     if resolved is None:
         print(
-            f"[ERROR] Cannot resolve '{ticket_or_project}' to a destination",
+            f"[ERROR] Cannot resolve '{ticket_or_project}' to a destination "
+            f"(reason: {describe_reason(resolution, prefix)})",
             file=sys.stderr,
         )
         return 2
@@ -547,11 +909,17 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     if not PREFIX_RE.match(prefix):
         print(f"[ERROR] Malformed prefix: {prefix}", file=sys.stderr)
         return 2
-    resolved = resolve_prefix(prefix, motor_root)
-    if resolved is None:
-        print(f"[ERROR] Unknown or ambiguous prefix: {prefix}", file=sys.stderr)
+    project_root = getattr(args, "project_root", None)
+    known = Path(project_root) if project_root else None
+    resolution = resolve_prefix_known(prefix, motor_root, known)
+    if resolution.path is None:
+        print(
+            f"[ERROR] Unknown or ambiguous prefix: {prefix} "
+            f"(reason: {describe_reason(resolution, prefix)})",
+            file=sys.stderr,
+        )
         return 1
-    print(str(resolved))
+    print(str(resolution.path))
     return 0
 
 
@@ -579,7 +947,50 @@ def _collect_verify_issues(motor_root: Path) -> list[str]:
             issues.append(
                 f"OVERRIDE unreachable: '{prefix}' -> {dest} (path does not exist)"
             )
+    issues.extend(_unreadable_link_issues(search_root))
     return issues
+
+
+def _link_dirs(search_root: Path) -> list[Path]:
+    """Sorted non-hidden children of ``search_root`` that carry a link file."""
+    if not search_root.exists():
+        return []
+    return [
+        child
+        for child in sorted(search_root.iterdir())
+        if not child.name.startswith(".") and (child / LINK_REL).exists()
+    ]
+
+
+def _unreadable_link_issues(search_root: Path) -> list[str]:
+    """``UNREADABLE <link> <reason>`` for each link ``scan_links`` skips (126b).
+
+    Before: ``search_root`` is parent(motor_root). During: re-reads each link
+    through ``_read_link`` (read-only). After: one issue per unreadable link.
+    """
+    issues = []
+    for child in _link_dirs(search_root):
+        data, reason = _read_link(child / LINK_REL)
+        if data is None:
+            issues.append(f"UNREADABLE {child / LINK_REL} {reason}")
+    return issues
+
+
+def _motor_worktree_link_warnings(motor_root: Path) -> list[str]:
+    """``MOTOR-WORKTREE LINK <path>`` WARN for links living in a worktree of the
+    MOTOR's own repo (fossils such as pilot-104m / repo-audit-run; WOT-2026-126b).
+    WARN only: not counted in the rc and not excluded from the mapping (a
+    legitimate destination can also be a motor worktree).
+    """
+    motor_dirs = _git_dirs(motor_root)
+    if motor_dirs is None:
+        return []
+    warnings = []
+    for child in _link_dirs(motor_root.parent):
+        child_dirs = _git_dirs(child)
+        if child_dirs is not None and child_dirs[1] == motor_dirs[1]:
+            warnings.append(f"MOTOR-WORKTREE LINK {child}")
+    return warnings
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -588,6 +999,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print("[ERROR] Cannot discover motor_root (use --motor-root)", file=sys.stderr)
         return 2
     issues = _collect_verify_issues(motor_root)
+    for warning in _motor_worktree_link_warnings(motor_root):
+        print(f"[VERIFY] WARN {warning}", file=sys.stderr)
     if issues:
         for issue in issues:
             print(f"[VERIFY] {issue}", file=sys.stderr)
@@ -613,6 +1026,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--motor-root",
         help="Path to the motor repo (auto-discovered if omitted).",
+    )
+    parser.add_argument(
+        "--project-root",
+        help="Destination already known (--resolve only); resolved FIRST "
+        "(WOT-2026-126b) so it works from a motor in a T3 worktree.",
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
