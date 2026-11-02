@@ -1409,3 +1409,255 @@ def test_103b_rc2_is_no_verificable_not_silent_pass(tmp_path):
     assert result.passed is False
     assert result.is_blocking is False
     assert "NO VERIFICABLE" in result.output
+
+
+# ----------------------------------- WOT-2026-059r: DOD Metric Freshness (WARN)
+# El autouse de tests/conftest.py enlaza el prefijo de ids antes de CADA test, y
+# eso enmascaro que en cierre (proceso fresco, nadie enlazo) el helper lanzaba
+# RuntimeError y se saltaba entero. Estos tests des-enlazan el prefijo a
+# proposito para medir la ruta que corre en produccion.
+_DOD_HEADER = (
+    "## Vista rapida\n\n"
+    "| Prioridad | Ticket | Titulo | Scope | Estado | Depende de | Origen | Reactivation |\n"
+    "|---|---|---|---|---|---|---|---|\n"
+)
+
+
+def _dod_row(ticket: str, origen: str) -> str:
+    return f"| Alta | {ticket} | titulo | motor | pending | - | {origen} | none |\n"
+
+
+def _dod_destino(
+    root: Path, *rows: str, prefix: str | None = "WOT", backlog: bool = True
+) -> Path:
+    """Destino minimo: link con ticket_prefix y backlog.md con tabla viva."""
+    if prefix is not None:
+        cfg = root / ".agent" / "config"
+        cfg.mkdir(parents=True, exist_ok=True)
+        (cfg / "motor_destination_link.json").write_text(
+            json.dumps({"ticket_prefix": prefix}), encoding="utf-8"
+        )
+    if backlog:
+        collab = root / ".agent" / "collaboration"
+        collab.mkdir(parents=True, exist_ok=True)
+        (collab / "backlog.md").write_text(
+            _DOD_HEADER + "".join(rows), encoding="utf-8"
+        )
+    return root
+
+
+def _unbind_dod_prefix(monkeypatch):
+    """Estado de un proceso de cierre fresco: ningun prefijo enlazado.
+
+    Quita tambien AGENT_PROJECT_ROOT: el resolvedor lo usa de respaldo y un
+    entorno con esa variable haria que un test resolviera el prefijo de OTRA
+    raiz (el de discriminacion RDS es el sensible).
+    """
+    import scripts.check_dod_metric_freshness as dod
+
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    monkeypatch.setattr(dod, "_TICKET_ID_SPAN_RE", None)
+    return dod
+
+
+_DOD_VIOLATING = (
+    _dod_row("WOT-2026-900a", "quedan 177 filas por drenar"),
+    _dod_row("WOT-2026-900b", "hay 5 entradas sin ancla"),
+    _dod_row("WOT-2026-900c", "quedan 9 filas MEDIDO 2026-11-02"),
+)
+
+
+def test_059r_dod_helper_warns_with_violations_on_production_path(
+    tmp_path, monkeypatch
+):
+    """Con prefijo SIN enlazar (cierre real) las violaciones se REPORTAN.
+
+    ROJO previo al fix: el helper llamaba find_violations sin enlazar, este
+    lanzaba RuntimeError y el `except` lo convertia en skipped=True -- el
+    cierre jamas veia una violacion. WARN = passed False + is_blocking False
+    (como 103b): `_print_preflight_report` solo imprime el output si
+    `not passed`, asi que passed=True escondia el recuento aun enlazado.
+    MUTACIONES: quitar el bind -> skipped; is_blocking=True -> bloquea el
+    cierre; passed=True -> el informe calla el recuento.
+    """
+    _unbind_dod_prefix(monkeypatch)
+    root = _dod_destino(tmp_path, *_DOD_VIOLATING)
+    result = pc_module.run_dod_metric_freshness_check(root)
+    assert result.skipped is False, result.output
+    assert result.is_blocking is False
+    assert result.passed is False
+    assert "violaciones=2" in result.output
+    assert "WOT-2026-900a" in result.output
+    assert "WOT-2026-900b" in result.output
+    assert "WOT-2026-900c" not in result.output, "la fila anclada no es violacion"
+
+
+def test_059r_dod_helper_uses_the_destino_prefix_not_a_hardwired_one(
+    tmp_path, monkeypatch
+):
+    """El prefijo sale del link del DESTINO auditado (RDS), no de WOT cableado."""
+    _unbind_dod_prefix(monkeypatch)
+    root = _dod_destino(
+        tmp_path, _dod_row("RDS-2026-900a", "quedan 177 filas"), prefix="RDS"
+    )
+    result = pc_module.run_dod_metric_freshness_check(root)
+    assert result.skipped is False, result.output
+    assert "violaciones=1" in result.output
+    assert "RDS-2026-900a" in result.output
+
+
+def test_059r_dod_helper_clean_queue_is_silent_ok(tmp_path, monkeypatch):
+    """Cola sin cifras sin ancla: passed True, ejecutado, sin alarma."""
+    _unbind_dod_prefix(monkeypatch)
+    root = _dod_destino(tmp_path, _DOD_VIOLATING[2])
+    result = pc_module.run_dod_metric_freshness_check(root)
+    assert result.passed is True
+    assert result.is_blocking is False
+    assert result.skipped is False
+    assert "violaciones=0" in result.output
+    assert "sin ancla" not in result.output
+
+
+def test_059r_dod_helper_skips_without_backlog(tmp_path, monkeypatch):
+    """Sin backlog.md no hay cola viva: skipped=True nombrado, no bloquea."""
+    _unbind_dod_prefix(monkeypatch)
+    result = pc_module.run_dod_metric_freshness_check(tmp_path)
+    assert result.skipped is True
+    assert result.passed is True
+    assert result.is_blocking is False
+    assert "No backlog.md" in result.output
+
+
+def test_059r_dod_helper_selffail_is_skipped_never_raises(tmp_path, monkeypatch):
+    """Si el guard lanza, el cierre no cae: skipped=True con el tipo visible."""
+    dod = _unbind_dod_prefix(monkeypatch)
+    root = _dod_destino(tmp_path, *_DOD_VIOLATING)
+
+    def _boom(rows):
+        raise ValueError("fallo simulado del guard")
+
+    monkeypatch.setattr(dod, "find_violations", _boom)
+    result = pc_module.run_dod_metric_freshness_check(root)
+    assert result.skipped is True
+    assert result.passed is True
+    assert result.is_blocking is False
+    assert "ValueError" in result.output
+    assert "violaciones=" not in result.output
+
+
+def test_059r_dod_helper_unresolvable_prefix_is_skipped_with_reason(
+    tmp_path, monkeypatch
+):
+    """Sin ticket_prefix resoluble: skipped=True con el motivo del resolvedor.
+
+    Nunca un `passed` mudo ni un bloqueo, y nunca un prefijo inventado.
+    """
+    _unbind_dod_prefix(monkeypatch)
+    monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+    root = _dod_destino(tmp_path, *_DOD_VIOLATING, prefix=None)
+    result = pc_module.run_dod_metric_freshness_check(root)
+    assert result.skipped is True
+    assert result.passed is True
+    assert result.is_blocking is False
+    assert "ticket_prefix" in result.output
+    assert "violaciones=" not in result.output
+
+
+def _stub_other_checks(monkeypatch):
+    """Deja solo el helper de 059r real: el resto de checks de cierre -> OK."""
+    ok = pc_module.CheckResult(name="stub", passed=True, output="", is_blocking=True)
+    keep = {
+        "run_preflight_check",
+        "run_dod_metric_freshness_check",
+        "run_subprocess_check",
+    }
+    for name in dir(pc_module):
+        if name.startswith("run_") and name not in keep:
+            monkeypatch.setattr(pc_module, name, lambda *a, **k: ok)
+
+
+def test_059r_dod_warn_is_reported_in_closeout_and_does_not_block(
+    tmp_path, monkeypatch, capsys
+):
+    """Extremo a extremo por la ruta de cierre: aparece como [WARN], rc 0.
+
+    MUTACION: quitar el `results.append(run_dod_metric_freshness_check(...))`
+    del closeout deja el informe sin la linea y este test cae.
+    """
+    _unbind_dod_prefix(monkeypatch)
+    _stub_other_checks(monkeypatch)
+    root = _dod_destino(tmp_path, *_DOD_VIOLATING)
+    rc = pc_module.run_preflight_check(root, closeout_mode=True)
+    out = capsys.readouterr().out
+    assert rc == 0, "un WARN informativo no puede bloquear el cierre"
+    assert "[WARN] DOD Metric Freshness (closeout, WARN) (informacional)" in out
+    assert "violaciones=2" in out
+
+
+def test_059r_dod_check_is_not_invoked_outside_closeout(tmp_path, monkeypatch):
+    """CONTROL NEGATIVO: el preflight base (cada push) no INVOCA el informe.
+
+    Espia sobre el helper (no sobre el stdout): invocarlo y descartar el
+    resultado tambien seria pagarlo en cada push. Que el closeout SI lo
+    invoca lo prueba UNICAMENTE el e2e de closeout (contract-test del
+    cableado), para que desconectar la invocacion tumbe solo ese.
+    MUTACION: llamar al helper tambien fuera de closeout_mode.
+    """
+    _stub_other_checks(monkeypatch)
+    calls = []
+
+    def _spy(root, *args, **kwargs):
+        calls.append(root)
+        return pc_module.CheckResult(
+            name="spy", passed=True, output="", is_blocking=False
+        )
+
+    monkeypatch.setattr(pc_module, "run_dod_metric_freshness_check", _spy)
+    pc_module.run_preflight_check(tmp_path, closeout_mode=False)
+    assert calls == [], "el preflight base no debe invocar el informe de cierre"
+
+
+def test_059r_dod_warn_composes_with_blocking_failures(tmp_path, monkeypatch):
+    """DoD(c): el WARN del helper solo informa; un fallo bloqueante sigue ganando.
+
+    (a) solo el WARN (passed False, is_blocking False) -> no bloquea, rc 0.
+    (b) WARN + un check bloqueante fallido -> bloquea, rc 1.
+    MUTACION: tratar todo passed=False como bloqueante -> cae (a).
+    """
+    warn = pc_module.CheckResult(
+        name="warn", passed=False, output="x", is_blocking=False
+    )
+    fail = pc_module.CheckResult(
+        name="fail", passed=False, output="y", is_blocking=True
+    )
+    assert pc_module._print_preflight_report([warn]) is False
+    assert pc_module._print_preflight_report([warn, fail]) is True
+
+    _unbind_dod_prefix(monkeypatch)
+    _stub_other_checks(monkeypatch)
+    root = _dod_destino(tmp_path, *_DOD_VIOLATING)
+    assert pc_module.run_preflight_check(root, closeout_mode=True) == 0
+    monkeypatch.setattr(pc_module, "run_backlog_contract_check", lambda *a, **k: fail)
+    assert pc_module.run_preflight_check(root, closeout_mode=True) == 1
+
+
+def test_059r_dod_helper_resolver_raising_is_skipped_never_raises(
+    tmp_path, monkeypatch
+):
+    """Un link con bytes no UTF-8 hace lanzar al resolvedor REAL (sin mock).
+
+    El resolvedor captura OSError y JSONDecodeError pero no
+    UnicodeDecodeError (subclase de ValueError). Fuera del try del helper
+    eso rompia el cierre; dentro, el informe se salta con el tipo visible.
+    MUTACION: sacar la llamada al resolvedor del try -> cae este test.
+    """
+    _unbind_dod_prefix(monkeypatch)
+    root = _dod_destino(tmp_path, *_DOD_VIOLATING)
+    link = root / ".agent" / "config" / "motor_destination_link.json"
+    link.write_bytes(b"\xff\xfe\x00 no es utf-8")
+    result = pc_module.run_dod_metric_freshness_check(root)
+    assert result.skipped is True
+    assert result.passed is True
+    assert result.is_blocking is False
+    assert "UnicodeDecodeError" in result.output
+    assert "violaciones=" not in result.output

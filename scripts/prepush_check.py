@@ -535,16 +535,29 @@ def run_dod_metric_freshness_check(project_root: Path) -> CheckResult:
     cableado NON-GOAL de SU ticket) y murio huerfano: cero call-sites, owner
     archivado, y el SKIP sin root del orphan-check lo escondia en cada cierre.
     Se cablea AQUI en modo informe (no bloqueante): las violaciones vivas se
-    reportan con nombre; bloquear con 37 violaciones romperia cada cierre y
-    anclarlas es higiene con dueno propio, no de este gate. El modo
+    reportan con nombre; bloquear con violaciones vivas romperia cada cierre
+    y anclarlas es higiene con dueno propio, no de este gate. El modo
     fail-closed sigue disponible invocando el script standalone.
 
-    Before: project_root apunta al repo_destino con backlog.md.
-    During: extrae la tabla viva con la MISMA funcion del contract
-        (check_backlog_contract._extract_active_table, sin re-implementar el
-        regex) y aplica find_violations real del guard.
-    After: CheckResult passed=True (WARN informativo) con el recuento; nunca
-        lanza.
+    WOT-2026-059r: hasta aqui el helper se saltaba SIEMPRE en un cierre real
+    (el guard exige el prefijo de ids enlazado y solo su main() lo hacia) y,
+    aun enlazado, devolvia passed=True, con lo que el informe no imprimia el
+    recuento. Ahora enlaza el prefijo del link del destino y modela el WARN
+    como passed=False con is_blocking=False.
+
+    Before: project_root apunta al repo_destino con backlog.md y link con
+        ticket_prefix.
+    During: resuelve y enlaza el prefijo de ids del destino (mismo orden que
+        el main() del guard), extrae la tabla viva con la MISMA funcion del
+        contract (check_backlog_contract._extract_active_table, sin
+        re-implementar el regex) y aplica find_violations real del guard.
+        Enlaza un global del modulo del guard (idempotente).
+    After: CheckResult passed=False + is_blocking=False (WARN) con el recuento
+        y los ids cuando hay violaciones; passed=True sin ellas; skipped=True
+        (passed=True) con el motivo si no hay backlog, prefijo resoluble o el
+        guard falla. Ningun fallo de resolucion del prefijo, lectura o
+        ejecucion del informe propaga ni bloquea; un fallo de import de los
+        propios modulos (arriba del try) NO esta cubierto.
     """
     name = "DOD Metric Freshness (closeout, WARN)"
     backlog = project_root / ".agent" / "collaboration" / "backlog.md"
@@ -558,13 +571,45 @@ def run_dod_metric_freshness_check(project_root: Path) -> CheckResult:
         )
     try:
         from scripts.check_backlog_contract import _extract_active_table
-        from scripts.check_dod_metric_freshness import find_violations
+        from scripts.check_dod_metric_freshness import (
+            bind_ticket_prefix,
+            find_violations,
+        )
+        from scripts.prefix_resolver import resolve_ticket_alternation
     except ImportError:
         from check_backlog_contract import (
             _extract_active_table,  # type: ignore[no-redef]
         )
-        from check_dod_metric_freshness import find_violations  # type: ignore[no-redef]
+        from check_dod_metric_freshness import (  # type: ignore[no-redef]
+            bind_ticket_prefix,
+            find_violations,
+        )
+        from prefix_resolver import (  # type: ignore[no-redef]
+            resolve_ticket_alternation,
+        )
+    # WOT-2026-059r: el guard exige el prefijo de ids ENLAZADO (fail-closed) y
+    # solo su main() lo enlazaba; aqui, en un cierre real, nadie lo hacia y
+    # find_violations lanzaba RuntimeError -> el informe de 070k se saltaba
+    # siempre. Mismo orden y mismo origen que su main(): prefijo del link del
+    # destino auditado, bind, y solo entonces find_violations. Sin prefijo
+    # resoluble: skipped con el motivo del resolvedor (nunca un prefijo
+    # inventado, nunca un pass mudo). El try cubre resolucion, bind, lectura y
+    # guard; los imports de arriba (y su fallback) quedan fuera a proposito.
     try:
+        # El resolvedor tambien va DENTRO del try: captura OSError y
+        # JSONDecodeError pero un link con bytes no UTF-8 sube como
+        # UnicodeDecodeError (subclase de ValueError) y, fuera del try,
+        # romperia el cierre en vez de saltar el informe.
+        alternation, prefix_err = resolve_ticket_alternation(project_root)
+        if alternation is None:
+            return CheckResult(
+                name=name,
+                passed=True,
+                output=f"dod-metric informe no ejecutable: {prefix_err}",
+                is_blocking=False,
+                skipped=True,
+            )
+        bind_ticket_prefix(alternation)
         content = backlog.read_text(encoding="utf-8-sig")
         rows, _header = _extract_active_table(content)
         violations = find_violations(rows)
@@ -583,9 +628,12 @@ def run_dod_metric_freshness_check(project_root: Path) -> CheckResult:
             "ejecuta el script standalone para el detalle por fila: "
             + "; ".join(v.split(":")[0] for v in violations[:5])
         )
+    # WARN = passed False + is_blocking False (patron 103b): el informe de
+    # cierre solo imprime `output` cuando `not passed`, asi que con
+    # passed=True el recuento quedaba invisible aunque el helper corriera.
     return CheckResult(
         name=name,
-        passed=True,
+        passed=not violations,
         output=output,
         is_blocking=False,
         skipped=False,
