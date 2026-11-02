@@ -47,6 +47,22 @@ sys.path.insert(0, str(_PROJECT_ROOT / ".agent" / "hooks"))
 import claude_guard_entry  # noqa: E402
 
 
+# WOT-2026-152b-1: the link is read through the BOM-tolerant helper that
+# prefix_resolver loads by path. If the ``_read_link`` name cannot be imported
+# (absent, renamed or raising on access) the link counts as unreadable
+# (fail-closed), never a traceback and never a pass.
+try:
+    try:
+        from scripts.prefix_resolver import _read_link
+    except ImportError:
+        from prefix_resolver import _read_link  # type: ignore[no-redef]
+except Exception as _import_exc:  # fail-closed: nothing may escape
+    _READ_LINK_IMPORT_FAILURE = f"import: {_import_exc}"
+
+    def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+        return None, _READ_LINK_IMPORT_FAILURE
+
+
 _GATING_TOKENS = ("Write", "Edit", "MultiEdit")
 _BENIGN_PAYLOAD = b'{"tool_name":"Write","tool_input":{"file_path":"x.txt"}}'
 
@@ -394,10 +410,9 @@ def _resolve_link(link: Path) -> tuple[Path | None, Path | None, str | None]:
     workspace by IDENTITY, not by directory-name spelling.
     On failure ``resolved_dest_root`` is None and ``skip_reason`` explains why.
     """
-    try:
-        data = json.loads(link.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        return None, None, f"unreadable link ({exc})"
+    data, reason = _read_link(link)
+    if data is None:
+        return None, None, f"unreadable link ({reason})"
     motor_root = data.get("motor_root")
     resolved_motor = None
     if motor_root:
@@ -590,17 +605,18 @@ def _canonical_entry_resolves(dest_root: Path) -> bool:
         return True
     link = dest_root / ".agent" / "config" / "motor_destination_link.json"
     if link.exists():
-        try:
-            data = json.loads(link.read_text(encoding="utf-8"))
-            motor_root = data.get("motor_root")
-            if motor_root:
-                motor_hook = (
-                    Path(motor_root) / ".agent" / "hooks" / "claude_guard_entry.py"
-                )
-                if motor_hook.exists():
-                    return True
-        except (json.JSONDecodeError, OSError, KeyError):
-            pass
+        data, _reason = _read_link(link)
+        if data is not None:
+            try:
+                motor_root = data.get("motor_root")
+                if motor_root:
+                    motor_hook = (
+                        Path(motor_root) / ".agent" / "hooks" / "claude_guard_entry.py"
+                    )
+                    if motor_hook.exists():
+                        return True
+            except OSError:
+                pass
     return False
 
 

@@ -26,6 +26,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+# WOT-2026-152b-1: the link is read through the BOM-tolerant helper that
+# prefix_resolver loads by path. If the ``_read_link`` name cannot be imported
+# (absent, renamed or raising on access) the link counts as unreadable
+# (fail-closed), never a traceback and never a pass.
+try:
+    try:
+        from scripts.prefix_resolver import _read_link
+    except ImportError:
+        from prefix_resolver import _read_link  # type: ignore[no-redef]
+except Exception as _import_exc:  # fail-closed: nothing may escape
+    _READ_LINK_IMPORT_FAILURE = f"import: {_import_exc}"
+
+    def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+        return None, _READ_LINK_IMPORT_FAILURE
+
+
 THIS_SCRIPT_DIR = Path(__file__).resolve().parent
 
 
@@ -123,8 +139,8 @@ def classify_pair_state(motor_worktree: Path, destino_worktree: Path) -> str:
         )
         if not link_file.exists():
             return "partial"
-        try:
-            link_data = json.loads(link_file.read_text(encoding="utf-8"))
+        link_data, _reason = _read_link(link_file)
+        if link_data is not None:
             motor_root = link_data.get("motor_root", "")
             dest_root = link_data.get("destination_root", "")
             if (
@@ -132,8 +148,6 @@ def classify_pair_state(motor_worktree: Path, destino_worktree: Path) -> str:
                 and dest_root == destino_worktree.as_posix()
             ):
                 return "complete"
-        except (OSError, ValueError, KeyError):
-            pass
         return "partial"
 
     # Only one exists
@@ -510,25 +524,24 @@ def _print_partial_diagnostic(
         )
         return
 
-    try:
-        link_data = json.loads(link_file.read_text(encoding="utf-8"))
-        stored_motor = link_data.get("motor_root", "")
-        expected = motor_worktree.as_posix()
-        if stored_motor != expected:
-            print(
-                f"[ERROR] Par parcial: el link en {link_file} apunta a "
-                f"{stored_motor} pero se esperaba {expected}.\n"
-                f"Reparacion:\n"
-                f"  Corrige el motor_root a mano, o borra el fichero y vuelve "
-                f"a correr este script:\n"
-                f"    rm {link_file}\n"
-                f"    {sys.argv[0]} ..."
-            )
-            return
-    except (OSError, ValueError):
+    link_data, _reason = _read_link(link_file)
+    if link_data is None:
         print(
             f"[ERROR] Par parcial: no se pudo leer el link en {link_file}.\n"
             f"Reparacion: borra el fichero y vuelve a correr este script."
+        )
+        return
+    stored_motor = link_data.get("motor_root", "")
+    expected = motor_worktree.as_posix()
+    if stored_motor != expected:
+        print(
+            f"[ERROR] Par parcial: el link en {link_file} apunta a "
+            f"{stored_motor} pero se esperaba {expected}.\n"
+            f"Reparacion:\n"
+            f"  Corrige el motor_root a mano, o borra el fichero y vuelve "
+            f"a correr este script:\n"
+            f"    rm {link_file}\n"
+            f"    {sys.argv[0]} ..."
         )
         return
 

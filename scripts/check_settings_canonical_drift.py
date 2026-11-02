@@ -29,12 +29,27 @@ alcanzar el destino activo y que el remedio es `--destino-root` o la env
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+
+
+# WOT-2026-152b-1: the link is read through the BOM-tolerant helper that
+# prefix_resolver loads by path. If the ``_read_link`` name cannot be imported
+# (absent, renamed or raising on access) the link counts as unreadable
+# (fail-closed), never a traceback and never a pass.
+try:
+    try:
+        from scripts.prefix_resolver import _read_link
+    except ImportError:
+        from prefix_resolver import _read_link  # type: ignore[no-redef]
+except Exception as _import_exc:  # fail-closed: nothing may escape
+    _READ_LINK_IMPORT_FAILURE = f"import: {_import_exc}"
+
+    def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+        return None, _READ_LINK_IMPORT_FAILURE
 
 
 # Trigger: ficheros cuya modificacion puede alterar comandos canonicos de hooks.
@@ -145,8 +160,13 @@ def discover_destinos(
                 )
                 if not json_path.exists():
                     continue
+                data, reason = _read_link(json_path)
+                if data is None:
+                    problemas.append(
+                        f"{json_path}: JSON invalido o ilegible ({reason})"
+                    )
+                    continue
                 try:
-                    data = json.loads(json_path.read_text(encoding="utf-8"))
                     dest_path = data.get("destination_root")
                     if dest_path and Path(dest_path).is_dir():
                         destinos.append(Path(dest_path))
@@ -154,7 +174,7 @@ def discover_destinos(
                         problemas.append(
                             f"{json_path}: destination_root ausente o no es directorio"
                         )
-                except (json.JSONDecodeError, OSError) as exc:
+                except OSError as exc:
                     problemas.append(f"{json_path}: JSON invalido o ilegible ({exc})")
         except OSError:
             problemas.append(f"raiz {root}: acceso denegado o inexistente")

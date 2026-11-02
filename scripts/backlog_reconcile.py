@@ -57,6 +57,25 @@ if str(_ROOT) not in sys.path:
 from scripts.prefix_resolver import resolve_ticket_alternation  # noqa: E402
 
 
+# WOT-2026-152b-1: the link is read through the BOM-tolerant helper that
+# prefix_resolver loads by path. If the ``_read_link`` name cannot be imported
+# (absent, renamed or raising on access) the link counts as unreadable
+# (fail-closed), never a traceback and never a pass.
+# Limit L: ``resolve_ticket_alternation`` is imported from prefix_resolver above,
+# unguarded (pre-existing, unchanged); if prefix_resolver fails while it
+# initialises, that earlier import still raises before this block runs.
+try:
+    try:
+        from scripts.prefix_resolver import _read_link
+    except ImportError:
+        from prefix_resolver import _read_link  # type: ignore[no-redef]
+except Exception as _import_exc:  # fail-closed: nothing may escape
+    _READ_LINK_IMPORT_FAILURE = f"import: {_import_exc}"
+
+    def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+        return None, _READ_LINK_IMPORT_FAILURE
+
+
 SCHEMA_VERSION = "backlog-reconcile-collector/v0"
 
 # Live-queue statuses that enter reconciliation (mirror backlog_triage.md, Fase 0 (Reconciliacion) and
@@ -235,12 +254,14 @@ def _resolve_destino_root(
         / "config"
         / "motor_destination_link.json"
     )
-    try:
-        data = json.loads(link.read_text(encoding="utf-8"))
-    except OSError:
-        return None, f"motor_destination_link.json not found under {workspace_root}"
-    except json.JSONDecodeError as exc:
-        return None, f"motor_destination_link.json unreadable: {exc}"
+    data, reason = _read_link(link)
+    if data is None:
+        if reason == "missing":
+            return (
+                None,
+                f"motor_destination_link.json not found under {workspace_root}",
+            )
+        return None, f"motor_destination_link.json unreadable: {reason}"
     dest = data.get("destination_root")
     if not dest:
         return None, "motor_destination_link.json has no destination_root"
