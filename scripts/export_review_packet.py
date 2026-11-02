@@ -43,7 +43,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
-import json
 import re
 import subprocess
 import sys
@@ -51,6 +50,22 @@ from pathlib import Path
 
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
+
+# WOT-2026-152b-2: the link is read through the BOM-tolerant helper that
+# prefix_resolver loads by path. If the ``_read_link`` name cannot be imported
+# (absent, renamed or raising on access) the link counts as unreadable
+# (fail-closed), never a traceback and never a pass. This module had no earlier
+# import of prefix_resolver, so a failed initialisation of it is covered too.
+try:
+    try:
+        from scripts.prefix_resolver import _read_link
+    except ImportError:
+        from prefix_resolver import _read_link  # type: ignore[no-redef]
+except Exception as _import_exc:  # fail-closed: nothing may escape
+    _READ_LINK_IMPORT_FAILURE = f"import: {_import_exc}"
+
+    def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+        return None, _READ_LINK_IMPORT_FAILURE
 
 
 def _load_sibling(name: str):
@@ -99,14 +114,18 @@ def _git_head_observed(repo: Path) -> subprocess.CompletedProcess:
 
 
 def _linked_motor_root(project_root: Path) -> Path | None:
-    """Motor declarado por el link del workspace, o None si no hay link."""
+    """Motor declarado por el link del workspace, o None si no hay link.
+
+    WOT-2026-152b-2: un ``motor_root`` que no es cadena o es vacio da None (antes un
+    numero lanzaba TypeError). Uno solo-espacios o con byte NUL NO se rechaza aqui: se
+    devuelve ``Path(valor)`` sin resolver (comportamiento previo, sin cambio).
+    """
     link = project_root / ".agent" / "config" / "motor_destination_link.json"
-    try:
-        data = json.loads(link.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    data, _reason = _read_link(link)
+    if data is None:
         return None
     raw = data.get("motor_root")
-    return Path(raw) if raw else None
+    return Path(raw) if isinstance(raw, str) and raw else None
 
 
 def compute_cache_key(

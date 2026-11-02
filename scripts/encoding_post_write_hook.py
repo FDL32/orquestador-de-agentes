@@ -43,19 +43,39 @@ def _find_repo_root(start: Path) -> Path:
     return start
 
 
+def _read_link_dict(link_path: Path) -> dict | None:
+    """Read a ``motor_destination_link.json`` as an object, or None (WOT-2026-152b-2).
+
+    Before: ``link_path`` is the full path of the link (it may be absent, a
+    directory, empty, truncated, BOM-prefixed or hold any JSON). This is a HOOK:
+    it cannot depend on importing the motor, so this is a stdlib-only copy of
+    ``runtime.motor_link.read_motor_link`` (a test compares both on every form).
+    During: one ``read_bytes`` and a ``utf-8-sig`` decode (the PowerShell 5.1 BOM is
+    tolerated) and ``json.loads``. Writes nothing and opens nothing else.
+    After: the parsed dict; ``None`` for EVERYTHING else (OS error, undecodable
+    bytes, invalid or too deeply nested JSON, a root that is not an object). ``None``
+    means "do not widen the allowed roots" -- fail-closed, never raises.
+    """
+    try:
+        data = json.loads(link_path.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _resolve_destino(repo_root: Path) -> Path | None:
     env_root = os.environ.get("AGENT_PROJECT_ROOT")
     if env_root:
         return Path(env_root).resolve()
     link_path = repo_root / ".agent" / "config" / "motor_destination_link.json"
     if link_path.is_file():
-        try:
-            data = json.loads(link_path.read_text(encoding="utf-8"))
-            dest_root = data.get("destination_root")
-            if dest_root:
+        data = _read_link_dict(link_path)
+        dest_root = data.get("destination_root") if data is not None else None
+        if isinstance(dest_root, str) and dest_root.strip():
+            try:
                 return Path(dest_root).resolve()
-        except (json.JSONDecodeError, OSError):
-            pass
+            except (OSError, ValueError):
+                return None
     return None
 
 

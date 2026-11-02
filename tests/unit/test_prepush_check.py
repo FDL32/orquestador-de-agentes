@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
@@ -1247,7 +1249,7 @@ def test_prepush_validate_passes_no_heal(tmp_path):
     de sync_state_projection que los tests mockeados de collect_system_health no
     alcanzan -- un mock de _run pasaba VERDE con el defecto vivo.
 
-    MUTACION QUE LO MATA: la mutacion real es (c) — quitar --no-heal del cmd
+    MUTACION QUE LO MATA: la mutacion real es (c) - quitar --no-heal del cmd
     en run_agent_controller_validate -> el test_cmd cae (AssertionError:
     --no-heal no esta en captured_cmd). El test (a) declara su propia cmd
     de subproceso y no muerde bajo esa mutacion (permitido por el plan 2.2:
@@ -1291,7 +1293,7 @@ def test_prepush_validate_does_not_rewrite_terminal_state_md(tmp_path):
     """(b) CONTROL NEGATIVO: sin --no-heal, el fixture drift -> STATE.md SI se reescribe.
 
     Sanity: demuestra que el fixture gunita drift real y el path de heal se
-    dispara sin el flag — la asercion de arriba es significativa, no vacua.
+    dispara sin el flag - la asercion de arriba es significativa, no vacua.
     """
     import subprocess
 
@@ -1641,15 +1643,63 @@ def test_059r_dod_warn_composes_with_blocking_failures(tmp_path, monkeypatch):
     assert pc_module.run_preflight_check(root, closeout_mode=True) == 1
 
 
+def _make_resolver_raise(monkeypatch, exc: Exception) -> None:
+    """Hace que el resolvedor que importa el helper LANCE ``exc`` (sin mock del helper).
+
+    El helper importa ``resolve_ticket_alternation`` dentro de la funcion, con
+    fallback ``scripts.prefix_resolver`` -> ``prefix_resolver``: se parchean los dos
+    simbolos para que gane el que gane el import, el resolvedor lance.
+    """
+
+    def _raises(project_root):
+        raise exc
+
+    for modname in ("scripts.prefix_resolver", "prefix_resolver"):
+        try:
+            module = __import__(modname, fromlist=["resolve_ticket_alternation"])
+        except ImportError:
+            continue
+        monkeypatch.setattr(module, "resolve_ticket_alternation", _raises)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        ValueError("fallo simulado del resolvedor"),
+    ],
+    ids=["UnicodeDecodeError", "ValueError"],
+)
 def test_059r_dod_helper_resolver_raising_is_skipped_never_raises(
+    tmp_path, monkeypatch, exc
+):
+    """Un resolvedor que LANZA (de verdad) no rompe el cierre: skipped con el tipo.
+
+    WOT-2026-152b-2: desde 152a el resolvedor REAL ya no lanza con un link no UTF-8
+    (O2: degrada a ilegible, ver el test hermano), asi que este test dejo de poder
+    fabricar la excepcion con bytes. Conserva su intencion forzando el lanzamiento:
+    el helper salta con el tipo visible, nunca propaga.
+    MUTACION: sacar la llamada al resolvedor del try -> cae este test.
+    """
+    _unbind_dod_prefix(monkeypatch)
+    root = _dod_destino(tmp_path, *_DOD_VIOLATING)
+    _make_resolver_raise(monkeypatch, exc)
+    result = pc_module.run_dod_metric_freshness_check(root)
+    assert result.skipped is True
+    assert result.passed is True
+    assert result.is_blocking is False
+    assert type(exc).__name__ in result.output
+    assert "violaciones=" not in result.output
+
+
+def test_059r_dod_helper_non_utf8_link_is_unreadable_fail_closed_without_mock(
     tmp_path, monkeypatch
 ):
-    """Un link con bytes no UTF-8 hace lanzar al resolvedor REAL (sin mock).
+    """O2 (152a, WOT-2026-152b-2): un link REAL con bytes no UTF-8 ya no lanza.
 
-    El resolvedor captura OSError y JSONDecodeError pero no
-    UnicodeDecodeError (subclase de ValueError). Fuera del try del helper
-    eso rompia el cierre; dentro, el informe se salta con el tipo visible.
-    MUTACION: sacar la llamada al resolvedor del try -> cae este test.
+    El resolvedor lo lee por ``read_motor_link`` y devuelve ilegible: el helper salta
+    (skipped, passed, no bloqueante) con el motivo fail-closed del resolvedor, sin
+    prefijo inventado y sin mock.
     """
     _unbind_dod_prefix(monkeypatch)
     root = _dod_destino(tmp_path, *_DOD_VIOLATING)
@@ -1659,5 +1709,6 @@ def test_059r_dod_helper_resolver_raising_is_skipped_never_raises(
     assert result.skipped is True
     assert result.passed is True
     assert result.is_blocking is False
-    assert "UnicodeDecodeError" in result.output
+    assert "link ilegible" in result.output
+    assert "fail-closed" in result.output
     assert "violaciones=" not in result.output

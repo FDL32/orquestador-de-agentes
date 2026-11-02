@@ -111,13 +111,23 @@ def _emit(payload):
     raise SystemExit(0)
 
 
+def _read_link(path):
+    # stdlib copy of runtime.motor_link.read_motor_link (WOT-2026-152b-2): this
+    # template finds the motor THROUGH the link, so it cannot import the motor.
+    try:
+        data = json.loads(path.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 _project_root = Path(__PROJECT_ROOT__)
 _link = _project_root / ".agent" / "config" / "motor_destination_link.json"
+_data = _read_link(_link)
+_raw = _data.get("motor_root") if _data is not None else None
 try:
-    _motor = Path(
-        json.loads(_link.read_text(encoding="utf-8"))["motor_root"]
-    ).resolve()
-except (OSError, ValueError, KeyError, TypeError):
+    _motor = Path(_raw).resolve() if isinstance(_raw, str) and _raw else None
+except (OSError, ValueError):
     _motor = None
 if _motor is None or not _motor.exists():
     _emit({"status": "no_link", "cause": __LABEL_LINK__})

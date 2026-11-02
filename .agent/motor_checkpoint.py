@@ -16,9 +16,10 @@ call sites and test monkeypatches (agent_controller._*) keep working.
 
 from __future__ import annotations
 
-import json
+import importlib.util
 import subprocess
 from pathlib import Path
+from types import ModuleType
 
 import scope_gate
 
@@ -453,18 +454,74 @@ def resolve_launcher_roots(project_root: Path | None) -> dict[str, str]:
     return result
 
 
+# WOT-2026-152b-2: the helper lives in THIS motor (the module's own location), not in
+# whatever ``motor_root`` a caller passes and not on ``sys.path``.
+MOTOR_LINK_MODULE_PATH = (
+    Path(__file__).resolve().parent.parent / "runtime" / "motor_link.py"
+)
+_motor_link_module: ModuleType | None = None
+
+
+def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+    """Read a motor_destination_link.json through ``runtime.motor_link.read_motor_link``.
+
+    Same loader as ``prefix_resolver._read_link`` (WOT-2026-152a); this module lives in
+    ``.agent/`` and cannot import ``scripts.*``, so it keeps its own copy (a test
+    compares both on every form).
+
+    Before: ``link_path`` is the full path of the link (it may not exist). The helper is
+            loaded by path from ``MOTOR_LINK_MODULE_PATH``.
+    During: loads the helper once (cached on success), then one tolerant read (UTF-8
+            BOM accepted). Writes nothing.
+    After: ``(data, None)`` for a readable link object; ``(None, reason)`` otherwise,
+           with ``reason`` ``"missing"`` or the helper's cause (``decode``, ``json``,
+           ``not-a-dict``, ``io``). If the helper cannot be loaded the link counts as
+           unreadable (``"import: ..."``): fail-closed. Never raises.
+    """
+    global _motor_link_module
+    try:
+        if _motor_link_module is None:
+            spec = importlib.util.spec_from_file_location(
+                "_motor_link_152b2_motor_checkpoint", MOTOR_LINK_MODULE_PATH
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load {MOTOR_LINK_MODULE_PATH}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _motor_link_module = module
+        result = _motor_link_module.read_motor_link(link_path)
+        if result.state == _motor_link_module.LINK_OK:
+            return result.data, None
+        return None, result.reason or "missing"
+    except Exception as exc:  # fail-closed: nothing may escape
+        return None, f"import: {exc}"
+
+
 def resolve_destino_root(motor_root: Path, project_root: Path | None) -> Path:
-    """Resolve repo_destino_root from project_root or motor_destination_link.json."""
+    """Resolve repo_destino_root from project_root or motor_destination_link.json.
+
+    Before: ``motor_root`` is this motor; its link may be absent, unreadable or carry
+            a BOM (PowerShell 5.1).
+    During: with no ``project_root``, one tolerant read of the link through
+            ``_read_link`` (WOT-2026-152b-2).
+    After: ``project_root`` resolved; else the link's ``destination_root`` when it is a
+           non-empty string that resolves; ELSE ``motor_root``.
+           Already fell back to ``motor_root`` before 152b-2: an absent link, invalid
+           JSON (``JSONDecodeError``), an ``OSError`` and an empty string. Used to ESCAPE
+           with an exception and now falls back: a non-object link (``AttributeError``),
+           non-UTF-8 bytes (``UnicodeDecodeError``), too deep a nesting
+           (``RecursionError``), a non-string value (``TypeError``) and a path with a NUL
+           byte (``ValueError``).
+    """
     if project_root is not None:
         return Path(project_root).resolve()
     link_path = motor_root / ".agent" / "config" / "motor_destination_link.json"
-    if link_path.exists():
+    data, _reason = _read_link(link_path)
+    dest = data.get("destination_root") if data is not None else None
+    if isinstance(dest, str) and dest:
         try:
-            link_data = json.loads(link_path.read_text(encoding="utf-8"))
-            dest = link_data.get("destination_root")
-            if dest:
-                return Path(dest).resolve()
-        except (json.JSONDecodeError, OSError):
+            return Path(dest).resolve()
+        except (OSError, ValueError):
             pass
     return motor_root
 

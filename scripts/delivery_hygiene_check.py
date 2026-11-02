@@ -24,7 +24,6 @@ After (Post-condiciones y Errores):
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import subprocess
 import sys
@@ -37,6 +36,22 @@ from typing import NamedTuple
 _MOTOR_ROOT = Path(__file__).resolve().parent.parent
 if str(_MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT))
+
+# WOT-2026-152b-2: the link is read through the BOM-tolerant helper that
+# prefix_resolver loads by path. If the ``_read_link`` name cannot be imported
+# (absent, renamed or raising on access) the link counts as unreadable
+# (fail-closed), never a traceback and never a pass. This module had no earlier
+# import of prefix_resolver, so a failed initialisation of it is covered too.
+try:
+    try:
+        from scripts.prefix_resolver import _read_link
+    except ImportError:
+        from prefix_resolver import _read_link  # type: ignore[no-redef]
+except Exception as _import_exc:  # fail-closed: nothing may escape
+    _READ_LINK_IMPORT_FAILURE = f"import: {_import_exc}"
+
+    def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+        return None, _READ_LINK_IMPORT_FAILURE
 
 
 class HygieneResult(NamedTuple):
@@ -559,12 +574,17 @@ _TICKET_ID_RE = re.compile(r"^([A-Z]{2,5}-\d{4}-\w+)")
 
 
 def _read_link_field(project_root: Path, field: str) -> str | None:
-    """Campo string no vacio del link del propio destino, o None; nunca lanza."""
-    try:
-        data = json.loads((project_root / _MOTOR_LINK_REL).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict):
+    """Campo string no vacio del link del propio destino, o None; nunca lanza.
+
+    WOT-2026-152b-2: devuelve el valor TAL CUAL, sin resolverlo. Un valor que no es
+    cadena o es vacio da None; uno solo-espacios o con byte NUL NO se rechaza aqui
+    (comportamiento previo, sin cambio). Otros lectores SI rechazan: el byte NUL lo
+    rechazan el hook, motor_checkpoint y la plantilla de collect_session_state; el valor
+    solo-espacios lo rechaza UNICAMENTE el hook (O7), y motor_checkpoint y la plantilla
+    lo resuelven como antes.
+    """
+    data, _reason = _read_link(project_root / _MOTOR_LINK_REL)
+    if data is None:
         return None
     raw = data.get(field)
     return raw if isinstance(raw, str) and raw else None
