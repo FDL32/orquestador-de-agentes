@@ -31,6 +31,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -38,6 +39,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 
 LINK_REL = Path(".agent") / "config" / "motor_destination_link.json"
@@ -48,6 +50,46 @@ TICKET_ID_RE = re.compile(r"^[A-Z]{2,5}-\d{4}-\d{3}[a-z]$")
 # Malformed ticket ID: looks like one but doesn't match canonical pattern
 MALFORMED_ID_RE = re.compile(r"^[A-Za-z]{2,5}-\d{1,4}-\d{1,4}[a-z]?$")
 PREFIX_RE = re.compile(r"^[A-Z]{2,5}$")
+# WOT-2026-152a: the helper lives in THIS motor (the script's own location), not in
+# whatever ``--motor-root``/``motor_root`` a caller passes and not on ``sys.path``.
+MOTOR_LINK_MODULE_PATH = (
+    Path(__file__).resolve().parent.parent / "runtime" / "motor_link.py"
+)
+_motor_link_module: ModuleType | None = None
+
+
+def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+    """Read a motor_destination_link.json through ``runtime.motor_link.read_motor_link``.
+
+    WOT-2026-152a: every reader of the link in this module goes through here, so a
+    UTF-8 BOM (PowerShell 5.1) no longer makes a healthy link look unreadable.
+
+    Before: ``link_path`` is the full path of the link (it may not exist). The
+            helper is loaded by path from ``MOTOR_LINK_MODULE_PATH``.
+    During: loads the helper once (cached on success), then one tolerant read.
+            Writes nothing.
+    After: ``(data, None)`` for a readable link object; ``(None, reason)`` otherwise,
+           with ``reason`` ``"missing"`` or the helper's cause (``decode``, ``json``,
+           ``not-a-dict``, ``io``). If the helper itself cannot be loaded the link
+           counts as unreadable (``"import: ..."``): fail-closed. Never raises.
+    """
+    global _motor_link_module
+    try:
+        if _motor_link_module is None:
+            spec = importlib.util.spec_from_file_location(
+                "_motor_link_152a_prefix_resolver", MOTOR_LINK_MODULE_PATH
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load {MOTOR_LINK_MODULE_PATH}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _motor_link_module = module
+        result = _motor_link_module.read_motor_link(link_path)
+        if result.state == _motor_link_module.LINK_OK:
+            return result.data, None
+        return None, result.reason or "missing"
+    except Exception as exc:  # fail-closed: nothing may escape
+        return None, f"import: {exc}"
 
 
 def discover_motor_root(cwd: Path) -> Path | None:
@@ -59,18 +101,18 @@ def discover_motor_root(cwd: Path) -> Path | None:
             then tries cwd's link (motor_root field), then AGENT_PROJECT_ROOT
             env. Motor-first avoids treating the motor as a destination when
             it has a stale/self-referential link.
-    After: returns the motor_root Path, or None if undiscoverable.
+    After: returns the motor_root Path, or None if undiscoverable. The links
+           are read through ``_read_link`` (WOT-2026-152a): a UTF-8 BOM is
+           tolerated and a non-UTF-8 / too-deep link counts as unreadable (None
+           path onward) instead of raising.
     """
     if (cwd / ".agent" / "agent_controller.py").exists():
         return cwd
     link_path = cwd / LINK_REL
     if link_path.exists():
-        try:
-            data = json.loads(link_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and data.get("motor_root"):
-                return Path(data["motor_root"])
-        except (json.JSONDecodeError, OSError):
-            pass
+        data, _reason = _read_link(link_path)
+        if data and data.get("motor_root"):
+            return Path(data["motor_root"])
     env_root = os.environ.get("AGENT_PROJECT_ROOT")
     if env_root:
         p = Path(env_root)
@@ -78,12 +120,9 @@ def discover_motor_root(cwd: Path) -> Path | None:
             return p
         link_path = p / LINK_REL
         if link_path.exists():
-            try:
-                data = json.loads(link_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict) and data.get("motor_root"):
-                    return Path(data["motor_root"])
-            except (json.JSONDecodeError, OSError):
-                pass
+            data, _reason = _read_link(link_path)
+            if data and data.get("motor_root"):
+                return Path(data["motor_root"])
     return None
 
 
@@ -93,7 +132,9 @@ def scan_links(search_root: Path) -> dict[str, list[Path]]:
     Before: search_root is parent(motor_root).
     During: iterates search_root/*/.agent/config/motor_destination_link.json,
             reads ticket_prefix + destination_root from each. Skips links
-            with null/missing prefix or destination.
+            with null/missing prefix or destination. Each link is read through
+            ``_read_link`` (WOT-2026-152a): BOM tolerated; an unreadable link
+            (incl. non-UTF-8 or too deeply nested, which used to raise) is skipped.
     After: returns dict prefix -> list of destination_roots (list for
           duplicate detection; singleton when unique).
     """
@@ -106,11 +147,8 @@ def scan_links(search_root: Path) -> dict[str, list[Path]]:
         link_path = child / LINK_REL
         if not link_path.exists():
             continue
-        try:
-            data = json.loads(link_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(data, dict):
+        data, _reason = _read_link(link_path)
+        if data is None:
             continue
         prefix = data.get("ticket_prefix")
         dest = data.get("destination_root")
@@ -191,7 +229,9 @@ def resolve_by_project_name(name: str, motor_root: Path) -> Path | None:
     """Resolve by destination_id (project directory name).
 
     Before: name is a project name (not a ticket ID).
-    During: scans links, matches destination_id field.
+    During: scans links, matches destination_id field. Links are read through
+            ``_read_link`` (WOT-2026-152a): BOM tolerated; an unreadable link is
+            skipped, as before (the fail-closed redesign is WOT-2026-126b).
     After: returns the destination_root Path, or None.
     """
     search_root = motor_root.parent
@@ -201,11 +241,8 @@ def resolve_by_project_name(name: str, motor_root: Path) -> Path | None:
         link_path = child / LINK_REL
         if not link_path.exists():
             continue
-        try:
-            data = json.loads(link_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(data, dict):
+        data, _reason = _read_link(link_path)
+        if data is None:
             continue
         if data.get("destination_id") == name or child.name == name:
             dest = data.get("destination_root")
@@ -220,16 +257,15 @@ def resolve_prefix_for_destination(destination_root: Path) -> str | None:
     Before: destination_root is a repo_destino path.
     During: reads .agent/config/motor_destination_link.json from destination_root.
     After: returns the ticket_prefix string (e.g. "WOT", "CTL"), or None if
-          the link is missing, malformed, or has no ticket_prefix field.
+          the link is missing, unreadable (incl. non-UTF-8 or too deeply
+          nested, which used to raise; WOT-2026-152a), malformed, or has no
+          ticket_prefix field. A UTF-8 BOM is tolerated.
     """
     link_path = destination_root / LINK_REL
     if not link_path.exists():
         return None
-    try:
-        data = json.loads(link_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    if not isinstance(data, dict):
+    data, _reason = _read_link(link_path)
+    if data is None:
         return None
     prefix = data.get("ticket_prefix")
     return str(prefix) if prefix else None
@@ -318,7 +354,10 @@ def resolve_ticket_alternation(
     During: I/O de lectura exclusivamente: link por ascenso desde ``start``,
         o desde ``AGENT_PROJECT_ROOT`` si no hay ``start``; ausencia total de
         link y ausencia/vacio de ``ticket_prefix`` son el MISMO fallo
-        fail-closed (motivo nombrado).
+        fail-closed (motivo nombrado). El link se lee por ``_read_link``
+        (WOT-2026-152a): un BOM UTF-8 se tolera; un link no UTF-8 o con
+        anidamiento que desborda la recursion es "ilegible", ya no lanza
+        (antes UnicodeDecodeError/RecursionError escapaban pese a este contrato).
     After: ``("RDS|WOT|WP|WT", None)`` cuando el link lo declara; si no,
         ``(None, "<motivo>")`` -- el llamador DEBE fallar explicito con ese
         motivo, nunca asumir un prefijo por defecto. Nunca lanza.
@@ -341,16 +380,13 @@ def resolve_ticket_alternation(
             continue
         if link is None:
             continue
-        try:
-            data = json.loads(link.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return None, (
-                f"link ilegible en {link}: ticket_prefix no resoluble "
-                "(fail-closed, el motor no inventa politica)"
+        data, reason = _read_link(link)
+        if data is None:
+            kind = (
+                "malformado" if (reason or "").startswith("not-a-dict") else "ilegible"
             )
-        if not isinstance(data, dict):
             return None, (
-                f"link malformado en {link}: ticket_prefix no resoluble "
+                f"link {kind} en {link}: ticket_prefix no resoluble "
                 "(fail-closed, el motor no inventa politica)"
             )
         alternation = ticket_prefix_alternation(data.get("ticket_prefix"))

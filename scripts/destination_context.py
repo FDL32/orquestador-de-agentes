@@ -20,17 +20,25 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 
 
 DEFAULT_MAX_BYTES = 204800  # 200 KB
 CONTEXT_DIR_REL = Path(".agent") / "context"
 LINK_REL = Path(".agent") / "config" / "motor_destination_link.json"
 DESTINATION_MAP_NAME = "destination_map.md"
+# WOT-2026-152a: the helper lives in THIS motor (the script's own location), not in
+# whatever ``--project-root`` a caller passes and not on ``sys.path``.
+MOTOR_LINK_MODULE_PATH = (
+    Path(__file__).resolve().parent.parent / "runtime" / "motor_link.py"
+)
+_motor_link_module: ModuleType | None = None
 
 # Directory basenames excluded from the filtered tree walk (matched on entry.name)
 EXCLUDED_TREE_DIRS: frozenset[str] = frozenset(
@@ -77,24 +85,55 @@ KEY_CONFIGS: list[str] = [
 ]
 
 
+def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+    """Read a motor_destination_link.json through ``runtime.motor_link.read_motor_link``.
+
+    WOT-2026-152a: same loader as ``prefix_resolver._read_link`` (two minimal
+    copies, kept equal by tests/unit/test_152a_link_readers_bom.py).
+
+    Before: ``link_path`` is the full path of the link (it may not exist). The
+            helper is loaded by path from ``MOTOR_LINK_MODULE_PATH``.
+    During: loads the helper once (cached on success), then one tolerant read.
+            Writes nothing.
+    After: ``(data, None)`` for a readable link object; ``(None, reason)`` otherwise,
+           with ``reason`` ``"missing"`` or the helper's cause (``decode``, ``json``,
+           ``not-a-dict``, ``io``). If the helper itself cannot be loaded the link
+           counts as unreadable (``"import: ..."``): fail-closed. Never raises.
+    """
+    global _motor_link_module
+    try:
+        if _motor_link_module is None:
+            spec = importlib.util.spec_from_file_location(
+                "_motor_link_152a_destination_context", MOTOR_LINK_MODULE_PATH
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load {MOTOR_LINK_MODULE_PATH}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _motor_link_module = module
+        result = _motor_link_module.read_motor_link(link_path)
+        if result.state == _motor_link_module.LINK_OK:
+            return result.data, None
+        return None, result.reason or "missing"
+    except Exception as exc:  # fail-closed: nothing may escape
+        return None, f"import: {exc}"
+
+
 def resolve_motor_link(project_root: Path) -> dict | None:
     """Read and validate motor_destination_link.json.
 
     Before: project_root/.agent/config/motor_destination_link.json may or
             may not exist.
-    During: Reads JSON and validates it is a dict with a 'motor_root' key.
-    After: Returns the parsed dict, or None if missing/malformed.
+    During: Reads JSON through ``_read_link`` (WOT-2026-152a): a UTF-8 BOM is
+            tolerated; the object must be a dict.
+    After: Returns the parsed dict, or None if missing/unreadable/malformed
+           (incl. non-UTF-8 or too deeply nested, which used to raise).
     """
     link_path = project_root / LINK_REL
     if not link_path.exists():
         return None
-    try:
-        data = json.loads(link_path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return None
-        return data
-    except (json.JSONDecodeError, OSError):
-        return None
+    data, _reason = _read_link(link_path)
+    return data
 
 
 def _resolve_motor_head(
