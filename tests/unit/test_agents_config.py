@@ -1,8 +1,12 @@
 """Tests for agent configuration loader."""
 
 import copy
+import hashlib
 import json
+import os
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -459,7 +463,11 @@ class TestMigrationFramework:
             )
         )
         report = migrate_agents_config(cfg)
-        # un backup por migracion aplicada, derivado del registro (024t)
+        # un backup por migracion aplicada, derivado del registro (024t). WOT-2026-137b:
+        # se cuentan RUTAS DISTINTAS, no entradas de la lista: con el nombre repetido
+        # dentro del mismo segundo `len(report.backups)` valia N pero habia 1 solo
+        # fichero y el original se perdia (el aserto antiguo pasaba en verde).
+        assert len(set(report.backups)) == len(ALL_MIGRATION_IDS)
         assert len(report.backups) == len(ALL_MIGRATION_IDS)
         assert all(b.exists() for b in report.backups)
 
@@ -1159,3 +1167,199 @@ class TestRealAgentsJsonContract:
             assert profile_name in config["ensemble_profiles"], (
                 f"challenger referencia perfil inexistente '{profile_name}'"
             )
+
+
+_AGENTS_CONFIG_CLI = _agent_dir / "agents_config.py"
+_FIXED_NOW = datetime(2026, 11, 3, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _legacy_1_0_config() -> dict:
+    """Config minima en schema 1.0 (antes de TODAS las migraciones)."""
+    return {
+        "schema_version": "1.0",
+        "backends": {
+            "opencode": {
+                "executable": "opencode",
+                "args": ["run"],
+                "discovery": {"method": "path_only"},
+            }
+        },
+        "role_assignments": {"BUILDER": "opencode"},
+    }
+
+
+def _make_project(root: Path, config: dict) -> Path:
+    """Crea <root>/.agent/config/agents.json y devuelve su ruta."""
+    cfg_dir = root / ".agent" / "config"
+    cfg_dir.mkdir(parents=True)
+    cfg = cfg_dir / "agents.json"
+    cfg.write_text(json.dumps(config), encoding="utf-8")
+    return cfg
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _run_cli(args: list[str], env_root: Path | None) -> subprocess.CompletedProcess:
+    """Ejecuta agents_config.py como en produccion (subprocess, ruta real)."""
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_PROJECT_ROOT"}
+    if env_root is not None:
+        env["AGENT_PROJECT_ROOT"] = str(env_root)
+    return subprocess.run(
+        [sys.executable, str(_AGENTS_CONFIG_CLI), *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+class TestMigrationBackupsNeverCollide:
+    """WOT-2026-137b C4: los backups del migrate no se pisan (perdida de datos medida)."""
+
+    def test_same_second_migrations_keep_the_original_recoverable(self, tmp_path):
+        """El reloj congelado reproduce el caso: 4 migraciones en el MISMO segundo.
+
+        Before: agents.json en 1.0; datetime.now() devuelve siempre el mismo instante.
+        During: migrate_agents_config aplica todas las migraciones, una copia previa cada una.
+        After: tantos ficheros distintos como migraciones y el primero conserva el
+            contenido ORIGINAL (schema 1.0), no el estado intermedio.
+        """
+        cfg = tmp_path / "agents.json"
+        cfg.write_text(json.dumps(_legacy_1_0_config()), encoding="utf-8")
+        with patch("agents_config.datetime") as fake_dt:
+            fake_dt.now.return_value = _FIXED_NOW
+            report = migrate_agents_config(cfg)
+        assert len(set(report.backups)) == len(ALL_MIGRATION_IDS)
+        assert all(b.exists() for b in report.backups)
+        on_disk = sorted(tmp_path.glob("agents.json.bak.*"))
+        assert len(on_disk) == len(ALL_MIGRATION_IDS)
+        first = json.loads(report.backups[0].read_text(encoding="utf-8"))
+        assert first["schema_version"] == "1.0"
+        assert "_migrations" not in first
+
+    def test_existing_backup_with_the_same_name_is_never_overwritten(self, tmp_path):
+        """Un .bak previo con el nombre que tocaria NO se sobrescribe (otra corrida).
+
+        Before: ya existe agents.json.bak.<ts> con contenido centinela.
+        During: migrate con el reloj congelado en ese mismo <ts>.
+        After: el centinela intacto y el backup nuevo en otra ruta.
+        """
+        cfg = tmp_path / "agents.json"
+        cfg.write_text(json.dumps(_legacy_1_0_config()), encoding="utf-8")
+        stamp = _FIXED_NOW.strftime("%Y%m%dT%H%M%SZ")
+        sentinel = tmp_path / f"agents.json.bak.{stamp}"
+        sentinel.write_text("CENTINELA", encoding="utf-8")
+        with patch("agents_config.datetime") as fake_dt:
+            fake_dt.now.return_value = _FIXED_NOW
+            report = migrate_agents_config(cfg)
+        assert sentinel.read_text(encoding="utf-8") == "CENTINELA"
+        assert sentinel not in report.backups
+        assert len(set(report.backups)) == len(ALL_MIGRATION_IDS)
+
+    def test_failed_copy_leaves_no_empty_placeholder_and_no_migration(self, tmp_path):
+        """Si la copia del backup falla, no queda un .bak vacio engañoso y no se migra.
+
+        Before: agents.json 1.0; shutil.copy2 lanza OSError.
+        During: la reserva exclusiva ya creo el nombre; la rama de error lo borra.
+        After: OSError propagado, ningun agents.json.bak.* y el fichero intacto.
+        """
+        cfg = tmp_path / "agents.json"
+        cfg.write_text(json.dumps(_legacy_1_0_config()), encoding="utf-8")
+        before = _sha(cfg)
+        with (
+            patch("agents_config.shutil.copy2", side_effect=OSError("disco lleno")),
+            pytest.raises(OSError, match="disco lleno"),
+        ):
+            migrate_agents_config(cfg)
+        assert list(tmp_path.glob("agents.json.bak.*")) == []
+        assert _sha(cfg) == before
+
+    def test_dry_run_creates_no_backup_and_does_not_write(self, tmp_path):
+        """--dry-run: ni backup ni escritura (hash antes == despues)."""
+        cfg = tmp_path / "agents.json"
+        cfg.write_text(json.dumps(_legacy_1_0_config()), encoding="utf-8")
+        before = _sha(cfg)
+        with patch("agents_config.datetime") as fake_dt:
+            fake_dt.now.return_value = _FIXED_NOW
+            report = migrate_agents_config(cfg, dry_run=True)
+        assert report.backups == []
+        assert report.applied == ALL_MIGRATION_IDS
+        assert _sha(cfg) == before
+        assert list(tmp_path.glob("agents.json.bak.*")) == []
+
+
+class TestMigrateCliProjectRoot:
+    """WOT-2026-137b C1: --project-root en el CLI del migrate (hoy rc 2)."""
+
+    def test_flag_targets_the_given_project_not_the_env_project(self, tmp_path):
+        """--project-root GANA al entorno y el motor propio queda intacto.
+
+        Before: destino con agents.json 1.0; AGENT_PROJECT_ROOT apunta a un senuelo.
+        During: --migrate --project-root <destino>.
+        After: rc 0, el destino migrado, el senuelo y el agents.json del motor intactos.
+        """
+        target = _make_project(tmp_path / "destino", _legacy_1_0_config())
+        decoy = _make_project(tmp_path / "senuelo", _legacy_1_0_config())
+        motor_cfg = _agent_dir / "config" / "agents.json"
+        decoy_before, motor_before = _sha(decoy), _sha(motor_cfg)
+        result = _run_cli(
+            ["--migrate", "--project-root", str(tmp_path / "destino")],
+            env_root=tmp_path / "senuelo",
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["applied"] == ALL_MIGRATION_IDS
+        assert json.loads(target.read_text(encoding="utf-8"))["schema_version"] == (
+            LATEST_SCHEMA
+        )
+        assert _sha(decoy) == decoy_before
+        assert _sha(motor_cfg) == motor_before
+
+    def test_flag_dry_run_does_not_write(self, tmp_path):
+        """--migrate --dry-run --project-root: rc 0, dry_run true, hash intacto."""
+        target = _make_project(tmp_path / "destino", _legacy_1_0_config())
+        before = _sha(target)
+        result = _run_cli(
+            ["--migrate", "--dry-run", "--project-root", str(tmp_path / "destino")],
+            env_root=None,
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["dry_run"] is True
+        assert report["applied"] == ALL_MIGRATION_IDS
+        assert _sha(target) == before
+        assert list((tmp_path / "destino" / ".agent" / "config").glob("*.bak.*")) == []
+
+    def test_flag_and_env_routes_give_identical_output(self, tmp_path):
+        """Sin flag el comportamiento no cambia: ruta ENV y ruta flag, misma salida."""
+        _make_project(tmp_path / "a", _legacy_1_0_config())
+        _make_project(tmp_path / "b", _legacy_1_0_config())
+        via_env = _run_cli(["--migrate", "--dry-run"], env_root=tmp_path / "a")
+        via_flag = _run_cli(
+            ["--migrate", "--dry-run", "--project-root", str(tmp_path / "b")],
+            env_root=None,
+        )
+        assert via_env.returncode == via_flag.returncode == 0
+        assert via_env.stdout == via_flag.stdout
+
+    def test_nonexistent_project_root_fails_closed_without_touching_anything(
+        self, tmp_path
+    ):
+        """Raiz inexistente: rc 1 con mensaje, nada creado bajo esa ruta."""
+        missing = tmp_path / "no_existe"
+        result = _run_cli(["--migrate", "--project-root", str(missing)], env_root=None)
+        assert result.returncode == 1
+        assert "project root" in result.stderr.lower()
+        assert not missing.exists()
+
+    def test_root_without_agents_json_does_not_create_one(self, tmp_path):
+        """Raiz valida sin .agent/config/agents.json: error, y no se crea el fichero."""
+        (tmp_path / "vacio").mkdir()
+        result = _run_cli(
+            ["--migrate", "--project-root", str(tmp_path / "vacio")], env_root=None
+        )
+        assert result.returncode != 0
+        assert not (tmp_path / "vacio" / ".agent").exists()

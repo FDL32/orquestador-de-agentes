@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -398,6 +399,186 @@ def _contract_surface_warning(motor_link: dict) -> str | None:
     except Exception:
         # SIGNAL, not a gate: never propagate, never affect exit code.
         return None
+
+
+_SCHEMA_VERSION_RE = re.compile(r"\d+(\.\d+)*")
+AGENTS_DOC_REL = ".agent/rules/common/host_install_integration.md"
+
+
+def _read_agents_object(path: Path) -> tuple[dict | None, str | None]:
+    """Lee un agents.json como objeto JSON sin lanzar nunca (WOT-2026-137b).
+
+    Before: `path` puede no existir, ser ilegible, tener BOM, no ser UTF-8, estar
+        truncado, anidado en exceso o no ser un objeto.
+    During: una sola lectura estricta UTF-8 (sin tolerar BOM: el cargador del motor
+        tampoco lo tolera) y `json.loads`.
+    After: `(dict, None)` si es un objeto; `(None, causa)` en cualquier otro caso,
+        con la causa nombrando el TIPO de fallo y nunca el contenido del fichero.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "ausente"
+    except (OSError, ValueError, RecursionError) as exc:
+        return None, f"ilegible ({type(exc).__name__})"
+    if not isinstance(data, dict):
+        return None, "ilegible (la raiz no es un objeto JSON)"
+    return data, None
+
+
+def _schema_tuple(value: object) -> tuple[int, ...] | None:
+    """Convierte un schema_version `N(.N)*` en tupla leyendo el TOKEN COMPLETO.
+
+    Before: `value` es lo que haya en el JSON (cadena, numero, null...).
+    During: `fullmatch` de digitos separados por puntos; "1.4abc" o 1.4 (numero JSON) no valen.
+    After: tupla de enteros, o None si no es una version bien formada.
+    """
+    if isinstance(value, str) and _SCHEMA_VERSION_RE.fullmatch(value):
+        return tuple(int(part) for part in value.split("."))
+    return None
+
+
+def _schema_is_older(dest: tuple[int, ...], motor: tuple[int, ...]) -> bool:
+    """True si `dest` < `motor`, rellenando con ceros (1.4 == 1.4.0, 1.10 > 1.4)."""
+    width = max(len(dest), len(motor))
+    pad = (0,) * width
+    return (dest + pad[: width - len(dest)]) < (motor + pad[: width - len(motor)])
+
+
+def _field_kind(data: dict, key: str) -> str:
+    """Describe POR TIPO (nunca por contenido) por que un campo no es utilizable."""
+    if key not in data:
+        return "ausente"
+    return f"ilegible ({type(data[key]).__name__})"
+
+
+def _motor_reference_gaps(motor_data: dict) -> list[str]:
+    """Causas por las que el agents.json del motor no sirve de referencia (137b ronda 2).
+
+    Before: `motor_data` es el objeto JSON del motor, ya leido.
+    During: comprueba schema_version (cadena `N(.N)*`) y role_mapping (objeto con al
+        menos un rol). Una referencia inutilizable se leia como "sin deriva".
+    After: lista de causas, vacia si la referencia es comparable. Cada causa nombra el
+        campo y el tipo del fallo, nunca el contenido del fichero.
+    """
+    gaps: list[str] = []
+    if _schema_tuple(motor_data.get("schema_version")) is None:
+        kind = _field_kind(motor_data, "schema_version")
+        if isinstance(motor_data.get("schema_version"), str):
+            kind = "ilegible (formato invalido)"
+        gaps.append("schema_version del motor " + kind)
+    mapping = motor_data.get("role_mapping")
+    if not isinstance(mapping, dict):
+        gaps.append("role_mapping del motor " + _field_kind(motor_data, "role_mapping"))
+    elif not mapping:
+        gaps.append("role_mapping del motor vacio")
+    return gaps
+
+
+def _agents_drift_problems(
+    motor_data: dict, dest_data: dict
+) -> tuple[list[str], bool, list[str]]:
+    """Compara dos agents.json ya leidos (WOT-2026-137b).
+
+    Before: ambos son objetos JSON.
+    During: primero comprueba que la referencia del motor sea comparable (un motor
+        con schema_version o role_mapping inutilizables NO es "sin deriva"); despues
+        schema_version destino < motor (token completo) y roles del `role_mapping`
+        del motor ausentes en el del destino. Cada dimension comparable se evalua
+        aunque la otra no lo sea.
+    After: `(problemas, schema_mas_antiguo, roles_ausentes)`; vacio si no hay deriva.
+    """
+    gaps = _motor_reference_gaps(motor_data)
+    problems: list[str] = []
+    if gaps:
+        problems.append("referencia del motor no comparable (" + "; ".join(gaps) + ")")
+    dest_raw = dest_data.get("schema_version")
+    dest_ver = _schema_tuple(dest_raw)
+    motor_ver = _schema_tuple(motor_data.get("schema_version"))
+    schema_older = False
+    if dest_ver is None:
+        problems.append(
+            f"schema_version del destino no legible ({str(dest_raw)[:24]!r})"
+        )
+    elif motor_ver is not None and _schema_is_older(dest_ver, motor_ver):
+        schema_older = True
+        problems.append(
+            f"schema_version destino={dest_raw} "
+            f"motor={motor_data.get('schema_version')}"
+        )
+
+    def _roles(data: dict) -> set[str]:
+        mapping = data.get("role_mapping")
+        return {str(k) for k in mapping} if isinstance(mapping, dict) else set()
+
+    missing = sorted(_roles(motor_data) - _roles(dest_data))
+    if missing:
+        problems.append(
+            "roles del motor sin declarar en role_mapping: " + ",".join(missing)
+        )
+    return problems, schema_older, missing
+
+
+def compute_agents_drift(project_root: Path, motor_link: dict) -> list[str]:
+    """SENAL (nunca gate) de deriva del agents.json del destino frente al del motor.
+
+    WOT-2026-137b (8). Mide dos cosas, ambas leyendo ficheros y sin escribir nada:
+    el `schema_version` del destino MENOR que el del motor, y roles que el
+    `role_mapping` del motor declara y el del destino no. `reviewer` NO cuenta como
+    `revisor` (el cargador lo rechaza: sin alias).
+
+    Before: `project_root` es el destino ya resuelto; `motor_link` el link parseado
+        (puede carecer de motor_root o apuntar a un motor sin agents.json).
+    During: lee `<motor_root>/.agent/config/agents.json` y el del destino con
+        `_read_agents_object`; compara versiones token a token y roles por conjunto.
+    After: lista de lineas para imprimir (vacia si no hay deriva): un [WARN] y, si
+        hay remedio, un [HINT] con el comando. Si algun fichero no se puede leer, una
+        sola linea [WARN] con la causa. NUNCA lanza ni afecta al exit code.
+    """
+    try:
+        motor_root_raw = motor_link.get("motor_root")
+        if not motor_root_raw:
+            return [
+                "[WARN] agents.json drift: link sin motor_root, no se puede comparar"
+            ]
+        motor_root = Path(str(motor_root_raw))
+        motor_data, cause = _read_agents_object(
+            motor_root / ".agent" / "config" / "agents.json"
+        )
+        if motor_data is None:
+            return [
+                f"[WARN] agents.json drift: el agents.json del motor esta {cause}, "
+                "no se puede comparar"
+            ]
+        dest_data, cause = _read_agents_object(
+            project_root / ".agent" / "config" / "agents.json"
+        )
+        if dest_data is None:
+            return [f"[WARN] agents.json drift: config/agents.json del destino {cause}"]
+
+        problems, schema_older, missing = _agents_drift_problems(motor_data, dest_data)
+        if not problems:
+            return []
+
+        lines = ["[WARN] agents.json drift: " + " | ".join(problems)]
+        dest_posix = project_root.as_posix()
+        if schema_older:
+            lines.append(
+                "[HINT] actualiza el schema (revisa el diff con --dry-run y aplica sin el): "
+                f'python "{motor_root.as_posix()}/.agent/agents_config.py" --migrate '
+                f'--dry-run --project-root "{dest_posix}"'
+            )
+        if missing:
+            lines.append(
+                f"[HINT] declara los roles que faltan en {dest_posix}/.agent/config/"
+                f"agents.json sin tocar lo ya declarado; procedimiento: {AGENTS_DOC_REL}"
+            )
+        return lines
+    except Exception:
+        # SIGNAL, not a gate: never propagate, never affect exit code.
+        return [
+            "[WARN] agents.json drift: no se pudo calcular la deriva de agents.json"
+        ]
 
 
 def get_git_info(project_root: Path) -> dict | None:
@@ -933,6 +1114,12 @@ def _print_summary(
     surface_warning = _contract_surface_warning(link)
     if surface_warning:
         print(surface_warning)
+
+    # WOT-2026-137b (8): deriva del agents.json del destino (schema y roles del motor).
+    # SENAL en stdout, nunca en destination_map.md (no ensucia el arbol del destino) y
+    # nunca gate: no toca el exit code.
+    for agents_line in compute_agents_drift(project_root, link):
+        print(agents_line)
 
     collab = project_root / ".agent" / "collaboration"
     wp = collab / "work_plan.md"

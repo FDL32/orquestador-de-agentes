@@ -11,13 +11,20 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from scripts.destination_context import (
+    _schema_tuple,
     _write_map,
     build_map,
+    compute_agents_drift,
     compute_contract_surface_drift,
     compute_motor_drift,
     extract_file_preview,
@@ -844,3 +851,428 @@ def test_bootstrap_rerun_over_untracked_map_stays_clean(tmp_path):
         "el arbol quedo sucio tras --bootstrap repetido sobre un destino "
         "real con el mapa gitignored (regresion WOT-2026-068f)"
     )
+
+
+# ---------------------------------------------------------------------------
+# compute_agents_drift (WOT-2026-137b, DoD 8): senal WARN, nunca gate, de la deriva
+# del agents.json del destino frente al del motor. Lee, no escribe.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_AGENTS_CONFIG_CLI = _REPO_ROOT / ".agent" / "agents_config.py"
+_REAL_MOTOR_AGENTS = json.loads(
+    (_REPO_ROOT / ".agent" / "config" / "agents.json").read_text(encoding="utf-8")
+)
+
+
+def _agents_json(
+    schema: object = "1.4", roles: tuple[str, ...] = ("builder", "revisor")
+) -> dict:
+    return {
+        "schema_version": schema,
+        "backends": {"claude": {}},
+        "role_mapping": {role: {"backend": "claude"} for role in roles},
+    }
+
+
+def _write_agents(root: Path, data: object | bytes | None) -> Path:
+    cfg = root / ".agent" / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    path = cfg / "agents.json"
+    if data is None:
+        return path
+    path.write_bytes(data if isinstance(data, bytes) else json.dumps(data).encode())
+    return path
+
+
+def _drift_pair(tmp_path: Path, motor: dict, dest: object | bytes | None):
+    """Motor y destino sinteticos con su link; devuelve (destino, link, ficheros)."""
+    motor_root, dest_root = tmp_path / "motor", tmp_path / "destino"
+    motor_file = _write_agents(motor_root, motor)
+    dest_file = _write_agents(dest_root, dest)
+    return dest_root, {"motor_root": str(motor_root)}, (motor_file, dest_file)
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_agents_drift_silent_when_destination_matches_motor(tmp_path):
+    dest, link, _ = _drift_pair(tmp_path, _agents_json(), _agents_json())
+    assert compute_agents_drift(dest, link) == []
+
+
+def test_agents_drift_older_schema_and_missing_roles_names_both_with_command(tmp_path):
+    dest, link, _ = _drift_pair(
+        tmp_path, _agents_json("1.4"), {"schema_version": "1.2", "backends": {}}
+    )
+    lines = compute_agents_drift(dest, link)
+    assert lines[0].startswith("[WARN] agents.json drift:")
+    assert "schema_version destino=1.2 motor=1.4" in lines[0]
+    assert "builder,revisor" in lines[0]
+    hints = [line for line in lines if line.startswith("[HINT]")]
+    assert any(
+        "agents_config.py" in h and "--migrate --dry-run --project-root" in h
+        for h in hints
+    )
+    assert any("host_install_integration.md" in h for h in hints)
+
+
+def test_agents_drift_missing_role_with_current_schema_has_no_migrate_hint(tmp_path):
+    """El migrate no siembra revisor: no se recomienda un comando que no lo arregla."""
+    dest, link, _ = _drift_pair(
+        tmp_path, _agents_json("1.4"), _agents_json("1.4", roles=("builder",))
+    )
+    lines = compute_agents_drift(dest, link)
+    assert "roles del motor sin declarar en role_mapping: revisor" in lines[0]
+    assert "schema_version" not in lines[0]
+    assert not any("--migrate" in line for line in lines)
+
+
+def test_agents_drift_reviewer_is_not_counted_as_revisor(tmp_path):
+    """Sin alias (C3 no autorizado): `reviewer` no cubre el rol `revisor`."""
+    dest_cfg = _agents_json("1.4", roles=("builder", "reviewer"))
+    dest, link, _ = _drift_pair(tmp_path, _agents_json("1.4"), dest_cfg)
+    assert "revisor" in compute_agents_drift(dest, link)[0]
+
+
+@pytest.mark.parametrize(
+    ("dest_schema", "motor_schema", "expect_warn"),
+    [
+        ("1.10", "1.4", False),  # token completo: 1.10 > 1.4, no es "1.1 < 1.4"
+        ("1.4", "1.10", True),
+        ("1.4.0", "1.4", False),
+        ("1.4", "1.4.0", False),  # 1.4 == 1.4.0: rellenar con ceros, no comparar tuplas
+        ("1.5", "1.4", False),  # mayor que el motor: no es "menor"
+        ("1.3", "1.4", True),
+    ],
+)
+def test_agents_drift_schema_compares_full_tokens(
+    tmp_path, dest_schema, motor_schema, expect_warn
+):
+    dest, link, _ = _drift_pair(
+        tmp_path, _agents_json(motor_schema), _agents_json(dest_schema)
+    )
+    lines = compute_agents_drift(dest, link)
+    assert bool(lines) is expect_warn
+    if expect_warn:
+        assert "schema_version destino=" in lines[0]
+
+
+@pytest.mark.parametrize("bad", ["1.4abc", 1.4, None, "", "v1.4", ["1.4"]])
+def test_agents_drift_unreadable_schema_version_warns_instead_of_passing(tmp_path, bad):
+    assert _schema_tuple(bad) is None
+    dest, link, _ = _drift_pair(tmp_path, _agents_json(), _agents_json(bad))
+    assert (
+        "schema_version del destino no legible" in compute_agents_drift(dest, link)[0]
+    )
+
+
+@pytest.mark.parametrize(
+    ("content", "cause"),
+    [
+        (None, "ausente"),
+        (b"", "JSONDecodeError"),
+        (b'{"schema_version": "1.4"', "JSONDecodeError"),
+        (b"\xef\xbb\xbf" + json.dumps(_agents_json()).encode(), "JSONDecodeError"),
+        (b'{"a": "\xe9"}', "UnicodeDecodeError"),
+        (b"[]", "la raiz no es un objeto JSON"),
+        (b'"x"', "la raiz no es un objeto JSON"),
+        (b"null", "la raiz no es un objeto JSON"),
+        (b"[" * 200000 + b"]" * 200000, "RecursionError"),
+    ],
+    ids=[
+        "ausente",
+        "vacio",
+        "truncado",
+        "bom",
+        "no-utf8",
+        "lista",
+        "cadena",
+        "null",
+        "anidado",
+    ],
+)
+def test_agents_drift_unreadable_destination_gives_one_warn_and_never_raises(
+    tmp_path, content, cause
+):
+    dest, link, files = _drift_pair(tmp_path, _agents_json(), content)
+    before = _sha(files[1]) if files[1].exists() else None
+    lines = compute_agents_drift(dest, link)
+    assert len(lines) == 1
+    assert lines[0].startswith(
+        "[WARN] agents.json drift: config/agents.json del destino"
+    )
+    assert cause in lines[0]
+    assert (_sha(files[1]) if files[1].exists() else None) == before
+
+
+def _motor_without(field: str, value: object = None, *, drop: bool = False) -> dict:
+    """agents.json del motor sano al que se le estropea UN campo."""
+    motor = _agents_json("1.4")
+    if drop:
+        motor.pop(field)
+    else:
+        motor[field] = value
+    return motor
+
+
+@pytest.mark.parametrize(
+    ("motor", "cause"),
+    [
+        (
+            _motor_without("schema_version", "1.4abc"),
+            "schema_version del motor ilegible (formato invalido)",
+        ),
+        (
+            _motor_without("schema_version", drop=True),
+            "schema_version del motor ausente",
+        ),
+        (
+            _motor_without("schema_version", 1.4),
+            "schema_version del motor ilegible (float)",
+        ),
+        (
+            _motor_without("schema_version", None),
+            "schema_version del motor ilegible (NoneType)",
+        ),
+        (_motor_without("role_mapping", drop=True), "role_mapping del motor ausente"),
+        (
+            _motor_without("role_mapping", ["builder"]),
+            "role_mapping del motor ilegible (list)",
+        ),
+        (
+            _motor_without("role_mapping", "builder"),
+            "role_mapping del motor ilegible (str)",
+        ),
+        (_motor_without("role_mapping", {}), "role_mapping del motor vacio"),
+    ],
+    ids=[
+        "schema-malformado",
+        "schema-ausente",
+        "schema-numero",
+        "schema-null",
+        "roles-ausentes",
+        "roles-lista",
+        "roles-cadena",
+        "roles-vacio",
+    ],
+)
+def test_agents_drift_unusable_motor_reference_is_a_warn_not_silence(
+    tmp_path, motor, cause
+):
+    """Un motor LEGIBLE con contenido inutilizable no puede leerse como "sin deriva".
+
+    El destino es identico al motor sano: el unico fallo es la referencia, y antes de
+    este arreglo devolvia [] en estas formas (falso negativo de la ronda 1).
+    """
+    dest, link, _ = _drift_pair(tmp_path, motor, _agents_json("1.4"))
+    lines = compute_agents_drift(dest, link)
+    assert [line.startswith("[WARN]") for line in lines] == [True]
+    assert "referencia del motor no comparable (" in lines[0]
+    assert cause in lines[0]
+
+
+def test_agents_drift_unusable_motor_reference_leaks_no_content(tmp_path):
+    marker = "MARCA-NO-IMPRIMIR"
+    motor = _agents_json("1.4")
+    motor["schema_version"] = marker
+    dest, link, _ = _drift_pair(tmp_path, motor, _agents_json("1.4"))
+    assert marker not in "\n".join(compute_agents_drift(dest, link))
+
+
+def test_agents_drift_keeps_the_roles_dimension_when_motor_schema_is_unusable(tmp_path):
+    dest, link, _ = _drift_pair(
+        tmp_path,
+        _motor_without("schema_version", "1.4abc"),
+        _agents_json("1.4", roles=("builder",)),
+    )
+    lines = compute_agents_drift(dest, link)
+    warns = [line for line in lines if line.startswith("[WARN]")]
+    assert len(warns) == 1
+    assert "referencia del motor no comparable (schema_version del motor" in warns[0]
+    assert "roles del motor sin declarar en role_mapping: revisor" in warns[0]
+
+
+def test_agents_drift_keeps_the_schema_dimension_when_motor_roles_are_unusable(
+    tmp_path,
+):
+    dest, link, _ = _drift_pair(
+        tmp_path,
+        _motor_without("role_mapping", drop=True),
+        {"schema_version": "1.2", "backends": {}},
+    )
+    lines = compute_agents_drift(dest, link)
+    warns = [line for line in lines if line.startswith("[WARN]")]
+    assert len(warns) == 1
+    assert (
+        "referencia del motor no comparable (role_mapping del motor ausente)"
+        in warns[0]
+    )
+    assert "schema_version destino=1.2 motor=1.4" in warns[0]
+    assert any("--migrate --dry-run --project-root" in line for line in lines)
+
+
+def test_agents_drift_both_motor_fields_unusable_is_still_one_warn_line(tmp_path):
+    motor = {"backends": {}}
+    dest, link, _ = _drift_pair(tmp_path, motor, _agents_json("1.4"))
+    lines = compute_agents_drift(dest, link)
+    assert len(lines) == 1
+    assert (
+        "schema_version del motor ausente; role_mapping del motor ausente" in lines[0]
+    )
+
+
+def test_agents_drift_healthy_motor_adds_no_reference_warning(tmp_path):
+    """Control negativo: motor sano, destino sano -> ninguna linea nueva."""
+    dest, link, _ = _drift_pair(tmp_path, _agents_json("1.4"), _agents_json("1.4"))
+    assert compute_agents_drift(dest, link) == []
+    dest2 = tmp_path / "otro"
+    _write_agents(dest2, _agents_json("1.2"))
+    assert all(
+        "referencia del motor" not in line for line in compute_agents_drift(dest2, link)
+    )
+
+
+def test_main_bootstrap_unusable_motor_reference_keeps_rc(tmp_path, capsys):
+    """Por la ruta productiva: motor con schema ilegible -> WARN en stdout y rc 0."""
+    motor_root = tmp_path / "motor"
+    _write_agents(motor_root, _motor_without("schema_version", "1.4abc"))
+    dest = _bootstrap_destination(tmp_path, _agents_json("1.4"))
+    link_path = dest / ".agent" / "config" / "motor_destination_link.json"
+    link = json.loads(link_path.read_text(encoding="utf-8"))
+    link["motor_root"] = str(motor_root)
+    link_path.write_text(json.dumps(link), encoding="utf-8")
+    assert main(["--bootstrap", "--project-root", str(dest)]) == 0
+    assert "referencia del motor no comparable" in capsys.readouterr().out
+
+
+def test_agents_drift_motor_side_failures_are_one_warn(tmp_path):
+    dest = tmp_path / "destino"
+    _write_agents(dest, _agents_json())
+    assert "link sin motor_root" in compute_agents_drift(dest, {})[0]
+    missing_motor = {"motor_root": str(tmp_path / "no_motor")}
+    lines = compute_agents_drift(dest, missing_motor)
+    assert len(lines) == 1
+    assert "agents.json del motor esta ausente" in lines[0]
+
+
+def test_agents_drift_never_raises_even_if_the_comparison_blows_up(tmp_path):
+    dest, link, _ = _drift_pair(tmp_path, _agents_json(), _agents_json("1.2"))
+    with patch(
+        "scripts.destination_context._agents_drift_problems", side_effect=RuntimeError
+    ):
+        lines = compute_agents_drift(dest, link)
+    assert lines == [
+        "[WARN] agents.json drift: no se pudo calcular la deriva de agents.json"
+    ]
+
+
+def test_agents_drift_is_read_only(tmp_path):
+    dest, link, files = _drift_pair(tmp_path, _agents_json("1.4"), _agents_json("1.2"))
+    before = [_sha(f) for f in files]
+    assert compute_agents_drift(dest, link)
+    assert [_sha(f) for f in files] == before
+    assert sorted(p.name for p in files[1].parent.iterdir()) == ["agents.json"]
+
+
+def _bootstrap_destination(tmp_path: Path, agents: object | bytes | None) -> Path:
+    """Destino con link valido apuntando al motor REAL (este checkout)."""
+    dest = tmp_path / "destino"
+    _write_agents(dest, agents)
+    payload = {
+        "motor_root": str(_REPO_ROOT),
+        "destination_root": str(dest),
+        "motor_version": "9.17.1",
+        "motor_sha": "unknown",
+        "destination_id": "destino",
+        "ticket_prefix": "WOT",
+        "created_at": "2026-07-19T00:00:00+00:00",
+        "manifest_version": "1.0",
+    }
+    (dest / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    return dest
+
+
+def test_main_bootstrap_prints_agents_drift_on_stdout_only_and_keeps_rc(
+    tmp_path, capsys
+):
+    dest = _bootstrap_destination(tmp_path, {"schema_version": "1.2", "backends": {}})
+    assert main(["--bootstrap", "--project-root", str(dest)]) == 0
+    out = capsys.readouterr().out
+    assert "[WARN] agents.json drift: schema_version destino=1.2" in out
+    assert "[HINT] actualiza el schema" in out
+    map_text = (dest / ".agent" / "context" / "destination_map.md").read_text(
+        encoding="utf-8"
+    )
+    assert "agents.json drift" not in map_text
+
+
+def test_main_bootstrap_rc_is_unchanged_for_an_unreadable_agents_json(tmp_path, capsys):
+    dest = _bootstrap_destination(tmp_path, b"\xef\xbb\xbf{")
+    assert main(["--bootstrap", "--project-root", str(dest)]) == 0
+    assert "agents.json drift: config/agents.json del destino ilegible" in (
+        capsys.readouterr().out
+    )
+
+
+def test_main_bootstrap_silent_for_a_destination_that_equals_the_motor(
+    tmp_path, capsys
+):
+    dest = _bootstrap_destination(tmp_path, _REAL_MOTOR_AGENTS)
+    assert main(["--bootstrap", "--project-root", str(dest)]) == 0
+    assert "agents.json drift" not in capsys.readouterr().out
+
+
+def test_agents_drift_reads_what_the_real_migrate_produced(tmp_path):
+    """Consumidor encadenado: la salida REAL de `agents_config.py --migrate` (C1).
+
+    Productor: el CLI real migra un agents.json 1.0 del destino. Consumidor: la senal
+    lee ese fichero tal cual lo dejo el productor (no un fixture escrito a mano).
+    Antes del migrate avisa del schema; despues ya no, y los roles que el migrate no
+    siembra (revisor, entre otros) siguen avisando.
+    """
+    legacy = {
+        "schema_version": "1.0",
+        "backends": {
+            "opencode": {
+                "executable": "opencode",
+                "args": ["run"],
+                "discovery": {"method": "path_only"},
+            }
+        },
+        "role_assignments": {"BUILDER": "opencode"},
+    }
+    dest = tmp_path / "destino"
+    cfg = _write_agents(dest, legacy)
+    link = {"motor_root": str(_REPO_ROOT)}
+    motor_schema = _REAL_MOTOR_AGENTS["schema_version"]
+
+    before = compute_agents_drift(dest, link)
+    assert f"schema_version destino=1.0 motor={motor_schema}" in before[0]
+
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_PROJECT_ROOT"}
+    done = subprocess.run(
+        [
+            sys.executable,
+            str(_AGENTS_CONFIG_CLI),
+            "--migrate",
+            "--project-root",
+            str(dest),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert json.loads(cfg.read_text(encoding="utf-8"))["schema_version"] == motor_schema
+
+    after = compute_agents_drift(dest, link)
+    assert after, "el migrate no siembra revisor: debe seguir avisando de los roles"
+    assert "schema_version" not in after[0]
+    assert "revisor" in after[0]
+    assert not any("--migrate" in line for line in after)

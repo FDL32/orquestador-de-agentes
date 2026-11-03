@@ -1085,6 +1085,38 @@ MIGRATIONS: list[Migration] = [
 ]
 
 
+_BACKUP_MAX_COLLISIONS = 10_000
+
+
+def _reserve_backup_path(path: Path, ts: str) -> Path:
+    """Reserva un nombre de backup que NO existe, creandolo de forma exclusiva.
+
+    WOT-2026-137b (C4): con el nombre `<fichero>.json.bak.<ts>` (resolucion de
+    segundo) las migraciones encadenadas de una misma corrida se pisaban entre si y
+    el original se perdia.
+
+    Before: `path` es el agents.json a respaldar; `ts` el sello UTC `%Y%m%dT%H%M%SZ`.
+    During: prueba `...bak.<ts>`, `...bak.<ts>-1`, `...bak.<ts>-2`... (mismo sufijo
+        `-N` que el backup del `--sync`) abriendo con modo exclusivo `xb`: la
+        reserva es atomica, tambien entre procesos concurrentes. Crea un fichero
+        vacio que el llamador sustituye con la copia.
+    After: devuelve la ruta reservada (existe, vacia). Lanza AgentsConfigError si se
+        agotan los candidatos y deja pasar OSError distintos de FileExistsError.
+    """
+    for n in range(_BACKUP_MAX_COLLISIONS):
+        suffix = f".json.bak.{ts}" + (f"-{n}" if n else "")
+        candidate = path.with_suffix(suffix)
+        try:
+            with open(candidate, "xb"):
+                pass
+        except FileExistsError:
+            continue
+        return candidate
+    raise AgentsConfigError(
+        f"No free backup name for {path} at {ts} after {_BACKUP_MAX_COLLISIONS} tries"
+    )
+
+
 def migrate_agents_config(
     path: Path | None = None,
     *,
@@ -1144,8 +1176,12 @@ def migrate_agents_config(
             continue
         if not dry_run:
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            backup_path = path.with_suffix(f".json.bak.{ts}")
-            shutil.copy2(path, backup_path)
+            backup_path = _reserve_backup_path(path, ts)
+            try:
+                shutil.copy2(path, backup_path)
+            except OSError:
+                backup_path.unlink(missing_ok=True)
+                raise
             backups.append(backup_path)
             config = migration.apply(config)
             current_migrations.append(migration.id)
@@ -1167,9 +1203,29 @@ if __name__ == "__main__":
         "--migrate", action="store_true", help="Apply pending migrations"
     )
     parser.add_argument("--dry-run", action="store_true", help="Report without writing")
+    parser.add_argument(
+        "--project-root",
+        default=None,
+        help="Project (destino) whose .agent/config/agents.json is used; "
+        "default: AGENT_PROJECT_ROOT or the module's own project",
+    )
     parser.add_argument("command", nargs="?", help="Command to run")
     parser.add_argument("args", nargs="*", help="Command arguments")
     args = parser.parse_args()
+
+    # WOT-2026-137b (C1): the flag propagates through AGENT_PROJECT_ROOT, the single
+    # channel runtime.project_root documents. Without the flag nothing changes.
+    if args.project_root is not None:
+        import os
+
+        from runtime.project_root import clear_cache
+
+        _root = Path(args.project_root).resolve()
+        if not _root.is_dir():
+            print(f"Error: project root does not exist: {_root}", file=sys.stderr)
+            sys.exit(1)
+        os.environ["AGENT_PROJECT_ROOT"] = str(_root)
+        clear_cache()
 
     # Handle --migrate flag
     if args.migrate:
@@ -1197,7 +1253,9 @@ if __name__ == "__main__":
         print("  get_args <backend>")
         print("  get_discovery <backend>")
         print("  validate")
-        print("  --migrate [--dry-run]  Apply pending migrations")
+        print(
+            "  --migrate [--dry-run] [--project-root <dir>]  Apply pending migrations"
+        )
         sys.exit(1)
 
     command = args.command

@@ -1349,6 +1349,44 @@ copia del bundle. Comportamiento:
 Plantillas: `.agent/host-setup.sh.example` / `.agent/host-setup.ps1.example`.
 Origen del patrón: OpenHands `.openhands/setup.sh` (MIT).
 
+## Actualizar el `agents.json` de un destino (WOT-2026-137b)
+
+> Esta seccion NO es verbatim de `AGENTS.md`: es propia de este modulo (WOT-2026-137b,
+> DoD 9). El `agents.json` es del destino (desde WOT-2026-140a el `--sync` no lo pisa y
+> solo avisa); el motor aporta el comando y la senal, el destino decide y commitea.
+
+**Cuando:** `destination_context.py --bootstrap` imprime `[WARN] agents.json drift: ...`
+(schema del destino menor que el del motor, o roles del `role_mapping` del motor sin
+declarar), o el `--sync` imprime `[WARN] config/agents.json: PROTEGIDO`. Es una senal, nunca
+un gate: no cambia ningun exit code.
+
+**Procedimiento, destino a destino** (cada destino abre SU ficha con SU prefijo; el motor no
+abre fichas de destino). `<motor>` = `motor_root` del link; `<destino>` = su raiz. Se usa el
+`agents_config.py` DEL MOTOR: ese modulo no viaja al destino (`MANIFEST.workspace`).
+
+1. **Medir**: `python <motor>/scripts/destination_context.py --bootstrap --project-root <destino>`
+   y leer el `[WARN] agents.json drift`. Antes de seguir, `git status` del destino: el arbol de
+   `.agent/config/` debe estar limpio, para que el diff sea solo el del migrate.
+2. **Ensayo**: `python <motor>/.agent/agents_config.py --migrate --dry-run --project-root <destino>`.
+   Lista `applied` (migraciones pendientes) y no escribe. Si falla con traceback (BOM, no UTF-8,
+   JSON truncado), PARAR: el migrate lee de forma laxa y no es quien debe arreglar ese fichero.
+3. **Aplicar**: el mismo comando sin `--dry-run`. Deja un backup por migracion aplicada,
+   `agents.json.bak.<ts>` (y `-1`, `-2`... dentro del mismo segundo); el primero es el original.
+   Comprobar que son tantos ficheros como migraciones y NO versionarlos.
+4. **Roles que el migrate no siembra** (p. ej. `revisor`): declararlos a mano en el
+   `agents.json` VERSIONADO del destino (no en `agents.local.json`, que esta ignorado por git),
+   como `"role_mapping": {"<rol>": {"backend": "<b>"}}` con `<b>` ya presente en `backends` del
+   destino y sin modelo (el modelo es un override opcional). El rol `reviewer` se rechaza
+   (rc 1): el nombre canonico es `revisor`.
+5. **Validar**: repetir el paso 1 (sin `[WARN] agents.json drift`) y
+   `python <motor>/.agent/agents_config.py get_backend_for_role revisor --project-root <destino>`
+   (un rol sin declarar resuelve a `default` en silencio).
+6. **Commit en el destino**, con su prefijo; el ensayo del paso 2 y los hashes antes/despues
+   van en su informe.
+
+La reparacion automatica de `role_mapping.revisor` y el alias `reviewer` -> `revisor` NO
+existen (viven en WOT-2026-137a, diferidas): hasta entonces el paso 4 es manual.
+
 ```
 
 ## .agent/rules/common/manifest_contracts.md
