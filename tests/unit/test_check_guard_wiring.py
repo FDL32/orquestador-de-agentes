@@ -389,6 +389,13 @@ EXPECTED_WIRED_REAL = {
     # NO bloqueante: PASS/WARN/NOT_VERIFIED, omitido en dry-run). Vive en scripts/flight/:
     # find_guards lo descubre por rglob y _path_tokens_in reduce la subruta al basename.
     "check_quota_index_drift",
+    # WOT-2026-153k: cableado via la constante `_LATIDO_CHECK = "flight/check_latido_alert_wiring.py"`
+    # pasada a `run_script_fn` en scripts/closeout_steps/gates.py::step_latido_alert_wiring,
+    # invocado desde session_closeout.py::_step_latido_alert_wiring (cierre FINAL, BLOQUEANTE
+    # con roster; SKIP sin roster o en dry-run). Vive en scripts/flight/ (mismo patron que
+    # check_quota_index_drift). Verifica que los latidos del vuelo invocan el mecanismo de
+    # avisos del motor; el consumidor durante el vuelo (B2) es el propio latido con --alert.
+    "check_latido_alert_wiring",
 }
 
 

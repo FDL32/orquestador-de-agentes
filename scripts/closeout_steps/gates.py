@@ -7,7 +7,9 @@ steps that used to live in the session_closeout monolith.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -251,6 +253,171 @@ def step_roster_matches_acting_thread(
             detail="check_roster_matches_acting_thread.py not found in scripts/",
             blocking=True,
         )
+
+
+_LATIDO_CHECK = "flight/check_latido_alert_wiring.py"
+_LATIDO_REPRO_PREFIX = "reproducir y revalidar:"
+
+
+def _latido_repro_command(roster_path: str | None, latido_files: list[str]) -> str:
+    """Orden exacta (reproducir y revalidar) con los mismos argumentos que recibio el paso."""
+    motor_root = Path(__file__).resolve().parents[2]
+    git_exe = shutil.which("git") or "git"
+    parts = [
+        "python",
+        f"scripts/{_LATIDO_CHECK}",
+        "--motor-root",
+        str(motor_root),
+        "--python-exe",
+        sys.executable,
+        "--git-exe",
+        git_exe,
+    ]
+    if roster_path:
+        parts += ["--roster-path", roster_path]
+    for spec in latido_files:
+        parts += ["--latido-file", spec]
+    return subprocess.list2cmdline(parts)
+
+
+def _latido_fail_detail(
+    headline: str, stdout: str, roster_path: str | None, latido_files: list[str]
+) -> str:
+    """Detalle self-service de un FAIL: QUE falla, COMO reproducirlo y COMO revalidar."""
+    lines = [ln.strip() for ln in (stdout or "").splitlines() if ln.strip()]
+    findings = [ln[:160] for ln in lines if ln.startswith("- [")][:3]
+    repro = next(
+        (ln for ln in lines if ln.startswith(_LATIDO_REPRO_PREFIX)),
+        _LATIDO_REPRO_PREFIX + " " + _latido_repro_command(roster_path, latido_files),
+    )
+    what = (
+        " | ".join(findings)
+        if findings
+        else (lines[0][:200] if lines else "sin salida")
+    )
+    return (
+        f"{headline}. QUE falla: {what}. COMO reproducirlo: {repro[len(_LATIDO_REPRO_PREFIX) :].strip()}. "
+        "COMO revalidar: corrige el latido (rutas absolutas al motor, interprete fijado, ordenes "
+        "obligatorias del rol) y repite esa misma orden hasta rc 0, sin escalar al humano"
+    )
+
+
+def step_latido_alert_wiring(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    roster_path: str | None,
+    latido_files: list[str] | None,
+    run_script_fn,
+    process_diagnostic_fn,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Run flight/check_latido_alert_wiring.py as a blocking, self-service closeout gate.
+
+    WOT-2026-153k (A, obligatorio en el cierre FINAL): verifica que los latidos del vuelo
+    invocan el mecanismo de avisos del motor (ruta absoluta, tracked e igual a HEAD,
+    interprete fijado, ordenes obligatorias por rol). Contrato de rc del check:
+
+    - dry_run=True -> SKIP, non-blocking (nada se verifico).
+    - roster declarado cuyo fichero no existe -> FAIL, blocking: un roster declarado pero
+      ausente deja el cierre sin verificar y no puede degradarse a SKIP fail-open.
+    - rc 3 (N/A: sin roster) -> SKIP, non-blocking: un cierre ordinario NO cambia.
+    - rc 0 -> PASS, blocking.
+    - rc 1 (violacion), rc 2 (ilegible), otro rc, timeout de 60 s o script ausente ->
+      FAIL, blocking. El detail dice QUE falla, COMO reproducirlo (la orden exacta) y COMO
+      revalidar, sin escalar al humano.
+
+    The roster is passed with --roster-path only when the closeout received one; the latidos
+    with one --latido-file ROL=RUTA each (the child also inherits FLIGHT_ROSTER_PATH and
+    FLIGHT_LATIDO_FILES from the environment).
+    """
+    name = "latido_alert_wiring"
+    if dry_run:
+        return step_result_cls(
+            name=name,
+            status="SKIP",
+            detail="Not run in dry-run mode: latido wiring was not verified",
+            blocking=False,
+        )
+    if roster_path and not (
+        Path(roster_path).is_file() or (project_root / roster_path).is_file()
+    ):
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail=_latido_fail_detail(
+                f"Roster file not found ({roster_path}): latido wiring not verified",
+                "",
+                roster_path,
+                list(latido_files or []),
+            ),
+            blocking=True,
+        )
+    specs = list(latido_files or [])
+    args: list[str] = ["--roster-path", roster_path] if roster_path else []
+    for spec in specs:
+        args += ["--latido-file", spec]
+    try:
+        result = run_script_fn(_LATIDO_CHECK, args, project_root, timeout=60)
+    except subprocess.TimeoutExpired:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail=_latido_fail_detail(
+                "check_latido_alert_wiring.py agoto 60s", "", roster_path, specs
+            ),
+            blocking=True,
+        )
+    except FileNotFoundError:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail=_latido_fail_detail(
+                "flight/check_latido_alert_wiring.py no existe en scripts/",
+                "",
+                roster_path,
+                specs,
+            ),
+            blocking=True,
+        )
+    except OSError as exc:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail=_latido_fail_detail(
+                f"no se pudo ejecutar flight/check_latido_alert_wiring.py "
+                f"({type(exc).__name__}: {exc})",
+                "",
+                roster_path,
+                specs,
+            ),
+            blocking=True,
+        )
+    if result.returncode == 0:
+        return step_result_cls(
+            name=name,
+            status="PASS",
+            detail="Latidos invocan el mecanismo de avisos del motor",
+            blocking=True,
+        )
+    if result.returncode == 3:
+        return step_result_cls(
+            name=name,
+            status="SKIP",
+            detail="No roster found (N/A): latido wiring not applicable to this closeout",
+            blocking=False,
+        )
+    return step_result_cls(
+        name=name,
+        status="FAIL",
+        detail=_latido_fail_detail(
+            f"Latidos sin cablear o ilegibles (exit {result.returncode})",
+            result.stdout or process_diagnostic_fn(result),
+            roster_path,
+            specs,
+        ),
+        blocking=True,
+    )
 
 
 def step_quota_index_drift(

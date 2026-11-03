@@ -268,6 +268,12 @@ def test_run_closeout_calls_roster_step_and_blocks_on_fail(
         "scripts.session_closeout._step_prepush_check",
         _fake_prepush,
     )
+    monkeypatch.setattr(
+        "scripts.session_closeout._step_latido_alert_wiring",
+        lambda *a, **k: StepResult(
+            name="latido_alert_wiring", status="PASS", blocking=True
+        ),
+    )
 
     import scripts.session_closeout as session_closeout
 
@@ -337,6 +343,12 @@ def test_run_closeout_roster_step_pass_appears_in_report(
     monkeypatch.setattr(
         "scripts.session_closeout._step_prepush_check",
         _fake_prepush,
+    )
+    monkeypatch.setattr(
+        "scripts.session_closeout._step_latido_alert_wiring",
+        lambda *a, **k: StepResult(
+            name="latido_alert_wiring", status="PASS", blocking=True
+        ),
     )
 
     import scripts.session_closeout as session_closeout

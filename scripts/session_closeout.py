@@ -58,6 +58,7 @@ from scripts.closeout_steps.archival import (  # noqa: E402
 )
 from scripts.closeout_steps.gates import (  # noqa: E402
     step_integration_receipts as _step_integration_receipts_impl,
+    step_latido_alert_wiring as _step_latido_alert_wiring_impl,
     step_local_audit as _step_local_audit_impl,
     step_manifest_check as _step_manifest_check_impl,
     step_prepush_check as _step_prepush_check_impl,
@@ -1126,6 +1127,25 @@ def _step_roster_matches_acting_thread(
         roster_path=roster_path,
         registry_path=registry_path,
         changes_log=changes_log,
+        run_script_fn=_run_script,
+        process_diagnostic_fn=_process_diagnostic,
+        step_result_cls=StepResult,
+    )
+
+
+def _step_latido_alert_wiring(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    roster_path: str | None = None,
+    latido_files: list[str] | None = None,
+) -> StepResult:
+    """Run flight/check_latido_alert_wiring.py as a blocking latido wiring gate (153k)."""
+    return _step_latido_alert_wiring_impl(
+        project_root,
+        dry_run,
+        roster_path=roster_path,
+        latido_files=latido_files,
         run_script_fn=_run_script,
         process_diagnostic_fn=_process_diagnostic,
         step_result_cls=StepResult,
@@ -3159,10 +3179,12 @@ def run_closeout(  # noqa: C901 - already complex, new step adds to it
     roster_path: str | None = None,
     registry_path: str | None = None,
     changes_log: str | None = None,
+    latido_files: list[str] | None = None,
 ) -> int:
     """Run the full session closeout pipeline.
 
-    Before: project_root is the repository root.
+    Before: project_root is the repository root. latido_files (WOT-2026-153k) are the
+    ROL=RUTA specs of the flight latidos (None = none passed; FLIGHT_LATIDO_FILES applies).
     During: Executes all closeout steps in order, collecting results.
     After: Returns exit code (0=success, 1=blocking failure).
 
@@ -3255,6 +3277,16 @@ def run_closeout(  # noqa: C901 - already complex, new step adds to it
     )
     report.steps.append(roster)
     if roster.status == "FAIL":
+        report_path = _generate_report(report, project_root)
+        print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
+        return 1
+    # WOT-2026-153k: the flight latidos must call the motor's alert mechanism (blocking
+    # with a roster; N/A without one). Self-service detail: what fails, how to reproduce it.
+    latido = _step_latido_alert_wiring(
+        project_root, dry_run, roster_path=roster_path, latido_files=latido_files
+    )
+    report.steps.append(latido)
+    if latido.status == "FAIL":
         report_path = _generate_report(report, project_root)
         print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
         return 1
@@ -3446,6 +3478,17 @@ def main() -> int:
         default=None,
         help="WOT-2026-136c: explicit path to roster_changes.jsonl.",
     )
+    parser.add_argument(
+        "--latido-file",
+        action="append",
+        default=None,
+        metavar="ROL=RUTA",
+        help=(
+            "WOT-2026-153k: flight latido (coordinadora|supervisora) the closeout must "
+            "check against the motor's alert mechanism; repeatable. FLIGHT_LATIDO_FILES "
+            "applies when none is passed."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -3473,6 +3516,7 @@ def main() -> int:
         roster_path=args.roster_path,
         registry_path=args.registry_path,
         changes_log=args.changes_log,
+        latido_files=args.latido_file,
     )
 
 

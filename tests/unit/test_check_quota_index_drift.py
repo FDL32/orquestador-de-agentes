@@ -367,6 +367,12 @@ def test_run_closeout_invoca_el_paso_y_un_warn_no_bloquea(tmp_path, monkeypatch)
         "scripts.session_closeout._step_prepush_check",
         lambda *a, **k: StepResult(name="prepush_check", status="PASS", blocking=True),
     )
+    monkeypatch.setattr(
+        "scripts.session_closeout._step_latido_alert_wiring",
+        lambda *a, **k: StepResult(
+            name="latido_alert_wiring", status="PASS", blocking=True
+        ),
+    )
     import scripts.session_closeout as session_closeout
 
     rc = session_closeout.run_closeout(

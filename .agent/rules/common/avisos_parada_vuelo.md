@@ -1,0 +1,139 @@
+# Avisos de parada del vuelo y barrera cableada del latido (WOT-2026-153h)
+
+Referencia bajo demanda: consultala al editar un latido, al tocar `scripts/flight/` (comms_alert,
+flight_stall_check, quota_tick, notify_user.ps1) o cuando el cierre falla en el paso
+`latido_alert_wiring`. Todo en ASCII.
+
+## 1. Que es
+
+El vuelo avisa al usuario de una parada (cupo, cola bloqueante, git bloqueado o sucio, disco, hook)
+con un aviso de escritorio, sin ventana negra, una vez por causa y ventana. El mecanismo vive en el
+motor, en `scripts/flight/`:
+
+- `comms_alert.py`: estado, ledger, `--scan`, `--event`, `--ack`, `--resolve`. Directorio de
+  operacion por `--ops-dir` o `FLIGHT_OPS_DIR` (datos: de el nunca se carga codigo).
+- `notify_user.ps1`: el toast. `-SimulateToastFailure` es solo para pruebas: un latido que lo pasara
+  dejaria al usuario SIN aviso, y el check lo prohibe.
+- `flight_stall_check.py`: los detectores (y `--self-check`).
+- `quota_tick.py`: la medida del cupo (rc 0, 3, 4, 5, 9).
+- `check_latido_alert_wiring.py`: la barrera cableada de este documento.
+
+Las copias antiguas de `tmp_or8` NO son el mecanismo: un latido que las llame esta desviado.
+
+## 2. La barrera: `scripts/flight/check_latido_alert_wiring.py`
+
+Lee el FICHERO del latido de cada rol (`coordinadora`, `supervisora`) y comprueba que sus ordenes
+(solo las que estan en codigo en linea o en un bloque de codigo; la prosa no cuenta) invocan el
+mecanismo del motor:
+
+- el primer token es una RUTA ABSOLUTA del interprete fijado (Python: `--python-exe`, `FLIGHT_PYTHON` o
+  `<motor>/.venv`; PowerShell: `%SystemRoot%/System32/WindowsPowerShell/v1.0/powershell.exe`);
+- el script NO se busca por coincidencia en toda la linea: para Python es el primer operando tras una
+  tabla cerrada de opciones (`-I -B -E -s -S -u -O -OO -q -v -b -d` sin valor, `-W`/`-X` con uno;
+  `-c`/`-m` y cualquier otra opcion se rechazan); para PowerShell es el operando inmediato de `-File`
+  o el primer posicional. Un valor de opcion (`-W`, `-X`, `-Title`, `-Message`, `--ops-dir`, `--what`)
+  nunca puede hacerse pasar por script, incluso si repite su basename;
+- el script es absoluto, no UNC, sin `tmp_or8`, resuelve (strict, enlaces incluidos) dentro de
+  `<motor>/scripts/flight/`, esta TRACKED, es igual a HEAD y no tiene cambios preparados;
+- toda ruta absoluta que no sea uno de los scripts del inventario es una violacion, aunque el
+  fichero exista y aunque su basename coincida con uno permitido; tras el script se valida toda
+  la cola con una tabla cerrada de flags y aridad derivada de los parsers reales. Se rechazan
+  flags desconocidos, `flag=valor` para flags sin valor, valores ausentes o con apariencia de
+  flag, posicionales no declarados y `--dry-run` en cualquier orden: ese modo silencia el aviso
+  y deja sin cubrir B2. Los marcadores `<x>` solo son valores de una opcion que los consume;
+- denylist: `-SimulateToastFailure`, `-EncodedCommand` y sus prefijos, `-Command` antes de
+  `-File` y cualquier parametro no declarado despues del script,
+  `-ExecutionPolicy Bypass`, `python -c` y `-m`, flags internos `--emit*`, `cmd.exe`;
+- sin operadores de shell, salvo UN `> ruta` final en la orden de `quota_tick.py` (ruta absoluta, no
+  UNC, con el directorio ya existente);
+- inventario obligatorio por rol (cada item lo cubre UNA orden valida):
+  - coordinadora: `comms_alert.py --scan`; `comms_alert.py --event`; `flight_stall_check.py` (el tick,
+    sin `--self-check`); `flight_stall_check.py --self-check`; `quota_tick.py`; la orden del propio
+    check con `--alert`.
+  - supervisora: `notify_user.ps1` (PowerShell con `-File`) y `quota_tick.py`.
+
+Codigos de salida: 0 todo correcto; 1 violacion; 2 ILEGIBLE (latido, git o interprete que no se
+pueden verificar, roster declarado e ilegible, error de uso); 3 N/A solo si no hay roster
+(`--roster-path` o `FLIGHT_ROSTER_PATH`, el mismo que usa el gate de roster). Con roster y sin
+latidos es 1. Si hay ilegible y violacion gana 2. La ultima linea de la salida trae la orden exacta
+para reproducir y revalidar.
+
+Entrada: `--latido-file ROL=RUTA` (repetible) o `FLIGHT_LATIDO_FILES` (pares separados por `;`; la CLI
+gana). Las rutas relativas del CHECK (`--latido-file`, `--roster-path`) se resuelven contra
+`--motor-root`, nunca contra el cwd; las rutas de scripts dentro de una orden deben ser absolutas.
+
+## 3. Consumidores
+
+- A (OBLIGATORIO, cierre FINAL): el paso `latido_alert_wiring` de `session_closeout.py` (modulo
+  `closeout_steps/gates.py`). dry-run: SKIP; sin roster: SKIP; roster declarado ausente: FAIL
+  bloqueante; rc 0: PASS bloqueante; cualquier otro
+  rc, timeout de 60 s o script ausente: FAIL bloqueante. El detalle del FAIL dice QUE falla, COMO
+  reproducirlo (la orden exacta) y COMO revalidar. Se alimenta con `--latido-file` (repetible) en
+  `session_closeout.py` o con `FLIGHT_LATIDO_FILES`, y con el mismo `--roster-path`.
+- B2 (OBLIGATORIO durante el vuelo): el latido de la coordinadora ejecuta el check CON `--alert` en
+  cada tick. Avisa URGENTE: `latido-desviado` (rc 1) o `latido-check-roto` (rc 2), owner `check`; rc 0
+  resuelve ambas claves; rc 3 no emite ni resuelve. Si el aviso falla, el rc final es el mayor entre el
+  diagnostico y 2 y la ultima linea lleva `diag_rc=<n> alert=ok` o `alert=fallido`.
+  Limite: B2 depende del texto del latido; si alguien QUITA la orden del check, B2 deja de ejecutarse y
+  solo lo ve A en el cierre FINAL.
+- B1 (sonda en `collect_system_health.py`): NO existe. Medido en 153k: admite una sonda aditiva, pero
+  toca pruebas fuera de la ficha y A + B2 cubren el caso. Limite declarado, no olvido.
+
+## 4. Limites declarados
+
+- El check mide el FICHERO del latido, no la copia que T3 ejecuta dentro de la tarea programada:
+  comparar el hash citado en la tarea con el del fichero es un paso de la coordinadora al activar.
+- Los roles los declara quien invoca el check: dos latidos sinteticos correctos pasan.
+- Con `core.autocrlf` una diferencia SOLO de finales de linea del script no cambia el hash que compara
+  git: no se detecta.
+- No se exige `--ops-dir` en las ordenes del inventario (`FLIGHT_OPS_DIR` lo cubre y comms_alert falla
+  en voz alta si falta).
+- Resolver una ruta UNC consulta la red: por eso se rechaza ANTES de resolver.
+- El denylist usa prefijos para cubrir abreviaturas peligrosas; por eso puede producir falsos FAIL
+  en una opcion legitima que empiece por el mismo prefijo. Es una sobreamplitud deliberada del
+  guard (nunca un falso PASS): el detalle self-service identifica la opcion que debe corregirse.
+- Cada item del inventario debe estar cubierto por una orden valida DISTINTA; una sola orden no
+  puede cubrir simultaneamente `comms_alert.py --scan` y `comms_alert.py --event`.
+- Censo de roles por posicion: el primer token solo clasifica el interprete; los valores de opciones
+  se consumen con su aridad antes de elegir el script; tras el script, los flags solo clasifican la
+  orden ya estructurada; la redireccion solo se permite como el operador final de `quota_tick.py`.
+  No hay una inferencia valida de "primer basename conocido".
+
+## 5. Si el cierre falla en `latido_alert_wiring`
+
+Es self-service: el detalle del FAIL trae las primeras causas y la orden. Ejecutala tal cual, corrige
+el latido (rutas absolutas al motor, interprete fijado, las ordenes obligatorias de su rol) y repitela
+hasta rc 0. No se escala al humano por esto. Si el check sale con rc 2, lee la causa: git que no
+responde, interprete fijado ausente (`<motor>/.venv`), latido ilegible o roster ilegible.
+
+## 6. Ordenes exactas de un latido migrado
+
+`<MOTOR>` es la raiz del worktree autorizado (donde viven `scripts/flight/` y `.venv`); `<PY>` es
+`<MOTOR>/.venv/Scripts/python.exe`; `<OPS>` el directorio de operacion; `<VUELO>` el directorio del
+vuelo. Una orden por linea de codigo en linea, rutas ABSOLUTAS (con `/` o con la barra de Windows).
+Escribe cada orden completa (tambien las de `--ack` y `--resolve`, no solo `comms_alert.py --ack`) y
+nunca `URGENTE` y `AVISO` unidos con una barra vertical sin comillas.
+
+Coordinadora:
+
+```
+<PY> <MOTOR>/scripts/flight/comms_alert.py --ops-dir <OPS> --scan
+<PY> <MOTOR>/scripts/flight/comms_alert.py --ops-dir <OPS> --event <clave> --level URGENTE --what "<frase>"
+<PY> <MOTOR>/scripts/flight/comms_alert.py --ops-dir <OPS> --event <clave> --level AVISO --what "<frase>"
+<PY> <MOTOR>/scripts/flight/comms_alert.py --ops-dir <OPS> --ack <clave>
+<PY> <MOTOR>/scripts/flight/comms_alert.py --ops-dir <OPS> --resolve <clave>
+<PY> <MOTOR>/scripts/flight/flight_stall_check.py --ops-dir <OPS> --flight-dir <VUELO>
+<PY> <MOTOR>/scripts/flight/flight_stall_check.py --ops-dir <OPS> --flight-dir <VUELO> --self-check
+<PY> <MOTOR>/scripts/flight/quota_tick.py --flight-dir <VUELO> > <OPS>/quota_last.txt
+<PY> <MOTOR>/scripts/flight/check_latido_alert_wiring.py --alert --ops-dir <OPS> --flight-dir <VUELO> --roster-path <VUELO>/flight_roster.json --latido-file coordinadora=<LATIDO_COORDINADORA> --latido-file supervisora=<LATIDO_SUPERVISORA>
+```
+
+Supervisora:
+
+```
+C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -File <MOTOR>/scripts/flight/notify_user.ps1 -Title "<titulo>" -Message "<mensaje>"
+<PY> <MOTOR>/scripts/flight/quota_tick.py --flight-dir <VUELO>
+```
+
+Retirada manual: borrar la clave del estado de `comms_alert` se hace con `--resolve`; un bloqueo del
+estado huerfano se degrada solo (tras 5 s se sigue sin bloqueo).
