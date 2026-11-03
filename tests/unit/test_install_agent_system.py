@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -1180,6 +1181,1059 @@ def _canonical_session_start_command() -> str:
     import claude_guard_entry
 
     return claude_guard_entry.canonical_session_start_command()
+
+
+def _canonical_context_command(script: str, parent: str = "agent_hooks") -> str:
+    """Return the unmodified generator output accepted by the portability gate."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    agent_hooks_dir = str(
+        _Path(ias.__file__).resolve().parent.parent / ".agent" / "hooks"
+    )
+    if agent_hooks_dir not in _sys.path:
+        _sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    return claude_guard_entry.canonical_command_for(script, parent)
+
+
+def test_propagate_managed_claude_hooks_replaces_only_enumerated_legacy_commands(
+    tmp_path,
+):
+    """155a: exact known legacy tokens are migrated in every managed event.
+
+    A destination-owned command containing ``guard_paths`` as a substring is a
+    negative control: it is not a motor command and must survive unchanged.
+    """
+    dest_root = tmp_path / "dest"
+    claude_dir = dest_root / ".claude"
+    claude_dir.mkdir(parents=True)
+    legacy = {
+        ("PreToolUse", "Write|Edit|MultiEdit"): "python .agent/hooks/guard_paths.py",
+        ("PreCompact", ""): "python .agent/hooks/pre_compact_hook.py",
+        ("PostToolUse", "Read|Grep|Glob|WebFetch"): (
+            "python .agent/hooks/native_post_tool_hook.py"
+        ),
+        ("PostToolUse", "Write|Edit|MultiEdit"): (
+            "python scripts/encoding_post_write_hook.py"
+        ),
+        ("Stop", ""): "python .agent/hooks/native_stop_hook.py",
+        ("SubagentStop", ""): "python .agent/hooks/subagent_stop_hook.py",
+        ("SessionStart", ""): "python .agent/hooks/session_start_hook.py",
+    }
+    hooks: dict[str, list[dict]] = {}
+    for (event, matcher), command in legacy.items():
+        hooks.setdefault(event, []).append(
+            {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
+        )
+    hooks["PreToolUse"].append(
+        {
+            "matcher": "DestinationOwnTool",
+            "hooks": [{"type": "command", "command": "echo guard_paths keep"}],
+        }
+    )
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text(json.dumps({"hooks": hooks}, indent=2), encoding="utf-8")
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+
+    result = json.loads(settings_path.read_text(encoding="utf-8"))
+    expected = {
+        ("PreToolUse", "Write|Edit|MultiEdit"): _canonical_command(),
+        ("PreCompact", ""): _canonical_context_command("pre_compact_hook.py"),
+        ("PostToolUse", "Read|Grep|Glob|WebFetch"): _canonical_context_command(
+            "native_post_tool_hook.py"
+        ),
+        ("PostToolUse", "Write|Edit|MultiEdit"): _canonical_context_command(
+            "encoding_post_write_hook.py", "scripts"
+        ),
+        ("Stop", ""): _canonical_context_command("native_stop_hook.py"),
+        ("SubagentStop", ""): _canonical_context_command("subagent_stop_hook.py"),
+        ("SessionStart", ""): _canonical_session_start_command(),
+    }
+    for (event, matcher), command in expected.items():
+        entry = next(
+            item for item in result["hooks"][event] if item["matcher"] == matcher
+        )
+        assert entry["hooks"] == [{"type": "command", "command": command}]
+    own = next(
+        item
+        for item in result["hooks"]["PreToolUse"]
+        if item["matcher"] == "DestinationOwnTool"
+    )
+    assert own["hooks"] == [{"type": "command", "command": "echo guard_paths keep"}]
+    first_bytes = settings_path.read_bytes()
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert settings_path.read_bytes() == first_bytes
+
+
+def test_155a_managed_hook_propagation_reads_bom_and_rewrites_utf8(tmp_path):
+    """BOM is accepted only on input; the established writer emits plain UTF-8."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_bytes(b"\xef\xbb\xbf" + json.dumps({"hooks": {}}).encode())
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+
+    raw = settings_path.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert json.loads(raw.decode("utf-8"))["hooks"]["SessionStart"]
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert settings_path.read_bytes() == raw
+
+
+def test_155a_managed_hook_dry_run_is_read_only_and_reports_plan(tmp_path, capsys):
+    """Dry-run reports the normalization action without changing settings bytes."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Write|Edit|MultiEdit",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python .agent/hooks/guard_paths.py",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = settings_path.read_bytes()
+    assert ias.propagate_managed_claude_hooks(dest_root, dry_run=True) is True
+    assert settings_path.read_bytes() == before
+    assert "Would update" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("payload", [{}, {"hooks": {}}])
+def test_155a_managed_hook_empty_settings_shapes_are_completed(tmp_path, payload):
+    """Empty settings and settings without hooks receive the managed defaults."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps(payload), encoding="utf-8")
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert settings["hooks"]["PreToolUse"]
+
+
+def test_155a_managed_hook_propagation_creates_complete_settings_when_absent(tmp_path):
+    """An absent settings file becomes a complete canonical portable settings file."""
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+
+    settings = json.loads(
+        (dest_root / ".claude" / "settings.json").read_text(encoding="utf-8")
+    )
+    for event, matcher in ias._LEGACY_MOTOR_HOOK_COMMANDS:
+        assert any(
+            entry.get("matcher", "") == matcher for entry in settings["hooks"][event]
+        )
+
+
+def test_155a_mixed_managed_hooks_deduplicate_per_matcher_and_preserve_own_hook(
+    tmp_path,
+    capsys,
+):
+    """Mixed fleet state gets one canonical per matcher; own commands survive."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    canonical = _canonical_command()
+    legacy = "python .agent/hooks/guard_paths.py"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Write|Edit|MultiEdit",
+                            "hooks": [
+                                {"type": "command", "command": legacy},
+                                {"type": "command", "command": canonical},
+                                {"type": "command", "command": legacy},
+                            ],
+                        },
+                        {
+                            "matcher": "Write|Edit|MultiEdit",
+                            "hooks": [{"type": "command", "command": legacy}],
+                        },
+                        {
+                            "matcher": "Edit|Write|MultiEdit",
+                            "hooks": [{"type": "command", "command": legacy}],
+                        },
+                        {
+                            "matcher": "Write|Edit|MultiEdit",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f"echo prefix {legacy} suffix",
+                                }
+                            ],
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    entries = settings["hooks"]["PreToolUse"]
+    exact = [e for e in entries if e["matcher"] == "Write|Edit|MultiEdit"]
+    alternate = [e for e in entries if e["matcher"] == "Edit|Write|MultiEdit"]
+    assert sum(h.get("command") == canonical for e in exact for h in e["hooks"]) == 1
+    assert (
+        sum(h.get("command") == canonical for e in alternate for h in e["hooks"]) == 1
+    )
+    assert any(
+        h.get("command") == f"echo prefix {legacy} suffix"
+        for e in exact
+        for h in e["hooks"]
+    )
+    assert "hook propio en entrada gating" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("matcher", "migrates"),
+    [
+        ("Edit|Write|MultiEdit", True),
+        ("Write | Edit | MultiEdit", True),
+        ("write|edit|multiedit", False),
+    ],
+)
+def test_155a_migration_uses_portability_gate_matcher_predicate(
+    tmp_path, matcher, migrates
+):
+    """Matcher order/spacing follows the gate; case-sensitive negatives stay put."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    legacy = "python .agent/hooks/guard_paths.py"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": matcher,
+                            "hooks": [{"type": "command", "command": legacy}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    entries = json.loads(settings_path.read_text(encoding="utf-8"))["hooks"][
+        "PreToolUse"
+    ]
+    target = next(entry for entry in entries if entry["matcher"] == matcher)
+    commands = [hook.get("command") for hook in target["hooks"]]
+    assert (_canonical_command() in commands) is migrates
+    if not migrates:
+        assert legacy in commands
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [["legacy"]],
+        [["canonical"]],
+        [["canonical", "own"]],
+        [["legacy", "canonical"]],
+        [["legacy", "own"]],
+        [["legacy"], ["canonical", "own"]],
+        [["canonical"], ["canonical"]],
+        [["legacy"], ["legacy"], ["canonical", "own"]],
+        [["legacy"], []],
+    ],
+)
+def test_155a_managed_migration_is_deterministic_and_gate_visible(
+    tmp_path, rows, capsys
+):
+    """Every mixed shape normalizes to one canonical and a byte-level fixed point."""
+    import scripts.check_claude_settings_portability as portability
+
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    canonical = _canonical_command()
+    legacy = "python .agent/hooks/guard_paths.py"
+    own = "echo own"
+    hooks_by_name = {
+        "legacy": {"type": "command", "command": legacy},
+        "canonical": {"type": "command", "command": canonical},
+        "own": {"type": "command", "command": own},
+    }
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Write|Edit|MultiEdit",
+                            "hooks": [hooks_by_name[name] for name in row],
+                        }
+                        for row in rows
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    first_bytes = settings_path.read_bytes()
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert settings_path.read_bytes() == first_bytes
+    settings = json.loads(first_bytes)
+    gating = [
+        entry
+        for entry in settings["hooks"]["PreToolUse"]
+        if any(
+            tok in entry.get("matcher", "") for tok in ("Write", "Edit", "MultiEdit")
+        )
+    ]
+    assert (
+        sum(
+            hook.get("command") == canonical
+            for entry in gating
+            for hook in entry["hooks"]
+        )
+        == 1
+    )
+    assert all(
+        entry.get("hooks") or set(entry) - {"matcher", "hooks"}
+        for entry in settings["hooks"]["PreToolUse"]
+    )
+    assert any(
+        hook.get("command") == own
+        for entry in settings["hooks"]["PreToolUse"]
+        for hook in entry["hooks"]
+    ) == ("own" in {name for row in rows for name in row})
+    violations = portability.check_settings_file(settings_path)
+    has_own = "own" in {name for row in rows for name in row}
+    assert bool(violations) is has_own
+    if has_own:
+        assert any("arbitrary commands" in violation for violation in violations)
+        assert "hook propio en entrada gating" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("name", "entries", "owned"),
+    [
+        (
+            "propio_exacto",
+            [{"matcher": "Write|Edit|MultiEdit", "hooks": ["echo own"]}],
+            ["echo own"],
+        ),
+        (
+            "subcadena_legacy",
+            [
+                {
+                    "matcher": "Write|Edit|MultiEdit",
+                    "hooks": ["echo prefix python .agent/hooks/guard_paths.py suffix"],
+                }
+            ],
+            ["echo prefix python .agent/hooks/guard_paths.py suffix"],
+        ),
+        (
+            "subcadena_canonico",
+            [
+                {
+                    "matcher": "Write|Edit|MultiEdit",
+                    "hooks": [f"echo prefix {_canonical_command()} suffix"],
+                }
+            ],
+            [f"echo prefix {_canonical_command()} suffix"],
+        ),
+        (
+            "dos_entradas_mismo_matcher",
+            [
+                {"matcher": "Write|Edit|MultiEdit", "hooks": ["echo first"]},
+                {"matcher": "Write|Edit|MultiEdit", "hooks": ["echo second"]},
+            ],
+            ["echo first", "echo second"],
+        ),
+        (
+            "matcher_alternativo",
+            [{"matcher": "DestinationOwnTool", "hooks": ["echo own"]}],
+            ["echo own"],
+        ),
+    ],
+)
+def test_155a_managed_hook_fixed_point_normalizes_each_ownership_shape(
+    tmp_path, name, entries, owned
+):
+    """One pass reaches the same event/matcher normal form as every later pass."""
+    dest_root = tmp_path / name
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": entry["matcher"],
+                            "hooks": [
+                                {"type": "command", "command": command}
+                                for command in entry["hooks"]
+                            ],
+                        }
+                        for entry in entries
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    first = settings_path.read_bytes()
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert settings_path.read_bytes() == first
+    settings = json.loads(first)
+    commands = [
+        hook["command"]
+        for entry in settings["hooks"]["PreToolUse"]
+        for hook in entry["hooks"]
+    ]
+    assert commands.count(_canonical_command()) == 1
+    for command in owned:
+        assert command in commands
+    if name == "matcher_alternativo":
+        own_entry = next(
+            entry
+            for entry in settings["hooks"]["PreToolUse"]
+            if entry["matcher"] == "DestinationOwnTool"
+        )
+        assert own_entry["hooks"] == [{"type": "command", "command": "echo own"}]
+
+
+def test_155a_managed_hook_product_shapes_reach_a_lossless_fixed_point(tmp_path):
+    """Cartesian entry forms prove no own command is duplicated or lost on re-sync."""
+    canonical = _canonical_command()
+    legacy = "python .agent/hooks/guard_paths.py"
+    contents = {
+        "legacy": legacy,
+        "canonical": canonical,
+        "own": "echo own",
+        "own_substring": f"echo prefix {legacy} suffix",
+    }
+    forms = ("simple", "metadata", "empty", "without_commands")
+    case_number = 0
+    for count in range(1, 4):
+        for position in range(count):
+            for form, content_name in itertools.product(forms, contents):
+                case_number += 1
+                entries = [
+                    {
+                        "matcher": "Write|Edit|MultiEdit",
+                        "hooks": [{"type": "command", "command": legacy}],
+                    }
+                    for _ in range(count)
+                ]
+                target = entries[position]
+                if form == "without_commands":
+                    target.pop("hooks")
+                else:
+                    target["hooks"] = (
+                        []
+                        if form == "empty"
+                        else [{"type": "command", "command": contents[content_name]}]
+                    )
+                if form == "metadata":
+                    target.update({"timeout": 10, "statusMessage": "own"})
+                dest_root = tmp_path / f"case-{case_number}"
+                settings_path = dest_root / ".claude" / "settings.json"
+                settings_path.parent.mkdir(parents=True)
+                settings_path.write_text(
+                    json.dumps({"hooks": {"PreToolUse": entries}}), encoding="utf-8"
+                )
+                expected_own = sorted(
+                    hook["command"]
+                    for entry in entries
+                    for hook in entry.get("hooks", [])
+                    if hook["command"] not in {legacy, canonical}
+                )
+
+                assert ias.propagate_managed_claude_hooks(dest_root) is True
+                first = settings_path.read_bytes()
+                assert ias.propagate_managed_claude_hooks(dest_root) is True
+                assert settings_path.read_bytes() == first
+                normalized = json.loads(first)["hooks"]["PreToolUse"]
+                commands = [
+                    hook["command"] for entry in normalized for hook in entry["hooks"]
+                ]
+                actual_own = sorted(
+                    command
+                    for command in commands
+                    if command not in {legacy, canonical}
+                )
+                assert actual_own == expected_own
+                assert commands.count(canonical) == 1
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {},
+        {"hooks": {}},
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "DestinationOwnTool",
+                        "hooks": [{"type": "command", "command": "echo own"}],
+                    }
+                ]
+            }
+        },
+    ],
+)
+def test_155a_managed_hook_missing_events_create_canonical_fixed_point(
+    tmp_path, settings
+):
+    """Empty groups create their canonical entry on pass one, never index group[0]."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    first = settings_path.read_bytes()
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert settings_path.read_bytes() == first
+    actual = json.loads(first)
+    for event, matcher in ias._LEGACY_MOTOR_HOOK_COMMANDS:
+        assert any(
+            entry.get("matcher", "") == matcher for entry in actual["hooks"][event]
+        )
+    if settings.get("hooks", {}).get("PreToolUse"):
+        own = next(
+            entry
+            for entry in actual["hooks"]["PreToolUse"]
+            if entry["matcher"] == "DestinationOwnTool"
+        )
+        assert own["hooks"] == [{"type": "command", "command": "echo own"}]
+
+
+def test_155a_missing_hooks_key_is_a_safe_empty_hook_list(tmp_path):
+    """A gate-tolerated missing hooks key never raises and receives the canonical guard."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"matcher": "Write|Edit|MultiEdit"}]}}),
+        encoding="utf-8",
+    )
+
+    assert ias._settings_preflight_problem(dest_root) is None
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert settings["hooks"]["PreToolUse"][0]["hooks"] == [
+        {"type": "command", "command": _canonical_command()}
+    ]
+
+
+def test_155a_alternate_gating_matcher_gets_canonical_entry_and_warning(
+    tmp_path, capsys
+):
+    """An owned Write-only matcher survives while a full canonical guard is added."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Write",
+                            "hooks": [{"type": "command", "command": "echo own"}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    entries = json.loads(settings_path.read_text(encoding="utf-8"))["hooks"][
+        "PreToolUse"
+    ]
+    assert any(
+        entry["matcher"] == "Write|Edit|MultiEdit"
+        and entry["hooks"] == [{"type": "command", "command": _canonical_command()}]
+        for entry in entries
+    )
+    out = capsys.readouterr().out
+    assert "matcher gating alternativo" in out
+    # The WARN must not promise coverage: the gate stays red while the owned
+    # hook remains in a gating matcher.
+    assert "gate seguira rojo" in out
+    assert "gate tenga cobertura" not in out
+
+
+def test_155a_non_gating_events_may_omit_matcher_when_gate_accepts_them(tmp_path):
+    """P8 does not block canonical PreCompact or SessionStart entries lacking matcher."""
+    commands = ias._managed_hook_commands()
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreCompact": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": commands[("PreCompact", "")],
+                                }
+                            ]
+                        }
+                    ],
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": commands[("SessionStart", "")],
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias._settings_preflight_problem(dest_root) is None
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+
+
+def test_155a_non_gating_owned_alternate_warns_but_canonical_control_does_not(
+    tmp_path, capsys
+):
+    """Unknown non-gating ownership is visible instead of a silent false green."""
+    commands = ias._managed_hook_commands()
+    dest_root = tmp_path / "owned"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "matcher": "DestinationOwnTool",
+                            "hooks": [{"type": "command", "command": "echo own"}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert "evento no gestionado" in capsys.readouterr().out
+
+    control_root = tmp_path / "control"
+    control_path = control_root / ".claude" / "settings.json"
+    control_path.parent.mkdir(parents=True)
+    control_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                {"type": "command", "command": commands[("Stop", "")]}
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert ias.propagate_managed_claude_hooks(control_root) is True
+    assert "evento no gestionado" not in capsys.readouterr().out
+
+
+def test_155a_gate_empty_implies_p8_clean_and_a_red_sync_is_explained(tmp_path, capsys):
+    """Invariant: gate-empty is never blocked by P8; a red sync always warns."""
+    from scripts import check_claude_settings_portability as gate
+
+    managed = ias._managed_hook_commands()
+    canonical_events: dict[str, list[dict]] = {}
+    for (event, matcher), command in managed.items():
+        entry: dict = {}
+        if event not in {"PreCompact", "SessionStart"}:
+            entry["matcher"] = matcher
+        entry["hooks"] = [{"type": "command", "command": command}]
+        canonical_events.setdefault(event, []).append(entry)
+
+    cases = [
+        ({"hooks": canonical_events}, None),
+        ({"hooks": {"PreToolUse": [{"matcher": "Write|Edit|MultiEdit"}]}}, None),
+        (
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Write",
+                            "hooks": [{"type": "command", "command": "echo own"}],
+                        }
+                    ]
+                }
+            },
+            "matcher gating alternativo",
+        ),
+        ({"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": []}]}}, None),
+        ({"hooks": {}}, None),
+    ]
+    for index, (settings, expected_warn) in enumerate(cases):
+        dest = tmp_path / f"invariant-{index}"
+        path = dest / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(settings), encoding="utf-8")
+
+        accepted_before = gate.check_settings_file(path)
+        if not accepted_before:
+            assert ias._settings_preflight_problem(dest) is None
+
+        capsys.readouterr()
+        assert ias.propagate_managed_claude_hooks(dest) is True
+        out = capsys.readouterr().out
+        remaining = gate.check_settings_file(path)
+        assert not remaining or "[WARN]" in out, (index, remaining, out)
+        if expected_warn is not None:
+            assert expected_warn in out, (index, out)
+
+
+def test_155a_pre_058a_session_start_literal_is_migrated(tmp_path):
+    """The fail-closed SessionStart command a real destino carries is migrated."""
+    legacy = ias._pre_058a_session_start_command()
+    assert "hook failed (fail-closed)" in legacy
+    # Drift pin: this is the historic literal installers wrote before WOT-2026-058a.
+    assert hashlib.sha256(legacy.encode("utf-8")).hexdigest()[:12] == "e3b84ceebb3c"
+    assert legacy in ias._LEGACY_MOTOR_HOOK_COMMANDS[("SessionStart", "")]
+    canonical = ias._managed_hook_commands()[("SessionStart", "")]
+    assert canonical != legacy
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "",
+                            "hooks": [{"type": "command", "command": legacy}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    first = settings_path.read_bytes()
+    settings = json.loads(first)
+    commands = [
+        hook["command"]
+        for entry in settings["hooks"]["SessionStart"]
+        for hook in entry["hooks"]
+    ]
+    assert commands == [canonical]
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert settings_path.read_bytes() == first
+
+
+@pytest.mark.parametrize("command", [7, None, [], "\ud800"])
+def test_155a_unwritable_hook_command_fails_closed_without_sync_tmp(tmp_path, command):
+    """P8 and propagate reject non-string/lone-surrogate commands; no temp leaks."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "matcher": "",
+                            "hooks": [{"type": "command", "command": command}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = settings_path.read_bytes()
+
+    problem = ias._settings_preflight_problem(dest_root)
+    assert problem is not None and "P8" in problem
+    assert ias.propagate_managed_claude_hooks(dest_root) is False
+    assert settings_path.read_bytes() == before
+    assert not list(settings_path.parent.glob("*.sync-tmp"))
+
+
+def test_155a_owned_hook_census_warns_once_per_entry(tmp_path, capsys):
+    """One WARN per owned entry, including events outside the managed set."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Notification": [
+                        {
+                            "matcher": "",
+                            "hooks": [{"type": "command", "command": "echo notify"}],
+                        }
+                    ],
+                    "PostToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [{"type": "command", "command": "echo post"}],
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    out = capsys.readouterr().out
+    assert out.count("[WARN] hook en evento no gestionado (censo)") == 2
+    assert "evento=Notification" in out
+    assert "evento=PostToolUse" in out
+
+
+def test_155a_warn_rendering_and_write_stay_fail_closed_on_non_ascii(tmp_path, capsys):
+    """A lone surrogate in a non-command hook cannot crash the WARN or leak a tmp."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Notification": [
+                        {
+                            "matcher": "",
+                            "hooks": [{"type": "prompt", "command": "echo \ud800"}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = settings_path.read_bytes()
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is False
+    out = capsys.readouterr().out
+    assert "evento=Notification" in out
+    out.encode("ascii")
+    assert settings_path.read_bytes() == before
+    assert not list(settings_path.parent.glob("*.sync-tmp"))
+
+
+def test_155a_canonical_settings_hit_skip_without_rewriting(tmp_path, capsys):
+    """An already canonical document takes SKIP and keeps its exact bytes."""
+    managed = ias._managed_hook_commands()
+    hooks: dict[str, list[dict]] = {}
+    for (event, matcher), command in managed.items():
+        hooks.setdefault(event, []).append(
+            {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
+        )
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    # Compact formatting differs from the writer's indent=2 output: a rewrite
+    # would change the bytes, so this test bites the resurrected SKIP branch.
+    settings_path.write_text(
+        json.dumps({"hooks": hooks}, separators=(",", ":")), encoding="utf-8"
+    )
+    before = settings_path.read_bytes()
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    assert "[SKIP]" in capsys.readouterr().out
+    assert settings_path.read_bytes() == before
+
+
+def test_155a_warn_sanitizes_matcher_event_and_destination(tmp_path, capsys):
+    """A surrogate in the matcher cannot crash the WARN on a cp1252 console."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {
+                            "matcher": "star\ud800tup",
+                            "hooks": [{"type": "command", "command": "echo own"}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is False
+    out = capsys.readouterr().out
+    assert "evento=Stop" in out
+    out.encode("ascii")
+    assert not list(settings_path.parent.glob("*.sync-tmp"))
+
+
+@pytest.mark.parametrize(
+    ("event", "matcher"),
+    [
+        ("SessionStart", "startup"),
+        ("Stop", "Task"),
+        ("PostToolUse", "Bash"),
+        ("PreToolUse", "Write"),
+    ],
+)
+def test_155a_managed_command_under_unknown_matcher_is_never_mute(
+    tmp_path, capsys, event, matcher
+):
+    """F1: sync green + gate red must always be explained by a WARN.
+
+    PreToolUse is the negative control: the exact-matcher canonical entry is
+    already present, so the partial matcher stays green and no WARN is due.
+    """
+    from scripts import check_claude_settings_portability as gate
+
+    managed = ias._managed_hook_commands()
+    hooks: dict[str, list[dict]] = {}
+    for (managed_event, managed_matcher), command in managed.items():
+        hooks.setdefault(managed_event, []).append(
+            {
+                "matcher": managed_matcher,
+                "hooks": [{"type": "command", "command": command}],
+            }
+        )
+    event_matcher = next(m for (e, m) in managed if e == event)
+    hooks[event].append(
+        {
+            "matcher": matcher,
+            "hooks": [{"type": "command", "command": managed[(event, event_matcher)]}],
+        }
+    )
+    dest_root = tmp_path / f"case-{event}"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
+
+    before = gate.check_settings_file(settings_path)
+    if event == "PreToolUse":
+        assert before == []
+    else:
+        assert any("is not a known hook target" in message for message in before)
+    capsys.readouterr()
+
+    assert ias.propagate_managed_claude_hooks(dest_root) is True
+    out = capsys.readouterr().out
+    after = gate.check_settings_file(settings_path)
+    if event == "PreToolUse":
+        assert after == []
+    else:
+        assert any("is not a known hook target" in message for message in after)
+        assert "[WARN]" in out
+        assert f"evento={event}" in out
+
+
+def test_155a_p10_rejects_relative_motor_root_with_self_service_message(tmp_path):
+    """A relative motor_root has no verifiable base: P10 bites, override admits."""
+    source = tmp_path / "motor"
+    (source / ".agent").mkdir(parents=True)
+    (source / ".agent" / "agent_controller.py").write_text("# stub\n")
+    dest = tmp_path / "dest"
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.parent.mkdir(parents=True)
+
+    for base in (link.parent, dest):
+        link.write_text(
+            json.dumps({"motor_root": os.path.relpath(source, base)}),
+            encoding="utf-8",
+        )
+        problem = ias._source_repoint_problem(source, dest, False)
+        assert problem is not None and "relativo" in problem
+        assert ias._source_repoint_problem(source, dest, True) is None
+
+    link.write_text(json.dumps({"motor_root": str(source)}), encoding="utf-8")
+    assert ias._source_repoint_problem(source, dest, False) is None
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        b"{ not json",
+        b"[]",
+        json.dumps({"hooks": []}).encode(),
+        json.dumps({"hooks": {"PreToolUse": {}}}).encode(),
+        json.dumps(
+            {"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": {}}]}}
+        ).encode(),
+        json.dumps(
+            {"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": ["x"]}]}}
+        ).encode(),
+        json.dumps(
+            {"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": [7]}]}}
+        ).encode(),
+        json.dumps(
+            {"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": [None]}]}}
+        ).encode(),
+        json.dumps({"hooks": {"PreToolUse": [{"matcher": 7, "hooks": []}]}}).encode(),
+    ],
+)
+def test_155a_propagate_managed_hooks_rejects_each_malformed_settings_shape(
+    tmp_path, shape
+):
+    """Managed-hook propagation fails closed for every malformed settings form."""
+    dest_root = tmp_path / "dest"
+    settings_path = dest_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_bytes(shape)
+    before = settings_path.read_bytes()
+    assert "P8" in (ias._settings_preflight_problem(dest_root) or "")
+    assert ias.propagate_managed_claude_hooks(dest_root) is False
+    assert settings_path.read_bytes() == before
 
 
 def test_propagate_session_start_hook_creates_when_absent(tmp_path):
@@ -2502,6 +3556,10 @@ def _tree_140a(root: Path) -> dict[str, str]:
 
 
 def _sync_140a(motor_agent: Path, dest: Path, capsys, **kwargs) -> tuple[int, str]:
+    # Existing 140a tests exercise unrelated copy/prune behavior.  Their prior
+    # successful runs include the historical profile flip, so keep that explicit
+    # while 155a adds dedicated rejection coverage for an omitted --yes.
+    kwargs.setdefault("auto_yes", True)
     rc = ias.sync_agent_system(motor_agent, dest / ".agent", **kwargs)
     return rc, capsys.readouterr().out
 
@@ -2600,6 +3658,381 @@ def test_140a_t3_flip_changes_only_active_profile_and_backs_up_first(tmp_path, c
     )
     assert len(backups) == 1
     assert backups[0].read_bytes() == original_bytes
+
+
+def test_155a_sync_rejects_engine_profile_without_yes_before_any_write(
+    tmp_path, capsys
+):
+    """The profile transition is now an explicit confirmation boundary."""
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(
+        tmp_path,
+        "U",
+        files={
+            "config/agents.json": _jdump(
+                {"schema_version": "1.4", "active_profile": "engine-dev"}
+            ),
+            "config/hooks_config.json": _jdump(_MOTOR_HOOKS_140A),
+        },
+    )
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(
+        motor,
+        dest,
+        capsys,
+        auto_yes=False,
+        require_yes_for_profile_flip=True,
+    )
+
+    assert rc == 1
+    assert "P9" in out and "--yes" in out
+    assert _tree_140a(dest) == before
+
+
+def test_155a_sync_rejects_invalid_settings_byte_for_byte_before_any_write(
+    tmp_path, capsys
+):
+    """Invalid JSON must fail closed rather than returning sync success mid-flight."""
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    settings = dest / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    raw = b"{ not json"
+    settings.write_bytes(raw)
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys)
+
+    assert rc == 1
+    assert "P8" in out and "ningun paso" in out
+    assert settings.read_bytes() == raw
+    assert _tree_140a(dest) == before
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"{ not json",
+        b"[]",
+        b'{"hooks": []}',
+        b'{"hooks": {"PreToolUse": {}}}',
+        b'{"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": {}}]}}',
+    ],
+)
+def test_155a_cli_install_p8_rejects_malformed_settings_before_any_write(tmp_path, raw):
+    """Install applies the same fail-safe P8 boundary as sync."""
+    motor_agent = _motor_140a(tmp_path)
+    dest = tmp_path / "install-malformed"
+    settings = dest / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_bytes(raw)
+    before = _tree_140a(dest)
+
+    rc, out = _cli_install_155a(motor_agent.parent, dest, "--yes")
+
+    assert rc == 1, out
+    assert "P8" in out
+    assert _tree_140a(dest) == before
+
+
+def test_155a_source_without_git_requires_matching_link_or_override(tmp_path):
+    """Decision table: no-Git source is safe only when an existing link owns it."""
+    source = tmp_path / "portable-source"
+    (source / ".agent").mkdir(parents=True)
+    (source / ".agent" / "agent_controller.py").write_text("# stub\n")
+    dest = tmp_path / "dest"
+    (dest / ".agent" / "config").mkdir(parents=True)
+
+    assert "P10" in ias._source_repoint_problem(source, dest, False)
+    assert ias._source_repoint_problem(source, dest, True) is None
+
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.write_text(json.dumps({"motor_root": str(source)}), encoding="utf-8")
+    assert ias._source_repoint_problem(source, dest, False) is None
+
+    relative = os.path.relpath(source, link.parent)
+    link.write_text(json.dumps({"motor_root": relative}), encoding="utf-8")
+    assert "P10" in ias._source_repoint_problem(source, dest, False)
+
+    # No single verifiable base exists for a relative motor_root: whether it is
+    # spelled from the link directory or from the destination root, P10 fails
+    # closed and only the explicit override admits it.
+    relative_to_dest = os.path.relpath(source, dest)
+    link.write_text(json.dumps({"motor_root": relative_to_dest}), encoding="utf-8")
+    assert "P10" in ias._source_repoint_problem(source, dest, False)
+    assert ias._source_repoint_problem(source, dest, True) is None
+
+    other_source = tmp_path / "other-source"
+    other_source.mkdir()
+    link.write_text(json.dumps({"motor_root": str(other_source)}), encoding="utf-8")
+    assert "P10" in ias._source_repoint_problem(source, dest, False)
+
+    source_sub = tmp_path / "portable-source-sub"
+    source_sub.mkdir()
+    link.write_text(json.dumps({"motor_root": str(source_sub)}), encoding="utf-8")
+    assert "P10" in ias._source_repoint_problem(source, dest, False)
+
+
+@pytest.mark.parametrize(
+    ("branch", "with_upstream", "allowed"),
+    [
+        ("main", False, True),
+        ("master", False, True),
+        ("topic", False, True),
+        ("topic", True, True),
+    ],
+)
+def test_155a_unlinked_source_branch_and_upstream_decision_table(
+    tmp_path, branch, with_upstream, allowed
+):
+    """P10 admits only the first Git worktree, regardless of branch/upstream."""
+    source = tmp_path / f"source-{branch}-{with_upstream}"
+    source.mkdir()
+    _git_140a(source, "init", "-q", "-b", branch)
+    (source / ".agent").mkdir()
+    (source / ".agent" / "agent_controller.py").write_text("# stub\n")
+    _git_140a(source, "add", ".agent/agent_controller.py")
+    _git_140a(source, "commit", "-qm", "seed")
+    if with_upstream:
+        remote = tmp_path / f"remote-{branch}.git"
+        remote.mkdir()
+        _git_140a(remote, "init", "--bare", "-q")
+        _git_140a(source, "remote", "add", "origin", str(remote))
+        _git_140a(source, "push", "-qu", "origin", branch)
+
+    dest = tmp_path / f"dest-{branch}-{with_upstream}"
+    (dest / ".agent").mkdir(parents=True)
+    problem = ias._source_repoint_problem(source, dest, False)
+    assert (problem is None) is allowed
+    if not allowed:
+        assert "P10" in problem
+
+
+def test_155a_link_match_normalizes_slashes_drive_case_and_trailing_separator(
+    tmp_path,
+):
+    """A link match is path-semantic, while a sibling remains a negative control."""
+    source = tmp_path / "source"
+    source.mkdir()
+    dest = tmp_path / "dest"
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.parent.mkdir(parents=True)
+    rendered = str(source).replace("\\", "/") + "/"
+    if len(rendered) > 1 and rendered[1] == ":":
+        rendered = rendered[0].swapcase() + rendered[1:]
+    link.write_text(json.dumps({"motor_root": rendered}), encoding="utf-8")
+    assert ias._source_repoint_problem(source, dest, False) is None
+    link.write_text(
+        json.dumps({"motor_root": str(tmp_path / "sibling")}), encoding="utf-8"
+    )
+    assert "P10" in ias._source_repoint_problem(source, dest, False)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_155a_link_match_resolves_directory_links_and_rejects_sibling(tmp_path, kind):
+    """A symlink/junction alias is accepted only when it resolves to the link root."""
+    source = tmp_path / "source"
+    source.mkdir()
+    alias = tmp_path / "alias"
+    _make_link_148a(kind, alias, source)
+    dest = tmp_path / "dest"
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.parent.mkdir(parents=True)
+    link.write_text(json.dumps({"motor_root": str(source)}), encoding="utf-8")
+    assert ias._source_repoint_problem(alias, dest, False) is None
+    link.write_text(
+        json.dumps({"motor_root": str(tmp_path / "sibling")}), encoding="utf-8"
+    )
+    assert "P10" in ias._source_repoint_problem(alias, dest, False)
+
+
+def test_155a_link_match_normalizes_unc_paths_with_negative_control(tmp_path):
+    """UNC paths use the same normalized equality rule without touching the share."""
+    dest = tmp_path / "dest"
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.parent.mkdir(parents=True)
+    link.write_text(
+        json.dumps({"motor_root": r"\\\\LOCALHOST\\C$\\Users\\FDL\\Motor\\"}),
+        encoding="utf-8",
+    )
+    assert (
+        ias._source_repoint_problem(
+            Path(r"\\\\localhost\\c$\\Users\\fdl\\Motor"), dest, False
+        )
+        is None
+    )
+    link.write_text(
+        json.dumps({"motor_root": r"\\\\localhost\\c$\\Users\\fdl\\Other"}),
+        encoding="utf-8",
+    )
+    assert "P10" in ias._source_repoint_problem(
+        Path(r"\\\\localhost\\c$\\Users\\fdl\\Motor"), dest, False
+    )
+
+
+def test_155a_source_without_link_requires_primary_git_worktree(tmp_path):
+    """An unowned source must be Git's primary worktree, never detached HEAD."""
+    source = tmp_path / "source"
+    source.mkdir()
+    _git_140a(source, "init", "-q", "-b", "main")
+    (source / ".agent").mkdir()
+    (source / ".agent" / "agent_controller.py").write_text("# stub\n")
+    _git_140a(source, "add", ".agent/agent_controller.py")
+    _git_140a(
+        source,
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "user.name=test",
+        "commit",
+        "-qm",
+        "seed",
+    )
+    dest = tmp_path / "dest"
+    (dest / ".agent").mkdir(parents=True)
+
+    assert ias._source_repoint_problem(source, dest, False) is None
+
+    _git_140a(source, "checkout", "--quiet", "--detach", "HEAD")
+    assert ias._is_primary_git_checkout(source)
+    assert ias._source_repoint_problem(source, dest, False) is None
+
+
+def test_155a_source_without_link_rejects_secondary_worktree(tmp_path):
+    """An unowned secondary worktree is not the checkout permitted by rule (c)."""
+    source = tmp_path / "source"
+    source.mkdir()
+    _git_140a(source, "init", "-q", "-b", "main")
+    (source / ".agent").mkdir()
+    (source / ".agent" / "agent_controller.py").write_text("# stub\n")
+    _git_140a(source, "add", ".agent/agent_controller.py")
+    _git_140a(source, "commit", "-qm", "seed")
+    secondary = tmp_path / "secondary"
+    _git_140a(source, "worktree", "add", "-q", "-b", "topic", str(secondary))
+    dest = tmp_path / "dest"
+    (dest / ".agent").mkdir(parents=True)
+    assert not ias._is_primary_git_checkout(secondary)
+    assert "P10" in ias._source_repoint_problem(secondary, dest, False)
+
+
+def test_155a_matching_link_allows_secondary_worktree_but_absent_link_rejects(
+    tmp_path,
+):
+    """Decision table: matching ownership wins; absent ownership requires primary."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _git_140a(primary, "init", "-q", "-b", "main")
+    (primary / ".agent").mkdir()
+    (primary / ".agent" / "agent_controller.py").write_text("# stub\n")
+    _git_140a(primary, "add", ".agent/agent_controller.py")
+    _git_140a(primary, "commit", "-qm", "seed")
+    secondary = tmp_path / "secondary"
+    _git_140a(primary, "worktree", "add", "-q", "-b", "topic", str(secondary))
+    dest = tmp_path / "dest"
+    config = dest / ".agent" / "config"
+    config.mkdir(parents=True)
+
+    # Existing link ownership permits the secondary worktree, even though it is
+    # not the primary checkout required by rule (c) when ownership is absent.
+    link = config / "motor_destination_link.json"
+    link.write_text(json.dumps({"motor_root": str(secondary)}), encoding="utf-8")
+    assert ias._source_repoint_problem(secondary, dest, False) is None
+
+    link.unlink()
+    assert "P10" in ias._source_repoint_problem(secondary, dest, False)
+
+
+def test_155a_real_sync_from_declared_temp_checkout_makes_portability_check_pass(
+    tmp_path,
+):
+    """The production CLI migrates a real legacy settings file, then the real gate passes."""
+    source = tmp_path / "canonical-source"
+    clone = subprocess.run(
+        ["git", "clone", "--quiet", "--no-hardlinks", str(TEMPLATE_ROOT), str(source)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert clone.returncode == 0, clone.stderr
+    dest = tmp_path / "destination"
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.parent.mkdir(parents=True)
+    link.write_text(json.dumps({"motor_root": str(source)}), encoding="utf-8")
+    hooks: dict[str, list[dict]] = {}
+    for (event, matcher), commands in ias._LEGACY_MOTOR_HOOK_COMMANDS.items():
+        hooks.setdefault(event, []).append(
+            {
+                "matcher": matcher,
+                "hooks": [
+                    {"type": "command", "command": command}
+                    for command in sorted(commands)
+                ],
+            }
+        )
+    settings = dest / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    before_confirmation = _tree_140a(dest)
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            str(Path(ias.__file__).resolve()),
+            "--sync",
+            "--source",
+            str(source),
+            "--dest",
+            str(dest),
+        ],
+        cwd=dest,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "P9" in rejected.stdout and "--yes" in rejected.stdout
+    assert _tree_140a(dest) == before_confirmation
+    sync = subprocess.run(
+        [
+            sys.executable,
+            str(Path(ias.__file__).resolve()),
+            "--sync",
+            "--yes",
+            "--source",
+            str(source),
+            "--dest",
+            str(dest),
+        ],
+        cwd=dest,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert sync.returncode == 0, sync.stdout + sync.stderr
+    portability = subprocess.run(
+        [
+            sys.executable,
+            str(TEMPLATE_ROOT / "scripts" / "check_claude_settings_portability.py"),
+            str(settings),
+        ],
+        cwd=dest,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert portability.returncode == 0, portability.stdout + portability.stderr
 
 
 @pytest.mark.parametrize("state", ["I", "U", "N"])
@@ -2806,6 +4239,7 @@ def _cli_sync_140a(motor_agent: Path, dest: Path, *extra: str) -> tuple[int, str
             str(Path(ias.__file__).resolve()),
             "--sync",
             "--yes",
+            "--allow-motor-repoint",
             "--source",
             str(motor_agent.parent),
             "--dest",
@@ -2821,6 +4255,241 @@ def _cli_sync_140a(motor_agent: Path, dest: Path, *extra: str) -> tuple[int, str
         check=False,
     )
     return proc.returncode, proc.stdout + proc.stderr
+
+
+def _cli_sync_140a_no_override(
+    motor_agent: Path, dest: Path, *extra: str
+) -> tuple[int, str]:
+    """Production sync path without the repoint override, for P10 coverage."""
+    env = dict(os.environ)
+    env.pop("AGENT_PROJECT_ROOT", None)
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(Path(ias.__file__).resolve()),
+            "--sync",
+            "--yes",
+            "--source",
+            str(motor_agent.parent),
+            "--dest",
+            str(dest),
+            *extra,
+        ],
+        cwd=str(dest.parent),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def _cli_install_155a(motor_root: Path, dest: Path, *extra: str) -> tuple[int, str]:
+    """Run the real install entry point against a temporary engine-dev motor."""
+    env = dict(os.environ)
+    env.pop("AGENT_PROJECT_ROOT", None)
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(Path(ias.__file__).resolve()),
+            "--install",
+            "--allow-motor-repoint",
+            "--source",
+            str(motor_root),
+            "--dest",
+            str(dest),
+            *extra,
+        ],
+        cwd=str(dest.parent),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def _cli_source_155a(source: Path, dest: Path, *extra: str) -> tuple[int, str]:
+    """Run the real sync entry point without the repoint override or --yes."""
+    env = dict(os.environ)
+    env.pop("AGENT_PROJECT_ROOT", None)
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(Path(ias.__file__).resolve()),
+            "--sync",
+            "--source",
+            str(source),
+            "--dest",
+            str(dest),
+            *extra,
+        ],
+        cwd=str(dest.parent),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def test_155a_cli_install_p9_requires_yes_and_yes_creates_destination(tmp_path):
+    """Production install wires P9: omitted --yes writes nothing; --yes succeeds."""
+    motor_agent = _motor_140a(tmp_path)
+    source = motor_agent.parent
+    no_yes_dest = tmp_path / "install-no-yes"
+    rc, out = _cli_install_155a(source, no_yes_dest)
+    assert rc != 0, out
+    assert "P9" in out
+    assert not no_yes_dest.exists()
+
+    yes_dest = tmp_path / "install-yes"
+    rc, out = _cli_install_155a(source, yes_dest, "--yes")
+    assert rc == 0, out
+    assert (yes_dest / ".agent").is_dir()
+
+
+def test_155a_cli_p10_rejects_mismatched_link_without_writing(tmp_path):
+    """Production main invokes P10 before a mismatched-link sync can write."""
+    motor_agent = _motor_140a(tmp_path)
+    source = motor_agent.parent
+    dest = _dest_140a(tmp_path, "U", name="p10-mismatch")
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.write_text(
+        json.dumps({"motor_root": str(tmp_path / "different-motor")}),
+        encoding="utf-8",
+    )
+    before = _tree_140a(dest)
+    rc, out = _cli_source_155a(source, dest)
+    assert rc == 1, out
+    assert "P10" in out
+    assert _tree_140a(dest) == before
+
+
+def test_155a_cli_p10_rejects_unlinked_secondary_worktree(tmp_path):
+    """Production main applies rule (c) when the link was never created."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _git_140a(primary, "init", "-q", "-b", "main")
+    (primary / ".agent").mkdir()
+    (primary / ".agent" / "agent_controller.py").write_text("# stub\n")
+    _git_140a(primary, "add", ".agent/agent_controller.py")
+    _git_140a(primary, "commit", "-qm", "seed")
+    secondary = tmp_path / "secondary"
+    _git_140a(primary, "worktree", "add", "-q", "-b", "topic", str(secondary))
+    dest = _dest_140a(tmp_path, "U", name="p10-secondary")
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    # ``_dest_140a(..., "U")`` intentionally creates the destination config
+    # directory without a motor link: this is the link-absent branch, not a
+    # cleanup of a pre-existing link.
+    assert not link.exists()
+    before = _tree_140a(dest)
+    rc, out = _cli_source_155a(secondary, dest)
+    assert rc == 1, out
+    assert "P10" in out
+    assert _tree_140a(dest) == before
+
+
+def test_155a_cli_p10_allows_matching_link(tmp_path):
+    """Production main permits a source that exactly matches destination ownership."""
+    motor_agent = _motor_140a(tmp_path)
+    source = motor_agent.parent
+    dest = _dest_140a(tmp_path, "U", name="p10-match")
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.write_text(json.dumps({"motor_root": str(source)}), encoding="utf-8")
+    rc, out = _cli_source_155a(source, dest, "--yes")
+    assert rc == 0, out
+
+
+def test_155a_140a_cli_helper_without_override_exercises_p10(tmp_path):
+    """The legacy CLI helper also has a no-override production-path variant."""
+    motor_agent = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U", name="p10-helper")
+    rc, out = _cli_sync_140a_no_override(motor_agent, dest)
+    assert rc == 1, out
+    assert "P10" in out
+
+
+@pytest.mark.parametrize("raw", [b"{ NOT JSON", b'{"motor_root": 123}', b"", b"[]"])
+def test_155a_cli_p10_rejects_existing_unreadable_link_without_writing(tmp_path, raw):
+    """An existing unreadable link is not treated as a missing link."""
+    motor_agent = _motor_140a(tmp_path)
+    source = motor_agent.parent
+    _git_140a(source, "init", "-q", "-b", "main")
+    _git_140a(source, "add", ".")
+    _git_140a(source, "commit", "-qm", "seed")
+    dest = _dest_140a(tmp_path, "U", name="p10-unreadable")
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.write_bytes(raw)
+    before = _tree_140a(dest)
+
+    rc, out = _cli_source_155a(source, dest, "--yes")
+
+    assert rc == 1, out
+    assert "P10" in out
+    assert _tree_140a(dest) == before
+
+
+def test_155a_primary_probe_fail_closes_when_git_is_missing(tmp_path, monkeypatch):
+    """A missing git executable becomes a self-service P10, not a traceback."""
+    source = tmp_path / "source"
+    source.mkdir()
+
+    def missing_git(*_args, **_kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(ias.subprocess, "run", missing_git)
+    assert not ias._is_primary_git_checkout(source)
+    assert "P10" in ias._source_repoint_problem(source, tmp_path / "dest", False)
+
+
+def test_155a_source_resolve_oserror_fails_closed(monkeypatch, tmp_path):
+    """An OSError during path resolution produces P10 and never repoints."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    link.parent.mkdir(parents=True)
+    link.write_text(json.dumps({"motor_root": str(source)}), encoding="utf-8")
+
+    def broken_resolve(_path):
+        raise OSError("resolve failed")
+
+    monkeypatch.setattr(ias, "_normalized_source_path", broken_resolve)
+    message = ias._source_repoint_problem(source, dest, False)
+    assert message is not None and "P10" in message
+    assert "no se pudieron resolver" in message
+
+
+def test_155a_normalized_source_path_strips_windows_extended_prefix(tmp_path):
+    """The long-path spelling owns the same motor, never a false P10 repoint."""
+    source = tmp_path / "motor"
+    source.mkdir()
+    plain = source.resolve()
+    extended = Path("\\\\?\\" + str(plain))
+    legacy_spelling = Path("\\" + "?\\" + str(plain))
+
+    assert ias._normalized_source_path(extended) == ias._normalized_source_path(plain)
+    assert ias._normalized_source_path(legacy_spelling) == ias._normalized_source_path(
+        plain
+    )
+
+
+def test_155a_normalized_source_path_keeps_non_extended_control_prefix(tmp_path):
+    """Only the Windows extended prefix is removed; ordinary names stay distinct."""
+    source = tmp_path / "motor"
+    source.mkdir()
+    assert ias._normalized_source_path(source) != ias._normalized_source_path(
+        tmp_path / "other-motor"
+    )
 
 
 _AUX_PREFIXES_140A = (

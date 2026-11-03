@@ -2249,6 +2249,396 @@ def propagate_session_start_hook(
     return True
 
 
+# Exact legacy literals historically written by this motor.  This is a closed
+# migration list: a destination command is never classified by a substring.
+def _pre_058a_session_start_command() -> str:
+    """The exact fail-closed SessionStart literal installers wrote before 058a.
+
+    Before: called once while the closed legacy migration list is built.
+    During: asks the single-source generator for the FAIL-CLOSED bootstrap of
+        ``session_start_hook.py`` -- the literal every destination installed
+        before WOT-2026-058a carries on disk (058a switched SessionStart to the
+        dedicated fail-OPEN launcher, so the current canonical literal differs).
+    After: returns the literal. A change in the generator template would change
+        it, so a focused test pins the historic text.
+    """
+    agent_hooks_dir = str(Path(__file__).resolve().parent.parent / ".agent" / "hooks")
+    if agent_hooks_dir not in sys.path:
+        sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    return claude_guard_entry.canonical_command_for(
+        "session_start_hook.py", "agent_hooks"
+    )
+
+
+_LEGACY_MOTOR_HOOK_COMMANDS: dict[tuple[str, str], frozenset[str]] = {
+    ("PreToolUse", "Write|Edit|MultiEdit"): frozenset(
+        {"python .agent/hooks/guard_paths.py"}
+    ),
+    ("PreCompact", ""): frozenset({"python .agent/hooks/pre_compact_hook.py"}),
+    ("PostToolUse", "Read|Grep|Glob|WebFetch"): frozenset(
+        {"python .agent/hooks/native_post_tool_hook.py"}
+    ),
+    ("PostToolUse", "Write|Edit|MultiEdit"): frozenset(
+        {"python scripts/encoding_post_write_hook.py"}
+    ),
+    ("Stop", ""): frozenset({"python .agent/hooks/native_stop_hook.py"}),
+    ("SubagentStop", ""): frozenset({"python .agent/hooks/subagent_stop_hook.py"}),
+    ("SessionStart", ""): frozenset(
+        {
+            "python .agent/hooks/session_start_hook.py",
+            _pre_058a_session_start_command(),
+        }
+    ),
+}
+
+
+def _managed_hook_commands() -> dict[tuple[str, str], str]:
+    """Return the gate-owned canonical commands without duplicating literals.
+
+    Before: no arguments; the motor's ``.agent/hooks`` package is importable
+        from this checkout (the function makes it importable if needed).
+    During: imports ``claude_guard_entry`` -- the single source of every hook
+        literal -- and asks it for each managed ``(event, matcher)`` command.
+        ``SessionStart`` routes to the dedicated fail-OPEN generator; every
+        other event uses the fail-CLOSED ``canonical_command_for``.
+    After: returns a new dict keyed by ``(event, matcher)``. No I/O beyond the
+        one-time module import; callers must treat the result as read-only.
+    """
+    agent_hooks_dir = str(Path(__file__).resolve().parent.parent / ".agent" / "hooks")
+    if agent_hooks_dir not in sys.path:
+        sys.path.insert(0, agent_hooks_dir)
+    import claude_guard_entry
+
+    return {
+        (
+            "PreToolUse",
+            "Write|Edit|MultiEdit",
+        ): claude_guard_entry.canonical_hook_command(),
+        ("PreCompact", ""): claude_guard_entry.canonical_command_for(
+            "pre_compact_hook.py", "agent_hooks"
+        ),
+        (
+            "PostToolUse",
+            "Read|Grep|Glob|WebFetch",
+        ): claude_guard_entry.canonical_command_for(
+            "native_post_tool_hook.py", "agent_hooks"
+        ),
+        (
+            "PostToolUse",
+            "Write|Edit|MultiEdit",
+        ): claude_guard_entry.canonical_command_for(
+            "encoding_post_write_hook.py", "scripts"
+        ),
+        ("Stop", ""): claude_guard_entry.canonical_command_for(
+            "native_stop_hook.py", "agent_hooks"
+        ),
+        ("SubagentStop", ""): claude_guard_entry.canonical_command_for(
+            "subagent_stop_hook.py", "agent_hooks"
+        ),
+        ("SessionStart", ""): claude_guard_entry.canonical_session_start_command(),
+    }
+
+
+def _render_for_log(value: object) -> str:
+    """ASCII-safe, bounded rendering of a hook value for WARN lines.
+
+    Before: ``value`` is a command (or the hook dict when it has no command).
+    During: stringifies it and escapes non-ASCII (a lone surrogate would
+        otherwise raise UnicodeEncodeError on a cp1252 console mid-sync).
+    After: returns at most 160 characters of printable ASCII.
+    """
+    return str(value).encode("ascii", "backslashreplace").decode("ascii")[:160]
+
+
+def _hook_command_problem(hook: dict) -> str | None:
+    """Return why a ``type: command`` hook cannot be validated or written.
+
+    Before: ``hook`` is a dict the caller already checked is an object.
+    During: audits only ``type: command`` hooks -- the portability gate ignores
+        every other hook type, so a P8 block there would break the invariant
+        "gate-empty is never blocked"; the audited command must be a string
+        that can be re-encoded as UTF-8.
+    After: returns a short diagnostic, or ``None`` when the hook is acceptable.
+        A lone surrogate is rejected here because ``json.dumps`` +
+        ``write_text`` would otherwise raise mid-write and leave a ``.sync-tmp``.
+    """
+    if hook.get("type") != "command":
+        return None
+    command = hook.get("command")
+    if not isinstance(command, str):
+        return "command is not a string"
+    try:
+        command.encode("utf-8")
+    except UnicodeEncodeError:
+        return "command contains a lone surrogate and cannot be written as UTF-8"
+    return None
+
+
+def propagate_managed_claude_hooks(  # noqa: C901
+    destination_root: Path, dry_run: bool = False
+) -> bool:
+    """Migrate only exact legacy motor hooks and add missing canonical hooks.
+
+    Before: the destination settings may be absent or a JSON object.
+    During: reads UTF-8 with BOM tolerance, replaces only commands enumerated in
+    ``_LEGACY_MOTOR_HOOK_COMMANDS`` (including the pre-058a fail-closed
+    SessionStart literal real destinations carry). Simple duplicate entries are
+    consolidated; entries with destination metadata keep their own hooks in
+    place. A single census pass warns about every owned hook that the gate will
+    reject, once per entry. ``type: command`` hooks whose command is not a
+    UTF-8-encodable string fail closed before any write.
+    After: returns False without writing when the file is unreadable, invalid,
+    or would leave a ``.sync-tmp`` behind; never raises mid-write.
+    """
+    settings_path = destination_root / ".claude" / "settings.json"
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, RecursionError) as exc:
+            print(f"[ERROR] {settings_path} is not valid JSON: {exc}")
+            return False
+        if not isinstance(existing, dict):
+            print(f"[ERROR] {settings_path} root is not a JSON object")
+            return False
+    hooks = existing.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        print(f"[ERROR] {settings_path} hooks is not a JSON object")
+        return False
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            print(f"[ERROR] {settings_path} hooks.{event} is not a list")
+            return False
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                print(
+                    f"[ERROR] {settings_path} hooks.{event}[{index}] is not an object"
+                )
+                return False
+            if "matcher" in entry and not isinstance(entry["matcher"], str):
+                print(
+                    f"[ERROR] {settings_path} hooks.{event}[{index}].matcher is not a string"
+                )
+                return False
+            hook_list = entry.get("hooks", [])
+            if not isinstance(hook_list, list):
+                print(
+                    f"[ERROR] {settings_path} hooks.{event}[{index}].hooks is not a list"
+                )
+                return False
+            for hook_index, hook in enumerate(hook_list):
+                if not isinstance(hook, dict):
+                    print(
+                        f"[ERROR] {settings_path} hooks.{event}[{index}].hooks["
+                        f"{hook_index}] is not an object"
+                    )
+                    return False
+                problem = _hook_command_problem(hook)
+                if problem is not None:
+                    print(
+                        f"[ERROR] {settings_path} hooks.{event}[{index}].hooks["
+                        f"{hook_index}] {problem}"
+                    )
+                    return False
+    # Exact document snapshot: ``changed`` is derived from it at the end, so the
+    # SKIP branch is reachable (an unconditional ``changed = True`` made it dead)
+    # and a rewrite never happens when the resulting document is identical.
+    original_document = json.dumps(existing, sort_keys=True, ensure_ascii=False)
+    # Import the gate's actual matcher predicate.  The installer must migrate
+    # exactly the entries the portability gate considers write-gating; a copied
+    # token check would drift when the gate changes its definition.
+    try:
+        from scripts.check_claude_settings_portability import _gating_entries
+    except ImportError:
+        from check_claude_settings_portability import _gating_entries  # type: ignore
+
+    managed_commands = _managed_hook_commands()
+    managed_matchers_by_event: dict[str, set[str]] = {}
+    for managed_event, managed_matcher in managed_commands:
+        managed_matchers_by_event.setdefault(managed_event, set()).add(managed_matcher)
+    # One census pass over the document: the same entry must be reported once,
+    # not once per managed matcher of its event (PostToolUse has two). A
+    # MANAGED command under a NON-managed matcher is reported too: the gate
+    # rejects that matcher as an unknown target, so staying silent would be the
+    # F1 symptom (sync green, gate red, mute).
+    for census_event, census_entries in hooks.items():
+        if census_event == "PreToolUse":
+            # Gating alternates are reported by the consolidation branch below.
+            continue
+        census_matchers = managed_matchers_by_event.get(census_event)
+        for entry in census_entries:
+            if (
+                census_matchers is not None
+                and entry.get("matcher", "") in census_matchers
+            ):
+                continue
+            own_hooks = entry.get("hooks", [])
+            if not own_hooks:
+                continue
+            for own_hook in own_hooks:
+                command = (
+                    own_hook.get("command") if isinstance(own_hook, dict) else None
+                )
+                rendered = _render_for_log(command if command is not None else own_hook)
+                print(
+                    "[WARN] hook en evento no gestionado (censo): se conserva en "
+                    "su entrada y el gate lo rechaza; "
+                    f"destino={_render_for_log(destination_root)} "
+                    f"evento={_render_for_log(census_event)} "
+                    f"matcher={_render_for_log(entry.get('matcher', ''))} "
+                    f"comando={rendered}"
+                )
+    for (event, matcher), canonical in managed_commands.items():
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            print(f"[ERROR] {settings_path} hooks.{event} is not a list")
+            return False
+        candidates = (
+            _gating_entries({"hooks": {event: entries}})
+            if event == "PreToolUse"
+            else [
+                entry
+                for entry in entries
+                if isinstance(entry, dict) and entry.get("matcher", "") == matcher
+            ]
+        )
+        groups: dict[str, list[dict]] = {}
+        for entry in candidates:
+            if not isinstance(entry, dict) or not isinstance(
+                entry.get("hooks", []), list
+            ):
+                print(
+                    f"[ERROR] {settings_path} managed hooks.{event} entry is malformed"
+                )
+                return False
+            groups.setdefault(entry.get("matcher", ""), []).append(entry)
+        if not groups:
+            groups = {matcher: []}
+
+        legacy = _LEGACY_MOTOR_HOOK_COMMANDS.get((event, matcher), frozenset())
+        has_managed_matcher = matcher in groups
+        for group_matcher, group in groups.items():
+            if not group:
+                entries.append(
+                    {
+                        "matcher": matcher,
+                        "hooks": [{"type": "command", "command": canonical}],
+                    }
+                )
+                continue
+            managed = any(
+                isinstance(hook, dict)
+                and hook.get("type") == "command"
+                and hook.get("command") in {*legacy, canonical}
+                for entry in group
+                for hook in entry.get("hooks", [])
+            )
+            if not managed and group_matcher != matcher:
+                for entry in group:
+                    for own_hook in entry.get("hooks", []):
+                        command = own_hook.get("command")
+                        rendered = _render_for_log(
+                            command if command is not None else own_hook
+                        )
+                        print(
+                            "[WARN] hook propio en matcher gating alternativo: "
+                            "se conserva en su entrada; se anade el comando canonico "
+                            "en una entrada propia, pero el gate seguira rojo "
+                            "mientras este hook propio permanezca en un matcher "
+                            "gating; "
+                            f"destino={_render_for_log(destination_root)} "
+                            f"evento={_render_for_log(event)} "
+                            f"matcher={_render_for_log(entry.get('matcher', ''))} "
+                            f"comando={rendered}"
+                        )
+                continue
+
+            first = group[0]
+            own_hooks: list[tuple[dict, dict]] = []
+            retained_group: list[dict] = []
+            for entry in group:
+                retained: list[dict] = []
+                for hook in entry.get("hooks", []):
+                    exact_managed = (
+                        isinstance(hook, dict)
+                        and hook.get("type") == "command"
+                        and hook.get("command") in {*legacy, canonical}
+                    )
+                    if not exact_managed:
+                        retained.append(hook)
+                        own_hooks.append((entry, hook))
+                simple_entry = set(entry) <= {
+                    "matcher",
+                    "hooks",
+                }
+                if entry is first or simple_entry:
+                    entry["hooks"] = retained
+                    retained_group.extend(retained)
+                else:
+                    # Destination metadata makes this an owned entry. Remove
+                    # only exact motor commands; keep its own hooks in place.
+                    entry["hooks"] = retained
+                if entry is not first and simple_entry:
+                    entries[:] = [
+                        candidate for candidate in entries if candidate is not entry
+                    ]
+            first["hooks"] = [
+                {"type": "command", "command": canonical},
+                *retained_group,
+            ]
+            for owner_entry, own_hook in own_hooks:
+                command = (
+                    own_hook.get("command") if isinstance(own_hook, dict) else None
+                )
+                rendered = _render_for_log(command if command is not None else own_hook)
+                print(
+                    "[WARN] hook propio en entrada gating: "
+                    "check_claude_settings_portability seguira dando rc 1 hasta "
+                    "que el dueno del destino lo mueva; el comando se conserva "
+                    "(se consolida solo desde entradas simples); "
+                    f"destino={_render_for_log(destination_root)} "
+                    f"evento={_render_for_log(event)} "
+                    f"matcher={_render_for_log(owner_entry.get('matcher', ''))} "
+                    f"comando={rendered}"
+                )
+        if not has_managed_matcher:
+            entries.append(
+                {
+                    "matcher": matcher,
+                    "hooks": [{"type": "command", "command": canonical}],
+                }
+            )
+    changed = (
+        json.dumps(existing, sort_keys=True, ensure_ascii=False) != original_document
+    )
+    if dry_run:
+        print(
+            f"[DRY-RUN] Would {'update' if changed else 'keep'} managed Claude hooks in {settings_path}"
+        )
+        return True
+    if not changed:
+        print(f"[SKIP] Managed Claude hooks already canonical in {settings_path}")
+        return True
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = settings_path.with_name(settings_path.name + ".sync-tmp")
+    try:
+        temp_path.write_text(
+            json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        os.replace(temp_path, settings_path)
+    except (OSError, ValueError) as exc:
+        # Never leave a .sync-tmp behind: UnicodeEncodeError (lone surrogate)
+        # and circular-reference ValueErrors used to escape as bare OSError
+        # did not cover them.
+        temp_path.unlink(missing_ok=True)
+        print(f"[ERROR] {settings_path} could not be written: {exc}")
+        return False
+    print(f"[INFO] Updated managed Claude hooks in {settings_path}")
+    return True
+
+
 def copy_project_template(
     template_root: Path,
     destination_root: Path,
@@ -2625,11 +3015,64 @@ def print_sync_plan(plan: SyncPlan) -> None:
         print(line)
 
 
+def _settings_preflight_problem(destination_root: Path) -> str | None:  # noqa: C901
+    """Validate an existing settings shape before install or sync writes.
+
+    Before: ``destination_root/.claude/settings.json`` may be absent or contain
+        any JSON value and malformed hook structures.
+    During: reads the file once with BOM tolerance and validates the object,
+        hooks map, event lists, entry objects, matcher fields, hook lists, and
+        ``type: command`` commands (string, UTF-8-encodable). Non-command hook
+        types stay untouched: the portability gate ignores them, so blocking
+        them here would break "gate-empty is never blocked by P8".
+        No filesystem writes or subprocesses occur.
+    After: returns a P8 diagnostic for the first invalid shape, or ``None`` when
+        the file is absent or structurally safe for managed-hook propagation.
+    """
+    settings_path = destination_root / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return None
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, RecursionError) as exc:
+        return f"P8: settings.json ilegible ({exc})"
+    if not isinstance(settings, dict):
+        return "P8: settings.json no es un objeto JSON"
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return "P8: settings.json hooks no es un objeto JSON"
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            return f"P8: settings.json hooks.{event} no es una lista"
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                return f"P8: settings.json hooks.{event}[{index}] no es un objeto"
+            if "matcher" in entry and not isinstance(entry["matcher"], str):
+                return f"P8: settings.json hooks.{event}[{index}].matcher no es texto"
+            hook_list = entry.get("hooks", [])
+            if not isinstance(hook_list, list):
+                return f"P8: settings.json hooks.{event}[{index}].hooks no es una lista"
+            for hook_index, hook in enumerate(hook_list):
+                if not isinstance(hook, dict):
+                    return (
+                        f"P8: settings.json hooks.{event}[{index}].hooks["
+                        f"{hook_index}] no es un objeto"
+                    )
+                problem = _hook_command_problem(hook)
+                if problem is not None:
+                    return (
+                        f"P8: settings.json hooks.{event}[{index}].hooks["
+                        f"{hook_index}] {problem}"
+                    )
+    return None
+
+
 def run_sync_preflight(
     template_agent: Path,
     project_agent: Path,
     plan: SyncPlan,
     ticket_prefix: str | None = None,
+    auto_yes: bool = False,
 ) -> list[str]:
     """Check, read-only, that the sync can finish without leaving a half-done destination.
 
@@ -2678,6 +3121,13 @@ def run_sync_preflight(
     )
     if link_problem is not None:
         failures.append(link_problem)
+    settings_problem = _settings_preflight_problem(project_agent.parent)
+    if settings_problem is not None:
+        failures.append(f"{settings_problem}; no se ejecuta ningun paso del sync")
+    if any(action == "FLIP" for action, _rel, _reason in plan.entries) and not auto_yes:
+        failures.append(
+            "P9: active_profile engine-dev requiere --yes; no se ejecuta ningun paso del sync"
+        )
     return failures
 
 
@@ -2848,18 +3298,41 @@ def _write_target_problems(
     return [problems[path] for path in sorted(problems, key=str)]
 
 
-def install_agent_system(
+def install_agent_system(  # noqa: C901
     template_agent: Path,
     project_agent: Path,
     ticket_prefix: str | None = None,
     dry_run: bool = False,
     auto_yes: bool = False,
+    require_yes_for_profile_flip: bool = False,
     untrack_existing: bool = False,
 ) -> int:
     print("[INSTALL] Agent System from orquestador_de_agentes/")
 
     if project_agent.exists():
         print(f"[WARN] {project_agent} already exists. Use --sync to update.")
+        return 1
+
+    settings_problem = _settings_preflight_problem(project_agent.parent)
+    if settings_problem is not None:
+        print(f"[PREFLIGHT] FAIL {settings_problem}")
+        print("[PREFLIGHT] install abortado: no se ha modificado nada.")
+        return 1
+
+    source_agents, _source_agents_error = _load_json_object(
+        template_agent / "config" / "agents.json"
+    )
+    if (
+        require_yes_for_profile_flip
+        and not dry_run
+        and not auto_yes
+        and source_agents
+        and source_agents.get("active_profile") == "engine-dev"
+    ):
+        print(
+            "[PREFLIGHT] FAIL P9: active_profile engine-dev requiere --yes; "
+            "no se ejecuta ningun paso del install"
+        )
         return 1
 
     if dry_run:
@@ -2934,15 +3407,9 @@ def install_agent_system(
     # Seed a portable .gitleaks.toml to the destination (no-clobber)
     copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
 
-    # WOT-2026-071d: propagate the guard_paths write guard into the destino's
-    # tracked .claude/settings.json (structural merge, never a clobber).
-    propagate_claude_guard_hook(destination_root, dry_run=dry_run)
-
-    # Fase 0 (M4/M5 integration, 2026-10-15): propagate the SessionStart hook
-    # alongside the write guard -- a destino installed before this lacked
-    # SessionStart entirely (measured on Crear_Texto_LLM), so the memory
-    # index/health/role sections of session_start_hook.py never ran there.
-    propagate_session_start_hook(destination_root, dry_run=dry_run)
+    if not propagate_managed_claude_hooks(destination_root, dry_run=dry_run):
+        print("[ERROR] Managed Claude hooks could not be migrated; install aborted.")
+        return 1
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
@@ -2977,6 +3444,7 @@ def sync_agent_system(  # noqa: C901
     strict_sync: bool = False,
     prune: bool = False,
     auto_yes: bool = False,
+    require_yes_for_profile_flip: bool = False,
     untrack_existing: bool = False,
 ) -> int:
     """Sync the destination ``.agent/`` from the motor without clobbering its config.
@@ -3046,7 +3514,13 @@ def sync_agent_system(  # noqa: C901
         print("[PREFLIGHT] sync abortado: no se ha modificado nada.")
         return 1
     print_sync_plan(plan)
-    failures = run_sync_preflight(template_agent, project_agent, plan, ticket_prefix)
+    failures = run_sync_preflight(
+        template_agent,
+        project_agent,
+        plan,
+        ticket_prefix,
+        auto_yes=(auto_yes or not require_yes_for_profile_flip or dry_run),
+    )
     if failures:
         for failure in failures:
             print(f"[PREFLIGHT] FAIL {failure}")
@@ -3131,13 +3605,9 @@ def sync_agent_system(  # noqa: C901
     # Seed a portable .gitleaks.toml to the destination (no-clobber, idempotent)
     copy_gitleaks_config(template_root, destination_root, dry_run=dry_run)
 
-    # WOT-2026-071d: propagate/re-verify the guard_paths write guard in the
-    # destino's tracked .claude/settings.json (structural merge, idempotent).
-    propagate_claude_guard_hook(destination_root, dry_run=dry_run)
-
-    # Fase 0 (M4/M5 integration, 2026-10-15): re-verify SessionStart on sync,
-    # same contract as the write guard above.
-    propagate_session_start_hook(destination_root, dry_run=dry_run)
+    if not propagate_managed_claude_hooks(destination_root, dry_run=dry_run):
+        print("[ERROR] Managed Claude hooks could not be migrated; sync aborted.")
+        return 1
 
     integrity_ok = ensure_hooks_config_integrity(project_agent, dry_run=dry_run)
 
@@ -3272,6 +3742,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip interactive confirmation for host-setup hook (CI mode)",
     )
     parser.add_argument(
+        "--allow-motor-repoint",
+        action="store_true",
+        help="Allow an explicit source/link motor repoint after verification",
+    )
+    parser.add_argument(
         "--untrack-existing",
         action="store_true",
         help=(
@@ -3301,6 +3776,136 @@ def detect_template_root(user_source: Path | None) -> Path:
     )
 
 
+def _normalized_source_path(path: Path) -> str:
+    """Normalize a source path for ownership comparisons across Windows forms.
+
+    Before: ``path`` is a candidate source or declared motor path.
+    During: resolves the path and applies the platform's case normalization.
+    After: returns one comparison string, or propagates ``OSError`` so callers
+        can fail closed when the path cannot be resolved.
+    """
+    raw = str(path)
+    if raw.startswith("\\\\?\\UNC\\"):
+        raw = "\\\\" + raw[len("\\\\?\\UNC\\") :]
+    elif raw.startswith("\\\\?\\"):
+        raw = raw[len("\\\\?\\") :]
+    elif raw.startswith("\\?\\"):
+        raw = raw[len("\\?\\") :]
+    resolved = str(Path(raw).resolve())
+    if resolved.startswith("\\\\?\\UNC\\"):
+        resolved = "\\\\" + resolved[len("\\\\?\\UNC\\") :]
+    elif resolved.startswith("\\\\?\\"):
+        resolved = resolved[len("\\\\?\\") :]
+    elif resolved.startswith("\\?\\"):
+        resolved = resolved[len("\\?\\") :]
+    return os.path.normcase(os.path.normpath(resolved))
+
+
+def _is_primary_git_checkout(template_root: Path) -> bool:
+    """Accept a source without a link only when it is Git's primary worktree.
+
+    Before: ``template_root`` is a resolved candidate source not already owned by
+    the destination link.
+    During: queries ``git worktree list --porcelain`` and compares the candidate
+    with the first (primary) worktree after path normalization.
+    After: returns True for Git's first (primary) worktree, including a detached
+        primary HEAD; returns False for secondary, untracked or ambiguous
+        checkouts so the caller can require the explicit repoint override.
+    """
+
+    def git_output(*args: str) -> tuple[int, str]:
+        result = subprocess.run(  # noqa: S603
+            ["git", "-C", str(template_root), *args],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode, result.stdout.strip()
+
+    try:
+        inside_rc, inside = git_output("rev-parse", "--is-inside-work-tree")
+    except OSError:
+        return False
+    if inside_rc != 0 or inside != "true":
+        return False
+    try:
+        worktree_rc, worktree_text = git_output("worktree", "list", "--porcelain")
+    except OSError:
+        return False
+    if worktree_rc != 0:
+        return False
+    worktrees = [
+        line.removeprefix("worktree ").strip()
+        for line in worktree_text.splitlines()
+        if line.startswith("worktree ")
+    ]
+    try:
+        return bool(worktrees) and _normalized_source_path(
+            template_root
+        ) == _normalized_source_path(Path(worktrees[0]))
+    except OSError:
+        return False
+
+
+def _source_repoint_problem(
+    template_root: Path, dest: Path, allow_motor_repoint: bool
+) -> str | None:
+    """Return a self-service error before a source can repoint a destination link.
+
+    Before: ``template_root`` is the requested source and ``dest`` is the
+        destination; an existing link may be absent, readable, or corrupt.
+    During: preserves the distinction between missing and unreadable links,
+        rejects a relative ``motor_root`` (no single verifiable base: the
+        runtime readers resolve it against the process cwd), compares
+        normalized owned paths, then checks Git's primary worktree. No writes
+        occur.
+    After: returns ``None`` only for an explicit override, an exact readable
+        link match, or a primary Git worktree; otherwise returns P10.
+    """
+    if allow_motor_repoint:
+        return None
+    link = dest / ".agent" / "config" / "motor_destination_link.json"
+    if link.exists():
+        result = _read_motor_link(link)
+        if result.state == "UNREADABLE":
+            return (
+                "P10: motor_destination_link.json existente es ilegible; "
+                "repara el link o repite con --allow-motor-repoint tras verificarlo"
+            )
+        if result.state == "OK":
+            motor_root = result.data.get("motor_root")
+            if not isinstance(motor_root, str) or not motor_root:
+                return (
+                    "P10: motor_destination_link.json no declara un motor_root legible"
+                )
+            try:
+                declared = Path(motor_root)
+                if not (declared.is_absolute() or declared.drive or declared.root):
+                    return (
+                        "P10: motor_destination_link.json declara un motor_root "
+                        "relativo, que no es verificable de forma unica desde el "
+                        "destino; corrige el link a una ruta absoluta o repite con "
+                        "--allow-motor-repoint solo tras verificar el motor"
+                    )
+                if _normalized_source_path(declared) == _normalized_source_path(
+                    template_root
+                ):
+                    return None
+            except OSError:
+                return "P10: no se pudieron resolver las rutas del link existente"
+            return (
+                "P10: --source no coincide con motor_root del link existente; "
+                "repite con --allow-motor-repoint solo tras verificar el motor"
+            )
+        return "P10: no se pudo clasificar el motor_destination_link.json existente"
+    if _is_primary_git_checkout(template_root):
+        return None
+    return (
+        "P10: --source no es el worktree principal de un checkout Git canonico; repite con "
+        "--allow-motor-repoint solo tras verificar el motor"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -3315,6 +3920,13 @@ def main(argv: list[str] | None = None) -> int:
         template_root = detect_template_root(args.source)
     except FileNotFoundError as exc:
         print(f"[ERROR] {exc}")
+        return 1
+
+    source_problem = _source_repoint_problem(
+        template_root, dest, args.allow_motor_repoint
+    )
+    if source_problem is not None:
+        print(f"[PREFLIGHT] FAIL {source_problem}")
         return 1
 
     template_agent = template_root / ".agent"
@@ -3337,6 +3949,7 @@ def main(argv: list[str] | None = None) -> int:
             ticket_prefix=args.prefix,
             dry_run=args.dry_run,
             auto_yes=args.yes,
+            require_yes_for_profile_flip=not args.dry_run,
             untrack_existing=args.untrack_existing,
         )
 
@@ -3351,6 +3964,7 @@ def main(argv: list[str] | None = None) -> int:
         strict_sync=args.strict_sync,
         prune=args.prune,
         auto_yes=args.yes,
+        require_yes_for_profile_flip=not args.dry_run,
         untrack_existing=args.untrack_existing,
     )
 
