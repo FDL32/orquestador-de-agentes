@@ -1,7 +1,7 @@
 #### Push por vuelo: UN solo push al final de TODOS los tickets (2026-10-19)
 
 - DECISION DE PROCESO: la publicacion se difiere al final del vuelo, nunca por ticket (2026-10-19).
-  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: `prompts/orchestrator_session_bootstrap.md:314` ("UN solo push al final de la cola, con OK humano explicito"), `prompts/orchestrator_pipeline_codeonly.md:199` ("Push AGRUPADO al final de sesion ... NO push por ticket") y `prompts/manager_orchestrator_loop_backlog.md:455` (informe antes del push). Esta seccion EXTIENDE esa regla a todo vuelo multi-ticket; no la inventa.
+  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: `prompts/orchestrator_session_bootstrap.md:318` ("UN solo push al final de la cola, con OK humano explicito"), `prompts/orchestrator_pipeline_codeonly.md:203` ("Push AGRUPADO al final de TODOS los tickets del vuelo ... NO push por ticket") y la seccion 7 de `prompts/manager_orchestrator_loop_backlog.md` (informe antes del push). Esta seccion EXTIENDE esa regla a todo vuelo multi-ticket; no la inventa.
 
 **La publicacion es una accion del VUELO, no del ticket.** Durante un vuelo (batch
 autonomo, pipeline code-only o cadena de cierres), cada ticket se cierra EN LOCAL con su
@@ -10,9 +10,15 @@ vuelo: despues del ULTIMO ticket, con la suite canonica verde sobre el HEAD fina
 gates de publicacion de la seccion siguiente (Gate 1/Gate 2) satisfechos.
 
 Motivo: cada push intermedio exige una autorizacion humana y rompe la autonomia del vuelo.
-La autorizacion de publicacion se resuelve en la PREPARACION del vuelo -- una sola
-decision, por adelantado, registrada en el arranque/plan de vuelo -- no goteando ticket a
-ticket (misma logica que `batch-agrupar-preguntas-antes-de-arrancar`).
+La autorizacion inicial de publicacion se registra en la PREPARACION del vuelo como
+INTENCION -- una sola decision, por adelantado, no goteando ticket a ticket (misma
+logica que `batch-agrupar-preguntas-antes-de-arrancar`). El push final exige ademas la
+CONFIRMACION DEL ARTEFACTO mediante la frase canonica definida y verificada por
+`scripts/flight/verify_user_authorization.py`. La frase se emite y consume sobre el
+HEAD que se va a empujar; cada integracion del Gate 2 o rechazo non-fast-forward
+exige una frase nueva. El verificador lo impone: `collect_push_context` exige
+`tested_commit_sha == HEAD` en `scripts/flight/verify_user_authorization.py:1257-1284`,
+y `_range_commit_count` rechaza `not-ancestor` en `:1216-1245`.
 
 - **Sin autorizacion registrada no hay push.** Un vuelo que termina sin decision de
   publicacion queda en estado declarado `PUBLICACION_PENDIENTE_AUTORIZACION`: todo
