@@ -1799,3 +1799,74 @@ def test_n80b_dry_run_no_concilia_ni_imprime_borrados(box):
     assert "resueltas" not in r.out and "resuelta tarea-muerta" not in r.out
     assert box.resolved == []
     assert "event:cupo-92" in box.ca_state()
+
+
+def test_go_tick_reconoce_clave_go_y_titulo_go_pendiente(box):
+    """E1/E6: el tick parsea go-id, no subcadenas, y usa título GO pendiente."""
+    box.notify_rc = 2
+    assert (
+        box.ca.main(
+            [
+                "--ops-dir",
+                str(box.ops),
+                "--flight-dir",
+                str(box.flight),
+                "--go-id",
+                "go-tick",
+                "--owner",
+                "IM-56",
+                "--what",
+                "Escribe GO 1",
+            ]
+        )
+        == 2
+    )
+    resultado = box.tick()
+    assert resultado.sent[0][0] == "GO pendiente"
+    assert "Escribe GO 1" in resultado.sent[0][1]
+    assert "event:go-tick" not in box.ca_state()
+
+
+def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
+    """E6: tick posterior al fallo avisa; tras éxito el tick siguiente no duplica."""
+    box.notify_rc = 2
+    assert (
+        box.ca.main(
+            [
+                "--ops-dir",
+                str(box.ops),
+                "--flight-dir",
+                str(box.flight),
+                "--go-id",
+                "go-fallback",
+                "--owner",
+                "IM-56",
+                "--what",
+                "Escribe GO 1",
+            ]
+        )
+        == 2
+    )
+    failed_tick = box.tick()
+    assert failed_tick.sent[0][0] == "GO pendiente"
+    box.notify_rc = 0
+    assert (
+        box.ca.main(
+            [
+                "--ops-dir",
+                str(box.ops),
+                "--flight-dir",
+                str(box.flight),
+                "--go-id",
+                "go-fallback",
+                "--owner",
+                "IM-56",
+                "--what",
+                "Escribe GO 1",
+            ]
+        )
+        == 0
+    )
+    sent = len(box.sent)
+    assert box.tick().sent == []
+    assert len(box.sent) == sent

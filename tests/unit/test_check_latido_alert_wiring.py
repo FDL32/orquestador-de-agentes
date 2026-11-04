@@ -38,6 +38,10 @@ _STUBS = (
     "check_latido_alert_wiring.py",
 )
 
+# Copia literal del parrafo GO AL USUARIO del latido real de CO-28 (linea 19,
+# 2026-11-04). El test no lee el workspace del vuelo.
+LATIDO_REAL_GO_MANUAL = r"""GO AL USUARIO (seccion 8 del ARRANQUE_CO-27, b7861d02fbf8): toda solicitud de GO sale como notificacion en pantalla en la MISMA accion: (1) linea ABIERTA BLOQUEA en diseno\COLA_PARA_USUARIO.md con la frase literal esperada (la ruta absoluta de la cola es esa; no crees otra); (2) FLIGHT_OPS_DIR=C:/Users/fdl/tmp_or8 python scripts/flight/comms_alert.py --event go-<id> --level URGENTE --title "GO pendiente: <ticket>" --what "<frase literal>" (--what se redacta y se recorta a 160 caracteres: la frase LITERAL esta en la cola); al recibir el GO: comms_alert.py --resolve go-<id> y marca la linea RESUELTA. LIMITE CONOCIDO (bucle de avisos, tickets 153s y 153h): el tick avisa ademas la linea de cola con la clave cola-<sha1>, asi que un GO genera DOS avisos hasta que 153s unifique la clave; no resuelvas a mano la clave cola-<sha1>: se limpia sola cuando la linea pasa a RESUELTA."""
+
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -137,6 +141,69 @@ def _clean_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_alert_subprocesses(monkeypatch, tmp_path, request):
+    """Hermetiza ``--alert`` por run/check_output, cadenas y Popen directo.
+
+    Before: cualquier prueba puede lanzar el script del check en subproceso.
+    During: intercepta la orden y el Popen subyacente, registra ambos y el hijo recibe un stub;
+        los demás subprocess (git y sondas PowerShell) conservan su comportamiento.
+    After: el log prueba la barrera; nunca se abre PowerShell real y no se fuerza dry-run.
+    """
+    real_run = subprocess.run
+    real_popen = subprocess.Popen
+    log = tmp_path / "alert_subprocess_guard.log"
+    request.node._alert_subprocess_guard_log = log
+    stub_dir = tmp_path / "alert_stub"
+    stub_dir.mkdir()
+    stub_log = str(log).replace("\\", "\\\\")
+    (stub_dir / "sitecustomize.py").write_text(
+        "import subprocess\n"
+        "_real_run = subprocess.run\n"
+        "def _stub_run(cmd, *args, **kwargs):\n"
+        "    words = [str(x) for x in cmd] if isinstance(cmd, (list, tuple)) else [str(cmd)]\n"
+        "    if any('notify_user.ps1' in x.lower() for x in words) and '-file' in [x.lower() for x in words]:\n"
+        f"        open(r'{stub_log}', 'a', encoding='utf-8').write('POWERSHELL_STUB\\n' + ' '.join(words) + '\\n')\n"
+        "        return subprocess.CompletedProcess(cmd, 0, '', '')\n"
+        "    return _real_run(cmd, *args, **kwargs)\n"
+        "subprocess.run = _stub_run\n",
+        encoding="utf-8",
+    )
+
+    def is_alert(cmd):
+        text = (
+            " ".join(str(item) for item in cmd)
+            if isinstance(cmd, (list, tuple))
+            else str(cmd)
+        )
+        return "check_latido_alert_wiring.py" in text and "--alert" in text
+
+    def child_env(kwargs):
+        env = dict(kwargs.get("env") or os.environ)
+        env["PYTHONPATH"] = str(stub_dir) + os.pathsep + env.get("PYTHONPATH", "")
+        kwargs["env"] = env
+        return kwargs
+
+    def record(kind, cmd):
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(f"INTERCEPTED {kind} check --alert\n{cmd}\n")
+
+    def guarded_run(cmd, *args, **kwargs):
+        if is_alert(cmd):
+            record("run", cmd)
+            kwargs = child_env(kwargs)
+        return real_run(cmd, *args, **kwargs)
+
+    def guarded_popen(cmd, *args, **kwargs):
+        if is_alert(cmd):
+            record("Popen", cmd)
+            kwargs = child_env(kwargs)
+        return real_popen(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    monkeypatch.setattr(subprocess, "Popen", guarded_popen)
+
+
 @pytest.fixture
 def box(tmp_path) -> Box:
     return Box(tmp_path)
@@ -157,6 +224,132 @@ def test_fila_131_latidos_correctos_dan_rc_0(box, capsys):
     rc, out = run(box.argv(coord, sup), capsys)
     assert rc == 0, out
     assert out.startswith("latido-check: OK")
+
+
+def test_go_productor_nuevo_en_latido_es_valido(box, capsys):
+    """E7 positivo: una solicitud GO usa el subcomando productor y pasa el wiring."""
+    orders = box.coord_orders()
+    orders.insert(
+        2,
+        f'{box.py} {box.s("comms_alert.py")} --go-id go-e7 --what "Escribe GO 1" '
+        f"--flight-dir {box.root / 'flight'} --owner CO-28 --ops-dir {box.ops}",
+    )
+    coord = box.latido("go-good.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 0
+    assert "latido-check: OK" in out
+
+
+def test_go_receta_manual_en_latido_es_violation_nombrada(box, capsys):
+    """E7 negativo: la receta manual de GO debe fallar con causa reparable."""
+    orders = box.coord_orders()
+    orders.insert(
+        2,
+        f"{box.py} {box.s('comms_alert.py')} --event go-e7 --level URGENTE "
+        '--what "Escribe GO 1 y anade ABIERTA BLOQUEA a mano"',
+    )
+    coord = box.latido("go-manual.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 1
+    assert "GO" in out and ("manual" in out.lower() or "--go-id" in out)
+
+
+def test_d14_go_id_en_what_no_convierte_evento_legitimo_en_receta(box, capsys):
+    orders = box.coord_orders()
+    orders.insert(
+        2,
+        f"{box.py} {box.s('comms_alert.py')} --event clave --level URGENTE "
+        '--what "go-123 listo"',
+    )
+    coord = box.latido("go-what.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 0
+    assert "receta GO manual" not in out
+
+
+def test_d14_clave_event_go_si_es_receta_manual(box, capsys):
+    orders = box.coord_orders()
+    orders.insert(
+        2,
+        f"{box.py} {box.s('comms_alert.py')} --event go-x --level URGENTE "
+        '--what "solicita decision"',
+    )
+    coord = box.latido("go-event.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 1
+    assert "receta GO manual" in out
+
+
+def test_d9_latido_real_go_manual_exige_productor_valido(box, capsys):
+    """D9a: el parrafo real marca receta manual y ausencia de orden GO valida."""
+    coord = box.latido("go-real.md", box.coord_orders(), LATIDO_REAL_GO_MANUAL)
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 1
+    assert "receta GO manual" in out
+    assert "falta una orden GO valida" in out
+
+
+@pytest.mark.parametrize(
+    ("missing", "order"),
+    [
+        ("owner", '--go-id go-missing --what "Escribe GO" --flight-dir F'),
+        ("flight-dir", '--go-id go-missing --what "Escribe GO" --owner CO-28'),
+        ("what", "--go-id go-missing --flight-dir F --owner CO-28"),
+    ],
+)
+def test_d9_orden_go_incompleta_no_cubre_seccion(box, capsys, missing, order):
+    """D9b: cada omision deja la orden invalida y nombra la barrera GO."""
+    orders = box.coord_orders()
+    orders.insert(2, f"{box.py} {box.s('comms_alert.py')} {order}")
+    coord = box.latido(f"go-missing-{missing}.md", orders, "GO AL USUARIO")
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 1
+    assert "falta una orden GO valida" in out
+
+
+def test_d9_seccion_go_sin_go_id_se_marca_y_latido_normal_no(box, capsys):
+    """D9c: la seccion GO exige productor; un latido sin seccion no hereda el hallazgo."""
+    coord = box.latido("go-sin-orden.md", box.coord_orders(), "ABIERTA BLOQUEA")
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 1
+    assert "falta una orden GO valida" in out
+
+    coord = box.latido("sin-go.md", box.coord_orders(), "progreso normal")
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert "falta una orden GO valida" not in out
+    assert "receta GO manual" not in out
+
+
+def test_d20_go_dry_run_no_cubre_seccion(box, capsys):
+    orders = box.coord_orders()
+    orders.insert(
+        2,
+        f'{box.py} {box.s("comms_alert.py")} --go-id go-dry --what "Escribe GO" '
+        f"--flight-dir {box.root / 'flight'} --owner CO-28 --dry-run",
+    )
+    coord = box.latido("go-dry-run.md", orders, "GO AL USUARIO")
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 1
+    assert "falta una orden GO valida" in out
+
+
+def test_d9_go_id_en_prosa_manual_tambien_es_violation(box, capsys):
+    """D9d: go-<id> en prosa, junto a la receta manual, tambien muerde."""
+    prose = "GO AL USUARIO: usa --event go-<id> y escribe ABIERTA BLOQUEA a mano."
+    coord = box.latido("go-prosa.md", box.coord_orders(), prose)
+    sup = box.latido("s.md", box.sup_orders())
+    rc, out = run(box.argv(coord, sup), capsys)
+    assert rc == 1
+    assert "receta GO manual" in out
+    assert "falta una orden GO valida" in out
 
 
 @windows_only
@@ -1175,8 +1368,8 @@ def test_r7_fallo_de_introspeccion_no_rompe_import_y_da_ilegible_con_alert(
     assert "metadata de parsers" in lines[1]
 
 
-def test_r7_subprocess_sin_systemroot_da_ilegible_y_diag_alert(tmp_path):
-    """R7 M3: PowerShell inexistente no deja Traceback ni rc 1 durante el import."""
+def test_r7_subprocess_sin_systemroot_da_ilegible_y_diag_alert(tmp_path, request):
+    """R7 original: PowerShell inexistente conserva rc2/metadata/diag_rc=2, hermético."""
     roster = tmp_path / "roster.json"
     roster.write_text("{}", encoding="utf-8")
     env = dict(os.environ)
@@ -1197,8 +1390,53 @@ def test_r7_subprocess_sin_systemroot_da_ilegible_y_diag_alert(tmp_path):
         check=False,
     )
     assert done.returncode == 2
+    assert "Traceback" not in done.stdout
     assert "metadata de parsers" in done.stdout
     assert "diag_rc=2" in done.stdout
+    assert "POWERSHELL_STUB" in request.node._alert_subprocess_guard_log.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_alert_subprocess_barrier_logs_and_neutralizes_real_notifier(tmp_path, request):
+    """D15: la barrera autouse intercepta una orden alert antes de que toque pantalla."""
+    roster = tmp_path / "roster.json"
+    roster.write_text("{}", encoding="utf-8")
+    done = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--alert",
+            "--roster-path",
+            str(roster),
+            "--ops-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 1
+    log = request.node._alert_subprocess_guard_log
+    assert "INTERCEPTED run check --alert" in log.read_text(encoding="utf-8")
+
+
+def test_alert_subprocess_barrier_intercepts_string_and_direct_popen(tmp_path, request):
+    """D17: cadena y Popen directo no pueden esquivar la barrera."""
+    command = f'"{sys.executable}" "{_SCRIPT}" --alert --ops-dir "{tmp_path}"'
+    subprocess.run(  # noqa: S602 - la cadena es precisamente la superficie bajo prueba
+        command, shell=True, capture_output=True, text=True, check=False
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(_SCRIPT), "--alert", "--ops-dir", str(tmp_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    proc.communicate()
+    log = request.node._alert_subprocess_guard_log.read_text(encoding="utf-8")
+    assert "INTERCEPTED run check --alert" in log
+    assert "INTERCEPTED Popen check --alert" in log
 
 
 @pytest.mark.parametrize(

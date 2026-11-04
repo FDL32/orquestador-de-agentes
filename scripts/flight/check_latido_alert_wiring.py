@@ -961,6 +961,19 @@ def evaluate_latido(role: str, text: str, checker: _Checker) -> list[_Finding]:
     el latido cumple).
     """
     findings: list[_Finding] = []
+    go_section = bool(re.search(r"GO AL USUARIO|ABIERTA BLOQUEA", text, re.IGNORECASE))
+    if go_section and re.search(
+        r"--event\s+go-\S+|ABIERTA BLOQUEA", text, re.IGNORECASE
+    ):
+        findings.append(
+            _Finding(
+                "V",
+                role,
+                "",
+                "receta GO manual: usa una orden valida --go-id --what --flight-dir --owner; "
+                "no escribas ABIERTA BLOQUEA ni uses --event go-<id>",
+            )
+        )
     orders, problems = extract_orders(text)
     findings.extend(_Finding("V", role, "", problem) for problem in problems)
     evaluated: list[_Order] = []
@@ -972,6 +985,40 @@ def evaluate_latido(role: str, text: str, checker: _Checker) -> list[_Finding]:
         findings.extend(
             _Finding(kind, role, f" linea {line}", f"{msg} | {order_text[:90]}")
             for kind, msg in result.problems
+        )
+        upper = order_text.upper()
+        if (
+            result.valid
+            and result.script == "comms_alert.py"
+            and "--EVENT" in upper
+            and re.search(
+                r"(?:^|\s)--event\s+go-[a-z0-9-]+(?:\s|$)",
+                order_text,
+                re.IGNORECASE,
+            )
+        ):
+            findings.append(
+                _Finding(
+                    "V",
+                    role,
+                    f" linea {line}",
+                    "receta GO manual: usa --go-id ... --what ... --flight-dir; "
+                    "no escribas ABIERTA ni uses --event go-<id>",
+                )
+            )
+    if go_section and not any(
+        o.valid
+        and o.script == "comms_alert.py"
+        and {"--go-id", "--what", "--flight-dir", "--owner"} <= o.flags
+        for o in evaluated
+    ):
+        findings.append(
+            _Finding(
+                "V",
+                role,
+                "",
+                "falta una orden GO valida con --go-id --what --flight-dir --owner",
+            )
         )
     used: set[int] = set()
     for script, required, forbidden in _INVENTORY[role]:

@@ -72,6 +72,20 @@ _ROW_KEYS = (
 )
 OWN_PREFIX = "comms_alert:"  # prefijo de mensaje_id de las filas propias (mas un UUID aleatorio por fila)
 TEXT_LIMIT = 160
+GO_ID_RE = re.compile(r"^go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?$")
+OWNER_RE = re.compile(r"^[A-Z]{2,3}-[0-9]{1,4}$")
+GO_QUEUE_REL = Path("diseno") / "COLA_PARA_USUARIO.md"
+GO_LINE_RE = re.compile(
+    r"^- \[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] "
+    r"\[(?P<owner>[A-Z]{2,3}-\d{1,4})\] ABIERTA BLOQUEA \| "
+    r"(?P<id>go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?): (?P<what>.*)$"
+)
+GO_RESOLVED_RE = re.compile(
+    r"^- \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] "
+    r"\[[A-Z]{2,3}-\d{1,4}\] RESUELTA(?:-SIN-EFECTO)? \| "
+    r"(?P<id>go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?): .*$"
+)
+GO_SEPARATORS = "\n\r\u2028\u2029\u0085\u000b\u000c\u001c\u001d\u001e"
 _FREE_FIELDS = ("what", "nota", "error", "note")
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _RE_THREAD = re.compile(r"mcp:" + _UUID, re.IGNORECASE)
@@ -366,6 +380,9 @@ def _nota(level, why, rc, what):
 
 
 def _powershell_exe():
+    override = os.environ.get("FLIGHT_POWERSHELL_EXE")
+    if override:
+        return Path(override)
     root = os.environ.get("SYSTEMROOT")
     if not root:
         return None
@@ -619,6 +636,215 @@ def resolve(key, dry=False):
     return 0
 
 
+def _validate_go_value(value, *, identifier=False):
+    """Valida un identificador o frase GO antes de cualquier I/O de la cola.
+
+    Before: ``value`` es texto recibido por el CLI.
+    During: aplica la gramática ASCII del identificador o la política monolínea de la frase.
+    After: devuelve ``None`` si es válido; imprime la causa y devuelve 2 si no lo es.
+    """
+    text = str(value)
+    if identifier:
+        if not GO_ID_RE.fullmatch(text):
+            print(
+                "go-id invalido: se espera go-[a-z0-9]([a-z0-9-]{0,59}[a-z0-9])?",
+                file=sys.stderr,
+            )
+            return 2
+        return None
+    if not text or len(text) > TEXT_LIMIT or any(ch in text for ch in GO_SEPARATORS):
+        print("--what invalido: debe ser una frase UTF-8 de una linea", file=sys.stderr)
+        return 2
+    upper = text.upper()
+    reserved_scan = upper.replace("DESBLOQUEAR", "")
+    if " | " in text or any(
+        token in reserved_scan for token in ("ABIERTA", "RESUELTA", "BLOQUEA")
+    ):
+        print(
+            "--what invalido: contiene un separador o palabra reservada",
+            file=sys.stderr,
+        )
+        return 2
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        print("--what invalido: contiene un caracter de control", file=sys.stderr)
+        return 2
+    if "\ufeff" in text:
+        print("--what invalido: contiene BOM intermedio", file=sys.stderr)
+        return 2
+    return None
+
+
+def _validate_owner(value):
+    if value is None or not OWNER_RE.fullmatch(value):
+        print("--owner invalido: se espera ^[A-Z]{2,3}-[0-9]{1,4}$", file=sys.stderr)
+        return 2
+    return None
+
+
+def _go_queue_path(raw):
+    """Resuelve el directorio de vuelo y exige una cola existente."""
+    if not raw:
+        print("flight-dir sin resolver", file=sys.stderr)
+        return None
+    path = Path(raw)
+    if not path.is_absolute() or not path.is_dir():
+        print(f"flight-dir no existe o no es absoluto: {raw}", file=sys.stderr)
+        return None
+    queue = path.resolve() / GO_QUEUE_REL
+    if not queue.is_file():
+        print(f"cola ausente: {queue}", file=sys.stderr)
+        return None
+    return queue
+
+
+def _go_lines(data):
+    """Devuelve los GO ABIERTOS de bytes UTF-8, tolerando BOM inicial y EOL mixto."""
+    text = data.decode("utf-8-sig")
+    return [GO_LINE_RE.fullmatch(line.rstrip("\r\n")) for line in text.splitlines()]
+
+
+def _go_resolved_ids(data):
+    text = data.decode("utf-8-sig")
+    return {
+        match.group("id")
+        for line in text.splitlines()
+        if (match := GO_RESOLVED_RE.fullmatch(line.rstrip("\r\n")))
+    }
+
+
+def _go_eol(data):
+    """Elige el EOL dominante, con LF como desempate y fallback."""
+    crlf = data.count(b"\r\n")
+    lf = data.count(b"\n") - crlf
+    return b"\r\n" if crlf > lf else b"\n"
+
+
+def local_timestamp():
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def go_request(  # noqa: C901
+    go_id, what, flight_dir, owner, dry=False, now_fn=local_timestamp
+):
+    """Añade un GO idempotente y avisa sólo después del append.
+
+    Before: ops configurado, flight-dir absoluto existente y cola existente.
+    During: valida texto, bloquea la cola entre procesos, detecta repetición/conflicto, añade una
+        línea con el EOL dominante y delega el aviso URGENTE a ``event``.
+    After: rc 0 tras aviso, 10 si ya avisado con la misma frase, 2 ante entrada/I/O/notificador;
+        un fallo del notificador conserva la línea pero no registra evento de éxito.
+    """
+    if (
+        _validate_go_value(go_id, identifier=True)
+        or _validate_go_value(what)
+        or _validate_owner(owner)
+    ):
+        return 2
+    queue = _go_queue_path(flight_dir)
+    if queue is None:
+        return 2
+    lock_path = queue.with_name(queue.name + ".go.lock")
+    line = f"- [{now_fn()}] [{owner}] ABIERTA BLOQUEA | {go_id}: {what}".encode()
+    already_present = False
+    with _Lock(lock_path):
+        data = queue.read_bytes()
+        try:
+            resolved_ids = _go_resolved_ids(data)
+            matches = _go_lines(data)
+        except UnicodeDecodeError:
+            print("cola invalida: no es UTF-8", file=sys.stderr)
+            return 2
+        if go_id in resolved_ids:
+            print(f"go-id ya resuelto: usa otra clave: {go_id}", file=sys.stderr)
+            return 2
+        for match in matches:
+            if match and match.group("id") == go_id:
+                if match.group("what") == what:
+                    if "event:" + go_id in load_state():
+                        return 10
+                    already_present = True
+                else:
+                    print(f"go-id en conflicto: {go_id}", file=sys.stderr)
+                    return 2
+        eol = _go_eol(data)
+        prefix = b"" if not data or data.endswith((b"\n", b"\r")) else eol
+        if not dry and not already_present:
+            with queue.open("ab") as handle:
+                handle.write(prefix + line + eol)
+    if dry:
+        return 0
+    rc = event(go_id, "URGENTE", "GO pendiente", what, False, False, owner="go")
+    # La cola puede haberse resuelto mientras el notificador estaba bloqueado.
+    with _Lock(lock_path):
+        try:
+            resolved_after = _go_resolved_ids(queue.read_bytes())
+        except UnicodeDecodeError:
+            return rc
+        if go_id in resolved_after:
+            resolve(go_id, dry=False)
+    return rc
+
+
+def go_resolve(  # noqa: C901 - contrato de cola, estado y reconciliacion en un unico lock
+    go_id, flight_dir, owner, dry=False, without_effect=False, now_fn=local_timestamp
+):
+    """Marca un GO como recibido o cancelado y resuelve su evento.
+
+    Before: ``go_id`` válido y un flight-dir absoluto.
+    During: bloquea la cola, añade una marca RESUELTA asociada si hay ABIERTA y elimina el
+        evento de estado si existe; una cola ausente se trata como no registrada.
+    After: rc 0 al resolver una ABIERTA o evento, rc 10 si no hay ninguno o si ya estaba
+        RESUELTA; dry-run no muta cola ni estado.
+    """
+    if _validate_go_value(go_id, identifier=True) or _validate_owner(owner):
+        return 2
+    raw_path = Path(flight_dir) if flight_dir is not None else None
+    if raw_path is None or not raw_path.is_absolute() or not raw_path.is_dir():
+        print(f"flight-dir no existe o no es absoluto: {flight_dir}", file=sys.stderr)
+        return 2
+    queue = _go_queue_path(flight_dir)
+    if queue is None:
+        return 10
+    lock_path = queue.with_name(queue.name + ".go.lock")
+    with _Lock(lock_path):
+        data = queue.read_bytes()
+        try:
+            resolved_ids = _go_resolved_ids(data)
+            open_ids = {
+                match.group("id") for match in _go_lines(data) if match is not None
+            }
+        except UnicodeDecodeError:
+            print("cola invalida: no es UTF-8", file=sys.stderr)
+            return 2
+        has_event = "event:" + go_id in load_state()
+        if go_id in resolved_ids:
+            if has_event:
+                # A crash may leave the marker committed before event cleanup.
+                # Reconcile that active event while keeping the queue immutable.
+                return resolve(go_id, dry)
+            print(f"go ya resuelto: {go_id}")
+            return 10
+        if go_id in open_ids:
+            marker = "RESUELTA-SIN-EFECTO" if without_effect else "RESUELTA"
+            eol = _go_eol(data)
+            if not dry:
+                with queue.open("ab") as handle:
+                    if data and not data.endswith((b"\n", b"\r")):
+                        handle.write(eol)
+                    handle.write(
+                        f"- [{now_fn()}] [{owner}] {marker} | {go_id}: {marker}".encode()
+                        + eol
+                    )
+            if not has_event:
+                return 0
+        elif not has_event:
+            print(f"sin registro de {go_id}")
+            return 10
+        else:
+            return resolve(go_id, dry)
+    return resolve(go_id, dry)
+
+
 def reconcile(prefixes, active, dry=False, owner=None):
     """Borra las claves de evento con esos prefijos que el detector ya NO ve (una recaida vuelve a avisar). Con owner, solo las suyas o las heredadas sin dueno."""
     gone = []
@@ -792,7 +1018,7 @@ def scan(force, dry):
     return rc
 
 
-def main(argv=None):
+def main(argv=None):  # noqa: C901 - CLI dispatch keeps legacy and GO paths explicit.
     """CLI de comms_alert.
 
     Before: argumentos de linea de comandos (o ``argv``).
@@ -805,6 +1031,10 @@ def main(argv=None):
     ap.add_argument(
         "--ops-dir",
         help=f"directorio de operacion (ledger y estado); por defecto ${OPS_DIR_ENV}",
+    )
+    ap.add_argument(
+        "--flight-dir",
+        help="directorio del vuelo que contiene diseno/COLA_PARA_USUARIO.md",
     )
     ap.add_argument("--what", help="llamada y destino que fallo")
     ap.add_argument("--error", default="parent_not_active")
@@ -827,6 +1057,11 @@ def main(argv=None):
         "--resolve",
         help="la causa ya no existe: borra la clave (una recaida avisa de nuevo)",
     )
+    ap.add_argument("--go-id", help="clave estable de una solicitud GO")
+    ap.add_argument("--owner", help="propietario: AA-1..AAA-9999")
+    ap.add_argument(
+        "--sin-efecto", action="store_true", help="marca un GO cancelado sin efecto"
+    )
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     try:
@@ -834,6 +1069,55 @@ def main(argv=None):
     except OpsDirError as exc:
         print(f"comms_alert: {exc}", file=sys.stderr)
         return 2
+    if a.resolve and a.what:
+        print("--resolve no se combina con --what", file=sys.stderr)
+        return 2
+    if a.resolve and a.owner is not None and a.flight_dir is None:
+        print("--owner con --resolve exige --flight-dir", file=sys.stderr)
+        return 2
+    if a.sin_efecto and (not a.resolve or not a.flight_dir):
+        print(
+            "--sin-efecto solo es valido con --resolve y --flight-dir", file=sys.stderr
+        )
+        return 2
+    go_mode = (
+        a.go_id is not None
+        or a.flight_dir is not None
+        or a.owner is not None
+        or a.sin_efecto
+    )
+    if go_mode:
+        mixed = (
+            a.event
+            or a.ack
+            or a.scan
+            or (a.resolve and a.go_id is not None)
+            or a.sin_efecto
+            or a.error != "parent_not_active"
+        )
+        if a.resolve and (a.event or a.ack or a.scan or a.go_id is not None):
+            print(
+                "--resolve no se combina con --event/--ack/--scan/--go-id",
+                file=sys.stderr,
+            )
+            return 2
+        if a.go_id is None and not a.resolve:
+            print(
+                "modo GO incompleto: --flight-dir/--owner/--sin-efecto exige --go-id o --resolve",
+                file=sys.stderr,
+            )
+            return 2
+        if a.go_id is not None and (not a.what or not a.flight_dir or mixed):
+            print(
+                "modo GO incompleto o mezclado: --go-id exige --what, --flight-dir y --owner",
+                file=sys.stderr,
+            )
+            return 2
+        if a.resolve and not a.flight_dir:
+            return resolve(a.resolve, a.dry_run)
+        if a.resolve:
+            return go_resolve(a.resolve, a.flight_dir, a.owner, a.dry_run, a.sin_efecto)
+        return go_request(a.go_id, a.what, a.flight_dir, a.owner, a.dry_run)
     if a.resolve:
         return resolve(a.resolve, a.dry_run)
     if a.ack:

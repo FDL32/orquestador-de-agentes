@@ -26,6 +26,7 @@ CA_PATH = Path(
     os.environ.get("COMMS_ALERT_UNDER_TEST")
     or Path(__file__).resolve().parents[2] / "scripts" / "flight" / "comms_alert.py"
 )
+FS_PATH = CA_PATH.with_name("flight_stall_check.py")
 WINDOWS = os.name == "nt"
 M = 60  # segundos por minuto del reloj inyectado
 
@@ -35,6 +36,14 @@ def _load(name="comms_alert_ut"):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _consumer_findings(cola):
+    spec = importlib.util.spec_from_file_location("flight_stall_check_ut", FS_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.CFG = types.SimpleNamespace(cola=cola)
+    return mod.check_cola({}, {})
 
 
 class FakeClock:
@@ -66,6 +75,22 @@ def ca(tmp_path):
         sent.append((title, message)),
         mode["rc"],
     )[1]
+    real_main = mod.main
+
+    def test_main(argv=None):
+        # Los tests heredados de Caja 1 no incluían el owner; el contrato D3 sí.
+        args = list(argv or [])
+        if (
+            "--go-id" in args or ("--resolve" in args and "--flight-dir" in args)
+        ) and "--owner" not in args:
+            marker = (
+                args.index("--go-id") if "--go-id" in args else args.index("--resolve")
+            )
+            args[marker:marker] = ["--owner", "IM-56"]
+        return real_main(args)
+
+    mod.main = test_main
+    mod._raw_main = real_main
     return types.SimpleNamespace(m=mod, clock=clock, sent=sent, mode=mode, dir=tmp_path)
 
 
@@ -1717,3 +1742,817 @@ def test_fila55b_alert_dry_run_no_escribe_estado_ni_ledger(ca):
     assert ca.m.alert("k", "w", "e", False, True) == 0
     assert not ca.m.STATE.exists()
     assert not ca.m.LEDGER.exists()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Escribe GO 1\nforjada",
+        "Escribe GO 1\rforjada",
+        "Escribe GO 1\u2028forjada",
+        "Escribe GO 1\u2029forjada",
+        "Escribe GO 1\u0085forjada",
+        "Escribe GO 1\u000bforjada",
+        "Escribe GO 1\u000cforjada",
+        "Escribe GO 1\u001cforjada",
+        "Escribe GO 1\u001dforjada",
+        "Escribe GO 1\u001eforjada",
+        "Escribe RESUELTA ahora",
+        "Escribe ABIERTA ahora",
+        "Escribe BLOQUEA ahora",
+        "Escribe | GO 1",
+        "\ufeffEscribe GO 1",
+    ],
+)
+def test_go_rechaza_inyeccion_de_cola_sin_escribir_ni_notificar(ca, value):
+    """E1: texto no monolineal o reservado devuelve 2 sin efectos observables."""
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# cola existente\n")
+    antes = cola.read_bytes()
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--go-id",
+                "go-e1",
+                "--what",
+                value,
+            ]
+        )
+        == 2
+    )
+    assert cola.read_bytes() == antes
+    assert ca.sent == []
+
+
+@pytest.mark.parametrize(
+    "go_id",
+    [
+        "go-a",
+        "go-" + "a" * 61,
+        "go",
+        "go-",
+        "go--",
+        "go-a-",
+        "go-A",
+        "go_a",
+        "go-" + "a" * 62,
+    ],
+)
+def test_go_id_gramatica_cerrada_y_fronteras(ca, go_id):
+    """E1: go-id sólo admite la gramática cerrada y rechaza sus fronteras inválidas."""
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# cola existente\n")
+    antes = cola.read_bytes()
+    assert ca.m.main(
+        [
+            "--ops-dir",
+            str(ca.dir),
+            "--flight-dir",
+            str(flight),
+            "--go-id",
+            go_id,
+            "--what",
+            "Escribe GO 1",
+        ]
+    ) == (0 if go_id in {"go-a", "go-" + "a" * 61} else 2)
+    if go_id not in {"go-a", "go-" + "a" * 61}:
+        assert cola.read_bytes() == antes
+        assert ca.sent == []
+
+
+def test_go_sin_owner_rechaza_rc2_sin_mutar(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# cola\n")
+    antes = cola.read_bytes()
+    assert (
+        ca.m._raw_main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--go-id",
+                "go-owner",
+                "--what",
+                "Escribe GO",
+            ]
+        )
+        == 2
+    )
+    assert cola.read_bytes() == antes
+
+
+def test_go_acepta_cola_vacia_y_append_especifico(ca):
+    """E2/E3: cola vacía es válida y el primer GO se añade sin reescribirla."""
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--go-id",
+                "go-e2",
+                "--what",
+                "Escribe GO 1",
+            ]
+        )
+        == 0
+    )
+    assert cola.read_bytes().endswith(
+        b"] [IM-56] ABIERTA BLOQUEA | go-e2: Escribe GO 1\n"
+    )
+    assert ca.sent == [("GO pendiente", "Escribe GO 1")]
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        b"# cola\n- [old] [CO-1] ABIERTA | vieja\n",
+        b"# cola\r\n- [old] [CO-1] ABIERTA | vieja\r\n",
+        b"\xef\xbb\xbf# cola\n- [old] [CO-1] ABIERTA | vieja\n",
+        b"# cola\n- [old] [CO-1] ABIERTA | vieja",
+    ],
+)
+def test_go_append_conserva_bytes_y_formato_de_eol(ca, original):
+    """E3: append no reescribe el prefijo y produce una línea exacta consumible."""
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(original)
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--go-id",
+                "go-e3",
+                "--what",
+                "Escribe GO 1",
+            ]
+        )
+        == 0
+    )
+    producido = b"] [IM-56] ABIERTA BLOQUEA | go-e3: Escribe GO 1"
+    datos = cola.read_bytes()
+    eol = b"\r\n" if b"\r\n" in original else b"\n"
+    assert datos.endswith(producido + eol)
+
+
+def test_go_misma_clave_idempotente_y_conflicto_no_silencioso(ca):
+    """E4: misma clave/frase da 10; misma clave/frase distinta da 2."""
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    args = [
+        "--ops-dir",
+        str(ca.dir),
+        "--flight-dir",
+        str(flight),
+        "--go-id",
+        "go-e4",
+        "--what",
+        "Escribe GO 1",
+    ]
+    assert ca.m.main(args) == 0
+    antes = cola.read_bytes()
+    assert ca.m.main(args) == 10
+    assert cola.read_bytes() == antes
+    assert ca.sent == [("GO pendiente", "Escribe GO 1")]
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--go-id",
+                "go-e4",
+                "--what",
+                "Escribe GO 2",
+            ]
+        )
+        == 2
+    )
+    assert cola.read_bytes() == antes
+
+
+def test_go_fallo_de_notificador_conserva_linea_y_devuelve_2(ca):
+    """E6: append precede al aviso; un fallo queda reintentable y fail-closed."""
+    ca.mode["rc"] = 2
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--go-id",
+                "go-e6",
+                "--what",
+                "Escribe GO 1",
+            ]
+        )
+        == 2
+    )
+    assert cola.read_bytes().endswith(
+        b"] [IM-56] ABIERTA BLOQUEA | go-e6: Escribe GO 1\n"
+    )
+    assert ca.m.load_state() == {}
+
+
+def test_go_reintento_tras_fallo_reavisa_sin_duplicar_linea(ca):
+    """E6: sin evento registrado, la misma petición reintenta y luego queda idempotente."""
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    ca.mode["rc"] = 2
+    args = [
+        "--ops-dir",
+        str(ca.dir),
+        "--flight-dir",
+        str(flight),
+        "--go-id",
+        "go-r",
+        "--what",
+        "Escribe GO 1",
+    ]
+    assert ca.m.main(args) == 2
+    ca.mode["rc"] = 0
+    assert ca.m.main(args) == 0
+    assert ca.m.main(args) == 10
+    assert cola.read_bytes().endswith(
+        b"] [IM-56] ABIERTA BLOQUEA | go-r: Escribe GO 1\n"
+    )
+    assert ca.sent == [
+        ("GO pendiente", "Escribe GO 1"),
+        ("GO pendiente", "Escribe GO 1"),
+    ]
+
+
+def _go_args(ca, flight, go_id, what="Escribe GO 1"):
+    return [
+        "--ops-dir",
+        str(ca.dir),
+        "--flight-dir",
+        str(flight),
+        "--go-id",
+        go_id,
+        "--what",
+        what,
+    ]
+
+
+def test_go_resolve_dry_run_no_muta_cola_y_consumidor_real(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# cola\n")
+    assert ca.m.main(_go_args(ca, flight, "go-r4a")) == 0
+    antes = cola.read_bytes()
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4a",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert cola.read_bytes() == antes
+    assert _consumer_findings(cola)[0][0] == "go-r4a"
+
+
+def test_go_sin_efecto_end_to_end_resuelve_consumidor_real(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert ca.m.main(_go_args(ca, flight, "go-r4b")) == 0
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4b",
+                "--sin-efecto",
+            ]
+        )
+        == 0
+    )
+    assert b"RESUELTA-SIN-EFECTO | go-r4b:" in cola.read_bytes()
+    assert _consumer_findings(cola) == []
+
+
+def test_go_sin_efecto_mezclado_con_request_rechaza_sin_mutar(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# cola\n")
+    antes = cola.read_bytes()
+    assert ca.m.main([*_go_args(ca, flight, "go-r4c"), "--sin-efecto"]) == 2
+    assert cola.read_bytes() == antes
+
+
+def test_go_resolve_owner_sin_flight_y_event_mezclado_rechazan_sin_mutar(ca, capsys):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    antes = cola.read_bytes()
+    assert (
+        ca.m.main(
+            ["--ops-dir", str(ca.dir), "--resolve", "go-r4c1", "--owner", "CO-28"]
+        )
+        == 2
+    )
+    assert "--flight-dir" in capsys.readouterr().err
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4c1",
+                "--owner",
+                "CO-28",
+                "--event",
+                "otra",
+            ]
+        )
+        == 2
+    )
+    assert cola.read_bytes() == antes
+
+
+def test_go_notify_fallido_resolve_y_tick_real_no_avisa(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    ca.mode["rc"] = 2
+    assert ca.m.main(_go_args(ca, flight, "go-r4d")) == 2
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4d",
+            ]
+        )
+        == 0
+    )
+    assert "event:go-r4d" not in ca.m.load_state()
+    assert _consumer_findings(cola) == []
+
+
+def test_go_reabrir_resuelto_rechaza_incluso_notify_fallido(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert ca.m.main(_go_args(ca, flight, "go-r4e")) == 0
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4e",
+            ]
+        )
+        == 0
+    )
+    antes = cola.read_bytes()
+    ca.mode["rc"] = 2
+    assert ca.m.main(_go_args(ca, flight, "go-r4e")) == 2
+    assert cola.read_bytes() == antes
+
+
+def test_go_resolve_inexistente_rc10_sin_mutar(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# cola\n")
+    antes = cola.read_bytes()
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4f",
+            ]
+        )
+        == 10
+    )
+    assert cola.read_bytes() == antes
+
+
+def test_go_cola_no_utf8_rc2_sin_mutar(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# invalida \xff\n")
+    antes = cola.read_bytes()
+    assert ca.m.main(_go_args(ca, flight, "go-r4g")) == 2
+    assert cola.read_bytes() == antes
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4g",
+            ]
+        )
+        == 2
+    )
+    assert cola.read_bytes() == antes
+
+
+def test_go_cola_ausente_request_rc2_resolve_rc10(ca):
+    flight = ca.dir / "flight"
+    (flight / "diseno").mkdir(parents=True)
+    assert ca.m.main(_go_args(ca, flight, "go-r4h")) == 2
+    assert not (flight / "diseno" / "COLA_PARA_USUARIO.md").exists()
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4h",
+            ]
+        )
+        == 10
+    )
+
+
+def test_go_resolve_elimina_evento_y_segundo_resolve_es_idempotente(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert ca.m.main(_go_args(ca, flight, "go-r4i")) == 0
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4i",
+            ]
+        )
+        == 0
+    )
+    assert "event:go-r4i" not in ca.m.load_state()
+    antes = cola.read_bytes()
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4i",
+            ]
+        )
+        == 10
+    )
+    assert cola.read_bytes() == antes
+
+
+def test_go_resolve_reconcilia_marcador_previo_con_evento_activo(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert ca.m.main(_go_args(ca, flight, "go-r5-crash")) == 0
+    cola.write_bytes(
+        cola.read_bytes()
+        + b"- [2026-11-04 10:00:00] [CO-28] RESUELTA | go-r5-crash: RESUELTA\n"
+    )
+    assert "event:go-r5-crash" in ca.m.load_state()
+    antes = cola.read_bytes()
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r5-crash",
+            ]
+        )
+        == 0
+    )
+    assert cola.read_bytes() == antes
+    assert "event:go-r5-crash" not in ca.m.load_state()
+
+
+def test_go_redacta_ruta_y_secreto_en_aviso_inmediato_y_tick(ca, capsys):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    real_notify = _load("comms_alert_notify_real").notify
+    recibido = []
+
+    def captura_notify(title, message, dry):
+        recibido.append((title, message, dry))
+        return real_notify(title, message, True)
+
+    ca.m.notify = captura_notify
+    phrase = r"usa C:\Users\fdl\privada\token-secreto"
+    assert ca.m.main(_go_args(ca, flight, "go-redact", phrase)) == 0
+    assert recibido[-1][1] == phrase
+    salida = capsys.readouterr().out
+    assert phrase not in salida
+    assert "<ruta>" in salida
+    findings = _consumer_findings(cola)
+    rendered = " ".join(str(item) for item in findings)
+    assert "token-secreto" not in rendered
+    assert "<ruta>" in rendered or "<secreto>" in rendered
+
+
+def test_go_resolve_destino_invalido_rc2_sin_mutar_estado(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert ca.m.main(_go_args(ca, flight, "go-destino")) == 0
+    antes_estado = ca.m.load_state()
+    antes_cola = cola.read_bytes()
+    for destino in ("flight-relativo", str(ca.dir / "no-existe")):
+        assert (
+            ca.m.main(
+                [
+                    "--ops-dir",
+                    str(ca.dir),
+                    "--flight-dir",
+                    destino,
+                    "--resolve",
+                    "go-destino",
+                    "--owner",
+                    "CO-28",
+                ]
+            )
+            == 2
+        )
+        assert cola.read_bytes() == antes_cola
+        assert ca.m.load_state() == antes_estado
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--what", ""],
+        ["--what", "x" * 161],
+        ["--owner", "bad-owner"],
+    ],
+)
+def test_go_request_argumentos_invalidos_rc2_sin_mutar_cola(ca, extra):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"# cola\n")
+    antes = cola.read_bytes()
+    args = [
+        "--ops-dir",
+        str(ca.dir),
+        "--flight-dir",
+        str(flight),
+        "--go-id",
+        "go-invalid-args",
+        "--what",
+        "Escribe GO 1",
+    ]
+    if extra[0] == "--what":
+        args[args.index("--what") + 1] = extra[1]
+    else:
+        args.extend(extra)
+    assert ca.m.main(args) == 2
+    assert cola.read_bytes() == antes
+
+
+def test_go_ack_y_resolve_control(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    assert ca.m.main(_go_args(ca, flight, "go-ack-control")) == 0
+    assert ca.m.main(["--ops-dir", str(ca.dir), "--ack", "go-ack-control"]) == 0
+    assert ca.m.load_state()["event:go-ack-control"]["acked"] is True
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-ack-control",
+            ]
+        )
+        == 0
+    )
+    assert "event:go-ack-control" not in ca.m.load_state()
+
+
+def test_go_request_resolve_entrelazado_no_deja_evento(ca):
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    entered = threading.Event()
+    release = threading.Event()
+    real_event = ca.m.event
+
+    def paused_event(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_event(*args, **kwargs)
+
+    ca.m.event = paused_event
+    result = []
+
+    def request():
+        result.append(ca.m.main(_go_args(ca, flight, "go-r4j")))
+
+    thread = threading.Thread(target=request)
+    thread.start()
+    assert entered.wait(timeout=5)
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--resolve",
+                "go-r4j",
+            ]
+        )
+        == 0
+    )
+    release.set()
+    thread.join(timeout=5)
+    assert result == [0]
+    assert "event:go-r4j" not in ca.m.load_state()
+    assert b"RESUELTA | go-r4j:" in cola.read_bytes()
+
+
+def test_go_resolve_concurrent_no_pierde_lineas(ca):
+    """E5: dos productores concurrentes conservan ambos GO y su resolución es explícita."""
+    cola = ca.dir / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    resultados = []
+    errores = []
+
+    def emitir(go_id):
+        try:
+            resultados.append(
+                ca.m.main(
+                    [
+                        "--ops-dir",
+                        str(ca.dir),
+                        "--flight-dir",
+                        str(ca.dir),
+                        "--go-id",
+                        go_id,
+                        "--owner",
+                        "IM-56",
+                        "--what",
+                        f"Escribe {go_id}",
+                    ]
+                )
+            )
+        except (
+            BaseException
+        ) as exc:  # argparse/SystemExit también es evidencia RED del CLI ausente.
+            errores.append(exc)
+
+    hilos = [
+        threading.Thread(target=emitir, args=(go_id,)) for go_id in ("go-a", "go-b")
+    ]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join()
+    contenido = cola.read_text(encoding="utf-8")
+    assert errores == []
+    assert sorted(resultados) == [0, 0]
+    assert "go-a" in contenido and "go-b" in contenido
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(ca.dir),
+                "--resolve",
+                "go-a",
+                "--owner",
+                "IM-56",
+            ]
+        )
+        == 0
+    )
+    assert "RESUELTA | go-a:" in cola.read_text(encoding="utf-8")
+
+
+def test_go_dos_procesos_y_escritor_crudo_no_funden_ni_pierden_lineas(ca):
+    """E5: dos procesos y un tercero crudo conservan líneas completas bajo contención."""
+    flight = ca.dir / "flight"
+    cola = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    cola.parent.mkdir(parents=True)
+    cola.write_bytes(b"")
+    worker = (
+        "import importlib.util, sys; "
+        "spec=importlib.util.spec_from_file_location('ca', sys.argv[1]); "
+        "m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
+        "m.notify=lambda title,message,dry: 0; "
+        "raise SystemExit(m.main(sys.argv[2:]))"
+    )
+    processes = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                worker,
+                str(CA_PATH),
+                "--ops-dir",
+                str(ca.dir),
+                "--flight-dir",
+                str(flight),
+                "--go-id",
+                go_id,
+                "--owner",
+                "IM-56",
+                "--what",
+                f"Escribe {go_id}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for go_id in ("go-proc-a", "go-proc-b")
+    ]
+    with cola.open("ab") as handle:
+        handle.write(b"- [go-raw] [IM-57] ABIERTA BLOQUEA | Escribe GO raw\n")
+    assert [process.wait(timeout=10) for process in processes] == [0, 0]
+    lines = cola.read_bytes().splitlines(keepends=True)
+    assert len(lines) == 3
+    assert all(line.endswith(b"\n") for line in lines)
+    assert all(
+        token in b"".join(lines) for token in (b"go-proc-a", b"go-proc-b", b"go-raw")
+    )

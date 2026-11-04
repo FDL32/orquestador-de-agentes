@@ -44,6 +44,16 @@ TASK_STALE_S = 25 * 60  # la tarea corre cada 10 min: mas de 2 ciclos
 TASK_FUTURE_S = 5 * 60  # un ts_tarea mas alla de esto en el futuro es ilegible
 SIBLING_GLOBS = ("implantador-*", "triaje-*")
 COLA_REL = Path("diseno") / "COLA_PARA_USUARIO.md"
+GO_LINE_RE = re.compile(
+    r"^- \[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] "
+    r"\[[A-Z]{2,3}-[0-9]{1,4}\] ABIERTA BLOQUEA \| "
+    r"(?P<id>go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?): (?P<what>.*)$"
+)
+GO_RESOLVED_RE = re.compile(
+    r"^- \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] "
+    r"\[[A-Z]{2,3}-[0-9]{1,4}\] RESUELTA(?:-SIN-EFECTO)? \| "
+    r"(?P<id>go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?): .*$"
+)
 QUOTA_NAME = "quota_last.txt"
 STATE_NAME = "stall_state.json"
 TASK_REGISTERED_NAME = "task_registered.json"
@@ -268,10 +278,22 @@ def check_cola(out, st):
     redact = _load_alert().redact
     found = []
     abiertas = 0
-    for line in CFG.cola.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+    lines = CFG.cola.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    resolved_go = {
+        match.group("id") for line in lines if (match := GO_RESOLVED_RE.fullmatch(line))
+    }
+    for line in lines:
+        go_match = GO_LINE_RE.fullmatch(line)
+        if go_match and go_match.group("id") in resolved_go:
+            continue
         if "ABIERTA" not in line or "RESUELTA" in line:
             continue
         abiertas += 1
+        if go_match:
+            key = go_match.group("id")
+            what = redact(go_match.group("what"))
+            found.append((key, "URGENTE", what))
+            continue
         h = hashlib.sha1(line.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
         resumen = re.sub(r"^- \[[^\]]*\] \[[^\]]*\] ABIERTA \| ", "", line)
         nivel = "URGENTE" if "BLOQUEA" in line else "AVISO"
@@ -586,7 +608,8 @@ def _notify_all(ca, found, a):
             ca.mark_seen(key, level, "stall", a.dry_run)
             print(f"BASELINE {level} {key}")
             continue
-        r = ca.event(key, level, None, what, False, a.dry_run, owner="stall")
+        title = "GO pendiente" if key.startswith("go-") else None
+        r = ca.event(key, level, title, what, False, a.dry_run, owner="stall")
         if r == 2:
             rc = 2
         print(f"{level} {key} rc_aviso={r} {what}")

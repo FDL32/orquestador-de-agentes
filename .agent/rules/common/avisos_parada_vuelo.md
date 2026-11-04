@@ -106,6 +106,39 @@ el latido (rutas absolutas al motor, interprete fijado, las ordenes obligatorias
 hasta rc 0. No se escala al humano por esto. Si el check sale con rc 2, lee la causa: git que no
 responde, interprete fijado ausente (`<motor>/.venv`), latido ilegible o roster ilegible.
 
+## 5 bis. Solicitudes GO y límite residual de la cola
+
+Una solicitud GO se produce únicamente con `comms_alert.py --go-id ... --what ... --owner ... --flight-dir ...`.
+El `owner` obligatorio tiene la forma `^[A-Z]{2,3}-[0-9]{1,4}$`; el productor escribe
+`- [YYYY-MM-DD HH:MM:SS] [OWNER] ABIERTA BLOQUEA | go-<id>: <frase>` usando el reloj local.
+`--resolve <go-id> --owner <OWNER> --flight-dir ...` añade el marcador correspondiente
+`RESUELTA | go-<id>: ...` (o `RESUELTA-SIN-EFECTO` con `--sin-efecto`).
+El latido no debe fabricar manualmente una línea `ABIERTA BLOQUEA` ni usar `--event go-<id>` para
+simularla; `check_latido_alert_wiring.py` lo marca como receta GO manual. La cola se comparte con
+sesiones que pueden escribir directamente: el productor GO usa un bloqueo del sistema operativo y
+append-only, detectando bloqueos huérfanos por la liberación del sistema operativo. Riesgo residual
+declarado: un escritor externo que reescriba el fichero completo mediante Edit/Write puede perder
+líneas concurrentes; este mecanismo no puede evitar una reescritura ajena y el dueño de esa deuda es
+la coordinadora del vuelo.
+
+La migracion de prompts/ARRANQUE y latidos existentes para invocar esta orden nueva queda
+pendiente de CO-28; este ticket no modifica el workspace ni esos artefactos.
+Toda corrida de `check_latido_alert_wiring.py --alert` fija `FLIGHT_OPS_DIR` a un directorio
+temporal y stubbea el notificador (o usa `--dry-run`); nunca se ejecuta contra el ops-dir real.
+Migracion pendiente: los prompts, latidos y ARRANQUE del workspace llamaran a `--go-id`; la hace
+la coordinadora tras integrar y queda fuera de este ticket. El toast observado alrededor de
+08:20–08:25 queda como causa NO DEMOSTRADA; no se dispone de dato fiable de la ultima corrida
+`--alert` anterior al toast.
+
+La barrera solo detecta secciones marcadas `GO AL USUARIO` o `ABIERTA BLOQUEA`; una petición GO
+redactada con otra prosa queda fuera de alcance declarado (BA254 M2). Cuando sí hay sección GO,
+debe existir una orden de solicitud completa con `--go-id`, `--what`, `--flight-dir` y `--owner`;
+una orden `--resolve` sola no satisface esa barrera (BA03 m5b).
+Limites BA03 H3: una cadena `--event go-...` citada dentro de un `--what` entrecomillado puede
+marcarse como receta; `go_section` se activa por esa prosa en cualquier rol; y, mientras dura la
+migracion, mencionar `ABIERTA BLOQUEA` en una seccion GO marca receta manual aunque tambien exista
+una orden valida.
+
 ## 6. Ordenes exactas de un latido migrado
 
 `<MOTOR>` es la raiz del worktree autorizado (donde viven `scripts/flight/` y `.venv`); `<PY>` es
