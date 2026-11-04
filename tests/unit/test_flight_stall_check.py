@@ -107,19 +107,44 @@ class Box:
         self.ca.time = self.clock
         self.m.time = self.clock
         self.quota_touch(0)
-        self.ca.notify = lambda t, msg, dry: (
+        self.ca.notify = lambda t, msg, dry, **kwargs: (
             self.sent.append((t, msg)),
             self.notify_rc,
         )[1]
+        self.ca.remove_toast = lambda *args, **kwargs: True
+        self.clear_group_calls = []
+        self.ca.clear_group = lambda dry=False: (
+            self.clear_group_calls.append(dry) or True
+        )
         real_event, real_mark, real_resolve = (
             self.ca.event,
             self.ca.mark_seen,
             self.ca.resolve,
         )
 
-        def event(key, level, title, what, force, dry, owner=None):
+        def event(
+            key,
+            level,
+            title,
+            what,
+            force,
+            dry,
+            owner=None,
+            session_code=None,
+            preserve_literal=False,
+        ):
             self.events.append((key, level, owner))
-            return real_event(key, level, title, what, force, dry, owner=owner)
+            return real_event(
+                key,
+                level,
+                title,
+                what,
+                force,
+                dry,
+                owner=owner,
+                session_code=session_code,
+                preserve_literal=preserve_literal,
+            )
 
         def mark_seen(key, level, owner=None, dry=False):
             self.events.append(("MARK:" + key, level, owner))
@@ -349,6 +374,59 @@ def test_d2_motor_por_entorno_y_defecto_derivado_del_script(box, monkeypatch):
         box.ops,
     )
     assert cfg.motor == FSC_PATH.resolve().parents[2] and fatal is None and causes == []
+
+
+@pytest.mark.parametrize(
+    "roster_body",
+    [
+        None,
+        "{invalid",
+        '{"active_roles": {"orquestador": {"session_code": "mcp:x"}}}',
+        '{"active_roles": {"orquestador": {"session_code": ["CO-29"]}}}',
+    ],
+)
+def test_a3_roster_forma_negativa_no_inyecta_codigo(box, roster_body):
+    """A3: roster ausente, JSON roto, código inválido o tipo equivocado => sin título inyectado."""
+    roster = box.flight / "flight_roster.json"
+    if roster_body is None:
+        roster.unlink(missing_ok=True)
+    else:
+        roster.write_text(roster_body, encoding="utf-8")
+    cfg, causes, fatal = box.m._resolve_paths(
+        types.SimpleNamespace(
+            flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+        ),
+        box.ops,
+    )
+    assert fatal is None and not causes and cfg.session_code is None
+
+
+def test_a3_roster_json_suelto_no_es_canonico(box):
+    """BA07: un roster.json paralelo no aporta identidad al tick."""
+    (box.flight / "roster.json").write_text(
+        '{"active_roles":{"orquestador":{"session_code":"CO-31"}}}',
+        encoding="utf-8",
+    )
+    cfg, causes, fatal = box.m._resolve_paths(
+        types.SimpleNamespace(
+            flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+        ),
+        box.ops,
+    )
+    assert fatal is None and not causes and cfg.session_code is None
+
+
+def test_a3_tick_real_usa_flight_roster_para_titulo(box):
+    """BA07: un tick real con flight_roster.json propaga el codigo al aviso."""
+    (box.flight / "flight_roster.json").write_text(
+        '{"active_roles":{"orquestador":{"session_code":"CO-31"}}}',
+        encoding="utf-8",
+    )
+    box.quota.write_text(
+        "QUOTA | alvarovans weekly 97% | brabander weekly 30%", encoding="utf-8"
+    )
+    result = box.tick()
+    assert result.sent and result.sent[0][0] == "CO-31"
 
 
 def test_d2_quota_file_relativo_ciega_el_cupo(box, tmp_path, monkeypatch):
@@ -1822,9 +1900,78 @@ def test_go_tick_reconoce_clave_go_y_titulo_go_pendiente(box):
         == 2
     )
     resultado = box.tick()
-    assert resultado.sent[0][0] == "GO pendiente"
+    assert resultado.sent[0][0] == "IM-56"
     assert "Escribe GO 1" in resultado.sent[0][1]
     assert "event:go-tick" not in box.ca_state()
+
+
+def test_caja1_go_real_en_cola_llega_al_tick_con_codigo_y_frase(box):
+    """RED/E3: la linea real de go_request debe producir en el tick titulo y frase de la sesion."""
+    box.notify_rc = 2
+    box.ca.main(
+        [
+            "--ops-dir",
+            str(box.ops),
+            "--flight-dir",
+            str(box.flight),
+            "--go-id",
+            "go-caja1-tick",
+            "--owner",
+            "CO-29",
+            "--what",
+            "PUSH C:/Users/fdl/repo mcp:12345678-1234-1234-1234-123456789012 16.",
+        ]
+    )
+    box.notify_rc = 0
+    result = box.tick("--dry-run")
+    assert result.sent, result.out
+    assert result.sent[0][0].startswith("CO-29")
+    assert result.sent[0][1].startswith("PUSH C:/Users/fdl/repo")
+    assert "mcp:12345678-1234-1234-1234-123456789012" in result.sent[0][1]
+
+
+def test_f5_el_arranque_del_vigilante_invoca_clear_group(box):
+    """F5: el tick invoca la limpieza acotada del Group propio."""
+    box.tick("--dry-run")
+    assert box.clear_group_calls == [True]
+
+
+def test_clear_group_no_se_retira_mientras_persiste_la_causa(box):
+    """Una causa activa en dos ticks conserva el Group; solo el tick vacio lo limpia."""
+    box.cola.write_text(
+        "# cola\n- [2026-11-04 13:30:00] [CO-29] ABIERTA BLOQUEA | go-persist: FRASE\n",
+        encoding="utf-8",
+    )
+    assert box.tick().rc in (0, 1)
+    assert box.tick().rc in (0, 1)
+    assert box.clear_group_calls == []
+
+
+def test_clear_group_no_retira_si_hay_causa_activa_de_otro_productor(box):
+    """Una clave de check activa evita retirar el Group aunque este tick no halle causas."""
+    box.ca.event(
+        "latido-desviado", "URGENTE", None, "causa check", False, False, owner="check"
+    )
+    box.tick("--dry-run")
+    assert box.clear_group_calls == []
+    box.ca.resolve("latido-desviado")
+    box.tick("--dry-run")
+    assert box.clear_group_calls == [True]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- [2026-11-04 13:30:00] [not-a-code] ABIERTA BLOQUEA | go-bad: FRASE LITERAL primero",
+        "- [2026-11-04 13:30:00] [] ABIERTA BLOQUEA | go-missing: FRASE LITERAL primero",
+    ],
+)
+def test_caja1_go_line_owner_invalido_o_ausente_fallback_generico(box, line):
+    """RED/E3: una linea GO sin codigo de emisor no inyecta identidad en el titulo."""
+    box.cola.write_text("# cola\n" + line + "\n", encoding="utf-8")
+    result = box.tick("--dry-run")
+    assert result.sent, result.out
+    assert result.sent[0][0].startswith("Vuelo ?")
 
 
 def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
@@ -1848,7 +1995,7 @@ def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
         == 2
     )
     failed_tick = box.tick()
-    assert failed_tick.sent[0][0] == "GO pendiente"
+    assert failed_tick.sent[0][0] == "IM-56"
     box.notify_rc = 0
     assert (
         box.ca.main(

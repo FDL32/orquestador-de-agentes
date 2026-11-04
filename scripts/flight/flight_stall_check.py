@@ -46,7 +46,7 @@ SIBLING_GLOBS = ("implantador-*", "triaje-*")
 COLA_REL = Path("diseno") / "COLA_PARA_USUARIO.md"
 GO_LINE_RE = re.compile(
     r"^- \[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] "
-    r"\[[A-Z]{2,3}-[0-9]{1,4}\] ABIERTA BLOQUEA \| "
+    r"\[(?P<owner>[A-Z]{2,3}-[0-9]{1,4})\] ABIERTA BLOQUEA \| "
     r"(?P<id>go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?): (?P<what>.*)$"
 )
 GO_RESOLVED_RE = re.compile(
@@ -55,6 +55,7 @@ GO_RESOLVED_RE = re.compile(
     r"(?P<id>go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?): .*$"
 )
 QUOTA_NAME = "quota_last.txt"
+FLIGHT_ROSTER_NAME = "flight_roster.json"
 STATE_NAME = "stall_state.json"
 TASK_REGISTERED_NAME = "task_registered.json"
 TASK_STATE_NAME = "task_state.json"
@@ -263,6 +264,7 @@ def check_cola(out, st):
     After: lista de hallazgos; cola ausente = ciego + ``detector-ciego-cola`` AVISO.
     """
     del st
+    out.setdefault("session_codes", {})
     if CFG.cola is None:
         out["ciego_cola"] = True
         return []
@@ -275,7 +277,8 @@ def check_cola(out, st):
                 "El detector de la cola esta ciego: no existe COLA_PARA_USUARIO.md",
             )
         ]
-    redact = _load_alert().redact
+    alert_mod = _load_alert()
+    redact = alert_mod.redact
     found = []
     abiertas = 0
     lines = CFG.cola.read_text(encoding="utf-8-sig", errors="replace").splitlines()
@@ -291,7 +294,10 @@ def check_cola(out, st):
         abiertas += 1
         if go_match:
             key = go_match.group("id")
-            what = redact(go_match.group("what"))
+            what = alert_mod.redact_literal_first(
+                go_match.group("what"), preserve_literal=True
+            )
+            out["session_codes"][key] = go_match.group("owner")
             found.append((key, "URGENTE", what))
             continue
         h = hashlib.sha1(line.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
@@ -489,7 +495,7 @@ def _resolve_dir(raw, label):
     return real
 
 
-def _resolve_paths(a, ops):
+def _resolve_paths(a, ops):  # noqa: C901
     """Resuelve cola, motor, worktrees, cupo y umbral de disco (argumento > entorno > derivado).
 
     Before: ``a`` son los argumentos; ``ops`` es el directorio de operacion ya resuelto
@@ -500,7 +506,9 @@ def _resolve_paths(a, ops):
     """
     env = os.environ
     causes = []
-    cfg = SimpleNamespace(ops=ops, state=None, cola=None, motor=None, quota=None)
+    cfg = SimpleNamespace(
+        ops=ops, state=None, cola=None, motor=None, quota=None, session_code=None
+    )
     cfg.wt_globs, cfg.free_gb_min, cfg.disk_anchor = [], FREE_GB_DEFAULT, Path("/")
     if ops is not None:
         cfg.state = ops / STATE_NAME
@@ -511,6 +519,19 @@ def _resolve_paths(a, ops):
                 f"flight-dir sin resolver: pasa --flight-dir o define {FLIGHT_DIR_ENV}"
             )
         cfg.cola = _resolve_dir(raw, "flight-dir") / COLA_REL
+        roster = Path(raw) / FLIGHT_ROSTER_NAME
+        if roster.is_file():
+            try:
+                value = json.loads(roster.read_text(encoding="utf-8"))
+                candidate = (
+                    value.get("active_roles", {})
+                    .get("orquestador", {})
+                    .get("session_code")
+                )
+                if re.fullmatch(r"[A-Z]{2,3}-[0-9]{1,4}", str(candidate or "")):
+                    cfg.session_code = candidate
+            except (OSError, ValueError, AttributeError):
+                pass
     except ValueError as exc:
         causes.append(str(exc))
     raw = a.motor_wt or env.get("STALL_MOTOR_WT")
@@ -599,7 +620,7 @@ def _detect(out, st):
     return found, broke
 
 
-def _notify_all(ca, found, a):
+def _notify_all(ca, found, a, out):
     """Avisa (o marca con --baseline) cada hallazgo; devuelve el rc (1 hallazgos, 2 aviso fallido)."""
     rc = 0
     for key, level, what in found:
@@ -608,8 +629,20 @@ def _notify_all(ca, found, a):
             ca.mark_seen(key, level, "stall", a.dry_run)
             print(f"BASELINE {level} {key}")
             continue
-        title = "GO pendiente" if key.startswith("go-") else None
-        r = ca.event(key, level, title, what, False, a.dry_run, owner="stall")
+        session_code = out.get("session_codes", {}).get(key) or getattr(
+            CFG, "session_code", None
+        )
+        r = ca.event(
+            key,
+            level,
+            None,
+            what,
+            False,
+            a.dry_run,
+            owner="stall",
+            session_code=session_code,
+            preserve_literal=key in out.get("session_codes", {}),
+        )
         if r == 2:
             rc = 2
         print(f"{level} {key} rc_aviso={r} {what}")
@@ -668,7 +701,10 @@ def run(a):
                 "Detector sin configurar: " + "; ".join(c[:80] for c in causes),
             ),
         )
-    rc = _notify_all(ca, found, a)
+    active_events = {key for key in ca.load_state() if str(key).startswith("event:")}
+    if not found and not active_events and not ca.clear_group(a.dry_run):
+        print("STALL_CHECK_WARNING: no se pudo limpiar nuestro Group de avisos")
+    rc = _notify_all(ca, found, a, out)
     if not a.dry_run and not a.baseline and not broke:
         _reconcile(ca, out, found, a)
     if not a.dry_run:

@@ -848,7 +848,10 @@ class _Checker:
             if (
                 kind == "powershell"
                 and low.startswith("-")
-                and _prefix_of(low.lstrip("-"), _FORBIDDEN_SWITCH)
+                and (
+                    _prefix_of(low.lstrip("-"), _FORBIDDEN_SWITCH)
+                    or _prefix_of(low.lstrip("-"), "simulatenotifiersetting")
+                )
             ):
                 order.bad(f"{w} suprime el aviso (prohibido)")
             name = low.lstrip("-")
@@ -1157,6 +1160,7 @@ def emit_alert(
     *,
     ops_dir: str | None,
     flight_dir: str | None,
+    session_code: str | None = None,
     dry_run: bool,
     runner=subprocess.run,
 ) -> bool:
@@ -1182,6 +1186,8 @@ def emit_alert(
     ]
     if flight_dir:
         cmd += ["--flight-dir", flight_dir]
+    if session_code:
+        cmd += ["--session-code", session_code]
     if emit_key:
         cmd += ["--emit", emit_key, "--what", _alert_what(diag, first_finding)[:300]]
     for key in resolve_keys:
@@ -1246,6 +1252,7 @@ def emit_child_main(args: argparse.Namespace, loader=_load_comms_alert) -> int:
             False,
             args.dry_run,
             owner=ALERT_OWNER,
+            session_code=args.session_code,
         )
         if sent not in (0, 10):
             rc = 2
@@ -1293,6 +1300,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--emit-child", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--emit", help=argparse.SUPPRESS)
     ap.add_argument("--what", help=argparse.SUPPRESS)
+    ap.add_argument("--session-code", help=argparse.SUPPRESS)
     ap.add_argument("--resolve", action="append", help=argparse.SUPPRESS)
     return ap
 
@@ -1521,7 +1529,28 @@ def _alert_and_report(
     first = next((ln.strip() for ln in lines[1:2]), "")
     ops = args.ops_dir or env.get(OPS_DIR_ENV)
     flight = args.flight_dir or env.get(FLIGHT_DIR_ENV)
-    ok = emit_alert(diag, first, ops_dir=ops, flight_dir=flight, dry_run=args.dry_run)
+    roster = getattr(args, "roster_path", None) or env.get(ROSTER_ENV) or None
+    session_code = None
+    if roster:
+        try:
+            roster_data = json.loads(Path(roster).read_text(encoding="utf-8"))
+            candidate = (
+                roster_data.get("active_roles", {})
+                .get("orquestador", {})
+                .get("session_code")
+            )
+            if re.fullmatch(r"[A-Z]{2,3}-[0-9]{1,4}", str(candidate or "")):
+                session_code = candidate
+        except (OSError, ValueError, AttributeError):
+            pass
+    ok = emit_alert(
+        diag,
+        first,
+        ops_dir=ops,
+        flight_dir=flight,
+        session_code=session_code,
+        dry_run=args.dry_run,
+    )
     print(f"diag_rc={diag} alert={'ok' if ok else 'fallido'}")
     return diag if ok else max(diag, EXIT_UNREADABLE)
 

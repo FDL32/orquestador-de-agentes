@@ -170,3 +170,26 @@ C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInterac
 
 Retirada manual: borrar la clave del estado de `comms_alert` se hace con `--resolve`; un bloqueo del
 estado huerfano se degrada solo (tras 5 s se sigue sin bloqueo).
+## Contrato 153t: identidad y acciones
+
+El productor usa `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe` como `AppId` predeterminado y lo expone en
+`-XmlOnly`; `-AppId` solo permite parametrizarlo. Este ticket no registra AppIds ni escribe el
+Registro de Windows: queda diferido a un ticket hijo con recibo. Por ello existe una limitación
+de suplantación: otro proceso que conozca ese AppId puede presentar avisos con la misma identidad.
+
+`-XmlOnly` no muestra un toast ni modifica el historial. La forma válida contiene únicamente la
+acción `Entendido` (`system`, `dismiss`) y, si se solicita `-OpenUri`, `Abrir sesion`
+(`protocol`, `t3code://threads/...`). Cerrar no es reconocer: el texto fijo del aviso URGENTE
+indica que vuelve a avisar a 30/60/120/240 minutos. `History.Remove`/limpieza solo se intenta para
+nuestro Tag/Group y AppId, y si falla el estado canónico se conserva y el fallo se registra.
+
+Los ganchos `-SimulateToastFailure` y `-SimulateNotifierSetting` son solo de prueba y están
+prohibidos en las órdenes de latido; nunca deben viajar desde una orden de producción.
+El fallo `Setting != Enabled` hace fallar la publicacion; la retirada de un toast durante
+`ack`, `resolve` o `reconcile` es fail-soft: el estado canonico se actualiza y un fallo de
+limpieza queda en el ledger. El `title` legado de `event` y `--title` del CLI se conservan por
+compatibilidad, pero se ignoran: el titulo visible es siempre el codigo de sesion valido o
+`Vuelo ?`. El vigilante solo limpia el Group propio cuando no hay causas activas.
+La limpieza del Group es condicional: solo se ejecuta cuando no queda ninguna clave `event:` activa; una causa activa de otro productor impide la retirada global.
+`-OpenUri` puede llevar query en el productor, pero ningun productor de este ticket lo genera; queda reservado a 153v.
+El `--what` de un GO es solo la frase literal completa, escrita por la coordinadora y limitada a 160 caracteres; no lleva detalle adicional.

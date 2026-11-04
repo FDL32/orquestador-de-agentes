@@ -70,11 +70,18 @@ def ca(tmp_path):
     clock = types.SimpleNamespace(now=1_000_000.0)
     mod.time = types.SimpleNamespace(time=lambda: clock.now)
     sent = []
+    cleanup = []
     mode = {"rc": 0}
-    mod.notify = lambda title, message, dry: (
+    mod.notify = lambda title, message, dry, **kwargs: (
         sent.append((title, message)),
         mode["rc"],
     )[1]
+
+    def remove_toast(tag, group="flight", app_id=None, dry=False):
+        cleanup.append((tag, group, app_id, dry))
+        return True
+
+    mod.remove_toast = remove_toast
     real_main = mod.main
 
     def test_main(argv=None):
@@ -91,7 +98,9 @@ def ca(tmp_path):
 
     mod.main = test_main
     mod._raw_main = real_main
-    return types.SimpleNamespace(m=mod, clock=clock, sent=sent, mode=mode, dir=tmp_path)
+    return types.SimpleNamespace(
+        m=mod, clock=clock, sent=sent, cleanup=cleanup, mode=mode, dir=tmp_path
+    )
 
 
 def _contend(code=errno.EACCES):
@@ -571,6 +580,7 @@ def test_fila24_ack_silencia(ca):
     """fila 24: ack sienta la clave - retroceso no la reavisa."""
     ca.m.event("k", "URGENTE", None, "x", False, False)
     assert ca.m.ack("k") == 0
+    assert ca.cleanup[-1][0:2] == ("k", "flight")
     ca.clock.now += 600 * M
     assert ca.m.event("k", "URGENTE", None, "x", False, False) == 10
 
@@ -691,11 +701,39 @@ def test_fila35_ack_marca_acked_y_dry_no_escribe(ca):
     assert ca.m.load_state()["event:k"]["acked"] is True
 
 
+def test_ack_resolve_sin_toast_previo_no_registra_fallo_de_remove(ca, monkeypatch):
+    """Limpieza fail-soft: una marca sin toast no genera un fallo espurio de History.Remove."""
+    ca.m.save_state(
+        {
+            "event:ghost": {
+                "level": "AVISO",
+                "first": 1,
+                "last": 1,
+                "n": 1,
+                "nu": 0,
+                "acked": False,
+                "owner": "manual",
+                "toast": False,
+            }
+        }
+    )
+
+    def impossible_remove(*args, **kwargs):
+        raise AssertionError("History.Remove no debe invocarse sin toast publicado")
+
+    monkeypatch.setattr(ca.m, "remove_toast", impossible_remove)
+    assert ca.m.ack("ghost") == 0
+    assert not ca.m.LEDGER.exists()
+    assert ca.m.resolve("ghost") == 0
+    assert not ca.m.LEDGER.exists()
+
+
 def test_fila36_resolve_borra_y_la_recaida_avisa(ca):
     """fila 36: resolve borra la clave y una recaida vuelve a avisar."""
     ca.m.event("r1", "URGENTE", None, "x", False, False)
     n0 = len(ca.sent)
     assert ca.m.resolve("r1") == 0
+    assert ca.cleanup[-1][0:2] == ("r1", "flight")
     assert "event:r1" not in ca.m.load_state()
     assert ca.m.event("r1", "URGENTE", None, "x", False, False) == 0
     assert len(ca.sent) == n0 + 1
@@ -717,6 +755,7 @@ def test_fila39_reconcile_prefijos_y_activas(ca):
     """fila 39: reconcile borra claves no activas (la recaida avisa) y respeta activas."""
     assert ca.m.event("k", "AVISO", None, "x", False, False) == 0
     assert ca.m.reconcile(("k",), set()) == ["k"]
+    assert ca.cleanup[-1][0:2] == ("k", "flight")
     assert "event:k" not in ca.m.load_state()
     assert ca.m.event("k", "AVISO", None, "x", False, False) == 0
     assert len(ca.sent) == 2
@@ -1116,7 +1155,362 @@ def test_fila70_main_event_usa_owner_manual(ca, monkeypatch):
     monkeypatch.setattr(ca.m, "event", lambda *a, **k: vistos.append((a, k)) or 0)
     monkeypatch.setenv(ca.m.OPS_DIR_ENV, str(ca.dir))
     assert ca.m.main(["--event", "K", "--what", "w"]) == 0
-    assert vistos[0][1] == {"owner": "manual"}
+    assert vistos[0][1] == {"owner": "manual", "session_code": None}
+
+
+def test_caja1_evento_sin_codigo_conserva_aviso_y_marca_titulo_generico(ca):
+    """Caja 1 RED/E2: la falta de codigo no puede silenciar el aviso."""
+    assert (
+        ca.m.event("sin-codigo", "AVISO", None, "FRASE LITERAL primero", False, False)
+        == 0
+    )
+    assert ca.sent[0][0].startswith("Vuelo ?")
+
+
+def test_caja1_evento_largo_cadena_real_protege_frase_y_recorta(ca, monkeypatch):
+    """A4: notify real recibe la frase protegida y aplica el recorte de 160."""
+    real_mod = _load("comms_alert_chain_real")
+    real_mod.configure(str(ca.dir))
+    captured = []
+
+    def run(argv, **kwargs):
+        captured.append(list(argv))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(real_mod.subprocess, "run", run)
+    monkeypatch.setattr(real_mod, "_powershell_exe", lambda: Path("powershell.exe"))
+    ca.m.notify = real_mod.notify
+    what = (
+        "PUSH C:/Users/fdl/repo mcp:12345678-1234-1234-1234-123456789012 16. Detalle: "
+        + ("x" * 400)
+    )
+    assert (
+        ca.m.event(
+            "frase-larga",
+            "AVISO",
+            "CO-29",
+            what,
+            False,
+            False,
+            preserve_literal=True,
+        )
+        == 0
+    )
+    message = captured[0][captured[0].index("-Message") + 1]
+    assert message.startswith(
+        "PUSH C:/Users/fdl/repo mcp:12345678-1234-1234-1234-123456789012 16."
+    )
+    assert len(message) <= ca.m.TEXT_LIMIT
+
+
+def test_caja1_go_usa_owner_como_codigo_de_sesion_y_redacta_la_frase(ca, tmp_path):
+    """Caja 1 RED/E3: GO explicito identifica la sesion; el llamador ya da la frase primera."""
+    queue = tmp_path / "diseno" / "COLA_PARA_USUARIO.md"
+    queue.parent.mkdir()
+    queue.write_text("", encoding="utf-8")
+    assert (
+        ca.m.go_request(
+            "go-caja1",
+            "FRASE LITERAL primero",
+            str(tmp_path),
+            "CO-29",
+            dry=False,
+            now_fn=lambda: "2026-11-04 13:24:00",
+        )
+        == 0
+    )
+    assert ca.sent[0][0] == "CO-29"
+    assert ca.sent[0][1] == "FRASE LITERAL primero"
+
+
+def test_f1_appid_efectivo_es_igual_al_publicar_y_retirar(ca, monkeypatch):
+    real = _load("f1_real")
+    real.configure(str(ca.dir))
+    """F1: publicación y retirada deben usar exactamente la misma identidad."""
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(real.subprocess, "run", run)
+    monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
+    key = "hilo-failed-6bb68939-6779-41de-be05-88e711bb7d03"
+    real.notify("CO-29", "FRASE", False, tag=key, group="flight")
+    real.remove_toast(key)
+
+    def appid(argv):
+        return argv[argv.index("-AppId") + 1]
+
+    assert len(calls) == 2
+    assert appid(calls[0]) == appid(calls[1]) == real.POWERSHELL_APP_ID
+    expected_tag = real.tag_for_toast(key)
+    assert calls[0][calls[0].index("-Tag") + 1] == expected_tag
+    assert calls[1][calls[1].index("-Tag") + 1] == expected_tag
+    assert "-Remove" in calls[1] and "-NoFlash" in calls[1]
+
+
+def test_clear_group_real_no_flash_y_appid_unico(ca, monkeypatch):
+    real = _load("clear_group_real")
+    real.configure(str(ca.dir))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(real.subprocess, "run", run)
+    monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
+    assert real.clear_group(False) is True
+    assert "-ClearGroup" in calls[0]
+    assert "-NoFlash" in calls[0]
+    assert calls[0][calls[0].index("-AppId") + 1] == real.POWERSHELL_APP_ID
+
+
+def test_f2_enlace_basico_t3code_se_pasa_y_fallback_no_anade_uri(ca, monkeypatch):
+    """F2: el enlace depende de ambos ids del entorno; si falta uno solo queda dismiss."""
+    captured = []
+    ca.m.notify = lambda *args, **kwargs: captured.append(kwargs) or 0
+    monkeypatch.setenv("T3_ENVIRONMENT_ID", "ENVIRONMENT_ID")
+    monkeypatch.setenv("T3_THREAD_ID", "THREAD_ID")
+    assert (
+        ca.m.event(
+            "f2", "URGENTE", "ignorado", "FRASE", True, False, session_code="CO-29"
+        )
+        == 0
+    )
+    assert captured[-1]["open_uri"] == "t3code://threads/ENVIRONMENT_ID/mcp:THREAD_ID"
+    monkeypatch.delenv("T3_THREAD_ID")
+    assert (
+        ca.m.event(
+            "f2b", "URGENTE", "ignorado", "FRASE", True, False, session_code="CO-29"
+        )
+        == 0
+    )
+    assert captured[-1]["open_uri"] is None
+
+
+@pytest.mark.parametrize(
+    ("environment", "thread"),
+    [
+        ("T3_ENVIRONMENT_ID", "T3_THREAD_ID"),
+        ("FLIGHT_ENVIRONMENT_ID", "FLIGHT_THREAD_ID"),
+    ],
+)
+def test_session_open_uri_acepta_los_dos_pares_de_entorno(
+    ca, monkeypatch, environment, thread
+):
+    for name in (
+        "T3_ENVIRONMENT_ID",
+        "T3_THREAD_ID",
+        "FLIGHT_ENVIRONMENT_ID",
+        "FLIGHT_THREAD_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(environment, "ENVIRONMENT_ID")
+    monkeypatch.setenv(thread, "THREAD_ID")
+    assert ca.m.session_open_uri() == "t3code://threads/ENVIRONMENT_ID/mcp:THREAD_ID"
+
+
+def test_f3_codigo_ausente_ignora_title_del_llamador(ca):
+    """F3: sin código válido el título visible siempre es Vuelo ?."""
+    ca.sent.clear()
+    assert ca.m.event("f3", "AVISO", "CO-29", "FRASE", True, False) == 0
+    assert ca.sent[-1][0] == "Vuelo ?"
+
+
+def test_f4_protege_la_frase_literal_antes_de_redactar_la_cola(ca, monkeypatch):
+    """F4: ruta y mcp:id dentro de la primera frase permanecen literales."""
+    phrase = "PUSH C:/Users/fdl/repo mcp:12345678-1234-1234-1234-123456789012 16. Detalle: reintento"
+    real = _load("f4_real")
+    real.configure(str(ca.dir))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(real.subprocess, "run", run)
+    monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
+    assert real.notify("CO-29", phrase, False, preserve_literal=True) == 0
+    message = calls[0][calls[0].index("-Message") + 1]
+    assert message.startswith(
+        "PUSH C:/Users/fdl/repo mcp:12345678-1234-1234-1234-123456789012 16."
+    )
+    assert len(message) <= real.TEXT_LIMIT
+
+
+def test_evento_manual_redacta_completo_sin_heuristica(ca, monkeypatch):
+    real = _load("manual_redact_real")
+    real.configure(str(ca.dir))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(real.subprocess, "run", run)
+    monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
+    assert (
+        real.event(
+            "manual-redact",
+            "AVISO",
+            None,
+            "Detalle C:/Users/fdl/privada. Escribe GO 1 token-secreto",
+            False,
+            False,
+            session_code="CO-29",
+        )
+        == 0
+    )
+    message = calls[0][calls[0].index("-Message") + 1]
+    assert "<ruta>" in message
+    assert "token-secreto" not in message
+    assert "Escribe GO 1" in message
+
+
+def test_tag_for_toast_distingue_uuid_y_reutiliza_tag_en_publicar_y_retirar(
+    ca, monkeypatch
+):
+    real = _load("tag_identity_real")
+    real.configure(str(ca.dir))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(real.subprocess, "run", run)
+    monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
+    keys = [
+        "hilo-failed-6bb68939-6779-41de-be05-88e711bb7d03",
+        "hilo-failed-2083aab7-ec8d-45a6-ad03-ac2e9ba6782c",
+    ]
+    for key in keys:
+        assert real.notify("CO-31", "aviso", False, tag=key) == 0
+        assert real.remove_toast(key, dry=False)
+    published = [calls[i][calls[i].index("-Tag") + 1] for i in (0, 2)]
+    removed = [calls[i][calls[i].index("-Tag") + 1] for i in (1, 3)]
+    assert published[0] != published[1]
+    assert published == removed
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["mi-token=abc123", "my_token=abc", "x-api-key: abc", "mypassword=abc"],
+)
+def test_redact_reconoce_secretos_pegados_a_prefijos(ca, value):
+    real = _load("secret_prefixes_real")
+    assert "abc" not in real.redact(value)
+
+
+def test_redact_literal_first_docstring_real_del_fuente():
+    """La especificacion se lee del docstring AST, no de una reasignacion posterior."""
+    tree = ast.parse(CA_PATH.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "redact_literal_first"
+    )
+    doc = ast.get_docstring(function) or ""
+    assert "96 caracteres" not in doc
+    assert "debe aplicar" not in doc
+    assert "preserve_literal" in doc
+    assert "no pre-redacta" in doc
+
+
+def test_go_cola_tick_literal_conserva_ruta_mcp_y_redacta_secreto(ca, monkeypatch):
+    real = _load("go_chain_real")
+    real.configure(str(ca.dir))
+    flight = ca.dir / "flight"
+    queue = flight / "diseno" / "COLA_PARA_USUARIO.md"
+    queue.parent.mkdir(parents=True)
+    queue.write_text("", encoding="utf-8")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(real.subprocess, "run", run)
+    monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
+    phrase = (
+        "PUSH C:/Users/fdl/repo mcp:12345678-1234-1234-1234-123456789012 "
+        "16. token-secreto"
+    )
+    assert real.go_request("go-chain", phrase, str(flight), "CO-29") == 0
+    fs = _load_sibling("flight_stall_check.py")
+    fs.CFG = types.SimpleNamespace(cola=queue)
+    out = {}
+    found = fs.check_cola(out, {})
+    key, level, what = found[0]
+    assert key == "go-chain" and level == "URGENTE"
+    assert "C:/Users/fdl/repo" in what
+    assert "mcp:12345678-1234-1234-1234-123456789012" in what
+    assert "token-secreto" not in what
+    assert (
+        real.event(
+            key,
+            level,
+            None,
+            what,
+            True,
+            False,
+            owner="stall",
+            session_code="CO-29",
+            preserve_literal=True,
+        )
+        == 0
+    )
+    message = calls[-1][calls[-1].index("-Message") + 1]
+    assert "C:/Users/fdl/repo" in message
+    assert "mcp:12345678-1234-1234-1234-123456789012" in message
+    assert "token-secreto" not in message
+
+
+def test_caja1_event_owner_codigo_valido_titulo_y_codigo_invalido_fallback(ca):
+    """RED/E3: session_code identifica; owner sigue siendo la clase interna del estado."""
+    ca.m.event(
+        "owner-ok",
+        "AVISO",
+        None,
+        "FRASE LITERAL primero",
+        False,
+        False,
+        owner="manual",
+        session_code="CO-29",
+    )
+    assert ca.sent[-1][0].startswith("CO-29")
+    for invalid in (
+        "mcp:12345678-1234-1234-1234-123456789012",
+        r"C:\secret",
+        "<CO-29>",
+        "TOOLONG-1",
+    ):
+        ca.m.event(
+            "owner-" + str(len(ca.sent)),
+            "AVISO",
+            None,
+            "FRASE LITERAL primero",
+            False,
+            False,
+            owner="manual",
+            session_code=invalid,
+        )
+        assert ca.sent[-1][0].startswith("Vuelo ?")
+
+
+def test_caja1_setting_disabled_doble_no_marca_evento_y_devuelve_rc2(ca):
+    """RED/E2: si el notificador devuelve rc 3 por Setting Disabled, comms devuelve rc 2."""
+    ca.mode["rc"] = 3
+    assert (
+        ca.m.event(
+            "setting-disabled", "AVISO", "CO-29", "FRASE LITERAL primero", False, False
+        )
+        == 2
+    )
+    assert ca.sent
+    assert "event:setting-disabled" not in ca.m.load_state()
 
 
 # ---- filas 71-73: redact (D21)
@@ -1128,7 +1522,8 @@ def test_fila71_redact_cubre_el_title_y_el_mensaje_del_toast(tmp_path, monkeypat
     mod.notify(
         f"hilo {_UUID_TXT}", "en C:\\Users\\fdl\\tmp_or8\\x y c:/users/FDL/y", False
     )
-    title, message = cap["cmd"][-3], cap["cmd"][-1]
+    title = cap["cmd"][cap["cmd"].index("-Title") + 1]
+    message = cap["cmd"][cap["cmd"].index("-Message") + 1]
     assert "3921a7b1" not in title
     assert "mcp:<hilo>" in title
     assert "fdl" not in message.lower()
@@ -1876,7 +2271,7 @@ def test_go_acepta_cola_vacia_y_append_especifico(ca):
     assert cola.read_bytes().endswith(
         b"] [IM-56] ABIERTA BLOQUEA | go-e2: Escribe GO 1\n"
     )
-    assert ca.sent == [("GO pendiente", "Escribe GO 1")]
+    assert ca.sent == [("IM-56", "Escribe GO 1")]
 
 
 @pytest.mark.parametrize(
@@ -1935,7 +2330,7 @@ def test_go_misma_clave_idempotente_y_conflicto_no_silencioso(ca):
     antes = cola.read_bytes()
     assert ca.m.main(args) == 10
     assert cola.read_bytes() == antes
-    assert ca.sent == [("GO pendiente", "Escribe GO 1")]
+    assert ca.sent == [("IM-56", "Escribe GO 1")]
     assert (
         ca.m.main(
             [
@@ -2007,8 +2402,8 @@ def test_go_reintento_tras_fallo_reavisa_sin_duplicar_linea(ca):
         b"] [IM-56] ABIERTA BLOQUEA | go-r: Escribe GO 1\n"
     )
     assert ca.sent == [
-        ("GO pendiente", "Escribe GO 1"),
-        ("GO pendiente", "Escribe GO 1"),
+        ("IM-56", "Escribe GO 1"),
+        ("IM-56", "Escribe GO 1"),
     ]
 
 
@@ -2306,14 +2701,14 @@ def test_go_redacta_ruta_y_secreto_en_aviso_inmediato_y_tick(ca, capsys):
     real_notify = _load("comms_alert_notify_real").notify
     recibido = []
 
-    def captura_notify(title, message, dry):
+    def captura_notify(title, message, dry, **kwargs):
         recibido.append((title, message, dry))
         return real_notify(title, message, True)
 
     ca.m.notify = captura_notify
     phrase = r"usa C:\Users\fdl\privada\token-secreto"
     assert ca.m.main(_go_args(ca, flight, "go-redact", phrase)) == 0
-    assert recibido[-1][1] == phrase
+    assert recibido[-1][1] == r"usa C:\Users\fdl\privada\<secreto>"
     salida = capsys.readouterr().out
     assert phrase not in salida
     assert "<ruta>" in salida
@@ -2520,7 +2915,7 @@ def test_go_dos_procesos_y_escritor_crudo_no_funden_ni_pierden_lineas(ca):
         "import importlib.util, sys; "
         "spec=importlib.util.spec_from_file_location('ca', sys.argv[1]); "
         "m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
-        "m.notify=lambda title,message,dry: 0; "
+        "m.notify=lambda title,message,dry,**kwargs: 0; "
         "raise SystemExit(m.main(sys.argv[2:]))"
     )
     processes = [

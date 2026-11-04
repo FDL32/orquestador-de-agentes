@@ -23,6 +23,7 @@ After: rc 0 = aviso emitido, 10 = limitado o nada nuevo, 2 = error (incluye ops-
 import argparse
 import contextlib
 import errno
+import hashlib
 import importlib.util
 import json
 import os
@@ -71,9 +72,15 @@ _ROW_KEYS = (
     "nota",
 )
 OWN_PREFIX = "comms_alert:"  # prefijo de mensaje_id de las filas propias (mas un UUID aleatorio por fila)
+POWERSHELL_APP_ID = (
+    "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe"
+)
+ENVIRONMENT_ID_ENV = "T3_ENVIRONMENT_ID"
+THREAD_ID_ENV = "T3_THREAD_ID"
 TEXT_LIMIT = 160
 GO_ID_RE = re.compile(r"^go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?$")
 OWNER_RE = re.compile(r"^[A-Z]{2,3}-[0-9]{1,4}$")
+SESSION_CODE_RE = OWNER_RE
 GO_QUEUE_REL = Path("diseno") / "COLA_PARA_USUARIO.md"
 GO_LINE_RE = re.compile(
     r"^- \[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] "
@@ -97,6 +104,9 @@ _RE_WINPATH = re.compile(
 _RE_OBJ_START = re.compile(r'\{\s*["}]')
 _RE_OWN_FRAGMENT = re.compile(r'"(?:by|from)"\s*:\s*"comms_alert"')
 _RE_HOMEPATH = re.compile(r"/(?:home|Users)/[^\s'\"<>|]*")
+_RE_SECRET = re.compile(
+    r"(?i)(?:token|secret|secreto|password|passwd|api[_-]?key)[=:_-][ ]*[^ ,;]+"
+)
 # Rutas del directorio de operacion: las fija configure(); None = sin configurar.
 LEDGER = None
 STATE = None
@@ -329,9 +339,26 @@ def redact(text):
     out = _RE_UUID.sub("<uuid>", out)
     out = _RE_WINPATH.sub("<ruta>", out)
     out = _RE_HOMEPATH.sub("<ruta>", out)
+    out = _RE_SECRET.sub("<secreto>", out)
     if len(out) > TEXT_LIMIT:
         out = out[: TEXT_LIMIT - 3] + "..."
     return out
+
+
+def tag_for_toast(key):
+    """Deriva un Tag estable y no colisionante para la clave cruda del aviso.
+
+    Before: ``key`` es la clave del estado que identifica una causa.
+    During: conserva claves de hasta 64 caracteres sin cambios si ``redact`` no
+        las transforma; en otro caso usa un prefijo fijo y SHA-256 de la clave cruda.
+    After: devuelve siempre un Tag de como mucho 64 caracteres, reutilizable por
+        publicación y retirada sin volver a pasar por ``redact``.
+    """
+    raw = str(key)
+    clean = redact(raw)
+    if clean == raw and len(raw) <= 64:
+        return raw
+    return "flight-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:57]
 
 
 def ledger_append(row):
@@ -389,17 +416,65 @@ def _powershell_exe():
     return Path(root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 
 
-def notify(title, message, dry):
-    """Lanza notify_user.ps1 SIN ventana y devuelve su rc (2 si no pudo lanzarse).
+def _valid_session_code(value):
+    """Devuelve un código corto seguro para el título o None si falta/no es válido."""
+    return str(value) if value and SESSION_CODE_RE.fullmatch(str(value)) else None
+
+
+def session_open_uri():
+    """Construye el enlace de sesión básico si el entorno aporta ambos identificadores."""
+    environment_id = os.environ.get(ENVIRONMENT_ID_ENV) or os.environ.get(
+        "FLIGHT_ENVIRONMENT_ID"
+    )
+    thread_id = os.environ.get(THREAD_ID_ENV) or os.environ.get("FLIGHT_THREAD_ID")
+    if not environment_id or not thread_id:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", environment_id) or not re.fullmatch(
+        r"[A-Za-z0-9._-]+", thread_id
+    ):
+        return None
+    return f"t3code://threads/{environment_id}/mcp:{thread_id}"
+
+
+def redact_literal_first(text, *, preserve_literal=False):
+    """Redacta un texto libre o conserva el literal explicito de un emisor GO.
+
+    Before: ``text`` puede ser cualquier valor; ``preserve_literal`` indica si el llamador conoce que el valor completo es la frase literal de un GO.
+    During: con ``False`` aplica ``redact`` completo; con ``True`` conserva el texto salvo secretos reconocibles por ``_RE_SECRET``, normaliza CR/LF a espacios y recorta a ``TEXT_LIMIT``. El llamador GO no pre-redacta.
+    After: devuelve texto seguro de como mucho ``TEXT_LIMIT`` caracteres.
+    """
+    raw = str(text)
+    if not preserve_literal:
+        return redact(raw)
+    value = _RE_SECRET.sub("<secreto>", raw)
+    value = value.replace("\r", " ").replace("\n", " ")
+    return value if len(value) <= TEXT_LIMIT else value[: TEXT_LIMIT - 3] + "..."
+
+
+def notify(
+    title,
+    message,
+    dry,
+    *,
+    tag=None,
+    group=None,
+    open_uri=None,
+    urgent=False,
+    app_id=None,
+    clear_group=False,
+    no_flash=False,
+    preserve_literal=False,
+):
+    """Lanza notify_user.ps1 sin ventana y devuelve su rc (2 si no pudo lanzarse).
 
     Before: ``notify_user.ps1`` junto a este fichero; SystemRoot definido (Windows).
     During: ejecuta PowerShell por ruta absoluta, sin Bypass, con timeout de 60 s.
     After: rc del proceso tal cual; 2 ante SystemRoot ausente, timeout u OSError. Titulo y
-        mensaje salen redactados (redact) en la orden y en el modo dry-run; la salida de
-        PowerShell que se imprime (recortada a 200 caracteres) NO pasa por redact.
+        mensaje se redactan completos salvo ``preserve_literal=True``, reservado a GO;
+        la salida de PowerShell se imprime recortada a 200 caracteres y no se redacciona.
     """
     title = redact(title)
-    message = redact(message)
+    message = redact_literal_first(message, preserve_literal=preserve_literal)
     if dry:
         print("DRY-RUN notify:", title, "|", message)
         return 0
@@ -420,6 +495,19 @@ def notify(title, message, dry):
         "-Message",
         message,
     ]
+    if tag is not None:
+        cmd += ["-Tag", tag_for_toast(tag)]
+    if group is not None:
+        cmd += ["-Group", redact(group)]
+    if open_uri is not None:
+        cmd += ["-OpenUri", open_uri]
+    cmd += ["-AppId", app_id or POWERSHELL_APP_ID]
+    if urgent:
+        cmd.append("-Urgent")
+    if clear_group:
+        cmd.append("-ClearGroup")
+    if no_flash:
+        cmd.append("-NoFlash")
     flags = NO_WINDOW if os.name == "nt" else 0
     try:
         r = subprocess.run(  # noqa: S603 - ruta absoluta del sistema, argumentos propios
@@ -435,6 +523,66 @@ def notify(title, message, dry):
         return 2
     print("notify rc={} {}".format(r.returncode, (r.stdout or "").strip()[:200]))
     return r.returncode
+
+
+def remove_toast(tag, group="flight", app_id=POWERSHELL_APP_ID, dry=False):
+    """Intenta limpiar solo nuestro toast; el fallo no revierte el estado canónico."""
+    if dry:
+        return True
+    exe = _powershell_exe()
+    if exe is None:
+        return False
+    cmd = [
+        str(exe),
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-File",
+        str(NOTIFY),
+        "-Title",
+        ".",
+        "-Message",
+        ".",
+        "-Tag",
+        tag_for_toast(tag),
+        "-Group",
+        redact(group),
+        "-AppId",
+        app_id,
+        "-Remove",
+        "-NoFlash",
+    ]
+    try:
+        return (
+            subprocess.run(  # noqa: S603
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                creationflags=NO_WINDOW if os.name == "nt" else 0,
+                check=False,
+            ).returncode
+            == 0
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def clear_group(dry=False):
+    """Limpia solo nuestro Group/AppId al arrancar el vigilante, fail-soft."""
+    return (
+        notify(
+            ".",
+            ".",
+            dry,
+            group="flight",
+            app_id=POWERSHELL_APP_ID,
+            clear_group=True,
+            no_flash=True,
+        )
+        == 0
+    )
 
 
 def alert(key, what, error, force, dry):
@@ -546,10 +694,22 @@ def _record(st, key, level, now, owner):
         "nu": (_nu(rec) if rec else 0) + (1 if level == "URGENTE" else 0),
         "acked": False,
         "owner": owner or (rec or {}).get("owner"),
+        "toast": True,
     }
 
 
-def event(key, level, title, what, force, dry, owner=None):
+def event(
+    key,
+    level,
+    title,
+    what,
+    force,
+    dry,
+    owner=None,
+    session_code=None,
+    open_uri=None,
+    preserve_literal=False,
+):
     """Aviso de escritorio por una causa de parada, UNA vez por aparicion; URGENTE se repite con retroceso hasta ack o hasta que deje de verse.
 
     Before: configurado; ``level`` URGENTE o AVISO.
@@ -571,7 +731,20 @@ def event(key, level, title, what, force, dry, owner=None):
             f"limitado ({key}, {level}): ya avisado hace {mins} min (n={_num(rec.get('n'), 1)}{', ack' if rec.get('acked') else ''})"
         )
         return 10
-    rc = notify(title or (f"Vuelo: {key}"), what, dry)
+    safe_code = _valid_session_code(session_code)
+    effective_title = safe_code or "Vuelo ?"
+    if not safe_code:
+        print("titulo de sesion ausente o invalido: se usa Vuelo ?")
+    rc = notify(
+        effective_title,
+        what,
+        dry,
+        tag=key,
+        group="flight",
+        urgent=level == "URGENTE",
+        open_uri=open_uri if open_uri is not None else session_open_uri(),
+        preserve_literal=preserve_literal,
+    )
     if not dry:
         if rc == 0:
             update_state(lambda s: _record(s, key, level, now, owner))
@@ -579,7 +752,8 @@ def event(key, level, title, what, force, dry, owner=None):
             _ledger_row(
                 key,
                 "ALERT" if rc == 0 else "ALERT_FALLIDO",
-                _nota(level, why, rc, what),
+                _nota(level, why, rc, what)
+                + ("; titulo_sesion=ok" if safe_code else "; titulo_sesion=fallback"),
                 "" if rc == 0 else f"notify rc={rc}",
             )
         )
@@ -602,6 +776,7 @@ def mark_seen(key, level, owner=None, dry=False):
                 "nu": 1 if level.upper() == "URGENTE" else 0,
                 "acked": False,
                 "owner": owner,
+                "toast": False,
             },
         )
     )
@@ -621,6 +796,15 @@ def ack(key, dry=False):
                 s["event:" + key] = r
 
         update_state(f)
+        rec = _rec(load_state().get("event:" + key))
+        if (
+            rec is not None
+            and rec.get("toast") is True
+            and not remove_toast(key, dry=False)
+        ):
+            ledger_append(
+                _ledger_row(key, "TOAST_REMOVE_FALLIDO", "ack: limpieza fail-soft", "")
+            )
     print(f"ack {key}")
     return 0
 
@@ -631,7 +815,18 @@ def resolve(key, dry=False):
         print(f"sin registro de {key}")
         return 10
     if not dry:
+        rec = _rec(load_state().get("event:" + key))
         update_state(lambda s: s.pop("event:" + key, None))
+        if (
+            rec is not None
+            and rec.get("toast") is True
+            and not remove_toast(key, dry=False)
+        ):
+            ledger_append(
+                _ledger_row(
+                    key, "TOAST_REMOVE_FALLIDO", "resolve: limpieza fail-soft", ""
+                )
+            )
     print(f"resuelta {key}")
     return 0
 
@@ -773,7 +968,18 @@ def go_request(  # noqa: C901
                 handle.write(prefix + line + eol)
     if dry:
         return 0
-    rc = event(go_id, "URGENTE", "GO pendiente", what, False, False, owner="go")
+    literal = redact_literal_first(what, preserve_literal=True)
+    rc = event(
+        go_id,
+        "URGENTE",
+        None,
+        literal,
+        False,
+        False,
+        owner="go",
+        session_code=owner,
+        preserve_literal=True,
+    )
     # La cola puede haberse resuelto mientras el notificador estaba bloqueado.
     with _Lock(lock_path):
         try:
@@ -845,9 +1051,10 @@ def go_resolve(  # noqa: C901 - contrato de cola, estado y reconciliacion en un 
     return resolve(go_id, dry)
 
 
-def reconcile(prefixes, active, dry=False, owner=None):
+def reconcile(prefixes, active, dry=False, owner=None):  # noqa: C901 - filtros de estado y limpieza fail-soft
     """Borra las claves de evento con esos prefijos que el detector ya NO ve (una recaida vuelve a avisar). Con owner, solo las suyas o las heredadas sin dueno."""
     gone = []
+    toast_keys = set()
 
     def f(s):
         for k in list(s):
@@ -861,6 +1068,8 @@ def reconcile(prefixes, active, dry=False, owner=None):
             if owner is not None and dueno not in (owner, None):
                 continue
             gone.append(k[6:])
+            if (_rec(s[k]) or {}).get("toast") is True:
+                toast_keys.add(k[6:])
             if not dry:
                 del s[k]
 
@@ -868,6 +1077,15 @@ def reconcile(prefixes, active, dry=False, owner=None):
         f(load_state())
     else:
         update_state(f)
+        for key in gone:
+            if key not in toast_keys:
+                continue
+            if not remove_toast(key, dry=False):
+                ledger_append(
+                    _ledger_row(
+                        key, "TOAST_REMOVE_FALLIDO", "reconcile: limpieza fail-soft", ""
+                    )
+                )
     return gone
 
 
@@ -1083,7 +1301,7 @@ def main(argv=None):  # noqa: C901 - CLI dispatch keeps legacy and GO paths expl
     go_mode = (
         a.go_id is not None
         or a.flight_dir is not None
-        or a.owner is not None
+        or (a.owner is not None and a.event is None)
         or a.sin_efecto
     )
     if go_mode:
@@ -1130,7 +1348,14 @@ def main(argv=None):  # noqa: C901 - CLI dispatch keeps legacy and GO paths expl
                 "--event exige --what (una frase con lo que hace falta del usuario)"
             )
         return event(
-            a.event, a.level, a.title, a.what, a.force, a.dry_run, owner="manual"
+            a.event,
+            a.level,
+            a.title,
+            a.what,
+            a.force,
+            a.dry_run,
+            owner="manual",
+            session_code=a.owner,
         )
     if not a.what:
         ap.error("falta --what o --scan")

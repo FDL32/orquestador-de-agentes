@@ -1882,6 +1882,18 @@ def test_fila_146_prefijo_sim_rc_1(box, capsys):
     assert "suprime el aviso" in out
 
 
+@windows_only
+def test_caja1_simulate_notifier_setting_denylist_rc_1(box, capsys):
+    """RED/R7: el gancho de Setting Disabled también suprime avisos y queda prohibido."""
+    orders = box.sup_orders()
+    orders[0] += " -SimulateNotifierSetting Disabled"
+    coord, _ = box.good()
+    s = box.latido("s-caja1.md", orders)
+    rc, out = run(box.argv(coord, s), capsys)
+    assert rc == 1, out
+    assert "suprime el aviso" in out
+
+
 # ================================================================== FILA 147 -- DENYLIST POWERSHELL (@windows_only)
 
 
@@ -2733,7 +2745,7 @@ class _Aviso:
         ca = chk._load_comms_alert()
         assert ca is not None
 
-        def notify(title, message, dry):
+        def notify(title, message, dry, **kwargs):
             if not dry:
                 self.sent.append((title, message))
             return 0
@@ -2859,7 +2871,7 @@ def test_fila_153_owner_fijo_check_y_nivel_urgente():
             llamadas.append(("configure", ops))
 
         @staticmethod
-        def event(key, level, title, what, force, dry, owner=None):
+        def event(key, level, title, what, force, dry, owner=None, session_code=None):
             llamadas.append(("event", key, level, title, what, force, dry, owner))
             return 0
 
@@ -2922,6 +2934,52 @@ def test_fila_154_subproceso_con_ejecutable_y_directorios_explicitos():
     assert cmd[cmd.index("--emit") + 1] == "latido-desviado"
     assert "--dry-run" not in cmd
     assert kwargs["capture_output"] is True and kwargs["check"] is False
+
+
+def test_fila_154_session_code_llega_al_hijo():
+    """BA07 L1/L2: emit_alert propaga --session-code al productor hijo."""
+    vistos: list[list[str]] = []
+
+    def runner(cmd, **kwargs):
+        vistos.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    assert chk.emit_alert(
+        1,
+        "- [c] f",
+        ops_dir="/o",
+        flight_dir="/v",
+        session_code="CO-31",
+        dry_run=False,
+        runner=runner,
+    )
+    cmd = vistos[0]
+    assert cmd[cmd.index("--session-code") + 1] == "CO-31"
+
+
+def test_alert_real_pasa_session_code_del_roster_al_hijo(box, capsys, monkeypatch):
+    """BA07 L2: el camino --alert lee el roster y lo reenvia al hijo real."""
+    box.roster.write_text(
+        '{"active_roles":{"orquestador":{"session_code":"CO-31"}}}',
+        encoding="utf-8",
+    )
+    malo = box.latido("malo-session.md", ["nada"])
+    sup = box.latido("s.md", box.sup_orders())
+    vistos: list[list[str]] = []
+
+    def runner(cmd, **kwargs):
+        vistos.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    original = chk.emit_alert
+    monkeypatch.setattr(
+        chk,
+        "emit_alert",
+        lambda *args, **kwargs: original(*args, **{**kwargs, "runner": runner}),
+    )
+    rc, out = run(box.argv(malo, sup, ("--alert", "--ops-dir", str(box.ops))), capsys)
+    assert rc == 1 and "alert=ok" in out
+    assert vistos[0][vistos[0].index("--session-code") + 1] == "CO-31"
 
 
 def test_fila_154_sin_ops_dir_no_lanza_nada_y_falla():
@@ -2991,7 +3049,8 @@ def test_fila_156_rc_1_emite_latido_desviado_urgente_y_no_el_roto(aviso):
     assert aviso.keys() == {"event:latido-desviado"}
     assert len(aviso.sent) == 1
     titulo, texto = aviso.sent[0]
-    assert "latido-desviado" in titulo
+    assert titulo == "Vuelo ?"
+    assert "latido-desviado" not in titulo
     assert "falta la orden" in texto
 
 
@@ -2999,7 +3058,8 @@ def test_fila_157_rc_2_emite_latido_check_roto_y_no_el_desviado(aviso):
     """Fila 157 / N123: el aviso real lleva la clave latido-check-roto."""
     assert aviso.emit(2, "latido ilegible") is True
     assert aviso.keys() == {"event:latido-check-roto"}
-    assert "latido-check-roto" in aviso.sent[0][0]
+    assert aviso.sent[0][0] == "Vuelo ?"
+    assert "latido-check-roto" not in aviso.sent[0][0]
 
 
 def test_fila_158_rc_0_resuelve_ambas_claves(aviso):
@@ -3022,8 +3082,9 @@ def test_fila_159_transiciones_resuelven_la_otra_y_la_recaida_vuelve_a_avisar(av
     assert aviso.keys() == {"event:latido-check-roto"}
     aviso.emit(1)
     assert aviso.keys() == {"event:latido-desviado"}
-    assert [t for t, _ in aviso.sent].count("Vuelo: latido-desviado") == 2
-    assert [t for t, _ in aviso.sent].count("Vuelo: latido-check-roto") == 1
+    titles = [t for t, _ in aviso.sent]
+    assert titles == ["Vuelo ?", "Vuelo ?", "Vuelo ?"]
+    assert all("latido-" not in title for title in titles)
 
 
 def test_fila_159_mismo_rc_dos_veces_no_repite_el_aviso_inmediato(aviso):
@@ -3073,6 +3134,51 @@ def test_fila_160_na_sin_roster_no_emite_y_dice_omitido(box, capsys, monkeypatch
     rc, out = run(box.argv(roster=False, extra=("--alert",)), capsys)
     assert rc == 3 and llamadas == []
     assert "diag_rc=3 alert=omitido" in out
+
+
+@pytest.mark.parametrize(
+    ("roster_text", "expected"),
+    [
+        ('{"active_roles":{"orquestador":{"session_code":"CO-31"}}}', "CO-31"),
+        ("{", None),
+        ('{"active_roles":[]}', None),
+        ('{"active_roles":{"orquestador":null}}', None),
+        ('{"active_roles":{"orquestador":{"session_code":7}}}', None),
+        ('{"active_roles":{"orquestador":{"session_code":"mcp:bad"}}}', None),
+    ],
+)
+def test_alert_roster_session_code_real_y_formas_invalidas(
+    box, capsys, monkeypatch, roster_text, expected
+):
+    """El --alert real lee cada forma de roster y nunca inyecta codigo invalido."""
+    box.roster.write_text(roster_text, encoding="utf-8")
+    malo = box.latido("malo-roster.md", ["nada"])
+    sup = box.latido("s.md", box.sup_orders())
+    vistos = {}
+
+    def captura(diag, first, **kwargs):
+        vistos.update(kwargs)
+        return True
+
+    monkeypatch.setattr(chk, "emit_alert", captura)
+    rc, out = run(box.argv(malo, sup, ("--alert", "--ops-dir", str(box.ops))), capsys)
+    assert rc in {1, 2}
+    assert "alert=ok" in out
+    assert vistos["session_code"] == expected
+
+
+def test_alert_roster_ausente_no_inyecta_session_code(box, capsys, monkeypatch):
+    """El --alert real conserva el aviso aunque el roster declarado no exista."""
+    box.roster.unlink()
+    malo = box.latido("malo-roster-ausente.md", ["nada"])
+    sup = box.latido("s.md", box.sup_orders())
+    vistos = {}
+    monkeypatch.setattr(
+        chk, "emit_alert", lambda diag, first, **kwargs: vistos.update(kwargs) or True
+    )
+    rc, out = run(box.argv(malo, sup, ("--alert", "--ops-dir", str(box.ops))), capsys)
+    assert rc == 2 and "alert=ok" in out
+    assert vistos["session_code"] is None
 
 
 @windows_only
@@ -3492,7 +3598,7 @@ def _ca_falso(event_rc: int = 0, resolve_rc: int = 10):
             return ops
 
         @staticmethod
-        def event(key, level, title, what, force, dry, owner=None):
+        def event(key, level, title, what, force, dry, owner=None, session_code=None):
             return event_rc
 
         @staticmethod
