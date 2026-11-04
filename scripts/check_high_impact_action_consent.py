@@ -41,11 +41,15 @@ alguna de 4 categorias de accion que requieren OK humano no heredable:
     o leer un contrato entero/completo, como paso previo declarado.
 
 Y verifica que, si ORDENA alguna de esas 4, el artefacto tambien declare QUIEN
-autoriza -- un campo `Autorizacion:`/`autorizado por <alguien>`/`con
-autorizacion de <alguien>` en CUALQUIER lugar del texto (misma simplicidad que
-042y: presencia literal, no proximidad ni atribucion por accion). No basta la
-palabra "autorizacion" sola: "sin autorizacion" NO cuenta, porque el patron
-exige una declaracion POSITIVA que NOMBRE a quien autoriza.
+autoriza mediante una de cinco formas positivas (`Autorizacion:`, `Autoriza:`,
+`autorizado por`, `con autorizacion [explicita] de`, `quien autoriza:`) con un
+valor que no sea marcador. Se acepta una clausula con valor no marcador aunque otra anterior
+sea marcador; no se verifica identidad ni validez real del autorizador. No
+basta la palabra "autorizacion" sola: "sin autorizacion" NO cuenta. La forma
+adicional que entra en `dispatch_externo` es `bucle [de lentes] ...` con al
+menos dos nombres de proveedor distintos en la misma linea. Es una heuristica
+estructural fail-closed: una linea que nombra un bucle y dos proveedores
+distintos exige autorizador aunque sea descriptiva.
 
 ALCANCE DECLARADO (lo que este guard NO hace)
 ----------------------------------------------
@@ -80,6 +84,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 
@@ -116,27 +121,80 @@ ACTION_PATTERNS: dict[str, re.Pattern[str]] = {
     ),
 }
 
-# Declaracion POSITIVA de quien autoriza. "sin autorizacion" no matchea: no
-# lleva ":", ni "por <alguien>", ni "de <alguien>" en esa forma.
-_CONSENT_CLAUSE_RE = re.compile(
-    r"\bautorizaci[oó]n\s*:\s*\S+"
-    r"|\bautoriza\s*:\s*\S+"
-    r"|\bautorizado\s+por\s+\S+"
-    r"|\bcon\s+autorizaci[oó]n\s+(expl[ií]cita\s+)?de\s+\S+"
-    r"|\bquien\s+autoriza\s*:\s*\S+",
+_LOOP_PROVIDER_BASES = (
+    r"anthropic|claude|codex|cohere|gemini|groq|kilo|kiosapi|llm7|mistral|"
+    r"nan|nvidia|opencode|openrouter|tokenharbor|deepseek|glm|qwen|opus|"
+    r"sonnet|haiku|gemma|mimo|kimi|minimax|nemotron|codestral|command|north|"
+    r"gpt|alvarovans|gamsgo"
+)
+_LOOP_PROVIDER_VARIANT = r"(?:\d+(?:\.\d+)?|-[a-z0-9]+(?:[.-][a-z0-9]+)*)?"
+_LOOP_DISPATCH_PATTERN = re.compile(
+    rf"\bbucle(?:[ \t]+de[ \t]+lentes)?\b[^\n]{{0,300}}\b"
+    rf"(?P<provider1>{_LOOP_PROVIDER_BASES}){_LOOP_PROVIDER_VARIANT}\b"
+    rf"[^\n]{{0,300}}\b(?!\b(?P=provider1){_LOOP_PROVIDER_VARIANT}\b)"
+    rf"(?:{_LOOP_PROVIDER_BASES}){_LOOP_PROVIDER_VARIANT}\b",
     re.IGNORECASE,
 )
+ACTION_PATTERNS["dispatch_externo"] = re.compile(
+    rf"(?:{ACTION_PATTERNS['dispatch_externo'].pattern})|(?:{_LOOP_DISPATCH_PATTERN.pattern})",
+    re.IGNORECASE,
+)
+
+_CONSENT_CLAUSE_RE = re.compile(
+    r"\b(?:autorizaci[oó]n|autoriza)[ \t]*:[ \t]*[*_`~]*[ \t]*(?P<colon>\S+)"
+    r"|\bautorizado[ \t]+por[ \t]+(?P<por>\S+)"
+    r"|\bcon[ \t]+autorizaci[oó]n[ \t]+(?:expl[ií]cita[ \t]+)?de[ \t]+(?P<de>\S+)"
+    r"|\bquien[ \t]+autoriza[ \t]*:[ \t]*[*_`~]*[ \t]*(?P<quien>\S+)",
+    re.IGNORECASE,
+)
+
+_CONSENT_MARKERS = frozenset({"", "pendiente", "ninguna", "ninguno", "tbd", "n/a", "?"})
+
+
+def _normalized_consent_value(value: str) -> str:
+    """Normaliza el primer token de una clausula de consentimiento.
+
+    Before: recibe el valor no vacio capturado por una de las cinco formas.
+    During: quita envoltorios Markdown/puntuacion final, hace casefold y
+        elimina diacriticos del token capturado.
+    After: devuelve un valor comparable con ``_CONSENT_MARKERS`` sin I/O ni
+        mutacion del texto original.
+    """
+    raw = value.strip()
+    cleaned = raw.strip("`*_~'\".,;:!?()[]{}<>¿¡")
+    folded = unicodedata.normalize("NFD", cleaned.casefold())
+    return "".join(char for char in folded if unicodedata.category(char) != "Mn")
+
+
+def _has_valid_consent_clause(text: str) -> bool:
+    """Indica si alguna de las cinco formas tiene valor no marcador.
+
+    Before: recibe el artefacto completo como texto UTF-8.
+    During: itera todas las coincidencias y acepta la primera cuyo valor
+        normalizado no sea un marcador; una coincidencia marcador no oculta
+        una posterior valida.
+    After: devuelve True solo con una clausula con valor no marcador; no
+        verifica identidad, procedencia ni autoridad real.
+    """
+    for match in _CONSENT_CLAUSE_RE.finditer(text):
+        value = next(
+            captured for captured in match.groupdict().values() if captured is not None
+        )
+        if _normalized_consent_value(value) not in _CONSENT_MARKERS:
+            return True
+    return False
 
 
 def detect_unauthorized_actions(text: str) -> dict[str, str]:
     """Categorias de accion que `text` ORDENA sin declarar quien autoriza.
 
     Devuelve un mapa categoria -> fragmento que disparo el patron. Vacio si no
-    se ordena ninguna de las 4 categorias, o si se declara autorizacion en
-    cualquier lugar del texto (cobertura global, no por-accion -- misma
-    simplicidad que `check_contract_clause_coverage.check_clause_coverage`).
+    se ordena ninguna de las 4 categorias, o si existe una clausula positiva
+    con valor no-marcador en cualquier lugar del texto (cobertura global, no
+    por-accion -- misma simplicidad que
+    `check_contract_clause_coverage.check_clause_coverage`).
     """
-    if _CONSENT_CLAUSE_RE.search(text):
+    if _has_valid_consent_clause(text):
         return {}
     found: dict[str, str] = {}
     for category, pattern in ACTION_PATTERNS.items():

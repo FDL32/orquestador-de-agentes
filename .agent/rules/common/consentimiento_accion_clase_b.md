@@ -14,8 +14,8 @@ acciones de alto impacto es
 convierte su enumeracion en una prueba de consentimiento.
 
 El diseno y los limites de esta regla proceden de
-`ADJUDICACION_confirma_ronda1_20261103.md` y
-`ADJUDICACION_confirma_ronda2_20261103.md`.
+`diseno/ADJUDICACION_confirma_ronda1_20261103.md` y
+`diseno/ADJUDICACION_confirma_ronda2_20261103.md`.
 
 ## 2. Norma de consentimiento
 
@@ -56,27 +56,39 @@ archivado normales, `schedule_task`, cambios de `agents.json`, snapshot de
 `check_motor_pristine`, borrado de worktrees locales, reset/clean/restore sobre
 ramas propias y dispatch a proveedores.
 
-El guard `scripts/check_high_impact_action_consent.py` solo exige que el
-artefacto nombre un autorizador para sus cuatro categorias y solo en las
-formas literales de sus patrones; no verifica que el autorizador sea valido.
-Por ejemplo, una linea de bucle de lentes y envio del bundle puede no activar
-ningun patron si no usa esas formas literales. El campo `Autorizacion: x` que
-satisface al guard NO es consentimiento: `Autorizacion: pendiente` y
-`Autorizacion: ninguna` tambien pasan, y un agente puede escribirlo. Esto no
-cambia la clasificacion A del dispatch a proveedores: la ficha la conserva y
-la decision del usuario sigue pendiente.
+El dispatch a proveedores es clase A por autorizacion permanente acotada:
+solo proveedores del roster, `data_sensitivity=public` declarada, sin secretos
+ni material no versionado en el bundle. Pasa a clase B si la sensibilidad no
+es `public`, si el bundle lleva material no versionado (`privada/`,
+credenciales o transcripts) o si el proveedor no esta en el roster. La
+ratificacion del roster por el usuario sigue siendo deuda abierta.
+
+El guard `scripts/check_high_impact_action_consent.py` exige que el artefacto
+nombre una clausula con valor no marcador para sus cuatro categorias y para la
+forma estructural `bucle [de lentes] ...` con al menos dos nombres de
+proveedor distintos en la misma linea. Es una heuristica estructural
+fail-closed: una linea que nombra un bucle y dos proveedores distintos exige
+autorizador aunque sea descriptiva. Rechaza los
+valores marcador `pendiente`, `ninguna`, `ninguno`, `tbd`, `n/a` y `?` en las
+cinco formas de clausula; una clausula valida posterior hace pasar el texto.
+No verifica que el autorizador sea valido, ni que sea la persona que
+corresponde: `Autorizacion: x` tampoco es consentimiento. La forma del bucle
+se detecta dentro de `dispatch_externo`, no como una categoria nueva. Esto no
+cambia la clasificacion A acotada del dispatch a proveedores: roster,
+`data_sensitivity=public` declarada y ausencia de secretos/material no
+versionado son condiciones; el roster aun no esta ratificado por el usuario.
 
 ### Cobertura real hoy
 
-Medida contra `ACTION_PATTERNS` del guard (lineas 91-117):
+Medida contra el simbolo `ACTION_PATTERNS` del guard:
 
 - dispatch externo: detector `dispatch_externo` | freno: prosa;
 - push: detector `push` | freno: prosa;
-- force-push: detector `borrado_irreversible` | freno: prosa;
+- force-push: detectores `push` + `borrado_irreversible` | freno: prosa;
 - borrado irreversible: detector `borrado_irreversible` | freno: prosa;
 - gasto desproporcionado: detector `gasto_desproporcionado` | freno: prosa;
 - sync/install/upgrade/rollback/prune: detector: ninguno | freno: prosa;
-- tags: detector: ninguno | freno: prosa;
+- tags locales: detector: ninguno; `git push refs/tags/...` cae bajo `push` | freno: prosa;
 - releases: detector: ninguno | freno: prosa;
 - rulesets: detector: ninguno | freno: prosa;
 - rotacion de credenciales: detector: ninguno | freno: prosa;
