@@ -68,6 +68,65 @@ coordinadora", "Self-hop del orquestador", "Cadena de ancestros".
 
 ## 5. Regla de cuenta (contrato)
 
+### Autorizacion de relevos encadenados (WOT-2026-153z)
+
+La autorizacion de cadena es una capacidad separada de la regla de cuenta y
+solo cubre el relevo de la coordinadora. El snapshot estructurado vive en
+`autorizacion_cadena.json`; su procedencia se revalida contra el mensaje real
+antes de cada consumo. El contador efectivo se deriva de las lineas
+append-only de `roster_changes.jsonl`, nunca de un JSON mutable por la parte
+interesada. El ledger de consumo compuesto `(messageId, step)` es
+`autorizacion_cadena.ledger.jsonl` y se mantiene separado de
+`PushAuthorityLedger`.
+
+El rotador versionado es `scripts/flight/rotate_coordinator.py`. Exige
+`--approved-by` como UUID36 de la autorizacion real: no existe valor por
+defecto ni se acepta prosa de supervisora. La fase A solo puede ejecutarse
+despues de `revalidate_chain_authorization`; consume un paso fail-closed y
+despues instala la identidad del entrante en el roster y registro, y deja
+`PENDIENTE_ACK`. La fase B recibe del ejecutor la medicion del ACK y solo
+entonces marca `ACTIVO`. El plazo de 900 s empieza al inicio de A; B solo
+acepta un ACK medido de edad <= 900 s. Si el ACK falta o llega tarde, B
+rechaza sin mutar: el ejecutor conserva el backup de A y ejecuta el rollback
+del estado previo. `--rehearsal` copia los cinco ficheros mutables a un
+directorio temporal y nunca escribe el vuelo real.
+
+Las fases A y B mantienen una exclusión común por vuelo desde el snapshot hasta
+el final de las escrituras o del rollback (`.rotate_coordinator.lock`). El
+journal de rollback registra los bytes propios incluso si una escritura falla
+después de modificar parcialmente un fichero; por eso un fallo propio restaura
+roster, registro y log byte a byte. Un escritor que no respete la exclusión
+puede introducir una carrera TOCTOU: la detección depende de que el cambio
+ajeno difiera de los bytes capturados como propios; si el cambio ajeno es
+byte-idéntico a esos bytes capturados, la carrera no se detecta. Cuando la diferencia ajena
+es demostrable, el rotador falla cerrado con `rollback-conflict:<ficheros>`,
+conserva el estado observado y no declara el relevo completado. Si queda un lock tras terminación
+del proceso, el ejecutor verifica que no haya un rotador vivo antes de retirarlo
+como parte de la recuperación manual.
+
+Una terminacion del proceso entre escrituras no es una excepcion capturable del
+rotador. El ejecutor debe detener el relevo, no reintentar la fase, y restaurar
+desde `pre_rotate` estos cuatro ficheros: `flight_roster.json`,
+`session_registry.json`, `roster_changes.jsonl` y `autorizacion_cadena.json`.
+El ledger `autorizacion_cadena.ledger.jsonl` y su directorio de locks se
+conservan con el paso consumido: es un bloqueo fail-closed y no se borra ni se
+edita a mano ni se rehabilita el paso. Tras restaurar, el ejecutor pide al usuario un GO
+nuevo con otro `messageId` y deja aviso de la terminacion parcial; nunca
+declara el relevo completado. Es recuperacion desde backups `pre_rotate`, no
+una garantia de atomicidad frente a terminacion del proceso.
+
+Las paradas de seguridad son: ventana vencida o fuera del tope duro de doce
+horas, reloj sin zona, mas de doce pasos, separacion menor de treinta minutos,
+registro corrupto, guard de roster no verde, ACK ausente y cualquier fallo de
+revalidacion. Una separacion menor de treinta minutos detiene la fase y emite
+el evento URGENTE `relevo-separacion` mediante `comms_alert`; el ejecutor debe
+proporcionar `--ops-dir` para el ledger de avisos. El ejecutor declara las mediciones de guard, ventana, cupo y
+ACK que entrega al rotador; el rotador las valida y rechaza valores ausentes,
+invalidos o fuera de rango. Un rechazo conserva el estado anterior y no se
+convierte en autorizacion implicita. Los pasos 2 a N los ejecuta el runner
+fijo de la coordinadora saliente, con la misma revalidacion y consumo por
+paso; no se delegan en una nueva sesion LLM.
+
 La regla de cuenta define cuando mover un hilo entre cuentas: `cuenta preferida`
 y `cuenta de refugio` (con `proveedor de cuenta de refugio`). Este documento
 define el CONTRATO de la regla vigente; los numeros de la politica de cuenta se

@@ -818,6 +818,15 @@ VALORES_VIGENTES_2026_10_30: dict[str, str] = dict(
 )
 PROTOCOLO_REL = "docs/protocol/flight_supervision.md"
 FIXTURE_136C_REL = "tests/fixtures/wot_2026_136c/pre_or7/flight_roster.json"
+# These two files consume the quota policy through the live roster and do not
+# define or restate the protocol.  They are therefore the same kind of
+# intentional consumer exception as the frozen fixture, not protocol copies.
+POLICY_CONSUMER_REL: frozenset[str] = frozenset(
+    {
+        "scripts/flight/quota_tick.py",
+        "tests/unit/test_quota_tick.py",
+    }
+)
 HELPER_ENVIOS = MOTOR_ROOT / "scripts" / "flight" / "send_with_ledger.py"
 ACCION_SOFT_ROSTER = (
     "FREEZE de tickets nuevos: las sesiones terminan el ticket en curso y paran"
@@ -1296,12 +1305,14 @@ def test_dod_136h_censo_ocho_campos_de_la_politica():
     ciego (sin excepciones no ve el protocolo ni el fixture) o si el denominador, los
     ficheros LEIDOS, no cuadra o hay ficheros ilegibles.
 
-    EXCEPCIONES (cada una con su motivo): el protocolo (el DoD le manda declararlos) y
-    el fixture congelado de 136c bajo `tests/fixtures/` (intocable por el plan). Este
-    fichero NO se excluye: sus nombres estan construidos por fragmentos.
+    EXCEPCIONES (cada una con su motivo): el protocolo (el DoD le manda declararlos),
+    el fixture congelado de 136c bajo `tests/fixtures/` (intocable por el plan), y los
+    dos consumidores de cuota que leen esos nombres para medir el roster; ninguno
+    redefine la politica. Este fichero NO se excluye: sus nombres estan construidos
+    por fragmentos.
     """
     universo = sorted(set(_universo_versionado()) | {PROTOCOLO_REL})
-    excepciones = {PROTOCOLO_REL, FIXTURE_136C_REL}
+    excepciones = {PROTOCOLO_REL, FIXTURE_136C_REL, *POLICY_CONSUMER_REL}
     assert FIXTURE_136C_REL in universo, "el fixture de 136c no esta versionado"
 
     # Control positivo: SIN excepciones el censo ve el protocolo y el fixture.
@@ -1321,6 +1332,22 @@ def test_dod_136h_censo_ocho_campos_de_la_politica():
         f"ficheros versionados que repiten campos de la politica: {aciertos} "
         f"(universo={len(universo)} leidos={leidos})"
     )
+
+
+def test_dod_136h_consumidores_de_cuota_son_excepciones_explicitas():
+    """Control negativo: quitar cada excepcion vuelve a descubrir al consumidor."""
+    universo = sorted(set(_universo_versionado()) | {PROTOCOLO_REL})
+    excepciones = {PROTOCOLO_REL, FIXTURE_136C_REL, *POLICY_CONSUMER_REL}
+    aciertos, _, _ = _censo_campos_politica(excepciones, universo)
+    assert aciertos == []
+
+    for consumidor in POLICY_CONSUMER_REL:
+        mutada = excepciones - {consumidor}
+        aciertos_mutados, _, _ = _censo_campos_politica(mutada, universo)
+        assert consumidor in aciertos_mutados, (
+            f"control negativo inerte: al quitar {consumidor!r}, "
+            f"el censo no lo detecto: {aciertos_mutados}"
+        )
 
 
 def test_dod_136h_censo_ocho_campos_muerde_en_un_arbol_aislado(tmp_path, monkeypatch):

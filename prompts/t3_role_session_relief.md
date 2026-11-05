@@ -388,6 +388,13 @@ El sucesor **reporta sus propios PIDs** y estados medidos por sus propias herram
 
 ## 9. Self-hop del orquestador (C14)
 
+### Relevos encadenados autorizados (WOT-2026-153z)
+
+El hogar normativo y el procedimiento ejecutable se remiten a
+`docs/protocol/flight_supervision.md` y
+`scripts/flight/rotate_coordinator.py`. Este prompt no duplica sus limites ni
+sus condiciones de parada (X-09).
+
 ### Cuando aplica
 
 Antes de que la sesion orquestadora se apague (por compactacion u otra razon de cierre),
