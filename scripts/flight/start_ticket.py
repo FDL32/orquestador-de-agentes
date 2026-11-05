@@ -392,6 +392,19 @@ def start_ticket(
         lens = current_by_key.get(key)
         if lens is None:
             raise StartError(f"roster cambio antes del despacho: {key}")
+        current_composition = [
+            (item["backend_key"], item["role"], item["profile"])
+            for item in current_lenses
+        ]
+        planned_composition = [
+            (item["backend_key"], item["role"], item["profile"])
+            for item in planned_lenses
+        ]
+        if current_composition != planned_composition:
+            raise StartError(
+                "roster cambio antes del despacho: composicion distinta "
+                f"{current_composition!r} != {planned_composition!r}"
+            )
         if lens["status"] == "NO_LEGIBLE":
             results.append(
                 {"backend_key": key, "role": planned["role"], "status": "NO_LEGIBLE"}

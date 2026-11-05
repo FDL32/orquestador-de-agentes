@@ -202,6 +202,83 @@ def test_start_reloads_roster_before_each_dispatch(tmp_path: Path) -> None:
         _start(world, tmp_path, runner=change_roster_after_first_dispatch)
 
 
+def _apply_roster_change(roster: dict[str, object], case: str) -> None:
+    session = roster["session_types"]["implantacion"]
+    lenses = session["lenses"]["MANAGER_REVIEW"]
+    if case == "reviewer_replaced":
+        lenses[:] = [
+            lenses[1],
+            {"backend_key": "REVIEWER", "profile": "profile-reviewer"},
+        ]
+        session["revisor"] = {
+            "backend_key": "NEW_REVIEWER",
+            "profile": "reviewer-new",
+            "channel": "loop-round",
+        }
+    elif case == "roles_swapped":
+        session["lenses"]["MANAGER_REVIEW"] = [
+            lenses[1],
+            {"backend_key": "REVIEWER", "profile": "profile-reviewer"},
+        ]
+        session["revisor"] = {
+            "backend_key": "BA03",
+            "profile": "profile-ba03",
+            "channel": "loop-round",
+        }
+    elif case == "lens_added":
+        lenses.append({"backend_key": "NEW_LENS", "profile": "new-lens"})
+    elif case == "profile_changed":
+        lenses[1]["profile"] = "profile-ba254-new"
+    elif case == "order_changed":
+        session["lenses"]["MANAGER_REVIEW"] = [lenses[1], lenses[0]]
+    else:
+        raise AssertionError(case)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "reviewer_replaced",
+        "roles_swapped",
+        "lens_added",
+        "profile_changed",
+        "order_changed",
+    ],
+)
+def test_start_rejects_roster_composition_change_before_next_dispatch(
+    tmp_path: Path, case: str
+) -> None:
+    world = _world(tmp_path)
+    roster = json.loads(Path(world["roster"]).read_text(encoding="utf-8"))
+    if case in {"reviewer_replaced", "lens_added"}:
+        agents = json.loads(Path(world["agents"]).read_text(encoding="utf-8"))
+        new_key = "NEW_REVIEWER" if case == "reviewer_replaced" else "NEW_LENS"
+        agents["ensemble_registry"]["backend_keys"][new_key] = {"family": "new"}
+        Path(world["agents"]).write_text(json.dumps(agents), encoding="utf-8")
+
+    calls = 0
+
+    def change_roster_after_first_dispatch(command, **kwargs):
+        nonlocal calls
+        result = _run(command, **kwargs)
+        if "loop-round" in command:
+            calls += 1
+            if calls == 1:
+                _apply_roster_change(roster, case)
+                Path(world["roster"]).write_text(json.dumps(roster), encoding="utf-8")
+        return result
+
+    with pytest.raises(StartError, match="roster cambio antes del despacho"):
+        _start(world, tmp_path, runner=change_roster_after_first_dispatch)
+    rows = [
+        json.loads(line)
+        for line in (world["project"] / ".agent/runtime/ensemble/scorecard.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [row["backend_key"] for row in rows] == ["BA03"]
+
+
 @pytest.mark.parametrize("field", ["channel", "profile"])
 def test_start_rejects_invalid_reviewer_contract(tmp_path: Path, field: str) -> None:
     world = _world(tmp_path)
