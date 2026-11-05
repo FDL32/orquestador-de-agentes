@@ -40,9 +40,12 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
+
+
+_ORIGINAL_OS_CLOSE = os.close
 
 
 SCHEMA_MESSAGES = "orchestration_v2_projection_messages"
@@ -240,6 +243,251 @@ class Decision:
     text_sha256: str | None = None
 
 
+CHAIN_HARD_MAX_DURATION_HOURS = 12
+_CHAIN_TEXT_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _parse_chain_expiry(value: str) -> datetime:
+    """Parsea una caducidad ISO-8601 con zona explicita.
+
+    Before: recibe una cadena de registro, no una hora local ambigua.
+    During: usa `datetime.fromisoformat` y exige offset o zona UTC.
+    After: devuelve datetime aware o ValueError fail-closed.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("expiry-invalid") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("expiry-zone-required")
+    return parsed
+
+
+def _parse_chain_successors(raw: object) -> tuple[str, ...]:
+    """Valida la sucesion ordenada minima del registro de cadena."""
+    successors = raw
+    if (
+        not isinstance(successors, list)
+        or not successors
+        or any(not isinstance(item, str) or not item for item in successors)
+    ):
+        raise ValueError("successors-invalid")
+    if len(successors) < 2:
+        raise ValueError("successors-too-short")
+    return tuple(successors)
+
+
+def _parse_chain_trigger(raw: object) -> int:
+    """Valida el disparador y exige representación exacta en miles."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        raise ValueError("trigger-invalid")
+    if raw % 1000 != 0:
+        raise ValueError("trigger-not-whole-k")
+    return raw
+
+
+_LITERAL_EDGE_PUNCTUATION = "()[]{}'\",;:.!?"
+
+
+def _literal_tokens(text: str) -> list[str]:
+    """Tokeniza por espacios y quita solo puntuación permitida de los bordes."""
+    return [part.strip(_LITERAL_EDGE_PUNCTUATION) for part in text.split()]
+
+
+@dataclass(frozen=True)
+class ChainAuthorizationRecord:
+    """Registro estructurado y revalidable de una autorizacion de cadena.
+
+    Before: recibe un mapping persistido fuera del almacen de mensajes con
+        sucesores ordenados, disparador, caducidad ISO con zona, texto literal,
+        identidad del mensaje, createdAt del servidor y digest del texto.
+    During: valida formas, conserva la cita literal y comprueba que cada campo
+        operativo aparece en el mensaje exacto; la ventana se calcula desde
+        createdAt del servidor, nunca desde el reloj del agente.
+    After: devuelve un registro inmutable o lanza ValueError; los metodos de
+        validacion devuelven None o un motivo fail-closed machine-readable.
+    """
+
+    successors: tuple[str, ...]
+    trigger_context_tokens: int
+    expires_at: datetime
+    literal_text: str
+    message_id: str
+    created_at: str
+    text_sha256: str
+    max_duration_hours: int
+
+    @classmethod
+    def from_mapping(cls, raw: dict) -> ChainAuthorizationRecord:
+        """Construye el registro comprobando tipos, UUID, digest y timestamps.
+
+        Before: `raw` es el snapshot de autorizacion, no un mensaje confiado.
+        During: valida todos los campos obligatorios y normaliza sucesores y
+            fechas sin interpretar una hora local ambigua.
+        After: devuelve un registro listo para revalidacion o ValueError con la
+            primera discrepancia estructural.
+        """
+        successors = _parse_chain_successors(raw.get("successors"))
+        message_id = raw.get("message_id")
+        if not isinstance(message_id, str) or not _UUID36_RE.match(message_id):
+            raise ValueError("message-id-form")
+        literal_text = raw.get("literal_text")
+        text_sha256 = raw.get("text_sha256")
+        if not isinstance(literal_text, str) or not literal_text:
+            raise ValueError("literal-text-invalid")
+        if not isinstance(text_sha256, str) or not _CHAIN_TEXT_SHA_RE.match(
+            text_sha256
+        ):
+            raise ValueError("text-digest-form")
+        if sha256_text(literal_text) != text_sha256:
+            raise ValueError("text-digest-mismatch")
+        trigger = _parse_chain_trigger(raw.get("trigger_context_tokens"))
+        max_duration = raw.get("max_duration_hours")
+        if (
+            isinstance(max_duration, bool)
+            or not isinstance(max_duration, int)
+            or not 1 <= max_duration <= CHAIN_HARD_MAX_DURATION_HOURS
+        ):
+            raise ValueError("duration-limit-invalid")
+        created_at = raw.get("created_at")
+        if not isinstance(created_at, str):
+            raise ValueError("created-at-invalid")
+        _parse_iso(created_at)
+        expires_at_raw = raw.get("expires_at")
+        if not isinstance(expires_at_raw, str):
+            raise ValueError("expiry-invalid")
+        expires_at = _parse_chain_expiry(expires_at_raw)
+        return cls(
+            successors=successors,
+            trigger_context_tokens=trigger,
+            expires_at=expires_at,
+            literal_text=literal_text,
+            message_id=message_id,
+            created_at=created_at,
+            text_sha256=text_sha256,
+            max_duration_hours=max_duration,
+        )
+
+    def validate_literal(self, message_text: str) -> str | None:
+        """Comprueba digest, sucesores, disparador y caducidad en texto entero.
+
+        Before: `message_text` es el texto real revalidado del mensaje.
+        During: exige el digest exacto y la secuencia textual de cada campo,
+            sin aceptar que el registro estructurado invente datos ausentes. No
+            comprueba `max_duration_hours`; los sucesores se validan
+            estructuralmente en `from_mapping` y aquí se comprueba su secuencia
+            literal delimitada.
+        After: None si toda la evidencia textual coincide; en otro caso un
+            motivo estable de rechazo.
+        """
+        if sha256_text(message_text) != self.text_sha256:
+            return "text-digest-mismatch"
+        if message_text != self.literal_text:
+            return "literal-text-mismatch"
+        tokens = _literal_tokens(message_text)
+        cursor = 0
+        for left, right in zip(self.successors, self.successors[1:], strict=False):
+            pair_start = None
+            for index in range(cursor, len(tokens) - 2):
+                if (
+                    tokens[index] == left
+                    and tokens[index + 1] == "->"
+                    and tokens[index + 2] == right
+                ):
+                    pair_start = index
+                    break
+            if pair_start is None:
+                return "successors-not-literal"
+            cursor = pair_start + 2
+        trigger_token = f"{self.trigger_context_tokens // 1000}k"
+        if trigger_token not in tokens:
+            return "trigger-not-literal"
+        if self.expires_at.isoformat() not in tokens:
+            return "expiry-not-literal"
+        return None
+
+    def validate_server_window(self) -> str | None:
+        """Rechaza plazos no positivos o mayores que el tope duro desde servidor.
+
+        Before: `created_at` es el timestamp del mensaje servido por T3.
+        During: compara ambos timestamps con zona y aplica el máximo de doce
+            horas; no consulta datetime.now ni una hora del agente.
+        After: None para una ventana válida o motivo fail-closed.
+        """
+        created = _parse_iso(self.created_at)
+        if created.tzinfo is None:
+            return "created-at-zone-required"
+        delta = self.expires_at.astimezone(timezone.utc) - created.astimezone(
+            timezone.utc
+        )
+        if delta.total_seconds() <= 0:
+            return "expiry-not-after-created-at"
+        if delta > timedelta(hours=self.max_duration_hours):
+            return "expiry-over-hard-limit"
+        return None
+
+
+def revalidate_chain_authorization(
+    connection: sqlite3.Connection,
+    *,
+    record: ChainAuthorizationRecord,
+    anchor_message_id: str,
+    now: datetime | None = None,
+) -> Decision:
+    """Revalida procedencia real y evidencia estructurada antes del consumo.
+
+    Before: conexión de solo lectura, registro estructurado y ancla del pedido.
+    During: valida la ventana desde createdAt servidor, aplica un limite
+        exclusivo (`now >= expires_at` es caducado), valida el literal y relee
+        el mensaje real, su hilo, createdAt, procedencia, UUID y ancla mediante
+        el predicado comun de identidad. Si `now` se omite usa UTC solo en este
+        instante; un reloj inyectado debe tener zona.
+    After: devuelve Decision autorizada o rechazo fail-closed sin escribir el
+        almacen de mensajes.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("now-zone-required")
+    reason = record.validate_server_window() or record.validate_literal(
+        record.literal_text
+    )
+    if reason is not None:
+        return Decision(False, f"chain-{reason}")
+    if now.astimezone(timezone.utc) >= record.expires_at.astimezone(timezone.utc):
+        return Decision(False, "chain-expired")
+    thread_id = _thread_id_for_message(connection, record.message_id)
+    row = _fetch_one(connection, _SQL_BY_MESSAGE_ID, (record.message_id,))
+    if row is None:
+        return Decision(False, "revalidation-missing")
+    try:
+        message = _row_to_record(row)
+    except (TimestampFormError, RowUnreadableError):
+        return Decision(False, "revalidation-unreadable")
+    rejection = _revalidate_identity(
+        connection,
+        message,
+        thread_id=thread_id,
+        created_at=record.created_at,
+        anchor_message_id=anchor_message_id,
+    )
+    if rejection is not None:
+        return rejection
+    if sha256_text(message.text) != record.text_sha256:
+        return Decision(False, "chain-text-digest-mismatch")
+    failure = _chain_candidate_failure(message, record.literal_text)
+    if failure is not None:
+        return Decision(False, failure)
+    return Decision(
+        True,
+        "authorized",
+        message_id=message.message_id,
+        thread_id=message.thread_id,
+        created_at=message.created_at,
+        text_sha256=record.text_sha256,
+    )
+
+
 def sha256_text(text: str) -> str:
     """Digest estable del texto para el ledger y la revalidacion."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -434,6 +682,24 @@ def _fetch_one(
         raise InfraError("store-read-error", str(exc)) from exc
 
 
+def _thread_id_for_message(connection: sqlite3.Connection, message_id: str) -> str:
+    """Resuelve el hilo del mensaje real para delegar la revalidacion comun.
+
+    Before: `connection` tiene el esquema validado y `message_id` es la
+        identidad del registro estructurado.
+    During: lee una sola fila del almacen SQLite de solo lectura.
+    After: devuelve el thread_id o eleva InfraError si la fila no existe o es
+        ilegible; nunca inventa un hilo para autorizar.
+    """
+    row = _fetch_one(connection, _SQL_BY_MESSAGE_ID, (message_id,))
+    if row is None:
+        raise InfraError("message-missing", message_id)
+    try:
+        return _row_to_record(row).thread_id
+    except (TimestampFormError, RowUnreadableError) as exc:
+        raise InfraError("message-unreadable", str(exc)) from exc
+
+
 def open_store_ro(db_path: str | Path) -> sqlite3.Connection:
     """Abre el almacen en SOLO LECTURA, sin `immutable` (WAL vivo).
 
@@ -569,6 +835,32 @@ def _candidate_failure(
     if record.streaming:
         return "not-final"
     if not matches_phrase(record.normalized_text, expected.phrase):
+        return "text-mismatch"
+    return None
+
+
+def _chain_candidate_failure(record: MessageRecord, expected_text: str) -> str | None:
+    """Aplica el predicado de procedencia sin imponer el verbo PUSH.
+
+    Before: `record` es la fila releida y `expected_text` la cita estructurada.
+    During: conserva las mismas barreras de identidad, procedencia, UUID,
+        sender, estado final y compara el texto entero de cadena.
+    After: devuelve el motivo de rechazo o None; nunca relaja una barrera del
+        flujo PUSH, solo sustituye su frase esperada.
+    """
+    if record.created_by != ACCEPTED_CREATED_BY:
+        return "source-not-accepted"
+    if record.creation_source not in ACCEPTED_SOURCES:
+        return "source-not-accepted"
+    if record.message_id.startswith(FORBIDDEN_MESSAGE_ID_PREFIXES):
+        return "message-id-prefix"
+    if not _UUID36_RE.match(record.message_id):
+        return "message-id-form"
+    if record.sender_thread_present:
+        return "sender-thread"
+    if record.streaming:
+        return "not-final"
+    if record.normalized_text != expected_text:
         return "text-mismatch"
     return None
 
@@ -1149,6 +1441,161 @@ class PushAuthorityLedger:
             with contextlib.suppress(OSError):
                 lock_path.unlink()
             raise InfraError("ledger-append-failed", str(exc)) from exc
+        return True
+
+
+class ChainAuthorityLedger:
+    """Ledger append-only de consumo por `(messageId, step)`.
+
+    Before: `path` apunta al ledger propio de la cadena y cada transición
+        aporta un messageId, ordinal positivo y códigos de salida/entrada.
+    During: adquiere un lock O_EXCL por clave compuesta y añade una línea JSON;
+        un mismo mensaje puede autorizar pasos distintos, pero nunca repetir
+        el mismo paso.
+    After: `consume` devuelve True solo al ganador del paso, False en replay, y
+        `is_consumed` consulta locks o líneas sin modificar el ledger.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+
+    @staticmethod
+    def _key(message_id: str, step: int) -> str:
+        return hashlib.sha256(f"{message_id}:{step}".encode()).hexdigest()
+
+    def _lock_path(self, message_id: str, step: int) -> Path:
+        return (
+            self.path.parent
+            / (self.path.name + ".locks")
+            / (self._key(message_id, step) + ".lock")
+        )
+
+    @staticmethod
+    def _strict_json_loads(raw: str) -> object:
+        """Decodifica una línea y rechaza claves duplicadas o constantes no finitas."""
+
+        def reject_duplicate_pairs(
+            pairs: list[tuple[str, object]],
+        ) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate-json-key")
+                result[key] = value
+            return result
+
+        def reject_constant(value: str) -> object:
+            raise ValueError(f"non-finite-json-constant: {value}")
+
+        return json.loads(
+            raw,
+            object_pairs_hook=reject_duplicate_pairs,
+            parse_constant=reject_constant,
+        )
+
+    def _iter_records(self) -> Iterator[dict[str, object]]:
+        """Lee registros JSONL y convierte corrupción de bytes en InfraError."""
+        try:
+            with self.path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    stripped = raw.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        item = self._strict_json_loads(stripped)
+                    except (TypeError, ValueError, RecursionError) as exc:
+                        raise InfraError("chain-ledger-corrupt-line", str(exc)) from exc
+                    if (
+                        not isinstance(item, dict)
+                        or not isinstance(item.get("messageId"), str)
+                        or isinstance(item.get("step"), bool)
+                        or not isinstance(item.get("step"), int)
+                    ):
+                        raise InfraError("chain-ledger-corrupt-line", "invalid object")
+                    yield item
+        except OSError as exc:
+            raise InfraError("chain-ledger-unreadable", str(exc)) from exc
+        except UnicodeError as exc:
+            raise InfraError("chain-ledger-corrupt-line", str(exc)) from exc
+
+    def is_consumed(self, message_id: str, step: int) -> bool:
+        """Comprueba el consumo compuesto sin considerar el mensaje completo.
+
+        Before: `step` es un ordinal entero positivo.
+        During: revisa lock y las líneas recorridas del ledger JSONL hasta
+            hallar evidencia de consumo; ignora líneas vacías y valida que cada
+            línea recorrida sea un objeto con `messageId` textual y `step` entero.
+            El decodificador rechaza duplicados y constantes no finitas.
+        After: devuelve True solo para la misma pareja messageId/step; un lock
+            existente siempre bloquea el replay, incluso sin linea de log.
+        """
+        if isinstance(step, bool) or not isinstance(step, int) or step < 1:
+            raise ValueError("step-invalid")
+        if self._lock_path(message_id, step).exists():
+            return True
+        if not self.path.exists():
+            return False
+        for item in self._iter_records():
+            if item["messageId"] == message_id and item["step"] == step:
+                return True
+        return False
+
+    def consume(self, message_id: str, step: int, out_code: str, in_code: str) -> bool:
+        """Consume exactamente una transición de la cadena.
+
+        Before: messageId, ordinal y códigos describen una transición real.
+        During: crea el lock exclusivo y persiste una línea append-only.
+        After: devuelve True una vez; replay o contienda devuelve False y los
+            errores de I/O se convierten en InfraError.
+        """
+        if isinstance(step, bool) or not isinstance(step, int) or step < 1:
+            raise ValueError("step-invalid")
+        if not message_id or not out_code or not in_code:
+            raise ValueError("transition-invalid")
+        if self.is_consumed(message_id, step):
+            return False
+        lock_path = self._lock_path(message_id, step)
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            return False
+        except OSError as exc:
+            raise InfraError("chain-ledger-lock-failed", str(exc)) from exc
+        payload = {
+            "messageId": message_id,
+            "step": step,
+            "outCode": out_code,
+            "inCode": in_code,
+        }
+        try:
+            os.write(
+                descriptor, json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            )
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+            with contextlib.suppress(OSError):
+                _ORIGINAL_OS_CLOSE(descriptor)
+            with contextlib.suppress(OSError):
+                lock_path.unlink()
+            raise InfraError("chain-ledger-lock-write-failed", str(exc)) from exc
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                _ORIGINAL_OS_CLOSE(descriptor)
+            with contextlib.suppress(OSError):
+                lock_path.unlink()
+            raise InfraError("chain-ledger-lock-close-failed", str(exc)) from exc
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                lock_path.unlink()
+            raise InfraError("chain-ledger-append-failed", str(exc)) from exc
         return True
 
 

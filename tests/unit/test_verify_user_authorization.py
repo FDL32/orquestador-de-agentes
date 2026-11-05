@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -2438,3 +2439,719 @@ def test_real_store_given_thread_positive_and_negative(monkeypatch, tmp_path):
     }
     assert ledger.consume(record) is True
     assert ledger.is_consumed("synthetic-real-chain") is True
+
+
+# --------------------------------------------------------------------------
+# WOT-2026-153z: autorizacion de relevos encadenados (CAJA 4A).
+# --------------------------------------------------------------------------
+
+CHAIN_MESSAGE_ID = "77777777-7777-4777-8777-777777777777"
+CHAIN_ANCHOR_ID = "88888888-8888-4888-8888-888888888888"
+CHAIN_TEXT = (
+    "AUTORIZO relevos CO-33 -> CO-34 -> CO-35 -> CO-36, "
+    "un salto cada vez cuando el saliente llegue a 330k de contexto, "
+    "hasta las 2026-11-05T08:00:00+01:00"
+)
+
+
+def _chain_record(**overrides):
+    record = {
+        "successors": ["CO-33", "CO-34", "CO-35", "CO-36"],
+        "trigger_context_tokens": 330_000,
+        "expires_at": "2026-11-05T08:00:00+01:00",
+        "literal_text": CHAIN_TEXT,
+        "message_id": CHAIN_MESSAGE_ID,
+        "created_at": "2026-11-04T23:22:31.965Z",
+        "text_sha256": vua.sha256_text(CHAIN_TEXT),
+        "max_duration_hours": 12,
+    }
+    record.update(overrides)
+    return record
+
+
+def _chain_record_for_window(
+    *,
+    created_at=CANDIDATE_CREATED,
+    expires_at="2026-01-01T01:00:00+00:00",
+    **overrides,
+):
+    literal_text = CHAIN_TEXT.replace("2026-11-05T08:00:00+01:00", expires_at)
+    return _chain_record(
+        created_at=created_at,
+        expires_at=expires_at,
+        literal_text=literal_text,
+        text_sha256=vua.sha256_text(literal_text),
+        **overrides,
+    )
+
+
+def test_chain_record_accepts_structured_fields_and_literal_evidence():
+    record = vua.ChainAuthorizationRecord.from_mapping(_chain_record())
+
+    assert record.successors == ("CO-33", "CO-34", "CO-35", "CO-36")
+    assert record.trigger_context_tokens == 330_000
+    assert record.expires_at.isoformat() == "2026-11-05T08:00:00+01:00"
+    assert record.validate_literal(CHAIN_TEXT) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("successors", ["CO-33", "CO-35", "CO-34", "CO-36"], "successors-not-literal"),
+        ("trigger_context_tokens", 320_000, "trigger-not-literal"),
+        ("expires_at", "2026-11-05T07:00:00+01:00", "expiry-not-literal"),
+    ],
+)
+def test_chain_record_rejects_each_structured_literal_mutation(field, value, reason):
+    record = vua.ChainAuthorizationRecord.from_mapping(_chain_record(**{field: value}))
+
+    assert record.validate_literal(CHAIN_TEXT) == reason
+
+
+@pytest.mark.parametrize(
+    ("trigger_text", "expected_reason"),
+    [
+        ("1330k de", "trigger-not-literal"),
+        ("330kk de", "trigger-not-literal"),
+        ("2330k de", "trigger-not-literal"),
+        ("330k, de", None),
+        ("330k. de", None),
+        ("(330k) de", None),
+        ("330k de", None),
+    ],
+)
+def test_chain_record_requires_delimited_trigger_literal(trigger_text, expected_reason):
+    literal_text = CHAIN_TEXT.replace("330k de", trigger_text)
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == expected_reason
+
+
+@pytest.mark.parametrize(
+    "unicode_prefix_or_suffix",
+    ["\u0661", "é", "β", "\uff13"],
+)
+def test_chain_record_rejects_unicode_adjacent_trigger(unicode_prefix_or_suffix):
+    if unicode_prefix_or_suffix == "\uff13":
+        trigger_text = f"330k{unicode_prefix_or_suffix} de"
+    else:
+        trigger_text = f"{unicode_prefix_or_suffix}330k de"
+    literal_text = CHAIN_TEXT.replace("330k de", trigger_text)
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "trigger-not-literal"
+
+
+@pytest.mark.parametrize("trigger_text", ["330k-5 de", "330k.5 de"])
+def test_chain_record_rejects_trigger_interior_punctuation(trigger_text):
+    literal_text = CHAIN_TEXT.replace("330k de", trigger_text)
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "trigger-not-literal"
+
+
+def test_chain_record_rejects_successor_prefix_collision():
+    literal_text = (
+        "CO-33 -> CO-340, salto al llegar a 330k de contexto, "
+        "hasta las 2026-11-05T08:00:00+01:00"
+    )
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            successors=["CO-33", "CO-34"],
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "successors-not-literal"
+
+
+@pytest.mark.parametrize("successor_text", ["CO-33 -> CO-34-5", "CO-33 -> CO-34.5"])
+def test_chain_record_rejects_successor_interior_punctuation(successor_text):
+    literal_text = (
+        f"{successor_text}, salto al llegar a 330k de contexto, "
+        "hasta las 2026-11-05T08:00:00+01:00"
+    )
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            successors=["CO-33", "CO-34"],
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "successors-not-literal"
+
+
+def test_chain_record_rejects_successor_left_prefix_punctuation():
+    literal_text = (
+        "-CO-33 -> CO-34, salto al llegar a 330k de contexto, "
+        "hasta las 2026-11-05T08:00:00+01:00"
+    )
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            successors=["CO-33", "CO-34"],
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "successors-not-literal"
+
+
+def test_chain_record_rejects_embedded_expiry_literal():
+    expiry = "2026-11-05T08:00:00+01:00"
+    literal_text = CHAIN_TEXT.replace(expiry, f"x{expiry}0")
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "expiry-not-literal"
+
+
+@pytest.mark.parametrize(
+    "expiry_text",
+    [
+        "2026-11-05T08:00:00+01:00:30",
+        "2026-11-05T08:00:00+01:00.5",
+        "2026-11-05T08:00:00+01:00-05",
+        "-2026-11-05T08:00:00+01:00",
+    ],
+)
+def test_chain_record_rejects_expiry_interior_or_left_punctuation(expiry_text):
+    literal_text = CHAIN_TEXT.replace("2026-11-05T08:00:00+01:00", expiry_text)
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "expiry-not-literal"
+
+
+@pytest.mark.parametrize(
+    ("successors", "successor_text"),
+    [
+        (["CO-33", "CO-34"], "CO-33 -> CO-34,"),
+        (["CO-33", "CO-34"], "CO-33 -> CO-34 "),
+        (["CO-35", "CO-36"], "CO-35 -> CO-36."),
+        (["CO-33", "CO-34", "CO-35"], "CO-33 -> CO-34 -> CO-35."),
+    ],
+)
+def test_chain_record_accepts_unicode_delimited_successor_boundaries(
+    successors, successor_text
+):
+    literal_text = (
+        f"{successor_text} salto al llegar a 330k de contexto, "
+        "hasta las 2026-11-05T08:00:00+01:00"
+    )
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            successors=successors,
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) is None
+
+
+@pytest.mark.parametrize(
+    "successor_text",
+    [
+        "CO-34 -> CO-35; CO-33 -> CO-34;",
+        "CO-34 -> CO-35; CO-35 -> CO-36; CO-33 -> CO-34;",
+    ],
+)
+def test_chain_record_rejects_successor_pairs_out_of_order(successor_text):
+    literal_text = (
+        "AUTORIZO relevos "
+        f"{successor_text} cuando llegue a 330k de contexto, "
+        "hasta las 2026-11-05T08:00:00+01:00"
+    )
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            successors=["CO-33", "CO-34", "CO-35"],
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_literal(literal_text) == "successors-not-literal"
+
+
+def test_chain_record_rejects_digest_mismatch_at_ingress():
+    with pytest.raises(ValueError, match="text-digest-mismatch"):
+        vua.ChainAuthorizationRecord.from_mapping(_chain_record(text_sha256="0" * 64))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("message_id", "not-a-uuid"),
+        ("created_at", "not-a-timestamp"),
+        ("expires_at", "2026-11-05T08:00:00"),
+        ("max_duration_hours", 0),
+        ("successors", []),
+        ("successors", ["CO-33"]),
+        ("trigger_context_tokens", 330_999),
+        ("trigger_context_tokens", True),
+        ("max_duration_hours", True),
+    ],
+)
+def test_chain_record_rejects_invalid_shape(field, value):
+    with pytest.raises(ValueError):
+        vua.ChainAuthorizationRecord.from_mapping(_chain_record(**{field: value}))
+
+
+def test_chain_record_enforces_max_duration_at_ingress():
+    with pytest.raises(ValueError, match="duration-limit-invalid"):
+        vua.ChainAuthorizationRecord.from_mapping(_chain_record(max_duration_hours=13))
+
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(max_duration_hours=12)
+    )
+    assert record.max_duration_hours == 12
+
+
+def test_chain_record_rejects_non_whole_k_trigger_with_stable_reason():
+    with pytest.raises(ValueError, match="trigger-not-whole-k"):
+        vua.ChainAuthorizationRecord.from_mapping(
+            _chain_record(trigger_context_tokens=330_999)
+        )
+
+
+def test_chain_record_rejects_expiry_after_server_created_at_limit():
+    literal_text = CHAIN_TEXT.replace(
+        "2026-11-05T08:00:00+01:00", "2026-11-05T13:00:00+01:00"
+    )
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record(
+            expires_at="2026-11-05T13:00:00+01:00",
+            literal_text=literal_text,
+            text_sha256=vua.sha256_text(literal_text),
+        )
+    )
+
+    assert record.validate_server_window() == "expiry-over-hard-limit"
+
+
+def test_chain_revalidate_uses_real_message_identity_and_anchor(tmp_path):
+    text = CHAIN_TEXT
+    path = build_db(
+        tmp_path,
+        anchor={"message_id": CHAIN_ANCHOR_ID},
+        rows=[
+            {
+                "message_id": CHAIN_MESSAGE_ID,
+                "text": text,
+                "created_at": "2026-11-05T00:00:00.000Z",
+            }
+        ],
+    )
+    connection = vua.open_store_ro(path)
+    try:
+        record = vua.ChainAuthorizationRecord.from_mapping(
+            _chain_record(
+                message_id=CHAIN_MESSAGE_ID,
+                created_at="2026-11-05T00:00:00.000Z",
+                literal_text=text,
+                text_sha256=vua.sha256_text(text),
+            )
+        )
+        decision = vua.revalidate_chain_authorization(
+            connection,
+            record=record,
+            anchor_message_id=CHAIN_ANCHOR_ID,
+            now=datetime(2026, 11, 5, 1, 0, tzinfo=timezone.utc),
+        )
+    finally:
+        connection.close()
+
+    assert decision.allowed is True
+
+
+def test_chain_revalidate_rejects_real_text_digest_mismatch(tmp_path):
+    path = build_db(
+        tmp_path,
+        anchor={"message_id": CHAIN_ANCHOR_ID},
+        rows=[
+            {
+                "message_id": CHAIN_MESSAGE_ID,
+                "text": CHAIN_TEXT + " alterado",
+                "created_at": "2026-11-05T00:00:00.000Z",
+            }
+        ],
+    )
+    connection = vua.open_store_ro(path)
+    try:
+        record = vua.ChainAuthorizationRecord.from_mapping(
+            _chain_record(
+                message_id=CHAIN_MESSAGE_ID,
+                created_at="2026-11-05T00:00:00.000Z",
+            )
+        )
+        decision = vua.revalidate_chain_authorization(
+            connection,
+            record=record,
+            anchor_message_id=CHAIN_ANCHOR_ID,
+            now=datetime(2026, 11, 5, 1, 0, tzinfo=timezone.utc),
+        )
+    finally:
+        connection.close()
+
+    assert decision.reason == "chain-text-digest-mismatch"
+
+
+def _run_chain_decision(
+    tmp_path, *, row=None, record=None, anchor_id=CHAIN_ANCHOR_ID, now=None
+):
+    path = build_db(
+        tmp_path,
+        anchor={"message_id": CHAIN_ANCHOR_ID},
+        rows=[row or {"message_id": CHAIN_MESSAGE_ID, "text": CHAIN_TEXT}],
+    )
+    connection = vua.open_store_ro(path)
+    try:
+        chain_record = vua.ChainAuthorizationRecord.from_mapping(
+            record or _chain_record()
+        )
+        return vua.revalidate_chain_authorization(
+            connection, record=chain_record, anchor_message_id=anchor_id, now=now
+        )
+    finally:
+        connection.close()
+
+
+def test_chain_revalidate_rejects_missing_anchor_with_exact_reason(tmp_path):
+    decision = _run_chain_decision(
+        tmp_path,
+        row={
+            "message_id": CHAIN_MESSAGE_ID,
+            "text": CHAIN_TEXT,
+            "created_at": CANDIDATE_CREATED,
+        },
+        record=_chain_record_for_window(),
+        anchor_id="99999999-9999-4999-8999-999999999999",
+        now=datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc),
+    )
+
+    assert decision.reason == "revalidation-anchor-missing"
+
+
+@pytest.mark.parametrize(
+    ("row_update", "reason"),
+    [
+        ({"created_by": "assistant"}, "source-not-accepted"),
+        ({"creation_source": "provider"}, "source-not-accepted"),
+        ({"sender": SYNTH_THREAD_MCP}, "sender-thread"),
+        ({"streaming": True}, "not-final"),
+    ],
+)
+def test_chain_revalidate_rejects_each_provenance_branch(tmp_path, row_update, reason):
+    row = {
+        "message_id": CHAIN_MESSAGE_ID,
+        "text": CHAIN_TEXT.replace(
+            "2026-11-05T08:00:00+01:00", "2026-01-01T01:00:00+00:00"
+        ),
+        "created_at": CANDIDATE_CREATED,
+        **row_update,
+    }
+    decision = _run_chain_decision(
+        tmp_path,
+        row=row,
+        record=_chain_record_for_window(),
+        now=datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc),
+    )
+
+    assert decision.reason == reason
+
+
+def test_chain_revalidate_rejects_server_created_at_mismatch(tmp_path):
+    decision = _run_chain_decision(
+        tmp_path,
+        row={
+            "message_id": CHAIN_MESSAGE_ID,
+            "text": CHAIN_TEXT,
+            "created_at": CANDIDATE_CREATED,
+        },
+        record=_chain_record_for_window(created_at="2026-01-01T00:00:02.000Z"),
+        now=datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc),
+    )
+
+    assert decision.reason == "revalidation-edited"
+
+
+@pytest.mark.parametrize(
+    ("now", "reason"),
+    [
+        (datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc), "chain-expired"),
+        (datetime(2026, 1, 1, 1, 0, 1, tzinfo=timezone.utc), "chain-expired"),
+    ],
+)
+def test_chain_revalidate_rejects_expired_at_and_after_deadline(tmp_path, now, reason):
+    decision = _run_chain_decision(
+        tmp_path,
+        row={
+            "message_id": CHAIN_MESSAGE_ID,
+            "text": CHAIN_TEXT.replace(
+                "2026-11-05T08:00:00+01:00", "2026-01-01T01:00:00+00:00"
+            ),
+            "created_at": CANDIDATE_CREATED,
+        },
+        record=_chain_record_for_window(),
+        now=now,
+    )
+
+    assert decision.reason == reason
+
+
+def test_chain_revalidate_accepts_inside_window_with_injected_clock(tmp_path):
+    decision = _run_chain_decision(
+        tmp_path,
+        row={
+            "message_id": CHAIN_MESSAGE_ID,
+            "text": CHAIN_TEXT.replace(
+                "2026-11-05T08:00:00+01:00", "2026-01-01T01:00:00+00:00"
+            ),
+            "created_at": CANDIDATE_CREATED,
+        },
+        record=_chain_record_for_window(),
+        now=datetime(2026, 1, 1, 0, 59, 59, tzinfo=timezone.utc),
+    )
+
+    assert decision.allowed is True
+
+
+def test_chain_revalidate_default_clock_rejects_old_expiry(tmp_path):
+    decision = _run_chain_decision(
+        tmp_path,
+        row={
+            "message_id": CHAIN_MESSAGE_ID,
+            "text": CHAIN_TEXT.replace(
+                "2026-11-05T08:00:00+01:00", "2026-01-01T01:00:00+00:00"
+            ),
+            "created_at": CANDIDATE_CREATED,
+        },
+        record=_chain_record_for_window(),
+    )
+
+    assert decision.reason == "chain-expired"
+
+
+def test_chain_revalidate_rejects_naive_injected_clock(tmp_path):
+    with pytest.raises(ValueError, match="now-zone-required"):
+        _run_chain_decision(
+            tmp_path,
+            row={
+                "message_id": CHAIN_MESSAGE_ID,
+                "text": CHAIN_TEXT.replace(
+                    "2026-11-05T08:00:00+01:00", "2026-01-01T01:00:00+00:00"
+                ),
+                "created_at": CANDIDATE_CREATED,
+            },
+            record=_chain_record_for_window(),
+            now=datetime(2026, 1, 1, 0, 30),
+        )
+
+
+@pytest.mark.parametrize(
+    ("expires_at", "reason"),
+    [
+        ("2025-12-31T23:59:59+00:00", "expiry-not-after-created-at"),
+        ("2026-01-01T12:00:00+00:00", None),
+        ("2026-01-01T12:00:02+00:00", "expiry-over-hard-limit"),
+    ],
+)
+def test_chain_record_server_window_boundaries(expires_at, reason):
+    record = vua.ChainAuthorizationRecord.from_mapping(
+        _chain_record_for_window(expires_at=expires_at)
+    )
+
+    assert record.validate_server_window() == reason
+
+
+def test_chain_ledger_consumes_each_step_once(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+
+    assert ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34") is True
+    assert ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34") is False
+    assert ledger.consume(CHAIN_MESSAGE_ID, 2, "CO-34", "CO-35") is True
+    assert ledger.is_consumed(CHAIN_MESSAGE_ID, 1) is True
+    assert ledger.is_consumed(CHAIN_MESSAGE_ID, 3) is False
+
+
+def test_chain_ledger_rejects_invalid_step_and_preserves_append_only_log(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+
+    with pytest.raises(ValueError):
+        ledger.consume(CHAIN_MESSAGE_ID, 0, "CO-33", "CO-34")
+    with pytest.raises(ValueError):
+        ledger.consume(CHAIN_MESSAGE_ID, True, "CO-33", "CO-34")
+    with pytest.raises(ValueError):
+        ledger.is_consumed(CHAIN_MESSAGE_ID, True)
+    assert not (tmp_path / "chain.jsonl").exists()
+
+
+def test_chain_ledger_treats_orphan_lock_as_consumed(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    lock_path = ledger._lock_path(CHAIN_MESSAGE_ID, 1)
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_bytes(b"partial-lock")
+
+    assert ledger.is_consumed(CHAIN_MESSAGE_ID, 1) is True
+    assert ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34") is False
+
+
+def test_chain_ledger_replay_is_rejected_from_append_only_log_without_lock(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+
+    assert ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34") is True
+    ledger._lock_path(CHAIN_MESSAGE_ID, 1).unlink()
+
+    assert ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34") is False
+    assert len((tmp_path / "chain.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_chain_ledger_write_error_is_infra_and_retryable(tmp_path, monkeypatch):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError(28, "no space")
+
+    monkeypatch.setattr(vua.os, "write", fail_write)
+    with pytest.raises(vua.InfraError, match="chain-ledger-lock-write-failed"):
+        ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34")
+    assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
+    assert not ledger.path.exists()
+
+    monkeypatch.undo()
+    assert ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34") is True
+
+
+def test_chain_ledger_close_error_is_infra_and_retryable(tmp_path, monkeypatch):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+
+    def fail_close(*_args, **_kwargs):
+        raise OSError(5, "close failed")
+
+    monkeypatch.setattr(vua.os, "close", fail_close)
+    with pytest.raises(vua.InfraError, match="chain-ledger-lock-close-failed"):
+        ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34")
+    assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
+    assert not ledger.path.exists()
+
+    monkeypatch.undo()
+    assert ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34") is True
+
+
+@pytest.mark.parametrize("line", ['{"messageId":', "null", "[]"])
+def test_chain_ledger_corrupt_nonempty_line_is_infra(tmp_path, line):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    ledger.path.write_text(line + "\n", encoding="utf-8")
+
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.is_consumed(CHAIN_MESSAGE_ID, 1)
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"messageId":"77777777-7777-4777-8777-777777777777","step":1,"step":2}',
+        '{"messageId":"77777777-7777-4777-8777-777777777777",'
+        '"messageId":"other","step":1}',
+        '{"messageId":"77777777-7777-4777-8777-777777777777",'
+        '"step":1,"extra":{"name":1,"name":2}}',
+        '{"messageId":"77777777-7777-4777-8777-777777777777","step":1,"extra":NaN}',
+    ],
+)
+def test_chain_ledger_strict_json_rejects_ambiguous_line_without_state_change(
+    tmp_path, line
+):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    ledger.path.write_text(line + "\n", encoding="utf-8")
+    before = ledger.path.read_bytes()
+
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.is_consumed(CHAIN_MESSAGE_ID, 1)
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34")
+
+    assert ledger.path.read_bytes() == before
+    assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
+
+
+def test_chain_ledger_strict_json_accepts_distinct_extra_fields(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    ledger.path.write_text(
+        '{"messageId":"77777777-7777-4777-8777-777777777777",'
+        '"step":1,"outCode":"CO-33","inCode":"CO-34",'
+        '"extra":{"a":1,"b":2}}\n',
+        encoding="utf-8",
+    )
+
+    assert ledger.is_consumed(CHAIN_MESSAGE_ID, 1) is True
+
+
+def test_chain_ledger_integral_log_is_valid_without_lock(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    ledger.path.write_text(
+        '{"messageId":"77777777-7777-4777-8777-777777777777",'
+        '"step":1,"outCode":"CO-33","inCode":"CO-34"}\n',
+        encoding="utf-8",
+    )
+
+    assert ledger.is_consumed(CHAIN_MESSAGE_ID, 1) is True
+
+
+def test_chain_ledger_non_utf8_line_is_infra_without_touching_state(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    raw = b"\xff\xfe\n"
+    ledger.path.write_bytes(raw)
+
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.is_consumed(CHAIN_MESSAGE_ID, 1)
+    assert ledger.path.read_bytes() == raw
+    assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
+
+
+def test_chain_ledger_recursive_json_line_is_infra_without_touching_state(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    raw = (b"[" * 200_000) + b"\n"
+    ledger.path.write_bytes(raw)
+
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.is_consumed(CHAIN_MESSAGE_ID, 1)
+    assert ledger.path.read_bytes() == raw
+    assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
+
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34")
+    assert ledger.path.read_bytes() == raw
+    assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
+
+    with pytest.raises(vua.InfraError, match="chain-ledger-corrupt-line"):
+        ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34")
+    assert ledger.path.read_bytes() == raw
+    assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
