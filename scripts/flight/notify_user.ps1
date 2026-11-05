@@ -23,6 +23,7 @@ function EffectiveTag([string]$Value) {
   finally { $sha.Dispose() }
 }
 function WriteMetaComment([object]$Xml, [string]$Text) { [void]$Xml.DocumentElement.AppendChild($Xml.CreateComment(($Text -replace '--', '-~'))) }
+function EncodeCommentValue([string]$Value) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Value)) }
 try {
   if ($SimulateToastFailure) { throw 'fallo simulado (prueba)' }
   if ($SimulateNotifierSetting -and $SimulateNotifierSetting -ne 'Enabled') { throw "notifier Setting=$SimulateNotifierSetting" }
@@ -36,7 +37,7 @@ try {
   $action = '<action content="Entendido" activationType="system" arguments="dismiss"/>'
   if ($OpenUri) { $action += '<action content="Abrir sesion" activationType="protocol" arguments="' + (Escape $OpenUri) + '"/>' }
   $xml.LoadXml("<toast scenario='reminder'><visual><binding template='ToastGeneric'><text>$titleEsc</text><text>$messageEsc</text>$third</binding></visual><actions>$action</actions><audio src='ms-winsoundevent:Notification.Reminder'/></toast>")
-  WriteMetaComment $xml ('effective-tag=' + $tagEffective); WriteMetaComment $xml ('effective-app-id=' + $AppId)
+  WriteMetaComment $xml ('effective-tag=' + (EncodeCommentValue $tagEffective)); WriteMetaComment $xml ('effective-app-id=' + $AppId)
   if ($XmlOnly) { $xml.GetXml(); exit 0 }
   $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId)
   if ($notifier.Setting -ne 'Enabled') { throw "notifier Setting=$($notifier.Setting)" }

@@ -349,14 +349,16 @@ def tag_for_toast(key):
     """Deriva un Tag estable y no colisionante para la clave cruda del aviso.
 
     Before: ``key`` es la clave del estado que identifica una causa.
-    During: conserva claves de hasta 64 caracteres sin cambios si ``redact`` no
-        las transforma; en otro caso usa un prefijo fijo y SHA-256 de la clave cruda.
-    After: devuelve siempre un Tag de como mucho 64 caracteres, reutilizable por
-        publicación y retirada sin volver a pasar por ``redact``.
+    During: reserva ``flight-`` para Tags derivados y usa SHA-256 de la clave
+        cruda cuando aparece ese prefijo o ``redact`` la transforma; las demas
+        claves de hasta 64 caracteres no transformadas se conservan.
+    After: la funcion aplica redact a la clave cruda SIEMPRE y su salida NO es
+        idempotente, asi que publicacion y retirada deben derivar el Tag de la
+        MISMA clave cruda y nunca aplicar tag_for_toast sobre un Tag ya derivado.
     """
     raw = str(key)
     clean = redact(raw)
-    if clean == raw and len(raw) <= 64:
+    if not raw.startswith("flight-") and clean == raw and len(raw) <= 64:
         return raw
     return "flight-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:57]
 

@@ -10,6 +10,9 @@ After: asevera rc y salida del camino de fallo simulado, que ``-NoFlash`` no omi
     fichero no conserva ``-Banner`` ni ``NOTIFY_*``.
 """
 
+import base64
+import hashlib
+import importlib.util
 import os
 import re
 import subprocess
@@ -207,6 +210,13 @@ def _comment(root, prefix):
     )
 
 
+def _decode_effective_tag(comment):
+    """Decodifica la metadata segura del Tag efectivo del comentario XML."""
+    prefix = "effective-tag="
+    assert comment.startswith(prefix)
+    return base64.b64decode(comment.removeprefix(prefix)).decode("utf-8")
+
+
 def test_caja1_xmlonly_entendido_es_la_unica_accion_sin_open_uri():
     """RED: sin URI solo existe Entendido/system/dismiss."""
     r = _xmlonly(
@@ -256,27 +266,44 @@ def test_caja1_urgente_mantiene_frase_de_160_y_anade_texto_fijo_separado():
     assert len(normal.findall("visual/binding/text")) == 2
 
 
-def test_caja1_xmlonly_tag_64_se_conserva_y_65_se_hashea_de_forma_determinista():
-    """RED: el Tag efectivo es observable sin convertir stdout en dos XML."""
-    tag64 = "a" * 64
-    tag65a = "a" * 65
-    tag65b = "b" * 65
+def test_caja_a_tabla_comun_de_tags_declara_el_esquema_de_python_y_ps1():
+    """La tabla fija dos esquemas por compatibilidad con toasts vivos.
+
+    No se unifican porque hacerlo cambiaria el Tag de toasts ya publicados;
+    los Tags Python solo cambian si la clave empieza por ``flight-`` y ninguno
+    de los productores actuales usa ese prefijo. El hash completo de PS1 solo
+    lo ejerce un llamador PS1 directo; la migracion queda fuera de esta caja.
+    """
+    tags = ("a" * 64, "a" * 65, "a--b", "tag-")
+    spec = importlib.util.spec_from_file_location(
+        "comms_alert_common_tag_table", REPO / "scripts" / "flight" / "comms_alert.py"
+    )
+    comms_alert = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(comms_alert)
+    assert [comms_alert.tag_for_toast(tag) for tag in tags] == [
+        "a" * 64,
+        "flight-" + hashlib.sha256(("a" * 65).encode("utf-8")).hexdigest()[:57],
+        "a--b",
+        "tag-",
+    ]
     outputs = []
-    for tag in (tag64, tag65a, tag65a, tag65b):
+    for tag in tags:
         r = _xmlonly(
             "-Title", "CO-29", "-Message", "FRASE LITERAL primero", "-Tag", tag
         )
         root = _parse_xmlonly(r)
         comment = _comment(root, "effective-tag=") or ""
-        outputs.append((tag, comment))
-    assert outputs[0][1] == "effective-tag=" + tag64
-    assert outputs[1][1] == outputs[2][1]
-    assert len(outputs[1][1].removeprefix("effective-tag=")) <= 64
-    assert outputs[1][1] != outputs[3][1]
+        outputs.append(_decode_effective_tag(comment))
+    assert outputs == [
+        "a" * 64,
+        hashlib.sha256(("a" * 65).encode("utf-8")).hexdigest(),
+        "a--b",
+        "tag-",
+    ]
 
 
 def test_caja1_xmlonly_tag_con_guiones_dobles_sigue_siend_xml_valido():
-    """El comentario effective-tag no puede introducir ``--`` en XML."""
+    """El comentario codificado es válido y reversible aunque el Tag contenga ``--``."""
     result = _xmlonly(
         "-Title",
         "CO-31",
@@ -289,6 +316,23 @@ def test_caja1_xmlonly_tag_con_guiones_dobles_sigue_siend_xml_valido():
     root = _parse_xmlonly(result)
     comment = _comment(root, "effective-tag=") or ""
     assert "--" not in comment
+    assert _decode_effective_tag(comment) == "go-a--b"
+
+
+def test_caja_a_xmlonly_tag_terminado_en_guion_es_valido_y_reversible():
+    """El control negativo del saneador actual: un Tag terminado en ``-`` sigue parseando."""
+    root = _parse_xmlonly(
+        _xmlonly(
+            "-Title",
+            "CO-31",
+            "-Message",
+            "FRASE LITERAL primero",
+            "-Tag",
+            "tag-",
+        )
+    )
+    comment = _comment(root, "effective-tag=") or ""
+    assert _decode_effective_tag(comment) == "tag-"
 
 
 def test_caja1_setting_disabled_es_fallo_y_no_toast_ok_con_doble():

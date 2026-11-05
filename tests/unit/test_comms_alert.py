@@ -8,6 +8,7 @@ El modulo se localiza por ruta (COMMS_ALERT_UNDER_TEST permite apuntar a una cop
 
 import ast
 import errno
+import hashlib
 import importlib.util
 import json
 import os
@@ -1393,6 +1394,40 @@ def test_tag_for_toast_distingue_uuid_y_reutiliza_tag_en_publicar_y_retirar(
     removed = [calls[i][calls[i].index("-Tag") + 1] for i in (1, 3)]
     assert published[0] != published[1]
     assert published == removed
+
+
+def test_caja_a_tag_reserva_prefijo_y_conserva_tags_de_productores_reales(ca):
+    """Caja A: ``flight-`` es prefijo reservado; los productores actuales no cambian."""
+    real = _load("tag_reserved_prefix_real")
+    source_key = "hilo-failed-6bb68939-6779-41de-be05-88e711bb7d03"
+    hashed_tag = real.tag_for_toast(source_key)
+    assert real.tag_for_toast(hashed_tag) != hashed_tag
+    assert real.tag_for_toast(hashed_tag) == (
+        "flight-" + hashlib.sha256(hashed_tag.encode("utf-8")).hexdigest()[:57]
+    )
+
+    golden = {
+        "latido-muerto": "latido-muerto",
+        "cupo-alvarovans-95": "cupo-alvarovans-95",
+        "cola-66c72ced": "cola-66c72ced",
+        source_key: "flight-c3ff50acd48e5c186aa7d834d948a64065abb7982e3ced7b951628ca4",
+        "go-153y-1": "go-153y-1",
+    }
+    assert {key: real.tag_for_toast(key) for key in golden} == golden
+
+
+def test_caja_a_tag_fija_fronteras_de_longitud_y_prefijo_reservado(ca):
+    """La reserva solo aplica al prefijo exacto y la frontera de 64 es inclusiva."""
+    real = _load("tag_reserved_boundaries_real")
+    assert real.tag_for_toast("x" * 64) == "x" * 64
+    assert real.tag_for_toast("x" * 65) == (
+        "flight-" + hashlib.sha256(("x" * 65).encode("utf-8")).hexdigest()[:57]
+    )
+    assert real.tag_for_toast("flightplan") == "flightplan"
+    assert real.tag_for_toast("flight") == "flight"
+    assert real.tag_for_toast("flight-anything") == (
+        "flight-" + hashlib.sha256(b"flight-anything").hexdigest()[:57]
+    )
 
 
 @pytest.mark.parametrize(
