@@ -51,6 +51,10 @@ def read_motor_link(link_path: Path) -> MotorLinkRead:
            ``LINK_UNREADABLE`` with the cause for a decode error, invalid JSON, a
            JSON root that is not an object, or an OS error other than "not found"
            (a directory, a permission problem). Never raises.
+
+    Limit: a broken symlink is intentionally reported as ``LINK_MISSING`` here.
+        This reader contract is shared by the 152a/152b/152c readers; the writer
+        is responsible for refusing to overwrite a broken existing link.
     """
     try:
         raw = link_path.read_bytes()

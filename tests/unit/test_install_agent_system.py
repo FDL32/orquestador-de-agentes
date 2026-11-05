@@ -2760,15 +2760,56 @@ def test_clear_ticket_prefix_nulls_it_explicitly(tmp_path):
 
 
 def test_malformed_existing_link_no_longer_degrades_to_null(tmp_path):
-    """WOT-2026-126a-1 replaces the 023i "degrades to None" contract: a link that
+    """Non-sync writer paths preserve bytes and propagate the unreadable-link error.
+
+    WOT-2026-126a-1 replaces the 023i "degrades to None" contract: a link that
     cannot be read is NOT "no prefix" -- writing `ticket_prefix: null` over it is the
     silent data loss this ticket closes. Without an explicit prefix the writer refuses
     and the unreadable file keeps its bytes."""
     link = _write_link(tmp_path, prefix="WOT")
     link.write_text("{ not json", encoding="utf-8")
-    with pytest.raises(ias.MotorLinkUnreadableError, match="json"):
+    with pytest.raises(
+        ias.MotorLinkUnreadableError, match="ticket_prefix no recuperable"
+    ):
         _write_link(tmp_path, prefix=None)
     assert link.read_text(encoding="utf-8") == "{ not json"
+
+
+def test_writer_rejects_a_broken_symlink_without_writing(tmp_path):
+    """The writer treats a broken existing symlink as unreadable, not missing."""
+    motor_root = tmp_path / "motor"
+    motor_root.mkdir()
+    dest_root = tmp_path / "dest"
+    project_agent = dest_root / ".agent"
+    project_agent.mkdir(parents=True)
+    link = project_agent / "config" / "motor_destination_link.json"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(tmp_path / "missing-target.json")
+
+    with pytest.raises(ias.MotorLinkUnreadableError, match="symlink roto"):
+        write_motor_destination_link(
+            project_agent=project_agent,
+            motor_root=motor_root,
+            destination_root=dest_root,
+            motor_version="v9.17.1",
+        )
+    assert link.is_symlink()
+    assert not link.resolve(strict=False).exists()
+
+
+def test_writer_rejects_non_string_existing_ticket_prefix_without_writing(tmp_path):
+    """A readable non-string prefix is not silently replaced by JSON null."""
+    link = _write_link(tmp_path, prefix="WOT")
+    link.write_text(
+        json.dumps({"motor_root": "x", "ticket_prefix": 123}), encoding="utf-8"
+    )
+    before = link.read_bytes()
+
+    with pytest.raises(
+        ias.MotorLinkUnreadableError, match="ticket_prefix no es string"
+    ):
+        _write_link(tmp_path, prefix=None)
+    assert link.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------
@@ -5698,9 +5739,9 @@ def _prefix_on_disk_126a(link: Path) -> object:
 def test_126a1_sync_without_prefix_keeps_the_prefix_of_a_bom_link(
     tmp_path, capsys, dry_run
 ):
-    """DoD (5): the real sync over a link with BOM keeps `FDL`. Before the fix the
-    strict reader called the BOM a decode failure and the sync wrote null (dry-run
-    printed the null payload).
+    """DoD (5): the real sync over a link with BOM keeps `FDL`. Before the fix,
+    ``json.loads`` rejected the decoded BOM-prefixed text and the sync wrote null
+    (dry-run printed the null payload).
 
     Mutation-to-prove: M1 -- read the link with `utf-8` again inside the helper and
     this goes red at `assert rc == 0` (the BOM link is UNREADABLE, so the sync stops
@@ -5752,6 +5793,28 @@ def test_126a1_sync_without_prefix_fails_on_an_unreadable_link_and_writes_nothin
     assert "motor_destination_link.json" in out
     assert cause in out
     assert "--prefix" in out
+    assert link.read_bytes() == raw
+    assert _tree_140a(dest) == before
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_152d_sync_non_string_ticket_prefix_reports_p7_and_writes_nothing(
+    tmp_path, capsys, dry_run
+):
+    """Sync reports P7 for a readable link whose prefix has the wrong type."""
+    motor = _motor_140a(tmp_path)
+    dest = _dest_140a(tmp_path, "U")
+    raw = json.dumps(
+        {"motor_root": "x", "destination_id": "dest", "ticket_prefix": 123}
+    ).encode("utf-8")
+    link = _link_126a(dest, raw)
+    before = _tree_140a(dest)
+
+    rc, out = _sync_140a(motor, dest, capsys, dry_run=dry_run)
+
+    assert rc == 1, out
+    assert "[PREFLIGHT] FAIL P7" in out
+    assert "ticket_prefix no es string" in out
     assert link.read_bytes() == raw
     assert _tree_140a(dest) == before
 

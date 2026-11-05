@@ -1525,13 +1525,14 @@ def _read_motor_link(link_file: Path):
 
     Loaded from ``TEMPLATE_ROOT`` (the motor this script belongs to), not through
     ``sys.path``: a ``runtime`` module already imported from somewhere else must not
-    answer for the link reader. A motor without the helper fails loudly (ImportError):
+    answer for the link reader. A motor without the helper fails loudly
+    (``ImportError`` or ``FileNotFoundError``):
     degrading to "no prefix" is the bug this reader exists to prevent.
     """
     import importlib.util
 
     module_path = TEMPLATE_ROOT / "runtime" / "motor_link.py"
-    spec = importlib.util.spec_from_file_location("_motor_link_126a", module_path)
+    spec = importlib.util.spec_from_file_location("_motor_link_runtime", module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {module_path}")
     module = importlib.util.module_from_spec(spec)
@@ -1550,6 +1551,17 @@ def _link_prefix_problem(link_file: Path, ticket_prefix: str | None) -> str | No
     if ticket_prefix is not None:
         return None
     result = _read_motor_link(link_file)
+    if result.state == "OK":
+        payload = result.data
+        existing = payload.get("ticket_prefix")
+        if existing is not None and not isinstance(existing, str):
+            return (
+                f"P7: motor_destination_link.json ilegible en {link_file} "
+                f"(ticket_prefix no es string: {type(existing).__name__}): "
+                "no se puede conservar su ticket_prefix; repara el fichero o "
+                "pasa --prefix <PREFIJO>"
+            )
+        return None
     if result.state != "UNREADABLE":
         return None
     return (
@@ -1569,6 +1581,10 @@ def _read_existing_ticket_prefix(link_file: Path) -> str | None:
            prefix. Raises ``MotorLinkUnreadableError`` (cause in the message) when
            the link exists but cannot be read: "unknown" is not "no prefix".
     """
+    if link_file.is_symlink() and not link_file.exists():
+        raise MotorLinkUnreadableError(
+            f"{link_file} ilegible (io: symlink roto): ticket_prefix no recuperable"
+        )
     result = _read_motor_link(link_file)
     if result.state == "UNREADABLE":
         raise MotorLinkUnreadableError(
@@ -1577,6 +1593,11 @@ def _read_existing_ticket_prefix(link_file: Path) -> str | None:
     if result.state != "OK":
         return None
     existing = result.data.get("ticket_prefix")
+    if existing is not None and not isinstance(existing, str):
+        raise MotorLinkUnreadableError(
+            f"{link_file} ilegible (ticket_prefix no es string: "
+            f"{type(existing).__name__}): ticket_prefix no recuperable"
+        )
     return existing if isinstance(existing, str) and existing else None
 
 
