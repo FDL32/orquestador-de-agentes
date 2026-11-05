@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -274,17 +275,158 @@ def test_main_from_worktree_sees_installed_hooks_e2e(
     )
 
 
-def test_051c_declared_commit_msg_missing_is_red_and_fixable(
+def test_regenerate_hooks_uses_real_runner_and_all_hook_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """WOT-2026-051c DoD(b) -- par de exit-codes literal, no lectura de codigo.
+    """The real regeneration path requests every managed hook type.
+
+    Before: ``repo_root`` is a temporary git repository and the subprocess
+        runner can be observed without installing hooks in the flight repo.
+    During: call the real ``_regenerate_hooks`` function; intercept only its
+        pre-commit command and delegate every other command to the original
+        runner.
+    After: return code is zero and the exact interpreter, module, install,
+        overwrite, hook-type arguments, and repository cwd are asserted.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _git(["init"], repo_root)
+
+    original_run = chi.subprocess.run
+    pre_commit_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def _run(*args: object, **kwargs: object) -> subprocess.CompletedProcess:
+        command = list(args[0]) if args else list(kwargs["args"])  # type: ignore[index]
+        if command[:3] == [sys.executable, "-m", "pre_commit"]:
+            pre_commit_calls.append((command, kwargs))
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return original_run(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(chi.subprocess, "run", _run)
+
+    result = chi._regenerate_hooks(repo_root)
+
+    assert result.returncode == 0
+    assert len(pre_commit_calls) == 1
+    command, kwargs = pre_commit_calls[0]
+    assert command[:5] == [sys.executable, "-m", "pre_commit", "install", "--overwrite"]
+    assert command[5:] == [
+        "--hook-type",
+        "pre-commit",
+        "--hook-type",
+        "pre-push",
+        "--hook-type",
+        "commit-msg",
+    ]
+    assert kwargs["cwd"] == repo_root
+
+
+def test_main_fix_regenerates_missing_commit_msg_e2e(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``--fix`` path installs the declared hook and re-checks green.
+
+    Before: a temporary git repo declares all managed hook types, but only
+        pre-commit and pre-push exist with valid interpreters.
+    During: call ``main`` with ``--fix``; intercept the real pre-commit runner,
+        install commit-msg in the temporary hooks directory, and delegate any
+        non-pre-commit command to the original runner.
+    After: regeneration is invoked once with all three hook types, ``main``
+        returns zero, and an explicit no-fix re-check also returns zero.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _git(["init"], repo_root)
+    hooks_dir = repo_root / ".git" / "hooks"
+    (repo_root / ".pre-commit-config.yaml").write_text(
+        "default_install_hook_types: [pre-commit, pre-push, commit-msg]\n",
+        encoding="utf-8",
+    )
+    interp = _existing_interpreter(tmp_path)
+    for hook_type in ("pre-commit", "pre-push"):
+        _write_hook(hooks_dir, hook_type, interp)
+
+    original_run = chi.subprocess.run
+    pre_commit_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def _run(*args: object, **kwargs: object) -> subprocess.CompletedProcess:
+        command = list(args[0]) if args else list(kwargs["args"])  # type: ignore[index]
+        if command[:3] == [sys.executable, "-m", "pre_commit"]:
+            pre_commit_calls.append((command, kwargs))
+            _write_hook(hooks_dir, "commit-msg", interp)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return original_run(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(chi.subprocess, "run", _run)
+
+    argv = ["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir), "--fix"]
+    assert chi.main(argv) == 0
+    assert chi.main(argv[:-1]) == 0
+
+    assert len(pre_commit_calls) == 1
+    command, kwargs = pre_commit_calls[0]
+    assert command[:5] == [sys.executable, "-m", "pre_commit", "install", "--overwrite"]
+    assert command[5:] == [
+        "--hook-type",
+        "pre-commit",
+        "--hook-type",
+        "pre-push",
+        "--hook-type",
+        "commit-msg",
+    ]
+    assert kwargs["cwd"] == repo_root
+
+
+def test_main_fix_regeneration_failure_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed regeneration returns one and names the regeneration failure.
+
+    Before: a temporary git repo declares commit-msg but does not install it.
+    During: ``main --fix`` calls the real regeneration function while the
+        injected runner returns a non-zero pre-commit result.
+    After: ``main`` returns one and stderr contains ``regeneration failed``.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _git(["init"], repo_root)
+    hooks_dir = repo_root / ".git" / "hooks"
+    (repo_root / ".pre-commit-config.yaml").write_text(
+        "default_install_hook_types: [pre-commit, pre-push, commit-msg]\n",
+        encoding="utf-8",
+    )
+    interp = _existing_interpreter(tmp_path)
+    for hook_type in ("pre-commit", "pre-push"):
+        _write_hook(hooks_dir, hook_type, interp)
+
+    original_run = chi.subprocess.run
+
+    def _run(*args: object, **kwargs: object) -> subprocess.CompletedProcess:
+        command = list(args[0]) if args else list(kwargs["args"])  # type: ignore[index]
+        if command[:3] == [sys.executable, "-m", "pre_commit"]:
+            return subprocess.CompletedProcess(command, 7, "", "simulated failure")
+        return original_run(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(chi.subprocess, "run", _run)
+
+    rc = chi.main(
+        ["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir), "--fix"]
+    )
+
+    assert rc == 1
+    assert "regeneration failed" in capsys.readouterr().err
+
+
+def test_051c_declared_commit_msg_missing_is_red_and_names_absent_hook(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """WOT-2026-051c DoD(b): the negative control names the absent hook.
 
     El patron del clon viejo: el repo declara commit-msg en
     default_install_hook_types, los otros hooks gestionados SI estan
     instalados, y commit-msg no llego (nadie re-ejecuto `pre-commit
-    install` tras 046f). El check sale en ROJO citando el hook que falta;
-    instalado, sale en VERDE. Con --hooks-dir y sin config, la semantica
-    legacy no cambia (sin declaracion no hay ausencia que marcar).
+    install` tras 046f). El check sale en ROJO citando literalmente el hook
+    que falta. Con --hooks-dir y sin config, la semantica legacy no cambia.
     """
     repo_root = tmp_path / "repo"
     hooks_dir = repo_root / ".git" / "hooks"
@@ -299,39 +441,10 @@ def test_051c_declared_commit_msg_missing_is_red_and_fixable(
 
     # RED: clon viejo -- commit-msg declarado y ausente.
     assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 1
-
-    # WOT-2026-051c ronda 2 (hallazgo Codex): --fix debe reparar el caso. El
-    # fake registra los --hook-type pedidos y simula la instalacion; la
-    # asercion sobre los args prueba que _regenerate_hooks pide commit-msg.
-    installed_via_fix: list[list[str]] = []
-
-    def _fake_regenerate(repo_root: Path) -> subprocess.CompletedProcess:
-        # Argumentos que el real le pasaria a pre-commit:
-        args = ["install", "--overwrite"]
-        for hook_type in chi.HOOK_TYPES:
-            args.extend(["--hook-type", hook_type])
-        installed_via_fix.append(args)
-        # Simula la instalacion: escribe los hooks que pre-commit crearia.
-        for hook_type in chi.HOOK_TYPES:
-            _write_hook(hooks_dir, hook_type, interp)
-        return subprocess.CompletedProcess(args, 0, "", "")
-
-    monkeypatch.setattr(chi, "_regenerate_hooks", _fake_regenerate)
-    # RED + --fix: sale 0 y los args pedidos incluyen commit-msg.
-    assert (
-        chi.main(
-            ["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir), "--fix"]
-        )
-        == 0
-    )
-    assert installed_via_fix, "--fix no llego a regenerar"
-    flat = [a for args in installed_via_fix for a in args]
-    assert "commit-msg" in flat, (
-        "--fix no pidio --hook-type commit-msg (hallazgo ronda 1)"
-    )
-
-    # GREEN: instalado, mismo interpreter (sin --fix).
-    assert chi.main(["--repo-root", str(repo_root), "--hooks-dir", str(hooks_dir)]) == 0
+    captured = capsys.readouterr()
+    assert "commit-msg" in captured.err
+    assert "pre-commit" not in captured.err
+    assert "pre-push" not in captured.err
 
 
 def test_051c_unparseable_config_keeps_legacy_semantics(tmp_path: Path) -> None:

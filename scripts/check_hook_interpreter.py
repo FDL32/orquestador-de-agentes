@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The two hook types pre-commit generates that embed INSTALL_PYTHON.
+# The three hook types pre-commit generates that embed INSTALL_PYTHON.
 HOOK_TYPES = ("pre-commit", "pre-push", "commit-msg")
 
 # Line 7 of a generated hook: INSTALL_PYTHON='...'  or  INSTALL_PYTHON="..."
