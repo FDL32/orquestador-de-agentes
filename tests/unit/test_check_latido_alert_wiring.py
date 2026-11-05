@@ -241,6 +241,39 @@ def test_go_productor_nuevo_en_latido_es_valido(box, capsys):
     assert "latido-check: OK" in out
 
 
+def test_flight_heartbeat_extra_no_rompe_latido_normal(box, capsys):
+    """Control positivo: heartbeat adicional no sustituye la orden detectora normal."""
+    orders = box.coord_orders()
+    orders.insert(
+        3,
+        f"{box.py} {box.s('flight_stall_check.py')} --heartbeat-check "
+        f"--ops-dir {box.ops} --flight-dir {box.flight}",
+    )
+    coord = box.latido("heartbeat-extra.md", orders)
+    sup = box.latido("heartbeat-extra-s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 0, out
+    assert "latido-check: OK" in out
+
+
+def test_flight_heartbeat_no_sustituye_orden_normal(box, capsys):
+    """Control negativo: solo heartbeat no cubre la orden normal de la coordinadora."""
+    orders = box.coord_orders()
+    orders[2] = (
+        f"{box.py} {box.s('flight_stall_check.py')} --heartbeat-check "
+        f"--ops-dir {box.ops} --flight-dir {box.flight}"
+    )
+    coord = box.latido("heartbeat-only.md", orders)
+    sup = box.latido("heartbeat-only-s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "falta una orden VALIDA de flight_stall_check.py (orden normal)" in out
+
+
 def test_go_receta_manual_en_latido_es_violation_nombrada(box, capsys):
     """E7 negativo: la receta manual de GO debe fallar con causa reparable."""
     orders = box.coord_orders()

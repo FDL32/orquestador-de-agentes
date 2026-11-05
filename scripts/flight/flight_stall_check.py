@@ -42,6 +42,9 @@ FREE_GB_DEFAULT = 5.0
 QUOTA_STALE_MIN = 40
 TASK_STALE_S = 25 * 60  # la tarea corre cada 10 min: mas de 2 ciclos
 TASK_FUTURE_S = 5 * 60  # un ts_tarea mas alla de esto en el futuro es ilegible
+HEARTBEAT_STALE_S = 35 * 60
+HEARTBEAT_KEY = "latido-muerto"
+HEARTBEAT_OWNER = "task"
 SIBLING_GLOBS = ("implantador-*", "triaje-*")
 COLA_REL = Path("diseno") / "COLA_PARA_USUARIO.md"
 GO_LINE_RE = re.compile(
@@ -595,6 +598,85 @@ def _save_state(st):
         raise
 
 
+def _save_task_state(ts):
+    """Guarda el reloj de la tarea con un temporal propio y sustitucion atomica.
+
+    Before: ``CFG.ops`` existe y ``ts`` es un numero finito del reloj inyectado o real.
+    During: escribe solo ``task_state.<pid>.tmp`` y lo sustituye por ``task_state.json``.
+    After: queda un estado JSON con ``ts_tarea``; ante un fallo se elimina el temporal y se
+        propaga ``OSError`` sin tocar el estado anterior.
+    """
+    target = CFG.ops / TASK_STATE_NAME
+    tmp = target.with_suffix(f".{os.getpid()}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps({"ts_tarea": ts}, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+            newline="\n",
+        )
+        os.replace(tmp, target)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
+def _heartbeat_observation(st, now):
+    """Clasifica el reloj del latido actual o el campo ``ts`` de transicion.
+
+    Before: ``st`` es el diccionario tolerante de ``stall_state.json`` y ``now`` es el reloj.
+    During: prefiere ``ts_latido``; si falta usa el ``ts`` legado, acepta solo relojes finitos
+        no futuros y considera stale solo si pasa de 35 minutos (exclusivo).
+    After: devuelve ``(ok, nombre_reloj, motivo)``; no escribe estado ni emite avisos.
+    """
+    if "ts_latido" in st:
+        name, value = "ts_latido", st.get("ts_latido")
+    elif "ts" in st:
+        name, value = "ts antiguo", st.get("ts")
+    else:
+        return False, "ts_latido", "ts_latido ausente"
+    if not _is_finite(value) or value > now:
+        return False, name, f"{name} ausente o ilegible"
+    age = now - value
+    if age > HEARTBEAT_STALE_S:
+        return False, name, f"{name} viejo: lleva {int(age / 60)} min sin actualizar"
+    return True, name, "fresco"
+
+
+def _heartbeat_check(a, ca):
+    """Ejecuta exclusivamente la sonda que la tarea programada usa cuando T3 esta cerrado.
+
+    Before: ``CFG`` esta resuelto, ``ca`` esta configurado y ``a`` contiene heartbeat-check.
+    During: lee ``stall_state.json``, clasifica ``ts_latido`` o el ``ts`` de transicion, avisa
+        solo ``latido-muerto`` con owner ``task`` y, fuera de dry-run, escribe ``ts_tarea``.
+    After: devuelve 0 si el reloj es fresco, 2 si es viejo/ilegible o si falla el aviso/estado;
+        nunca ejecuta los detectores ni escribe ``ts_latido``.
+    """
+    st = _load_json_dict(CFG.state)
+    now = time.time()
+    fresh, clock_name, reason = _heartbeat_observation(st, now)
+    found = [] if fresh else [(HEARTBEAT_KEY, "URGENTE", reason)]
+    state_failed = False
+    if not a.dry_run:
+        try:
+            _save_task_state(now)
+        except OSError as exc:
+            print(
+                f"STALL_CHECK_BROKEN: task_state: {type(exc).__name__}: {str(exc)[:120]}"
+            )
+            state_failed = True
+    if fresh:
+        if "event:" + HEARTBEAT_KEY in ca.load_state() and not a.dry_run:
+            ca.resolve(HEARTBEAT_KEY, False)
+        print(f"heartbeat-check: {clock_name} {reason}")
+        return 2 if state_failed else 0
+    if a.dry_run:
+        print(f"URGENTE {HEARTBEAT_KEY} dry-run: {reason}")
+        return 2
+    notify_rc = _notify_all(ca, found, a, {}, owner=HEARTBEAT_OWNER)
+    return max(2, notify_rc) if state_failed else 2
+
+
 def _detect(out, st):
     """Corre los detectores; uno roto no tapa a los demas (``detector-roto`` AVISO)."""
     found, broke = [], False
@@ -620,13 +702,13 @@ def _detect(out, st):
     return found, broke
 
 
-def _notify_all(ca, found, a, out):
+def _notify_all(ca, found, a, out, owner="stall"):
     """Avisa (o marca con --baseline) cada hallazgo; devuelve el rc (1 hallazgos, 2 aviso fallido)."""
     rc = 0
     for key, level, what in found:
         rc = max(rc, 1)
         if a.baseline:
-            ca.mark_seen(key, level, "stall", a.dry_run)
+            ca.mark_seen(key, level, owner, a.dry_run)
             print(f"BASELINE {level} {key}")
             continue
         session_code = out.get("session_codes", {}).get(key) or getattr(
@@ -639,13 +721,14 @@ def _notify_all(ca, found, a, out):
             what,
             False,
             a.dry_run,
-            owner="stall",
+            owner=owner,
             session_code=session_code,
             preserve_literal=key in out.get("session_codes", {}),
         )
         if r == 2:
             rc = 2
-        print(f"{level} {key} rc_aviso={r} {what}")
+        suffix = " aviso fallido" if r == 2 else ""
+        print(f"{level} {key} rc_aviso={r}{suffix} {what}")
     return rc
 
 
@@ -667,13 +750,16 @@ def _reconcile(ca, out, found, a):
         ca.resolve("tarea-muerta", a.dry_run)
 
 
-def run(a):
+def run(a):  # noqa: C901 - detector legacy mas el modo heartbeat aislado
     """Un tick: carga el aviso, resuelve la configuracion, detecta, avisa y guarda el reloj.
 
     Before: argumentos ``a`` (dry_run, baseline, ops_dir, ...).
-    During: ver el docstring del modulo.
-    After: rc 0/1/2; con ``--dry-run`` no escribe estado; ``ts_latido`` se escribe en
-        cada ejecucion no-dry, tambien con ``--baseline``.
+    During: con ``--heartbeat-check`` retorna antes de cargar ``_state`` o ejecutar
+        ``_detect``; esa rama lee ``ts_latido`` (o el ``ts`` de transicion), avisa y
+        solo escribe ``ts_tarea`` fuera de ``--dry-run``.
+    After: rc 0/1/2; ``--heartbeat-check`` no escribe ``ts_latido``; en la rama
+        normal, ``--dry-run`` no escribe estado y ``ts_latido`` se escribe en cada
+        ejecucion no-dry, tambien con ``--baseline``.
     """
     global CFG
     try:
@@ -690,6 +776,11 @@ def run(a):
     if fatal:
         print(f"STALL_CHECK_BROKEN: {fatal}")
         return 2
+    if a.heartbeat_check:
+        if causes:
+            print("STALL_CHECK_BROKEN: " + "; ".join(causes[:3]))
+            return 2
+        return _heartbeat_check(a, ca)
     st, out = _state(), {}
     found, broke = _detect(out, st)
     if causes:
@@ -743,6 +834,11 @@ def main(argv=None):
         help="comprueba que existen y compilan los tres scripts",
     )
     ap.add_argument(
+        "--heartbeat-check",
+        action="store_true",
+        help="sondea ts_latido y escribe solo ts_tarea",
+    )
+    ap.add_argument(
         "--ops-dir", help=f"directorio de operacion; por defecto ${OPS_DIR_ENV}"
     )
     ap.add_argument(
@@ -757,6 +853,10 @@ def main(argv=None):
         help="ultima salida de quota_tick.py; por defecto <ops-dir>/quota_last.txt",
     )
     a = ap.parse_args(argv)
+    if a.heartbeat_check and (a.baseline or a.self_check):
+        ap.error("--heartbeat-check no se combina con --baseline ni --self-check")
+    if a.heartbeat_check and (not a.ops_dir or not a.flight_dir):
+        ap.error("--heartbeat-check exige --ops-dir y --flight-dir")
     try:
         return self_check(a) if a.self_check else run(a)
     except Exception as exc:

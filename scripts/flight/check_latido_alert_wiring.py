@@ -87,8 +87,16 @@ _INVENTORY: dict[str, tuple[tuple[str, frozenset[str], frozenset[str]], ...]] = 
     "coordinadora": (
         ("comms_alert.py", frozenset({"--scan"}), frozenset()),
         ("comms_alert.py", frozenset({"--event"}), frozenset()),
-        ("flight_stall_check.py", frozenset(), frozenset({"--self-check"})),
-        ("flight_stall_check.py", frozenset({"--self-check"}), frozenset()),
+        (
+            "flight_stall_check.py",
+            frozenset(),
+            frozenset({"--self-check", "--heartbeat-check"}),
+        ),
+        (
+            "flight_stall_check.py",
+            frozenset({"--self-check"}),
+            frozenset({"--heartbeat-check"}),
+        ),
         ("quota_tick.py", frozenset(), frozenset()),
         (SELF_NAME, frozenset({"--alert"}), frozenset()),
     ),
