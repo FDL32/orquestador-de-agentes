@@ -918,35 +918,27 @@ def _literal_mcp_count(tree: ast.AST) -> int:
         string expression, which is its docstring.
     After: returns the number of exact ``mcp:`` literals outside docstrings.
     """
-    count = 0
-
-    class Visitor(ast.NodeVisitor):
-        def visit_Constant(self, node: ast.Constant) -> None:
-            nonlocal count
-            if node.value == "mcp:":
-                count += 1
-
-        def _visit_body(self, node: ast.AST, body: list[ast.stmt]) -> None:
-            docstring = body and ast.get_docstring(node, clean=False) is not None
-            for index, statement in enumerate(body):
-                if docstring and index == 0:
-                    continue
-                self.visit(statement)
-
-        def visit_Module(self, node: ast.Module) -> None:
-            self._visit_body(node, node.body)
-
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            self._visit_body(node, node.body)
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self._visit_body(node, node.body)
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            self._visit_body(node, node.body)
-
-    Visitor().visit(tree)
-    return count
+    docstring_ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        if not node.body:
+            continue
+        first = node.body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            docstring_ids.add(id(first.value))
+    return sum(
+        isinstance(node, ast.Constant)
+        and node.value == "mcp:"
+        and id(node) not in docstring_ids
+        for node in ast.walk(tree)
+    )
 
 
 def violaciones(
@@ -992,16 +984,16 @@ class TestCensoMcpPrefix:
         scripts = tmp_path / "scripts"
         (scripts / "flight").mkdir(parents=True)
         (scripts / "flight" / "thread_id.py").write_text('MCP_PREFIX = "mcp:"\n')
+        (scripts / "flight" / "comms_alert.py").write_text('VALUE = "mcp:"\n')
+        (scripts / "flight" / "verify_user_authorization.py").write_text(
+            'VALUE = "mcp:"\n'
+        )
         (scripts / "extra.py").write_text('VALUE = "mcp:"\n')
         violations = violaciones(
             censo(scripts),
-            {
-                "scripts/flight/thread_id.py": _MCP_PREFIX_ALLOWLIST[
-                    "scripts/flight/thread_id.py"
-                ]
-            },
+            _MCP_PREFIX_ALLOWLIST,
         )
-        assert any("scripts/extra.py" in violation for violation in violations)
+        assert violations == ["fichero no allowlisted: scripts/extra.py"]
 
     def test_censo_rejects_second_constant_in_allowlisted_file(self, tmp_path: Path):
         scripts = tmp_path / "scripts"
@@ -1015,7 +1007,7 @@ class TestCensoMcpPrefix:
                     "scripts/flight/thread_id.py"
                 ]
             },
-        )
+        ) == ["cuenta incorrecta en scripts/flight/thread_id.py: 2 != 1"]
 
     def test_censo_rejects_missing_allowlisted_file(self, tmp_path: Path):
         scripts = tmp_path / "scripts"
@@ -1037,6 +1029,43 @@ class TestCensoMcpPrefix:
         scripts.mkdir()
         (scripts / "plain.py").write_text('"""mcp:"""\n# mcp:\nVALUE = "other"\n')
         assert censo(scripts) == {}
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'def f(p="mcp:"):\n    return p\n',
+            '@deco("mcp:")\ndef f():\n    pass\n',
+            'def f(p: "mcp:" = 1):\n    return p\n',
+            'class A(metaclass=type("mcp:", (), {})):\n    pass\n',
+        ],
+    )
+    def test_censo_counts_non_docstring_constants_everywhere(
+        self, tmp_path: Path, source: str
+    ):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "all_ast_positions.py").write_text(source)
+        assert censo(scripts) == {"scripts/all_ast_positions.py": 1}
+
+    def test_censo_ignores_nested_function_docstring(self, tmp_path: Path):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "nested_docstring.py").write_text(
+            'def outer():\n    def inner():\n        "mcp:"\n    return inner\n'
+        )
+        assert censo(scripts) == {}
+
+    def test_violaciones_rejects_missing_reason(self):
+        assert violaciones(
+            {"scripts/flight/thread_id.py": 1},
+            {"scripts/flight/thread_id.py": {"count": 1, "reason": "  "}},
+        ) == ["razon ausente: scripts/flight/thread_id.py"]
+
+    def test_violaciones_rejects_wrong_count_with_present_file(self):
+        assert violaciones(
+            {"scripts/flight/thread_id.py": 1},
+            {"scripts/flight/thread_id.py": {"count": 2, "reason": "definicion"}},
+        ) == ["cuenta incorrecta en scripts/flight/thread_id.py: 1 != 2"]
 
     def test_censo_propagates_syntax_error(self, tmp_path: Path):
         scripts = tmp_path / "scripts"
