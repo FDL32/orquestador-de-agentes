@@ -755,6 +755,9 @@ def test_fila99_status_fallido_es_ceguera_con_aviso_y_no_borra_claves_git(
     r = box.tick("--motor-wt", str(sin_repo), motor=False)
     assert r.rc == 1 and ("detector-ciego-git", "AVISO", "stall") in r.events
     assert "hook-seguridad" not in r.keys
+    assert ("detector-ciego-hook", "AVISO", "stall") in r.events
+    assert all(level != "URGENTE" for _, level, _ in r.events)
+    assert '"ciego_hook": true' in r.out
     assert "ciego_git" in r.out and '"motor_sucio": -1' in r.out
     assert "event:git-index.lock-wt" in box.ca_state()
     assert box.stall_state()["motor_sucio"] == 0
@@ -1203,7 +1206,47 @@ def test_d3_cota_de_lectura_acepta_4096_y_ciega_4097(box):
     _con_cupo(box, sobre)
     r = box.tick()
     assert ("cupo-no-medido", "AVISO", "stall") in r.events
+    assert '"cupo_max": null' in r.out
     assert "ciego_cupo" in r.out
+
+
+def test_d3_fichero_mucho_mayor_se_lee_solo_hasta_la_cota_mas_uno(box, monkeypatch):
+    """D3: un fichero de 1 MiB no se carga entero; se lee solo cota+1 y queda ciego."""
+    box.quota.write_text(
+        "QUOTA | alvarovans weekly 40% | " + "x" * (1024 * 1024),
+        encoding="utf-8",
+    )
+    box.quota_touch(0)
+    real_open = box.m.Path.open
+    sizes = []
+
+    def probe_open(path, *args, **kwargs):
+        raw = real_open(path, *args, **kwargs)
+
+        class Probe:
+            def __enter__(self):
+                raw.__enter__()
+                return self
+
+            def __exit__(self, *exc_info):
+                return raw.__exit__(*exc_info)
+
+            def __getattr__(self, name):
+                return getattr(raw, name)
+
+            def read(self, size=-1):
+                if path == box.quota:
+                    sizes.append(size)
+                return raw.read(size)
+
+        return Probe()
+
+    monkeypatch.setattr(box.m.Path, "open", probe_open)
+    r = box.tick()
+
+    assert sizes == [box.m.QUOTA_READ_MAX + 1]
+    assert ("cupo-no-medido", "AVISO", "stall") in r.events
+    assert '"cupo_max": null' in r.out and "ciego_cupo" in r.out
 
 
 def test_d6_sonda_codex_no_inyecta_cuenta_conocida(box):

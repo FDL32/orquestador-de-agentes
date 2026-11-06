@@ -182,8 +182,8 @@ def check_quota(out):
     """Detector de cupo: lee ``quota_last.txt`` (salida de quota_tick.py).
 
     Before: ``CFG.quota`` apunta al fichero (o es None si la configuracion era invalida).
-    During: lee la salida completa hasta ``QUOTA_READ_MAX`` caracteres; si la supera, queda
-        ciego + ``cupo-no-medido`` sin truncar en silencio. Ausente = ciego + ``cupo-no-medido``;
+    During: lee como mucho ``QUOTA_READ_MAX + 1`` caracteres; si la lectura supera la cota,
+        queda ciego + ``cupo-no-medido`` sin truncar en silencio. Ausente = ciego + ``cupo-no-medido``;
         sin porcentajes (o una cuenta sin el suyo) =
         ciego + ``cupo-ilegible``; mas de 40 min, cabecera ``QUOTA NO_MEDIDO`` o una cuenta
         ``STALE`` = ciego + ``cupo-no-medido``; maximo >= 97 URGENTE, >= 92 AVISO.
@@ -204,7 +204,8 @@ def check_quota(out):
             )
         ]
     age_min = (time.time() - q.stat().st_mtime) / 60
-    text = q.read_text(encoding="utf-8", errors="replace")
+    with q.open("r", encoding="utf-8", errors="replace") as stream:
+        text = stream.read(QUOTA_READ_MAX + 1)
     if len(text) > QUOTA_READ_MAX:
         out["ciego_cupo"] = True
         out["cupo_max"] = None
