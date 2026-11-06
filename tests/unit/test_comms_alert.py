@@ -3193,6 +3193,10 @@ def test_153n_redacta_patrones_cerrados_de_secretos(ca, value):
         "disk-1234abcdefgh",
         "task-force",
         "el token expira mañana",
+        "token validation failed in step 3",
+        "token verification pending",
+        "token expiration soon",
+        "apikey rotation scheduled",
         "Bearer es un apellido sin valor",
         "sk- es un prefijo citado sin valor",
     ],
@@ -3201,21 +3205,67 @@ def test_153n_redacta_sin_falsos_positivos_legitimos(ca, value):
     assert ca.m.redact(value) == value
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "token abcDEF1234567890",
+        "api-key SYNTH12345678",
+        "api_key: SYNTH12345678",
+        "apikey SYNTH12345678",
+    ],
+)
+def test_153n_exige_digito_en_secretos_separados_por_espacio(ca, value):
+    assert "SYNTH" not in ca.m.redact(value)
+
+
+@pytest.mark.parametrize(
+    ("prefix", "short_value", "long_value"),
+    [
+        ("ghp_", "ghp_1234567", "ghp_12345678"),
+        ("sk-", "sk-1234567", "sk-12345678"),
+    ],
+)
+def test_153n_prefijos_respetan_frontera_de_ocho_caracteres(
+    ca, prefix, short_value, long_value
+):
+    assert ca.m.redact(short_value) == short_value
+    assert ca.m.redact(long_value) == "<secreto>"
+
+
+def test_153n_unc_respeta_limite_izquierdo(ca):
+    assert ca.m.redact(r"abc\\srv\share\x") == r"abc\\srv\share\x"
+    assert ca.m.redact(r"\\srv\share\x") == "<ruta>"
+
+
 def test_153n_redacta_stdout_antes_de_truncar(ca, monkeypatch, capsys):
     real = _load("notify_153n_real")
     real.configure(str(ca.dir))
 
     class Result:
         returncode = 0
-        stdout = "Authorization: Bearer SYNTHETIC_STDOUT_123\n" + ("x" * 220)
+        stdout = ""
+
+    seen = []
+    full_bearer_value = "Bearer abcdefgh12345678"
+
+    def fake_redact(value):
+        seen.append(value)
+        return value.replace(full_bearer_value, "<secreto>")
 
     monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
     monkeypatch.setattr(real.subprocess, "run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(real, "redact", fake_redact)
 
+    Result.stdout = ("a" * 195) + " " + full_bearer_value + "\n"
     assert real.notify("title", "message", False) == 0
     output = capsys.readouterr().out
-    assert "SYNTHETIC_STDOUT_123" not in output
-    assert len(output.split("notify rc=0 ", 1)[1].rstrip("\n")) <= 200
+    assert seen[-1].endswith(full_bearer_value)
+    assert " Bear" not in output
+
+    Result.stdout = "a" * 250
+    assert real.notify("title", "message", False) == 0
+    control = capsys.readouterr().out
+    assert len(control.split("notify rc=0 ", 1)[1].rstrip("\n")) == 200
 
 
 def test_153n_preserve_literal_redacta_secretos_nuevos_y_conserva_ruta(ca):

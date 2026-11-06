@@ -113,9 +113,13 @@ _RE_SECRET = re.compile(
 _RE_BEARER_SECRET = re.compile(
     r"(?i)(?<![A-Za-z0-9_-])(?:authorization:\s*)?bearer\s+[A-Za-z0-9._~+/=-]{8,}"
 )
-_RE_SPACED_SECRET = re.compile(r"(?i)(?<![A-Za-z0-9_-])token\s+[A-Za-z0-9._~+/=-]{8,}")
+_RE_SPACED_SECRET = re.compile(
+    r"(?i)(?<![A-Za-z0-9_-])token\s+(?=[A-Za-z0-9._~+/=-]*[0-9])"
+    r"[A-Za-z0-9._~+/=-]{8,}"
+)
 _RE_API_SECRET = re.compile(
-    r"(?i)(?<![A-Za-z0-9_-])api[-_]?key(?:[=: ]+)[A-Za-z0-9._~+/=-]{8,}"
+    r"(?i)(?<![A-Za-z0-9_-])api[-_]?key(?:[=:]\s*|\s+(?=[A-Za-z0-9._~+/=-]*[0-9]))"
+    r"[A-Za-z0-9._~+/=-]{8,}"
 )
 _RE_PREFIX_SECRET = re.compile(
     r"(?i)(?<![A-Za-z0-9_-])(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|sk-)[A-Za-z0-9_-]{8,}"
@@ -347,8 +351,11 @@ def redact(text):
     During: sustituye UUID de hilo (``mcp:<uuid>``), UUID sueltos y rutas (Windows en cualquier
         forma/capitalizacion, ``\\\\?\\``, UNC y /home, /Users), mas la lista cerrada de secretos
         Authorization/Bearer, token con espacio, api-key/api_key/apikey y prefijos ghp_/gho_/ghu_/
-        ghs_/ghr_/github_pat_/sk-. Las formas fuera de esta lista quedan como limite medido;
-        DESPUES acota a TEXT_LIMIT caracteres.
+        ghs_/ghr_/github_pat_/sk-. En las formas separadas por espacio el valor debe contener un
+        digito: se midieron como falsos positivos ``token validation failed in step 3``, ``token
+        verification pending``, ``token expiration soon`` y ``apikey rotation scheduled``; queda
+        como falso negativo medido un valor solo de letras tras espacio. Las formas fuera de esta
+        lista quedan como limite medido; DESPUES acota a TEXT_LIMIT caracteres.
     After: devuelve un str de como mucho TEXT_LIMIT caracteres; redact(redact(x)) == redact(x).
     """
     out = _RE_THREAD.sub("mcp:<hilo>", str(text))
