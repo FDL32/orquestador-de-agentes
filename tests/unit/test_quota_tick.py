@@ -294,6 +294,21 @@ def test_umbral_valido_no_lleva_marca(rig):
     assert rc == 0 and "umbrales-roster-invalidos" not in out
 
 
+def test_d8_hard_invalido_65_por_ciento_es_ok_con_marca(rig):
+    """D8: con hard inválido se conserva el fallback 97 y se declara la marca."""
+    rig.roster({"hard_stop_block_pct": "60"})
+    rc, out = _pct(rig, 65)
+    assert rc == 0
+    assert "(soft 92/hard 97) umbrales-roster-invalidos" in out
+
+
+def test_d9_quota_tick_inf_es_hard_5(rig):
+    """D9: quota_tick conserva deliberadamente +inf como HARD rc 5."""
+    rig.monitor_out = json.dumps(accounts(a=acct(float("inf"))))
+    rc, out = rig.tick()
+    assert rc == 5 and out.startswith("QUOTA HARD") and "inf%" in out
+
+
 def test_umbrales_invertidos_conservan_la_precedencia_hard(rig):
     """R13: soft 97 > hard 92 con 95 % = HARD (como HOY)."""
     rig.roster({"soft_freeze_block_pct": 97, "hard_stop_block_pct": 92})

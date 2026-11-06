@@ -8,7 +8,9 @@ Before: un directorio del vuelo (``--flight-dir`` o ``FLIGHT_DIR``, absoluto y e
 During: lee los umbrales del roster (``quota.soft_freeze_block_pct``, ``quota.hard_stop_block_pct``;
     por defecto 92 y 97), ejecuta el monitor con PowerShell por ruta absoluta de SystemRoot y toma
     el peor ``block_pct`` de las cuentas. Un umbral invalido cae al defecto con la marca
-    ``umbrales-roster-invalidos`` (nunca baja una severidad). La sonda de codex es informativa.
+    ``umbrales-roster-invalidos``; en particular, un ``hard_stop_block_pct`` invalido cae a 97
+    y puede resultar menos severo que el umbral pretendido por el roster. La sonda de codex es
+    informativa. Un ``+inf`` del monitor se conserva como HARD rc 5 deliberadamente.
 After: UNA linea ``QUOTA <ESTADO> (soft S/hard H) | <cuenta> <ventana> <pct>% | codex ...`` y rc 0 OK,
     3 AVISO (>= 90), 4 FREEZE (>= soft), 5 HARD (>= hard), 9 NO_MEDIDO. Cualquier fallo interno
     (roster o monitor ausentes o ilegibles, cuentas vacias, porcentaje NaN, booleano o cadena)
