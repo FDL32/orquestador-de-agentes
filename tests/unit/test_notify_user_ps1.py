@@ -11,6 +11,7 @@ After: asevera rc y salida del camino de fallo simulado, que ``-NoFlash`` no omi
 """
 
 import base64
+import binascii
 import hashlib
 import importlib.util
 import os
@@ -214,7 +215,25 @@ def _decode_effective_tag(comment):
     """Decodifica la metadata segura del Tag efectivo del comentario XML."""
     prefix = "effective-tag="
     assert comment.startswith(prefix)
-    return base64.b64decode(comment.removeprefix(prefix)).decode("utf-8")
+    return base64.b64decode(comment.removeprefix(prefix), validate=True).decode("utf-8")
+
+
+def test_caja_c_metadata_effective_tag_invalida_falla_cerrado():
+    """La metadata corrupta no se acepta silenciosamente como un Tag vacío."""
+    with pytest.raises((binascii.Error, UnicodeDecodeError)):
+        _decode_effective_tag("effective-tag=!!!!")
+
+
+def test_caja_c_metadata_effective_tag_valida_se_decodifica():
+    """La ruta positiva confirma que la metadata base64 válida conserva el Tag."""
+    encoded = base64.b64encode(b"tag-valido").decode("ascii")
+    assert _decode_effective_tag("effective-tag=" + encoded) == "tag-valido"
+
+
+def test_caja_c_metadata_effective_tag_utf8_invalido_falla():
+    """Base64 válida pero UTF-8 inválida debe fallar por UnicodeDecodeError."""
+    with pytest.raises(UnicodeDecodeError):
+        _decode_effective_tag("effective-tag=/w==")
 
 
 def test_caja1_xmlonly_entendido_es_la_unica_accion_sin_open_uri():

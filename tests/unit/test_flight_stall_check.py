@@ -416,6 +416,21 @@ def test_a3_roster_json_suelto_no_es_canonico(box):
     assert fatal is None and not causes and cfg.session_code is None
 
 
+def test_caja_c_7b_resolve_paths_lee_el_roster_canonico(box):
+    """7b: el consumidor del tick usa la misma fixture flight_roster.json del contrato."""
+    (box.flight / "flight_roster.json").write_text(
+        '{"active_roles":{"orquestador":{"session_code":"CO-31"}}}',
+        encoding="utf-8",
+    )
+    cfg, causes, fatal = box.m._resolve_paths(
+        types.SimpleNamespace(
+            flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+        ),
+        box.ops,
+    )
+    assert causes == [] and fatal is None and cfg.session_code == "CO-31"
+
+
 def test_a3_tick_real_usa_flight_roster_para_titulo(box):
     """BA07: un tick real con flight_roster.json propaga el codigo al aviso."""
     (box.flight / "flight_roster.json").write_text(
@@ -1925,7 +1940,7 @@ def test_caja1_go_real_en_cola_llega_al_tick_con_codigo_y_frase(box):
     box.notify_rc = 0
     result = box.tick("--dry-run")
     assert result.sent, result.out
-    assert result.sent[0][0].startswith("CO-29")
+    assert result.sent[0][0] == "CO-29"
     assert result.sent[0][1].startswith("PUSH C:/Users/fdl/repo")
     assert "mcp:12345678-1234-1234-1234-123456789012" in result.sent[0][1]
 

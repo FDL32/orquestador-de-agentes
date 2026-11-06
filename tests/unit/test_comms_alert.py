@@ -1159,6 +1159,43 @@ def test_fila70_main_event_usa_owner_manual(ca, monkeypatch):
     assert vistos[0][1] == {"owner": "manual", "session_code": None}
 
 
+def test_caja_c_main_event_inyecta_owner_como_session_code(ca, monkeypatch):
+    """Caja C 7c: el CLI real conserva --owner como session_code del evento."""
+    vistos = []
+    monkeypatch.setattr(ca.m, "event", lambda *a, **k: vistos.append((a, k)) or 0)
+    monkeypatch.setenv(ca.m.OPS_DIR_ENV, str(ca.dir))
+    assert (
+        ca.m.main(["--event", "K", "--what", "w", "--owner", "CO-31", "--dry-run"]) == 0
+    )
+    assert vistos == [
+        (
+            ("K", "AVISO", None, "w", False, True),
+            {"owner": "manual", "session_code": "CO-31"},
+        )
+    ]
+
+
+def test_caja_c_main_event_owner_invalido_conserva_fallback_real(ca):
+    """El CLI real no convierte un owner inválido en identidad visible."""
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--event",
+                "K",
+                "--what",
+                "w",
+                "--owner",
+                "not-a-code",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert ca.sent == [("Vuelo ?", "w")]
+
+
 def test_caja1_evento_sin_codigo_conserva_aviso_y_marca_titulo_generico(ca):
     """Caja 1 RED/E2: la falta de codigo no puede silenciar el aviso."""
     assert (
@@ -1245,7 +1282,8 @@ def test_caja_b_main_fija_what_y_titulo_con_owner_invalido_y_ausente(ca):
         )
         == 0
     )
-    assert ca.sent[-1] == ("Vuelo ?", literal)
+    assert len(ca.sent) == 1
+    assert ca.sent[0] == ("Vuelo ?", literal)
     assert (
         ca.m.main(
             [
@@ -1260,7 +1298,42 @@ def test_caja_b_main_fija_what_y_titulo_con_owner_invalido_y_ausente(ca):
         )
         == 0
     )
-    assert ca.sent[-1] == ("Vuelo ?", literal)
+    assert len(ca.sent) == 2
+    assert ca.sent[1] == ("Vuelo ?", literal)
+
+
+def test_caja_c_tag_for_toast_docstring_fija_la_clave_cruda(ca):
+    """Caja C 7d: la especificación exige derivar siempre desde la clave cruda."""
+    doc = ca.m.tag_for_toast.__doc__ or ""
+    assert "aplica redact a la clave cruda SIEMPRE" in doc
+    assert "NO aplica redact a la clave cruda SIEMPRE" not in doc
+    assert "salida NO es" in doc and "idempotente" in doc
+    assert "MISMA clave cruda" in doc
+    assert "nunca aplicar tag_for_toast sobre un Tag ya derivado" in doc
+
+
+def test_caja_c_redact_aplica_text_limit_despues_de_transformar_contenido(ca):
+    """La frontera se mide sobre el contenido ya redactado, no sobre la entrada cruda."""
+    raw = "x" * 150 + "mcp:12345678-1234-1234-1234-123456789012"
+    assert len(raw) > ca.m.TEXT_LIMIT
+    assert ca.m.redact(raw) == "x" * 150 + "mcp:<hilo>"
+    assert len(ca.m.redact(raw)) == ca.m.TEXT_LIMIT
+    near = "x" * 149 + "mcp:12345678-1234-1234-1234-123456789012"
+    assert ca.m.redact(near) == "x" * 149 + "mcp:<hilo>"
+    assert len(ca.m.redact(near)) == ca.m.TEXT_LIMIT - 1
+
+
+def test_caja_c_docstring_tag_no_promete_idempotencia():
+    """La comprobación lee el docstring real del módulo, no una copia del test."""
+    tree = ast.parse(CA_PATH.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "tag_for_toast"
+    )
+    doc = ast.get_docstring(function) or ""
+    assert "aplica redact a la clave cruda SIEMPRE" in doc
+    assert "MISMA clave cruda" in doc
 
 
 def test_caja1_evento_largo_cadena_real_protege_frase_y_recorta(ca, monkeypatch):
@@ -1610,7 +1683,7 @@ def test_caja1_event_owner_codigo_valido_titulo_y_codigo_invalido_fallback(ca):
         owner="manual",
         session_code="CO-29",
     )
-    assert ca.sent[-1][0].startswith("CO-29")
+    assert ca.sent[-1][0] == "CO-29"
     for invalid in (
         "mcp:12345678-1234-1234-1234-123456789012",
         r"C:\secret",

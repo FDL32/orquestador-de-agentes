@@ -20,6 +20,13 @@ motor, en `scripts/flight/`:
 
 Las copias antiguas de `tmp_or8` NO son el mecanismo: un latido que las llame esta desviado.
 
+## Regla de Tags del aviso
+
+`tag_for_toast` aplica `redact` a la clave cruda siempre. Su salida no es idempotente:
+publicacion y retirada deben derivar el Tag desde la misma clave cruda, y nunca se debe
+volver a pasar `tag_for_toast` sobre un Tag ya derivado. Esto mantiene alineados el Tag
+que publica `notify` y el que usa `remove_toast`.
+
 ## 2. La barrera: `scripts/flight/check_latido_alert_wiring.py`
 
 Lee el FICHERO del latido de cada rol (`coordinadora`, `supervisora`) y comprueba que sus ordenes

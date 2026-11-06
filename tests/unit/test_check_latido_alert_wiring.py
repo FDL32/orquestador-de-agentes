@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -406,6 +407,57 @@ def test_fila_132_sin_roster_es_rc_3_aunque_los_latidos_esten_mal(box, capsys):
     rc, out = run(box.argv(), capsys)  # roster presente, ningun latido
     assert rc == 1
     assert "sin latido" in out
+
+
+@pytest.mark.parametrize(
+    ("roster_body", "expected"),
+    [
+        ('{"active_roles":{"orquestador":{"session_code":"CO-31"}}}', "CO-31"),
+        ('{"active_roles":{"orquestador":{}}}', None),
+        ('{"active_roles":{"orquestador":{"session_code":""}}}', None),
+        ('{"active_roles":{"orquestador":{"session_code":null}}}', None),
+        ('{"active_roles":{"orquestador":{"session_code":"co-31"}}}', None),
+        ('{"active_roles":{"orquestador":{"session_code":"CO31"}}}', None),
+        ('{"active_roles":{"orquestador":{"session_code":"123"}}}', None),
+        ("{", None),
+    ],
+)
+def test_caja_c_7b_ambos_consumidores_usan_el_mismo_roster_real(
+    box, monkeypatch, roster_body, expected
+):
+    """7b: ambos consumidores resuelven None ante cualquier roster no canónico."""
+    roster = box.motor / "flight_roster.json"
+    roster.write_text(roster_body, encoding="utf-8")
+    captured = {}
+    monkeypatch.setattr(
+        chk,
+        "emit_alert",
+        lambda *args, **kwargs: captured.update(kwargs) or True,
+    )
+    args = argparse.Namespace(
+        roster_path=str(roster),
+        ops_dir=str(box.ops),
+        flight_dir=str(box.motor),
+        dry_run=True,
+    )
+    assert chk._alert_and_report(1, ["diagnostico", "hallazgo"], args, {}) == 1
+
+    stall_path = _ROOT / "scripts" / "flight" / "flight_stall_check.py"
+    spec = importlib.util.spec_from_file_location(
+        "flight_stall_check_caja_c_7b", stall_path
+    )
+    stall = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stall)
+    cfg, causes, fatal = stall._resolve_paths(
+        types.SimpleNamespace(
+            flight_dir=str(box.motor),
+            motor_wt=str(box.motor),
+            quota_file=None,
+        ),
+        box.ops,
+    )
+    assert causes == [] and fatal is None
+    assert captured["session_code"] == cfg.session_code == expected
 
 
 # ================================================================== FILA 130 -- ILEGIBLE rc 2
