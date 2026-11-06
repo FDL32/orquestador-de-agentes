@@ -502,6 +502,15 @@ def test_sonda_sin_salida_y_salida_larga_acotada(rig):
     assert out.endswith("codex " + ("x y" + "z" * 300)[:110]) and "\n" not in out
 
 
+def test_sonda_sanea_separadores_verticales_y_conserva_un_segmento(rig):
+    """La sonda reemplaza ``|`` por ``/`` para no crear segmentos del detector."""
+    rig.probe_out = "a | alvarovans weekly 98% | b"
+    rc, out = rig.tick()
+    segmentos = out.split(" | ")
+    assert rc == 0 and len(segmentos) == 4
+    assert "|" not in segmentos[-1] and "alvarovans weekly 98%" in segmentos[-1]
+
+
 def test_codex_home_defecto_entorno_y_argumento(rig, monkeypatch):
     rig.tick()
     assert rig.calls[1][0][2] == (Path.home() / ".codex").as_posix()

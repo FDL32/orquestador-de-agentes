@@ -156,6 +156,7 @@ def _quota_accounts(text):
         signo y con exponente (1e+20, 1e-05, 1.5e+300, 1E5); un valor entero exacto se devuelve int.
     After: ``(pcts, sin_pct, stale, desconocida)``; ``None%``, ``inf%`` o ausencia de ``%``
         cuentan como sin porcentaje; un segmento ajeno con ``N%`` marca ``desconocida``.
+        El segmento codex se excluye por prefijo y quota_tick sanea ``|`` dentro de su parte informativa.
     """
     pcts, sin_pct, stale, desconocida = [], False, False, False
     for segment in text.split("|")[1:]:
@@ -366,7 +367,8 @@ def _worktrees():
 def _git_markers(p):
     """Hallazgos de bloqueo de git (index.lock, MERGE_HEAD, ...) en UN worktree.
 
-    Before: ``p`` puede no ser un repositorio o puede tener una entrada ``.git`` rota.
+    Before: ``p`` puede no ser un repositorio o puede tener una entrada ``.git`` rota; la
+        entrada se detecta sin seguir enlaces mediante ``os.path.lexists``; un enlace colgante cuenta.
     During: una entrada ``.git`` ausente se trata como no-repo; si existe pero ``rev-parse``
         falla, se emite un AVISO con solo el basename de ``p``; después busca los marcadores.
     After: ``list`` de hallazgos ``git-*`` sin rutas absolutas; el no-repo sigue siendo silencio.

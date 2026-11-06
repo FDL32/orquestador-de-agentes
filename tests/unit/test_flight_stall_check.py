@@ -1654,13 +1654,22 @@ def _cuenta(pct, stale=False, ventana="weekly"):
     return {"block_pct": pct, "stale": stale, "block_window": ventana}
 
 
-def _linea_real_de_quota_tick(box, cuentas):
-    """La linea que imprime quota_tick.py de VERDAD (monitor falso), para encadenarla con el detector."""
+def _linea_real_de_quota_tick(box, cuentas, probe_out=None):
+    """Genera la linea real de quota_tick para encadenarla con el detector.
+
+    Before: ``box`` aporta un vuelo temporal y ``cuentas`` el JSON del monitor; ``probe_out``
+        es opcional y representa la salida de la sonda de codex.
+    During: carga quota_tick por ruta, sustituye sus subprocesos por monitor y sonda sintéticos
+        y captura stdout sin tocar herramientas reales.
+    After: devuelve la línea ``QUOTA`` producida por quota_tick; no deja estado persistente fuera
+        de ``box``.
+    """
     spec = importlib.util.spec_from_file_location("quota_tick_cadena", QUOTA_TICK_PATH)
     qt = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(qt)
     (box.flight / "flight_roster.json").write_text('{"quota": {}}', encoding="utf-8")
     salida = json.dumps({"accounts": cuentas})
+    probe = str(box.root / "probe.py") if probe_out is not None else None
     buf = []
     old = sys.stdout
     sys.stdout = _Buf(buf)
@@ -1669,14 +1678,22 @@ def _linea_real_de_quota_tick(box, cuentas):
             box.monkeypatch.context() as mp
         ):  # subprocess.run es global: solo durante la medicion
             mp.setenv("SYSTEMROOT", os.environ.get("SYSTEMROOT") or str(box.root))
-            mp.setattr(
-                qt.subprocess,
-                "run",
-                lambda cmd, **kw: types.SimpleNamespace(stdout=salida, returncode=0),
-            )
-            qt.main(
-                ["--flight-dir", str(box.flight), "--monitor", str(box.root / "m.ps1")]
-            )
+
+            def fake_run(cmd, **kw):
+                if str(cmd[0]).endswith("powershell.exe"):
+                    return types.SimpleNamespace(stdout=salida, returncode=0)
+                return types.SimpleNamespace(stdout=probe_out or "", returncode=0)
+
+            mp.setattr(qt.subprocess, "run", fake_run)
+            args = [
+                "--flight-dir",
+                str(box.flight),
+                "--monitor",
+                str(box.root / "m.ps1"),
+            ]
+            if probe is not None:
+                args += ["--probe", probe]
+            qt.main(args)
     finally:
         sys.stdout = old
     return "".join(buf).strip()
@@ -1720,6 +1737,30 @@ def test_a1_la_cuenta_baja_no_tapa_a_la_alta_con_fraccion(box):
         "QUOTA FREEZE (soft 92/hard 97) | alvarovans weekly 10.5% | brabander weekly 97.0%",
     )
     assert "cupo-97" in box.tick().keys
+
+
+def test_a1_sonda_con_pipe_no_inyecta_cuenta_en_el_detector(box):
+    """La salida real del productor sanea un pipe de la sonda antes del detector."""
+    linea = _linea_real_de_quota_tick(
+        box,
+        {"brabander": _cuenta(30)},
+        probe_out="a | alvarovans weekly 98% | b",
+    )
+    _con_cupo(box, linea)
+    r = box.tick()
+    assert "cupo-97" not in r.keys and "cupo-cuenta-desconocida" not in r.keys
+    assert '"cupo_max": 30' in r.out
+
+
+def test_a1_cuenta_real_alta_con_sonda_sigue_urgente(box):
+    """Una cuenta real al 98% conserva el corte duro aunque la sonda tenga texto con pipes."""
+    linea = _linea_real_de_quota_tick(
+        box,
+        {"alvarovans": _cuenta(98)},
+        probe_out="a | alvarovans weekly 40% | b",
+    )
+    _con_cupo(box, linea)
+    assert ("cupo-97", "URGENTE", "stall") in box.tick().events
 
 
 # Todas las formas en que Python imprime un float de block_pct (A8): entero exacto, decimal,

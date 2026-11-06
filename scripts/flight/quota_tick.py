@@ -162,7 +162,14 @@ def _measure(accounts):
 
 
 def _codex(probe, home):
-    """Parte informativa de la sonda de codex; su fallo NUNCA cambia el rc."""
+    """Parte informativa de la sonda de codex; su fallo NUNCA cambia el rc.
+
+    Before: ``probe`` es una ruta opcional y ``home`` el directorio de la sonda.
+    During: ejecuta la sonda, aplana saltos de línea, sanea ``|`` como ``/`` y acota la salida
+        para que la información no cree segmentos adicionales en la línea ``QUOTA``.
+    After: devuelve un fragmento informativo estable; cualquier excepción produce ``NO_MEDIDO``
+        sin alterar el rc de la medición.
+    """
     if not probe:
         return f"codex NO_MEDIDO sin {PROBE_ENV}"
     try:
@@ -173,7 +180,9 @@ def _codex(probe, home):
             timeout=60,
             check=False,
         )
-        return "codex " + (c.stdout.strip().replace("\n", " ")[:110] or "sin salida")
+        return "codex " + (
+            c.stdout.strip().replace("\n", " ").replace("|", "/")[:110] or "sin salida"
+        )
     except Exception as exc:
         return f"codex NO_MEDIDO {type(exc).__name__}"
 
