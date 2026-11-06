@@ -28,6 +28,10 @@ FIELDS = (
     "quota_summary",
 )
 _SHA12 = re.compile(r"[0-9a-fA-F]{12}")
+_TS_WITH_OFFSET = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
+)
 
 
 class UsageError(ValueError):
@@ -43,7 +47,6 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         description="Append one coordinator heartbeat trace record",
-        exit_on_error=False,
     )
     parser.add_argument("--ops-dir", required=True)
     parser.add_argument("--coordinator")
@@ -98,12 +101,12 @@ def _parse_ts(raw: str | None) -> str:
     """
     if raw is None:
         return dt.datetime.now().astimezone().isoformat(timespec="seconds")
-    try:
-        parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise UsageError("ts must be ISO8601 with an offset") from exc
-    if parsed.tzinfo is None or len(raw.split("T", 1)[-1].split(".", 1)[0]) < 8:
+    if not _TS_WITH_OFFSET.fullmatch(raw):
         raise UsageError("ts must be ISO8601 with an offset and seconds")
+    try:
+        dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise UsageError("ts must be ISO8601 with an offset and seconds") from exc
     return raw
 
 

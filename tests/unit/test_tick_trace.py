@@ -24,6 +24,17 @@ def run_trace(ops_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_direct(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run the CLI without injecting the mandatory ops-dir argument."""
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def read_lines(ops_dir: Path) -> list[dict[str, object]]:
     """Parse every physical JSONL line from the trace."""
     raw = (ops_dir / "tick_trace.jsonl").read_bytes()
@@ -163,3 +174,69 @@ def test_invalid_return_code_is_rc2_and_does_not_create_trace(tmp_path: Path) ->
     assert result.returncode == 2
     assert not (tmp_path / "tick_trace.jsonl").exists()
     assert "TICK_TRACE error" in result.stdout
+
+
+def test_relative_ops_dir_is_rejected_without_writing(tmp_path: Path) -> None:
+    """The output directory must be absolute even when a relative one exists."""
+    relative = tmp_path / "relative-ops"
+    relative.mkdir()
+
+    result = run_direct(
+        "--ops-dir",
+        relative.name,
+        *measured_args(),
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2
+    assert not (relative / "tick_trace.jsonl").exists()
+    assert "TICK_TRACE error" in result.stdout
+
+
+def test_unknown_option_and_missing_ops_dir_are_named_errors(tmp_path: Path) -> None:
+    """Argparse failures are converted to the heartbeat's named error output."""
+    for args in (("--unknown",), tuple()):
+        result = run_direct(*args, cwd=tmp_path)
+        assert result.returncode == 2
+        assert "TICK_TRACE error" in result.stdout
+        assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_invalid_unmeasured_declarations_are_rejected(tmp_path: Path) -> None:
+    """Malformed, unknown, and empty-reason declarations write nothing."""
+    for declaration in ("guard_rc", "invented=x", "guard_rc="):
+        result = run_trace(
+            tmp_path,
+            "--unmeasured",
+            declaration,
+            "--ts",
+            TS_A,
+        )
+        assert result.returncode == 2
+        assert not (tmp_path / "tick_trace.jsonl").exists()
+        assert "TICK_TRACE error" in result.stdout
+
+
+def test_timestamp_requires_offset_and_seconds(tmp_path: Path) -> None:
+    """Naive, date-only, and minute-only timestamps are invalid."""
+    for timestamp in (
+        "2026-11-06T12:30:01",
+        "2026-11-06",
+        "2026-11-06T12:30+01:00",
+    ):
+        result = run_trace(tmp_path, "--ts", timestamp)
+        assert result.returncode == 2
+        assert not (tmp_path / "tick_trace.jsonl").exists()
+        assert "TICK_TRACE error" in result.stdout
+
+
+def test_trace_path_as_directory_is_rc2(tmp_path: Path) -> None:
+    """A directory at the fixed trace path is never opened for append."""
+    (tmp_path / "tick_trace.jsonl").mkdir()
+
+    result = run_trace(tmp_path, *measured_args())
+
+    assert result.returncode == 2
+    assert "TICK_TRACE error" in result.stdout
+    assert "trace path is not a file" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
