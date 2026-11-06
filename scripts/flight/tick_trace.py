@@ -6,7 +6,9 @@ During: validate the arguments, build schema version 1, and append one UTF-8
 JSON line to the fixed ``tick_trace.jsonl`` path with one binary write;
 ``quota_summary`` is bounded to 200 characters.
 After: return 0 for a fully measured record, 1 for a record containing null
-measurements, or 2 for usage/I/O errors, always with a named stdout message.
+measurements, or 2 for usage/I/O errors, with a named stdout message except
+for argparse ``--help``. Limit: one writer; simultaneous calls can
+interleave, and the heartbeat is sequential.
 
 Threat model: confia en el ops-dir; no defiende frente a un enlace simbolico
 plantado por quien ya puede escribir ahi.
@@ -34,12 +36,22 @@ FIELDS = (
 _SHA12 = re.compile(r"[0-9a-fA-F]{12}")
 _TS_WITH_OFFSET = re.compile(
     r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
-    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
+    r"(?:\.\d+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
 )
 
 
 class UsageError(ValueError):
     """Raised when a command-line value violates the trace contract."""
+
+
+def _safe_error_text(exc: BaseException) -> str:
+    """Escape line breaks before an expected error reaches stdout.
+
+    Before: ``exc`` is an expected usage or I/O exception.
+    During: convert carriage returns and line feeds to visible escape text.
+    After: return one physical-line-safe error description.
+    """
+    return str(exc).replace("\r", r"\r").replace("\n", r"\n")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -90,7 +102,7 @@ def _parse_unmeasured(values: list[str]) -> dict[str, str]:
     for value in values:
         field, separator, reason = value.partition("=")
         if not separator or field not in FIELDS or not reason:
-            raise UsageError("--unmeasured must be FIELD=RAZON for a known field")
+            raise UsageError(f"--unmeasured invalido: {value}")
         reasons[field] = reason
     return reasons
 
@@ -190,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         record, rc = _record(args)
         _append(Path(args.ops_dir), record)
     except (argparse.ArgumentError, OSError, UsageError, ValueError) as exc:
-        print(f"TICK_TRACE error {exc}")
+        print(f"TICK_TRACE error {_safe_error_text(exc)}")
         return 2
     except SystemExit as exc:
         if exc.code == 0:

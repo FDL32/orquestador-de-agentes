@@ -315,3 +315,78 @@ def test_empty_quota_summary_is_measured(tmp_path: Path) -> None:
     record = read_lines(tmp_path)[0]
     assert record["quota_summary"] == ""
     assert record["unmeasured"] == {}
+
+
+def test_offset_minute_range_is_rejected_or_preserved(tmp_path: Path) -> None:
+    """Offset minutes stay in 00..59 while valid edge offsets are preserved."""
+    invalid = run_trace(tmp_path, "--ts", "2026-11-06T12:30:01+00:60")
+    assert invalid.returncode == 2
+    assert not (tmp_path / "tick_trace.jsonl").exists()
+
+    for timestamp in (
+        "2026-11-06T12:30:01+23:59",
+        "2026-11-06T12:30:01-05:30",
+    ):
+        result = run_trace(tmp_path, *measured_args(timestamp))
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert [record["ts"] for record in read_lines(tmp_path)] == [
+        "2026-11-06T12:30:01+23:59",
+        "2026-11-06T12:30:01-05:30",
+    ]
+
+
+def test_error_output_escapes_line_breaks(tmp_path: Path) -> None:
+    """An interpolated invalid value containing LF stays one stdout line."""
+    result = run_trace(
+        tmp_path,
+        "--unmeasured",
+        "invented\nline",
+        "--ts",
+        TS_A,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout.count("\n") == 1
+    assert r"invented\nline" in result.stdout
+
+
+def test_duplicate_unmeasured_reason_uses_last_value(tmp_path: Path) -> None:
+    """Repeated declarations are characterized as last-value-wins."""
+    result = run_trace(
+        tmp_path,
+        "--unmeasured",
+        "guard_rc=first",
+        "--unmeasured",
+        "guard_rc=last",
+        "--ts",
+        TS_A,
+    )
+
+    assert result.returncode == 1
+    assert read_lines(tmp_path)[0]["unmeasured"]["guard_rc"] == "last"
+
+
+def test_negative_guard_rc_is_recorded_as_data(tmp_path: Path) -> None:
+    """A negative guard return code remains data and does not degrade the tick."""
+    result = run_trace(tmp_path, *measured_args(), "--guard-rc", "-1")
+
+    assert result.returncode == 0
+    assert read_lines(tmp_path)[0]["guard_rc"] == -1
+
+
+def test_quota_summary_newline_stays_one_physical_line(tmp_path: Path) -> None:
+    """JSON escaping keeps a newline-bearing summary on one JSONL line."""
+    result = run_trace(tmp_path, *measured_args(), "--quota-summary", "a\nb")
+
+    assert result.returncode == 0
+    trace = tmp_path / "tick_trace.jsonl"
+    assert len(trace.read_bytes().splitlines()) == 1
+    assert read_lines(tmp_path)[0]["quota_summary"] == "a\nb"
+
+
+def test_quota_summary_unicode_is_utf8_json(tmp_path: Path) -> None:
+    """Unicode quota text survives the UTF-8 JSONL append."""
+    result = run_trace(tmp_path, *measured_args(), "--quota-summary", "cupo ✓")
+
+    assert result.returncode == 0
+    assert read_lines(tmp_path)[0]["quota_summary"] == "cupo ✓"
