@@ -109,10 +109,12 @@ def _strict_live_ticket_ids(dest_root: Path) -> tuple[set[str] | None, str | Non
     """Own-row ticket IDs from the LIVE backlog's '## Vista rapida' table ONLY.
 
     Before: `dest_root` is a resolved repo_destino.
-    During: reads `.agent/collaboration/backlog.md`, parses ONLY the Vista
-        rapida table (`backlog_reconcile._extract_vista_rapida_rows`) and
-        takes column `_COL_TICKET` (the row's OWN id) of every well-formed
-        8-cell row. Deliberately STRICTER than `check_guard_wiring._live_owner_tickets`,
+    During: reads only the live `.agent/collaboration/backlog.md` (never
+        `_archive/backlog_done.md`), parses ONLY the Vista rapida table
+        (`backlog_reconcile._extract_vista_rapida_rows`) and takes column
+        `_COL_TICKET` (the row's OWN id) of every well-formed 8-cell row.
+        Rows with any other arity are discarded. Deliberately STRICTER than
+        `check_guard_wiring._live_owner_tickets`,
         which scrapes every ticket-shaped substring anywhere in the file
         (including a CITATION inside another row's prose) -- that laxer scrape
         counted 111 archived tickets as "live" because they were merely
@@ -120,8 +122,10 @@ def _strict_live_ticket_ids(dest_root: Path) -> tuple[set[str] | None, str | Non
         (measured, WOT-2026-068y). Reading errors mirror `_live_owner_tickets`
         exactly (`errors="replace"` would turn an unreadable backlog into an
         indistinguishable empty set -- the same disease this ticket closes).
-    After: `(set, None)`, or `(None, reason)` so the caller SKIPS explicitly
-        instead of inventing orphans out of a parse failure. Never raises.
+    After: `(set, None)` when at least one canonical ID remains, or
+        `(None, reason)` when the backlog cannot be read, parsed, or yields no
+        canonical ID. The caller SKIPS explicitly instead of inventing orphans
+        out of a parse failure. Never raises.
     """
     backlog = dest_root / ".agent" / "collaboration" / "backlog.md"
     try:

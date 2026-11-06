@@ -110,6 +110,70 @@ def test_strict_extractor_skips_when_no_canonical_id_found(tmp_path):
     assert "no canonical ticket id" in err
 
 
+def test_strict_extractor_ignores_ticket_only_in_archive(tmp_path):
+    dest = _destino(
+        tmp_path,
+        _ROW.format(tid="WOT-2026-900a", titulo="live"),
+    )
+    archive = dest / ".agent" / "collaboration" / "_archive"
+    archive.mkdir()
+    (archive / "backlog_done.md").write_text(
+        _VISTA_HEADER + _ROW.format(tid="WOT-2026-900b", titulo="archived"),
+        encoding="utf-8",
+    )
+    live, err = cbdo._strict_live_ticket_ids(dest)
+    assert err is None
+    assert live == {"WOT-2026-900a"}
+    assert "WOT-2026-900b" not in live
+
+
+def test_strict_extractor_ignores_noncanonical_ticket_id(tmp_path):
+    dest = _destino(
+        tmp_path,
+        _ROW.format(tid="WOT-2026-900a", titulo="valid")
+        + _ROW.format(tid="not-a-ticket", titulo="invalid"),
+    )
+    live, err = cbdo._strict_live_ticket_ids(dest)
+    assert err is None
+    assert live == {"WOT-2026-900a"}
+
+
+def test_strict_extractor_omits_seven_cell_row(tmp_path):
+    malformed = "| Media | WOT-2026-900b | malformed | motor/x | pending | - | s |\n"
+    dest = _destino(
+        tmp_path,
+        _ROW.format(tid="WOT-2026-900a", titulo="valid") + malformed,
+    )
+    live, err = cbdo._strict_live_ticket_ids(dest)
+    assert err is None
+    assert live == {"WOT-2026-900a"}
+
+
+def test_strict_extractor_omits_nine_cell_row(tmp_path):
+    malformed = _ROW.format(tid="WOT-2026-900b", titulo="unescaped | pipe")
+    dest = _destino(
+        tmp_path,
+        _ROW.format(tid="WOT-2026-900a", titulo="valid") + malformed,
+    )
+    live, err = cbdo._strict_live_ticket_ids(dest)
+    assert err is None
+    assert live == {"WOT-2026-900a"}
+
+
+def test_strict_extractor_skips_when_all_rows_have_wrong_arity(tmp_path):
+    malformed = (
+        "| Media | WOT-2026-900b | malformed | motor/x | pending | - | s |\n"
+        + _ROW.format(tid="WOT-2026-900c", titulo="unescaped | pipe")
+    )
+    dest = _destino(tmp_path, malformed)
+    live, err = cbdo._strict_live_ticket_ids(dest)
+    assert live is None
+    assert err == (
+        f"{dest / '.agent' / 'collaboration' / 'backlog.md'}: "
+        "Vista rapida table has no canonical ticket id"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # (d) contract/parity: strict is always a SUBSET of the laxer scrape
 # --------------------------------------------------------------------------- #
