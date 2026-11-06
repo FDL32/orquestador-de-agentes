@@ -129,7 +129,12 @@ def _is_finite(value):
 
     Before: ``value`` puede ser cualquier objeto del estado.
     During: valida ``int`` o ``float`` no booleano y aplica ``math.isfinite``.
-    After: devuelve ``True`` solo para numeros finitos.
+    After: devuelve ``True`` solo para numeros finitos; un entero fuera del rango
+        convertible a ``float`` puede propagar ``OverflowError`` desde
+        ``math.isfinite`` en vez de devolver ``False``. Las llamadas de los
+        detectores en las lineas de validacion de tarea y de latido (~536, ~538,
+        ~750) no interceptan esa excepcion; sus llamadores la tratan como detector
+        roto cuando corresponde.
     """
     return (
         isinstance(value, (int, float))

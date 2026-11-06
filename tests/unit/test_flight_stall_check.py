@@ -253,23 +253,24 @@ def test_d1_censo_sin_rutas_del_usuario():
     assert _census(FSC_PATH.read_text(encoding="utf-8")) == []
     assert _census(Path(__file__).read_text(encoding="utf-8")) == []
     usuario = "f" + "dl"
-    muestra = (
-        "BASE = "
-        + "C"
-        + ":/Users/"
-        + usuario
-        + "/tmp_"
-        + "or8\n"
-        + "Q = "
-        + "C"
-        + ":\\\\Temp\\\\co"
-        + "24_q.txt\n"
-        + "V = vuelo-"
-        + "20261026b\n"
-        + "M = orquestadora-"
-        + "3"
+    muestras = (
+        "BASE = " + "C" + ":/Users/" + usuario,
+        "TMP = tmp_" + "or8",
+        "Q = " + "C" + ":\\\\Temp\\\\co" + "24_q.txt",
+        "V = vuelo-" + "20261026b",
+        "M = orquestadora-" + "3",
     )
-    assert len(_census(muestra)) >= 5  # el censo SI muerde
+    assert all(
+        _census(muestra) for muestra in muestras
+    )  # cada identificador debe morder
+
+
+def test_is_finite_entero_grande_caracteriza_overflow():
+    """Caracteriza el OverflowError actual de ``math.isfinite`` para enteros enormes."""
+    mod = _load()
+    assert mod._is_finite(10**300) is True
+    with pytest.raises(OverflowError):
+        mod._is_finite(10**1000)
 
 
 def test_d2_ops_dir_sin_resolver_rc2_sin_cwd(box, tmp_path, monkeypatch):
