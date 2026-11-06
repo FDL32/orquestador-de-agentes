@@ -1114,7 +1114,7 @@ def _dewired(
 # uv-pre-commit) -- no resuelven a ejecutables de ESTE repo.
 # ---------------------------------------------------------------------------
 
-_CENSUS_SCRIPT_RE = re.compile(r"((?:scripts|\.agent/hooks)/[\w.-]+\.py)")
+_CENSUS_SCRIPT_RE = re.compile(r"((?:scripts|\.agent/hooks)/(?:[\w.-]+/)*[\w.-]+\.py)")
 _CLOSEOUT_STEM_RE = re.compile(r"(?:from|import)\s+(?:scripts\.)?([\w_]+)")
 # WOT-2026-049g ronda 2: gates.py invoca prepush_check.py por SUBPROCESS
 # con nombre literal (no import): censar tambien literales .py que EXISTEN
@@ -1130,6 +1130,107 @@ def _extract_script_from_entry(entry: str) -> str | None:
     """
     match = _CENSUS_SCRIPT_RE.search(entry or "")
     return match.group(1) if match else None
+
+
+def _existing_settings_script(root: Path, relative: str) -> str | None:
+    """Resolve one settings path only when it is a local existing file.
+
+    Before: ``root`` is the censused tree and ``relative`` is a candidate path.
+    During: normalize separators, enforce the two allowed script prefixes, and
+        resolve containment below ``root``.
+    After: return the normalized relative path for an existing file, otherwise
+        ``None`` without raising filesystem errors.
+    """
+    normalized = relative.replace("\\", "/")
+    if not (
+        normalized.startswith("scripts/") or normalized.startswith(".agent/hooks/")
+    ):
+        return None
+    candidate = (root / Path(normalized)).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return normalized if candidate.is_file() else None
+
+
+def _literal_path_parts(node: ast.AST) -> list[str] | None:
+    """Read path segments from a Python slash-concatenation expression.
+
+    Before: ``node`` is an AST node from a hook's ``python -c`` command.
+    During: recursively accept string constants joined with ``/`` and one
+        non-literal base object such as ``r`` or ``Path(...)``.
+    After: return ordered path segments or ``None`` for unrelated expressions.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+        return None
+    if not isinstance(node.right, ast.Constant) or not isinstance(
+        node.right.value, str
+    ):
+        return None
+    left = _literal_path_parts(node.left)
+    if left is None and isinstance(
+        node.left, (ast.Name, ast.Attribute, ast.Call, ast.Subscript)
+    ):
+        left = []
+    return None if left is None else [*left, node.right.value]
+
+
+def _settings_script_paths(command: str, root: Path) -> list[str]:
+    """Extract existing local script paths from one Claude hook command.
+
+    Before: ``command`` is one JSON hook command and ``root`` is the tree whose
+        settings file is being censused.
+    During: direct commands use the path regex; ``python -c`` commands are
+        parsed as Python and only slash-concatenated path expressions or exact
+        path literals are considered. Embedded message text is never searched.
+    After: return sorted, normalized relative ``.py`` paths that exist below
+        ``root``; malformed commands and outside-root paths return no paths.
+    """
+    if not isinstance(command, str):
+        return []
+    found: set[str] = set()
+    code_match = re.search(r"(?:^|\s)-c\s+\"(?P<code>.*)\"\s*$", command)
+    if not code_match:
+        direct = _extract_script_from_entry(command)
+        if direct:
+            resolved = _existing_settings_script(root, direct)
+            if resolved:
+                found.add(resolved)
+        return sorted(found)
+
+    try:
+        tree = ast.parse(code_match.group("code"))
+    except SyntaxError:
+        return []
+    return _python_settings_script_paths(tree, root)
+
+
+def _python_settings_script_paths(tree: ast.AST, root: Path) -> list[str]:
+    """Extract existing paths from parsed Python hook code.
+
+    Before: ``tree`` is parsed from a hook's ``python -c`` command and ``root``
+        is its owning repository.
+    During: inspect slash expressions and exact string constants, resolving only
+        local files below ``root``.
+    After: return sorted unique relative script paths; prose inside a larger
+        string cannot become a candidate.
+    """
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            parts = _literal_path_parts(node)
+            if parts:
+                resolved = _existing_settings_script(root, "/".join(parts))
+                if resolved:
+                    found.add(resolved)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            resolved = _existing_settings_script(root, node.value)
+            if resolved:
+                found.add(resolved)
+    return sorted(found)
 
 
 def _census_pre_commit(motor_root: Path, found: dict) -> None:
@@ -1166,7 +1267,6 @@ def _census_claude_settings(settings_path: Path, found: dict) -> None:
     """
     if not settings_path.is_file():
         return
-    hooks_root = settings_path.parent.parent / ".agent" / "hooks"
     try:
         data = json.loads(settings_path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, json.JSONDecodeError):
@@ -1175,14 +1275,9 @@ def _census_claude_settings(settings_path: Path, found: dict) -> None:
         for matcher in value or []:
             for hook in matcher.get("hooks", []):
                 command = hook.get("command") or ""
-                script = _extract_script_from_entry(command)
-                if not script:
-                    for token_match in re.finditer(r"([\w-]+\.py)", command):
-                        candidate = hooks_root / token_match.group(1)
-                        if candidate.is_file():
-                            script = f".agent/hooks/{token_match.group(1)}"
-                            break
-                if script:
+                for script in _settings_script_paths(
+                    command, settings_path.parent.parent
+                ):
                     found.setdefault(script, []).append(
                         {"source": ".claude/settings.json", "stage": "claude-hook"}
                     )

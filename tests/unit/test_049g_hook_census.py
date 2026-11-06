@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from scripts import check_guard_wiring as cgw
@@ -26,6 +27,117 @@ CONFIG_UNREGISTERED = (
     "        always_run: true\n"
     "        stages: [pre-commit]\n"
 )
+
+
+REAL_SETTINGS_COMMANDS = [
+    "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'claude_guard_entry.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'claude_guard_entry.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('SECURITY HOOK INACTIVE: claude_guard_entry.py not found; write blocked (fail-closed).'),sys.exit(2))\"",
+    "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'native_post_tool_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'native_post_tool_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: native_post_tool_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\"",
+    "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'pre_compact_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'pre_compact_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: pre_compact_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\"",
+    "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'scripts'/'encoding_post_write_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'scripts'/'encoding_post_write_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: encoding_post_write_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\"",
+    "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'native_stop_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'native_stop_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: native_stop_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\"",
+    "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'subagent_stop_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'subagent_stop_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: subagent_stop_hook.py not found; hook failed (fail-closed).'),sys.exit(2))\"",
+    "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'session_start_hook.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'session_start_hook.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':'Memoria del proyecto NO disponible en este arranque: session_start_hook.py no encontrado en este destino (ni via motor_destination_link.json). Sesion continua sin contexto automatico (fail-open deliberado, WOT-2026-058a). Carga manual: python scripts/memory_context.py --bootstrap si el script existe.'},'systemMessage':'SessionStart degradado: hook de memoria ausente en este destino; la sesion continua sin memoria automatica (fail-open deliberado, WOT-2026-058a).'}))\"",
+]
+
+
+def _write_settings(root: Path, commands: list[str]) -> None:
+    settings = {
+        "hooks": {
+            f"Event{i}": [{"hooks": [{"type": "command", "command": command}]}]
+            for i, command in enumerate(commands)
+        }
+    }
+    (root / ".claude").mkdir(parents=True, exist_ok=True)
+    (root / ".claude" / "settings.json").write_text(
+        json.dumps(settings), encoding="utf-8"
+    )
+
+
+def test_049g_settings_realistic_seven_commands_are_exactly_seven_hooks(
+    tmp_path: Path,
+) -> None:
+    """D1 control: seven literal production commands yield seven real files."""
+    for relative in (
+        ".agent/hooks/claude_guard_entry.py",
+        ".agent/hooks/native_post_tool_hook.py",
+        ".agent/hooks/pre_compact_hook.py",
+        ".agent/hooks/native_stop_hook.py",
+        ".agent/hooks/subagent_stop_hook.py",
+        ".agent/hooks/session_start_hook.py",
+        "scripts/encoding_post_write_hook.py",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, REAL_SETTINGS_COMMANDS)
+
+    census = cgw.census_hooks(tmp_path)
+
+    settings_hooks = {
+        script
+        for script, invokers in census.items()
+        if any(i["source"] == ".claude/settings.json" for i in invokers)
+    }
+    assert len(settings_hooks) == 7
+    assert "scripts/memory_context.py" not in settings_hooks
+    assert "scripts/encoding_post_write_hook.py" in settings_hooks
+    assert ".agent/hooks/session_start_hook.py" in settings_hooks
+
+
+def test_049g_nested_settings_script_is_censed(tmp_path: Path) -> None:
+    """D2 control: a nested scripts/tools path remains a full relative key."""
+    nested = tmp_path / "scripts" / "tools" / "deep.py"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, ["python scripts/tools/deep.py"])
+
+    assert "scripts/tools/deep.py" in cgw.census_hooks(tmp_path)
+
+
+def test_049g_cli_project_root_forwards_destination_settings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """D3 control: the real CLI path includes the destination census."""
+    motor = tmp_path / "motor"
+    destination = tmp_path / "destination"
+    motor.mkdir()
+    _write_settings(destination, [REAL_SETTINGS_COMMANDS[0]])
+    hook = destination / ".agent" / "hooks" / "claude_guard_entry.py"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(motor, [])
+
+    captured: dict[str, object] = {}
+
+    def report(root, policy, enforce=False, project_root=None):
+        captured["census"] = cgw.census_hooks(root, project_root)
+        return 0
+
+    monkeypatch.setattr(cgw, "hook_census_report", report)
+    assert (
+        cgw.main(
+            [
+                "--motor-root",
+                str(motor),
+                "--hook-census",
+                "--project-root",
+                str(destination),
+            ]
+        )
+        == 0
+    )
+    census = captured["census"]
+    assert census[".agent/hooks/claude_guard_entry.py"] == [
+        {"source": ".claude/settings.json", "stage": "claude-hook"}
+    ]
+
+
+def test_049g_cli_enforce_keeps_report_rc_contract(tmp_path: Path) -> None:
+    """D4 control: only --enforce turns an unknown local hook into rc 1."""
+    _make_motor(tmp_path, CONFIG_UNREGISTERED, {"foo.py": "# fixture\n"})
+
+    assert cgw.main(["--motor-root", str(tmp_path), "--hook-census"]) == 0
+    assert cgw.main(["--motor-root", str(tmp_path), "--hook-census", "--enforce"]) == 1
 
 
 def test_049g_mutation_unregistered_local_hook_rc1(tmp_path: Path) -> None:
