@@ -1165,7 +1165,102 @@ def test_caja1_evento_sin_codigo_conserva_aviso_y_marca_titulo_generico(ca):
         ca.m.event("sin-codigo", "AVISO", None, "FRASE LITERAL primero", False, False)
         == 0
     )
-    assert ca.sent[0][0].startswith("Vuelo ?")
+    assert ca.sent[0][0] == "Vuelo ?"
+
+
+@pytest.mark.parametrize(
+    "invalid", ["", "bad id", "bad/slash", "bad;semi", 'bad"quote', "bad-ñ"]
+)
+def test_caja_b_session_open_uri_rechaza_ids_invalidos(ca, monkeypatch, invalid):
+    """Cada forma inválida de entorno no produce un URI de sesión."""
+    for name in (
+        "T3_ENVIRONMENT_ID",
+        "T3_THREAD_ID",
+        "FLIGHT_ENVIRONMENT_ID",
+        "FLIGHT_THREAD_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("T3_ENVIRONMENT_ID", invalid)
+    monkeypatch.setenv("T3_THREAD_ID", "THREAD_ID")
+    assert ca.m.session_open_uri() is None
+
+
+@pytest.mark.parametrize(
+    "invalid", ["bad id", "bad/slash", "bad;semi", 'bad"quote', "bad-ñ"]
+)
+def test_caja_b_session_open_uri_rechaza_thread_ids_invalidos(ca, monkeypatch, invalid):
+    """El control negativo también cubre el segundo identificador de entorno."""
+    for name in (
+        "T3_ENVIRONMENT_ID",
+        "T3_THREAD_ID",
+        "FLIGHT_ENVIRONMENT_ID",
+        "FLIGHT_THREAD_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("T3_ENVIRONMENT_ID", "ENVIRONMENT_ID")
+    monkeypatch.setenv("T3_THREAD_ID", invalid)
+    assert ca.m.session_open_uri() is None
+
+
+def test_caja_b_event_cablea_urgent_segun_nivel_con_notificador_stub(tmp_path):
+    """La ruta real de event entrega urgent=True solo para URGENTE."""
+    real = _load("urgent_wiring_real")
+    real.configure(str(tmp_path))
+    captured = []
+
+    def notify(title, message, dry, **kwargs):
+        captured.append((title, message, dry, kwargs))
+        return 0
+
+    real.notify = notify
+    assert real.event("urgent-wire", "URGENTE", None, "urgent", True, True) == 0
+    assert real.event("notice-wire", "AVISO", None, "notice", True, True) == 0
+    assert [item[3]["urgent"] for item in captured] == [True, False]
+
+
+def test_caja_b_redact_ancla_la_frontera_exacta_de_text_limit(ca):
+    """160 caracteres caben; 161 se recortan al límite y conservan el sufijo."""
+    assert len(ca.m.redact("x" * 160)) == 160
+    recortado = ca.m.redact("x" * 161)
+    assert len(recortado) == ca.m.TEXT_LIMIT == 160
+    assert recortado.endswith("...")
+
+
+def test_caja_b_main_fija_what_y_titulo_con_owner_invalido_y_ausente(ca):
+    """El fallback real conserva el what literal tanto con owner inválido como ausente."""
+    literal = "FRASE LITERAL primero"
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--event",
+                "fallback-invalid-owner",
+                "--what",
+                literal,
+                "--owner",
+                "not-a-code",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert ca.sent[-1] == ("Vuelo ?", literal)
+    assert (
+        ca.m.main(
+            [
+                "--ops-dir",
+                str(ca.dir),
+                "--event",
+                "fallback-missing-owner",
+                "--what",
+                literal,
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert ca.sent[-1] == ("Vuelo ?", literal)
 
 
 def test_caja1_evento_largo_cadena_real_protege_frase_y_recorta(ca, monkeypatch):

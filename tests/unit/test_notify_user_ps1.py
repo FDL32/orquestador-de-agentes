@@ -366,6 +366,16 @@ def test_caja1_setting_unknown_tambien_es_fallo_por_la_rama_unica():
     assert "toast=FALLO" in r.stdout and "toast=ok" not in r.stdout
 
 
+def test_caja_b_fija_la_comprobacion_estructural_del_setting_real():
+    """El tramo Windows queda diferido, pero la comparación productiva queda fijada."""
+    assert re.search(
+        r"^  if \(\$notifier\.Setting -ne 'Enabled'\) \{ throw "
+        r'"notifier Setting=\$\(\$notifier\.Setting\)" \}$',
+        _src(),
+        re.MULTILINE,
+    )
+
+
 @pytest.mark.parametrize("uri", ["https://example.invalid/write", "t3code://otra-ruta"])
 def test_caja1_open_uri_rechaza_esquema_distinto_de_t3code_sin_escribir(uri):
     """RED: solo se admite t3code://threads/... y no se ejecuta un URI externo."""

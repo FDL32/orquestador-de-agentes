@@ -1971,7 +1971,7 @@ def test_caja1_go_line_owner_invalido_o_ausente_fallback_generico(box, line):
     box.cola.write_text("# cola\n" + line + "\n", encoding="utf-8")
     result = box.tick("--dry-run")
     assert result.sent, result.out
-    assert result.sent[0][0].startswith("Vuelo ?")
+    assert result.sent[0][0] == "Vuelo ?"
 
 
 def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
