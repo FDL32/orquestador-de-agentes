@@ -2268,6 +2268,26 @@ def test_153m_p8_linea_patologica_usa_ultimo_recurso_sin_descartar(ca):
     ]
 
 
+def test_153m_p8_tope_determinista_de_raw_decode_y_fail_conservado(ca, monkeypatch):
+    """P8: el tope se prueba contando parseos y conserva el texto FAIL final."""
+    real_decoder = ca.m.json.JSONDecoder
+    calls = []
+
+    class CountingDecoder:
+        def __init__(self):
+            self._decoder = real_decoder()
+
+        def raw_decode(self, text, index=0):
+            calls.append(index)
+            return self._decoder.raw_decode(text, index)
+
+    monkeypatch.setattr(ca.m.json, "JSONDecoder", CountingDecoder)
+    line = '{"' * (3 * ca.m.MAX_SPLIT_PARSE_ATTEMPTS) + " FAIL"
+    pieces = ca.m._split_line(line)
+    assert len(calls) <= ca.m.MAX_SPLIT_PARSE_ATTEMPTS + 1
+    assert any(kind == "frag" and "FAIL" in value for kind, value in pieces)
+
+
 # ---- ronda 2 (B2): valores numericos no finitos o enormes en el estado = registro ilegible, el aviso sale
 _NUM_MALOS = [
     "1e309",
