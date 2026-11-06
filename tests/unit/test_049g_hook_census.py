@@ -140,6 +140,150 @@ def test_049g_cli_enforce_keeps_report_rc_contract(tmp_path: Path) -> None:
     assert cgw.main(["--motor-root", str(tmp_path), "--hook-census", "--enforce"]) == 1
 
 
+def test_049g_settings_existing_filter_rejects_missing_concat_target(
+    tmp_path: Path,
+) -> None:
+    """Mutation 1: a concatenated path is censused only when it exists."""
+    command = "python -c \"r/'scripts'/'ghost.py'\""
+    _write_settings(tmp_path, [command])
+    assert cgw.census_hooks(tmp_path) == {}
+
+    ghost = tmp_path / "scripts" / "ghost.py"
+    ghost.parent.mkdir(parents=True, exist_ok=True)
+    ghost.write_text("# fixture\n", encoding="utf-8")
+    assert "scripts/ghost.py" in cgw.census_hooks(tmp_path)
+
+
+def test_049g_settings_root_containment_rejects_escape(tmp_path: Path) -> None:
+    """Mutation 2: a resolved path outside the censused root is omitted."""
+    root = tmp_path / "motor"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(root, ["python -c \"r/'scripts/../../outside.py'\""])
+
+    assert cgw.census_hooks(root) == {}
+
+
+def test_049g_settings_prefix_filter_rejects_existing_tools_script(
+    tmp_path: Path,
+) -> None:
+    """Mutation 3: an existing script without an allowed prefix is omitted."""
+    script = tmp_path / "tools" / "x.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, ["python -c \"r/'tools'/'x.py'\""])
+
+    assert cgw.census_hooks(tmp_path) == {}
+
+
+def test_049g_settings_syntax_error_does_not_hide_other_hooks(
+    tmp_path: Path,
+) -> None:
+    """Mutation 4: one unreadable command stays invisible without blocking peers."""
+    good = tmp_path / "scripts" / "good.py"
+    good.parent.mkdir(parents=True)
+    good.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, ['python -c "r/("', "python scripts/good.py"])
+
+    census = cgw.census_hooks(tmp_path)
+
+    assert "scripts/good.py" in census
+    assert len(census) == 1
+
+
+def test_049g_settings_exact_literal_is_allowed(tmp_path: Path) -> None:
+    """Mutation 5: an exact path literal counts when its file exists."""
+    script = tmp_path / "scripts" / "foo.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, ["python -c \"'scripts/foo.py'\""])
+
+    assert list(cgw.census_hooks(tmp_path)) == ["scripts/foo.py"]
+
+
+def test_049g_settings_phrase_is_not_an_exact_literal(tmp_path: Path) -> None:
+    """The same path inside a longer message is not an invocation."""
+    script = tmp_path / "scripts" / "foo.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, ["python -c \"print('run scripts/foo.py now')\""])
+
+    assert cgw.census_hooks(tmp_path) == {}
+
+
+def test_049g_settings_non_string_commands_are_ignored(tmp_path: Path) -> None:
+    """Mutation 6: numeric and null commands do not break the census."""
+    script = tmp_path / "scripts" / "good.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, ["python scripts/good.py"])
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    settings["hooks"]["Bad"] = [
+        {"hooks": [{"type": "command", "command": 42}]},
+        {"hooks": [{"type": "command", "command": None}]},
+    ]
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    assert list(cgw.census_hooks(tmp_path)) == ["scripts/good.py"]
+
+
+def test_049g_settings_backslash_path_normalizes_to_forward_slashes(
+    tmp_path: Path,
+) -> None:
+    """Mutation 7: Windows separators become the canonical relative key."""
+    script = tmp_path / "scripts" / "tools" / "deep.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, [r"python scripts\tools\deep.py"])
+
+    assert "scripts/tools/deep.py" in cgw.census_hooks(tmp_path)
+    assert (
+        cgw._existing_settings_script(tmp_path, r"scripts\tools\deep.py")
+        == "scripts/tools/deep.py"
+    )
+
+
+def test_049g_precommit_backslash_path_uses_canonical_key(tmp_path: Path) -> None:
+    """The shared extractor normalizes backslashes outside settings too."""
+    config = CONFIG_UNREGISTERED.replace("scripts/foo.py", "scripts\\tools\\deep.py")
+    (tmp_path / ".pre-commit-config.yaml").write_text(config, encoding="utf-8")
+    script = tmp_path / "scripts" / "tools" / "deep.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+
+    census = cgw.census_hooks(tmp_path)
+
+    assert "scripts/tools/deep.py" in census
+    assert "scripts\\tools\\deep.py" not in census
+
+
+def test_049g_agent_hooks_backslash_prefix_uses_canonical_key(
+    tmp_path: Path,
+) -> None:
+    """F-2: .agent\\hooks is accepted and normalized like scripts paths."""
+    script = tmp_path / ".agent" / "hooks" / "stop_hook.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(tmp_path, [r"python .agent\hooks\stop_hook.py"])
+
+    assert ".agent/hooks/stop_hook.py" in cgw.census_hooks(tmp_path)
+
+
+def test_049g_unrecognized_python_c_form_is_invisible(tmp_path: Path) -> None:
+    """F-1: an unrecognized -c quoting form never falls back to text search."""
+    script = tmp_path / "scripts" / "memory_context.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture\n", encoding="utf-8")
+    _write_settings(
+        tmp_path,
+        ["python -c 'print(\"revisar scripts/memory_context.py antes de continuar\")'"],
+    )
+
+    assert cgw.census_hooks(tmp_path) == {}
+
+
 def test_049g_mutation_unregistered_local_hook_rc1(tmp_path: Path) -> None:
     """DoD mutation: hook local -> scripts/foo.py sin prefijo ni registro ->
     enforce rc 1 (barrera invisible detectada)."""

@@ -1114,7 +1114,7 @@ def _dewired(
 # uv-pre-commit) -- no resuelven a ejecutables de ESTE repo.
 # ---------------------------------------------------------------------------
 
-_CENSUS_SCRIPT_RE = re.compile(r"((?:scripts|\.agent/hooks)/(?:[\w.-]+/)*[\w.-]+\.py)")
+_CENSUS_SCRIPT_RE = re.compile(r"((?:scripts|\.agent[/\\]hooks)(?:[/\\][\w.-]+)+\.py)")
 _CLOSEOUT_STEM_RE = re.compile(r"(?:from|import)\s+(?:scripts\.)?([\w_]+)")
 # WOT-2026-049g ronda 2: gates.py invoca prepush_check.py por SUBPROCESS
 # con nombre literal (no import): censar tambien literales .py que EXISTEN
@@ -1129,7 +1129,7 @@ def _extract_script_from_entry(entry: str) -> str | None:
     After: la primera ruta encontrada, o None.
     """
     match = _CENSUS_SCRIPT_RE.search(entry or "")
-    return match.group(1) if match else None
+    return match.group(1).replace("\\", "/") if match else None
 
 
 def _existing_settings_script(root: Path, relative: str) -> str | None:
@@ -1186,6 +1186,8 @@ def _settings_script_paths(command: str, root: Path) -> list[str]:
     During: direct commands use the path regex; ``python -c`` commands are
         parsed as Python and only slash-concatenated path expressions or exact
         path literals are considered. Embedded message text is never searched.
+        If the ``-c`` form is not recognized, no path is censused (invisible,
+        never falsely censused).
     After: return sorted, normalized relative ``.py`` paths that exist below
         ``root``; malformed commands and outside-root paths return no paths.
     """
@@ -1194,6 +1196,8 @@ def _settings_script_paths(command: str, root: Path) -> list[str]:
     found: set[str] = set()
     code_match = re.search(r"(?:^|\s)-c\s+\"(?P<code>.*)\"\s*$", command)
     if not code_match:
+        if re.search(r"(?:^|\s)-c(?:\s|$)", command):
+            return []
         direct = _extract_script_from_entry(command)
         if direct:
             resolved = _existing_settings_script(root, direct)
