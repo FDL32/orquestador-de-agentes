@@ -1022,9 +1022,11 @@ def _live_owner_tickets(dest_root: Path) -> tuple[set[str] | None, str | None]:
     un numero de celdas distinto de 8 (p.ej. un ``|`` dentro de una celda) no
     cuenta como viva: LIMITE conocido, solo WARN.
 
-    Limite (WOT-2026-151a (d)): solo se juzgan los guards que ``audit`` encuentra
-    en el motor; una entrada ticket-owned cuyo guard vive en el destino (p.ej.
-    ``check_pii_tracked``) no entra en ``declared`` y no se evalua aqui.
+    Limite (WOT-2026-151a (d), cerrado por WOT-2026-152p): ``audit`` sigue
+    descubriendo solo guards del motor, pero el cruce de owners se evalua sobre
+    toda la policy ``known_unwired``. Asi una entrada ticket-owned cuyo guard
+    vive en el repo_destino (p.ej. ``check_pii_tracked``) tambien se contrasta
+    con la cola viva, sin inventar un guard del motor.
     """
     try:
         from scripts.check_backlog_debt_ownership import _strict_live_ticket_ids
@@ -1036,22 +1038,31 @@ def _live_owner_tickets(dest_root: Path) -> tuple[set[str] | None, str | None]:
 
 
 def _orphan_owners(
-    known_unwired: dict, declared: list[str], live: set[str]
+    known_unwired: dict,
+    declared: list[str],
+    live: set[str],
+    stale: set[str] | None = None,
 ) -> list[str]:
-    """Declared debt whose OWNER is archived while the guard is STILL unwired.
+    """Return ticket-owned policy entries whose owners are not live.
 
-    Before: ``declared`` are the guards this run found unwired AND declared;
-    ``live`` are the ticket IDs still in the destino's live backlog.
-    During: an entry is an orphan iff its owner is a ticket (BY-DESIGN entries are
-    always exempt -- they have no owner to archive) that is NOT live. Guards that got
-    wired are not considered: they are already reported as ``stale``.
-    After: returns the sorted ``guard -> owner`` lines. The INVARIANT is the
-    criterion (archived owner + still unwired), never a count (WOT-2026-024t).
+    Before: ``known_unwired`` is the complete policy, ``declared`` is the set
+    selected for this run, ``live`` contains ticket IDs from the destination's
+    canonical live backlog, and ``stale`` contains declarations already found
+    wired or absent. ``BY-DESIGN:`` entries are valid non-ticket exceptions.
+    During: evaluate every selected policy entry, including guards absent from
+    the motor tree, while excluding ``stale`` so its dedicated error is not
+    duplicated as an orphan report.
+    After: return sorted ``guard -> owner`` lines for ticket owners not in
+    ``live``; no filesystem I/O occurs and the invariant is owner liveness,
+    never a count (WOT-2026-024t).
     """
+    excluded = stale or set()
     return sorted(
         f"{g} -> {known_unwired[g]}"
         for g in declared
-        if _TICKET.match(str(known_unwired[g])) and str(known_unwired[g]) not in live
+        if g not in excluded
+        and _TICKET.match(str(known_unwired[g]))
+        and str(known_unwired[g]) not in live
     )
 
 
@@ -1452,7 +1463,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI: format-chec
         if live is None:
             print(f"[guard-wiring] SKIP orphan-owner check: {live_err}.")
         else:
-            orphans = _orphan_owners(known, declared, live)
+            orphan_candidates = [g for g in known if g not in stale]
+            orphans = _orphan_owners(known, orphan_candidates, live, set(stale))
             if orphans:
                 label = "ERROR" if args.strict else "WARN"
                 print(

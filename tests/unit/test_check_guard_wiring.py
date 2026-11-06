@@ -457,6 +457,10 @@ def test_044w_dispositions_in_real_policy():
     # (4) aplazamiento != diseno: sigue siendo deuda, con el dueno VIVO de seguimiento
     closure_owner = known["check_closure_adversarial_pass"]
     assert closure_owner == "WOT-2026-121a"
+    pii_owner = known["check_pii_tracked"]
+    assert str(pii_owner).startswith(cgw._BY_DESIGN)
+    assert "Redes_Sociales" in pii_owner
+    assert "tools/pre_commit_check.py::verificar_pii_tracked()" in pii_owner
     # (5) 044w lo dejo como deuda de 034c; WOT-2026-070k (aterrizado despues) lo cablea:
     # ya no es deuda declarada (su entrada de policy se retiro).
     assert "check_dod_metric_freshness" not in known
@@ -823,9 +827,9 @@ def test_orphan_owner_ignores_guards_that_got_wired(tmp_path):
     contradictorios ("reabre el ticket" vs "borra la declaracion").
     """
     known = {"check_new": "WOT-2026-023t"}
-    # `declared` solo contiene guards que esta pasada vio UNWIRED; si esta wired
-    # no entra, y por tanto no puede salir como huerfano.
-    assert cgw._orphan_owners(known, [], {"WOT-2026-019o"}) == []
+    # La policy entera puede entrar al cruce, pero stale se excluye para no
+    # duplicar el error especifico de declaracion stale.
+    assert cgw._orphan_owners(known, ["check_new"], set(), {"check_new"}) == []
 
 
 def test_orphan_owner_fails_only_under_strict(tmp_path, monkeypatch):
@@ -934,7 +938,9 @@ def _orphan_motor(tmp_path, monkeypatch, owner, *, with_guard_file=True):
         "repos:\n  - repo: local\n    hooks:\n      []\n", encoding="utf-8"
     )
     policy_yaml = tmp_path / "scripts" / "guard_wiring_policy.yaml"
-    policy_yaml.write_text(f"known_unwired:\n  check_new: {owner}\n", encoding="utf-8")
+    policy_yaml.write_text(
+        f"known_unwired:\n  check_new: {owner!r}\n", encoding="utf-8"
+    )
     baseline_yaml = tmp_path / "baseline.yaml"
     baseline_yaml.write_text("wired_baseline: {}\n", encoding="utf-8")
     monkeypatch.setattr(cgw, "POLICY_PATH", policy_yaml)
@@ -981,15 +987,38 @@ def test_owner_with_own_live_row_is_not_orphan(tmp_path, monkeypatch, capsys):
     assert "HUERFANA" not in capsys.readouterr().out
 
 
-def test_ticket_owned_entry_without_findable_guard_is_not_judged(
+def test_ticket_owned_entry_without_findable_guard_is_judged(
     tmp_path, monkeypatch, capsys
 ):
-    """(d) LIMITE DECLARADO (WOT-2026-151a): una entrada ticket-owned cuyo guard no
-    esta en el arbol del motor (p.ej. `check_pii_tracked`, que vive en el destino)
-    no entra en `declared` y el motor NO la juzga huerfana: no puede saber si el
-    guard sigue sin cablear. Su cobertura es otra ficha."""
+    """WOT-2026-152p: la policy entera tambien cruza guards residentes en destino."""
     _orphan_motor(tmp_path, monkeypatch, "WOT-2026-999z", with_guard_file=False)
+    dest = _destino(tmp_path, _VIVA_CITA)
+    argv = ["--motor-root", str(tmp_path), "--project-root", str(dest)]
+    assert cgw.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "HUERFANA" in out and "check_new -> WOT-2026-999z" in out
+    assert cgw.main([*argv, "--strict"]) == 1
+
+
+def test_destination_resident_entry_with_live_owner_passes(
+    tmp_path, monkeypatch, capsys
+):
+    """A destination-resident guard with a proper live owner is accepted."""
+    _orphan_motor(tmp_path, monkeypatch, "WOT-2026-111a", with_guard_file=False)
     dest = _destino(tmp_path, _VIVA)
+    assert cgw.main(["--motor-root", str(tmp_path), "--project-root", str(dest)]) == 0
+    assert "HUERFANA" not in capsys.readouterr().out
+
+
+def test_destination_resident_by_design_entry_passes(tmp_path, monkeypatch, capsys):
+    """A destination-resident BY-DESIGN entry is not an orphan."""
+    _orphan_motor(
+        tmp_path,
+        monkeypatch,
+        "BY-DESIGN: vive en un repo destino separado con cableado propio",
+        with_guard_file=False,
+    )
+    dest = _destino(tmp_path, _VIVA_CITA)
     assert cgw.main(["--motor-root", str(tmp_path), "--project-root", str(dest)]) == 0
     assert "HUERFANA" not in capsys.readouterr().out
 

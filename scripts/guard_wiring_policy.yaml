@@ -189,8 +189,9 @@ known_unwired:
     automatico. Cablearlo en pre-commit no tiene sentido: el guard audita un
     borrador de arranque que normalmente ni siquiera se versiona.
 
-  # WOT-2026-004y: guard PII tracked en el destino (`tools/check_pii_tracked.py`).
-  # Cableado REAL en el destino: `.git/hooks/pre-commit` -> `tools/pre_commit_check.py`
+  # WOT-2026-004y: guard PII tracked residente en el repo_destino Redes_Sociales
+  # (`tools/check_pii_tracked.py`). Cableado REAL en ese destino:
+  # `.git/hooks/pre-commit` -> `tools/pre_commit_check.py`
   # (versionado) -> subprocess en `verificar_pii_tracked()` de ese fichero.
   # El motor no puede ver los ficheros del destino -> AST del motor no lo alcanza.
   # El hook local `.git/hooks/pre-commit` corre solo (always_run). El camino
@@ -198,7 +199,7 @@ known_unwired:
   # El cableado versionado es `pre_commit_check.py` del destino.
   # Adicionalmente: `tools/run_suite_safe.py` (camino de cierre) invoca el gate
   # como subprocess -> parte de la suite canonica versionada.
-  check_pii_tracked: WOT-2026-004y
+  check_pii_tracked: "BY-DESIGN: guard residente en repo_destino Redes_Sociales (tools/check_pii_tracked.py); cableado real en tools/pre_commit_check.py::verificar_pii_tracked()"
 
   # WOT-2026-076a: guard de paridad de contratos normativos entre el checkout
   # canonico de solo lectura y el worktree de ejecucion. Su cableado natural
