@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.check_ruff_hook_scope import check_pre_commit_config
@@ -190,15 +193,48 @@ def test_ruff_check_hook_is_pinned_readonly() -> None:
     )
 
 
-def test_pyproject_still_declares_fix_true_so_the_pin_is_needed() -> None:
-    """Control: si `fix = true` desapareciera, este pin dejaria de ser necesario.
+def _effective_ruff_fix(probe: Path, *, no_fix: bool = False) -> bool:
+    command = [sys.executable, "-m", "ruff", "check", "--show-settings"]
+    if no_fix:
+        command.append("--no-fix")
+    command.append(str(probe))
+    result = subprocess.run(
+        command,
+        cwd=probe.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "ruff no pudo mostrar la configuración efectiva "
+        f"(rc={result.returncode}): {result.stderr.strip()}"
+    )
+    fix_lines = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("fix")
+    ]
+    assert fix_lines, "ruff --show-settings no devolvió una línea `fix`"
+    match = re.match(r"fix\s*=\s*(true|false)\s*$", fix_lines[0], re.IGNORECASE)
+    assert match, f"formato inesperado para la configuración `fix`: {fix_lines[0]!r}"
+    return match.group(1).lower() == "true"
 
-    No falla el pin -- documenta POR QUE existe. Si alguien pone `fix = false`,
-    este test avisa de que la premisa del pin cambio y hay que re-decidir.
-    """
-    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
-    text = pyproject.read_text(encoding="utf-8")
-    assert "fix = true" in text, (
-        "pyproject ya NO declara `fix = true`: la premisa del pin `--no-fix` "
-        "cambio. Re-evalua si el pin sigue haciendo falta en vez de asumirlo."
+
+def test_effective_ruff_fix_is_false_and_no_floor(tmp_path: Path) -> None:
+    """El control mide Ruff efectivo y prueba el pin contra una config mutada."""
+    repo_root = Path(__file__).resolve().parents[2]
+    source = repo_root / "pyproject.toml"
+    pyproject = source.read_text(encoding="utf-8")
+    probe = tmp_path / "probe.py"
+    probe.write_text("x = 1\n", encoding="utf-8")
+
+    copied = pyproject.replace("[tool.ruff]\n", "[tool.ruff]\nfix = true\n", 1)
+    assert copied != pyproject
+    (tmp_path / "pyproject.toml").write_text(copied, encoding="utf-8")
+
+    assert _effective_ruff_fix(probe) is True, (
+        "sin el pin la config mutada debe activar fix"
+    )
+    assert _effective_ruff_fix(probe, no_fix=True) is False, (
+        "con --no-fix la config efectiva debe quedar en fix = false"
     )
