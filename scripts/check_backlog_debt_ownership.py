@@ -113,14 +113,14 @@ def _strict_live_ticket_ids(dest_root: Path) -> tuple[set[str] | None, str | Non
         `_archive/backlog_done.md`), parses ONLY the Vista rapida table
         (`backlog_reconcile._extract_vista_rapida_rows`) and takes column
         `_COL_TICKET` (the row's OWN id) of every well-formed 8-cell row.
-        Rows with any other arity are discarded. Deliberately STRICTER than
-        `check_guard_wiring._live_owner_tickets`,
-        which scrapes every ticket-shaped substring anywhere in the file
-        (including a CITATION inside another row's prose) -- that laxer scrape
-        counted 111 archived tickets as "live" because they were merely
-        MENTIONED by a live row, not because they HAD a live row of their own
-        (measured, WOT-2026-068y). Reading errors mirror `_live_owner_tickets`
-        exactly (`errors="replace"` would turn an unreadable backlog into an
+        Rows with any other arity are discarded. Since WOT-2026-151a,
+        `check_guard_wiring._live_owner_tickets` delegates here; the laxer
+        historical scraper is `check_guard_wiring._TICKET_ANYWHERE`, which
+        matched any ticket-shaped ID anywhere in the file (including a
+        CITATION inside another row's prose) and counted 635 scraped IDs as
+        live versus 256 real rows (WOT-2026-068y). This extractor is the strict
+        replacement for that historical scrape. Reading errors are resolved
+        here (`errors="replace"` would turn an unreadable backlog into an
         indistinguishable empty set -- the same disease this ticket closes).
     After: `(set, None)` when at least one canonical ID remains, or
         `(None, reason)` when the backlog cannot be read, parsed, or yields no
