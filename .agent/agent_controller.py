@@ -1425,17 +1425,18 @@ def _validate_closeout_commit_message(msg: str, active_id: str) -> tuple[bool, s
         - active_id is the active ticket ID (e.g., WT-2026-188).
 
     During:
-        - Checks for checkpoint keywords that indicate a generic commit.
-        - Extracts all ticket IDs (WT-XXXX / WP-XXXX) from the message.
-        - Validates that the active ticket ID is referenced.
+        - Extracts all ticket IDs (WT-XXXX / WP-XXXX) from the message first.
+        - Validates that the active ticket ID is referenced before applying the
+          generic checkpoint heuristic.
 
     After:
         - Returns (True, "") if the message is valid for closeout.
         - Returns (False, reason_string) if invalid.
 
     Rules:
-        1. Generic checkpoint commits (containing 'checkpoint', 'pre-handoff',
-           'wip', 'interim') are rejected regardless of ticket ID.
+        1. A message citing the active ticket is accepted even when its
+           subject necessarily contains a checkpoint keyword. The diff is an
+           external precondition and is not inspected here.
         2. Commits without any ticket ID are rejected.
         3. Commits referencing a different ticket ID than active_id are rejected.
         4. Commits with active_id and meaningful content are accepted.
@@ -1443,21 +1444,19 @@ def _validate_closeout_commit_message(msg: str, active_id: str) -> tuple[bool, s
     if not msg or not active_id:
         return False, "Empty message or ticket ID"
 
-    msg_lower = msg.lower()
-    # Check for checkpoint keywords first (generic commits are always rejected)
-    for keyword in _CHECKPOINT_KEYWORDS:
-        if keyword in msg_lower:
-            return (
-                False,
-                f"Commit appears to be a '{keyword}' commit, "
-                f"not a meaningful closeout message",
-            )
-
     # Use the canonical ticket-id parser so suffixes like WT-2026-248a are
     # preserved consistently across bus, closeout, and manager validation.
     ticket_ids = extract_all_ticket_ids(msg)
 
     if not ticket_ids:
+        msg_lower = msg.lower()
+        for keyword in _CHECKPOINT_KEYWORDS:
+            if keyword in msg_lower:
+                return (
+                    False,
+                    f"Commit message does not reference any ticket ID; "
+                    f"generic '{keyword}' signal failed",
+                )
         return False, "Commit message does not reference any ticket ID"
 
     if active_id not in ticket_ids:

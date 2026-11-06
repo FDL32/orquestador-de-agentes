@@ -2208,15 +2208,48 @@ class TestCloseoutCommitValidation:
 
     _ACTIVE_ID = "WT-2026-188"
 
-    def test_manager_approve_rejects_generic_checkpoint_commit_message(self):
-        """Checkpoint with correct ID is rejected (generic pre-handoff)."""
+    def test_manager_approve_accepts_checkpoint_commit_message_with_active_id(self):
+        """A keyword is allowed when the active ticket is cited."""
         valid, reason = agent_controller._validate_closeout_commit_message(
             "chore(WT-2026-188): pre-handoff checkpoint", self._ACTIVE_ID
         )
+        assert valid, f"Expected valid, got: {reason}"
+
+    def test_closeout_accepts_accredited_checkpoint_m3_subject(self):
+        """The accredited M3 subject passes when it cites the active ticket."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "WOT-2026-068q: el cierre acepta el commit acreditado por el checkpoint M3",
+            "WOT-2026-068q",
+        )
+        assert (valid, reason) == (True, "")
+
+    def test_closeout_rejects_accredited_subject_for_other_active_ticket(self):
+        """The accredited subject is rejected when the active ticket differs."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "WOT-2026-068q: el cierre acepta el commit acreditado por el checkpoint M3",
+            "WOT-2026-099",
+        )
         assert not valid
-        # The commit contains both "pre-handoff" and "checkpoint"; either may
-        # be reported first depending on iteration order
-        assert any(kw in reason.lower() for kw in ("checkpoint", "pre-handoff"))
+        assert "Commit references" in reason
+
+    @pytest.mark.parametrize("keyword", ("checkpoint", "pre-handoff", "wip", "interim"))
+    def test_closeout_rejects_each_generic_checkpoint_keyword(self, keyword):
+        """Each strong generic signal remains identifiable without a ticket."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            f"maintenance: {keyword}", self._ACTIVE_ID
+        )
+        assert not valid
+        assert "does not reference any ticket ID" in reason
+        assert keyword in reason
+
+    def test_manager_approve_rejects_checkpoint_without_ticket_with_strong_reason(self):
+        """A generic keyword without a ticket remains blocked by the strong signal."""
+        valid, reason = agent_controller._validate_closeout_commit_message(
+            "chore: pre-handoff checkpoint", self._ACTIVE_ID
+        )
+        assert not valid
+        assert "does not reference any ticket ID" in reason
+        assert any(keyword in reason for keyword in ("checkpoint", "pre-handoff"))
 
     def test_manager_approve_rejects_commit_message_with_wrong_ticket_id(self):
         """Message referencing a valid but different ticket ID is rejected."""
@@ -2522,11 +2555,13 @@ class TestHandleManagerApproveIntegration:
         monkeypatch.setattr(agent_controller, "_SUPERVISOR_STATE_PATH", sup)
         return mgr, sup
 
-    def test_blocks_on_generic_checkpoint_commit(self, monkeypatch, tmp_path):
-        """_handle_manager_approve returns 1 for a checkpoint commit with correct ID."""
+    def test_accepts_checkpoint_commit_that_cites_active_ticket(
+        self, monkeypatch, tmp_path
+    ):
+        """_handle_manager_approve accepts a checkpoint citing the active ticket."""
         self._setup(monkeypatch, tmp_path, "chore(WT-2026-188): pre-handoff checkpoint")
         rc = agent_controller._handle_manager_approve(self._TICKET, False, False)
-        assert rc == 1, "Expected block on generic checkpoint commit"
+        assert rc == 0, "Expected closeout acceptance for the cited active ticket"
 
     def test_blocks_on_wrong_ticket_id_in_commit(self, monkeypatch, tmp_path):
         """_handle_manager_approve returns 1 when commit references a different ticket."""
@@ -2535,6 +2570,12 @@ class TestHandleManagerApproveIntegration:
         )
         rc = agent_controller._handle_manager_approve(self._TICKET, False, False)
         assert rc == 1, "Expected block on wrong ticket ID in commit"
+
+    def test_force_only_bypasses_commit_validation(self, monkeypatch, tmp_path):
+        """--force accepts an otherwise invalid commit message."""
+        self._setup(monkeypatch, tmp_path, "chore: wip checkpoint")
+        rc = agent_controller._handle_manager_approve(self._TICKET, False, True)
+        assert rc == 0
 
     def test_blocks_on_missing_ticket_id_in_commit(self, monkeypatch, tmp_path):
         """_handle_manager_approve returns 1 when commit has no ticket ID."""
@@ -3666,7 +3707,7 @@ class TestExternalMotorCheckpointTopology:
     reproduce the bug: --pre-handoff creating the tag in the wrong root
     and --mark-ready failing to find it.
 
-    [NON-REVERSE-CLASSICAL: regression test for identified bug — the fix
+    [NON-REVERSE-CLASSICAL: regression test for identified bug - the fix
     was implemented first, then the test was written to prove it works.]
     """
 
@@ -4567,7 +4608,7 @@ class TestExternalMotorCheckpointTopology:
             lambda content, default="code": "code",
         )
 
-        # Run mark-ready — should fail because checkpoint tag is missing
+        # Run mark-ready - should fail because checkpoint tag is missing
         code, output = self._capture_output(
             lambda: agent_controller._handle_mark_ready(
                 scope_override=None, json_output=False, force_mode=False
@@ -4684,7 +4725,7 @@ class TestExternalMotorCheckpointTopology:
             lambda dt="code": True,
         )
 
-        # Run mark-ready — must NOT block even though no checkpoint tag exists
+        # Run mark-ready - must NOT block even though no checkpoint tag exists
         code, output = self._capture_output(
             lambda: agent_controller._handle_mark_ready(
                 scope_override=None, json_output=False, force_mode=False
@@ -4734,7 +4775,7 @@ class TestExternalMotorCheckpointTopology:
 
 
 # =============================================================================
-# WT-2026-249a: CLI contract hardening — stderr vs returncode
+# WT-2026-249a: CLI contract hardening - stderr vs returncode
 # =============================================================================
 
 
@@ -4916,7 +4957,7 @@ class TestBuilderBriefExclusion:
     """WT-2026-249b: BUILDER_BRIEF_ must be treated as live surface (non-blocking)
     while UPSTREAM_LEARNINGS.md must remain outside exclusions.
 
-    [NON-REVERSE-CLASSICAL: test of guard prefix logic — the fix is a
+    [NON-REVERSE-CLASSICAL: test of guard prefix logic - the fix is a
     one-line constant addition, behavioural coverage matters.]
     """
 
