@@ -693,6 +693,33 @@ def test_fila94_rev_parse_fallido_de_hermano_se_salta(box, tmp_path, monkeypatch
     assert r.rc == 0 and not [k for k in r.keys if k.startswith("git-")]
 
 
+def test_d2_gitdir_enlace_colgante_avisa_y_sin_git_calla(box, tmp_path):
+    """D2: .git colgante se diagnostica; un hermano sin .git sigue siendo silencio."""
+    hermanos = tmp_path / "hermanos"
+    hermanos.mkdir()
+    roto = hermanos / "impl-roto"
+    roto.mkdir()
+    try:
+        (roto / ".git").symlink_to(
+            tmp_path / "gitdir-inexistente", target_is_directory=True
+        )
+    except (OSError, NotImplementedError):
+        pytest.skip("sin permiso para crear enlaces simbolicos")
+
+    hallazgos = box.m._git_markers(roto)
+    limpio = hermanos / "impl-limpio"
+    limpio.mkdir()
+
+    assert hallazgos == [
+        (
+            "git-gitdir-impl-roto",
+            "AVISO",
+            "Git no pudo resolver su directorio de datos en impl-roto",
+        )
+    ]
+    assert box.m._git_markers(limpio) == []
+
+
 def test_d2_gitdir_roto_avisa_con_basename_y_sin_ruta(box, tmp_path):
     """D2: una entrada .git rota no se confunde con un directorio que no es repo."""
     roto = tmp_path / "gitdir-roto"
@@ -1263,6 +1290,25 @@ def test_d6_cuenta_real_alta_sigue_siendourgente(box):
     """D6: la exclusión de codex no relaja el segmento real de alvarovans."""
     _con_cupo(box, "QUOTA | alvarovans weekly 98% | brabander weekly 30%")
     assert ("cupo-97", "URGENTE", "stall") in box.tick().events
+
+
+def test_d6_nombre_parecido_no_cuenta_y_cuenta_real_si(box):
+    """D6: el nombre de cuenta debe terminar antes de un espacio; la cuenta exacta sí cuenta."""
+    _con_cupo(box, "QUOTA | brabander-old weekly 98% | brabander weekly 30%")
+    r = box.tick()
+    assert r.rc == 1 and ("cupo-cuenta-desconocida", "AVISO", "stall") in r.events
+    assert "cupo-97" not in r.keys
+
+    _con_cupo(box, "QUOTA | brabander weekly 98% | alvarovans weekly 30%")
+    assert ("cupo-97", "URGENTE", "stall") in box.tick().events
+
+
+def test_d6_cuenta_desconocida_avisa_sin_contar_en_cupo_max(box):
+    """D6: una cuenta no reconocida con porcentaje avisa una vez y no altera el máximo."""
+    _con_cupo(box, "QUOTA | nueva_cuenta weekly 98% | brabander weekly 30%")
+    r = box.tick()
+    assert ("cupo-cuenta-desconocida", "AVISO", "stall") in r.events
+    assert '"cupo_max": 30' in r.out and '"cupo_max": 98' not in r.out
 
 
 def test_d9_detector_inf_es_ilegible_y_no_urgente(box):

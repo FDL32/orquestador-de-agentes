@@ -147,19 +147,23 @@ def _git(path, *args):
 
 
 def _quota_accounts(text):
-    """Cuentas de la salida de quota_tick: (porcentajes validos, hay cuenta sin porcentaje, hay STALE).
+    """Cuentas de quota_tick: porcentajes, ilegible, STALE y cuenta desconocida.
 
     Before: ``text`` es la salida de una linea ``QUOTA ... | <cuenta> <ventana> <pct>%[ STALE] | ...``.
     During: por cuenta (hasta el siguiente ``|``) toma el ULTIMO token ``<algo>%`` (el productor
         imprime ``<cuenta> <ventana> <pct>%`` y la ventana va cruda, puede contener ``N%``) y lo
         lee ENTERO como imprime Python el ``block_pct`` crudo: entero, decimal (97.0, 92.5), con
         signo y con exponente (1e+20, 1e-05, 1.5e+300, 1E5); un valor entero exacto se devuelve int.
-    After: ``(pcts, sin_pct, stale)``; ``None%``, ``inf%`` o ausencia de ``%`` cuentan como sin porcentaje.
+    After: ``(pcts, sin_pct, stale, desconocida)``; ``None%``, ``inf%`` o ausencia de ``%``
+        cuentan como sin porcentaje; un segmento ajeno con ``N%`` marca ``desconocida``.
     """
-    pcts, sin_pct, stale = [], False, False
+    pcts, sin_pct, stale, desconocida = [], False, False, False
     for segment in text.split("|")[1:]:
-        m = re.match(r"\s*(?:alvarovans|brabander)\b(.*)", segment)
+        if re.match(r"\s*codex(?:\s|$)", segment):
+            continue
+        m = re.match(r"\s*(?:alvarovans|brabander)(?=\s)(.*)", segment)
         if m is None:
+            desconocida = desconocida or re.search(r"\S+%", segment) is not None
             continue
         rest = m.group(1)
         stale = stale or re.search(r"\bSTALE\b", rest) is not None
@@ -175,7 +179,7 @@ def _quota_accounts(text):
             pcts.append(int(value) if value.is_integer() else value)
         else:
             sin_pct = True
-    return pcts, sin_pct, stale
+    return pcts, sin_pct, stale, desconocida
 
 
 def check_quota(out):
@@ -216,7 +220,7 @@ def check_quota(out):
                 f"La salida del cupo supera la cota de lectura de {QUOTA_READ_MAX} caracteres",
             )
         ]
-    pcts, sin_pct, stale = _quota_accounts(text)
+    pcts, sin_pct, stale, desconocida = _quota_accounts(text)
     declara = re.search(r"\bNO_MEDIDO\b", text.split("|", 1)[0]) is not None
     razones = _quota_reasons(age_min, declara, stale)
     ilegible = (not pcts or sin_pct) and not declara
@@ -233,6 +237,14 @@ def check_quota(out):
         )
     if razones:
         found.append(("cupo-no-medido", "AVISO", "; ".join(razones)))
+    if desconocida:
+        found.append(
+            (
+                "cupo-cuenta-desconocida",
+                "AVISO",
+                "La salida del cupo contiene una cuenta no reconocida",
+            )
+        )
     found += _quota_levels(pcts)
     out["cupo_max"] = max(pcts) if pcts else None
     return found
@@ -360,7 +372,7 @@ def _git_markers(p):
     After: ``list`` de hallazgos ``git-*`` sin rutas absolutas; el no-repo sigue siendo silencio.
     """
     git_entry = p / ".git"
-    if not git_entry.exists():
+    if not os.path.lexists(git_entry):
         return []
     rc, gitdir = _git(p, "rev-parse", "--absolute-git-dir")
     if rc != 0:
