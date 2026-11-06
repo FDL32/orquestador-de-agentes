@@ -120,13 +120,13 @@ def _run_session_close(root: Path, roster_path: Path | None, acting_thread: str 
     return result, elapsed, report_text
 
 
-def _parse_step_table(report_text: str) -> tuple[dict[str, tuple[str, str]], int]:
+def _parse_step_table(report_text: str) -> tuple[list[tuple[str, str, str]], int]:
     """Parse anchored closeout rows and return statuses plus row denominator.
 
     Before: ``report_text`` is the markdown report emitted by session close.
     During: matches only complete step-row prefixes, ignoring headers and
         arbitrary detail text (including escaped pipes).
-    After: returns ``{step_name: (status, blocking)}`` and the number of parsed rows;
+    After: returns ``[(step_name, status, blocking)]`` and the number of parsed rows;
         malformed or absent rows are not counted.
     """
     row_pattern = re.compile(
@@ -134,10 +134,10 @@ def _parse_step_table(report_text: str) -> tuple[dict[str, tuple[str, str]], int
         r"(PASS|FAIL|WARN|SKIP)\s*\|\s*(Yes|No)\s*\|",
         re.MULTILINE,
     )
-    rows = {
-        match.group(1).strip(): (match.group(2), match.group(3))
+    rows = [
+        (match.group(1).strip(), match.group(2), match.group(3))
         for match in row_pattern.finditer(report_text)
-    }
+    ]
     return rows, len(rows)
 
 
@@ -151,10 +151,10 @@ class TestStepTableParser:
             "| 6 | latido_alert_wiring | FAIL | Yes | detalle FAIL |\n"
         )
         assert _parse_step_table(report) == (
-            {
-                "roster_matches_acting_thread": ("PASS", "Yes"),
-                "latido_alert_wiring": ("FAIL", "Yes"),
-            },
+            [
+                ("roster_matches_acting_thread", "PASS", "Yes"),
+                ("latido_alert_wiring", "FAIL", "Yes"),
+            ],
             2,
         )
 
@@ -165,39 +165,95 @@ class TestStepTableParser:
             "| 6 | malformed | FAIL |\n"
         )
         assert _parse_step_table(report) == (
-            {"roster_matches_acting_thread": ("PASS", "Yes")},
+            [("roster_matches_acting_thread", "PASS", "Yes")],
             1,
         )
 
     def test_parser_handles_escaped_detail_pipe_and_final_line_without_newline(self):
         report = "| 6 | latido_alert_wiring | FAIL | Yes | a \\| b |"
         assert _parse_step_table(report) == (
-            {"latido_alert_wiring": ("FAIL", "Yes")},
+            [("latido_alert_wiring", "FAIL", "Yes")],
             1,
         )
 
+    def test_parser_counts_duplicate_names_and_two_failures(self):
+        report = (
+            "| 1 | same | FAIL | Yes | first |\n"
+            "| 2 | same | PASS | No | duplicate name |\n"
+            "| 3 | other | FAIL | Yes | second |\n"
+        )
+        assert _parse_step_table(report) == (
+            [
+                ("same", "FAIL", "Yes"),
+                ("same", "PASS", "No"),
+                ("other", "FAIL", "Yes"),
+            ],
+            3,
+        )
+
     def test_parser_returns_empty_for_empty_or_absent_table(self):
-        assert _parse_step_table("") == ({}, 0)
-        assert _parse_step_table("sin tabla y sin filas FAIL") == ({}, 0)
+        assert _parse_step_table("") == ([], 0)
+        assert _parse_step_table("sin tabla y sin filas FAIL") == ([], 0)
 
 
 def test_roster_step_pass_when_acting_thread_matches(
     hermetic_project_root, monkeypatch
 ):
     monkeypatch.setenv("FLIGHT_LATIDO_FILES", "coordinadora=stale-latido.json")
+    captured = {}
+    real_run = subprocess.run
+
+    def capture_run(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args", [])
+        if "--session-close" in command:
+            captured["env"] = kwargs["env"]
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", capture_run)
     roster_path = _write_fixture_roster(hermetic_project_root)
     result, elapsed, report = _run_session_close(
         hermetic_project_root, roster_path, "test-thread-1"
     )
     assert elapsed < 60, f"excedio presupuesto: {elapsed}s"
     steps, denominator = _parse_step_table(report)
-    assert steps.get("roster_matches_acting_thread", (None, None))[0] == "PASS", report
+    assert [row for row in steps if row[0] == "roster_matches_acting_thread"] == [
+        ("roster_matches_acting_thread", "PASS", "Yes")
+    ], report
     assert result.returncode == 1, result.stdout + result.stderr
     assert denominator >= 2, report
-    assert {
-        name for name, (status, _blocking) in steps.items() if status == "FAIL"
-    } == {"latido_alert_wiring"}, report
-    assert steps["latido_alert_wiring"] == ("FAIL", "Yes"), report
+    assert {name for name, status, _blocking in steps if status == "FAIL"} == {
+        "latido_alert_wiring"
+    }, report
+    assert [row for row in steps if row[0] == "latido_alert_wiring"] == [
+        ("latido_alert_wiring", "FAIL", "Yes")
+    ], report
+    assert steps[-1][0] == "latido_alert_wiring", report
+    assert "FLIGHT_LATIDO_FILES" not in captured["env"]
+
+
+def test_run_session_close_discards_stale_report_when_subprocess_writes_nothing(
+    hermetic_project_root, monkeypatch
+):
+    report_path = (
+        hermetic_project_root
+        / ".agent"
+        / "runtime"
+        / "memory"
+        / "session_close_report.md"
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("stale report", encoding="utf-8")
+
+    def no_report_run(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args", [])
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", no_report_run)
+    result, _elapsed, report = _run_session_close(
+        hermetic_project_root, None, "test-thread-1"
+    )
+    assert result.returncode == 0
+    assert report == ""
 
 
 def test_roster_step_fail_when_acting_thread_mismatches(hermetic_project_root):
@@ -218,7 +274,9 @@ def test_roster_step_fail_when_acting_thread_mismatches(hermetic_project_root):
         hermetic_project_root, roster_path, "otro-hilo-distinto"
     )
     steps, denominator = _parse_step_table(report)
-    assert steps.get("roster_matches_acting_thread", (None, None))[0] == "FAIL", report
+    assert [row for row in steps if row[0] == "roster_matches_acting_thread"] == [
+        ("roster_matches_acting_thread", "FAIL", "Yes")
+    ], report
     assert denominator >= 1, report
     assert "latido_alert_wiring" not in steps, report
     assert result.returncode == 1
@@ -229,7 +287,9 @@ def test_roster_step_skip_without_flight_roster_path(hermetic_project_root):
         hermetic_project_root, None, "test-thread-1"
     )
     steps, _denominator = _parse_step_table(report)
-    assert steps.get("roster_matches_acting_thread", (None, None))[0] == "SKIP", report
+    assert [row for row in steps if row[0] == "roster_matches_acting_thread"] == [
+        ("roster_matches_acting_thread", "SKIP", "No")
+    ], report
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -239,7 +299,9 @@ def test_roster_step_fail_without_acting_thread(hermetic_project_root):
         hermetic_project_root, roster_path, None
     )
     steps, _denominator = _parse_step_table(report)
-    assert steps.get("roster_matches_acting_thread", (None, None))[0] == "FAIL", report
+    assert [row for row in steps if row[0] == "roster_matches_acting_thread"] == [
+        ("roster_matches_acting_thread", "FAIL", "Yes")
+    ], report
     assert "latido_alert_wiring" not in steps, report
     assert result.returncode == 1
 
