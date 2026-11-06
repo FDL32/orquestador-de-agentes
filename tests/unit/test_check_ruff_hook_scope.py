@@ -193,14 +193,16 @@ def test_ruff_check_hook_is_pinned_readonly() -> None:
     )
 
 
-def _effective_ruff_fix(probe: Path, *, no_fix: bool = False) -> bool:
+def _effective_ruff_fix(
+    probe: Path, *, no_fix: bool = False, cwd: Path | None = None
+) -> bool:
     command = [sys.executable, "-m", "ruff", "check", "--show-settings"]
     if no_fix:
         command.append("--no-fix")
     command.append(str(probe))
     result = subprocess.run(
         command,
-        cwd=probe.parent,
+        cwd=cwd or probe.parent,
         capture_output=True,
         text=True,
         check=False,
@@ -220,6 +222,16 @@ def _effective_ruff_fix(probe: Path, *, no_fix: bool = False) -> bool:
     return match.group(1).lower() == "true"
 
 
+def test_real_ruff_config_is_not_autofix() -> None:
+    """The repository's effective config must keep gates read-only by default."""
+    repo_root = Path(__file__).resolve().parents[2]
+    probe = repo_root / "scripts" / "check_guard_wiring.py"
+    assert _effective_ruff_fix(probe, cwd=repo_root) is False, (
+        "reintroducir `fix = true` en pyproject haría que dispatcher y workflow "
+        "(que no llevan `--no-fix`) reescriban ficheros"
+    )
+
+
 def test_effective_ruff_fix_is_false_and_no_floor(tmp_path: Path) -> None:
     """El control mide Ruff efectivo y prueba el pin contra una config mutada."""
     repo_root = Path(__file__).resolve().parents[2]
@@ -228,8 +240,27 @@ def test_effective_ruff_fix_is_false_and_no_floor(tmp_path: Path) -> None:
     probe = tmp_path / "probe.py"
     probe.write_text("x = 1\n", encoding="utf-8")
 
-    copied = pyproject.replace("[tool.ruff]\n", "[tool.ruff]\nfix = true\n", 1)
+    lines = pyproject.splitlines()
+    copied_lines: list[str] = []
+    in_ruff_section = False
+    replaced_fix = False
+    for line in lines:
+        if line.startswith("["):
+            in_ruff_section = line == "[tool.ruff]"
+        if in_ruff_section and re.match(r"^\s*fix\s*=", line):
+            copied_lines.append("fix = true")
+            replaced_fix = True
+        else:
+            copied_lines.append(line)
+    if not replaced_fix:
+        section_index = copied_lines.index("[tool.ruff]")
+        copied_lines.insert(section_index + 1, "fix = true")
+    copied = "\n".join(copied_lines) + "\n"
     assert copied != pyproject
+    active_fix_lines = [
+        line for line in copied.splitlines() if re.match(r"^\s*fix\s*=", line)
+    ]
+    assert active_fix_lines == ["fix = true"]
     (tmp_path / "pyproject.toml").write_text(copied, encoding="utf-8")
 
     assert _effective_ruff_fix(probe) is True, (
