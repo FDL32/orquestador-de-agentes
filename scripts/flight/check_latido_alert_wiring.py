@@ -79,6 +79,7 @@ _SCRIPTS = (
     "comms_alert.py",
     "flight_stall_check.py",
     "quota_tick.py",
+    "tick_trace.py",
     "notify_user.ps1",
     SELF_NAME,
 )
@@ -98,6 +99,20 @@ _INVENTORY: dict[str, tuple[tuple[str, frozenset[str], frozenset[str]], ...]] = 
             frozenset({"--heartbeat-check"}),
         ),
         ("quota_tick.py", frozenset(), frozenset()),
+        (
+            "tick_trace.py",
+            frozenset(
+                {
+                    "--ops-dir",
+                    "--coordinator",
+                    "--roster-sha12",
+                    "--guard-rc",
+                    "--quota-rc",
+                    "--quota-summary",
+                }
+            ),
+            frozenset({"--ts"}),
+        ),
         (SELF_NAME, frozenset({"--alert"}), frozenset()),
     ),
     "supervisora": (
@@ -1033,6 +1048,19 @@ def evaluate_latido(role: str, text: str, checker: _Checker) -> list[_Finding]:
         )
     used: set[int] = set()
     for script, required, forbidden in _INVENTORY[role]:
+        forbidden_orders = [
+            o for o in evaluated if o.script == script and forbidden & o.flags
+        ]
+        if script == "tick_trace.py" and forbidden_orders:
+            findings.append(
+                _Finding(
+                    "V",
+                    role,
+                    "",
+                    f"opcion prohibida para {script}: "
+                    f"{' '.join(sorted(forbidden & forbidden_orders[0].flags))}",
+                )
+            )
         if not any(
             i not in used
             and o.valid
@@ -1060,6 +1088,16 @@ def evaluate_latido(role: str, text: str, checker: _Checker) -> list[_Finding]:
                     and not (forbidden & o.flags)
                 )
             )
+    trace_count = sum(o.valid and o.script == "tick_trace.py" for o in evaluated)
+    if role == "coordinadora" and trace_count > 1:
+        findings.append(
+            _Finding(
+                "V",
+                role,
+                "",
+                "tick_trace.py debe aparecer exactamente una vez en el latido",
+            )
+        )
     return findings
 
 
@@ -1517,7 +1555,12 @@ def _derive_script_options() -> dict[str, dict[str, tuple[bool, bool, bool]]]:
     """Construye la gramática desde los productores, no desde una lista manual."""
     flight = Path(__file__).resolve().parent
     result = {SELF_NAME: _python_parser_actions(Path(__file__), own=True)}
-    for name in ("comms_alert.py", "flight_stall_check.py", "quota_tick.py"):
+    for name in (
+        "comms_alert.py",
+        "flight_stall_check.py",
+        "quota_tick.py",
+        "tick_trace.py",
+    ):
         path = flight / name
         if path.exists():
             result[name] = _python_parser_actions(path)

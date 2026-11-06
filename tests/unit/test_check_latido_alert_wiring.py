@@ -35,6 +35,7 @@ _STUBS = (
     "comms_alert.py",
     "flight_stall_check.py",
     "quota_tick.py",
+    "tick_trace.py",
     "notify_user.ps1",
     "check_latido_alert_wiring.py",
 )
@@ -80,7 +81,7 @@ class Box:
         return str(self.flight / name)
 
     def coord_orders(self) -> list[str]:
-        """Las 6 ordenes obligatorias de la coordinadora (todas validas)."""
+        """Las 7 ordenes obligatorias de la coordinadora (todas validas)."""
         py = self.py
         return [
             f"{py} {self.s('comms_alert.py')} --scan --ops-dir {self.ops}",
@@ -89,7 +90,25 @@ class Box:
             f"{py} {self.s('flight_stall_check.py')} --self-check",
             f"{py} {self.s('quota_tick.py')} > {self.root / 'quota.txt'}",
             f"{py} {self.s('check_latido_alert_wiring.py')} --alert",
+            self.trace_order(),
         ]
+
+    def trace_order(self, *, markers: bool = False) -> str:
+        """Construye la orden completa de tick_trace para los fixtures."""
+        values = {
+            "ops": "<ops-dir>" if markers else str(self.ops),
+            "coordinator": "<coordinator>" if markers else "CO-48",
+            "roster": "<roster-sha12>" if markers else "0123456789ab",
+            "guard": "<guard-rc>" if markers else "0",
+            "quota": "<quota-rc>" if markers else "0",
+            "summary": "<quota-summary>" if markers else "ok",
+        }
+        return (
+            f"{self.py} {self.s('tick_trace.py')} --ops-dir {values['ops']} "
+            f"--coordinator {values['coordinator']} --roster-sha12 {values['roster']} "
+            f"--guard-rc {values['guard']} --quota-rc {values['quota']} "
+            f"--quota-summary {values['summary']}"
+        )
 
     def sup_orders(self) -> list[str]:
         """Las 2 ordenes obligatorias de la supervisora (todas validas; PowerShell = Windows)."""
@@ -225,6 +244,113 @@ def test_fila_131_latidos_correctos_dan_rc_0(box, capsys):
     rc, out = run(box.argv(coord, sup), capsys)
     assert rc == 0, out
     assert out.startswith("latido-check: OK")
+
+
+def test_tick_trace_valido_es_obligatorio_una_vez_y_acepta_marcadores(box, capsys):
+    """WOT-2026-158a D1-D5: una traza completa valida el latido con marcadores."""
+    orders = box.coord_orders()
+    orders[-1] = box.trace_order(markers=True)
+    coord = box.latido("tick-markers.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 0, out
+    assert "latido-check: OK" in out
+
+
+def test_tick_trace_duplicado_es_violacion(box, capsys):
+    """WOT-2026-158a D2/D5: dos trazas validas no satisfacen exactamente una."""
+    orders = [*box.coord_orders(), box.trace_order()]
+    coord = box.latido("tick-duplicate.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "exactamente una" in out
+
+
+def test_tick_trace_ausente_es_violacion(box, capsys):
+    """WOT-2026-158a D2: omitir la traza obligatoria invalida el latido."""
+    orders = box.coord_orders()
+    orders.pop()
+    coord = box.latido("tick-missing-order.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "falta una orden VALIDA de tick_trace.py" in out
+
+
+def test_tick_trace_sin_ops_dir_se_rechaza_por_la_ruta_cli(box, capsys):
+    """WOT-2026-158a D6: la CLI rechaza tick_trace sin --ops-dir con rc 1."""
+    orders = box.coord_orders()
+    orders[-1] = box.trace_order().replace("--ops-dir " + str(box.ops), "")
+    coord = box.latido("tick-no-ops.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "falta el parametro obligatorio de tick_trace.py: --ops-dir" in out
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--ops-dir",
+        "--coordinator",
+        "--roster-sha12",
+        "--guard-rc",
+        "--quota-rc",
+        "--quota-summary",
+    ],
+)
+def test_tick_trace_cada_flag_exigido_es_necesario(box, capsys, flag):
+    """WOT-2026-158a D3: quitar cualquier flag exigido invalida el tick."""
+    orders = box.coord_orders()
+    trace = box.trace_order()
+    tokens = trace.split()
+    index = tokens.index(flag)
+    del tokens[index : index + 2]
+    orders[-1] = " ".join(tokens)
+    coord = box.latido(f"tick-missing-{flag[2:]}.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert flag in out
+
+
+def test_tick_trace_opcion_no_derivada_se_rechaza_por_la_ruta_cli(box, capsys):
+    """WOT-2026-158a D6: una opcion ajena al productor se rechaza con rc 1."""
+    orders = box.coord_orders()
+    orders[-1] = box.trace_order().replace(
+        "--quota-summary ok", "--not-a-real-option x"
+    )
+    coord = box.latido("tick-unknown-option.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "opcion desconocida para tick_trace.py: --not-a-real-option" in out
+
+
+def test_tick_trace_ts_esta_prohibido(box, capsys):
+    """WOT-2026-158a D4: el reloj del productor no se fija desde el latido."""
+    orders = box.coord_orders()
+    orders[-1] += " --ts <fixed-ts>"
+    coord = box.latido("tick-fixed-ts.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "--ts" in out and "prohibid" in out
 
 
 def test_go_productor_nuevo_en_latido_es_valido(box, capsys):
@@ -834,6 +960,7 @@ def test_fila_134_slash_abajo_rc_0(box, capsys):
         f"{py} {flight_str}/flight_stall_check.py --self-check",
         f"{py} {flight_str}/quota_tick.py > {box.root / 'quota.txt'}",
         f"{py} {flight_str}/check_latido_alert_wiring.py --alert",
+        box.trace_order(),
     ]
     # Fix powershell path in sup orders
     sysroot = os.environ.get("SYSTEMROOT", "")
@@ -862,6 +989,7 @@ def test_fila_134_comillas_dobles_rc_0(box, capsys):
         f"{py} {s_ca.replace('comms_alert.py', 'flight_stall_check.py')} --self-check",
         f"{py} {s_ca.replace('comms_alert.py', 'quota_tick.py')} > {box.root / 'quota.txt'}",
         f"{py} {s_ca.replace('comms_alert.py', 'check_latido_alert_wiring.py')} --alert",
+        box.trace_order(),
     ]
     ps = box.ps
     sup_orders = [
@@ -1102,6 +1230,7 @@ def test_fila_136_junction_fuera_rc_1(box, capsys):
         f"{py} {box.s('flight_stall_check.py')} --self-check",
         f"{py} {box.s('quota_tick.py')} > {box.root / 'quota.txt'}",
         f"{py} {box.s('check_latido_alert_wiring.py')} --alert",
+        box.trace_order(),
     ]
     sysroot = os.environ.get("SYSTEMROOT", "")
     ps = str(
@@ -1139,6 +1268,7 @@ def test_r5_soundness_metadata_se_deriva_de_los_parsers_reales():
         "comms_alert.py",
         "flight_stall_check.py",
         "quota_tick.py",
+        "tick_trace.py",
         "check_latido_alert_wiring.py",
     ):
         actual = chk._python_parser_actions(
@@ -1774,6 +1904,7 @@ def test_fila_141_minuscula_slash_rc_0(box, capsys):
         f"{py_lower} {flight_lower}/flight_stall_check.py --self-check",
         f"{py_lower} {flight_lower}/quota_tick.py > {box.root / 'quota.txt'}",
         f"{py_lower} {flight_lower}/check_latido_alert_wiring.py --alert",
+        box.trace_order(),
     ]
     sysroot = os.environ.get("SYSTEMROOT", "")
     ps_lower = str(
@@ -1802,6 +1933,7 @@ def test_fila_141_prefijo_dispositivo_rc_0(box, capsys):
         f"{py} {box.s('flight_stall_check.py')} --self-check",
         f"{py} {box.s('quota_tick.py')} > {box.root / 'quota.txt'}",
         f"{py} {box.s('check_latido_alert_wiring.py')} --alert",
+        box.trace_order(),
     ]
     sup = box.latido("s.md", box.sup_orders())
     c = box.latido("c.md", orders)
@@ -1920,7 +2052,11 @@ def test_fila_144_coord_mala_sup_buen_rc_1(box, capsys):
 def test_fila_145_sin_ord_propia_rc_1(box, capsys):
     """Fila 145 (mutacion 145.1): sin la orden del propio check -> rc 1."""
     orders = box.coord_orders()
-    orders.pop()  # Remove check_latido_alert_wiring.py --alert
+    orders.remove(
+        next(
+            order for order in orders if "check_latido_alert_wiring.py --alert" in order
+        )
+    )
     c = box.latido("c.md", orders)
     s = box.latido("s.md", box.sup_orders())
     rc, out = run(box.argv(c, s), capsys)
