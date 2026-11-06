@@ -1263,7 +1263,7 @@ def test_finish_start_metadata_without_manifest_contradiction_counts(
         ("backend_key", "BA03", "BA254"),
         ("commit_sha", "start-sha", "artifact-sha"),
         ("family", "glm", "qwen"),
-        ("model_effective", "model-a", "model-b"),
+        ("model_effective", "glm-5", "qwen-3"),
         ("expected_mode", "LECTORA", "TEXTO"),
         ("expected_mode", "TEXTO", "LECTORA"),
     ],
