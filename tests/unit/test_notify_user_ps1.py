@@ -146,7 +146,7 @@ def test_fila77_sin_banner_ni_variables_notify_y_con_los_parametros_exactos():
 
 
 def _simulate_toast_failure_offenders(root):
-    """Censa fuentes versionadas de las tres carpetas operativas.
+    """Censa ficheros con sufijos aceptados bajo scripts, prompts y skills.
 
     Before: root contiene scripts, prompts y skills, y puede incluir subdirectorios de cache.
     During: recorre un glob recursivo separado por cada sufijo aceptado y lee con errors=replace.

@@ -276,7 +276,8 @@ def _unlock(fh):
 
     Before: fh sigue abierto y conserva el bloqueo tomado por _try_lock.
     During: reposiciona el descriptor y llama a la primitiva de desbloqueo del backend activo.
-    After: retorna None con el lock liberado; propaga OSError del backend.
+    After: con msvcrt o fcntl retorna None con el lock liberado; sin backend retorna None sin
+        desbloquear; propaga OSError del backend.
     """
     fh.seek(0)
     if msvcrt is not None:
@@ -495,7 +496,8 @@ def _nota(level, why, rc, what):
 
     Before: los cuatro argumentos representan nivel, motivo, rc y descripcion.
     During: los interpola en el orden contractual y separa componentes con puntuacion fija.
-    After: devuelve un str de una sola linea; no hace I/O ni redaccion adicional.
+    After: devuelve el str interpolado tal cual; no sanea saltos de linea de los argumentos ni
+        hace I/O adicional.
     """
     return f"nivel={level}; motivo={why}; rc={rc}; {what}"
 
@@ -795,7 +797,9 @@ def _nu(rec):
 
     Before: rec es un dict utilizable devuelto por _rec.
     During: conserva un nu entero real o deriva uno a partir del nivel legado.
-    After: devuelve un int no negativo semantico para el retroceso del aviso.
+    After: devuelve cuantos avisos URGENTE lleva la clave: conserva un nu entero real tal cual,
+        incluido su signo; si no, deriva 1 para nivel None/URGENTE y 0 para otros niveles. El
+        retroceso cuenta solo esos avisos y un registro legado sin nivel cuenta como 1.
     """
     nu = rec.get("nu")
     if isinstance(nu, int) and not isinstance(nu, bool):
@@ -1036,7 +1040,6 @@ def _go_queue_path(raw):
     During: valida ruta absoluta/directorio y comprueba el fichero GO_QUEUE_REL.
     After: devuelve la cola como Path o None tras imprimir el motivo de rechazo en stderr.
     """
-
     if not raw:
         print("flight-dir sin resolver", file=sys.stderr)
         return None
@@ -1057,7 +1060,6 @@ def _go_lines(data):
     During: decodifica con utf-8-sig, separa lineas y aplica GO_LINE_RE.fullmatch.
     After: devuelve una lista de matches, incluyendo None para lineas no validas.
     """
-
     text = data.decode("utf-8-sig")
     return [GO_LINE_RE.fullmatch(line.rstrip("\r\n")) for line in text.splitlines()]
 
@@ -1083,7 +1085,6 @@ def _go_eol(data):
     During: cuenta ambos finales sin doble contar CRLF y compara sus frecuencias.
     After: devuelve b"\\r\\n" si domina CRLF; en empate o dominio LF devuelve b"\\n".
     """
-
     crlf = data.count(b"\r\n")
     lf = data.count(b"\n") - crlf
     return b"\r\n" if crlf > lf else b"\n"
@@ -1270,7 +1271,6 @@ def _is_own(d):
     During: comprueba primero la forma antigua y luego by junto con OWN_PREFIX.
     After: devuelve True solo para filas propias; no modifica d ni hace I/O.
     """
-
     if d.get("from") == "comms_alert":
         return True
     return d.get("by") == "comms_alert" and str(d.get("mensaje_id", "")).startswith(
@@ -1284,7 +1284,6 @@ def _failure_resultados():
     During: obtiene el vocabulario cacheado y elimina el resultado enviado.
     After: devuelve un frozenset de resultados que deben tratarse como fallo.
     """
-
     return frozenset(_helper().VALID_RESULTADOS) - {"enviado"}
 
 
@@ -1294,7 +1293,6 @@ def _scan_failure(d, failures):
     During: selecciona resultado/status/result, compara sin case y detecta parent_not_active.
     After: devuelve to/status normalizado para un fallo o None si la fila no es fallo.
     """
-
     verdict = str(d.get("resultado") or d.get("status") or d.get("result") or "")
     folded = verdict.casefold()
     if not (
