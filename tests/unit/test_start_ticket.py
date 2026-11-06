@@ -231,6 +231,8 @@ def _apply_roster_change(roster: dict[str, object], case: str) -> None:
         lenses[1]["profile"] = "profile-ba254-new"
     elif case == "order_changed":
         session["lenses"]["MANAGER_REVIEW"] = [lenses[1], lenses[0]]
+    elif case == "dispatched_key_replaced":
+        lenses[0]["backend_key"] = "BA03B"
     else:
         raise AssertionError(case)
 
@@ -243,6 +245,7 @@ def _apply_roster_change(roster: dict[str, object], case: str) -> None:
         "lens_added",
         "profile_changed",
         "order_changed",
+        "dispatched_key_replaced",
     ],
 )
 def test_start_rejects_roster_composition_change_before_next_dispatch(
@@ -250,9 +253,13 @@ def test_start_rejects_roster_composition_change_before_next_dispatch(
 ) -> None:
     world = _world(tmp_path)
     roster = json.loads(Path(world["roster"]).read_text(encoding="utf-8"))
-    if case in {"reviewer_replaced", "lens_added"}:
+    if case in {"reviewer_replaced", "lens_added", "dispatched_key_replaced"}:
         agents = json.loads(Path(world["agents"]).read_text(encoding="utf-8"))
-        new_key = "NEW_REVIEWER" if case == "reviewer_replaced" else "NEW_LENS"
+        new_key = {
+            "reviewer_replaced": "NEW_REVIEWER",
+            "lens_added": "NEW_LENS",
+            "dispatched_key_replaced": "BA03B",
+        }[case]
         agents["ensemble_registry"]["backend_keys"][new_key] = {"family": "new"}
         Path(world["agents"]).write_text(json.dumps(agents), encoding="utf-8")
 
