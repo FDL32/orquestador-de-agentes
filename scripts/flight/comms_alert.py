@@ -196,6 +196,12 @@ def configure(arg=None, environ=None):
 
 
 def _require_configured():
+    """Rechaza el uso de rutas de estado antes de configurar el directorio operativo.
+
+    Before: configure() puede no haberse llamado y una o mas rutas globales pueden ser None.
+    During: comprueba STATE, LEDGER y LOCK sin hacer I/O adicional.
+    After: retorna None cuando todo esta configurado; lanza OpsDirError si falta una ruta.
+    """
     if STATE is None or LEDGER is None or LOCK is None:
         raise OpsDirError(
             "ops-dir sin configurar: llama a configure() antes de usar el estado"
@@ -250,7 +256,12 @@ def save_state(st):
 
 
 def _try_lock(fh):
-    """Intenta tomar el bloqueo del SO (1 byte en el offset 0) SIN esperar; OSError si no."""
+    """Intenta tomar sin espera el byte cero del bloqueo del sistema operativo.
+
+    Before: fh es un fichero abierto y utilizable por el backend de bloqueo disponible.
+    During: reposiciona el descriptor y usa msvcrt en Windows o fcntl en POSIX.
+    After: retorna None con el lock tomado; propaga OSError ante contencion o fallo.
+    """
     fh.seek(0)
     if msvcrt is not None:
         msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
@@ -261,7 +272,12 @@ def _try_lock(fh):
 
 
 def _unlock(fh):
-    """Libera el bloqueo del SO tomado por _try_lock."""
+    """Libera el byte de bloqueo que tomo _try_lock.
+
+    Before: fh sigue abierto y conserva el bloqueo tomado por _try_lock.
+    During: reposiciona el descriptor y llama a la primitiva de desbloqueo del backend activo.
+    After: retorna None con el lock liberado; propaga OSError del backend.
+    """
     fh.seek(0)
     if msvcrt is not None:
         msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
@@ -455,7 +471,12 @@ def ledger_append(row):
 
 
 def _ledger_row(a, resultado, nota, error=""):
-    """Fila propia con EXACTAMENTE las 9 claves fijas y marca ``comms_alert:<uuid>`` (D16, D20)."""
+    """Construye una fila propia con nueve claves fijas y un identificador nuevo.
+
+    Before: los argumentos son valores serializables y OWN_PREFIX esta configurado.
+    During: obtiene la hora local, fija campos de compatibilidad y genera un UUID bajo comms_alert:.
+    After: devuelve un dict con exactamente nueve claves; no escribe ni modifica estado.
+    """
     return {
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "by": "comms_alert",
@@ -470,10 +491,22 @@ def _ledger_row(a, resultado, nota, error=""):
 
 
 def _nota(level, why, rc, what):
+    """Formatea una causa de aviso para el campo nota del ledger.
+
+    Before: los cuatro argumentos representan nivel, motivo, rc y descripcion.
+    During: los interpola en el orden contractual y separa componentes con puntuacion fija.
+    After: devuelve un str de una sola linea; no hace I/O ni redaccion adicional.
+    """
     return f"nivel={level}; motivo={why}; rc={rc}; {what}"
 
 
 def _powershell_exe():
+    """Resuelve el ejecutable PowerShell desde override o SYSTEMROOT.
+
+    Before: el entorno puede contener FLIGHT_POWERSHELL_EXE, SYSTEMROOT o ninguno.
+    During: prioriza el override; si falta, compone la ruta Windows bajo SYSTEMROOT.
+    After: devuelve un Path candidato o None si SYSTEMROOT falta; no valida ni ejecuta.
+    """
     override = os.environ.get("FLIGHT_POWERSHELL_EXE")
     if override:
         return Path(override)
@@ -484,6 +517,12 @@ def _powershell_exe():
 
 
 def _valid_session_code(value):
+    """Valida un codigo corto seguro para usarlo en el titulo del aviso.
+
+    Before: value puede ser ausente, de cualquier tipo o contener caracteres no permitidos.
+    During: convierte a texto solo para validar y aplica SESSION_CODE_RE.fullmatch.
+    After: devuelve el texto convertido si coincide; devuelve None si falta o es invalido.
+    """
     """Devuelve un código corto seguro para el título o None si falta/no es válido."""
     return str(value) if value and SESSION_CODE_RE.fullmatch(str(value)) else None
 
@@ -708,17 +747,33 @@ def _is_num(v):
 
 
 def _num(v, default=0):
+    """Selecciona un numero persistido o un valor por defecto seguro.
+
+    Before: v puede tener cualquier tipo y default representa el fallback del llamador.
+    During: delega la comprobacion de numero no booleano y finito en _is_num.
+    After: devuelve v si es valido; en caso contrario devuelve default sin lanzar.
+    """
     """``v`` si es un numero (int o float, no bool); si no, ``default`` (un valor ilegible nunca rompe el aviso)."""
     return v if _is_num(v) else default
 
 
 def _is_int(v):
+    """Comprueba que un valor sea entero sin aceptar bool como entero accidental.
+
+    Before: v puede tener cualquier tipo.
+    During: aplica isinstance contra int y excluye explicitamente bool.
+    After: devuelve un bool y no realiza I/O ni conversiones.
+    """
     """True solo para un entero real (un bool no cuenta: ``True`` seria el offset 1)."""
     return isinstance(v, int) and not isinstance(v, bool)
 
 
 def _rec(v):
     """Registro de una clave de evento, o None si no es utilizable (None = clave nueva: avisa).
+
+    Before: v es un valor persistido que puede ser numero, dict o una forma ilegible.
+    During: valida level, ack y last, y normaliza el legado numerico a un dict.
+    After: devuelve un registro utilizable o None para que el llamador avise fail-closed.
 
     Legado: un numero era la hora del unico aviso (nivel desconocido). Un dict solo es utilizable
     con ``level`` en LEVELS, ``acked`` booleano (o ausente) y ``last`` numerico (o ausente). Cualquier
@@ -739,6 +794,12 @@ def _rec(v):
 
 
 def _nu(rec):
+    """Calcula el contador de avisos URGENTE de un registro normalizado.
+
+    Before: rec es un dict utilizable devuelto por _rec.
+    During: conserva un nu entero real o deriva uno a partir del nivel legado.
+    After: devuelve un int no negativo semantico para el retroceso del aviso.
+    """
     """Cuantos avisos URGENTE lleva la clave (el retroceso cuenta solo esos; un registro legado sin nivel cuenta como 1)."""
     nu = rec.get("nu")
     if isinstance(nu, int) and not isinstance(nu, bool):
@@ -747,6 +808,12 @@ def _nu(rec):
 
 
 def _due(rec, level, now):
+    """Decide si un registro requiere un nuevo aviso y devuelve su motivo.
+
+    Before: rec es None o un registro utilizable; level pertenece a LEVELS; now es numerico.
+    During: aplica ack, subida de nivel y retroceso URGENTE con el contador _nu.
+    After: devuelve un motivo textual cuando toca avisar o None cuando debe limitarse.
+    """
     """Motivo por el que toca avisar, o None: nueva; sube de nivel; URGENTE persistente tras su retroceso. AVISO: una sola vez."""
     if rec is None:
         return "nueva"
@@ -761,6 +828,12 @@ def _due(rec, level, now):
 
 
 def _record(st, key, level, now, owner):
+    """Actualiza en memoria el registro de una causa que ya fue avisada.
+
+    Before: st es un dict mutable, key identifica la causa y level/now/owner estan normalizados.
+    During: lee el registro previo y escribe contador, tiempos, nivel, owner y marca de toast.
+    After: st contiene event:key actualizado; no persiste el dict ni emite un aviso.
+    """
     rec = _rec(st.get("event:" + key))
     st["event:" + key] = {
         "level": level,
@@ -950,6 +1023,12 @@ def _validate_go_value(value, *, identifier=False):
 
 
 def _validate_owner(value):
+    """Valida el identificador textual del owner del vuelo.
+
+    Before: value procede del CLI y puede ser None o cualquier texto.
+    During: aplica OWNER_RE.fullmatch y escribe un diagnostico en stderr si falla.
+    After: devuelve None para un owner valido o rc 2 para uno invalido.
+    """
     if value is None or not OWNER_RE.fullmatch(value):
         print("--owner invalido: se espera ^[A-Z]{2,3}-[0-9]{1,4}$", file=sys.stderr)
         return 2
@@ -957,7 +1036,12 @@ def _validate_owner(value):
 
 
 def _go_queue_path(raw):
-    """Resuelve el directorio de vuelo y exige una cola existente."""
+    """Resuelve el directorio de vuelo y exige una cola existente.
+    Before: raw es el argumento --flight-dir y puede faltar, ser relativo o no ser directorio.
+    During: valida ruta absoluta/directorio y comprueba el fichero GO_QUEUE_REL.
+    After: devuelve la cola como Path o None tras imprimir el motivo de rechazo en stderr.
+    """
+
     if not raw:
         print("flight-dir sin resolver", file=sys.stderr)
         return None
@@ -973,12 +1057,23 @@ def _go_queue_path(raw):
 
 
 def _go_lines(data):
-    """Devuelve los GO ABIERTOS de bytes UTF-8, tolerando BOM inicial y EOL mixto."""
+    """Devuelve los GO ABIERTOS de bytes UTF-8, tolerando BOM inicial y EOL mixto.
+    Before: data son bytes UTF-8 validos con posible BOM y saltos LF/CRLF.
+    During: decodifica con utf-8-sig, separa lineas y aplica GO_LINE_RE.fullmatch.
+    After: devuelve una lista de matches, incluyendo None para lineas no validas.
+    """
+
     text = data.decode("utf-8-sig")
     return [GO_LINE_RE.fullmatch(line.rstrip("\r\n")) for line in text.splitlines()]
 
 
 def _go_resolved_ids(data):
+    """Extrae los ids de GO resueltos de bytes UTF-8 tolerantes a BOM y EOL.
+
+    Before: data contiene bytes que deben ser UTF-8 valido con posible BOM inicial.
+    During: decodifica, separa lineas y conserva solo coincidencias de GO_RESOLVED_RE.
+    After: devuelve un set de ids; propaga UnicodeDecodeError si los bytes no son UTF-8.
+    """
     text = data.decode("utf-8-sig")
     return {
         match.group("id")
@@ -988,7 +1083,12 @@ def _go_resolved_ids(data):
 
 
 def _go_eol(data):
-    """Elige el EOL dominante, con LF como desempate y fallback."""
+    """Elige el EOL dominante, con LF como desempate y fallback.
+    Before: data son bytes de un fichero de cola, posiblemente con LF y CRLF mezclados.
+    During: cuenta ambos finales sin doble contar CRLF y compara sus frecuencias.
+    After: devuelve b"\\r\\n" si domina CRLF; en empate o dominio LF devuelve b"\\n".
+    """
+
     crlf = data.count(b"\r\n")
     lf = data.count(b"\n") - crlf
     return b"\r\n" if crlf > lf else b"\n"
@@ -1170,7 +1270,12 @@ def reconcile(prefixes, active, dry=False, owner=None):  # noqa: C901 - filtros 
 
 
 def _is_own(d):
-    """Fila propia: ``from``=comms_alert (antiguas) o ``by``=comms_alert con marca ``comms_alert:<uuid>`` (D20)."""
+    """Fila propia: ``from``=comms_alert o ``by``=comms_alert con marca propia.
+    Before: d es un dict obtenido al decodificar una fila del ledger.
+    During: comprueba primero la forma antigua y luego by junto con OWN_PREFIX.
+    After: devuelve True solo para filas propias; no modifica d ni hace I/O.
+    """
+
     if d.get("from") == "comms_alert":
         return True
     return d.get("by") == "comms_alert" and str(d.get("mensaje_id", "")).startswith(
@@ -1179,12 +1284,22 @@ def _is_own(d):
 
 
 def _failure_resultados():
-    """Resultados del vocabulario cerrado de send_with_ledger que son fallo: todos menos ``enviado``."""
+    """Obtiene resultados del vocabulario cerrado que deben tratarse como fallo.
+    Before: el helper de send_with_ledger es cargable y expone VALID_RESULTADOS.
+    During: obtiene el vocabulario cacheado y elimina el resultado enviado.
+    After: devuelve un frozenset de resultados que deben tratarse como fallo.
+    """
+
     return frozenset(_helper().VALID_RESULTADOS) - {"enviado"}
 
 
 def _scan_failure(d, failures):
-    """Convierte una fila ajena del ledger en un fallo ``{to, status}`` o None (D15)."""
+    """Convierte una fila ajena del ledger en un fallo ``{to, status}`` o None.
+    Before: d es un dict ajeno y failures es el vocabulario cerrado de fallos.
+    During: selecciona resultado/status/result, compara sin case y detecta parent_not_active.
+    After: devuelve to/status normalizado para un fallo o None si la fila no es fallo.
+    """
+
     verdict = str(d.get("resultado") or d.get("status") or d.get("result") or "")
     folded = verdict.casefold()
     if not (
@@ -1200,6 +1315,10 @@ def _scan_failure(d, failures):
 
 def _split_line(line):  # noqa: C901 - bounded recovery keeps parser state together.
     """Parte una linea en sus piezas, en orden: ``("obj", valor)`` o ``("frag", texto)``.
+
+    Before: line es una cadena de una linea de ledger, incluso si esta fusionada o truncada.
+    During: intenta raw_decode, resincroniza en anclas plausibles y limita los intentos de parseo.
+    After: devuelve piezas ordenadas de objetos dict o fragmentos; captura ValueError/RecursionError.
 
     Una linea fusionada (``{..}{..}``) trae varios objetos JSON completos. Si un objeto esta roto, se
     RESINCRONIZA en la siguiente ``{`` que abre un objeto plausible (``{`` + espacios + ``"`` o ``}``; una
@@ -1311,6 +1430,10 @@ def _ledger_identity(prefix_n=None):
 
 def _scan_chunk(chunk, failures):
     """Lista los fallos de las lineas completas de ``chunk``; las filas propias NO cuentan.
+
+    Before: chunk es texto de ledger y failures contiene resultados de fallo normalizados.
+    During: separa piezas, ignora filas propias y aplica el ultimo recurso a fragmentos no parseables.
+    After: devuelve una lista de dicts to/status sin escribir estado ni emitir avisos.
 
     Cada objeto JSON completo se evalua por separado (una fila propia fusionada con una ajena no
     esconde el fallo ajeno). El ultimo recurso por subcadena se aplica a cada FRAGMENTO no parseable
