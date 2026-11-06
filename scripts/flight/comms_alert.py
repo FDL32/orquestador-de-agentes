@@ -1206,7 +1206,10 @@ def _split_line(line):  # noqa: C901 - bounded recovery keeps parser state toget
     llave suelta dentro del texto no corta) y el texto roto es un ``frag``: asi una fila propia rota no
     esconde una ajena completa que la sigue, ni al reves. Sin ninguna ``{`` decodificable la linea
     entera es un ``frag``. Tras 4096 intentos de parseo el resto se fragmenta por las anclas ya
-    indexadas como ultimo recurso lineal; nunca se descarta silenciosamente una cola ajena.
+    indexadas como ultimo recurso. Cada fragmento se reparsea una vez con ``json.loads`` para
+    conservar colas ajenas completas, incluso si contienen anclas plausibles anidadas o dentro
+    de texto; este recurso esta acotado en los intentos de ``raw_decode``, pero no garantiza
+    linealidad global. Nunca se descarta silenciosamente una cola ajena.
     """
     dec = json.JSONDecoder()
     plausible_starts = [match.start() for match in _RE_OBJ_START.finditer(line)]
@@ -1229,19 +1232,30 @@ def _split_line(line):  # noqa: C901 - bounded recovery keeps parser state toget
                     start_index += 1
                 while start_index < len(plausible_starts):
                     nxt = plausible_starts[start_index]
-                    fragment = line[pos:nxt]
                     try:
-                        parsed = json.loads(fragment)
+                        parsed = json.loads(line[pos:])
                     except (ValueError, RecursionError):
-                        out.append(("frag", fragment))
+                        fragment = line[pos:nxt]
+                        try:
+                            parsed = json.loads(fragment)
+                        except (ValueError, RecursionError):
+                            out.append(("frag", fragment))
+                        else:
+                            out.append(
+                                ("obj", parsed)
+                                if isinstance(parsed, dict)
+                                else ("frag", fragment)
+                            )
+                        pos = nxt
+                        start_index += 1
                     else:
                         out.append(
                             ("obj", parsed)
                             if isinstance(parsed, dict)
-                            else ("frag", fragment)
+                            else ("frag", line[pos:])
                         )
-                    pos = nxt
-                    start_index += 1
+                        pos = n
+                        break
                 if pos < n:
                     fragment = line[pos:]
                     try:
@@ -1345,8 +1359,9 @@ def scan(force, dry):  # noqa: C901 - scan keeps the fail-closed cursor transiti
         Un ledger solo crece por append: una sustitucion es hash distinto de los primeros
         ``stored_prefix_n`` bytes, o tamaño igual al guardado con mtime_ns distinto, o truncado
         por debajo del offset. Un crecimiento con prefijo igual no reinicia el cursor aunque cambie
-        mtime_ns. Limite conocido: un cambio posterior al prefijo con tamaño y mtime iguales no se
-        detecta.
+        mtime_ns. El prefijo guardado crece con el ledger hasta 4096 bytes y no baja; limite
+        conocido residual: una sustitucion mayor que el offset que conserva esos primeros 4096
+        bytes no se detecta si el resto cambia.
         Un estado viejo sin identidad adopta la actual conservando el offset si sigue dentro del
         fichero; un estado corrupto relee desde 0, avisa ``estado ilegible`` y se reescribe.
     After: rc 0 avisado, 10 nada nuevo o agrupado, 2 aviso fallido, ledger ausente/ilegible o helper
@@ -1405,11 +1420,7 @@ def scan(force, dry):  # noqa: C901 - scan keeps the fail-closed cursor transiti
     new = _scan_chunk(chunk, failures)
 
     def setoff(s):
-        saved_prefix_n = s.get("_ledger_prefix_n")
-        identity_prefix_n = (
-            saved_prefix_n if _is_int(saved_prefix_n) and saved_prefix_n > 0 else None
-        )
-        current_identity = _ledger_identity(identity_prefix_n)
+        current_identity = _ledger_identity()
         s["_last_scan_offset"] = new_off
         s["_ledger_size"] = current_identity["size"]
         s["_ledger_mtime_ns"] = current_identity["mtime_ns"]

@@ -2059,7 +2059,11 @@ def test_153m_identidad_mtime_detecta_cambio_despues_del_prefijo(ca):
 
 
 def test_153m_scan_append_enviado_no_relee_fail_consumido(ca):
-    """P1: un append normal conserva el cursor y no reavisa un FAIL ya consumido."""
+    """P1: un append normal conserva el cursor y no reavisa un FAIL ya consumido.
+
+    El ledger conserva la fila ALERT que scan acaba de registrar: reescribir solo las filas
+    de entrada seria una sustitucion, no un append, con la identidad creciente de Caja 6.
+    """
     enviado = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
     fallo = _fail_row(a="IM-74")
     ca.m.LEDGER.write_bytes(enviado)
@@ -2068,7 +2072,7 @@ def test_153m_scan_append_enviado_no_relee_fail_consumido(ca):
     assert ca.m.scan(False, False) == 0
     assert len(ca.sent) == 1
     ca.clock.now += 31 * M
-    ca.m.LEDGER.write_bytes(enviado + fallo + enviado)
+    ca.m.LEDGER.write_bytes(ca.m.LEDGER.read_bytes() + enviado)
     assert ca.m.scan(False, False) == 10
     assert len(ca.sent) == 1
     assert ca.m.load_state()["_last_scan_offset"] == ca.m.LEDGER.stat().st_size
@@ -2112,6 +2116,31 @@ def test_153m_scan_append_mayor_con_prefijo_distinto_relee_por_hash(ca):
     assert "mcp:x" in ca.sent[-1][1]
 
 
+def test_153m_scan_prefijo_persistido_crece_y_detecta_fail_despues_del_prefijo(ca):
+    """P1 Caja 6: el prefijo persistido crece con el ledger y no pierde una sustitucion tardia."""
+    enviado = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    ca.m.LEDGER.write_bytes(enviado)
+    assert ca.m.scan(False, False) == 10
+    primer_prefijo_n = ca.m.load_state()["_ledger_prefix_n"]
+    assert primer_prefijo_n == len(enviado)
+
+    crecimiento = enviado * 100
+    ca.m.LEDGER.write_bytes(crecimiento)
+    assert ca.m.scan(False, False) == 10
+    estado = ca.m.load_state()
+    assert estado["_last_scan_offset"] == len(crecimiento)
+    assert estado["_ledger_prefix_n"] == min(len(crecimiento), 4096)
+
+    fallo_tardio = _fail_row(a="IM-77")
+    reemplazo = (
+        crecimiento[:primer_prefijo_n] + fallo_tardio + crecimiento[primer_prefijo_n:]
+    )
+    assert len(reemplazo) > len(crecimiento)
+    ca.m.LEDGER.write_bytes(reemplazo)
+    assert ca.m.scan(True, False) == 0
+    assert "IM-77" in ca.sent[-1][1]
+
+
 def test_153m_scan_migracion_offset_positivo_solo_ve_fail_nuevo(ca):
     """P1 migración: estado sin identidad conserva un offset positivo y solo avisa lo posterior."""
     anterior = _fail_row(a="IM-74")
@@ -2122,6 +2151,56 @@ def test_153m_scan_migracion_offset_positivo_solo_ve_fail_nuevo(ca):
     assert len(ca.sent) == 1
     assert "IM-75" in ca.sent[0][1]
     assert "IM-74" not in ca.sent[0][1]
+
+
+@pytest.mark.parametrize(
+    ("forma", "prefix_n"),
+    [
+        ("ausente", None),
+        ("negativo", -1),
+        ("cadena", "4096"),
+        ("flotante", 4096.0),
+        ("bool", True),
+        ("cero", 0),
+        ("positivo", 1),
+    ],
+    ids=["ausente", "negativo", "cadena", "flotante", "bool", "cero", "positivo"],
+)
+def test_153m_scan_matriz_ledger_prefix_n_conserva_offset_y_adopta_identidad(
+    ca, forma, prefix_n
+):
+    """P1: cada forma de prefix_n distingue migracion de identidad valida sin perder filas nuevas."""
+    anterior = _fail_row(a="IM-74")
+    nuevo = _fail_row(a="IM-75")
+    ledger = anterior + nuevo
+    ca.m.LEDGER.write_bytes(ledger)
+    stat = ca.m.LEDGER.stat()
+    state = {"_last_scan_offset": len(anterior)}
+    if forma != "ausente":
+        state.update(
+            {
+                "_ledger_size": stat.st_size,
+                "_ledger_mtime_ns": stat.st_mtime_ns,
+                "_ledger_prefix_sha256": (
+                    hashlib.sha256(b"").hexdigest()
+                    if prefix_n == 0
+                    else hashlib.sha256(ledger[:prefix_n]).hexdigest()
+                    if isinstance(prefix_n, int) and not isinstance(prefix_n, bool)
+                    else hashlib.sha256(ledger[:4096]).hexdigest()
+                ),
+                "_ledger_prefix_n": prefix_n,
+            }
+        )
+    ca.m.save_state(state)
+
+    assert ca.m.scan(False, False) == 0
+    assert len(ca.sent) == 1
+    assert "IM-75" in ca.sent[0][1]
+    assert "IM-74" not in ca.sent[0][1]
+    assert ca.m.load_state()["_last_scan_offset"] == len(ledger)
+    assert ca.m.load_state()["_ledger_prefix_n"] == min(
+        ca.m.LEDGER.stat().st_size, 4096
+    )
 
 
 def test_153m_p8_cola_ajena_completa_despues_del_tope_conserva_destino(ca):
@@ -2412,6 +2491,32 @@ def test_153m_p8_linea_patologica_usa_ultimo_recurso_sin_descartar(ca):
     assert ca.m._scan_chunk(line + "\n", ca.m._failure_resultados()) == [
         {"to": "?", "status": "FAIL (linea no parseable)"}
     ]
+
+
+@pytest.mark.parametrize(
+    "cola_interna",
+    [
+        '{"nested":{"resultado":"enviado"}}',
+        '{"nota":"texto con {\\"ancla\\":\\"interna\\"}"}',
+    ],
+    ids=["ancla-anidada", "ancla-en-texto"],
+)
+def test_153m_p8_ultimo_recurso_no_duplica_objeto_con_anclas_internas(ca, cola_interna):
+    """P8: una cola ajena completa con anclas internas conserva exactamente un FAIL."""
+    prefix = '{"' * (ca.m.MAX_SPLIT_PARSE_ATTEMPTS + 100)
+    foreign = (
+        '{"from":"CO-24","a":"IM-78","resultado":"FAIL",' + cola_interna[1:-1] + "}"
+    )
+    got = ca.m._scan_chunk(prefix + foreign + "\n", ca.m._failure_resultados())
+    assert got == [{"to": "IM-78", "status": "FAIL"}]
+    assert len(got) == 1
+
+
+def test_153m_p8_ultimo_recurso_control_sin_fail_no_avisa(ca):
+    """P8 control: anclas internas de una cola ajena sin FAIL no generan avisos."""
+    prefix = '{"' * (ca.m.MAX_SPLIT_PARSE_ATTEMPTS + 100)
+    foreign = '{"from":"CO-24","a":"IM-78","resultado":"enviado","x":{"k":"v"}}'
+    assert ca.m._scan_chunk(prefix + foreign + "\n", ca.m._failure_resultados()) == []
 
 
 def test_153m_p8_tope_determinista_de_raw_decode_y_fail_conservado(ca, monkeypatch):
