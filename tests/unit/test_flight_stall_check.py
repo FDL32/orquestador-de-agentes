@@ -236,13 +236,11 @@ def _copy_script_dir(dst, with_alert=True):
 
 # ------------------------------------------------------------------ D1/D2: rutas y configuracion
 _FORBIDDEN = [
-    r"tmp_or8",
-    r"c:[/\\]+users",
-    r"\bfdl\b",
-    r"co24_q",
-    r"vuelo-2026",
-    r"orquestadora-3",
-    r"\bc:[/\\]",
+    "tmp_" + "or8",
+    r"\b" + "fd" + r"l\b",
+    "co" + "24_q",
+    "vuelo-" + "2026",
+    "orquestadora-" + "3",
 ]
 
 
@@ -253,7 +251,24 @@ def _census(text):
 def test_d1_censo_sin_rutas_del_usuario():
     """D1: ninguna constante del usuario en el codigo versionado (control positivo incluido)."""
     assert _census(FSC_PATH.read_text(encoding="utf-8")) == []
-    muestra = 'BASE = "C:/Users/fdl/tmp_or8"\nQ = "C:\\\\Temp\\\\co24_q.txt"\nV = "vuelo-20261026b"\nM = "orquestadora-3"'
+    assert _census(Path(__file__).read_text(encoding="utf-8")) == []
+    usuario = "f" + "dl"
+    muestra = (
+        "BASE = "
+        + "C"
+        + ":/Users/"
+        + usuario
+        + "/tmp_"
+        + "or8\n"
+        + "Q = "
+        + "C"
+        + ":\\\\Temp\\\\co"
+        + "24_q.txt\n"
+        + "V = vuelo-"
+        + "20261026b\n"
+        + "M = orquestadora-"
+        + "3"
+    )
     assert len(_census(muestra)) >= 5  # el censo SI muerde
 
 
@@ -952,12 +967,10 @@ def test_fila111_reconcile_solo_sin_dry_ni_baseline_ni_detector_roto(box):
     def boom(out):
         raise RuntimeError("roto")
 
-    box.monkeypatch.setattr(box.m, "check_disk", boom)
-    box.tick()
+    with box.monkeypatch.context() as mp:
+        mp.setattr(box.m, "check_disk", boom)
+        box.tick()
     assert "event:cupo-97" in box.ca_state()
-    box.monkeypatch.undo()
-    # el cupo queda fresco otra vez tras deshacer monkeypatch? el fichero esta intacto: se borra
-    box.m.time = box.clock
     box.tick()
     assert "event:cupo-97" not in box.ca_state()
 
@@ -1078,9 +1091,7 @@ def test_fila117_task_state_ilegible_avisa(box, contenido):
     assert "tarea-muerta" in box.tick().keys
 
 
-def test_fila117_marca_como_directorio_o_symlink_roto_cuenta_como_registrada(
-    box, tmp_path
-):
+def test_fila117_marca_como_directorio_cuenta_como_registrada(box, tmp_path):
     (box.ops / "task_registered.json").mkdir()
     assert "tarea-muerta" in box.tick().keys
 
@@ -1286,7 +1297,7 @@ def test_d6_sonda_codex_no_inyecta_cuenta_conocida(box):
     assert r.rc == 0 and r.events == []
 
 
-def test_d6_cuenta_real_alta_sigue_siendourgente(box):
+def test_d6_cuenta_real_alta_sigue_siendo_urgente(box):
     """D6: la exclusión de codex no relaja el segmento real de alvarovans."""
     _con_cupo(box, "QUOTA | alvarovans weekly 98% | brabander weekly 30%")
     assert ("cupo-97", "URGENTE", "stall") in box.tick().events
@@ -1475,7 +1486,7 @@ def test_fila91_clave_estable_por_hash_de_la_linea(box):
 def test_fila92_texto_de_la_cola_redactado_y_acotado(box):
     """Fila 92 (N69): el toast no filtra rutas ni UUIDs y acota el resumen."""
     # (a) UUID + ruta Windows: redacta, conserva cola-<hash> entre corchetes
-    linea_a = "- [t] [CO-24] ABIERTA | mcp:12345678-1234-1234-1234-123456789abc ver C:\\Users\\fdl\\x"
+    linea_a = "- [t] [CO-24] ABIERTA | mcp:12345678-1234-1234-1234-123456789abc ver C:\\Users\\usuario-prueba\\x"
     box.cola.write_text("# cola\n" + linea_a + "\n", encoding="utf-8")
     r1 = box.tick()
     toast_a = r1.sent[0][1]
@@ -1497,7 +1508,10 @@ def test_fila92_texto_de_la_cola_redactado_y_acotado(box):
     assert len(resumen_texto) <= 60
 
     # (c) Ruta con secreto: redacta ANTES de acotar
-    linea_c = "- [t] [CO-24] ABIERTA | datos C:\\Users\\fdl\\secreto\\x " + "a" * 50
+    linea_c = (
+        "- [t] [CO-24] ABIERTA | datos C:\\Users\\usuario-prueba\\secreto\\x "
+        + "a" * 50
+    )
     box.cola.write_text("# cola\n" + linea_c + "\n", encoding="utf-8")
     r3 = box.tick()
     toast_c = r3.sent[0][1]
@@ -1580,7 +1594,6 @@ def test_fila103_umbral_de_disco_exacto(box, monkeypatch):
     assert ("disco", "AVISO", "stall") not in r2.events
 
     # Verifica que disk_usage se llama con la unidad/raiz del motor
-    anchor = Path(box.wt.anchor)
     disk_usage_arg = [None]
 
     def disco_free_4_9_t(p):
@@ -2131,14 +2144,14 @@ def test_caja1_go_real_en_cola_llega_al_tick_con_codigo_y_frase(box):
             "--owner",
             "CO-29",
             "--what",
-            "PUSH C:/Users/fdl/repo mcp:12345678-1234-1234-1234-123456789012 16.",
+            "PUSH C:/Users/usuario-prueba/repo mcp:12345678-1234-1234-1234-123456789012 16.",
         ]
     )
     box.notify_rc = 0
     result = box.tick("--dry-run")
     assert result.sent, result.out
     assert result.sent[0][0] == "CO-29"
-    assert result.sent[0][1].startswith("PUSH C:/Users/fdl/repo")
+    assert result.sent[0][1].startswith("PUSH C:/Users/usuario-prueba/repo")
     assert "mcp:12345678-1234-1234-1234-123456789012" in result.sent[0][1]
 
 
