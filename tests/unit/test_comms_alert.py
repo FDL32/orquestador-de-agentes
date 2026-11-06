@@ -3252,6 +3252,60 @@ def test_153n_unc_respeta_limite_izquierdo(ca):
     assert ca.m.redact(r"\\srv\share\x") == "<ruta>"
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        r"\\server\shared folder\private.txt",
+        r"C:\shared folder\private.txt",
+    ],
+)
+def test_153n_caracteriza_ruta_con_espacio_y_cola_visible(ca, value):
+    assert ca.m.redact(value).endswith(" folder\\private.txt")
+    assert ca.m.redact(value).startswith("<ruta>")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Bearer authentication failed", "<secreto> failed"),
+        ("token 2026-11-06", "<secreto>"),
+        ("Bearer 2026-11-06", "<secreto>"),
+        ("//server/share", "//server/share"),
+    ],
+)
+def test_153n_caracteriza_limites_y_sobre_redacciones_mediadas(ca, value, expected):
+    assert ca.m.redact(value) == expected
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "Authorization: Bearer {value}",
+        "Bearer {value}",
+        "token {value}",
+        "api-key={value}",
+        "api_key = {value}",
+        "apikey {value}",
+        "ghp_{value}",
+        "sk-{value}",
+        "token={value}",
+        "secret:{value}",
+    ],
+)
+@pytest.mark.parametrize("length", range(1, 13))
+def test_153n_redact_idempotente_si_el_corte_cae_en_cualquier_secreto(
+    ca, template, length
+):
+    value = "a" * max(0, length - 1) + "1"
+    body = template.format(value=value)
+    fixed_length = len(body) - length
+    prefix_length = ca.m.TEXT_LIMIT - 3 - fixed_length - length
+    raw = "!" * max(0, prefix_length) + body + " fin!"
+    assert len(raw) > ca.m.TEXT_LIMIT
+    once = ca.m.redact(raw)
+    assert ca.m.redact(once) == once
+
+
 def test_153n_redacta_stdout_antes_de_truncar(ca, monkeypatch, capsys):
     real = _load("notify_153n_real")
     real.configure(str(ca.dir))

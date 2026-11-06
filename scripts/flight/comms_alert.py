@@ -124,6 +124,13 @@ _RE_API_SECRET = re.compile(
 _RE_PREFIX_SECRET = re.compile(
     r"(?i)(?<![A-Za-z0-9_-])(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|sk-)[A-Za-z0-9_-]{8,}"
 )
+_SECRET_PATTERNS = (
+    _RE_BEARER_SECRET,
+    _RE_SPACED_SECRET,
+    _RE_API_SECRET,
+    _RE_PREFIX_SECRET,
+    _RE_SECRET,
+)
 # Rutas del directorio de operacion: las fija configure(); None = sin configurar.
 LEDGER = None
 STATE = None
@@ -344,6 +351,18 @@ def _helper():
     return _HELPER
 
 
+def _redact_secrets(text):
+    """Aplica en orden todos los patrones de secretos de la lista cerrada.
+
+    Before: ``text`` es un str y ``_SECRET_PATTERNS`` contiene regex compiladas.
+    During: sustituye cada coincidencia por ``<secreto>`` en el orden declarado.
+    After: devuelve el texto con los secretos reconocidos ocultos; no recorta ni normaliza.
+    """
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("<secreto>", text)
+    return text
+
+
 def redact(text):
     """Redacta un texto libre antes de que salga por el toast o el ledger (D21), idempotente.
 
@@ -355,7 +374,11 @@ def redact(text):
         digito: se midieron como falsos positivos ``token validation failed in step 3``, ``token
         verification pending``, ``token expiration soon`` y ``apikey rotation scheduled``; queda
         como falso negativo medido un valor solo de letras tras espacio. Las formas fuera de esta
-        lista quedan como limite medido; DESPUES acota a TEXT_LIMIT caracteres.
+        lista quedan como limite medido. Las rutas UNC y con unidad se redactan solo hasta el
+        primer espacio: la cola visible es un limite medido; ``//server/share`` con barras
+        normales tampoco se cubre. Tambien se midieron las sobre-redacciones ``Bearer
+        authentication failed``, ``token 2026-11-06`` y ``Bearer 2026-11-06``. DESPUES acota a
+        TEXT_LIMIT caracteres y revalida el sufijo para conservar idempotencia.
     After: devuelve un str de como mucho TEXT_LIMIT caracteres; redact(redact(x)) == redact(x).
     """
     out = _RE_THREAD.sub("mcp:<hilo>", str(text))
@@ -363,13 +386,12 @@ def redact(text):
     out = _RE_UNCPATH.sub("<ruta>", out)
     out = _RE_WINPATH.sub("<ruta>", out)
     out = _RE_HOMEPATH.sub("<ruta>", out)
-    out = _RE_BEARER_SECRET.sub("<secreto>", out)
-    out = _RE_SPACED_SECRET.sub("<secreto>", out)
-    out = _RE_API_SECRET.sub("<secreto>", out)
-    out = _RE_PREFIX_SECRET.sub("<secreto>", out)
-    out = _RE_SECRET.sub("<secreto>", out)
+    out = _redact_secrets(out)
     if len(out) > TEXT_LIMIT:
         out = out[: TEXT_LIMIT - 3] + "..."
+        out = _redact_secrets(out)
+        if len(out) > TEXT_LIMIT:
+            out = out[: TEXT_LIMIT - 3] + "..."
     return out
 
 
@@ -478,15 +500,7 @@ def redact_literal_first(text, *, preserve_literal=False):
     raw = str(text)
     if not preserve_literal:
         return redact(raw)
-    for secret_pattern in (
-        _RE_BEARER_SECRET,
-        _RE_SPACED_SECRET,
-        _RE_API_SECRET,
-        _RE_PREFIX_SECRET,
-        _RE_SECRET,
-    ):
-        value = secret_pattern.sub("<secreto>", raw)
-        raw = value
+    value = _redact_secrets(raw)
     value = value.replace("\r", " ").replace("\n", " ")
     return value if len(value) <= TEXT_LIMIT else value[: TEXT_LIMIT - 3] + "..."
 
