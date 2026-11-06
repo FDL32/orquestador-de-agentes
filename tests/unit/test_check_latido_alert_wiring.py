@@ -353,6 +353,111 @@ def test_tick_trace_ts_esta_prohibido(box, capsys):
     assert "--ts" in out and "prohibid" in out
 
 
+def test_tick_trace_ts_inline_esta_prohibido(box, capsys):
+    """T2: la forma inline --ts=... tambien queda prohibida."""
+    orders = box.coord_orders()
+    orders[-1] += " --ts=<fixed-ts>"
+    coord = box.latido("tick-fixed-ts-inline.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "--ts" in out and "prohibid" in out
+
+
+def test_tick_trace_prefijo_t_es_desconocido(box, capsys):
+    """T2: --t no puede adquirir semantica por prefijo de --ts."""
+    orders = box.coord_orders()
+    orders[-1] += " --t <fixed-ts>"
+    coord = box.latido("tick-short-ts.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "opcion desconocida para tick_trace.py: --t" in out
+
+
+def test_tick_trace_valida_mas_otra_con_ts_falla_por_prohibicion_y_duplicado(
+    box, capsys
+):
+    """T2: una orden valida y otra con --ts disparan ambas barreras."""
+    orders = [*box.coord_orders(), box.trace_order() + " --ts <fixed-ts>"]
+    coord = box.latido("tick-valid-and-ts.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "opcion prohibida para tick_trace.py" in out
+    assert "exactamente una" in out
+
+
+def test_tick_trace_duplicado_con_marcadores_es_violacion(box, capsys):
+    """T2: dos órdenes válidas con marcadores siguen siendo dos ticks."""
+    orders = [*box.coord_orders(), box.trace_order(markers=True)]
+    coord = box.latido("tick-marker-duplicate.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "exactamente una" in out
+
+
+@pytest.mark.parametrize("flag", ["--guard-rc", "--quota-rc"])
+def test_tick_trace_rc_literal_no_entero_es_rechazado(box, capsys, flag):
+    """T2: los RC literales respetan int(raw, 10) del productor real."""
+    orders = box.coord_orders()
+    orders[-1] = box.trace_order().replace(f"{flag} 0", f"{flag} abc")
+    coord = box.latido(f"tick-bad-{flag[2:]}.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert f"valor no aceptado por tick_trace.py: {flag}=abc" in out
+
+
+@pytest.mark.parametrize("flag", ["--guard-rc", "--quota-rc"])
+def test_tick_trace_rc_marcador_es_aceptado(box, capsys, flag):
+    """T2: cada RC admite un marcador posicional del latido."""
+    orders = box.coord_orders()
+    orders[-1] = box.trace_order().replace(f"{flag} 0", f"{flag} <{flag[2:]}>")
+    coord = box.latido(f"tick-marker-{flag[2:]}.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 0, out
+
+
+def test_tick_trace_unmeasured_deriva_esquema_y_rechaza_campo_ajeno(box, capsys):
+    """T2: --unmeasured usa el FIELD=REASON del productor, no una tabla local."""
+    orders = box.coord_orders()
+    orders[-1] += " --unmeasured not_a_field=reason"
+    coord = box.latido("tick-bad-unmeasured.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert "valor no aceptado por tick_trace.py: --unmeasured=not_a_field=reason" in out
+
+
+def test_tick_trace_unmeasured_field_real_es_aceptado(box, capsys):
+    """T2: un FIELD real del productor mantiene la orden ejecutable."""
+    orders = box.coord_orders()
+    orders[-1] += " --unmeasured guard_rc=not_measured"
+    coord = box.latido("tick-good-unmeasured.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 0, out
+
+
 def test_go_productor_nuevo_en_latido_es_valido(box, capsys):
     """E7 positivo: una solicitud GO usa el subcomando productor y pasa el wiring."""
     orders = box.coord_orders()

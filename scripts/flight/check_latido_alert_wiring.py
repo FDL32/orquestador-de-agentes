@@ -84,6 +84,9 @@ _SCRIPTS = (
     SELF_NAME,
 )
 # (script, flags exigidos, flags prohibidos): lo cubre UNA orden valida con ese script.
+# D2: tick_trace es OBLIGATORIO para la coordinadora, no solo permitido; sin la
+# linea la traza falta en silencio y el DoD de medicion de dos ticks consecutivos
+# no puede observarse ni verificarse.
 _INVENTORY: dict[str, tuple[tuple[str, frozenset[str], frozenset[str]], ...]] = {
     "coordinadora": (
         ("comms_alert.py", frozenset({"--scan"}), frozenset()),
@@ -157,6 +160,32 @@ class _OptionSpec(NamedTuple):
     mutex: int | None = None
     unsupported: tuple[str, ...] = ()
     empty_allowed: bool | None = None
+
+
+def _load_tick_trace_contract() -> tuple[tuple[str, ...], object, object]:
+    """Carga el esquema y validadores reales del productor tick_trace.
+
+    Before: ``scripts/flight/tick_trace.py`` existe junto a este checker.
+    During: importa el modulo real sin ejecutar su CLI y obtiene ``FIELDS``,
+    ``_parse_rc`` y ``_parse_unmeasured``.
+    After: devuelve el esquema y las funciones productoras; lanza
+    ``RuntimeError`` si el contrato no puede derivarse.
+    """
+    path = Path(__file__).resolve().with_name("tick_trace.py")
+    spec = importlib.util.spec_from_file_location("tick_trace_contract", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"no se puede cargar parser: {path}")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise RuntimeError(f"no se puede cargar contrato: {path}") from exc
+    fields = tuple(module.FIELDS)
+    parse_rc = module._parse_rc
+    parse_unmeasured = module._parse_unmeasured
+    if not fields or not callable(parse_rc) or not callable(parse_unmeasured):
+        raise RuntimeError(f"contrato incompleto: {path}")
+    return fields, parse_rc, parse_unmeasured
 
 
 def _unsupported_spec_details(spec: _OptionSpec) -> tuple[str, ...]:
@@ -855,13 +884,37 @@ class _Checker:
         if inline is not None:
             if not inline or inline.startswith("-"):
                 order.bad(f"{name}: valor ausente o con apariencia de flag")
+            else:
+                self._check_tick_trace_value(order, script, name, inline)
             return index + 1
         if index + 1 >= len(args) or args[index + 1].startswith("-"):
             order.bad(f"{name}: falta el valor o parece otra opcion")
             return index + 1
         if args[index + 1] == "" and spec.empty_allowed is False:
             order.bad(f"{name}: valor vacio no permitido para un string obligatorio")
+        self._check_tick_trace_value(order, script, name, args[index + 1])
         return index + 2
+
+    def _check_tick_trace_value(
+        self, order: _Order, script: str, name: str, value: str
+    ) -> None:
+        """Comprueba valores literales de tick_trace con sus validadores reales.
+
+        Before: ``script`` es el productor ya identificado y ``value`` es el
+        valor de una opción con aridad.
+        During: conserva marcadores ``<...>`` como posiciones del latido y, en
+        otro caso, delega en ``tick_trace.py`` para enteros y ``FIELD=REASON``.
+        After: añade una violación concreta si el productor rechaza el literal.
+        """
+        if script != "tick_trace.py" or _PLACEHOLDER_RE.fullmatch(value):
+            return
+        try:
+            if name in {"--guard-rc", "--quota-rc"}:
+                _TICK_TRACE_PARSE_RC(value, name[2:])
+            elif name == "--unmeasured":
+                _TICK_TRACE_PARSE_UNMEASURED([value])
+        except (TypeError, ValueError) as exc:
+            order.bad(f"valor no aceptado por tick_trace.py: {name}={value} ({exc})")
 
     def _denylist(self, order: _Order, words: list[str], kind: str) -> None:
         for i, w in enumerate(words):
@@ -1690,12 +1743,27 @@ def _argv_value(argv: list[str], option: str) -> str | None:
     )
 
 
+_TICK_TRACE_FIELDS: tuple[str, ...] = ()
+_TICK_TRACE_PARSE_RC = None
+_TICK_TRACE_PARSE_UNMEASURED = None
+_TICK_TRACE_CONTRACT_ERROR: str | None = None
+try:
+    (
+        _TICK_TRACE_FIELDS,
+        _TICK_TRACE_PARSE_RC,
+        _TICK_TRACE_PARSE_UNMEASURED,
+    ) = _load_tick_trace_contract()
+except Exception as exc:
+    _TICK_TRACE_CONTRACT_ERROR = f"no se pudo derivar contrato de tick_trace.py: {exc}"
+
 _SCRIPT_OPTION_META_ERROR: str | None = None
 try:
     _SCRIPT_OPTION_META = _derive_script_options()
 except Exception as exc:
     _SCRIPT_OPTION_META = {}
     _SCRIPT_OPTION_META_ERROR = f"no se pudo derivar metadata de parsers: {exc}"
+if _TICK_TRACE_CONTRACT_ERROR:
+    _SCRIPT_OPTION_META_ERROR = _TICK_TRACE_CONTRACT_ERROR
 _SCRIPT_OPTIONS = {
     script: {option: spec[0] for option, spec in options.items()}
     for script, options in _SCRIPT_OPTION_META.items()
