@@ -523,7 +523,6 @@ def _valid_session_code(value):
     During: convierte a texto solo para validar y aplica SESSION_CODE_RE.fullmatch.
     After: devuelve el texto convertido si coincide; devuelve None si falta o es invalido.
     """
-    """Devuelve un código corto seguro para el título o None si falta/no es válido."""
     return str(value) if value and SESSION_CODE_RE.fullmatch(str(value)) else None
 
 
@@ -753,7 +752,6 @@ def _num(v, default=0):
     During: delega la comprobacion de numero no booleano y finito en _is_num.
     After: devuelve v si es valido; en caso contrario devuelve default sin lanzar.
     """
-    """``v`` si es un numero (int o float, no bool); si no, ``default`` (un valor ilegible nunca rompe el aviso)."""
     return v if _is_num(v) else default
 
 
@@ -764,7 +762,6 @@ def _is_int(v):
     During: aplica isinstance contra int y excluye explicitamente bool.
     After: devuelve un bool y no realiza I/O ni conversiones.
     """
-    """True solo para un entero real (un bool no cuenta: ``True`` seria el offset 1)."""
     return isinstance(v, int) and not isinstance(v, bool)
 
 
@@ -800,7 +797,6 @@ def _nu(rec):
     During: conserva un nu entero real o deriva uno a partir del nivel legado.
     After: devuelve un int no negativo semantico para el retroceso del aviso.
     """
-    """Cuantos avisos URGENTE lleva la clave (el retroceso cuenta solo esos; un registro legado sin nivel cuenta como 1)."""
     nu = rec.get("nu")
     if isinstance(nu, int) and not isinstance(nu, bool):
         return nu
@@ -814,7 +810,6 @@ def _due(rec, level, now):
     During: aplica ack, subida de nivel y retroceso URGENTE con el contador _nu.
     After: devuelve un motivo textual cuando toca avisar o None cuando debe limitarse.
     """
-    """Motivo por el que toca avisar, o None: nueva; sube de nivel; URGENTE persistente tras su retroceso. AVISO: una sola vez."""
     if rec is None:
         return "nueva"
     if rec.get("acked"):

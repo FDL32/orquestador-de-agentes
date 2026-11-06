@@ -146,32 +146,38 @@ def test_fila77_sin_banner_ni_variables_notify_y_con_los_parametros_exactos():
 
 
 def _simulate_toast_failure_offenders(root):
-    """Censa fuentes versionadas de las tres carpetas operativas."""
+    """Censa fuentes versionadas de las tres carpetas operativas.
+
+    Before: root contiene scripts, prompts y skills, y puede incluir subdirectorios de cache.
+    During: recorre un glob recursivo separado por cada sufijo aceptado y lee con errors=replace.
+    After: devuelve rutas relativas de los ficheros que contienen SimulateToastFailure, sin tocar
+        el filesystem.
+    """
+    suffixes = (
+        ".py",
+        ".ps1",
+        ".md",
+        ".xml",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".txt",
+    )
     ofensores = []
     for carpeta in ("scripts", "prompts", "skills"):
-        for p in (root / carpeta).rglob("*"):
-            if (
-                not p.is_file()
-                or "__pycache__" in p.parts
-                or p.name in {"notify_user.ps1", "check_latido_alert_wiring.py"}
-            ):
-                continue
-            if p.suffix not in {
-                ".py",
-                ".ps1",
-                ".md",
-                ".xml",
-                ".json",
-                ".yaml",
-                ".yml",
-                ".toml",
-                ".txt",
-            }:
-                continue
-            if "SimulateToastFailure" in p.read_text(
-                encoding="utf-8", errors="replace"
-            ):
-                ofensores.append(p.relative_to(root).as_posix())
+        for suffix in suffixes:
+            for p in (root / carpeta).glob("**/*" + suffix):
+                if (
+                    not p.is_file()
+                    or "__pycache__" in p.parts
+                    or p.name in {"notify_user.ps1", "check_latido_alert_wiring.py"}
+                ):
+                    continue
+                if "SimulateToastFailure" in p.read_text(
+                    encoding="utf-8", errors="replace"
+                ):
+                    ofensores.append(p.relative_to(root).as_posix())
     return ofensores
 
 
