@@ -141,6 +141,17 @@ def _parse_step_table(report_text: str) -> tuple[list[tuple[str, str, str]], int
     return rows, len(rows)
 
 
+def _has_step(rows: list[tuple[str, str, str]], name: str) -> bool:
+    """Check a step by its row name, independently of status or blocking.
+
+    Before: ``rows`` contains parsed ``(name, status, blocking)`` tuples.
+    During: scans the name field of every row without relying on container
+        membership semantics for a different element type.
+    After: returns ``True`` exactly when a row with ``name`` exists.
+    """
+    return any(row[0] == name for row in rows)
+
+
 class TestStepTableParser:
     def test_parser_returns_statuses_and_denominator(self):
         report = (
@@ -157,6 +168,8 @@ class TestStepTableParser:
             ],
             2,
         )
+        rows, _denominator = _parse_step_table(report)
+        assert _has_step(rows, "latido_alert_wiring")
 
     def test_parser_ignores_fail_in_detail_and_malformed_rows(self):
         report = (
@@ -278,7 +291,7 @@ def test_roster_step_fail_when_acting_thread_mismatches(hermetic_project_root):
         ("roster_matches_acting_thread", "FAIL", "Yes")
     ], report
     assert denominator >= 1, report
-    assert "latido_alert_wiring" not in steps, report
+    assert not _has_step(steps, "latido_alert_wiring"), report
     assert result.returncode == 1
 
 
@@ -302,7 +315,7 @@ def test_roster_step_fail_without_acting_thread(hermetic_project_root):
     assert [row for row in steps if row[0] == "roster_matches_acting_thread"] == [
         ("roster_matches_acting_thread", "FAIL", "Yes")
     ], report
-    assert "latido_alert_wiring" not in steps, report
+    assert not _has_step(steps, "latido_alert_wiring"), report
     assert result.returncode == 1
 
 
