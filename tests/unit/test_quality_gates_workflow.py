@@ -26,20 +26,26 @@ def load_yaml_file(path: Path) -> dict[str, Any]:
 
 
 def assert_ruff_steps_are_readonly(workflow: dict[str, Any]) -> None:
+    """Protect declared workflow invocations from accidental Ruff autofix.
+
+    This does not cover indirection, external config files, or shell obfuscation.
+    An ``echo`` or comment containing ``ruff``/``--fix`` may therefore false-red.
+    """
     ruff_steps: list[tuple[str, list[str]]] = []
     for job_name, job in workflow.get("jobs", {}).items():
         for step in job.get("steps", []):
             run = step.get("run")
             if not isinstance(run, str):
                 continue
-            if not re.search(r"(?<![\w-])ruff(?![\w-])", run):
+            normalized = re.sub(r"[\"\\']", "", run)
+            if not re.search(r"(?<![\w-])ruff(?![\w-])", normalized):
                 continue
             assert not re.search(
-                r"--(unsafe-)?fix(-only)?\b|--unsafe-fixes\b|--fix=", run
+                r"--(unsafe-)?fix(-only)?\b|--unsafe-fixes\b|--fix=", normalized
             ), f"el paso Ruff del job {job_name!r} contiene autofix: {run!r}"
-            assert not re.search(r'fix\s*=\s*(true|"true")', run, re.IGNORECASE), (
-                f"el paso Ruff del job {job_name!r} activa fix por --config: {run!r}"
-            )
+            assert not re.search(
+                r'fix\s*=\s*(true|"true")', normalized, re.IGNORECASE
+            ), f"el paso Ruff del job {job_name!r} activa fix por --config: {run!r}"
             ruff_steps.append((job_name, shlex.split(run)))
 
     assert ruff_steps, "no se encontró ningún paso que invoque el token ruff"
@@ -145,6 +151,8 @@ class TestQualityGatesXdistPilot:
             ("fix-equals", "autofix"),
             ("M1", "autofix"),
             ("M2", "autofix"),
+            ("quoted-ruff", "autofix"),
+            ("legit-format", None),
             ("second-lint", "exactamente un paso de lint"),
         ],
     )
@@ -167,9 +175,14 @@ class TestQualityGatesXdistPilot:
                 "fix-equals": 'uv run ruff check --fix="true" .',
                 "M1": "uv run .venv/bin/ruff check --fix .",
                 "M2": "bash -c 'ruff check --fix .'",
+                "quoted-ruff": 'uv run r"uff" check --fix .',
+                "legit-format": "uv run ruff format --check src/",
                 "second-lint": "uv run ruff --config x check",
             }[case]
             mutated["jobs"]["quality-gates"]["steps"].append({"run": run})
 
-        with pytest.raises(AssertionError, match=expected_reason):
+        if expected_reason is None:
             assert_ruff_steps_are_readonly(mutated)
+        else:
+            with pytest.raises(AssertionError, match=expected_reason):
+                assert_ruff_steps_are_readonly(mutated)
