@@ -1678,9 +1678,7 @@ def _linea_real_de_quota_tick(box, cuentas, probe_out=None):
     After: devuelve la línea ``QUOTA`` producida por quota_tick; no deja estado persistente fuera
         de ``box``.
     """
-    spec = importlib.util.spec_from_file_location("quota_tick_cadena", QUOTA_TICK_PATH)
-    qt = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(qt)
+    qt = _load_quota_tick()
     (box.flight / "flight_roster.json").write_text('{"quota": {}}', encoding="utf-8")
     salida = json.dumps({"accounts": cuentas})
     probe = str(box.root / "probe.py") if probe_out is not None else None
@@ -1711,6 +1709,27 @@ def _linea_real_de_quota_tick(box, cuentas, probe_out=None):
     finally:
         sys.stdout = old
     return "".join(buf).strip()
+
+
+def _load_quota_tick():
+    """Carga quota_tick.py por la misma ruta que usa la cadena de integracion.
+
+    Before: ``QUOTA_TICK_PATH`` apunta al modulo bajo prueba o a su copia mutada.
+    During: importa el fichero por ruta con un nombre de modulo aislado.
+    After: devuelve el modulo cargado sin ejecutar una medicion ni escribir estado.
+    """
+    spec = importlib.util.spec_from_file_location("quota_tick_cadena", QUOTA_TICK_PATH)
+    qt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(qt)
+    return qt
+
+
+def test_quota_tick_is_real_entero_grande_caracteriza_overflow():
+    """Caracteriza el OverflowError actual de math.isnan para enteros enormes."""
+    qt = _load_quota_tick()
+    assert qt._is_real(10**300) is True
+    with pytest.raises(OverflowError):
+        qt._is_real(10**1000)
 
 
 def _con_cupo(box, linea, edad_min=0):

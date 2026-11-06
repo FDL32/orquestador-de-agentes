@@ -51,8 +51,13 @@ def _is_real(value):
     """Comprueba si un valor es real admisible para la medicion.
 
     Before: ``value`` puede proceder del roster o del monitor.
-    During: acepta ``int`` o ``float`` salvo ``bool`` y rechaza ``NaN``.
-    After: devuelve ``True`` para numeros no booleanos no-NaN y ``False`` para el resto.
+    During: acepta ``int`` o ``float`` salvo ``bool`` y rechaza ``NaN`` mediante
+        ``math.isnan``.
+    After: devuelve ``True`` para numeros no booleanos no-NaN y ``False`` para el resto;
+        un ``int`` fuera del rango convertible a ``float`` puede propagar
+        ``OverflowError`` desde ``math.isnan`` en vez de devolver ``False``. El
+        llamador de ``main`` lo captura como fallo interno y emite ``QUOTA NO_MEDIDO``
+        con rc 9.
     """
     return (
         isinstance(value, (int, float))
@@ -117,8 +122,12 @@ def _thresholds(quota):
     """Obtiene los umbrales soft y hard del bloque quota.
 
     Before: ``quota`` es un diccionario del roster y puede contener tipos arbitrarios.
-    During: valida cada valor como real finito y positivo, sustituyendo invalidos por el defecto.
-    After: devuelve ``(soft, hard, invalid)`` y marca si algun valor fue sustituido.
+    During: valida cada valor como real finito y positivo, sustituyendo invalidos por el
+        defecto; para un entero JSON fuera del rango convertible a ``float``,
+        ``_is_real`` puede propagar ``OverflowError`` antes de esa sustitucion.
+    After: devuelve ``(soft, hard, invalid)`` y marca si algun valor fue sustituido;
+        no captura ese ``OverflowError``, que sube hasta ``main`` y se convierte en
+        ``QUOTA NO_MEDIDO`` con rc 9.
     """
     out, invalid = [], False
     for key, default in (
@@ -184,8 +193,12 @@ def _measure(accounts):
     """Resume porcentajes y estados stale de las cuentas medidas.
 
     Before: ``accounts`` es el diccionario validado por ``_accounts``.
-    During: lee porcentaje, stale y ventana, conserva cada cuenta como texto y calcula el peor porcentaje.
-    After: devuelve ``(worst, parts, bad)`` con el maximo, fragmentos y marca de dato malo.
+    During: lee porcentaje, stale y ventana, conserva cada cuenta como texto y calcula
+        el peor porcentaje mediante ``_is_real``.
+    After: devuelve ``(worst, parts, bad)`` con el maximo, fragmentos y marca de dato
+        malo; un entero JSON fuera del rango convertible a ``float`` puede propagar
+        ``OverflowError`` desde ``_is_real`` y no se sustituye dentro de este helper.
+        ``main`` lo captura como fallo interno y emite ``QUOTA NO_MEDIDO`` con rc 9.
     """
     worst, parts, bad = 0, [], False
     for name, v in accounts.items():
