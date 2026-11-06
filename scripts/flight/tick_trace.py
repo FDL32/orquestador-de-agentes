@@ -1,11 +1,15 @@
-"""Append one structured, bounded record for each coordinator heartbeat.
+"""Append one structured record for each coordinator heartbeat.
 
 Before: the caller supplies an existing absolute ``--ops-dir`` and explicit
 measurements; no live flight files are read.
 During: validate the arguments, build schema version 1, and append one UTF-8
-JSON line to the fixed ``tick_trace.jsonl`` path with one binary write.
+JSON line to the fixed ``tick_trace.jsonl`` path with one binary write;
+``quota_summary`` is bounded to 200 characters.
 After: return 0 for a fully measured record, 1 for a record containing null
 measurements, or 2 for usage/I/O errors, always with a named stdout message.
+
+Threat model: confia en el ops-dir; no defiende frente a un enlace simbolico
+plantado por quien ya puede escribir ahi.
 """
 
 from __future__ import annotations
@@ -78,8 +82,8 @@ def _parse_unmeasured(values: list[str]) -> dict[str, str]:
     """Parse repeatable field-reason declarations.
 
     Before: each value has the form ``FIELD=REASON``.
-    During: validate the field against the fixed schema and trim only the
-    separator-side whitespace from the reason.
+    During: validate the field against the fixed schema and preserve the
+    reason verbatim after the separator.
     After: return one reason per field or raise ``UsageError``.
     """
     reasons: dict[str, str] = {}
@@ -115,7 +119,8 @@ def _record(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
     Before: parser values exist but no output path has been opened.
     During: validate directory, hashes, return codes, timestamp and reasons;
-    assign null plus a reason to every omitted measurement.
+    assign null plus a reason to every omitted measurement. An empty
+    ``quota_summary`` is treated as measured and therefore returns rc 0.
     After: return the record and its semantic rc (0 measured or 1 degraded).
     """
     raw_ops = str(args.ops_dir)
@@ -173,9 +178,11 @@ def main(argv: list[str] | None = None) -> int:
     """Run the trace command and convert expected failures to named rc output.
 
     Before: ``argv`` is absent or a command-line argument list.
-    During: parse and validate without I/O, append only after validation, and
+    During: parse and validate without opening or writing the trace file, append only after validation, and
     catch usage/I/O errors so heartbeat callers never receive a traceback.
-    After: print exactly one ``TICK_TRACE`` status line and return 0, 1 or 2.
+    After: print exactly one ``TICK_TRACE`` status line and return 0, 1 or 2;
+    argparse ``--help`` intentionally exits with SystemExit(0) without a
+    ``TICK_TRACE`` status line.
     """
     parser = _parser()
     try:

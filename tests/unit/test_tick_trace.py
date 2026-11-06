@@ -240,3 +240,78 @@ def test_trace_path_as_directory_is_rc2(tmp_path: Path) -> None:
     assert "TICK_TRACE error" in result.stdout
     assert "trace path is not a file" in result.stdout
     assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_impossible_timestamp_is_rejected_before_writing(tmp_path: Path) -> None:
+    """Calendar-invalid timestamps fail before the append."""
+    result = run_trace(tmp_path, "--ts", "2026-13-45T25:61:61+01:00")
+
+    assert result.returncode == 2
+    assert not (tmp_path / "tick_trace.jsonl").exists()
+    assert "TICK_TRACE error" in result.stdout
+
+
+def test_nonzero_guard_and_quota_rcs_are_recorded_as_data(tmp_path: Path) -> None:
+    """Nonzero guard and quota measurements do not degrade a complete record."""
+    result = run_trace(
+        tmp_path,
+        *measured_args(),
+        "--guard-rc",
+        "1",
+        "--quota-rc",
+        "3",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = read_lines(tmp_path)[0]
+    assert record["guard_rc"] == 1
+    assert record["quota_rc"] == 3
+
+
+def test_ops_dir_pointing_to_file_is_rc2(tmp_path: Path) -> None:
+    """An existing file cannot serve as the operation directory."""
+    ops_file = tmp_path / "ops-file"
+    ops_file.write_text("not a directory", encoding="utf-8")
+
+    result = run_trace(ops_file, *measured_args())
+
+    assert result.returncode == 2
+    assert "TICK_TRACE error" in result.stdout
+
+
+def test_non_integer_quota_rc_is_rejected_without_writing(tmp_path: Path) -> None:
+    """A non-integer quota measurement fails before the append."""
+    result = run_trace(tmp_path, "--quota-rc", "three", "--ts", TS_A)
+
+    assert result.returncode == 2
+    assert not (tmp_path / "tick_trace.jsonl").exists()
+    assert "TICK_TRACE error" in result.stdout
+
+
+def test_timestamp_accepts_z_fraction_and_space_forms(tmp_path: Path) -> None:
+    """Valid Z, fractional, and space-separated timestamps are preserved."""
+    timestamps = (
+        "2026-11-06T12:30:01Z",
+        "2026-11-06T12:30:01.123+01:00",
+        "2026-11-06 12:30:01+01:00",
+    )
+    for timestamp in timestamps:
+        result = run_trace(tmp_path, *measured_args(timestamp))
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    assert [record["ts"] for record in read_lines(tmp_path)] == list(timestamps)
+
+
+def test_empty_quota_summary_is_measured(tmp_path: Path) -> None:
+    """An explicitly empty quota summary is recorded with rc 0."""
+    result = run_trace(
+        tmp_path,
+        *measured_args(),
+        "--quota-summary",
+        "",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = read_lines(tmp_path)[0]
+    assert record["quota_summary"] == ""
+    assert record["unmeasured"] == {}
