@@ -1198,7 +1198,7 @@ def _scan_failure(d, failures):
     }
 
 
-def _split_line(line):
+def _split_line(line):  # noqa: C901 - bounded recovery keeps parser state together.
     """Parte una linea en sus piezas, en orden: ``("obj", valor)`` o ``("frag", texto)``.
 
     Una linea fusionada (``{..}{..}``) trae varios objetos JSON completos. Si un objeto esta roto, se
@@ -1229,11 +1229,31 @@ def _split_line(line):
                     start_index += 1
                 while start_index < len(plausible_starts):
                     nxt = plausible_starts[start_index]
-                    out.append(("frag", line[pos:nxt]))
+                    fragment = line[pos:nxt]
+                    try:
+                        parsed = json.loads(fragment)
+                    except (ValueError, RecursionError):
+                        out.append(("frag", fragment))
+                    else:
+                        out.append(
+                            ("obj", parsed)
+                            if isinstance(parsed, dict)
+                            else ("frag", fragment)
+                        )
                     pos = nxt
                     start_index += 1
                 if pos < n:
-                    out.append(("frag", line[pos:]))
+                    fragment = line[pos:]
+                    try:
+                        parsed = json.loads(fragment)
+                    except (ValueError, RecursionError):
+                        out.append(("frag", fragment))
+                    else:
+                        out.append(
+                            ("obj", parsed)
+                            if isinstance(parsed, dict)
+                            else ("frag", fragment)
+                        )
                 break
             while (
                 start_index < len(plausible_starts)
@@ -1253,16 +1273,20 @@ def _split_line(line):
     return out
 
 
-def _ledger_identity():
-    """Calcula la identidad estable del ledger para detectar sustituciones silenciosas.
+def _ledger_identity(prefix_n=None):
+    """Calcula la identidad acotada del ledger para detectar sustituciones silenciosas.
 
     Before: LEDGER configurado y accesible.
-    During: obtiene tamaño y mtime_ns del fichero y hashea como máximo sus primeros 4096 bytes.
-    After: devuelve un dict serializable; propaga OSError para que scan devuelva rc 2.
+    During: obtiene tamaño y mtime_ns y hashea los primeros ``prefix_n`` bytes, o como máximo
+        4096 cuando no se especifica. El tamaño y mtime describen el fichero completo; el hash
+        solo describe el prefijo que se haya pedido para comparar una identidad guardada.
+    After: devuelve un dict serializable con el número real de bytes hasheados; propaga OSError
+        para que scan devuelva rc 2.
     """
     stat = LEDGER.stat()
+    limit = 4096 if prefix_n is None else prefix_n
     with open(LEDGER, "rb") as fh:
-        prefix = fh.read(min(stat.st_size, 4096))
+        prefix = fh.read(min(stat.st_size, limit))
     return {
         "size": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
@@ -1318,8 +1342,11 @@ def scan(force, dry):  # noqa: C901 - scan keeps the fail-closed cursor transiti
         agrupado (el limite de 30 min acota el coste). DIFERENCIA AUTORIZADA frente a la version
         vigente, que saltaba al final y descartaba en silencio las filas FAIL no escaneadas (falso
         negativo = parada sin aviso); antes un offset no entero daba TypeError sin aviso.
-        La identidad persistida es tamaño + mtime_ns + SHA-256 de los primeros 4096 bytes; una
-        sustitucion con tamaño >= offset y distinta identidad relee desde 0 y agrupa un unico aviso.
+        Un ledger solo crece por append: una sustitucion es hash distinto de los primeros
+        ``stored_prefix_n`` bytes, o tamaño igual al guardado con mtime_ns distinto, o truncado
+        por debajo del offset. Un crecimiento con prefijo igual no reinicia el cursor aunque cambie
+        mtime_ns. Limite conocido: un cambio posterior al prefijo con tamaño y mtime iguales no se
+        detecta.
         Un estado viejo sin identidad adopta la actual conservando el offset si sigue dentro del
         fichero; un estado corrupto relee desde 0, avisa ``estado ilegible`` y se reescribe.
     After: rc 0 avisado, 10 nada nuevo o agrupado, 2 aviso fallido, ledger ausente/ilegible o helper
@@ -1340,8 +1367,21 @@ def scan(force, dry):  # noqa: C901 - scan keeps the fail-closed cursor transiti
         "prefix_sha256": state.get("_ledger_prefix_sha256"),
         "prefix_n": state.get("_ledger_prefix_n"),
     }
-    has_identity = all(value is not None for value in stored_identity.values())
-    replaced = has_identity and stored_identity != identity
+    has_identity = (
+        all(value is not None for value in stored_identity.values())
+        and _is_int(stored_identity["prefix_n"])
+        and stored_identity["prefix_n"] >= 0
+    )
+    compare_identity = (
+        _ledger_identity(stored_identity["prefix_n"]) if has_identity else identity
+    )
+    replaced = has_identity and (
+        compare_identity["prefix_sha256"] != stored_identity["prefix_sha256"]
+        or (
+            identity["size"] == stored_identity["size"]
+            and identity["mtime_ns"] != stored_identity["mtime_ns"]
+        )
+    )
     offset = state.get("_last_scan_offset")
     if state_corrupt or replaced:
         offset = 0
@@ -1365,7 +1405,11 @@ def scan(force, dry):  # noqa: C901 - scan keeps the fail-closed cursor transiti
     new = _scan_chunk(chunk, failures)
 
     def setoff(s):
-        current_identity = _ledger_identity()
+        saved_prefix_n = s.get("_ledger_prefix_n")
+        identity_prefix_n = (
+            saved_prefix_n if _is_int(saved_prefix_n) and saved_prefix_n > 0 else None
+        )
+        current_identity = _ledger_identity(identity_prefix_n)
         s["_last_scan_offset"] = new_off
         s["_ledger_size"] = current_identity["size"]
         s["_ledger_mtime_ns"] = current_identity["mtime_ns"]

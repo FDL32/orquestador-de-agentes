@@ -2058,6 +2058,80 @@ def test_153m_identidad_mtime_detecta_cambio_despues_del_prefijo(ca):
     assert ca.sent == []
 
 
+def test_153m_scan_append_enviado_no_relee_fail_consumido(ca):
+    """P1: un append normal conserva el cursor y no reavisa un FAIL ya consumido."""
+    enviado = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    fallo = _fail_row(a="IM-74")
+    ca.m.LEDGER.write_bytes(enviado)
+    assert ca.m.scan(False, False) == 10
+    ca.m.LEDGER.write_bytes(enviado + fallo)
+    assert ca.m.scan(False, False) == 0
+    assert len(ca.sent) == 1
+    ca.clock.now += 31 * M
+    ca.m.LEDGER.write_bytes(enviado + fallo + enviado)
+    assert ca.m.scan(False, False) == 10
+    assert len(ca.sent) == 1
+    assert ca.m.load_state()["_last_scan_offset"] == ca.m.LEDGER.stat().st_size
+
+
+def test_153m_scan_appends_sucesivos_sin_releer_y_falla_nuevo_solo(ca):
+    """P1: tres crecimientos append intermedios no reinician el offset; un FAIL nuevo sí avisa."""
+    enviado = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    ca.m.LEDGER.write_bytes(enviado)
+    assert ca.m.scan(False, False) == 10
+    for _ in range(3):
+        ca.m.LEDGER.write_bytes(ca.m.LEDGER.read_bytes() + enviado)
+        assert ca.m.scan(False, False) == 10
+        assert ca.sent == []
+    ca.m.LEDGER.write_bytes(ca.m.LEDGER.read_bytes() + _fail_row(a="IM-75"))
+    assert ca.m.scan(False, False) == 0
+    assert "IM-75" in ca.sent[-1][1]
+
+
+def test_153m_scan_append_mtime_distinto_mismo_prefijo_no_relee(ca):
+    """P1: crecimiento con mtime distinto y prefijo igual sigue siendo append, no sustitución."""
+    enviado = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    ca.m.LEDGER.write_bytes(enviado)
+    assert ca.m.scan(False, False) == 10
+    mtime_ns = ca.m.LEDGER.stat().st_mtime_ns
+    ca.m.LEDGER.write_bytes(enviado + enviado)
+    os.utime(ca.m.LEDGER, ns=(mtime_ns + 1_000_000, mtime_ns + 1_000_000))
+    assert ca.m.scan(False, False) == 10
+    assert ca.sent == []
+
+
+def test_153m_scan_append_mayor_con_prefijo_distinto_relee_por_hash(ca):
+    """P1: crecimiento con prefijo distinto es sustitución aunque el tamaño sea mayor."""
+    original = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    replacement = b'{"from":"CO-24","a":"mcp:x","resultado":"error"}\n' + b" " * 10
+    assert len(replacement) > len(original)
+    ca.m.LEDGER.write_bytes(original)
+    assert ca.m.scan(False, False) == 10
+    ca.m.LEDGER.write_bytes(replacement)
+    assert ca.m.scan(True, False) == 0
+    assert "mcp:x" in ca.sent[-1][1]
+
+
+def test_153m_scan_migracion_offset_positivo_solo_ve_fail_nuevo(ca):
+    """P1 migración: estado sin identidad conserva un offset positivo y solo avisa lo posterior."""
+    anterior = _fail_row(a="IM-74")
+    nuevo = _fail_row(a="IM-75")
+    ca.m.LEDGER.write_bytes(anterior + nuevo)
+    ca.m.save_state({"_last_scan_offset": len(anterior)})
+    assert ca.m.scan(False, False) == 0
+    assert len(ca.sent) == 1
+    assert "IM-75" in ca.sent[0][1]
+    assert "IM-74" not in ca.sent[0][1]
+
+
+def test_153m_p8_cola_ajena_completa_despues_del_tope_conserva_destino(ca):
+    """P8: el último recurso conserva destino y resultado de una cola ajena completa."""
+    prefix = '{"' * (ca.m.MAX_SPLIT_PARSE_ATTEMPTS + 100)
+    foreign = '{"from":"CO-24","a":"IM-76","resultado":"error"}'
+    got = ca.m._scan_chunk(prefix + foreign + "\n", ca.m._failure_resultados())
+    assert got[-1] == {"to": "IM-76", "status": "FAIL"}
+
+
 @pytest.mark.parametrize(
     ("raw", "expected_rc"),
     [
