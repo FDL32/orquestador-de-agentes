@@ -7,6 +7,7 @@ run accidentally adopts xdist.
 """
 
 import copy
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -31,22 +32,28 @@ def assert_ruff_steps_are_readonly(workflow: dict[str, Any]) -> None:
             run = step.get("run")
             if not isinstance(run, str):
                 continue
-            tokens = shlex.split(run)
-            if "ruff" in tokens:
-                ruff_steps.append((job_name, tokens))
+            if not re.search(r"(?<![\w-])ruff(?![\w-])", run):
+                continue
+            assert not re.search(
+                r"--(unsafe-)?fix(-only)?\b|--unsafe-fixes\b|--fix=", run
+            ), f"el paso Ruff del job {job_name!r} contiene autofix: {run!r}"
+            assert not re.search(r'fix\s*=\s*(true|"true")', run, re.IGNORECASE), (
+                f"el paso Ruff del job {job_name!r} activa fix por --config: {run!r}"
+            )
+            ruff_steps.append((job_name, shlex.split(run)))
 
     assert ruff_steps, "no se encontró ningún paso que invoque el token ruff"
-    forbidden = {"--fix", "--unsafe-fixes", "--fix-only"}
-    for job_name, tokens in ruff_steps:
-        assert not forbidden.intersection(tokens), (
-            f"el paso Ruff del job {job_name!r} contiene una opción de autofix: "
-            f"{tokens!r}"
-        )
 
     lint_steps = [
         tokens
         for _, tokens in ruff_steps
-        if any(part == "check" for part in tokens[tokens.index("ruff") + 1 :])
+        if re.search(
+            r"(?<![\w-])ruff(?![\w-])"
+            r"(?:(?:\s+--[^\s]+)(?:\s+[^\s-][^\s]*)?)*"
+            r"\s+check(?:\s|$)",
+            " ".join(tokens),
+            re.IGNORECASE,
+        )
     ]
     assert len(lint_steps) == 1, (
         f"debe existir exactamente un paso de lint Ruff; encontrados {len(lint_steps)}"
@@ -129,9 +136,15 @@ class TestQualityGatesXdistPilot:
     @pytest.mark.parametrize(
         ("case", "expected_reason"),
         [
-            ("E1", "opción de autofix"),
-            ("E2", "opción de autofix"),
-            ("E4", "opción de autofix"),
+            ("E1", "autofix"),
+            ("E2", "autofix"),
+            ("E4", "autofix"),
+            ("E4b", "autofix"),
+            ("python-fix", "autofix"),
+            ("config-fix", "activa fix"),
+            ("fix-equals", "autofix"),
+            ("M1", "autofix"),
+            ("M2", "autofix"),
             ("second-lint", "exactamente un paso de lint"),
         ],
     )
@@ -148,6 +161,12 @@ class TestQualityGatesXdistPilot:
             run = {
                 "E1": "uv run ruff --config pyproject.toml check --fix .",
                 "E2": "uv run ruff check --fix .",
+                "E4b": "uv run ruff check --unsafe-fixes .",
+                "python-fix": "python -m ruff check --fix .",
+                "config-fix": "uv run ruff --config fix=true check .",
+                "fix-equals": 'uv run ruff check --fix="true" .',
+                "M1": "uv run .venv/bin/ruff check --fix .",
+                "M2": "bash -c 'ruff check --fix .'",
                 "second-lint": "uv run ruff --config x check",
             }[case]
             mutated["jobs"]["quality-gates"]["steps"].append({"run": run})
