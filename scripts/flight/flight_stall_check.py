@@ -58,6 +58,7 @@ GO_RESOLVED_RE = re.compile(
     r"(?P<id>go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?): .*$"
 )
 QUOTA_NAME = "quota_last.txt"
+QUOTA_READ_MAX = 4096
 FLIGHT_ROSTER_NAME = "flight_roster.json"
 STATE_NAME = "stall_state.json"
 TASK_REGISTERED_NAME = "task_registered.json"
@@ -156,7 +157,10 @@ def _quota_accounts(text):
     After: ``(pcts, sin_pct, stale)``; ``None%``, ``inf%`` o ausencia de ``%`` cuentan como sin porcentaje.
     """
     pcts, sin_pct, stale = [], False, False
-    for m in re.finditer(r"(?:alvarovans|brabander)([^|]*)", text):
+    for segment in text.split("|")[1:]:
+        m = re.match(r"\s*(?:alvarovans|brabander)\b(.*)", segment)
+        if m is None:
+            continue
         rest = m.group(1)
         stale = stale or re.search(r"\bSTALE\b", rest) is not None
         # el pct es el ULTIMO token: la ventana se imprime cruda y puede contener "N%"
@@ -178,7 +182,9 @@ def check_quota(out):
     """Detector de cupo: lee ``quota_last.txt`` (salida de quota_tick.py).
 
     Before: ``CFG.quota`` apunta al fichero (o es None si la configuracion era invalida).
-    During: ausente = ciego + ``cupo-no-medido``; sin porcentajes (o una cuenta sin el suyo) =
+    During: lee la salida completa hasta ``QUOTA_READ_MAX`` caracteres; si la supera, queda
+        ciego + ``cupo-no-medido`` sin truncar en silencio. Ausente = ciego + ``cupo-no-medido``;
+        sin porcentajes (o una cuenta sin el suyo) =
         ciego + ``cupo-ilegible``; mas de 40 min, cabecera ``QUOTA NO_MEDIDO`` o una cuenta
         ``STALE`` = ciego + ``cupo-no-medido``; maximo >= 97 URGENTE, >= 92 AVISO.
     After: lista de (clave, nivel, texto); ``out`` recibe ``ciego_cupo`` y ``cupo_max``. Un cupo
@@ -198,7 +204,17 @@ def check_quota(out):
             )
         ]
     age_min = (time.time() - q.stat().st_mtime) / 60
-    text = q.read_text(encoding="utf-8", errors="replace")[:400]
+    text = q.read_text(encoding="utf-8", errors="replace")
+    if len(text) > QUOTA_READ_MAX:
+        out["ciego_cupo"] = True
+        out["cupo_max"] = None
+        return [
+            (
+                "cupo-no-medido",
+                "AVISO",
+                f"La salida del cupo supera la cota de lectura de {QUOTA_READ_MAX} caracteres",
+            )
+        ]
     pcts, sin_pct, stale = _quota_accounts(text)
     declara = re.search(r"\bNO_MEDIDO\b", text.split("|", 1)[0]) is not None
     razones = _quota_reasons(age_min, declara, stale)
@@ -335,10 +351,25 @@ def _worktrees():
 
 
 def _git_markers(p):
-    """Hallazgos de bloqueo de git (index.lock, MERGE_HEAD, ...) en UN worktree."""
+    """Hallazgos de bloqueo de git (index.lock, MERGE_HEAD, ...) en UN worktree.
+
+    Before: ``p`` puede no ser un repositorio o puede tener una entrada ``.git`` rota.
+    During: una entrada ``.git`` ausente se trata como no-repo; si existe pero ``rev-parse``
+        falla, se emite un AVISO con solo el basename de ``p``; después busca los marcadores.
+    After: ``list`` de hallazgos ``git-*`` sin rutas absolutas; el no-repo sigue siendo silencio.
+    """
+    git_entry = p / ".git"
+    if not git_entry.exists():
+        return []
     rc, gitdir = _git(p, "rev-parse", "--absolute-git-dir")
     if rc != 0:
-        return []
+        return [
+            (
+                f"git-gitdir-{p.name}",
+                "AVISO",
+                f"Git no pudo resolver su directorio de datos en {p.name}",
+            )
+        ]
     gd = Path(gitdir)
     return [
         (
@@ -405,10 +436,26 @@ def check_disk(out):
 
 
 def check_hook(out):
-    """Detector del hook de seguridad de la rama del vuelo (``claude_guard_entry.py``)."""
+    """Detector del hook de seguridad de la rama del vuelo (``claude_guard_entry.py``).
+
+    Before: ``CFG.motor`` puede ser ``None`` o una ruta existente.
+    During: valida primero que ``git rev-parse`` resuelva el worktree; un fallo deja el
+        detector ciego y no se interpreta como hook ausente.
+    After: hook ausente en un worktree válido = URGENTE; no-worktree o repo roto = AVISO ciego.
+    """
     if CFG.motor is None:
         out["ciego_hook"] = True
         return []
+    rc, _ = _git(CFG.motor, "rev-parse", "--absolute-git-dir")
+    if rc != 0:
+        out["ciego_hook"] = True
+        return [
+            (
+                "detector-ciego-hook",
+                "AVISO",
+                "El detector del hook esta ciego: git no pudo resolver el worktree",
+            )
+        ]
     guard = CFG.motor / ".agent" / "hooks" / "claude_guard_entry.py"
     out["hook_guard_existe"] = guard.exists()
     if not guard.exists():

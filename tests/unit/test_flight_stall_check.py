@@ -693,6 +693,20 @@ def test_fila94_rev_parse_fallido_de_hermano_se_salta(box, tmp_path, monkeypatch
     assert r.rc == 0 and not [k for k in r.keys if k.startswith("git-")]
 
 
+def test_d2_gitdir_roto_avisa_con_basename_y_sin_ruta(box, tmp_path):
+    """D2: una entrada .git rota no se confunde con un directorio que no es repo."""
+    roto = tmp_path / "gitdir-roto"
+    roto.mkdir()
+    (roto / ".git").write_text("gitdir: no-existe\n", encoding="utf-8")
+
+    hallazgos = box.m._git_markers(roto)
+
+    assert len(hallazgos) == 1
+    clave, nivel, texto = hallazgos[0]
+    assert clave == "git-gitdir-gitdir-roto" and nivel == "AVISO"
+    assert str(roto) not in texto and "gitdir-roto" in texto
+
+
 @pytest.mark.parametrize(
     "nombre", ["index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD"]
 )
@@ -740,6 +754,7 @@ def test_fila99_status_fallido_es_ceguera_con_aviso_y_no_borra_claves_git(
     sin_repo.mkdir()
     r = box.tick("--motor-wt", str(sin_repo), motor=False)
     assert r.rc == 1 and ("detector-ciego-git", "AVISO", "stall") in r.events
+    assert "hook-seguridad" not in r.keys
     assert "ciego_git" in r.out and '"motor_sucio": -1' in r.out
     assert "event:git-index.lock-wt" in box.ca_state()
     assert box.stall_state()["motor_sucio"] == 0
@@ -1161,6 +1176,58 @@ def test_fila84_cupo_sin_porcentajes_es_ilegible(box):
     r = box.tick()
     assert r.rc == 1 and ("cupo-ilegible", "AVISO", "stall") in r.events
     assert "cupo-92" not in r.keys and "cupo-97" not in r.keys
+
+
+def test_d3_cupo_lee_mas_alla_de_400_y_detecta_el_urgente(box):
+    """D3: una cuenta alta después del prefijo histórico de 400 caracteres sigue siendo visible."""
+    segmentos = ["alvarovans weekly 30%"] * 18
+    segmentos.append("alvarovans weekly 98%")
+    linea = "QUOTA | " + " | ".join(segmentos)
+    assert len(linea) > 400
+    _con_cupo(box, linea)
+
+    r = box.tick()
+
+    assert r.rc == 1 and ("cupo-97", "URGENTE", "stall") in r.events
+
+
+def test_d3_cota_de_lectura_acepta_4096_y_ciega_4097(box):
+    """D3: la cota es explícita; exactamente 4096 se procesa y 4097 se marca no medido."""
+    prefijo = "QUOTA | alvarovans weekly 40% | "
+    exacta = prefijo + "x" * (4096 - len(prefijo))
+    assert len(exacta) == 4096
+    _con_cupo(box, exacta)
+    assert "cupo-no-medido" not in box.tick().keys
+
+    sobre = exacta + "x"
+    _con_cupo(box, sobre)
+    r = box.tick()
+    assert ("cupo-no-medido", "AVISO", "stall") in r.events
+    assert "ciego_cupo" in r.out
+
+
+def test_d6_sonda_codex_no_inyecta_cuenta_conocida(box):
+    """D6: una mención de alvarovans dentro del segmento codex es informativa, no una cuenta."""
+    _con_cupo(
+        box,
+        "QUOTA | codex alvarovans weekly 98% | brabander weekly 30%",
+    )
+    r = box.tick()
+    assert r.rc == 0 and r.events == []
+
+
+def test_d6_cuenta_real_alta_sigue_siendourgente(box):
+    """D6: la exclusión de codex no relaja el segmento real de alvarovans."""
+    _con_cupo(box, "QUOTA | alvarovans weekly 98% | brabander weekly 30%")
+    assert ("cupo-97", "URGENTE", "stall") in box.tick().events
+
+
+def test_d9_detector_inf_es_ilegible_y_no_urgente(box):
+    """D9: el detector conserva +inf como cupo ilegible, no como cupo-97."""
+    _con_cupo(box, "QUOTA HARD (soft 92/hard 97) | alvarovans weekly inf%")
+    r = box.tick()
+    assert ("cupo-ilegible", "AVISO", "stall") in r.events
+    assert "cupo-97" not in r.keys
 
 
 @pytest.mark.parametrize("p", [91, 92, 96, 97, 100])
