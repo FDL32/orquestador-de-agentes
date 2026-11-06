@@ -875,29 +875,182 @@ class TestHelperDegenerateCases:
         assert abs((now - ts_dt).total_seconds()) < 120
 
 
+_MCP_PREFIX_ALLOWLIST = {
+    "scripts/flight/thread_id.py": {
+        "count": 1,
+        "reason": "definicion del prefijo MCP enforced",
+    },
+    "scripts/flight/comms_alert.py": {
+        "count": 1,
+        "reason": "extractor de threadIds en texto",
+    },
+    "scripts/flight/verify_user_authorization.py": {
+        "count": 1,
+        "reason": "prefijo prohibido de messageId",
+    },
+}
+
+
+def censo(root: Path) -> dict[str, int]:
+    """Count exact ``mcp:`` AST constants below a scripts tree.
+
+    Before: ``root`` identifies the scripts directory.
+    During: recursively parses Python files, skipping ``__pycache__`` and
+        normalizing relative paths to forward slashes.
+    After: returns one exact constant count per file; syntax errors propagate.
+    """
+    result: dict[str, int] = {}
+    for py in sorted(root.rglob("*.py")):
+        if "__pycache__" in py.parts:
+            continue
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        count = _literal_mcp_count(tree)
+        if count:
+            result[py.relative_to(root.parent).as_posix()] = count
+    return result
+
+
+def _literal_mcp_count(tree: ast.AST) -> int:
+    """Count literal constants while excluding module/class/function docstrings.
+
+    Before: ``tree`` is a successfully parsed Python AST.
+    During: visits executable AST nodes and skips each definition's first
+        string expression, which is its docstring.
+    After: returns the number of exact ``mcp:`` literals outside docstrings.
+    """
+    count = 0
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Constant(self, node: ast.Constant) -> None:
+            nonlocal count
+            if node.value == "mcp:":
+                count += 1
+
+        def _visit_body(self, node: ast.AST, body: list[ast.stmt]) -> None:
+            docstring = body and ast.get_docstring(node, clean=False) is not None
+            for index, statement in enumerate(body):
+                if docstring and index == 0:
+                    continue
+                self.visit(statement)
+
+        def visit_Module(self, node: ast.Module) -> None:
+            self._visit_body(node, node.body)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            self._visit_body(node, node.body)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._visit_body(node, node.body)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._visit_body(node, node.body)
+
+    Visitor().visit(tree)
+    return count
+
+
+def violaciones(
+    census: dict[str, int], allowlist: dict[str, dict[str, object]]
+) -> list[str]:
+    """Return exact-count and exact-membership violations for an MCP census.
+
+    Before: ``census`` and ``allowlist`` use normalized relative paths.
+    During: compares paths and counts in both directions, while requiring a
+        non-empty reason for every allowlist entry.
+    After: returns an empty list iff the census matches the allowlist exactly.
+    """
+    violations: list[str] = []
+    expected = {path: entry["count"] for path, entry in allowlist.items()}
+    for path in sorted(set(census) | set(expected)):
+        if path not in expected:
+            violations.append(f"fichero no allowlisted: {path}")
+        elif path not in census:
+            violations.append(f"fichero allowlisted sin constante: {path}")
+        elif census[path] != expected[path]:
+            violations.append(
+                f"cuenta incorrecta en {path}: {census[path]} != {expected[path]}"
+            )
+    for path, entry in allowlist.items():
+        if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+            violations.append(f"razon ausente: {path}")
+    return violations
+
+
 class TestCensoMcpPrefix:
-    """Censo AST: only thread_id.py should have the literal mcp: as a constant."""
+    """Censo AST con allowlist explícita, razón y cuenta exacta por fichero."""
 
     def test_censo_mcp_prefix_in_scripts_py(self):
-        """Censo AST de constantes cadena iguales a mcp: en scripts/**/*.py debe ser 1."""
-        root = _SCRIPTS_DIR
-        count = 0
-        found_files = []
-
-        for py in sorted(root.rglob("*.py")):
-            if "__pycache__" in py.parts:
-                continue
-            src = py.read_text(encoding="utf-8")
-            tree = ast.parse(src)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Constant) and node.value == "mcp:":
-                    count += 1
-                    found_files.append(str(py.relative_to(_SCRIPTS_DIR.parent)))
-
-        assert count == 1, (
-            f"Expected exactly 1 file with mcp: constant, found {count} in: {found_files}"
+        census = censo(_SCRIPTS_DIR)
+        assert not violaciones(census, _MCP_PREFIX_ALLOWLIST), census
+        assert _MCP_PREFIX_ALLOWLIST["scripts/flight/thread_id.py"]["count"] == 1
+        assert (
+            "definicion"
+            in _MCP_PREFIX_ALLOWLIST["scripts/flight/thread_id.py"]["reason"]
         )
-        assert any("thread_id.py" in f and "flight" in f for f in found_files)
+
+    def test_censo_rejects_unexpected_file(self, tmp_path: Path):
+        scripts = tmp_path / "scripts"
+        (scripts / "flight").mkdir(parents=True)
+        (scripts / "flight" / "thread_id.py").write_text('MCP_PREFIX = "mcp:"\n')
+        (scripts / "extra.py").write_text('VALUE = "mcp:"\n')
+        violations = violaciones(
+            censo(scripts),
+            {
+                "scripts/flight/thread_id.py": _MCP_PREFIX_ALLOWLIST[
+                    "scripts/flight/thread_id.py"
+                ]
+            },
+        )
+        assert any("scripts/extra.py" in violation for violation in violations)
+
+    def test_censo_rejects_second_constant_in_allowlisted_file(self, tmp_path: Path):
+        scripts = tmp_path / "scripts"
+        flight = scripts / "flight"
+        flight.mkdir(parents=True)
+        (flight / "thread_id.py").write_text('MCP_PREFIX = "mcp:"\nOTHER = "mcp:"\n')
+        assert violaciones(
+            censo(scripts),
+            {
+                "scripts/flight/thread_id.py": _MCP_PREFIX_ALLOWLIST[
+                    "scripts/flight/thread_id.py"
+                ]
+            },
+        )
+
+    def test_censo_rejects_missing_allowlisted_file(self, tmp_path: Path):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        violations = violaciones(
+            censo(scripts),
+            {
+                "scripts/flight/thread_id.py": _MCP_PREFIX_ALLOWLIST[
+                    "scripts/flight/thread_id.py"
+                ]
+            },
+        )
+        assert violations == [
+            "fichero allowlisted sin constante: scripts/flight/thread_id.py"
+        ]
+
+    def test_censo_ignores_docstrings_and_comments(self, tmp_path: Path):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "plain.py").write_text('"""mcp:"""\n# mcp:\nVALUE = "other"\n')
+        assert censo(scripts) == {}
+
+    def test_censo_propagates_syntax_error(self, tmp_path: Path):
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "broken.py").write_text('VALUE = "mcp:"\nif\n')
+        with pytest.raises(SyntaxError):
+            censo(scripts)
+
+    def test_censo_handles_empty_and_nested_scripts(self, tmp_path: Path):
+        scripts = tmp_path / "scripts"
+        nested = scripts / "nested" / "deeper"
+        nested.mkdir(parents=True)
+        (nested / "constant.py").write_text('VALUE = "mcp:"')
+        assert censo(scripts) == {"scripts/nested/deeper/constant.py": 1}
 
 
 # --- Phase 2: Tests for writer and guard isolation (D4) ---
