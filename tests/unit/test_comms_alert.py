@@ -2209,6 +2209,65 @@ def test_b1_control_negativo_lo_que_no_es_un_fallo_ajeno_no_cuenta(ca, linea):
     assert ca.m._scan_chunk(linea + "\n", ca.m._failure_resultados()) == []
 
 
+def test_153m_p5_prioriza_cola_ajena_y_declara_falso_positivo_residual(ca):
+    """P5: la cola ajena gana; una llave con FAIL dentro de nota propia rota queda declarada."""
+    foreign_tail = '{"by":"comms_alert","nota":"rota {"from":"CO-24","a":"IM-9","resultado":"FAIL"}'
+    assert ca.m._scan_chunk(foreign_tail + "\n", ca.m._failure_resultados()) == [
+        {"to": "IM-9", "status": "FAIL"}
+    ]
+
+    own_note_false_positive = '{"by":"comms_alert","nota":"rota {"resultado":"FAIL"}'
+    assert ca.m._scan_chunk(
+        own_note_false_positive + "\n", ca.m._failure_resultados()
+    ) == [{"to": "?", "status": "FAIL"}]
+    own_note_control = '{"by":"comms_alert","nota":"rota {"resultado":"enviado"}'
+    assert ca.m._scan_chunk(own_note_control + "\n", ca.m._failure_resultados()) == []
+
+
+@pytest.mark.parametrize(
+    ("verdict", "is_failure"),
+    [
+        ("error", True),
+        ("ERROR", True),
+        ("FAIL", True),
+        ("fail", True),
+        ("thread_not_found", True),
+        ("THREAD_NOT_FOUND", True),
+        ("enviado", False),
+        ("ENVIADO", False),
+        ("unknown", False),
+    ],
+)
+def test_153m_p6_vocabulario_casefold_con_control_negativo(ca, verdict, is_failure):
+    """P6: el vocabulario del helper se compara sin distinguir mayúsculas."""
+    got = ca.m._scan_failure(
+        {"resultado": verdict, "a": "IM-74"}, ca.m._failure_resultados()
+    )
+    assert (got is not None) is is_failure
+
+
+def test_153m_p8_split_line_no_recurre_a_search_cuadratico(ca, monkeypatch):
+    """P8: el último recurso usa el índice lineal de anclas plausibles, no search repetido."""
+
+    class LinearAnchors:
+        def finditer(self, line):
+            return iter(())
+
+        def search(self, line, start=0):
+            raise AssertionError("search repetido: mutación cuadrática")
+
+    monkeypatch.setattr(ca.m, "_RE_OBJ_START", LinearAnchors())
+    assert ca.m._split_line('{"' * 10_000)
+
+
+def test_153m_p8_linea_patologica_usa_ultimo_recurso_sin_descartar(ca):
+    """P8: una línea con demasiadas anclas cae al fragmentado acotado y conserva el FAIL textual."""
+    line = '{"' * (ca.m.MAX_SPLIT_PARSE_ATTEMPTS + 100) + " FAIL"
+    assert ca.m._scan_chunk(line + "\n", ca.m._failure_resultados()) == [
+        {"to": "?", "status": "FAIL (linea no parseable)"}
+    ]
+
+
 # ---- ronda 2 (B2): valores numericos no finitos o enormes en el estado = registro ilegible, el aviso sale
 _NUM_MALOS = [
     "1e309",

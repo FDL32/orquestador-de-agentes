@@ -79,6 +79,7 @@ POWERSHELL_APP_ID = (
 ENVIRONMENT_ID_ENV = "T3_ENVIRONMENT_ID"
 THREAD_ID_ENV = "T3_THREAD_ID"
 TEXT_LIMIT = 160
+MAX_SPLIT_PARSE_ATTEMPTS = 4096
 GO_ID_RE = re.compile(r"^go-[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?$")
 OWNER_RE = re.compile(r"^[A-Z]{2,3}-[0-9]{1,4}$")
 SESSION_CODE_RE = OWNER_RE
@@ -1204,11 +1205,13 @@ def _split_line(line):
     RESINCRONIZA en la siguiente ``{`` que abre un objeto plausible (``{`` + espacios + ``"`` o ``}``; una
     llave suelta dentro del texto no corta) y el texto roto es un ``frag``: asi una fila propia rota no
     esconde una ajena completa que la sigue, ni al reves. Sin ninguna ``{`` decodificable la linea
-    entera es un ``frag``.
+    entera es un ``frag``. Tras 4096 intentos de parseo el resto se fragmenta por las anclas ya
+    indexadas como ultimo recurso lineal; nunca se descarta silenciosamente una cola ajena.
     """
     dec = json.JSONDecoder()
     plausible_starts = [match.start() for match in _RE_OBJ_START.finditer(line)]
     start_index = 0
+    parse_attempts = 0
     out, pos, n = [], 0, len(line)
     while pos < n:
         if line[pos].isspace():
@@ -1217,6 +1220,21 @@ def _split_line(line):
         try:
             obj, pos = dec.raw_decode(line, pos)
         except (ValueError, RecursionError):
+            parse_attempts += 1
+            if parse_attempts > MAX_SPLIT_PARSE_ATTEMPTS:
+                while (
+                    start_index < len(plausible_starts)
+                    and plausible_starts[start_index] <= pos
+                ):
+                    start_index += 1
+                while start_index < len(plausible_starts):
+                    nxt = plausible_starts[start_index]
+                    out.append(("frag", line[pos:nxt]))
+                    pos = nxt
+                    start_index += 1
+                if pos < n:
+                    out.append(("frag", line[pos:]))
+                break
             while (
                 start_index < len(plausible_starts)
                 and plausible_starts[start_index] <= pos
