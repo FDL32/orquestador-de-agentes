@@ -87,3 +87,15 @@ class TestQualityGatesXdistPilot:
         """Guard against the canonical run being silently softened to non-blocking."""
         step = self._canonical_step(workflow)
         assert step.get("continue-on-error", False) is False
+
+    def test_ruff_lint_step_is_exactly_readonly(self, workflow):
+        """The workflow Ruff gate must not inherit or request autofix."""
+        steps = [
+            step
+            for step in workflow["jobs"]["quality-gates"]["steps"]
+            if "ruff check" in str(step.get("run", ""))
+        ]
+        assert len(steps) == 1, "debe existir exactamente un paso ruff check"
+        run = str(steps[0]["run"]).strip()
+        assert run == "uv run ruff check ."
+        assert "--fix" not in run

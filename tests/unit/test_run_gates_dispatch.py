@@ -70,7 +70,7 @@ def test_run_code_gates_uses_project_pip_audit_wrapper():
     assert "uv run pip-audit ." not in source
 
 
-# WOT-2026-003e: has_local_tests — destino without a local suite must not fail gates
+# WOT-2026-003e: has_local_tests - destino without a local suite must not fail gates
 
 
 def test_has_local_tests_false_when_no_tests_dir(tmp_path):
@@ -186,7 +186,8 @@ def test_run_code_gates_repo_motor_uses_motor_root_and_absolute_pytest(
     rc = dispatch.run_code_gates("repo_motor")
 
     assert rc == 0
-    assert calls[0][0][:4] == [dispatch.sys.executable, "-m", "ruff", "check"]
+    assert calls[0][0] == [dispatch.sys.executable, "-m", "ruff", "check", "."]
+    assert not any("fix" in argument.lower() for argument in calls[0][0])
     assert calls[0][1] == motor
     pytest_cmd, pytest_cwd, pytest_env = calls[2]
     # WOT-2026-058q: la invocacion lleva ahora `--level all`. Este test aseveraba
@@ -291,7 +292,7 @@ def test_main_runs_barriers_from_motor_with_destino_project_root(monkeypatch, tm
     ]
 
 
-# WOT-2026-014e: mutation barrier — resolve_motor_root_path delegates to canonical helper
+# WOT-2026-014e: mutation barrier - resolve_motor_root_path delegates to canonical helper
 
 
 def test_resolve_motor_root_path_delegates_to_canonical_helper(tmp_path, monkeypatch):
@@ -360,7 +361,7 @@ def test_resolve_motor_root_path_returns_resolved_path(tmp_path):
     )
 
 
-# WOT-2026-019i: regression barrier — .agent must never shadow the top-level
+# WOT-2026-019i: regression barrier - .agent must never shadow the top-level
 # runtime package at module level.
 
 
