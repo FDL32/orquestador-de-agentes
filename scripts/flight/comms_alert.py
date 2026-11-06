@@ -100,12 +100,25 @@ _RE_UUID = re.compile(_UUID, re.IGNORECASE)
 _RE_WINPATH = re.compile(
     r"(?<![a-z0-9])(?:\\\\\?\\)?[a-z]:[\\/][^\s'\"<>|]*", re.IGNORECASE
 )
+_RE_UNCPATH = re.compile(
+    r"(?<![A-Za-z0-9])\\\\[^\\/\s'\"<>|]+(?:[\\/][^\\/\s'\"<>|]+)+"
+)
 # una `{` que abre un objeto JSON plausible (no una llave suelta del texto)
 _RE_OBJ_START = re.compile(r'\{\s*["}]')
 _RE_OWN_FRAGMENT = re.compile(r'"(?:by|from)"\s*:\s*"comms_alert"')
 _RE_HOMEPATH = re.compile(r"/(?:home|Users)/[^\s'\"<>|]*")
 _RE_SECRET = re.compile(
     r"(?i)(?:token|secret|secreto|password|passwd|api[_-]?key)[=:_-][ ]*[^ ,;]+"
+)
+_RE_BEARER_SECRET = re.compile(
+    r"(?i)(?<![A-Za-z0-9_-])(?:authorization:\s*)?bearer\s+[A-Za-z0-9._~+/=-]{8,}"
+)
+_RE_SPACED_SECRET = re.compile(r"(?i)(?<![A-Za-z0-9_-])token\s+[A-Za-z0-9._~+/=-]{8,}")
+_RE_API_SECRET = re.compile(
+    r"(?i)(?<![A-Za-z0-9_-])api[-_]?key(?:[=: ]+)[A-Za-z0-9._~+/=-]{8,}"
+)
+_RE_PREFIX_SECRET = re.compile(
+    r"(?i)(?<![A-Za-z0-9_-])(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|sk-)[A-Za-z0-9_-]{8,}"
 )
 # Rutas del directorio de operacion: las fija configure(); None = sin configurar.
 LEDGER = None
@@ -332,13 +345,21 @@ def redact(text):
 
     Before: ``text`` es cualquier valor (se convierte con str).
     During: sustituye UUID de hilo (``mcp:<uuid>``), UUID sueltos y rutas (Windows en cualquier
-        forma/capitalizacion, ``\\\\?\\`` y /home, /Users); DESPUES acota a TEXT_LIMIT caracteres.
+        forma/capitalizacion, ``\\\\?\\``, UNC y /home, /Users), mas la lista cerrada de secretos
+        Authorization/Bearer, token con espacio, api-key/api_key/apikey y prefijos ghp_/gho_/ghu_/
+        ghs_/ghr_/github_pat_/sk-. Las formas fuera de esta lista quedan como limite medido;
+        DESPUES acota a TEXT_LIMIT caracteres.
     After: devuelve un str de como mucho TEXT_LIMIT caracteres; redact(redact(x)) == redact(x).
     """
     out = _RE_THREAD.sub("mcp:<hilo>", str(text))
     out = _RE_UUID.sub("<uuid>", out)
+    out = _RE_UNCPATH.sub("<ruta>", out)
     out = _RE_WINPATH.sub("<ruta>", out)
     out = _RE_HOMEPATH.sub("<ruta>", out)
+    out = _RE_BEARER_SECRET.sub("<secreto>", out)
+    out = _RE_SPACED_SECRET.sub("<secreto>", out)
+    out = _RE_API_SECRET.sub("<secreto>", out)
+    out = _RE_PREFIX_SECRET.sub("<secreto>", out)
     out = _RE_SECRET.sub("<secreto>", out)
     if len(out) > TEXT_LIMIT:
         out = out[: TEXT_LIMIT - 3] + "..."
@@ -442,13 +463,23 @@ def redact_literal_first(text, *, preserve_literal=False):
     """Redacta un texto libre o conserva el literal explicito de un emisor GO.
 
     Before: ``text`` puede ser cualquier valor; ``preserve_literal`` indica si el llamador conoce que el valor completo es la frase literal de un GO.
-    During: con ``False`` aplica ``redact`` completo; con ``True`` conserva el texto salvo secretos reconocibles por ``_RE_SECRET``, normaliza CR/LF a espacios y recorta a ``TEXT_LIMIT``. El llamador GO no pre-redacta.
+    During: con ``False`` aplica ``redact`` completo; con ``True`` conserva el texto salvo los
+        secretos de la lista cerrada, normaliza CR/LF a espacios y recorta a ``TEXT_LIMIT``. El
+        llamador GO no pre-redacta.
     After: devuelve texto seguro de como mucho ``TEXT_LIMIT`` caracteres.
     """
     raw = str(text)
     if not preserve_literal:
         return redact(raw)
-    value = _RE_SECRET.sub("<secreto>", raw)
+    for secret_pattern in (
+        _RE_BEARER_SECRET,
+        _RE_SPACED_SECRET,
+        _RE_API_SECRET,
+        _RE_PREFIX_SECRET,
+        _RE_SECRET,
+    ):
+        value = secret_pattern.sub("<secreto>", raw)
+        raw = value
     value = value.replace("\r", " ").replace("\n", " ")
     return value if len(value) <= TEXT_LIMIT else value[: TEXT_LIMIT - 3] + "..."
 
@@ -473,7 +504,7 @@ def notify(
     During: ejecuta PowerShell por ruta absoluta, sin Bypass, con timeout de 60 s.
     After: rc del proceso tal cual; 2 ante SystemRoot ausente, timeout u OSError. Titulo y
         mensaje se redactan completos salvo ``preserve_literal=True``, reservado a GO;
-        la salida de PowerShell se imprime recortada a 200 caracteres y no se redacciona.
+        la salida de PowerShell se redacta completa y despues se imprime recortada a 200 caracteres.
     """
     title = redact(title)
     message = redact_literal_first(message, preserve_literal=preserve_literal)
@@ -523,7 +554,8 @@ def notify(
     except (subprocess.TimeoutExpired, OSError) as exc:
         print(f"notify FALLO: {type(exc).__name__}")
         return 2
-    print("notify rc={} {}".format(r.returncode, (r.stdout or "").strip()[:200]))
+    stdout = redact((r.stdout or "").strip())[:200]
+    print(f"notify rc={r.returncode} {stdout}")
     return r.returncode
 
 
@@ -1288,6 +1320,19 @@ def main(argv=None):  # noqa: C901 - CLI dispatch keeps legacy and GO paths expl
         configure(a.ops_dir)
     except OpsDirError as exc:
         print(f"comms_alert: {exc}", file=sys.stderr)
+        return 2
+    mode_options = [
+        ("--scan", a.scan),
+        ("--event", a.event is not None),
+        ("--resolve", a.resolve is not None),
+        ("--ack", a.ack is not None),
+    ]
+    selected_modes = [name for name, selected in mode_options if selected]
+    if len(selected_modes) >= 2:
+        print(
+            "opciones incompatibles: " + ", ".join(selected_modes),
+            file=sys.stderr,
+        )
         return 2
     if a.resolve and a.what:
         print("--resolve no se combina con --what", file=sys.stderr)

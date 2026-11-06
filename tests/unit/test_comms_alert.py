@@ -3154,3 +3154,148 @@ def test_go_dos_procesos_y_escritor_crudo_no_funden_ni_pierden_lineas(ca):
     assert all(
         token in b"".join(lines) for token in (b"go-proc-a", b"go-proc-b", b"go-raw")
     )
+
+
+def test_153n_redacta_unc_y_conserva_control_negativo(ca):
+    assert ca.m.redact(r"UNC \\server\share\secret.txt") == "UNC <ruta>"
+    assert (
+        ca.m.redact("https://server/share/secret.txt")
+        == "https://server/share/secret.txt"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Authorization: Bearer SYNTHETIC_BEARER_123",
+        "Bearer SYNTHETIC_BEARER_123",
+        "token SYNTHETIC_TOKEN_123",
+        "api-key=SYNTHETIC_API_123",
+        "api_key: SYNTHETIC_API_123",
+        "apikey SYNTHETIC_API_123",
+        "ghp_SYNTHETIC_123",
+        "gho_SYNTHETIC_123",
+        "ghu_SYNTHETIC_123",
+        "ghs_SYNTHETIC_123",
+        "ghr_SYNTHETIC_123",
+        "github_pat_SYNTHETIC_123",
+        "sk-SYNTHETIC_123",
+    ],
+)
+def test_153n_redacta_patrones_cerrados_de_secretos(ca, value):
+    assert "SYNTHETIC" not in ca.m.redact(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "risk-assessment",
+        "disk-1234abcdefgh",
+        "task-force",
+        "el token expira mañana",
+        "Bearer es un apellido sin valor",
+        "sk- es un prefijo citado sin valor",
+    ],
+)
+def test_153n_redacta_sin_falsos_positivos_legitimos(ca, value):
+    assert ca.m.redact(value) == value
+
+
+def test_153n_redacta_stdout_antes_de_truncar(ca, monkeypatch, capsys):
+    real = _load("notify_153n_real")
+    real.configure(str(ca.dir))
+
+    class Result:
+        returncode = 0
+        stdout = "Authorization: Bearer SYNTHETIC_STDOUT_123\n" + ("x" * 220)
+
+    monkeypatch.setattr(real, "_powershell_exe", lambda: Path("powershell.exe"))
+    monkeypatch.setattr(real.subprocess, "run", lambda *args, **kwargs: Result())
+
+    assert real.notify("title", "message", False) == 0
+    output = capsys.readouterr().out
+    assert "SYNTHETIC_STDOUT_123" not in output
+    assert len(output.split("notify rc=0 ", 1)[1].rstrip("\n")) <= 200
+
+
+def test_153n_preserve_literal_redacta_secretos_nuevos_y_conserva_ruta(ca):
+    value = "PUSH C:/Users/example/repo Authorization: Bearer SYNTHETIC_GO_123"
+    result = ca.m.redact_literal_first(value, preserve_literal=True)
+    assert "C:/Users/example/repo" in result
+    assert "SYNTHETIC_GO_123" not in result
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("--scan", "--event"),
+        ("--scan", "--resolve"),
+        ("--scan", "--ack"),
+        ("--event", "--resolve"),
+        ("--event", "--ack"),
+        ("--resolve", "--ack"),
+    ],
+)
+def test_153n_cli_rechaza_dos_modos_de_aviso_con_mensaje_estable(
+    ca, capsys, left, right
+):
+    values = {
+        "--event": ["event-key", "--what", "texto"],
+        "--resolve": ["resolve-key"],
+        "--ack": ["ack-key"],
+    }
+    args = ["--ops-dir", str(ca.dir), "--dry-run", left]
+    args.extend(values.get(left, []))
+    args.append(right)
+    args.extend(values.get(right, []))
+
+    assert ca.m.main(args) == 2
+    error = capsys.readouterr().err
+    assert "opciones incompatibles" in error
+    assert left in error and right in error
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--event", "event-key", "--level", "AVISO", "--what", "texto"],
+        ["--ack", "ack-key"],
+        ["--resolve", "resolve-key"],
+        ["--resolve", "go-key", "--owner", "CO-48", "--flight-dir", "{flight}"],
+        [
+            "--go-id",
+            "go-key",
+            "--what",
+            "Escribe GO 1",
+            "--owner",
+            "CO-48",
+            "--flight-dir",
+            "{flight}",
+        ],
+        ["--scan"],
+    ],
+)
+def test_153n_conserva_invocaciones_documentadas_del_latido(ca, args):
+    flight = ca.dir / "flight"
+    (flight / "diseno").mkdir(parents=True)
+    (flight / "diseno" / "COLA_PARA_USUARIO.md").write_text("", encoding="utf-8")
+    (ca.dir / "comms_ledger.jsonl").write_text("", encoding="utf-8")
+    argv = [part.format(flight=str(flight)) for part in args]
+    argv.extend(["--ops-dir", str(ca.dir), "--dry-run"])
+
+    assert ca.m.main(argv) != 2
+
+
+def test_153n_caracteriza_paridad_de_throttle_por_error(ca, monkeypatch):
+    monkeypatch.setattr(
+        ca.m,
+        "load_state",
+        lambda: {"same-error": ca.clock.now - 1, "other-error": 0},
+    )
+
+    assert ca.m.alert("same-error", "incidencia-uno", "same-error", False, True) == 10
+    assert ca.m.alert("same-error", "incidencia-dos", "same-error", False, True) == 10
+    assert (
+        ca.m.alert("different-error", "incidencia-tres", "different-error", False, True)
+        == 0
+    )
