@@ -103,19 +103,34 @@ def _load_json_dict(path):
 
 
 def _state():
-    """Estado del latido (``stall_state.json``): ausente o ilegible = vacio (se reescribe)."""
+    """Carga el estado persistente del latido.
+
+    Before: ``CFG.state`` apunta a ``stall_state.json``.
+    During: delega en ``_load_json_dict`` para leer utf-8-sig y tolerar entradas ilegibles.
+    After: devuelve un diccionario o ``{}`` si el fichero falta, es invalido o no es objeto.
+    """
     return _load_json_dict(CFG.state)
 
 
 def _count(value):
-    """Contador entero no negativo y acotado; cualquier otra forma (cadena, bool, NaN) = 0."""
+    """Normaliza el contador persistido de un worktree sucio.
+
+    Before: ``value`` puede tener cualquier tipo por proceder del estado JSON.
+    During: acepta solo un entero no booleano entre cero y un millon exclusivo.
+    After: devuelve el entero aceptado o ``0`` para cualquier otra forma.
+    """
     if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 10**6:
         return value
     return 0
 
 
 def _is_finite(value):
-    """True para un numero real finito (un bool no cuenta)."""
+    """Comprueba si un valor es un numero finito y no booleano.
+
+    Before: ``value`` puede ser cualquier objeto del estado.
+    During: valida ``int`` o ``float`` no booleano y aplica ``math.isfinite``.
+    After: devuelve ``True`` solo para numeros finitos.
+    """
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -252,7 +267,12 @@ def check_quota(out):
 
 
 def _quota_reasons(age_min, declara_no_medido, stale):
-    """Razones por las que el cupo no vale como medicion (antiguedad, cabecera NO_MEDIDO, STALE)."""
+    """Construye las razones por las que una medicion de cupo queda ciega.
+
+    Before: ``age_min`` es la antiguedad y los otros argumentos indican cabecera o cuenta stale.
+    During: compara la antiguedad con ``QUOTA_STALE_MIN`` y prioriza ``NO_MEDIDO`` sobre ``STALE``.
+    After: devuelve una lista de textos de razon, posiblemente vacia, sin efectos laterales.
+    """
     razones = []
     if age_min > QUOTA_STALE_MIN:
         razones.append(f"El cupo lleva {int(age_min)} min sin medirse")
@@ -264,7 +284,12 @@ def _quota_reasons(age_min, declara_no_medido, stale):
 
 
 def _quota_levels(pcts):
-    """Hallazgo por el peor porcentaje: >= 97 URGENTE (cupo-97), >= 92 AVISO (cupo-92)."""
+    """Clasifica el peor porcentaje de cupo en un hallazgo.
+
+    Before: ``pcts`` contiene porcentajes ya parseados y puede estar vacio.
+    During: toma el maximo y aplica los cortes 97 (URGENTE) y 92 (AVISO).
+    After: devuelve como mucho ``cupo-97`` o ``cupo-92``; sin corte devuelve ``[]``.
+    """
     if not pcts:
         return []
     worst = max(pcts)
@@ -348,7 +373,12 @@ def check_cola(out, st):
 
 
 def _worktrees():
-    """Motor mas los worktrees hermanos, sin repetir ninguno (el motor casa con su propio glob)."""
+    """Reune el motor y sus worktrees hermanos sin duplicados.
+
+    Before: ``CFG.motor`` y ``CFG.wt_globs`` contienen la raiz y los globos a vigilar.
+    During: expande los globos, normaliza las rutas cuando puede y deduplica con ``normcase``.
+    After: devuelve una lista de ``Path`` que empieza por el motor y no repite rutas.
+    """
     seen, paths = set(), []
     for p in [
         CFG.motor,
@@ -440,7 +470,12 @@ def check_git(out, st):
 
 
 def check_disk(out):
-    """Detector de disco libre en la unidad del motor (umbral ``CFG.free_gb_min``)."""
+    """Detecta si queda menos disco libre que el umbral configurado.
+
+    Before: ``CFG.disk_anchor`` identifica la unidad y ``CFG.free_gb_min`` su minimo en GB.
+    During: consulta ``shutil.disk_usage``, convierte bytes a GB y guarda el redondeo en ``out``.
+    After: devuelve el aviso ``disco`` si queda por debajo o ``[]``; propaga errores de la consulta.
+    """
     anchor = CFG.disk_anchor
     free_gb = shutil.disk_usage(anchor).free / 1e9
     out["disco_libre_gb"] = round(free_gb)
@@ -538,14 +573,24 @@ def self_check(a):
 
 
 def _is_unc(cand):
-    """True para una ruta de red (``\\\\servidor\\recurso``); la forma ``\\\\?\\C:`` es local."""
+    """Comprueba si una ruta representa un recurso UNC de red.
+
+    Before: ``cand`` es un ``Path`` construido desde la configuracion.
+    During: inspecciona ``drive`` y excluye la forma extendida local ``\\?\\C:``.
+    After: devuelve ``True`` para drives UNC de red y ``False`` para rutas locales.
+    """
     return cand.drive.startswith("\\\\") and not re.fullmatch(
         r"\\\\\?\\[A-Za-z]:", cand.drive
     )
 
 
 def _resolve_dir(raw, label):
-    """Resuelve un directorio ABSOLUTO y existente (sin UNC); ValueError con la causa si no."""
+    """Resuelve y valida un directorio local de configuracion.
+
+    Before: ``raw`` es una ruta candidata y ``label`` identifica el parametro.
+    During: rechaza UNC y rutas relativas, resuelve con ``strict=True`` y comprueba que sea directorio.
+    After: devuelve el ``Path`` real o lanza ``ValueError`` con la causa etiquetada.
+    """
     cand = Path(raw)
     if _is_unc(cand):
         raise ValueError(f"{label} en ruta de red (UNC) no admitida")
@@ -628,7 +673,12 @@ def _resolve_paths(a, ops):  # noqa: C901
 
 
 def _free_gb_min(cfg, raw):
-    """Fija ``cfg.free_gb_min`` desde ``STALL_FREE_GB_MIN``; devuelve el error fatal o None."""
+    """Fija el umbral de disco a partir de la configuracion textual.
+
+    Before: ``cfg`` es el namespace de configuracion y ``raw`` es el valor opcional del entorno.
+    During: convierte ``raw`` a ``float`` y valida finitud y no negatividad; si falta conserva el default.
+    After: devuelve ``None`` cuando es valido o el texto del error fatal cuando no lo es.
+    """
     if raw is None:
         return None
     try:
@@ -740,7 +790,12 @@ def _heartbeat_check(a, ca):
 
 
 def _detect(out, st):
-    """Corre los detectores; uno roto no tapa a los demas (``detector-roto`` AVISO)."""
+    """Ejecuta todos los detectores aislando el fallo de cada uno.
+
+    Before: ``out`` es el acumulador y ``st`` el estado del tick.
+    During: invoca quota, cola, git, disco, hook y tarea; captura excepciones y añade ``detector-roto``.
+    After: devuelve ``(hallazgos, roto)`` y conserva los resultados de detectores sanos.
+    """
     found, broke = [], False
     for fn in (
         lambda: check_quota(out),
@@ -765,7 +820,12 @@ def _detect(out, st):
 
 
 def _notify_all(ca, found, a, out, owner="stall"):
-    """Avisa (o marca con --baseline) cada hallazgo; devuelve el rc (1 hallazgos, 2 aviso fallido)."""
+    """Publica o establece como baseline los hallazgos del tick.
+
+    Before: ``ca`` ofrece ``event``/``mark_seen``; ``found``, ``a`` y ``out`` contienen resultados y modos.
+    During: recorre cada hallazgo, marca baseline o llama a ``ca.event`` e imprime el resultado.
+    After: devuelve 0 sin hallazgos, 1 con hallazgos o 2 si algun aviso fallo.
+    """
     rc = 0
     for key, level, what in found:
         rc = max(rc, 1)
@@ -795,7 +855,12 @@ def _notify_all(ca, found, a, out, owner="stall"):
 
 
 def _reconcile(ca, out, found, a):
-    """Borra las claves de SU owner que el detector ya no ve y resuelve ``tarea-muerta`` si se recupero."""
+    """Reconcilia las claves propias que ya no corresponden al estado observado.
+
+    Before: ``ca`` mantiene el ledger; ``out``, ``found`` y ``a`` describen ceguera, hallazgos y dry-run.
+    During: reconcilia solo prefijos no ciegos, borra claves ausentes y resuelve ``tarea-muerta`` recuperada.
+    After: deja el ledger reconciliado para owner ``stall`` y no devuelve ningun valor.
+    """
     blind = {
         "cupo-": out.get("ciego_cupo"),
         "cola-": out.get("ciego_cola"),

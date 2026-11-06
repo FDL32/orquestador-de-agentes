@@ -39,11 +39,21 @@ RC = {"NO_MEDIDO": 9, "HARD": 5, "FREEZE": 4, "AVISO": 3, "OK": 0}
 
 
 class NoMedidoError(Exception):
-    """La medicion no se pudo hacer: la causa va en el mensaje y el rc es 9."""
+    """Señala una medicion no realizada y conserva su causa.
+
+    Before: el llamador detecta una entrada ausente, invalida o no medible.
+    During: la excepcion transporta el mensaje de causa sin ejecutar logica adicional.
+    After: ``main`` puede convertirla en ``QUOTA NO_MEDIDO`` con rc 9.
+    """
 
 
 def _is_real(value):
-    """True para un int o float que no es bool ni NaN."""
+    """Comprueba si un valor es real admisible para la medicion.
+
+    Before: ``value`` puede proceder del roster o del monitor.
+    During: acepta ``int`` o ``float`` salvo ``bool`` y rechaza ``NaN``.
+    After: devuelve ``True`` para numeros no booleanos no-NaN y ``False`` para el resto.
+    """
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -52,14 +62,24 @@ def _is_real(value):
 
 
 def _is_unc(cand):
-    """True para una ruta de red (``\\\\srv\\r`` o ``\\\\?\\UNC\\srv\\r``); ``\\\\?\\C:`` es local."""
+    """Comprueba si una ruta es UNC y no la forma extendida local.
+
+    Before: ``cand`` es un ``Path`` construido desde el argumento del vuelo.
+    During: inspecciona ``cand.drive`` y excluye el patron ``\\?\\C:``.
+    After: devuelve ``True`` para rutas UNC de red y ``False`` para rutas locales.
+    """
     return cand.drive.startswith("\\\\") and not re.fullmatch(
         r"\\\\\?\\[A-Za-z]:", cand.drive
     )
 
 
 def _flight_dir(raw):
-    """Directorio del vuelo ABSOLUTO y existente (sin UNC); NoMedidoError con la causa si no."""
+    """Valida y devuelve el directorio absoluto del vuelo.
+
+    Before: ``raw`` es el argumento opcional de vuelo o su valor de entorno.
+    During: rechaza ausencia, UNC, rutas relativas y rutas que no sean directorios existentes.
+    After: devuelve el ``Path`` valido o lanza ``NoMedidoError`` con la causa concreta.
+    """
     if not raw:
         raise NoMedidoError(
             f"roster: flight-dir sin resolver (pasa --flight-dir o define {FLIGHT_DIR_ENV})"
@@ -94,7 +114,12 @@ def _roster_quota(flight_dir):
 
 
 def _thresholds(quota):
-    """(soft, hard, invalidos): un umbral no numerico, booleano, no finito o <= 0 cae al defecto."""
+    """Obtiene los umbrales soft y hard del bloque quota.
+
+    Before: ``quota`` es un diccionario del roster y puede contener tipos arbitrarios.
+    During: valida cada valor como real finito y positivo, sustituyendo invalidos por el defecto.
+    After: devuelve ``(soft, hard, invalid)`` y marca si algun valor fue sustituido.
+    """
     out, invalid = [], False
     for key, default in (
         ("soft_freeze_block_pct", SOFT_DEFAULT),
@@ -110,7 +135,12 @@ def _thresholds(quota):
 
 
 def _powershell():
-    """Ruta absoluta de PowerShell desde SystemRoot (nunca por PATH)."""
+    """Construye la ruta absoluta del PowerShell del sistema.
+
+    Before: ``SYSTEMROOT`` identifica la instalacion Windows del proceso.
+    During: toma esa variable y anade la ruta fija sin buscar ejecutables mediante ``PATH``.
+    After: devuelve un ``Path`` al ejecutable o lanza ``NoMedidoError`` si falta la variable.
+    """
     root = os.environ.get("SYSTEMROOT")
     if not root:
         raise NoMedidoError("monitor: SystemRoot ausente")
@@ -118,7 +148,12 @@ def _powershell():
 
 
 def _accounts(monitor):
-    """Cuentas del monitor: un dict NO vacio de dicts; NoMedidoError con la causa si no."""
+    """Ejecuta el monitor y valida su mapa de cuentas.
+
+    Before: ``monitor`` identifica el script o es un valor vacio no resoluble.
+    During: ejecuta PowerShell con ``-NoProfile -File monitor -Json``, parsea stdout y valida la forma.
+    After: devuelve el mapa valido o lanza ``NoMedidoError`` con la causa del fallo.
+    """
     if not monitor:
         raise NoMedidoError(
             f"monitor: sin resolver (pasa --monitor o define {MONITOR_ENV})"
@@ -146,7 +181,12 @@ def _accounts(monitor):
 
 
 def _measure(accounts):
-    """(peor porcentaje, partes de la linea, hay_dato_malo) sobre las cuentas del monitor."""
+    """Resume porcentajes y estados stale de las cuentas medidas.
+
+    Before: ``accounts`` es el diccionario validado por ``_accounts``.
+    During: lee porcentaje, stale y ventana, conserva cada cuenta como texto y calcula el peor porcentaje.
+    After: devuelve ``(worst, parts, bad)`` con el maximo, fragmentos y marca de dato malo.
+    """
     worst, parts, bad = 0, [], False
     for name, v in accounts.items():
         pct, stale = v.get("block_pct"), v.get("stale")
@@ -188,7 +228,12 @@ def _codex(probe, home):
 
 
 def _state(worst, bad, soft, hard):
-    """Estado por severidad: NO_MEDIDO > HARD > FREEZE > AVISO > OK."""
+    """Clasifica la medicion por severidad y umbrales configurados.
+
+    Before: ``worst`` es el maximo, ``bad`` indica dato no medible y los umbrales son positivos.
+    During: aplica el orden NO_MEDIDO, HARD, FREEZE, AVISO y OK.
+    After: devuelve exactamente uno de los estados presentes en ``RC``.
+    """
     if bad:
         return "NO_MEDIDO"
     if worst >= hard:
@@ -199,6 +244,12 @@ def _state(worst, bad, soft, hard):
 
 
 def _tick(a):
+    """Ejecuta una medicion completa de cupo y escribe su linea de resultado.
+
+    Before: ``a`` contiene los argumentos CLI; vuelo, roster y monitor deben ser resolubles.
+    During: resuelve roster y umbrales, ejecuta el monitor, anade la sonda informativa y clasifica.
+    After: devuelve el rc del estado; ``NoMedidoError`` sube al ``main`` y no se modifica ningun fichero.
+    """
     env = os.environ
     quota = _roster_quota(_flight_dir(a.flight_dir or env.get(FLIGHT_DIR_ENV)))
     soft, hard, invalid = _thresholds(quota)
