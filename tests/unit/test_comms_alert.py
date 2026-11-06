@@ -3189,6 +3189,21 @@ def test_153n_redacta_patrones_cerrados_de_secretos(ca, value):
 @pytest.mark.parametrize(
     "value",
     [
+        "api_key = abcdEFGH1234",
+        "api_key  =  secretvalueXYZ",
+        "API_KEY   =   abc12345678",
+        "apikey = rotation12",
+        "api_key\t=\tabcdEFGH1234",
+    ],
+)
+def test_153n_api_key_con_espacios_alrededor_del_separador_se_redacta(ca, value):
+    assert "key" not in ca.m.redact(value).lower()
+    assert "abcd" not in ca.m.redact(value).lower()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
         "risk-assessment",
         "disk-1234abcdefgh",
         "task-force",

@@ -118,7 +118,7 @@ _RE_SPACED_SECRET = re.compile(
     r"[A-Za-z0-9._~+/=-]{8,}"
 )
 _RE_API_SECRET = re.compile(
-    r"(?i)(?<![A-Za-z0-9_-])api[-_]?key(?:[=:]\s*|\s+(?=[A-Za-z0-9._~+/=-]*[0-9]))"
+    r"(?i)(?<![A-Za-z0-9_-])api[-_]?key(?:\s*[=:]\s*|\s+(?=[A-Za-z0-9._~+/=-]*[0-9]))"
     r"[A-Za-z0-9._~+/=-]{8,}"
 )
 _RE_PREFIX_SECRET = re.compile(
