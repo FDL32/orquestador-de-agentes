@@ -919,7 +919,8 @@ def test_fila47_forma_de_la_orden_absoluta_sin_bypass_sin_ventana(
         str(mod.NOTIFY),
     ]
     assert cap["kw"]["timeout"] == 60
-    assert cap["kw"]["creationflags"] == (mod.NO_WINDOW if os.name == "nt" else 0)
+    expected_flags = 0x08000000 if os.name == "nt" else 0
+    assert cap["kw"]["creationflags"] == expected_flags
 
 
 def test_fila48_el_rc_del_proceso_se_devuelve_tal_cual(tmp_path, monkeypatch):
@@ -1899,7 +1900,10 @@ def test_fila51_alert_limita_a_una_vez_cada_30_min_por_clave(ca):
     assert ca.m.alert("k", "w", "e", False, False) == 0
     assert ca.m.alert("k", "w", "e", False, False) == 10
     assert len(ca.sent) == 1
-    ca.clock.now += 31 * M
+    ca.clock.now += 29 * M
+    assert ca.m.alert("k", "w", "e", False, False) == 10
+    assert len(ca.sent) == 1
+    ca.clock.now += M
     assert ca.m.alert("k", "w", "e", False, False) == 0
     assert len(ca.sent) == 2
 
@@ -2310,6 +2314,14 @@ def test_a1_fila_ajena_rota_que_solo_menciona_comms_alert_cuenta(ca):
     ]
     _write_ledger(ca, linea.encode())
     assert ca.m.scan(True, False) == 0
+
+
+def test_r4d20_fila_ajena_rota_con_resultado_vocabulario_sin_fail_cuenta(ca):
+    """R4-D20: resultado de fallo sin la palabra FAIL sigue contando en linea rota."""
+    linea = '{"by":"CO-24","resultado":"thread_not_found"\n'
+    assert ca.m._scan_chunk(linea, ca.m._failure_resultados()) == [
+        {"to": "?", "status": "FAIL (linea no parseable)"}
+    ]
 
 
 @pytest.mark.parametrize(

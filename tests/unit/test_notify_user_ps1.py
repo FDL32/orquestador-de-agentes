@@ -145,11 +145,11 @@ def test_fila77_sin_banner_ni_variables_notify_y_con_los_parametros_exactos():
         open(f"{PS1}:Zone.Identifier", "rb").close()
 
 
-def test_fila77b_ningun_script_prompt_o_skill_versionado_pasa_simulate_toast_failure():
-    """D26: el parametro solo existe para pruebas; un llamador que lo pasara dejaria al usuario SIN aviso."""
+def _simulate_toast_failure_offenders(root):
+    """Censa fuentes versionadas de las tres carpetas operativas."""
     ofensores = []
     for carpeta in ("scripts", "prompts", "skills"):
-        for p in (REPO / carpeta).rglob("*"):
+        for p in (root / carpeta).rglob("*"):
             if (
                 not p.is_file()
                 or "__pycache__" in p.parts
@@ -171,8 +171,25 @@ def test_fila77b_ningun_script_prompt_o_skill_versionado_pasa_simulate_toast_fai
             if "SimulateToastFailure" in p.read_text(
                 encoding="utf-8", errors="replace"
             ):
-                ofensores.append(p.relative_to(REPO).as_posix())
-    assert ofensores == []
+                ofensores.append(p.relative_to(root).as_posix())
+    return ofensores
+
+
+def test_fila77b_ningun_script_prompt_o_skill_versionado_pasa_simulate_toast_failure(
+    tmp_path,
+):
+    """D26: el parametro solo existe para pruebas; un llamador que lo pasara dejaria al usuario SIN aviso."""
+    assert _simulate_toast_failure_offenders(REPO) == []
+
+    synthetic = tmp_path / "scripts" / "synthetic_caller.py"
+    synthetic.parent.mkdir()
+    synthetic.write_text("# -SimulateToastFailure\n", encoding="utf-8")
+    assert _simulate_toast_failure_offenders(tmp_path) == [
+        "scripts/synthetic_caller.py"
+    ]
+
+    synthetic.write_text("# no toast simulation\n", encoding="utf-8")
+    assert _simulate_toast_failure_offenders(tmp_path) == []
 
 
 def _xmlonly(*args):
