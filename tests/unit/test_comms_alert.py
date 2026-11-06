@@ -1978,10 +1978,82 @@ def test_153m_scan_estado_corrupto_relee_y_reescribe_un_aviso(ca):
     assert ca.m.scan(False, False) == 0
     assert len(ca.sent) == 1
     assert "estado ilegible" in ca.sent[0][1]
+    assert "IM-74" in ca.sent[0][1]
     repaired = ca.m.load_state()
     assert repaired["_ledger_prefix_n"] > 0
     assert repaired["_last_scan_offset"] == len(_fail_row(a="IM-74"))
     ca.sent.clear()
+    assert ca.m.scan(False, False) == 10
+    assert ca.sent == []
+
+
+def test_153m_scan_estado_corrupto_sin_fail_avisa_y_ausente_no(ca):
+    """P2: corrupción sin FAIL sigue avisando; ausencia en primer uso queda silenciosa."""
+    enviado = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    ca.m.LEDGER.write_bytes(enviado)
+    ca.m.STATE.write_bytes(b"not-json")
+    assert ca.m.scan(False, False) == 0
+    assert len(ca.sent) == 1
+    assert "estado ilegible" in ca.sent[0][1]
+
+    control = ca.dir / "estado-ausente-control"
+    control.mkdir()
+    ca.m.configure(str(control))
+    ca.m.LEDGER.write_bytes(enviado)
+    ca.sent.clear()
+    assert ca.m.scan(False, False) == 10
+    assert ca.sent == []
+
+
+def test_153m_identidad_hash_detecta_mismo_tamano_y_mtime(ca):
+    """P1: el hash de prefijo detecta contenido distinto con tamaño y mtime_ns iguales."""
+    original = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    replacement = b'{  "from":"CO-24","a":"mcp:x","resultado":"error"}\n'
+    assert len(original) == len(replacement)
+    ca.m.LEDGER.write_bytes(original)
+    mtime_ns = ca.m.LEDGER.stat().st_mtime_ns
+    assert ca.m.scan(False, False) == 10
+    ca.m.LEDGER.write_bytes(replacement)
+    os.utime(ca.m.LEDGER, ns=(mtime_ns, mtime_ns))
+    assert ca.m.scan(True, False) == 0
+    assert "mcp:x" in ca.sent[-1][1]
+
+    control = ca.dir / "hash-control"
+    control.mkdir()
+    ca.m.configure(str(control))
+    ca.m.LEDGER.write_bytes(original)
+    control_mtime = ca.m.LEDGER.stat().st_mtime_ns
+    assert ca.m.scan(False, False) == 10
+    ca.sent.clear()
+    ca.m.LEDGER.write_bytes(original)
+    os.utime(ca.m.LEDGER, ns=(control_mtime, control_mtime))
+    assert ca.m.scan(False, False) == 10
+    assert ca.sent == []
+
+
+def test_153m_identidad_mtime_detecta_cambio_despues_del_prefijo(ca):
+    """P1: mtime_ns detecta cambios tras 4096 bytes; mismo mtime y prefijo es límite conocido."""
+    prefix = b"x" * 4096
+    enviado = b'{"from":"CO-24","a":"IM-74","resultado":"enviado"}\n'
+    fallo = b'  {"from":"CO-24","a":"IM-74","resultado":"error"}\n'
+    assert len(enviado) == len(fallo)
+    ca.m.LEDGER.write_bytes(prefix + enviado)
+    mtime_ns = ca.m.LEDGER.stat().st_mtime_ns
+    assert ca.m.scan(False, False) == 10
+    ca.m.LEDGER.write_bytes(prefix + fallo)
+    os.utime(ca.m.LEDGER, ns=(mtime_ns + 1_000_000, mtime_ns + 1_000_000))
+    assert ca.m.scan(True, False) == 0
+    assert "IM-74" in ca.sent[-1][1]
+
+    control = ca.dir / "mtime-control"
+    control.mkdir()
+    ca.m.configure(str(control))
+    ca.m.LEDGER.write_bytes(prefix + enviado)
+    control_mtime = ca.m.LEDGER.stat().st_mtime_ns
+    assert ca.m.scan(False, False) == 10
+    ca.sent.clear()
+    ca.m.LEDGER.write_bytes(prefix + enviado)
+    os.utime(ca.m.LEDGER, ns=(control_mtime, control_mtime))
     assert ca.m.scan(False, False) == 10
     assert ca.sent == []
 
