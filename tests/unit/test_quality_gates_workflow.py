@@ -6,6 +6,8 @@ stay serial. These barriers fail if the pilot disappears OR if the canonical
 run accidentally adopts xdist.
 """
 
+import copy
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,38 @@ def get_repo_root() -> Path:
 def load_yaml_file(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def assert_ruff_steps_are_readonly(workflow: dict[str, Any]) -> None:
+    ruff_steps: list[tuple[str, list[str]]] = []
+    for job_name, job in workflow.get("jobs", {}).items():
+        for step in job.get("steps", []):
+            run = step.get("run")
+            if not isinstance(run, str):
+                continue
+            tokens = shlex.split(run)
+            if "ruff" in tokens:
+                ruff_steps.append((job_name, tokens))
+
+    assert ruff_steps, "no se encontró ningún paso que invoque el token ruff"
+    forbidden = {"--fix", "--unsafe-fixes", "--fix-only"}
+    for job_name, tokens in ruff_steps:
+        assert not forbidden.intersection(tokens), (
+            f"el paso Ruff del job {job_name!r} contiene una opción de autofix: "
+            f"{tokens!r}"
+        )
+
+    lint_steps = [
+        tokens
+        for _, tokens in ruff_steps
+        if any(part == "check" for part in tokens[tokens.index("ruff") + 1 :])
+    ]
+    assert len(lint_steps) == 1, (
+        f"debe existir exactamente un paso de lint Ruff; encontrados {len(lint_steps)}"
+    )
+    assert lint_steps[0] == ["uv", "run", "ruff", "check", "."], (
+        "el paso de lint Ruff debe ser exactamente 'uv run ruff check .'"
+    )
 
 
 class TestQualityGatesXdistPilot:
@@ -89,13 +123,34 @@ class TestQualityGatesXdistPilot:
         assert step.get("continue-on-error", False) is False
 
     def test_ruff_lint_step_is_exactly_readonly(self, workflow):
-        """The workflow Ruff gate must not inherit or request autofix."""
-        steps = [
-            step
-            for step in workflow["jobs"]["quality-gates"]["steps"]
-            if "ruff check" in str(step.get("run", ""))
-        ]
-        assert len(steps) == 1, "debe existir exactamente un paso ruff check"
-        run = str(steps[0]["run"]).strip()
-        assert run == "uv run ruff check ."
-        assert "--fix" not in run
+        """The real workflow has only a read-only, exact Ruff lint step."""
+        assert_ruff_steps_are_readonly(workflow)
+
+    @pytest.mark.parametrize(
+        ("case", "expected_reason"),
+        [
+            ("E1", "opción de autofix"),
+            ("E2", "opción de autofix"),
+            ("E4", "opción de autofix"),
+            ("second-lint", "exactamente un paso de lint"),
+        ],
+    )
+    def test_ruff_workflow_rejects_autofix_and_duplicate_lint(
+        self, workflow, case, expected_reason
+    ):
+        mutated = copy.deepcopy(workflow)
+        if case == "E4":
+            mutated["jobs"]["autofix"] = {
+                "runs-on": "ubuntu-latest",
+                "steps": [{"run": "uv run ruff check --fix ."}],
+            }
+        else:
+            run = {
+                "E1": "uv run ruff --config pyproject.toml check --fix .",
+                "E2": "uv run ruff check --fix .",
+                "second-lint": "uv run ruff --config x check",
+            }[case]
+            mutated["jobs"]["quality-gates"]["steps"].append({"run": run})
+
+        with pytest.raises(AssertionError, match=expected_reason):
+            assert_ruff_steps_are_readonly(mutated)
