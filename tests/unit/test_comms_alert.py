@@ -1859,8 +1859,8 @@ def test_deuda2_event_con_registro_ilegible_no_rompe_y_el_urgente_sale(
 
 def test_deuda2_ack_y_reconcile_con_registro_ilegible(ca):
     ca.m.STATE.write_text('{"event:k": "ayer", "event:j": [1]}', encoding="utf-8")
-    assert ca.m.ack("k") == 0
-    assert ca.m.load_state()["event:k"]["acked"] is True
+    assert ca.m.ack("k") == 2
+    assert ca.m.load_state()["event:k"] == "ayer"
     assert ca.m.reconcile(("j",), set(), False, "stall") == ["j"]
 
 
@@ -1955,6 +1955,83 @@ def test_fila59_scan_offset_mayor_que_el_fichero_relee_desde_0_fail_closed(ca):
     _write_ledger(ca, fila, offset=len(fila))
     assert ca.m.scan(False, False) == 10
     assert ca.sent == []
+
+
+def test_153m_scan_reemplazo_mismo_tamano_relee_por_identidad(ca):
+    """P1: un ledger sustituido con tamaño igual al offset no puede quedar oculto."""
+    original = b'{"from":"CO-24","a":"mcp:x","resultado":"enviado"}\n'
+    replacement = b'{  "from":"CO-24","a":"mcp:x","resultado":"error"}\n'
+    assert len(original) == len(replacement)
+    ca.m.LEDGER.write_bytes(original)
+    assert ca.m.scan(False, False) == 10
+    assert ca.m.load_state()["_last_scan_offset"] == len(original)
+    ca.m.LEDGER.write_bytes(replacement)
+    assert ca.m.scan(True, False) == 0
+    assert len(ca.sent) == 1
+    assert "mcp:x" in ca.sent[0][1]
+
+
+def test_153m_scan_estado_corrupto_relee_y_reescribe_un_aviso(ca):
+    """P2: estado corrupto es fail-closed; ausencia sigue siendo primer uso silencioso."""
+    ca.m.LEDGER.write_bytes(_fail_row(a="IM-74"))
+    ca.m.STATE.write_bytes(b'{"_last_scan_offset":')
+    assert ca.m.scan(False, False) == 0
+    assert len(ca.sent) == 1
+    assert "estado ilegible" in ca.sent[0][1]
+    repaired = ca.m.load_state()
+    assert repaired["_ledger_prefix_n"] > 0
+    assert repaired["_last_scan_offset"] == len(_fail_row(a="IM-74"))
+    ca.sent.clear()
+    assert ca.m.scan(False, False) == 10
+    assert ca.sent == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_rc"),
+    [
+        (b"", 0),
+        (b"{", 0),
+        (b"[]", 0),
+        (b'{"_last_scan_offset": 0}', 0),
+    ],
+    ids=["vacio", "truncado", "tipo-equivocado", "valido-sin-salto-final"],
+)
+def test_153m_scan_formas_estado_ilegible_o_valido(ca, raw, expected_rc):
+    """P2: las formas hermanas se distinguen; un JSON válido sin salto conserva su offset."""
+    ca.m.LEDGER.write_bytes(_fail_row(a="IM-74"))
+    ca.m.STATE.write_bytes(raw)
+    assert ca.m.scan(False, False) == expected_rc
+    if raw == b'{"_last_scan_offset": 0}':
+        assert ca.sent and "IM-74" in ca.sent[0][1]
+    else:
+        assert ca.sent and "estado ilegible" in ca.sent[0][1]
+
+
+def test_153m_ack_registro_ilegible_no_muta_bytes(ca, capsys):
+    """P3: ack no puede reparar silenciosamente un registro ilegible."""
+    raw = b'{"event:k":{"level":"AVISO","acked":"false","last":"bad"}}'
+    ca.m.STATE.write_bytes(raw)
+    assert ca.m.ack("k") == 2
+    assert ca.m.STATE.read_bytes() == raw
+    assert "registro ilegible" in capsys.readouterr().err
+
+
+def test_153m_oserror_update_state_y_ledger_devuelve_rc2(ca, monkeypatch, capsys):
+    """P7: las rutas de producción convierten ambos OSError en rc 2 con causa."""
+    monkeypatch.setattr(
+        ca.m, "update_state", lambda fn: (_ for _ in ()).throw(OSError("state boom"))
+    )
+    assert ca.m.main(["--what", "x", "--ops-dir", str(ca.dir)]) == 2
+    assert "state boom" in capsys.readouterr().err
+
+    monkeypatch.setattr(ca.m, "update_state", lambda fn: None)
+    monkeypatch.setattr(
+        ca.m,
+        "ledger_append",
+        lambda row: (_ for _ in ()).throw(OSError("ledger boom")),
+    )
+    assert ca.m.main(["--what", "x", "--ops-dir", str(ca.dir)]) == 2
+    assert "ledger boom" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -3221,16 +3298,18 @@ def test_153n_redacta_sin_falsos_positivos_legitimos(ca, value):
 
 
 @pytest.mark.parametrize(
-    "value",
+    ("value", "expected"),
     [
-        "token abcDEF1234567890",
-        "api-key SYNTH12345678",
-        "api_key: SYNTH12345678",
-        "apikey SYNTH12345678",
+        ("token SYNTH12345678", "<secreto>"),
+        ("api-key SYNTH12345678", "<secreto>"),
+        ("api_key: SYNTH12345678", "<secreto>"),
+        ("apikey SYNTH12345678", "<secreto>"),
+        ("token validation failed in step 3", "token validation failed in step 3"),
+        ("apikey rotation scheduled", "apikey rotation scheduled"),
     ],
 )
-def test_153n_exige_digito_en_secretos_separados_por_espacio(ca, value):
-    assert "SYNTH" not in ca.m.redact(value)
+def test_153n_exige_digito_en_secretos_separados_por_espacio(ca, value, expected):
+    assert ca.m.redact(value) == expected
 
 
 @pytest.mark.parametrize(

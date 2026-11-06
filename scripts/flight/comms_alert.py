@@ -59,6 +59,7 @@ _CONTENTION = (errno.EACCES, errno.EDEADLK, errno.EAGAIN)
 NOTIFY = Path(__file__).resolve().with_name("notify_user.ps1")
 _HELPER_PATH = Path(__file__).resolve().with_name("send_with_ledger.py")
 _HELPER = None
+STATE_LOAD_STATUS = None
 # Las 9 claves fijas del ledger (las mismas que send_with_ledger.FIXED_KEYS; una prueba las compara).
 _ROW_KEYS = (
     "ts",
@@ -201,19 +202,30 @@ def _require_configured():
 
 
 def load_state():
-    """Lee el estado; ausente, ilegible, corrupto o no-diccionario = vacio.
+    """Lee el estado y distingue ausencia legitima de corrupcion.
 
     Before: STATE configurado.
-    During: lee con utf-8-sig (tolera BOM) y parsea JSON.
-    After: devuelve siempre un dict (vacio ante cualquier forma no valida, incluido un JSON tan
-        anidado que desborda la recursion del parser: avisa de nuevo).
+    During: lee con utf-8-sig (tolera BOM), parsea JSON y actualiza STATE_LOAD_STATUS a
+        ``missing`` para ausencia o ``corrupt`` para vacio, truncado, tipo equivocado, JSON
+        anidado que desborda la recursion o error de I/O.
+    After: devuelve un dict; ante corrupcion devuelve ``{}`` para que el llamante aplique
+        fail-closed, mientras el marcador permite conservar el primer uso legitimo ausente.
     """
+    global STATE_LOAD_STATUS
     _require_configured()
+    if not STATE.exists():
+        STATE_LOAD_STATUS = "missing"
+        return {}
     try:
         data = json.loads(STATE.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
+        STATE_LOAD_STATUS = "corrupt"
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        STATE_LOAD_STATUS = "corrupt"
+        return {}
+    STATE_LOAD_STATUS = None
+    return data
 
 
 def save_state(st):
@@ -371,7 +383,8 @@ def redact(text):
         forma/capitalizacion, ``\\\\?\\``, UNC y /home, /Users), mas la lista cerrada de secretos
         Authorization/Bearer, token con espacio, api-key/api_key/apikey y prefijos ghp_/gho_/ghu_/
         ghs_/ghr_/github_pat_/sk-. En las formas separadas por espacio el valor debe contener un
-        digito: se midieron como falsos positivos ``token validation failed in step 3``, ``token
+        digito (solo token y api-key/apikey separados por espacio; Bearer no usa esta condicion):
+        se midieron como falsos positivos ``token validation failed in step 3``, ``token
         verification pending``, ``token expiration soon`` y ``apikey rotation scheduled``; queda
         como falso negativo medido un valor solo de letras tras espacio. Las formas fuera de esta
         lista quedan como limite medido. Las rutas UNC y con unidad se redactan solo hasta el
@@ -379,7 +392,8 @@ def redact(text):
         normales tampoco se cubre. Tambien se midieron las sobre-redacciones ``Bearer
         authentication failed``, ``token 2026-11-06`` y ``Bearer 2026-11-06``. DESPUES acota a
         TEXT_LIMIT caracteres y revalida el sufijo para conservar idempotencia.
-    After: devuelve un str de como mucho TEXT_LIMIT caracteres; redact(redact(x)) == redact(x).
+    After: devuelve un str de como mucho TEXT_LIMIT caracteres; para los SECRETOS reconocidos,
+        redact(redact(x)) == redact(x). Las rutas pegadas pueden cambiar al aplicar dos veces.
     """
     out = _RE_THREAD.sub("mcp:<hilo>", str(text))
     out = _RE_UUID.sub("<uuid>", out)
@@ -681,8 +695,14 @@ def alert(key, what, error, force, dry):
 
 
 def _is_num(v):
-    """True solo para un numero real y razonable: int o float (un bool no cuenta), finito y de
-    modulo < 1e15 (NaN, +-inf y los enteros enormes hacen lanzar la aritmetica del reloj)."""
+    """True solo para un numero real y razonable, con cota absoluta 1e15.
+
+    Before: cualquier valor persistido que pueda representar un instante o contador.
+    During: acepta int/float finito salvo bool y rechaza NaN, infinito y valores enormes.
+        El censo de 2026-11-06 no encontro timestamps heredados en microsegundos; por eso la
+        cota 1e15 se conserva como NO-DEFECTO y no se amplia por especulacion.
+    After: devuelve bool sin lanzar, incluso para formas ilegibles.
+    """
     return isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) < 1e15
 
 
@@ -839,9 +859,13 @@ def mark_seen(key, level, owner=None, dry=False):
 
 def ack(key, dry=False):
     """Reconocida la causa: no se repite mientras el detector la siga viendo."""
-    if "event:" + key not in load_state():
+    state = load_state()
+    if "event:" + key not in state:
         print(f"sin registro de {key}")
         return 10
+    if _rec(state["event:" + key]) is None:
+        print(f"ack FALLO: registro ilegible para {key}", file=sys.stderr)
+        return 2
     if not dry:
 
         def f(s):
@@ -1161,7 +1185,10 @@ def _failure_resultados():
 def _scan_failure(d, failures):
     """Convierte una fila ajena del ledger en un fallo ``{to, status}`` o None (D15)."""
     verdict = str(d.get("resultado") or d.get("status") or d.get("result") or "")
-    if not (verdict.upper().startswith("FAIL") or verdict in failures):
+    folded = verdict.casefold()
+    if not (
+        folded.startswith("fail") or folded in {item.casefold() for item in failures}
+    ):
         return None
     pna = "parent_not_active" in (str(d.get("error")) + verdict)
     return {
@@ -1180,6 +1207,8 @@ def _split_line(line):
     entera es un ``frag``.
     """
     dec = json.JSONDecoder()
+    plausible_starts = [match.start() for match in _RE_OBJ_START.finditer(line)]
+    start_index = 0
     out, pos, n = [], 0, len(line)
     while pos < n:
         if line[pos].isspace():
@@ -1188,13 +1217,40 @@ def _split_line(line):
         try:
             obj, pos = dec.raw_decode(line, pos)
         except (ValueError, RecursionError):
-            nxt = _RE_OBJ_START.search(line, pos + 1)
-            end = n if nxt is None else nxt.start()
+            while (
+                start_index < len(plausible_starts)
+                and plausible_starts[start_index] <= pos
+            ):
+                start_index += 1
+            nxt = (
+                plausible_starts[start_index]
+                if start_index < len(plausible_starts)
+                else None
+            )
+            end = n if nxt is None else nxt
             out.append(("frag", line[pos:end]))
             pos = end
             continue
         out.append(("obj", obj))
     return out
+
+
+def _ledger_identity():
+    """Calcula la identidad estable del ledger para detectar sustituciones silenciosas.
+
+    Before: LEDGER configurado y accesible.
+    During: obtiene tamaño y mtime_ns del fichero y hashea como máximo sus primeros 4096 bytes.
+    After: devuelve un dict serializable; propaga OSError para que scan devuelva rc 2.
+    """
+    stat = LEDGER.stat()
+    with open(LEDGER, "rb") as fh:
+        prefix = fh.read(min(stat.st_size, 4096))
+    return {
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "prefix_sha256": hashlib.sha256(prefix).hexdigest(),
+        "prefix_n": len(prefix),
+    }
 
 
 def _scan_chunk(chunk, failures):
@@ -1206,7 +1262,9 @@ def _scan_chunk(chunk, failures):
     (no por la palabra suelta: una fila ajena rota que solo MENCIONA comms_alert sigue contando).
     LIMITE DECLARADO: un UNICO fragmento que mezcla una cabecera propia y una cola ajena sin una segunda
     llave de objeto (``{"by":"comms_alert",...FAIL``) se descarta entero como propio, y el FAIL ajeno
-    queda oculto; exige la carrera de escritura ya declarada en ledger_append.
+    queda oculto; exige la carrera de escritura ya declarada en ledger_append. Como compromiso D18/D19,
+    las anclas plausibles priorizan no perder la cola ajena, y se acepta/declarara el falso positivo
+    residual cuando una llave seguida de comillas aparece dentro de una nota propia rota.
     """
     fused = re.compile(
         r'"resultado"\s*:\s*"(?:'
@@ -1231,7 +1289,7 @@ def _scan_chunk(chunk, failures):
     return new
 
 
-def scan(force, dry):
+def scan(force, dry):  # noqa: C901 - scan keeps the fail-closed cursor transitions together.
     """Mira solo los bytes COMPLETOS (hasta el ultimo salto de linea) del ledger posteriores al ultimo escaneo.
 
     Before: configurado; ``send_with_ledger.py`` junto a este fichero.
@@ -1242,20 +1300,34 @@ def scan(force, dry):
         agrupado (el limite de 30 min acota el coste). DIFERENCIA AUTORIZADA frente a la version
         vigente, que saltaba al final y descartaba en silencio las filas FAIL no escaneadas (falso
         negativo = parada sin aviso); antes un offset no entero daba TypeError sin aviso.
-        LIMITE DECLARADO: solo se detecta un ledger MAS CORTO que el offset; un ledger sustituido por
-        otro de tamano >= offset NO se detecta (hoy el ledger solo crece por append; la identidad del
-        fichero con tamano+mtime+hash queda diferida, D8).
+        La identidad persistida es tamaño + mtime_ns + SHA-256 de los primeros 4096 bytes; una
+        sustitucion con tamaño >= offset y distinta identidad relee desde 0 y agrupa un unico aviso.
+        Un estado viejo sin identidad adopta la actual conservando el offset si sigue dentro del
+        fichero; un estado corrupto relee desde 0, avisa ``estado ilegible`` y se reescribe.
     After: rc 0 avisado, 10 nada nuevo o agrupado, 2 aviso fallido, ledger ausente/ilegible o helper
         no cargable (con la causa en la salida; nunca "sin novedad").
     """
     try:
         failures = _failure_resultados()
-        size = LEDGER.stat().st_size
+        identity = _ledger_identity()
+        size = identity["size"]
     except (HelperError, OSError) as exc:
         print(f"scan FALLO: {exc}")
         return 2
-    offset = load_state().get("_last_scan_offset")
-    if offset is None:
+    state = load_state()
+    state_corrupt = STATE_LOAD_STATUS == "corrupt"
+    stored_identity = {
+        "size": state.get("_ledger_size"),
+        "mtime_ns": state.get("_ledger_mtime_ns"),
+        "prefix_sha256": state.get("_ledger_prefix_sha256"),
+        "prefix_n": state.get("_ledger_prefix_n"),
+    }
+    has_identity = all(value is not None for value in stored_identity.values())
+    replaced = has_identity and stored_identity != identity
+    offset = state.get("_last_scan_offset")
+    if state_corrupt or replaced:
+        offset = 0
+    elif offset is None:
         offset = size
     elif not _is_int(offset) or offset < 0 or offset > size:
         offset = 0  # estado basura o ledger encogido/sustituido: se relee desde el principio (un aviso agrupado), nunca traceback ni filas FAIL descartadas
@@ -1275,16 +1347,32 @@ def scan(force, dry):
     new = _scan_chunk(chunk, failures)
 
     def setoff(s):
+        current_identity = _ledger_identity()
         s["_last_scan_offset"] = new_off
+        s["_ledger_size"] = current_identity["size"]
+        s["_ledger_mtime_ns"] = current_identity["mtime_ns"]
+        s["_ledger_prefix_sha256"] = current_identity["prefix_sha256"]
+        s["_ledger_prefix_n"] = current_identity["prefix_n"]
         s.pop("_last_scan_ts", None)
 
+    if state_corrupt and not new:
+        rc = alert(
+            "scan", "estado ilegible; 0 envios fallidos", "estado ilegible", force, dry
+        )
+        if rc != 2 and not dry:
+            update_state(setoff)
+        return rc
     if not new:
         if not dry:
             update_state(setoff)
         print(f"sin FAIL nuevos en el ledger (desde la posicion {offset})")
         return 10
-    what = f"{len(new)} envio(s) fallido(s), ultimo hacia {new[-1]['to']}"
-    rc = alert("scan", what, new[-1]["status"], force, dry)
+    prefix = "estado ilegible; " if state_corrupt else ""
+    what = f"{prefix}{len(new)} envio(s) fallido(s), ultimo hacia {new[-1]['to']}"
+    error = (
+        "estado ilegible; " + new[-1]["status"] if state_corrupt else new[-1]["status"]
+    )
+    rc = alert("scan", what, error, force, dry)
     # rc 10 = agrupado con el aviso de hace menos de 30 min: se consume; solo un aviso FALLIDO (rc 2) deja el offset donde estaba
     if rc != 2 and not dry:
         update_state(setoff)
@@ -1372,62 +1460,68 @@ def main(argv=None):  # noqa: C901 - CLI dispatch keeps legacy and GO paths expl
         or (a.owner is not None and a.event is None)
         or a.sin_efecto
     )
-    if go_mode:
-        mixed = (
-            a.event
-            or a.ack
-            or a.scan
-            or (a.resolve and a.go_id is not None)
-            or a.sin_efecto
-            or a.error != "parent_not_active"
-        )
-        if a.resolve and (a.event or a.ack or a.scan or a.go_id is not None):
-            print(
-                "--resolve no se combina con --event/--ack/--scan/--go-id",
-                file=sys.stderr,
+    try:
+        if go_mode:
+            mixed = (
+                a.event
+                or a.ack
+                or a.scan
+                or (a.resolve and a.go_id is not None)
+                or a.sin_efecto
+                or a.error != "parent_not_active"
             )
-            return 2
-        if a.go_id is None and not a.resolve:
-            print(
-                "modo GO incompleto: --flight-dir/--owner/--sin-efecto exige --go-id o --resolve",
-                file=sys.stderr,
-            )
-            return 2
-        if a.go_id is not None and (not a.what or not a.flight_dir or mixed):
-            print(
-                "modo GO incompleto o mezclado: --go-id exige --what, --flight-dir y --owner",
-                file=sys.stderr,
-            )
-            return 2
-        if a.resolve and not a.flight_dir:
-            return resolve(a.resolve, a.dry_run)
+            if a.resolve and (a.event or a.ack or a.scan or a.go_id is not None):
+                print(
+                    "--resolve no se combina con --event/--ack/--scan/--go-id",
+                    file=sys.stderr,
+                )
+                return 2
+            if a.go_id is None and not a.resolve:
+                print(
+                    "modo GO incompleto: --flight-dir/--owner/--sin-efecto exige --go-id o --resolve",
+                    file=sys.stderr,
+                )
+                return 2
+            if a.go_id is not None and (not a.what or not a.flight_dir or mixed):
+                print(
+                    "modo GO incompleto o mezclado: --go-id exige --what, --flight-dir y --owner",
+                    file=sys.stderr,
+                )
+                return 2
+            if a.resolve and not a.flight_dir:
+                return resolve(a.resolve, a.dry_run)
+            if a.resolve:
+                return go_resolve(
+                    a.resolve, a.flight_dir, a.owner, a.dry_run, a.sin_efecto
+                )
+            return go_request(a.go_id, a.what, a.flight_dir, a.owner, a.dry_run)
         if a.resolve:
-            return go_resolve(a.resolve, a.flight_dir, a.owner, a.dry_run, a.sin_efecto)
-        return go_request(a.go_id, a.what, a.flight_dir, a.owner, a.dry_run)
-    if a.resolve:
-        return resolve(a.resolve, a.dry_run)
-    if a.ack:
-        return ack(a.ack, a.dry_run)
-    if a.scan:
-        return scan(a.force, a.dry_run)
-    if a.event:
-        if not a.what:
-            ap.error(
-                "--event exige --what (una frase con lo que hace falta del usuario)"
+            return resolve(a.resolve, a.dry_run)
+        if a.ack:
+            return ack(a.ack, a.dry_run)
+        if a.scan:
+            return scan(a.force, a.dry_run)
+        if a.event:
+            if not a.what:
+                ap.error(
+                    "--event exige --what (una frase con lo que hace falta del usuario)"
+                )
+            return event(
+                a.event,
+                a.level,
+                a.title,
+                a.what,
+                a.force,
+                a.dry_run,
+                owner="manual",
+                session_code=a.owner,
             )
-        return event(
-            a.event,
-            a.level,
-            a.title,
-            a.what,
-            a.force,
-            a.dry_run,
-            owner="manual",
-            session_code=a.owner,
-        )
-    if not a.what:
-        ap.error("falta --what o --scan")
-    return alert(a.error, a.what, a.error, a.force, a.dry_run)
+        if not a.what:
+            ap.error("falta --what o --scan")
+        return alert(a.error, a.what, a.error, a.force, a.dry_run)
+    except OSError as exc:
+        print(f"comms_alert: I/O: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
