@@ -218,8 +218,28 @@ def test_equiv_se_informa_aparte_y_no_es_superviviente():
             executor=lambda _repo, _env, _tests: (0, "equivalente"),
         )
     assert result == 0
-    assert "EQUIVALENTE N69" in output.getvalue()
-    assert "supervivientes: ninguno" in output.getvalue()
+    text = output.getvalue()
+    assert "EQUIVALENTE N69" in text
+    assert "SURVIVE N69" not in text
+    assert "supervivientes: ninguno" in text
+
+
+def test_todos_los_equivalentes_se_informan_sin_supervivientes():
+    module = _load_harness()
+    assert module.RETIRED == {}
+    for mid in module.EQUIV:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            assert (
+                module.main(
+                    ["--repo", str(ROOT), "--ids", mid],
+                    executor=lambda _repo, _env, _tests: (0, "equivalente"),
+                )
+                == 0
+            )
+        text = output.getvalue()
+        assert f"EQUIVALENTE {mid}" in text
+        assert f"SURVIVE {mid}" not in text
 
 
 def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina(tmp_path):
@@ -353,7 +373,9 @@ def test_focal_por_objetivo_y_tests_explicitos():
 
 def test_excepcion_del_ejecutor_limpia_directorio_temporal():
     module = _load_harness()
-    before = _tmp_dirs("mutate_detectors_")
+    flight = ROOT / "scripts" / "flight"
+    before_tree = _tree(flight)
+    before_tmp = _tmp_dirs("mutate_detectors_")
     mutation = next(item for item in module.MUT if item[0] == "E7")
 
     def raising(_repo, _env, _tests):
@@ -365,7 +387,8 @@ def test_excepcion_del_ejecutor_limpia_directorio_temporal():
         pass
     else:
         raise AssertionError("se esperaba la excepción del ejecutor")
-    assert _tmp_dirs("mutate_detectors_") == before
+    assert _tree(flight) == before_tree
+    assert _tmp_dirs("mutate_detectors_") == before_tmp
 
 
 def test_flags_detectores_controlan_rutas_distintas():

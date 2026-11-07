@@ -979,16 +979,19 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
             return 0 if rc == 0 else 1
         if rc == 99:
             timeouts.append(mid)
+            print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
         elif label == "KILLED":
             killed += 1
+            print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
         elif label == "SURVIVE":
             if mid in EQUIV:
                 print(f"EQUIVALENTE {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
             else:
                 survivors.append(mid)
+                print(f"SURVIVE {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
         else:
             errors.append((mid, rc))
-        print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
+            print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
     print(
         f"RESUMEN: matadas {killed}/{len(mutations)}; timeouts: {timeouts or 'ninguno'}; "
         f"errores: {errors or 'ninguno'}; supervivientes: {survivors or 'ninguno'}"

@@ -119,8 +119,13 @@ def test_timeout_is_not_a_kill_and_is_not_green():
 
 def test_visible_mutations_are_opt_in_even_when_selected_by_id():
     module = _load()
-    assert not any(item[0] == "SJ1" for item in module._selected("all", "SJ1", False))
-    assert any(item[0] == "SJ1" for item in module._selected("all", "SJ1", True))
+    visible_ids = {"SJ1", "N56b", "N56c"}
+    for mid in visible_ids:
+        assert not any(item[0] == mid for item in module._selected("all", "", False))
+        assert not any(item[0] == mid for item in module._selected("all", mid, False))
+        assert any(item[0] == mid for item in module._selected("all", mid, True))
+    ordinary = next(item[0] for item in module.MUT if item[0] not in visible_ids)
+    assert any(item[0] == ordinary for item in module._selected("all", ordinary, False))
 
 
 def _tree(root):
