@@ -22,16 +22,42 @@ def _load():
 
 def test_import_has_no_cli_side_effects():
     module = _load()
-    assert module.RETIRED
+    assert module.RETIRED == {}
     assert len(module.MUT) == 130
 
 
 def test_validate_only_covers_current_patterns_and_retired_reasons():
     module = _load()
     selected = module._selected("all", "", visible=True)
-    assert len(selected) == 106
+    assert len(selected) == 130
     assert all(item[0] not in module.RETIRED for item in selected)
-    assert all(reason.strip() for reason in module.RETIRED.values())
+    assert set(module.REANCHORED) == {
+        "N1",
+        "N2",
+        "E2",
+        "N7",
+        "X14",
+        "N30",
+        "N31",
+        "N32",
+        "D19b",
+        "N38",
+        "N42",
+        "N44",
+        "N46",
+        "D15a",
+        "Q4a",
+        "N50",
+        "N54",
+        "N56b",
+        "N56c",
+        "N57",
+        "SJ3",
+        "B1a",
+        "B1c",
+        "C1a",
+    }
+    assert all(reason.strip() for reason in module.REANCHORED.values())
     assert module.validate(ROOT, selected) == []
 
 

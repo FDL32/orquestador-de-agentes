@@ -22,31 +22,33 @@ MUT = []
 
 # Patrones medidos contra la base 9fbe371: los retirados no se silencian; cada
 # motivo es parte del contrato y se comprueba por el test focal.
-RETIRED = {
-    "N1": "obsoleto tras 159a: bloque de excepciones reescrito",
-    "N2": "obsoleto tras 159a: bloque de excepciones reescrito",
-    "E2": "obsoleto tras 159a: normalizacion de estado reescrita",
-    "N7": "obsoleto tras 159a: implementacion del lock reescrita",
-    "X14": "obsoleto tras 159a: parser reescrito",
-    "N30": "obsoleto tras 159a: escaneo reescrito",
-    "N31": "obsoleto tras 159a: escaneo reescrito",
-    "N32": "obsoleto tras 159a: escaneo reescrito",
-    "D19b": "duplicado en la base vigente; no es una mutacion univoca",
-    "N38": "duplicado en la base vigente; no es una mutacion univoca",
-    "N42": "obsoleto tras 159a: parser reescrito",
-    "N44": "obsoleto tras 159a: parser reescrito",
-    "N46": "obsoleto tras 159a: parser reescrito",
-    "D15a": "obsoleto tras 159a: resultado normalizado reescrito",
-    "Q4a": "obsoleto tras 159a: lectura de cola reescrita",
-    "N50": "duplicado en la base vigente; no es una mutacion univoca",
-    "N54": "obsoleto tras 159a: sanitizacion reescrita",
-    "N56b": "obsoleto: rama PowerShell sustituida",
-    "N56c": "obsoleto: rama PowerShell sustituida",
-    "N57": "obsoleto: rama PowerShell sustituida",
-    "SJ3": "obsoleto: rama PowerShell sustituida",
-    "B1a": "obsoleto tras 159a: split del ledger reescrito",
-    "B1c": "duplicado en la base vigente; no es una mutacion univoca",
-    "C1a": "obsoleto tras 159a: carga de estado reescrita",
+RETIRED = {}
+
+REANCHORED = {
+    "N1": "153m 567eb000: bloque except de load_state con STATE_LOAD_STATUS",
+    "N2": "153m 567eb000: bloque except de load_state con STATE_LOAD_STATUS",
+    "E2": "153m 567eb000: validacion de tipo de load_state",
+    "N7": "153m 567eb000: _try_lock usa seek y LK_NBLCK",
+    "X14": "153i vigente: rama ack de clave ausente",
+    "N30": "153i vigente: borrado de clave en reconcile",
+    "N31": "153i vigente: rama dry de reconcile",
+    "N32": "153i vigente: rama update_state de reconcile",
+    "D19b": "153i vigente: argumentos controlados de notify",
+    "N38": "153i vigente: fallo sin SYSTEMROOT en notify",
+    "N42": "153i vigente: persistencia despues de notify",
+    "N44": "153m 567eb000: offset inicial de scan",
+    "N46": "153m 567eb000: normalizacion folded del resultado",
+    "D15a": "153m 567eb000: filtro folded de resultados",
+    "Q4a": "153m 567eb000: error de identidad antes de scan",
+    "N50": "153i vigente: dispatch resolve legacy",
+    "N54": "153n: retorno de redact despues de truncar",
+    "N56b": "153t 75049573: rama de flash de notify_user.ps1",
+    "N56c": "153t 75049573: rama de beep de notify_user.ps1",
+    "N57": "153t 75049573: inicializacion de salida de notify_user.ps1",
+    "SJ3": "153i vigente: salida flash_ventanas de notify_user.ps1",
+    "B1a": "153m: resincronizacion de _split_line con plausible_starts",
+    "B1c": "153m: captura ValueError/RecursionError de fragmento",
+    "C1a": "153m 567eb000: estado no-dict de load_state",
 }
 
 
@@ -58,14 +60,14 @@ def m(mid, box, pattern, repl, target="comms_alert.py"):
 m(
     "N1",
     "1A",
-    "    except (OSError, ValueError, RecursionError):\n        return {}\n    return data if",
-    "    except (ValueError, RecursionError):\n        return {}\n    return data if",
+    'try:\n        data = json.loads(STATE.read_text(encoding="utf-8-sig"))\n    except (OSError, ValueError, RecursionError):',
+    'try:\n        data = json.loads(STATE.read_text(encoding="utf-8-sig"))\n    except (OSError, ValueError):',
 )
 m(
     "N2",
     "1A",
-    "    except (OSError, ValueError, RecursionError):\n        return {}\n    return data if",
-    "    except (OSError, RecursionError):\n        return {}\n    return data if",
+    '    except (OSError, ValueError, RecursionError):\n        STATE_LOAD_STATUS = "corrupt"\n        return {}\n    if not isinstance(data, dict):',
+    '    except (OSError, RecursionError):\n        STATE_LOAD_STATUS = "corrupt"\n        return {}\n    if not isinstance(data, dict):',
 )
 m(
     "E1",
@@ -73,7 +75,12 @@ m(
     'STATE.read_text(encoding="utf-8-sig")',
     'STATE.read_text(encoding="utf-8")',
 )
-m("E2", "1A", "    return data if isinstance(data, dict) else {}", "    return data")
+m(
+    "E2",
+    "1A",
+    '    if not isinstance(data, dict):\n        STATE_LOAD_STATUS = "corrupt"\n        return {}\n    STATE_LOAD_STATUS = None\n    return data',
+    '    if False:\n        STATE_LOAD_STATUS = "corrupt"\n        return {}\n    STATE_LOAD_STATUS = None\n    return data',
+)
 m(
     "N3",
     "1A",
@@ -107,8 +114,8 @@ m(
 m(
     "N7",
     "1A",
-    '(1 byte en el offset 0) SIN esperar; OSError si no."""\n    fh.seek(0)',
-    '(1 byte en el offset 0) SIN esperar; OSError si no."""\n    fh.seek(os.getpid() % 1000 + 1)',
+    "    fh.seek(0)\n    if msvcrt is not None:\n        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)",
+    "    fh.seek(1)\n    if msvcrt is not None:\n        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)",
 )
 m("N8", "1A", 'self.fh = open(self.path, "a+b")', 'self.fh = open(self.path, "wb")')
 m(
@@ -237,8 +244,8 @@ m(
 m(
     "X14",
     "1A",
-    '        print(f"sin registro de {key}")\n        return 10\n    if not dry:\n\n        def f(s):',
-    '        print(f"sin registro de {key}")\n        pass\n    if not dry:\n\n        def f(s):',
+    '    if "event:" + key not in state:\n        print(f"sin registro de {key}")\n        return 10',
+    '    if "event:" + key not in state:\n        print(f"sin registro de {key}")\n        return 0',
 )
 m(
     "N28",
@@ -255,14 +262,14 @@ m(
 m(
     "N30",
     "1A",
-    '        print(f"sin registro de {key}")\n        return 10\n    if not dry:\n        update_state(lambda s: s.pop(',
-    '        print(f"sin registro de {key}")\n        return 0\n    if not dry:\n        update_state(lambda s: s.pop(',
+    "            if not dry:\n                del s[k]",
+    "            if not dry:\n                pass",
 )
 m(
     "N31",
     "1A",
-    '    if not dry:\n        update_state(lambda s: s.pop("event:" + key, None))',
-    '    if True:\n        update_state(lambda s: s.pop("event:" + key, None))',
+    "    if dry:\n        f(load_state())\n    else:\n        update_state(f)",
+    "    if dry:\n        f(load_state())\n    else:\n        pass",
 )
 m(
     "M2",
@@ -279,8 +286,8 @@ m(
 m(
     "N32",
     "1A",
-    "            gone.append(k[6:])\n            if not dry:\n                del s[k]\n\n    if dry:\n        f(load_state())\n    else:\n        update_state(f)",
-    "            gone.append(k[6:])\n            del s[k]\n\n    update_state(f)",
+    "    if dry:\n        f(load_state())\n    else:\n        update_state(f)\n        for key in gone:",
+    "    if dry:\n        f(load_state())\n    else:\n        pass\n        for key in gone:",
 )
 m(
     "N33",
@@ -353,8 +360,8 @@ m("X15", "1B", "            creationflags=flags,\n", "")
 m(
     "D19b",
     "1B",
-    '        "-NonInteractive",\n',
-    '        "-NonInteractive",\n        "-ExecutionPolicy",\n        "Bypass",\n',
+    '        str(NOTIFY),\n        "-Title",\n        title,',
+    '        str(NOTIFY),\n        "-Title",\n        title,\n        "-ExecutionPolicy",\n        "Bypass",',
 )
 m("N37", "1B", "    return r.returncode", "    return 0")
 m(
@@ -366,8 +373,8 @@ m(
 m(
     "N38",
     "1B",
-    "    exe = _powershell_exe()\n    if exe is None:",
-    '    exe = _powershell_exe() or "powershell"\n    if exe is None:',
+    '    exe = _powershell_exe()\n    if exe is None:\n        print("notify FALLO: SystemRoot ausente")',
+    '    exe = _powershell_exe() or "powershell"\n    if exe is None:\n        print("notify FALLO: SystemRoot ausente")',
 )
 m("X8", "1B", "    if not force and now - last < THROTTLE_S:", "    if False:")
 m(
@@ -397,8 +404,8 @@ m(
 m(
     "N42",
     "1B",
-    '    rc = notify(title or (f"Vuelo: {key}"), what, dry)\n    if not dry:',
-    '    rc = notify(title or (f"Vuelo: {key}"), what, dry)\n    if True:',
+    '    rc = notify(\n        "Vuelo: comunicacion T3 con problemas",\n        f"{what}: {error}. El vuelo puede estar parado; sigo reintentando.",\n        dry,\n    )\n    if not dry:\n        if rc == 0:',
+    '    rc = notify(\n        "Vuelo: comunicacion T3 con problemas",\n        f"{what}: {error}. El vuelo puede estar parado; sigo reintentando.",\n        dry,\n    )\n    if True:\n        if rc == 0:',
 )
 m(
     "N43",
@@ -409,8 +416,8 @@ m(
 m(
     "N44",
     "1B",
-    "    if offset is None:\n        offset = size\n    elif not _is_int(offset)",
-    "    if offset is None:\n        offset = 0\n    elif not _is_int(offset)",
+    "    elif offset is None:\n        offset = size\n    elif not _is_int(offset)",
+    "    elif offset is None:\n        offset = 0\n    elif not _is_int(offset)",
 )
 m("X12", "1B", "or offset < 0 or offset > size:", "or offset < 0:")
 m("M13", "1B", "    consumed = cut + 1 if cut >= 0 else 0", "    consumed = len(raw)")
@@ -459,8 +466,8 @@ m(
 m(
     "N46",
     "1B",
-    '    if not (verdict.upper().startswith("FAIL") or verdict in failures):',
-    '    if not (verdict.upper() == "FAIL" or verdict in failures):',
+    '    if not (\n        folded.startswith("fail") or folded in {item.casefold() for item in failures}\n    ):',
+    '    if not (\n        folded == "fail" or folded in {item.casefold() for item in failures}\n    ):',
 )
 m(
     "N47",
@@ -471,8 +478,8 @@ m(
 m(
     "D15a",
     "1B",
-    '    if not (verdict.upper().startswith("FAIL") or verdict in failures):',
-    '    if not verdict.upper().startswith("FAIL"):',
+    '        folded.startswith("fail") or folded in {item.casefold() for item in failures}\n    ):',
+    '        folded.startswith("fail") and folded in {item.casefold() for item in failures}\n    ):',
 )
 m(
     "D15c",
@@ -507,14 +514,14 @@ m(
 m(
     "Q4a",
     "1B",
-    '        print(f"scan FALLO: {exc}")\n        return 2\n    offset = load_state()',
-    '        print(f"scan FALLO: {exc}")\n        return 10\n    offset = load_state()',
+    '    except (HelperError, OSError) as exc:\n        print(f"scan FALLO: {exc}")\n        return 2\n    state = load_state()',
+    '    except (HelperError, OSError) as exc:\n        print(f"scan FALLO: {exc}")\n        return 10\n    state = load_state()',
 )
 m(
     "N50",
     "1B",
-    "        return resolve(a.resolve, a.dry_run)",
-    "        return ack(a.resolve, a.dry_run)",
+    "        if a.resolve:\n            return resolve(a.resolve, a.dry_run)",
+    "        if a.resolve:\n            return ack(a.resolve, a.dry_run)",
 )
 m("N51", "1B", 'owner="manual"', "owner=None")
 m("N52", "1B", "    title = redact(title)\n", "")
@@ -527,8 +534,8 @@ m(
 m(
     "N54",
     "1B",
-    "    return out\n\n\ndef ledger_append(row):",
-    '    return out + "."\n\n\ndef ledger_append(row):',
+    "    return out\n\n\ndef tag_for_toast(key):",
+    '    return out + "."\n\n\ndef tag_for_toast(key):',
 )
 m(
     "N55",
@@ -584,19 +591,25 @@ m(
     "try {\n  if ($NoFlash) { return }\n  if ($SimulateToastFailure) {",
     PS,
 )
-m("N56b", "1C", "if (-not $NoFlash) { try {", "if ($true) { try {", PS)
+m(
+    "N56b",
+    "1C",
+    "if (-not $XmlOnly -and -not $NoFlash) { try {",
+    "if ($true) { try {",
+    PS,
+)
 m(
     "N56c",
     "1C",
-    "if (-not $NoFlash) { [console]::beep",
+    "if (-not $XmlOnly -and -not $NoFlash) { [console]::beep",
     "if ($true) { [console]::beep",
     PS,
 )
 m(
     "N57",
     "1C",
-    "$out = @()\n",
-    "$out = @()\nif ($env:NOTIFY_TEST -eq '1') { $NoFlash = [switch]$true }\n",
+    "$out = @(); $toastFail = $false\n",
+    "$out = @(); $toastFail = $false\nif ($env:NOTIFY_TEST -eq '1') { $NoFlash = [switch]$true }\n",
     PS,
 )
 m(
@@ -611,8 +624,8 @@ m("SJ2", "1C", '$out += "toast=FALLO(', '$out += "toast=fallo(', PS)
 m(
     "SJ3",
     "1C",
-    '  $out += "flash_ventanas=$n"\n',
-    "  $out += \"flash_ventanas=$n\"\n  $out += 'banner=omitido'\n",
+    '$out += "flash_ventanas=$n"',
+    '$out += "flash_ventanas=0"',
     PS,
 )
 
@@ -658,14 +671,14 @@ m("M19", "1C", '    out = _RE_UUID.sub("<uuid>", out)\n', "")
 m(
     "B1a",
     "1C",
-    "            nxt = _RE_OBJ_START.search(line, pos + 1)",
+    "            nxt = (\n                plausible_starts[start_index]\n                if start_index < len(plausible_starts)\n                else None\n            )",
     "            nxt = None",
 )
 m(
     "B1c",
     "1C",
-    "        except (ValueError, RecursionError):",
-    "        except ValueError:",
+    '                    except (ValueError, RecursionError):\n                        out.append(("frag", fragment))',
+    '                    except RecursionError:\n                        out.append(("frag", fragment))',
 )
 m(
     "B2a",
@@ -679,8 +692,8 @@ m("B4a", "1C", '(1 if level == "URGENTE" else 0)', "1")
 m(
     "C1a",
     "1C",
-    "    except (OSError, ValueError, RecursionError):\n        return {}",
-    "    except (OSError, ValueError):\n        return {}",
+    '    if not isinstance(data, dict):\n        STATE_LOAD_STATUS = "corrupt"\n        return {}\n    STATE_LOAD_STATUS = None',
+    '    if False:\n        STATE_LOAD_STATUS = "corrupt"\n        return {}\n    STATE_LOAD_STATUS = None',
 )
 m("C2a", "1C", "re.compile(r'\\{\\s*[\"}]')", "re.compile(r'\\{')")
 m("C2b", "1C", "re.compile(r'\\{\\s*[\"}]')", "re.compile(r'\\{[\"}]')")
