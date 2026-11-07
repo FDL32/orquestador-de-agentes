@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -265,7 +266,7 @@ def _git_text(repo: Path, *args: str) -> str:
     return result.stdout
 
 
-def _read_blob_ids(repo: Path, blob_shas: list[str]) -> set[str]:
+def _read_blob_ids(repo: Path, blob_shas: list[str]) -> set[str]:  # noqa: C901
     """Read unique blobs through git batch and release each payload in turn.
 
     Before: ``blob_shas`` contains object IDs reported as blobs by batch-check.
@@ -289,9 +290,18 @@ def _read_blob_ids(repo: Path, blob_shas: list[str]) -> set[str]:
         raise RuntimeError("git cat-file --batch no expuso sus pipes")
     stdin = process.stdin
     stdout = process.stdout
+    writer_errors: list[BaseException] = []
+
+    def write_requests() -> None:
+        try:
+            stdin.write(("\n".join(blob_shas) + "\n").encode("ascii"))
+            stdin.close()
+        except BaseException as exc:  # pragma: no cover - OS scheduling failure
+            writer_errors.append(exc)
+
+    writer = threading.Thread(target=write_requests, daemon=True)
+    writer.start()
     try:
-        stdin.write(("\n".join(blob_shas) + "\n").encode("ascii"))
-        stdin.close()
         found: set[str] = set()
         for _ in blob_shas:
             header = stdout.readline()
@@ -307,6 +317,11 @@ def _read_blob_ids(repo: Path, blob_shas: list[str]) -> set[str]:
             if stdout.read(1) != b"\n":
                 raise RuntimeError("git cat-file --batch no termino el blob")
             found.update(_row_ticket_ids_from_text(payload.decode("utf-8", "replace")))
+        writer.join()
+        if writer_errors:
+            raise RuntimeError(
+                "git cat-file --batch no acepto las peticiones"
+            ) from writer_errors[0]
         if process.wait() != 0:
             raise RuntimeError("git cat-file --batch fallo")
         return found
@@ -314,6 +329,10 @@ def _read_blob_ids(repo: Path, blob_shas: list[str]) -> set[str]:
         if process.poll() is None:
             process.kill()
             process.wait()
+        writer.join(timeout=1)
+        for stream in (stdin, stdout, process.stderr):
+            if stream is not None:
+                stream.close()
 
 
 def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
@@ -328,8 +347,10 @@ def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
         extracted from refs actually read; ``ids_solo_en_refs`` is that set
         minus IDs currently present in the working-tree HEAD surfaces. Git
         absence, unreadable refs, or unreadable blobs yield working-tree IDs
-        plus avisos, including the fixed stale-remote warning; no exception
-        escapes.
+        plus avisos, including the fixed stale-remote warning; supported Git,
+        pipe, decoding, and surface-read failures are converted to avisos at
+        this boundary, while unrelated programming errors are not promised to
+        be intercepted.
     """
     avisos: list[str] = [_REF_REMOTE_WARNING]
     try:

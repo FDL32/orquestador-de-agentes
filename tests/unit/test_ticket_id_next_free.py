@@ -8,9 +8,15 @@ propone).
 
 from __future__ import annotations
 
+import hashlib
+import os
 import subprocess
+import sys
+import threading
+import zlib
 from pathlib import Path
 
+import pytest
 from bus.ticket_id import (
     TICKET_ID_RE,
     RefScan,
@@ -40,6 +46,70 @@ def _git(repo: Path, *args: str) -> str:
         text=True,
     )
     return result.stdout.strip()
+
+
+def _git_input(repo: Path, args: tuple[str, ...], payload: bytes) -> str:
+    """Run real git with a binary stdin payload and return decoded stdout."""
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        input=payload,
+        check=True,
+        capture_output=True,
+    )
+    return result.stdout.decode("utf-8").strip()
+
+
+def _read_git_object(repo: Path, sha: str) -> tuple[str, bytes]:
+    """Read one loose Git object from the real temporary repository."""
+    raw = zlib.decompress((repo / ".git" / "objects" / sha[:2] / sha[2:]).read_bytes())
+    header, payload = raw.split(b"\0", 1)
+    kind, _, size = header.decode().partition(" ")
+    assert int(size) == len(payload)
+    return kind, payload
+
+
+def _write_git_object(repo: Path, kind: str, payload: bytes) -> str:
+    """Write one valid loose Git object without bypassing Git object format."""
+    raw = f"{kind} {len(payload)}\0".encode() + payload
+    sha = hashlib.sha1(raw, usedforsecurity=False).hexdigest()
+    target = repo / ".git" / "objects" / sha[:2] / sha[2:]
+    target.parent.mkdir(exist_ok=True)
+    target.write_bytes(zlib.compress(raw))
+    return sha
+
+
+def _tree_entries(repo: Path, sha: str) -> list[tuple[bytes, bytes, bytes]]:
+    """Decode a real Git tree into mode, name, and raw object SHA tuples."""
+    kind, payload = _read_git_object(repo, sha)
+    assert kind == "tree"
+    entries = []
+    rest = payload
+    while rest:
+        mode, _, rest = rest.partition(b" ")
+        name, _, rest = rest.partition(b"\0")
+        entries.append((mode, name, rest[:20]))
+        rest = rest[20:]
+    return entries
+
+
+def _write_tree_with(
+    repo: Path, tree: str, name: bytes, replacement: tuple[bytes, bytes]
+) -> str:
+    """Write a tree replacing one entry while preserving all other entries."""
+    replacement_mode, sha_hex = replacement
+    entries = []
+    for old_mode, entry_name, sha in _tree_entries(repo, tree):
+        if entry_name == name:
+            entries.append((replacement_mode, entry_name, bytes.fromhex(sha_hex)))
+        else:
+            entries.append((old_mode, entry_name, sha))
+    return _write_git_object(
+        repo,
+        "tree",
+        b"".join(
+            mode + b" " + entry_name + b"\0" + sha for mode, entry_name, sha in entries
+        ),
+    )
 
 
 def _git_collab(tmp_path: Path, live: str = "", archive: str = "") -> tuple[Path, Path]:
@@ -371,6 +441,75 @@ def test_scan_ref_ticket_ids_handles_unreadable_local_surface(tmp_path):
     assert any("superficie HEAD no disponible" in aviso for aviso in scan.avisos)
     assert scan.ids_solo_en_refs == frozenset()
     assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-120b"
+
+
+def test_scan_ref_ticket_ids_volume_does_not_block_on_cat_file_pipes(tmp_path):
+    """400 distinct 300-KB blobs finish within a hard subprocess deadline."""
+    repo, collab = _git_collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+    )
+    base = _git(repo, "rev-parse", "HEAD")
+    root = _git(repo, "rev-parse", f"{base}^{{tree}}")
+    agent = _git(repo, "rev-parse", f"{base}:.agent")
+    collab_tree = _git(repo, "rev-parse", f"{base}:.agent/collaboration")
+    for index in range(400):
+        body = (
+            "| Ticket | Estado |\n|---|---|\n"
+            f"| WOT-2026-{index + 200:03d}a | pending |\n" + "x" * 300_000
+        ).encode()
+        blob = _write_git_object(repo, "blob", body)
+        new_collab = _write_tree_with(
+            repo, collab_tree, b"backlog.md", (b"100644", blob)
+        )
+        new_agent = _write_tree_with(
+            repo, agent, b"collaboration", (b"040000", new_collab)
+        )
+        new_root = _write_tree_with(repo, root, b".agent", (b"040000", new_agent))
+        commit_payload = (
+            f"tree {new_root}\nparent {base}\n"
+            "author ticket-id-tests <tests@example.invalid> 0 +0000\n"
+            "committer ticket-id-tests <tests@example.invalid> 0 +0000\n\n"
+            "volume surface\n"
+        ).encode()
+        commit = _write_git_object(repo, "commit", commit_payload)
+        ref = repo / ".git" / "refs" / "heads" / f"volume-{index:03d}"
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        ref.write_text(commit + "\n", encoding="ascii")
+
+    script = (
+        "from pathlib import Path; "
+        "from bus.ticket_id import scan_ref_ticket_ids; "
+        "print(scan_ref_ticket_ids(Path(__import__('sys').argv[1])).blobs_leidos)"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(collab)],
+        cwd=Path.cwd(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+    )
+    output: dict[str, bytes] = {}
+
+    def wait_for_scan() -> None:
+        output["stdout"], output["stderr"] = process.communicate()
+
+    waiter = threading.Thread(target=wait_for_scan, daemon=True)
+    waiter.start()
+    waiter.join(timeout=8)
+    if waiter.is_alive():
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+            )
+        else:
+            process.kill()
+        waiter.join(timeout=3)
+        pytest.fail("scan_ref_ticket_ids excedio el limite duro de 8 s")
+    assert process.returncode == 0, output.get("stderr", b"").decode()
+    assert output["stdout"].strip() == b"402"
 
 
 def test_scan_ref_ticket_ids_deduplicates_identical_surface_blobs_across_tips(
