@@ -322,9 +322,12 @@ def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
     During: enumerates non-symbolic heads/remotes, deduplicates tip and blob
         objects, reads unique surface blobs with batch-check and batch, and
         extracts only the first two row cells. Remote refs are never fetched.
-    After: returns a ``RefScan`` denominator and ID union. Git absence,
-        unreadable refs, or unreadable blobs yield HEAD IDs plus avisos,
-        including the fixed stale-remote warning; no exception escapes.
+    After: returns a ``RefScan`` denominator whose ``ids`` are the row IDs
+        extracted from refs actually read; ``ids_solo_en_refs`` is that set
+        minus IDs currently present in the working-tree HEAD surfaces. Git
+        absence, unreadable refs, or unreadable blobs yield working-tree IDs
+        plus avisos, including the fixed stale-remote warning; no exception
+        escapes.
     """
     fallback_ids = frozenset(_collect_row_ticket_ids(collab_dir))
     avisos: list[str] = [_REF_REMOTE_WARNING]
@@ -419,10 +422,11 @@ def next_free_ticket_id(
         read; it cannot cover refs from other machines or refs skipped after a
         declared read failure. With ``include_refs=False`` it uses HEAD only.
     """
+    head_ids = _collect_row_ticket_ids(collab_dir)
     existing = (
-        set(scan_ref_ticket_ids(collab_dir).ids)
+        head_ids | set(scan_ref_ticket_ids(collab_dir).ids)
         if include_refs
-        else _collect_row_ticket_ids(collab_dir)
+        else head_ids
     )
     max_key: tuple[int, int] | None = None
     for tid in existing:

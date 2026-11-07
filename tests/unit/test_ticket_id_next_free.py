@@ -260,6 +260,29 @@ def test_scan_ref_ticket_ids_reads_distinct_branch_ids(tmp_path):
     assert "refs remotas posiblemente caducadas (sin fetch)" in scan.avisos
 
 
+def test_next_free_includes_uncommitted_working_tree_rows_with_refs(tmp_path):
+    """Una fila sin commit se une a refs leídas y conserva el control HEAD."""
+    _repo, collab = _git_collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+    )
+    path = collab / "backlog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "| Ticket | Estado |\n|---|---|\n| WOT-2026-100b | pending |\n",
+        encoding="utf-8",
+    )
+
+    scan = scan_ref_ticket_ids(collab)
+
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-100c"
+    assert (
+        next_free_ticket_id("WOT", 2026, collab, include_refs=False) == "WOT-2026-100c"
+    )
+    assert scan.ids == {"WOT-2026-100a"}
+    assert scan.ids_solo_en_refs == set()
+
+
 def test_scan_ref_ticket_ids_deduplicates_same_tip_and_same_row(tmp_path):
     """Refs al mismo tip no duplican blobs ni convierten la fila en nueva."""
     repo, collab = _git_collab(
