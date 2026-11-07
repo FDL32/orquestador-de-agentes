@@ -343,6 +343,7 @@ def test_scan_ref_ticket_ids_includes_detached_head_tip(tmp_path):
     )
     _git(repo, "checkout", "-q", "main")
     _git(repo, "checkout", "-q", "--detach", head_sha)
+    _git(repo, "branch", "-D", "rama-head")
     (collab / "backlog.md").write_text(
         "| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
         encoding="utf-8",
@@ -357,7 +358,7 @@ def test_scan_ref_ticket_ids_includes_detached_head_tip(tmp_path):
 
 def test_scan_ref_ticket_ids_handles_unreadable_local_surface(tmp_path):
     """Una superficie local ilegible degrada con aviso y no lanza."""
-    collab = _collab(
+    _repo, collab = _git_collab(
         tmp_path,
         live="| Ticket | Estado |\n|---|---|\n| WOT-2026-120a | pending |\n",
     )
@@ -366,9 +367,10 @@ def test_scan_ref_ticket_ids_handles_unreadable_local_surface(tmp_path):
 
     scan = scan_ref_ticket_ids(collab)
 
-    assert scan.ids == set()
+    assert scan.ids == {"WOT-2026-120a"}
     assert any("superficie HEAD no disponible" in aviso for aviso in scan.avisos)
-    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-001a"
+    assert scan.ids_solo_en_refs == frozenset()
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-120b"
 
 
 def test_scan_ref_ticket_ids_deduplicates_identical_surface_blobs_across_tips(
