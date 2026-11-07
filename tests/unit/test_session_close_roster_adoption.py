@@ -320,9 +320,9 @@ def _write_hermetic_roster(root: Path, thread_id: str = "test-thread-1") -> Path
     """Write an isolated roster fixture for one hermetic close case.
 
     Before: ``root`` is the temporary destination owned by the current test.
-    During: writes roster, session registry, and change-log fixtures below a
-    test-local directory. After: returns the absolute roster path and changes
-    no durable repository state.
+    During: writes roster, session registry, and change-log fixtures below the
+    fixture directory ``root / "fixture_roster"``. After: returns the absolute
+    roster path and changes no durable repository state.
     """
     fixture_dir = root / "fixture_roster"
     fixture_dir.mkdir(exist_ok=True)
@@ -400,7 +400,8 @@ def _run_hermetic_session_close(
 ):
     """Run the real session close against the copied motor and linked target.
 
-    Before: the temporary motor is clean and the fixture paths are absolute.
+    Before: the temporary motor and fixture paths are valid; callers may
+    intentionally dirty the temporary motor for negative cases.
     During: launches ``agent_controller.py`` from the copied motor, injecting
     roster, latido, and Python variables only into the child environment; no
     ``--alert`` flag is passed. After: returns the subprocess result, elapsed
@@ -813,6 +814,38 @@ def test_hermetic_close_rejects_coordinator_latido_without_event(hermetic_close_
     _assert_only_blocking_failures(report, ["latido_alert_wiring"])
     _assert_close_stops_after(report, "latido_alert_wiring")
     assert "falta una orden VALIDA de comms_alert.py --event" in report, report
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="el cierre hermetico requiere Windows y PowerShell del sistema",
+)
+def test_hermetic_close_rejects_absent_supervisor_latido(hermetic_close_case):
+    """Reject a close when one required role has no latido file.
+
+    Before: the copied motor, roster, and both valid latidos form the positive
+    control. During: removes only the supervisor entry from the child-only
+    ``FLIGHT_LATIDO_FILES`` mapping and runs the real close. After: rc is
+    nonzero, only the blocking latido row fails, and the close stops there.
+    """
+    motor_root, destination_root = hermetic_close_case
+    roster = _write_hermetic_roster(destination_root)
+    latidos = _write_hermetic_latidos(motor_root, destination_root)
+    latidos.pop("supervisora")
+    result, _elapsed, report = _run_hermetic_session_close(
+        motor_root, destination_root, roster, latidos, "test-thread-1"
+    )
+    assert result.returncode != 0, report
+    _assert_hermetic_rows(
+        report,
+        {
+            "roster_matches_acting_thread": ("PASS", "Yes"),
+            "latido_alert_wiring": ("FAIL", "Yes"),
+        },
+    )
+    _assert_only_blocking_failures(report, ["latido_alert_wiring"])
+    _assert_close_stops_after(report, "latido_alert_wiring")
+    assert "supervisora: sin latido" in report, report
 
 
 @pytest.mark.skipif(
