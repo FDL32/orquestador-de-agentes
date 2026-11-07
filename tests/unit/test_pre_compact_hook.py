@@ -12,7 +12,9 @@ Cubre:
 """
 
 import json
+import os
 import pathlib
+import shutil
 import sys
 from io import StringIO
 from unittest.mock import patch
@@ -88,6 +90,21 @@ class TestLoadObservationsSafe:
             obs = hook.load_observations_safe()
         assert obs == []
 
+    def test_explicit_path_overrides_module_default(self, tmp_path):
+        obs_file = tmp_path / "explicit.jsonl"
+        obs_file.write_text(
+            '{"topic": "explicit", "signal": "path", "source": "test"}\n',
+            encoding="utf-8",
+        )
+
+        obs = hook.load_observations_safe(obs_file)
+
+        assert obs == [{"topic": "explicit", "signal": "path", "source": "test"}]
+
+    def test_permission_error_on_path_exists_returns_empty(self, tmp_path):
+        with patch.object(hook.Path, "exists", side_effect=PermissionError("denied")):
+            assert hook.load_observations_safe(tmp_path / "observations.jsonl") == []
+
 
 class TestExtractKeywordsFromWorkPlan:
     """Tests para extract_keywords_from_work_plan()."""
@@ -131,6 +148,18 @@ class TestExtractKeywordsFromWorkPlan:
         ):
             keywords = hook.extract_keywords_from_work_plan()
             assert keywords == []
+
+    def test_explicit_path_overrides_module_default(self, tmp_path):
+        plan_file = tmp_path / "explicit.md"
+        plan_file.write_text("# ExplicitRoot\n", encoding="utf-8")
+
+        keywords = hook.extract_keywords_from_work_plan(plan_file)
+
+        assert "explicitroot" in keywords
+
+    def test_permission_error_on_path_exists_returns_empty(self, tmp_path):
+        with patch.object(hook.Path, "exists", side_effect=PermissionError("denied")):
+            assert hook.extract_keywords_from_work_plan(tmp_path / "work_plan.md") == []
 
 
 class TestScoreObservation:
@@ -387,6 +416,370 @@ class TestMainHook:
         result = json.loads(stdout_mock.getvalue())
         assert result["continue"] is True
         assert result["input"] == {}  # Input vacio por error de parseo
+
+    @pytest.mark.parametrize(
+        "env_value",
+        ["", "   ", "relative-root", "missing-root", "C:\\mangled\\root"],
+    )
+    def test_invalid_project_root_degrades_to_cwd_root(
+        self, monkeypatch, tmp_path, env_value
+    ):
+        cwd_root = tmp_path / "cwd-root"
+        (cwd_root / ".claude").mkdir(parents=True)
+        monkeypatch.chdir(cwd_root)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", env_value)
+
+        assert hook._resolve_data_root() == cwd_root.resolve()
+
+    def test_project_root_file_degrades_to_cwd_root(self, monkeypatch, tmp_path):
+        cwd_root = tmp_path / "cwd-root"
+        (cwd_root / ".claude").mkdir(parents=True)
+        invalid = tmp_path / "not-a-directory"
+        invalid.write_text("x", encoding="utf-8")
+        monkeypatch.chdir(cwd_root)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(invalid))
+
+        assert hook._resolve_data_root() == cwd_root.resolve()
+
+    def test_existing_relative_project_root_is_not_accepted(
+        self, monkeypatch, tmp_path
+    ):
+        cwd_root = tmp_path / "cwd-root"
+        relative_root = cwd_root / "relative-root"
+        (cwd_root / ".claude").mkdir(parents=True)
+        relative_root.mkdir()
+        monkeypatch.chdir(cwd_root)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", "relative-root")
+
+        assert hook._resolve_data_root() == cwd_root.resolve()
+
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(relative_root))
+        assert hook._resolve_data_root() == relative_root.resolve()
+
+    def test_existing_mangled_project_root_degrades(self, monkeypatch, tmp_path):
+        cwd_root = tmp_path / "cwd-root"
+        mangled_root = tmp_path / "mangled-root"
+        (cwd_root / ".claude").mkdir(parents=True)
+        mangled_root.mkdir()
+        monkeypatch.chdir(cwd_root)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(mangled_root))
+
+        with patch.object(hook, "_is_mangled_root", return_value=True) as detector:
+            assert hook._resolve_data_root() == cwd_root.resolve()
+
+        detector.assert_called_once_with(str(mangled_root), mangled_root.resolve())
+
+    def test_project_root_uses_first_claude_ancestor(self, monkeypatch, tmp_path):
+        root = tmp_path / "root"
+        nested = root / "a" / "b"
+        (root / ".claude").mkdir(parents=True)
+        nested.mkdir(parents=True)
+        monkeypatch.chdir(nested)
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+        assert hook._resolve_data_root() == root.resolve()
+
+    def test_valid_inherited_project_root_wins_over_cwd(self, monkeypatch, tmp_path):
+        cwd_root = tmp_path / "cwd-root"
+        inherited_root = tmp_path / "inherited-root"
+        (cwd_root / ".claude").mkdir(parents=True)
+        inherited_root.mkdir()
+        monkeypatch.chdir(cwd_root)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(inherited_root))
+
+        assert hook._resolve_data_root() == inherited_root.resolve()
+
+    def test_main_passes_resolved_paths_and_restores_environment(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        root = tmp_path / "project"
+        (root / ".claude").mkdir(parents=True)
+        monkeypatch.chdir(root)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", "stale-value")
+        observations_paths = []
+        work_plan_paths = []
+
+        def load(path=None):
+            observations_paths.append(path)
+            return []
+
+        def keywords(path=None):
+            work_plan_paths.append(path)
+            return []
+
+        with (
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(hook, "get_compact_context", return_value=""),
+            patch.object(hook, "load_observations_safe", side_effect=load),
+            patch.object(hook, "extract_keywords_from_work_plan", side_effect=keywords),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+
+        assert exc_info.value.code == 0
+        assert observations_paths == [
+            root / ".agent" / "runtime" / "memory" / "observations.jsonl"
+        ]
+        assert work_plan_paths == [root / ".agent" / "collaboration" / "work_plan.md"]
+        assert os.environ["AGENT_PROJECT_ROOT"] == "stale-value"
+        json.loads(capsys.readouterr().out)
+
+    def test_main_restores_absent_environment(self, monkeypatch, tmp_path, capsys):
+        root = tmp_path / "project"
+        (root / ".claude").mkdir(parents=True)
+        monkeypatch.chdir(root)
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+        with (
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", StringIO()),
+            patch.object(hook, "get_compact_context", return_value=""),
+            patch.object(hook, "load_observations_safe", return_value=[]),
+            patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
+            pytest.raises(SystemExit),
+        ):
+            hook.main()
+
+        assert "AGENT_PROJECT_ROOT" not in os.environ
+
+    def test_main_continues_without_memory_when_cwd_is_unavailable(self, monkeypatch):
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        stdout = StringIO()
+
+        with (
+            patch.object(
+                hook.Path, "cwd", side_effect=OSError("cwd unavailable")
+            ) as cwd,
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", stdout),
+            patch.object(
+                hook, "get_compact_context", side_effect=AssertionError("memory read")
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+
+        assert exc_info.value.code == 0
+        cwd.assert_called_once_with()
+        result = json.loads(stdout.getvalue())
+        assert result["continue"] is True
+        assert "additionalContext" not in result
+        assert "AGENT_PROJECT_ROOT" not in os.environ
+
+    def test_main_uses_valid_environment_when_cwd_is_unavailable(
+        self, monkeypatch, tmp_path
+    ):
+        valid_root = tmp_path / "valid-root"
+        valid_root.mkdir()
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(valid_root))
+        stdout = StringIO()
+
+        with (
+            patch.object(
+                hook.Path, "cwd", side_effect=OSError("cwd unavailable")
+            ) as cwd,
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", stdout),
+            patch.object(hook, "get_compact_context", return_value="VALID-ROOT"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+
+        assert exc_info.value.code == 0
+        cwd.assert_not_called()
+        result = json.loads(stdout.getvalue())
+        assert result["continue"] is True
+        assert "VALID-ROOT" in result["additionalContext"]
+        assert os.environ["AGENT_PROJECT_ROOT"] == str(valid_root)
+
+    def test_main_skips_permission_errors_while_scanning_ancestors(
+        self, monkeypatch, tmp_path
+    ):
+        root = tmp_path / "root"
+        middle = root / "middle"
+        cwd_root = middle / "leaf"
+        (root / ".claude").mkdir(parents=True)
+        cwd_root.mkdir(parents=True)
+        monkeypatch.chdir(cwd_root)
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        denied = {cwd_root / ".claude", middle / ".claude"}
+        calls = []
+
+        def is_dir(path):
+            calls.append(path)
+            if path in denied:
+                raise PermissionError("permission denied")
+            return path == root / ".claude"
+
+        monkeypatch.setattr(hook.Path, "is_dir", is_dir)
+        stdout = StringIO()
+
+        with (
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", stdout),
+            patch.object(hook, "get_compact_context", return_value=""),
+            patch.object(hook, "load_observations_safe", return_value=[]),
+            patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+
+        assert exc_info.value.code == 0
+        assert cwd_root / ".claude" in calls
+        assert middle / ".claude" in calls
+        result = json.loads(stdout.getvalue())
+        assert result["continue"] is True
+        assert "additionalContext" not in result
+        assert "AGENT_PROJECT_ROOT" not in os.environ
+
+    def test_ancestor_scan_without_permission_error_is_control(
+        self, monkeypatch, tmp_path
+    ):
+        root = tmp_path / "root"
+        nested = root / "middle" / "leaf"
+        (root / ".claude").mkdir(parents=True)
+        nested.mkdir(parents=True)
+        monkeypatch.chdir(nested)
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+
+        assert hook._resolve_data_root() == root.resolve()
+
+    def test_main_degrades_when_l1_paths_are_inaccessible(self, monkeypatch, tmp_path):
+        root = tmp_path / "project"
+        (root / ".claude").mkdir(parents=True)
+        monkeypatch.chdir(root)
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        stdout = StringIO()
+
+        with (
+            patch.object(
+                hook.Path, "exists", side_effect=PermissionError("denied")
+            ) as exists,
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", stdout),
+            patch.object(hook, "get_compact_context", return_value=""),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+
+        assert exc_info.value.code == 0
+        assert exists.call_count >= 2
+        result = json.loads(stdout.getvalue())
+        assert result["continue"] is True
+        assert "additionalContext" not in result
+        assert "AGENT_PROJECT_ROOT" not in os.environ
+
+    def test_main_degrades_when_compact_loader_raises(self, monkeypatch, tmp_path):
+        root = tmp_path / "project"
+        (root / ".claude").mkdir(parents=True)
+        monkeypatch.chdir(root)
+        monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
+        stdout = StringIO()
+
+        with (
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", stdout),
+            patch.object(
+                hook, "get_compact_context", side_effect=RuntimeError("loader failed")
+            ),
+            patch.object(
+                hook, "load_observations_safe", side_effect=AssertionError("L1 read")
+            ),
+            patch.object(
+                hook,
+                "extract_keywords_from_work_plan",
+                side_effect=AssertionError("plan read"),
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            hook.main()
+
+        assert exc_info.value.code == 0
+        result = json.loads(stdout.getvalue())
+        assert result["continue"] is True
+        assert "additionalContext" not in result
+        assert "AGENT_PROJECT_ROOT" not in os.environ
+
+
+def _synthetic_precompact_fixture(tmp_path):
+    motor = tmp_path / "motor"
+    destino = tmp_path / "destino"
+    (motor / ".agent" / "hooks").mkdir(parents=True)
+    (motor / ".agent" / "runtime" / "memory").mkdir(parents=True)
+    shutil.copy2(
+        HOOK_PATH / "pre_compact_hook.py",
+        motor / ".agent" / "hooks" / "pre_compact_hook.py",
+    )
+    shutil.copytree(HOOK_PATH.parent.parent / "bus", motor / "bus")
+    shutil.copytree(HOOK_PATH.parent.parent / "runtime", motor / "runtime")
+    (destino / ".claude").mkdir(parents=True)
+    (destino / ".agent" / "config").mkdir(parents=True)
+    (destino / ".agent" / "runtime" / "memory").mkdir(parents=True)
+    (destino / ".agent" / "collaboration").mkdir(parents=True)
+    settings = pathlib.Path(__file__).parents[2] / ".claude" / "settings.json"
+    shutil.copy2(settings, destino / ".claude" / "settings.json")
+    (destino / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({"motor_root": str(motor)}), encoding="utf-8"
+    )
+    return motor, destino
+
+
+def test_real_launcher_without_local_hook_anchors_loader_to_cwd(tmp_path):
+    motor, destino = _synthetic_precompact_fixture(tmp_path)
+    (motor / ".agent" / "runtime" / "memory" / "memory_profile.md").write_text(
+        "MOTORMARK", encoding="utf-8"
+    )
+    (destino / ".agent" / "runtime" / "memory" / "memory_profile.md").write_text(
+        "DESTMARK", encoding="utf-8"
+    )
+
+    result = _run_settings_hook("PreCompact", b"{}", destino, {})
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+    output = result.stdout.decode("utf-8")
+    assert "DESTMARK" in output
+    assert "MOTORMARK" not in output
+
+
+def test_real_launcher_l1_fallback_uses_destination_paths(tmp_path):
+    motor, destino = _synthetic_precompact_fixture(tmp_path)
+    (motor / ".agent" / "runtime" / "memory" / "observations.jsonl").write_text(
+        '{"timestamp":"2026-11-07T00:00:00Z","topic":"motor","signal":"MOTORMARK","source":"test"}\n',
+        encoding="utf-8",
+    )
+    (destino / ".agent" / "runtime" / "memory" / "observations.jsonl").write_text(
+        '{"timestamp":"2026-11-07T00:00:00Z","topic":"destino","signal":"DESTMARK","source":"test"}\n',
+        encoding="utf-8",
+    )
+    (destino / ".agent" / "collaboration" / "work_plan.md").write_text(
+        "# DESTMARK", encoding="utf-8"
+    )
+
+    result = _run_settings_hook("PreCompact", b"{}", destino, {})
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+    output = result.stdout.decode("utf-8")
+    assert "DESTMARK" in output
+    assert "MOTORMARK" not in output
+
+
+def test_valid_stale_environment_override_is_measured(tmp_path):
+    motor, destino = _synthetic_precompact_fixture(tmp_path)
+    (motor / ".agent" / "runtime" / "memory" / "memory_profile.md").write_text(
+        "MOTORMARK", encoding="utf-8"
+    )
+    (destino / ".agent" / "runtime" / "memory" / "memory_profile.md").write_text(
+        "DESTMARK", encoding="utf-8"
+    )
+
+    result = _run_settings_hook(
+        "PreCompact", b"{}", destino, {"AGENT_PROJECT_ROOT": str(motor)}
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+    output = result.stdout.decode("utf-8")
+    assert "MOTORMARK" in output
+    assert "DESTMARK" not in output
 
 
 class TestRobustness:

@@ -13,6 +13,7 @@ Output is capped at 5 observations maximum.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,14 +21,18 @@ from typing import Any
 
 
 # WP-2026-178: Ensure project root is on sys.path for memory loader import.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+try:
+    _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+except (OSError, RuntimeError):
+    _PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
-from bus.memory_loader import get_compact_context  # noqa: E402
+from bus.memory_loader import get_compact_context
+from runtime.project_root import _is_mangled_root
 
 
-# Derive AGENT_DIR from __file__ to avoid depending on cwd
-AGENT_DIR = Path(__file__).resolve().parent.parent
+# Derive the code root from __file__; this is not a session data root.
+AGENT_DIR = _PROJECT_ROOT / ".agent"
 MEMORY_DIR = AGENT_DIR / "runtime" / "memory"
 OBSERVATIONS_FILE = MEMORY_DIR / "observations.jsonl"
 WORK_PLAN_FILE = AGENT_DIR / "collaboration" / "work_plan.md"
@@ -36,15 +41,83 @@ WORK_PLAN_FILE = AGENT_DIR / "collaboration" / "work_plan.md"
 MAX_OBSERVATIONS = 5
 
 
-def load_observations_safe() -> list[dict[str, Any]]:
+def _has_claude_dir(path: Path) -> bool:
+    """Check one candidate root without propagating filesystem errors.
+
+    Before (Pre-conditions):
+        - ``path`` is an absolute or relative candidate directory.
+
+    During (Process and Resources):
+        - Checks ``path / ".claude"`` with ``Path.is_dir`` and catches
+          filesystem errors from inaccessible candidates. Performs no writes.
+
+    After (Post-conditions and Errors):
+        - Returns whether the candidate has an accessible ``.claude``
+          directory; returns ``False`` for any ``OSError``.
+    """
+    try:
+        return (path / ".claude").is_dir()
+    except OSError:
+        return False
+
+
+def _resolve_data_root() -> Path | None:
+    """Resolve the session root used for all memory data paths.
+
+    Before (Pre-conditions):
+        - The process may have an ``AGENT_PROJECT_ROOT`` inherited from a
+          parent session, and the current working directory may be nested
+          below a directory containing ``.claude``.
+
+    During (Process and Resources):
+        - Uses an existing absolute directory from ``AGENT_PROJECT_ROOT``
+          unless it is relative or mangled; otherwise walks cwd and its
+          ancestors for the first ``.claude`` directory, then falls back to
+          cwd. Performs no writes.
+
+    After (Post-conditions and Errors):
+        - Returns an absolute directory path when a session root is available,
+          or ``None`` when cwd is unavailable and no valid environment root
+          exists. Invalid environment values, cwd failures, and inaccessible
+          ancestor checks do not raise.
+    """
+    raw_env = os.environ.get("AGENT_PROJECT_ROOT", "").strip()
+    if raw_env:
+        try:
+            candidate = Path(raw_env)
+            resolved = candidate.resolve()
+            if (
+                candidate.is_absolute()
+                and not _is_mangled_root(raw_env, resolved)
+                and resolved.is_dir()
+            ):
+                return resolved
+        except (OSError, RuntimeError, ValueError):
+            pass
+
+    try:
+        cwd = Path.cwd().resolve()
+    except (OSError, RuntimeError):
+        return None
+
+    for ancestor in (cwd, *cwd.parents):
+        if _has_claude_dir(ancestor):
+            return ancestor
+    return cwd
+
+
+def load_observations_safe(
+    path: Path | None = None,
+) -> list[dict[str, Any]]:
     """Load observations from observations.jsonl safely.
 
     Before (Pre-conditions):
-        - observations.jsonl may exist or not in MEMORY_DIR.
+        - observations.jsonl may exist or not in MEMORY_DIR, or ``path`` may
+          explicitly identify another memory file.
         - File may be empty, valid JSONL, or corrupted.
 
     During (Process and Resources):
-        - Opens OBSERVATIONS_FILE if it exists.
+        - Opens ``path`` when supplied, otherwise OBSERVATIONS_FILE.
         - Parses each line as JSON, skipping invalid lines.
         - Catches all I/O and JSON exceptions gracefully.
 
@@ -53,11 +126,11 @@ def load_observations_safe() -> list[dict[str, Any]]:
         - Never raises; returns [] on any error.
     """
     observations: list[dict[str, Any]] = []
-    if not OBSERVATIONS_FILE.exists():
-        return observations
-
+    observations_file = path if path is not None else OBSERVATIONS_FILE
     try:
-        with open(OBSERVATIONS_FILE, encoding="utf-8", errors="replace") as f:
+        if not observations_file.exists():
+            return observations
+        with open(observations_file, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -69,22 +142,23 @@ def load_observations_safe() -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     # Skip corrupted lines silently
                     pass
-    except OSError:
+    except Exception:
         # File read error - return empty list
         return []
 
     return observations
 
 
-def extract_keywords_from_work_plan() -> list[str]:
+def extract_keywords_from_work_plan(path: Path | None = None) -> list[str]:
     """Extract keywords from the active work_plan.md.
 
     Before (Pre-conditions):
-        - work_plan.md may exist or not in COLLABORATION_DIR.
+        - work_plan.md may exist or not in COLLABORATION_DIR, or ``path`` may
+          explicitly identify another work plan.
         - File contains markdown text with objectives, metadata, etc.
 
     During (Process and Resources):
-        - Reads WORK_PLAN_FILE if it exists.
+        - Reads ``path`` when supplied, otherwise WORK_PLAN_FILE.
         - Extracts significant words from Objetivo, Titulo, and metadata sections.
         - Filters out common stop words and markdown artifacts.
 
@@ -92,12 +166,12 @@ def extract_keywords_from_work_plan() -> list[str]:
         - Returns a list of lowercase keyword strings (may be empty).
         - Never raises; returns [] on any error.
     """
-    if not WORK_PLAN_FILE.exists():
-        return []
-
+    work_plan_file = path if path is not None else WORK_PLAN_FILE
     try:
-        content = WORK_PLAN_FILE.read_text(encoding="utf-8")
-    except OSError:
+        if not work_plan_file.exists():
+            return []
+        content = work_plan_file.read_text(encoding="utf-8")
+    except Exception:
         return []
 
     # Extract relevant sections: Objetivo, Titulo, metadata
@@ -299,8 +373,9 @@ def main() -> None:
 
     During (Process and Resources):
         - Reads and parses stdin JSON safely.
-        - Loads observations from MEMORY_DIR safely.
-        - Extracts keywords from WORK_PLAN_FILE.
+        - Resolves the session data root and temporarily anchors the memory
+          loader to it, then loads observations and keywords from paths under
+          that root.
         - Ranks observations by recency and keyword matching.
         - Builds additionalContext with "Memoria relevante" section.
         - Outputs JSON result with continue=true.
@@ -308,44 +383,75 @@ def main() -> None:
     After (Post-conditions and Errors):
         - Prints valid JSON (ASCII puro, `ensure_ascii=True`) to stdout with
           "continue" and "additionalContext".
-        - Exits with code 0 (continue) or 1 (error).
-        - Never crashes on missing/corrupted files.
+        - Exits with code 0 and no additionalContext when no data root is
+          available; otherwise missing or corrupted input files degrade to
+          empty context instead of failing the hook. Any exception while
+          loading or ranking context also degrades to empty context.
+        - Restores the inherited ``AGENT_PROJECT_ROOT`` value even when root
+          resolution or context loading cannot proceed.
     """
+    previous_root = os.environ.get("AGENT_PROJECT_ROOT")
     try:
-        input_data = json.loads(sys.stdin.read())
-    except (json.JSONDecodeError, Exception):
-        input_data = {}
+        data_root = _resolve_data_root()
+        try:
+            input_data = json.loads(sys.stdin.read())
+        except (json.JSONDecodeError, Exception):
+            input_data = {}
 
-    # WP-2026-178: Prefer L2+L3 compact context from the memory loader.
-    # Falls back to keyword-based L1 ranking when loader returns empty.
-    compact_context = get_compact_context()
+        if data_root is None:
+            print(
+                json.dumps({"continue": True, "input": input_data}, ensure_ascii=True)
+            )
+            sys.exit(0)
 
-    if compact_context:
-        # Loader returned structured L2/L3 content; use it directly.
-        additional_context = f"**Memoria del proyecto (L2+L3)**:\n\n{compact_context}"
-    else:
-        # Fallback: keyword-based L1 ranking from observations.jsonl
-        observations = load_observations_safe()
-        keywords = extract_keywords_from_work_plan()
-        ranked_obs = rank_observations(observations, keywords)
-        additional_context = format_memory_section(ranked_obs)
+        os.environ["AGENT_PROJECT_ROOT"] = str(data_root)
 
-    # Always continue - this hook is for context projection only
-    continue_flag = True
+        try:
+            # WP-2026-178: Prefer L2+L3 compact context from the memory loader.
+            # Falls back to keyword-based L1 ranking when loader returns empty.
+            compact_context = get_compact_context()
 
-    # Output result
-    result: dict[str, Any] = {
-        "continue": continue_flag,
-        "input": input_data,
-    }
+            if compact_context:
+                # Loader returned structured L2/L3 content; use it directly.
+                additional_context = (
+                    f"**Memoria del proyecto (L2+L3)**:\n\n{compact_context}"
+                )
+            else:
+                # Fallback: keyword-based L1 ranking from observations.jsonl
+                agent_dir = data_root / ".agent"
+                observations = load_observations_safe(
+                    agent_dir / "runtime" / "memory" / "observations.jsonl"
+                )
+                keywords = extract_keywords_from_work_plan(
+                    agent_dir / "collaboration" / "work_plan.md"
+                )
+                ranked_obs = rank_observations(observations, keywords)
+                additional_context = format_memory_section(ranked_obs)
+        except Exception:
+            # Context is optional: continue without reading another root.
+            additional_context = ""
 
-    # Only include additionalContext if there's relevant memory
-    if additional_context:
-        result["additionalContext"] = additional_context
+        # Always continue - this hook is for context projection only
+        continue_flag = True
 
-    # WOT-2026-110a: evita bytes no-UTF-8 en la codepage del pipe (cp1252).
-    print(json.dumps(result, ensure_ascii=True))
-    sys.exit(0 if continue_flag else 1)
+        # Output result
+        result: dict[str, Any] = {
+            "continue": continue_flag,
+            "input": input_data,
+        }
+
+        # Only include additionalContext if there's relevant memory
+        if additional_context:
+            result["additionalContext"] = additional_context
+
+        # WOT-2026-110a: evita bytes no-UTF-8 en la codepage del pipe (cp1252).
+        print(json.dumps(result, ensure_ascii=True))
+        sys.exit(0 if continue_flag else 1)
+    finally:
+        if previous_root is None:
+            os.environ.pop("AGENT_PROJECT_ROOT", None)
+        else:
+            os.environ["AGENT_PROJECT_ROOT"] = previous_root
 
 
 if __name__ == "__main__":
