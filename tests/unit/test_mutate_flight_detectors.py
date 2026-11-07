@@ -26,6 +26,15 @@ def _load_harness():
     return module
 
 
+def _tree(root):
+    """Devuelve el árbol completo de ficheros con bytes y rutas relativas."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def test_catalogo_de_mutaciones_y_reanclajes_es_completo():
     """El arnés conserva el denominador completo y los 12 reanclajes de 153j."""
     module = _load_harness()
@@ -217,21 +226,13 @@ def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina(tmp_path):
     module = _load_harness()
     flight = ROOT / "scripts" / "flight"
     tmp_before = _tmp_dirs("mutate_detectors_")
-    original = {
-        path.relative_to(flight).as_posix(): path.read_bytes()
-        for path in flight.rglob("*")
-        if path.is_file()
-    }
+    original = _tree(flight)
     seen = {}
 
     def executor(_repo, env, tests):
         root = Path(env["MUTATION_COPY_ROOT"])
         copy = Path(env["STALL_CHECK_UNDER_TEST"])
-        copied = {
-            path.relative_to(root).as_posix(): path.read_bytes()
-            for path in root.rglob("*")
-            if path.is_file()
-        }
+        copied = _tree(root)
         seen["exists"] = copy.exists()
         seen["tests"] = tests
         seen["changed"] = copy.read_bytes() != original["flight_stall_check.py"]
@@ -253,30 +254,25 @@ def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina(tmp_path):
     assert seen["tests"] == ["tests/unit/test_flight_stall_check.py"]
     assert seen["changed"] is True
     assert not seen["copy_path"].exists()
-    current = {
-        path.relative_to(flight).as_posix(): path.read_bytes()
-        for path in flight.rglob("*")
-        if path.is_file()
-    }
+    current = _tree(flight)
     assert current == original
     assert _tmp_dirs("mutate_detectors_") == tmp_before
 
     probe = tmp_path / "tree-probe"
     shutil.copytree(flight, probe)
-    expected = {
-        path.relative_to(flight).as_posix(): path.read_bytes()
-        for path in flight.rglob("*")
-        if path.is_file()
-    }
-    for relative in (Path("added.py"), Path("nested") / "added.py"):
+    expected = _tree(flight)
+    for relative in (
+        Path("added.py"),
+        Path("nested") / "added.py",
+        Path("added.ps1"),
+        Path("nested") / "added.ps1",
+        Path("added.txt"),
+        Path("nested") / "added.txt",
+    ):
         added = probe / relative
         added.parent.mkdir(parents=True, exist_ok=True)
         added.write_bytes(b"added")
-        observed = {
-            path.relative_to(probe).as_posix(): path.read_bytes()
-            for path in probe.rglob("*")
-            if path.is_file()
-        }
+        observed = _tree(probe)
         assert observed != expected
         assert relative.as_posix() in observed
         assert relative.as_posix() not in expected
@@ -287,44 +283,38 @@ def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina(tmp_path):
     modified = probe / "flight_stall_check.py"
     original_bytes = modified.read_bytes()
     modified.write_bytes(original_bytes + b"\n")
-    observed = {
-        path.relative_to(probe).as_posix(): path.read_bytes()
-        for path in probe.rglob("*")
-        if path.is_file()
-    }
+    observed = _tree(probe)
     assert observed != expected
     assert observed["flight_stall_check.py"] != expected["flight_stall_check.py"]
     modified.write_bytes(original_bytes)
 
     deleted = probe / "flight_stall_check.py"
     deleted.unlink()
-    observed = {
-        path.relative_to(probe).as_posix(): path.read_bytes()
-        for path in probe.rglob("*")
-        if path.is_file()
-    }
+    observed = _tree(probe)
     assert observed != expected
     assert "flight_stall_check.py" not in observed
+
+    ps1 = probe / "notify_user.ps1"
+    ps1.write_bytes(ps1.read_bytes() + b"\n")
+    observed = _tree(probe)
+    assert observed != expected
+    assert observed["notify_user.ps1"] != expected["notify_user.ps1"]
+    ps1.unlink()
+    observed = _tree(probe)
+    assert observed != expected
+    assert "notify_user.ps1" not in observed
 
 
 def test_control_no_muta_y_devuelve_rc_del_ejecutor():
     module = _load_harness()
     flight = ROOT / "scripts" / "flight"
-    original = {
-        path.relative_to(flight).as_posix(): path.read_bytes()
-        for path in flight.rglob("*")
-        if path.is_file()
-    }
+    original = _tree(flight)
     calls = []
 
     def executor(_repo, env, tests):
         calls.append((env, tests))
         root = Path(env["MUTATION_COPY_ROOT"])
-        copied = {
-            path.relative_to(root).as_posix(): path.read_bytes()
-            for path in root.rglob("*")
-            if path.is_file()
-        }
+        copied = _tree(root)
         assert copied == original
         return 0, "control"
 

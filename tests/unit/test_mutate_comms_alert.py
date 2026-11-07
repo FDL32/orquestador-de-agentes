@@ -202,7 +202,14 @@ def test_copia_completa_byte_a_byte_y_control_positivo(tmp_path):
     probe = tmp_path / "tree-probe"
     shutil.copytree(ROOT / "scripts" / "flight", probe)
     expected = _tree(ROOT / "scripts" / "flight")
-    for relative in (Path("added.py"), Path("nested") / "added.py"):
+    for relative in (
+        Path("added.py"),
+        Path("nested") / "added.py",
+        Path("added.ps1"),
+        Path("nested") / "added.ps1",
+        Path("added.txt"),
+        Path("nested") / "added.txt",
+    ):
         added = probe / relative
         added.parent.mkdir(parents=True, exist_ok=True)
         added.write_bytes(b"added")
@@ -226,6 +233,16 @@ def test_copia_completa_byte_a_byte_y_control_positivo(tmp_path):
     observed = _tree(probe)
     assert observed != expected
     assert "comms_alert.py" not in observed
+
+    ps1 = probe / "notify_user.ps1"
+    ps1.write_bytes(ps1.read_bytes() + b"\n")
+    observed = _tree(probe)
+    assert observed != expected
+    assert observed["notify_user.ps1"] != expected["notify_user.ps1"]
+    ps1.unlink()
+    observed = _tree(probe)
+    assert observed != expected
+    assert "notify_user.ps1" not in observed
 
 
 def test_validate_ps1_no_compila_y_main_anuncia_limite(capsys, monkeypatch, tmp_path):
