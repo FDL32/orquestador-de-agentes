@@ -52,18 +52,17 @@ def _is_real(value):
 
     Before: ``value`` puede proceder del roster o del monitor.
     During: acepta ``int`` o ``float`` salvo ``bool`` y rechaza ``NaN`` mediante
-        ``math.isnan``.
-    After: devuelve ``True`` para numeros no booleanos no-NaN y ``False`` para el resto;
-        un ``int`` fuera del rango convertible a ``float`` puede propagar
-        ``OverflowError`` desde ``math.isnan`` en vez de devolver ``False``. El
-        llamador de ``main`` lo captura como fallo interno y emite ``QUOTA NO_MEDIDO``
-        con rc 9.
+        ``math.isnan`` dentro de una guarda contra el desborde de conversion a ``float``.
+    After: devuelve ``True`` para numeros no booleanos no-NaN, incluidos ``+inf`` y
+        ``-inf``; devuelve ``False`` para el resto y para enteros cuyo ``float()``
+        desborda, sin propagar ``OverflowError``.
     """
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and not math.isnan(value)
-    )
+    if not (isinstance(value, (int, float)) and not isinstance(value, bool)):
+        return False
+    try:
+        return not math.isnan(value)
+    except OverflowError:
+        return False
 
 
 def _is_unc(cand):
@@ -123,11 +122,9 @@ def _thresholds(quota):
 
     Before: ``quota`` es un diccionario del roster y puede contener tipos arbitrarios.
     During: valida cada valor como real finito y positivo, sustituyendo invalidos por el
-        defecto; para un entero JSON fuera del rango convertible a ``float``,
-        ``_is_real`` puede propagar ``OverflowError`` antes de esa sustitucion.
+        defecto; los enteros JSON fuera del rango convertible a ``float`` son invalidos.
     After: devuelve ``(soft, hard, invalid)`` y marca si algun valor fue sustituido;
-        no captura ese ``OverflowError``, que sube hasta ``main`` y se convierte en
-        ``QUOTA NO_MEDIDO`` con rc 9.
+        nunca propaga el ``OverflowError`` de un entero JSON enorme.
     """
     out, invalid = [], False
     for key, default in (
@@ -196,9 +193,8 @@ def _measure(accounts):
     During: lee porcentaje, stale y ventana, conserva cada cuenta como texto y calcula
         el peor porcentaje mediante ``_is_real``.
     After: devuelve ``(worst, parts, bad)`` con el maximo, fragmentos y marca de dato
-        malo; un entero JSON fuera del rango convertible a ``float`` puede propagar
-        ``OverflowError`` desde ``_is_real`` y no se sustituye dentro de este helper.
-        ``main`` lo captura como fallo interno y emite ``QUOTA NO_MEDIDO`` con rc 9.
+        malo; un entero JSON fuera del rango convertible a ``float`` marca la cuenta
+        como mala y no propaga ``OverflowError``.
     """
     worst, parts, bad = 0, [], False
     for name, v in accounts.items():

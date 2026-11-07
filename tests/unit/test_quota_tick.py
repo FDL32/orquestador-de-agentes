@@ -270,7 +270,20 @@ def test_fronteras_exactas_de_los_umbrales_por_defecto(rig, pct, estado, rc_espe
 
 # ------------------------------------------------------------------ umbrales del roster (formas)
 @pytest.mark.parametrize(
-    "malo", ['"92"', "NaN", "Infinity", "-Infinity", "true", "0", "-5", "null", "[]"]
+    "malo",
+    [
+        '"92"',
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "true",
+        "0",
+        "-5",
+        "null",
+        "1" * 400,
+        "-" + "1" * 400,
+        "[]",
+    ],
 )
 def test_umbral_invalido_cae_al_defecto_con_marca_y_nunca_baja_un_hard(rig, malo):
     """Q-O4: un umbral invalido usa 92/97 con la marca; con 99 % sigue siendo HARD (rc 5)."""
@@ -352,11 +365,16 @@ def test_monitor_ilegible_o_sin_cuentas_es_no_medido(rig, salida):
 
 @pytest.mark.parametrize(
     "pct",
-    [None, "50", "nan", True, False, [], {}],
+    [None, "50", "nan", True, False, [], {}, 10**1000, -(10**1000)],
 )
 def test_porcentaje_no_numerico_es_no_medido(rig, pct):
     rc, out = _pct(rig, pct)
-    assert rc == 9 and out.startswith("QUOTA NO_MEDIDO (soft")
+    assert (
+        rc == 9
+        and out.startswith("QUOTA NO_MEDIDO (soft")
+        and "interno" not in out
+        and "a weekly" in out
+    )
 
 
 def test_porcentaje_nan_json_es_no_medido(rig):

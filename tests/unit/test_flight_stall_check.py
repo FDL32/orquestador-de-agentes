@@ -1745,12 +1745,21 @@ def _load_quota_tick():
     return qt
 
 
-def test_quota_tick_is_real_entero_grande_caracteriza_overflow():
-    """Caracteriza el OverflowError actual de math.isnan para enteros enormes."""
+def test_quota_tick_is_real_entero_grande_es_falso_y_fija_la_frontera():
+    """Los porcentajes enteros que desbordan ``float`` son no medibles."""
     qt = _load_quota_tick()
     assert qt._is_real(10**300) is True
-    with pytest.raises(OverflowError):
-        qt._is_real(10**1000)
+    assert qt._is_real(10**308) is True
+    assert qt._is_real(10**309) is False
+    assert qt._is_real(-(10**1000)) is False
+    assert qt._is_real(float("inf")) is True
+    assert qt._is_real([]) is False
+    assert qt._is_real({}) is False
+    boundary = int(sys.float_info.max) + 2**970
+    assert qt._is_real(boundary - 1) is True
+    assert qt._is_real(boundary) is False
+    assert qt._is_real(-(boundary - 1)) is True
+    assert qt._is_real(-boundary) is False
 
 
 def _con_cupo(box, linea, edad_min=0):
