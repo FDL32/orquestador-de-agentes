@@ -325,24 +325,10 @@ def test_tick_trace_cada_flag_exigido_es_necesario(box, capsys, flag):
     assert flag in out
 
 
-@pytest.mark.parametrize(
-    "flag",
-    [
-        "--ops-dir",
-        "--coordinator",
-        "--roster-sha12",
-        "--guard-rc",
-        "--quota-rc",
-        "--quota-summary",
-    ],
-)
-def test_tick_trace_cada_flag_exigido_fija_mensaje_completo(flag, box, monkeypatch):
-    """WOT-2026-160a P4: la rama de requerido conserva el mensaje exacto por flag."""
-    options = dict(chk._SCRIPT_OPTION_META["tick_trace.py"])
-    options[flag] = options[flag]._replace(required=True)
-    metadata = dict(chk._SCRIPT_OPTION_META)
-    metadata["tick_trace.py"] = options
-    monkeypatch.setattr(chk, "_SCRIPT_OPTION_META", metadata)
+@pytest.mark.parametrize("flag", ["--ops-dir"])
+def test_tick_trace_metadata_required_fija_mensaje_completo(flag, box):
+    """WOT-2026-160a P4: metadata real required fija el mensaje exacto para ops-dir."""
+    assert chk._SCRIPT_OPTION_META["tick_trace.py"][flag].required is True
     args = box.trace_order().split()
     script_index = next(
         i for i, token in enumerate(args) if token.endswith("tick_trace.py")
@@ -360,21 +346,65 @@ def test_tick_trace_cada_flag_exigido_fija_mensaje_completo(flag, box, monkeypat
     ]
 
 
+def _finding_messages(output):
+    """Normaliza ubicacion y receta, conservando la lista completa de mensajes."""
+    return [
+        line.split(": ", 1)[1].split(" | ", 1)[0]
+        for line in output.splitlines()
+        if line.startswith("  - [")
+    ]
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--coordinator",
+        "--roster-sha12",
+        "--guard-rc",
+        "--quota-rc",
+        "--quota-summary",
+    ],
+)
+def test_tick_trace_inventory_required_flags_fijan_hallazgos_reales(flag, box, capsys):
+    """WOT-2026-160a P4: cinco flags vienen de _INVENTORY (l.109-120), no de metadata required."""
+    assert chk._SCRIPT_OPTION_META["tick_trace.py"][flag].required is False
+    orders = box.coord_orders()
+    tokens = box.trace_order().split()
+    index = tokens.index(flag)
+    del tokens[index : index + 2]
+    orders[-1] = " ".join(tokens)
+    coord = box.latido(f"tick-inventory-missing-{flag[2:]}.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 1
+    assert _finding_messages(out) == [
+        "falta una orden VALIDA de tick_trace.py --coordinator --guard-rc "
+        "--ops-dir --quota-rc --quota-summary --roster-sha12 sin --ts"
+    ]
+
+
 def _tick_trace_argument_problems(box, flag, value, form):
-    """Devuelve todos los hallazgos de una sola forma de argumento del productor."""
-    token = f"{flag}={value}" if form == "inline" else flag
-    args = [token] if form == "inline" else [token, value]
-    order = chk._Order(1, "tick_trace.py " + " ".join(args))
-    checker = chk._Checker(box.motor, box.py, None, {})
-    checker._check_script_argument(
-        order,
-        args,
-        0,
-        "tick_trace.py",
-        chk._SCRIPT_OPTION_META["tick_trace.py"],
-        set(),
+    """Devuelve hallazgos y rc agregado de una orden completa de tick_trace."""
+    args = box.trace_order().split()
+    script_index = next(
+        i for i, token in enumerate(args) if token.endswith("tick_trace.py")
     )
-    return order.problems
+    script_args = args[script_index + 1 :]
+    index = script_args.index(flag)
+    if form == "inline":
+        script_args[index] = f"{flag}={value}"
+        del script_args[index + 1]
+    else:
+        script_args[index + 1] = value
+    order = chk._Order(1, "tick_trace.py " + " ".join(script_args))
+    checker = chk._Checker(box.motor, box.py, None, {})
+    checker._check_script_arguments(order, script_args, "tick_trace.py")
+    findings = [
+        chk._Finding(kind, "coordinadora", "", text) for kind, text in order.problems
+    ]
+    return order.problems, chk.aggregate(findings)
 
 
 _RC_INLINE_CASES = [
@@ -410,6 +440,15 @@ def _space_expected(flag, value, inline_expected):
     return inline_expected
 
 
+def _expected_problems(flag, value, expected, form):
+    if expected is None:
+        return []
+    problems = [("V", expected)]
+    if form == "space" and value == "-5":
+        problems.append(("V", "opcion desconocida para tick_trace.py: -5"))
+    return problems
+
+
 _RC_EQUIVALENCE_CASES = [
     (*case, _space_expected(case[0], case[1], case[2])) for case in _RC_INLINE_CASES
 ]
@@ -422,9 +461,10 @@ _RC_EQUIVALENCE_CASES = [
 )
 def test_tick_trace_rc_inline_matrix(box, flag, value, expected):
     """WOT-2026-160a DA: ambos flags cubren todas las formas inline."""
-    problems = _tick_trace_argument_problems(box, flag, value, "inline")
-    expected_problems = [] if expected is None else [("V", expected)]
+    problems, rc = _tick_trace_argument_problems(box, flag, value, "inline")
+    expected_problems = _expected_problems(flag, value, expected, "inline")
     assert problems == expected_problems
+    assert rc == (0 if expected is None else 1)
 
 
 @pytest.mark.parametrize(
@@ -438,13 +478,13 @@ def test_tick_trace_rc_inline_y_espacio_compara_hallazgos_completos(
     box, flag, value, inline_expected, space_expected
 ):
     """WOT-2026-160a DA: ambas representaciones fijan listas completas y el mismo rc."""
-    inline = _tick_trace_argument_problems(box, flag, value, "inline")
-    space = _tick_trace_argument_problems(box, flag, value, "space")
-    expected_inline = [] if inline_expected is None else [("V", inline_expected)]
-    expected_space = [] if space_expected is None else [("V", space_expected)]
+    inline, inline_rc = _tick_trace_argument_problems(box, flag, value, "inline")
+    space, space_rc = _tick_trace_argument_problems(box, flag, value, "space")
+    expected_inline = _expected_problems(flag, value, inline_expected, "inline")
+    expected_space = _expected_problems(flag, value, space_expected, "space")
     assert inline == expected_inline
     assert space == expected_space
-    assert bool(inline) == bool(space)
+    assert inline_rc == space_rc
 
 
 def test_tick_trace_opcion_no_derivada_se_rechaza_por_la_ruta_cli(box, capsys):

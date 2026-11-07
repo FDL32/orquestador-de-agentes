@@ -171,16 +171,14 @@ def _load_tick_trace_contract() -> tuple[tuple[str, ...], object, object]:
     Before: ``scripts/flight/tick_trace.py`` existe junto a este checker.
     During: importa el modulo real sin ejecutar su CLI y obtiene ``FIELDS``,
     ``_parse_rc`` y ``_parse_unmeasured``.
-    After: devuelve el esquema y las funciones productoras. Puede lanzar
-    ``RuntimeError`` cuando falta el fichero o una excepcion ocurre durante la importacion;
-    ambos errores de carga quedan envueltos por el loader antes de la captura global.
-    ``RuntimeError`` si no se puede cargar el módulo o si el contrato está incompleto,
-    ``AttributeError`` si falta un atributo del productor o ``TypeError`` si ``FIELDS``
-    no es iterable. La defensa ``spec is None or spec.loader is None`` también produce
-    ``RuntimeError``, pero es un límite no alcanzable por entrada de usuario y no se prueba;
-    el bloque de inicialización del módulo captura esas excepciones,
-    las guarda en ``_TICK_TRACE_CONTRACT_ERROR`` y las publica mediante ``run_check``
-    como metadata ilegible con rc 2.
+    After: devuelve el esquema y las funciones productoras. Puede lanzar ``RuntimeError``
+    si falta el fichero, ocurre una excepcion durante la importacion o el contrato esta
+    incompleto; ``AttributeError`` si falta un atributo del productor; o ``TypeError`` si
+    ``FIELDS`` no es iterable. La defensa ``spec is None or spec.loader is None`` tambien
+    produce ``RuntimeError``, pero es un limite no alcanzable por entrada de usuario y no
+    se prueba. El bloque de inicializacion del modulo captura esas excepciones, las guarda
+    en ``_TICK_TRACE_CONTRACT_ERROR`` y las publica mediante ``run_check`` como metadata
+    ilegible con rc 2.
     """
     path = Path(__file__).resolve().with_name("tick_trace.py")
     spec = importlib.util.spec_from_file_location("tick_trace_contract", path)
