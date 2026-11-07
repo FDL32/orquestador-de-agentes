@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -173,7 +174,7 @@ def test_fichero_ausente_se_rechaza_por_main_rc_1(tmp_path):
     assert module.main(["--repo", str(repo), "--validate-only"]) == 1
 
 
-def test_copia_completa_byte_a_byte_y_control_positivo():
+def test_copia_completa_byte_a_byte_y_control_positivo(tmp_path):
     module = _load()
     original = _tree(ROOT / "scripts" / "flight")
     seen = {}
@@ -188,8 +189,6 @@ def test_copia_completa_byte_a_byte_y_control_positivo():
         )
         assert copied[target] != original[target]
         assert _tree(ROOT / "scripts" / "flight") == original
-        added = dict(copied, added_for_control_positive=b"x")
-        assert added != copied
         return 1, "killed"
 
     before = _tree(ROOT / "scripts" / "flight")
@@ -199,6 +198,55 @@ def test_copia_completa_byte_a_byte_y_control_positivo():
     assert seen["tests"] == ["tests/unit/test_comms_alert.py"]
     assert _tree(ROOT / "scripts" / "flight") == before
     assert _tmp_dirs("mutate_comms_") == tmp_before
+
+    probe = tmp_path / "tree-probe"
+    shutil.copytree(ROOT / "scripts" / "flight", probe)
+    expected = _tree(ROOT / "scripts" / "flight")
+    for relative in (Path("added.py"), Path("nested") / "added.py"):
+        added = probe / relative
+        added.parent.mkdir(parents=True, exist_ok=True)
+        added.write_bytes(b"added")
+        observed = _tree(probe)
+        assert observed != expected
+        assert relative.as_posix() in observed
+        assert relative.as_posix() not in expected
+        added.unlink()
+        if not any(added.parent.iterdir()):
+            added.parent.rmdir()
+
+    modified = probe / "comms_alert.py"
+    original_bytes = modified.read_bytes()
+    modified.write_bytes(original_bytes + b"\n")
+    assert _tree(probe) != expected
+    assert _tree(probe)["comms_alert.py"] != expected["comms_alert.py"]
+    modified.write_bytes(original_bytes)
+
+    deleted = probe / "comms_alert.py"
+    deleted.unlink()
+    observed = _tree(probe)
+    assert observed != expected
+    assert "comms_alert.py" not in observed
+
+
+def test_validate_ps1_no_compila_y_main_anuncia_limite(capsys, monkeypatch, tmp_path):
+    module = _load()
+    repo = _synthetic_repo(tmp_path)
+    ps1 = repo / "scripts" / "flight" / "notify_user.ps1"
+    ps1.write_text("Write-Host old\n", encoding="utf-8")
+    mutation = ("PS1", "synthetic", "notify_user.ps1", "old", "new")
+
+    def forbidden_compile(*_args, **_kwargs):
+        raise AssertionError("validate no debe compilar PowerShell")
+
+    monkeypatch.setattr("builtins.compile", forbidden_compile)
+    module.MUT = [mutation]
+    assert module.validate(repo, [mutation]) == []
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 0
+    output = capsys.readouterr().out
+    assert (
+        "casa 1 vez y difiere; los .py compilan; los .ps1 NO se compilan "
+        "(limite declarado)"
+    ) in output
 
 
 def test_run_mutation_control_preserva_copia_y_ejecuta_una_vez():

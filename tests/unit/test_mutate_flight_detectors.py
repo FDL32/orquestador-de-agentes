@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -212,7 +213,7 @@ def test_equiv_se_informa_aparte_y_no_es_superviviente():
     assert "supervivientes: ninguno" in output.getvalue()
 
 
-def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina():
+def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina(tmp_path):
     module = _load_harness()
     flight = ROOT / "scripts" / "flight"
     tmp_before = _tmp_dirs("mutate_detectors_")
@@ -240,7 +241,6 @@ def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina():
             for key, value in original.items()
             if key != "flight_stall_check.py"
         )
-        assert dict(copied, added_for_control_positive=b"x") != copied
         seen["copy_path"] = copy
         return 1, "mutant killed"
 
@@ -260,6 +260,51 @@ def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina():
     }
     assert current == original
     assert _tmp_dirs("mutate_detectors_") == tmp_before
+
+    probe = tmp_path / "tree-probe"
+    shutil.copytree(flight, probe)
+    expected = {
+        path.relative_to(flight).as_posix(): path.read_bytes()
+        for path in flight.rglob("*")
+        if path.is_file()
+    }
+    for relative in (Path("added.py"), Path("nested") / "added.py"):
+        added = probe / relative
+        added.parent.mkdir(parents=True, exist_ok=True)
+        added.write_bytes(b"added")
+        observed = {
+            path.relative_to(probe).as_posix(): path.read_bytes()
+            for path in probe.rglob("*")
+            if path.is_file()
+        }
+        assert observed != expected
+        assert relative.as_posix() in observed
+        assert relative.as_posix() not in expected
+        added.unlink()
+        if not any(added.parent.iterdir()):
+            added.parent.rmdir()
+
+    modified = probe / "flight_stall_check.py"
+    original_bytes = modified.read_bytes()
+    modified.write_bytes(original_bytes + b"\n")
+    observed = {
+        path.relative_to(probe).as_posix(): path.read_bytes()
+        for path in probe.rglob("*")
+        if path.is_file()
+    }
+    assert observed != expected
+    assert observed["flight_stall_check.py"] != expected["flight_stall_check.py"]
+    modified.write_bytes(original_bytes)
+
+    deleted = probe / "flight_stall_check.py"
+    deleted.unlink()
+    observed = {
+        path.relative_to(probe).as_posix(): path.read_bytes()
+        for path in probe.rglob("*")
+        if path.is_file()
+    }
+    assert observed != expected
+    assert "flight_stall_check.py" not in observed
 
 
 def test_control_no_muta_y_devuelve_rc_del_ejecutor():

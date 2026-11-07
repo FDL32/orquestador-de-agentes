@@ -724,7 +724,11 @@ def _selected(box, ids, visible):
 
 
 def validate(repo, mutations):
-    """Validate exact matches, compilability, and non-equivalence of mutations."""
+    """Validate exact matches and non-equivalence for every target.
+
+    Python targets are also compiled; PowerShell targets are not compiled because
+    parsing PowerShell is a declared scope limit of this harness.
+    """
     src_dir = pathlib.Path(repo).resolve() / "scripts" / "flight"
     seen = set()
     errors = []
@@ -861,7 +865,9 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
             print("ARNES-ABORTA: " + error, flush=True)
         return 1
     print(
-        f"patrones validados: {len(mutations)} (cada uno casa 1 vez, compila y difiere)",
+        "patrones validados: "
+        f"{len(mutations)} (casa 1 vez y difiere; los .py compilan; "
+        "los .ps1 NO se compilan (limite declarado))",
         flush=True,
     )
     if args.validate_only:
