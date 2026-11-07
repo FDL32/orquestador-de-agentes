@@ -301,6 +301,26 @@ def test_scan_ref_ticket_ids_deduplicates_same_tip_and_same_row(tmp_path):
     assert scan.blobs_leidos == 2
 
 
+def test_scan_ref_ticket_ids_deduplicates_identical_surface_blobs_across_tips(
+    tmp_path,
+):
+    """Tips distintos con superficies idénticas leen solo dos blobs."""
+    repo, collab = _git_collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+    )
+    _git(repo, "checkout", "-qb", "rama-distinta")
+    (repo / "unrelated.txt").write_text("contenido ajeno\n", encoding="utf-8")
+    _git(repo, "add", "unrelated.txt")
+    _git(repo, "commit", "-qm", "unrelated change")
+    _git(repo, "checkout", "-q", "main")
+
+    scan = scan_ref_ticket_ids(collab)
+
+    assert scan.tips == 2
+    assert scan.blobs_leidos == 2
+
+
 def test_scan_ref_ticket_ids_reads_simulated_remote_and_ignores_symbolic_ref(tmp_path):
     """Una remote simulada cuenta y su ref simbolica no cuenta como tip."""
     repo, collab = _git_collab(
