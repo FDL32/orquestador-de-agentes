@@ -133,14 +133,67 @@ def collect_surface_ticket_ids(collab_dir: Path) -> set[str]:
     return found
 
 
+def _split_row_cells(line: str) -> list[str]:
+    """Split a markdown row into cells while preserving escaped pipes.
+
+    Before: ``line`` is one markdown table row, possibly using ``\\|`` for a
+        literal pipe inside a cell.
+    During: walks the line once, treating only unescaped pipes as delimiters,
+        then trims the optional outer cells and surrounding whitespace.
+    After: returns the ordered cell contents without the outer markdown
+        delimiters; it does not perform I/O or mutate the input.
+    """
+    cells: list[str] = []
+    buffer: list[str] = []
+    escaped = False
+    for char in line:
+        if char == "|" and not escaped:
+            cells.append("".join(buffer))
+            buffer = []
+        else:
+            buffer.append(char)
+        escaped = char == "\\" and not escaped
+    cells.append("".join(buffer))
+    if cells and not cells[0].strip():
+        cells = cells[1:]
+    if cells and not cells[-1].strip():
+        cells = cells[:-1]
+    return [cell.strip() for cell in cells]
+
+
+def _collect_row_ticket_ids(collab_dir: Path) -> set[str]:
+    """Collect ticket IDs from the first two cells of both HEAD surfaces.
+
+    Before: ``collab_dir`` points to a collaboration directory containing zero
+        or more of ``backlog.md`` and ``_archive/backlog_done.md``.
+    During: reads existing files as UTF-8 with replacement, normalizes line
+        endings, and extracts canonical IDs only from the first two cells of
+        lines beginning with ``|``. Missing files contribute no IDs.
+    After: returns the union of row-cell IDs from both HEAD surfaces, without
+        mutation; prose-only mentions and cells after the first two are absent.
+    """
+    found: set[str] = set()
+    for rel in ("backlog.md", "_archive/backlog_done.md"):
+        path = collab_dir / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines():
+            if not line.lstrip().startswith("|"):
+                continue
+            cells = _split_row_cells(line)
+            found.update(TICKET_ID_RE.findall(" ".join(cells[:2])))
+    return found
+
+
 def next_free_ticket_id(prefix: str, year: int, collab_dir: Path) -> str:
     """Return the next free ticket ID for a prefix/year scanning both surfaces.
 
     Before: ``collab_dir`` is a live ``.agent/collaboration`` directory with
         ``backlog.md`` and ``_archive/backlog_done.md``; ``prefix`` is the
         canon ticket prefix (e.g. ``WOT``); ``year`` the operative year.
-    During: collects the canonical IDs of BOTH surfaces
-        (``collect_surface_ticket_ids``), parses each matching
+    During: collects the canonical IDs in the first two cells of BOTH surfaces
+        (``_collect_row_ticket_ids``), parses each matching
         ``<PREFIX>-<YEAR>-NNNx`` into ``(number, letter)``, and takes the
         global maximum. Allocation policy (WOT-2026-040f, declared): NO
         gap-filling -- always the successor of the global max (number, letter)
@@ -149,9 +202,10 @@ def next_free_ticket_id(prefix: str, year: int, collab_dir: Path) -> str:
         number with letter ``a`` (``400z`` -> ``401a``). No prior IDs of the
         prefix/year -> ``<PREFIX>-<YEAR>-001a``.
     After: returns the successor as ``<PREFIX>-<YEAR>-NNNx`` (3-digit number).
-        Never returns an ID present in either surface by construction.
+        It excludes IDs present in the ticket cells of either HEAD surface;
+        prose mentions and later cells are intentionally not allocated IDs.
     """
-    existing = collect_surface_ticket_ids(collab_dir)
+    existing = _collect_row_ticket_ids(collab_dir)
     max_key: tuple[int, int] | None = None
     for tid in existing:
         m = _CANONICAL_ID_RE.fullmatch(tid)

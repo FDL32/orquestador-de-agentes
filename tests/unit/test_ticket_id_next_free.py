@@ -126,6 +126,51 @@ def test_next_free_filters_by_prefix_and_year(tmp_path):
     assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-001a"
 
 
+def test_next_free_ignores_prose_ticket_ids_in_rows(tmp_path):
+    """Solo las celdas de ticket cuentan; una mencion en el titulo no."""
+    collab = _collab(
+        tmp_path,
+        live=(
+            "| Prioridad | Ticket | Titulo |\n|---|---|---|\n"
+            "| Media | WOT-2026-160b | ficha que menciona WOT-2026-999z |\n"
+        ),
+        archive="",
+    )
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-160c"
+
+
+def test_next_free_ignores_ticket_ids_after_ticket_cells(tmp_path):
+    """Un ID en la tercera celda es prosa y no ocupa el siguiente ID."""
+    collab = _collab(
+        tmp_path,
+        live=(
+            "| Prioridad | Nota | Titulo |\n|---|---|---|\n"
+            "| Media | sin ticket | WOT-2026-999z |\n"
+        ),
+        archive="",
+    )
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-001a"
+
+
+def test_next_free_ignores_ticket_ids_outside_table_rows(tmp_path):
+    """Una mencion fuera de una fila markdown no ocupa un ID."""
+    collab = _collab(tmp_path, live="Nota: WOT-2026-999z ya fue descartado.\n")
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-001a"
+
+
+def test_next_free_row_parser_respects_escaped_pipes(tmp_path):
+    """Un pipe escapado permanece dentro de la celda del ticket."""
+    collab = _collab(
+        tmp_path,
+        live=(
+            "| Prioridad | Ticket | Titulo |\n|---|---|---|\n"
+            r"| Media | WOT-2026-400x\| variante | ficha |" + "\n"
+        ),
+        archive="",
+    )
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-400y"
+
+
 def test_collect_surface_ticket_ids_crosses_both_surfaces(tmp_path):
     """El enumerador compartido lee AMBAS superficies en una sola llamada."""
     collab = _collab(
