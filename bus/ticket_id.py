@@ -12,6 +12,8 @@ their own local copy via ``$script:TicketIdPattern``.
 from __future__ import annotations
 
 import re
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -67,6 +69,29 @@ NEXT_TICKET_PATTERN = re.compile(r"(?:WP|WT|[A-Z]{3})-(\d{4})-(\d+)")
 
 # ── Sort key pattern (accepts all prefixes, extracts year + suffix) ──────────
 TICKET_SORT_KEY_PATTERN = re.compile(r"(?:WP|WT|[A-Z]{3})-(\d{4})-([A-Za-z0-9]+)")
+
+
+_REF_REMOTE_WARNING = "refs remotas posiblemente caducadas (sin fetch)"
+
+
+@dataclass(frozen=True)
+class RefScan:
+    """Immutable denominator and IDs produced by a local ref sweep.
+
+    Before: the caller provides no mutable state; the scan owns all counts and
+        sets returned by the ref reader.
+    During: the reader fills the values while traversing local and remote refs
+        without network access.
+    After: instances expose frozen collections and counters for reporting; a
+        failed sweep is represented by avisos rather than an exception.
+    """
+
+    ids: frozenset[str]
+    refs: int
+    tips: int
+    blobs_leidos: int
+    ids_solo_en_refs: frozenset[str]
+    avisos: tuple[str, ...]
 
 
 def is_valid_ticket_id(ticket_id: str) -> bool:
@@ -186,14 +211,202 @@ def _collect_row_ticket_ids(collab_dir: Path) -> set[str]:
     return found
 
 
-def next_free_ticket_id(prefix: str, year: int, collab_dir: Path) -> str:
+def _row_ticket_ids_from_line(line: str) -> set[str]:
+    """Extract ticket IDs from one markdown row using the two-cell contract.
+
+    Before: ``line`` is one decoded line from a backlog surface.
+    During: ignores non-row text, splits escaped pipes, and searches only the
+        first two cells with the canonical ticket regex.
+    After: returns the IDs in the ticket-cell window, or an empty set; it does
+        not access files, invoke git, or mutate state.
+    """
+    if not line.lstrip().startswith("|"):
+        return set()
+    cells = _split_row_cells(line)
+    return set(TICKET_ID_RE.findall(" ".join(cells[:2])))
+
+
+def _row_ticket_ids_from_text(text: str) -> set[str]:
+    """Extract ticket-cell IDs from normalized markdown text.
+
+    Before: ``text`` is decoded backlog content and may contain CRLF or CR
+        line endings.
+    During: normalizes line endings and unions ``_row_ticket_ids_from_line``
+        for each line without importing the admission guard.
+    After: returns the union of IDs from the first two cells of row lines only;
+        no filesystem or git state is changed.
+    """
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    found: set[str] = set()
+    for line in normalized.splitlines():
+        found.update(_row_ticket_ids_from_line(line))
+    return found
+
+
+def _git_text(repo: Path, *args: str) -> str:
+    """Run a read-only git command and decode its stdout.
+
+    Before: ``repo`` is a candidate repository path and ``args`` are git
+        arguments that do not mutate refs or working-tree files.
+    During: invokes git through an argument list without a shell and decodes
+        UTF-8 output with replacement for unusual branch names.
+    After: returns stdout or propagates the specific subprocess/I/O failure to
+        the fail-open scan boundary.
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), *args],  # noqa: S607
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.stdout
+
+
+def _read_blob_ids(repo: Path, blob_shas: list[str]) -> set[str]:
+    """Read unique blobs through git batch and release each payload in turn.
+
+    Before: ``blob_shas`` contains object IDs reported as blobs by batch-check.
+    During: sends the IDs to one ``cat-file --batch`` process, reads each
+        header and exact payload length, extracts row IDs, then discards that
+        payload before reading the next blob.
+    After: returns the union of row IDs; subprocess failures raise for the
+        caller's fail-open boundary and no repository state is modified.
+    """
+    if not blob_shas:
+        return set()
+    process = subprocess.Popen(  # noqa: S603
+        ["git", "-C", str(repo), "cat-file", "--batch"],  # noqa: S607
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if process.stdin is None or process.stdout is None:
+        process.kill()
+        process.wait()
+        raise RuntimeError("git cat-file --batch no expuso sus pipes")
+    stdin = process.stdin
+    stdout = process.stdout
+    try:
+        stdin.write(("\n".join(blob_shas) + "\n").encode("ascii"))
+        stdin.close()
+        found: set[str] = set()
+        for _ in blob_shas:
+            header = stdout.readline()
+            if not header:
+                raise RuntimeError("git cat-file --batch termino antes de tiempo")
+            parts = header.rstrip(b"\n").split()
+            if len(parts) != 3 or parts[1] != b"blob":
+                raise RuntimeError("git cat-file --batch devolvio un objeto no blob")
+            size = int(parts[2])
+            payload = stdout.read(size)
+            if len(payload) != size:
+                raise RuntimeError("git cat-file --batch devolvio un blob truncado")
+            if stdout.read(1) != b"\n":
+                raise RuntimeError("git cat-file --batch no termino el blob")
+            found.update(_row_ticket_ids_from_text(payload.decode("utf-8", "replace")))
+        if process.wait() != 0:
+            raise RuntimeError("git cat-file --batch fallo")
+        return found
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
+    """Scan HEAD surfaces and all readable local/remote refs without network.
+
+    Before: ``collab_dir`` is the collaboration directory of a candidate git
+        repository; its two surfaces may be absent, and git may be unavailable.
+    During: enumerates non-symbolic heads/remotes, deduplicates tip and blob
+        objects, reads unique surface blobs with batch-check and batch, and
+        extracts only the first two row cells. Remote refs are never fetched.
+    After: returns a ``RefScan`` denominator and ID union. Git absence,
+        unreadable refs, or unreadable blobs yield HEAD IDs plus avisos,
+        including the fixed stale-remote warning; no exception escapes.
+    """
+    fallback_ids = frozenset(_collect_row_ticket_ids(collab_dir))
+    avisos: list[str] = [_REF_REMOTE_WARNING]
+    try:
+        repo = collab_dir.parent.parent
+        discovered_root = Path(
+            _git_text(repo, "rev-parse", "--show-toplevel").strip()
+        ).resolve()
+        if discovered_root != repo.resolve():
+            raise RuntimeError(
+                f"la colaboracion no es la raiz git esperada ({discovered_root})"
+            )
+        if not _git_text(repo, "rev-parse", "HEAD").strip():
+            raise RuntimeError("HEAD vacio")
+        raw_refs = _git_text(
+            repo,
+            "for-each-ref",
+            "--format=%(refname)%00%(objectname)%00%(symref)",
+            "refs/heads",
+            "refs/remotes",
+        )
+        refs: list[tuple[str, str]] = []
+        for line in raw_refs.splitlines():
+            name, sep, rest = line.partition("\0")
+            if not sep:
+                continue
+            sha, sep, symref = rest.partition("\0")
+            if not sep or symref:
+                continue
+            refs.append((name, sha))
+        tips = sorted({sha for _, sha in refs})
+        specs = "".join(
+            f"{tip}:{surface}\n"
+            for tip in tips
+            for surface in (
+                ".agent/collaboration/backlog.md",
+                ".agent/collaboration/_archive/backlog_done.md",
+            )
+        )
+        check = subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo), "cat-file", "--batch-check"],  # noqa: S607
+            input=specs.encode("utf-8"),
+            check=True,
+            capture_output=True,
+        ).stdout.decode("utf-8", "replace")
+        blob_shas: list[str] = []
+        seen_blobs: set[str] = set()
+        for line in check.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[1] == "blob" and parts[0] not in seen_blobs:
+                seen_blobs.add(parts[0])
+                blob_shas.append(parts[0])
+        ids = _read_blob_ids(repo, blob_shas)
+        head_ids = _collect_row_ticket_ids(collab_dir)
+        return RefScan(
+            frozenset(ids),
+            len(refs),
+            len(tips),
+            len(blob_shas),
+            frozenset(ids - head_ids),
+            tuple(avisos),
+        )
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        avisos.append(f"lectura de refs no disponible ({exc})")
+        return RefScan(fallback_ids, 0, 0, 0, frozenset(), tuple(avisos))
+
+
+def next_free_ticket_id(
+    prefix: str,
+    year: int,
+    collab_dir: Path,
+    *,
+    include_refs: bool = True,
+) -> str:
     """Return the next free ticket ID for a prefix/year scanning both surfaces.
 
     Before: ``collab_dir`` is a live ``.agent/collaboration`` directory with
         ``backlog.md`` and ``_archive/backlog_done.md``; ``prefix`` is the
         canon ticket prefix (e.g. ``WOT``); ``year`` the operative year.
-    During: collects the canonical IDs in the first two cells of BOTH surfaces
-        (``_collect_row_ticket_ids``), parses each matching
+    During: collects the canonical IDs in the first two cells of BOTH HEAD
+        surfaces and, by default, unions IDs from refs read by
+        ``scan_ref_ticket_ids``; parses each matching
         ``<PREFIX>-<YEAR>-NNNx`` into ``(number, letter)``, and takes the
         global maximum. Allocation policy (WOT-2026-040f, declared): NO
         gap-filling -- always the successor of the global max (number, letter)
@@ -202,10 +415,15 @@ def next_free_ticket_id(prefix: str, year: int, collab_dir: Path) -> str:
         number with letter ``a`` (``400z`` -> ``401a``). No prior IDs of the
         prefix/year -> ``<PREFIX>-<YEAR>-001a``.
     After: returns the successor as ``<PREFIX>-<YEAR>-NNNx`` (3-digit number).
-        It excludes IDs present in the ticket cells of either HEAD surface;
-        prose mentions and later cells are intentionally not allocated IDs.
+        With ``include_refs=True`` it excludes IDs in HEAD plus refs actually
+        read; it cannot cover refs from other machines or refs skipped after a
+        declared read failure. With ``include_refs=False`` it uses HEAD only.
     """
-    existing = _collect_row_ticket_ids(collab_dir)
+    existing = (
+        set(scan_ref_ticket_ids(collab_dir).ids)
+        if include_refs
+        else _collect_row_ticket_ids(collab_dir)
+    )
     max_key: tuple[int, int] | None = None
     for tid in existing:
         m = _CANONICAL_ID_RE.fullmatch(tid)

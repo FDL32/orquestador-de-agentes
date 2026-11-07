@@ -8,12 +8,15 @@ propone).
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from bus.ticket_id import (
     TICKET_ID_RE,
+    RefScan,
     collect_surface_ticket_ids,
     next_free_ticket_id,
+    scan_ref_ticket_ids,
 )
 
 
@@ -26,6 +29,42 @@ def _collab(tmp_path: Path, live: str = "", archive: str = "") -> Path:
     (collab / "backlog.md").write_text(live, encoding="utf-8")
     (collab / "_archive" / "backlog_done.md").write_text(archive, encoding="utf-8")
     return collab
+
+
+def _git(repo: Path, *args: str) -> str:
+    """Run one real git command in a test repository."""
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _git_collab(tmp_path: Path, live: str = "", archive: str = "") -> tuple[Path, Path]:
+    """Create a real git repository with the two collaboration surfaces."""
+    repo = tmp_path / "repo"
+    collab = repo / ".agent" / "collaboration"
+    (collab / "_archive").mkdir(parents=True)
+    (collab / "backlog.md").write_text(live, encoding="utf-8")
+    (collab / "_archive" / "backlog_done.md").write_text(archive, encoding="utf-8")
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "tests@example.invalid")
+    _git(repo, "config", "user.name", "ticket-id-tests")
+    _git(repo, "config", "core.autocrlf", "false")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "base")
+    return repo, collab
+
+
+def _append_row_and_commit(repo: Path, collab: Path, row: str, message: str) -> str:
+    """Append one row to the live surface and return its commit SHA."""
+    path = collab / "backlog.md"
+    path.write_text(path.read_text(encoding="utf-8") + row, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", message)
+    return _git(repo, "rev-parse", "HEAD")
 
 
 def test_next_free_base_case_no_ids(tmp_path):
@@ -190,6 +229,147 @@ def test_next_free_skips_archived_id_if_only_archive_has_higher(tmp_path):
         archive=("| Ticket | Estado |\n|---|---|\n| WOT-2026-401a | completed |\n"),
     )
     assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-401b"
+
+
+def test_scan_ref_ticket_ids_reads_distinct_branch_ids(tmp_path):
+    """Una rama con un ID mayor cambia el sucesor y publica el denominador."""
+    repo, collab = _git_collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+    )
+    _git(repo, "checkout", "-qb", "rama-mayor")
+    _append_row_and_commit(
+        repo,
+        collab,
+        "| Ticket | Estado |\n|---|---|\n| WOT-2026-200a | pending |\n",
+        "higher ticket",
+    )
+    _git(repo, "checkout", "-q", "main")
+
+    scan = scan_ref_ticket_ids(repo / ".agent" / "collaboration")
+
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-200b"
+    assert (
+        next_free_ticket_id("WOT", 2026, collab, include_refs=False) == "WOT-2026-100b"
+    )
+    assert {"WOT-2026-100a", "WOT-2026-200a"} <= scan.ids
+    assert scan.refs == 2
+    assert scan.tips == 2
+    assert scan.ids_solo_en_refs == {"WOT-2026-200a"}
+    assert scan.blobs_leidos >= 1
+    assert "refs remotas posiblemente caducadas (sin fetch)" in scan.avisos
+
+
+def test_scan_ref_ticket_ids_deduplicates_same_tip_and_same_row(tmp_path):
+    """Refs al mismo tip no duplican blobs ni convierten la fila en nueva."""
+    repo, collab = _git_collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/heads/rama-misma-fila", head)
+    scan = scan_ref_ticket_ids(collab)
+
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-100b"
+    assert scan.ids == {"WOT-2026-100a"}
+    assert scan.ids_solo_en_refs == set()
+    assert scan.refs == 2
+    assert scan.tips == 1
+    assert scan.blobs_leidos == 2
+
+
+def test_scan_ref_ticket_ids_reads_simulated_remote_and_ignores_symbolic_ref(tmp_path):
+    """Una remote simulada cuenta y su ref simbolica no cuenta como tip."""
+    repo, collab = _git_collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+    )
+    _git(repo, "checkout", "-qb", "rama-remota")
+    remote_sha = _append_row_and_commit(
+        repo,
+        collab,
+        "| Ticket | Estado |\n|---|---|\n| WOT-2026-300a | pending |\n",
+        "remote ticket",
+    )
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "update-ref", "refs/remotes/origin/rama-remota", remote_sha)
+    _git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/rama-remota",
+    )
+    _git(repo, "branch", "-D", "rama-remota")
+    _git(repo, "branch", "sesión-é")
+
+    scan = scan_ref_ticket_ids(collab)
+
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-300b"
+    assert scan.refs == 3
+    assert scan.tips == 2
+    assert "WOT-2026-300a" in scan.ids_solo_en_refs
+
+
+def test_scan_ref_ticket_ids_tolerates_missing_surfaces(tmp_path):
+    """Una superficie ausente no impide leer la otra en cada tip."""
+    repo, collab = _git_collab(
+        tmp_path,
+        archive="| Ticket | Estado |\n|---|---|\n| WOT-2026-150a | done |\n",
+    )
+    (collab / "backlog.md").unlink()
+    _git(repo, "add", "-u")
+    _git(repo, "commit", "-qm", "remove live surface")
+
+    scan = scan_ref_ticket_ids(collab)
+
+    assert scan.ids == {"WOT-2026-150a"}
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-150b"
+
+
+def test_scan_ref_ticket_ids_fail_open_without_git(tmp_path):
+    """Sin repositorio git conserva HEAD y publica avisos deterministas."""
+    collab = _collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-120a | pending |\n",
+    )
+
+    scan = scan_ref_ticket_ids(collab)
+
+    assert scan.ids == {"WOT-2026-120a"}
+    assert scan.refs == 0
+    assert scan.tips == 0
+    assert scan.blobs_leidos == 0
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-120b"
+    assert any("lectura de refs no disponible" in aviso for aviso in scan.avisos)
+    assert any("refs remotas posiblemente caducadas" in aviso for aviso in scan.avisos)
+
+
+def test_ref_scan_is_frozen():
+    """RefScan expone un denominador inmutable para el informe del barrido."""
+    scan = RefScan(frozenset(), (), 0, 0, frozenset(), ())
+    try:
+        scan.refs = 1
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("RefScan debe ser congelada")
+
+
+def test_row_parser_parity_with_backlog_admission(tmp_path):
+    """La forma de fila del bus coincide con el guard en un corpus controlado."""
+    from bus.ticket_id import _row_ticket_ids_from_line
+    from scripts.check_backlog_admission import row_line_ids
+
+    corpus = [
+        "| Media | WOT-2026-160b | titulo WOT-2026-999z |",
+        r"| Media | WOT-2026-160b\|variante | titulo |",
+        "| Media | nota | WOT-2026-999z |",
+        "prosa WOT-2026-999z fuera de tabla",
+        "| Media | CTL-2026-001a | WOT-2026-999z |",
+        "| Media | WOT-2025-001a |",
+    ]
+
+    assert all(_row_ticket_ids_from_line(line) == row_line_ids(line) for line in corpus)
 
 
 def test_find_similar_uses_canonical_pattern_not_private(tmp_path, monkeypatch):
