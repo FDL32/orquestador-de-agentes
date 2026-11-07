@@ -1,17 +1,20 @@
 """Arnes de mutacion para scripts/flight/comms_alert.py (WOT-2026-153p).
 
-Uso: python mutate_153i.py --repo <worktree> [--box 1A|1B|1C|all] [--ids N1,N2] [--inject-bad-pattern]
+Uso: python mutate_153i.py --repo <worktree> [--box 1A|1B|1C|all] [--ids N1,N2]
+     [--tests TEST] [--inject-bad-pattern] [--validate-only] [--visible]
 Before: repo es una raiz existente y contiene scripts/flight/comms_alert.py; las mutaciones activas son
     patrones versionados que deben casar exactamente una vez.
-During: valida patrones, crea una copia temporal del directorio de scripts/flight y ejecuta un
-    executor inyectable en serie; el executor por defecto lanza pytest con timeout acotado.
-After: devuelve rc 0 solo sin supervivientes ni errores de validacion; un timeout (rc 99) no es
-    una muerte. El original nunca se escribe y cada copia temporal se elimina en finally.
+During: valida patrones, crea una copia temporal del arbol completo de scripts/flight y ejecuta un
+    executor inyectable en serie; el executor por defecto lanza la focal explicita o la canonica.
+After: devuelve rc 0 solo sin supervivientes, timeouts, errores de validacion o ejecucion; solo rc 1
+    de pytest es KILLED, rc 99 es TIMEOUT y otros rc no cero son ERROR. El original nunca se
+    escribe y cada copia temporal se elimina incluso si el executor lanza una excepcion.
 """
 
 import argparse
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -795,24 +798,33 @@ def _classify_rc(rc):
     return {0: "SURVIVE", 1: "KILLED", 99: "TIMEOUT"}.get(rc, "ERROR")
 
 
-def run_mutation(repo, mutation, tests, executor=None):
-    """Run one mutation against a temporary copy and always remove that copy."""
+def run_mutation(repo, mutation, tests=None, executor=None):
+    """Run one mutation against the complete temporary tree and always remove it.
+
+    Before: ``repo`` contains ``scripts/flight`` and ``mutation`` is validated.
+    During: copies the complete tree, applies only non-null patterns, and invokes the
+        explicit focal or the canonical comms focal through the injected executor.
+    After: returns id, box, rc, diagnostic and duration; control preserves bytes and
+        the temporary copy is removed even when the executor raises.
+    """
     mid, box, fn, pattern, replacement = mutation
     src_dir = pathlib.Path(repo).resolve() / "scripts" / "flight"
     execute = executor or _default_executor
+    tests = tests or ["tests/unit/test_comms_alert.py"]
     started = time.time()
     with tempfile.TemporaryDirectory(prefix="mutate_comms_") as tmp_name:
         tmp = pathlib.Path(tmp_name)
-        for source in src_dir.iterdir():
-            if source.suffix in (".py", ".ps1"):
-                (tmp / source.name).write_text(
-                    source.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
-                )
+        shutil.copytree(src_dir, tmp, dirs_exist_ok=True)
         original = (src_dir / fn).read_text(encoding="utf-8")
-        (tmp / fn).write_text(
-            original.replace(pattern, replacement), encoding="utf-8", newline="\n"
+        if pattern is not None:
+            (tmp / fn).write_text(
+                original.replace(pattern, replacement), encoding="utf-8", newline="\n"
+            )
+        env = dict(
+            os.environ,
+            COMMS_ALERT_UNDER_TEST=str(tmp / "comms_alert.py"),
+            MUTATION_COPY_ROOT=str(tmp),
         )
-        env = dict(os.environ, COMMS_ALERT_UNDER_TEST=str(tmp / "comms_alert.py"))
         rc, why = execute(repo, env, tests)
     return mid, box, rc, why, time.time() - started
 
@@ -823,7 +835,7 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
     parser.add_argument("--repo", required=True)
     parser.add_argument("--box", default="all")
     parser.add_argument("--ids", default="")
-    parser.add_argument("--tests", default="tests/unit/test_comms_alert.py")
+    parser.add_argument("--tests")
     parser.add_argument("--inject-bad-pattern", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--visible", action="store_true")
@@ -855,7 +867,7 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
     if args.validate_only:
         return 0
     killed, survivors, timeouts, errors = 0, [], [], []
-    tests = [item for item in args.tests.split(",") if item]
+    tests = [item for item in args.tests.split(",") if item] if args.tests else None
     for mutation in mutations:
         mid, box, rc, why, elapsed = run_mutation(
             args.repo, mutation, tests, executor=executor

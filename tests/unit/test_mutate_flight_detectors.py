@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import tempfile
 from pathlib import Path
 
 
@@ -45,6 +46,7 @@ def test_catalogo_de_mutaciones_y_reanclajes_es_completo():
         "Q14",
     }
     assert all(module.REANCHORED.values())
+    assert module.main(["--repo", str(ROOT), "--validate-only"]) == 0
 
 
 def test_cada_patron_casa_una_vez_compila_y_cambia_el_objetivo():
@@ -58,11 +60,11 @@ def test_cada_patron_casa_una_vez_compila_y_cambia_el_objetivo():
         compile(mutated, target, "exec")
 
 
-def test_patron_inexistente_no_se_considera_mutacion_valida():
-    """Un patrón ausente falla cerrado, evitando falsos verdes del arnés."""
+def test_main_rechaza_patron_inexistente_por_rc_1(tmp_path):
     module = _load_harness()
-    source = (ROOT / "scripts" / "flight" / module.STALL).read_text(encoding="utf-8")
-    assert source.count("PATRON_AUSENTE_153P") == 0
+    repo = _synthetic_repo(tmp_path)
+    module.MUT = _synthetic("MAIN0", "missing", "x")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
 
 
 def _synthetic_repo(tmp_path, text="abc"):
@@ -76,6 +78,13 @@ def _synthetic_repo(tmp_path, text="abc"):
 
 def _synthetic(mid, pattern, replacement, target="flight_stall_check.py"):
     return [(mid, "synthetic", target, pattern, replacement)]
+
+
+def _tmp_dirs(prefix):
+    """Cuenta directorios temporales vivos del arnés por prefijo."""
+    return {
+        path for path in Path(tempfile.gettempdir()).glob(prefix + "*") if path.is_dir()
+    }
 
 
 def test_validate_rechaza_patron_inexistente_sin_otro_motivo(tmp_path):
@@ -121,6 +130,36 @@ def test_validate_rechaza_fichero_ausente_sin_otro_motivo(tmp_path):
         _synthetic_repo(tmp_path), _synthetic("H6", "abc", "x", "missing.py")
     )
     assert len(errors) == 1 and "no se puede leer" in errors[0]
+
+
+def test_main_rechaza_patron_duplicado_por_rc_1(tmp_path):
+    module = _load_harness()
+    repo = _synthetic_repo(tmp_path, "abcabc")
+    module.MUT = _synthetic("MAIN2", "abc", "x")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_main_rechaza_mutacion_igual_por_rc_1(tmp_path):
+    module = _load_harness()
+    repo = _synthetic_repo(tmp_path)
+    module.MUT = _synthetic("MAIN3", "abc", "abc")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_main_rechaza_mutacion_no_compilable_por_rc_1(tmp_path):
+    module = _load_harness()
+    repo = _synthetic_repo(tmp_path, "value = 1")
+    module.MUT = _synthetic("MAIN4", "value = 1", "if (")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_main_inject_bad_pattern_nombra_bad_y_rc_1(capsys):
+    module = _load_harness()
+    assert (
+        module.main(["--repo", str(ROOT), "--validate-only", "--inject-bad-pattern"])
+        == 1
+    )
+    assert "BAD" in capsys.readouterr().out
 
 
 def test_tabla_vacia_es_rc_1(monkeypatch):
@@ -175,14 +214,33 @@ def test_equiv_se_informa_aparte_y_no_es_superviviente():
 
 def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina():
     module = _load_harness()
-    original = (ROOT / "scripts" / "flight" / "flight_stall_check.py").read_bytes()
+    flight = ROOT / "scripts" / "flight"
+    tmp_before = _tmp_dirs("mutate_detectors_")
+    original = {
+        path.relative_to(flight).as_posix(): path.read_bytes()
+        for path in flight.rglob("*")
+        if path.is_file()
+    }
     seen = {}
 
     def executor(_repo, env, tests):
+        root = Path(env["MUTATION_COPY_ROOT"])
         copy = Path(env["STALL_CHECK_UNDER_TEST"])
+        copied = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
         seen["exists"] = copy.exists()
         seen["tests"] = tests
-        seen["changed"] = copy.read_bytes() != original
+        seen["changed"] = copy.read_bytes() != original["flight_stall_check.py"]
+        assert set(copied) == set(original)
+        assert all(
+            copied[key] == value
+            for key, value in original.items()
+            if key != "flight_stall_check.py"
+        )
+        assert dict(copied, added_for_control_positive=b"x") != copied
         seen["copy_path"] = copy
         return 1, "mutant killed"
 
@@ -195,6 +253,103 @@ def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina():
     assert seen["tests"] == ["tests/unit/test_flight_stall_check.py"]
     assert seen["changed"] is True
     assert not seen["copy_path"].exists()
+    current = {
+        path.relative_to(flight).as_posix(): path.read_bytes()
+        for path in flight.rglob("*")
+        if path.is_file()
+    }
+    assert current == original
+    assert _tmp_dirs("mutate_detectors_") == tmp_before
+
+
+def test_control_no_muta_y_devuelve_rc_del_ejecutor():
+    module = _load_harness()
+    flight = ROOT / "scripts" / "flight"
+    original = {
+        path.relative_to(flight).as_posix(): path.read_bytes()
+        for path in flight.rglob("*")
+        if path.is_file()
+    }
+    calls = []
+
+    def executor(_repo, env, tests):
+        calls.append((env, tests))
+        root = Path(env["MUTATION_COPY_ROOT"])
+        copied = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+        assert copied == original
+        return 0, "control"
+
+    assert module.main(["--repo", str(ROOT), "--control"], executor=executor) == 0
+    assert len(calls) == 1
+    calls.clear()
+
+    def failing(_repo, env, tests):
+        calls.append((env, tests))
+        return 1, "control failed"
+
+    assert module.main(["--repo", str(ROOT), "--control"], executor=failing) == 1
+    assert len(calls) == 1
+
+
+def test_focal_por_objetivo_y_tests_explicitos():
+    module = _load_harness()
+    seen = []
+
+    def executor(_repo, _env, tests):
+        seen.append(tests)
+        return 1, "killed"
+
+    stall = next(item for item in module.MUT if item[2] == module.STALL)
+    quota = next(item for item in module.MUT if item[2] == module.QUOTA)
+    module.run_mutation(ROOT, stall, None, executor)
+    module.run_mutation(ROOT, quota, None, executor)
+    assert seen == [
+        ["tests/unit/test_flight_stall_check.py"],
+        ["tests/unit/test_quota_tick.py"],
+    ]
+    seen.clear()
+    module.run_mutation(ROOT, quota, ["tests/unit/custom.py"], executor)
+    assert seen == [["tests/unit/custom.py"]]
+
+
+def test_excepcion_del_ejecutor_limpia_directorio_temporal():
+    module = _load_harness()
+    before = _tmp_dirs("mutate_detectors_")
+    mutation = next(item for item in module.MUT if item[0] == "E7")
+
+    def raising(_repo, _env, _tests):
+        raise RuntimeError("executor")
+
+    try:
+        module.run_mutation(ROOT, mutation, None, raising)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("se esperaba la excepción del ejecutor")
+    assert _tmp_dirs("mutate_detectors_") == before
+
+
+def test_flags_detectores_controlan_rutas_distintas():
+    module = _load_harness()
+    assert module.main(["--repo", str(ROOT), "--box", "nope", "--validate-only"]) == 1
+    assert module.main(["--repo", str(ROOT), "--ids", "NOPE", "--validate-only"]) == 1
     assert (
-        ROOT / "scripts" / "flight" / "flight_stall_check.py"
-    ).read_bytes() == original
+        module.main(
+            ["--repo", str(ROOT), "--workers", "2", "--ids", "E7"],
+            executor=lambda *_: (1, "killed"),
+        )
+        == 0
+    )
+    seen = []
+    assert (
+        module.main(
+            ["--repo", str(ROOT), "--ids", "E7", "--tests", "tests/unit/custom.py"],
+            executor=lambda _repo, _env, tests: seen.append(tests) or (1, "killed"),
+        )
+        == 0
+    )
+    assert seen == [["tests/unit/custom.py"]]

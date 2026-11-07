@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import tempfile
 from pathlib import Path
 
 
@@ -59,6 +60,7 @@ def test_validate_only_covers_current_patterns_and_retired_reasons():
     }
     assert all(reason.strip() for reason in module.REANCHORED.values())
     assert module.validate(ROOT, selected) == []
+    assert module.main(["--repo", str(ROOT), "--validate-only", "--visible"]) == 0
 
 
 def test_bad_pattern_is_a_control_negative(capsys):
@@ -118,6 +120,123 @@ def test_visible_mutations_are_opt_in_even_when_selected_by_id():
     module = _load()
     assert not any(item[0] == "SJ1" for item in module._selected("all", "SJ1", False))
     assert any(item[0] == "SJ1" for item in module._selected("all", "SJ1", True))
+
+
+def _tree(root):
+    """Devuelve el árbol completo de ficheros con bytes y rutas relativas."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def _tmp_dirs(prefix):
+    """Cuenta directorios temporales vivos del arnés por prefijo."""
+    return {
+        path for path in Path(tempfile.gettempdir()).glob(prefix + "*") if path.is_dir()
+    }
+
+
+def test_main_rechaza_patron_inexistente_por_rc_1(tmp_path):
+    module = _load()
+    repo = _synthetic_repo(tmp_path)
+    module.MUT = _synthetic(module, "MAIN0", "missing", "x")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_main_rechaza_patron_duplicado_por_rc_1(tmp_path):
+    module = _load()
+    repo = _synthetic_repo(tmp_path, "abcabc")
+    module.MUT = _synthetic(module, "MAIN2", "abc", "x")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_main_rechaza_mutacion_igual_por_rc_1(tmp_path):
+    module = _load()
+    repo = _synthetic_repo(tmp_path)
+    module.MUT = _synthetic(module, "MAIN3", "abc", "abc")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_main_rechaza_mutacion_no_compilable_por_rc_1(tmp_path):
+    module = _load()
+    repo = _synthetic_repo(tmp_path, "value = 1")
+    module.MUT = _synthetic(module, "MAIN4", "value = 1", "if (")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_fichero_ausente_se_rechaza_por_main_rc_1(tmp_path):
+    module = _load()
+    repo = _synthetic_repo(tmp_path)
+    module.MUT = _synthetic(module, "MAIN6", "abc", "x", "missing.py")
+    assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_copia_completa_byte_a_byte_y_control_positivo():
+    module = _load()
+    original = _tree(ROOT / "scripts" / "flight")
+    seen = {}
+
+    def executor(_repo, env, tests):
+        copied = _tree(Path(env["MUTATION_COPY_ROOT"]))
+        target = "comms_alert.py"
+        seen["tests"] = tests
+        assert set(copied) == set(original)
+        assert all(
+            copied[key] == value for key, value in original.items() if key != target
+        )
+        assert copied[target] != original[target]
+        assert _tree(ROOT / "scripts" / "flight") == original
+        added = dict(copied, added_for_control_positive=b"x")
+        assert added != copied
+        return 1, "killed"
+
+    before = _tree(ROOT / "scripts" / "flight")
+    tmp_before = _tmp_dirs("mutate_comms_")
+    mutation = module._selected("1A", "E1", visible=False)[0]
+    module.run_mutation(ROOT, mutation, None, executor)
+    assert seen["tests"] == ["tests/unit/test_comms_alert.py"]
+    assert _tree(ROOT / "scripts" / "flight") == before
+    assert _tmp_dirs("mutate_comms_") == tmp_before
+
+
+def test_ejecutor_inyectado_recibe_tests_explicitos_y_excepcion_limpia():
+    module = _load()
+    baseline = _tree(ROOT / "scripts" / "flight")
+    tmp_before = _tmp_dirs("mutate_comms_")
+    seen = {}
+
+    def executor(_repo, env, tests):
+        seen["tests"] = tests
+        assert _tree(Path(env["MUTATION_COPY_ROOT"]))
+        raise RuntimeError("ejecutor")
+
+    mutation = module._selected("1A", "E1", visible=False)[0]
+    try:
+        module.run_mutation(ROOT, mutation, ["tests/unit/test_custom.py"], executor)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("se esperaba la excepción del ejecutor")
+    assert seen["tests"] == ["tests/unit/test_custom.py"]
+    assert _tree(ROOT / "scripts" / "flight") == baseline
+    assert _tmp_dirs("mutate_comms_") == tmp_before
+
+
+def test_flags_comms_controlan_rutas_distintas():
+    module = _load()
+    assert module.main(["--repo", str(ROOT), "--box", "nope", "--validate-only"]) == 1
+    assert module.main(["--repo", str(ROOT), "--ids", "NOPE", "--validate-only"]) == 1
+    seen = []
+    assert (
+        module.main(
+            ["--repo", str(ROOT), "--ids", "E1", "--tests", "tests/unit/custom.py"],
+            executor=lambda _repo, _env, tests: seen.append(tests) or (1, "killed"),
+        )
+        == 0
+    )
+    assert seen == [["tests/unit/custom.py"]]
 
 
 def _synthetic_repo(tmp_path, text="abc"):

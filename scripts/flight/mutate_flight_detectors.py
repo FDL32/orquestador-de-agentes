@@ -1,17 +1,19 @@
 """Arnes de mutacion para flight_stall_check.py y quota_tick.py (WOT-2026-153p).
 
-Uso: python -X utf8 -I mutate_153j.py --repo <worktree> [--box 2A|2B|all] [--ids N1,N2] [--workers 6]
-     [--inject-bad-pattern] [--validate-only] [--control]
+Uso: python -X utf8 -I mutate_flight_detectors.py --repo <worktree> [--box 2A|2B|all]
+     [--ids N1,N2] [--tests TEST] [--workers 1] [--inject-bad-pattern]
+     [--validate-only] [--control]
 Reglas D23: cada patron casa EXACTAMENTE una vez, el codigo mutado compila y difiere del original; patron ausente, duplicado
 o mutacion invalida => el arnes SALE con rc 1 sin seguir. Un superviviente no adjudicado => rc 1. Los mutantes EQUIVALENTES
-declarados (EQUIV) se informan aparte y no cuentan como supervivientes. Matar = pytest del fichero focal con rc != 0
-(timeout cuenta como matada: CRASH-TIMEOUT). Basado en mutate_153i.py (8440863c5e59).
+declarados (EQUIV) se informan aparte y no cuentan como supervivientes. Solo rc 1 de pytest es KILLED; rc 99 es
+TIMEOUT y otros rc no cero son ERROR. La ejecución activa es siempre serial y la copia contiene el árbol completo.
 """
 
 import argparse
 import concurrent.futures
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -894,27 +896,33 @@ def _default_executor(repo, env, tests, timeout=900):
     return completed.returncode, why
 
 
-def run_mutation(repo, mutation, tests, executor=None):
-    """Ejecuta una mutación contra una copia temporal y la elimina siempre."""
+def run_mutation(repo, mutation, tests=None, executor=None):
+    """Ejecuta una mutación contra el árbol completo de una copia temporal.
+
+    Before: ``repo`` contiene ambos objetivos y ``mutation`` es una entrada validada.
+    During: copia todo ``scripts/flight``, elige por objetivo la focal canónica cuando
+        no hay ``--tests``, aplica la mutación solo con patrón no nulo y llama al ejecutor.
+    After: devuelve id, caja, rc, diagnóstico y duración; control conserva el original
+        byte a byte y la copia se elimina incluso si el ejecutor lanza una excepción.
+    """
     mid, box, fn, pattern, replacement = mutation
     src_dir = pathlib.Path(repo).resolve() / "scripts" / "flight"
     execute = executor or _default_executor
+    tests = tests or [TESTS_BY_TARGET[fn]]
     started = time.time()
     with tempfile.TemporaryDirectory(prefix="mutate_detectors_") as tmp_name:
         tmp = pathlib.Path(tmp_name)
-        for source in src_dir.iterdir():
-            if source.suffix in (".py", ".ps1"):
-                (tmp / source.name).write_text(
-                    source.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
-                )
+        shutil.copytree(src_dir, tmp, dirs_exist_ok=True)
         original = (src_dir / fn).read_text(encoding="utf-8")
-        (tmp / fn).write_text(
-            original.replace(pattern, replacement), encoding="utf-8", newline="\n"
-        )
+        if pattern is not None:
+            (tmp / fn).write_text(
+                original.replace(pattern, replacement), encoding="utf-8", newline="\n"
+            )
         env = dict(
             os.environ,
             STALL_CHECK_UNDER_TEST=str(tmp / STALL),
             QUOTA_TICK_UNDER_TEST=str(tmp / QUOTA),
+            MUTATION_COPY_ROOT=str(tmp),
         )
         rc, why = execute(repo, env, tests)
     return mid, box, rc, why, time.time() - started
@@ -932,7 +940,7 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
     ap.add_argument("--box", default="all")
     ap.add_argument("--ids", default="")
     ap.add_argument("--workers", type=int, default=1)
-    ap.add_argument("--tests", default="tests/unit/test_flight_stall_check.py")
+    ap.add_argument("--tests")
     ap.add_argument("--inject-bad-pattern", action="store_true")
     ap.add_argument("--validate-only", action="store_true")
     ap.add_argument("--control", action="store_true")
@@ -957,7 +965,7 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
     )
     if a.validate_only:
         return 0
-    tests = [item for item in a.tests.split(",") if item]
+    tests = [item for item in a.tests.split(",") if item] if a.tests else None
     if a.control:
         mutations = [("CONTROL", "-", STALL, None, None)]
     killed, survivors, timeouts, errors = 0, [], [], []
