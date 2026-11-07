@@ -19,7 +19,6 @@ import json
 import math
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -34,7 +33,7 @@ CHECK_EVERY = 64
 REPARSE_POINT = 0x400
 HISTOGRAM = ("0-1", "1-3", "3-7", "7-14", "14-30", "30-90", ">90")
 _LETTERS = re.compile(r"^[A-Za-z]+")
-_GIT = shutil.which("git") or "git"
+_GIT = "git"
 
 
 class UsageError(ValueError):
@@ -46,7 +45,7 @@ def family_key(name: str) -> str:
 
     Before: ``name`` is a filesystem basename, possibly hidden, numeric, or
     containing spaces and separators.
-    During: remove the final suffix, classify hidden/nonnalphabetic names, take
+    During: strip the final suffix, classify hidden/nonnalphabetic names, take
     the leading letter token, and normalize it with ``casefold``.
     After: return a non-empty comparable key; no filesystem access occurs.
     """
@@ -107,6 +106,8 @@ def _git_root(root: Path) -> Path | None:
     After: return the absolute repository root or None when no repository is
     available; no exception escapes for an ordinary non-repository tree.
     """
+    if not _git_available():
+        return None
     try:
         result = subprocess.run(  # noqa: S603
             [_GIT, "rev-parse", "--show-toplevel"],
@@ -121,6 +122,24 @@ def _git_root(root: Path) -> Path | None:
     if result.returncode != 0 or not result.stdout.strip():
         return None
     return Path(result.stdout.strip()).resolve()
+
+
+def _git_available() -> bool:
+    """Check that the literal Git executable can be invoked.
+
+    Before: the process may or may not expose Git on PATH.
+    During: execute ``git --version`` without using filesystem paths supplied
+    by the caller.
+    After: return true only when Git exits successfully; expected OS failures
+    become false and do not escape the inventory operation.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            [_GIT, "--version"], capture_output=True, check=False, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def _git_states(root: Path, files: list[Path]) -> dict[Path, str]:
@@ -220,6 +239,7 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
     mtimes: list[float] = []
     family_data: dict[str, list[float | int]] = defaultdict(lambda: [0, 0, []])
     processed = 0
+    directories_processed = 0
     while stack:
         current = stack.pop()
         try:
@@ -228,6 +248,15 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
             result["traversal_errors"].append(f"{current}: {type(exc).__name__}")
             result["partial"] = True
             continue
+        directories_processed += 1
+        if (
+            directories_processed % CHECK_EVERY == 0
+            and time.monotonic() - start >= budget
+        ):
+            result["truncated"] = True
+            result["partial"] = True
+            result["reasons"].append("presupuesto agotado")
+            break
         for entry in entries:
             path = Path(entry.path)
             try:
@@ -370,7 +399,7 @@ def _write_exclusive(path: Path, payload: dict[str, Any]) -> None:
     Before: payload is serializable and path has passed semantic validation.
     During: create the parent if it exists and open the final path with O_EXCL.
     After: the artifact is fully written or an OSError propagates; an existing
-    artifact is never replaced.
+    artifact is never overwritten.
     """
     if not path.parent.is_dir():
         raise OSError(f"directorio de salida inexistente: {path.parent}")
@@ -400,11 +429,11 @@ def _snapshot(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if args.budget_seconds < 0 or not math.isfinite(args.budget_seconds):
         raise UsageError("--budget-seconds debe ser finito y no negativo")
     now = time.time()
-    stamp = (
-        dt.datetime.fromtimestamp(now, dt.timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
+    stamp = dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(
+        timespec="seconds"
     )
+    if stamp.endswith("+00:00"):
+        stamp = stamp[:-6] + "Z"
     records = {
         label: _scan_root(path, args.budget_seconds, now) for label, path in roots
     }
@@ -453,6 +482,12 @@ def _load_photo(path: Path) -> dict[str, Any]:
     """
 
     def reject_constant(value: str) -> None:
+        """Reject JSON NaN and infinity constants.
+
+        Before: the JSON decoder supplies a non-standard numeric token.
+        During: raise a value error before the photo can be accepted.
+        After: no non-finite constant is returned to the caller.
+        """
         raise ValueError(value)
 
     try:
@@ -467,6 +502,12 @@ def _load_photo(path: Path) -> dict[str, Any]:
         raise UsageError(f"schema_version invalida: {path.name}")
 
     def finite(value: Any) -> None:
+        """Reject non-finite numbers recursively in a decoded photo.
+
+        Before: ``value`` is any JSON-compatible scalar, list, or mapping.
+        During: inspect every nested value and reject a non-finite float.
+        After: return normally only when this subtree contains finite numbers.
+        """
         if isinstance(value, float) and not math.isfinite(value):
             raise UsageError(f"numero no finito en {path.name}")
         if isinstance(value, dict):

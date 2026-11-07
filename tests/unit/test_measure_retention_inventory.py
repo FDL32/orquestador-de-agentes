@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -337,3 +338,88 @@ def test_compare_rejects_wrong_schema_and_nonfinite_number(tmp_path: Path) -> No
     result = run_cli("--compare", str(nonfinite), str(good), "--out", str(out))
     assert result.returncode == 2
     assert not out.exists()
+
+
+def test_scandir_error_marks_partial_without_global_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A child traversal error is partial and the no-error control is complete."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "root"
+    bad = root / "bad-child"
+    root.mkdir()
+    bad.mkdir()
+    (root / "visible.txt").write_text("visible", encoding="utf-8")
+    calls: list[Path] = []
+    original_scandir = inventory.os.scandir
+
+    def scandir_with_failure(path: str | os.PathLike[str]) -> os.ScandirIterator[str]:
+        """Raise only for the synthetic child and delegate every other call."""
+        calls.append(Path(path))
+        if Path(path) == bad:
+            raise PermissionError("synthetic child denial")
+        return original_scandir(path)
+
+    monkeypatch.setattr(inventory.os, "scandir", scandir_with_failure)
+    failed_out = tmp_path / "failed.json"
+    failed_photo, failed_rc = inventory._snapshot(
+        argparse.Namespace(
+            root=[f"sample={root}"],
+            out=str(failed_out),
+            flight_id="flight-test",
+            workspace_root=None,
+            budget_seconds=60.0,
+        )
+    )
+
+    assert bad in calls
+    assert failed_rc == 1
+    assert failed_photo["roots"]["sample"]["partial"] is True
+    assert failed_photo["roots"]["sample"]["traversal_errors"]
+    assert "total" not in failed_photo
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    (clean_root / "visible.txt").write_text("visible", encoding="utf-8")
+    clean_out = tmp_path / "clean.json"
+    clean_photo, clean_rc = inventory._snapshot(
+        argparse.Namespace(
+            root=[f"sample={clean_root}"],
+            out=str(clean_out),
+            flight_id="flight-test",
+            workspace_root=None,
+            budget_seconds=60.0,
+        )
+    )
+    assert clean_rc == 0
+    assert clean_photo["roots"]["sample"]["partial"] is False
+    assert "total" in clean_photo
+
+
+def test_budget_checks_directories_without_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Many empty directories can truncate on the directory polling boundary."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "deep"
+    root.mkdir()
+    current = root
+    for index in range(65):
+        current = current / f"directory-{index}"
+        current.mkdir()
+
+    clock = iter((0.0, 1.0))
+    monkeypatch.setattr(inventory.time, "monotonic", lambda: next(clock))
+    partial = inventory._scan_root(root, budget=0.5, now=0.0)
+
+    assert partial["files"] == 0
+    assert partial["truncated"] is True
+    assert partial["partial"] is True
+
+    monkeypatch.setattr(inventory.time, "monotonic", lambda: 0.0)
+    complete = inventory._scan_root(root, budget=0.5, now=0.0)
+    assert complete["files"] == 0
+    assert complete["truncated"] is False
+    assert complete["partial"] is False
