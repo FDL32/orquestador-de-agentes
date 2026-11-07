@@ -262,3 +262,78 @@ def test_invalid_photo_and_duplicate_root_are_usage_errors(tmp_path: Path) -> No
     result = run_cli("--compare", str(bad), str(bad), "--out", str(out))
     assert result.returncode == 2
     assert not out.exists()
+
+
+def test_compare_warns_on_flight_mismatch_and_propagates_partial(
+    tmp_path: Path,
+) -> None:
+    """Different flights warn while a partial root keeps rc 1."""
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    common = {
+        "schema_version": 1,
+        "captured_at": "2026-11-07T01:00:00Z",
+        "commits": {},
+        "denominator": {"requested": 1, "measured": 1},
+        "roots": {
+            "sample": {
+                "files": 1,
+                "bytes": 1,
+                "partial": True,
+                "truncated": True,
+                "families": {"a": {"files": 1, "bytes": 1}},
+            }
+        },
+        "reasons": [],
+    }
+    first.write_text(
+        json.dumps({**common, "flight_id": "one", "partial": True}), encoding="utf-8"
+    )
+    second.write_text(
+        json.dumps({**common, "flight_id": "two", "partial": True}), encoding="utf-8"
+    )
+    out = tmp_path / "delta.json"
+
+    result = run_cli("--compare", str(first), str(second), "--out", str(out))
+
+    assert result.returncode == 1
+    delta = read_json(out)
+    assert delta["partial"] is True
+    assert delta["roots"]["sample"]["partial"] is True
+    assert delta["reasons"] == ["flight_id distinto entre fotos"]
+
+
+def test_snapshot_requires_flight_id_and_never_overwrites_output(
+    tmp_path: Path,
+) -> None:
+    """Missing identity and an existing destination are both rc 2."""
+    root = tmp_path / "root"
+    root.mkdir()
+    no_id = tmp_path / "no-id.json"
+    result = run_cli("--root", f"sample={root}", "--out", str(no_id))
+    assert result.returncode == 2
+    assert not no_id.exists()
+
+    existing = tmp_path / "photo.json"
+    existing.write_text("original", encoding="utf-8")
+    result = run_cli(*snapshot_args(tmp_path, root))
+    assert result.returncode == 2
+    assert existing.read_text(encoding="utf-8") == "original"
+
+
+def test_compare_rejects_wrong_schema_and_nonfinite_number(tmp_path: Path) -> None:
+    """Malformed compare photos fail closed before creating the delta."""
+    wrong = tmp_path / "wrong.json"
+    wrong.write_text(json.dumps({"schema_version": 99}), encoding="utf-8")
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    out = tmp_path / "delta.json"
+    result = run_cli("--compare", str(wrong), str(good), "--out", str(out))
+    assert result.returncode == 2
+    assert not out.exists()
+
+    nonfinite = tmp_path / "nonfinite.json"
+    nonfinite.write_text('{"schema_version": 1, "value": NaN}', encoding="utf-8")
+    result = run_cli("--compare", str(nonfinite), str(good), "--out", str(out))
+    assert result.returncode == 2
+    assert not out.exists()

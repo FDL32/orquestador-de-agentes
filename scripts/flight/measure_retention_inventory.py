@@ -451,11 +451,15 @@ def _load_photo(path: Path) -> dict[str, Any]:
     numeric values, including deeply nested decoder recursion failures.
     After: return a dict photo or raise UsageError without writing anything.
     """
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(value)
+
     try:
         with path.open(encoding="utf-8") as handle:
             photo = json.load(
                 handle,
-                parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
+                parse_constant=reject_constant,
             )
     except (OSError, ValueError, json.JSONDecodeError, RecursionError) as exc:
         raise UsageError(f"foto ilegible: {path.name}: {type(exc).__name__}") from exc
