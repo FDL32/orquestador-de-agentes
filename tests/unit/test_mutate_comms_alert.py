@@ -1,9 +1,22 @@
-"""Focal tests for the versioned comms-alert mutation harness."""
+"""Focal tests for the versioned comms-alert mutation harness.
+
+Formas de entrada -> test:
+objetivo ausente/OSError -> test_fichero_ausente_se_rechaza_por_main_rc_1;
+bytes UTF-8 inválidos -> test_main_rechaza_objetivo_ilegible_por_unicodeerror_rc_1;
+0 coincidencias -> test_main_rechaza_patron_inexistente_por_rc_1;
+2 coincidencias -> test_main_rechaza_patron_duplicado_por_rc_1;
+mutante igual -> test_main_rechaza_mutacion_igual_por_rc_1;
+no compila -> test_main_rechaza_mutacion_no_compilable_por_rc_1;
+id duplicado -> test_validate_rechaza_id_duplicado_sin_otro_motivo;
+tabla vacía -> test_empty_table_is_not_vacuously_green;
+caja o id desconocido -> test_flags_comms_controlan_rutas_distintas.
+"""
 
 import contextlib
 import importlib.util
 import io
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -179,6 +192,36 @@ def test_fichero_ausente_se_rechaza_por_main_rc_1(tmp_path):
     assert module.main(["--repo", str(repo), "--validate-only"]) == 1
 
 
+def test_main_rechaza_objetivo_ilegible_por_unicodeerror_rc_1(capsys, tmp_path):
+    module = _load()
+    repo = _synthetic_repo(tmp_path)
+    (repo / "scripts" / "flight" / "comms_alert.py").write_bytes(b"\xff\xfe")
+    module.MUT = _synthetic(module, "W1", "x", "y")
+
+    def executor(*_args):
+        raise AssertionError("executor")
+
+    assert module.main(["--repo", str(repo), "--validate-only"], executor) == 1
+    output = capsys.readouterr().out
+    assert "W1" in output and "no se puede leer" in output
+
+
+def test_formas_de_entrada_documentadas_existen():
+    names = (
+        "test_fichero_ausente_se_rechaza_por_main_rc_1",
+        "test_main_rechaza_objetivo_ilegible_por_unicodeerror_rc_1",
+        "test_main_rechaza_patron_inexistente_por_rc_1",
+        "test_main_rechaza_patron_duplicado_por_rc_1",
+        "test_main_rechaza_mutacion_igual_por_rc_1",
+        "test_main_rechaza_mutacion_no_compilable_por_rc_1",
+        "test_validate_rechaza_id_duplicado_sin_otro_motivo",
+        "test_empty_table_is_not_vacuously_green",
+        "test_flags_comms_controlan_rutas_distintas",
+    )
+    for name in names:
+        assert callable(getattr(sys.modules[__name__], name))
+
+
 def test_copia_completa_byte_a_byte_y_control_positivo(tmp_path):
     module = _load()
     original = _tree(ROOT / "scripts" / "flight")
@@ -239,11 +282,14 @@ def test_copia_completa_byte_a_byte_y_control_positivo(tmp_path):
     assert observed != expected
     assert "comms_alert.py" not in observed
 
+    deleted.write_bytes(original_bytes)
     ps1 = probe / "notify_user.ps1"
-    ps1.write_bytes(ps1.read_bytes() + b"\n")
+    ps1_original = ps1.read_bytes()
+    ps1.write_bytes(ps1_original + b"\n")
     observed = _tree(probe)
     assert observed != expected
     assert observed["notify_user.ps1"] != expected["notify_user.ps1"]
+    ps1.write_bytes(ps1_original)
     ps1.unlink()
     observed = _tree(probe)
     assert observed != expected

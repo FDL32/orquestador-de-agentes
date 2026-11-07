@@ -4,8 +4,27 @@ import contextlib
 import importlib.util
 import io
 import shutil
+import sys
 import tempfile
 from pathlib import Path
+
+
+__doc__ = (
+    (__doc__ or "")
+    + """
+
+Formas de entrada -> test:
+objetivo ausente/OSError -> test_validate_rechaza_fichero_ausente_sin_otro_motivo;
+bytes UTF-8 inválidos -> test_main_rechaza_objetivo_ilegible_por_unicodeerror_rc_1;
+0 coincidencias -> test_validate_rechaza_patron_inexistente_sin_otro_motivo;
+2 coincidencias -> test_validate_rechaza_patron_duplicado_sin_otro_motivo;
+mutante igual -> test_validate_rechaza_mutacion_igual_sin_otro_motivo;
+no compila -> test_validate_rechaza_mutacion_no_compilable_sin_otro_motivo;
+id duplicado -> test_validate_rechaza_id_duplicado_sin_otro_motivo;
+tabla vacía -> test_tabla_vacia_es_rc_1;
+caja o id desconocido -> test_flags_detectores_controlan_rutas_distintas.
+"""
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +94,36 @@ def test_main_rechaza_patron_inexistente_por_rc_1(tmp_path):
     repo = _synthetic_repo(tmp_path)
     module.MUT = _synthetic("MAIN0", "missing", "x")
     assert module.main(["--repo", str(repo), "--validate-only"]) == 1
+
+
+def test_main_rechaza_objetivo_ilegible_por_unicodeerror_rc_1(capsys, tmp_path):
+    module = _load_harness()
+    repo = _synthetic_repo(tmp_path)
+    (repo / "scripts" / "flight" / "flight_stall_check.py").write_bytes(b"\xff\xfe")
+    module.MUT = _synthetic("W1", "x", "y")
+
+    def executor(*_args):
+        raise AssertionError("executor")
+
+    assert module.main(["--repo", str(repo), "--validate-only"], executor) == 1
+    output = capsys.readouterr().out
+    assert "W1" in output and "no se puede leer" in output
+
+
+def test_formas_de_entrada_documentadas_existen():
+    names = (
+        "test_validate_rechaza_fichero_ausente_sin_otro_motivo",
+        "test_main_rechaza_objetivo_ilegible_por_unicodeerror_rc_1",
+        "test_validate_rechaza_patron_inexistente_sin_otro_motivo",
+        "test_validate_rechaza_patron_duplicado_sin_otro_motivo",
+        "test_validate_rechaza_mutacion_igual_sin_otro_motivo",
+        "test_validate_rechaza_mutacion_no_compilable_sin_otro_motivo",
+        "test_validate_rechaza_id_duplicado_sin_otro_motivo",
+        "test_tabla_vacia_es_rc_1",
+        "test_flags_detectores_controlan_rutas_distintas",
+    )
+    for name in names:
+        assert callable(getattr(sys.modules[__name__], name))
 
 
 def _synthetic_repo(tmp_path, text="abc"):
@@ -314,11 +363,14 @@ def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina(tmp_path):
     assert observed != expected
     assert "flight_stall_check.py" not in observed
 
+    deleted.write_bytes(original_bytes)
     ps1 = probe / "notify_user.ps1"
-    ps1.write_bytes(ps1.read_bytes() + b"\n")
+    ps1_original = ps1.read_bytes()
+    ps1.write_bytes(ps1_original + b"\n")
     observed = _tree(probe)
     assert observed != expected
     assert observed["notify_user.ps1"] != expected["notify_user.ps1"]
+    ps1.write_bytes(ps1_original)
     ps1.unlink()
     observed = _tree(probe)
     assert observed != expected

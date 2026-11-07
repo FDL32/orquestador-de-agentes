@@ -2,8 +2,8 @@
 
 Uso: python mutate_comms_alert.py --repo <worktree> [--box 1A|1B|1C|all] [--ids N1,N2]
      [--tests TEST] [--inject-bad-pattern] [--validate-only] [--visible]
-Before: repo es una raiz existente y contiene scripts/flight/comms_alert.py; las mutaciones activas son
-    patrones versionados que deben casar exactamente una vez.
+Before: repo es una raiz existente y contiene scripts/flight/comms_alert.py y notify_user.ps1;
+    las mutaciones activas son patrones versionados que deben casar exactamente una vez.
 During: valida patrones, crea una copia temporal del arbol completo de scripts/flight y ejecuta un
     executor inyectable en serie; el executor por defecto lanza la focal explicita o la canonica.
 After: devuelve rc 0 solo sin supervivientes, timeouts, errores de validacion o ejecucion; solo rc 1

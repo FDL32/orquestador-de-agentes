@@ -939,7 +939,9 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
     ap.add_argument("--repo", required=True)
     ap.add_argument("--box", default="all")
     ap.add_argument("--ids", default="")
-    ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument(
+        "--workers", type=int, default=1, help="aceptado; ejecución serial, se ignora"
+    )
     ap.add_argument("--tests")
     ap.add_argument("--inject-bad-pattern", action="store_true")
     ap.add_argument("--validate-only", action="store_true")
