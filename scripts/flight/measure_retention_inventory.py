@@ -5,7 +5,9 @@ mandatory ``--out`` path outside every measured root, and a ``--flight-id``.
 Compare mode receives two existing JSON photos and an exclusive output path.
 During: walk only temporary or caller-selected trees, skip symbolic links and
 Windows reparse points, collect age/family/git statistics, and write one JSON
-artifact with exclusive creation. No measured file is changed.
+artifact with exclusive creation. A user-selected root is intentionally
+resolved to its destination; link entries inside the tree are still omitted.
+No measured file is changed.
 After: return 0 for a complete photo/compare, 1 when a root or comparison is
 partial, and 2 for usage, validation, JSON, or output errors.
 """
@@ -200,7 +202,8 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
 
     Before: ``root`` is a resolved candidate; ``budget`` is non-negative and
     ``now`` is one captured epoch shared by this scan.
-    During: use scandir/lstat, check the monotonic budget every 64 files, skip
+    During: use scandir/lstat, recheck a popped directory for reparse races,
+    check the monotonic budget every 64 files, directories, and entries, skip
     symlinks and reparse points, and record stat/scandir failures.
     After: return counts, exact age statistics, families, git states, reasons,
     and completeness flags; no write or delete operation is performed.
@@ -240,8 +243,18 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
     family_data: dict[str, list[float | int]] = defaultdict(lambda: [0, 0, []])
     processed = 0
     directories_processed = 0
+    entries_processed = 0
     while stack:
         current = stack.pop()
+        if current != root:
+            try:
+                if _is_reparse(current):
+                    result["omitted_links"] += 1
+                    continue
+            except OSError as exc:
+                result["traversal_errors"].append(f"{current}: {type(exc).__name__}")
+                result["partial"] = True
+                continue
         try:
             entries = list(os.scandir(current))
         except OSError as exc:
@@ -259,6 +272,16 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
             break
         for entry in entries:
             path = Path(entry.path)
+            entries_processed += 1
+            if (
+                entries_processed % CHECK_EVERY == 0
+                and time.monotonic() - start >= budget
+            ):
+                result["truncated"] = True
+                result["partial"] = True
+                result["reasons"].append("presupuesto agotado")
+                stack.clear()
+                break
             try:
                 if _is_reparse(path):
                     result["omitted_links"] += 1
@@ -320,8 +343,11 @@ def _parse_roots(values: list[str]) -> list[tuple[str, Path]]:
     """Validate repeatable labelled absolute root arguments.
 
     Before: values are raw ``LABEL=PATH`` arguments from argparse.
-    During: split once, reject duplicates/relative paths, and resolve paths.
-    After: return ordered unique labels and absolute paths or raise UsageError.
+    During: split once, reject duplicates/relative paths, and intentionally
+    resolve each user-selected root to its destination; only entries inside
+    the resulting tree are subject to link omission.
+    After: return ordered unique labels and resolved absolute paths or raise
+    UsageError.
     """
     roots: list[tuple[str, Path]] = []
     labels: set[str] = set()
@@ -397,7 +423,8 @@ def _write_exclusive(path: Path, payload: dict[str, Any]) -> None:
     """Create exactly one UTF-8 JSON artifact without overwriting.
 
     Before: payload is serializable and path has passed semantic validation.
-    During: create the parent if it exists and open the final path with O_EXCL.
+    During: verify that the parent already exists, then open the final path
+    with O_EXCL; the parent is never created by this function.
     After: the artifact is fully written or an OSError propagates; an existing
     artifact is never overwritten.
     """
@@ -498,8 +525,7 @@ def _load_photo(path: Path) -> dict[str, Any]:
             )
     except (OSError, ValueError, json.JSONDecodeError, RecursionError) as exc:
         raise UsageError(f"foto ilegible: {path.name}: {type(exc).__name__}") from exc
-    if not isinstance(photo, dict) or photo.get("schema_version") != SCHEMA_VERSION:
-        raise UsageError(f"schema_version invalida: {path.name}")
+    _validate_photo_structure(photo, path)
 
     def finite(value: Any) -> None:
         """Reject non-finite numbers recursively in a decoded photo.
@@ -519,6 +545,111 @@ def _load_photo(path: Path) -> dict[str, Any]:
 
     finite(photo)
     return photo
+
+
+def _validate_photo_structure(photo: Any, path: Path) -> None:  # noqa: C901
+    """Validate the complete shape required by snapshot photos.
+
+    Before: ``photo`` is decoded JSON from a candidate input path.
+    During: verify top-level identity, denominator, roots, root counters,
+    families, lists, and scalar types before comparison code reads them.
+    After: return normally only for a snapshot-shaped object; raise
+    ``UsageError`` with the path and field for every structural mismatch.
+    """
+    if not isinstance(photo, dict):
+        raise UsageError(f"foto no es un objeto: {path.name}")
+    if photo.get("mode") == "compare":
+        raise UsageError(f"artefacto compare usado como foto: {path.name}")
+    if photo.get("schema_version") != SCHEMA_VERSION:
+        raise UsageError(f"schema_version invalida: {path.name}")
+    required = (
+        "captured_at",
+        "flight_id",
+        "commits",
+        "denominator",
+        "partial",
+        "roots",
+        "reasons",
+    )
+    missing = [field for field in required if field not in photo]
+    if missing:
+        raise UsageError(f"campos ausentes en {path.name}: {','.join(missing)}")
+    if not isinstance(photo["captured_at"], str) or not photo["captured_at"]:
+        raise UsageError(f"captured_at invalido en {path.name}")
+    if not isinstance(photo["flight_id"], str) or not photo["flight_id"]:
+        raise UsageError(f"flight_id invalido en {path.name}")
+    if not isinstance(photo["commits"], dict):
+        raise UsageError(f"commits invalido en {path.name}")
+    denominator = photo["denominator"]
+    if not isinstance(denominator, dict):
+        raise UsageError(f"denominator invalido en {path.name}")
+    for field in ("requested", "measured"):
+        value = denominator.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise UsageError(f"denominator.{field} invalido en {path.name}")
+    if not isinstance(photo["partial"], bool):
+        raise UsageError(f"partial invalido en {path.name}")
+    if not isinstance(photo["roots"], dict):
+        raise UsageError(f"roots invalido en {path.name}")
+    if not isinstance(photo["reasons"], list):
+        raise UsageError(f"reasons invalido en {path.name}")
+    root_fields = (
+        "files",
+        "bytes",
+        "oldest_age_days",
+        "median_age_days",
+        "histogram",
+        "families",
+        "files_detail",
+        "stat_errors",
+        "traversal_errors",
+        "omitted_links",
+        "truncated",
+        "partial",
+        "absent",
+        "reasons",
+    )
+    family_fields = ("files", "bytes", "oldest_age_days", "median_age_days")
+    for label, record in photo["roots"].items():
+        if not isinstance(label, str) or not isinstance(record, dict):
+            raise UsageError(f"raiz invalida en {path.name}")
+        missing = [field for field in root_fields if field not in record]
+        if missing:
+            raise UsageError(
+                f"campos de raiz ausentes en {path.name}: {','.join(missing)}"
+            )
+        for field in ("files", "bytes", "stat_errors", "omitted_links"):
+            value = record[field]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise UsageError(f"{label}.{field} invalido en {path.name}")
+        for field in ("partial", "truncated", "absent"):
+            if not isinstance(record[field], bool):
+                raise UsageError(f"{label}.{field} invalido en {path.name}")
+        if not isinstance(record["histogram"], dict) or not isinstance(
+            record["families"], dict
+        ):
+            raise UsageError(f"{label}.histogram/families invalido en {path.name}")
+        if (
+            not isinstance(record["files_detail"], list)
+            or not isinstance(record["traversal_errors"], list)
+            or not isinstance(record["reasons"], list)
+        ):
+            raise UsageError(f"listas de raiz invalidas en {path.name}")
+        for field in ("oldest_age_days", "median_age_days"):
+            value = record[field]
+            if value is not None and (
+                not isinstance(value, (int, float)) or isinstance(value, bool)
+            ):
+                raise UsageError(f"{label}.{field} invalido en {path.name}")
+        for family, details in record["families"].items():
+            if not isinstance(family, str) or not isinstance(details, dict):
+                raise UsageError(f"familia invalida en {path.name}")
+            if any(field not in details for field in family_fields):
+                raise UsageError(f"campos de familia ausentes en {path.name}")
+            for field in ("files", "bytes"):
+                value = details[field]
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise UsageError(f"familia.{field} invalida en {path.name}")
 
 
 def _compare(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
@@ -617,7 +748,7 @@ def main(argv: list[str] | None = None) -> int:
             f"RETENTION_INVENTORY {('partial' if rc else 'complete')} {Path(args.out).name}"
         )
         return rc
-    except (OSError, UsageError, ValueError) as exc:
+    except (AttributeError, OSError, TypeError, UsageError, ValueError) as exc:
         print(f"RETENTION_INVENTORY error {exc}")
         return 2
 

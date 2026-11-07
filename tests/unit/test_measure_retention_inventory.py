@@ -76,6 +76,8 @@ def test_snapshot_has_metadata_denominator_and_age_statistics(tmp_path: Path) ->
     photo = read_json(out)
     assert photo["schema_version"] == 1
     assert photo["flight_id"] == "flight-test"
+    assert isinstance(photo["captured_at"], str)
+    assert "motor" in photo["commits"]
     assert photo["denominator"] == {"requested": 1, "measured": 1}
     record = photo["roots"]["sample"]
     assert record["files"] == 2
@@ -282,10 +284,27 @@ def test_compare_warns_on_flight_mismatch_and_propagates_partial(
                 "bytes": 1,
                 "partial": True,
                 "truncated": True,
-                "families": {"a": {"files": 1, "bytes": 1}},
+                "oldest_age_days": None,
+                "median_age_days": None,
+                "histogram": {},
+                "families": {
+                    "a": {
+                        "files": 1,
+                        "bytes": 1,
+                        "oldest_age_days": None,
+                        "median_age_days": None,
+                    }
+                },
+                "files_detail": [],
+                "stat_errors": 0,
+                "traversal_errors": [],
+                "omitted_links": 0,
+                "absent": False,
+                "reasons": [],
             }
         },
         "reasons": [],
+        "partial": False,
     }
     first.write_text(
         json.dumps({**common, "flight_id": "one", "partial": True}), encoding="utf-8"
@@ -423,3 +442,228 @@ def test_budget_checks_directories_without_files(
     assert complete["files"] == 0
     assert complete["truncated"] is False
     assert complete["partial"] is False
+
+
+def test_photo_structure_validation_rejects_malformed_compare_inputs(
+    tmp_path: Path,
+) -> None:
+    """Missing roots, wrong containers, compare artifacts and wrong types fail closed."""
+    valid = {
+        "schema_version": 1,
+        "captured_at": "2026-11-07T01:00:00Z",
+        "flight_id": "flight-test",
+        "commits": {},
+        "denominator": {"requested": 1, "measured": 1},
+        "partial": False,
+        "roots": {},
+        "reasons": [],
+    }
+    cases = [
+        {"schema_version": 1},
+        {**valid, "roots": []},
+        {**valid, "mode": "compare"},
+        {**valid, "roots": {"sample": {"files": "one"}}},
+    ]
+    for index, payload in enumerate(cases):
+        first = tmp_path / f"first-{index}.json"
+        second = tmp_path / f"second-{index}.json"
+        out = tmp_path / f"delta-{index}.json"
+        first.write_text(json.dumps(payload), encoding="utf-8")
+        second.write_text(json.dumps(payload), encoding="utf-8")
+        result = run_cli("--compare", str(first), str(second), "--out", str(out))
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "RETENTION_INVENTORY error" in result.stdout
+        assert "AttributeError" not in result.stderr
+        assert "TypeError" not in result.stderr
+        assert not out.exists()
+
+
+def test_compare_recomputes_global_partial_from_truncated_root(tmp_path: Path) -> None:
+    """A structurally valid root marked truncated forces a partial comparison."""
+    root_record = {
+        "files": 0,
+        "bytes": 0,
+        "oldest_age_days": None,
+        "median_age_days": None,
+        "histogram": {},
+        "families": {},
+        "files_detail": [],
+        "stat_errors": 0,
+        "traversal_errors": [],
+        "omitted_links": 0,
+        "truncated": True,
+        "partial": False,
+        "absent": False,
+        "reasons": [],
+    }
+    photo = {
+        "schema_version": 1,
+        "captured_at": "2026-11-07T01:00:00Z",
+        "flight_id": "flight-test",
+        "commits": {},
+        "denominator": {"requested": 1, "measured": 1},
+        "partial": False,
+        "roots": {"sample": root_record},
+        "reasons": [],
+    }
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    out = tmp_path / "delta.json"
+    first.write_text(json.dumps(photo), encoding="utf-8")
+    second.write_text(json.dumps(photo), encoding="utf-8")
+
+    result = run_cli("--compare", str(first), str(second), "--out", str(out))
+
+    assert result.returncode == 1
+    assert read_json(out)["partial"] is True
+
+
+def test_budget_counts_omitted_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory of omitted entries can exhaust the entry budget."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "links"
+    root.mkdir()
+    for index in range(65):
+        (root / f"entry-{index}").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(inventory, "_is_reparse", lambda path: True)
+    clock = iter((0.0, 1.0))
+    monkeypatch.setattr(inventory.time, "monotonic", lambda: next(clock))
+
+    result = inventory._scan_root(root, budget=0.5, now=0.0)
+
+    assert result["files"] == 0
+    assert result["omitted_links"] > 0
+    assert result["truncated"] is True
+    assert result["partial"] is True
+
+
+def test_reparse_race_is_checked_when_directory_is_popped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory becoming a reparse point after enqueue is omitted safely."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "root"
+    child = root / "child"
+    root.mkdir()
+    child.mkdir()
+    (child / "hidden.txt").write_text("hidden", encoding="utf-8")
+    original = inventory._is_reparse
+    calls: list[Path] = []
+
+    def race(path: Path) -> bool:
+        """Simulate a reparse transition only when the child is popped."""
+        calls.append(path)
+        return (path == child and len(calls) > 1) or original(path)
+
+    monkeypatch.setattr(inventory, "_is_reparse", race)
+    result = inventory._scan_root(root, budget=60.0, now=0.0)
+
+    assert child in calls
+    assert result["files"] == 0
+    assert result["omitted_links"] == 1
+
+
+def test_root_symlink_is_resolved_intentionally(tmp_path: Path) -> None:
+    """A user-selected symlink root resolves to its target before scanning."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    target = tmp_path / "target"
+    alias = tmp_path / "alias"
+    target.mkdir()
+    (target / "visible.txt").write_text("x", encoding="utf-8")
+    try:
+        alias.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("el sistema no permite crear symlinks")
+
+    parsed = inventory._parse_roots([f"sample={alias}"])
+
+    assert parsed == [("sample", target.resolve())]
+
+
+def test_root_stat_failure_is_partial_and_has_no_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A root permission failure is reported as partial rc 1."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "root"
+    root.mkdir()
+    out = tmp_path / "photo.json"
+    original_stat = inventory.Path.stat
+
+    def denied(path: Path, *args: object, **kwargs: object) -> os.stat_result:
+        """Deny only the measured root and delegate all other stat calls."""
+        if path == root:
+            raise PermissionError("synthetic root denial")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(inventory.Path, "stat", denied)
+    photo, rc = inventory._snapshot(
+        argparse.Namespace(
+            root=[f"sample={root}"],
+            out=str(out),
+            flight_id="flight-test",
+            workspace_root=None,
+            budget_seconds=60.0,
+        )
+    )
+
+    assert rc == 1
+    assert photo["roots"]["sample"]["partial"] is True
+    assert "raiz ilegible" in photo["roots"]["sample"]["reasons"][0]
+    assert "total" not in photo
+
+
+def test_symlink_skip_can_be_controlled_on_any_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A patched symlink predicate exercises the portable skip branch."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "root"
+    fake_link = root / "fake-link"
+    root.mkdir()
+    fake_link.mkdir()
+    original = inventory.Path.is_symlink
+    monkeypatch.setattr(
+        inventory.Path,
+        "is_symlink",
+        lambda path: path == fake_link or original(path),
+    )
+
+    result = inventory._scan_root(root, budget=60.0, now=0.0)
+
+    assert result["omitted_links"] == 1
+    assert result["files"] == 0
+
+
+def test_file_stat_error_is_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A disappearing/stat-denied file is counted and makes the root partial."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "root"
+    file_path = root / "file.txt"
+    root.mkdir()
+    file_path.write_text("x", encoding="utf-8")
+    original_stat = inventory.os.stat
+
+    def denied(
+        path: os.PathLike[str] | str, *args: object, **kwargs: object
+    ) -> os.stat_result:
+        """Deny the synthetic file and delegate every other stat call."""
+        if Path(path) == file_path:
+            raise PermissionError("synthetic file denial")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(inventory.os, "stat", denied)
+    result = inventory._scan_root(root, budget=60.0, now=0.0)
+
+    assert result["stat_errors"] == 1
+    assert result["partial"] is True
