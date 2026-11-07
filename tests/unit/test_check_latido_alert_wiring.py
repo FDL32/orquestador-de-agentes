@@ -360,67 +360,91 @@ def test_tick_trace_cada_flag_exigido_fija_mensaje_completo(flag, box, monkeypat
     ]
 
 
+def _tick_trace_argument_problems(box, flag, value, form):
+    """Devuelve todos los hallazgos de una sola forma de argumento del productor."""
+    token = f"{flag}={value}" if form == "inline" else flag
+    args = [token] if form == "inline" else [token, value]
+    order = chk._Order(1, "tick_trace.py " + " ".join(args))
+    checker = chk._Checker(box.motor, box.py, None, {})
+    checker._check_script_argument(
+        order,
+        args,
+        0,
+        "tick_trace.py",
+        chk._SCRIPT_OPTION_META["tick_trace.py"],
+        set(),
+    )
+    return order.problems
+
+
+_RC_INLINE_CASES = [
+    (
+        "--guard-rc",
+        "abc",
+        "valor no aceptado por tick_trace.py: --guard-rc=abc (guard-rc must be an integer)",
+    ),
+    (
+        "--quota-rc",
+        "abc",
+        "valor no aceptado por tick_trace.py: --quota-rc=abc (quota-rc must be an integer)",
+    ),
+    ("--guard-rc", "0", None),
+    ("--quota-rc", "0", None),
+    ("--guard-rc", "", "--guard-rc: valor ausente o con apariencia de flag"),
+    ("--quota-rc", "", "--quota-rc: valor ausente o con apariencia de flag"),
+    ("--guard-rc", "-5", "--guard-rc: valor ausente o con apariencia de flag"),
+    ("--quota-rc", "-5", "--quota-rc: valor ausente o con apariencia de flag"),
+    ("--guard-rc", "<guard-rc>", None),
+    ("--quota-rc", "<quota-rc>", None),
+]
+
+
+def _space_expected(flag, value, inline_expected):
+    if value == "":
+        return (
+            f"valor no aceptado por tick_trace.py: {flag}= ({flag[2:]} "
+            "must be an integer)"
+        )
+    if value == "-5":
+        return f"{flag}: falta el valor o parece otra opcion"
+    return inline_expected
+
+
+_RC_EQUIVALENCE_CASES = [
+    (*case, _space_expected(case[0], case[1], case[2])) for case in _RC_INLINE_CASES
+]
+
+
 @pytest.mark.parametrize(
     ("flag", "value", "expected"),
-    [
-        (
-            "--guard-rc",
-            "abc",
-            "valor no aceptado por tick_trace.py: --guard-rc=abc",
-        ),
-        (
-            "--quota-rc",
-            "abc",
-            "valor no aceptado por tick_trace.py: --quota-rc=abc",
-        ),
-        ("--guard-rc", "0", None),
-        ("--guard-rc", "", "--guard-rc: valor ausente o con apariencia de flag"),
-        ("--guard-rc", "-5", "--guard-rc: valor ausente o con apariencia de flag"),
-        ("--guard-rc", "<guard-rc>", None),
-    ],
+    _RC_INLINE_CASES,
+    ids=[f"{flag[2:]}-{value or 'empty'}" for flag, value, _ in _RC_INLINE_CASES],
+)
+def test_tick_trace_rc_inline_matrix(box, flag, value, expected):
+    """WOT-2026-160a DA: ambos flags cubren todas las formas inline."""
+    problems = _tick_trace_argument_problems(box, flag, value, "inline")
+    expected_problems = [] if expected is None else [("V", expected)]
+    assert problems == expected_problems
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "inline_expected", "space_expected"),
+    _RC_EQUIVALENCE_CASES,
     ids=[
-        "guard-abc",
-        "quota-abc",
-        "guard-zero",
-        "guard-empty",
-        "guard-negative",
-        "guard-marker",
+        f"{flag[2:]}-{value or 'empty'}" for flag, value, _, _ in _RC_EQUIVALENCE_CASES
     ],
 )
-def test_tick_trace_rc_inline_matrix(box, capsys, flag, value, expected):
-    """WOT-2026-160a DA: cada forma inline obtiene el veredicto propio del productor."""
-    orders = box.coord_orders()
-    orders[-1] = box.trace_order().replace(f"{flag} 0", f"{flag}={value}")
-    safe_value = (value or "empty").replace("<", "").replace(">", "")
-    coord = box.latido(f"tick-inline-{flag[2:]}-{safe_value}.md", orders)
-    sup = box.latido("s.md", box.sup_orders())
-
-    rc, out = run(box.argv(coord, sup), capsys)
-
-    if expected is None:
-        assert rc == 0, out
-        assert out.startswith("latido-check: OK\n")
-    else:
-        assert rc == 1
-        findings = [line for line in out.splitlines() if line.startswith("  - [")]
-        assert len([line for line in findings if expected in line]) == 1
-        assert out.count(expected) == 1
-
-
-@pytest.mark.parametrize("flag", ["--guard-rc", "--quota-rc"])
-def test_tick_trace_rc_inline_y_espacio_tienen_mismo_veredicto(box, capsys, flag):
-    """WOT-2026-160a DA: inline y forma separada rechazan el mismo literal."""
-    for form in ("inline", "space"):
-        orders = box.coord_orders()
-        replacement = f"{flag}=abc" if form == "inline" else f"{flag} abc"
-        orders[-1] = box.trace_order().replace(f"{flag} 0", replacement)
-        coord = box.latido(f"tick-{form}-{flag[2:]}.md", orders)
-        sup = box.latido(f"s-{form}-{flag[2:]}.md", box.sup_orders())
-        rc, out = run(box.argv(coord, sup), capsys)
-        assert rc == 1
-        expected = f"valor no aceptado por tick_trace.py: {flag}=abc ({flag[2:]} must be an integer)"
-        findings = [line for line in out.splitlines() if line.startswith("  - [")]
-        assert len([line for line in findings if expected in line]) == 1
+def test_tick_trace_rc_inline_y_espacio_compara_hallazgos_completos(
+    box, flag, value, inline_expected, space_expected
+):
+    """WOT-2026-160a DA: ambas representaciones fijan listas completas y el mismo rc."""
+    inline = _tick_trace_argument_problems(box, flag, value, "inline")
+    space = _tick_trace_argument_problems(box, flag, value, "space")
+    expected_inline = [] if inline_expected is None else [("V", inline_expected)]
+    expected_space = [] if space_expected is None else [("V", space_expected)]
+    assert inline == expected_inline
+    assert space == expected_space
+    assert bool(inline) == bool(space)
 
 
 def test_tick_trace_opcion_no_derivada_se_rechaza_por_la_ruta_cli(box, capsys):

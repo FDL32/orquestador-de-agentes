@@ -38,7 +38,8 @@ T3 ejecuta; (c) con ``core.autocrlf`` una diferencia SOLO de finales de linea no
 que compara git (no se detecta); (d) no se exige ``--ops-dir`` en las ordenes del inventario
 (``FLIGHT_OPS_DIR`` lo cubre y comms_alert falla en voz alta); (e) B1 (sonda en
 ``collect_system_health.py``) no existe: lo cubren el gate de cierre (A) y este check en cada tick (B2);
-(f) ``_is_candidate`` descarta prosa y scripts fuera del inventario por diseño; (g) los valores de
+(f) ``_is_candidate`` descarta ordenes que no citan un script del inventario ni un interprete
+conocido; (g) los valores de
 retorno de latido están limitados al rango rc 0-255, por lo que los RC negativos no son representables.
 """
 
