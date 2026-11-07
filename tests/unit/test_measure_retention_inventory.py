@@ -667,6 +667,52 @@ def test_deep_extra_field_returns_rc2_without_traceback(tmp_path: Path) -> None:
     assert not out.exists()
 
 
+def test_finite_recursion_error_is_usage_error_after_json_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parser-accepted deep field is rejected when finite() exhausts the stack."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    _, valid = emit_valid_photo(tmp_path)
+    parse_limit = 1000
+    finite_limit = 100
+    deep = copy.deepcopy(valid)
+    deep["extra"] = [0]
+    for _ in range(200):
+        deep["extra"] = [deep["extra"]]
+    candidate = tmp_path / "finite-deep.json"
+    candidate.write_text(json.dumps(deep), encoding="utf-8")
+    shallow = copy.deepcopy(valid)
+    shallow["extra"] = [0]
+    shallow_candidate = tmp_path / "finite-shallow.json"
+    shallow_candidate.write_text(json.dumps(shallow), encoding="utf-8")
+
+    original_load = inventory.json.load
+    parsed = False
+
+    def load_then_lower_limit(handle: object, **kwargs: object) -> object:
+        """Let json.load finish before lowering the limit for finite()."""
+        nonlocal parsed
+        photo = original_load(handle, **kwargs)
+        parsed = True
+        sys.setrecursionlimit(finite_limit)
+        return photo
+
+    monkeypatch.setattr(inventory.json, "load", load_then_lower_limit)
+
+    previous_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(parse_limit)
+        with pytest.raises(inventory.UsageError, match="demasiado anidada"):
+            inventory._load_photo(candidate)
+        assert parsed is True
+        sys.setrecursionlimit(parse_limit)
+        assert inventory._load_photo(shallow_candidate)["schema_version"] == 1
+    finally:
+        sys.setrecursionlimit(previous_limit)
+
+
 def test_reparse_race_is_checked_when_directory_is_popped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
