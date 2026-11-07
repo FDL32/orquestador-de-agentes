@@ -7,7 +7,10 @@ During: walk only temporary or caller-selected trees, skip symbolic links and
 Windows reparse points, collect age/family/git statistics, and write one JSON
 artifact with exclusive creation. A user-selected root is intentionally
 resolved to its destination; link entries inside the tree are still omitted.
-No measured file is changed.
+No measured file is changed. Reparse detection is best-effort: after the
+directory recheck there remains a small check/use window before ``scandir``;
+closing that race requires enumeration by handle and is an accepted limitation
+owned by the coordinator.
 After: return 0 for a complete photo/compare, 1 when a root or comparison is
 partial, and 2 for usage, validation, JSON, or output errors.
 """
@@ -202,11 +205,14 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
 
     Before: ``root`` is a resolved candidate; ``budget`` is non-negative and
     ``now`` is one captured epoch shared by this scan.
-    During: use scandir/lstat, recheck a popped directory for reparse races,
-    check the monotonic budget every 64 files, directories, and entries, skip
-    symlinks and reparse points, and record stat/scandir failures.
+    During: consume and close each scandir iterator incrementally, recheck a
+    popped directory for reparse races, check the monotonic budget every 64
+    files, directories, and entries, skip symlinks and reparse points, and
+    record stat/scandir failures. The check/use race after the recheck is an
+    accepted best-effort limitation.
     After: return counts, exact age statistics, families, git states, reasons,
-    and completeness flags; no write or delete operation is performed.
+    and completeness flags; no write or delete operation is performed, and a
+    truncated iterator is closed without consuming the remaining entries.
     """
     result: dict[str, Any] = {
         "path": str(root),
@@ -255,12 +261,6 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
                 result["traversal_errors"].append(f"{current}: {type(exc).__name__}")
                 result["partial"] = True
                 continue
-        try:
-            entries = list(os.scandir(current))
-        except OSError as exc:
-            result["traversal_errors"].append(f"{current}: {type(exc).__name__}")
-            result["partial"] = True
-            continue
         directories_processed += 1
         if (
             directories_processed % CHECK_EVERY == 0
@@ -270,48 +270,56 @@ def _scan_root(root: Path, budget: float, now: float) -> dict[str, Any]:  # noqa
             result["partial"] = True
             result["reasons"].append("presupuesto agotado")
             break
-        for entry in entries:
-            path = Path(entry.path)
-            entries_processed += 1
-            if (
-                entries_processed % CHECK_EVERY == 0
-                and time.monotonic() - start >= budget
-            ):
-                result["truncated"] = True
-                result["partial"] = True
-                result["reasons"].append("presupuesto agotado")
-                stack.clear()
-                break
-            try:
-                if _is_reparse(path):
-                    result["omitted_links"] += 1
-                    continue
-                if entry.is_dir(follow_symlinks=False):
-                    stack.append(path)
-                    continue
-                if not entry.is_file(follow_symlinks=False):
-                    continue
-                stat_result = os.stat(path, follow_symlinks=False)
-            except OSError:
-                result["stat_errors"] += 1
-                result["partial"] = True
-                continue
-            processed += 1
-            if processed % CHECK_EVERY == 0 and time.monotonic() - start >= budget:
-                result["truncated"] = True
-                result["partial"] = True
-                result["reasons"].append("presupuesto agotado")
-                stack.clear()
-                break
-            age = max(0.0, (now - stat_result.st_mtime) / 86400)
-            found.append(path)
-            mtimes.append(age)
-            result["files"] += 1
-            result["bytes"] += stat_result.st_size
-            key = family_key(path.name)
-            family_data[key][0] += 1
-            family_data[key][1] += stat_result.st_size
-            family_data[key][2].append(age)
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    path = Path(entry.path)
+                    entries_processed += 1
+                    if (
+                        entries_processed % CHECK_EVERY == 0
+                        and time.monotonic() - start >= budget
+                    ):
+                        result["truncated"] = True
+                        result["partial"] = True
+                        result["reasons"].append("presupuesto agotado")
+                        stack.clear()
+                        break
+                    try:
+                        if _is_reparse(path):
+                            result["omitted_links"] += 1
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        stat_result = os.stat(path, follow_symlinks=False)
+                    except OSError:
+                        result["stat_errors"] += 1
+                        result["partial"] = True
+                        continue
+                    processed += 1
+                    if (
+                        processed % CHECK_EVERY == 0
+                        and time.monotonic() - start >= budget
+                    ):
+                        result["truncated"] = True
+                        result["partial"] = True
+                        result["reasons"].append("presupuesto agotado")
+                        stack.clear()
+                        break
+                    age = max(0.0, (now - stat_result.st_mtime) / 86400)
+                    found.append(path)
+                    mtimes.append(age)
+                    result["files"] += 1
+                    result["bytes"] += stat_result.st_size
+                    key = family_key(path.name)
+                    family_data[key][0] += 1
+                    family_data[key][1] += stat_result.st_size
+                    family_data[key][2].append(age)
+        except OSError as exc:
+            result["traversal_errors"].append(f"{current}: {type(exc).__name__}")
+            result["partial"] = True
         if result["truncated"]:
             break
     states = _git_states(root, found)
@@ -543,7 +551,10 @@ def _load_photo(path: Path) -> dict[str, Any]:
             for item in value:
                 finite(item)
 
-    finite(photo)
+    try:
+        finite(photo)
+    except RecursionError as exc:
+        raise UsageError(f"foto demasiado anidada: {path.name}") from exc
     return photo
 
 
@@ -625,6 +636,10 @@ def _validate_photo_structure(photo: Any, path: Path) -> None:  # noqa: C901
         for field in ("partial", "truncated", "absent"):
             if not isinstance(record[field], bool):
                 raise UsageError(f"{label}.{field} invalido en {path.name}")
+        if (record["absent"] or record["truncated"]) and not record["partial"]:
+            raise UsageError(
+                f"{label}: absent/truncated requiere partial en {path.name}"
+            )
         if not isinstance(record["histogram"], dict) or not isinstance(
             record["families"], dict
         ):

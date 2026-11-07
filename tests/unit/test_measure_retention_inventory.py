@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import subprocess
@@ -42,6 +43,24 @@ def snapshot_args(tmp_path: Path, root: Path, *extra: str) -> tuple[str, ...]:
 def read_json(path: Path) -> dict[str, object]:
     """Read a produced photo."""
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def emit_valid_photo(tmp_path: Path) -> tuple[Path, dict[str, object]]:
+    """Produce a valid photo through the production CLI for negative tests."""
+    root = tmp_path / "valid-root"
+    root.mkdir()
+    (root / "valid.txt").write_text("valid", encoding="utf-8")
+    photo_path = tmp_path / "valid-photo.json"
+    result = run_cli(
+        "--root",
+        f"sample={root}",
+        "--out",
+        str(photo_path),
+        "--flight-id",
+        "flight-test",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return photo_path, read_json(photo_path)
 
 
 def test_family_key_is_casefolded_and_never_empty() -> None:
@@ -304,7 +323,7 @@ def test_compare_warns_on_flight_mismatch_and_propagates_partial(
             }
         },
         "reasons": [],
-        "partial": False,
+        "partial": True,
     }
     first.write_text(
         json.dumps({**common, "flight_id": "one", "partial": True}), encoding="utf-8"
@@ -343,17 +362,25 @@ def test_snapshot_requires_flight_id_and_never_overwrites_output(
 
 def test_compare_rejects_wrong_schema_and_nonfinite_number(tmp_path: Path) -> None:
     """Malformed compare photos fail closed before creating the delta."""
-    wrong = tmp_path / "wrong.json"
-    wrong.write_text(json.dumps({"schema_version": 99}), encoding="utf-8")
+    _, valid = emit_valid_photo(tmp_path)
     good = tmp_path / "good.json"
-    good.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    good.write_text(json.dumps(valid), encoding="utf-8")
+    wrong = tmp_path / "wrong.json"
+    wrong_payload = copy.deepcopy(valid)
+    wrong_payload["schema_version"] = 99
+    wrong.write_text(json.dumps(wrong_payload), encoding="utf-8")
     out = tmp_path / "delta.json"
     result = run_cli("--compare", str(wrong), str(good), "--out", str(out))
     assert result.returncode == 2
     assert not out.exists()
 
     nonfinite = tmp_path / "nonfinite.json"
-    nonfinite.write_text('{"schema_version": 1, "value": NaN}', encoding="utf-8")
+    nonfinite_payload = copy.deepcopy(valid)
+    nonfinite_payload["roots"]["sample"]["extra"] = 0
+    nonfinite_text = json.dumps(nonfinite_payload).replace(
+        '"extra": 0', '"extra": 1e999'
+    )
+    nonfinite.write_text(nonfinite_text, encoding="utf-8")
     result = run_cli("--compare", str(nonfinite), str(good), "--out", str(out))
     assert result.returncode == 2
     assert not out.exists()
@@ -448,31 +475,30 @@ def test_photo_structure_validation_rejects_malformed_compare_inputs(
     tmp_path: Path,
 ) -> None:
     """Missing roots, wrong containers, compare artifacts and wrong types fail closed."""
-    valid = {
-        "schema_version": 1,
-        "captured_at": "2026-11-07T01:00:00Z",
-        "flight_id": "flight-test",
-        "commits": {},
-        "denominator": {"requested": 1, "measured": 1},
-        "partial": False,
-        "roots": {},
-        "reasons": [],
-    }
-    cases = [
-        {"schema_version": 1},
-        {**valid, "roots": []},
-        {**valid, "mode": "compare"},
-        {**valid, "roots": {"sample": {"files": "one"}}},
-    ]
-    for index, payload in enumerate(cases):
+    _, valid = emit_valid_photo(tmp_path)
+    cases: list[tuple[dict[str, object], str]] = []
+    missing_roots = copy.deepcopy(valid)
+    del missing_roots["roots"]
+    cases.append((missing_roots, "campos ausentes"))
+    roots_list = copy.deepcopy(valid)
+    roots_list["roots"] = []
+    cases.append((roots_list, "roots invalido"))
+    compare_artifact = copy.deepcopy(valid)
+    compare_artifact["mode"] = "compare"
+    cases.append((compare_artifact, "artefacto compare"))
+    wrong_files = copy.deepcopy(valid)
+    wrong_files["roots"]["sample"]["files"] = "one"
+    cases.append((wrong_files, "sample.files invalido"))
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(valid), encoding="utf-8")
+    for index, (payload, expected_message) in enumerate(cases):
         first = tmp_path / f"first-{index}.json"
-        second = tmp_path / f"second-{index}.json"
         out = tmp_path / f"delta-{index}.json"
         first.write_text(json.dumps(payload), encoding="utf-8")
-        second.write_text(json.dumps(payload), encoding="utf-8")
-        result = run_cli("--compare", str(first), str(second), "--out", str(out))
+        result = run_cli("--compare", str(first), str(good), "--out", str(out))
         assert result.returncode == 2, result.stdout + result.stderr
         assert "RETENTION_INVENTORY error" in result.stdout
+        assert expected_message in result.stdout
         assert "AttributeError" not in result.stderr
         assert "TypeError" not in result.stderr
         assert not out.exists()
@@ -492,7 +518,7 @@ def test_compare_recomputes_global_partial_from_truncated_root(tmp_path: Path) -
         "traversal_errors": [],
         "omitted_links": 0,
         "truncated": True,
-        "partial": False,
+        "partial": True,
         "absent": False,
         "reasons": [],
     }
@@ -538,6 +564,107 @@ def test_budget_counts_omitted_entries(
     assert result["omitted_links"] > 0
     assert result["truncated"] is True
     assert result["partial"] is True
+
+
+def test_scandir_is_consumed_incrementally_and_closes_on_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow oversized directory stops before its iterator is exhausted."""
+    from scripts.flight import measure_retention_inventory as inventory
+
+    root = tmp_path / "large"
+    root.mkdir()
+    for index in range(128):
+        (root / f"entry-{index}.txt").write_text("x", encoding="utf-8")
+    original_scandir = inventory.os.scandir
+    yielded: list[os.DirEntry[str]] = []
+    state = {"closed": False}
+
+    class SlowScanner:
+        """Context-managed iterator that records early closure."""
+
+        def __enter__(self) -> SlowScanner:
+            self.iterator = original_scandir(root)
+            return self
+
+        def __iter__(self) -> SlowScanner:
+            return self
+
+        def __next__(self) -> os.DirEntry[str]:
+            entry = next(self.iterator)
+            yielded.append(entry)
+            return entry
+
+        def __exit__(self, *_args: object) -> None:
+            self.iterator.close()
+            state["closed"] = True
+
+    def slow_scandir(path: Path) -> SlowScanner | os.ScandirIterator[str]:
+        """Return the slow instrumented iterator only for the target root."""
+        if Path(path) == root:
+            return SlowScanner()
+        return original_scandir(path)
+
+    monkeypatch.setattr(inventory.os, "scandir", slow_scandir)
+    clock = iter((0.0, 1.0))
+    monkeypatch.setattr(inventory.time, "monotonic", lambda: next(clock))
+    output = tmp_path / "photo.json"
+    photo, rc = inventory._snapshot(
+        argparse.Namespace(
+            root=[f"sample={root}"],
+            out=str(output),
+            flight_id="flight-test",
+            workspace_root=None,
+            budget_seconds=0.5,
+        )
+    )
+
+    assert rc == 1
+    assert photo["partial"] is True
+    assert "total" not in photo
+    assert len(yielded) < 128
+    assert state["closed"] is True
+
+
+def test_photo_rejects_absent_or_truncated_root_without_partial(
+    tmp_path: Path,
+) -> None:
+    """Snapshot invariants reject root states that contradict their partial flag."""
+    _, valid = emit_valid_photo(tmp_path)
+    for field in ("absent", "truncated"):
+        payload = copy.deepcopy(valid)
+        payload["roots"]["sample"][field] = True
+        payload["roots"]["sample"]["partial"] = False
+        first = tmp_path / f"invalid-{field}.json"
+        second = tmp_path / f"valid-{field}.json"
+        out = tmp_path / f"delta-{field}.json"
+        first.write_text(json.dumps(payload), encoding="utf-8")
+        second.write_text(json.dumps(valid), encoding="utf-8")
+
+        result = run_cli("--compare", str(first), str(second), "--out", str(out))
+
+        assert result.returncode == 2
+        assert "partial" in result.stdout
+        assert not out.exists()
+
+
+def test_deep_extra_field_returns_rc2_without_traceback(tmp_path: Path) -> None:
+    """A valid photo with a deeply nested extra field fails as a usage error."""
+    _, valid = emit_valid_photo(tmp_path)
+    good = tmp_path / "good-deep.json"
+    good.write_text(json.dumps(valid), encoding="utf-8")
+    deep = "[" * 2000 + "0" + "]" * 2000
+    nested = tmp_path / "nested.json"
+    nested_text = json.dumps(valid)[:-1] + f', "extra": {deep}}}'
+    nested.write_text(nested_text, encoding="utf-8")
+    out = tmp_path / "nested-delta.json"
+
+    result = run_cli("--compare", str(nested), str(good), "--out", str(out))
+
+    assert result.returncode == 2
+    assert "RETENTION_INVENTORY error" in result.stdout
+    assert "Traceback" not in result.stderr
+    assert not out.exists()
 
 
 def test_reparse_race_is_checked_when_directory_is_popped(
