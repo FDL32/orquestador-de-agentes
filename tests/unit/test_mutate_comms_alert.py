@@ -201,6 +201,28 @@ def test_copia_completa_byte_a_byte_y_control_positivo():
     assert _tmp_dirs("mutate_comms_") == tmp_before
 
 
+def test_run_mutation_control_preserva_copia_y_ejecuta_una_vez():
+    module = _load()
+    before = _tree(ROOT / "scripts" / "flight")
+    tmp_before = _tmp_dirs("mutate_comms_")
+    calls = []
+
+    def executor(_repo, env, tests):
+        calls.append((env, tests))
+        copied = _tree(Path(env["MUTATION_COPY_ROOT"]))
+        assert copied == before
+        return 0, "control"
+
+    control = ("CONTROL", "-", "comms_alert.py", None, None)
+    result = module.run_mutation(ROOT, control, None, executor)
+
+    assert result[:3] == ("CONTROL", "-", 0)
+    assert len(calls) == 1
+    assert calls[0][1] == ["tests/unit/test_comms_alert.py"]
+    assert _tree(ROOT / "scripts" / "flight") == before
+    assert _tmp_dirs("mutate_comms_") == tmp_before
+
+
 def test_ejecutor_inyectado_recibe_tests_explicitos_y_excepcion_limpia():
     module = _load()
     baseline = _tree(ROOT / "scripts" / "flight")

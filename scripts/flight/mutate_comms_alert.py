@@ -1,6 +1,6 @@
 """Arnes de mutacion para scripts/flight/comms_alert.py (WOT-2026-153p).
 
-Uso: python mutate_153i.py --repo <worktree> [--box 1A|1B|1C|all] [--ids N1,N2]
+Uso: python mutate_comms_alert.py --repo <worktree> [--box 1A|1B|1C|all] [--ids N1,N2]
      [--tests TEST] [--inject-bad-pattern] [--validate-only] [--visible]
 Before: repo es una raiz existente y contiene scripts/flight/comms_alert.py; las mutaciones activas son
     patrones versionados que deben casar exactamente una vez.
