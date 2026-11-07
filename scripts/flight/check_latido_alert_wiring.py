@@ -37,7 +37,9 @@ Limites declarados: (a) los roles los declara el invocador; (b) se mide el FICHE
 T3 ejecuta; (c) con ``core.autocrlf`` una diferencia SOLO de finales de linea no cambia el hash
 que compara git (no se detecta); (d) no se exige ``--ops-dir`` en las ordenes del inventario
 (``FLIGHT_OPS_DIR`` lo cubre y comms_alert falla en voz alta); (e) B1 (sonda en
-``collect_system_health.py``) no existe: lo cubren el gate de cierre (A) y este check en cada tick (B2).
+``collect_system_health.py``) no existe: lo cubren el gate de cierre (A) y este check en cada tick (B2);
+(f) ``_is_candidate`` descarta prosa y scripts fuera del inventario por diseño; (g) los valores de
+retorno de latido están limitados al rango rc 0-255, por lo que los RC negativos no son representables.
 """
 
 from __future__ import annotations
@@ -168,8 +170,14 @@ def _load_tick_trace_contract() -> tuple[tuple[str, ...], object, object]:
     Before: ``scripts/flight/tick_trace.py`` existe junto a este checker.
     During: importa el modulo real sin ejecutar su CLI y obtiene ``FIELDS``,
     ``_parse_rc`` y ``_parse_unmeasured``.
-    After: devuelve el esquema y las funciones productoras; lanza
-    ``RuntimeError`` si el contrato no puede derivarse.
+    After: devuelve el esquema y las funciones productoras. Puede lanzar
+    ``RuntimeError`` si no se puede cargar el módulo o si el contrato está incompleto,
+    ``AttributeError`` si falta un atributo del productor o ``TypeError`` si ``FIELDS``
+    no es iterable. La defensa ``spec is None or spec.loader is None`` también produce
+    ``RuntimeError``, pero es un límite no alcanzable por entrada de usuario y no se prueba;
+    el bloque de inicialización del módulo captura esas excepciones,
+    las guarda en ``_TICK_TRACE_CONTRACT_ERROR`` y las publica mediante ``run_check``
+    como metadata ilegible con rc 2.
     """
     path = Path(__file__).resolve().with_name("tick_trace.py")
     spec = importlib.util.spec_from_file_location("tick_trace_contract", path)

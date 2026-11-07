@@ -325,6 +325,104 @@ def test_tick_trace_cada_flag_exigido_es_necesario(box, capsys, flag):
     assert flag in out
 
 
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--ops-dir",
+        "--coordinator",
+        "--roster-sha12",
+        "--guard-rc",
+        "--quota-rc",
+        "--quota-summary",
+    ],
+)
+def test_tick_trace_cada_flag_exigido_fija_mensaje_completo(flag, box, monkeypatch):
+    """WOT-2026-160a P4: la rama de requerido conserva el mensaje exacto por flag."""
+    options = dict(chk._SCRIPT_OPTION_META["tick_trace.py"])
+    options[flag] = options[flag]._replace(required=True)
+    metadata = dict(chk._SCRIPT_OPTION_META)
+    metadata["tick_trace.py"] = options
+    monkeypatch.setattr(chk, "_SCRIPT_OPTION_META", metadata)
+    args = box.trace_order().split()
+    script_index = next(
+        i for i, token in enumerate(args) if token.endswith("tick_trace.py")
+    )
+    script_args = args[script_index + 1 :]
+    index = script_args.index(flag)
+    del script_args[index : index + 2]
+    order = chk._Order(1, "tick_trace.py " + " ".join(script_args))
+    checker = chk._Checker(box.motor, box.py, None, {})
+
+    checker._check_script_arguments(order, script_args, "tick_trace.py")
+
+    assert order.problems == [
+        ("V", f"falta el parametro obligatorio de tick_trace.py: {flag}")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "expected"),
+    [
+        (
+            "--guard-rc",
+            "abc",
+            "valor no aceptado por tick_trace.py: --guard-rc=abc",
+        ),
+        (
+            "--quota-rc",
+            "abc",
+            "valor no aceptado por tick_trace.py: --quota-rc=abc",
+        ),
+        ("--guard-rc", "0", None),
+        ("--guard-rc", "", "--guard-rc: valor ausente o con apariencia de flag"),
+        ("--guard-rc", "-5", "--guard-rc: valor ausente o con apariencia de flag"),
+        ("--guard-rc", "<guard-rc>", None),
+    ],
+    ids=[
+        "guard-abc",
+        "quota-abc",
+        "guard-zero",
+        "guard-empty",
+        "guard-negative",
+        "guard-marker",
+    ],
+)
+def test_tick_trace_rc_inline_matrix(box, capsys, flag, value, expected):
+    """WOT-2026-160a DA: cada forma inline obtiene el veredicto propio del productor."""
+    orders = box.coord_orders()
+    orders[-1] = box.trace_order().replace(f"{flag} 0", f"{flag}={value}")
+    safe_value = (value or "empty").replace("<", "").replace(">", "")
+    coord = box.latido(f"tick-inline-{flag[2:]}-{safe_value}.md", orders)
+    sup = box.latido("s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    if expected is None:
+        assert rc == 0, out
+        assert out.startswith("latido-check: OK\n")
+    else:
+        assert rc == 1
+        findings = [line for line in out.splitlines() if line.startswith("  - [")]
+        assert len([line for line in findings if expected in line]) == 1
+        assert out.count(expected) == 1
+
+
+@pytest.mark.parametrize("flag", ["--guard-rc", "--quota-rc"])
+def test_tick_trace_rc_inline_y_espacio_tienen_mismo_veredicto(box, capsys, flag):
+    """WOT-2026-160a DA: inline y forma separada rechazan el mismo literal."""
+    for form in ("inline", "space"):
+        orders = box.coord_orders()
+        replacement = f"{flag}=abc" if form == "inline" else f"{flag} abc"
+        orders[-1] = box.trace_order().replace(f"{flag} 0", replacement)
+        coord = box.latido(f"tick-{form}-{flag[2:]}.md", orders)
+        sup = box.latido(f"s-{form}-{flag[2:]}.md", box.sup_orders())
+        rc, out = run(box.argv(coord, sup), capsys)
+        assert rc == 1
+        expected = f"valor no aceptado por tick_trace.py: {flag}=abc ({flag[2:]} must be an integer)"
+        findings = [line for line in out.splitlines() if line.startswith("  - [")]
+        assert len([line for line in findings if expected in line]) == 1
+
+
 def test_tick_trace_opcion_no_derivada_se_rechaza_por_la_ruta_cli(box, capsys):
     """WOT-2026-158a D6: una opcion ajena al productor se rechaza con rc 1."""
     orders = box.coord_orders()
@@ -1668,6 +1766,97 @@ def test_r8_metadata_argparse_se_deriva_de_parser_real(tmp_path):
     assert {"choices", "mutex"}.issubset(meta["--choice"].unsupported)
     assert "type" in meta["--typed"].unsupported
     assert "nargs" in meta["--many"].unsupported
+
+
+@pytest.mark.parametrize(
+    ("label", "producer", "detail"),
+    [
+        ("syntax", "def (:", "no se puede cargar contrato"),
+        (
+            "missing-attribute",
+            "FIELDS=('a',)\ndef _parse_unmeasured(value): pass\n",
+            "module 'tick_trace_contract' has no attribute '_parse_rc'",
+        ),
+        (
+            "empty-fields",
+            "FIELDS=()\ndef _parse_rc(value, name): pass\ndef _parse_unmeasured(value): pass\n",
+            "contrato incompleto",
+        ),
+        (
+            "non-iterable-fields",
+            "FIELDS=42\ndef _parse_rc(value, name): pass\ndef _parse_unmeasured(value): pass\n",
+            "'int' object is not iterable",
+        ),
+    ],
+)
+def test_r7_loader_roto_se_importa_y_publica_error_real(
+    tmp_path, label, producer, detail
+):
+    """WOT-2026-160a DA/M3/M4: cada fallo real del loader llega a run_check como rc2."""
+    flight = tmp_path / "scripts" / "flight"
+    flight.mkdir(parents=True)
+    for source in (_ROOT / "scripts" / "flight").iterdir():
+        if source.is_file() and source.name != "tick_trace.py":
+            shutil.copy2(source, flight / source.name)
+    fake = flight / "tick_trace.py"
+    fake.write_text(producer, encoding="utf-8")
+    module_name = f"check_latido_alert_wiring_probe_{label}_{id(tmp_path)}"
+    spec = importlib.util.spec_from_file_location(
+        module_name, flight / "check_latido_alert_wiring.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        roster = tmp_path / "roster.json"
+        roster.write_text("{}", encoding="utf-8")
+        rc, lines = module.run_check(
+            roster=str(roster), specs={}, motor_root=tmp_path, environ={}
+        )
+        assert rc == 2
+        assert module._TICK_TRACE_CONTRACT_ERROR is not None
+        expected = f"no se pudo derivar contrato de tick_trace.py: {detail}"
+        if detail in {"no se puede cargar contrato", "contrato incompleto"}:
+            expected += f": {fake}"
+        assert lines == [
+            "latido-check: ILEGIBLE",
+            f"  - [U] metadata de parsers: {expected}",
+        ]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_r7_loader_real_es_control_positivo(tmp_path):
+    """WOT-2026-160a DA: el productor real conserva contrato cargable."""
+    assert chk._TICK_TRACE_CONTRACT_ERROR is None
+    roster = tmp_path / "roster.json"
+    roster.write_text("{}", encoding="utf-8")
+    rc, lines = chk.run_check(
+        roster=str(roster), specs={}, motor_root=tmp_path, environ={}
+    )
+    assert rc == 1
+    assert lines == [
+        "latido-check: VIOLACION",
+        "  - [V] coordinadora: sin latido (pasa --latido-file ROL=RUTA)",
+        "  - [V] supervisora: sin latido (pasa --latido-file ROL=RUTA)",
+    ]
+
+
+def test_r7_loader_docstring_declara_excepciones_y_captura():
+    """WOT-2026-160a DC: el contrato documental refleja las excepciones observables."""
+    doc = chk._load_tick_trace_contract.__doc__ or ""
+    assert "RuntimeError" in doc
+    assert "AttributeError" in doc
+    assert "TypeError" in doc
+    assert "modulo" in doc and "captura" in doc
+
+
+def test_check_docstring_declara_limites_de_candidatura_y_rc():
+    """WOT-2026-160a DD: los límites P5/P6 quedan declarados sin alterar código."""
+    doc = chk.__doc__ or ""
+    assert "Limites declarados" in doc
+    assert "_is_candidate" in doc
+    assert "rc 0-255" in doc
 
 
 def test_r7_fallo_de_introspeccion_no_rompe_import_y_da_ilegible_con_alert(
