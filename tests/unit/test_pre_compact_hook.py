@@ -20,6 +20,7 @@ from io import StringIO
 from unittest.mock import patch
 
 import pytest
+from runtime.project_root import _is_mangled_root as runtime_is_mangled_root
 
 from tests.unit.test_session_start_hook import (
     RAYA,
@@ -32,6 +33,21 @@ from tests.unit.test_session_start_hook import (
 HOOK_PATH = pathlib.Path(__file__).parent.parent.parent / ".agent" / "hooks"
 sys.path.insert(0, str(HOOK_PATH))
 import pre_compact_hook as hook  # noqa: E402
+
+
+class _RaisingStdin:
+    def __init__(self, error):
+        self.error = error
+
+    def read(self):
+        raise self.error
+
+
+def _assert_exact_hook_result(stdout, expected_input):
+    assert json.loads(stdout.getvalue()) == {
+        "continue": True,
+        "input": expected_input,
+    }
 
 
 class TestLoadObservationsSafe:
@@ -469,6 +485,21 @@ class TestMainHook:
 
         detector.assert_called_once_with(str(mangled_root), mangled_root.resolve())
 
+    def test_existing_absolute_project_root_uses_real_detector(
+        self, monkeypatch, tmp_path
+    ):
+        absolute_root = tmp_path / "absolute-root"
+        absolute_root.mkdir()
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(absolute_root))
+
+        assert hook._is_mangled_root is runtime_is_mangled_root
+        with patch.object(
+            hook, "_is_mangled_root", wraps=runtime_is_mangled_root
+        ) as detector:
+            assert hook._resolve_data_root() == absolute_root.resolve()
+
+        detector.assert_called_once_with(str(absolute_root), absolute_root.resolve())
+
     def test_project_root_uses_first_claude_ancestor(self, monkeypatch, tmp_path):
         root = tmp_path / "root"
         nested = root / "a" / "b"
@@ -542,7 +573,17 @@ class TestMainHook:
 
         assert "AGENT_PROJECT_ROOT" not in os.environ
 
-    def test_main_continues_without_memory_when_cwd_is_unavailable(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("stdin_text", "expected_input"),
+        [
+            ('{"kind": "object"}', {"kind": "object"}),
+            ('["kind", "list"]', ["kind", "list"]),
+        ],
+        ids=["object-input", "list-input"],
+    )
+    def test_main_continues_without_memory_when_cwd_is_unavailable(
+        self, monkeypatch, stdin_text, expected_input
+    ):
         monkeypatch.delenv("AGENT_PROJECT_ROOT", raising=False)
         stdout = StringIO()
 
@@ -550,20 +591,17 @@ class TestMainHook:
             patch.object(
                 hook.Path, "cwd", side_effect=OSError("cwd unavailable")
             ) as cwd,
-            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdin", StringIO(stdin_text)),
             patch.object(sys, "stdout", stdout),
-            patch.object(
-                hook, "get_compact_context", side_effect=AssertionError("memory read")
-            ),
+            patch.object(hook, "get_compact_context", return_value="") as context,
             pytest.raises(SystemExit) as exc_info,
         ):
             hook.main()
 
         assert exc_info.value.code == 0
         cwd.assert_called_once_with()
-        result = json.loads(stdout.getvalue())
-        assert result["continue"] is True
-        assert "additionalContext" not in result
+        context.assert_not_called()
+        _assert_exact_hook_result(stdout, expected_input)
         assert "AGENT_PROJECT_ROOT" not in os.environ
 
     def test_main_uses_valid_environment_when_cwd_is_unavailable(
@@ -669,7 +707,112 @@ class TestMainHook:
         assert "additionalContext" not in result
         assert "AGENT_PROJECT_ROOT" not in os.environ
 
-    def test_main_degrades_when_compact_loader_raises(self, monkeypatch, tmp_path):
+    @pytest.mark.parametrize(
+        "root_error",
+        [Exception("root resolution failed"), KeyboardInterrupt()],
+        ids=["exception", "keyboard-interrupt"],
+    )
+    def test_main_propagates_data_root_resolution_errors_and_restores_environment(
+        self, monkeypatch, tmp_path, root_error
+    ):
+        inherited_root = tmp_path / "inherited-root"
+        inherited_root.mkdir()
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(inherited_root))
+        stdout = StringIO()
+
+        with (
+            patch.object(hook, "_resolve_data_root", side_effect=root_error),
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", stdout),
+            pytest.raises(type(root_error)),
+        ):
+            hook.main()
+
+        assert stdout.getvalue() == ""
+        assert os.environ["AGENT_PROJECT_ROOT"] == str(inherited_root)
+
+    @pytest.mark.parametrize(
+        ("loader_error", "propagates"),
+        [
+            (RuntimeError("loader failed"), False),
+            (KeyboardInterrupt(), True),
+            (SystemExit(7), True),
+        ],
+        ids=[
+            "exception-degrades",
+            "keyboard-interrupt-propagates",
+            "system-exit-propagates",
+        ],
+    )
+    def test_main_handles_loader_exception_forms(
+        self, monkeypatch, tmp_path, loader_error, propagates
+    ):
+        root = tmp_path / "project"
+        (root / ".claude").mkdir(parents=True)
+        inherited_root = tmp_path / "inherited-root"
+        inherited_root.mkdir()
+        monkeypatch.chdir(root)
+        monkeypatch.setenv("AGENT_PROJECT_ROOT", str(inherited_root))
+        stdout = StringIO()
+
+        with (
+            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdout", stdout),
+            patch.object(hook, "get_compact_context", side_effect=loader_error),
+            patch.object(
+                hook, "load_observations_safe", return_value=[]
+            ) as observations,
+            patch.object(
+                hook,
+                "extract_keywords_from_work_plan",
+                return_value=[],
+            ) as keywords,
+            patch.object(hook, "format_memory_section", return_value="") as formatter,
+        ):
+            if propagates:
+                with pytest.raises(type(loader_error)) as exc_info:
+                    hook.main()
+                if isinstance(loader_error, SystemExit):
+                    assert exc_info.value.code == loader_error.code
+                assert stdout.getvalue() == ""
+            else:
+                with pytest.raises(SystemExit) as exc_info:
+                    hook.main()
+                assert exc_info.value.code == 0
+                _assert_exact_hook_result(stdout, {})
+
+        observations.assert_not_called()
+        keywords.assert_not_called()
+        formatter.assert_not_called()
+        assert os.environ["AGENT_PROJECT_ROOT"] == str(inherited_root)
+
+    @pytest.mark.parametrize(
+        ("stdin", "expected_input"),
+        [
+            (StringIO(""), {}),
+            (StringIO("not valid json"), {}),
+            (StringIO('{"kind": "object"}'), {"kind": "object"}),
+            (StringIO('["kind", "list"]'), ["kind", "list"]),
+            (
+                _RaisingStdin(
+                    UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+                ),
+                {},
+            ),
+            (_RaisingStdin(OSError("stdin unavailable")), {}),
+        ],
+        ids=[
+            "empty",
+            "invalid-json",
+            "object",
+            "list",
+            "unicode-decode-error",
+            "os-error",
+        ],
+    )
+    def test_main_normalizes_stdin_forms(
+        self, monkeypatch, tmp_path, stdin, expected_input
+    ):
         root = tmp_path / "project"
         (root / ".claude").mkdir(parents=True)
         monkeypatch.chdir(root)
@@ -677,27 +820,18 @@ class TestMainHook:
         stdout = StringIO()
 
         with (
-            patch.object(sys, "stdin", StringIO("{}")),
+            patch.object(sys, "stdin", stdin),
             patch.object(sys, "stdout", stdout),
-            patch.object(
-                hook, "get_compact_context", side_effect=RuntimeError("loader failed")
-            ),
-            patch.object(
-                hook, "load_observations_safe", side_effect=AssertionError("L1 read")
-            ),
-            patch.object(
-                hook,
-                "extract_keywords_from_work_plan",
-                side_effect=AssertionError("plan read"),
-            ),
+            patch.object(hook, "get_compact_context", return_value=""),
+            patch.object(hook, "load_observations_safe", return_value=[]),
+            patch.object(hook, "extract_keywords_from_work_plan", return_value=[]),
             pytest.raises(SystemExit) as exc_info,
         ):
             hook.main()
 
         assert exc_info.value.code == 0
-        result = json.loads(stdout.getvalue())
-        assert result["continue"] is True
-        assert "additionalContext" not in result
+        _assert_exact_hook_result(stdout, expected_input)
+        assert os.environ.get("AGENT_PROJECT_ROOT") is None
         assert "AGENT_PROJECT_ROOT" not in os.environ
 
 

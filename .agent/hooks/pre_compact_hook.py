@@ -367,28 +367,38 @@ def main() -> None:
     """Main entry point for pre-compact hook.
 
     Before (Pre-conditions):
-        - stdin contains valid JSON input (or empty/invalid).
+        - stdin may contain valid JSON, be empty or invalid, or raise an
+          Exception while being read.
         - observations.jsonl may exist, be empty, or corrupted.
         - work_plan.md may exist or not.
 
     During (Process and Resources):
-        - Reads and parses stdin JSON safely.
-        - Resolves the session data root and temporarily anchors the memory
-          loader to it, then loads observations and keywords from paths under
-          that root.
-        - Ranks observations by recency and keyword matching.
-        - Builds additionalContext with "Memoria relevante" section.
-        - Outputs JSON result with continue=true.
+        - Attempts to read and parse stdin JSON; a JSON decoding or read
+          Exception is normalized to an empty object.
+        - Resolves the session data root before the inner context-handling
+          try block. If root resolution itself raises, no JSON result is
+          emitted and the exception propagates through the outer finally.
+        - When a data root exists, temporarily anchors the memory loader to
+          it. An empty compact context triggers loading observations and
+          keywords from paths under that root, followed by ranking by recency
+          and keyword matching.
+        - Builds optional additionalContext with a "Memoria relevante" or
+          structured memory section when relevant memory is available.
+        - When processing reaches the output stage, emits a JSON result with
+          continue=true.
 
     After (Post-conditions and Errors):
-        - Prints valid JSON (ASCII puro, `ensure_ascii=True`) to stdout with
-          "continue" and "additionalContext".
-        - Exits with code 0 and no additionalContext when no data root is
-          available; otherwise missing or corrupted input files degrade to
-          empty context instead of failing the hook. Any exception while
-          loading or ranking context also degrades to empty context.
-        - Restores the inherited ``AGENT_PROJECT_ROOT`` value even when root
-          resolution or context loading cannot proceed.
+        - After successful processing, prints valid JSON (ASCII puro,
+          `ensure_ascii=True`) to stdout. The result always contains
+          "continue" and "input"; "additionalContext" is included only when
+          relevant memory is available.
+        - Exits with code 0 after printing that JSON result. When no data root
+          is available, the result has no additionalContext. A handled
+          `Exception` while loading or ranking context degrades to empty
+          context; a `BaseException` such as `KeyboardInterrupt` or
+          `SystemExit` is not caught and propagates instead.
+        - The outer `finally` restores the inherited ``AGENT_PROJECT_ROOT``
+          value before any handled or propagated exception leaves `main`.
     """
     previous_root = os.environ.get("AGENT_PROJECT_ROOT")
     try:
