@@ -210,6 +210,33 @@ def test_next_free_row_parser_respects_escaped_pipes(tmp_path):
     assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-400y"
 
 
+def test_next_free_row_parser_handles_escaped_pipe_before_ticket_cell(tmp_path):
+    """Un pipe escapado en la primera celda no desplaza la celda de ticket."""
+    collab = _collab(
+        tmp_path,
+        live=(
+            "| Prioridad | Ticket | Titulo |\n|---|---|---|\n"
+            r"| Media\| variante | WOT-2026-400x | ficha |" + "\n"
+        ),
+        archive="",
+    )
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-400y"
+
+
+def test_next_free_include_refs_false_ignores_prose_ticket_ids(tmp_path):
+    """include_refs=False conserva la regla de excluir IDs de prosa."""
+    collab = _collab(
+        tmp_path,
+        live=(
+            "| Prioridad | Ticket | Titulo |\n|---|---|---|\n"
+            "| Media | WOT-2026-160b | ficha WOT-2026-999z |\n"
+        ),
+    )
+    assert (
+        next_free_ticket_id("WOT", 2026, collab, include_refs=False) == "WOT-2026-160c"
+    )
+
+
 def test_collect_surface_ticket_ids_crosses_both_surfaces(tmp_path):
     """El enumerador compartido lee AMBAS superficies en una sola llamada."""
     collab = _collab(
@@ -256,7 +283,7 @@ def test_scan_ref_ticket_ids_reads_distinct_branch_ids(tmp_path):
     assert scan.refs == 2
     assert scan.tips == 2
     assert scan.ids_solo_en_refs == {"WOT-2026-200a"}
-    assert scan.blobs_leidos >= 1
+    assert scan.blobs_leidos == 3
     assert "refs remotas posiblemente caducadas (sin fetch)" in scan.avisos
 
 
@@ -299,6 +326,49 @@ def test_scan_ref_ticket_ids_deduplicates_same_tip_and_same_row(tmp_path):
     assert scan.refs == 2
     assert scan.tips == 1
     assert scan.blobs_leidos == 2
+
+
+def test_scan_ref_ticket_ids_includes_detached_head_tip(tmp_path):
+    """HEAD separado aporta su tip aunque no exista una ref que lo nombre."""
+    repo, collab = _git_collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+    )
+    _git(repo, "checkout", "-qb", "rama-head")
+    head_sha = _append_row_and_commit(
+        repo,
+        collab,
+        "| Ticket | Estado |\n|---|---|\n| WOT-2026-100b | pending |\n",
+        "detached head ticket",
+    )
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "checkout", "-q", "--detach", head_sha)
+    (collab / "backlog.md").write_text(
+        "| Ticket | Estado |\n|---|---|\n| WOT-2026-100a | pending |\n",
+        encoding="utf-8",
+    )
+
+    scan = scan_ref_ticket_ids(collab)
+
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-100c"
+    assert {"WOT-2026-100a", "WOT-2026-100b"} <= scan.ids
+    assert scan.tips == 2
+
+
+def test_scan_ref_ticket_ids_handles_unreadable_local_surface(tmp_path):
+    """Una superficie local ilegible degrada con aviso y no lanza."""
+    collab = _collab(
+        tmp_path,
+        live="| Ticket | Estado |\n|---|---|\n| WOT-2026-120a | pending |\n",
+    )
+    (collab / "backlog.md").unlink()
+    (collab / "backlog.md").mkdir()
+
+    scan = scan_ref_ticket_ids(collab)
+
+    assert scan.ids == set()
+    assert any("superficie HEAD no disponible" in aviso for aviso in scan.avisos)
+    assert next_free_ticket_id("WOT", 2026, collab) == "WOT-2026-001a"
 
 
 def test_scan_ref_ticket_ids_deduplicates_identical_surface_blobs_across_tips(

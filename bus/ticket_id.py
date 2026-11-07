@@ -200,8 +200,10 @@ def _collect_row_ticket_ids(collab_dir: Path) -> set[str]:
     found: set[str] = set()
     for rel in ("backlog.md", "_archive/backlog_done.md"):
         path = collab_dir / rel
-        if not path.is_file():
+        if not path.exists():
             continue
+        if not path.is_file():
+            raise OSError(f"superficie no es un fichero regular: {path}")
         text = path.read_text(encoding="utf-8", errors="replace")
         for line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines():
             if not line.lstrip().startswith("|"):
@@ -329,8 +331,14 @@ def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
         plus avisos, including the fixed stale-remote warning; no exception
         escapes.
     """
-    fallback_ids = frozenset(_collect_row_ticket_ids(collab_dir))
     avisos: list[str] = [_REF_REMOTE_WARNING]
+    try:
+        fallback_ids = frozenset(_collect_row_ticket_ids(collab_dir))
+        head_ids_readable = True
+    except OSError as exc:
+        fallback_ids = frozenset()
+        head_ids_readable = False
+        avisos.append(f"superficie HEAD no disponible ({exc})")
     try:
         repo = collab_dir.parent.parent
         discovered_root = Path(
@@ -340,7 +348,8 @@ def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
             raise RuntimeError(
                 f"la colaboracion no es la raiz git esperada ({discovered_root})"
             )
-        if not _git_text(repo, "rev-parse", "HEAD").strip():
+        head_sha = _git_text(repo, "rev-parse", "HEAD").strip()
+        if not head_sha:
             raise RuntimeError("HEAD vacio")
         raw_refs = _git_text(
             repo,
@@ -358,7 +367,9 @@ def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
             if not sep or symref:
                 continue
             refs.append((name, sha))
-        tips = sorted({sha for _, sha in refs})
+        tip_set = {sha for _, sha in refs}
+        tip_set.add(head_sha)
+        tips = sorted(tip_set)
         specs = "".join(
             f"{tip}:{surface}\n"
             for tip in tips
@@ -381,13 +392,12 @@ def scan_ref_ticket_ids(collab_dir: Path) -> RefScan:
                 seen_blobs.add(parts[0])
                 blob_shas.append(parts[0])
         ids = _read_blob_ids(repo, blob_shas)
-        head_ids = _collect_row_ticket_ids(collab_dir)
         return RefScan(
             frozenset(ids),
             len(refs),
             len(tips),
             len(blob_shas),
-            frozenset(ids - head_ids),
+            frozenset(ids - fallback_ids) if head_ids_readable else frozenset(),
             tuple(avisos),
         )
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
@@ -422,7 +432,10 @@ def next_free_ticket_id(
         read; it cannot cover refs from other machines or refs skipped after a
         declared read failure. With ``include_refs=False`` it uses HEAD only.
     """
-    head_ids = _collect_row_ticket_ids(collab_dir)
+    try:
+        head_ids = _collect_row_ticket_ids(collab_dir)
+    except OSError:
+        head_ids = set()
     existing = (
         head_ids | set(scan_ref_ticket_ids(collab_dir).ids)
         if include_refs
