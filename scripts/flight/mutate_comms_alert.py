@@ -324,7 +324,7 @@ m(
 )
 
 
-# ---- extras de 1A cerradas en 1B (deuda 2 y Q3) ----  (E5 y E7 RETIRADOS en la ronda 1: con A2 un `last` no numerico ya no llega a _due/event, el `_num` era codigo muerto y se quito)
+# ---- extras de 1A cerradas en 1B (deuda 2 y Q3) ----  (E5 y E7 RETIRADO HISTORICO de 153i; NO es inventario de este ticket (RETIRED esta vacio a proposito): con A2 un `last` no numerico ya no llega a _due/event, el `_num` era codigo muerto y se quito)
 m("E3", "1B", "    last = _num(st.get(key), 0)", "    last = st.get(key, 0)")
 m(
     "E4",
@@ -669,7 +669,7 @@ m(
 )
 m("M19", "1C", '    out = _RE_UUID.sub("<uuid>", out)\n', "")
 
-# Q2a RETIRADO en la ronda 2: con la resincronizacion de _split_line (B1) un BOM delante del primer objeto queda como fragmento vacio y el objeto se parsea igual; quitar el removeprefix ya no cambia ningun resultado (mutante equivalente; el codigo se conserva como defensa explicita).
+# Q2a RETIRADO HISTORICO de 153i; NO es inventario de este ticket (RETIRED esta vacio a proposito): con la resincronizacion de _split_line (B1) un BOM delante del primer objeto queda como fragmento vacio y el objeto se parsea igual; quitar el removeprefix ya no cambia ningun resultado (mutante equivalente; el codigo se conserva como defensa explicita).
 # ---- ronda 2 (B1, B2, B4) ----
 m(
     "B1a",

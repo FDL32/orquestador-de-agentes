@@ -970,7 +970,7 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
     tests = [item for item in a.tests.split(",") if item] if a.tests else None
     if a.control:
         mutations = [("CONTROL", "-", STALL, None, None)]
-    killed, survivors, timeouts, errors = 0, [], [], []
+    killed, survivors, timeouts, errors, dead_equiv = 0, [], [], [], []
     for mutation in mutations:
         mid, box, rc, why, elapsed = run_mutation(
             repo, mutation, tests, executor=executor
@@ -985,6 +985,13 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
         elif label == "KILLED":
             killed += 1
             print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
+            if mid in EQUIV:
+                dead_equiv.append(mid)
+                print(
+                    f"EQUIV-DECLARADO-MUERTO {mid} {box}: la declaracion de "
+                    "equivalencia parece obsoleta, revisar",
+                    flush=True,
+                )
         elif label == "SURVIVE":
             if mid in EQUIV:
                 print(f"EQUIVALENTE {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
@@ -996,7 +1003,8 @@ def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
             print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
     print(
         f"RESUMEN: matadas {killed}/{len(mutations)}; timeouts: {timeouts or 'ninguno'}; "
-        f"errores: {errors or 'ninguno'}; supervivientes: {survivors or 'ninguno'}"
+        f"errores: {errors or 'ninguno'}; supervivientes: {survivors or 'ninguno'}; "
+        f"equivalentes_muertos: {dead_equiv or 'ninguno'}"
     )
     if errors:
         return 1

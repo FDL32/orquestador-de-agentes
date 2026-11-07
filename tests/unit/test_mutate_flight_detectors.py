@@ -291,6 +291,38 @@ def test_todos_los_equivalentes_se_informan_sin_supervivientes():
         assert f"SURVIVE {mid}" not in text
 
 
+def test_equivalentes_muertos_se_informan_y_no_equivalente_no():
+    module = _load_harness()
+    for mid in module.EQUIV:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            assert (
+                module.main(
+                    ["--repo", str(ROOT), "--ids", mid],
+                    executor=lambda _repo, _env, _tests: (1, "fallo"),
+                )
+                == 0
+            )
+        text = output.getvalue()
+        assert f"KILLED {mid}" in text
+        assert f"EQUIV-DECLARADO-MUERTO {mid}" in text
+        assert f"equivalentes_muertos: ['{mid}']" in text
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        assert (
+            module.main(
+                ["--repo", str(ROOT), "--ids", "E7"],
+                executor=lambda _repo, _env, _tests: (1, "fallo"),
+            )
+            == 0
+        )
+    text = output.getvalue()
+    assert "KILLED E7" in text
+    assert "EQUIV-DECLARADO-MUERTO E7" not in text
+    assert "equivalentes_muertos: ninguno" in text
+
+
 def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina(tmp_path):
     module = _load_harness()
     flight = ROOT / "scripts" / "flight"
