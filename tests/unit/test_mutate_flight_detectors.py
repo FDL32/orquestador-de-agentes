@@ -1,6 +1,8 @@
 """Pruebas del arnés de mutación de los detectores de vuelo."""
 
+import contextlib
 import importlib.util
+import io
 from pathlib import Path
 
 
@@ -61,3 +63,138 @@ def test_patron_inexistente_no_se_considera_mutacion_valida():
     module = _load_harness()
     source = (ROOT / "scripts" / "flight" / module.STALL).read_text(encoding="utf-8")
     assert source.count("PATRON_AUSENTE_153P") == 0
+
+
+def _synthetic_repo(tmp_path, text="abc"):
+    """Crea una raíz mínima para probar una sola barrera del arnés."""
+    flight = tmp_path / "scripts" / "flight"
+    flight.mkdir(parents=True)
+    (flight / "flight_stall_check.py").write_text(text, encoding="utf-8")
+    (flight / "quota_tick.py").write_text("abc", encoding="utf-8")
+    return tmp_path
+
+
+def _synthetic(mid, pattern, replacement, target="flight_stall_check.py"):
+    return [(mid, "synthetic", target, pattern, replacement)]
+
+
+def test_validate_rechaza_patron_inexistente_sin_otro_motivo(tmp_path):
+    module = _load_harness()
+    errors = module.validate(
+        _synthetic_repo(tmp_path), _synthetic("H1", "missing", "x")
+    )
+    assert len(errors) == 1 and "casa 0" in errors[0]
+
+
+def test_validate_rechaza_patron_duplicado_sin_otro_motivo(tmp_path):
+    module = _load_harness()
+    errors = module.validate(
+        _synthetic_repo(tmp_path, "abcabc"), _synthetic("H2", "abc", "x")
+    )
+    assert len(errors) == 1 and "casa 2" in errors[0]
+
+
+def test_validate_rechaza_mutacion_igual_sin_otro_motivo(tmp_path):
+    module = _load_harness()
+    errors = module.validate(_synthetic_repo(tmp_path), _synthetic("H3", "abc", "abc"))
+    assert errors == ["H3: la mutacion no difiere del original"]
+
+
+def test_validate_rechaza_mutacion_no_compilable_sin_otro_motivo(tmp_path):
+    module = _load_harness()
+    errors = module.validate(
+        _synthetic_repo(tmp_path, "value = 1"), _synthetic("H4", "value = 1", "if (")
+    )
+    assert len(errors) == 1 and "no compila" in errors[0]
+
+
+def test_validate_rechaza_id_duplicado_sin_otro_motivo(tmp_path):
+    module = _load_harness()
+    mutations = _synthetic("H5", "a", "x") + _synthetic("H5", "b", "y")
+    errors = module.validate(_synthetic_repo(tmp_path, "ab"), mutations)
+    assert errors == ["H5: id duplicado"]
+
+
+def test_validate_rechaza_fichero_ausente_sin_otro_motivo(tmp_path):
+    module = _load_harness()
+    errors = module.validate(
+        _synthetic_repo(tmp_path), _synthetic("H6", "abc", "x", "missing.py")
+    )
+    assert len(errors) == 1 and "no se puede leer" in errors[0]
+
+
+def test_tabla_vacia_es_rc_1(monkeypatch):
+    module = _load_harness()
+    monkeypatch.setattr(module, "MUT", [])
+    assert module.main(["--repo", str(ROOT), "--validate-only"]) == 1
+
+
+def test_executor_rc_5_y_rc_2_son_errores_no_muertes():
+    module = _load_harness()
+    for rc in (5, 2):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = module.main(
+                ["--repo", str(ROOT), "--ids", "E7"],
+                executor=lambda _repo, _env, _tests, rc=rc: (rc, "bad executor"),
+            )
+        text = output.getvalue()
+        assert result == 1
+        assert "ERROR E7" in text
+        assert "matadas 0/1" in text
+
+
+def test_timeout_no_es_muerte_y_superviviente_no_adjudicado():
+    module = _load_harness()
+    for rc, label in ((99, "TIMEOUT"), (0, "SURVIVE")):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = module.main(
+                ["--repo", str(ROOT), "--ids", "E7"],
+                executor=lambda _repo, _env, _tests, rc=rc: (rc, "synthetic"),
+            )
+        assert result == 1
+        assert f"{label} E7" in output.getvalue()
+        assert "matadas 0/1" in output.getvalue()
+        if rc == 99:
+            assert "errores: ninguno" in output.getvalue()
+
+
+def test_equiv_se_informa_aparte_y_no_es_superviviente():
+    module = _load_harness()
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = module.main(
+            ["--repo", str(ROOT), "--ids", "N69"],
+            executor=lambda _repo, _env, _tests: (0, "equivalente"),
+        )
+    assert result == 0
+    assert "EQUIVALENTE N69" in output.getvalue()
+    assert "supervivientes: ninguno" in output.getvalue()
+
+
+def test_executor_recibe_copia_byte_a_byte_y_la_copia_se_elimina():
+    module = _load_harness()
+    original = (ROOT / "scripts" / "flight" / "flight_stall_check.py").read_bytes()
+    seen = {}
+
+    def executor(_repo, env, tests):
+        copy = Path(env["STALL_CHECK_UNDER_TEST"])
+        seen["exists"] = copy.exists()
+        seen["tests"] = tests
+        seen["changed"] = copy.read_bytes() != original
+        seen["copy_path"] = copy
+        return 1, "mutant killed"
+
+    mutation = next(item for item in module.MUT if item[0] == "E7")
+    result = module.run_mutation(
+        ROOT, mutation, ["tests/unit/test_flight_stall_check.py"], executor
+    )
+    assert result[2] == 1
+    assert seen["exists"] is True
+    assert seen["tests"] == ["tests/unit/test_flight_stall_check.py"]
+    assert seen["changed"] is True
+    assert not seen["copy_path"].exists()
+    assert (
+        ROOT / "scripts" / "flight" / "flight_stall_check.py"
+    ).read_bytes() == original

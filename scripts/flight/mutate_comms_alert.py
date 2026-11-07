@@ -785,6 +785,16 @@ def _default_executor(repo, env, tests, timeout=180):
     return completed.returncode, why
 
 
+def _classify_rc(rc):
+    """Clasifica el resultado de la focal sin convertir errores en muertes.
+
+    Before: ``rc`` es el código real devuelto por pytest o por el ejecutor inyectado.
+    During: separa fallo de tests (1), timeout (99), éxito (0) y errores de ejecución.
+    After: devuelve una etiqueta estable para el informe del arnés.
+    """
+    return {0: "SURVIVE", 1: "KILLED", 99: "TIMEOUT"}.get(rc, "ERROR")
+
+
 def run_mutation(repo, mutation, tests, executor=None):
     """Run one mutation against a temporary copy and always remove that copy."""
     mid, box, fn, pattern, replacement = mutation
@@ -807,7 +817,7 @@ def run_mutation(repo, mutation, tests, executor=None):
     return mid, box, rc, why, time.time() - started
 
 
-def main(argv=None, executor=None):
+def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
     """Validate and optionally execute selected mutations without touching the source tree."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -844,27 +854,28 @@ def main(argv=None, executor=None):
     )
     if args.validate_only:
         return 0
-    killed, survivors, timeouts = 0, [], []
+    killed, survivors, timeouts, errors = 0, [], [], []
     tests = [item for item in args.tests.split(",") if item]
     for mutation in mutations:
         mid, box, rc, why, elapsed = run_mutation(
             args.repo, mutation, tests, executor=executor
         )
+        label = _classify_rc(rc)
         if rc == 99:
             timeouts.append(mid)
-        elif rc != 0:
+        elif label == "KILLED":
             killed += 1
-        else:
+        elif label == "SURVIVE":
             survivors.append(mid)
-        label = (
-            "KILLED"
-            if rc != 0 and rc != 99
-            else ("TIMEOUT" if rc == 99 else "SOBREVIVE")
-        )
+        else:
+            errors.append((mid, rc))
         print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
     print(
-        f"RESUMEN: matadas {killed}/{len(mutations)}; timeouts: {timeouts or 'ninguno'}; supervivientes: {survivors or 'ninguno'}"
+        f"RESUMEN: matadas {killed}/{len(mutations)}; timeouts: {timeouts or 'ninguno'}; "
+        f"errores: {errors or 'ninguno'}; supervivientes: {survivors or 'ninguno'}"
     )
+    if errors:
+        return 1
     return 1 if survivors or timeouts else 0
 
 

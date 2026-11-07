@@ -802,10 +802,195 @@ m("A9d", "2A", "if toks\n", "if False\n")
 
 def die(msg):
     print("ARNES-ABORTA: " + msg, flush=True)
-    sys.exit(1)
+    return 1
 
 
-def run_one(args):
+def _selected(box, ids):
+    """Selecciona mutaciones activas sin incluir retiradas.
+
+    Before: ``box`` es una caja válida y ``ids`` una lista separada por comas.
+    During: filtra ``MUT`` por caja e identificador, preservando el orden versionado.
+    After: devuelve la tabla seleccionada; una tabla vacía se deja visible para abortar.
+    """
+    wanted = {item for item in ids.split(",") if item}
+    return [
+        item
+        for item in MUT
+        if item[0] not in RETIRED
+        and box in ("all", item[1])
+        and (not wanted or item[0] in wanted)
+    ]
+
+
+def validate(repo, mutations):
+    """Valida cardinalidad, cambio y compilación de mutaciones.
+
+    Before: ``repo`` contiene los dos módulos objetivo y ``mutations`` es una tabla iterable.
+    During: lee cada objetivo, detecta ids repetidos, exige una coincidencia y compila Python.
+    After: devuelve todos los errores encontrados sin ejecutar pytest ni abortar por el primero.
+    """
+    src_dir = pathlib.Path(repo).resolve() / "scripts" / "flight"
+    seen = set()
+    errors = []
+    for mid, _box, fn, pattern, replacement in mutations:
+        if mid in seen:
+            errors.append(f"{mid}: id duplicado")
+        seen.add(mid)
+        try:
+            original = (src_dir / fn).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            errors.append(f"{mid}: no se puede leer {fn}: {exc}")
+            continue
+        count = original.count(pattern)
+        if count != 1:
+            errors.append(f"{mid}: el patron casa {count} veces (debe ser 1)")
+            continue
+        mutated = original.replace(pattern, replacement)
+        if mutated == original:
+            errors.append(f"{mid}: la mutacion no difiere del original")
+            continue
+        if fn.endswith(".py"):
+            try:
+                compile(mutated, fn, "exec")
+            except SyntaxError as exc:
+                errors.append(f"{mid}: el codigo mutado no compila ({exc})")
+    return errors
+
+
+def _default_executor(repo, env, tests, timeout=900):
+    """Ejecuta la focal y devuelve su rc sin reinterpretarlo."""
+    command = [
+        sys.executable,
+        "-X",
+        "utf8",
+        "-I",
+        "-m",
+        "pytest",
+        *tests,
+        "-x",
+        "-q",
+        "-o",
+        "addopts=",
+        "-p",
+        "no:cacheprovider",
+    ]
+    try:
+        completed = subprocess.run(  # noqa: S603 - focal controlada por el arnés
+            command,
+            cwd=str(repo),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return 99, "CRASH-TIMEOUT"
+    output = (completed.stdout or "") + (completed.stderr or "")
+    why = next(
+        (line for line in output.splitlines() if line.startswith(("FAILED", "ERROR"))),
+        output.strip().splitlines()[-1] if output.strip() else "",
+    )
+    return completed.returncode, why
+
+
+def run_mutation(repo, mutation, tests, executor=None):
+    """Ejecuta una mutación contra una copia temporal y la elimina siempre."""
+    mid, box, fn, pattern, replacement = mutation
+    src_dir = pathlib.Path(repo).resolve() / "scripts" / "flight"
+    execute = executor or _default_executor
+    started = time.time()
+    with tempfile.TemporaryDirectory(prefix="mutate_detectors_") as tmp_name:
+        tmp = pathlib.Path(tmp_name)
+        for source in src_dir.iterdir():
+            if source.suffix in (".py", ".ps1"):
+                (tmp / source.name).write_text(
+                    source.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
+                )
+        original = (src_dir / fn).read_text(encoding="utf-8")
+        (tmp / fn).write_text(
+            original.replace(pattern, replacement), encoding="utf-8", newline="\n"
+        )
+        env = dict(
+            os.environ,
+            STALL_CHECK_UNDER_TEST=str(tmp / STALL),
+            QUOTA_TICK_UNDER_TEST=str(tmp / QUOTA),
+        )
+        rc, why = execute(repo, env, tests)
+    return mid, box, rc, why, time.time() - started
+
+
+def _classify_rc(rc):
+    """Clasifica resultados del ejecutor: solo rc 1 es muerte."""
+    return {0: "SURVIVE", 1: "KILLED", 99: "TIMEOUT"}.get(rc, "ERROR")
+
+
+def main(argv=None, executor=None):  # noqa: C901 - CLI y adjudicación serial
+    """Valida y ejecuta mutaciones serialmente con ejecutor inyectable."""
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--box", default="all")
+    ap.add_argument("--ids", default="")
+    ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--tests", default="tests/unit/test_flight_stall_check.py")
+    ap.add_argument("--inject-bad-pattern", action="store_true")
+    ap.add_argument("--validate-only", action="store_true")
+    ap.add_argument("--control", action="store_true")
+    a = ap.parse_args(argv)
+    repo = pathlib.Path(a.repo).resolve()
+    mutations = _selected(a.box, a.ids)
+    if a.inject_bad_pattern:
+        mutations.insert(
+            0, ("BAD", a.box, STALL, "ESTE PATRON NO EXISTE EN EL CODIGO", "x")
+        )
+    if not mutations:
+        print("ARNES-ABORTA: tabla de patrones vacia", flush=True)
+        return 1
+    errors = validate(repo, mutations)
+    if errors:
+        for error in errors:
+            print("ARNES-ABORTA: " + error, flush=True)
+        return 1
+    print(
+        f"patrones validados: {len(mutations)} (cada uno casa 1 vez, compila y difiere)",
+        flush=True,
+    )
+    if a.validate_only:
+        return 0
+    tests = [item for item in a.tests.split(",") if item]
+    if a.control:
+        mutations = [("CONTROL", "-", STALL, None, None)]
+    killed, survivors, timeouts, errors = 0, [], [], []
+    for mutation in mutations:
+        mid, box, rc, why, elapsed = run_mutation(
+            repo, mutation, tests, executor=executor
+        )
+        label = "CONTROL" if a.control else _classify_rc(rc)
+        if a.control:
+            print(f"CONTROL rc={rc} {elapsed:.1f}s {why}", flush=True)
+            return 0 if rc == 0 else 1
+        if rc == 99:
+            timeouts.append(mid)
+        elif label == "KILLED":
+            killed += 1
+        elif label == "SURVIVE":
+            if mid in EQUIV:
+                print(f"EQUIVALENTE {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
+            else:
+                survivors.append(mid)
+        else:
+            errors.append((mid, rc))
+        print(f"{label} {mid} {box} {elapsed:.1f}s {why[:110]}", flush=True)
+    print(
+        f"RESUMEN: matadas {killed}/{len(mutations)}; timeouts: {timeouts or 'ninguno'}; "
+        f"errores: {errors or 'ninguno'}; supervivientes: {survivors or 'ninguno'}"
+    )
+    if errors:
+        return 1
+    return 1 if survivors or timeouts else 0
+
+
+def _legacy_run_one(args):
     """Ejecuta una mutación aislada con limpieza garantizada.
 
     Before: ``args`` contiene una mutación validada, la raíz del repositorio y su focal.
@@ -818,7 +1003,7 @@ def run_one(args):
     tests = [TESTS_BY_TARGET[fn]] if fn in TESTS_BY_TARGET else tests
     orig = (src_dir / fn).read_text(encoding="utf-8")
     t0 = time.time()
-    with tempfile.TemporaryDirectory(prefix="mutate_detectors_") as tmp_name:
+    with tempfile.TemporaryDirectory(prefix="mutate_detectors_legacy_") as tmp_name:
         tmp = pathlib.Path(tmp_name)
         for f in src_dir.iterdir():
             if f.suffix in (".py", ".ps1"):
@@ -870,7 +1055,7 @@ def run_one(args):
     return mid, box, rc, why, time.time() - t0
 
 
-def main():  # noqa: C901 - CLI de validación y adjudicación del arnés
+def _legacy_main():  # noqa: C901 - retained only as historical implementation
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
     ap.add_argument("--box", default="all")
@@ -895,11 +1080,11 @@ def main():  # noqa: C901 - CLI de validación y adjudicación del arnés
     ]
     if a.inject_bad_pattern:
         muts = [("BAD", a.box, STALL, "ESTE PATRON NO EXISTE EN EL CODIGO", "x"), *muts]
-    seen = set()
+    seen_legacy = set()
     for mid, _box, fn, pat, rep in muts:
-        if mid in seen:
+        if mid in seen_legacy:
             die("id duplicado " + mid)
-        seen.add(mid)
+        seen_legacy.add(mid)
         orig = (src_dir / fn).read_text(encoding="utf-8")
         n = orig.count(pat)
         if n != 1:
@@ -925,7 +1110,7 @@ def main():  # noqa: C901 - CLI de validación y adjudicación del arnés
         jobs = [("CONTROL", "-", STALL, None, None, repo, a.tests.split(","), src_dir)]
     killed, survivors, equiv_surv = 0, [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.workers) as ex:
-        for mid, box, rc, why, dt in ex.map(run_one, jobs):
+        for mid, box, rc, why, dt in ex.map(_legacy_run_one, jobs):
             ok = (
                 rc != 0 and rc != 99
             )  # un timeout NO es una muerte: queda como no adjudicado

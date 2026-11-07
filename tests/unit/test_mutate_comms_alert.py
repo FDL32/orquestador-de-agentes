@@ -111,9 +111,97 @@ def test_timeout_is_not_a_kill_and_is_not_green():
     assert rc == 1
     assert "TIMEOUT E1" in output.getvalue()
     assert "matadas 0/1" in output.getvalue()
+    assert "errores: ninguno" in output.getvalue()
 
 
 def test_visible_mutations_are_opt_in_even_when_selected_by_id():
     module = _load()
     assert not any(item[0] == "SJ1" for item in module._selected("all", "SJ1", False))
     assert any(item[0] == "SJ1" for item in module._selected("all", "SJ1", True))
+
+
+def _synthetic_repo(tmp_path, text="abc"):
+    """Crea una raíz mínima para probar una sola barrera de validación."""
+    flight = tmp_path / "scripts" / "flight"
+    flight.mkdir(parents=True)
+    (flight / "comms_alert.py").write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def _synthetic(module, mid, pattern, replacement, target="comms_alert.py"):
+    return [(mid, "synthetic", target, pattern, replacement)]
+
+
+def test_validate_rechaza_patron_inexistente_sin_otro_motivo(tmp_path):
+    module = _load()
+    errors = module.validate(
+        _synthetic_repo(tmp_path), _synthetic(module, "H1", "missing", "x")
+    )
+    assert len(errors) == 1 and "casa 0" in errors[0]
+
+
+def test_validate_rechaza_patron_duplicado_sin_otro_motivo(tmp_path):
+    module = _load()
+    errors = module.validate(
+        _synthetic_repo(tmp_path, "abcabc"), _synthetic(module, "H2", "abc", "x")
+    )
+    assert len(errors) == 1 and "casa 2" in errors[0]
+
+
+def test_validate_rechaza_mutacion_igual_sin_otro_motivo(tmp_path):
+    module = _load()
+    errors = module.validate(
+        _synthetic_repo(tmp_path), _synthetic(module, "H3", "abc", "abc")
+    )
+    assert errors == ["H3: la mutacion no difiere del original"]
+
+
+def test_validate_rechaza_mutacion_no_compilable_sin_otro_motivo(tmp_path):
+    module = _load()
+    errors = module.validate(
+        _synthetic_repo(tmp_path, "value = 1"),
+        _synthetic(module, "H4", "value = 1", "if ("),
+    )
+    assert len(errors) == 1 and "no compila" in errors[0]
+
+
+def test_validate_rechaza_id_duplicado_sin_otro_motivo(tmp_path):
+    module = _load()
+    mutations = _synthetic(module, "H5", "a", "x") + _synthetic(module, "H5", "b", "y")
+    errors = module.validate(_synthetic_repo(tmp_path, "ab"), mutations)
+    assert errors == ["H5: id duplicado"]
+
+
+def test_validate_rechaza_fichero_ausente_sin_otro_motivo(tmp_path):
+    module = _load()
+    errors = module.validate(
+        _synthetic_repo(tmp_path), _synthetic(module, "H6", "abc", "x", "missing.py")
+    )
+    assert len(errors) == 1 and "no se puede leer" in errors[0]
+
+
+def test_executor_rc_5_y_rc_2_son_errores_no_muertes():
+    module = _load()
+    for rc in (5, 2):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = module.main(
+                ["--repo", str(ROOT), "--ids", "E1"],
+                executor=lambda _repo, _env, _tests, rc=rc: (rc, "bad executor"),
+            )
+        text = output.getvalue()
+        assert result == 1
+        assert "ERROR E1" in text
+        assert "matadas 0/1" in text
+
+
+def test_rc_0_es_superviviente_no_adjudicado():
+    module = _load()
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = module.main(
+            ["--repo", str(ROOT), "--ids", "E1"],
+            executor=lambda _repo, _env, _tests: (0, "green"),
+        )
+    assert result == 1
+    assert "SURVIVE E1" in output.getvalue()
