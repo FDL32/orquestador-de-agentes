@@ -265,12 +265,22 @@ def test_d1_censo_sin_rutas_del_usuario():
     )  # cada identificador debe morder
 
 
-def test_is_finite_entero_grande_caracteriza_overflow():
-    """Caracteriza el OverflowError actual de ``math.isfinite`` para enteros enormes."""
+def test_is_finite_entero_grande_es_falso_y_fija_la_frontera():
+    """Los enteros que desbordan ``float`` son ilegibles sin perder la frontera exacta."""
     mod = _load()
     assert mod._is_finite(10**300) is True
-    with pytest.raises(OverflowError):
-        mod._is_finite(10**1000)
+    assert mod._is_finite(10**308) is True
+    assert mod._is_finite(10**309) is False
+    assert mod._is_finite(-(10**1000)) is False
+    assert mod._is_finite(True) is False
+    assert mod._is_finite([]) is False
+    assert mod._is_finite({}) is False
+    assert mod._is_finite(float("inf")) is False
+    boundary = int(sys.float_info.max) + 2**970
+    assert mod._is_finite(boundary - 1) is True
+    assert mod._is_finite(boundary) is False
+    assert mod._is_finite(-(boundary - 1)) is True
+    assert mod._is_finite(-boundary) is False
 
 
 def test_d2_ops_dir_sin_resolver_rc2_sin_cwd(box, tmp_path, monkeypatch):
@@ -1064,7 +1074,18 @@ def test_fila117_umbral_de_25_min_y_futuro_acotado(box, minutos, avisa):
 
 @pytest.mark.parametrize(
     "malo",
-    ['"ayer"', "null", "true", "NaN", "Infinity", "-Infinity", "1e999", "[]", "{}"],
+    [
+        '"ayer"',
+        "null",
+        "true",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1e999",
+        "1" * 400,
+        "[]",
+        "{}",
+    ],
 )
 def test_fila117_ts_tarea_ilegible_avisa(box, malo):
     """Un reloj ilegible se dice ilegible (ni "lleva N min", ni detector-roto por desbordar)."""

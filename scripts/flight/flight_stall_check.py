@@ -128,19 +128,18 @@ def _is_finite(value):
     """Comprueba si un valor es un numero finito y no booleano.
 
     Before: ``value`` puede ser cualquier objeto del estado.
-    During: valida ``int`` o ``float`` no booleano y aplica ``math.isfinite``.
-    After: devuelve ``True`` solo para numeros finitos; un entero fuera del rango
-        convertible a ``float`` puede propagar ``OverflowError`` desde
-        ``math.isfinite`` en vez de devolver ``False``. Las llamadas de los
-        detectores en las lineas de validacion de tarea y de latido (~536, ~538,
-        ~750) no interceptan esa excepcion; sus llamadores la tratan como detector
-        roto cuando corresponde.
+    During: valida ``int`` o ``float`` no booleano y aplica ``math.isfinite`` dentro
+        de una guarda contra el desborde de conversion a ``float``.
+    After: devuelve ``True`` solo para numeros finitos convertibles a ``float``;
+        devuelve ``False`` para booleanos, objetos de otro tipo, valores no finitos
+        y enteros cuyo ``float()`` desborda, sin propagar ``OverflowError``.
     """
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if not (isinstance(value, (int, float)) and not isinstance(value, bool)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _git(path, *args):

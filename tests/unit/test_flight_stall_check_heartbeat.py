@@ -68,6 +68,7 @@ def test_heartbeat_ausente_corrupto_y_no_finito_son_urgentes(heartbeat_box):
         {"ts_latido": "bad"},
         {"ts_latido": True},
         {"ts_latido": float("nan")},
+        {"ts_latido": 10**400},
     ):
         _write_stall_state(box, payload)
         result = box.tick("--heartbeat-check")
