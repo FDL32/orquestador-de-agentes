@@ -171,6 +171,8 @@ def _load_tick_trace_contract() -> tuple[tuple[str, ...], object, object]:
     During: importa el modulo real sin ejecutar su CLI y obtiene ``FIELDS``,
     ``_parse_rc`` y ``_parse_unmeasured``.
     After: devuelve el esquema y las funciones productoras. Puede lanzar
+    ``RuntimeError`` cuando falta el fichero o una excepcion ocurre durante la importacion;
+    ambos errores de carga quedan envueltos por el loader antes de la captura global.
     ``RuntimeError`` si no se puede cargar el módulo o si el contrato está incompleto,
     ``AttributeError`` si falta un atributo del productor o ``TypeError`` si ``FIELDS``
     no es iterable. La defensa ``spec is None or spec.loader is None`` también produce

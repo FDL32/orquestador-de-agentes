@@ -1771,11 +1771,37 @@ def test_r8_metadata_argparse_se_deriva_de_parser_real(tmp_path):
 @pytest.mark.parametrize(
     ("label", "producer", "detail"),
     [
+        ("absent", None, "no se puede cargar contrato"),
         ("syntax", "def (:", "no se puede cargar contrato"),
+        (
+            "import-error",
+            "raise RuntimeError('import boom')\n",
+            "no se puede cargar contrato",
+        ),
         (
             "missing-attribute",
             "FIELDS=('a',)\ndef _parse_unmeasured(value): pass\n",
             "module 'tick_trace_contract' has no attribute '_parse_rc'",
+        ),
+        (
+            "missing-fields",
+            "def _parse_rc(value, name): pass\ndef _parse_unmeasured(value): pass\n",
+            "module 'tick_trace_contract' has no attribute 'FIELDS'",
+        ),
+        (
+            "missing-parse-unmeasured",
+            "FIELDS=('a',)\ndef _parse_rc(value, name): pass\n",
+            "module 'tick_trace_contract' has no attribute '_parse_unmeasured'",
+        ),
+        (
+            "non-callable-parse-rc",
+            "FIELDS=('a',)\n_parse_rc=42\ndef _parse_unmeasured(value): pass\n",
+            "contrato incompleto",
+        ),
+        (
+            "non-callable-parse-unmeasured",
+            "FIELDS=('a',)\ndef _parse_rc(value, name): pass\n_parse_unmeasured=42\n",
+            "contrato incompleto",
         ),
         (
             "empty-fields",
@@ -1799,7 +1825,8 @@ def test_r7_loader_roto_se_importa_y_publica_error_real(
         if source.is_file() and source.name != "tick_trace.py":
             shutil.copy2(source, flight / source.name)
     fake = flight / "tick_trace.py"
-    fake.write_text(producer, encoding="utf-8")
+    if producer is not None:
+        fake.write_text(producer, encoding="utf-8")
     module_name = f"check_latido_alert_wiring_probe_{label}_{id(tmp_path)}"
     spec = importlib.util.spec_from_file_location(
         module_name, flight / "check_latido_alert_wiring.py"
@@ -1857,6 +1884,10 @@ def test_check_docstring_declara_limites_de_candidatura_y_rc():
     assert "Limites declarados" in doc
     assert "_is_candidate" in doc
     assert "rc 0-255" in doc
+    assert chk._is_candidate("echo hello") is False
+    assert chk._is_candidate("unknown.py --x") is False
+    assert chk._is_candidate("python unknown.py --x") is True
+    assert chk._is_candidate("tick_trace.py --guard-rc 0") is True
 
 
 def test_r7_fallo_de_introspeccion_no_rompe_import_y_da_ilegible_con_alert(
