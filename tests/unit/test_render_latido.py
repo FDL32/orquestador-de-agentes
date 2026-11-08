@@ -219,6 +219,189 @@ def test_render_blindado_for_salto_x_to_x_mas_uno(tmp_path: Path) -> None:
     assert "para el salto CO-56 -> CO-57" in output
 
 
+def test_judgement_span_preserves_literal_salto_phrase(tmp_path: Path) -> None:
+    predecessor = tmp_path / "judgement-salto.md"
+    predecessor.write_text(PREDECESSOR.read_text(encoding="utf-8"), encoding="utf-8")
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    juicios["nota_derivacion"] = (
+        "[literal para el salto CO-56 -> CO-56] " + juicios["nota_derivacion"]
+    )
+
+    rc, output = render_latido(predecessor, roster, 2, juicios)
+
+    assert rc == 0
+    assert "literal para el salto CO-56 -> CO-56" in output
+    assert "para el salto CO-56 -> CO-57" in output
+
+
+def test_predecessor_free_text_unknown_judgement_marker_is_rc2(tmp_path: Path) -> None:
+    predecessor = tmp_path / "unknown-marker.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\n[[JUICIO:pendiente]]\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "marcador de JUICIO desconocido: pendiente" in output
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (
+            lambda text: text.replace(
+                "Eres CO-55, sesion coordinadora ACTIVA",
+                "Eres CO-55, sesion coordinadora",
+            ),
+            "identidades o paso 9 no derivables del predecesor",
+        ),
+        (
+            lambda text: text.replace(
+                "Tu supervisora es CO-54 (mcp:", "Tu supervisora es CO-54 sin mcp:"
+            ),
+            "identidades o paso 9 no derivables del predecesor",
+        ),
+        (
+            lambda text: text.replace(
+                "fila b1 de diseno/GO_RELEVO_24H_REGISTRO.md",
+                "fila b1 de diseno/registro.md",
+            ),
+            "go_index_predecesor no derivable del paso 9",
+        ),
+        (
+            lambda text: text.replace(
+                "ARRANQUE_CO-55 s.1 y ", "ARRANQUE_CO-55 s.1 ", 1
+            ),
+            "ancla R2b 'y ' no encontrada",
+        ),
+        (
+            lambda text: text.replace(
+                " (procedimiento de ticket", " (procedimiento de caso", 1
+            ),
+            "ancla final R2b no encontrada",
+        ),
+    ],
+)
+def test_missing_required_predecessor_anchor_is_rc2(
+    tmp_path: Path, mutate, message: str
+) -> None:
+    predecessor = tmp_path / "missing-anchor.md"
+    predecessor.write_text(
+        mutate(PREDECESSOR.read_text(encoding="utf-8")), encoding="utf-8"
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert message in output
+
+
+@pytest.mark.parametrize("content", ["", "una sola linea"])
+def test_predecessor_without_judgement_header_is_rc2(
+    tmp_path: Path, content: str
+) -> None:
+    predecessor = tmp_path / "short.md"
+    predecessor.write_text(content, encoding="utf-8")
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "el predecesor no tiene linea de cabecera JUICIO" in output
+
+
+@pytest.mark.parametrize("location", ["orquestador", "supervisor"])
+def test_missing_role_roster_identity_is_rc2(location: str) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    del roster["active_roles"][location]["threadId"]
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert f"campo de roster ausente: threadId en active_roles.{location}" in output
+
+
+def test_missing_context_roster_identity_is_rc2() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    del roster["cadena_contexto"][0]["session_code"]
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "campo de roster ausente: session_code en cadena_contexto[0]" in output
+
+
+@pytest.mark.parametrize("value", ["CO-56\n", "CO 56"])
+def test_roster_session_code_requires_strict_form(value: str) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["active_roles"]["orquestador"]["session_code"] = value
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert (
+        "session_code en active_roles.orquestador no tiene la forma esperada" in output
+    )
+
+
+@pytest.mark.parametrize("value", ["mcp:ABCDEF12", "ABCDEF12"])
+def test_roster_thread_id_requires_strict_form(value: str) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["active_roles"]["orquestador"]["threadId"] = value
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "threadId en active_roles.orquestador no tiene la forma esperada" in output
+
+
+def test_cli_rejects_unknown_judgement_name(tmp_path: Path, capsys) -> None:
+    juicio = tmp_path / "juicio.txt"
+    juicio.write_text("texto", encoding="utf-8")
+
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(ROSTER),
+            "--go-index",
+            "2",
+            "--juicio",
+            f"foo=@{juicio}",
+        ]
+    )
+
+    assert rc == 2
+    assert "--juicio con nombre desconocido: foo" in capsys.readouterr().out
+
+
+def test_cli_rejects_valid_json_roster_that_is_not_dict(tmp_path: Path, capsys) -> None:
+    roster = tmp_path / "list.json"
+    roster.write_text("[]", encoding="utf-8")
+
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(roster),
+            "--go-index",
+            "2",
+        ]
+    )
+
+    assert rc == 2
+    assert (
+        "campo de roster no consumido: roster debe ser dict" in capsys.readouterr().out
+    )
+
+
 def test_synthetic_pair_derives_identities_without_pair_literals(
     tmp_path: Path,
 ) -> None:
@@ -787,7 +970,7 @@ def test_missing_required_anchor_is_rc2(tmp_path: Path, mutate, message: str) ->
     assert message in output
 
 
-def test_missing_cascade_end_anchor_is_rc2(tmp_path: Path) -> None:
+def test_duplicate_cascade_end_anchor_is_rc2(tmp_path: Path) -> None:
     predecessor = tmp_path / "duplicate-end.md"
     predecessor.write_text(
         PREDECESSOR.read_text(encoding="utf-8") + " LATIDO DE PROGRESO",
@@ -799,6 +982,60 @@ def test_missing_cascade_end_anchor_is_rc2(tmp_path: Path) -> None:
 
     assert rc == 2
     assert "regla R2b-fin: esperado 1, encontrado 2" in output
+
+
+def test_missing_cascade_end_anchor_is_rc2(tmp_path: Path) -> None:
+    predecessor = tmp_path / "missing-end.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8").replace(" LATIDO DE PROGRESO", "", 1),
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R2b-fin: esperado 1, encontrado 0" in output
+
+
+def test_zombie_id_in_replaced_old_judgement_is_ignored(tmp_path: Path) -> None:
+    predecessor = tmp_path / "zombie-judgement.md"
+    text = PREDECESSOR.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    lines[1] = lines[1].replace(
+        "]", " mcp:zombie-00000000-0000-4000-8000-000000000000]", 1
+    )
+    predecessor.write_text("".join(lines), encoding="utf-8")
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert "zombie-00000000" not in output
+
+
+@pytest.mark.parametrize(
+    ("first_line_end", "rest_end"), [("\n", "\r\n"), ("\r\n", "\n")]
+)
+def test_forced_status_uses_first_line_ending(
+    tmp_path: Path, first_line_end: str, rest_end: str
+) -> None:
+    lines = PREDECESSOR.read_text(encoding="utf-8").splitlines()
+    predecessor = tmp_path / "mixed-endings.md"
+    predecessor.write_bytes(
+        (
+            first_line_end.join([lines[0], lines[1]])
+            + rest_end
+            + rest_end.join(lines[2:])
+            + rest_end
+        ).encode("utf-8")
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert output.startswith("ESTADO: VIGENTE" + first_line_end)
 
 
 @pytest.mark.parametrize("go_index", [2.5, "2", -1, True, False])
@@ -818,7 +1055,9 @@ def test_non_numeric_session_code_is_rc2() -> None:
     rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
 
     assert rc == 2
-    assert "session_code no numerico: CO-ABC" in output
+    assert (
+        "session_code en active_roles.orquestador no tiene la forma esperada" in output
+    )
 
 
 def test_cli_malformed_juicio_keeps_argparse_error(capsys) -> None:

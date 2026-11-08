@@ -20,6 +20,16 @@ saliente coordinator in its paquete de relevo; the lifecycle of scheduled tasks
 (creating its own and deleting the predecessor's) is not part of this
 specification.
 
+R7: the ``para el salto {own_new} -> {own_new}`` correction is applied only to
+unprotected source pieces, never to protected cascade, postcompaction, or
+judgement spans.
+
+Limitation: predecessor-dated filenames (for example
+``LATIDO_CO-xx_v7.1_20261108.md``) are copied as-is without correcting their
+date. A handoff on another day must correct that date manually; this is out
+of scope for this card, whose DoD lists identities only, and remains debt for
+whoever measures the three real handoffs (CO-57 or its successor).
+
 After: ``render_latido`` returns ``(0, text)`` for a complete derivation,
 ``(2, text)`` for a rule mismatch, foreign id, or unconsumed roster field, and
 ``(3, text)`` when a judgement is not supplied.  Every non-zero result carries
@@ -34,6 +44,7 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -132,7 +143,7 @@ def _derive_predecessor(
     }
 
 
-def _roster_values(
+def _roster_values(  # noqa: C901
     roster: dict[str, Any],
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str], list[str]]:
     errors: list[str] = []
@@ -185,6 +196,20 @@ def _roster_values(
             if key in value
             and (not isinstance(value[key], str) or not value[key].strip())
         )
+        if isinstance(value.get("session_code"), str) and not re.fullmatch(
+            r"[A-Z]+-[0-9]+", value["session_code"]
+        ):
+            errors.append(
+                f"campo de roster no consumido: session_code en {location} "
+                "no tiene la forma esperada"
+            )
+        if isinstance(value.get("threadId"), str) and not re.fullmatch(
+            r"mcp:[0-9a-f-]+", value["threadId"]
+        ):
+            errors.append(
+                f"campo de roster no consumido: threadId en {location} "
+                "no tiene la forma esperada"
+            )
         values.append(value)
     return values[0], values[1], values[2], errors
 
@@ -300,8 +325,17 @@ def _replace_identity_tokens(
     text: str,
     protected: list[tuple[int, int, str]],
     replacements: dict[str, str],
+    extra_transform: Callable[[str], str] | None = None,
 ) -> str:
-    """Replace identity tokens in original-text gaps and emit protected values."""
+    """Replace identity tokens in gaps and emit protected values.
+
+    Before: ``text`` and non-overlapping protected spans use offsets into the
+    same source string; ``replacements`` maps complete identity tokens.
+    During: token replacement and the optional extra transform are applied to
+    every unprotected piece, while protected values are emitted unchanged.
+    After: returns the concatenated rendering and never transforms protected
+    values.
+    """
     alternatives = "|".join(
         re.escape(old) for old in sorted(replacements, key=len, reverse=True)
     )
@@ -313,10 +347,12 @@ def _replace_identity_tokens(
     pieces: list[str] = []
     cursor = 0
     for start, end, value in sorted(protected):
-        pieces.append(token_pattern.sub(replace_match, text[cursor:start]))
+        piece = token_pattern.sub(replace_match, text[cursor:start])
+        pieces.append(extra_transform(piece) if extra_transform else piece)
         pieces.append(value)
         cursor = end
-    pieces.append(token_pattern.sub(replace_match, text[cursor:]))
+    piece = token_pattern.sub(replace_match, text[cursor:])
+    pieces.append(extra_transform(piece) if extra_transform else piece)
     return "".join(pieces)
 
 
@@ -331,6 +367,7 @@ def render_latido(  # noqa: C901
     Before: see the module contract; the input mapping is not modified.
     During: validates roster shape and ids, measures R2/R3 anchors, applies
     R1-R4 outside protected spans, and fills or marks the three judgement values.
+    R7 applies the salto correction only in unprotected source pieces.
     After: returns the rendered UTF-8 text and rc 0, 2, or 3 as documented;
     malformed input is reported as a plain ``DIFERENCIAS:`` diagnostic.
     """
@@ -347,6 +384,7 @@ def render_latido(  # noqa: C901
         problems.extend(roster_errors)
         if problems:
             return 2, _failure(text, problems)
+        judgement_spans = _judgement_spans(text)
 
         cascade_anchor_count = text.count(_CASCADE_START)
         if cascade_anchor_count != 1:
@@ -374,9 +412,10 @@ def render_latido(  # noqa: C901
                 "roster.cadena_contexto[0] no coincide con la identidad de supervisora "
                 "citada en el predecesor"
             )
-        judgement_spans = _judgement_spans(text)
-
-        all_ids = set(re.findall(r"mcp:[0-9A-Za-z-]+", text))
+        judgement_text = text
+        for start, end in sorted(judgement_spans.values(), reverse=True):
+            judgement_text = judgement_text[:start] + judgement_text[end:]
+        all_ids = set(re.findall(r"mcp:[0-9A-Za-z-]+", judgement_text))
         frozen_ids = set(
             re.findall(r"mcp:[0-9A-Za-z-]+", text[cascade_start:cascade_end])
         )
@@ -457,7 +496,16 @@ def render_latido(  # noqa: C901
             derived["cascade_code"]: context["session_code"],
             derived["cascade_id"]: context["threadId"],
         }
-        rendered = _replace_identity_tokens(text, protected, replacements)
+
+        def salto_transform(piece: str) -> str:
+            return piece.replace(
+                f"para el salto {own['session_code']} -> {own['session_code']}",
+                f"para el salto {own['session_code']} -> {_next_session_code(own['session_code'])}",
+            )
+
+        rendered = _replace_identity_tokens(
+            text, protected, replacements, extra_transform=salto_transform
+        )
         line9 = re.search(r"(?m)^9\. Contexto propio:.*$", rendered)
         if line9 is None:
             return 2, _failure(
@@ -475,12 +523,13 @@ def render_latido(  # noqa: C901
         step9 = step9.replace(f"fila b{derived['go_index']}", f"fila b{go_index}")
         rendered = rendered[: line9.start()] + step9 + rendered[line9.end() :]
 
-        line_ending = "\r\n" if "\r\n" in rendered else "\n"
-        rendered = "ESTADO: VIGENTE" + line_ending + rendered.split("\n", 1)[1]
-        rendered = rendered.replace(
-            f"para el salto {own['session_code']} -> {own['session_code']}",
-            f"para el salto {own['session_code']} -> {_next_session_code(own['session_code'])}",
+        first_newline = rendered.find("\n")
+        line_ending = (
+            "\r\n"
+            if first_newline > 0 and rendered[first_newline - 1] == "\r"
+            else "\n"
         )
+        rendered = "ESTADO: VIGENTE" + line_ending + rendered.split("\n", 1)[1]
         if missing:
             return 3, _failure(
                 rendered, [f"hueco de JUICIO no rellenado: {name}" for name in missing]
@@ -495,6 +544,24 @@ def render_latido(  # noqa: C901
                     f"id mcp ajeno al roster introducido por JUICIO: {item}"
                     for item in foreign_rendered_ids
                 ],
+            )
+        markers = re.findall(r"\[\[JUICIO:([^\]]*)\]\]", rendered)
+        known = {
+            "nota_derivacion",
+            "objetivo_en_curso",
+            "secciones_postcompactacion_nueva",
+        }
+        unknown_markers = sorted(set(markers) - known)
+        if unknown_markers:
+            return 2, _failure(
+                rendered,
+                [f"marcador de JUICIO desconocido: {name}" for name in unknown_markers],
+            )
+        known_markers = sorted(set(markers) & known)
+        if known_markers:
+            return 3, _failure(
+                rendered,
+                [f"hueco de JUICIO no rellenado: {name}" for name in known_markers],
             )
         return 0, rendered
     except (OSError, UnicodeError, ValueError, KeyError) as exc:
@@ -539,6 +606,23 @@ def _main(argv: list[str] | None = None) -> int:
         except (OSError, UnicodeError) as exc:
             sys.stdout.write(_failure("", [f"no se pudo leer --juicio: {exc}"]))
             return 2
+    known_juicios = {
+        "nota_derivacion",
+        "objetivo_en_curso",
+        "secciones_postcompactacion_nueva",
+    }
+    unknown_juicios = sorted(set(juicios) - known_juicios)
+    if unknown_juicios:
+        sys.stdout.write(
+            _failure(
+                "",
+                [
+                    f"--juicio con nombre desconocido: {name}"
+                    for name in unknown_juicios
+                ],
+            )
+        )
+        return 2
     rc, output = render_latido(args.predecessor, roster, args.go_index, juicios)
     if args.out is None:
         sys.stdout.write(output)
