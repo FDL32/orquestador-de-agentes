@@ -297,6 +297,187 @@ def test_main_requires_approved_by_and_message_proof() -> None:
         build_parser().parse_args([])
 
 
+def _resolution_args() -> list[str]:
+    return [
+        "--out-code",
+        "CO-33",
+        "--out-thread",
+        "mcp:11111111-1111-4111-8111-111111111111",
+        "--in-code",
+        "CO-34",
+        "--in-thread",
+        "mcp:22222222-2222-4222-8222-222222222222",
+        "--slot",
+        "coordinadora-34",
+        "--package",
+        "tmp/fixture.md",
+        "--actor",
+        "CO-40",
+        "--approved-by",
+        MESSAGE_ID,
+        "--reason",
+        "resolution test",
+        "--message-id",
+        MESSAGE_ID,
+        "--anchor-message-id",
+        "22222222-2222-4222-8222-222222222222",
+        "--store-path",
+        "store.sqlite",
+        "--guard-rc",
+        "0",
+        "--window-state",
+        "open",
+        "--quota-hard-pct",
+        "50",
+        "--apply-phase",
+        "B",
+    ]
+
+
+def test_flight_dir_sin_argumento_ni_entorno_rechaza_sin_default_usuario(
+    monkeypatch, capsys
+) -> None:
+    import scripts.flight.rotate_coordinator as module
+
+    monkeypatch.delenv("FLIGHT_DIR", raising=False)
+    rc = module.main(_resolution_args())
+    out = capsys.readouterr().out
+    assert rc == 10
+    assert "REJECTED: flight-dir sin resolver" in out
+    assert "FLIGHT_DIR" in out
+
+
+def test_flight_dir_entorno_vacio_rechaza_sin_default_silencioso(
+    monkeypatch, capsys
+) -> None:
+    import scripts.flight.rotate_coordinator as module
+
+    monkeypatch.setenv("FLIGHT_DIR", "")
+    rc = module.main(_resolution_args())
+    out = capsys.readouterr().out
+    assert rc == 10
+    assert "REJECTED: flight-dir sin resolver" in out
+    assert "FLIGHT_DIR" in out
+
+
+def test_flight_dir_entorno_solo_espacios_rechaza_sin_default_silencioso(
+    monkeypatch, capsys
+) -> None:
+    import scripts.flight.rotate_coordinator as module
+
+    monkeypatch.setenv("FLIGHT_DIR", "   ")
+    rc = module.main(_resolution_args())
+    out = capsys.readouterr().out
+    assert rc == 10
+    assert "REJECTED: flight-dir sin resolver" in out
+
+
+@pytest.mark.parametrize("use_arg", [False, True])
+def test_flight_dir_resuelve_argumento_o_entorno(
+    monkeypatch, tmp_path: Path, use_arg: bool
+) -> None:
+    import scripts.flight.rotate_coordinator as module
+
+    env_dir = tmp_path / "env-flight"
+    arg_dir = tmp_path / "arg-flight"
+    monkeypatch.setenv("FLIGHT_DIR", str(env_dir))
+    args = _resolution_args()
+    if use_arg:
+        args = ["--fl-dir", str(arg_dir), *args]
+    seen: list[Path] = []
+
+    def probe(path: Path):
+        seen.append(path)
+        raise module.RotationRejectedError("resolution-probe")
+
+    monkeypatch.setattr(module, "load_chain_record", probe)
+    rc = module.main(args)
+    expected = arg_dir if use_arg else env_dir
+    assert rc == 10
+    assert seen == [expected / "autorizacion_cadena.json"]
+
+
+def test_flight_dir_argumento_gana_a_un_entorno_distinto(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import scripts.flight.rotate_coordinator as module
+
+    env_dir = tmp_path / "env-flight"
+    arg_dir = tmp_path / "arg-flight"
+    monkeypatch.setenv("FLIGHT_DIR", str(env_dir))
+    args = ["--fl-dir", str(arg_dir), *_resolution_args()]
+    seen: list[Path] = []
+
+    def probe(path: Path):
+        seen.append(path)
+        raise module.RotationRejectedError("resolution-probe")
+
+    monkeypatch.setattr(module, "load_chain_record", probe)
+    assert module.main(args) == 10
+    assert seen == [arg_dir / "autorizacion_cadena.json"]
+
+
+def test_rehearsal_con_flight_dir_de_entorno_copia_antes_de_leer_la_cadena(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import shutil
+
+    import scripts.flight.rotate_coordinator as module
+
+    flight_dir = tmp_path / "env-flight"
+    flight_dir.mkdir()
+    for name in module.FILES:
+        path = flight_dir / name
+        path.write_text("{}\n" if not name.endswith(".jsonl") else "", encoding="utf-8")
+    monkeypatch.setenv("FLIGHT_DIR", str(flight_dir))
+    args = ["--rehearsal", *_resolution_args()]
+    seen_copy: list[Path] = []
+    rehearsal_roots: list[Path] = []
+    rehearsal_dirs: list[Path] = []
+    seen_load_target: list[Path] = []
+
+    original_copy = module._copy_rehearsal
+
+    def copy_from_env(path: Path):
+        seen_copy.append(path)
+        rehearsal, root = original_copy(path)
+        rehearsal_roots.append(root)
+        rehearsal_dirs.append(rehearsal)
+        return rehearsal, root
+
+    def probe(path: Path):
+        seen_load_target.append(path)
+        raise module.RotationRejectedError("rehearsal-resolution-probe")
+
+    monkeypatch.setattr(module, "_copy_rehearsal", copy_from_env)
+    monkeypatch.setattr(module, "load_chain_record", probe)
+    try:
+        assert module.main(args) == 10
+    finally:
+        for root in rehearsal_roots:
+            shutil.rmtree(root)
+    assert seen_copy == [flight_dir]
+    assert seen_load_target == [rehearsal_dirs[-1] / "autorizacion_cadena.json"]
+    assert "REJECTED: rehearsal-resolution-probe" in capsys.readouterr().out
+
+
+def test_fuente_no_contiene_rutas_de_esta_maquina() -> None:
+    """Ninguna constante de ruta del usuario queda en el rotador versionado."""
+    import re
+
+    source = (
+        Path(__file__).parents[2] / "scripts" / "flight" / "rotate_coordinator.py"
+    ).read_text(encoding="utf-8")
+    prohibidas = [
+        r"tmp_or8",
+        r"c:[/\\]+users",
+        r"\bfdl\b",
+        r"claude_tooling",
+        r"Proyectos_Python",
+    ]
+    assert [p for p in prohibidas if re.search(p, source, re.IGNORECASE)] == []
+
+
 def test_real_user_message_id_is_never_fixture_authority() -> None:
     """The fixture UUID is synthetic and never one of the known real IDs."""
     known_real_id = "-".join(("482988f8", "af81", "4c37", "8f73", "d7b393803a76"))

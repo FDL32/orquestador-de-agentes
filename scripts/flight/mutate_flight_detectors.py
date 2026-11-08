@@ -475,7 +475,7 @@ m(
     "P1",
     "2A",
     "FREE_GB_DEFAULT = 5.0",
-    'FREE_GB_DEFAULT = 5.0\n_X = "C:/Users/fdl/tmp_or8"',
+    'FREE_GB_DEFAULT = 5.0\n_X = "/opt/ejemplo/ruta-neutra"',
 )
 m(
     "P2",

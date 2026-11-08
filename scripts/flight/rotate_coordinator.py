@@ -42,10 +42,7 @@ from scripts.flight.verify_user_authorization import (  # noqa: E402
 )
 
 
-DEFAULT_FLIGHT = Path(
-    "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/"
-    ".agent/runtime/flight/vuelo-20261026b"
-)
+FLIGHT_DIR_ENV = "FLIGHT_DIR"
 FILES = (
     "flight_roster.json",
     "session_registry.json",
@@ -774,9 +771,28 @@ def _copy_rehearsal(flight_dir: Path) -> tuple[Path, Path]:
     return rehearsal, temp_root
 
 
+def _env_flight_dir() -> Path | None:
+    """Resuelve el directorio del vuelo desde la variable establecida.
+
+    Before: el entorno puede contener ``FLIGHT_DIR_ENV``.
+    During: lee la variable y recorta espacios en los bordes antes de decidir.
+    After: devuelve ``Path`` si, tras el recorte, queda un valor no vacío; ``None``
+        si falta, está vacía o son solo espacios.
+    """
+    raw = os.environ.get(FLIGHT_DIR_ENV)
+    if raw is not None:
+        raw = raw.strip()
+    return Path(raw) if raw else None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fl-dir", type=Path, default=DEFAULT_FLIGHT)
+    parser.add_argument(
+        "--fl-dir",
+        type=Path,
+        default=None,
+        help=f"directorio del vuelo; por defecto ${FLIGHT_DIR_ENV}",
+    )
     parser.add_argument("--out-code", required=True)
     parser.add_argument("--out-thread", required=True)
     parser.add_argument("--in-code", required=True)
@@ -813,12 +829,17 @@ def main(argv: list[str] | None = None) -> int:
         args.reason,
     )
     now = datetime.now(timezone.utc)
-    target = args.fl_dir
     temp_root: Path | None = None
     try:
+        fl_dir = args.fl_dir or _env_flight_dir()
+        if fl_dir is None:
+            raise RotationRejectedError(
+                f"flight-dir sin resolver: pasa --fl-dir o define {FLIGHT_DIR_ENV}"
+            )
+        target = fl_dir
         validate_approved_by(args.approved_by)
         if args.rehearsal:
-            target, temp_root = _copy_rehearsal(args.fl_dir)
+            target, temp_root = _copy_rehearsal(fl_dir)
         record = load_chain_record(target / "autorizacion_cadena.json")
         decision = revalidate_from_store(
             record,

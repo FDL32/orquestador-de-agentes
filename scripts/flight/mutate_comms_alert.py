@@ -308,7 +308,7 @@ m(
     "P1",
     "1A",
     'OPS_DIR_ENV = "FLIGHT_OPS_DIR"',
-    'OPS_DIR_ENV = "FLIGHT_OPS_DIR"\n_X = "C:/Users/fdl/tmp_or8"',
+    'OPS_DIR_ENV = "FLIGHT_OPS_DIR"\n_X = "/opt/ejemplo/ruta-neutra"',
 )
 m(
     "P2",
