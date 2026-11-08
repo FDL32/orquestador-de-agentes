@@ -10540,6 +10540,12 @@ def _registro_salidas_046c():
                 "resolubles en el spawn"
             ),
         },
+        ("bus/ticket_id.py", "_read_blob_ids"): {
+            "mecanismo": "runner_local_exenta",
+            "motivo": (
+                "git cat-file local, sin backend externo, sin payload de usuario"
+            ),
+        },
         ("bus/supervisor.py", "_bootstrap_watchdog_manager_if_needed"): {
             "mecanismo": "solo_sys_executable",
             "motivo": (
