@@ -146,6 +146,9 @@ append `--project-root <destino>` to commands that operate on project state.
   aclaraciones van en una linea separada; texto como `o modulo equivalente` en
   el mismo bullet puede impedir que el parser de FLT reconozca la ruta.
 
+### Espera => trabajo avanzable
+Al esperar, no cierres el turno sin enumerar y hacer trabajo avanzable (solo lectura, preparacion o registro; sin alterar el proceso principal ni decidir por el usuario; arreglos via Hacer ahora vs aplazar). Atiende el resultado al llegar. Si no hay, anota el motivo. Detalle: `.agent/rules/common/espera_trabajo_paralelo.md`.
+
 ### Orden de trabajo: AGRUPA los commits, la suite va la ULTIMA (WOT-2026-026t)
 
 **La suite canonica es el ULTIMO paso antes del push, nunca uno intermedio.** El contrato exige
@@ -246,10 +249,7 @@ Ver las superficies vivas NO archivables y la regla de limpieza en .agent/rules/
 
 ### 1. Docstrings como especificación de ejecución (Docstrings-as-Spec)
 
-Cada función, clase o módulo operativo del sistema debe contar con un docstring claro y estructurado en **3 fases**. El agente o auditor contrastará la firma técnica con esta especificación semántica para asegurar el cumplimiento:
-- **Before (Pre-condiciones):** Qué estados, variables, archivos o privilegios requiere la función antes de invocarse.
-- **During (Proceso y Recursos):** Cuál es el flujo de transformación de datos, qué efectos colaterales (I/O, llamadas de red) realiza y qué recursos del sistema consume.
-- **After (Post-condiciones y Errores):** Qué salidas exactas se garantizan, cómo cambian los estados canónicos y qué excepciones específicas se interceptan y lanzan.
+Cada función, clase o módulo operativo debe llevar un docstring en 3 fases (**Before**, **During**, **After**). Detalle: `.agent/rules/common/docstrings_and_test_rubric.md`.
 
 ### 2. Rúbrica de testing de alta fidelidad (Test Útil vs Basura)
 
@@ -263,7 +263,7 @@ Para evitar la inflación artificial de cobertura sin validación lógica real, 
 
 ### 3. Anti-patrones de implementación
 
-- **Zero-logic wrapper:** una función cuyo cuerpo completo es una única llamada delegada 1:1 sin lógica propia debe ser inlineada o eliminada. Añade indirección cognitiva sin valor.
+Ver `.agent/rules/common/docstrings_and_test_rubric.md` (incluye Zero-logic wrapper, AP-03 de `skills/_shared/anti-patterns.md`).
 
 ## CEM v0 - Contrato, Evidencia y Memoria
 
