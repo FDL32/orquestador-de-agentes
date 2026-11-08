@@ -328,6 +328,16 @@ def test_store_sets_query_only(tmp_path):
         connection.close()
 
 
+def test_open_store_ro_rejects_non_numeric_timeout(tmp_path):
+    with pytest.raises(ValueError, match="abc"):
+        vua.open_store_ro(tmp_path / "unused.sqlite", timeout="abc")
+
+
+def test_open_store_ro_rejects_non_positive_timeout(tmp_path):
+    with pytest.raises(ValueError, match="0"):
+        vua.open_store_ro(tmp_path / "unused.sqlite", timeout=0)
+
+
 def test_locked_store_is_named_infra(tmp_path):
     path = tmp_path / "locked.sqlite"
     holder = sqlite3.connect(path)
@@ -337,7 +347,7 @@ def test_locked_store_is_named_infra(tmp_path):
     holder.execute("BEGIN EXCLUSIVE")
     try:
         with pytest.raises(vua.InfraError) as excinfo:
-            vua.open_store_ro(path)
+            vua.open_store_ro(path, timeout=0.2)
         assert excinfo.value.cause == "store-locked"
     finally:
         holder.rollback()
@@ -354,7 +364,7 @@ def test_existing_unopenable_path_is_store_permission(tmp_path):
 
 def test_locked_after_open_check_schema_is_infra(tmp_path):
     path = build_db(tmp_path)
-    ro = vua.open_store_ro(path)
+    ro = vua.open_store_ro(path, timeout=0.2)
     holder = sqlite3.connect(path)
     holder.execute("PRAGMA journal_mode=DELETE")
     holder.execute("BEGIN EXCLUSIVE")
@@ -371,7 +381,7 @@ def test_locked_after_open_check_schema_is_infra(tmp_path):
 def test_locked_during_revalidate_is_infra(tmp_path):
     path = build_db(tmp_path, rows=[{"message_id": SYNTH_THREAD}])
     decision = run(path)
-    ro = vua.open_store_ro(path)
+    ro = vua.open_store_ro(path, timeout=0.2)
     holder = sqlite3.connect(path)
     holder.execute("PRAGMA journal_mode=DELETE")
     holder.execute("BEGIN EXCLUSIVE")
@@ -395,7 +405,7 @@ def test_locked_during_revalidate_is_infra(tmp_path):
 
 def test_locked_during_pagination_is_infra(tmp_path):
     path = build_db(tmp_path)
-    ro = vua.open_store_ro(path)
+    ro = vua.open_store_ro(path, timeout=0.2)
     holder = sqlite3.connect(path)
     holder.execute("PRAGMA journal_mode=DELETE")
     holder.execute("BEGIN EXCLUSIVE")

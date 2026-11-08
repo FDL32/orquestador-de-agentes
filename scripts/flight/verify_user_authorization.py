@@ -700,10 +700,11 @@ def _thread_id_for_message(connection: sqlite3.Connection, message_id: str) -> s
         raise InfraError("message-unreadable", str(exc)) from exc
 
 
-def open_store_ro(db_path: str | Path) -> sqlite3.Connection:
+def open_store_ro(db_path: str | Path, *, timeout: float = 5.0) -> sqlite3.Connection:
     """Abre el almacen en SOLO LECTURA, sin `immutable` (WAL vivo).
 
-    Before: `db_path` apunta al `statev2.sqlite` real o a una copia.
+    Before: `db_path` apunta al `statev2.sqlite` real o a una copia; `timeout`
+        es un numero positivo para la espera de SQLite.
     During: abre con URI `mode=ro` y `PRAGMA query_only=ON`; fuerza una lectura
         de cabecera para que un fichero ausente/corrupto falle AQUI con causa
         nombrada. No usa `immutable=1` (ignoraria el WAL vivo).
@@ -711,6 +712,12 @@ def open_store_ro(db_path: str | Path) -> sqlite3.Connection:
         `store-missing`, `store-permission`, `store-locked`, `store-corrupt` o
         `store-unavailable`.
     """
+    if (
+        not isinstance(timeout, (int, float))
+        or isinstance(timeout, bool)
+        or timeout <= 0
+    ):
+        raise ValueError(f"timeout debe ser un numero > 0, recibido: {timeout!r}")
     path = Path(db_path)
     try:
         uri = path.resolve().as_uri() + "?mode=ro"
@@ -718,7 +725,7 @@ def open_store_ro(db_path: str | Path) -> sqlite3.Connection:
         raise InfraError("store-path-invalid", str(exc)) from exc
     connection: sqlite3.Connection | None = None
     try:
-        connection = sqlite3.connect(uri, uri=True, timeout=5.0)
+        connection = sqlite3.connect(uri, uri=True, timeout=timeout)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA query_only=ON")
         connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
