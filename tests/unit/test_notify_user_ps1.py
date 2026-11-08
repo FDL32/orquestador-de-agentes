@@ -145,11 +145,20 @@ def test_fila77_sin_banner_ni_variables_notify_y_con_los_parametros_exactos():
         open(f"{PS1}:Zone.Identifier", "rb").close()
 
 
+# D26/WOT-2026-160l: el mutador cita el token SOLO dentro de cadenas de mutantes que
+# aplican sobre notify_user.ps1 (no es un llamador real). La exencion es por RUTA
+# relativa EXACTA, nunca por nombre de fichero, para no abrir un hueco a un llamador
+# real que pudiera esconderse bajo el mismo nombre en otra ruta.
+MUTATOR_HARNESS_FILES = ("scripts/flight/mutate_comms_alert.py",)
+
+
 def _simulate_toast_failure_offenders(root):
     """Censa ficheros con sufijos aceptados bajo scripts, prompts y skills.
 
     Before: root contiene scripts, prompts y skills, y puede incluir subdirectorios de cache.
-    During: recorre un glob recursivo separado por cada sufijo aceptado y lee con errors=replace.
+    During: recorre un glob recursivo separado por cada sufijo aceptado, ignora por nombre
+        los ficheros permitidos y por ruta relativa exacta el arnes de mutacion, y lee con
+        errors=replace.
     After: devuelve rutas relativas de los ficheros que contienen SimulateToastFailure, sin tocar
         el filesystem.
     """
@@ -174,10 +183,13 @@ def _simulate_toast_failure_offenders(root):
                     or p.name in {"notify_user.ps1", "check_latido_alert_wiring.py"}
                 ):
                     continue
+                rel = p.relative_to(root).as_posix()
+                if rel in MUTATOR_HARNESS_FILES:
+                    continue
                 if "SimulateToastFailure" in p.read_text(
                     encoding="utf-8", errors="replace"
                 ):
-                    ofensores.append(p.relative_to(root).as_posix())
+                    ofensores.append(rel)
     return ofensores
 
 
@@ -196,6 +208,62 @@ def test_fila77b_ningun_script_prompt_o_skill_versionado_pasa_simulate_toast_fai
 
     synthetic.write_text("# no toast simulation\n", encoding="utf-8")
     assert _simulate_toast_failure_offenders(tmp_path) == []
+
+
+def test_fila77b_exencion_no_se_ensancha_al_directorio(tmp_path):
+    """D26/WOT-2026-160l: la exencion es de UN fichero por ruta exacta, no de su
+    directorio: un llamador real escondido JUNTO al arnes (scripts/flight/) sigue
+    marcado como ofensor aunque el arnes mismo este exento."""
+    harness = tmp_path / "scripts" / "flight" / "mutate_comms_alert.py"
+    harness.parent.mkdir(parents=True)
+    harness.write_text("SimulateToastFailure\n", encoding="utf-8")
+
+    otro_llamador = tmp_path / "scripts" / "flight" / "otro_llamador.py"
+    otro_llamador.write_text("SimulateToastFailure\n", encoding="utf-8")
+
+    assert _simulate_toast_failure_offenders(tmp_path) == [
+        "scripts/flight/otro_llamador.py"
+    ]
+
+
+def test_fila77b_exencion_del_arnes_es_por_ruta_no_por_nombre(tmp_path):
+    """D26/WOT-2026-160l: la exencion de MUTATOR_HARNESS_FILES es por RUTA relativa
+    EXACTA, no por nombre: un fichero con el MISMO nombre en OTRA ruta sigue marcado
+    como ofensor aunque el arnes real este exento."""
+    otra_ruta = tmp_path / "scripts" / "otro" / "mutate_comms_alert.py"
+    otra_ruta.parent.mkdir(parents=True)
+    otra_ruta.write_text("SimulateToastFailure\n", encoding="utf-8")
+    assert _simulate_toast_failure_offenders(tmp_path) == [
+        "scripts/otro/mutate_comms_alert.py"
+    ]
+
+    harness = tmp_path / "scripts" / "flight" / "mutate_comms_alert.py"
+    harness.parent.mkdir(parents=True)
+    harness.write_text("SimulateToastFailure\n", encoding="utf-8")
+    assert _simulate_toast_failure_offenders(tmp_path) == [
+        "scripts/otro/mutate_comms_alert.py"
+    ]
+
+
+def test_mutate_comms_alert_conserva_tres_mutantes_de_simulate_toast_failure():
+    """DoD (c) WOT-2026-160l: scripts/flight/mutate_comms_alert.py debe conservar
+    EXACTAMENTE 3 llamadas m(...) cuyo texto cita la clave SimulateToastFailure
+    (medido 2026-11-08: N56, N57b, SJ1). Si se borra una, este test se pone rojo.
+    Si se anaden o renombran mutantes LEGITIMOS de esta clave, el conteo cambia a
+    proposito: documentalo aqui y actualiza el numero."""
+    import ast
+
+    mutator = REPO / "scripts" / "flight" / "mutate_comms_alert.py"
+    source = mutator.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    count = sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "m"
+        and "SimulateToastFailure" in (ast.get_source_segment(source, node) or "")
+    )
+    assert count == 3
 
 
 def _xmlonly(*args):
