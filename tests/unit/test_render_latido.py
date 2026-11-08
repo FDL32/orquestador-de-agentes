@@ -249,6 +249,45 @@ def test_predecessor_free_text_unknown_judgement_marker_is_rc2(tmp_path: Path) -
     assert "marcador de JUICIO desconocido: pendiente" in output
 
 
+def test_predecessor_free_text_known_judgement_marker_is_rc3(tmp_path: Path) -> None:
+    predecessor = tmp_path / "known-marker.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\n[[JUICIO:nota_derivacion]]\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 3
+    assert "hueco de JUICIO no rellenado: nota_derivacion" in output
+
+
+def test_salto_x_to_x_after_last_protected_span_is_corrected(
+    tmp_path: Path,
+) -> None:
+    predecessor = tmp_path / "late-salto.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8")
+        + "\nTexto posterior al ultimo span protegido: "
+        + "para el salto CO-55 -> CO-55\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert (
+        "Texto posterior al ultimo span protegido: para el salto CO-56 -> CO-57"
+        in output
+    )
+    assert (
+        "Texto posterior al ultimo span protegido: para el salto CO-55 -> CO-55"
+        not in output
+    )
+
+
 @pytest.mark.parametrize(
     "mutate, message",
     [
