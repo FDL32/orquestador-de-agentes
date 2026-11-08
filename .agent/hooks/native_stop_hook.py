@@ -102,6 +102,16 @@ MARKER_RE = re.compile(r"(?m)^[ \t>*_]{0,6}\[(?:EVIDENCIA|HIPOTESIS)\]")
 #: Centinela opt-in. Sin este fichero el hook es un no-op absoluto.
 SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode.json"
 
+# WOT-2026-160p: segunda rama, deliberadamente independiente de WOT-2026-044t.
+ESPERA_SENTINEL_RELPATH = Path(".agent") / "runtime" / "espera_checklist_mode.json"
+ESPERA_OBSERVATIONS_RELPATH = Path(".agent") / "runtime" / "espera_observations.json"
+_A_ESTRECHO_RE = re.compile(
+    r"(sigo esperando|continuo esperando|continúo esperando|sigo a la espera|"
+    r"me quedo esperando|quedo esperando)",
+    re.IGNORECASE,
+)
+ESPERA_MARKER_RE = re.compile(r"(?m)^[ \t>*_]{0,6}\[ESPERA:(HECHO|NADA):([^\]]*)\]")
+
 #: WOT-2026-044x: edad maxima del centinela antes de tratarlo como inactivo.
 #: Criterio DECLARADO (no hay distribucion empirica de duraciones medida):
 #: cubre con margen las sesiones de "varias horas" que acota el DoD (d) de la
@@ -130,6 +140,13 @@ _REASON = (
     'exit code concreto que lo respalda, o "[HIPOTESIS]" seguido de lo que NO '
     "comprobaste. Usa el primero solo si adjuntas recibo; si no mediste, usa el "
     "segundo. Mencionarlos dentro de una frase no clasifica."
+)
+
+_ESPERA_REASON = (
+    "Cierre que declara espera sin decision. Abre una linea con "
+    "[ESPERA:HECHO: texto] si hiciste trabajo avanzable, o con "
+    "[ESPERA:NADA: motivo] si no lo hubo; el motivo no puede estar vacio. "
+    "Los ejemplos van dentro de una frase para no autoaprobar este reason."
 )
 
 
@@ -289,6 +306,11 @@ def classifies(message: str) -> bool:
 
     Sigue siendo mecanico: cuenta delimitadores y mira posicion, no interpreta.
     """
+    return any(MARKER_RE.match(line) for line in _lines_outside_fences(message))
+
+
+def _lines_outside_fences(message: str):
+    """Before: recibe texto crudo; During: alterna fences; After: produce lineas utiles."""
     in_fence = False
     for line in message.replace("\r\n", "\n").split("\n"):
         if line.lstrip().startswith("```"):
@@ -296,9 +318,96 @@ def classifies(message: str) -> bool:
             continue
         if in_fence:
             continue
-        if MARKER_RE.match(line):
+        yield line
+
+
+def _espera_guard_allows(payload: dict) -> bool:
+    """Before: payload Stop; During: aplica el guard 044t; After: indica si puede actuar."""
+    return "stop_hook_active" in payload and not payload.get("stop_hook_active")
+
+
+def _last_sentence(text: str) -> str:
+    """Before: texto crudo; During: separa por puntuacion; After: devuelve la ultima frase."""
+    text = text.strip()
+    if not text:
+        return ""
+    parts = re.split(r"(?<=[.!?\n])\s+", text)
+    parts = [part for part in parts if part.strip()]
+    return parts[-1] if parts else text
+
+
+def declares_wait(message: str) -> bool:
+    """Before: mensaje crudo; During: examina su ultima frase; After: devuelve el disparador A."""
+    return bool(_A_ESTRECHO_RE.search(_last_sentence(message)))
+
+
+def espera_classifies(message: str) -> bool:
+    """Before: mensaje final; During: ignora fences y valida motivo; After: indica marcador DC valido."""
+    for line in _lines_outside_fences(message):
+        match = ESPERA_MARKER_RE.match(line)
+        if match and match.group(2).strip():
             return True
     return False
+
+
+def read_espera_sentinel(root: Path) -> dict | None:
+    """Before: raiz del repo; During: lee JSON regular; After: devuelve dict o fail-open."""
+    target = root / ESPERA_SENTINEL_RELPATH
+    try:
+        if not target.is_file():
+            return None
+        raw = target.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _record_espera_observation(
+    root: Path, payload: dict, trigger_a: bool, ya_clasificado: bool, message: str
+) -> None:
+    """Before: datos no sensibles; During: anade JSONL; After: falla abierto si no escribe."""
+    try:
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": payload.get("session_id"),
+            "trigger_a": trigger_a,
+            "ya_clasificado": ya_clasificado,
+            "background_tasks_nonempty": bool(payload.get("background_tasks")),
+            "session_crons_nonempty": bool(payload.get("session_crons")),
+            "message_len": len(message),
+        }
+        target = root / ESPERA_OBSERVATIONS_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        return
+
+
+def _decide_espera(root: Path, payload: dict) -> dict:
+    """Before: payload y centinela nuevo; During: observa o bloquea; After: devuelve veredicto."""
+    sentinel = read_espera_sentinel(root)
+    if sentinel is None or sentinel.get("mode") not in ("observe", "block"):
+        return {"continue": True}
+    if not _espera_guard_allows(payload):
+        return {"continue": True}
+    message = payload.get("last_assistant_message")
+    if not isinstance(message, str) or not message.strip():
+        return {"continue": True}
+    trigger_a = declares_wait(message)
+    ya_clasificado = espera_classifies(message)
+    if sentinel["mode"] == "observe":
+        _record_espera_observation(root, payload, trigger_a, ya_clasificado, message)
+        return {"continue": True}
+    if trigger_a and not ya_clasificado:
+        return {"decision": "block", "reason": _ESPERA_REASON[:REASON_MAX_LEN]}
+    return {"continue": True}
 
 
 def needs_classification(payload: dict) -> bool:
@@ -311,9 +420,7 @@ def needs_classification(payload: dict) -> bool:
     # Guard de reentrada. `stop_hook_active` NO esta documentado, asi que su
     # AUSENCIA se trata como fail-open en vez de asumir "no activo": si el campo
     # desapareciera, asumir lo contrario abriria un bucle de re-entrega.
-    if "stop_hook_active" not in payload:
-        return False
-    if payload.get("stop_hook_active"):
+    if not _espera_guard_allows(payload):
         return False
 
     message = payload.get("last_assistant_message")
@@ -400,35 +507,24 @@ def _decide(payload: dict) -> dict:
     root = find_repo_root(start.resolve())
 
     baseline = read_sentinel(root)
-    if baseline is None:
-        return {"continue": True}
-
     # WOT-2026-044x: centinela caducado o sin fecha legible -> INACTIVO con
-    # diagnostico visible (el relief es el proposito del ticket; el flujo
-    # posterior de mutacion/fail-open queda intacto para vigentes).
-    if _sentinel_inactive_exit(baseline):
-        return {"continue": True}
-
-    # Proporcionalidad: un cierre puramente conversacional no debe recibo.
-    # Solo se exige clasificacion si el turno MUTO el repo, que es un hecho
-    # estructural medible, no una lectura de la prosa del agente.
-    if not repo_mutated(root, baseline):
-        return {"continue": True}
-
-    if needs_classification(payload):
-        # Escape por entorno (WOT-2026-044t): en `observe` la barrera MIDE
-        # pero no bloquea. Existe para que un vuelo autonomo -- sin humano
-        # delante -- no estrene un mecanismo bloqueante en la corrida que
-        # debe salir sola, conservando la medicion de cuantos cierres
-        # habrian sido bloqueados.
+    # diagnostico visible; la segunda rama sigue siendo independiente.
+    if (
+        baseline is not None
+        and not _sentinel_inactive_exit(baseline)
+        and repo_mutated(root, baseline)
+        and needs_classification(payload)
+    ):
+        # Escape por entorno (WOT-2026-044t): observe mide pero no bloquea.
         if _observe_only():
             _record_observation(root, payload)
             sys.stderr.write(
                 "native_stop_hook: OBSERVE -- habria bloqueado; no bloquea.\n"
             )
-            return {"continue": True}
-        return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
-    return {"continue": True}
+        else:
+            return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
+
+    return _decide_espera(root, payload)
 
 
 def main() -> None:

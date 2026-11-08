@@ -20,3 +20,13 @@ ESTATUS: NORMA (no barrera). Ficha WOT-2026-160o (2026-11-08). Origen: P9 (vuelo
    - Hacer commits en el motor antes de la suite final. Ver `AGENTS.md`, seccion "Orden de trabajo: AGRUPA los commits, la suite va la ULTIMA (WOT-2026-026t)".
 7. Lo que NO esta en la norma: lanzar triaje si hay menos de 2 IM (H178, pendiente de ratificacion del usuario).
 8. Indicador: el de P9 (minutos de IM ocioso con cola pendiente) mas un contador nuevo (turnos de espera cerrados sin entrada sobre turnos de espera totales). Barrera futura: campo `idle_checklist` en `scripts/flight/tick_trace.py`, como ficha si el contador no baja a 0 en dos vuelos seguidos.
+
+9. Mecanismo opt-in del Stop hook (WOT-2026-160p): el gancho puede exigir un
+   marcador de decision de espera mediante el centinela
+   `.agent/runtime/espera_checklist_mode.json`. Se arma, desarma y consulta
+   unicamente con `python scripts/espera_checklist_mode.py on [--mode observe|block]`,
+   `python scripts/espera_checklist_mode.py off` y
+   `python scripts/espera_checklist_mode.py status`. Hoy es MANUAL: no esta
+   cableado en bootstrap ni en cierre de sesion.
+   Las dos formas exactas son `[ESPERA:HECHO: avance realizado]` y
+   `[ESPERA:NADA: no habia trabajo avanzable]`.

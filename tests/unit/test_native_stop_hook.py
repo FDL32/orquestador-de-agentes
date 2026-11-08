@@ -592,3 +592,179 @@ class TestMutacion:
         assert len(hook.MARKERS) == 2
         assert "[EVIDENCIA]" in hook.MARKERS
         assert "[HIPOTESIS]" in hook.MARKERS
+
+
+def _arm_espera(root, mode="observe", payload=None):
+    target = root / hook.ESPERA_SENTINEL_RELPATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps({"mode": mode, "activated_at": "now"}), encoding="utf-8"
+    )
+
+
+def _espera_payload(root, message="Sigo esperando.", **extra):
+    return {
+        "cwd": str(root),
+        "session_id": "s-espera",
+        "stop_hook_active": False,
+        "last_assistant_message": message,
+        **extra,
+    }
+
+
+class TestEsperaChecklistBranch:
+    """La segunda rama exige decision solo con el centinela nuevo."""
+
+    def test_sin_centinela_no_bloquea_ni_registra(self, tmp_path):
+        root = make_root(tmp_path)
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+        assert not (root / hook.ESPERA_OBSERVATIONS_RELPATH).exists()
+
+    @pytest.mark.parametrize(
+        "sentinel_kind",
+        ["directory", "invalid_json", "json_array", "mode_absent", "mode_bogus"],
+    )
+    def test_centinela_espera_ilegible_o_modo_invalido_fail_open(
+        self, tmp_path, sentinel_kind
+    ):
+        root = make_root(tmp_path)
+        target = root / hook.ESPERA_SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if sentinel_kind == "directory":
+            target.mkdir()
+        else:
+            contents = {
+                "invalid_json": "{roto",
+                "json_array": "[1,2,3]",
+                "mode_absent": "{}",
+                "mode_bogus": json.dumps({"mode": "bogus"}),
+            }[sentinel_kind]
+            target.write_text(contents, encoding="utf-8")
+
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+        assert not (root / hook.ESPERA_OBSERVATIONS_RELPATH).exists()
+
+    def test_observe_registra_tanto_trigger_como_no_trigger(self, tmp_path):
+        root = make_root(tmp_path)
+        _arm_espera(root)
+        for message, _trigger in (
+            ("Sigo esperando.", True),
+            ("Termine el trabajo.", False),
+        ):
+            _, result, _ = run_hook(json.dumps(_espera_payload(root, message)), root)
+            assert result == {"continue": True}
+        records = [
+            json.loads(line)
+            for line in (root / hook.ESPERA_OBSERVATIONS_RELPATH)
+            .read_text()
+            .splitlines()
+        ]
+        assert [record["trigger_a"] for record in records] == [True, False]
+        assert records[0]["ya_clasificado"] is False
+        assert records[0]["session_id"] == "s-espera"
+        assert records[0]["message_len"] == len("Sigo esperando.")
+
+    def test_block_sin_marcador_bloquea(self, tmp_path):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result["decision"] == "block"
+        assert hook._ESPERA_REASON in result["reason"]
+
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            "[ESPERA:HECHO: avance realizado]",
+            "[ESPERA:NADA: no habia trabajo avanzable]",
+        ],
+    )
+    def test_marcadores_validos_no_bloquean(self, tmp_path, marker):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        message = f"{marker}\nSigo esperando."
+        _, result, _ = run_hook(json.dumps(_espera_payload(root, message)), root)
+        assert result == {"continue": True}
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "[ESPERA:HECHO sin segundo colon]\nSigo esperando.",
+            "[ESPERA:HECHO:]\nSigo esperando.",
+            "[ESPERA:HECHO: ]\nSigo esperando.",
+            "Ya cerre. [ESPERA:HECHO: x]\nSigo esperando.",
+            "```\n[ESPERA:HECHO: x]\n```\nSigo esperando.",
+            "[[ESPERA:HECHO: x]]\nSigo esperando.",
+            "[espera:hecho: x]\nSigo esperando.",
+            "[Espera:Hecho: x]\nSigo esperando.",
+            "[ESPERA:HECHO]\r\nSigo esperando.",
+        ],
+    )
+    def test_marcadores_malformados_bloquean(self, tmp_path, message):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root, message)), root)
+        assert result["decision"] == "block"
+
+    def test_crlf_bien_formado_no_bloquea(self, tmp_path):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(
+            json.dumps(_espera_payload(root, "[ESPERA:HECHO: x]\r\nSigo esperando.")),
+            root,
+        )
+        assert result == {"continue": True}
+
+    @pytest.mark.parametrize("active", [True, "true"])
+    def test_reentrada_no_actua(self, tmp_path, active):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        payload = _espera_payload(root, stop_hook_active=active)
+        _, result, _ = run_hook(json.dumps(payload), root)
+        assert result == {"continue": True}
+        assert not (root / hook.ESPERA_OBSERVATIONS_RELPATH).exists()
+
+    def test_reentrada_none_coincide_con_044t_y_actua(self, tmp_path):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        payload = _espera_payload(root, stop_hook_active=None)
+        _, result, _ = run_hook(json.dumps(payload), root)
+        assert result["decision"] == "block"
+
+    def test_reentrada_false_si_actua_y_guarda_es_044t(self, tmp_path):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(
+            json.dumps(_espera_payload(root, stop_hook_active=False)), root
+        )
+        assert result["decision"] == "block"
+        for value in ("true", True, None, False):
+            payload = {
+                "last_assistant_message": "Sigo esperando.",
+                "stop_hook_active": value,
+            }
+            assert hook._espera_guard_allows(payload) == hook.needs_classification(
+                payload
+            )
+
+    def test_payload_incompleto_no_actua(self, tmp_path):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        for payload in (
+            {},
+            {"stop_hook_active": False},
+            {"stop_hook_active": False, "last_assistant_message": ""},
+        ):
+            payload["cwd"] = str(root)
+            _, result, _ = run_hook(json.dumps(payload), root)
+            assert result == {"continue": True}
+
+    def test_044t_gana_si_ambas_bloquean(self, tmp_path):
+        root = make_root(tmp_path, sentinel=True)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result["reason"] == hook._REASON[: hook.REASON_MAX_LEN]
+
+    def test_reason_nuevo_no_se_autoaprueba(self):
+        assert hook.espera_classifies(hook._ESPERA_REASON) is False
