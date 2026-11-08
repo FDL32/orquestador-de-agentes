@@ -241,6 +241,7 @@ ni `skills/builder-run-quality-gates`**, donde el Builder SI es el unico verific
 **La publicacion es una accion del VUELO, no del ticket: NO se pushea entre tickets, solo al
 final con autorizacion registrada.** Detalle completo (decision de proceso, busqueda previa,
 motivo y estado `PUBLICACION_PENDIENTE_AUTORIZACION`): `.agent/rules/common/flight_push_policy.md`.
+El protocolo de vuelo infinito vive indexado con estado en `.agent/rules/common/vuelo_pilares.md`; no se re-declara aqui.
 
 #### Extension: push a una rama con trafico concurrente de otras sesiones (2026-10-14)
 

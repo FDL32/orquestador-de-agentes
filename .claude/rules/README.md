@@ -25,5 +25,6 @@
 - `.agent/rules/common/project_manifest_architecture.md`: si trabajas con `project_manifest.toml`, `.version_manifest.json` o deteccion/upgrade de proyectos.
 - `.agent/rules/common/t3_ade_coordination.md`: si operas con sesiones T3 paralelas (multi-cuenta o multi-worktree) sobre el mismo vuelo o el mismo repo.
 - Resto de reglas de referencia del motor: `.agent/rules/common/` (indexadas desde `AGENTS.md`).
+- `.agent/rules/common/vuelo_pilares.md`: estado de pilares del vuelo infinito y su precedencia.
 
 > **Nota para el Agente:** ver `CLAUDE.md` (raiz) para instrucciones de Claude Code especificas.
