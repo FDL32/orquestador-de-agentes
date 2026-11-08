@@ -17,10 +17,17 @@ import pytest
 
 
 TEMPLATES_DIR = Path(__file__).parents[2] / "prompts" / "vuelo_pilares_templates"
+CANON_PATH = (
+    Path(__file__).parents[2] / ".agent" / "rules" / "common" / "vuelo_pilares.md"
+)
 TEMPLATE_PATHS = (
     TEMPLATES_DIR / "LATIDO_PLANTILLA.md",
     TEMPLATES_DIR / "ARRANQUE_PLANTILLA.md",
 )
+REQUIRED_MARKERS_BY_TEMPLATE: dict[Path, frozenset[str]] = {
+    TEMPLATE_PATHS[0]: frozenset({"MOTOR_ROOT"}),
+    TEMPLATE_PATHS[1]: frozenset({"HEAD_SHA"}),
+}
 ABSOLUTE_ROUTE_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|/home/|/Users/|\\\\[^\\/\s]+[\\/][^\\/\s]+)"
 )
@@ -50,21 +57,12 @@ KNOWN_CRITERION_FRAGMENTS = (
     "sin push",
     "puedes lanzar el rotador",
     "lo lanza la supervisora",
+    "asienta (settle) todo CO fuera de la terna",
+    "conteo esperado",
+    "conteo medido",
+    "como primer paso",
+    "ejecuta el paso K-93",
 )
-EXCEPCIONES_C5 = {
-    "No existe condición de contexto mínimo (retirada por P4)": (
-        "DoD (c): es el propio paso de relevo CORREGIDO (sin la condición A "
-        "de 380k), no un criterio copiado de otra fila del canon."
-    ),
-    "objetivo cerrado": (
-        "DoD (c): el paso de relevo corregido exige las tres condiciones a la "
-        "vez; no es un criterio copiado de otra fila."
-    ),
-    "ventana de no-relevo abierta": (
-        "DoD (c): el paso de relevo corregido exige las tres condiciones a la "
-        "vez; no es un criterio copiado de otra fila."
-    ),
-}
 
 
 def parse_template(text: str) -> tuple[set[str], set[str]]:
@@ -82,7 +80,7 @@ def parse_template(text: str) -> tuple[set[str], set[str]]:
     header = HEADER_RE.search(text)
     if header is None:
         raise ValueError("template is missing marker header")
-    declared = set(header.group(1).split())
+    declared = {token.strip("{}") for token in header.group(1).split()}
     if not declared:
         raise ValueError("template declares no markers")
     body_text = text[header.end() :]
@@ -95,7 +93,7 @@ def parse_template(text: str) -> tuple[set[str], set[str]]:
     invalid = all_tokens - set(UPPER_TOKEN_RE.findall(text))
     if invalid:
         raise ValueError("template contains malformed marker")
-    body = set(UPPER_TOKEN_RE.findall(body_text))
+    body = {token.strip("{}") for token in UPPER_TOKEN_RE.findall(body_text)}
     missing = declared - body
     if missing:
         raise ValueError("declared marker is unused")
@@ -124,22 +122,79 @@ def assert_no_criterion_fragments(text: str) -> None:
     if header is None:
         raise ValueError("template is missing marker header")
     body = text[header.end() :]
-    for exception_text in EXCEPCIONES_C5:
-        body = body.replace(exception_text, "")
     matches = [fragment for fragment in KNOWN_CRITERION_FRAGMENTS if fragment in body]
     if matches:
         raise ValueError(f"criterion fragment copied: {matches[0]}")
 
 
+def assert_required_markers(template_path: Path, declared: set[str]) -> None:
+    """Require every marker required by a portable template.
+
+    Before: ``declared`` is the marker set already validated by
+    :func:`parse_template`.
+    During: look up the required set for ``template_path``.
+    After: return silently when every required marker is declared; otherwise
+    raise ``ValueError`` naming the first missing marker.
+    """
+    required = REQUIRED_MARKERS_BY_TEMPLATE.get(template_path, frozenset())
+    missing = sorted(required - declared)
+    if missing:
+        raise ValueError(f"missing required marker: {missing[0]}")
+
+
+def read_pillar_state(canon_text: str, pillar: str) -> str:
+    """Read one pillar's ESTADO column from the real canon index.
+
+    Before: ``canon_text`` is the complete canonical pillar index.
+    During: locate the row whose first cell is exactly ``pillar``.
+    After: return its ESTADO cell; raise ``ValueError`` if the row is missing.
+    """
+    row_re = re.compile(rf"^\| {re.escape(pillar)} \|.*\|$", re.MULTILINE)
+    match = row_re.search(canon_text)
+    if match is None:
+        raise ValueError(f"pillar {pillar} is missing from canon")
+    cells = [c.strip() for c in match.group(0).strip("|").split("|")]
+    return cells[2]
+
+
+def assert_pillar_cited_with_state(text: str, pillar: str, state: str) -> None:
+    """Require one exact citation of pillar with its real state.
+
+    Before: ``text`` is a complete template with its marker header.
+    During: scan the body after the header for ``PILLAR (STATE`` citations.
+    After: return silently on exactly one match; raise ``ValueError`` if the
+    pillar/state citation is absent, or if it appears more than once.
+    """
+    header = HEADER_RE.search(text)
+    if header is None:
+        raise ValueError("template is missing marker header")
+    body = text[header.end() :]
+    pattern = re.compile(rf"\b{re.escape(pillar)}\s*\(\s*{re.escape(state)}\b")
+    count = len(pattern.findall(body))
+    if count == 0:
+        raise ValueError(f"template does not cite {pillar} with state {state}")
+    if count > 1:
+        raise ValueError(f"template cites {pillar} more than once")
+
+
 def test_real_templates_have_complete_portable_marker_contract() -> None:
     for path in TEMPLATE_PATHS:
         declared, used = parse_template(path.read_text(encoding="utf-8"))
+        assert_required_markers(path, declared)
         assert declared == used
 
 
 def test_real_templates_do_not_copy_canon_criteria() -> None:
     for path in TEMPLATE_PATHS:
         assert_no_criterion_fragments(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("pillar", ["P28", "P29"])
+def test_real_templates_cite_pillar_with_its_real_state(pillar: str) -> None:
+    canon_text = CANON_PATH.read_text(encoding="utf-8")
+    state = read_pillar_state(canon_text, pillar)
+    for path in TEMPLATE_PATHS:
+        assert_pillar_cited_with_state(path.read_text(encoding="utf-8"), pillar, state)
 
 
 def extract_relevo_block(text: str) -> str:
@@ -170,6 +225,8 @@ def assert_relevo_requires_three_conditions(text: str) -> None:
         raise ValueError("relevo must require all three conditions together")
     if "resultado de cada una" not in block:
         raise ValueError("relevo must record each condition result")
+    if not re.search(r"GO nuevo.*cada salto", block, re.DOTALL):
+        raise ValueError("relevo must require GO per jump (P6 semantics)")
 
 
 def test_real_latido_relevo_requires_three_conditions() -> None:
@@ -178,11 +235,22 @@ def test_real_latido_relevo_requires_three_conditions() -> None:
     )
 
 
-def test_c5_exceptions_are_explicit_and_present() -> None:
-    latido = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
-    for exception_text, reason in EXCEPCIONES_C5.items():
-        assert reason
-        assert latido.count(exception_text) == 1
+def test_arranque_missing_head_sha_marker_fails_explicitly() -> None:
+    text = TEMPLATE_PATHS[1].read_text(encoding="utf-8")
+    assert text.count("{{HEAD_SHA}}") == 2
+    candidate = text.replace("{{HEAD_SHA}}", "")
+    declared, _used = parse_template(candidate)
+    with pytest.raises(ValueError, match="missing required marker: HEAD_SHA"):
+        assert_required_markers(TEMPLATE_PATHS[1], declared)
+
+
+def test_latido_missing_motor_root_marker_fails_explicitly() -> None:
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    assert text.count("{{MOTOR_ROOT}}") == 3
+    candidate = text.replace("{{MOTOR_ROOT}}", "")
+    declared, _used = parse_template(candidate)
+    with pytest.raises(ValueError, match="missing required marker: MOTOR_ROOT"):
+        assert_required_markers(TEMPLATE_PATHS[0], declared)
 
 
 @pytest.fixture
@@ -203,7 +271,8 @@ def fixture_relevo_template() -> str:
 
 9. Contexto y relevo: el relevo SOLO procede si se cumplen LAS TRES
    condiciones A LA VEZ: P4 (NO RATIFICADA en el canon; objetivo cerrado),
-   P6 (RATIFICADA, vinculante: GO nuevo, re-verificado con `user_msgs.py`) y
+   P6 (RATIFICADA, vinculante: GO nuevo, re-verificado con `user_msgs.py` por
+   cada salto) y
    P23 (NO RATIFICADA en el canon; ventana de no-relevo abierta). Registra el
    resultado de cada una.
 
@@ -304,6 +373,68 @@ def test_template_criterion_fragment_fixture_fails_explicitly(
         assert_no_criterion_fragments(candidate)
 
 
+def test_p24_fragment_fixture_fails_explicitly(fixture_template: str) -> None:
+    candidate = mutate_once(
+        fixture_template,
+        "# Plantilla",
+        "# Plantilla\n\nasienta (settle) todo CO fuera de la terna",
+    )
+    with pytest.raises(ValueError, match="criterion fragment copied"):
+        assert_no_criterion_fragments(candidate)
+
+
+@pytest.mark.parametrize("fragment", ["conteo esperado", "conteo medido"])
+def test_p28_matrix_fragment_fixture_fails_explicitly(
+    fixture_template: str, fragment: str
+) -> None:
+    candidate = mutate_once(fixture_template, "# Plantilla", f"# Plantilla\n{fragment}")
+    with pytest.raises(ValueError, match="criterion fragment copied"):
+        assert_no_criterion_fragments(candidate)
+
+
+@pytest.mark.parametrize("fragment", ["como primer paso", "ejecuta el paso K-93"])
+def test_p24_first_step_fragment_fixture_fails_explicitly(
+    fixture_template: str, fragment: str
+) -> None:
+    candidate = mutate_once(fixture_template, "# Plantilla", f"# Plantilla\n{fragment}")
+    with pytest.raises(ValueError, match="criterion fragment copied"):
+        assert_no_criterion_fragments(candidate)
+
+
+def test_pillar_fixture_without_p28_citation_fails_explicitly(
+    fixture_template: str,
+) -> None:
+    with pytest.raises(ValueError, match="does not cite P28"):
+        assert_pillar_cited_with_state(fixture_template, "P28", "RATIFICADA")
+
+
+def test_pillar_fixture_with_wrong_p28_state_fails_explicitly(
+    fixture_template: str,
+) -> None:
+    candidate = mutate_once(
+        fixture_template,
+        "Identidad: {{ROL}} / {{ID_PROPIO}}",
+        "Aplica P28 (NO RATIFICADA, no vinculante).\n\n"
+        "Identidad: {{ROL}} / {{ID_PROPIO}}",
+    )
+    with pytest.raises(ValueError, match="does not cite P28 with state RATIFICADA"):
+        assert_pillar_cited_with_state(candidate, "P28", "RATIFICADA")
+
+
+def test_latido_missing_p28_citation_fails_on_real_template() -> None:
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    candidate = mutate_once(text, "P28 (RATIFICADA, vinculante) y ", "")
+    with pytest.raises(ValueError, match="does not cite P28 with state RATIFICADA"):
+        assert_pillar_cited_with_state(candidate, "P28", "RATIFICADA")
+
+
+def test_arranque_missing_p29_citation_fails_on_real_template() -> None:
+    text = TEMPLATE_PATHS[1].read_text(encoding="utf-8")
+    candidate = mutate_once(text, "P29 (RATIFICADA, vinculante)", "")
+    with pytest.raises(ValueError, match="does not cite P29 with state RATIFICADA"):
+        assert_pillar_cited_with_state(candidate, "P29", "RATIFICADA")
+
+
 def test_relevo_fixture_without_three_conditions_fails_explicitly(
     fixture_template: str,
 ) -> None:
@@ -320,6 +451,33 @@ def test_relevo_fixture_with_three_conditions_is_positive(
     fixture_relevo_template: str,
 ) -> None:
     assert_relevo_requires_three_conditions(fixture_relevo_template)
+
+
+def test_relevo_conjunction_outside_step_nine_fails(
+    fixture_relevo_template: str,
+) -> None:
+    candidate = mutate_once(
+        fixture_relevo_template,
+        "9. Contexto y relevo:",
+        "8. Contexto previo: LAS TRES condiciones A LA VEZ.\n\n9. Contexto y relevo:",
+    )
+    candidate = mutate_once(
+        candidate,
+        "LAS TRES\n   condiciones A LA VEZ: ",
+        "se cumplen: ",
+    )
+    with pytest.raises(ValueError, match="all three conditions together"):
+        assert_relevo_requires_three_conditions(candidate)
+
+
+def test_relevo_without_go_per_jump_fails(fixture_relevo_template: str) -> None:
+    candidate = mutate_once(
+        fixture_relevo_template,
+        "GO nuevo, re-verificado con `user_msgs.py`",
+        "no se requiere GO",
+    )
+    with pytest.raises(ValueError, match="GO per jump"):
+        assert_relevo_requires_three_conditions(candidate)
 
 
 @pytest.mark.parametrize(

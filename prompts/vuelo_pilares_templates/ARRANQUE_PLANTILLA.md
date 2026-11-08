@@ -20,12 +20,12 @@
 4. Procedimiento de ticket: sigue la referencia vigente del vuelo; no
    re-declares aquí el procedimiento completo. Para cupo, usa
    {{COMANDO_CUPO_OPCIONAL}}; si no hay proveedor configurado, declara «NO
-   MEDIDO» con aviso, nunca verde silencioso.
+   MEDIDO» con aviso, nunca verde silencioso. El reparto de verificación del
+   DoD sigue P28 (RATIFICADA, vinculante) y P29 (RATIFICADA, vinculante).
 
-5. PRIMEROS PASOS: tras el ACTIVO, ejecuta el paso K-93 de P24 (RATIFICADA,
-   vinculante) como primer paso y verifica con `t3_thread_list`. Para el GO de
-   relevo, cita {{GO_MENSAJE_ID}} si aplica y verifica P6 (RATIFICADA,
-   vinculante).
+5. PRIMEROS PASOS: aplica P24 (RATIFICADA, vinculante) y verifica con
+   `t3_thread_list`. Para el GO de relevo, cita {{GO_MENSAJE_ID}} si aplica y
+   verifica P6 (RATIFICADA, vinculante).
 
 6. Errores a no repetir y lecciones: consulta la referencia vigente del
    vuelo; las lecciones completas viven en el ARRANQUE real derivado, no en

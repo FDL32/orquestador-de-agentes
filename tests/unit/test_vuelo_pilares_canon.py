@@ -23,8 +23,15 @@ ALLOWED_STATES = {"RATIFICADA", "PILOTO", "NO RATIFICADA", "SUPERADA"}
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
-ABSOLUTE_ROUTE_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/home/)")
-CUPO_FIGURE_RE = re.compile(r"P\s*>=\s*\d+|\d+\s*por ciento|cupo[^\n]{0,40}>=\s*\d+")
+ABSOLUTE_ROUTE_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/]|/home/|/Users/|\\\\[^\\/\s]+[\\/][^\\/\s]+)"
+)
+CUPO_FIGURE_RE = re.compile(
+    r"P\s*>=\s*\d+"
+    r"|\d+\s*por ciento"
+    r"|cupo[^\n]{0,40}>=\s*\d+"
+    r"|\d+\s+(?:unidades?\s+)?de\s+cupo"
+)
 
 BASE_ROW = (
     "| P0 | Regla de prueba | RATIFICADA | "
@@ -203,6 +210,24 @@ def test_p28_fixture_without_revisor_fails_explicitly() -> None:
         assert_pillar_contains_terms(candidate, "P28", P28_REQUIRED_TERMS)
 
 
+def test_p28_fixture_term_only_in_other_column_still_fails_explicitly() -> None:
+    """Require the missing term to be absent from the WHOLE row, not just
+    rephrased elsewhere: the phrase cell lacks REVISOR, but the mecanismo
+    cell names it, so a mutant that scanned the whole row instead of only
+    the phrase cell would wrongly find it there and stay silent."""
+    fixture_row = (
+        "| P28 | La verificación del DoD es de la coordinadora mediante una "
+        "matriz (cláusula, comprobación, ámbito, conteo esperado, conteo "
+        "medido, control positivo); la coordinadora comprueba cobertura. | "
+        f"RATIFICADA | {P28_MESSAGE_ID} | fuente.md | "
+        "REVISOR hace la matriz, conteo medido lo repite la coordinadora | "
+        "coordinadora activa |"
+    )
+    candidate = "# title\n" + fixture_row + "\n"
+    with pytest.raises(ValueError, match="phrase missing term: REVISOR"):
+        assert_pillar_contains_terms(candidate, "P28", P28_REQUIRED_TERMS)
+
+
 def test_p29_fixture_inverted_meaning_fails_explicitly() -> None:
     fixture_row = (
         "| P29 | Una caja con matriz ejecutada por el revisor se acepta. | "
@@ -255,12 +280,32 @@ def test_real_canon_has_no_embedded_cupo_figures() -> None:
 
 @pytest.mark.parametrize(
     "cupo_text",
-    ["P>=85", "cupo de 5h >=90", "~85 por ciento", "P>=95"],
+    [
+        "P>=85",
+        "cupo de 5h >=90",
+        "~85 por ciento",
+        "P>=95",
+        "quedan 90 unidades de cupo",
+        "90 de cupo",
+    ],
 )
 def test_cupo_figure_fixture_fails_explicitly(cupo_text: str) -> None:
     candidate = mutate_once(BASE_ROW, "Regla de prueba", f"Regla {cupo_text}")
     with pytest.raises(ValueError, match="cupo figures"):
         assert_no_cupo_figures(candidate)
+
+
+@pytest.mark.parametrize(
+    "context_text",
+    [
+        "contexto de la saliente al relevar / 600000",
+        "ticks con cupo medido (rc 0); episodios de cupo alto sin accion",
+    ],
+)
+def test_cupo_figure_does_not_flag_context_or_unrelated_numbers(
+    context_text: str,
+) -> None:
+    assert CUPO_FIGURE_RE.findall(context_text) == []
 
 
 def test_real_canon_pillar_ids_are_contiguous() -> None:
@@ -377,6 +422,21 @@ def test_canon_with_no_data_rows_fails_explicitly() -> None:
 
 def test_absolute_route_fixture_fails_explicitly() -> None:
     candidate = "# title\n| P1 | C:\\Users\\alguien\\canon.md | NO RATIFICADA |  | source.md | mechanism | usuario |\n"
+    with pytest.raises(ValueError, match="absolute route"):
+        load_canon(candidate)
+
+
+def test_absolute_route_posix_users_fixture_fails_explicitly() -> None:
+    candidate = "# title\n| P1 | /Users/alguien/canon.md | NO RATIFICADA |  | source.md | mechanism | usuario |\n"
+    with pytest.raises(ValueError, match="absolute route"):
+        load_canon(candidate)
+
+
+def test_absolute_route_unc_fixture_fails_explicitly() -> None:
+    candidate = (
+        "# title\n| P1 | \\\\servidor\\recurso\\canon.md | NO RATIFICADA |  | "
+        "source.md | mechanism | usuario |\n"
+    )
     with pytest.raises(ValueError, match="absolute route"):
         load_canon(candidate)
 
