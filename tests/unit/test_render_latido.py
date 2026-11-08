@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 import scripts.flight.render_latido as render_latido_module
-from scripts.flight.render_latido import _main, predecessor_sha12, render_latido
+from scripts.flight.render_latido import (
+    _main,
+    predecessor_sha12,
+    reduce_roster,
+    render_latido,
+)
 
 
 ROOT = Path(__file__).parents[2]
@@ -39,6 +44,7 @@ def test_golden_render_is_byte_exact() -> None:
 
     assert rc == 0
     assert output == SUCCESSOR.read_text(encoding="utf-8")
+    assert output.encode("utf-8") == SUCCESSOR.read_bytes()
 
 
 def test_missing_judgment_is_rc3_and_named() -> None:
@@ -196,6 +202,7 @@ def test_predecessor_sha12_matches_independent_hash() -> None:
     expected = hashlib.sha256(PREDECESSOR.read_bytes()).hexdigest()[:12]
 
     assert predecessor_sha12(PREDECESSOR) == expected
+    assert predecessor_sha12(PREDECESSOR) == "fadc9966e810"
 
 
 def test_render_blindado_for_salto_x_to_x_mas_uno(tmp_path: Path) -> None:
@@ -290,6 +297,7 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
 def test_module_docstring_declares_saliente_handoff_trigger() -> None:
     assert "saliente" in render_latido_module.__doc__
     assert "paquete de relevo" in render_latido_module.__doc__
+    assert "lifecycle of scheduled tasks" in render_latido_module.__doc__
 
 
 def test_module_and_function_docstrings_describe_three_judgement_values() -> None:
@@ -461,22 +469,6 @@ def test_go_index_zero_is_rejected() -> None:
     assert "go_index debe ser entero >= 1, recibido: 0" in output
 
 
-def test_cli_malformed_juicio_keeps_argparse_error() -> None:
-    with pytest.raises(SystemExit):
-        _main(
-            [
-                "--predecessor",
-                str(PREDECESSOR),
-                "--roster",
-                str(ROSTER),
-                "--go-index",
-                "2",
-                "--juicio",
-                "malformado",
-            ]
-        )
-
-
 def test_cli_missing_roster_returns_rc2(capsys) -> None:
     rc = _main(
         [
@@ -556,3 +548,308 @@ def test_cli_success_propagates_render_rc_and_writes_out(tmp_path: Path) -> None
 
     assert actual_rc == expected_rc == 0
     assert out.read_text(encoding="utf-8") == expected_output
+
+
+@pytest.mark.parametrize("thread_id", [[], {}, None])
+def test_unhashable_or_none_thread_id_is_rc2_without_traceback(thread_id) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["active_roles"]["supervisor"]["threadId"] = thread_id
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "threadId" in output
+    assert "Traceback" not in output
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("nota_derivacion", "x [[JUICIO:otro]]"),
+        ("objetivo_en_curso", "x [[JUICIO:otro]]"),
+        ("secciones_postcompactacion_nueva", "x [[JUICIO:otro]]"),
+    ],
+)
+def test_foreign_judgement_marker_is_named_for_its_own_block(name, value) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    juicios[name] = value
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, juicios)
+
+    assert rc == 3
+    assert f"hueco de JUICIO no rellenado: {name}" in output
+    assert "otro" not in output.split("DIFERENCIAS:", 1)[1]
+
+
+def test_judgement_cannot_introduce_foreign_mcp_id() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    juicios["nota_derivacion"] = "[mcp:foreign-id]"
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, juicios)
+
+    assert rc == 2
+    assert "id mcp ajeno al roster introducido por JUICIO: mcp:foreign-id" in output
+
+
+def test_crlf_predecessor_is_preserved(tmp_path: Path) -> None:
+    predecessor = tmp_path / "crlf.md"
+    predecessor.write_bytes(
+        PREDECESSOR.read_text(encoding="utf-8").replace("\n", "\r\n").encode("utf-8")
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert "\r\n" in output
+    assert "\n" not in output.replace("\r\n", "")
+
+
+def _real_roster() -> dict:
+    return {
+        "schema_version": 1,
+        "flight_id": "vuelo-test",
+        "updated_at": "2026-11-08T08:44:56+01:00",
+        "updated_by": "CO-9",
+        "rules": {},
+        "session_types": {},
+        "sessions": {},
+        "capacity": {},
+        "excluded_lenses": {},
+        "quota": {},
+        "quarantine": {},
+        "roster_fixes": [],
+        "active_roles": {
+            "_schema_note": "known metadata",
+            "orquestador": {
+                "threadId": "mcp:5c3353f8-5d71-4efc-bfa5-38164d851130",
+                "session_code": "CO-56",
+                "since": "2026-11-08T08:44:56+01:00",
+                "set_by": "CO-54",
+                "predecessor_threadId": "mcp:0355d3c5-08e9-427a-ba65-e6e3ab43b7ce",
+                "version": 147,
+                "status": "active",
+                "approved_by": "CO-54",
+                "nota": "known",
+                "estado": "ACTIVO",
+            },
+            "supervisor": {
+                "threadId": "mcp:0355d3c5-08e9-427a-ba65-e6e3ab43b7ce",
+                "session_code": "CO-55",
+                "since": "2026-11-08T08:44:56+01:00",
+                "set_by": "CO-54",
+                "predecessor_threadId": "mcp:d0cbb70f-c8f3-444d-a15d-ce28235cc26c",
+                "version": 48,
+                "status": "active",
+            },
+        },
+        "cadena_contexto": [
+            {
+                "threadId": "mcp:d0cbb70f-c8f3-444d-a15d-ce28235cc26c",
+                "session_code": "CO-54",
+                "hasta": "2026-11-08T08:44:56+01:00",
+                "cerrado_por": "CO-54",
+            },
+            {"threadId": "mcp:old", "session_code": "CO-53"},
+        ],
+    }
+
+
+def test_reduce_real_roster_to_consumed_shape() -> None:
+    reduced, errors = reduce_roster(_real_roster())
+
+    assert errors == []
+    assert reduced == json.loads(ROSTER.read_text(encoding="utf-8"))
+
+
+def test_reduce_real_roster_rejects_unknown_field() -> None:
+    real = _real_roster()
+    real["active_roles"]["supervisor"]["new_field"] = "must fail"
+
+    reduced, errors = reduce_roster(real)
+
+    assert reduced is None
+    assert (
+        "campo de roster no consumido: new_field en active_roles.supervisor" in errors
+    )
+
+
+def test_cli_accepts_real_roster_shape(tmp_path: Path) -> None:
+    roster_path = tmp_path / "real-roster.json"
+    roster_path.write_text(json.dumps(_real_roster()), encoding="utf-8")
+    args = [
+        "--predecessor",
+        str(PREDECESSOR),
+        "--roster",
+        str(roster_path),
+        "--go-index",
+        "2",
+    ]
+    for name, value in _juicios_sucesor().items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(value, encoding="utf-8")
+        args.extend(["--juicio", f"{name}=@{path}"])
+
+    assert _main(args) == 0
+
+
+def test_missing_predecessor_is_rc2_in_core_and_cli(tmp_path: Path, capsys) -> None:
+    missing = tmp_path / "missing.md"
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(missing, roster, 2, _juicios_sucesor())
+    cli_rc = _main(
+        [
+            "--predecessor",
+            str(missing),
+            "--roster",
+            str(ROSTER),
+            "--go-index",
+            "2",
+        ]
+    )
+
+    assert rc == cli_rc == 2
+    assert "DIFERENCIAS:" in output
+    assert "DIFERENCIAS:" in capsys.readouterr().out
+
+
+def test_invalid_utf8_predecessor_is_rc2(tmp_path: Path) -> None:
+    predecessor = tmp_path / "invalid.md"
+    predecessor.write_bytes(b"\xff\xfe\x00ESTADO")
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "Traceback" not in output
+
+
+def test_cli_malformed_roster_json_is_rc2(tmp_path: Path, capsys) -> None:
+    roster = tmp_path / "bad.json"
+    roster.write_text("{invalido", encoding="utf-8")
+
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(roster),
+            "--go-index",
+            "2",
+        ]
+    )
+
+    assert rc == 2
+    assert "no se pudo leer --roster" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda text: text.replace(
+                text.splitlines(keepends=True)[1], "VERSION\n", 1
+            ),
+            "nota_derivacion",
+        ),
+        (
+            lambda text: re.sub(
+                r"\(ARRANQUE_CO-55_20261108\.md s\.2: .*?\)",
+                "",
+                text,
+                count=1,
+            ),
+            "objetivo_en_curso",
+        ),
+        (
+            lambda text: text.replace("ARRANQUE_CO-55 s.1", "ARRANQUE_CO-55 s.0", 1),
+            "ancla R2b de ARRANQUE no encontrada",
+        ),
+        (
+            lambda text: text.replace("la cascada es CO-53", "la cascada es", 1),
+            "primer elemento de cascada no derivable",
+        ),
+    ],
+)
+def test_missing_required_anchor_is_rc2(tmp_path: Path, mutate, message: str) -> None:
+    predecessor = tmp_path / "mutated.md"
+    predecessor.write_text(
+        mutate(PREDECESSOR.read_text(encoding="utf-8")), encoding="utf-8"
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert message in output
+
+
+def test_missing_cascade_end_anchor_is_rc2(tmp_path: Path) -> None:
+    predecessor = tmp_path / "duplicate-end.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + " LATIDO DE PROGRESO",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R2b-fin: esperado 1, encontrado 2" in output
+
+
+@pytest.mark.parametrize("go_index", [2.5, "2", -1, True, False])
+def test_invalid_go_index_is_rc2(go_index) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(PREDECESSOR, roster, go_index, _juicios_sucesor())
+
+    assert rc == 2
+    assert "go_index debe ser entero >= 1" in output
+
+
+def test_non_numeric_session_code_is_rc2() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["active_roles"]["orquestador"]["session_code"] = "CO-ABC"
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "session_code no numerico: CO-ABC" in output
+
+
+def test_cli_malformed_juicio_keeps_argparse_error(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        _main(
+            [
+                "--predecessor",
+                str(PREDECESSOR),
+                "--roster",
+                str(ROSTER),
+                "--go-index",
+                "2",
+                "--juicio",
+                "malformado",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "--juicio debe tener la forma nombre=@fichero" in capsys.readouterr().err
+
+
+def test_late_exception_keeps_accumulated_problems(tmp_path: Path) -> None:
+    predecessor = tmp_path / "multiple-errors.md"
+    text = PREDECESSOR.read_text(encoding="utf-8")
+    text = text.replace("ARRANQUE_CO-55 s.1", "ARRANQUE_CO-55 s.0", 1)
+    text += "la cascada es "
+    predecessor.write_text(text, encoding="utf-8")
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R2: esperado 1, encontrado 2" in output
+    assert "ancla R2b de ARRANQUE no encontrada" in output

@@ -16,8 +16,8 @@ The input ``roster`` is the reduced three-object form: ``active_roles.orquestado
 ``session_code``.  A real ``flight_roster.json`` (with ``since``, ``set_by``,
 ``estado``, ``version``, and other fields) must be reduced before calling this
 function; passing it as-is returns rc 2.  The trigger is declared for the
-saliente coordinator in its paquete de relevo; the lifecycle of scheduled
-tasks (creating its own and deleting the predecessor's) is not part of this
+saliente coordinator in its paquete de relevo; the lifecycle of scheduled tasks
+(creating its own and deleting the predecessor's) is not part of this
 specification.
 
 After: ``render_latido`` returns ``(0, text)`` for a complete derivation,
@@ -55,7 +55,8 @@ def predecessor_sha12(predecessor: str | Path) -> str:
 
 
 def _read_predecessor(predecessor: str | Path) -> str:
-    return Path(predecessor).read_text(encoding="utf-8")
+    with Path(predecessor).open(encoding="utf-8", newline="") as handle:
+        return handle.read()
 
 
 def _judgement_spans(text: str) -> dict[str, tuple[int, int]]:
@@ -63,7 +64,7 @@ def _judgement_spans(text: str) -> dict[str, tuple[int, int]]:
     if len(lines) < 2:
         raise ValueError("el predecesor no tiene linea de cabecera JUICIO")
     header_end = len(lines[0]) + len(lines[1])
-    note_start = text.find("[", len(lines[0]))
+    note_start = len(lines[0])
     note_end = text.find("\n", note_start)
     note_end = text.rfind("]", note_start, note_end) + 1
     if note_start < 0 or note_end <= note_start:
@@ -188,6 +189,113 @@ def _roster_values(
     return values[0], values[1], values[2], errors
 
 
+def reduce_roster(real: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    """Reduce a real flight roster to the three identities consumed here.
+
+    Before: ``real`` must be a JSON-like mapping containing ``active_roles`` and
+    ``cadena_contexto``.
+    During: root and location metadata are checked against the closed lists of
+    known non-consumed fields; the first context entry is projected to identity.
+    After: returns the exact reduced roster and no errors, or ``None`` and plain
+    diagnostics for missing or unknown schema fields.  The input is not mutated.
+    """
+
+    errors: list[str] = []
+    if not isinstance(real, dict):
+        return None, ["campo de roster no consumido: roster debe ser dict"]
+    known_root = {
+        "schema_version",
+        "flight_id",
+        "updated_at",
+        "updated_by",
+        "rules",
+        "session_types",
+        "sessions",
+        "capacity",
+        "excluded_lenses",
+        "quota",
+        "quarantine",
+        "roster_fixes",
+        "cadena_contexto",
+        "active_roles",
+    }
+    errors.extend(
+        f"campo de roster no consumido: {key} en raiz"
+        for key in sorted(set(real) - known_root)
+    )
+    active_roles = real.get("active_roles")
+    if not isinstance(active_roles, dict):
+        errors.append("campo de roster no consumido: active_roles debe ser dict")
+        active_roles = {}
+    errors.extend(
+        f"campo de roster no consumido: {key} en active_roles"
+        for key in sorted(
+            set(active_roles) - {"orquestador", "supervisor", "_schema_note"}
+        )
+    )
+    known_role_metadata = {
+        "since",
+        "set_by",
+        "predecessor_threadId",
+        "version",
+        "status",
+        "approved_by",
+        "nota",
+        "estado",
+    }
+    reduced_roles: dict[str, dict[str, Any]] = {}
+    for name in ("orquestador", "supervisor"):
+        value = active_roles.get(name)
+        location = f"active_roles.{name}"
+        if not isinstance(value, dict):
+            errors.append(f"campo de roster no consumido: objeto ausente en {location}")
+            continue
+        errors.extend(
+            f"campo de roster no consumido: {key} en {location}"
+            for key in sorted(
+                set(value) - {"threadId", "session_code"} - known_role_metadata
+            )
+        )
+        reduced_roles[name] = {
+            key: value[key] for key in ("threadId", "session_code") if key in value
+        }
+    context = real.get("cadena_contexto")
+    if not isinstance(context, list) or not context:
+        errors.append(
+            "campo de roster no consumido: cadena_contexto debe tener al menos un elemento"
+        )
+        context_value: Any = None
+    else:
+        context_value = context[0]
+    if not isinstance(context_value, dict):
+        errors.append(
+            "campo de roster no consumido: objeto ausente en cadena_contexto[0]"
+        )
+        reduced_context: dict[str, Any] = {}
+    else:
+        known_context_metadata = {"hasta", "cerrado_por"}
+        errors.extend(
+            f"campo de roster no consumido: {key} en cadena_contexto[0]"
+            for key in sorted(
+                set(context_value)
+                - {"threadId", "session_code"}
+                - known_context_metadata
+            )
+        )
+        reduced_context = {
+            key: context_value[key]
+            for key in ("threadId", "session_code")
+            if key in context_value
+        }
+    reduced = {
+        "active_roles": reduced_roles,
+        "cadena_contexto": [reduced_context],
+    }
+    if errors:
+        return None, errors
+    return reduced, []
+
+
 def _replace_identity_tokens(
     text: str,
     protected: list[tuple[int, int, str]],
@@ -237,15 +345,17 @@ def render_latido(  # noqa: C901
         text = _read_predecessor(predecessor)
         own, supervisor, context, roster_errors = _roster_values(roster)
         problems.extend(roster_errors)
-        if any(
-            set(value) != {"threadId", "session_code"}
-            for value in (own, supervisor, context)
-        ):
+        if problems:
             return 2, _failure(text, problems)
 
         cascade_anchor_count = text.count(_CASCADE_START)
         if cascade_anchor_count != 1:
             problems.append(f"regla R2: esperado 1, encontrado {cascade_anchor_count}")
+        cascade_end_count = text.count(_CASCADE_END)
+        if cascade_end_count != 1:
+            problems.append(
+                f"regla R2b-fin: esperado 1, encontrado {cascade_end_count}"
+            )
         cascade_start = text.find(_CASCADE_START) + len(_CASCADE_START)
         cascade_end = text.find(_CASCADE_END, cascade_start)
         if cascade_start < len(_CASCADE_START) or cascade_end < 0:
@@ -303,11 +413,7 @@ def render_latido(  # noqa: C901
         judgement_values: dict[str, str] = {}
         for name in ("nota_derivacion", "objetivo_en_curso"):
             value = (juicios or {}).get(name)
-            if (
-                value is None
-                or value.strip() == ""
-                or value.strip() == f"[[JUICIO:{name}]]"
-            ):
+            if value is None or value.strip() == "" or "[[JUICIO:" in value:
                 missing.append(name)
                 value = f"[[JUICIO:{name}]]"
             judgement_values[name] = value
@@ -315,7 +421,7 @@ def render_latido(  # noqa: C901
         if (
             section_value is None
             or section_value.strip() == ""
-            or section_value.strip() == "[[JUICIO:secciones_postcompactacion_nueva]]"
+            or "[[JUICIO:" in section_value
         ):
             missing.append("secciones_postcompactacion_nueva")
             section_value = "[[JUICIO:secciones_postcompactacion_nueva]]"
@@ -369,7 +475,8 @@ def render_latido(  # noqa: C901
         step9 = step9.replace(f"fila b{derived['go_index']}", f"fila b{go_index}")
         rendered = rendered[: line9.start()] + step9 + rendered[line9.end() :]
 
-        rendered = "ESTADO: VIGENTE\n" + rendered.split("\n", 1)[1]
+        line_ending = "\r\n" if "\r\n" in rendered else "\n"
+        rendered = "ESTADO: VIGENTE" + line_ending + rendered.split("\n", 1)[1]
         rendered = rendered.replace(
             f"para el salto {own['session_code']} -> {own['session_code']}",
             f"para el salto {own['session_code']} -> {_next_session_code(own['session_code'])}",
@@ -378,9 +485,20 @@ def render_latido(  # noqa: C901
             return 3, _failure(
                 rendered, [f"hueco de JUICIO no rellenado: {name}" for name in missing]
             )
+        foreign_rendered_ids = sorted(
+            set(re.findall(r"mcp:[0-9A-Za-z-]+", rendered)) - roster_ids - frozen_ids
+        )
+        if foreign_rendered_ids:
+            return 2, _failure(
+                rendered,
+                [
+                    f"id mcp ajeno al roster introducido por JUICIO: {item}"
+                    for item in foreign_rendered_ids
+                ],
+            )
         return 0, rendered
     except (OSError, UnicodeError, ValueError, KeyError) as exc:
-        return 2, _failure("", [str(exc)])
+        return 2, _failure("", [*problems, str(exc)])
 
 
 def _failure(text: str, problems: list[str]) -> str:
@@ -406,6 +524,10 @@ def _main(argv: list[str] | None = None) -> int:
         roster = json.loads(args.roster.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         sys.stdout.write(_failure("", [f"no se pudo leer --roster: {exc}"]))
+        return 2
+    roster, reduce_errors = reduce_roster(roster)
+    if reduce_errors:
+        sys.stdout.write(_failure("", reduce_errors))
         return 2
     juicios: dict[str, str] = {}
     for item in args.juicio:
