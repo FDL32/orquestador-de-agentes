@@ -4,18 +4,20 @@
 Before: ``--registry`` apunta a un JSON legible con ``sessions`` como lista de
     diccionarios, y los subcomandos de escritura reciben ``--by`` y ``--reason``.
 During: valida altas, asientos y notas en modo dry-run o, con ``--apply``, toma
-    el lock del sistema, rota backups, escribe el registry atomico y anade su
-    ledger propio antes de liberar el lock. Los locks usan ``msvcrt`` en
+    el lock del sistema, abre/normaliza el ledger, lee y muta, estampa
+    ``actualizado``, escribe el ledger con flush, rota backups y escribe el
+    registry atomico antes de liberar el lock. Los locks usan ``msvcrt`` en
     Windows y ``fcntl`` en POSIX.
 After: imprime un plan JSON o aplica una mutacion durable. Los codigos son:
     0 = exito (incluido dry-run valido); 2 = entrada invalida o esquema roto;
-    3 = reservado exclusivamente para el gate operativo de reconcile --apply;
+    3 = gate operativo compartido por todo subcomando --apply;
     4 = conflicto de identidad; 5 = lock no disponible tras reintentos.
 
-El ``providerInstanceId`` se resuelve a cuenta antes del snapshot de reconcile:
-``claudeAgent=brabander``, ``claudeAgent_alvarovans=alvarovans``,
-``codex=plana`` y ``codex_e402540e=Gamsgo``. ``registry_changes.jsonl`` es el
-ledger propio de registry_ops (Alt2 de DD), distinto de
+El snapshot de reconcile trae ``cuenta`` ya resuelta por quien lo genera (una
+sesion con acceso MCP); registry_ops no hace esa resolucion, solo consume el
+campo. La convencion externa es ``claudeAgent=brabander``,
+``claudeAgent_alvarovans=alvarovans``, ``codex=plana`` y ``codex_e402540e=Gamsgo``.
+``registry_changes.jsonl`` es el ledger propio de registry_ops (Alt2 de DD), distinto de
 ``roster_changes.jsonl`` del rotador: separar ambos evita acoplar operaciones
 de identidad con el historial de rotacion. ``asiento`` y ``nota`` nunca tocan
 ``threadId``, ``started``, ``brief`` ni ``launched_by``; esa separacion de
@@ -45,7 +47,7 @@ except ImportError:
 
 RC_OK = 0
 RC_INVALID = 2
-RC_RECONCILE_GATE = 3
+RC_ROSTER_GATE = 3
 RC_CONFLICT = 4
 RC_LOCK = 5
 LOCK_ATTEMPTS = 20
@@ -59,6 +61,8 @@ MUTABLE_FIELDS = (
     "worktree",
     "generation",
 )
+SNAPSHOT_FIELDS = ("threadId", "settled", "status", "updatedAt", "modelo", "cuenta")
+RECONCILE_FIELDS = ("settled", "status", "updatedAt", "modelo", "cuenta")
 OPTIONAL_FIELDS = (
     "nota",
     "started_nota",
@@ -194,6 +198,12 @@ def _read_registry(path):
         not isinstance(item, dict) or not item.get("code") for item in data["sessions"]
     ):
         raise RegistryError("registry invalido: cada sesion requiere code", RC_INVALID)
+    seen_codes = set()
+    for item in data["sessions"]:
+        code = item["code"]
+        if code in seen_codes:
+            raise RegistryError(f"registry invalido: code duplicado={code}", RC_INVALID)
+        seen_codes.add(code)
     return data
 
 
@@ -218,6 +228,73 @@ def _require_session(data, code):
     if item is None:
         raise RegistryError(f"sesion no encontrada: code={code}", RC_CONFLICT)
     return item
+
+
+def _check_roster_gate(roster_path):
+    """Comprueba el estado operativo de todos los roles activos.
+
+    Before: ``roster_path`` apunta al JSON del roster y el gate solo se invoca
+        para una escritura real.
+    During: lee ``active_roles`` y examina ``estado`` (con fallback ``ACTIVO``),
+        ignorando claves cuyo nombre empieza por ``_``.
+    After: retorna ``None`` si todos estan activos; lanza rc 2 ante roster
+        ilegible/esquema invalido y rc 3 ante cualquier estado no ACTIVO.
+        ``rotate_coordinator.py:426`` lee ``current_orchestrator.get("estado")``
+        y ``rotate_coordinator.py:441`` escribe literalmente ``estado`` con
+        ``PENDIENTE_ACK``; este gate consume ese mismo disyunto del rotador.
+    """
+    try:
+        roster = json.loads(Path(roster_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RegistryError(f"roster ilegible: {roster_path}", RC_INVALID) from exc
+    if not isinstance(roster, dict) or not isinstance(roster.get("active_roles"), dict):
+        raise RegistryError(f"roster ilegible: {roster_path}", RC_INVALID)
+    for role, entry in roster["active_roles"].items():
+        if role.startswith("_"):
+            continue
+        if not isinstance(entry, dict):
+            raise RegistryError(f"roster ilegible: active_roles.{role}", RC_INVALID)
+        state = entry.get("estado", "ACTIVO")
+        if state != "ACTIVO":
+            raise RegistryError(f"active_roles.{role}.estado={state}", RC_ROSTER_GATE)
+
+
+def _open_ledger(path):
+    """Abre el ledger y corrige inmediatamente una newline final ausente.
+
+    Before: ``path`` es el destino del ledger propio de registry_ops.
+    During: abre en append-binary, inspecciona el ultimo byte y deja el handle
+        posicionado al final para la fila posterior a la escritura del registry.
+    After: retorna un handle abierto; cualquier error de apertura se propaga sin
+        tocar el registry, backups ni su contenido.
+    """
+    handle = path.open("a+b")
+    try:
+        handle.seek(0, 2)
+        if handle.tell():
+            handle.seek(-1, 2)
+            if handle.read(1) != b"\n":
+                handle.seek(0, 2)
+                handle.write(b"\n")
+        handle.seek(0, 2)
+        return handle
+    except Exception:
+        handle.close()
+        raise
+
+
+def _append_ledger_handle(handle, by, change, detail, reason):
+    """Escribe una fila en un handle de ledger ya abierto bajo el lock.
+
+    Before: ``handle`` procede de ``_open_ledger`` y esta al final del fichero.
+    During: serializa el esquema exacto con timestamp local y escribe una fila.
+    After: la fila queda append-only y el handle permanece abierto para el cierre
+        de la seccion critica.
+    """
+    row = {"ts": _now(), "by": by, "change": change, "detail": detail, "reason": reason}
+    handle.seek(0, 2)
+    handle.write((json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8"))
+    handle.flush()
 
 
 def _rotate_backups(path, current):
@@ -261,43 +338,38 @@ def _write_registry(path, data):
         raise
 
 
-def _append_ledger(path, by, change, detail, reason):
-    """Anade una fila propia al ledger con guardia de newline.
-
-    Before: ``path`` puede no existir o terminar sin newline.
-    During: abre append-binary, inserta newline si falta y anade una fila JSON
-        con el esquema exacto del contrato.
-    After: la nueva fila queda al final y ninguna fila previa se reescribe.
-    """
-    row = {"ts": _now(), "by": by, "change": change, "detail": detail, "reason": reason}
-    with path.open("a+b") as handle:
-        handle.seek(0, 2)
-        if handle.tell() and (handle.seek(-1, 2) or True) and handle.read(1) != b"\n":
-            handle.seek(0, 2)
-            handle.write(b"\n")
-        handle.seek(0, 2)
-        handle.write((json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8"))
-
-
-def _apply_change(path, ledger, by, reason, change, detail, mutate):
+def _apply_change(path, ledger, roster, by, reason, change, detail, mutate):
     """Ejecuta una mutacion bajo lock, backup, escritura y ledger.
 
-    Before: ``path`` existe, ``mutate`` puede modificar un registry validado y
-        ``change/detail`` describen la fila de ledger.
-    During: adquiere lock antes de leer, valida mediante ``mutate``, rota backup,
-        actualiza ``actualizado``, escribe atomicamente y anade el ledger bajo lock.
-    After: registry y ledger quedan escritos antes de liberar el lock; errores de
-        validacion no escriben y errores de lock retornan rc 5 al llamador.
+    Before: ``path`` existe, ``roster`` pasa el gate y ``mutate`` puede modificar
+        un registry validado; ``change/detail`` describen la fila de ledger.
+    During: aplica el gate antes del lock, abre/normaliza el ledger dentro del
+        lock, lee+valida+muta, estampa ``actualizado``, escribe la fila real del
+        ledger con flush, rota backups y despues escribe atomicamente el registry,
+        manteniendo el mismo handle hasta liberar el lock.
+    After: registry y ledger quedan escritos antes de liberar el lock. Si falla
+        el append, no se toca registry ni backups (ningun bak nuevo); el ledger
+        puede crearse o normalizar su newline antes de que falle la validacion.
+        Si falla _write_registry despues del append y la rotacion, queda la fila
+        y la rotacion sin escritura final correspondiente (sobre-auditoria doble,
+        direccion segura, preferible a escribir sin rastro).
+        Los errores de lock retornan rc 5 al llamador.
     """
+    _check_roster_gate(roster)
     lock_path = path.with_name(path.name + ".lock")
     with _RegistryLock(lock_path):
-        data = _read_registry(path)
-        current = path.read_bytes()
-        mutate(data)
-        _rotate_backups(path, current)
-        data["actualizado"] = _now()
-        _write_registry(path, data)
-        _append_ledger(ledger, by, change, detail, reason)
+        ledger_handle = _open_ledger(ledger)
+        try:
+            data = _read_registry(path)
+            current = path.read_bytes()
+            mutate(data)
+            data["actualizado"] = _now()
+            actual_detail = detail(data) if callable(detail) else detail
+            _append_ledger_handle(ledger_handle, by, change, actual_detail, reason)
+            _rotate_backups(path, current)
+            _write_registry(path, data)
+        finally:
+            ledger_handle.close()
 
 
 def _session_for_alta(args, data):
@@ -332,6 +404,10 @@ def _handle_alta(args):
     Before: argparse ha validado los argumentos obligatorios.
     During: genera el plan sin escribir o ejecuta la mutacion bajo lock.
     After: imprime el dict de alta o retorna rc 0; los errores usan el contrato.
+        ``cadena_consulta``, ``protocolo`` y ``autoridad`` son top-level del
+        registry y no se crean por sesion desde alta; asiento y reconcile los
+        preservan (nunca los tocan) y close_relief.py (WOT-2026-160f, fuera de
+        alcance) es quien los escribira.
     """
     path = Path(args.registry)
     if not args.apply:
@@ -350,6 +426,7 @@ def _handle_alta(args):
     _apply_change(
         path,
         Path(args.ledger),
+        Path(args.roster),
         args.by,
         args.reason,
         "alta",
@@ -394,7 +471,14 @@ def _handle_asiento(args):
 
     detail = f"code={args.code} campos={sorted(changes)}"
     _apply_change(
-        path, Path(args.ledger), args.by, args.reason, "asiento", detail, mutate
+        path,
+        Path(args.ledger),
+        Path(args.roster),
+        args.by,
+        args.reason,
+        "asiento",
+        detail,
+        mutate,
     )
     return RC_OK
 
@@ -443,7 +527,173 @@ def _handle_nota(args):
     detail = (
         f"code={args.code} campo={field} modo={'append' if args.append else 'replace'}"
     )
-    _apply_change(path, Path(args.ledger), args.by, args.reason, "nota", detail, mutate)
+    _apply_change(
+        path,
+        Path(args.ledger),
+        Path(args.roster),
+        args.by,
+        args.reason,
+        "nota",
+        detail,
+        mutate,
+    )
+    return RC_OK
+
+
+def _read_snapshot(path):
+    """Lee y valida el snapshot T3 de reconcile.
+
+    Before: ``path`` apunta a un JSON candidato a snapshot.
+    During: exige una lista de diccionarios con los seis campos obligatorios y
+        rechaza ``threadId`` duplicados dentro del propio snapshot.
+    After: retorna la lista validada; JSON ilegible, forma incorrecta, campo
+        ausente o duplicado producen rc 2. El rechazo de duplicados es una
+        decision de ambiguedad del snapshot, no un requisito literal del DoD.
+    """
+    try:
+        snapshot = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RegistryError(f"snapshot ilegible: {path}", RC_INVALID) from exc
+    if not isinstance(snapshot, list):
+        raise RegistryError("snapshot invalido: debe ser una lista", RC_INVALID)
+    seen = []
+    for entry in snapshot:
+        if not isinstance(entry, dict) or any(
+            field not in entry for field in SNAPSHOT_FIELDS
+        ):
+            raise RegistryError(
+                "snapshot invalido: faltan campos obligatorios", RC_INVALID
+            )
+        if entry["threadId"] is None or entry["threadId"] == "":
+            raise RegistryError("snapshot invalido: threadId nulo o vacio", RC_INVALID)
+        if entry["threadId"] in seen:
+            raise RegistryError(
+                f"snapshot invalido: threadId duplicado={entry['threadId']}", RC_INVALID
+            )
+        seen.append(entry["threadId"])
+    return snapshot
+
+
+def _validate_reconcile_registry(data):
+    """Rechaza threadId no nulos duplicados antes del emparejamiento.
+
+    Before: ``data`` es un registry validado por ``_read_registry``.
+    During: recorre las sesiones y cuenta solo ``threadId`` presentes; un
+        duplicado vuelve ambiguo el emparejamiento por diccionario.
+    After: retorna ``None`` si es univoco o lanza rc 2 con el ``threadId``
+        repetido.
+    """
+    seen_threads = set()
+    for item in data["sessions"]:
+        thread_id = item.get("threadId")
+        if thread_id is None:
+            continue
+        if thread_id in seen_threads:
+            raise RegistryError(
+                f"registry invalido: threadId duplicado={thread_id}", RC_INVALID
+            )
+        seen_threads.add(thread_id)
+
+
+def _reconcile_plan(data, snapshot):
+    """Calcula el plan de reconcile sin mutar el registry.
+
+    Before: ``data`` y ``snapshot`` han pasado sus validadores respectivos.
+    During: empareja por ``threadId`` y compara exclusivamente cinco campos.
+    After: retorna actualizaciones y las dos listas de no-emparejados, sin crear
+        sesiones ni descartar campos desconocidos.
+    """
+    sessions_by_thread = {
+        item.get("threadId"): item for item in data["sessions"] if item.get("threadId")
+    }
+    snapshot_by_thread = {entry["threadId"]: entry for entry in snapshot}
+    updates = []
+    for entry in snapshot:
+        item = sessions_by_thread.get(entry["threadId"])
+        if item is None:
+            continue
+        changes = {
+            field: [item.get(field), entry[field]]
+            for field in RECONCILE_FIELDS
+            if item.get(field) != entry[field]
+        }
+        updates.append(
+            {
+                "code": item["code"],
+                "threadId": entry["threadId"],
+                "cambios": changes,
+            }
+        )
+    return {
+        "actualizaciones": updates,
+        "snapshot_sin_match": [
+            entry["threadId"]
+            for entry in snapshot
+            if entry["threadId"] not in sessions_by_thread
+        ],
+        "registry_sin_actualizar": [
+            item["code"]
+            for item in data["sessions"]
+            if item.get("threadId") not in snapshot_by_thread
+        ],
+    }
+
+
+def _handle_reconcile(args):
+    """Valida o aplica reconcile contra un snapshot T3.
+
+    Before: ``args`` contiene registry, snapshot, metadatos y, para apply,
+        roster. Dry-run no lee ni valida el roster.
+    During: construye un plan por ``threadId`` o aplica solo settled/status/
+        updatedAt/modelo/cuenta bajo el pipeline comun de gate, ledger, lock,
+        backups y escritura atomica.
+        Un snapshot invalido se valida antes del gate de roster, por lo que
+        snapshot invalido + roster bloqueado devuelve rc 2.
+    After: imprime el plan en dry-run o persiste el resultado con rc 0; los
+        errores de snapshot, roster, lock o I/O usan el contrato global.
+        ``actualizadas`` cuenta todas las sesiones emparejadas, incluso cuando
+        sus cinco valores ya coinciden y ``cambios`` queda vacio.
+    """
+    path = Path(args.registry)
+    if not args.apply:
+        data = _read_registry(path)
+        _validate_reconcile_registry(data)
+        snapshot = _read_snapshot(args.snapshot)
+        print(json.dumps(_reconcile_plan(data, snapshot), ensure_ascii=False, indent=2))
+        return RC_OK
+
+    snapshot = _read_snapshot(args.snapshot)
+    counts = {"actualizadas": 0, "sin_match": 0, "sin_actualizar": 0}
+
+    def mutate(data):
+        _validate_reconcile_registry(data)
+        plan = _reconcile_plan(data, snapshot)
+        counts["actualizadas"] = len(plan["actualizaciones"])
+        counts["sin_match"] = len(plan["snapshot_sin_match"])
+        counts["sin_actualizar"] = len(plan["registry_sin_actualizar"])
+        by_thread = {entry["threadId"]: entry for entry in snapshot}
+        for update in plan["actualizaciones"]:
+            item = _find_session(data, update["code"])
+            entry = by_thread[update["threadId"]]
+            for field in RECONCILE_FIELDS:
+                item[field] = entry[field]
+
+    def detail(_data):
+        return (
+            f"actualizadas={counts['actualizadas']} snapshot={args.snapshot} "
+            f"sin_match={counts['sin_match']} sin_actualizar={counts['sin_actualizar']}"
+        )
+
+    _apply_change(
+        path,
+        Path(args.ledger),
+        Path(args.roster),
+        args.by,
+        args.reason,
+        "reconcile",
+        detail,
+        mutate,
+    )
     return RC_OK
 
 
@@ -456,6 +706,7 @@ def _add_common(parser, writes=True):
     """
     parser.add_argument("--registry", required=True)
     parser.add_argument("--ledger", default=None)
+    parser.add_argument("--roster", default=None)
     if writes:
         parser.add_argument("--by", required=True)
         parser.add_argument("--reason", required=True)
@@ -464,7 +715,7 @@ def _add_common(parser, writes=True):
 
 
 def _parser():
-    """Construye el parser de los tres subcomandos de Caja 1.
+    """Construye el parser de los cuatro subcomandos del CLI.
 
     Before: no requiere estado externo.
     During: registra flags obligatorios, opcionales y campos mutables.
@@ -490,6 +741,8 @@ def _parser():
     nota.add_argument("--nota", default=None)
     nota.add_argument("--started-nota", dest="started_nota", default=None)
     nota.add_argument("--append", action="store_true")
+    reconcile = _add_common(commands.add_parser("reconcile"))
+    reconcile.add_argument("--snapshot", required=True)
     return parser
 
 
@@ -497,11 +750,17 @@ def main(argv=None):
     """Parsea y ejecuta una operacion de registry_ops.
 
     Before: ``argv`` contiene un subcomando y ``--registry`` explicito.
-    During: resuelve el ledger por defecto y despacha alta, asiento o nota.
+    During: exige roster para apply, resuelve el ledger por defecto y despacha
+        alta, asiento, nota o reconcile.
     After: retorna exactamente uno de los cinco codigos documentados; imprime
-        los errores operativos en stderr.
+        los errores operativos en stderr. Args malformados para argparse terminan
+        en SystemExit(2) emitido por argparse mismo, antes de este contrato; no
+        es uno de los cinco codigos de arriba.
     """
     args = _parser().parse_args(argv)
+    if args.apply and not args.roster:
+        print("registry_ops: --apply requiere --roster", file=sys.stderr)
+        return RC_INVALID
     args.ledger = args.ledger or str(
         Path(args.registry).parent / "registry_changes.jsonl"
     )
@@ -510,7 +769,9 @@ def main(argv=None):
             return _handle_alta(args)
         if args.command == "asiento":
             return _handle_asiento(args)
-        return _handle_nota(args)
+        if args.command == "nota":
+            return _handle_nota(args)
+        return _handle_reconcile(args)
     except RegistryError as exc:
         print(f"registry_ops: {exc}", file=sys.stderr)
         return exc.code
