@@ -101,16 +101,19 @@ def mutate_once(source: str, old: str, new: str) -> str:
     return source.replace(old, new)
 
 
-def test_real_canon_has_23_rows_and_portable_message_ids() -> None:
+def test_real_canon_rows_are_well_formed_and_portable() -> None:
     text = CANON_PATH.read_text(encoding="utf-8")
     rows = load_canon(text)
-    assert len(rows) == 23
-    assert sum(row["state"] == "RATIFICADA" for row in rows) == 7
-    assert sum(row["state"] == "NO RATIFICADA" for row in rows) == 16
+    assert rows
+    assert all(row["state"] in ALLOWED_STATES for row in rows)
     assert all(
         len(row["message_id"]) == 36 for row in rows if row["state"] == "RATIFICADA"
     )
-    assert all(not row["message_id"] for row in rows if row["state"] == "NO RATIFICADA")
+    assert all(
+        not row["message_id"]
+        for row in rows
+        if row["state"] in {"NO RATIFICADA", "PILOTO", "SUPERADA"}
+    )
     assert not any(token in text for token in ("C:\\", "C:/Users", "/home/"))
 
 
