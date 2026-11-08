@@ -31,6 +31,16 @@ BASE_ROW = (
     "c38d20f3-796a-4f56-ae3d-50c09952ce25 | fuente.md | mecanismo | coordinadora activa |"
 )
 
+P28_MESSAGE_ID = "71ce07a9-cadf-4882-85bb-b408632139ec"
+P28_FIXTURE_ROW = (
+    "| P28 | Regla de prueba P28 | RATIFICADA | "
+    f"{P28_MESSAGE_ID} | fuente.md | mecanismo | coordinadora activa |"
+)
+P29_FIXTURE_ROW = (
+    "| P29 | Regla de prueba P29 | RATIFICADA | "
+    f"{P28_MESSAGE_ID} | fuente.md | mecanismo | coordinadora activa |"
+)
+
 
 def parse_row(line: str) -> dict[str, str]:
     """Parse and validate one Markdown table row.
@@ -115,6 +125,113 @@ def assert_no_cupo_figures(text: str) -> None:
         raise ValueError("canonical file contains cupo figures")
 
 
+def assert_pillar_ratified(text: str, pillar: str, expected_message_id: str) -> None:
+    """Require one canon pillar row RATIFICADA with an exact messageId.
+
+    Before: ``text`` is a complete canonical pillar index (real file or
+    fixture) and ``pillar`` is a bare id such as ``"P28"``.
+    During: locate the row whose first cell is exactly ``pillar`` and parse
+    it with the same rules as every other row.
+    After: return silently when the row is RATIFICADA with
+    ``expected_message_id``; otherwise raise ``ValueError`` naming the gap.
+    """
+    row_re = re.compile(rf"^\| {re.escape(pillar)} \|.*\|$", re.MULTILINE)
+    match = row_re.search(text)
+    if match is None:
+        raise ValueError(f"pillar {pillar} is missing")
+    row = parse_row(match.group(0))
+    if row["state"] != "RATIFICADA":
+        raise ValueError(f"pillar {pillar} is not RATIFICADA")
+    if row["message_id"] != expected_message_id:
+        raise ValueError(f"pillar {pillar} messageId mismatch")
+
+
+def assert_pillar_contains_terms(
+    text: str, pillar: str, required_terms: tuple[str, ...]
+) -> None:
+    """Require every term in ``required_terms`` inside pillar's own phrase.
+
+    Before: ``text`` is a complete canonical pillar index (real file or
+    fixture) and ``pillar`` is a bare id such as ``"P28"``.
+    During: locate the row and read its phrase cell (second column) only;
+    never the other six columns.
+    After: return silently when every required term appears in the phrase;
+    otherwise raise ``ValueError`` naming the first missing term.
+    """
+    row_re = re.compile(rf"^\| {re.escape(pillar)} \|.*\|$", re.MULTILINE)
+    match = row_re.search(text)
+    if match is None:
+        raise ValueError(f"pillar {pillar} is missing")
+    row = parse_row(match.group(0))
+    missing = [term for term in required_terms if term not in row["phrase"]]
+    if missing:
+        raise ValueError(f"pillar {pillar} phrase missing term: {missing[0]}")
+
+
+P28_REQUIRED_TERMS = (
+    "REVISOR",
+    "cláusula",
+    "comprobación",
+    "ámbito",
+    "conteo esperado",
+    "conteo medido",
+    "control positivo",
+    "la coordinadora comprueba cobertura",
+)
+P29_REQUIRED_TERMS = ("sin matriz", "no se acepta")
+
+
+def test_real_canon_p28_phrase_has_required_terms() -> None:
+    text = CANON_PATH.read_text(encoding="utf-8")
+    assert_pillar_contains_terms(text, "P28", P28_REQUIRED_TERMS)
+
+
+def test_real_canon_p29_phrase_has_required_terms() -> None:
+    text = CANON_PATH.read_text(encoding="utf-8")
+    assert_pillar_contains_terms(text, "P29", P29_REQUIRED_TERMS)
+
+
+def test_p28_fixture_without_revisor_fails_explicitly() -> None:
+    fixture_row = (
+        "| P28 | La verificación del DoD es de la coordinadora mediante una "
+        "matriz (cláusula, comprobación, ámbito, conteo esperado, conteo "
+        "medido, control positivo); la coordinadora comprueba cobertura. | "
+        f"RATIFICADA | {P28_MESSAGE_ID} | fuente.md | mecanismo | coordinadora activa |"
+    )
+    candidate = "# title\n" + fixture_row + "\n"
+    with pytest.raises(ValueError, match="phrase missing term"):
+        assert_pillar_contains_terms(candidate, "P28", P28_REQUIRED_TERMS)
+
+
+def test_p29_fixture_inverted_meaning_fails_explicitly() -> None:
+    fixture_row = (
+        "| P29 | Una caja con matriz ejecutada por el revisor se acepta. | "
+        f"RATIFICADA | {P28_MESSAGE_ID} | fuente.md | mecanismo | coordinadora activa |"
+    )
+    candidate = "# title\n" + fixture_row + "\n"
+    with pytest.raises(ValueError, match="phrase missing term"):
+        assert_pillar_contains_terms(candidate, "P29", P29_REQUIRED_TERMS)
+
+
+def test_p28_real_canon_mutant_revisor_to_coordinadora_fails_explicitly() -> None:
+    text = CANON_PATH.read_text(encoding="utf-8")
+    assert text.count("REVISOR de la celda") == 1
+    candidate = mutate_once(text, "REVISOR de la celda", "coordinadora de la celda")
+    with pytest.raises(ValueError, match="phrase missing term"):
+        assert_pillar_contains_terms(candidate, "P28", P28_REQUIRED_TERMS)
+
+
+def test_p29_real_canon_mutant_inverted_meaning_fails_explicitly() -> None:
+    text = CANON_PATH.read_text(encoding="utf-8")
+    original = "sin matriz ejecutada por el revisor no se acepta"
+    assert text.count(original) == 1
+    candidate = mutate_once(
+        text, original, "con matriz ejecutada por el revisor se acepta"
+    )
+    with pytest.raises(ValueError, match="phrase missing term"):
+        assert_pillar_contains_terms(candidate, "P29", P29_REQUIRED_TERMS)
+
+
 def test_real_canon_rows_are_well_formed_and_portable() -> None:
     text = CANON_PATH.read_text(encoding="utf-8")
     rows = load_canon(text)
@@ -152,6 +269,48 @@ def test_real_canon_pillar_ids_are_contiguous() -> None:
     assert numbers
     assert max(numbers) >= 27
     assert numbers == list(range(1, max(numbers) + 1))
+
+
+@pytest.mark.parametrize("pillar", ["P28", "P29"])
+def test_real_canon_pillar_is_ratified_with_message_id(pillar: str) -> None:
+    text = CANON_PATH.read_text(encoding="utf-8")
+    assert_pillar_ratified(text, pillar, P28_MESSAGE_ID)
+
+
+@pytest.mark.parametrize("pillar", ["P28", "P29"])
+def test_pillar_fixture_without_row_fails_explicitly(pillar: str) -> None:
+    candidate = "# title\n" + BASE_ROW + "\n"
+    with pytest.raises(ValueError, match=f"{pillar} is missing"):
+        assert_pillar_ratified(candidate, pillar, P28_MESSAGE_ID)
+
+
+@pytest.mark.parametrize("pillar", ["P28", "P29"])
+def test_pillar_fixture_not_ratified_fails_explicitly(pillar: str) -> None:
+    fixture_row = (
+        f"| {pillar} | Regla de prueba {pillar} | NO RATIFICADA |  | "
+        "fuente.md | mecanismo | coordinadora activa |"
+    )
+    candidate = "# title\n" + fixture_row + "\n"
+    with pytest.raises(ValueError, match=f"{pillar} is not RATIFICADA"):
+        assert_pillar_ratified(candidate, pillar, P28_MESSAGE_ID)
+
+
+@pytest.mark.parametrize(
+    ("pillar", "fixture_row"),
+    [("P28", P28_FIXTURE_ROW), ("P29", P29_FIXTURE_ROW)],
+)
+def test_pillar_fixture_with_other_message_id_fails_explicitly(
+    pillar: str, fixture_row: str
+) -> None:
+    candidate = (
+        "# title\n"
+        + mutate_once(
+            fixture_row, P28_MESSAGE_ID, "c38d20f3-796a-4f56-ae3d-50c09952ce25"
+        )
+        + "\n"
+    )
+    with pytest.raises(ValueError, match="messageId mismatch"):
+        assert_pillar_ratified(candidate, pillar, P28_MESSAGE_ID)
 
 
 def test_ratified_positive_row_parses() -> None:
