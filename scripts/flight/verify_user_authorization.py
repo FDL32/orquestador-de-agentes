@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -704,17 +705,20 @@ def open_store_ro(db_path: str | Path, *, timeout: float = 5.0) -> sqlite3.Conne
     """Abre el almacen en SOLO LECTURA, sin `immutable` (WAL vivo).
 
     Before: `db_path` apunta al `statev2.sqlite` real o a una copia; `timeout`
-        es un numero positivo para la espera de SQLite.
+        es un numero real FINITO estrictamente positivo (no bool, no nan/inf)
+        para la espera de SQLite.
     During: abre con URI `mode=ro` y `PRAGMA query_only=ON`; fuerza una lectura
         de cabecera para que un fichero ausente/corrupto falle AQUI con causa
         nombrada. No usa `immutable=1` (ignoraria el WAL vivo).
-    After: devuelve una conexion row_factory=Row; eleva InfraError con causa
-        `store-missing`, `store-permission`, `store-locked`, `store-corrupt` o
-        `store-unavailable`.
+    After: devuelve una conexion row_factory=Row; eleva `ValueError` si
+        `timeout` no es un numero real finito > 0 (nan, inf, <=0 o bool), o
+        eleva InfraError con causa `store-missing`, `store-permission`,
+        `store-locked`, `store-corrupt` o `store-unavailable`.
     """
     if (
         not isinstance(timeout, (int, float))
         or isinstance(timeout, bool)
+        or not math.isfinite(timeout)
         or timeout <= 0
     ):
         raise ValueError(f"timeout debe ser un numero > 0, recibido: {timeout!r}")
