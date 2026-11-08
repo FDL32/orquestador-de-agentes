@@ -17,7 +17,15 @@ _REGISTRY_OPS_SPEC.loader.exec_module(_REGISTRY_OPS_MODULE)
 RECONCILE_FIELDS = _REGISTRY_OPS_MODULE.RECONCILE_FIELDS
 
 
-def run_cli(registry, *args, ledger=None, roster=None, auto_roster=True):
+def run_cli(
+    registry,
+    *args,
+    ledger=None,
+    roster=None,
+    snapshot=None,
+    auto_roster=True,
+    cwd=None,
+):
     if "--apply" in args and roster is None and auto_roster:
         roster = registry.parent / "roster.json"
         write_roster(roster)
@@ -26,7 +34,9 @@ def run_cli(registry, *args, ledger=None, roster=None, auto_roster=True):
         command += ["--ledger", str(ledger)]
     if roster is not None:
         command += ["--roster", str(roster)]
-    return subprocess.run(command, capture_output=True, text=True, check=False)
+    if snapshot is not None:
+        command += ["--snapshot", str(snapshot)]
+    return subprocess.run(command, capture_output=True, text=True, check=False, cwd=cwd)
 
 
 def write_registry(path, sessions=None):
@@ -66,6 +76,230 @@ def snapshot_entry(thread_id="thread-1", **overrides):
     }
     entry.update(overrides)
     return entry
+
+
+def _collision_command(command, apply=False):
+    args = [command]
+    if command == "alta":
+        args += [
+            "--code",
+            "IM-2",
+            "--role",
+            "builder",
+            "--slot",
+            "slot-2",
+            "--thread-id",
+            "thread-2",
+            "--started",
+            "now",
+            "--status",
+            "ACTIVE",
+        ]
+    elif command == "asiento":
+        args += ["--code", "IM-1", "--status", "SETTLED"]
+    elif command == "nota":
+        args += ["--code", "IM-1", "--nota", "note"]
+    else:
+        args += ["--snapshot", "SNAPSHOT_PLACEHOLDER"]
+    if command == "reconcile" or command in {"alta", "asiento", "nota"}:
+        args += ["--by", "collision-test", "--reason", "collision-test"]
+    if apply:
+        args += ["--apply"]
+    return args
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_dod_a_registry_ledger_collision_rejected_without_write(tmp_path, apply):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        *_collision_command("alta", apply),
+        ledger=registry,
+        auto_roster=apply,
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert "--registry=" in result.stderr and "--ledger=" in result.stderr
+
+
+def test_dod_a_registry_roster_collision_rejected_without_write(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        *_collision_command("alta", True),
+        ledger=tmp_path / "ledger.jsonl",
+        roster=registry,
+        auto_roster=False,
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert "--registry=" in result.stderr and "--roster=" in result.stderr
+
+
+def test_dod_a_ledger_roster_collision_rejected_before_corruption(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "shared.jsonl"
+    write_registry(registry)
+    ledger.write_bytes(b"roster-before\n")
+    before = ledger.read_bytes()
+    result = run_cli(
+        registry,
+        *_collision_command("alta", True),
+        ledger=ledger,
+        roster=ledger,
+        auto_roster=False,
+    )
+    assert result.returncode == 2
+    assert ledger.read_bytes() == before
+    assert "--ledger=" in result.stderr and "--roster=" in result.stderr
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_dod_a_registry_snapshot_collision_rejected(tmp_path, apply):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    before = registry.read_bytes()
+    args = _collision_command("reconcile", apply)
+    args[args.index("SNAPSHOT_PLACEHOLDER")] = str(registry)
+    result = run_cli(
+        registry,
+        *args,
+        ledger=tmp_path / "ledger.jsonl",
+        snapshot=registry,
+        auto_roster=apply,
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert "--registry=" in result.stderr and "--snapshot=" in result.stderr
+
+
+def test_dod_a_ledger_snapshot_collision_rejected_before_corruption(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "shared.jsonl"
+    snapshot = ledger
+    write_registry(registry)
+    snapshot.write_bytes(b"snapshot-before\n")
+    before = snapshot.read_bytes()
+    result = run_cli(
+        registry,
+        *_collision_command("reconcile", True),
+        ledger=ledger,
+        roster=tmp_path / "roster.json",
+        snapshot=snapshot,
+    )
+    assert result.returncode == 2
+    assert snapshot.read_bytes() == before
+    assert "--ledger=" in result.stderr and "--snapshot=" in result.stderr
+
+
+def test_dod_a_roster_snapshot_collision_rejected(tmp_path):
+    registry = tmp_path / "registry.json"
+    shared = tmp_path / "shared.json"
+    write_registry(registry)
+    shared.write_bytes(b"shared-before\n")
+    result = run_cli(
+        registry,
+        *_collision_command("reconcile", True),
+        ledger=tmp_path / "ledger.jsonl",
+        roster=shared,
+        snapshot=shared,
+        auto_roster=False,
+    )
+    assert result.returncode == 2
+    assert "--roster=" in result.stderr and "--snapshot=" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "path_style",
+    [
+        lambda path: str(path).upper(),
+        lambda path: str(path).replace("\\", "/"),
+        lambda path: str(path.parent / "nested" / ".." / path.name),
+        lambda path: path.name,
+    ],
+)
+def test_dod_a_equivalent_ledger_roster_paths_rejected(tmp_path, path_style):
+    registry = tmp_path / "registry.json"
+    roster = tmp_path / "roster.json"
+    write_registry(registry)
+    write_roster(roster)
+    ledger = path_style(roster)
+    result = run_cli(
+        registry,
+        *_collision_command("alta", True),
+        ledger=ledger,
+        roster=roster,
+        auto_roster=False,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 2
+    assert "--ledger=" in result.stderr and "--roster=" in result.stderr
+
+
+def test_dod_a_nonexistent_case_variant_ledger_roster_rejected(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "shared.jsonl"
+    roster = tmp_path / "SHARED.JSONL"
+    write_registry(registry)
+    assert not ledger.exists()
+    assert not roster.exists()
+    result = run_cli(
+        registry,
+        *_collision_command("alta", True),
+        ledger=ledger,
+        roster=roster,
+        auto_roster=False,
+    )
+    assert result.returncode == 2
+    assert "--ledger=" in result.stderr and "--roster=" in result.stderr
+
+
+def test_dod_a_distinct_paths_remain_valid(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    result = run_cli(
+        registry,
+        *_collision_command("alta", False),
+        ledger=tmp_path / "ledger.jsonl",
+    )
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "extra,kwargs",
+    [
+        (["--ledger", ""], {}),
+        ([], {"roster": Path(".")}),
+        (["--ledger", r"\\localhost\missing\ledger.jsonl"], {}),
+    ],
+)
+def test_dod_a_pathological_inputs_have_controlled_result(tmp_path, extra, kwargs):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    result = run_cli(
+        registry,
+        *_collision_command("alta", True),
+        *extra,
+        ledger=tmp_path / "ledger.jsonl",
+        auto_roster=not kwargs,
+        **kwargs,
+    )
+    assert result.returncode in {0, 2, 3, 4, 5}
+    assert "Traceback" not in result.stderr
+
+
+def test_dod_a_path_with_spaces_has_controlled_result(tmp_path):
+    registry = tmp_path / "mi registro.json"
+    write_registry(registry)
+    result = run_cli(
+        registry, *_collision_command("alta", False), ledger=tmp_path / "ledger.jsonl"
+    )
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
 
 
 def write_driver(tmp_path, mode):

@@ -28,6 +28,7 @@ import argparse
 import contextlib
 import errno
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -746,6 +747,46 @@ def _parser():
     return parser
 
 
+def _check_path_collisions(args):
+    """Rechaza rutas efectivas que apuntan al mismo fichero.
+
+    Before: ``args`` contiene las rutas ya resueltas por ``main`` y el
+        subcomando seleccionado.
+    During: compara rutas normalizadas y, cuando ambas existen, confirma la
+        identidad física con ``samefile``.
+    After: retorna ``None`` si no hay colisiones o lanza ``RegistryError``
+        con ``RC_INVALID`` nombrando ambos flags y sus rutas.
+    """
+    paths = [("--registry", args.registry), ("--ledger", args.ledger)]
+    if args.apply:
+        paths.append(("--roster", args.roster))
+    if args.command == "reconcile":
+        paths.append(("--snapshot", args.snapshot))
+
+    def collides(left, right):
+        left_path = Path(left)
+        right_path = Path(right)
+        if os.path.normcase(str(left_path.resolve())) == os.path.normcase(
+            str(right_path.resolve())
+        ):
+            return True
+        if left_path.exists() and right_path.exists():
+            try:
+                return os.path.samefile(left_path, right_path)
+            except OSError:
+                return False
+        return False
+
+    for index, (left_flag, left_path) in enumerate(paths):
+        for right_flag, right_path in paths[index + 1 :]:
+            if collides(left_path, right_path):
+                raise RegistryError(
+                    f"rutas en colision: {left_flag}={left_path} y "
+                    f"{right_flag}={right_path}",
+                    RC_INVALID,
+                )
+
+
 def main(argv=None):
     """Parsea y ejecuta una operacion de registry_ops.
 
@@ -765,6 +806,7 @@ def main(argv=None):
         Path(args.registry).parent / "registry_changes.jsonl"
     )
     try:
+        _check_path_collisions(args)
         if args.command == "alta":
             return _handle_alta(args)
         if args.command == "asiento":
