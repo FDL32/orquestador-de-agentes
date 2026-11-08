@@ -70,6 +70,7 @@ MUTABLE_FIELDS = (
 )
 SNAPSHOT_FIELDS = ("threadId", "settled", "status", "updatedAt", "modelo", "cuenta")
 RECONCILE_FIELDS = ("settled", "status", "updatedAt", "modelo", "cuenta")
+T3_OVERLAY_FIELDS = {field: "t3_" + field for field in RECONCILE_FIELDS}
 OPTIONAL_FIELDS = (
     "nota",
     "started_nota",
@@ -636,9 +637,13 @@ def _reconcile_plan(data, snapshot):
     """Calcula el plan de reconcile sin mutar el registry.
 
     Before: ``data`` y ``snapshot`` han pasado sus validadores respectivos.
-    During: empareja por ``threadId`` y compara exclusivamente cinco campos.
+    During: empareja por ``threadId`` y compara exclusivamente los cinco
+        nombres conservados en ``RECONCILE_FIELDS``; ``status`` se reporta,
+        pero nunca se escribe, y el apply proyecta el snapshot al overlay con
+        prefijo ``t3_``.
     After: retorna actualizaciones y las dos listas de no-emparejados, sin crear
-        sesiones ni descartar campos desconocidos.
+        sesiones ni descartar campos desconocidos; los nombres de los cambios
+        siguen siendo los nombres del snapshot.
     """
     sessions_by_thread = {
         item.get("threadId"): item for item in data["sessions"] if item.get("threadId")
@@ -681,9 +686,10 @@ def _handle_reconcile(args):
 
     Before: ``args`` contiene registry, snapshot, metadatos y, para apply,
         roster. Dry-run no lee ni valida el roster.
-    During: construye un plan por ``threadId`` o aplica solo settled/status/
-        updatedAt/modelo/cuenta bajo el pipeline comun de gate, ledger, lock,
-        backups y escritura atomica.
+    During: construye un plan por ``threadId`` o aplica los cinco campos del
+        snapshot al overlay con prefijo ``t3_`` bajo el pipeline comun de gate,
+        ledger, lock, backups y escritura atomica; ``status`` se reporta como
+        discrepancia pero el status anotado nunca se escribe.
         Un snapshot invalido se valida antes del gate de roster, por lo que
         snapshot invalido + roster bloqueado devuelve rc 2.
     After: imprime el plan en dry-run o persiste el resultado con rc 0; los
@@ -700,7 +706,12 @@ def _handle_reconcile(args):
         return RC_OK
 
     snapshot = _read_snapshot(args.snapshot)
-    counts = {"actualizadas": 0, "sin_match": 0, "sin_actualizar": 0}
+    counts = {
+        "actualizadas": 0,
+        "sin_match": 0,
+        "sin_actualizar": 0,
+        "status_discrepancias": 0,
+    }
 
     def mutate(data):
         _validate_reconcile_registry(data)
@@ -712,13 +723,16 @@ def _handle_reconcile(args):
         for update in plan["actualizaciones"]:
             item = _find_session(data, update["code"])
             entry = by_thread[update["threadId"]]
+            if item.get("status") != entry["status"]:
+                counts["status_discrepancias"] += 1
             for field in RECONCILE_FIELDS:
-                item[field] = entry[field]
+                item[T3_OVERLAY_FIELDS[field]] = entry[field]
 
     def detail(_data):
         return (
             f"actualizadas={counts['actualizadas']} snapshot={args.snapshot} "
-            f"sin_match={counts['sin_match']} sin_actualizar={counts['sin_actualizar']}"
+            f"sin_match={counts['sin_match']} sin_actualizar={counts['sin_actualizar']} "
+            f"status_discrepancias={counts['status_discrepancias']}"
         )
 
     _apply_change(

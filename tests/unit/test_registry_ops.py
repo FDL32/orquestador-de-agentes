@@ -18,6 +18,7 @@ _REGISTRY_OPS_SPEC = importlib.util.spec_from_file_location("registry_ops", SCRI
 _REGISTRY_OPS_MODULE = importlib.util.module_from_spec(_REGISTRY_OPS_SPEC)
 _REGISTRY_OPS_SPEC.loader.exec_module(_REGISTRY_OPS_MODULE)
 RECONCILE_FIELDS = _REGISTRY_OPS_MODULE.RECONCILE_FIELDS
+T3_OVERLAY_FIELDS = _REGISTRY_OPS_MODULE.T3_OVERLAY_FIELDS
 
 
 def test_registry_ops_docstring_describes_durability_limits():
@@ -1644,7 +1645,7 @@ def test_reconcile_lists_unmatched_entries_without_creating_sessions(tmp_path):
     assert json.loads(registry.read_text(encoding="utf-8"))["sessions"] == [session()]
 
 
-def test_reconcile_apply_updates_only_five_fields_and_preserves_unknowns(tmp_path):
+def test_reconcile_apply_preserves_status_and_writes_t3_overlay(tmp_path):
     registry = tmp_path / "registry.json"
     item = session()
     item.update(
@@ -1690,7 +1691,8 @@ def test_reconcile_apply_updates_only_five_fields_and_preserves_unknowns(tmp_pat
     assert result.returncode == 0
     updated_data = json.loads(registry.read_text(encoding="utf-8"))
     updated = updated_data["sessions"][0]
-    assert {field: updated[field] for field in RECONCILE_FIELDS} == {
+    assert updated["status"] == "ACTIVE"
+    assert {field: updated[T3_OVERLAY_FIELDS[field]] for field in RECONCILE_FIELDS} == {
         "settled": True,
         "status": "SETTLED",
         "updatedAt": "2026-11-08T11:00:00+01:00",
@@ -1726,7 +1728,155 @@ def test_reconcile_apply_updates_only_five_fields_and_preserves_unknowns(tmp_pat
     assert updated_data["protocolo"] == "protocolo-real"
     assert updated_data["autoridad"] == "autoridad-real"
     assert "extra" not in updated
-    assert set(updated) == original_keys | set(RECONCILE_FIELDS)
+    assert not {"settled", "updatedAt", "modelo", "cuenta"} & set(updated)
+    assert set(updated) == original_keys | {
+        T3_OVERLAY_FIELDS[field] for field in RECONCILE_FIELDS
+    }
+
+
+def test_reconcile_apply_preserves_exact_annotated_status_and_writes_overlay(tmp_path):
+    registry = tmp_path / "registry.json"
+    literal_status = (
+        "SETTLED (hilo completed y asentado 2026-10-27T08:43:42Z, "
+        "medido con t3_thread_list el 2026-10-29; antes: ACTIVA)"
+    )
+    item = session()
+    item["status"] = literal_status
+    original_keys = set(item)
+    write_registry(registry, [item])
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps([snapshot_entry()]), encoding="utf-8")
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t1",
+        "--reason",
+        "overlay",
+        "--apply",
+    )
+    assert result.returncode == 0
+    updated = json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]
+    assert updated["status"] == literal_status
+    assert updated[T3_OVERLAY_FIELDS["status"]] == "SETTLED"
+    assert updated[T3_OVERLAY_FIELDS["settled"]] is True
+    assert updated[T3_OVERLAY_FIELDS["updatedAt"]] == "2026-11-08T11:00:00+01:00"
+    assert updated[T3_OVERLAY_FIELDS["modelo"]] == "codex"
+    assert updated[T3_OVERLAY_FIELDS["cuenta"]] == "plana"
+    assert not {"settled", "updatedAt", "modelo", "cuenta"} & set(updated)
+    assert set(updated) == original_keys | {
+        T3_OVERLAY_FIELDS[field] for field in RECONCILE_FIELDS
+    }
+
+
+def test_reconcile_status_discrepancy_is_reported_and_status_same_is_zero(tmp_path):
+    registry = tmp_path / "registry.json"
+    item = session()
+    item["status"] = (
+        "SETTLED (hilo completed y asentado 2026-10-27T08:43:42Z, "
+        "medido con t3_thread_list el 2026-10-29; antes: ACTIVA)"
+    )
+    write_registry(registry, [item])
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps([snapshot_entry()]), encoding="utf-8")
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t2",
+        "--reason",
+        "status",
+    )
+    assert result.returncode == 0
+    plan = json.loads(result.stdout)
+    assert plan["actualizaciones"][0]["cambios"]["status"] == [
+        item["status"],
+        "SETTLED",
+    ]
+    ledger = tmp_path / "ledger.jsonl"
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t2",
+        "--reason",
+        "status",
+        "--apply",
+        ledger=ledger,
+    )
+    assert result.returncode == 0
+    assert (
+        "status_discrepancias=1"
+        in json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])["detail"]
+    )
+
+    same_registry = tmp_path / "same-registry.json"
+    same_item = session()
+    same_item["status"] = "completed"
+    write_registry(same_registry, [same_item])
+    same_snapshot = tmp_path / "same-snapshot.json"
+    same_snapshot.write_text(
+        json.dumps([snapshot_entry(status="completed", modelo="other")]),
+        encoding="utf-8",
+    )
+    same_ledger = tmp_path / "same-ledger.jsonl"
+    result = run_cli(
+        same_registry,
+        "reconcile",
+        "--snapshot",
+        same_snapshot,
+        "--by",
+        "t2",
+        "--reason",
+        "same-status",
+        "--apply",
+        ledger=same_ledger,
+    )
+    assert result.returncode == 0
+    assert (
+        "status_discrepancias=0"
+        in json.loads(same_ledger.read_text(encoding="utf-8").splitlines()[-1])[
+            "detail"
+        ]
+    )
+
+
+def test_reconcile_apply_preserves_rotator_activa_status(tmp_path):
+    roster_module_spec = importlib.util.spec_from_file_location(
+        "roster_matches_acting_thread_registry_ops_test",
+        ROOT / "scripts" / "check_roster_matches_acting_thread.py",
+    )
+    roster_module = importlib.util.module_from_spec(roster_module_spec)
+    roster_module_spec.loader.exec_module(roster_module)
+    registry = tmp_path / "registry.json"
+    item = session()
+    item["status"] = "ACTIVA (PENDIENTE_ACK)"
+    write_registry(registry, [item])
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(
+        json.dumps([snapshot_entry(status="running")]), encoding="utf-8"
+    )
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t4",
+        "--reason",
+        "rotator",
+        "--apply",
+    )
+    assert result.returncode == 0
+    updated = json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]
+    assert roster_module._RE_ACTIVA_PREFIX.match(updated["status"])
+    assert updated["t3_status"] == "running"
 
 
 def test_g4_roster_private_string_is_ignored_on_apply(tmp_path):
@@ -1907,7 +2057,8 @@ def test_l3_ledger_reconcile_contains_exact_audit_fields(tmp_path):
     assert row["by"] == "ledger-reconcile"
     assert row["reason"] == "audit-reconcile"
     assert row["detail"] == (
-        f"actualizadas=1 snapshot={snapshot} sin_match=0 sin_actualizar=0"
+        f"actualizadas=1 snapshot={snapshot} sin_match=0 sin_actualizar=0 "
+        "status_discrepancias=1"
     )
 
 
@@ -1950,7 +2101,8 @@ def test_r1_r2_d1_d6_reconcile_preserves_unmatched_sessions_and_detail(tmp_path)
     row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
     assert (
         row["detail"]
-        == f"actualizadas=1 snapshot={snapshot} sin_match=1 sin_actualizar=1"
+        == f"actualizadas=1 snapshot={snapshot} sin_match=1 sin_actualizar=1 "
+        "status_discrepancias=1"
     )
 
 
