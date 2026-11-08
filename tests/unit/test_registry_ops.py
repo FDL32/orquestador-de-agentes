@@ -443,6 +443,18 @@ def spy_locking(fd, mode, nbytes):
     return real_locking(fd, mode, nbytes)
 msvcrt.locking = spy_locking
 """,
+        "write_and_lock_release_fail": """
+import msvcrt
+def fail_write(*args, **kwargs):
+    raise OSError("simulado: fallo de escritura del registry")
+mod._write_registry = fail_write
+real_locking = msvcrt.locking
+def spy_locking(fd, mode, nbytes):
+    if mode == msvcrt.LK_UNLCK:
+        raise OSError(0, "simulado: fallo al liberar el lock")
+    return real_locking(fd, mode, nbytes)
+msvcrt.locking = spy_locking
+""",
     }[mode]
     driver = tmp_path / f"driver_{mode}.py"
     driver.write_text(
@@ -1296,6 +1308,49 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     datetime.fromisoformat(row["ts"])
     assert row["change"] == "asiento"
     assert row["by"] == "lock-test"
+
+
+def test_release_failure_before_mutation_keeps_current_rc(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    roster_before = roster.read_bytes()
+    ledger.write_bytes(b"")
+    before = registry.read_bytes()
+    driver = write_driver(tmp_path, "write_and_lock_release_fail")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(driver),
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "lock-test",
+            "--reason",
+            "write-then-release-fail",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+            "--apply",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "simulado: fallo de escritura del registry" in result.stderr
+    assert "simulado: fallo al liberar el lock" not in result.stderr
+    assert "SE APLICO" not in result.stderr
+    assert registry.read_bytes() == before
+    assert roster.read_bytes() == roster_before
 
 
 @pytest.mark.parametrize(
