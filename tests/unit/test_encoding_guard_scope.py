@@ -81,6 +81,7 @@ _NOISE_SURFACES = (
     ".agent/runtime/tmp/scratch_note.md",
     ".agent/runtime/reviews/review_raw.md",
     ".agent/runtime/review_packets/packet_001.md",
+    ".agent/runtime/compare/sample-report.md",
 )
 
 
@@ -188,6 +189,7 @@ class TestNoiseExclusion:
             "runtime/tmp/",
             "runtime/reviews/",
             "runtime/review_packets/",
+            "runtime/compare/",
         ],
     )
     def test_noise_dirs_excluded_from_scope(
@@ -215,7 +217,7 @@ class TestNoiseExclusion:
     def test_exclude_patterns_cover_noise_dirs(self) -> None:
         """EXCLUDE_PATTERNS must contain entries that cover noise directories."""
         exclude_str = " ".join(EXCLUDE_PATTERNS)
-        for noise_dir in ["_archive/", "archive/", "runtime/tmp/"]:
+        for noise_dir in ["_archive/", "archive/", "runtime/tmp/", "runtime/compare/"]:
             assert noise_dir.strip("/") in exclude_str or any(
                 part in exclude_str for part in noise_dir.split("/")
             ), (

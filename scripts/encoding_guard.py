@@ -134,6 +134,7 @@ EXCLUDE_PATTERNS = {
     "scripts/sandbox/**",
     ".agent/backups/**",
     ".agent/runtime/uv-cache/**",
+    ".agent/runtime/compare/**",
     # WOT-2026-070e: exclude archived and transient directories to avoid
     # blocking closes on historical corruption (404 noise files).
     "**/_archive/**",
