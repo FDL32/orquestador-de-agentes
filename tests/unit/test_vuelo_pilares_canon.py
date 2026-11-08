@@ -24,6 +24,7 @@ UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 ABSOLUTE_ROUTE_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/home/)")
+CUPO_FIGURE_RE = re.compile(r"P\s*>=\s*\d+|\d+\s*por ciento|cupo[^\n]{0,40}>=\s*\d+")
 
 BASE_ROW = (
     "| P0 | Regla de prueba | RATIFICADA | "
@@ -101,6 +102,19 @@ def mutate_once(source: str, old: str, new: str) -> str:
     return source.replace(old, new)
 
 
+def assert_no_cupo_figures(text: str) -> None:
+    """Reject cupo thresholds that belong in the flight state sources.
+
+    Before: ``text`` is the complete canonical pillar index.
+    During: scan all text for numeric cupo threshold forms.
+    After: return silently when no threshold is embedded; otherwise raise
+    ``ValueError`` naming the portability invariant.
+    """
+    matches = CUPO_FIGURE_RE.findall(text)
+    if matches:
+        raise ValueError("canonical file contains cupo figures")
+
+
 def test_real_canon_rows_are_well_formed_and_portable() -> None:
     text = CANON_PATH.read_text(encoding="utf-8")
     rows = load_canon(text)
@@ -115,6 +129,29 @@ def test_real_canon_rows_are_well_formed_and_portable() -> None:
         if row["state"] in {"NO RATIFICADA", "PILOTO", "SUPERADA"}
     )
     assert not any(token in text for token in ("C:\\", "C:/Users", "/home/"))
+
+
+def test_real_canon_has_no_embedded_cupo_figures() -> None:
+    text = CANON_PATH.read_text(encoding="utf-8")
+    assert_no_cupo_figures(text)
+
+
+@pytest.mark.parametrize(
+    "cupo_text",
+    ["P>=85", "cupo de 5h >=90", "~85 por ciento", "P>=95"],
+)
+def test_cupo_figure_fixture_fails_explicitly(cupo_text: str) -> None:
+    candidate = mutate_once(BASE_ROW, "Regla de prueba", f"Regla {cupo_text}")
+    with pytest.raises(ValueError, match="cupo figures"):
+        assert_no_cupo_figures(candidate)
+
+
+def test_real_canon_pillar_ids_are_contiguous() -> None:
+    text = CANON_PATH.read_text(encoding="utf-8")
+    numbers = [int(match) for match in re.findall(r"^\| P(\d+) \|", text, re.MULTILINE)]
+    assert numbers
+    assert max(numbers) >= 27
+    assert numbers == list(range(1, max(numbers) + 1))
 
 
 def test_ratified_positive_row_parses() -> None:
@@ -141,7 +178,7 @@ def test_ratified_positive_row_parses() -> None:
         (
             "c38d20f3-796a-4f56-ae3d-50c09952ce25",
             "",
-            "messageId",
+            "^ratified row requires messageId$",
         ),
         ("RATIFICADA", "NO RATIFICADA", "only ratified"),
     ],
@@ -151,6 +188,12 @@ def test_row_negative_mutates_one_unique_fragment(
 ) -> None:
     candidate = mutate_once(BASE_ROW, old, new)
     with pytest.raises(ValueError, match=reason):
+        parse_row(candidate)
+
+
+def test_row_with_six_columns_fails_explicitly() -> None:
+    candidate = mutate_once(BASE_ROW, "| mecanismo |", "| mecanismo")
+    with pytest.raises(ValueError, match="row must have seven columns"):
         parse_row(candidate)
 
 
@@ -164,6 +207,12 @@ def test_canon_without_final_newline_fails_explicitly() -> None:
         "# title\n| P1 | phrase | NO RATIFICADA |  | source.md | mechanism | usuario |"
     )
     with pytest.raises(ValueError, match="newline"):
+        load_canon(candidate)
+
+
+def test_canon_with_no_data_rows_fails_explicitly() -> None:
+    candidate = "# title\n| Pilar | Frase | ESTADO | messageId | fuente larga | mecanismo | actor |\n"
+    with pytest.raises(ValueError, match="no rows"):
         load_canon(candidate)
 
 
