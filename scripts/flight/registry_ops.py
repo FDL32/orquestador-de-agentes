@@ -637,10 +637,10 @@ def _reconcile_plan(data, snapshot):
     """Calcula el plan de reconcile sin mutar el registry.
 
     Before: ``data`` y ``snapshot`` han pasado sus validadores respectivos.
-    During: empareja por ``threadId`` y compara exclusivamente los cinco
-        nombres conservados en ``RECONCILE_FIELDS``; ``status`` se reporta,
-        pero nunca se escribe, y el apply proyecta el snapshot al overlay con
-        prefijo ``t3_``.
+    During: empareja por ``threadId``; compara ``status`` contra el status
+        anotado y los otros cuatro campos contra su clave overlay ``t3_<campo>``.
+        ``status`` se reporta, pero nunca se escribe, y el apply proyecta el
+        snapshot al overlay con prefijo ``t3_``.
     After: retorna actualizaciones y las dos listas de no-emparejados, sin crear
         sesiones ni descartar campos desconocidos; los nombres de los cambios
         siguen siendo los nombres del snapshot.
@@ -654,10 +654,25 @@ def _reconcile_plan(data, snapshot):
         item = sessions_by_thread.get(entry["threadId"])
         if item is None:
             continue
+
+        def current_value(field, item=item):
+            """Valor del registry contra el que se compara cada campo del snapshot.
+
+            Before: ``item`` es una sesion emparejada y ``field`` un nombre de
+                snapshot en ``RECONCILE_FIELDS``.
+            During: ``status`` se compara contra el status anotado de la sesion;
+                los otros cuatro campos contra su clave overlay ``t3_<campo>``
+                que es quien aplica el reconcile.
+            After: retorna el valor actual sin mutar nada.
+            """
+            if field == "status":
+                return item.get("status")
+            return item.get(T3_OVERLAY_FIELDS[field])
+
         changes = {
-            field: [item.get(field), entry[field]]
+            field: [current_value(field), entry[field]]
             for field in RECONCILE_FIELDS
-            if item.get(field) != entry[field]
+            if current_value(field) != entry[field]
         }
         updates.append(
             {

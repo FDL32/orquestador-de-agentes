@@ -1879,6 +1879,104 @@ def test_reconcile_apply_preserves_rotator_activa_status(tmp_path):
     assert updated["t3_status"] == "running"
 
 
+def test_reconcile_plan_converges_after_apply(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry, [session()])
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps([snapshot_entry()]), encoding="utf-8")
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t5",
+        "--reason",
+        "converge",
+        "--apply",
+    )
+    assert result.returncode == 0
+
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t5",
+        "--reason",
+        "converge",
+    )
+    assert result.returncode == 0
+    plan = json.loads(result.stdout)
+    assert len(plan["actualizaciones"]) == 1
+    assert set(plan["actualizaciones"][0]["cambios"]) == {"status"}
+    assert plan["actualizaciones"][0]["cambios"]["status"] == [
+        "ACTIVE",
+        "SETTLED",
+    ]
+
+    ledger = tmp_path / "ledger.jsonl"
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t5",
+        "--reason",
+        "converge",
+        "--apply",
+        ledger=ledger,
+    )
+    assert result.returncode == 0
+    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert "status_discrepancias=1" in row["detail"]
+
+
+def test_reconcile_plan_shows_only_the_changed_overlay_field(tmp_path):
+    registry = tmp_path / "registry.json"
+    item = session()
+    item["status"] = "SETTLED"
+    write_registry(registry, [item])
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(
+        json.dumps([snapshot_entry(status="SETTLED")]), encoding="utf-8"
+    )
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        snapshot,
+        "--by",
+        "t6",
+        "--reason",
+        "overlay",
+        "--apply",
+    )
+    assert result.returncode == 0
+
+    changed_snapshot = tmp_path / "changed-snapshot.json"
+    changed_snapshot.write_text(
+        json.dumps([snapshot_entry(status="SETTLED", modelo="sol")]),
+        encoding="utf-8",
+    )
+    result = run_cli(
+        registry,
+        "reconcile",
+        "--snapshot",
+        changed_snapshot,
+        "--by",
+        "t6",
+        "--reason",
+        "overlay",
+    )
+    assert result.returncode == 0
+    plan = json.loads(result.stdout)
+    assert set(plan["actualizaciones"][0]["cambios"]) == {"modelo"}
+    assert plan["actualizaciones"][0]["cambios"]["modelo"] == ["codex", "sol"]
+
+
 def test_g4_roster_private_string_is_ignored_on_apply(tmp_path):
     registry = tmp_path / "registry.json"
     write_registry(registry, [session()])
@@ -2169,11 +2267,11 @@ def test_d4_reconcile_dry_run_lists_only_changed_overlay_fields(tmp_path):
     item = session()
     item.update(
         {
-            "settled": True,
-            "modelo": "codex",
-            "cuenta": "plana",
+            "t3_settled": True,
+            "t3_modelo": "codex",
+            "t3_cuenta": "plana",
             "status": "ACTIVE",
-            "updatedAt": "old",
+            "t3_updatedAt": "old",
         }
     )
     write_registry(registry, [item])
