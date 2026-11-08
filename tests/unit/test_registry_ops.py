@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -370,10 +371,14 @@ def test_dod_a_path_with_spaces_has_controlled_result(tmp_path):
 def write_driver(tmp_path, mode):
     body = {
         "slow": """
+import os
 original_apply = mod._apply_change
 def slow_apply(*args, **kwargs):
     real_mutate = args[-1]
     def delayed(data):
+        witness_path = os.environ.get("REGISTRY_OPS_TEST_WITNESS")
+        if witness_path:
+            Path(witness_path).write_text("ready", encoding="utf-8")
         real_mutate(data)
         time.sleep(0.3)
     return original_apply(*args[:-1], delayed, **kwargs)
@@ -827,6 +832,7 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
         write_registry(registry, [first, second])
         write_roster(roster)
         slow = write_driver(work, "slow")
+        witness = work / "slow.ready"
         common = [
             "asiento",
             "--status",
@@ -839,6 +845,8 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
             str(roster),
             "--apply",
         ]
+        slow_env = os.environ.copy()
+        slow_env["REGISTRY_OPS_TEST_WITNESS"] = str(witness)
         slow_process = subprocess.Popen(
             [
                 sys.executable,
@@ -855,7 +863,17 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=slow_env,
         )
+        deadline = time.monotonic() + 5
+        while not witness.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not witness.exists():
+            slow_process.terminate()
+            slow_result = slow_process.communicate()
+            pytest.fail(
+                f"slow writer did not create witness within 5 seconds: {slow_result}"
+            )
         normal_process = subprocess.Popen(
             [
                 sys.executable,
