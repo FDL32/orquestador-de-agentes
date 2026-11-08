@@ -1185,6 +1185,9 @@ def test_rotate_failure_leaves_write_ahead_row_and_old_registry(tmp_path):
     assert len(rows) == 1
     row = rows[0]
     assert set(row) == {"ts", "by", "change", "detail", "reason"}
+    assert row["reason"] == "rotate-error"
+    assert row["detail"] == "code=IM-1 campos=['status']"
+    datetime.fromisoformat(row["ts"])
     assert row["change"] == "asiento"
     assert row["by"] == "rotate-test"
 
@@ -1227,6 +1230,7 @@ def test_lock_open_failure_leaves_inputs_untouched(tmp_path):
     assert result.returncode == 5
     assert "bloqueo no disponible" in result.stderr
     assert {path: path.read_bytes() for path in paths} == before
+    assert list(tmp_path.glob("registry.json.bak*")) == []
 
 
 def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
@@ -1238,6 +1242,7 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     roster_before = roster.read_bytes()
     ledger.write_bytes(b"")
     before = registry.read_bytes()
+    backup = registry.with_name("registry.json.bak1")
     driver = write_driver(tmp_path, "lock_release_fail")
     result = subprocess.run(
         [
@@ -1268,10 +1273,13 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     assert "simulado: fallo al liberar el lock" in result.stderr
     assert registry.read_bytes() != before
     assert roster.read_bytes() == roster_before
-    assert (
-        json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]["status"]
-        == "SETTLED"
-    )
+    expected = json.loads(before)
+    expected["sessions"][0]["status"] = "SETTLED"
+    final = json.loads(registry.read_text(encoding="utf-8"))
+    actualizado = final.pop("actualizado")
+    datetime.fromisoformat(actualizado)
+    assert final == expected
+    assert backup.read_bytes() == before
     assert sorted(p.name for p in tmp_path.glob("registry.json.bak*")) == [
         "registry.json.bak1"
     ]
@@ -1281,6 +1289,9 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     assert len(rows) == 1
     row = rows[0]
     assert set(row) == {"ts", "by", "change", "detail", "reason"}
+    assert row["reason"] == "lock-release-error"
+    assert row["detail"] == "code=IM-1 campos=['status']"
+    datetime.fromisoformat(row["ts"])
     assert row["change"] == "asiento"
     assert row["by"] == "lock-test"
 
