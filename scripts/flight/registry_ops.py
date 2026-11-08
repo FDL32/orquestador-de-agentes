@@ -15,7 +15,8 @@ After: imprime un plan JSON o aplica una mutacion durable frente a un crash del
     Los codigos son:
     0 = exito (incluido dry-run valido); 2 = entrada invalida o esquema roto;
     3 = gate operativo compartido por todo subcomando --apply;
-    4 = conflicto de identidad; 5 = lock no disponible tras reintentos.
+    4 = conflicto de identidad; 5 = lock no disponible tras reintentos;
+    6 = mutacion aplicada pero fallo la liberacion del lock.
 
 El snapshot de reconcile trae ``cuenta`` ya resuelta por quien lo genera (una
 sesion con acceso MCP); registry_ops no hace esa resolucion, solo consume el
@@ -55,6 +56,7 @@ RC_INVALID = 2
 RC_ROSTER_GATE = 3
 RC_CONFLICT = 4
 RC_LOCK = 5
+RC_LOCK_RELEASE = 6
 LOCK_ATTEMPTS = 20
 LOCK_DELAY_S = 0.05
 MUTABLE_FIELDS = (
@@ -93,6 +95,16 @@ class LockUnavailableError(RegistryError):
 
     def __init__(self, path):
         super().__init__(f"bloqueo no disponible tras reintentos: {path}", RC_LOCK)
+
+
+class LockReleaseError(RegistryError):
+    """La mutacion se aplico pero fallo la liberacion del lock."""
+
+    def __init__(self, path, reason):
+        super().__init__(
+            f"la mutacion SE APLICO y el registry quedo escrito, pero fallo la liberacion del lock: {path} ({reason})",
+            RC_LOCK_RELEASE,
+        )
 
 
 def _now():
@@ -149,6 +161,7 @@ class _RegistryLock:
         self.path = Path(path)
         self.handle = None
         self.held = False
+        self.committed = False
 
     def __enter__(self):
         try:
@@ -170,15 +183,26 @@ class _RegistryLock:
             raise
 
     def __exit__(self, exc_type, exc_value, traceback):
+        release_error = None
         try:
             if self.held:
                 _lock_release(self.handle)
+        except OSError as exc:
+            release_error = exc
         finally:
             if self.handle is not None:
                 with contextlib.suppress(OSError):
                     self.handle.close()
                 self.handle = None
                 self.held = False
+        if release_error is None:
+            return None
+        if exc_type is not None:
+            # hay otra excepcion en vuelo (p.ej. fallo de escritura): no la enmascaramos
+            return None
+        if self.committed:
+            raise LockReleaseError(self.path, release_error) from release_error
+        raise release_error
 
 
 def _read_registry(path):
@@ -369,7 +393,7 @@ def _apply_change(path, ledger, roster, by, reason, change, detail, mutate):
     """
     _check_roster_gate(roster)
     lock_path = path.with_name(path.name + ".lock")
-    with _RegistryLock(lock_path):
+    with _RegistryLock(lock_path) as lock:
         ledger_handle = _open_ledger(ledger)
         try:
             data = _read_registry(path)
@@ -380,6 +404,7 @@ def _apply_change(path, ledger, roster, by, reason, change, detail, mutate):
             _append_ledger_handle(ledger_handle, by, change, actual_detail, reason)
             _rotate_backups(path, current)
             _write_registry(path, data)
+            lock.committed = True
         finally:
             ledger_handle.close()
 
@@ -804,10 +829,11 @@ def main(argv=None):
     Before: ``argv`` contiene un subcomando y ``--registry`` explicito.
     During: exige roster para apply, resuelve el ledger por defecto y despacha
         alta, asiento, nota o reconcile.
-    After: retorna exactamente uno de los cinco codigos documentados; imprime
+    After: retorna exactamente uno de los seis codigos documentados; imprime
         los errores operativos en stderr. Args malformados para argparse terminan
         en SystemExit(2) emitido por argparse mismo, antes de este contrato; no
-        es uno de los cinco codigos de arriba.
+        es uno de los seis codigos de arriba. El codigo 6 indica que la mutacion
+        se aplico y el registry quedo escrito, pero fallo la liberacion del lock.
     """
     args = _parser().parse_args(argv)
     if args.apply and not args.roster:

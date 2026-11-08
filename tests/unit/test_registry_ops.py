@@ -370,7 +370,7 @@ def test_dod_a_pathological_inputs_have_controlled_result(tmp_path, extra, kwarg
         auto_roster=not kwargs,
         **kwargs,
     )
-    assert result.returncode in {0, 2, 3, 4, 5}
+    assert result.returncode in {0, 2, 3, 4, 5, 6}
     assert "Traceback" not in result.stderr
 
 
@@ -1269,8 +1269,10 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
         text=True,
         check=False,
     )
-    assert result.returncode == 2
+    assert result.returncode == 6
     assert "simulado: fallo al liberar el lock" in result.stderr
+    assert "SE APLICO" in result.stderr
+    assert "fallo la liberacion del lock" in result.stderr
     assert registry.read_bytes() != before
     assert roster.read_bytes() == roster_before
     expected = json.loads(before)
