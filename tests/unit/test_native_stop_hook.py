@@ -885,3 +885,91 @@ class TestEsperaChecklistBranch:
         ]
         assert len(records) == 1
         assert records[0]["trigger_a"] is True
+
+    def test_read_espera_sentinel_bytes_invalidos_no_lanza(self, tmp_path):
+        """Capa 1 del fix: read_espera_sentinel aislada, bytes NO-UTF8."""
+        root = make_root(tmp_path)
+        target = root / hook.ESPERA_SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\xff\xfe\x00bad")
+        assert hook.read_espera_sentinel(root) == {}
+
+    def test_centinela_espera_bytes_invalidos_falla_abierto(self, tmp_path):
+        """Espera AISLADA (sin 044t armado): bytes invalidos -> continue."""
+        root = make_root(tmp_path)
+        target = root / hook.ESPERA_SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\xff\xfe\x00bad")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+
+    def test_centinela_espera_roto_no_suprime_bloqueo_044t(self, tmp_path):
+        """Capa 2 del fix: el MISMO centinela roto, pero 044t SI debe
+        bloquear -- este test habria fallado sin el try/except de _decide."""
+        root = make_root(tmp_path, sentinel=True)
+        target = root / hook.ESPERA_SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\xff\xfe\x00bad")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result["decision"] == "block"
+        assert result["reason"] == hook._REASON[: hook.REASON_MAX_LEN]
+
+    def test_excepcion_en_espera_no_suprime_bloqueo_044t(self, tmp_path, monkeypatch):
+        """Inyecta una excepcion arbitraria en _decide_espera (monkeypatch,
+        llamada directa a _decide, no subprocess) y confirma que 044t
+        sigue bloqueando."""
+        root = make_root(tmp_path, sentinel=True)
+
+        def _boom(root, payload):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(hook, "_decide_espera", _boom)
+        payload = _espera_payload(root, "Hecho, sin marcador alguno.")
+        result = hook._decide(payload)
+        assert result == {
+            "decision": "block",
+            "reason": hook._REASON[: hook.REASON_MAX_LEN],
+        }
+
+    @pytest.mark.parametrize(
+        "message,expected_classifies",
+        [
+            # (1) 4 abre, 3 no cierra -> marcador sigue DENTRO (oculto).
+            (
+                "````text\n```\n[ESPERA:HECHO: x]\n````\nSigo esperando.",
+                False,
+            ),
+            # Reproduccion literal de CO-56.
+            (
+                "````text\n```\n[ESPERA:HECHO: ejemplo]\n````\nSigo esperando.",
+                False,
+            ),
+            # (2) 5 abre, 4 no cierra -> sigue oculto.
+            (
+                "`````text\n````\n[ESPERA:HECHO: x]\n`````\nSigo esperando.",
+                False,
+            ),
+            # (3) tildes: 4 abre, 3 no cierra -> sigue oculto.
+            (
+                "~~~~text\n~~~\n[ESPERA:HECHO: x]\n~~~~\nSigo esperando.",
+                False,
+            ),
+            # (4) cierre con longitud >= abre SI cierra -> marcador visible.
+            (
+                "```\nhidden line\n````\n[ESPERA:HECHO: x]\nSigo esperando.",
+                True,
+            ),
+            # (5) cierre con texto detras NO es un cierre valido.
+            (
+                "```\n[ESPERA:HECHO: x]\n```python\nSigo esperando.",
+                False,
+            ),
+            # (6) fence sin cerrar -> todo el resto queda oculto.
+            (
+                "~~~~\n[ESPERA:HECHO: x]\nSigo esperando.",
+                False,
+            ),
+        ],
+    )
+    def test_fence_respeta_longitud_del_delimitador(self, message, expected_classifies):
+        assert hook.espera_classifies(message) is expected_classifies

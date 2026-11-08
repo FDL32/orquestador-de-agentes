@@ -309,30 +309,78 @@ def classifies(message: str) -> bool:
     return any(MARKER_RE.match(line) for line in _lines_outside_fences(message))
 
 
+def _fence_open_run(stripped_line: str, char: str) -> int:
+    """Before: linea sin indentacion y el caracter de fence; During: cuenta la
+    racha inicial de ESE caracter; After: longitud (>=3) o 0 si no abre.
+
+    CommonMark: abre con 3+ backticks/tildes seguidos, pudiendo llevar un
+    "info string" detras (ej. "````text"); por eso NO exige que el resto de
+    la linea sea tambien el caracter.
+    """
+    run = 0
+    for c in stripped_line:
+        if c != char:
+            break
+        run += 1
+    return run if run >= 3 else 0
+
+
+def _fence_close_run(stripped_line: str, char: str) -> int:
+    """Before: linea sin indentacion y el caracter de fence; After: longitud
+    si la linea es EXCLUSIVAMENTE ese caracter repetido, 0 en otro caso.
+
+    CommonMark: una linea de cierre no puede llevar nada detras del propio
+    delimitador (space/tab aparte, ya recortados por rstrip): "```python" no
+    cierra nada, es contenido normal.
+    """
+    rstripped = stripped_line.rstrip()
+    if rstripped and set(rstripped) == {char}:
+        return len(rstripped)
+    return 0
+
+
 def _lines_outside_fences(message: str, fence_markers: tuple[str, ...] = ("```",)):
     """Before: texto crudo y los delimitadores de fence reconocidos; During:
-    abre con el primer delimitador que matchee y SOLO cierra con ESE MISMO
-    delimitador (nunca cruza tipos); After: produce las lineas utiles.
+    abre con el primer delimitador que matchee y SOLO cierra con el MISMO
+    caracter y una racha de longitud >= la de apertura (CommonMark: nunca
+    cruza tipos ni longitudes cortas); After: produce las lineas utiles.
 
     Por defecto solo ``` (contrato de WOT-2026-044t, SIN CAMBIOS: con un unico
-    delimitador, abrir-con-cualquiera-cierra-con-el-mismo es identico al
-    toggle simple de antes). `espera_classifies` pasa ademas ``~~~`` (hallazgo
-    codex ronda 2 de lentes, MAJOR: un marcador dentro de un bloque ``~~~``
-    se auto-aprobaba porque solo se reconocia ```).
+    delimitador y longitud minima, abrir-con-cualquiera-cierra-con-el-mismo-
+    tipo-y-longitud-suficiente es identico al toggle simple de antes para
+    todos los casos reales de 044t, que nunca mezclan longitudes). WOT-2026-
+    160p ronda 2 de lentes (hallazgo codex, MAJOR): antes solo se recordaba
+    el TIPO de delimitador, no su LONGITUD; una apertura de 4 backticks
+    ("````text") se cerraba con una linea de solo 3 ("```"), dejando el
+    marcador real "fuera" (visible) cuando en realidad seguia DENTRO del
+    bloque sin cerrar. `espera_classifies` pasa ademas ``~~~`` (hallazgo
+    previo: un marcador dentro de un bloque ``~~~`` se auto-aprobaba porque
+    solo se reconocia ```).
     """
+    fence_chars = tuple(marker[0] for marker in fence_markers)
     in_fence = False
-    opener = None
+    fence_char = None
+    fence_len = 0
     for line in message.replace("\r\n", "\n").split("\n"):
         stripped = line.lstrip()
         if in_fence:
-            if stripped.startswith(opener):
+            if _fence_close_run(stripped, fence_char) >= fence_len:
                 in_fence = False
-                opener = None
+                fence_char = None
+                fence_len = 0
             continue
-        matched = next((m for m in fence_markers if stripped.startswith(m)), None)
-        if matched:
+        opened_len = 0
+        opened_char = None
+        for char in fence_chars:
+            run = _fence_open_run(stripped, char)
+            if run:
+                opened_len = run
+                opened_char = char
+                break
+        if opened_len:
             in_fence = True
-            opener = matched
+            fence_char = opened_char
+            fence_len = opened_len
             continue
         yield line
 
@@ -384,14 +432,23 @@ def read_espera_sentinel(root: Path) -> dict | None:
     de esos casos prueba que el modo este activo); `{}` si el fichero SI es
     regular pero esta vacio, con JSON invalido o con JSON que no es un objeto
     (el modo esta "activo" pero sin dato utilizable); el dict parseado en
-    cualquier otro caso."""
+    cualquier otro caso. WOT-2026-160p ronda 2 de lentes (hallazgo codex,
+    MAJOR): un centinela con BYTES invalidos (no UTF-8) lanzaba
+    `UnicodeDecodeError` en `read_text`, que esta funcion no capturaba (solo
+    `OSError`); como `_decide` evalua siempre la rama de espera antes de
+    devolver el veredicto de 044t, esa excepcion se perdia el bloqueo real
+    de 044t. Ahora un fichero REGULAR con contenido illegible (bytes o JSON)
+    es el mismo caso que JSON invalido: `{}`, no una excepcion."""
     target = root / ESPERA_SENTINEL_RELPATH
     try:
         if not target.is_file():
             return None
-        raw = target.read_text(encoding="utf-8").strip()
     except OSError:
         return None
+    try:
+        raw = target.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return {}
     if not raw:
         return {}
     try:
@@ -570,7 +627,16 @@ def _decide(payload: dict) -> dict:
         else:
             evidencia_bloquea = True
 
-    espera_resultado = _decide_espera(root, payload)
+    # WOT-2026-160p ronda 2 de lentes (hallazgo codex, MAJOR): si algo dentro
+    # de la rama de espera lanza (p.ej. UnicodeDecodeError de un centinela con
+    # bytes invalidos), la excepcion NO debe propagar hasta el catch-all de
+    # `main()`, porque eso perderia `evidencia_bloquea` ya calculado y
+    # devolveria un `continue` plano en vez del bloqueo real de 044t. La rama
+    # de espera es fail-open TAMBIEN ante sus propios fallos internos.
+    try:
+        espera_resultado = _decide_espera(root, payload)
+    except Exception:
+        espera_resultado = {"continue": True}
 
     if evidencia_bloquea:
         return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
