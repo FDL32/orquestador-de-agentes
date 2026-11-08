@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 
+_REAL_OS_FSYNC = os.fsync
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "flight" / "registry_ops.py"
 
@@ -147,6 +148,7 @@ def test_dod_a_ledger_roster_collision_rejected_before_corruption(tmp_path):
     ledger = tmp_path / "shared.jsonl"
     write_registry(registry)
     ledger.write_bytes(b"roster-before\n")
+    registry_before = registry.read_bytes()
     before = ledger.read_bytes()
     result = run_cli(
         registry,
@@ -157,6 +159,7 @@ def test_dod_a_ledger_roster_collision_rejected_before_corruption(tmp_path):
     )
     assert result.returncode == 2
     assert ledger.read_bytes() == before
+    assert registry.read_bytes() == registry_before
     assert "--ledger=" in result.stderr and "--roster=" in result.stderr
 
 
@@ -185,6 +188,7 @@ def test_dod_a_ledger_snapshot_collision_rejected_before_corruption(tmp_path):
     snapshot = ledger
     write_registry(registry)
     snapshot.write_bytes(b"snapshot-before\n")
+    registry_before = registry.read_bytes()
     before = snapshot.read_bytes()
     result = run_cli(
         registry,
@@ -195,6 +199,7 @@ def test_dod_a_ledger_snapshot_collision_rejected_before_corruption(tmp_path):
     )
     assert result.returncode == 2
     assert snapshot.read_bytes() == before
+    assert registry.read_bytes() == registry_before
     assert "--ledger=" in result.stderr and "--snapshot=" in result.stderr
 
 
@@ -203,6 +208,8 @@ def test_dod_a_roster_snapshot_collision_rejected(tmp_path):
     shared = tmp_path / "shared.json"
     write_registry(registry)
     shared.write_bytes(b"shared-before\n")
+    registry_before = registry.read_bytes()
+    shared_before = shared.read_bytes()
     result = run_cli(
         registry,
         *_collision_command("reconcile", True),
@@ -213,6 +220,8 @@ def test_dod_a_roster_snapshot_collision_rejected(tmp_path):
     )
     assert result.returncode == 2
     assert "--roster=" in result.stderr and "--snapshot=" in result.stderr
+    assert registry.read_bytes() == registry_before
+    assert shared.read_bytes() == shared_before
 
 
 @pytest.mark.parametrize(
@@ -380,9 +389,22 @@ def slow_apply(*args, **kwargs):
         if witness_path:
             Path(witness_path).write_text("ready", encoding="utf-8")
         real_mutate(data)
-        time.sleep(0.3)
+        second_started = os.environ.get("REGISTRY_OPS_TEST_SECOND_STARTED")
+        if second_started:
+            deadline = time.monotonic() + 10
+            while not Path(second_started).exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if not Path(second_started).exists():
+                raise RuntimeError("el segundo escritor no arranco en 10s")
+        time.sleep(0.05)
     return original_apply(*args[:-1], delayed, **kwargs)
 mod._apply_change = slow_apply
+""",
+        "signal_start": """
+import os
+signal_path = os.environ.get("REGISTRY_OPS_TEST_SECOND_STARTED")
+if signal_path:
+    Path(signal_path).write_text("started", encoding="utf-8")
 """,
         "ledger_fail": 'mod._append_ledger_handle = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ledger failure"))',
         "registry_fail": 'mod._write_registry = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("registry failure"))',
@@ -832,7 +854,9 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
         write_registry(registry, [first, second])
         write_roster(roster)
         slow = write_driver(work, "slow")
+        normal = write_driver(work, "signal_start")
         witness = work / "slow.ready"
+        second_started = work / "second.started"
         common = [
             "asiento",
             "--status",
@@ -847,6 +871,7 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
         ]
         slow_env = os.environ.copy()
         slow_env["REGISTRY_OPS_TEST_WITNESS"] = str(witness)
+        slow_env["REGISTRY_OPS_TEST_SECOND_STARTED"] = str(second_started)
         slow_process = subprocess.Popen(
             [
                 sys.executable,
@@ -877,7 +902,7 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
         normal_process = subprocess.Popen(
             [
                 sys.executable,
-                str(SCRIPT),
+                str(normal),
                 *common[:1],
                 "--code",
                 "IM-2",
@@ -890,6 +915,10 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env={
+                **os.environ,
+                "REGISTRY_OPS_TEST_SECOND_STARTED": str(second_started),
+            },
         )
         slow_result = slow_process.communicate()
         normal_result = normal_process.communicate()
@@ -944,7 +973,7 @@ def test_write_ahead_ledger_failure_leaves_registry_unchanged(tmp_path):
     assert not registry.with_name("registry.json.bak1").exists()
 
 
-def test_write_registry_fsync_precedes_replace(tmp_path):
+def test_write_registry_fsync_precedes_replace(tmp_path, monkeypatch):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"
     roster = tmp_path / "roster.json"
@@ -961,7 +990,7 @@ def test_write_registry_fsync_precedes_replace(tmp_path):
         captured.append(registry.read_bytes())
         return real_fsync(fd)
 
-    module.os.fsync = spy_fsync
+    monkeypatch.setattr(module.os, "fsync", spy_fsync)
     result = module.main(
         [
             "alta",
@@ -995,7 +1024,7 @@ def test_write_registry_fsync_precedes_replace(tmp_path):
     assert registry.read_bytes() != before
 
 
-def test_write_registry_fsync_failure_cleans_tmp(tmp_path):
+def test_write_registry_fsync_failure_cleans_tmp(tmp_path, monkeypatch):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"
     roster = tmp_path / "roster.json"
@@ -1009,7 +1038,7 @@ def test_write_registry_fsync_failure_cleans_tmp(tmp_path):
     def failing_fsync(fd):
         raise OSError("fsync simulado: fallo tras escribir el tmp")
 
-    module.os.fsync = failing_fsync
+    monkeypatch.setattr(module.os, "fsync", failing_fsync)
     result = module.main(
         [
             "asiento",
@@ -1033,6 +1062,10 @@ def test_write_registry_fsync_failure_cleans_tmp(tmp_path):
     assert result == 2
     assert registry.read_bytes() == before
     assert not registry.with_name("registry.json.tmp").exists()
+
+
+def test_os_fsync_is_restored_after_fsync_tests():
+    assert os.fsync is _REAL_OS_FSYNC
 
 
 def test_write_ahead_registry_failure_leaves_audit_row(tmp_path):
