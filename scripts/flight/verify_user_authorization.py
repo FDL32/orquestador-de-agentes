@@ -715,12 +715,18 @@ def open_store_ro(db_path: str | Path, *, timeout: float = 5.0) -> sqlite3.Conne
         eleva InfraError con causa `store-missing`, `store-permission`,
         `store-locked`, `store-corrupt` o `store-unavailable`.
     """
-    if (
-        not isinstance(timeout, (int, float))
-        or isinstance(timeout, bool)
-        or not math.isfinite(timeout)
-        or timeout <= 0
-    ):
+    try:
+        timeout_invalid = (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        )
+    except OverflowError:
+        # un int demasiado grande para convertir a float (p.ej. 10**400) no
+        # es un numero real finito representable: invalido igual que nan/inf.
+        timeout_invalid = True
+    if timeout_invalid:
         raise ValueError(f"timeout debe ser un numero > 0, recibido: {timeout!r}")
     path = Path(db_path)
     try:

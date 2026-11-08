@@ -329,7 +329,7 @@ def test_store_sets_query_only(tmp_path):
 
 
 def test_open_store_ro_rejects_non_numeric_timeout(tmp_path):
-    with pytest.raises(ValueError, match="abc"):
+    with pytest.raises(ValueError, match="timeout debe ser un numero > 0"):
         vua.open_store_ro(tmp_path / "unused.sqlite", timeout="abc")
 
 
@@ -343,6 +343,12 @@ def test_open_store_ro_rejects_non_positive_timeout(tmp_path):
     [float("nan"), float("inf"), float("-inf"), -0.2, -1],
 )
 def test_open_store_ro_rejects_non_finite_or_negative_timeout(tmp_path, timeout):
+    with pytest.raises(ValueError, match="timeout debe ser un numero > 0"):
+        vua.open_store_ro(tmp_path / "unused.sqlite", timeout=timeout)
+
+
+@pytest.mark.parametrize("timeout", [10**400, 10**1000, -(10**400)])
+def test_open_store_ro_rejects_overflowing_timeout(tmp_path, timeout):
     with pytest.raises(ValueError, match="timeout debe ser un numero > 0"):
         vua.open_store_ro(tmp_path / "unused.sqlite", timeout=timeout)
 
