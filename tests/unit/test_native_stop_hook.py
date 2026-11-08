@@ -775,6 +775,11 @@ class TestEsperaChecklistBranch:
             ("Sigo esperando el CI. Ahora resumo lo hecho.", False),
             ("Hecho. Sigo esperando el resultado.", True),
             ("Hecho.\nSigo esperando el resultado.", True),
+            ("Sigo esperando\nYa termine.", False),
+            ("Ya termine.\nSigo esperando", True),
+            ("Ya termine.\r\nSigo esperando", True),
+            ("Ya termine.\n\nSigo esperando", True),
+            ("Sigo esperando", True),
         ],
     )
     def test_declares_wait_ancla_a_la_ultima_frase(
@@ -825,3 +830,58 @@ class TestEsperaChecklistBranch:
             json.dumps(_espera_payload(root, message_bad)), root
         )
         assert result_bad["decision"] == "block"
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "~~~\n[ESPERA:HECHO: x]\n~~~\nSigo esperando.",
+            "~~~\n[ESPERA:HECHO: x]\nSigo esperando.",
+            "~~~\n```\n[ESPERA:HECHO: x]\n```\n~~~\nSigo esperando.",
+            "```\n~~~\n[ESPERA:HECHO: x]\n~~~\n```\nSigo esperando.",
+        ],
+    )
+    def test_marcador_dentro_de_virgulilla_bloquea(self, tmp_path, message):
+        """Hallazgo codex ronda 2: ~~~ tambien debe ocultar el marcador.
+
+        Cubre fence ~~~ simple, fence ~~~ sin cerrar, y los dos cruces de
+        tipo (``` dentro de ~~~ y viceversa) sin que el delimitador interno
+        cierre el externo.
+        """
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root, message)), root)
+        assert result["decision"] == "block"
+
+    def test_044t_no_reconoce_virgulilla_sin_regresion(self):
+        """Control de NO-regresion: 044t solo reconoce ```, nunca ~~~.
+
+        Un [EVIDENCIA] dentro de un bloque ~~~ SIGUE clasificando para la
+        rama de evidencia (comportamiento intacto, no es el hallazgo nuevo).
+        """
+        assert hook.classifies("~~~\n[EVIDENCIA] dentro de virgulilla\n~~~") is True
+
+    def test_observe_044t_no_suprime_bloqueo_espera(self, tmp_path, monkeypatch):
+        """044t en observe NO debe tapar un bloqueo real de la rama espera."""
+        monkeypatch.setenv("AGENT_VERIFICATION_MODE", "observe")
+        root = make_root(tmp_path, sentinel=True)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result["decision"] == "block"
+        assert result["reason"] == hook._ESPERA_REASON[: hook.REASON_MAX_LEN]
+
+    def test_044t_bloquea_y_espera_observe_registra_igual(self, tmp_path):
+        """Inverso: 044t en block gana el veredicto, pero espera en observe
+        SIGUE registrando su propia telemetria (ramas independientes de
+        verdad, no solo en el caso en que espera pierde)."""
+        root = make_root(tmp_path, sentinel=True)
+        _arm_espera(root)
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result["reason"] == hook._REASON[: hook.REASON_MAX_LEN]
+        records = [
+            json.loads(line)
+            for line in (root / hook.ESPERA_OBSERVATIONS_RELPATH)
+            .read_text()
+            .splitlines()
+        ]
+        assert len(records) == 1
+        assert records[0]["trigger_a"] is True

@@ -309,14 +309,30 @@ def classifies(message: str) -> bool:
     return any(MARKER_RE.match(line) for line in _lines_outside_fences(message))
 
 
-def _lines_outside_fences(message: str):
-    """Before: recibe texto crudo; During: alterna fences; After: produce lineas utiles."""
+def _lines_outside_fences(message: str, fence_markers: tuple[str, ...] = ("```",)):
+    """Before: texto crudo y los delimitadores de fence reconocidos; During:
+    abre con el primer delimitador que matchee y SOLO cierra con ESE MISMO
+    delimitador (nunca cruza tipos); After: produce las lineas utiles.
+
+    Por defecto solo ``` (contrato de WOT-2026-044t, SIN CAMBIOS: con un unico
+    delimitador, abrir-con-cualquiera-cierra-con-el-mismo es identico al
+    toggle simple de antes). `espera_classifies` pasa ademas ``~~~`` (hallazgo
+    codex ronda 2 de lentes, MAJOR: un marcador dentro de un bloque ``~~~``
+    se auto-aprobaba porque solo se reconocia ```).
+    """
     in_fence = False
+    opener = None
     for line in message.replace("\r\n", "\n").split("\n"):
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
-            continue
+        stripped = line.lstrip()
         if in_fence:
+            if stripped.startswith(opener):
+                in_fence = False
+                opener = None
+            continue
+        matched = next((m for m in fence_markers if stripped.startswith(m)), None)
+        if matched:
+            in_fence = True
+            opener = matched
             continue
         yield line
 
@@ -327,11 +343,22 @@ def _espera_guard_allows(payload: dict) -> bool:
 
 
 def _last_sentence(text: str) -> str:
-    """Before: texto crudo; During: separa por puntuacion; After: devuelve la ultima frase."""
+    """Before: texto crudo; During: separa por puntuacion O por salto de linea
+    (sin exigir puntuacion antes del salto); After: devuelve la ultima frase.
+
+    WOT-2026-160p ronda 2 de lentes (hallazgo codex, MAJOR): el regex anterior
+    ``(?<=[.!?\\n])\\s+`` exigia que el CARACTER antes del tramo de espacios
+    fuera uno de ``.!?\\n`` -- pero un salto de linea SIN puntuacion previa
+    (``"Sigo esperando\\nYa termine."``) no cumplia esa condicion (el caracter
+    antes del ``\\n`` era una letra), asi que el texto quedaba SIN separar y
+    `declares_wait` veia el literal "sigo esperando" aunque la frase real
+    (``"Ya termine."``) ya no declarara espera. Ahora cualquier corte de
+    linea separa SIEMPRE, independientemente de lo que lo preceda.
+    """
     text = text.strip()
     if not text:
         return ""
-    parts = re.split(r"(?<=[.!?\n])\s+", text)
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text)
     parts = [part for part in parts if part.strip()]
     return parts[-1] if parts else text
 
@@ -342,8 +369,9 @@ def declares_wait(message: str) -> bool:
 
 
 def espera_classifies(message: str) -> bool:
-    """Before: mensaje final; During: ignora fences y valida motivo; After: indica marcador DC valido."""
-    for line in _lines_outside_fences(message):
+    """Before: mensaje final; During: ignora fences ``` y ~~~ y valida motivo;
+    After: indica marcador DC valido."""
+    for line in _lines_outside_fences(message, fence_markers=("```", "~~~")):
         match = ESPERA_MARKER_RE.match(line)
         if match and match.group(2).strip():
             return True
@@ -351,7 +379,12 @@ def espera_classifies(message: str) -> bool:
 
 
 def read_espera_sentinel(root: Path) -> dict | None:
-    """Before: raiz del repo; During: lee JSON regular; After: devuelve dict o fail-open."""
+    """Before: raiz del repo; During: lee el centinela; After: `None` si NO es
+    un fichero regular legible (ausente, directorio, enlace roto -- ninguno
+    de esos casos prueba que el modo este activo); `{}` si el fichero SI es
+    regular pero esta vacio, con JSON invalido o con JSON que no es un objeto
+    (el modo esta "activo" pero sin dato utilizable); el dict parseado en
+    cualquier otro caso."""
     target = root / ESPERA_SENTINEL_RELPATH
     try:
         if not target.is_file():
@@ -501,11 +534,24 @@ def _decide(payload: dict) -> dict:
     Fail-open ante cualquier anomalia del dominio: toda ambiguedad devuelve
     `{"continue": True}`. Los side-effects (stderr de INACTIVO/OBSERVE,
     observaciones) ocurren aqui; el emision unico lo hace main().
+
+    WOT-2026-160p ronda 2 de lentes (hallazgo codex, MAJOR, decision de
+    diseno CONFIRMADA): 044t y la rama de espera son dos barreras con MODOS
+    INDEPENDIENTES (DoD-a). Por eso la rama de espera se evalua SIEMPRE --
+    incluso cuando 044t ya decidio bloquear -- en vez de devolver en cuanto
+    044t bloquea: si no fuera asi, un cierre con 044t en `block` suprimiria
+    en silencio el registro `observe` de la rama de espera (044t ganaria el
+    veredicto Y le robaria la telemetria a la otra rama, que es justo lo que
+    "independiente" prohibe). El VEREDICTO final sigue dando precedencia a
+    044t sobre espera cuando ambas bloquean (mismo contrato que ya probaba
+    `test_044t_gana_si_ambas_bloquean`); lo que cambia es que la rama de
+    espera SIEMPRE corre sus side-effects antes de decidir el ganador.
     """
     cwd = payload.get("cwd")
     start = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
     root = find_repo_root(start.resolve())
 
+    evidencia_bloquea = False
     baseline = read_sentinel(root)
     # WOT-2026-044x: centinela caducado o sin fecha legible -> INACTIVO con
     # diagnostico visible; la segunda rama sigue siendo independiente.
@@ -522,9 +568,13 @@ def _decide(payload: dict) -> dict:
                 "native_stop_hook: OBSERVE -- habria bloqueado; no bloquea.\n"
             )
         else:
-            return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
+            evidencia_bloquea = True
 
-    return _decide_espera(root, payload)
+    espera_resultado = _decide_espera(root, payload)
+
+    if evidencia_bloquea:
+        return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
+    return espera_resultado
 
 
 def main() -> None:
