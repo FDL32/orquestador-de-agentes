@@ -4,10 +4,14 @@ Before: ``predecessor`` must be a UTF-8 heartbeat file with the documented
 anchors, ``roster`` must contain exactly the three consumed roster objects, and
 ``go_index`` must be the successor's positive Go number.
 
-During: the renderer validates the closed rule counts, preserves the cascade
-and postcompaction tails byte-for-byte, derives own/supervisor identities
-outside protected judgement and insertion spans, updates the step-9 Go
-references, forces the status line, and replaces the three judgement values.  It can also calculate the
+During: the renderer validates and applies the closed R1-R7 rules. R1
+substitutes identities and thread identifiers; R2 preserves the context
+cascade start and R2b-fin preserves its unique ending; R3 updates step-9
+``Go N``, ``Go N+1``, and ``fila bN`` references; R4 forces ``ESTADO:
+VIGENTE``; R5 detects explicit judgement holes and reports rc 3; R6 keeps the
+single postcompaction anchor; and R7 corrects the ``X -> X`` handoff jump.
+Protected cascade, postcompaction, and judgement spans are preserved while
+the three judgement values are replaced. It can also calculate the
 predecessor path's SHA-256 prefix with :func:`predecessor_sha12` for a
 judgement supplied by a caller.
 
@@ -59,7 +63,7 @@ def predecessor_sha12(predecessor: str | Path) -> str:
     Before: ``predecessor`` must identify a readable file.
     During: the file is read as bytes and hashed without normalizing it.
     After: the exact path bytes produce a deterministic 12-character prefix;
-    filesystem errors are allowed to propagate to the CLI error handler.
+    filesystem errors propagate unchanged to the caller.
     """
 
     return hashlib.sha256(Path(predecessor).read_bytes()).hexdigest()[:12]
@@ -80,15 +84,25 @@ def _judgement_spans(text: str) -> dict[str, tuple[int, int]]:
     note_end = text.rfind("]", note_start, note_end) + 1
     if note_start < 0 or note_end <= note_start:
         raise ValueError("no se encontro ancla de JUICIO nota_derivacion")
-    objective = re.search(
-        r"\(ARRANQUE_[A-Z]+-\d+_\d{8}\.md s\.2: .*?\)",
-        text[header_end:],
-        re.DOTALL,
+    objective_match = re.search(
+        r"\(ARRANQUE_[A-Z]+-\d+_\d{8}\.md s\.2: ", text[header_end:]
     )
-    if objective is None:
+    if objective_match is None:
         raise ValueError("no se encontro ancla de JUICIO objetivo_en_curso")
-    objective_start = header_end + objective.start()
-    objective_end = header_end + objective.end()
+    objective_start = header_end + objective_match.start()
+    depth = 0
+    objective_end = None
+    for position in range(objective_start, len(text)):
+        character = text[position]
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                objective_end = position + 1
+                break
+    if objective_end is None:
+        raise ValueError("no se encontro cierre de JUICIO objetivo_en_curso")
     return {
         "nota_derivacion": (note_start, note_end),
         "objetivo_en_curso": (objective_start, objective_end),
@@ -385,6 +399,24 @@ def render_latido(  # noqa: C901
         if problems:
             return 2, _failure(text, problems)
         judgement_spans = _judgement_spans(text)
+        judgement_inputs = {
+            name: (juicios or {}).get(name)
+            for name in (
+                "nota_derivacion",
+                "objetivo_en_curso",
+                "secciones_postcompactacion_nueva",
+            )
+        }
+        multiline_judgements = [
+            name
+            for name, value in judgement_inputs.items()
+            if isinstance(value, str) and ("\r" in value or "\n" in value)
+        ]
+        if multiline_judgements:
+            return 2, _failure(
+                "",
+                [f"juicio multilinea: {name}" for name in multiline_judgements],
+            )
 
         cascade_anchor_count = text.count(_CASCADE_START)
         if cascade_anchor_count != 1:
@@ -497,31 +529,31 @@ def render_latido(  # noqa: C901
             derived["cascade_id"]: context["threadId"],
         }
 
-        def salto_transform(piece: str) -> str:
-            return piece.replace(
+        def extra_transform(piece: str) -> str:
+            transformed = piece.replace(
                 f"para el salto {own['session_code']} -> {own['session_code']}",
                 f"para el salto {own['session_code']} -> {_next_session_code(own['session_code'])}",
             )
+            transformed = transformed.replace(
+                f"Go relevo 24h {derived['go_index']}", "Go relevo 24h __GO_INDEX__"
+            )
+            transformed = transformed.replace(
+                f"Go relevo 24h {derived['go_index'] + 1}", "Go relevo 24h __GO_NEXT__"
+            )
+            return (
+                transformed.replace("__GO_INDEX__", str(go_index))
+                .replace("__GO_NEXT__", str(go_index + 1))
+                .replace(f"fila b{derived['go_index']}", f"fila b{go_index}")
+            )
 
         rendered = _replace_identity_tokens(
-            text, protected, replacements, extra_transform=salto_transform
+            text, protected, replacements, extra_transform=extra_transform
         )
         line9 = re.search(r"(?m)^9\. Contexto propio:.*$", rendered)
         if line9 is None:
             return 2, _failure(
                 rendered, ["regla R3: parrafo del paso 9 ausente tras derivacion"]
             )
-        step9 = line9.group(0).replace(
-            f"Go relevo 24h {derived['go_index']}", "Go relevo 24h __GO_INDEX__"
-        )
-        step9 = step9.replace(
-            f"Go relevo 24h {derived['go_index'] + 1}", "Go relevo 24h __GO_NEXT__"
-        )
-        step9 = step9.replace("__GO_INDEX__", str(go_index)).replace(
-            "__GO_NEXT__", str(go_index + 1)
-        )
-        step9 = step9.replace(f"fila b{derived['go_index']}", f"fila b{go_index}")
-        rendered = rendered[: line9.start()] + step9 + rendered[line9.end() :]
 
         first_newline = rendered.find("\n")
         line_ending = (
@@ -545,7 +577,14 @@ def render_latido(  # noqa: C901
                     for item in foreign_rendered_ids
                 ],
             )
-        markers = re.findall(r"\[\[JUICIO:([^\]]*)\]\]", rendered)
+        markers = [
+            match.group(1).strip()
+            for match in re.finditer(
+                r"\[\[JUICIO:([^\]\r\n]*?)(?:\]\]|(?=\r?$))",
+                rendered,
+                re.MULTILINE,
+            )
+        ]
         known = {
             "nota_derivacion",
             "objetivo_en_curso",
@@ -579,7 +618,7 @@ def _next_session_code(code: str) -> str:
     return f"{match.group(1)}{int(match.group(2)) + 1}"
 
 
-def _main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser = argparse.ArgumentParser()
     parser.add_argument("--predecessor", required=True, type=Path)
     parser.add_argument("--roster", required=True, type=Path)
@@ -602,7 +641,12 @@ def _main(argv: list[str] | None = None) -> int:
         if not separator:
             parser.error("--juicio debe tener la forma nombre=@fichero")
         try:
-            juicios[name] = Path(path).read_text(encoding="utf-8")
+            value = Path(path).read_text(encoding="utf-8")
+            if value.endswith("\r\n"):
+                value = value[:-2]
+            elif value.endswith("\n"):
+                value = value[:-1]
+            juicios[name] = value
         except (OSError, UnicodeError) as exc:
             sys.stdout.write(_failure("", [f"no se pudo leer --juicio: {exc}"]))
             return 2
@@ -625,7 +669,7 @@ def _main(argv: list[str] | None = None) -> int:
         return 2
     rc, output = render_latido(args.predecessor, roster, args.go_index, juicios)
     if args.out is None:
-        sys.stdout.write(output)
+        sys.stdout.buffer.write(output.encode("utf-8"))
     else:
         try:
             args.out.write_text(output, encoding="utf-8", newline="")

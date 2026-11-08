@@ -1,6 +1,8 @@
 import hashlib
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -233,6 +235,148 @@ def test_judgement_span_preserves_literal_salto_phrase(tmp_path: Path) -> None:
     assert rc == 0
     assert "literal para el salto CO-56 -> CO-56" in output
     assert "para el salto CO-56 -> CO-57" in output
+
+
+def test_r3_does_not_corrupt_objective_judgement_with_step9_literals() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    juicios["objetivo_en_curso"] = (
+        "(ARRANQUE_CO-56_20261108.md s.2: conservar Go relevo 24h 1 y fila b1)"
+    )
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, juicios)
+
+    assert rc == 0
+    assert juicios["objetivo_en_curso"] in output
+
+
+@pytest.mark.parametrize(
+    ("marker", "expected_rc", "message"),
+    [
+        ("[[JUICIO:pendiente", 2, "marcador de JUICIO desconocido: pendiente"),
+        (
+            "[[JUICIO:nota_derivacion",
+            3,
+            "hueco de JUICIO no rellenado: nota_derivacion",
+        ),
+    ],
+)
+def test_unclosed_predecessor_judgement_marker_is_detected(
+    tmp_path: Path, marker: str, expected_rc: int, message: str
+) -> None:
+    predecessor = tmp_path / "unclosed-marker.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + f"\n{marker}\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == expected_rc
+    assert message in output
+
+
+def test_api_rejects_multiline_judgement_before_filling_spans() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    juicios["nota_derivacion"] = "[x]\ny"
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, juicios)
+
+    assert rc == 2
+    assert "juicio multilinea: nota_derivacion" in output
+
+
+def test_cli_trims_one_final_newline_but_preserves_internal_newline(
+    tmp_path: Path,
+) -> None:
+    juicio_paths = {}
+    juicios = _juicios_sucesor()
+    for name, value in juicios.items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(value, encoding="utf-8")
+        juicio_paths[name] = path
+    juicio_paths["nota_derivacion"].write_bytes(b"[x]\ny\n")
+    command = [
+        sys.executable,
+        str(ROOT / "scripts/flight/render_latido.py"),
+        "--predecessor",
+        str(PREDECESSOR),
+        "--roster",
+        str(ROSTER),
+        "--go-index",
+        "2",
+    ]
+    for name, path in juicio_paths.items():
+        command.extend(["--juicio", f"{name}=@{path}"])
+
+    result = subprocess.run(command, capture_output=True, check=False)
+
+    assert result.returncode == 2
+    assert "juicio multilinea: nota_derivacion" in result.stdout.decode("utf-8")
+
+    juicio_paths["nota_derivacion"].write_bytes(b"[x]\n")
+    valid_result = subprocess.run(command, capture_output=True, check=False)
+
+    assert valid_result.returncode == 0
+
+
+def test_module_docstring_lists_r4_status_rule() -> None:
+    assert "R4" in render_latido_module.__doc__
+    assert "ESTADO" in render_latido_module.__doc__
+
+
+def test_nested_parentheses_in_objective_judgement_are_replaced_as_one_span(
+    tmp_path: Path,
+) -> None:
+    fixture = PREDECESSOR.read_text(encoding="utf-8")
+    old_objective = re.search(r"\(ARRANQUE_CO-55_20261108\.md s\.2: .*?\)", fixture)
+    assert old_objective is not None
+    nested_objective = "(ARRANQUE_CO-55_20261108.md s.2: tarea (anidada) pendiente)"
+    predecessor = tmp_path / "nested-objective.md"
+    predecessor.write_text(
+        fixture[: old_objective.start()]
+        + nested_objective
+        + fixture[old_objective.end() :],
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    replacement = "(ARRANQUE_CO-56_20261108.md s.2: objetivo nuevo)"
+    juicios = _juicios_sucesor()
+    juicios["objetivo_en_curso"] = replacement
+
+    rc, output = render_latido(predecessor, roster, 2, juicios)
+
+    assert rc == 0
+    assert replacement in output
+    assert "tarea (anidada) pendiente" not in output
+    assert f"{replacement} pendiente)" not in output
+
+
+def test_cli_stdout_is_exact_utf8_without_crlf_translation(tmp_path: Path) -> None:
+    juicios = _juicios_sucesor()
+    juicios["nota_derivacion"] = "[derivación ñ] á"
+    command = [
+        sys.executable,
+        str(ROOT / "scripts/flight/render_latido.py"),
+        "--predecessor",
+        str(PREDECESSOR),
+        "--roster",
+        str(ROSTER),
+        "--go-index",
+        "2",
+    ]
+    for name, value in juicios.items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(value, encoding="utf-8", newline="")
+        command.extend(["--juicio", f"{name}=@{path}"])
+
+    result = subprocess.run(command, capture_output=True, check=False)
+
+    assert result.returncode == 0
+    assert "[derivación ñ] á".encode() in result.stdout
+    assert b"\r\n" not in result.stdout
 
 
 def test_predecessor_free_text_unknown_judgement_marker_is_rc2(tmp_path: Path) -> None:
