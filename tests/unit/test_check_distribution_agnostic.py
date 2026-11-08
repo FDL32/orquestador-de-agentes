@@ -96,6 +96,18 @@ def _policy(needles: dict, allowlist: list | None = None) -> dict:
     return {"needles": needles, "allowlist": allowlist or []}
 
 
+def _write_real_allowlist_fixtures(fake_motor: Path) -> None:
+    """Keep real-policy allowlist entries live in a synthetic denominator."""
+    policy = cda.load_policy()
+    entries = ["scripts/flight/"]
+    for entry in policy["allowlist"]:
+        file_path = entry["file"]
+        if file_path not in entries:
+            entries.append(file_path)
+        _wb(fake_motor / file_path, entry["match"] + "\n")
+    _wb(fake_motor / "MANIFEST.distribute", "\n".join(entries) + "\n")
+
+
 # ---------------------------------------------------------------- T-DENOM-EXPANDE
 def test_denominator_expands_directory_and_skips_untracked(fake_motor: Path):
     """A directory entry counts its tracked files (3), not 1; an untracked file in
@@ -114,6 +126,95 @@ def test_denominator_expands_directory_and_skips_untracked(fake_motor: Path):
     assert n_entries == 2  # AGENTS.md + pkg/
     assert set(files) == {"AGENTS.md", "pkg/a.py", "pkg/b.py", "pkg/c.py"}
     assert "pkg/untracked.py" not in files  # untracked never travels
+
+
+def test_real_denominator_includes_tracked_flight_python_files():
+    """Anchors tracked flight .py scripts only; the sibling .ps1 test covers PowerShell.
+    Igualdad de CONJUNTOS (no any()): git ls-files es la verdad, build_denominator()
+    no puede perder ni sobrar ninguno.
+    """
+    tracked = _git(_ROOT, "ls-files", "--", "scripts/flight/*.py")
+    assert tracked.returncode == 0, tracked.stderr
+    expected = {line for line in tracked.stdout.splitlines() if line}
+    assert expected, (
+        "control positivo: el universo de git ls-files no puede estar vacio"
+    )
+    _n_entries, files, err = cda.build_denominator(_ROOT)
+    assert err is None
+    actual = {f for f in files if f.startswith("scripts/flight/") and f.endswith(".py")}
+    assert actual == expected
+
+
+def test_real_denominator_includes_flight_powershell_protocol_scripts():
+    """Ambos .ps1 de scripts/flight son protocolo versionado (DB Alt. 2), no
+    infraestructura personal: deben viajar igual que los .py del directorio."""
+    _n_entries, files, err = cda.build_denominator(_ROOT)
+    assert err is None
+    assert "scripts/flight/notify_user.ps1" in files
+    assert "scripts/flight/register_stall_task.ps1" in files
+
+
+def test_real_policy_catches_user_profile_path_in_flight_file(fake_motor: Path):
+    """The production policy catches a machine path in an included flight file."""
+    _write_real_allowlist_fixtures(fake_motor)
+    content = r"C:\Users\bob\tmp_or8" + "\n"
+    assert content.count(r"C:\Users\bob\tmp_or8") == 1
+    _wb(fake_motor / "scripts" / "flight" / "ejemplo_mutado.py", content)
+    _commit_all(fake_motor)
+
+    code, lines = cda.audit(fake_motor, cda.load_policy())
+    joined = "\n".join(lines)
+    assert code == 1, joined
+    assert "aguja user_profile_root:" in joined
+    assert "scripts/flight/ejemplo_mutado.py" in joined
+
+
+def test_real_policy_catches_casefolded_user_profile_path_in_flight_file(
+    fake_motor: Path,
+):
+    """The fixed guard catches a casefolded machine path in flight scripts."""
+    _write_real_allowlist_fixtures(fake_motor)
+    content = r"c:\users\bob\tmp_or8" + "\n"
+    assert content.count(r"c:\users\bob\tmp_or8") == 1
+    _wb(fake_motor / "scripts" / "flight" / "ejemplo_mutado_casefold.py", content)
+    _commit_all(fake_motor)
+
+    code, lines = cda.audit(fake_motor, cda.load_policy())
+    joined = "\n".join(lines)
+    assert code == 1, joined
+    assert "aguja user_profile_root:" in joined
+    assert "scripts/flight/ejemplo_mutado_casefold.py" in joined
+
+
+def test_real_policy_bare_tmp_or8_without_machine_path_does_not_trigger_user_profile_root(
+    fake_motor: Path,
+):
+    """Aisla la aguja: ``tmp_or8`` solo no es una ruta de esta maquina."""
+    _write_real_allowlist_fixtures(fake_motor)
+    content = 'if "tmp_or8" in algo:\n    pass\n'
+    assert content.count("tmp_or8") == 1
+    _wb(
+        fake_motor / "scripts" / "flight" / "ejemplo_tmp_or8_sin_ruta.py",
+        content,
+    )
+    _commit_all(fake_motor)
+    code, lines = cda.audit(fake_motor, cda.load_policy())
+    joined = "\n".join(lines)
+    assert code == 0, joined
+    assert "aguja user_profile_root: 0 hits" in joined
+
+
+def test_real_policy_accepts_clean_flight_file(fake_motor: Path):
+    """The production policy accepts a neutral included flight file."""
+    _write_real_allowlist_fixtures(fake_motor)
+    _wb(
+        fake_motor / "scripts" / "flight" / "ejemplo_mutado.py",
+        "def ejemplo():\n    return 'neutral'\n",
+    )
+    _commit_all(fake_motor)
+
+    code, lines = cda.audit(fake_motor, cda.load_policy())
+    assert code == 0, "\n".join(lines)
 
 
 # ---------------------------------------------------------------- T-DENOM-PUBLICA

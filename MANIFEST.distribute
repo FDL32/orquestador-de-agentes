@@ -37,6 +37,11 @@ scripts/check_motor_pristine.py
 scripts/classify_publication.py
 
 # =============================================================================
+# PROTOCOLO DE VUELO (scripts/flight/, WOT-2026-160d)
+# =============================================================================
+scripts/flight/
+
+# =============================================================================
 # PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP (o por otros prompts
 # de planning ad-hoc de un vuelo, caso de persona_system.md)
 # =============================================================================
