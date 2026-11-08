@@ -16,7 +16,12 @@ from pathlib import Path
 import pytest
 
 
-TEMPLATE_PATH = Path(__file__).parents[2] / "prompts" / "builder_spec_plantilla.md"
+TEMPLATE_PATH = (
+    Path(__file__).parents[2]
+    / "prompts"
+    / "vuelo_builder_templates"
+    / "builder_spec_plantilla.md"
+)
 ABSOLUTE_ROUTE_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|/home/|/Users/|\\\\[^\\/\s]+[\\/][^\\/\s]+)"
 )
@@ -793,3 +798,23 @@ def test_coauthor_trailer_missing_fails_explicitly() -> None:
     """A candidate without the exact trailer is rejected."""
     with pytest.raises(ValueError, match="missing exact co-author trailer"):
         assert_mentions_exact_coauthor_trailer("No trailer.")
+
+
+def test_template_absent_from_live_index_and_router():
+    """DoD (b): ni la ruta vieja ni la nueva reaparecen en el catalogo/router vivos.
+
+    Before: la plantilla vive en TEMPLATE_PATH (prompts/vuelo_builder_templates/).
+    During: deriva el catalogo y el router EN VIVO desde scripts.discover_skills
+    contra el repo real, sin fixtures sinteticas.
+    After: ni la ruta plana legado ni la ruta vigente aparecen como entrada de
+    catalogo ni como mencion en el router.
+    """
+    from scripts.discover_skills import build_catalog, build_router
+
+    catalog_paths = {entry["path"] for entry in build_catalog()["entries"]}
+    assert "prompts/builder_spec_plantilla.md" not in catalog_paths
+    assert (
+        "prompts/vuelo_builder_templates/builder_spec_plantilla.md" not in catalog_paths
+    )
+
+    assert "builder_spec_plantilla" not in build_router()
