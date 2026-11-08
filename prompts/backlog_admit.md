@@ -138,6 +138,21 @@ existe ningun candidato con score > 0 (corpus totalmente disjunto), ambas
 listas quedan vacias y el guard rechaza -- ese es el unico caso residual
 donde el autor debe decidir.
 
+## Matriz de DoD para fichas de mecanismo
+
+Toda ficha de ALTA cuyo DoD sea de mecanismo declara, junto al DoD literal,
+una Matriz de DoD con una fila por cada clausula del DoD, sin agrupar varias
+clausulas en una fila. La tabla tiene exactamente estas seis columnas:
+`id | texto literal | comprobacion | ambito | conteo esperado | control positivo`.
+Usa el formato, los marcadores y el ejemplo de
+`prompts/vuelo_builder_templates/dod_matriz_plantilla.md`.
+
+Para la regla de aceptacion, ver P28 y P29 de
+`.agent/rules/common/vuelo_pilares.md`.
+
+Esta exigencia no es retroactiva: aplica desde la integracion de WOT-2026-160i,
+sin reabrir ni exigir la matriz a fichas admitidas antes.
+
 ## Generacion del recibo
 
 ```bash

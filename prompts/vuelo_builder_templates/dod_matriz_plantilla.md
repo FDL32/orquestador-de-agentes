@@ -14,5 +14,5 @@
 | b-02 | La matriz no se exige retroactivamente | ausencia de rutas de backlog en este test | tests/unit/test_dod_matriz_plantilla.py | 0 rutas | n/a: el test no abre ni importa esas rutas |
 
 La celda `control positivo` no puede estar vacia. Solo en esa columna se permite
-`n/a: <motivo>`, con un motivo no vacio; `n/a` sin motivo es invalido. Ninguna
+`n/a: <motivo>`, con un motivo de al menos dos palabras; `n/a` sin motivo es invalido. Ninguna
 celda puede contener el caracter `|`; si una clausula lo necesita, reformulala.
