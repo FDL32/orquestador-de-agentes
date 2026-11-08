@@ -768,3 +768,60 @@ class TestEsperaChecklistBranch:
 
     def test_reason_nuevo_no_se_autoaprueba(self):
         assert hook.espera_classifies(hook._ESPERA_REASON) is False
+
+    @pytest.mark.parametrize(
+        "message,expected_block",
+        [
+            ("Sigo esperando el CI. Ahora resumo lo hecho.", False),
+            ("Hecho. Sigo esperando el resultado.", True),
+            ("Hecho.\nSigo esperando el resultado.", True),
+        ],
+    )
+    def test_declares_wait_ancla_a_la_ultima_frase(
+        self, tmp_path, message, expected_block
+    ):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root, message)), root)
+        if expected_block:
+            assert result["decision"] == "block"
+        else:
+            assert result == {"continue": True}
+
+    @pytest.mark.parametrize(
+        "background_tasks,session_crons,expected_bg,expected_cron",
+        [
+            ([1], [], True, False),
+            ([], [], False, False),
+            ([], [1], False, True),
+        ],
+    )
+    def test_observe_registra_bg_y_cron_segun_payload(
+        self, tmp_path, background_tasks, session_crons, expected_bg, expected_cron
+    ):
+        root = make_root(tmp_path)
+        _arm_espera(root)
+        payload = _espera_payload(
+            root, background_tasks=background_tasks, session_crons=session_crons
+        )
+        _, result, _ = run_hook(json.dumps(payload), root)
+        assert result == {"continue": True}
+        record = json.loads(
+            (root / hook.ESPERA_OBSERVATIONS_RELPATH).read_text().splitlines()[-1]
+        )
+        assert record["background_tasks_nonempty"] is expected_bg
+        assert record["session_crons_nonempty"] is expected_cron
+
+    def test_prefijo_decoracion_limite_6_caracteres(self, tmp_path):
+        root = make_root(tmp_path)
+        _arm_espera(root, "block")
+        prefix6 = " " * 6
+        prefix7 = " " * 7
+        message_ok = f"{prefix6}[ESPERA:HECHO: x]\nSigo esperando."
+        message_bad = f"{prefix7}[ESPERA:HECHO: x]\nSigo esperando."
+        _, result_ok, _ = run_hook(json.dumps(_espera_payload(root, message_ok)), root)
+        assert result_ok == {"continue": True}
+        _, result_bad, _ = run_hook(
+            json.dumps(_espera_payload(root, message_bad)), root
+        )
+        assert result_bad["decision"] == "block"
