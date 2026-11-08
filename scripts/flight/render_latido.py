@@ -55,6 +55,7 @@ from typing import Any
 
 _CASCADE_START = "la cascada es "
 _CASCADE_END = " LATIDO DE PROGRESO"
+_R3_PATTERN = re.compile(r"(?<![A-Za-z0-9])(fila b|Go relevo 24h )(\d+)(?![A-Za-z0-9])")
 
 
 def predecessor_sha12(predecessor: str | Path) -> str:
@@ -407,6 +408,16 @@ def render_latido(  # noqa: C901
                 "secciones_postcompactacion_nueva",
             )
         }
+        invalid_judgements = [
+            name
+            for name, value in judgement_inputs.items()
+            if value is not None and not isinstance(value, str)
+        ]
+        if invalid_judgements:
+            return 2, _failure(
+                "",
+                [f"juicio no es texto: {name}" for name in invalid_judgements],
+            )
         multiline_judgements = [
             name
             for name, value in judgement_inputs.items()
@@ -534,17 +545,16 @@ def render_latido(  # noqa: C901
                 f"para el salto {own['session_code']} -> {own['session_code']}",
                 f"para el salto {own['session_code']} -> {_next_session_code(own['session_code'])}",
             )
-            transformed = transformed.replace(
-                f"Go relevo 24h {derived['go_index']}", "Go relevo 24h __GO_INDEX__"
-            )
-            transformed = transformed.replace(
-                f"Go relevo 24h {derived['go_index'] + 1}", "Go relevo 24h __GO_NEXT__"
-            )
-            return (
-                transformed.replace("__GO_INDEX__", str(go_index))
-                .replace("__GO_NEXT__", str(go_index + 1))
-                .replace(f"fila b{derived['go_index']}", f"fila b{go_index}")
-            )
+
+            def r3_replace(match: re.Match[str]) -> str:
+                prefix, number = match.group(1), int(match.group(2))
+                if number == derived["go_index"]:
+                    return f"{prefix}{go_index}"
+                if prefix == "Go relevo 24h " and number == derived["go_index"] + 1:
+                    return f"{prefix}{go_index + 1}"
+                return match.group(0)
+
+            return _R3_PATTERN.sub(r3_replace, transformed)
 
         rendered = _replace_identity_tokens(
             text, protected, replacements, extra_transform=extra_transform

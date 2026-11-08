@@ -251,6 +251,66 @@ def test_r3_does_not_corrupt_objective_judgement_with_step9_literals() -> None:
 
 
 @pytest.mark.parametrize(
+    ("literal", "expected"),
+    [
+        ("fila b10", "fila b10"),
+        ("fila b11", "fila b11"),
+        ("Go relevo 24h 10", "Go relevo 24h 10"),
+        ("Go relevo 24h 11", "Go relevo 24h 11"),
+        ("xfila b1", "xfila b1"),
+        ("fila b1x", "fila b1x"),
+        ("Go relevo 24h 1.", "Go relevo 24h 2."),
+    ],
+)
+def test_r3_replaces_only_bounded_references(
+    tmp_path: Path, literal: str, expected: str
+) -> None:
+    predecessor = tmp_path / "r3-boundaries.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + f"\nReferencia: {literal}\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert f"Referencia: {expected}" in output
+
+
+def test_r3_preserves_literal_sentinel_names(tmp_path: Path) -> None:
+    predecessor = tmp_path / "r3-sentinels.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8")
+        + "\nConservar literalmente __GO_INDEX__ y __GO_NEXT__.\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert "Conservar literalmente __GO_INDEX__ y __GO_NEXT__." in output
+
+
+def test_r3_successor_reference_uses_next_successor(
+    tmp_path: Path,
+) -> None:
+    predecessor = tmp_path / "r3-successor.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8")
+        + "\nReferencia futura: Go relevo 24h 2.\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert "Referencia futura: Go relevo 24h 3." in output
+
+
+@pytest.mark.parametrize(
     ("marker", "expected_rc", "message"),
     [
         ("[[JUICIO:pendiente", 2, "marcador de JUICIO desconocido: pendiente"),
@@ -856,6 +916,28 @@ def test_non_dict_roster_is_rc2_without_traceback() -> None:
 
     assert rc == 2
     assert "campo de roster no consumido" in output
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("nota_derivacion", 5),
+        ("objetivo_en_curso", ["x"]),
+        ("secciones_postcompactacion_nueva", True),
+    ],
+)
+def test_non_string_judgement_is_rc2_without_traceback(
+    name: str, value: object
+) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    juicios[name] = value  # type: ignore[assignment]
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, juicios)
+
+    assert rc == 2
+    assert f"juicio no es texto: {name}" in output
+    assert "Traceback" not in output
 
 
 def test_non_string_roster_thread_id_is_rc2_without_traceback() -> None:
