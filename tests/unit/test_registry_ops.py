@@ -316,6 +316,24 @@ mod._apply_change = slow_apply
 """,
         "ledger_fail": 'mod._append_ledger_handle = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ledger failure"))',
         "registry_fail": 'mod._write_registry = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("registry failure"))',
+        "rotate_fail": 'mod._rotate_backups = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("rotate failure"))',
+        "lock_open_fail": """
+real_open = Path.open
+def spy_open(self, *args, **kwargs):
+    if str(self).endswith(".lock"):
+        raise OSError(13, "simulado: permiso denegado al abrir el lock")
+    return real_open(self, *args, **kwargs)
+Path.open = spy_open
+""",
+        "lock_release_fail": """
+import msvcrt
+real_locking = msvcrt.locking
+def spy_locking(fd, mode, nbytes):
+    if mode == msvcrt.LK_UNLCK:
+        raise OSError(0, "simulado: fallo al liberar el lock")
+    return real_locking(fd, mode, nbytes)
+msvcrt.locking = spy_locking
+""",
     }[mode]
     driver = tmp_path / f"driver_{mode}.py"
     driver.write_text(
@@ -934,6 +952,134 @@ def test_write_ahead_registry_failure_leaves_audit_row(tmp_path):
     assert row["reason"] == "registry-error"
     assert row["detail"] == "code=IM-1 campo=nota modo=replace"
     assert registry.with_name("registry.json.bak1").read_bytes() == before
+
+
+def test_rotate_failure_leaves_write_ahead_row_and_old_registry(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    ledger.write_bytes(b"")
+    backup = registry.with_name("registry.json.bak1")
+    backup.write_bytes(b"previous-backup")
+    before = registry.read_bytes()
+    driver = write_driver(tmp_path, "rotate_fail")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(driver),
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "rotate-test",
+            "--reason",
+            "rotate-error",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+            "--apply",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert backup.read_bytes() == b"previous-backup"
+    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["change"] == "asiento"
+    assert row["by"] == "rotate-test"
+
+
+def test_lock_open_failure_leaves_inputs_untouched(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    ledger.write_bytes(b"ledger-before\n")
+    paths = (registry, ledger, roster)
+    before = {path: path.read_bytes() for path in paths}
+    driver = write_driver(tmp_path, "lock_open_fail")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(driver),
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "lock-test",
+            "--reason",
+            "lock-open-error",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+            "--apply",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 5
+    assert {path: path.read_bytes() for path in paths} == before
+
+
+def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    ledger.write_bytes(b"")
+    before = registry.read_bytes()
+    driver = write_driver(tmp_path, "lock_release_fail")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(driver),
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "lock-test",
+            "--reason",
+            "lock-release-error",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+            "--apply",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() != before
+    assert (
+        json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]["status"]
+        == "SETTLED"
+    )
+    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["change"] == "asiento"
+    assert row["by"] == "lock-test"
 
 
 @pytest.mark.parametrize(
