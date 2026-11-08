@@ -613,11 +613,13 @@ NOT_THE_LINK = {
         ),
     },
 }
-# Denominator of the census: 211 scripts/*.py + .agent/motor_checkpoint.py (prefix_resolver
-# is one of the 211). UPDATE RULE: adding/removing a scripts/*.py changes SCRIPTS_COUNT in
+# Denominator of the census: 212 scripts/*.py + .agent/motor_checkpoint.py (prefix_resolver
+# is one of the 212). UPDATE RULE: adding/removing a scripts/*.py changes SCRIPTS_COUNT in
 # the SAME commit; the new number must be justified by the diff (a new script is either a
 # clean file or one more exemption above), never edited just to silence the assertion.
-SCRIPTS_COUNT = 211
+# 211 -> 212: WOT-2026-160p added scripts/espera_checklist_mode.py (clean file: it never
+# names motor_destination_link, so no new exemption); the bump was missed in that commit.
+SCRIPTS_COUNT = 212
 CENSUS_DENOMINATOR = SCRIPTS_COUNT + 1
 
 # MEASURED on the 212 files (211 scripts/*.py + .agent/motor_checkpoint.py), 2026-11-02:
