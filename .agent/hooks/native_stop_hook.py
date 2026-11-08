@@ -305,8 +305,37 @@ def classifies(message: str) -> bool:
     mecanismo -- exactamente lo que ya fallo una vez.
 
     Sigue siendo mecanico: cuenta delimitadores y mira posicion, no interpreta.
+
+    WOT-2026-160p ronda 3 de lentes (hallazgo codex, MAJOR): esta funcion usaba
+    el helper CommonMark-aware `_lines_outside_fences` (tipo+longitud), que
+    cambiaba el veredicto real de 044t en mensajes con fences de longitud
+    mixta o con texto tras el cierre (medido: `classifies("````text\\n```\\n
+    [EVIDENCIA] x")` pasaba de True a False) -- rompiendo el contrato
+    "SIN CAMBIOS" de esta barrera, YA EN PRODUCCION, sin que ningun centinela
+    de espera estuviera armado. 044t vuelve a su propio helper legado,
+    BYTE A BYTE igual al algoritmo original (toggle simple, ignora longitud
+    y contenido tras el delimitador); el helper CommonMark-aware queda de uso
+    EXCLUSIVO de `espera_classifies`.
     """
-    return any(MARKER_RE.match(line) for line in _lines_outside_fences(message))
+    return any(MARKER_RE.match(line) for line in _lines_outside_fences_legacy(message))
+
+
+def _lines_outside_fences_legacy(message: str):
+    """Before: texto crudo; During: alterna con un toggle SIMPLE de ``` (sin
+    mirar longitud ni contenido tras el delimitador); After: lineas utiles.
+
+    Uso EXCLUSIVO de `classifies()` (044t): es el algoritmo ORIGINAL de
+    WOT-2026-044t, preservado byte a byte tras el hallazgo de la ronda 3 de
+    lentes de WOT-2026-160p (ver docstring de `classifies`).
+    """
+    in_fence = False
+    for line in message.replace("\r\n", "\n").split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        yield line
 
 
 def _fence_open_run(stripped_line: str, char: str) -> int:
@@ -345,17 +374,19 @@ def _lines_outside_fences(message: str, fence_markers: tuple[str, ...] = ("```",
     caracter y una racha de longitud >= la de apertura (CommonMark: nunca
     cruza tipos ni longitudes cortas); After: produce las lineas utiles.
 
-    Por defecto solo ``` (contrato de WOT-2026-044t, SIN CAMBIOS: con un unico
-    delimitador y longitud minima, abrir-con-cualquiera-cierra-con-el-mismo-
-    tipo-y-longitud-suficiente es identico al toggle simple de antes para
-    todos los casos reales de 044t, que nunca mezclan longitudes). WOT-2026-
-    160p ronda 2 de lentes (hallazgo codex, MAJOR): antes solo se recordaba
-    el TIPO de delimitador, no su LONGITUD; una apertura de 4 backticks
+    Uso EXCLUSIVO de `espera_classifies` (pasa ``` y ~~~). WOT-2026-160p
+    ronda 2 de lentes (hallazgo codex, MAJOR): antes solo se recordaba el
+    TIPO de delimitador, no su LONGITUD; una apertura de 4 backticks
     ("````text") se cerraba con una linea de solo 3 ("```"), dejando el
     marcador real "fuera" (visible) cuando en realidad seguia DENTRO del
     bloque sin cerrar. `espera_classifies` pasa ademas ``~~~`` (hallazgo
     previo: un marcador dentro de un bloque ``~~~`` se auto-aprobaba porque
-    solo se reconocia ```).
+    solo se reconocia ```). WOT-2026-160p ronda 3 de lentes (hallazgo codex,
+    MAJOR): este helper NO es equivalente al algoritmo original de 044t para
+    fences de longitud mixta o con texto tras el cierre -- 044t usa su PROPIO
+    helper legado `_lines_outside_fences_legacy` (ver docstring de
+    `classifies`); el valor por defecto `("```",)` de este parametro ya NO es
+    el contrato de 044t, es solo la firma por defecto de esta funcion.
     """
     fence_chars = tuple(marker[0] for marker in fence_markers)
     in_fence = False
@@ -431,8 +462,12 @@ def read_espera_sentinel(root: Path) -> dict | None:
     un fichero regular legible (ausente, directorio, enlace roto -- ninguno
     de esos casos prueba que el modo este activo); `{}` si el fichero SI es
     regular pero esta vacio, con JSON invalido o con JSON que no es un objeto
-    (el modo esta "activo" pero sin dato utilizable); el dict parseado en
-    cualquier otro caso. WOT-2026-160p ronda 2 de lentes (hallazgo codex,
+    (COMPORTAMIENTO REAL, corregido en ronda 3 de lentes: `_decide_espera`
+    trata `{}` exactamente IGUAL que `None` -- `{}.get("mode")` nunca esta en
+    `("observe", "block")`, asi que no registra ni bloquea; no es un estado
+    "activo sin dato", es fail-open total, como el centinela ausente); el
+    dict parseado en cualquier otro caso. WOT-2026-160p ronda 2 de lentes
+    (hallazgo codex,
     MAJOR): un centinela con BYTES invalidos (no UTF-8) lanzaba
     `UnicodeDecodeError` en `read_text`, que esta funcion no capturaba (solo
     `OSError`); como `_decide` evalua siempre la rama de espera antes de

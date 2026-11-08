@@ -416,6 +416,22 @@ class TestMarcadorDebeClasificar:
         """
         assert self._bloquea(hook._REASON) is True
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "````text\n```\n[EVIDENCIA] resultado comprobado",
+            "```\n```python\n[EVIDENCIA] x\n```",
+        ],
+    )
+    def test_classifies_044t_ignora_longitud_de_fence(self, message):
+        """Regresion (ronda 3 de lentes, hallazgo codex MAJOR): classifies()
+        debe seguir ignorando la longitud y el contenido tras el delimitador,
+        BYTE A BYTE igual que el algoritmo original de 044t -- el helper
+        CommonMark-aware (tipo+longitud) que WOT-2026-160p anadio para
+        `espera_classifies` cambiaba este veredicto de True a False sin que
+        ningun centinela de espera estuviera armado."""
+        assert hook.classifies(message) is True
+
 
 class TestObserveOnly:
     """Escape por entorno: mide pero NO bloquea (WOT-2026-044t).

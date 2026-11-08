@@ -53,3 +53,25 @@ def test_cli_real_status(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0
     assert proc.stdout.strip() == "espera_checklist_mode: OFF"
+
+
+def test_status_json_valido_no_dict_es_ilegible(tmp_path: Path, capsys) -> None:
+    """JSON valido pero no-objeto (ronda 3 de lentes): tambien es ILEGIBLE,
+    no solo el JSON roto que ya cubria test_status_off_legible_e_ilegible."""
+    target = tmp_path / mode.SENTINEL_RELPATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("[1, 2, 3]", encoding="utf-8")
+    assert mode.main(["status", "--root", str(tmp_path)]) == 0
+    assert "ON pero ILEGIBLE" in capsys.readouterr().out
+
+
+def test_turn_on_ante_oserror_devuelve_rc1(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Si escribir el centinela falla (OSError), turn_on no debe fingir
+    exito: rc 1 y diagnostico en stderr."""
+
+    def _boom(self, *args, **kwargs):
+        raise OSError("disco lleno (simulado)")
+
+    monkeypatch.setattr(Path, "write_text", _boom)
+    assert mode.main(["on", "--root", str(tmp_path)]) == 1
+    assert "no se pudo encender" in capsys.readouterr().err
