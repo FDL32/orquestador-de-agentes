@@ -843,6 +843,57 @@ def test_write_ahead_ledger_failure_leaves_registry_unchanged(tmp_path):
     assert not registry.with_name("registry.json.bak1").exists()
 
 
+def test_write_registry_fsync_precedes_replace(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    before = registry.read_bytes()
+    spec = importlib.util.spec_from_file_location("registry_ops_fsync", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    captured = []
+    real_fsync = module.os.fsync
+
+    def spy_fsync(fd):
+        captured.append(registry.read_bytes())
+        return real_fsync(fd)
+
+    module.os.fsync = spy_fsync
+    result = module.main(
+        [
+            "alta",
+            "--code",
+            "IM-2",
+            "--role",
+            "builder",
+            "--slot",
+            "slot-2",
+            "--thread-id",
+            "thread-2",
+            "--started",
+            "now",
+            "--status",
+            "ACTIVE",
+            "--by",
+            "fsync-test",
+            "--reason",
+            "fsync-test",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+            "--apply",
+        ]
+    )
+    assert result == 0
+    assert captured == [before]
+    assert registry.read_bytes() != before
+
+
 def test_write_ahead_registry_failure_leaves_audit_row(tmp_path):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"

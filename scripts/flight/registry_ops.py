@@ -265,7 +265,8 @@ def _open_ledger(path):
 
     Before: ``path`` es el destino del ledger propio de registry_ops.
     During: abre en append-binary, inspecciona el ultimo byte y deja el handle
-        posicionado al final para la fila posterior a la escritura del registry.
+        posicionado al final para la fila que se escribe antes del reemplazo
+        del registry.
     After: retorna un handle abierto; cualquier error de apertura se propaga sin
         tocar el registry, backups ni su contenido.
     """
@@ -322,16 +323,18 @@ def _write_registry(path, data):
     """Escribe el registry mediante temporal y reemplazo atomico.
 
     Before: ``data`` es un diccionario serializable y ``path`` es el destino.
-    During: escribe ``<suffix>.tmp`` con JSON UTF-8 y newline LF, y lo reemplaza.
+    During: escribe ``<suffix>.tmp`` con JSON UTF-8 y newline LF, hace flush y
+        fsync del fichero temporal, y despues lo reemplaza.
     After: ``path`` contiene el JSON nuevo; limpia el temporal si falla I/O.
+        El fsync cubre solo el fichero, no el directorio contenedor.
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
     try:
-        tmp.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         tmp.replace(path)
     except OSError:
         with contextlib.suppress(OSError):
