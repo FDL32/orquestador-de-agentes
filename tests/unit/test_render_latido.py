@@ -229,6 +229,7 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
     synthetic = (
         fixture.replace("CO-55", "CO-56")
         .replace("CO-54", "CO-55")
+        .replace("CO-53", "CO-54")
         .replace(
             "mcp:0355d3c5-08e9-427a-ba65-e6e3ab43b7ce",
             "mcp:11111111-1111-4111-8111-111111111111",
@@ -236,6 +237,10 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
         .replace(
             "mcp:d0cbb70f-c8f3-444d-a15d-ce28235cc26c",
             "mcp:33333333-3333-4333-8333-333333333333",
+        )
+        .replace(
+            "mcp:a3854955-09b6-4647-a647-d96a935442dc",
+            "mcp:44444444-4444-4444-8444-444444444444",
         )
     )
     predecessor = tmp_path / "synthetic.md"
@@ -274,6 +279,11 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
     assert (
         "Tu supervisora es CO-56 (mcp:22222222-2222-4222-8222-222222222222," in output
     )
+    assert "cascada directa CO-55" in output
+    assert "o 'CO-55'" in output
+    assert "cascada directa CO-54" not in output
+    assert "o 'CO-54'" not in output
+    assert "cascada directa CO-55 (mcp:33333333-3333-4333-8333-333333333333)" in output
     assert "Go relevo 24h 9" in output
 
 
@@ -319,6 +329,20 @@ def test_token_boundary_preserves_historical_code(tmp_path: Path) -> None:
 
     assert rc == 0
     assert "Referencia historica CO-550" in output
+
+
+def test_token_boundary_preserves_prefixed_historical_code(tmp_path: Path) -> None:
+    predecessor = tmp_path / "prefix-boundary.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\nReferencia historica XCO-55\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert "Referencia historica XCO-55" in output
 
 
 def test_token_boundary_allows_variable_length_successor_code(tmp_path: Path) -> None:
