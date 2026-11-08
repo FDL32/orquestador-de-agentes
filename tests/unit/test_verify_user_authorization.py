@@ -334,8 +334,37 @@ def test_open_store_ro_rejects_non_numeric_timeout(tmp_path):
 
 
 def test_open_store_ro_rejects_non_positive_timeout(tmp_path):
-    with pytest.raises(ValueError, match="0"):
+    with pytest.raises(ValueError, match="timeout debe ser un numero > 0"):
         vua.open_store_ro(tmp_path / "unused.sqlite", timeout=0)
+
+
+def test_open_store_ro_rejects_bool_timeout(tmp_path):
+    with pytest.raises(ValueError, match="True"):
+        vua.open_store_ro(tmp_path / "unused.sqlite", timeout=True)
+
+
+def test_open_store_ro_passes_timeout_to_sqlite_connect(tmp_path, monkeypatch):
+    path = build_db(tmp_path)
+    real_connect = vua.sqlite3.connect
+    calls: list[dict] = []
+
+    def spy_connect(*args, **kwargs):
+        calls.append(kwargs)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(vua.sqlite3, "connect", spy_connect)
+
+    connection = vua.open_store_ro(path, timeout=0.37)
+    try:
+        assert calls[-1]["timeout"] == 0.37
+    finally:
+        connection.close()
+
+    connection = vua.open_store_ro(path)
+    try:
+        assert calls[-1]["timeout"] == 5.0
+    finally:
+        connection.close()
 
 
 def test_locked_store_is_named_infra(tmp_path):
