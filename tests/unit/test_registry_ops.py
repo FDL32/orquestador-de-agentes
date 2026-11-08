@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import subprocess
 import sys
@@ -9,6 +10,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "flight" / "registry_ops.py"
+
+_REGISTRY_OPS_SPEC = importlib.util.spec_from_file_location("registry_ops", SCRIPT)
+_REGISTRY_OPS_MODULE = importlib.util.module_from_spec(_REGISTRY_OPS_SPEC)
+_REGISTRY_OPS_SPEC.loader.exec_module(_REGISTRY_OPS_MODULE)
+RECONCILE_FIELDS = _REGISTRY_OPS_MODULE.RECONCILE_FIELDS
 
 
 def run_cli(registry, *args, ledger=None, roster=None, auto_roster=True):
@@ -1019,9 +1025,6 @@ def test_reconcile_apply_updates_only_five_fields_and_preserves_unknowns(tmp_pat
     assert updated_data["autoridad"] == "autoridad-real"
     assert "extra" not in updated
     assert set(updated) == original_keys | set(RECONCILE_FIELDS)
-
-
-RECONCILE_FIELDS = ("settled", "status", "updatedAt", "modelo", "cuenta")
 
 
 def test_g4_roster_private_string_is_ignored_on_apply(tmp_path):
