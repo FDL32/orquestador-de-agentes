@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -256,6 +257,70 @@ def test_dod_a_nonexistent_case_variant_ledger_roster_rejected(tmp_path):
     )
     assert result.returncode == 2
     assert "--ledger=" in result.stderr and "--roster=" in result.stderr
+
+
+def test_dod_a_registry_hardlink_ledger_collision_rejected(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger-hardlink.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    try:
+        os.link(registry, ledger)
+    except (OSError, NotImplementedError):
+        pytest.skip("hardlinks no soportados en este filesystem")
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "SETTLED",
+        "--by",
+        "hardlink-test",
+        "--reason",
+        "hardlink-registry",
+        "--apply",
+        ledger=ledger,
+        roster=roster,
+        auto_roster=False,
+    )
+    assert result.returncode == 2
+    assert "--registry=" in result.stderr and "--ledger=" in result.stderr
+    assert registry.read_bytes() == before
+
+
+def test_dod_a_roster_hardlink_ledger_collision_rejected(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger-hardlink.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    try:
+        os.link(roster, ledger)
+    except (OSError, NotImplementedError):
+        pytest.skip("hardlinks no soportados en este filesystem")
+    before = roster.read_bytes()
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "SETTLED",
+        "--by",
+        "hardlink-test",
+        "--reason",
+        "hardlink-roster",
+        "--apply",
+        ledger=ledger,
+        roster=roster,
+        auto_roster=False,
+    )
+    assert result.returncode == 2
+    assert "--ledger=" in result.stderr and "--roster=" in result.stderr
+    assert roster.read_bytes() == before
 
 
 def test_dod_a_distinct_paths_remain_valid(tmp_path):
@@ -991,6 +1056,7 @@ def test_rotate_failure_leaves_write_ahead_row_and_old_registry(tmp_path):
         check=False,
     )
     assert result.returncode == 2
+    assert "rotate failure" in result.stderr
     assert registry.read_bytes() == before
     assert backup.read_bytes() == b"previous-backup"
     row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
@@ -1034,6 +1100,7 @@ def test_lock_open_failure_leaves_inputs_untouched(tmp_path):
         check=False,
     )
     assert result.returncode == 5
+    assert "bloqueo no disponible" in result.stderr
     assert {path: path.read_bytes() for path in paths} == before
 
 
@@ -1072,6 +1139,7 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
         check=False,
     )
     assert result.returncode == 2
+    assert "simulado: fallo al liberar el lock" in result.stderr
     assert registry.read_bytes() != before
     assert (
         json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]["status"]
