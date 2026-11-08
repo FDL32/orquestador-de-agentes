@@ -1,8 +1,9 @@
+import hashlib
 import json
 import re
 from pathlib import Path
 
-from scripts.flight.render_latido import render_latido
+from scripts.flight.render_latido import predecessor_sha12, render_latido
 
 
 ROOT = Path(__file__).parents[2]
@@ -68,6 +69,145 @@ def test_extra_roster_field_is_rc2() -> None:
 
     assert rc == 2
     assert "campo de roster no consumido: extra en active_roles.orquestador" in output
+
+
+def test_go_index_is_derived_from_a_non_one_predecessor(tmp_path: Path) -> None:
+    fixture = PREDECESSOR.read_text(encoding="utf-8")
+    match = re.search(r"(?m)^9\. Contexto propio:.*$", fixture)
+    assert match is not None
+    step9 = match.group(0)
+    for literal in ("fila b1", "Go relevo 24h 1", "Go relevo 24h 2"):
+        assert step9.count(literal) == 1
+    mutated_step9 = (
+        step9.replace("fila b1", "fila b4")
+        .replace("Go relevo 24h 1", "Go relevo 24h 4")
+        .replace("Go relevo 24h 2", "Go relevo 24h 5")
+    )
+    predecessor = tmp_path / "go-index-4.md"
+    predecessor.write_text(
+        fixture[: match.start()] + mutated_step9 + fixture[match.end() :],
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 7, _juicios_sucesor())
+
+    assert rc == 0
+    rendered_step9 = re.search(r"(?m)^9\. Contexto propio:.*$", output)
+    assert rendered_step9 is not None
+    assert "fila b7" in rendered_step9.group(0)
+    assert "Go relevo 24h 7" in rendered_step9.group(0)
+    assert "Go relevo 24h 8" in rendered_step9.group(0)
+    for literal in ("fila b4", "fila b1", "Go relevo 24h 4", "Go relevo 24h 1"):
+        assert literal not in rendered_step9.group(0)
+
+
+def test_context_code_must_match_cited_supervisor() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["cadena_contexto"][0]["session_code"] = "CO-99"
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert (
+        "roster.cadena_contexto[0] no coincide con la identidad de supervisora "
+        "citada en el predecesor"
+    ) in output
+
+
+def test_context_thread_id_must_match_cited_supervisor() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["cadena_contexto"][0]["threadId"] = (
+        "mcp:99999999-9999-4999-8999-999999999999"
+    )
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert (
+        "roster.cadena_contexto[0] no coincide con la identidad de supervisora "
+        "citada en el predecesor"
+    ) in output
+
+
+def test_duplicate_cascade_anchor_is_rc2(tmp_path: Path) -> None:
+    predecessor = tmp_path / "duplicate-cascade.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "la cascada es ", encoding="utf-8"
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R2: esperado 1, encontrado 2" in output
+
+
+def test_duplicate_r6_anchor_is_rc2(tmp_path: Path) -> None:
+    predecessor = tmp_path / "duplicate-r6.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "ARRANQUE_CO-55 s.1",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R6: esperado 1, encontrado 2" in output
+
+
+def test_duplicate_step9_r3_anchor_is_rc2(tmp_path: Path) -> None:
+    fixture = PREDECESSOR.read_text(encoding="utf-8")
+    match = re.search(r"(?m)^9\. Contexto propio:.*$", fixture)
+    assert match is not None
+    step9 = match.group(0)
+    assert step9.count("fila b1") == 1
+    predecessor = tmp_path / "duplicate-r3.md"
+    predecessor.write_text(
+        fixture[: match.end()] + " fila b1" + fixture[match.end() :],
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R3 fila b1: esperado 1, encontrado 2" in output
+
+
+def test_status_line_is_forced_to_vigente(tmp_path: Path) -> None:
+    predecessor = tmp_path / "other-status.md"
+    fixture = PREDECESSOR.read_text(encoding="utf-8")
+    predecessor.write_text(
+        fixture.replace("ESTADO: VIGENTE", "ESTADO: OTRA_COSA", 1), encoding="utf-8"
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert output.splitlines()[0] == "ESTADO: VIGENTE"
+
+
+def test_predecessor_sha12_matches_independent_hash() -> None:
+    expected = hashlib.sha256(PREDECESSOR.read_bytes()).hexdigest()[:12]
+
+    assert predecessor_sha12(PREDECESSOR) == expected
+
+
+def test_render_blindado_for_salto_x_to_x_mas_uno(tmp_path: Path) -> None:
+    predecessor = tmp_path / "salto.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\npara el salto CO-55 -> CO-55\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert "para el salto CO-56 -> CO-57" in output
 
 
 def test_synthetic_pair_derives_identities_without_pair_literals(
