@@ -580,7 +580,7 @@ def render_latido(  # noqa: C901
         markers = [
             match.group(1).strip()
             for match in re.finditer(
-                r"\[\[JUICIO:([^\]\r\n]*?)(?:\]\]|(?=\r?$))",
+                r"\[\[JUICIO:([^\]\r\n]*)",
                 rendered,
                 re.MULTILINE,
             )

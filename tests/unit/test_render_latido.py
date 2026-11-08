@@ -322,6 +322,58 @@ def test_cli_trims_one_final_newline_but_preserves_internal_newline(
     assert valid_result.returncode == 0
 
 
+def test_cli_trims_only_one_final_lf_from_juicio_file(tmp_path: Path) -> None:
+    juicio_paths = {}
+    for name, value in _juicios_sucesor().items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(value, encoding="utf-8")
+        juicio_paths[name] = path
+    juicio_paths["nota_derivacion"].write_bytes(b"[x]\n\n")
+    command = [
+        sys.executable,
+        str(ROOT / "scripts/flight/render_latido.py"),
+        "--predecessor",
+        str(PREDECESSOR),
+        "--roster",
+        str(ROSTER),
+        "--go-index",
+        "2",
+    ]
+    for name, path in juicio_paths.items():
+        command.extend(["--juicio", f"{name}=@{path}"])
+
+    result = subprocess.run(command, capture_output=True, check=False)
+
+    assert result.returncode == 2
+    assert "juicio multilinea: nota_derivacion" in result.stdout.decode("utf-8")
+
+
+def test_cli_trims_only_one_final_crlf_from_juicio_file(tmp_path: Path) -> None:
+    juicio_paths = {}
+    for name, value in _juicios_sucesor().items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(value, encoding="utf-8")
+        juicio_paths[name] = path
+    juicio_paths["nota_derivacion"].write_bytes(b"[x]\r\n\r\n")
+    command = [
+        sys.executable,
+        str(ROOT / "scripts/flight/render_latido.py"),
+        "--predecessor",
+        str(PREDECESSOR),
+        "--roster",
+        str(ROSTER),
+        "--go-index",
+        "2",
+    ]
+    for name, path in juicio_paths.items():
+        command.extend(["--juicio", f"{name}=@{path}"])
+
+    result = subprocess.run(command, capture_output=True, check=False)
+
+    assert result.returncode == 2
+    assert "juicio multilinea: nota_derivacion" in result.stdout.decode("utf-8")
+
+
 def test_module_docstring_lists_r4_status_rule() -> None:
     assert "R4" in render_latido_module.__doc__
     assert "ESTADO" in render_latido_module.__doc__
@@ -405,6 +457,39 @@ def test_predecessor_free_text_known_judgement_marker_is_rc3(tmp_path: Path) -> 
 
     assert rc == 3
     assert "hueco de JUICIO no rellenado: nota_derivacion" in output
+
+
+def test_predecessor_free_text_known_single_close_marker_with_text_is_rc3(
+    tmp_path: Path,
+) -> None:
+    predecessor = tmp_path / "known-single-close-marker.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8")
+        + "\n[[JUICIO:nota_derivacion] y resto.\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 3
+    assert "hueco de JUICIO no rellenado: nota_derivacion" in output
+
+
+def test_predecessor_free_text_unknown_single_close_marker_with_text_is_rc2(
+    tmp_path: Path,
+) -> None:
+    predecessor = tmp_path / "unknown-single-close-marker.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\n[[JUICIO:pendiente] y resto.\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "marcador de JUICIO desconocido: pendiente" in output
 
 
 def test_salto_x_to_x_after_last_protected_span_is_corrected(
