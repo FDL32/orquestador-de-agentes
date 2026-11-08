@@ -995,6 +995,46 @@ def test_write_registry_fsync_precedes_replace(tmp_path):
     assert registry.read_bytes() != before
 
 
+def test_write_registry_fsync_failure_cleans_tmp(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    roster = tmp_path / "roster.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    before = registry.read_bytes()
+    spec = importlib.util.spec_from_file_location("registry_ops_fsync_failure", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def failing_fsync(fd):
+        raise OSError("fsync simulado: fallo tras escribir el tmp")
+
+    module.os.fsync = failing_fsync
+    result = module.main(
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "fsync-failure-test",
+            "--reason",
+            "fsync-failure-test",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+            "--apply",
+        ]
+    )
+    assert result == 2
+    assert registry.read_bytes() == before
+    assert not registry.with_name("registry.json.tmp").exists()
+
+
 def test_write_ahead_registry_failure_leaves_audit_row(tmp_path):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"
