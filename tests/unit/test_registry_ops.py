@@ -1119,6 +1119,7 @@ def test_l3_ledger_alta_contains_exact_audit_fields(tmp_path):
     )
     assert result.returncode == 0
     row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert set(row) == {"ts", "by", "change", "detail", "reason"}
     assert row["change"] == "alta"
     assert row["by"] == "ledger-alta"
     assert row["reason"] == "audit-alta"
@@ -1145,6 +1146,7 @@ def test_l3_ledger_asiento_contains_exact_audit_fields(tmp_path):
     )
     assert result.returncode == 0
     row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert set(row) == {"ts", "by", "change", "detail", "reason"}
     assert row["change"] == "asiento"
     assert row["by"] == "ledger-asiento"
     assert row["reason"] == "audit-asiento"
@@ -1171,6 +1173,7 @@ def test_l3_ledger_nota_contains_exact_audit_fields(tmp_path):
     )
     assert result.returncode == 0
     row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert set(row) == {"ts", "by", "change", "detail", "reason"}
     assert row["change"] == "nota"
     assert row["by"] == "ledger-nota"
     assert row["reason"] == "audit-nota"
@@ -1197,6 +1200,7 @@ def test_l3_ledger_reconcile_contains_exact_audit_fields(tmp_path):
     )
     assert result.returncode == 0
     row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert set(row) == {"ts", "by", "change", "detail", "reason"}
     assert row["change"] == "reconcile"
     assert row["by"] == "ledger-reconcile"
     assert row["reason"] == "audit-reconcile"
