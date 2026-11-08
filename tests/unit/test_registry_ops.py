@@ -20,6 +20,13 @@ _REGISTRY_OPS_SPEC.loader.exec_module(_REGISTRY_OPS_MODULE)
 RECONCILE_FIELDS = _REGISTRY_OPS_MODULE.RECONCILE_FIELDS
 
 
+def test_registry_ops_docstring_describes_durability_limits():
+    docstring = _REGISTRY_OPS_MODULE.__doc__
+    assert "registry via temporal con fsync del fichero antes del replace" in docstring
+    assert "ledger con flush pero sin fsync" in docstring
+    assert "Ningun fsync cubre el directorio contenedor" in docstring
+
+
 def run_cli(
     registry,
     *args,
@@ -395,16 +402,26 @@ def slow_apply(*args, **kwargs):
             while not Path(second_started).exists() and time.monotonic() < deadline:
                 time.sleep(0.05)
             if not Path(second_started).exists():
-                raise RuntimeError("el segundo escritor no arranco en 10s")
+                raise RuntimeError(
+                    "el segundo escritor nunca intento el lock "
+                    "(_lock_try) en 10s"
+                )
         time.sleep(0.05)
     return original_apply(*args[:-1], delayed, **kwargs)
 mod._apply_change = slow_apply
 """,
-        "signal_start": """
+        "signal_lock_attempt": """
 import os
 signal_path = os.environ.get("REGISTRY_OPS_TEST_SECOND_STARTED")
-if signal_path:
-    Path(signal_path).write_text("started", encoding="utf-8")
+real_lock_try = mod._lock_try
+signaled = False
+def spy_lock_try(handle):
+    global signaled
+    if signal_path and not signaled:
+        Path(signal_path).write_text("attempted", encoding="utf-8")
+        signaled = True
+    return real_lock_try(handle)
+mod._lock_try = spy_lock_try
 """,
         "ledger_fail": 'mod._append_ledger_handle = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ledger failure"))',
         "registry_fail": 'mod._write_registry = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("registry failure"))',
@@ -854,7 +871,7 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
         write_registry(registry, [first, second])
         write_roster(roster)
         slow = write_driver(work, "slow")
-        normal = write_driver(work, "signal_start")
+        normal = write_driver(work, "signal_lock_attempt")
         witness = work / "slow.ready"
         second_started = work / "second.started"
         common = [
@@ -920,8 +937,15 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
                 "REGISTRY_OPS_TEST_SECOND_STARTED": str(second_started),
             },
         )
-        slow_result = slow_process.communicate()
-        normal_result = normal_process.communicate()
+        try:
+            slow_result = slow_process.communicate(timeout=30)
+            normal_result = normal_process.communicate(timeout=30)
+        except subprocess.TimeoutExpired as exc:
+            slow_process.terminate()
+            normal_process.terminate()
+            slow_process.communicate()
+            normal_process.communicate()
+            pytest.fail(f"escritores concurrentes excedieron 30s: {exc}")
         assert slow_process.returncode == 0, slow_result
         assert normal_process.returncode == 0, normal_result
         final = json.loads(registry.read_text(encoding="utf-8"))
@@ -1116,6 +1140,7 @@ def test_rotate_failure_leaves_write_ahead_row_and_old_registry(tmp_path):
     roster = tmp_path / "roster.json"
     write_registry(registry, [session()])
     write_roster(roster)
+    roster_before = roster.read_bytes()
     ledger.write_bytes(b"")
     backup = registry.with_name("registry.json.bak1")
     backup.write_bytes(b"previous-backup")
@@ -1149,8 +1174,17 @@ def test_rotate_failure_leaves_write_ahead_row_and_old_registry(tmp_path):
     assert result.returncode == 2
     assert "rotate failure" in result.stderr
     assert registry.read_bytes() == before
+    assert roster.read_bytes() == roster_before
     assert backup.read_bytes() == b"previous-backup"
-    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert sorted(p.name for p in tmp_path.glob("registry.json.bak*")) == [
+        "registry.json.bak1"
+    ]
+    rows = [
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert set(row) == {"ts", "by", "change", "detail", "reason"}
     assert row["change"] == "asiento"
     assert row["by"] == "rotate-test"
 
@@ -1201,6 +1235,7 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     roster = tmp_path / "roster.json"
     write_registry(registry, [session()])
     write_roster(roster)
+    roster_before = roster.read_bytes()
     ledger.write_bytes(b"")
     before = registry.read_bytes()
     driver = write_driver(tmp_path, "lock_release_fail")
@@ -1232,11 +1267,20 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     assert result.returncode == 2
     assert "simulado: fallo al liberar el lock" in result.stderr
     assert registry.read_bytes() != before
+    assert roster.read_bytes() == roster_before
     assert (
         json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]["status"]
         == "SETTLED"
     )
-    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert sorted(p.name for p in tmp_path.glob("registry.json.bak*")) == [
+        "registry.json.bak1"
+    ]
+    rows = [
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert set(row) == {"ts", "by", "change", "detail", "reason"}
     assert row["change"] == "asiento"
     assert row["by"] == "lock-test"
 

@@ -5,10 +5,14 @@ Before: ``--registry`` apunta a un JSON legible con ``sessions`` como lista de
     diccionarios, y los subcomandos de escritura reciben ``--by`` y ``--reason``.
 During: valida altas, asientos y notas en modo dry-run o, con ``--apply``, toma
     el lock del sistema, abre/normaliza el ledger, lee y muta, estampa
-    ``actualizado``, escribe el ledger con flush, rota backups y escribe el
-    registry atomico antes de liberar el lock. Los locks usan ``msvcrt`` en
+    ``actualizado``, escribe el ledger con flush pero sin fsync, rota backups y
+    escribe el registry via temporal con fsync del fichero antes del replace,
+    todo antes de liberar el lock. Ningun fsync cubre el directorio contenedor.
+    Los locks usan ``msvcrt`` en
     Windows y ``fcntl`` en POSIX.
-After: imprime un plan JSON o aplica una mutacion durable. Los codigos son:
+After: imprime un plan JSON o aplica una mutacion durable frente a un crash del
+    proceso Python, pero no frente a un corte de energia durante ese intervalo.
+    Los codigos son:
     0 = exito (incluido dry-run valido); 2 = entrada invalida o esquema roto;
     3 = gate operativo compartido por todo subcomando --apply;
     4 = conflicto de identidad; 5 = lock no disponible tras reintentos.
@@ -351,9 +355,13 @@ def _apply_change(path, ledger, roster, by, reason, change, detail, mutate):
         lock, lee+valida+muta, estampa ``actualizado``, escribe la fila real del
         ledger con flush, rota backups y despues escribe atomicamente el registry,
         manteniendo el mismo handle hasta liberar el lock.
-    After: registry y ledger quedan escritos antes de liberar el lock. Si falla
-        el append, no se toca registry ni backups (ningun bak nuevo); el ledger
-        puede crearse o normalizar su newline antes de que falle la validacion.
+    After: el registry se escribe via temporal con fsync del fichero antes del
+        replace; el ledger queda enviado al sistema operativo con flush, pero
+        sin fsync. Ningun fsync cubre el directorio contenedor. Esto garantiza
+        frente a un crash del proceso Python, no frente a un corte de energia
+        durante ese intervalo. Si falla el append, no se toca registry ni
+        backups (ningun bak nuevo); el ledger puede crearse o normalizar su
+        newline antes de que falle la validacion.
         Si falla _write_registry despues del append y la rotacion, queda la fila
         y la rotacion sin escritura final correspondiente (sobre-auditoria doble,
         direccion segura, preferible a escribir sin rastro).
