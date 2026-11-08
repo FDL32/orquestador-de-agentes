@@ -3,7 +3,9 @@ import json
 import re
 from pathlib import Path
 
-from scripts.flight.render_latido import predecessor_sha12, render_latido
+import pytest
+import scripts.flight.render_latido as render_latido_module
+from scripts.flight.render_latido import _main, predecessor_sha12, render_latido
 
 
 ROOT = Path(__file__).parents[2]
@@ -273,3 +275,260 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
         "Tu supervisora es CO-56 (mcp:22222222-2222-4222-8222-222222222222," in output
     )
     assert "Go relevo 24h 9" in output
+
+
+def test_module_docstring_declares_saliente_handoff_trigger() -> None:
+    assert "saliente" in render_latido_module.__doc__
+    assert "paquete de relevo" in render_latido_module.__doc__
+
+
+def test_module_and_function_docstrings_describe_three_judgement_values() -> None:
+    assert "three judgement values" in render_latido_module.__doc__
+    assert "three judgement values" in render_latido.__doc__
+
+
+def test_objective_judgement_accepts_a_different_eight_digit_date(
+    tmp_path: Path,
+) -> None:
+    predecessor_text = PREDECESSOR.read_text(encoding="utf-8").replace(
+        "ARRANQUE_CO-55_20261108.md s.2", "ARRANQUE_CO-55_20270101.md s.2"
+    )
+    predecessor = tmp_path / "date.md"
+    predecessor.write_text(predecessor_text, encoding="utf-8")
+    juicios = _juicios_sucesor()
+    juicios["objetivo_en_curso"] = juicios["objetivo_en_curso"].replace(
+        "20261108", "20270101"
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, juicios)
+
+    assert rc == 0
+    assert "ARRANQUE_CO-56_20270101.md s.2" in output
+
+
+def test_token_boundary_preserves_historical_code(tmp_path: Path) -> None:
+    predecessor = tmp_path / "boundary.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\nReferencia historica CO-550\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    assert "Referencia historica CO-550" in output
+
+
+def test_token_boundary_allows_variable_length_successor_code(tmp_path: Path) -> None:
+    predecessor = tmp_path / "variable-code.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\nReferencia ficticia CO-550\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["active_roles"]["orquestador"]["session_code"] = "CO-100"
+    juicios = _juicios_sucesor()
+    juicios["objetivo_en_curso"] = juicios["objetivo_en_curso"].replace(
+        "CO-56", "CO-100"
+    )
+
+    rc, output = render_latido(predecessor, roster, 2, juicios)
+
+    assert rc == 0
+    assert "Eres CO-100" in output
+    assert "Referencia ficticia CO-550" in output
+
+
+@pytest.mark.parametrize("value", ["", "   ", "[[JUICIO:objetivo_en_curso]]"])
+def test_empty_or_literal_judgement_is_rc3(value: str) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    juicios["objetivo_en_curso"] = value
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, juicios)
+
+    assert rc == 3
+    assert "hueco de JUICIO no rellenado: objetivo_en_curso" in output
+
+
+def test_partial_judgements_name_only_the_missing_block() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    juicios = _juicios_sucesor()
+    del juicios["objetivo_en_curso"]
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, juicios)
+
+    assert rc == 3
+    assert "hueco de JUICIO no rellenado: objetivo_en_curso" in output
+    assert "hueco de JUICIO no rellenado: nota_derivacion" not in output
+    assert (
+        "hueco de JUICIO no rellenado: secciones_postcompactacion_nueva" not in output
+    )
+
+
+def test_non_dict_roster_is_rc2_without_traceback() -> None:
+    rc, output = render_latido(PREDECESSOR, 5, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "campo de roster no consumido" in output
+
+
+def test_non_string_roster_thread_id_is_rc2_without_traceback() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["active_roles"]["supervisor"]["threadId"] = 5
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "threadId" in output
+    assert "Traceback" not in output
+
+
+@pytest.mark.parametrize(
+    "mutate, expected",
+    [
+        (lambda roster: roster.update({"schema_version": 1}), "raiz"),
+        (
+            lambda roster: roster["active_roles"].update({"ancestro_directo": {}}),
+            "active_roles",
+        ),
+        (
+            lambda roster: roster["cadena_contexto"].append(
+                roster["cadena_contexto"][0].copy()
+            ),
+            "cadena_contexto",
+        ),
+    ],
+)
+def test_reduced_roster_shape_is_exact(mutate, expected: str) -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    mutate(roster)
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "campo de roster no consumido:" in output
+    assert expected in output
+
+
+def test_uppercase_foreign_mcp_id_is_rejected(tmp_path: Path) -> None:
+    predecessor = tmp_path / "uppercase-id.md"
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8")
+        + "\nmcp:ABCDEF12-1234-4123-8123-123456789012\n",
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "id mcp ajeno al roster: mcp:ABCDEF12-1234-4123-8123-123456789012" in output
+
+
+def test_go_index_zero_is_rejected() -> None:
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(PREDECESSOR, roster, 0, _juicios_sucesor())
+
+    assert rc == 2
+    assert "go_index debe ser entero >= 1, recibido: 0" in output
+
+
+def test_cli_malformed_juicio_keeps_argparse_error() -> None:
+    with pytest.raises(SystemExit):
+        _main(
+            [
+                "--predecessor",
+                str(PREDECESSOR),
+                "--roster",
+                str(ROSTER),
+                "--go-index",
+                "2",
+                "--juicio",
+                "malformado",
+            ]
+        )
+
+
+def test_cli_missing_roster_returns_rc2(capsys) -> None:
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(PREDECESSOR.parent / "missing.json"),
+            "--go-index",
+            "2",
+        ]
+    )
+
+    assert rc == 2
+    assert "no se pudo leer --roster" in capsys.readouterr().out
+
+
+def test_cli_missing_juicio_file_returns_rc2(tmp_path: Path, capsys) -> None:
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(ROSTER),
+            "--go-index",
+            "2",
+            "--juicio",
+            f"nota_derivacion=@{tmp_path / 'missing.txt'}",
+        ]
+    )
+
+    assert rc == 2
+    assert "no se pudo leer --juicio" in capsys.readouterr().out
+
+
+def test_cli_unwritable_out_returns_rc2(tmp_path: Path, capsys) -> None:
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(ROSTER),
+            "--go-index",
+            "2",
+            "--out",
+            str(tmp_path / "missing-parent" / "rendered.md"),
+        ]
+    )
+
+    assert rc == 2
+    assert "no se pudo escribir --out" in capsys.readouterr().out
+
+
+def test_cli_success_propagates_render_rc_and_writes_out(tmp_path: Path) -> None:
+    paths = []
+    juicios = _juicios_sucesor()
+    for name, value in juicios.items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(value, encoding="utf-8")
+        paths.append((name, path))
+    out = tmp_path / "rendered.md"
+    args = [
+        "--predecessor",
+        str(PREDECESSOR),
+        "--roster",
+        str(ROSTER),
+        "--go-index",
+        "2",
+        "--out",
+        str(out),
+    ]
+    for name, path in paths:
+        args.extend(["--juicio", f"{name}=@{path}"])
+
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    expected_rc, expected_output = render_latido(PREDECESSOR, roster, 2, juicios)
+    actual_rc = _main(args)
+
+    assert actual_rc == expected_rc == 0
+    assert out.read_text(encoding="utf-8") == expected_output

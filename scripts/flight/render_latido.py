@@ -7,9 +7,18 @@ anchors, ``roster`` must contain exactly the three consumed roster objects, and
 During: the renderer validates the closed rule counts, preserves the cascade
 and postcompaction tails byte-for-byte, derives own/supervisor identities
 outside protected judgement and insertion spans, updates the step-9 Go
-references, forces the status line, and replaces the three judgement spans.  It can also calculate the
+references, forces the status line, and replaces the three judgement values.  It can also calculate the
 predecessor path's SHA-256 prefix with :func:`predecessor_sha12` for a
 judgement supplied by a caller.
+
+The input ``roster`` is the reduced three-object form: ``active_roles.orquestador``,
+``active_roles.supervisor``, and ``cadena_contexto[0]`` with ``threadId`` and
+``session_code``.  A real ``flight_roster.json`` (with ``since``, ``set_by``,
+``estado``, ``version``, and other fields) must be reduced before calling this
+function; passing it as-is returns rc 2.  The trigger is declared for the
+saliente coordinator in its paquete de relevo; the lifecycle of scheduled
+tasks (creating its own and deleting the predecessor's) is not part of this
+specification.
 
 After: ``render_latido`` returns ``(0, text)`` for a complete derivation,
 ``(2, text)`` for a rule mismatch, foreign id, or unconsumed roster field, and
@@ -60,7 +69,7 @@ def _judgement_spans(text: str) -> dict[str, tuple[int, int]]:
     if note_start < 0 or note_end <= note_start:
         raise ValueError("no se encontro ancla de JUICIO nota_derivacion")
     objective = re.search(
-        r"\(ARRANQUE_[A-Z]+-\d+_20261108\.md s\.2: .*?\)",
+        r"\(ARRANQUE_[A-Z]+-\d+_\d{8}\.md s\.2: .*?\)",
         text[header_end:],
         re.DOTALL,
     )
@@ -78,11 +87,13 @@ def _derive_predecessor(
     text: str, cascade_start: int, cascade_end: int
 ) -> dict[str, Any]:
     own_match = re.search(
-        r"Eres (CO-\d+), sesion coordinadora ACTIVA.*?tu hilo es (mcp:[0-9a-f-]+),",
+        r"Eres (CO-\d+), sesion coordinadora ACTIVA.*?tu hilo es (mcp:[0-9A-Za-z-]+),",
         text,
         re.DOTALL,
     )
-    supervisor_match = re.search(r"Tu supervisora es (CO-\d+) \((mcp:[0-9a-f-]+)", text)
+    supervisor_match = re.search(
+        r"Tu supervisora es (CO-\d+) \((mcp:[0-9A-Za-z-]+)", text
+    )
     step9_match = re.search(r"(?m)^9\. Contexto propio:.*$", text)
     if own_match is None or supervisor_match is None or step9_match is None:
         raise ValueError("identidades o paso 9 no derivables del predecesor")
@@ -92,7 +103,7 @@ def _derive_predecessor(
     if go_match is None:
         raise ValueError("go_index_predecesor no derivable del paso 9")
     cascade_match = re.match(
-        r"(CO-\d+) \((mcp:[0-9a-f-]+)\)", text[cascade_start:cascade_end]
+        r"(CO-\d+) \((mcp:[0-9A-Za-z-]+)\)", text[cascade_start:cascade_end]
     )
     if cascade_match is None:
         raise ValueError("primer elemento de cascada no derivable")
@@ -124,10 +135,34 @@ def _roster_values(
     roster: dict[str, Any],
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str], list[str]]:
     errors: list[str] = []
+    if not isinstance(roster, dict):
+        return {}, {}, {}, ["campo de roster no consumido: roster debe ser dict"]
+    if set(roster) != {"active_roles", "cadena_contexto"}:
+        errors.append(
+            "campo de roster no consumido: raiz debe contener exactamente "
+            "active_roles y cadena_contexto"
+        )
+    active_roles = roster.get("active_roles")
+    if not isinstance(active_roles, dict):
+        errors.append("campo de roster no consumido: active_roles debe ser dict")
+        active_roles = {}
+    elif set(active_roles) != {"orquestador", "supervisor"}:
+        errors.append(
+            "campo de roster no consumido: active_roles debe contener exactamente "
+            "orquestador y supervisor"
+        )
+    cadena_contexto = roster.get("cadena_contexto")
+    if not isinstance(cadena_contexto, list):
+        errors.append("campo de roster no consumido: cadena_contexto debe ser list")
+        cadena_contexto = []
+    elif len(cadena_contexto) != 1:
+        errors.append(
+            "campo de roster no consumido: cadena_contexto debe tener longitud 1"
+        )
     locations = (
-        ("active_roles.orquestador", roster.get("active_roles", {}).get("orquestador")),
-        ("active_roles.supervisor", roster.get("active_roles", {}).get("supervisor")),
-        ("cadena_contexto[0]", (roster.get("cadena_contexto") or [None])[0]),
+        ("active_roles.orquestador", active_roles.get("orquestador")),
+        ("active_roles.supervisor", active_roles.get("supervisor")),
+        ("cadena_contexto[0]", cadena_contexto[0] if cadena_contexto else None),
     )
     values: list[dict[str, str]] = []
     for location, value in locations:
@@ -143,20 +178,37 @@ def _roster_values(
         errors.extend(
             f"campo de roster ausente: {key} en {location}" for key in missing
         )
+        errors.extend(
+            f"campo de roster no consumido: {key} en {location} debe ser str no vacío"
+            for key in ("threadId", "session_code")
+            if key in value
+            and (not isinstance(value[key], str) or not value[key].strip())
+        )
         values.append(value)
     return values[0], values[1], values[2], errors
 
 
-def _replace_outside(
-    text: str, spans: list[tuple[int, int]], old: str, new: str
+def _replace_identity_tokens(
+    text: str,
+    protected: list[tuple[int, int, str]],
+    replacements: dict[str, str],
 ) -> str:
+    """Replace identity tokens in original-text gaps and emit protected values."""
+    alternatives = "|".join(
+        re.escape(old) for old in sorted(replacements, key=len, reverse=True)
+    )
+    token_pattern = re.compile(rf"(?<![A-Za-z0-9-])({alternatives})(?![A-Za-z0-9-])")
+
+    def replace_match(match: re.Match[str]) -> str:
+        return replacements[match.group(1)]
+
     pieces: list[str] = []
     cursor = 0
-    for start, end in sorted(spans):
-        pieces.append(text[cursor:start].replace(old, new))
-        pieces.append(text[start:end])
+    for start, end, value in sorted(protected):
+        pieces.append(token_pattern.sub(replace_match, text[cursor:start]))
+        pieces.append(value)
         cursor = end
-    pieces.append(text[cursor:].replace(old, new))
+    pieces.append(token_pattern.sub(replace_match, text[cursor:]))
     return "".join(pieces)
 
 
@@ -170,13 +222,18 @@ def render_latido(  # noqa: C901
 
     Before: see the module contract; the input mapping is not modified.
     During: validates roster shape and ids, measures R2/R3 anchors, applies
-    R1-R4 outside protected spans, and fills or marks both JUICIO spans.
+    R1-R4 outside protected spans, and fills or marks the three judgement values.
     After: returns the rendered UTF-8 text and rc 0, 2, or 3 as documented;
     malformed input is reported as a plain ``DIFERENCIAS:`` diagnostic.
     """
 
     problems: list[str] = []
     try:
+        if not isinstance(go_index, int) or isinstance(go_index, bool) or go_index < 1:
+            return 2, _failure(
+                "",
+                [f"go_index debe ser entero >= 1, recibido: {go_index}"],
+            )
         text = _read_predecessor(predecessor)
         own, supervisor, context, roster_errors = _roster_values(roster)
         problems.extend(roster_errors)
@@ -207,12 +264,12 @@ def render_latido(  # noqa: C901
                 "roster.cadena_contexto[0] no coincide con la identidad de supervisora "
                 "citada en el predecesor"
             )
-        spans = [(cascade_start, cascade_end), derived["post_span"]]
         judgement_spans = _judgement_spans(text)
-        spans.extend(judgement_spans.values())
 
-        all_ids = set(re.findall(r"mcp:[0-9a-z-]+", text))
-        frozen_ids = set(re.findall(r"mcp:[0-9a-z-]+", text[cascade_start:cascade_end]))
+        all_ids = set(re.findall(r"mcp:[0-9A-Za-z-]+", text))
+        frozen_ids = set(
+            re.findall(r"mcp:[0-9A-Za-z-]+", text[cascade_start:cascade_end])
+        )
         predecessor_identity_ids = {derived["own_id"], derived["supervisor_id"]}
         roster_ids = {own["threadId"], supervisor["threadId"], context["threadId"]}
         problems.extend(
@@ -242,19 +299,59 @@ def render_latido(  # noqa: C901
         if problems:
             return 2, _failure(text, problems)
 
-        rendered = _replace_outside(
-            text, spans, derived["own_code"], own["session_code"]
+        missing: list[str] = []
+        judgement_values: dict[str, str] = {}
+        for name in ("nota_derivacion", "objetivo_en_curso"):
+            value = (juicios or {}).get(name)
+            if (
+                value is None
+                or value.strip() == ""
+                or value.strip() == f"[[JUICIO:{name}]]"
+            ):
+                missing.append(name)
+                value = f"[[JUICIO:{name}]]"
+            judgement_values[name] = value
+        section_value = (juicios or {}).get("secciones_postcompactacion_nueva")
+        if (
+            section_value is None
+            or section_value.strip() == ""
+            or section_value.strip() == "[[JUICIO:secciones_postcompactacion_nueva]]"
+        ):
+            missing.append("secciones_postcompactacion_nueva")
+            section_value = "[[JUICIO:secciones_postcompactacion_nueva]]"
+
+        cascade_text = text[cascade_start:cascade_end]
+        cascade_value = (
+            f"{context['session_code']} ({context['threadId']}), luego {cascade_text}"
         )
-        rendered = _replace_outside(
-            rendered, spans, derived["supervisor_code"], supervisor["session_code"]
+        post_text = text[derived["post_span"][0] : derived["post_span"][1]]
+        post_value = (
+            f"{post_text} y PROTOCOLO_POSTCOMPACTACION_{supervisor['session_code']}.md "
+            f"{section_value}"
         )
-        rendered = _replace_outside(rendered, spans, derived["own_id"], own["threadId"])
-        rendered = _replace_outside(
-            rendered,
-            spans,
-            derived["supervisor_id"],
-            supervisor["threadId"],
-        )
+        protected = [
+            (cascade_start, cascade_end, cascade_value),
+            (derived["post_span"][0], derived["post_span"][1], post_value),
+            (
+                judgement_spans["nota_derivacion"][0],
+                judgement_spans["nota_derivacion"][1],
+                judgement_values["nota_derivacion"],
+            ),
+            (
+                judgement_spans["objetivo_en_curso"][0],
+                judgement_spans["objetivo_en_curso"][1],
+                judgement_values["objetivo_en_curso"],
+            ),
+        ]
+        replacements = {
+            derived["own_code"]: own["session_code"],
+            derived["supervisor_code"]: supervisor["session_code"],
+            derived["own_id"]: own["threadId"],
+            derived["supervisor_id"]: supervisor["threadId"],
+            derived["cascade_code"]: context["session_code"],
+            derived["cascade_id"]: context["threadId"],
+        }
+        rendered = _replace_identity_tokens(text, protected, replacements)
         line9 = re.search(r"(?m)^9\. Contexto propio:.*$", rendered)
         if line9 is None:
             return 2, _failure(
@@ -273,52 +370,9 @@ def render_latido(  # noqa: C901
         rendered = rendered[: line9.start()] + step9 + rendered[line9.end() :]
 
         rendered = "ESTADO: VIGENTE\n" + rendered.split("\n", 1)[1]
-        cascade_text = text[cascade_start:cascade_end]
-        replacement = (
-            f"{context['session_code']} ({context['threadId']}), luego {cascade_text}"
-        )
-        missing: list[str] = []
-        for name, (start, end) in sorted(
-            judgement_spans.items(), key=lambda item: item[1][0], reverse=True
-        ):
-            value = (juicios or {}).get(name)
-            if value is None:
-                missing.append(name)
-                value = f"[[JUICIO:{name}]]"
-            rendered = rendered[:start] + value + rendered[end:]
-        rendered = rendered.replace(
-            f"cascada directa {derived['cascade_code']} ({derived['cascade_id']})",
-            f"cascada directa {context['session_code']} ({context['threadId']})",
-        )
-        rendered = rendered.replace(
-            f"o '{derived['cascade_code']}'",
-            f"o '{context['session_code']}'",
-        )
-        rendered_cascade_start = rendered.index(_CASCADE_START) + len(_CASCADE_START)
-        rendered_cascade_end = rendered.index(_CASCADE_END, rendered_cascade_start)
-        rendered = (
-            rendered[:rendered_cascade_start]
-            + replacement
-            + rendered[rendered_cascade_end:]
-        )
         rendered = rendered.replace(
             f"para el salto {own['session_code']} -> {own['session_code']}",
             f"para el salto {own['session_code']} -> {_next_session_code(own['session_code'])}",
-        )
-        post_text = text[derived["post_span"][0] : derived["post_span"][1]]
-        rendered_anchor_end = rendered.index(
-            f"ARRANQUE_{own['session_code']} s.1"
-        ) + len(f"ARRANQUE_{own['session_code']} s.1")
-        rendered_post_start = rendered.index(post_text, rendered_anchor_end)
-        rendered_post_end = rendered_post_start + len(post_text)
-        section_value = (juicios or {}).get("secciones_postcompactacion_nueva")
-        if section_value is None:
-            missing.append("secciones_postcompactacion_nueva")
-            section_value = "[[JUICIO:secciones_postcompactacion_nueva]]"
-        rendered = (
-            rendered[:rendered_post_end]
-            + f" y PROTOCOLO_POSTCOMPACTACION_{supervisor['session_code']}.md {section_value}"
-            + rendered[rendered_post_end:]
         )
         if missing:
             return 3, _failure(
@@ -348,18 +402,30 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument("--juicio", action="append", default=[])
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
-    roster = json.loads(args.roster.read_text(encoding="utf-8"))
+    try:
+        roster = json.loads(args.roster.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        sys.stdout.write(_failure("", [f"no se pudo leer --roster: {exc}"]))
+        return 2
     juicios: dict[str, str] = {}
     for item in args.juicio:
         name, separator, path = item.partition("=@")
         if not separator:
             parser.error("--juicio debe tener la forma nombre=@fichero")
-        juicios[name] = Path(path).read_text(encoding="utf-8")
+        try:
+            juicios[name] = Path(path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            sys.stdout.write(_failure("", [f"no se pudo leer --juicio: {exc}"]))
+            return 2
     rc, output = render_latido(args.predecessor, roster, args.go_index, juicios)
     if args.out is None:
         sys.stdout.write(output)
     else:
-        args.out.write_text(output, encoding="utf-8", newline="")
+        try:
+            args.out.write_text(output, encoding="utf-8", newline="")
+        except (OSError, UnicodeError) as exc:
+            sys.stdout.write(_failure("", [f"no se pudo escribir --out: {exc}"]))
+            return 2
     return rc
 
 
