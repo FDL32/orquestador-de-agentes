@@ -255,7 +255,7 @@ def resolve_username_needle() -> tuple[re.Pattern | None, str]:
     if not users:
         return None, format_skip_reason(generic, too_short)
     pat = "|".join(re.escape(x) for x in users)
-    return re.compile(r"\b(?:" + pat + r")\b"), f"activa para {users}"
+    return re.compile(r"\b(?:" + pat + r")\b", re.IGNORECASE), f"activa para {users}"
 
 
 def scan_needle(
@@ -414,7 +414,7 @@ def audit(root: Path, policy: dict | None = None) -> tuple[int, list[str]]:
                 continue
             rx = uname_rx
         else:
-            rx = re.compile(spec["pattern"])
+            rx = re.compile(spec["pattern"], re.IGNORECASE)
         hits = scan_needle(root, files, rx)
         not_exempt, fired = partition_hits(name, hits, allowlist)
         all_fired |= fired

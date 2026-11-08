@@ -139,6 +139,7 @@ def test_publishes_the_count(fake_motor: Path):
         ),
         ("worktree_dev", "orquestador_de_agentes_dev", "cd orquestador_de_agentes_dev"),
         ("user_profile_root", r"C:[\\/]Users", r"path C:\Users\bob"),
+        ("user_profile_root", r"C:[\\/]Users", r"path C:/Users/bob"),
     ],
 )
 def test_each_needle_catches_its_leak(fake_motor: Path, needle_name, pattern, leak):
@@ -148,6 +149,26 @@ def test_each_needle_catches_its_leak(fake_motor: Path, needle_name, pattern, le
     code, lines = cda.audit(fake_motor, _policy({needle_name: {"pattern": pattern}}))
     assert code == 1
     assert any(f"aguja {needle_name}: 1 hits" in ln for ln in lines), lines
+
+
+def test_user_profile_root_casefolds_lowercase_backslash(fake_motor: Path):
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", r"path c:\users\bob" + "\n")
+    _commit_all(fake_motor)
+    code, lines = cda.audit(
+        fake_motor, _policy({"user_profile_root": {"pattern": r"C:[\\/]Users"}})
+    )
+    assert code == 1, lines
+
+
+def test_user_profile_root_casefolds_uppercase_forward_slash(fake_motor: Path):
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", "path C:/USERS/bob\n")
+    _commit_all(fake_motor)
+    code, lines = cda.audit(
+        fake_motor, _policy({"user_profile_root": {"pattern": r"C:[\\/]Users"}})
+    )
+    assert code == 1, lines
 
 
 # ---------------------------------------------------------------- T-FAILCLOSED-*
@@ -412,6 +433,17 @@ def test_username_active_via_env_catches(fake_motor: Path, monkeypatch):
     monkeypatch.setenv("AGNOSTIC_EXTRA_USERNAMES", "zzztestuser")
     _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
     _wb(fake_motor / "AGENTS.md", "hello zzztestuser here\n")
+    _commit_all(fake_motor)
+    code, lines = cda.audit(fake_motor, _policy({}))
+    assert code == 1
+    assert any("aguja username: 1 hits" in ln for ln in lines), lines
+
+
+def test_username_active_casefold_catches(fake_motor: Path, monkeypatch):
+    monkeypatch.setattr(cda.getpass, "getuser", lambda: "ci")
+    monkeypatch.setenv("AGNOSTIC_EXTRA_USERNAMES", "zzztestuser")
+    _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\n")
+    _wb(fake_motor / "AGENTS.md", "hello ZZZTESTUSER here\n")
     _commit_all(fake_motor)
     code, lines = cda.audit(fake_motor, _policy({}))
     assert code == 1
