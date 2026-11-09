@@ -26,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1376,4 +1377,391 @@ def test_hook_health_line_labels_motor_when_no_paired_destination(tmp_path) -> N
     )
     assert "destino:" not in line, (
         f"Con motor sin destino pareado, no debe contener 'destino:', linea: {line}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# WOT-2026-161g (F1/3, TR-26): el arranque de sesion arma el centinela de
+# espera en `observe` si NO habia ninguno. Consume la superficie CERRADA de
+# 160z (ruta unica, caducidad EN LECTURA) y nunca la edita.
+# --------------------------------------------------------------------------- #
+
+_SENTINEL_LITERAL = "espera_checklist_mode.json"
+
+
+def _neighbour_hook():
+    """Carga `native_stop_hook` (160z) para contrastar la ruta compartida."""
+    spec = importlib.util.spec_from_file_location(
+        "ns_hook_161g", _ROOT / ".agent" / "hooks" / "native_stop_hook.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _project_root(tmp_path: Path, name: str = "proyecto") -> Path:
+    """Raiz REALISTA de proyecto:
+
+    `.claude/` + `.agent/runtime/`, como un motor o un destino real. Un tmp de
+    pytest SIN `.claude` resuelve a `C:\\Users\\<user>` (que si lo tiene), asi
+    que los tests de armado deben crear la raiz de proyecto ellos mismos.
+    """
+    root = tmp_path / name
+    (root / ".claude").mkdir(parents=True)
+    (root / ".agent" / "runtime").mkdir(parents=True)
+    return root
+
+
+def _sentinel(root: Path) -> Path:
+    """Ruta del centinela tomada de 160z, NO del helper bajo prueba (a-04)."""
+    return root / _neighbour_hook().ESPERA_SENTINEL_RELPATH
+
+
+def _prepare_main(monkeypatch, hook) -> None:
+    """Fija la camara de memoria y silencia salud/roles para aislar el payload."""
+    import bus.memory_loader as ml
+
+    monkeypatch.setattr(ml, "get_session_index", lambda budget=0: "SESSION-IDX")
+    _quiet_sections(monkeypatch, hook)
+    _set_stdin_bytes(monkeypatch, b'{"source":"startup"}')
+
+
+@pytest.fixture(autouse=True)
+def _centinela_real_intacto():
+    """C4/161g: ningun test deja armado el centinela REAL del repo.
+
+    `test_hook_emits_memory_context` corre el hook con `cwd=_ROOT`, y el armado
+    de 161g escribe bajo `.agent/runtime/` del repo (medido: lo hizo en la 1a
+    corrida). Este guard guarda el estado previo (hoy: ausente) y lo restaura
+    al terminar, para que la focal no deje rastro ni cambie el centinela real.
+    """
+    sentinel = _ROOT / _neighbour_hook().ESPERA_SENTINEL_RELPATH
+    previo = sentinel.read_bytes() if sentinel.is_file() else None
+    mtime = sentinel.stat().st_mtime_ns if previo is not None else None
+    try:
+        yield
+    finally:
+        if previo is None:
+            if sentinel.exists():
+                sentinel.unlink()
+        else:
+            sentinel.write_bytes(previo)
+            if mtime is not None:
+                os.utime(sentinel, ns=(mtime, mtime))
+
+
+def test_arranque_arma_observe_si_no_habia_centinela(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """a-01: main() sobre una raiz de proyecto SIN centinela crea `observe`.
+
+    Afirma el CONTENIDO (mode y activated_at UTC parseable), no solo que el
+    fichero exista: un test de existencia seria un floor.
+    MUTACION M1: quitar `_arm_espera_observe(root)` de main() -> no hay fichero
+    y este test cae (mata a-07).
+    """
+    root = _project_root(tmp_path)
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    captured = capsys.readouterr()
+
+    sentinel = _sentinel(root)
+    assert sentinel.is_file(), "el arranque no armo el centinela (a-01)"
+    data = json.loads(sentinel.read_text(encoding="utf-8"))
+    assert data["mode"] == "observe"
+    activated = datetime.fromisoformat(data["activated_at"])
+    assert activated.tzinfo is not None
+    assert activated.utcoffset().total_seconds() == 0, "activated_at debe ser UTC"
+    assert captured.err == "", f"el arranque escribio en stderr: {captured.err!r}"
+    assert "hookSpecificOutput" in json.loads(captured.out)
+
+
+def test_arma_es_idempotente_y_no_refresca_activated_at(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """a-02: dos arranques sobre la misma raiz conservan bytes y `activated_at`.
+
+    CONTROL POSITIVO: una raiz NUEVA obtiene su propio activated_at.
+    MUTACION M2: abrir con "w" en vez de "x" (sobrescribir siempre) -> el
+    primer activated_at se pierde y mtime cambia.
+    MUTACION M3: invertir la guarda de proyecto (no armar nunca) -> el control
+    positivo se queda sin fichero.
+    """
+    root = _project_root(tmp_path, "repetido")
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    capsys.readouterr()
+    sentinel = _sentinel(root)
+    first_bytes = sentinel.read_bytes()
+    first_mtime = sentinel.stat().st_mtime_ns
+
+    assert hook.main() == 0
+    capsys.readouterr()
+    assert sentinel.read_bytes() == first_bytes, (
+        "el 2o arranque reescribio el centinela"
+    )
+    assert sentinel.stat().st_mtime_ns == first_mtime
+
+    otra = _project_root(tmp_path, "nueva")
+    monkeypatch.chdir(otra)
+    assert hook.main() == 0
+    capsys.readouterr()
+    nueva = json.loads(_sentinel(otra).read_text(encoding="utf-8"))
+    assert nueva["mode"] == "observe"
+    assert nueva["activated_at"] != json.loads(first_bytes)["activated_at"]
+
+
+def test_no_toca_observe_caducado_ni_block_ni_ilegible(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """161g (decision del PASO 0): si el fichero EXISTE no se escribe nunca.
+
+    Casos: `observe` caducado (25 h), `block` vigente y fichero no-dict. Los
+    tres conservan BYTES y mtime; la caducidad la decide 160z en lectura
+    (`sentinel_expiry`), de modo que el TTL de 24 h no se resetea.
+    MUTACION M8: re-armar el caducado -> el sha del fichero cambia.
+    """
+    when = datetime.now(timezone.utc)
+    casos = {
+        "caducado": {
+            "mode": "observe",
+            "activated_at": (when - timedelta(hours=25)).isoformat(),
+        },
+        "block": {"mode": "block", "activated_at": when.isoformat()},
+        "no_dict": [1, 2, 3],
+    }
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+
+    for nombre, contenido in casos.items():
+        root = _project_root(tmp_path, nombre)
+        sentinel = _sentinel(root)
+        sentinel.write_text(json.dumps(contenido), encoding="utf-8")
+        antes = sentinel.read_bytes()
+        antes_mtime = sentinel.stat().st_mtime_ns
+
+        monkeypatch.chdir(root)
+        assert hook.main() == 0
+        capsys.readouterr()
+
+        assert sentinel.read_bytes() == antes, f"{nombre}: el arranque lo reescribio"
+        assert sentinel.stat().st_mtime_ns == antes_mtime, f"{nombre}: mtime cambio"
+
+
+def test_no_arma_en_cwd_arbitrario_sin_claude(monkeypatch, tmp_path, capsys) -> None:
+    """C2: el helper jamas crea `.agent/runtime` fuera de un proyecto real.
+
+    Caso DIRECTO (el que mata el mutante): raiz con `.claude/` pero SIN
+    `.agent/` -- el HOME de esta maquina, o cualquier ancestro con `.claude/`.
+    El helper debe salir sin crear NADA.
+    Nota medida: con el `tmp_path` de este repo (re-anclado dentro del arbol,
+    `tests/sandbox/test_runtime/session_<pid>/...`) un cwd sin `.claude` resuelve
+    a la raiz del REPO, no al HOME, asi que el caso del HOME solo se puede
+    ejercitar llamando al helper con la raiz ya resuelta.
+    MUTACION: quitar la guarda `.agent/` -> se crea `.agent/runtime` en la raiz
+    con solo `.claude` (rojo) y ademas se arma el centinela REAL del repo.
+    """
+    hook = _hook_module()
+    solo_claude = tmp_path / "solo_claude"
+    (solo_claude / ".claude").mkdir(parents=True)
+
+    hook._arm_espera_observe(solo_claude)
+
+    assert not (solo_claude / ".agent").exists(), (
+        "el helper creo .agent/ en una raiz sin .agent/ (C2)"
+    )
+    assert list(solo_claude.rglob("*.json")) == []
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+    # Integracion: un cwd arbitrario no recibe `.agent/runtime` por su cuenta.
+    home_agent = Path.home() / ".agent"
+    home_antes = home_agent.exists()
+    vacio = tmp_path / "vacio"
+    vacio.mkdir()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(vacio)
+    assert hook.main() == 0
+    capsys.readouterr()
+    assert list(vacio.rglob("*.json")) == []
+    assert home_agent.exists() == home_antes, "el arranque escribio en el HOME"
+
+
+def test_armado_usa_apertura_exclusiva_y_traga_fileexistserror(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """C1: apertura EXCLUSIVA (`open(..., "x")`) y FileExistsError = "ya existia".
+
+    El armado no hace comprobar-y-escribir: la atomicidad la da el propio
+    `open(..., "x")`, asi que dos arranques simultaneos no se pisan.
+    MUTACION (C1): abrir con "w" -> el modo registrado deja de ser "x" y el
+    segundo llegada sobrescribe (rojo en este test y en a-02).
+    """
+    root = _project_root(tmp_path)
+    hook = _hook_module()
+    real_open = open
+    modos: list[str] = []
+
+    def _record(path, mode="r", *args, **kwargs):
+        modos.append(mode)
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(hook, "open", _record, raising=False)
+    hook._arm_espera_observe(root)
+
+    assert modos == ["x"], f"el armado no abrio en modo exclusivo: {modos}"
+    assert _sentinel(root).is_file()
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "", "el armado no debe hablar"
+
+    carrera = _project_root(tmp_path, "carrera")
+    sentinel = _sentinel(carrera)
+    sentinel.write_text(
+        json.dumps(
+            {"mode": "block", "activated_at": datetime.now(timezone.utc).isoformat()}
+        ),
+        encoding="utf-8",
+    )
+    antes = sentinel.read_bytes()
+    hook._arm_espera_observe(carrera)  # open("x") -> FileExistsError -> se traga
+    assert sentinel.read_bytes() == antes
+    assert json.loads(antes)["mode"] == "block"
+
+
+def test_armado_es_fail_open_ante_oserror(monkeypatch, tmp_path, capsys) -> None:
+    """a-03: si la escritura lanza OSError, main() sale 0 y el payload no cambia.
+
+    Se parchea el `open` que el codigo USA de verdad -- el builtin resuelto por
+    el global del hook -- no `Path.write_text` (leccion mock-drift).
+    MUTACION M4: quitar el try/except (o re-lanzar) -> la excepcion sale de
+    main() y el test cae.
+    """
+    root = _project_root(tmp_path)
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+
+    def _boom(*_args, **_kwargs):
+        raise OSError(28, "disco lleno (simulado)")
+
+    monkeypatch.setattr(hook, "open", _boom, raising=False)
+    monkeypatch.chdir(root)
+    assert hook.main() == 0
+    fallo = capsys.readouterr()
+    assert not _sentinel(root).exists()
+    assert "SESSION-IDX" in _ctx(json.loads(fallo.out))
+    assert fallo.err == ""
+
+    # Misma raiz: el fallo de escritura no puede alterar el payload frente a
+    # una corrida en la que el centinela YA existe (no se intenta escribir).
+    _sentinel(root).write_text(
+        json.dumps(
+            {"mode": "block", "activated_at": datetime.now(timezone.utc).isoformat()}
+        ),
+        encoding="utf-8",
+    )
+    assert hook.main() == 0
+    base = capsys.readouterr()
+    assert json.loads(fallo.out) == json.loads(base.out), "el OSError altero el payload"
+
+
+def test_armado_es_fail_open_si_el_gancho_vecino_no_carga(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """C5: un fallo al importar el vecino no rompe el arranque ni el payload.
+
+    MUTACION M4 (variante import): sacar `_espera_sentinel_relpath()` del
+    try/except -> FileNotFoundError sale de main() y el test cae.
+    """
+    root = _project_root(tmp_path)
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.setattr(hook, "_NEIGHBOUR_HOOK_FILENAME", "no_existe_161g.py")
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    captured = capsys.readouterr()
+    assert not _sentinel(root).exists()
+    assert "SESSION-IDX" in _ctx(json.loads(captured.out))
+    assert captured.err == ""
+
+
+def test_payload_identico_con_y_sin_armado(monkeypatch, tmp_path, capsys) -> None:
+    """a-05/C3: el armado no cambia el payload (claves Y valores) ni emite nada.
+
+    Misma raiz en las DOS corridas (el payload incluye rutas y fragmentos
+    dependientes del root): la 1a arma, la 2a encuentra el centinela y no
+    escribe. Si el armado tocara el payload, las dos salidas diferirian.
+    MUTACION M7: meter el estado del centinela en el contexto -> los payloads
+    difieren y el test cae.
+    """
+    root = _project_root(tmp_path, "misma_raiz")
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    con_armado = capsys.readouterr()
+    sentinel = _sentinel(root)
+    assert sentinel.is_file(), "la 1a corrida debia armar"
+    bytes_armado = sentinel.read_bytes()
+
+    assert hook.main() == 0
+    sin_armado = capsys.readouterr()
+    assert sentinel.read_bytes() == bytes_armado
+
+    assert json.loads(con_armado.out) == json.loads(sin_armado.out), (
+        "el armado altero claves o valores del payload de contexto (a-05)"
+    )
+    assert con_armado.err == "" and sin_armado.err == ""
+
+
+def test_armado_va_antes_de_imprimir_el_payload(monkeypatch, tmp_path, capsys) -> None:
+    """C5: la llamada va DESPUES de ensamblar y ANTES de `_print_context_safely`.
+
+    Mide el orden observable: cuando se imprime, el centinela ya existe.
+    MUTACION: mover `_arm_espera_observe(root)` por debajo del print -> rojo.
+    """
+    root = _project_root(tmp_path)
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    vistos: list[bool] = []
+    real_print = hook._print_context_safely
+
+    def _spy(context, system_message=None):
+        vistos.append(_sentinel(root).is_file())
+        return real_print(context, system_message)
+
+    monkeypatch.setattr(hook, "_print_context_safely", _spy)
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    capsys.readouterr()
+    assert vistos == [True], "el payload se imprimio antes de armar el centinela"
+
+
+def test_ruta_del_centinela_una_sola_fuente_en_el_arranque() -> None:
+    """a-04: el arranque IMPORTA la ruta de 160z; 0 literales duplicados.
+
+    CONTROL POSITIVO: el censo SI ve el literal cuando existe (el gancho vecino
+    lo tiene una vez), asi que no es un censo que siempre devuelve 0 ante un
+    literal inyectado.
+    MUTACION M5: duplicar el literal de la ruta en session_start_hook.py -> rojo.
+    """
+    hook = _hook_module()
+    neighbour = _neighbour_hook()
+    assert hook._espera_sentinel_relpath() == neighbour.ESPERA_SENTINEL_RELPATH
+
+    source = _HOOK.read_text(encoding="utf-8")
+    assert source.count(_SENTINEL_LITERAL) == 0, (
+        "session_start_hook.py duplica el literal de la ruta (a-04)"
+    )
+    neighbour_source = Path(neighbour.__file__).read_text(encoding="utf-8")
+    assert neighbour_source.count(_SENTINEL_LITERAL) == 1, (
+        "control positivo: el censo debe ver el literal donde existe"
     )

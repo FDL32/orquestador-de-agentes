@@ -24,9 +24,12 @@ ESTATUS: NORMA (no barrera). Ficha WOT-2026-160o (2026-11-08). Origen: P9 (vuelo
 9. Mecanismo opt-in del Stop hook (WOT-2026-160p): el gancho puede exigir un
    marcador de decision de espera mediante el centinela
    `.agent/runtime/espera_checklist_mode.json`. Se arma, desarma y consulta
-   unicamente con `python scripts/espera_checklist_mode.py on [--mode observe|block]`,
+   con `python scripts/espera_checklist_mode.py on [--mode observe|block]`,
    `python scripts/espera_checklist_mode.py off` y
-   `python scripts/espera_checklist_mode.py status`. Hoy es MANUAL: no esta
-   cableado en bootstrap ni en cierre de sesion.
+   `python scripts/espera_checklist_mode.py status`. Ademas, el arranque de
+   sesion lo arma en `observe` si no habia ninguno (WOT-2026-161g); si el
+   fichero ya existe -- `observe` vigente o caducado, ilegible, o `block` -- no
+   lo toca: la caducidad de 24 h (WOT-2026-160z) se evalua en lectura y no se
+   refresca.
    Las dos formas exactas son `[ESPERA:HECHO: avance realizado]` y
    `[ESPERA:NADA: no habia trabajo avanzable]`.

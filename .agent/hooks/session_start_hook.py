@@ -78,7 +78,9 @@ During: resuelve el project root; lee el campo `source` del payload (ya no
     con el backend/modelo de cada rol de capa resuelto desde `agents.json`
     (WOT-2026-098b), y SIEMPRE AL FINAL la seccion M4/M5 (2026-10-15):
     contratos de invocacion leidos EN VIVO desde
-    `prompts/orchestrator_launch_builder.md`. Solo lectura; ninguna escritura.
+    `prompts/orchestrator_launch_builder.md`. La UNICA escritura del hook es el
+    armado fail-open del centinela de espera en `observe` cuando no habia
+    ninguno (`_arm_espera_observe`, WOT-2026-161g); el resto es solo lectura.
 After: imprime `{"hookSpecificOutput": {"hookEventName": "SessionStart",
     "additionalContext": ...}}` por stdout (esquema documentado de Claude Code;
     el `additionalContext` en la raiz que se emitio hasta 2026-10-23 nunca llego
@@ -94,9 +96,11 @@ After: imprime `{"hookSpecificOutput": {"hookEventName": "SessionStart",
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -167,6 +171,62 @@ def _resolve_root() -> Path:
         if (candidate / ".claude").exists():
             return candidate
     return here
+
+
+_NEIGHBOUR_HOOK_FILENAME = "native_stop_hook.py"
+
+
+def _espera_sentinel_relpath() -> Path:
+    """Ruta del centinela de espera, importada de su UNICA definicion (160z).
+
+    Before: nada. During: carga `native_stop_hook` desde ESTE mismo directorio
+    con importlib (sin tocar el `sys.path` global ni depender de que el nombre
+    `native_stop_hook` este ya en `sys.modules`) y lee `ESPERA_SENTINEL_RELPATH`,
+    la unica definicion de la ruta. After: devuelve la ruta relativa; si el
+    vecino no se puede cargar, la excepcion sube al llamante, que la trata como
+    fail-open. No duplicar el literal (a-04 de 161g).
+    """
+    neighbour = Path(__file__).with_name(_NEIGHBOUR_HOOK_FILENAME)
+    spec = importlib.util.spec_from_file_location(
+        "_session_start_neighbour_hook", neighbour
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"no se pudo cargar el gancho vecino: {neighbour}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.ESPERA_SENTINEL_RELPATH
+
+
+def _arm_espera_observe(root: Path) -> None:
+    """Arma el centinela de espera en `observe` si NO habia ninguno (161g F1/3).
+
+    Before: `root` resuelto por `_resolve_root()`. During: si el root es un
+    proyecto real -- tiene `.claude/` Y `.agent/` -- crea el centinela con
+    apertura EXCLUSIVA (`open(..., "x")`), de modo que dos arranques simultaneos
+    no se pisan (el segundo recibe `FileExistsError`, se trata como "ya existia")
+    y NUNCA se sobrescribe un centinela previo: `observe` vigente, `observe`
+    caducado, fichero ilegible y `block` quedan INTACTOS porque la caducidad la
+    decide 160z EN LECTURA (`sentinel_expiry`), no el armado. After: no escribe
+    en stdout ni en stderr y NUNCA propaga (OSError, FileExistsError o fallo al
+    importar el gancho vecino): un arranque sin centinela es degradacion
+    silenciosa, jamas un bloqueo ni un cambio del payload de contexto.
+    """
+    try:
+        if not (root / ".claude").exists() or not (root / ".agent").is_dir():
+            return
+        target = root / _espera_sentinel_relpath()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "x", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "mode": "observe",
+                        "activated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            )
+    except Exception:
+        return
 
 
 def _dogfooding_workspace(root: Path) -> Path | None:
@@ -720,6 +780,9 @@ def main() -> int:
     context, failed = assemble_session_context(
         root, lambda budget: _load_context(root, source, budget)
     )
+    # 161g (F1/3): arma `observe` si no habia centinela. Va DESPUES del
+    # ensamblado y ANTES del print: fail-open, no toca el return ni el payload.
+    _arm_espera_observe(root)
     _print_context_safely(
         context,
         "Memoria del proyecto no cargada en el arranque: ejecuta "
