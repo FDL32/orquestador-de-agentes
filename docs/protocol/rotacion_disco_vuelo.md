@@ -192,6 +192,8 @@ archivo fuera de P7. La regla de reutilizacion se refleja en estas herramientas 
 
 - prune_git_recoverable.py es un paso MATERIAL dentro del contrato P7: solo tras archivo y hash verificados y con lista aprobada por el usuario con hash; no es una via de eliminacion paralela a P7.
 
+- Este diseno NO modifica ni autoriza el comportamiento propio de rotate_kilo_logs.py, prune_runtime_retention.py y prune_session_scratch.py (cada uno conserva su contrato actual de dry-run, retencion y locks); si se amplia su alcance a superficies archivadas o a nuevas familias, esa retirada pasa por P7 con lista aprobada con hash; si esas rotaciones automaticas deben quedar tambien bajo P7 es una DECISION DEL USUARIO (punto 7 de decisiones pendientes).
+
 Frase literal de la clausula: CICLO DE VIDA por familia (SEGUNDA ADENDA 18:42). El diseno declara la tabla de familias con las tres fases USO -> ARCHIVADO -> ELIMINACION y la herramienta de cada una (seccion 10 de esta ficha): una familia SIN las tres fases y SIN herramienta que las ejecute NO se archiva a ningun sitio; cada transicion la ejecuta un script con dry-run por defecto, lista con hash y rc por modo (patron de la casa) y deja fila de indice; nada sale del archivo sin pasar por el contrato P7; se REUTILIZA lo que existe (archive_arranques.py L16-17, purge_arranques_archive.py L62, rotate_kilo_logs.py L48-49, prune_runtime_retention.py L78-81, prune_git_recoverable.py L4-5, prune_session_scratch.py L44) y solo se escribe codigo nuevo para familias sin sistema.
 
 - scripts/archive_arranques.py L16-17 (SE MUEVE, JAMAS SE BORRA), L50 (mueve solo ARCHIVABLE, salvo --dry-run).
@@ -240,3 +242,4 @@ Frase literal de la clausula: REGISTRO diario de espacio libre (medicion viva). 
 4. Dueno de la automatizacion diaria de disk_free_log.csv.
 5. Forma exacta de partir la herramienta dentro de 161j o en la hija H1: la decision de partir (161j diseno breve + H1 hija) ya esta tomada por el usuario; se lista por figurar en la seccion 12 de la ficha.
 6. Topes del archivo y caducidad propuesta para las raices nuevas.
+7. Alcance de P7 frente a las rotaciones automaticas ya existentes (rotate_kilo_logs, prune_runtime_retention, prune_session_scratch): mantienen su contrato propio (propuesta de este diseno) o pasan tambien por P7 con lista aprobada con hash.
